@@ -52,6 +52,23 @@ test('Studio automation surface does not hide DSH session schedules', () => {
   assert.match(clientSource, /schedule_create/);
 });
 
+test('operations pages expose the old Studio operational workflows', () => {
+  assert.match(clientSource, /function EvaluationPage/);
+  assert.match(clientSource, /hostRemote\.evaluationTargets/);
+  assert.match(clientSource, /hostRemote\.evaluationRun/);
+  assert.match(clientSource, /开始评测/);
+  assert.match(clientSource, /function ObservabilityPage/);
+  assert.match(clientSource, /hostRemote\.tracesOverview/);
+  assert.match(clientSource, /原始 OTLP/);
+  assert.match(clientSource, /function ChannelsPage/);
+  assert.match(clientSource, /ListPairingRequests/);
+  assert.match(clientSource, /ApprovePairing/);
+  assert.match(clientSource, /ListBindings/);
+  assert.match(clientSource, /新增渠道/);
+  assert.match(clientSource, /解除绑定/);
+  assert.match(clientSource, /function OperationalPager/);
+});
+
 test('Studio marketplace exposes the old Studio plugin lifecycle through Host routes', () => {
   assert.match(clientSource, /hostRemote\.installDshPlugin/);
   assert.match(clientSource, /hostRemote\.enableDshPlugin/);

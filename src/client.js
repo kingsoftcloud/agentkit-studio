@@ -68,7 +68,7 @@ window.__ModuleLoader__.load({
         }
         const headers = new Headers(init.headers || {});
         headers.set('Accept', 'application/json');
-        if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+        if (init.body !== undefined && !headers.has('Content-Type') && !(typeof FormData !== 'undefined' && init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
         if (method !== 'GET' && method !== 'HEAD' && csrfToken) headers.set('X-CSRF-Token', csrfToken);
         if (sessionToken) headers.set('X-AgentKit-Session', sessionToken);
         let response;
@@ -294,11 +294,22 @@ window.__ModuleLoader__.load({
         putCredential: (name, value) => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value, persistence: 'session' }) }),
         deleteCredential: name => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'DELETE' }),
         probeModelEndpoint: payload => request('/api/v1/model-endpoints:probe', { method: 'POST', body: JSON.stringify(payload) }),
-        evaluationTargets: () => request('/api/v1/evaluation-targets'),
-        evaluations: () => request('/api/v1/evaluations'),
-        evaluationRuns: () => request('/api/v1/evaluation-runs'),
-        tracesOverview: () => request('/api/v1/traces/overview'),
+        evaluationTargets: (query = '') => request('/api/v1/evaluation-targets' + (query ? '?' + query : '')),
+        evaluations: (query = '') => request('/api/v1/evaluations' + (query ? '?' + query : '')),
+        evaluation: id => request('/api/v1/evaluations/' + encodeURIComponent(id)),
+        evaluationRun: id => request('/api/v1/evaluation-runs/' + encodeURIComponent(id)),
+        evaluationRuns: (query = '') => request('/api/v1/evaluation-runs' + (query ? '?' + query : '')),
+        createEvaluation: (payload, idempotencyKey) => request('/api/v1/evaluations', { method: 'POST', headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined, body: JSON.stringify(payload) }),
+        importEvaluationFile: body => request('/api/v1/evaluation-files', { method: 'POST', body }),
+        tracesOverview: (query = '') => request('/api/v1/traces/overview' + (query ? '?' + query : '')),
+        traces: (query = '') => request('/api/v1/traces' + (query ? '?' + query : '')),
+        trace: id => request('/api/v1/traces/' + encodeURIComponent(id)),
+        traceOtlp: id => request('/api/v1/traces/' + encodeURIComponent(id) + '/otlp'),
+        exportSessionLog: (id, query = '') => request('/api/v1/sessions/' + encodeURIComponent(id) + ':export' + (query ? '?' + query : '')),
         channelConnection: () => request('/api/v1/channels/connection'),
+        updateChannelConnection: payload => request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
+        updateAgentChannelConnection: (id, payload) => request('/api/v1/channels/agents/' + encodeURIComponent(id) + '/connection', { method: 'PUT', body: JSON.stringify(payload) }),
+        channelAction: (action, payload = {}) => request('/agentengine/api/v1/' + encodeURIComponent(action), { method: 'POST', body: JSON.stringify(payload) }),
       };
     }
 
@@ -2405,70 +2416,434 @@ window.__ModuleLoader__.load({
         tab === 'delivery' ? h(DeliveryPage) : tab === 'automation' ? h(AutomationPage, { scheduleRemote }) : h(OperationalPage, { page: tab }));
     }
 
-    function OperationalPage({ page }) {
+    function operationalCollection(payload, keys = ['items']) {
+      if (Array.isArray(payload)) return payload;
+      for (const key of keys) if (Array.isArray(payload?.[key])) return payload[key];
+      const nested = payload?.data || payload?.Data;
+      if (Array.isArray(nested)) return nested;
+      if (nested && typeof nested === 'object') {
+        for (const key of keys) if (Array.isArray(nested[key])) return nested[key];
+      }
+      return [];
+    }
+
+    function operationalId(item, fallback = '') {
+      return String(item?.id || item?.Id || item?.traceId || item?.TraceId || item?.runId || item?.RunId || fallback);
+    }
+
+    function operationalLabel(item, fallback = '—') {
+      return String(item?.name || item?.Name || item?.title || item?.Title || item?.displayName || item?.DisplayName || fallback);
+    }
+
+    function operationalDate(value) {
+      if (!value) return '—';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+    }
+
+    function operationalStatus(value) {
+      const status = String(value || 'unknown').toUpperCase();
+      const tone = ['SUCCEEDED', 'SUCCESS', 'PASSED', 'COMPLETED', 'READY', 'CONNECTED', 'ENABLED', 'ONLINE'].includes(status) ? 'accent' : ['FAILED', 'ERROR', 'CANCELLED', 'REJECTED', 'OFFLINE'].includes(status) ? 'signal' : 'neutral';
+      return h(Pill, { tone }, status.toLowerCase());
+    }
+
+    function OperationalTable({ columns, rows, empty = '暂无数据', onRowClick }) {
+      const header = h('thead', null,
+        h('tr', { style: { position: 'sticky', top: 0, zIndex: 1, textAlign: 'left', color: BRAND.inkMuted, background: BRAND.canvas } },
+          columns.map(column => h('th', { key: column.id, style: { padding: '11px 12px', fontWeight: 750, whiteSpace: 'nowrap', borderBottom: '1px solid ' + BRAND.border } }, column.label))));
+      const body = rows.length
+        ? rows.map((row, index) => h('tr', { key: operationalId(row, String(index)), onClick: onRowClick ? () => onRowClick(row) : undefined, style: { cursor: onRowClick ? 'pointer' : 'default', borderBottom: '1px solid ' + BRAND.border } }, columns.map(column => h('td', { key: column.id, style: { padding: '11px 12px', color: BRAND.ink, verticalAlign: 'top', maxWidth: column.maxWidth || undefined } }, column.cell ? column.cell(row) : String(row?.[column.id] ?? '—')))))
+        : h('tr', null, h('td', { colSpan: columns.length, style: { padding: '28px 14px', color: BRAND.inkMuted, textAlign: 'center' } }, empty));
+      return h('div', { style: { overflow: 'auto', maxHeight: 'min(58vh, 560px)', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface } },
+        h('table', { style: { width: '100%', minWidth: Math.max(680, columns.length * 140) + 'px', borderCollapse: 'collapse', fontSize: '12px' } }, header, h('tbody', null, body)));
+    }
+
+    function OperationalPager({ page, pageSize, total, onChange }) {
+      const pageCount = Math.max(1, Math.ceil(total / pageSize));
+      return h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '10px', color: BRAND.inkMuted, fontSize: '11px' } },
+        h('span', null, total ? `${page * pageSize + 1}–${Math.min(total, (page + 1) * pageSize)} / ${total}` : '0 条'),
+        h('div', { style: { display: 'flex', gap: '6px' } },
+          h('button', { type: 'button', disabled: page <= 0, onClick: () => onChange(Math.max(0, page - 1)), style: { ...buttonStyle(), padding: '6px 10px', background: BRAND.surface } }, '上一页'),
+          h('button', { type: 'button', disabled: page >= pageCount - 1, onClick: () => onChange(Math.min(pageCount - 1, page + 1)), style: { ...buttonStyle(), padding: '6px 10px', background: BRAND.surface } }, '下一页')));
+    }
+
+    function OperationalToolbar({ children, onRefresh, busy }) {
+      return h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, children),
+        h('button', { type: 'button', onClick: onRefresh, disabled: busy, style: { ...buttonStyle(), background: BRAND.surface } }, busy ? '读取中…' : '刷新'));
+    }
+
+    function EvaluationPage() {
       const [status, setStatus] = useState('loading');
-      const [data, setData] = useState(null);
       const [error, setError] = useState('');
-      const definitions = {
-        evaluation: {
-          title: '评测', note: '数据集与回归', icon: '✓',
-          detail: '评测目标、数据集和运行记录由 KsADK Host 统一管理。',
-          load: async () => hostRemote.evaluationTargets(),
-          summarize: result => [
-            ['构建目标', result?.builds?.length || 0, '可作为评测 target'],
-            ['评测集', result?.evalsets?.length || 0, '本地已导入数据集'],
-          ],
-        },
-        observability: {
-          title: '观测', note: '运行与追踪', icon: '◌',
-          detail: '运行事件通过 Host 写入本地 trace store，Studio 只展示聚合结果。',
-          load: async () => hostRemote.tracesOverview(),
-          summarize: result => [
-            ['运行次数', result?.total || 0, '最近 24 小时'],
-            ['已完成', result?.completed || 0, result?.successRate == null ? '暂无成功率' : `成功率 ${Math.round(result.successRate * 100)}%`],
-            ['Token 用量', result?.totalTokens || 0, '输入与输出合计'],
-          ],
-        },
-        channels: {
-          title: 'Channels', note: '渠道连接', icon: '⌘',
-          detail: 'Channel Connector 连接由 Host 管理，凭证与 Agent 绑定不进入 DSH 会话状态。',
-          load: async () => hostRemote.channelConnection(),
-          summarize: result => [
-            ['连接状态', result?.configured ? '已配置' : '未配置', result?.serverUrl || '等待 Channel Gateway'],
-            ['绑定 Agent', Array.isArray(result?.agents) ? result.agents.length : 0, '按 Agent 维护渠道映射'],
-            ['账号', result?.accountId || '—', 'Host 当前工作区'],
-          ],
-        },
-      }[page];
+      const [targets, setTargets] = useState([]);
+      const [evalsets, setEvalsets] = useState([]);
+      const [runs, setRuns] = useState([]);
+      const [tab, setTab] = useState('runs');
+      const [filter, setFilter] = useState('');
+      const [page, setPage] = useState(0);
+      const [selected, setSelected] = useState(null);
+      const [detailLoading, setDetailLoading] = useState(false);
+      const [createOpen, setCreateOpen] = useState(false);
+      const [evalsetFile, setEvalsetFile] = useState('');
+      const [target, setTarget] = useState('');
+      const [creating, setCreating] = useState(false);
+      const [message, setMessage] = useState('');
+      const [evalsetUploading, setEvalsetUploading] = useState(false);
+      const [runFilter, setRunFilter] = useState('all');
+      const pageSize = 12;
+
+      const load = async () => {
+        setStatus('loading'); setError('');
+        const result = await Promise.allSettled([
+          hostRemote.evaluationTargets(),
+          hostRemote.evaluations('limit=200'),
+          hostRemote.evaluationRuns('limit=200'),
+        ]);
+        const firstError = result.find(item => item.status === 'rejected');
+        if (firstError && result.every(item => item.status === 'rejected')) {
+          setStatus('error'); setError(firstError.reason?.message || '评测 Host 不可用'); return;
+        }
+        const targetPayload = result[0].status === 'fulfilled' ? result[0].value : {};
+        const evalPayload = result[1].status === 'fulfilled' ? result[1].value : {};
+        const runPayload = result[2].status === 'fulfilled' ? result[2].value : {};
+        setTargets(operationalCollection(targetPayload, ['builds', 'targets']));
+        setEvalsets(operationalCollection(evalPayload, ['items', 'evalsets', 'evaluationSets']));
+        setRuns(operationalCollection(runPayload, ['items', 'runs', 'evaluationRuns']));
+        setStatus('ready');
+        if (firstError) setError('部分评测目录暂不可用，已展示可读取的数据。');
+      };
+      useEffect(() => { void load(); }, []);
+      const filteredRuns = runs.filter(run => {
+        const haystack = [operationalId(run), operationalLabel(run?.evalset), operationalLabel(run?.target), run?.status, run?.createdAt].join(' ').toLowerCase();
+        const state = String(run?.status || '').toUpperCase();
+        const stateMatch = runFilter === 'active' ? ['RUNNING', 'PENDING', 'QUEUED', 'ADMITTING'].includes(state) : runFilter === 'passed' ? ['PASSED', 'SUCCEEDED', 'COMPLETED'].includes(state) : runFilter === 'attention' ? ['FAILED', 'ERROR', 'INTERRUPTED', 'UNAVAILABLE'].includes(state) : true;
+        return stateMatch && (!filter.trim() || haystack.includes(filter.trim().toLowerCase()));
+      });
+      const rows = filteredRuns.slice(page * pageSize, (page + 1) * pageSize);
+      const openRun = async run => {
+        const id = operationalId(run);
+        setSelected(run); setDetailLoading(true);
+        try { setSelected(await hostRemote.evaluationRun(id)); } catch { try { setSelected(await hostRemote.evaluation(id)); } catch { /* keep list row */ } }
+        finally { setDetailLoading(false); }
+      };
+      const startCreate = async event => {
+        event.preventDefault();
+        if (!evalsetFile.trim() || !target.trim() || creating) return;
+        setCreating(true); setMessage('');
+        try {
+          await hostRemote.createEvaluation({ evalsetFile: evalsetFile.trim(), target: { kind: 'studio_build', locator: target.trim() }, config: { dataPolicy: 'local_only', evaluators: ['response_contract@v1', 'runtime_budget@v1', 'tool_trajectory@v1'] } }, `studio-evaluation-${Date.now()}`);
+          setCreateOpen(false); setMessage('评测已提交，正在读取运行记录。'); await load();
+        } catch (reason) { setError(reason?.message || '评测创建失败'); }
+        finally { setCreating(false); }
+      };
+      const importEvalset = async event => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file || evalsetUploading) return;
+        setEvalsetUploading(true); setError('');
+        try {
+          const payload = await hostRemote.importEvaluationFile((() => { const body = new FormData(); body.append('file', file); return body; })());
+          const path = payload?.path || payload?.file?.path || payload?.locator;
+          if (!path) throw new Error('Host 未返回 EvalSet 路径');
+          setEvalsetFile(path); setMessage(`已导入 EvalSet：${path}`);
+        } catch (reason) { setError(reason?.message || 'EvalSet 文件导入失败'); }
+        finally { setEvalsetUploading(false); }
+      };
+      const summary = [
+        ['运行记录', runs.length, '真实 Host evaluation-runs'],
+        ['评测集', evalsets.length, '已导入的 EvalSet'],
+        ['可用目标', targets.length, 'Build / A2A / 本地目标'],
+        ['进行中', runs.filter(item => ['RUNNING', 'PENDING', 'QUEUED', 'ADMITTING'].includes(String(item?.status || '').toUpperCase())).length, '后台执行'],
+      ];
+      const runColumns = [
+        { id: 'name', label: '评测任务', cell: row => h('div', null, h('strong', null, operationalLabel(row?.evalset, operationalId(row))), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) },
+        { id: 'target', label: '目标', cell: row => operationalLabel(row?.target, row?.target?.kind || '—') },
+        { id: 'status', label: '状态', cell: row => operationalStatus(row?.status) },
+        { id: 'progress', label: '结果', cell: row => row?.summary ? `${row.summary.passedCases ?? 0} / ${row.summary.totalCases ?? 0} 通过` : row?.progress ? `${row.progress.current ?? 0} / ${row.progress.total ?? 0}` : '等待开始' },
+        { id: 'createdAt', label: '创建时间', cell: row => operationalDate(row?.createdAt) },
+      ];
+      const selectedDetail = selected ? h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, overflow: 'hidden' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border } },
+          h('strong', null, `评测详情 · ${operationalId(selected)}`),
+          h('button', { type: 'button', onClick: () => setSelected(null), style: { ...buttonStyle(), background: BRAND.surface } }, '关闭')),
+        h('div', { style: { padding: '14px', maxHeight: 'min(48vh, 480px)', overflow: 'auto' } },
+          detailLoading ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取运行详情…') : h(React.Fragment, null,
+            h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' } }, operationalStatus(selected.status), h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, operationalDate(selected.createdAt))),
+            h('pre', { style: { margin: 0, whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.55 } }, JSON.stringify(selected.report || selected.error || selected, null, 2))))) : null;
+
+      return h('div', null,
+        h(SectionHeading, { eyebrow: 'Studio domain / Evaluation', title: '评测', detail: '对齐原 Studio：评测集、目标、运行记录和详情都来自 Host；页面只做筛选、分页和结果投影。', action: h('div', { style: { display: 'flex', gap: '8px' } }, h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中'), h('button', { type: 'button', onClick: () => setCreateOpen(value => !value), style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, '新建评测')) }),
+        status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取评测数据', detail: '读取评测目标、评测集和运行记录。' }) : null,
+        status === 'error' ? h(EmptyState, { icon: '!', title: '评测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
+        status === 'ready' ? h(React.Fragment, null,
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
+          createOpen ? h('form', { onSubmit: startCreate, style: { display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1fr) minmax(170px,.7fr) auto', gap: '10px', alignItems: 'end', border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginBottom: '14px' } },
+            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'EvalSet 文件路径', h('input', { value: evalsetFile, onChange: event => setEvalsetFile(event.target.value), placeholder: '.agentkit/evaluations/example.yaml', style: inputStyle(), required: true }), h('input', { type: 'file', accept: '.yaml,.yml,.json', onChange: importEvalset, disabled: evalsetUploading, style: { ...inputStyle(), marginTop: '6px', padding: '6px' } }), evalsetUploading ? h('span', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, '正在导入…') : null),
+            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Build 目标', h('select', { value: target, onChange: event => setTarget(event.target.value), style: inputStyle(), required: true }, h('option', { value: '' }, '选择可用 Build'), targets.map(item => h('option', { key: operationalId(item), value: operationalId(item) }, `${operationalLabel(item, operationalId(item))} · ${operationalId(item)}`)))),
+            h('button', { type: 'submit', disabled: creating, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, creating ? '提交中…' : '开始评测')) : null,
+          h(StudioPageTabs, { value: tab, onChange: next => { setTab(next); setPage(0); }, items: [{ id: 'runs', label: '运行记录' }, { id: 'sets', label: `评测集 ${evalsets.length}` }, { id: 'targets', label: `评测目标 ${targets.length}` }], ariaLabel: '评测视图' }),
+          tab === 'runs' ? h(React.Fragment, null,
+            h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' }, h('input', { value: filter, onChange: event => { setFilter(event.target.value); setPage(0); }, placeholder: '搜索任务、目标或状态', 'aria-label': '搜索评测运行', style: { ...inputStyle(), maxWidth: '280px' } }), h('select', { value: runFilter, onChange: event => { setRunFilter(event.target.value); setPage(0); }, 'aria-label': '评测状态筛选', style: { ...inputStyle(), width: '120px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'active' }, '进行中'), h('option', { value: 'passed' }, '已通过'), h('option', { value: 'attention' }, '需关注')), h(Pill, { tone: 'neutral' }, `${filteredRuns.length} 条运行`)),
+            h(OperationalTable, { columns: runColumns, rows, empty: '还没有评测运行，点击“新建评测”提交一个真实任务。', onRowClick: openRun }),
+            h(OperationalPager, { page, pageSize, total: filteredRuns.length, onChange: setPage }),
+            message ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null) : null,
+          tab === 'sets' ? h(OperationalTable, { columns: [{ id: 'name', label: '评测集', cell: row => h('strong', null, operationalLabel(row)) }, { id: 'source', label: '来源', cell: row => row?.sourceFormat || row?.source || 'Host' }, { id: 'cases', label: '用例数', cell: row => row?.caseCount ?? row?.cases?.length ?? '—' }, { id: 'updatedAt', label: '更新时间', cell: row => operationalDate(row?.updatedAt || row?.createdAt) }], rows: evalsets, empty: '暂无已导入评测集。' }) : null,
+          tab === 'targets' ? h(OperationalTable, { columns: [{ id: 'name', label: '目标', cell: row => h('strong', null, operationalLabel(row, operationalId(row))) }, { id: 'kind', label: '类型', cell: row => row?.kind || row?.runtime || row?.type || 'Build' }, { id: 'agentId', label: 'Agent', cell: row => row?.agentId || row?.agent?.id || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || 'ready') }], rows: targets, empty: '暂无可评测目标，请先完成 Agent Build。' }) : null,
+          selectedDetail) : null);
+    }
+
+    function ObservabilityPage() {
+      const [status, setStatus] = useState('loading');
+      const [error, setError] = useState('');
+      const [overview, setOverview] = useState(null);
+      const [traces, setTraces] = useState([]);
+      const [range, setRange] = useState('24h');
+      const [query, setQuery] = useState('');
+      const [page, setPage] = useState(0);
+      const [selected, setSelected] = useState(null);
+      const [detailTab, setDetailTab] = useState('spans');
+      const [raw, setRaw] = useState(null);
+      const [detailLoading, setDetailLoading] = useState(false);
+      const pageSize = 12;
 
       const load = async () => {
         setStatus('loading');
         setError('');
-        try {
-          setData(await definitions.load());
-          setStatus('ready');
-        } catch (reason) {
-          setError(reason?.message || 'Host 尚未连接');
+        const qs = new URLSearchParams({ range, limit: '200' });
+        if (query.trim()) qs.set('query', query.trim());
+        const result = await Promise.allSettled([
+          hostRemote.tracesOverview(`range=${encodeURIComponent(range)}`),
+          hostRemote.traces(qs.toString()),
+        ]);
+        if (result.every(item => item.status === 'rejected')) {
           setStatus('error');
+          setError(result[0].reason?.message || '观测 Host 不可用');
+          return;
+        }
+        setOverview(result[0].status === 'fulfilled' ? result[0].value : null);
+        setTraces(result[1].status === 'fulfilled' ? operationalCollection(result[1].value, ['items', 'traces']) : []);
+        setStatus('ready');
+        if (result.some(item => item.status === 'rejected')) setError('部分观测数据暂不可用。');
+      };
+
+      useEffect(() => { void load(); }, [range]);
+
+      const filtered = traces.filter(trace => {
+        const haystack = [operationalId(trace), trace?.runId, trace?.sessionId, trace?.agentId, trace?.status, trace?.name]
+          .join(' ')
+          .toLowerCase();
+        return !query.trim() || haystack.includes(query.trim().toLowerCase());
+      });
+      const rows = filtered.slice(page * pageSize, (page + 1) * pageSize);
+
+      const openTrace = async trace => {
+        const id = operationalId(trace);
+        setSelected(trace);
+        setRaw(null);
+        setDetailTab('spans');
+        setDetailLoading(true);
+        try {
+          setSelected(await hostRemote.trace(id));
+        } catch (reason) {
+          setError(reason?.message || 'Trace 详情读取失败');
+        } finally {
+          setDetailLoading(false);
         }
       };
-      useEffect(() => { load(); }, [page]);
 
-      if (!definitions) return null;
-      const cards = status === 'ready' ? definitions.summarize(data).map(([label, value, detail]) => h(Metric, { key: label, label, value: String(value), detail, tone: value === '未配置' ? 'signal' : 'neutral' })) : null;
+      const loadRaw = async () => {
+        if (!selected) return;
+        try {
+          setRaw(await hostRemote.traceOtlp(operationalId(selected)));
+        } catch (reason) {
+          setError(reason?.message || 'OTLP 读取失败');
+        }
+      };
+
+      const summary = [
+        ['运行次数', overview?.total ?? traces.length, range === '7d' ? '近 7 天' : '近 24 小时'],
+        ['完成率', overview?.successRate == null ? '—' : `${Math.round(Number(overview.successRate) * 100)}%`, '已完成运行'],
+        ['平均耗时', overview?.avgDurationMs == null ? '—' : `${Math.round(Number(overview.avgDurationMs))} ms`, 'Runtime 上报'],
+        ['Token 用量', overview?.totalTokens ?? overview?.tokens ?? '—', '输入与输出合计'],
+      ];
+
+      const detailContent = detailTab === 'raw'
+        ? h(React.Fragment, null,
+            h('button', { type: 'button', onClick: loadRaw, style: buttonStyle() }, '读取 OTLP'),
+            raw
+              ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(raw, null, 2))
+              : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '点击读取原始 OTLP。'))
+        : detailTab === 'events'
+          ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.events || selected?.event || [], null, 2))
+          : h('div', { style: { display: 'grid', gap: '8px', maxHeight: '32vh', overflow: 'auto' } },
+              (selected?.spans || []).map((span, index) => h(
+                'div',
+                {
+                  key: operationalId(span, String(index)),
+                  style: { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '9px 10px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '10px' },
+                },
+                h('div', null,
+                  h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, span?.name || span?.spanName || 'Span'),
+                  h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${span?.spanId || span?.id || '—'} · ${span?.durationMs ?? '—'} ms`)),
+                operationalStatus(span?.status || 'completed'),
+              )));
+
+      const traceDetail = selected
+        ? h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, overflow: 'hidden' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border } },
+              h('strong', null, `Trace 详情 · ${operationalId(selected)}`),
+              h('button', { type: 'button', onClick: () => setSelected(null), style: { ...buttonStyle(), background: BRAND.surface } }, '关闭')),
+            h('div', { style: { padding: '12px 14px' } },
+              detailLoading
+                ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取 Span…')
+                : h(React.Fragment, null,
+                    h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'events', label: '事件' }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
+                    detailContent)))
+        : null;
+
+      const columns = [
+        { id: 'trace', label: 'Trace', cell: row => h('div', null, h('strong', null, row?.name || operationalId(row)), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) },
+        { id: 'agent', label: 'Agent / Run', cell: row => `${row?.agentId || '—'} · ${row?.runId || '—'}` },
+        { id: 'status', label: '状态', cell: row => operationalStatus(row?.status) },
+        { id: 'duration', label: '耗时', cell: row => row?.durationMs == null ? '—' : `${row.durationMs} ms` },
+        { id: 'tokens', label: 'Tokens', cell: row => row?.totalTokens ?? row?.usage?.totalTokens ?? '—' },
+        { id: 'startedAt', label: '开始时间', cell: row => operationalDate(row?.startedAt || row?.startTime || row?.createdAt) },
+      ];
+
       return h('div', null,
-        h(SectionHeading, { eyebrow: 'Studio domain', title: definitions.title, detail: definitions.detail, action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : 'Host 待接入') }),
-        status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取 Host', detail: '读取真实的 ' + definitions.title + ' 状态。' }) : null,
-        status === 'error' ? h(EmptyState, { icon: '!', title: definitions.title + '暂不可用', detail: error, action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新连接') }) : null,
-        status === 'ready' ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' } }, cards) : null,
-        status === 'ready' ? h('section', { style: { marginTop: '16px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '18px', background: BRAND.surface } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' } },
-            h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, 'Host 数据源'),
-            h('button', { type: 'button', onClick: load, style: buttonStyle() }, '刷新')),
-          h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } },
-            page === 'evaluation' ? '评测执行器已在 Host 注册，当前工作区还没有构建目标或评测集。' : page === 'observability' ? '观测存储已接入；首次运行 Agent 后会在这里看到 trace 和 token 汇总。' : 'Channel Connector API 已接入；配置 Gateway 后可继续绑定具体 Agent。')) : null);
+        h(SectionHeading, { eyebrow: 'Studio domain / Observability', title: '观测', detail: '按时间、Agent、Run 和 Session 查看 Trace，打开详情查看 Span、事件、用量和原始 OTLP。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Trace Store 已连接' : '读取中') }),
+        status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取观测数据', detail: '读取聚合指标和 Trace 列表。' }) : null,
+        status === 'error' ? h(EmptyState, { icon: '!', title: '观测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
+        status === 'ready' ? h(React.Fragment, null,
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
+          h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' },
+            h('input', { value: query, onChange: event => { setQuery(event.target.value); setPage(0); }, placeholder: '搜索 Trace、Run、Session 或 Agent', style: { ...inputStyle(), maxWidth: '300px' } }),
+            h('select', { value: range, onChange: event => { setRange(event.target.value); setPage(0); }, style: { ...inputStyle(), width: '110px' } }, h('option', { value: '24h' }, '24 小时'), h('option', { value: '7d' }, '7 天')),
+            h(Pill, { tone: 'neutral' }, `${filtered.length} 条 Trace`)),
+          h(OperationalTable, { columns, rows, empty: '还没有 Trace。完成一次真实 Agent 运行后，Trace 会出现在这里。', onRowClick: openTrace }),
+          h(OperationalPager, { page, pageSize, total: filtered.length, onChange: setPage }),
+          error ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.signal, fontSize: '12px' } }, error) : null,
+          traceDetail)
+        : null);
     }
 
+    function ChannelsPage() {
+      const [status, setStatus] = useState('loading');
+      const [error, setError] = useState('');
+      const [connection, setConnection] = useState(null);
+      const [channels, setChannels] = useState([]);
+      const [pairings, setPairings] = useState([]);
+      const [bindings, setBindings] = useState([]);
+      const [messages, setMessages] = useState([]);
+      const [tab, setTab] = useState('channels');
+      const [config, setConfig] = useState({ serverUrl: '', accountId: '', workspaceId: '', apiToken: '' });
+      const [saving, setSaving] = useState(false);
+      const [actionBusy, setActionBusy] = useState('');
+      const [channelEditor, setChannelEditor] = useState(null);
+      const [channelForm, setChannelForm] = useState({ AgentId: '', ConnectorWorkspaceId: '', Channel: 'wps-xiezuo', ChannelAccountId: '', DmPolicy: 'pairing', GroupPolicy: 'allowlist', RequireMention: true, SessionScope: 'per-peer', Enabled: true, ConfigJson: '{}' });
+      const [channelSaving, setChannelSaving] = useState(false);
+      const [channelPage, setChannelPage] = useState(0);
+      const channelPageSize = 10;
+      const channelData = payload => payload?.Data || payload?.data || payload;
+      const listAction = async action => channelData(await hostRemote.channelAction(action, { Offset: 0, Limit: 100 }));
+      const load = async () => {
+        setStatus('loading'); setError('');
+        const results = await Promise.allSettled([hostRemote.channelConnection(), listAction('ListChannels'), listAction('ListPairingRequests'), listAction('ListBindings'), listAction('ListMessages')]);
+        if (results[0].status === 'fulfilled') {
+          const value = results[0].value || {}; setConnection(value); setConfig(previous => ({ ...previous, serverUrl: value.serverUrl || '', accountId: value.accountId || '', workspaceId: value.workspaceId || '' }));
+        }
+        if (results[1].status === 'fulfilled') setChannels(operationalCollection(results[1].value, ['Items', 'items']));
+        if (results[2].status === 'fulfilled') setPairings(operationalCollection(results[2].value, ['Items', 'items']));
+        if (results[3].status === 'fulfilled') setBindings(operationalCollection(results[3].value, ['Items', 'items']));
+        if (results[4].status === 'fulfilled') setMessages(operationalCollection(results[4].value, ['Items', 'items']));
+        const firstError = results.find(item => item.status === 'rejected');
+        if (results.every(item => item.status === 'rejected')) { setStatus('error'); setError(firstError.reason?.message || 'Channel Host 不可用'); return; }
+        setStatus('ready');
+        if (firstError) setError('Channel Connector 未安装或部分数据源不可用；已展示能够读取的连接状态。');
+      };
+      useEffect(() => { void load(); }, []);
+      const saveConnection = async event => {
+        event.preventDefault(); setSaving(true); setError('');
+        try { const value = await hostRemote.updateChannelConnection({ serverUrl: config.serverUrl.trim(), accountId: config.accountId.trim(), workspaceId: config.workspaceId.trim(), ...(config.apiToken ? { apiToken: config.apiToken } : {}) }); setConnection(value); setConfig(previous => ({ ...previous, apiToken: '' })); }
+        catch (reason) { setError(reason?.message || '保存 Channel 连接失败'); }
+        finally { setSaving(false); }
+      };
+      const pairingAction = async (id, action) => { setActionBusy(id); try { await hostRemote.channelAction(action, { Id: id }); await load(); } catch (reason) { setError(reason?.message || `${action} 失败`); } finally { setActionBusy(''); } };
+      const openChannelEditor = channel => {
+        setChannelEditor(channel ? operationalId(channel) : 'new');
+        setChannelForm(channel ? { AgentId: channel?.AgentId || channel?.agentId || '', ConnectorWorkspaceId: channel?.ConnectorWorkspaceId || channel?.connectorWorkspaceId || '', Channel: channel?.Channel || channel?.channel || 'wps-xiezuo', ChannelAccountId: channel?.ChannelAccountId || channel?.channelAccountId || '', DmPolicy: channel?.DmPolicy || channel?.dmPolicy || 'pairing', GroupPolicy: channel?.GroupPolicy || channel?.groupPolicy || 'allowlist', RequireMention: channel?.RequireMention ?? channel?.requireMention ?? true, SessionScope: channel?.SessionScope || channel?.sessionScope || 'per-peer', Enabled: channel?.Enabled ?? channel?.enabled ?? true, ConfigJson: channel?.ConfigJson || channel?.configJson || '{}' } : { AgentId: '', ConnectorWorkspaceId: '', Channel: 'wps-xiezuo', ChannelAccountId: '', DmPolicy: 'pairing', GroupPolicy: 'allowlist', RequireMention: true, SessionScope: 'per-peer', Enabled: true, ConfigJson: '{}' });
+      };
+      const saveChannel = async event => {
+        event.preventDefault();
+        if (!channelForm.AgentId.trim() || !channelForm.ChannelAccountId.trim() || channelSaving) return;
+        setChannelSaving(true); setError('');
+        try {
+          const action = channelEditor && channelEditor !== 'new' ? 'UpdateChannel' : 'CreateChannel';
+          const payload = { ...channelForm, AgentId: channelForm.AgentId.trim(), ChannelAccountId: channelForm.ChannelAccountId.trim(), ...(channelEditor && channelEditor !== 'new' ? { Id: channelEditor } : {}) };
+          await hostRemote.channelAction(action, payload);
+          setChannelEditor(null); await load();
+        } catch (reason) { setError(reason?.message || '渠道保存失败'); }
+        finally { setChannelSaving(false); }
+      };
+      const deleteChannel = async channel => {
+        const id = operationalId(channel);
+        if (!id || !window.confirm(`删除渠道“${channelLabel(channel)}”？`)) return;
+        setActionBusy(id); setError('');
+        try { await hostRemote.channelAction('DeleteChannel', { Id: id }); await load(); }
+        catch (reason) { setError(reason?.message || '渠道删除失败'); }
+        finally { setActionBusy(''); }
+      };
+      const deleteBinding = async binding => {
+        const id = operationalId(binding);
+        if (!id || !window.confirm('解除这个渠道会话绑定？')) return;
+        setActionBusy(id); setError('');
+        try { await hostRemote.channelAction('DeleteBinding', { Id: id }); await load(); }
+        catch (reason) { setError(reason?.message || '解除绑定失败'); }
+        finally { setActionBusy(''); }
+      };
+      const summary = [['渠道总数', channels.length, 'Connector 配置'], ['已启用', channels.filter(item => item.Enabled ?? item.enabled).length, '接收消息'], ['待配对', pairings.filter(item => String(item.Status || item.status).toLowerCase() === 'pending').length, '等待处理'], ['会话绑定', bindings.length, '渠道会话']];
+      const channelLabel = item => ({ 'wps-xiezuo': 'WPS 协作', feishu: '飞书', wecom: '企业微信' }[item?.Channel || item?.channel] || item?.Channel || item?.channel || '渠道');
+      const visibleChannels = channels.slice(channelPage * channelPageSize, (channelPage + 1) * channelPageSize);
+      return h('div', null,
+        h(SectionHeading, { eyebrow: 'Studio domain / Channels', title: 'Channels', detail: '对齐原 Studio：连接配置、渠道、配对请求、会话绑定和消息记录分开管理；数据通过 Channel API 读取，不在插件内复制一套存储。', action: h(Pill, { tone: connection?.configured ? 'accent' : 'signal' }, connection?.configured ? '连接已配置' : '待配置') }),
+        h('form', { onSubmit: saveConnection, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(150px, .8fr) minmax(150px, .8fr) minmax(160px, .8fr) auto', gap: '9px', alignItems: 'end', border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '13px', background: BRAND.surface, marginBottom: '14px' } },
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Channel 服务地址', h('input', { value: config.serverUrl, onChange: event => setConfig({ ...config, serverUrl: event.target.value }), placeholder: 'https://channel.example.com', style: inputStyle() })),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '账号 ID', h('input', { value: config.accountId, onChange: event => setConfig({ ...config, accountId: event.target.value }), style: inputStyle() })),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '工作区 ID', h('input', { value: config.workspaceId, onChange: event => setConfig({ ...config, workspaceId: event.target.value }), style: inputStyle() })),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '服务凭证', h('input', { type: 'password', value: config.apiToken, onChange: event => setConfig({ ...config, apiToken: event.target.value }), placeholder: connection?.hasApiToken ? '已保存，留空保留' : '可选', style: inputStyle() })),
+          h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, saving ? '保存中…' : '保存连接')),
+        status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取 Channel 数据', detail: '读取连接状态、渠道、配对和消息。' }) : null,
+        status === 'error' ? h(EmptyState, { icon: '!', title: 'Channels 暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
+        status === 'ready' ? h(React.Fragment, null,
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
+          h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' }, h(Pill, { tone: 'neutral' }, 'Channel Connector API'), tab === 'channels' ? h('button', { type: 'button', onClick: () => openChannelEditor(null), style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, '新增渠道') : null),
+          channelEditor ? h('form', { onSubmit: saveChannel, style: { display: 'grid', gap: '10px', border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginBottom: '14px' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('strong', { style: { color: BRAND.ink } }, channelEditor === 'new' ? '新增渠道' : '编辑渠道'), h('button', { type: 'button', onClick: () => setChannelEditor(null), style: { ...buttonStyle(), background: BRAND.surface } }, '取消')),
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '9px' } },
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Agent ID', h('input', { value: channelForm.AgentId, onChange: event => setChannelForm({ ...channelForm, AgentId: event.target.value }), style: inputStyle(), required: true })),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '渠道类型', h('select', { value: channelForm.Channel, onChange: event => setChannelForm({ ...channelForm, Channel: event.target.value }), style: inputStyle() }, h('option', { value: 'wps-xiezuo' }, 'WPS 协作'), h('option', { value: 'feishu' }, '飞书'), h('option', { value: 'wecom' }, '企业微信'))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '渠道账号 ID', h('input', { value: channelForm.ChannelAccountId, onChange: event => setChannelForm({ ...channelForm, ChannelAccountId: event.target.value }), style: inputStyle(), required: true }))),
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '9px' } },
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '私聊策略', h('select', { value: channelForm.DmPolicy, onChange: event => setChannelForm({ ...channelForm, DmPolicy: event.target.value }), style: inputStyle() }, h('option', { value: 'pairing' }, '需配对'), h('option', { value: 'open' }, '开放'))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '群聊策略', h('select', { value: channelForm.GroupPolicy, onChange: event => setChannelForm({ ...channelForm, GroupPolicy: event.target.value }), style: inputStyle() }, h('option', { value: 'allowlist' }, '白名单'), h('option', { value: 'open' }, '开放'))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '会话范围', h('select', { value: channelForm.SessionScope, onChange: event => setChannelForm({ ...channelForm, SessionScope: event.target.value }), style: inputStyle() }, h('option', { value: 'per-peer' }, '按用户'), h('option', { value: 'per-group' }, '按群聊'))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '7px', paddingTop: '22px' } }, h('input', { type: 'checkbox', checked: channelForm.Enabled, onChange: event => setChannelForm({ ...channelForm, Enabled: event.target.checked }) }), '启用渠道')),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'submit', disabled: channelSaving, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, channelSaving ? '保存中…' : '保存渠道'))) : null,
+          h(StudioPageTabs, { value: tab, onChange: setTab, items: [{ id: 'channels', label: `渠道 ${channels.length}` }, { id: 'pairings', label: `配对 ${pairings.length}` }, { id: 'bindings', label: `绑定 ${bindings.length}` }, { id: 'messages', label: `消息 ${messages.length}` }], ariaLabel: 'Channels 管理视图' }),
+          tab === 'channels' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => h('div', null, h('strong', null, `${channelLabel(row)} · ${row?.ChannelAccountId || row?.channelAccountId || '—'}`), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) }, { id: 'agent', label: '绑定 Agent', cell: row => row?.AgentId || row?.agentId || '未绑定' }, { id: 'policy', label: '策略', cell: row => `${row?.DmPolicy || row?.dmPolicy || '—'} / ${row?.GroupPolicy || row?.groupPolicy || '—'}` }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Enabled ?? row?.enabled ? 'enabled' : 'disabled') }, { id: 'action', label: '操作', cell: row => h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: event => { event.stopPropagation(); openChannelEditor(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '编辑'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteChannel(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '删除')) }], rows: visibleChannels, empty: '还没有渠道配置，请先保存连接并创建渠道。' }), h(OperationalPager, { page: channelPage, pageSize: channelPageSize, total: channels.length, onChange: setChannelPage })) : null,
+          tab === 'pairings' ? h(OperationalTable, { columns: [{ id: 'sender', label: '申请人', cell: row => h('strong', null, row?.SenderName || row?.senderName || row?.SenderId || '—') }, { id: 'channel', label: '渠道', cell: row => `${channelLabel(row)} · ${row?.ChannelAccountId || '—'}` }, { id: 'chat', label: '会话', cell: row => row?.ChatType || row?.chatType || row?.PeerId || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Status || row?.status) }, { id: 'action', label: '操作', cell: row => String(row?.Status || row?.status).toLowerCase() === 'pending' ? h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void pairingAction(operationalId(row), 'ApprovePairing'); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '通过'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void pairingAction(operationalId(row), 'RejectPairing'); }, style: { ...buttonStyle(), padding: '5px 8px', background: BRAND.surface } }, '拒绝')) : '—' }], rows: pairings, empty: '没有待处理的配对请求。' }) : null,
+          tab === 'bindings' ? h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => `${channelLabel(row)} · ${row?.ChannelAccountId || '—'}` }, { id: 'agent', label: 'Agent', cell: row => row?.AgentId || row?.agentId || '—' }, { id: 'peer', label: '对端', cell: row => row?.PeerId || row?.peerId || '—' }, { id: 'session', label: 'Session', cell: row => row?.SessionId || row?.sessionId || '未关联' }, { id: 'createdAt', label: '更新时间', cell: row => operationalDate(row?.UpdatedAt || row?.updatedAt || row?.CreatedAt) }, { id: 'action', label: '操作', cell: row => h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '解除绑定') }], rows: bindings, empty: '没有会话绑定；用户完成渠道配对后会出现在这里。' }) : null,
+          tab === 'messages' ? h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => channelLabel(row) }, { id: 'direction', label: '方向', cell: row => row?.Direction || row?.direction || '—' }, { id: 'payload', label: '消息', cell: row => { const payload = row?.Payload || row?.payload; return typeof payload === 'string' ? payload.slice(0, 160) : JSON.stringify(payload || {}).slice(0, 160); } }, { id: 'status', label: '状态', cell: row => row?.Error || row?.error ? operationalStatus('failed') : operationalStatus('completed') }, { id: 'createdAt', label: '时间', cell: row => operationalDate(row?.CreatedAt || row?.createdAt) }], rows: messages, empty: '暂无渠道消息记录。' }) : null,
+          error ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.signal, fontSize: '12px' } }, error) : null) : null);
+    }
+
+    function OperationalPage({ page }) {
+      if (page === 'evaluation') return h(EvaluationPage);
+      if (page === 'observability') return h(ObservabilityPage);
+      if (page === 'channels') return h(ChannelsPage);
+      return null;
+    }
     function HostStatusPill() {
       const [status, setStatus] = useState('loading');
       useEffect(() => {

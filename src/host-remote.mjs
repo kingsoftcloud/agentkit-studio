@@ -41,7 +41,7 @@ export function createStudioHostRemote(options = {}) {
     const method = init.method || 'GET';
     const headers = new Headers(init.headers || {});
     headers.set('Accept', 'application/json');
-    if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    if (init.body !== undefined && !headers.has('Content-Type') && !(typeof FormData !== 'undefined' && init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
     if (method !== 'GET' && method !== 'HEAD' && csrfToken) headers.set('X-CSRF-Token', csrfToken);
     if (sessionToken) headers.set('X-AgentKit-Session', sessionToken);
     let response;
@@ -157,13 +157,25 @@ export function createStudioHostRemote(options = {}) {
         signal,
       });
     },
-    evaluationTargets: () => request('/api/v1/evaluation-targets'),
+    evaluationTargets: (query = '') => request(`/api/v1/evaluation-targets${query ? `?${query}` : ''}`),
     evaluations: (query = '') => request(`/api/v1/evaluations${query ? `?${query}` : ''}`),
+    evaluation: id => request(`/api/v1/evaluations/${encodeURIComponent(id)}`),
+    evaluationRun: id => request(`/api/v1/evaluation-runs/${encodeURIComponent(id)}`),
     evaluationRuns: (query = '') => request(`/api/v1/evaluation-runs${query ? `?${query}` : ''}`),
+    createEvaluation: (payload, idempotencyKey) => request('/api/v1/evaluations', { method: 'POST', headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined, body: JSON.stringify(payload) }),
+    importEvaluationFile: body => request('/api/v1/evaluation-files', { method: 'POST', body }),
     tracesOverview: (query = '') => request(`/api/v1/traces/overview${query ? `?${query}` : ''}`),
     traces: (query = '') => request(`/api/v1/traces${query ? `?${query}` : ''}`),
+    trace: id => request(`/api/v1/traces/${encodeURIComponent(id)}`),
+    traceOtlp: id => request(`/api/v1/traces/${encodeURIComponent(id)}/otlp`),
+    exportSessionLog: (id, query = '') => request(`/api/v1/sessions/${encodeURIComponent(id)}:export${query ? `?${query}` : ''}`),
     channelConnection: () => request('/api/v1/channels/connection'),
     updateChannelConnection: payload => request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
     updateAgentChannelConnection: (id, payload) => request(`/api/v1/channels/agents/${encodeURIComponent(id)}/connection`, { method: 'PUT', body: JSON.stringify(payload) }),
+    // The legacy Studio channel surface is an external channel control-plane
+    // contract. Keep it as a narrow Host call instead of recreating a channel
+    // database in the DSH plugin. Hosts that do not install the connector
+    // return a typed unavailable error and the page stays honest.
+    channelAction: (action, payload = {}) => request(`/agentengine/api/v1/${encodeURIComponent(action)}`, { method: 'POST', body: JSON.stringify(payload) }),
   };
 }

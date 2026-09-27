@@ -72,6 +72,10 @@ test('control-plane domain methods use the Host-owned routes', async () => {
   await remote.evaluationRuns();
   await remote.tracesOverview('range=7d');
   await remote.traces('status=completed');
+  await remote.trace('trace/1');
+  await remote.traceOtlp('trace/1');
+  await remote.evaluationRun('run/1');
+  await remote.channelAction('ListChannels', { Offset: 0, Limit: 10 });
   await remote.channelConnection();
   await remote.updateChannelConnection({ serverUrl: 'https://channel.example.invalid' });
   await remote.updateAgentChannelConnection('agent/a', { enabled: true });
@@ -83,12 +87,16 @@ test('control-plane domain methods use the Host-owned routes', async () => {
     ['GET', '/api/v1/evaluation-runs'],
     ['GET', '/api/v1/traces/overview?range=7d'],
     ['GET', '/api/v1/traces?status=completed'],
+    ['GET', '/api/v1/traces/trace%2F1'],
+    ['GET', '/api/v1/traces/trace%2F1/otlp'],
+    ['GET', '/api/v1/evaluation-runs/run%2F1'],
+    ['POST', '/agentengine/api/v1/ListChannels'],
     ['GET', '/api/v1/channels/connection'],
     ['PUT', '/api/v1/channels/connection'],
     ['PUT', '/api/v1/channels/agents/agent%2Fa/connection'],
     ['POST', '/api/v1/sessions/session%2Fa/commands'],
   ]);
-  assert.deepEqual(JSON.parse(calls[7].body), { serverUrl: 'https://channel.example.invalid' });
+  assert.deepEqual(JSON.parse(calls[11].body), { serverUrl: 'https://channel.example.invalid' });
 });
 
 test('bound-agent conversation uses the typed Studio stream and idempotency key', async () => {
