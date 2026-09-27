@@ -74,6 +74,11 @@ test('operations pages expose the old Studio operational workflows', () => {
   assert.match(clientSource, /Takeover/);
   assert.match(clientSource, /ReleaseTakeover/);
   assert.match(clientSource, /会话列表/);
+  assert.match(clientSource, /visiblePairings/);
+  assert.match(clientSource, /visibleBindings/);
+  assert.match(clientSource, /visibleConversations/);
+  assert.match(clientSource, /evalsetPage/);
+  assert.match(clientSource, /targetPage/);
   assert.match(clientSource, /function OperationalPager/);
 });
 
