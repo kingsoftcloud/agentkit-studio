@@ -2197,6 +2197,9 @@ window.__ModuleLoader__.load({
       const [historyTask, setHistoryTask] = useState('');
       const [history, setHistory] = useState([]);
       const [editingTask, setEditingTask] = useState(null);
+      const [detailTask, setDetailTask] = useState(null);
+      const [detailOccurrences, setDetailOccurrences] = useState([]);
+      const [latestOccurrences, setLatestOccurrences] = useState({});
       const [availability, setAvailability] = useState(null);
       const [section, setSection] = useState('tasks');
       const [viewMode, setViewMode] = useState('board');
@@ -2204,7 +2207,9 @@ window.__ModuleLoader__.load({
       const [agentFilter, setAgentFilter] = useState('');
       const [historyRows, setHistoryRows] = useState([]);
       const [historyStatus, setHistoryStatus] = useState('idle');
+      const [taskPage, setTaskPage] = useState(0);
       const [form, setForm] = useState({ agentId: '', displayName: '', prompt: '', kind: 'interval', everySeconds: '3600', expression: '0 9 * * 1-5', at: '' });
+      const taskPageSize = 12;
 
       const agentId = item => item?.metadata?.id || item?.id || '';
       const agentName = item => item?.metadata?.name || item?.name || agentId(item);
@@ -2214,7 +2219,20 @@ window.__ModuleLoader__.load({
           const [scheduleResult, agentResult] = await Promise.all([hostRemote.schedules(), hostRemote.agents()]);
           const nextAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
           setAgents(nextAgents);
-          setTasks(Array.isArray(scheduleResult?.items) ? scheduleResult.items : []);
+          const nextTasks = Array.isArray(scheduleResult?.items) ? scheduleResult.items : [];
+          setTasks(nextTasks);
+          // The old Studio board grouped tasks by the latest occurrence. The
+          // Host schedule list stays light, so hydrate a bounded index for the
+          // board and detail view without making one failed row fail the page.
+          const occurrencePairs = await Promise.all(nextTasks.slice(0, 100).map(async task => {
+            try {
+              const result = await hostRemote.scheduleOccurrences(task.taskId, task?.target?.agentId);
+              const items = Array.isArray(result?.items) ? result.items : [];
+              const latest = items.slice().sort((a, b) => new Date(b?.completedAt || b?.startedAt || b?.scheduledFor || 0) - new Date(a?.completedAt || a?.startedAt || a?.scheduledFor || 0))[0];
+              return [task.taskId, latest || null];
+            } catch { return [task.taskId, null]; }
+          }));
+          setLatestOccurrences(Object.fromEntries(occurrencePairs.filter(([, occurrence]) => occurrence)));
           try {
             const records = scheduleRemote?.catalog ? await scheduleRemote.catalog() : [];
             setNativeTasks(Array.isArray(records) ? records : []);
@@ -2229,6 +2247,7 @@ window.__ModuleLoader__.load({
         }
       };
       useEffect(() => { void load(); }, []);
+      useEffect(() => { setTaskPage(0); }, [query, agentFilter, viewMode]);
       useEffect(() => {
         if (section !== 'history' || status !== 'ready') return undefined;
         let cancelled = false;
@@ -2319,7 +2338,7 @@ window.__ModuleLoader__.load({
         if (!targetAgent || !task?.taskId) return;
         if (typeof window !== 'undefined' && !window.confirm(`删除自动化“${task.displayName || task.taskId}”？`)) return;
         setBusyTask(task.taskId); setError('');
-        try { await hostRemote.deleteSchedule(targetAgent, task.taskId); setMessage('自动化已删除。'); await load(); }
+        try { await hostRemote.deleteSchedule(targetAgent, task.taskId); setMessage('自动化已删除。'); if (detailTask?.taskId === task.taskId) { setDetailTask(null); setDetailOccurrences([]); } await load(); }
         catch (reason) { setError(reason?.message || '自动化删除失败'); }
         finally { setBusyTask(''); }
       };
@@ -2331,6 +2350,15 @@ window.__ModuleLoader__.load({
           setHistory(Array.isArray(result?.items) ? result.items : []);
         } catch (reason) { setError(reason?.message || '执行记录读取失败'); }
       };
+      const openDetail = async task => {
+        setDetailTask(task);
+        setDetailOccurrences([]);
+        setError('');
+        try {
+          const result = await hostRemote.scheduleOccurrences(task.taskId, task?.target?.agentId);
+          setDetailOccurrences(Array.isArray(result?.items) ? result.items : []);
+        } catch (reason) { setError(reason?.message || '执行记录读取失败'); }
+      };
       const visibleTasks = tasks.filter(task => {
         const name = String(task?.displayName || task?.taskId || '').toLowerCase();
         const prompt = String(task?.command?.payload?.content || '').toLowerCase();
@@ -2339,9 +2367,19 @@ window.__ModuleLoader__.load({
         return (!needle || name.includes(needle) || prompt.includes(needle) || agent.includes(needle))
           && (!agentFilter || agent === agentFilter.toLowerCase());
       });
-      const taskStatus = task => task.enabled === false ? 'paused' : 'scheduled';
+      const latestOccurrence = task => latestOccurrences[task.taskId] || task?.latestOccurrence || task?.lastOccurrence || null;
+      const taskStatus = task => {
+        const latest = latestOccurrence(task);
+        const state = String(latest?.state || latest?.status || '').toLowerCase();
+        if (['claimed', 'accepted', 'running', 'admitting'].includes(state)) return 'running';
+        if (['failed', 'error', 'cancelled', 'rejected'].includes(state)) return 'attention';
+        if (task.enabled === false || (task.schedule?.kind === 'once' && ['succeeded', 'completed'].includes(state))) return 'paused';
+        return 'scheduled';
+      };
       const taskGroups = [
         { id: 'scheduled', label: '待执行' },
+        { id: 'running', label: '执行中' },
+        { id: 'attention', label: '需关注' },
         { id: 'paused', label: '已暂停 / 已结束' },
       ];
       const openTemplate = kind => {
@@ -2357,14 +2395,26 @@ window.__ModuleLoader__.load({
       const taskCard = task => {
         const target = agents.find(item => agentId(item) === task?.target?.agentId);
         const active = historyTask === task.taskId;
+        const latest = latestOccurrence(task);
         return h('section', { key: task.taskId, style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '15px 16px', background: BRAND.surface, minWidth: 0 } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' } },
             h('div', { style: { minWidth: 0 } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, task.displayName || task.taskId), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `${target ? agentName(target) : task?.target?.agentId || '目标 Agent'} · ${scheduleLabel(task)}`)),
-            h(Pill, { tone: task.enabled ? 'accent' : 'signal' }, task.enabled ? '已启用' : '已暂停')),
+            h(Pill, { tone: taskStatus(task) === 'attention' ? 'signal' : task.enabled ? 'accent' : 'signal' }, taskStatus(task) === 'running' ? '执行中' : taskStatus(task) === 'attention' ? '需关注' : task.enabled ? '已启用' : '已暂停')),
           h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: '12px 0 0', whiteSpace: 'pre-wrap', minHeight: '36px' } }, task?.command?.payload?.content || '—'),
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginTop: '12px', color: BRAND.inkMuted, fontSize: '11px', flexWrap: 'wrap' } }, h('span', null, task.enabled && task.nextRunAt ? `下次执行：${new Date(task.nextRunAt).toLocaleString()}` : '未安排下一次执行'), h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } }, h('button', { type: 'button', onClick: () => void showHistory(task), style: { ...buttonStyle(), background: BRAND.surface } }, active ? '收起记录' : '执行记录'), h('button', { type: 'button', onClick: () => startEdit(task), style: { ...buttonStyle(), background: BRAND.surface } }, '编辑'), h('button', { type: 'button', onClick: () => void toggle(task), disabled: busyTask === task.taskId, style: { ...buttonStyle(), background: BRAND.surface } }, task.enabled === false ? '启用' : '暂停'), h('button', { type: 'button', onClick: () => void runNow(task), disabled: busyTask === task.taskId || task.enabled === false, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)' } }, busyTask === task.taskId ? '提交中…' : '立即运行'), h('button', { type: 'button', onClick: () => void remove(task), disabled: busyTask === task.taskId, style: { ...buttonStyle(), background: BRAND.surface, color: BRAND.danger } }, '删除'))),
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginTop: '12px', color: BRAND.inkMuted, fontSize: '11px', flexWrap: 'wrap' } }, h('span', null, task.enabled && task.nextRunAt ? `下次执行：${new Date(task.nextRunAt).toLocaleString()}` : latest ? `最近执行：${new Date(latest.completedAt || latest.startedAt || latest.scheduledFor || Date.now()).toLocaleString()}` : '未安排下一次执行'), h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } }, h('button', { type: 'button', onClick: () => void openDetail(task), style: { ...buttonStyle(), background: BRAND.surface } }, '详情'), h('button', { type: 'button', onClick: () => void showHistory(task), style: { ...buttonStyle(), background: BRAND.surface } }, active ? '收起记录' : '执行记录'), h('button', { type: 'button', onClick: () => startEdit(task), style: { ...buttonStyle(), background: BRAND.surface } }, '编辑'), h('button', { type: 'button', onClick: () => void toggle(task), disabled: busyTask === task.taskId, style: { ...buttonStyle(), background: BRAND.surface } }, task.enabled === false ? '启用' : '暂停'), h('button', { type: 'button', onClick: () => void runNow(task), disabled: busyTask === task.taskId || task.enabled === false, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)' } }, busyTask === task.taskId ? '提交中…' : '立即运行'), h('button', { type: 'button', onClick: () => void remove(task), disabled: busyTask === task.taskId, style: { ...buttonStyle(), background: BRAND.surface, color: BRAND.danger } }, '删除'))),
           active ? h('div', { style: { marginTop: '12px', paddingTop: '12px', borderTop: '1px solid ' + BRAND.border } }, history.length ? history.slice(0, 8).map(item => h('div', { key: item.occurrenceId, style: { display: 'flex', justifyContent: 'space-between', gap: '12px', color: BRAND.inkMuted, fontSize: '11px', padding: '4px 0' } }, h('span', null, item.state || 'unknown'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—'))) : h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, '暂无执行记录。')) : null);
       };
+      const pagedTasks = visibleTasks.slice(taskPage * taskPageSize, (taskPage + 1) * taskPageSize);
+      const detailTarget = detailTask ? agents.find(item => agentId(item) === detailTask?.target?.agentId) : null;
+      const detailPanel = detailTask ? h('section', { style: { marginBottom: '14px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' } },
+          h('div', null, h('div', { style: { color: BRAND.accentStrong, fontSize: '10px', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' } }, 'Automation detail'), h('h3', { style: { margin: '5px 0 3px', color: BRAND.ink, fontSize: '17px' } }, detailTask.displayName || detailTask.taskId), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, `${detailTarget ? agentName(detailTarget) : detailTask?.target?.agentId || '目标 Agent'} · ${scheduleLabel(detailTask)}`)),
+          h('div', { style: { display: 'flex', gap: '7px', alignItems: 'center' } }, h(Pill, { tone: taskStatus(detailTask) === 'attention' ? 'signal' : taskStatus(detailTask) === 'running' ? 'accent' : 'neutral' }, taskStatus(detailTask) === 'running' ? '执行中' : taskStatus(detailTask) === 'attention' ? '需关注' : detailTask.enabled === false ? '已暂停' : '已启用'), h('button', { type: 'button', onClick: () => { setDetailTask(null); setDetailOccurrences([]); }, style: { ...buttonStyle(), background: BRAND.surface } }, '关闭'))),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginTop: '14px' } },
+          [['任务 ID', detailTask.taskId], ['执行计划', scheduleLabel(detailTask)], ['会话方式', detailTask.continuity === 'continue_session' ? '继续已有会话' : '每次新建会话'], ['下次执行', detailTask.enabled && detailTask.nextRunAt ? new Date(detailTask.nextRunAt).toLocaleString() : '—']].map(([label, value]) => h('div', { key: label, style: { padding: '10px 11px', borderRadius: '10px', background: BRAND.canvas } }, h('div', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, label), h('div', { style: { color: BRAND.ink, fontSize: '12px', marginTop: '4px', wordBreak: 'break-word' } }, value || '—')))),
+        h('div', { style: { marginTop: '12px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap' } }, detailTask?.command?.payload?.content || '—'),
+        h('div', { style: { display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '13px' } }, h('button', { type: 'button', onClick: () => startEdit(detailTask), style: buttonStyle() }, '编辑'), h('button', { type: 'button', onClick: () => void toggle(detailTask), disabled: busyTask === detailTask.taskId, style: buttonStyle() }, detailTask.enabled === false ? '启用' : '暂停'), h('button', { type: 'button', onClick: () => void runNow(detailTask), disabled: busyTask === detailTask.taskId || detailTask.enabled === false, style: { ...buttonStyle(), color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' } }, busyTask === detailTask.taskId ? '提交中…' : '立即运行'), h('button', { type: 'button', onClick: () => void remove(detailTask), disabled: busyTask === detailTask.taskId, style: { ...buttonStyle(), color: BRAND.danger } }, '删除')),
+        h('div', { style: { marginTop: '14px', paddingTop: '12px', borderTop: '1px solid ' + BRAND.border } }, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, '最近执行'), detailOccurrences.length ? h('div', { style: { display: 'grid', gap: '6px', marginTop: '8px' } }, detailOccurrences.slice(0, 10).map(item => h('div', { key: item.occurrenceId || `${item.state}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: '90px minmax(0,1fr) 170px', gap: '10px', alignItems: 'center', color: BRAND.inkMuted, fontSize: '11px' } }, h(Pill, { tone: ['succeeded', 'completed'].includes(String(item.state).toLowerCase()) ? 'accent' : ['failed', 'error', 'cancelled'].includes(String(item.state).toLowerCase()) ? 'signal' : 'neutral' }, item.state || 'unknown'), h('span', null, item.detail || item.errorCode || item.occurrenceId || '—'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.startedAt ? new Date(item.startedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—')))) : h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px', marginTop: '8px' } }, '暂无执行记录。'))) : null;
 
       return h('div', null,
         h(SectionHeading, { eyebrow: 'Studio domain / Automation', title: '自动化', detail: '把一次性、间隔或 Cron 计划绑定到已构建的 Agent；创建和执行由 Host Scheduler 负责，结果回到会话与执行记录。', action: h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, h(Pill, { tone: availability?.triggerActive ? 'accent' : 'neutral' }, availability?.triggerActive ? '调度运行中' : '调度待就绪'), h('button', { type: 'button', onClick: () => { setEditingTask(null); setEditorOpen(true); setMessage(''); }, style: buttonStyle() }, '新建自动化'), h('button', { type: 'button', onClick: () => void load(), style: { ...buttonStyle(), background: BRAND.surface } }, '刷新')) }),
@@ -2400,10 +2450,13 @@ window.__ModuleLoader__.load({
               h('div', { style: { border: '1px dashed ' + BRAND.border, borderRadius: '10px', padding: '13px 14px', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } },
                 h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '12px', marginBottom: '4px' } }, '当前会话还没有 DSH 原生自动化'),
                 h('span', null, '在新会话中直接说“每天 9 点提醒我整理工作摘要”，DSH 会调用 schedule_create；创建后刷新本页即可看到任务。'))),
-          section === 'history' ? (historyStatus === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取执行记录', detail: '按任务读取 Host Scheduler 的 occurrence 历史。' }) : !historyRows.length ? h(EmptyState, { icon: '◷', title: '暂无执行记录', detail: visibleTasks.length ? '任务尚未执行，或调整筛选条件。' : '调整搜索或 Agent 筛选条件。' }) : h('div', { style: { display: 'grid', gap: '8px' } }, historyRows.filter(item => visibleTasks.some(task => task.taskId === item.taskId)).slice(0, 100).map(item => h('div', { key: item.occurrenceId || `${item.taskId}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 130px 170px', gap: '12px', alignItems: 'center', border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', background: BRAND.surface, color: BRAND.inkMuted, fontSize: '11px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, item.taskName), h('div', { style: { marginTop: '3px' } }, item.occurrenceId || '—')), h(Pill, { tone: item.state === 'completed' || item.state === 'succeeded' ? 'accent' : item.state === 'failed' ? 'signal' : 'neutral' }, item.state || 'unknown'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—'))))) : (!visibleTasks.length ? h(EmptyState, { icon: '◷', title: tasks.length ? '没有匹配的自动化' : '还没有自动化', detail: tasks.length ? '调整搜索或 Agent 筛选条件。' : agents.length ? '可以在这里创建计划。计划会绑定到 Agent 的当前 Build；也可以先用上面的常用任务模板。' : '先创建并构建一个 Agent，自动化才有可执行目标。' }) : viewMode === 'list' ? h('div', { style: { display: 'grid', gap: '10px' } }, visibleTasks.map(taskCard)) : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' } }, taskGroups.map(group => {
+          detailPanel,
+          section === 'history' ? (historyStatus === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取执行记录', detail: '按任务读取 Host Scheduler 的 occurrence 历史。' }) : !historyRows.length ? h(EmptyState, { icon: '◷', title: '暂无执行记录', detail: visibleTasks.length ? '任务尚未执行，或调整筛选条件。' : '调整搜索或 Agent 筛选条件。' }) : h('div', { style: { display: 'grid', gap: '8px' } }, historyRows.filter(item => visibleTasks.some(task => task.taskId === item.taskId)).slice(0, 100).map(item => h('div', { key: item.occurrenceId || `${item.taskId}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 130px 170px', gap: '12px', alignItems: 'center', border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', background: BRAND.surface, color: BRAND.inkMuted, fontSize: '11px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, item.taskName), h('div', { style: { marginTop: '3px' } }, item.occurrenceId || '—')), h(Pill, { tone: item.state === 'completed' || item.state === 'succeeded' ? 'accent' : item.state === 'failed' ? 'signal' : 'neutral' }, item.state || 'unknown'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—'))))) : (!visibleTasks.length ? h(EmptyState, { icon: '◷', title: tasks.length ? '没有匹配的自动化' : '还没有自动化', detail: tasks.length ? '调整搜索或 Agent 筛选条件。' : agents.length ? '可以在这里创建计划。计划会绑定到 Agent 的当前 Build；也可以先用上面的常用任务模板。' : '先创建并构建一个 Agent，自动化才有可执行目标。' }) : viewMode === 'list' ? h('div', { style: { display: 'grid', gap: '10px' } }, pagedTasks.map(taskCard)) : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' } }, taskGroups.map(group => {
             const items = visibleTasks.filter(task => taskStatus(task) === group.id);
-            return h('section', { key: group.id, style: { display: 'grid', alignContent: 'start', gap: '10px', minWidth: 0 } }, h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 2px', color: BRAND.inkMuted, fontSize: '12px', fontWeight: 750 } }, h('span', null, group.label), h('span', null, String(items.length))), items.length ? items.map(taskCard) : h('div', { style: { border: '1px dashed ' + BRAND.border, borderRadius: '12px', padding: '18px', color: BRAND.inkMuted, fontSize: '12px', textAlign: 'center' } }, group.id === 'scheduled' ? '新建任务，安排下一次执行' : '暂无任务'));
+            const pageItems = pagedTasks.filter(task => taskStatus(task) === group.id);
+            return h('section', { key: group.id, style: { display: 'grid', alignContent: 'start', gap: '10px', minWidth: 0 } }, h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 2px', color: BRAND.inkMuted, fontSize: '12px', fontWeight: 750 } }, h('span', null, group.label), h('span', null, String(items.length))), pageItems.length ? pageItems.map(taskCard) : h('div', { style: { border: '1px dashed ' + BRAND.border, borderRadius: '12px', padding: '18px', color: BRAND.inkMuted, fontSize: '12px', textAlign: 'center' } }, group.id === 'scheduled' ? '新建任务，安排下一次执行' : '暂无任务'));
           }))),
+          section === 'tasks' && visibleTasks.length ? h(OperationalPager, { page: taskPage, pageSize: taskPageSize, total: visibleTasks.length, onChange: setTaskPage }) : null,
           message ? h('div', { role: 'status', style: { marginTop: '12px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
           error ? h('div', { role: 'alert', style: { marginTop: '12px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
         ) : null);
@@ -2484,6 +2537,7 @@ window.__ModuleLoader__.load({
       const [page, setPage] = useState(0);
       const [selected, setSelected] = useState(null);
       const [detailLoading, setDetailLoading] = useState(false);
+      const [detailTab, setDetailTab] = useState('summary');
       const [createOpen, setCreateOpen] = useState(false);
       const [evalsetFile, setEvalsetFile] = useState('');
       const [target, setTarget] = useState('');
@@ -2523,7 +2577,7 @@ window.__ModuleLoader__.load({
       const rows = filteredRuns.slice(page * pageSize, (page + 1) * pageSize);
       const openRun = async run => {
         const id = operationalId(run);
-        setSelected(run); setDetailLoading(true);
+        setSelected(run); setDetailTab('summary'); setDetailLoading(true);
         try { setSelected(await hostRemote.evaluationRun(id)); } catch { try { setSelected(await hostRemote.evaluation(id)); } catch { /* keep list row */ } }
         finally { setDetailLoading(false); }
       };
@@ -2570,7 +2624,11 @@ window.__ModuleLoader__.load({
         h('div', { style: { padding: '14px', maxHeight: 'min(48vh, 480px)', overflow: 'auto' } },
           detailLoading ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取运行详情…') : h(React.Fragment, null,
             h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' } }, operationalStatus(selected.status), h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, operationalDate(selected.createdAt))),
-            h('pre', { style: { margin: 0, whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.55 } }, JSON.stringify(selected.report || selected.error || selected, null, 2))))) : null;
+            h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'summary', label: '摘要' }, { id: 'cases', label: `用例 ${selected?.cases?.length || 0}` }, { id: 'assertions', label: `断言 ${selected?.assertions?.length || 0}` }, { id: 'trace', label: '执行轨迹' }], ariaLabel: '评测运行详情视图' }),
+            detailTab === 'summary' ? h('pre', { style: { margin: '12px 0 0', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.55 } }, JSON.stringify(selected.report || selected.error || selected, null, 2)) : null,
+            detailTab === 'cases' ? h(OperationalTable, { columns: [{ id: 'name', label: '用例', cell: row => h('strong', null, operationalLabel(row, operationalId(row))) }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || row?.result) }, { id: 'duration', label: '耗时', cell: row => row?.durationMs == null ? '—' : `${row.durationMs} ms` }, { id: 'error', label: '错误', cell: row => row?.error || row?.message || '—' }], rows: operationalCollection(selected.cases || selected.caseResults || selected.results), empty: '运行详情未返回用例结果。' }) : null,
+            detailTab === 'assertions' ? h(OperationalTable, { columns: [{ id: 'name', label: '断言', cell: row => h('strong', null, operationalLabel(row, row?.path || '—')) }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || (row?.passed ? 'passed' : 'failed')) }, { id: 'message', label: '说明', cell: row => row?.message || row?.detail || '—' }], rows: operationalCollection(selected.assertions || selected.evaluatorResults), empty: '运行详情未返回断言结果。' }) : null,
+            detailTab === 'trace' ? h('pre', { style: { margin: '12px 0 0', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.55 } }, JSON.stringify(selected.trace || selected.trajectory || selected.events || [], null, 2)) : null))) : null;
 
       return h('div', null,
         h(SectionHeading, { eyebrow: 'Studio domain / Evaluation', title: '评测', detail: '对齐原 Studio：评测集、目标、运行记录和详情都来自 Host；页面只做筛选、分页和结果投影。', action: h('div', { style: { display: 'flex', gap: '8px' } }, h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中'), h('button', { type: 'button', onClick: () => setCreateOpen(value => !value), style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, '新建评测')) }),
@@ -2600,6 +2658,7 @@ window.__ModuleLoader__.load({
       const [traces, setTraces] = useState([]);
       const [range, setRange] = useState('24h');
       const [query, setQuery] = useState('');
+      const [statusFilter, setStatusFilter] = useState('all');
       const [page, setPage] = useState(0);
       const [selected, setSelected] = useState(null);
       const [detailTab, setDetailTab] = useState('spans');
@@ -2633,7 +2692,9 @@ window.__ModuleLoader__.load({
         const haystack = [operationalId(trace), trace?.runId, trace?.sessionId, trace?.agentId, trace?.status, trace?.name]
           .join(' ')
           .toLowerCase();
-        return !query.trim() || haystack.includes(query.trim().toLowerCase());
+        const state = String(trace?.status || '').toUpperCase();
+        const statusMatch = statusFilter === 'all' || (statusFilter === 'active' ? ['RUNNING', 'PENDING', 'QUEUED'].includes(state) : statusFilter === 'failed' ? ['FAILED', 'ERROR', 'INTERRUPTED'].includes(state) : ['SUCCEEDED', 'COMPLETED', 'SUCCESS'].includes(state));
+        return statusMatch && (!query.trim() || haystack.includes(query.trim().toLowerCase()));
       });
       const rows = filtered.slice(page * pageSize, (page + 1) * pageSize);
 
@@ -2660,6 +2721,16 @@ window.__ModuleLoader__.load({
           setError(reason?.message || 'OTLP 读取失败');
         }
       };
+      const exportSession = async () => {
+        const sessionId = selected?.sessionId || selected?.SessionId;
+        if (!sessionId) { setError('当前 Trace 没有 Session ID，无法导出会话日志。'); return; }
+        try {
+          const payload = await hostRemote.exportSessionLog(sessionId);
+          const blob = new Blob([typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a'); link.href = url; link.download = `${sessionId}-session.json`; link.click(); URL.revokeObjectURL(url);
+        } catch (reason) { setError(reason?.message || '会话日志导出失败'); }
+      };
 
       const summary = [
         ['运行次数', overview?.total ?? traces.length, range === '7d' ? '近 7 天' : '近 24 小时'],
@@ -2676,6 +2747,8 @@ window.__ModuleLoader__.load({
               : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '点击读取原始 OTLP。'))
         : detailTab === 'events'
           ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.events || selected?.event || [], null, 2))
+          : detailTab === 'trajectory'
+            ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.trajectory || selected?.toolCalls || selected?.spans || [], null, 2))
           : h('div', { style: { display: 'grid', gap: '8px', maxHeight: '32vh', overflow: 'auto' } },
               (selected?.spans || []).map((span, index) => h(
                 'div',
@@ -2693,12 +2766,12 @@ window.__ModuleLoader__.load({
         ? h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, overflow: 'hidden' } },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border } },
               h('strong', null, `Trace 详情 · ${operationalId(selected)}`),
-              h('button', { type: 'button', onClick: () => setSelected(null), style: { ...buttonStyle(), background: BRAND.surface } }, '关闭')),
+              h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: exportSession, style: { ...buttonStyle(), background: BRAND.surface } }, '导出 Session'), h('button', { type: 'button', onClick: () => setSelected(null), style: { ...buttonStyle(), background: BRAND.surface } }, '关闭'))),
             h('div', { style: { padding: '12px 14px' } },
               detailLoading
                 ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取 Span…')
                 : h(React.Fragment, null,
-                    h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'events', label: '事件' }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
+                    h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'events', label: '事件' }, { id: 'trajectory', label: '轨迹' }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
                     detailContent)))
         : null;
 
@@ -2720,6 +2793,7 @@ window.__ModuleLoader__.load({
           h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' },
             h('input', { value: query, onChange: event => { setQuery(event.target.value); setPage(0); }, placeholder: '搜索 Trace、Run、Session 或 Agent', style: { ...inputStyle(), maxWidth: '300px' } }),
             h('select', { value: range, onChange: event => { setRange(event.target.value); setPage(0); }, style: { ...inputStyle(), width: '110px' } }, h('option', { value: '24h' }, '24 小时'), h('option', { value: '7d' }, '7 天')),
+            h('select', { value: statusFilter, onChange: event => { setStatusFilter(event.target.value); setPage(0); }, 'aria-label': '观测状态筛选', style: { ...inputStyle(), width: '110px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'active' }, '进行中'), h('option', { value: 'success' }, '已完成'), h('option', { value: 'failed' }, '失败')),
             h(Pill, { tone: 'neutral' }, `${filtered.length} 条 Trace`)),
           h(OperationalTable, { columns, rows, empty: '还没有 Trace。完成一次真实 Agent 运行后，Trace 会出现在这里。', onRowClick: openTrace }),
           h(OperationalPager, { page, pageSize, total: filtered.length, onChange: setPage }),
@@ -2744,6 +2818,8 @@ window.__ModuleLoader__.load({
       const [channelForm, setChannelForm] = useState({ AgentId: '', ConnectorWorkspaceId: '', Channel: 'wps-xiezuo', ChannelAccountId: '', DmPolicy: 'pairing', GroupPolicy: 'allowlist', RequireMention: true, SessionScope: 'per-peer', Enabled: true, ConfigJson: '{}' });
       const [channelSaving, setChannelSaving] = useState(false);
       const [channelPage, setChannelPage] = useState(0);
+      const [activeTakeovers, setActiveTakeovers] = useState({});
+      const [selectedConversationId, setSelectedConversationId] = useState('');
       const channelPageSize = 10;
       const channelData = payload => payload?.Data || payload?.data || payload;
       const listAction = async action => channelData(await hostRemote.channelAction(action, { Offset: 0, Limit: 100 }));
@@ -2757,6 +2833,17 @@ window.__ModuleLoader__.load({
         if (results[2].status === 'fulfilled') setPairings(operationalCollection(results[2].value, ['Items', 'items']));
         if (results[3].status === 'fulfilled') setBindings(operationalCollection(results[3].value, ['Items', 'items']));
         if (results[4].status === 'fulfilled') setMessages(operationalCollection(results[4].value, ['Items', 'items']));
+        if (results[3].status === 'fulfilled') {
+          const bindingItems = operationalCollection(results[3].value, ['Items', 'items']);
+          const takeoverPairs = await Promise.all(bindingItems.slice(0, 100).map(async binding => {
+            try {
+              const value = await hostRemote.channelAction('GetActiveTakeover', { BindingId: operationalId(binding) });
+              const takeover = value?.Takeover || value?.takeover || value?.Data?.Takeover;
+              return [operationalId(binding), takeover?.Id || takeover?.id || null];
+            } catch { return [operationalId(binding), null]; }
+          }));
+          setActiveTakeovers(Object.fromEntries(takeoverPairs.filter(([, id]) => id)));
+        }
         const firstError = results.find(item => item.status === 'rejected');
         if (results.every(item => item.status === 'rejected')) { setStatus('error'); setError(firstError.reason?.message || 'Channel Host 不可用'); return; }
         setStatus('ready');
@@ -2802,9 +2889,77 @@ window.__ModuleLoader__.load({
         catch (reason) { setError(reason?.message || '解除绑定失败'); }
         finally { setActionBusy(''); }
       };
+      const updateBinding = async binding => {
+        const id = operationalId(binding);
+        if (!id) return;
+        const current = binding?.SessionId || binding?.sessionId || '';
+        const sessionId = window.prompt('关联的 Session ID（留空表示取消关联）', current);
+        if (sessionId === null) return;
+        setActionBusy(id); setError('');
+        try { await hostRemote.channelAction('UpdateBinding', { Id: id, SessionId: sessionId.trim() }); await load(); }
+        catch (reason) { setError(reason?.message || '会话关联更新失败'); }
+        finally { setActionBusy(''); }
+      };
+      const takeoverBinding = async binding => {
+        const id = operationalId(binding);
+        if (!id) return;
+        const reason = window.prompt('接管原因（可选）', '人工处理');
+        if (reason === null) return;
+        setActionBusy(id); setError('');
+        try {
+          const value = await hostRemote.channelAction('Takeover', { BindingId: id, TakenOverBy: 'studio-user', TakenOverByName: 'Studio 用户', Reason: reason.trim() || undefined });
+          const takeover = value?.Takeover || value?.takeover || value?.Data?.Takeover;
+          if (takeover?.Id || takeover?.id) setActiveTakeovers(previous => ({ ...previous, [id]: takeover.Id || takeover.id }));
+          else await load();
+        } catch (reasonValue) { setError(reasonValue?.message || '会话接管失败'); }
+        finally { setActionBusy(''); }
+      };
+      const releaseBinding = async binding => {
+        const id = operationalId(binding);
+        const takeoverId = activeTakeovers[id];
+        if (!id || !takeoverId) return;
+        setActionBusy(id); setError('');
+        try { await hostRemote.channelAction('ReleaseTakeover', { Id: takeoverId }); setActiveTakeovers(previous => { const next = { ...previous }; delete next[id]; return next; }); }
+        catch (reason) { setError(reason?.message || '释放接管失败'); }
+        finally { setActionBusy(''); }
+      };
       const summary = [['渠道总数', channels.length, 'Connector 配置'], ['已启用', channels.filter(item => item.Enabled ?? item.enabled).length, '接收消息'], ['待配对', pairings.filter(item => String(item.Status || item.status).toLowerCase() === 'pending').length, '等待处理'], ['会话绑定', bindings.length, '渠道会话']];
       const channelLabel = item => ({ 'wps-xiezuo': 'WPS 协作', feishu: '飞书', wecom: '企业微信' }[item?.Channel || item?.channel] || item?.Channel || item?.channel || '渠道');
+      const messageText = item => {
+        const payload = item?.Payload ?? item?.payload;
+        if (typeof payload === 'string') return payload;
+        if (payload && typeof payload === 'object') return String(payload.text || payload.content || payload.message || JSON.stringify(payload));
+        return '—';
+      };
+      const conversationMap = messages.reduce((groups, item) => {
+        const payload = item?.Payload ?? item?.payload;
+        const parsed = typeof payload === 'object' && payload ? payload : {};
+        const chat = parsed.chat || parsed.conversation || {};
+        const peer = item?.PeerId || item?.peerId || chat.id || parsed.peerId || 'default';
+        const key = `${item?.Channel || item?.channel || 'channel'}|${item?.ChannelAccountId || item?.channelAccountId || ''}|${peer}`;
+        const existing = groups[key] || { id: key, title: peer, channel: item?.Channel || item?.channel, account: item?.ChannelAccountId || item?.channelAccountId, items: [] };
+        existing.items.push(item); groups[key] = existing; return groups;
+      }, {});
+      const conversations = Object.values(conversationMap).map(group => ({
+        ...group,
+        items: group.items.slice().sort((a, b) => new Date(a?.CreatedAt || a?.createdAt || 0) - new Date(b?.CreatedAt || b?.createdAt || 0)),
+      })).sort((a, b) => new Date(b.items[b.items.length - 1]?.CreatedAt || b.items[b.items.length - 1]?.createdAt || 0) - new Date(a.items[a.items.length - 1]?.CreatedAt || a.items[a.items.length - 1]?.createdAt || 0));
+      const selectedConversation = conversations.find(item => item.id === selectedConversationId) || conversations[0] || null;
       const visibleChannels = channels.slice(channelPage * channelPageSize, (channelPage + 1) * channelPageSize);
+      const conversationBody = selectedConversation ? h(React.Fragment, null,
+        h('div', { style: { padding: '11px 13px', borderBottom: '1px solid ' + BRAND.border } }, h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, selectedConversation.title), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${channelLabel(selectedConversation)} · ${selectedConversation.account || '—'}`)),
+        h('div', { style: { padding: '12px 13px', overflow: 'auto', display: 'grid', alignContent: 'start', gap: '8px' } }, selectedConversation.items.map((item, index) => h('div', { key: operationalId(item, String(index)), style: { maxWidth: '82%', justifySelf: String(item?.Direction || item?.direction).toLowerCase() === 'outbound' ? 'end' : 'start', padding: '8px 10px', borderRadius: '10px', background: String(item?.Direction || item?.direction).toLowerCase() === 'outbound' ? BRAND.accentSoft : BRAND.canvas, color: BRAND.ink, fontSize: '12px', lineHeight: 1.5 } },
+          h('div', null, messageText(item)),
+          h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '10px' } }, `${String(item?.Direction || item?.direction).toLowerCase() === 'outbound' ? '发送' : '接收'} · ${operationalDate(item?.CreatedAt || item?.createdAt)}`, item?.Error || item?.error ? ` · ${item.Error || item.error}` : '')))))
+        : h('div', { style: { display: 'grid', placeItems: 'center', color: BRAND.inkMuted, fontSize: '12px' } }, '选择左侧会话查看消息');
+      const messageWorkspace = h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(200px, .7fr) minmax(0, 1.5fr)', gap: '12px', minHeight: '330px' } },
+        h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', overflow: 'auto', background: BRAND.surface } },
+          h('div', { style: { padding: '11px 13px', borderBottom: '1px solid ' + BRAND.border, color: BRAND.ink, fontWeight: 750, fontSize: '12px' } }, `会话列表 ${conversations.length}`),
+          conversations.length ? conversations.map(item => h('button', { key: item.id, type: 'button', onClick: () => setSelectedConversationId(item.id), style: { display: 'block', width: '100%', padding: '11px 13px', textAlign: 'left', border: 0, borderBottom: '1px solid ' + BRAND.border, color: BRAND.ink, background: selectedConversation?.id === item.id ? BRAND.accentSoft : BRAND.surface, cursor: 'pointer' } },
+            h('div', { style: { fontWeight: 750, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.title),
+            h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `${channelLabel(item)} · ${item.items.length} 条`)))
+            : h('div', { style: { padding: '28px 14px', color: BRAND.inkMuted, fontSize: '12px', textAlign: 'center' } }, '渠道接入并产生对话后，消息会出现在这里。')),
+        h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)' } }, conversationBody));
       return h('div', null,
         h(SectionHeading, { eyebrow: 'Studio domain / Channels', title: 'Channels', detail: '对齐原 Studio：连接配置、渠道、配对请求、会话绑定和消息记录分开管理；数据通过 Channel API 读取，不在插件内复制一套存储。', action: h(Pill, { tone: connection?.configured ? 'accent' : 'signal' }, connection?.configured ? '连接已配置' : '待配置') }),
         h('form', { onSubmit: saveConnection, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(150px, .8fr) minmax(150px, .8fr) minmax(160px, .8fr) auto', gap: '9px', alignItems: 'end', border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '13px', background: BRAND.surface, marginBottom: '14px' } },
@@ -2833,8 +2988,8 @@ window.__ModuleLoader__.load({
           h(StudioPageTabs, { value: tab, onChange: setTab, items: [{ id: 'channels', label: `渠道 ${channels.length}` }, { id: 'pairings', label: `配对 ${pairings.length}` }, { id: 'bindings', label: `绑定 ${bindings.length}` }, { id: 'messages', label: `消息 ${messages.length}` }], ariaLabel: 'Channels 管理视图' }),
           tab === 'channels' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => h('div', null, h('strong', null, `${channelLabel(row)} · ${row?.ChannelAccountId || row?.channelAccountId || '—'}`), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) }, { id: 'agent', label: '绑定 Agent', cell: row => row?.AgentId || row?.agentId || '未绑定' }, { id: 'policy', label: '策略', cell: row => `${row?.DmPolicy || row?.dmPolicy || '—'} / ${row?.GroupPolicy || row?.groupPolicy || '—'}` }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Enabled ?? row?.enabled ? 'enabled' : 'disabled') }, { id: 'action', label: '操作', cell: row => h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: event => { event.stopPropagation(); openChannelEditor(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '编辑'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteChannel(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '删除')) }], rows: visibleChannels, empty: '还没有渠道配置，请先保存连接并创建渠道。' }), h(OperationalPager, { page: channelPage, pageSize: channelPageSize, total: channels.length, onChange: setChannelPage })) : null,
           tab === 'pairings' ? h(OperationalTable, { columns: [{ id: 'sender', label: '申请人', cell: row => h('strong', null, row?.SenderName || row?.senderName || row?.SenderId || '—') }, { id: 'channel', label: '渠道', cell: row => `${channelLabel(row)} · ${row?.ChannelAccountId || '—'}` }, { id: 'chat', label: '会话', cell: row => row?.ChatType || row?.chatType || row?.PeerId || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Status || row?.status) }, { id: 'action', label: '操作', cell: row => String(row?.Status || row?.status).toLowerCase() === 'pending' ? h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void pairingAction(operationalId(row), 'ApprovePairing'); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '通过'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void pairingAction(operationalId(row), 'RejectPairing'); }, style: { ...buttonStyle(), padding: '5px 8px', background: BRAND.surface } }, '拒绝')) : '—' }], rows: pairings, empty: '没有待处理的配对请求。' }) : null,
-          tab === 'bindings' ? h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => `${channelLabel(row)} · ${row?.ChannelAccountId || '—'}` }, { id: 'agent', label: 'Agent', cell: row => row?.AgentId || row?.agentId || '—' }, { id: 'peer', label: '对端', cell: row => row?.PeerId || row?.peerId || '—' }, { id: 'session', label: 'Session', cell: row => row?.SessionId || row?.sessionId || '未关联' }, { id: 'createdAt', label: '更新时间', cell: row => operationalDate(row?.UpdatedAt || row?.updatedAt || row?.CreatedAt) }, { id: 'action', label: '操作', cell: row => h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '解除绑定') }], rows: bindings, empty: '没有会话绑定；用户完成渠道配对后会出现在这里。' }) : null,
-          tab === 'messages' ? h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => channelLabel(row) }, { id: 'direction', label: '方向', cell: row => row?.Direction || row?.direction || '—' }, { id: 'payload', label: '消息', cell: row => { const payload = row?.Payload || row?.payload; return typeof payload === 'string' ? payload.slice(0, 160) : JSON.stringify(payload || {}).slice(0, 160); } }, { id: 'status', label: '状态', cell: row => row?.Error || row?.error ? operationalStatus('failed') : operationalStatus('completed') }, { id: 'createdAt', label: '时间', cell: row => operationalDate(row?.CreatedAt || row?.createdAt) }], rows: messages, empty: '暂无渠道消息记录。' }) : null,
+          tab === 'bindings' ? h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => `${channelLabel(row)} · ${row?.ChannelAccountId || '—'}` }, { id: 'agent', label: 'Agent', cell: row => row?.AgentId || row?.agentId || '—' }, { id: 'peer', label: '对端', cell: row => row?.PeerId || row?.peerId || '—' }, { id: 'session', label: 'Session', cell: row => h('div', null, h('span', null, row?.SessionId || row?.sessionId || '未关联'), activeTakeovers[operationalId(row)] ? h(Pill, { tone: 'signal' }, '已接管') : null) }, { id: 'createdAt', label: '更新时间', cell: row => operationalDate(row?.UpdatedAt || row?.updatedAt || row?.CreatedAt) }, { id: 'action', label: '操作', cell: row => h('div', { style: { display: 'flex', gap: '5px', flexWrap: 'wrap' } }, h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void updateBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '编辑会话'), activeTakeovers[operationalId(row)] ? h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void releaseBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '释放接管') : h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void takeoverBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '接管'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '解除绑定')) }], rows: bindings, empty: '没有会话绑定；用户完成渠道配对后会出现在这里。' }) : null,
+          tab === 'messages' ? messageWorkspace : null,
           error ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.signal, fontSize: '12px' } }, error) : null) : null);
     }
 

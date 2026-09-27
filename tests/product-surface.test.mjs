@@ -41,6 +41,10 @@ test('Studio automation surface keeps Host-backed task management affordances', 
   assert.match(clientSource, /hostRemote\.scheduleOccurrences/);
   assert.match(clientSource, /每日简报/);
   assert.match(clientSource, /列表视图/);
+  assert.match(clientSource, /执行中/);
+  assert.match(clientSource, /需关注/);
+  assert.match(clientSource, /Automation detail/);
+  assert.match(clientSource, /taskPageSize/);
 });
 
 test('Studio automation surface does not hide DSH session schedules', () => {
@@ -66,6 +70,10 @@ test('operations pages expose the old Studio operational workflows', () => {
   assert.match(clientSource, /ListBindings/);
   assert.match(clientSource, /新增渠道/);
   assert.match(clientSource, /解除绑定/);
+  assert.match(clientSource, /UpdateBinding/);
+  assert.match(clientSource, /Takeover/);
+  assert.match(clientSource, /ReleaseTakeover/);
+  assert.match(clientSource, /会话列表/);
   assert.match(clientSource, /function OperationalPager/);
 });
 
