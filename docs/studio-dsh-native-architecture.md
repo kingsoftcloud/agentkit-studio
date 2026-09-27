@@ -434,7 +434,7 @@ DSH profile 只保存本地扩展、模型提供商配置和 endpoint 配对信�
 - 散落 worktree 已清扫；合并留痕按 MANIFEST 处理，不保留并行旧壳。
 - DSH 官方 Python SDK、事件映射、canonical probe、Host runtime adapter 和 Studio shell 的基础测试已通过。
 - Studio UI 已改为 AgentKit Studio 品牌和四个一级域；无 Agent 的 DSH 原生对话和 Host 连接错误态是真实路径。
-- 2026-09-28 验证刷新：Studio `pnpm check` 51/51、Python focused suite 312 passed/8 skipped，
+- 2026-09-28 验证刷新：Studio `pnpm check` 54/54、Python focused suite 312 passed/8 skipped，
   `make ci` 打包通过；当前 rc.2 packed artifact 与 browser profile 均能启动，独立 fixture 与 SDK transcript
   的 node-store probe 仍保留为历史/协议证据；直连 AgentEngine 的目录、详情和平台资源读取已由 Studio Node
   Host 接管。无资源 `dsh-native` Agent 的官方 preset 窄准入已接入，资源型 Revision、云端合同、资源激活和
