@@ -53,7 +53,7 @@ Studio Revision 中的模型白名单、MCP、Skill、知识库和记忆库是 K
 
 ### 4.3 资源型 selector 仍不能验收真实执行
 
-当前 Studio 对话页对无资源 dsh-native Revision 已经调用 Host 准入和 `agentPresets.select`；资源型 Revision 仍会在准入阶段被拒绝。因此以下结果都不能验收绑定资源后的 Agent 执行：
+当前 Studio 对话页对无资源 dsh-native Revision 已经调用 Host 准入和 `agentPresets.select`；资源型 Revision 仍会在准入阶段被拒绝。2026-09-28 使用 rc.2 本地 Host 的真实 Agent `resource-lifecycle-agent-e193611841b2`（Revision 4，含 model、MCP、Skill 和 platform plugin 绑定）复核了这一拒绝，证据见 [`rc2-resource-agent-admission-failclosed-2026-09-28.json`](../../../.scratch/studio-dsh-native-2026-09-24/rc2-resource-agent-admission-failclosed-2026-09-28.json)。因此以下结果都不能验收绑定资源后的 Agent 执行：
 
 - 下拉框显示了 Agent 名称；
 - DSH 原生会话能正常回显；
