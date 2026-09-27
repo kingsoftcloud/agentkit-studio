@@ -1543,14 +1543,14 @@ window.__ModuleLoader__.load({
         h(EmptyState, { icon: content[2], title: content[0] + '正在准备', detail: content[3], action: h(DisabledAction, null, '等待 Host 能力') }));
     }
 
-    function ResourceDialog({ title, detail, children, onClose }) {
+    function ResourceDialog({ title, detail, children, onClose, wide = false }) {
       return h('div', {
         role: 'presentation',
         onMouseDown: event => { if (event.target === event.currentTarget) onClose(); },
         style: { position: 'fixed', inset: 0, zIndex: 50, display: 'grid', placeItems: 'center', padding: '24px', background: 'rgba(7, 14, 24, 0.46)' },
       }, h('section', {
         role: 'dialog', 'aria-modal': 'true', 'aria-label': title,
-        style: { width: 'min(680px, 100%)', maxHeight: 'min(760px, calc(100vh - 48px))', overflow: 'auto', border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '20px', background: BRAND.surface, boxShadow: '0 22px 70px rgba(7, 14, 24, 0.28)' },
+        style: { width: `min(${wide ? 920 : 680}px, 100%)`, maxHeight: 'min(760px, calc(100vh - 48px))', overflow: 'auto', border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '20px', background: BRAND.surface, boxShadow: '0 22px 70px rgba(7, 14, 24, 0.28)' },
       }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start', marginBottom: '16px' } },
         h('div', null, h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '18px' } }, title), detail ? h('p', { style: { margin: '6px 0 0', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.5 } }, detail) : null),
         h('button', { type: 'button', 'aria-label': '关闭', onClick: onClose, style: { ...buttonStyle(), padding: '5px 9px', fontSize: '14px' } }, '×')),
@@ -2431,6 +2431,11 @@ window.__ModuleLoader__.load({
         if (task.enabled === false || (task.schedule?.kind === 'once' && ['succeeded', 'completed'].includes(state))) return 'paused';
         return 'scheduled';
       };
+      useEffect(() => {
+        if (status !== 'ready' || !tasks.some(task => taskStatus(task) === 'running')) return undefined;
+        const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 5000);
+        return () => window.clearInterval(timer);
+      }, [status, tasks, latestOccurrences]);
       const taskGroups = [
         { id: 'scheduled', label: '待执行' },
         { id: 'running', label: '执行中' },
@@ -2461,10 +2466,10 @@ window.__ModuleLoader__.load({
       };
       const pagedTasks = visibleTasks.slice(taskPage * taskPageSize, (taskPage + 1) * taskPageSize);
       const detailTarget = detailTask ? agents.find(item => agentId(item) === detailTask?.target?.agentId) : null;
-      const detailPanel = detailTask ? h('section', { style: { marginBottom: '14px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' } },
-          h('div', null, h('div', { style: { color: BRAND.accentStrong, fontSize: '10px', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' } }, 'Automation detail'), h('h3', { style: { margin: '5px 0 3px', color: BRAND.ink, fontSize: '17px' } }, detailTask.displayName || detailTask.taskId), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, `${detailTarget ? agentName(detailTarget) : detailTask?.target?.agentId || '目标 Agent'} · ${scheduleLabel(detailTask)}`)),
-          h('div', { style: { display: 'flex', gap: '7px', alignItems: 'center' } }, h(Pill, { tone: taskStatus(detailTask) === 'attention' ? 'signal' : taskStatus(detailTask) === 'running' ? 'accent' : 'neutral' }, taskStatus(detailTask) === 'running' ? '执行中' : taskStatus(detailTask) === 'attention' ? '需关注' : detailTask.enabled === false ? '已暂停' : '已启用'), h('button', { type: 'button', onClick: () => { setDetailTask(null); setDetailOccurrences([]); }, style: { ...buttonStyle(), background: BRAND.surface } }, '关闭'))),
+      const detailPanel = detailTask ? h(ResourceDialog, { title: detailTask.displayName || detailTask.taskId, detail: `${detailTarget ? agentName(detailTarget) : detailTask?.target?.agentId || '目标 Agent'} · ${scheduleLabel(detailTask)}`, wide: true, onClose: () => { setDetailTask(null); setDetailOccurrences([]); } },
+        h('div', { style: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '12px' } },
+          h('div', { style: { color: BRAND.accentStrong, fontSize: '10px', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: 'auto' } }, 'Automation detail'),
+          h(Pill, { tone: taskStatus(detailTask) === 'attention' ? 'signal' : taskStatus(detailTask) === 'running' ? 'accent' : 'neutral' }, taskStatus(detailTask) === 'running' ? '执行中' : taskStatus(detailTask) === 'attention' ? '需关注' : detailTask.enabled === false ? '已暂停' : '已启用')),
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginTop: '14px' } },
           [['任务 ID', detailTask.taskId], ['执行计划', scheduleLabel(detailTask)], ['会话方式', detailTask.continuity === 'continue_session' ? '继续已有会话' : '每次新建会话'], ['下次执行', detailTask.enabled && detailTask.nextRunAt ? new Date(detailTask.nextRunAt).toLocaleString() : '—']].map(([label, value]) => h('div', { key: label, style: { padding: '10px 11px', borderRadius: '10px', background: BRAND.canvas } }, h('div', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, label), h('div', { style: { color: BRAND.ink, fontSize: '12px', marginTop: '4px', wordBreak: 'break-word' } }, value || '—')))),
         h('div', { style: { marginTop: '12px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap' } }, detailTask?.command?.payload?.content || '—'),
@@ -2476,7 +2481,7 @@ window.__ModuleLoader__.load({
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取自动化', detail: '读取计划、可用 Agent 和调度器状态。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: '自动化不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
         status === 'ready' ? h(React.Fragment, null,
-          editorOpen ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface, marginBottom: '14px' } },
+          editorOpen ? h(ResourceDialog, { title: editingTask ? '编辑自动化' : '新建自动化', detail: '选择 Agent 和触发规则；保存后由 Host Scheduler 生成真实执行记录。', onClose: () => { if (!saving) setEditorOpen(false); } }, h('form', { onSubmit: event => { event.preventDefault(); void save(); }, style: { display: 'grid', gap: '14px' } },
             h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '绑定 Agent', h('select', { value: form.agentId, onChange: event => setForm(previous => ({ ...previous, agentId: event.target.value })), style: inputStyle() }, agents.map(item => h('option', { key: agentId(item), value: agentId(item) }, `${agentName(item)} · ${agentId(item)}`)))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '任务名称', h('input', { value: form.displayName, onChange: event => setForm(previous => ({ ...previous, displayName: event.target.value })), placeholder: '例如：每日工作摘要', style: inputStyle() }))),
@@ -2486,7 +2491,7 @@ window.__ModuleLoader__.load({
               form.kind === 'interval' ? h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '间隔秒数（最少 60）', h('input', { type: 'number', min: 60, value: form.everySeconds, onChange: event => setForm(previous => ({ ...previous, everySeconds: event.target.value })), style: inputStyle() })) : null,
               form.kind === 'cron' ? h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '五段 Cron（Asia/Shanghai）', h('input', { value: form.expression, onChange: event => setForm(previous => ({ ...previous, expression: event.target.value })), style: inputStyle() })) : null,
               form.kind === 'once' ? h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '执行时间', h('input', { type: 'datetime-local', value: form.at, onChange: event => setForm(previous => ({ ...previous, at: event.target.value })), style: inputStyle() })) : null),
-            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' } }, h('button', { type: 'button', onClick: () => setEditorOpen(false), style: { ...buttonStyle(), background: BRAND.surface } }, '取消'), h('button', { type: 'button', onClick: () => void save(), disabled: saving || !agents.length, style: { ...buttonStyle(), color: saving || !agents.length ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: saving || !agents.length ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !agents.length ? BRAND.border : 'transparent' } }, saving ? '保存中…' : '创建')),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '2px' } }, h('button', { type: 'button', onClick: () => setEditorOpen(false), disabled: saving, style: { ...buttonStyle(), background: BRAND.surface } }, '取消'), h('button', { type: 'submit', disabled: saving || !agents.length, style: { ...buttonStyle(), color: saving || !agents.length ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: saving || !agents.length ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !agents.length ? BRAND.border : 'transparent' } }, saving ? '保存中…' : editingTask ? '保存修改' : '创建'))),
           ) : null,
           h('section', { style: { display: 'grid', gap: '12px', marginBottom: '14px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '14px 16px', background: BRAND.surface } },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' } },
@@ -2630,6 +2635,11 @@ window.__ModuleLoader__.load({
         if (firstError) setError('部分评测目录暂不可用，已展示可读取的数据。');
       };
       useEffect(() => { void load(); }, []);
+      useEffect(() => {
+        if (status !== 'ready' || !runs.some(run => ['RUNNING', 'PENDING', 'QUEUED', 'ADMITTING'].includes(String(run?.status || '').toUpperCase()))) return undefined;
+        const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 4000);
+        return () => window.clearInterval(timer);
+      }, [status, runs]);
       const filteredRuns = runs.filter(run => {
         const haystack = [operationalId(run), operationalLabel(run?.evalset), operationalLabel(run?.target), run?.status, run?.createdAt].join(' ').toLowerCase();
         const state = String(run?.status || '').toUpperCase();
@@ -2699,11 +2709,8 @@ window.__ModuleLoader__.load({
         ['reference_match@v1', '参考答案匹配'],
       ];
       const targetKindLabel = targetKind === 'a2a' ? 'Agent 地址' : targetKind === 'local_source' ? 'Agent 源码目录' : 'Build';
-      const selectedDetail = selected ? h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, overflow: 'hidden' } },
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border } },
-          h('strong', null, `评测详情 · ${operationalId(selected)}`),
-          h('button', { type: 'button', onClick: () => setSelected(null), style: { ...buttonStyle(), background: BRAND.surface } }, '关闭')),
-        h('div', { style: { padding: '14px', maxHeight: 'min(48vh, 480px)', overflow: 'auto' } },
+      const selectedDetail = selected ? h(ResourceDialog, { title: `评测详情 · ${operationalId(selected)}`, detail: `${operationalDate(selected.createdAt)} · ${String(selected.status || 'unknown').toLowerCase()}`, wide: true, onClose: () => setSelected(null) },
+        h('div', { style: { padding: '2px 0', maxHeight: 'min(64vh, 620px)', overflow: 'auto' } },
           detailLoading ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取运行详情…') : h(React.Fragment, null,
             h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' } }, operationalStatus(selected.status), h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, operationalDate(selected.createdAt))),
             h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'summary', label: '摘要' }, { id: 'cases', label: `用例 ${selected?.cases?.length || 0}` }, { id: 'assertions', label: `断言 ${selected?.assertions?.length || 0}` }, { id: 'trace', label: '执行轨迹' }], ariaLabel: '评测运行详情视图' }),
@@ -2718,7 +2725,7 @@ window.__ModuleLoader__.load({
         status === 'error' ? h(EmptyState, { icon: '!', title: '评测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
         status === 'ready' ? h(React.Fragment, null,
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
-          createOpen ? h('form', { onSubmit: startCreate, style: { display: 'grid', gap: '14px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface, marginBottom: '14px' } },
+          createOpen ? h(ResourceDialog, { title: '新建评测', detail: '选择 EvalSet、目标和评估器，提交后由 Host 在后台执行。', onClose: () => { if (!creating) setCreateOpen(false); } }, h('form', { onSubmit: startCreate, style: { display: 'grid', gap: '14px' } },
             h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(180px, .8fr)', gap: '12px' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'EvalSet 文件', h('input', { value: evalsetFile, onChange: event => setEvalsetFile(event.target.value), placeholder: '.agentkit/evaluations/example.yaml', style: inputStyle(), required: true }), h('input', { type: 'file', accept: '.yaml,.yml,.json', onChange: importEvalset, disabled: evalsetUploading, style: { ...inputStyle(), marginTop: '6px', padding: '6px' } }), evalsetUploading ? h('span', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, '正在导入…') : null),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '评测目标类型', h('select', { value: targetKind, onChange: event => { setTargetKind(event.target.value); setTarget(''); }, style: inputStyle() }, h('option', { value: 'studio_build' }, 'Studio Build'), h('option', { value: 'a2a' }, 'A2A Agent'), h('option', { value: 'local_source' }, '本地源码')))),
@@ -2731,7 +2738,7 @@ window.__ModuleLoader__.load({
             h('fieldset', { style: { border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', margin: 0 } },
               h('legend', { style: { padding: '0 5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '评估器（至少选择一个）'),
               h('div', { style: { display: 'flex', gap: '10px 18px', flexWrap: 'wrap' } }, evaluatorOptions.map(([id, label]) => h('label', { key: id, style: { display: 'inline-flex', alignItems: 'center', gap: '6px', color: BRAND.ink, fontSize: '12px' } }, h('input', { type: 'checkbox', checked: evaluators.includes(id), onChange: event => setEvaluators(current => event.target.checked ? [...new Set([...current, id])] : current.filter(item => item !== id)) }), label)))),
-            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: () => setCreateOpen(false), style: { ...buttonStyle(), background: BRAND.surface } }, '取消'), h('button', { type: 'submit', disabled: creating || !evaluators.length, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, creating ? '提交中…' : '开始评测'))) : null,
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: () => setCreateOpen(false), disabled: creating, style: { ...buttonStyle(), background: BRAND.surface } }, '取消'), h('button', { type: 'submit', disabled: creating || !evaluators.length, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, creating ? '提交中…' : '开始评测')))) : null,
           h(StudioPageTabs, { value: tab, onChange: next => { setTab(next); setPage(0); if (next === 'sets') setEvalsetPage(0); if (next === 'targets') setTargetPage(0); }, items: [{ id: 'runs', label: '运行记录' }, { id: 'sets', label: `评测集 ${evalsets.length}` }, { id: 'targets', label: `评测目标 ${targets.length}` }], ariaLabel: '评测视图' }),
           tab === 'runs' ? h(React.Fragment, null,
             h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' }, h('input', { value: filter, onChange: event => { setFilter(event.target.value); setPage(0); }, placeholder: '搜索任务、目标或状态', 'aria-label': '搜索评测运行', style: { ...inputStyle(), maxWidth: '280px' } }), h('select', { value: runFilter, onChange: event => { setRunFilter(event.target.value); setPage(0); }, 'aria-label': '评测状态筛选', style: { ...inputStyle(), width: '120px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'active' }, '进行中'), h('option', { value: 'passed' }, '已通过'), h('option', { value: 'attention' }, '需关注')), h(Pill, { tone: 'neutral' }, `${filteredRuns.length} 条运行`)),
@@ -2784,6 +2791,11 @@ window.__ModuleLoader__.load({
       };
 
       useEffect(() => { void load(); }, [range]);
+      useEffect(() => {
+        if (status !== 'ready' || !traces.some(trace => ['RUNNING', 'PENDING', 'QUEUED'].includes(String(trace?.status || '').toUpperCase()))) return undefined;
+        const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 5000);
+        return () => window.clearInterval(timer);
+      }, [status, traces]);
 
       const filtered = traces.filter(trace => {
         const haystack = [operationalId(trace), trace?.runId, trace?.sessionId, trace?.agentId, trace?.status, trace?.name]
@@ -2870,11 +2882,9 @@ window.__ModuleLoader__.load({
                     )));
 
       const traceDetail = selected
-        ? h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, overflow: 'hidden' } },
-            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border } },
-              h('strong', null, `Trace 详情 · ${operationalId(selected)}`),
-              h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: exportSession, style: { ...buttonStyle(), background: BRAND.surface } }, '导出 Session'), h('button', { type: 'button', onClick: () => setSelected(null), style: { ...buttonStyle(), background: BRAND.surface } }, '关闭'))),
-            h('div', { style: { padding: '12px 14px' } },
+        ? h(ResourceDialog, { title: `Trace 详情 · ${operationalId(selected)}`, detail: `${operationalDate(selected.startedAt || selected.createdAt)} · ${String(selected.status || 'unknown').toLowerCase()}`, wide: true, onClose: () => setSelected(null) },
+            h('div', { style: { display: 'grid', gap: '10px' } },
+              h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'button', onClick: exportSession, style: { ...buttonStyle(), background: BRAND.surface } }, '导出 Session')),
               detailLoading
                 ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取 Span…')
                 : h(React.Fragment, null,
@@ -3081,7 +3091,7 @@ window.__ModuleLoader__.load({
           h('div', null, messageText(item)),
           h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '10px' } }, `${String(item?.Direction || item?.direction).toLowerCase() === 'outbound' ? '发送' : '接收'} · ${operationalDate(item?.CreatedAt || item?.createdAt)}`, item?.Error || item?.error ? ` · ${item.Error || item.error}` : '')))))
         : h('div', { style: { display: 'grid', placeItems: 'center', color: BRAND.inkMuted, fontSize: '12px' } }, '选择左侧会话查看消息');
-      const messageWorkspace = h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(200px, .7fr) minmax(0, 1.5fr)', gap: '12px', minHeight: '330px' } },
+      const messageWorkspace = h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(180px, .7fr) minmax(320px, 1.5fr)', gap: '12px', minHeight: '330px', overflowX: 'auto' } },
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', overflow: 'auto', background: BRAND.surface } },
           h('div', { style: { padding: '11px 13px', borderBottom: '1px solid ' + BRAND.border, color: BRAND.ink, fontWeight: 750, fontSize: '12px' } }, `会话列表 ${conversations.length}`),
           conversations.length ? visibleConversations.map(item => h('button', { key: item.id, type: 'button', onClick: () => setSelectedConversationId(item.id), style: { display: 'block', width: '100%', padding: '11px 13px', textAlign: 'left', border: 0, borderBottom: '1px solid ' + BRAND.border, color: BRAND.ink, background: selectedConversation?.id === item.id ? BRAND.accentSoft : BRAND.surface, cursor: 'pointer' } },
@@ -3091,32 +3101,30 @@ window.__ModuleLoader__.load({
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)' } }, conversationBody));
       return h('div', null,
         h(SectionHeading, { eyebrow: 'Studio domain / Channels', title: 'Channels', detail: '对齐原 Studio：连接配置、渠道、配对请求、会话绑定和消息记录分开管理；数据通过 Channel API 读取，不在插件内复制一套存储。', action: h(Pill, { tone: connection?.configured ? 'accent' : 'signal' }, connection?.configured ? '连接已配置' : '待配置') }),
-        h('form', { onSubmit: saveConnection, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(150px, .8fr) minmax(150px, .8fr) minmax(160px, .8fr) auto', gap: '9px', alignItems: 'end', border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '13px', background: BRAND.surface, marginBottom: '14px' } },
+        h('form', { onSubmit: saveConnection, style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '9px', alignItems: 'end', border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '13px', background: BRAND.surface, marginBottom: '14px' } },
           h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Channel 服务地址', h('input', { value: config.serverUrl, onChange: event => setConfig({ ...config, serverUrl: event.target.value }), placeholder: 'https://channel.example.com', style: inputStyle() })),
           h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '账号 ID', h('input', { value: config.accountId, onChange: event => setConfig({ ...config, accountId: event.target.value }), style: inputStyle() })),
           h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '工作区 ID', h('input', { value: config.workspaceId, onChange: event => setConfig({ ...config, workspaceId: event.target.value }), style: inputStyle() })),
           h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '服务凭证', h('input', { type: 'password', value: config.apiToken, onChange: event => setConfig({ ...config, apiToken: event.target.value }), placeholder: connection?.hasApiToken ? '已保存，留空保留' : '可选', style: inputStyle() })),
-          h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, saving ? '保存中…' : '保存连接')),
+          h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), justifySelf: 'start', background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, saving ? '保存中…' : '保存连接')),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取 Channel 数据', detail: '读取连接状态、渠道、配对和消息。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: 'Channels 暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
         status === 'ready' ? h(React.Fragment, null,
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
           h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' }, h(Pill, { tone: 'neutral' }, 'Channel Connector API'), tab === 'channels' ? h('button', { type: 'button', onClick: () => openChannelEditor(null), style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, '新增渠道') : null),
-          channelEditor ? h('form', { onSubmit: saveChannel, style: { display: 'grid', gap: '10px', border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginBottom: '14px' } },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('strong', { style: { color: BRAND.ink } }, channelEditor === 'new' ? '新增渠道' : '编辑渠道'), h('button', { type: 'button', onClick: () => setChannelEditor(null), style: { ...buttonStyle(), background: BRAND.surface } }, '取消')),
-            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '9px' } },
+          channelEditor ? h(ResourceDialog, { title: channelEditor === 'new' ? '新增渠道' : '编辑渠道', detail: '配置渠道连接和会话策略；保存后由 Channel API 管理凭证、配对和消息。', wide: true, onClose: () => { if (!channelSaving) setChannelEditor(null); } }, h('form', { onSubmit: saveChannel, style: { display: 'grid', gap: '10px' } },
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '9px' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Agent ID', h('input', { value: channelForm.AgentId, onChange: event => setChannelForm({ ...channelForm, AgentId: event.target.value }), style: inputStyle(), required: true })),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '渠道类型', h('select', { value: channelForm.Channel, onChange: event => setChannelForm({ ...channelForm, Channel: event.target.value }), style: inputStyle() }, h('option', { value: 'wps-xiezuo' }, 'WPS 协作'), h('option', { value: 'feishu' }, '飞书'), h('option', { value: 'wecom' }, '企业微信'))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '渠道账号 ID', h('input', { value: channelForm.ChannelAccountId, onChange: event => setChannelForm({ ...channelForm, ChannelAccountId: event.target.value }), style: inputStyle(), required: true }))),
-            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '9px' } },
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '9px' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '私聊策略', h('select', { value: channelForm.DmPolicy, onChange: event => setChannelForm({ ...channelForm, DmPolicy: event.target.value }), style: inputStyle() }, h('option', { value: 'pairing' }, '需配对'), h('option', { value: 'open' }, '开放'))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '群聊策略', h('select', { value: channelForm.GroupPolicy, onChange: event => setChannelForm({ ...channelForm, GroupPolicy: event.target.value }), style: inputStyle() }, h('option', { value: 'allowlist' }, '白名单'), h('option', { value: 'open' }, '开放'))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '会话范围', h('select', { value: channelForm.SessionScope, onChange: event => setChannelForm({ ...channelForm, SessionScope: event.target.value }), style: inputStyle() }, h('option', { value: 'per-peer' }, '按用户'), h('option', { value: 'per-group' }, '按群聊'))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '7px', paddingTop: '22px' } }, h('input', { type: 'checkbox', checked: channelForm.Enabled, onChange: event => setChannelForm({ ...channelForm, Enabled: event.target.checked }) }), '启用渠道')),
-            h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'submit', disabled: channelSaving, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, channelSaving ? '保存中…' : '保存渠道'))) : null,
-          channelQr ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginBottom: '14px' } },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' } }, h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, `连接渠道 · ${channelLabel(channelQr.channel)}`), h('button', { type: 'button', onClick: () => setChannelQr(null), style: { ...buttonStyle(), background: BRAND.surface } }, '关闭')),
-            channelQr.loading ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: '12px 0 0' } }, '正在读取连接地址…') : channelQr.error ? h('p', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px', margin: '12px 0 0' } }, channelQr.error) : channelQr.url ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '12px' } }, h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, channelQr.label || '请打开下面的连接地址完成渠道授权。'), h('a', { href: channelQr.url, target: '_blank', rel: 'noreferrer', style: { color: BRAND.accentStrong, fontSize: '12px', wordBreak: 'break-all' } }, channelQr.url)) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: '12px 0 0' } }, 'Host 未返回连接地址。')) : null,
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: () => setChannelEditor(null), disabled: channelSaving, style: { ...buttonStyle(), background: BRAND.surface } }, '取消'), h('button', { type: 'submit', disabled: channelSaving, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, channelSaving ? '保存中…' : '保存渠道')))) : null,
+          channelQr ? h(ResourceDialog, { title: `连接渠道 · ${channelLabel(channelQr.channel)}`, detail: '连接地址由 Connector 返回；Studio 不生成或保存二维码内容。', onClose: () => setChannelQr(null) },
+            channelQr.loading ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, '正在读取连接地址…') : channelQr.error ? h('p', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px', margin: 0 } }, channelQr.error) : channelQr.url ? h('div', { style: { display: 'grid', gap: '8px' } }, h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, channelQr.label || '请打开下面的连接地址完成渠道授权。'), h('a', { href: channelQr.url, target: '_blank', rel: 'noreferrer', style: { color: BRAND.accentStrong, fontSize: '12px', wordBreak: 'break-all' } }, channelQr.url)) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, 'Host 未返回连接地址。')) : null,
           h(StudioPageTabs, { value: tab, onChange: next => { setTab(next); if (next === 'channels') setChannelPage(0); if (next === 'pairings') setPairingPage(0); if (next === 'bindings') setBindingPage(0); if (next === 'messages') setMessagePage(0); }, items: [{ id: 'channels', label: `渠道 ${channels.length}` }, { id: 'pairings', label: `配对 ${pairings.length}` }, { id: 'bindings', label: `绑定 ${bindings.length}` }, { id: 'messages', label: `消息 ${messages.length}` }], ariaLabel: 'Channels 管理视图' }),
           tab === 'channels' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => h('div', null, h('strong', null, `${channelLabel(row)} · ${row?.ChannelAccountId || row?.channelAccountId || '—'}`), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) }, { id: 'agent', label: '绑定 Agent', cell: row => row?.AgentId || row?.agentId || '未绑定' }, { id: 'policy', label: '策略', cell: row => `${row?.DmPolicy || row?.dmPolicy || '—'} / ${row?.GroupPolicy || row?.groupPolicy || '—'}` }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Enabled ?? row?.enabled ? 'enabled' : 'disabled') }, { id: 'action', label: '操作', cell: row => h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } }, ['feishu', 'wecom'].includes(String(row?.Channel || row?.channel).toLowerCase()) ? h('button', { type: 'button', onClick: event => { event.stopPropagation(); void openChannelQr(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '扫码连接') : null, h('button', { type: 'button', onClick: event => { event.stopPropagation(); openChannelEditor(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '编辑'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteChannel(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '删除')) }], rows: visibleChannels, empty: '还没有渠道配置，请先保存连接并创建渠道。' }), h(OperationalPager, { page: channelPage, pageSize: channelPageSize, total: channels.length, onChange: setChannelPage })) : null,
           tab === 'pairings' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'sender', label: '申请人', cell: row => h('strong', null, row?.SenderName || row?.senderName || row?.SenderId || '—') }, { id: 'channel', label: '渠道', cell: row => `${channelLabel(row)} · ${row?.ChannelAccountId || '—'}` }, { id: 'chat', label: '会话', cell: row => row?.ChatType || row?.chatType || row?.PeerId || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Status || row?.status) }, { id: 'action', label: '操作', cell: row => String(row?.Status || row?.status).toLowerCase() === 'pending' ? h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void pairingAction(operationalId(row), 'ApprovePairing'); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '通过'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void pairingAction(operationalId(row), 'RejectPairing'); }, style: { ...buttonStyle(), padding: '5px 8px', background: BRAND.surface } }, '拒绝')) : '—' }], rows: visiblePairings, empty: '没有待处理的配对请求。' }), h(OperationalPager, { page: pairingPage, pageSize: channelSecondaryPageSize, total: pairings.length, onChange: setPairingPage })) : null,
