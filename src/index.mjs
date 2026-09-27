@@ -6,10 +6,12 @@
  * not translate them into legacy session/run action calls. Agent authoring
  * is exposed through the public DSH ToolRegistry: native conversations can
  * inspect catalogs, maintain a reviewed draft and explicitly commit it via
- * the Host API. A selected Studio Agent is still metadata on the native
- * composer until the separate public admission/provider contract is wired.
+ * the Host API. A selected no-resource dsh-native Studio Agent is admitted
+ * through DSH's public agent-preset registry; resource-bearing revisions
+ * remain fail-closed until their provider contract is implemented.
  */
 import { registerAuthoringTools } from './authoring-tools.mjs';
+import { DshPresetAdmission } from './agent-preset-admission.mjs';
 
 export const name = 'agentkit-studio';
 export const inject = ['connection', 'webServer'];
@@ -32,7 +34,24 @@ function registerControlPlane(ctx) {
   const serverClientPromise = import('./global-config.mjs').then(({ createGlobalConfiguration }) =>
     import('./server-client.mjs').then(({ createAgentEngineClient }) =>
       createAgentEngineClient({ configuration: createGlobalConfiguration({ env: runtimeEnv }) })));
-  const allowed = new Set(['agents/list', 'server/action']);
+  let presetRegistry;
+  let presetAdmission;
+  // The registry is an optional DSH service. Older profiles can still load
+  // the Studio catalog and UI, but an Agent binding must return a typed
+  // unavailable error instead of silently selecting the default DSH loop.
+  ctx.inject(['agentPresets'], presetCtx => {
+    presetRegistry = presetCtx.agentPresets;
+    if (presetAdmission) presetAdmission.setRegistry(presetRegistry);
+    presetCtx.effect(() => async () => {
+      await presetAdmission?.dispose();
+      presetRegistry = undefined;
+    }, 'agentkit-studio: dynamic preset cleanup');
+  });
+  presetAdmission = new DshPresetAdmission({
+    getAgent: async agentId => (await serverClientPromise).getAgent(agentId),
+  });
+  if (presetRegistry) presetAdmission.setRegistry(presetRegistry);
+  const allowed = new Set(['agents/list', 'agents/ensure-preset', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
@@ -47,6 +66,20 @@ function registerControlPlane(ctx) {
           page: Number(payload?.page || 1), pageSize: Number(payload?.limit || 50), query: String(payload?.query || ''),
         }, { signal });
         return { ok: true, value };
+      }
+      if (endpoint === 'agents/ensure-preset') {
+        const agentId = String(payload?.agentId || '').trim();
+        if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
+        try {
+          const value = await presetAdmission.ensure(agentId);
+          return { ok: true, value };
+        } catch (error) {
+          return { ok: false, error: {
+            code: error?.code || 'DSH_PRESET_ADMISSION_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            details: error?.details || {},
+          } };
+        }
       }
       if (endpoint === 'server/action') {
         const action = String(payload?.action || '');

@@ -138,6 +138,21 @@ window.__ModuleLoader__.load({
         }
         return result.value;
       }
+      async function ensureDshPreset(agentId) {
+        if (!connection?.rpc?.call) {
+          const error = new Error('DSH Agent preset 准入需要已连接的 Studio Host');
+          error.code = 'DSH_PRESET_HOST_CONNECTION_MISSING';
+          throw error;
+        }
+        const result = await connection.rpc.call('/agentkit', 'agents/ensure-preset', { agentId });
+        if (!result?.ok) {
+          const error = new Error(result?.error?.message || 'DSH Agent preset 准入失败');
+          error.code = result?.error?.code || 'DSH_PRESET_ADMISSION_FAILED';
+          error.details = result?.error?.details;
+          throw error;
+        }
+        return result.value;
+      }
       return {
         get baseUrl() { return baseUrl; },
         exchangeSession: ensureSession,
@@ -177,6 +192,7 @@ window.__ModuleLoader__.load({
         agent: id => directServer()
           ? serverAction('GetAgent', { AgentId: id }).catch(() => request('/api/v1/agents/' + encodeURIComponent(id)))
           : request('/api/v1/agents/' + encodeURIComponent(id)),
+        ensureDshPreset,
         createAgent: payload => request('/api/v1/agents', { method: 'POST', body: JSON.stringify(payload) }),
         quickAuthorAgent: payload => request('/api/v1/authoring/quick', { method: 'POST', body: JSON.stringify(payload) }),
         composeAuthoringConversation: payload => request('/api/v1/authoring/conversations:compose', { method: 'POST', body: JSON.stringify(payload) }),
@@ -316,9 +332,13 @@ window.__ModuleLoader__.load({
     let activeConnection = null;
     const hostRemote = createHostRemote({ get rpc() { return activeConnection?.rpc; } });
 
-    function readConversationAgent() {
+    function conversationAgentStorageKey(sessionId) {
+      return sessionId ? `${CONVERSATION_AGENT_KEY}:${sessionId}` : CONVERSATION_AGENT_KEY;
+    }
+
+    function readConversationAgent(sessionId) {
       try {
-        const raw = window.localStorage.getItem(CONVERSATION_AGENT_KEY);
+        const raw = window.localStorage.getItem(conversationAgentStorageKey(sessionId));
         if (!raw) return null;
         const value = JSON.parse(raw);
         return typeof value?.agentId === 'string' && value.agentId ? value.agentId : null;
@@ -327,9 +347,9 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function writeConversationAgent(agentId) {
+    function writeConversationAgent(agentId, sessionId) {
       const value = { agentId: agentId || null, updatedAt: Date.now() };
-      try { window.localStorage.setItem(CONVERSATION_AGENT_KEY, JSON.stringify(value)); } catch { /* private mode */ }
+      try { window.localStorage.setItem(conversationAgentStorageKey(sessionId), JSON.stringify(value)); } catch { /* private mode */ }
       window.__AGENTKIT_STUDIO_CONVERSATION__ = value;
       window.dispatchEvent(new CustomEvent('agentkit-studio:conversation-context-change', { detail: value }));
     }
@@ -583,28 +603,62 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The header control is deliberately a context selector, not a required
-     * Agent picker. DSH can always start a native session with the empty value.
-     * Until a public admission/provider mapping exists, a selected Studio
-     * Agent is metadata only and must be shown as such instead of implying that
-     * the DSH composer has switched execution targets.
+     * Session-scoped Agent selector. Empty keeps the official DSH native
+     * conversation. A dsh-native, no-resource Studio revision is admitted via
+     * the Host's public preset registry and selected through DSH's public
+     * `agentPresets.select` Remote. Resource-bearing or non-DSH revisions stay
+     * fail-closed until their provider can materialize the bindings.
      */
-    function AgentContextSelector() {
+    function AgentContextSelector({ sessionId, useSessions, studioRemote } = {}) {
       const [agents, setAgents] = useState([]);
-      const [selected, setSelected] = useState(readConversationAgent);
+      const [selected, setSelected] = useState(() => readConversationAgent(sessionId));
+      const [busy, setBusy] = useState(false);
+      const [notice, setNotice] = useState('');
+      const session = useSessions ? useSessions(state => state?.byId?.[sessionId]) : null;
+      const started = Boolean(session && session.blank === false);
 
       useEffect(() => {
         let alive = true;
+        setSelected(readConversationAgent(sessionId));
+        setNotice('');
         hostRemote.agents().then(result => {
           if (alive) setAgents(Array.isArray(result?.items) ? result.items : []);
         }).catch(() => { /* no Agent is a valid offline/default state */ });
         return () => { alive = false; };
-      }, []);
+      }, [sessionId]);
 
-      const select = event => {
+      const select = async event => {
         const value = event.target.value || null;
-        setSelected(value);
-        writeConversationAgent(value);
+        setNotice('');
+        if (!value) {
+          setSelected(null);
+          writeConversationAgent(null, sessionId);
+          return;
+        }
+        if (started || !sessionId || typeof studioRemote?.agentPresets?.select !== 'function') {
+          setSelected(value);
+          writeConversationAgent(value, sessionId);
+          setNotice(started ? '会话已开始，Agent 不能中途切换' : '当前 Host 没有公开 preset 选择接口');
+          return;
+        }
+        setBusy(true);
+        try {
+          const admission = await hostRemote.ensureDshPreset(value);
+          const selectedPreset = await studioRemote.agentPresets.select(sessionId, admission.presetId);
+          if (!selectedPreset?.ok) {
+            const refusal = new Error(selectedPreset?.error?.message || 'DSH 拒绝绑定该 Agent');
+            refusal.code = selectedPreset?.error?.code || 'DSH_PRESET_SELECT_FAILED';
+            refusal.details = selectedPreset?.error?.details;
+            throw refusal;
+          }
+          setSelected(value);
+          writeConversationAgent(value, sessionId);
+          setNotice('已绑定当前会话');
+        } catch (error) {
+          setNotice(error?.message || 'Agent 尚未具备可用的 DSH provider');
+        } finally {
+          setBusy(false);
+        }
       };
       const openBoundConversation = () => {
         if (!selected) return;
@@ -613,14 +667,15 @@ window.__ModuleLoader__.load({
       };
       const selectedAgent = agents.find(agent => (agent?.metadata?.id || agent?.id) === selected);
       return h('div', {
-        title: '这里只记录候选智能体，不改变当前会话。要使用指定智能体，请从 Agents 页面打开绑定对话。',
+        title: sessionId ? '空白会话可以绑定一个 Agent；首轮发送后锁定。未选择 Agent 时使用 DSH 原生会话。' : '选择 Agent 后请从空白会话开始；首轮发送后绑定关系锁定。',
         style: { display: 'inline-flex', alignItems: 'center', gap: '7px', minWidth: '0', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 },
       },
-      h('span', { style: { color: BRAND.accentStrong, whiteSpace: 'nowrap' } }, '候选智能体'),
+      h('span', { style: { color: BRAND.accentStrong, whiteSpace: 'nowrap' } }, '智能体'),
       h('select', {
-        'aria-label': '候选智能体（不改变当前会话）',
+        'aria-label': '选择当前会话智能体',
         value: selected || '',
         onChange: select,
+        disabled: busy || started,
         style: { maxWidth: '230px', height: '30px', padding: '0 9px', border: '1px solid ' + BRAND.border, borderRadius: '8px', color: BRAND.ink, background: BRAND.surface, fontSize: '11px', fontWeight: 700 },
       },
       h('option', { value: '' }, '无 Agent · DSH 原生会话'),
@@ -631,8 +686,8 @@ window.__ModuleLoader__.load({
         const runtime = agent?.spec?.runtime?.type || agent?.runtime?.type;
         return h('option', { key: id, value: id }, `${name} · ${RUNTIME_LABELS[runtime] || runtime || 'Agent'}`);
       })),
-      h(Pill, { tone: selected ? 'signal' : 'accent' }, selected ? '未绑定当前会话' : 'DSH 原生'),
-      selected && selectedAgent ? h('button', { type: 'button', onClick: openBoundConversation, title: '打开一个绑定该 Agent 的新会话；当前 DSH 会话保持不变', style: { height: '28px', border: '1px solid ' + BRAND.border, borderRadius: '7px', padding: '0 8px', color: BRAND.ink, background: BRAND.surface, fontSize: '10px', fontWeight: 750, cursor: 'pointer' } }, '打开绑定对话') : null,
+      h(Pill, { tone: notice && !notice.includes('已绑定') ? 'signal' : selected ? 'accent' : 'neutral' }, busy ? '准入中…' : notice || (selected ? (started ? '已锁定' : '已绑定') : 'DSH 原生')),
+      !sessionId && selected && selectedAgent ? h('button', { type: 'button', onClick: openBoundConversation, title: '打开一个空白会话再绑定该 Agent', style: { height: '28px', border: '1px solid ' + BRAND.border, borderRadius: '7px', padding: '0 8px', color: BRAND.ink, background: BRAND.surface, fontSize: '10px', fontWeight: 750, cursor: 'pointer' } }, '打开绑定对话') : null,
       h('button', { type: 'button', onClick: () => { try { window.localStorage.setItem('agentkit-studio:open-authoring', 'conversation'); } catch {} window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring', { detail: 'conversation' })); }, style: { height: '28px', border: '1px solid ' + BRAND.border, borderRadius: '7px', padding: '0 8px', color: BRAND.ink, background: BRAND.surface, fontSize: '10px', fontWeight: 750, cursor: 'pointer' } }, '创建 Agent'));
       // This entry point is available from the real DSH conversation header.
       // It opens Studio's multi-turn authoring surface without replacing the
@@ -3500,9 +3555,10 @@ window.__ModuleLoader__.load({
       // DSH owns the official composer and its native session.prompt path.
       // Studio does not inject a sink or bridge into InputHub. The authoring
       // tools registered by the Host let this native conversation create and
-      // refine a reviewed Agent draft. A selected Studio Agent remains
-      // metadata until the separate public admission/provider contract carries
-      // its Revision into execution.
+      // refine a reviewed Agent draft. A selected no-resource dsh-native
+      // Agent is admitted through the public DSH preset Remote; resource
+      // bindings remain explicitly fail-closed until a provider materializes
+      // them.
       // Replace the official DSH brand row through its public slots. This
       // preserves the frame while giving the product its own identity.
       ctx.slots.inject('sidebar.brand.mark', () => ctx.slots.register(
@@ -3521,9 +3577,16 @@ window.__ModuleLoader__.load({
         { name: 'conversation.hero.brand.name' },
         () => h('span', null, 'AgentKit Studio'),
       ));
-      ctx.slots.inject('conversation.header.leading', () => ctx.slots.register(
-        { name: 'conversation.header.leading' },
-        () => h(AgentContextSelector),
+      // Use the official session-maybe hero slot so the selector receives the
+      // current sessionId/useSessions hooks. This keeps the binding scoped to
+      // one blank conversation instead of leaking a global selection across
+      // the workspace. DSH still owns session creation and locking.
+      ctx.slots.inject('conversation.hero.agentPreset', () => ctx.slots.register(
+        // A negative priority intentionally shadows the optional DSH preset
+        // picker at this product entry point; the Host still owns the same
+        // public registry and session lock semantics underneath.
+        { name: 'conversation.hero.agentPreset', priority: -20 },
+        props => h(AgentContextSelector, { ...props, studioRemote: ctx.remote }),
       ));
 
       // Each product domain is a first-class DSH main panel. The rows land in
