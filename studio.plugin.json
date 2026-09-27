@@ -1,0 +1,17 @@
+{
+  "id": "agentkit-studio",
+  "version": "0.0.1",
+  "requiredHostApi": "dsh-native/0.1.7-rc.2",
+  "requiredDsh": "0.1.7-rc.2",
+  "capabilities": [
+    "studio.agent.catalog",
+    "studio.runtime.capabilities",
+    "studio.session.adapter",
+    "studio.workspace.dock"
+  ],
+  "contributes": [
+    "route",
+    "resource",
+    "command"
+  ]
+}

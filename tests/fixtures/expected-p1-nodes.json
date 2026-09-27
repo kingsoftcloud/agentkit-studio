@@ -1,0 +1,10 @@
+{
+  "user": {"kind":"user","target":"chat","anchorSeq":1,"text":"run matrix"},
+  "assistant": [
+    {"kind":"assistant-step","anchorSeq":4,"blocks":[{"kind":"text","text":"The answer is ready."}]},
+    {"kind":"assistant-step","anchorSeq":7,"blocks":[{"kind":"text","text":"inspect"}]}
+  ],
+  "tool": [
+    {"kind":"tool-call","anchorSeq":9,"callId":"p1-call","result":[{"type":"text","text":"{\"files\":2}"}]}
+  ]
+}

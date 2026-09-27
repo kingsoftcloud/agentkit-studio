@@ -1,0 +1,56 @@
+{
+  "session_id": "studio-session-1",
+  "watermark": 4,
+  "events": [
+    {
+      "schema_version": 2,
+      "event_id": "studio-event-0",
+      "seq": 0,
+      "timestamp": 1700000000,
+      "run_id": "studio-run-1",
+      "scope_id": "studio-run-1",
+      "source": {"framework": "ksadk", "protocol": "a2ui", "metadata": {"role": "system"}},
+      "event_type": "run.started",
+      "status": "running"
+    },
+    {
+      "schema_version": 2,
+      "event_id": "studio-event-1",
+      "seq": 1,
+      "timestamp": 1700000000.1,
+      "run_id": "studio-run-1",
+      "scope_id": "studio-run-1",
+      "source": {"framework": "ksadk", "protocol": "a2ui", "metadata": {"role": "user"}},
+      "event_type": "item.completed",
+      "item_id": "user-item-1",
+      "item_kind": "message",
+      "snapshot": {"parts": [{"content_type": "text", "part_id": "text-0", "text": "open studio"}]}
+    },
+    {
+      "schema_version": 2,
+      "event_id": "studio-event-2",
+      "seq": 2,
+      "timestamp": 1700000000.2,
+      "run_id": "studio-run-1",
+      "scope_id": "studio-run-1",
+      "source": {"framework": "ksadk", "protocol": "a2ui", "metadata": {}},
+      "event_type": "item.updated",
+      "item_id": "assistant-item-1",
+      "item_kind": "reasoning",
+      "op": "append",
+      "update": {"content_type": "text", "part_id": "reasoning-0", "text": "checking capabilities"}
+    },
+    {
+      "schema_version": 2,
+      "event_id": "studio-event-3",
+      "seq": 3,
+      "timestamp": 1700000000.3,
+      "run_id": "studio-run-1",
+      "scope_id": "studio-run-1",
+      "source": {"framework": "ksadk", "protocol": "a2ui", "metadata": {}},
+      "event_type": "run.completed",
+      "status": "completed",
+      "output_refs": []
+    }
+  ]
+}

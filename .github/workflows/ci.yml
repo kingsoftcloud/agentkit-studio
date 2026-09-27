@@ -1,0 +1,39 @@
+name: AgentKit Studio CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm pack --pack-destination .artifacts
+
+  dsh-node-store:
+    if: ${{ vars.DSH_CHECKOUT != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify against pinned DSH checkout
+        env:
+          AGENTKIT_DSH_ROOT: ${{ vars.DSH_CHECKOUT }}
+        run: pnpm verify-dsh
