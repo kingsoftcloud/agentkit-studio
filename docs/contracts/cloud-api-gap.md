@@ -2,7 +2,7 @@
 
 # Studio 原生 DSH 云 API 差距（P1 冻结草案）
 
-核对日期：2026-09-23。依据 `agentengine-server` 当前 `master`
+核对日期：2026-09-28。依据 `agentengine-server` 当前 checkout
 `7b85e91d70924af0ce16ce0fa5e176cd95394584` 的实际
 `app/api/v1/actions` 路由/请求模型；现有《数字员工托管Agent接口文档》标注的
 `master@e6aa4f27` 比源码旧，因此本表以路由为准。此文档不代表线上 KOP
@@ -63,10 +63,11 @@ Server `CancelRun` 路由是否存在的重新判断；它证明当前 Studio sh
 这些是提议，不是已经存在的接口。字段为空值与缺省值的区别、权限矩阵、并发冲突
 及可重试代码在 Server 实现/开放之前不能由 Studio 自行猜定。
 
-## 2026-09-24 路由快照（可复核证据）
+## 2026-09-28 路由快照（可复核证据）
 
 为避免把旧接口文档当成合同，本次在 Server checkout `7b85e91d70924af0ce16ce0fa5e176cd95394584`
-直接扫描 `app/api/v1/actions/*.py` 的 FastAPI decorator。与本表相关的实际公开 Action
+直接扫描 `app/api/v1/actions/*.py` 的 FastAPI decorator；完整机器可读结果保存在
+[`server-route-snapshot-2026-09-28.json`](../../../.scratch/studio-dsh-native-2026-09-24/server-route-snapshot-2026-09-28.json)。与本表相关的实际公开 Action
 如下（同一名称在不同模块重复注册的情况保留为一个语义项）：
 
 | 能力面 | 源码中实际存在的 Action |
@@ -89,10 +90,13 @@ binding 资源合同。
 
 ```sh
 python3 - <<'PY'
-import glob, re
-for path in sorted(glob.glob('app/api/v1/actions/*.py')):
-    source = open(path, encoding='utf-8').read()
-    for name in sorted(set(re.findall(r'@router\.(?:post|get)\("/([A-Za-z0-9_]+)"', source))):
+from pathlib import Path
+import re
+root = Path('app/api/v1/actions')
+pattern = re.compile(r'@router\.(?:post|get|put|patch|delete)\("/([A-Za-z0-9_{}-]+)"')
+for path in sorted(root.glob('*.py')):
+    source = path.read_text(encoding='utf-8')
+    for name in sorted({m.group(1) for m in pattern.finditer(source)}):
         print(name, path)
 PY
 ```
