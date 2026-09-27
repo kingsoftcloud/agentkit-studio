@@ -45,7 +45,7 @@
 ## 验证
 
 ```text
-pnpm check       # 51 个插件契约/回归测试
+pnpm check       # 54 个插件契约/回归测试
 make ci          # check + pack，生成 .artifacts/*.tgz
 git diff --check
 ```
