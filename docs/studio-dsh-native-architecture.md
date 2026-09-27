@@ -12,7 +12,7 @@ AgentKit Studio 是零代码产品，运行在 DSH Desktop 中，以 DSH 的公�
 
 所有集成都只走公开 wire 边界：DSH agent/provider 扩展点，或官方 JSON-RPC SDK 协议。向 DSH 内核注入 InputHub、SessionCommandController，或用 sink/bridge 把外部会话硬塞进内核，已实测失败，正式废弃。
 
-当前 UI 已完成产品壳、真实 DSH 无 Agent 对话以及 AgentKit Host 的接线骨架；知识库、记忆库、MCP、Skill Center、本地 Skill 的资源生命周期，以及云端 Agent 创建、编辑、构建和部署，仍需要按本 RFC 接入真实 server API，不能以 mock 页面验收。
+当前 UI 已完成产品壳、真实 DSH 无 Agent 对话、运营页面的 Host-backed 接线以及 AgentKit Host 的接线骨架；一个无资源 `dsh-native` Revision 已通过官方 preset registry 做到窄准入。知识库、记忆库、MCP、Skill Center、本地 Skill 的资源运行时物化，以及云端 Agent 创建、编辑、构建和部署，仍需要按本 RFC 接入真实 server API，不能以页面或 Revision 写入成功验收。
 
 ## 2. 问题边界与术语
 
@@ -59,14 +59,18 @@ DSH 层负责 Desktop、会话输入输出、provider/agent 注册、审批 UI �
 
 **本地集成教训。** 早期 sink/bridge 路线尝试把外部 Session 硬接进内核对象（`InputHub`、`SessionCommandController`），出现会话 ID 不一致、取消和恢复无落点、刷新后状态丢失等问题。该路线已实测失败并正式废弃，相关内容已从方案中删除；后续代码和文档不得再把它列为备选方案。
 
-**公开 Agent Preset 接缝（候选，尚未验收）。** DSH 的 wire 合同包含
-`SessionCreateRequest.agentPreset`，rc.2 的客户端 `sessions.create({ agentPreset })` 也已经把该字段
-透传到官方 Remote；Preset Registry 能通过公开注册点组合 provider、工具和能力。这是“绑定 Agent 后仍由
-DSH 自身 harness 执行”的唯一值得继续验证的候选接缝。它只解决了 DSH 已注册 preset 的合法创建，尚未
-解决 Studio AgentRevision/ResourceBinding 到 DSH PresetDefinition 的动态 admission。只有当 preset 到
-Revision 的映射、事件、资源授权和取消/恢复语义都能由真实 profile 验证后，才能把它作为绑定 Agent 的
-默认路径；在此之前，选择器只是上下文元数据，不能宣称已经执行了所选 Agent。不得通过 DOM、React 状态、
-`session.append` 或私有 sink 补齐这个缺口。
+**公开 Agent Preset 接缝（已落地窄准入，完整资源路径仍未验收）。** DSH 的 wire 合同包含
+`SessionCreateRequest.agentPreset`，rc.2 的客户端 `sessions.create({ agentPreset })` 已把该字段透传到
+官方 Remote；Preset Registry 也提供公开注册点组合 provider、工具和能力。Studio 现在通过
+`agents/ensure-preset` 注册一个按 Agent Revision 版本化的 preset，并在官方
+`conversation.hero.agentPreset` 槽位调用 `agentPresets.select`。该路径只接受 `dsh-native` 且没有模型、Tool、
+MCP、Skill、知识库、记忆库或插件绑定的 Revision；首轮后由 DSH 官方锁定。真实 rc.2 Web Host selector
+冒烟和真实资源型 Revision 的 typed fail-closed 证据分别记录在
+`.scratch/studio-dsh-native-2026-09-24/rc2-studio-preset-admission-smoke-2026-09-28.json` 与
+`.scratch/studio-dsh-native-2026-09-24/rc2-resource-agent-admission-failclosed-2026-09-28.json`。
+这证明合法的窄准入，不证明资源型 Studio Agent 的模型/工具/平台资源已经执行。动态
+AgentRevision/ResourceBinding 到 DSH PresetDefinition 的完整映射、事件、资源授权、取消和恢复仍需公开
+provider 合同；不得通过 DOM、React 状态、`session.append` 或私有 sink 补齐缺口。
 
 ### 3.2 Studio 产品层
 
@@ -430,10 +434,11 @@ DSH profile 只保存本地扩展、模型提供商配置和 endpoint 配对信�
 - 散落 worktree 已清扫；合并留痕按 MANIFEST 处理，不保留并行旧壳。
 - DSH 官方 Python SDK、事件映射、canonical probe、Host runtime adapter 和 Studio shell 的基础测试已通过。
 - Studio UI 已改为 AgentKit Studio 品牌和四个一级域；无 Agent 的 DSH 原生对话和 Host 连接错误态是真实路径。
-- 2026-09-27 验证刷新：Studio `pnpm check` 38/38、Python focused suite 312 passed/8 skipped，
-  当前 rc.2 packed artifact 与 browser profile 均能启动，独立 fixture 与 SDK transcript 的
-  node-store probe 仍保留为历史/协议证据；直连 AgentEngine 的目录、详情和平台资源读取已由
-  Studio Node Host 接管。这些结果仍不替代动态 Agent admission、云端合同、资源激活和完整内存门禁。
+- 2026-09-28 验证刷新：Studio `pnpm check` 51/51、Python focused suite 312 passed/8 skipped，
+  `make ci` 打包通过；当前 rc.2 packed artifact 与 browser profile 均能启动，独立 fixture 与 SDK transcript
+  的 node-store probe 仍保留为历史/协议证据；直连 AgentEngine 的目录、详情和平台资源读取已由 Studio Node
+  Host 接管。无资源 `dsh-native` Agent 的官方 preset 窄准入已接入，资源型 Revision、云端合同、资源激活和
+  完整内存门禁仍未签收。
 
 ### 13.2 未完成且不能标绿
 
@@ -442,7 +447,7 @@ DSH profile 只保存本地扩展、模型提供商配置和 endpoint 配对信�
 | Agent 创建/编辑/Revision | 有基础页，server 全量合同未接完 | server Agent/Revision/Build 查询与回归测试 |
 | 知识库/记忆库/MCP/Skill 生命周期 | 入口和数据模型草案存在，CRUD/授权/审计未完 | ResourceCatalog golden + 真实 API E2E |
 | 云构建与部署 | UI 不再伪造成功，待接 DeploymentPort(buildId) | 构建、部署、回滚和幂等证据 |
-| 绑定 Agent 的流式会话 | DSH/provider 骨架已接，需验证 canonical list/replay/cancel | server transcript + DSH UI 截图与日志 |
+| 绑定 Agent 的流式会话 | 无资源 `dsh-native` 已走官方 preset registry 的会话级准入和首轮锁定；资源型 Revision 仍 fail-closed | 无资源 preset 的真实 Host selector/lock、资源型拒绝证据；资源执行还需 server transcript + DSH UI 日志 |
 | 评测、观测、Channel、Schedule | 归位已确定，端到端接线未完 | 一次 occurrence 单 owner 的 E2E |
 | 端云协同 | 未开始 | 配对、授权、lease、离线补放与审计 |
 
