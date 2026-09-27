@@ -79,6 +79,15 @@ test('operations pages expose the old Studio operational workflows', () => {
   assert.match(clientSource, /visibleConversations/);
   assert.match(clientSource, /evalsetPage/);
   assert.match(clientSource, /targetPage/);
+  assert.match(clientSource, /reference_match@v1/);
+  assert.match(clientSource, /失败时停止/);
+  assert.match(clientSource, /timeoutSeconds/);
+  assert.match(clientSource, /hostRemote\.agents\(\)/);
+  assert.match(clientSource, /按 Agent 筛选/);
+  assert.match(clientSource, /GetConnectQr/);
+  assert.match(clientSource, /扫码连接/);
+  assert.match(clientSource, /attributes/);
+  assert.match(clientSource, /resource/);
   assert.match(clientSource, /function OperationalPager/);
 });
 

@@ -2543,6 +2543,10 @@ window.__ModuleLoader__.load({
       const [createOpen, setCreateOpen] = useState(false);
       const [evalsetFile, setEvalsetFile] = useState('');
       const [target, setTarget] = useState('');
+      const [targetKind, setTargetKind] = useState('studio_build');
+      const [timeoutSeconds, setTimeoutSeconds] = useState('120');
+      const [failFast, setFailFast] = useState(false);
+      const [evaluators, setEvaluators] = useState(['response_contract@v1', 'runtime_budget@v1', 'tool_trajectory@v1']);
       const [creating, setCreating] = useState(false);
       const [message, setMessage] = useState('');
       const [evalsetUploading, setEvalsetUploading] = useState(false);
@@ -2591,7 +2595,17 @@ window.__ModuleLoader__.load({
         if (!evalsetFile.trim() || !target.trim() || creating) return;
         setCreating(true); setMessage('');
         try {
-          await hostRemote.createEvaluation({ evalsetFile: evalsetFile.trim(), target: { kind: 'studio_build', locator: target.trim() }, config: { dataPolicy: 'local_only', evaluators: ['response_contract@v1', 'runtime_budget@v1', 'tool_trajectory@v1'] } }, `studio-evaluation-${Date.now()}`);
+          if (!evaluators.length) throw new Error('至少选择一个评估器');
+          await hostRemote.createEvaluation({
+            evalsetFile: evalsetFile.trim(),
+            target: { kind: targetKind, locator: target.trim() },
+            config: {
+              timeoutSeconds: Math.max(1, Number(timeoutSeconds) || 120),
+              failFast,
+              dataPolicy: 'local_only',
+              evaluators,
+            },
+          }, `studio-evaluation-${Date.now()}`);
           setCreateOpen(false); setMessage('评测已提交，正在读取运行记录。'); await load();
         } catch (reason) { setError(reason?.message || '评测创建失败'); }
         finally { setCreating(false); }
@@ -2620,8 +2634,16 @@ window.__ModuleLoader__.load({
         { id: 'target', label: '目标', cell: row => operationalLabel(row?.target, row?.target?.kind || '—') },
         { id: 'status', label: '状态', cell: row => operationalStatus(row?.status) },
         { id: 'progress', label: '结果', cell: row => row?.summary ? `${row.summary.passedCases ?? 0} / ${row.summary.totalCases ?? 0} 通过` : row?.progress ? `${row.progress.current ?? 0} / ${row.progress.total ?? 0}` : '等待开始' },
+        { id: 'duration', label: '耗时', cell: row => row?.durationMs == null ? '—' : `${row.durationMs} ms` },
         { id: 'createdAt', label: '创建时间', cell: row => operationalDate(row?.createdAt) },
       ];
+      const evaluatorOptions = [
+        ['response_contract@v1', '响应契约'],
+        ['runtime_budget@v1', '运行预算'],
+        ['tool_trajectory@v1', '工具轨迹'],
+        ['reference_match@v1', '参考答案匹配'],
+      ];
+      const targetKindLabel = targetKind === 'a2a' ? 'Agent 地址' : targetKind === 'local_source' ? 'Agent 源码目录' : 'Build';
       const selectedDetail = selected ? h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, overflow: 'hidden' } },
         h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', padding: '12px 14px', borderBottom: '1px solid ' + BRAND.border } },
           h('strong', null, `评测详情 · ${operationalId(selected)}`),
@@ -2641,10 +2663,20 @@ window.__ModuleLoader__.load({
         status === 'error' ? h(EmptyState, { icon: '!', title: '评测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
         status === 'ready' ? h(React.Fragment, null,
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
-          createOpen ? h('form', { onSubmit: startCreate, style: { display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1fr) minmax(170px,.7fr) auto', gap: '10px', alignItems: 'end', border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginBottom: '14px' } },
-            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'EvalSet 文件路径', h('input', { value: evalsetFile, onChange: event => setEvalsetFile(event.target.value), placeholder: '.agentkit/evaluations/example.yaml', style: inputStyle(), required: true }), h('input', { type: 'file', accept: '.yaml,.yml,.json', onChange: importEvalset, disabled: evalsetUploading, style: { ...inputStyle(), marginTop: '6px', padding: '6px' } }), evalsetUploading ? h('span', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, '正在导入…') : null),
-            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Build 目标', h('select', { value: target, onChange: event => setTarget(event.target.value), style: inputStyle(), required: true }, h('option', { value: '' }, '选择可用 Build'), targets.map(item => h('option', { key: operationalId(item), value: operationalId(item) }, `${operationalLabel(item, operationalId(item))} · ${operationalId(item)}`)))),
-            h('button', { type: 'submit', disabled: creating, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, creating ? '提交中…' : '开始评测')) : null,
+          createOpen ? h('form', { onSubmit: startCreate, style: { display: 'grid', gap: '14px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface, marginBottom: '14px' } },
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(180px, .8fr)', gap: '12px' } },
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'EvalSet 文件', h('input', { value: evalsetFile, onChange: event => setEvalsetFile(event.target.value), placeholder: '.agentkit/evaluations/example.yaml', style: inputStyle(), required: true }), h('input', { type: 'file', accept: '.yaml,.yml,.json', onChange: importEvalset, disabled: evalsetUploading, style: { ...inputStyle(), marginTop: '6px', padding: '6px' } }), evalsetUploading ? h('span', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, '正在导入…') : null),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '评测目标类型', h('select', { value: targetKind, onChange: event => { setTargetKind(event.target.value); setTarget(''); }, style: inputStyle() }, h('option', { value: 'studio_build' }, 'Studio Build'), h('option', { value: 'a2a' }, 'A2A Agent'), h('option', { value: 'local_source' }, '本地源码')))),
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 180px 180px', gap: '12px', alignItems: 'end' } },
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, targetKindLabel, targetKind === 'studio_build'
+                ? h('select', { value: target, onChange: event => setTarget(event.target.value), style: inputStyle(), required: true }, h('option', { value: '' }, '选择可用 Build'), targets.map(item => h('option', { key: operationalId(item), value: operationalId(item) }, `${operationalLabel(item, operationalId(item))} · ${operationalId(item)}`)))
+                : h('input', { value: target, onChange: event => setTarget(event.target.value), placeholder: targetKind === 'a2a' ? 'https://agent.example.test/a2a' : '.', style: inputStyle(), required: true })),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '超时（秒）', h('input', { type: 'number', min: 1, max: 3600, value: timeoutSeconds, onChange: event => setTimeoutSeconds(event.target.value), style: inputStyle(), required: true })),
+              h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', minHeight: '36px', color: BRAND.ink, fontSize: '12px', fontWeight: 700 } }, h('input', { type: 'checkbox', checked: failFast, onChange: event => setFailFast(event.target.checked) }), h('span', null, '失败时停止'))),
+            h('fieldset', { style: { border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', margin: 0 } },
+              h('legend', { style: { padding: '0 5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '评估器（至少选择一个）'),
+              h('div', { style: { display: 'flex', gap: '10px 18px', flexWrap: 'wrap' } }, evaluatorOptions.map(([id, label]) => h('label', { key: id, style: { display: 'inline-flex', alignItems: 'center', gap: '6px', color: BRAND.ink, fontSize: '12px' } }, h('input', { type: 'checkbox', checked: evaluators.includes(id), onChange: event => setEvaluators(current => event.target.checked ? [...new Set([...current, id])] : current.filter(item => item !== id)) }), label)))),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: () => setCreateOpen(false), style: { ...buttonStyle(), background: BRAND.surface } }, '取消'), h('button', { type: 'submit', disabled: creating || !evaluators.length, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, creating ? '提交中…' : '开始评测'))) : null,
           h(StudioPageTabs, { value: tab, onChange: next => { setTab(next); setPage(0); if (next === 'sets') setEvalsetPage(0); if (next === 'targets') setTargetPage(0); }, items: [{ id: 'runs', label: '运行记录' }, { id: 'sets', label: `评测集 ${evalsets.length}` }, { id: 'targets', label: `评测目标 ${targets.length}` }], ariaLabel: '评测视图' }),
           tab === 'runs' ? h(React.Fragment, null,
             h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' }, h('input', { value: filter, onChange: event => { setFilter(event.target.value); setPage(0); }, placeholder: '搜索任务、目标或状态', 'aria-label': '搜索评测运行', style: { ...inputStyle(), maxWidth: '280px' } }), h('select', { value: runFilter, onChange: event => { setRunFilter(event.target.value); setPage(0); }, 'aria-label': '评测状态筛选', style: { ...inputStyle(), width: '120px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'active' }, '进行中'), h('option', { value: 'passed' }, '已通过'), h('option', { value: 'attention' }, '需关注')), h(Pill, { tone: 'neutral' }, `${filteredRuns.length} 条运行`)),
@@ -2661,11 +2693,14 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('');
       const [overview, setOverview] = useState(null);
       const [traces, setTraces] = useState([]);
+      const [agents, setAgents] = useState([]);
       const [range, setRange] = useState('24h');
       const [query, setQuery] = useState('');
+      const [agentFilter, setAgentFilter] = useState('all');
       const [statusFilter, setStatusFilter] = useState('all');
       const [page, setPage] = useState(0);
       const [selected, setSelected] = useState(null);
+      const [selectedSpan, setSelectedSpan] = useState(null);
       const [detailTab, setDetailTab] = useState('spans');
       const [raw, setRaw] = useState(null);
       const [detailLoading, setDetailLoading] = useState(false);
@@ -2679,14 +2714,16 @@ window.__ModuleLoader__.load({
         const result = await Promise.allSettled([
           hostRemote.tracesOverview(`range=${encodeURIComponent(range)}`),
           hostRemote.traces(qs.toString()),
+          hostRemote.agents(),
         ]);
-        if (result.every(item => item.status === 'rejected')) {
+        if (result.slice(0, 2).every(item => item.status === 'rejected')) {
           setStatus('error');
           setError(result[0].reason?.message || '观测 Host 不可用');
           return;
         }
         setOverview(result[0].status === 'fulfilled' ? result[0].value : null);
         setTraces(result[1].status === 'fulfilled' ? operationalCollection(result[1].value, ['items', 'traces']) : []);
+        setAgents(result[2].status === 'fulfilled' ? operationalCollection(result[2].value, ['items', 'agents']) : []);
         setStatus('ready');
         if (result.some(item => item.status === 'rejected')) setError('部分观测数据暂不可用。');
       };
@@ -2699,18 +2736,22 @@ window.__ModuleLoader__.load({
           .toLowerCase();
         const state = String(trace?.status || '').toUpperCase();
         const statusMatch = statusFilter === 'all' || (statusFilter === 'active' ? ['RUNNING', 'PENDING', 'QUEUED'].includes(state) : statusFilter === 'failed' ? ['FAILED', 'ERROR', 'INTERRUPTED'].includes(state) : ['SUCCEEDED', 'COMPLETED', 'SUCCESS'].includes(state));
-        return statusMatch && (!query.trim() || haystack.includes(query.trim().toLowerCase()));
+        const traceAgentId = String(trace?.agentId || trace?.AgentId || '');
+        return statusMatch && (agentFilter === 'all' || traceAgentId === agentFilter) && (!query.trim() || haystack.includes(query.trim().toLowerCase()));
       });
       const rows = filtered.slice(page * pageSize, (page + 1) * pageSize);
 
       const openTrace = async trace => {
         const id = operationalId(trace);
         setSelected(trace);
+        setSelectedSpan(null);
         setRaw(null);
         setDetailTab('spans');
         setDetailLoading(true);
         try {
-          setSelected(await hostRemote.trace(id));
+          const detail = await hostRemote.trace(id);
+          setSelected(detail);
+          setSelectedSpan(detail?.spans?.[0] || null);
         } catch (reason) {
           setError(reason?.message || 'Trace 详情读取失败');
         } finally {
@@ -2751,21 +2792,27 @@ window.__ModuleLoader__.load({
               ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(raw, null, 2))
               : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '点击读取原始 OTLP。'))
         : detailTab === 'events'
-          ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.events || selected?.event || [], null, 2))
-          : detailTab === 'trajectory'
-            ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.trajectory || selected?.toolCalls || selected?.spans || [], null, 2))
-          : h('div', { style: { display: 'grid', gap: '8px', maxHeight: '32vh', overflow: 'auto' } },
-              (selected?.spans || []).map((span, index) => h(
-                'div',
-                {
-                  key: operationalId(span, String(index)),
-                  style: { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '9px 10px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '10px' },
-                },
-                h('div', null,
-                  h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, span?.name || span?.spanName || 'Span'),
-                  h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${span?.spanId || span?.id || '—'} · ${span?.durationMs ?? '—'} ms`)),
-                operationalStatus(span?.status || 'completed'),
-              )));
+          ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selectedSpan?.events || selected?.events || selected?.event || [], null, 2))
+          : detailTab === 'attributes'
+            ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selectedSpan?.attributes || {}, null, 2))
+            : detailTab === 'resource'
+              ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.resource || selected?.scope || {}, null, 2))
+              : detailTab === 'trajectory'
+                ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.trajectory || selected?.toolCalls || selected?.spans || [], null, 2))
+                : h('div', { style: { display: 'grid', gap: '8px', maxHeight: '32vh', overflow: 'auto' } },
+                    (selected?.spans || []).map((span, index) => h(
+                      'button',
+                      {
+                        key: operationalId(span, String(index)),
+                        type: 'button',
+                        onClick: () => setSelectedSpan(span),
+                        style: { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '9px 10px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '10px', textAlign: 'left', color: BRAND.ink, background: selectedSpan === span ? BRAND.accentSoft : BRAND.surface, cursor: 'pointer' },
+                      },
+                      h('div', null,
+                        h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, span?.name || span?.spanName || 'Span'),
+                        h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${span?.spanId || span?.id || '—'} · ${span?.durationMs ?? '—'} ms`)),
+                      operationalStatus(span?.status || 'completed'),
+                    )));
 
       const traceDetail = selected
         ? h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, overflow: 'hidden' } },
@@ -2776,7 +2823,7 @@ window.__ModuleLoader__.load({
               detailLoading
                 ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取 Span…')
                 : h(React.Fragment, null,
-                    h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'events', label: '事件' }, { id: 'trajectory', label: '轨迹' }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
+                    h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'attributes', label: '属性' }, { id: 'events', label: '事件' }, { id: 'resource', label: '资源' }, { id: 'trajectory', label: '轨迹' }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
                     detailContent)))
         : null;
 
@@ -2798,6 +2845,7 @@ window.__ModuleLoader__.load({
           h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' },
             h('input', { value: query, onChange: event => { setQuery(event.target.value); setPage(0); }, placeholder: '搜索 Trace、Run、Session 或 Agent', style: { ...inputStyle(), maxWidth: '300px' } }),
             h('select', { value: range, onChange: event => { setRange(event.target.value); setPage(0); }, style: { ...inputStyle(), width: '110px' } }, h('option', { value: '24h' }, '24 小时'), h('option', { value: '7d' }, '7 天')),
+            h('select', { value: agentFilter, onChange: event => { setAgentFilter(event.target.value); setPage(0); }, 'aria-label': '按 Agent 筛选', style: { ...inputStyle(), width: '170px' } }, h('option', { value: 'all' }, '全部 Agent'), agents.map(item => h('option', { key: operationalId(item), value: operationalId(item) }, operationalLabel(item, operationalId(item))))),
             h('select', { value: statusFilter, onChange: event => { setStatusFilter(event.target.value); setPage(0); }, 'aria-label': '观测状态筛选', style: { ...inputStyle(), width: '110px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'active' }, '进行中'), h('option', { value: 'success' }, '已完成'), h('option', { value: 'failed' }, '失败')),
             h(Pill, { tone: 'neutral' }, `${filtered.length} 条 Trace`)),
           h(OperationalTable, { columns, rows, empty: '还没有 Trace。完成一次真实 Agent 运行后，Trace 会出现在这里。', onRowClick: openTrace }),
@@ -2820,6 +2868,7 @@ window.__ModuleLoader__.load({
       const [saving, setSaving] = useState(false);
       const [actionBusy, setActionBusy] = useState('');
       const [channelEditor, setChannelEditor] = useState(null);
+      const [channelQr, setChannelQr] = useState(null);
       const [channelForm, setChannelForm] = useState({ AgentId: '', ConnectorWorkspaceId: '', Channel: 'wps-xiezuo', ChannelAccountId: '', DmPolicy: 'pairing', GroupPolicy: 'allowlist', RequireMention: true, SessionScope: 'per-peer', Enabled: true, ConfigJson: '{}' });
       const [channelSaving, setChannelSaving] = useState(false);
       const [channelPage, setChannelPage] = useState(0);
@@ -2890,6 +2939,18 @@ window.__ModuleLoader__.load({
         try { await hostRemote.channelAction('DeleteChannel', { Id: id }); await load(); }
         catch (reason) { setError(reason?.message || '渠道删除失败'); }
         finally { setActionBusy(''); }
+      };
+      const openChannelQr = async channel => {
+        const id = operationalId(channel);
+        if (!id) return;
+        setChannelQr({ loading: true, channel, url: '', label: '', error: '' });
+        try {
+          const response = await hostRemote.channelAction('GetConnectQr', { Id: id });
+          const data = response?.Data || response?.data || response || {};
+          setChannelQr({ loading: false, channel, url: data.QrUrl || data.qrUrl || data.Url || data.url || '', label: data.Label || data.label || '', error: '' });
+        } catch (reason) {
+          setChannelQr({ loading: false, channel, url: '', label: '', error: reason?.message || '获取连接地址失败' });
+        }
       };
       const deleteBinding = async binding => {
         const id = operationalId(binding);
@@ -2998,8 +3059,11 @@ window.__ModuleLoader__.load({
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '会话范围', h('select', { value: channelForm.SessionScope, onChange: event => setChannelForm({ ...channelForm, SessionScope: event.target.value }), style: inputStyle() }, h('option', { value: 'per-peer' }, '按用户'), h('option', { value: 'per-group' }, '按群聊'))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '7px', paddingTop: '22px' } }, h('input', { type: 'checkbox', checked: channelForm.Enabled, onChange: event => setChannelForm({ ...channelForm, Enabled: event.target.checked }) }), '启用渠道')),
             h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'submit', disabled: channelSaving, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, channelSaving ? '保存中…' : '保存渠道'))) : null,
+          channelQr ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginBottom: '14px' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' } }, h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, `连接渠道 · ${channelLabel(channelQr.channel)}`), h('button', { type: 'button', onClick: () => setChannelQr(null), style: { ...buttonStyle(), background: BRAND.surface } }, '关闭')),
+            channelQr.loading ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: '12px 0 0' } }, '正在读取连接地址…') : channelQr.error ? h('p', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px', margin: '12px 0 0' } }, channelQr.error) : channelQr.url ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '12px' } }, h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, channelQr.label || '请打开下面的连接地址完成渠道授权。'), h('a', { href: channelQr.url, target: '_blank', rel: 'noreferrer', style: { color: BRAND.accentStrong, fontSize: '12px', wordBreak: 'break-all' } }, channelQr.url)) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: '12px 0 0' } }, 'Host 未返回连接地址。')) : null,
           h(StudioPageTabs, { value: tab, onChange: next => { setTab(next); if (next === 'channels') setChannelPage(0); if (next === 'pairings') setPairingPage(0); if (next === 'bindings') setBindingPage(0); if (next === 'messages') setMessagePage(0); }, items: [{ id: 'channels', label: `渠道 ${channels.length}` }, { id: 'pairings', label: `配对 ${pairings.length}` }, { id: 'bindings', label: `绑定 ${bindings.length}` }, { id: 'messages', label: `消息 ${messages.length}` }], ariaLabel: 'Channels 管理视图' }),
-          tab === 'channels' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => h('div', null, h('strong', null, `${channelLabel(row)} · ${row?.ChannelAccountId || row?.channelAccountId || '—'}`), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) }, { id: 'agent', label: '绑定 Agent', cell: row => row?.AgentId || row?.agentId || '未绑定' }, { id: 'policy', label: '策略', cell: row => `${row?.DmPolicy || row?.dmPolicy || '—'} / ${row?.GroupPolicy || row?.groupPolicy || '—'}` }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Enabled ?? row?.enabled ? 'enabled' : 'disabled') }, { id: 'action', label: '操作', cell: row => h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: event => { event.stopPropagation(); openChannelEditor(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '编辑'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteChannel(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '删除')) }], rows: visibleChannels, empty: '还没有渠道配置，请先保存连接并创建渠道。' }), h(OperationalPager, { page: channelPage, pageSize: channelPageSize, total: channels.length, onChange: setChannelPage })) : null,
+          tab === 'channels' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => h('div', null, h('strong', null, `${channelLabel(row)} · ${row?.ChannelAccountId || row?.channelAccountId || '—'}`), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) }, { id: 'agent', label: '绑定 Agent', cell: row => row?.AgentId || row?.agentId || '未绑定' }, { id: 'policy', label: '策略', cell: row => `${row?.DmPolicy || row?.dmPolicy || '—'} / ${row?.GroupPolicy || row?.groupPolicy || '—'}` }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Enabled ?? row?.enabled ? 'enabled' : 'disabled') }, { id: 'action', label: '操作', cell: row => h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } }, ['feishu', 'wecom'].includes(String(row?.Channel || row?.channel).toLowerCase()) ? h('button', { type: 'button', onClick: event => { event.stopPropagation(); void openChannelQr(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '扫码连接') : null, h('button', { type: 'button', onClick: event => { event.stopPropagation(); openChannelEditor(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '编辑'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteChannel(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '删除')) }], rows: visibleChannels, empty: '还没有渠道配置，请先保存连接并创建渠道。' }), h(OperationalPager, { page: channelPage, pageSize: channelPageSize, total: channels.length, onChange: setChannelPage })) : null,
           tab === 'pairings' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'sender', label: '申请人', cell: row => h('strong', null, row?.SenderName || row?.senderName || row?.SenderId || '—') }, { id: 'channel', label: '渠道', cell: row => `${channelLabel(row)} · ${row?.ChannelAccountId || '—'}` }, { id: 'chat', label: '会话', cell: row => row?.ChatType || row?.chatType || row?.PeerId || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.Status || row?.status) }, { id: 'action', label: '操作', cell: row => String(row?.Status || row?.status).toLowerCase() === 'pending' ? h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void pairingAction(operationalId(row), 'ApprovePairing'); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '通过'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void pairingAction(operationalId(row), 'RejectPairing'); }, style: { ...buttonStyle(), padding: '5px 8px', background: BRAND.surface } }, '拒绝')) : '—' }], rows: visiblePairings, empty: '没有待处理的配对请求。' }), h(OperationalPager, { page: pairingPage, pageSize: channelSecondaryPageSize, total: pairings.length, onChange: setPairingPage })) : null,
           tab === 'bindings' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'channel', label: '渠道', cell: row => `${channelLabel(row)} · ${row?.ChannelAccountId || '—'}` }, { id: 'agent', label: 'Agent', cell: row => row?.AgentId || row?.agentId || '—' }, { id: 'peer', label: '对端', cell: row => row?.PeerId || row?.peerId || '—' }, { id: 'session', label: 'Session', cell: row => h('div', null, h('span', null, row?.SessionId || row?.sessionId || '未关联'), activeTakeovers[operationalId(row)] ? h(Pill, { tone: 'signal' }, '已接管') : null) }, { id: 'createdAt', label: '更新时间', cell: row => operationalDate(row?.UpdatedAt || row?.updatedAt || row?.CreatedAt) }, { id: 'action', label: '操作', cell: row => h('div', { style: { display: 'flex', gap: '5px', flexWrap: 'wrap' } }, h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void updateBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '编辑会话'), activeTakeovers[operationalId(row)] ? h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void releaseBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '释放接管') : h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void takeoverBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px' } }, '接管'), h('button', { type: 'button', disabled: actionBusy === operationalId(row), onClick: event => { event.stopPropagation(); void deleteBinding(row); }, style: { ...buttonStyle(), padding: '5px 8px', color: BRAND.danger, background: BRAND.surface } }, '解除绑定')) }], rows: visibleBindings, empty: '没有会话绑定；用户完成渠道配对后会出现在这里。' }), h(OperationalPager, { page: bindingPage, pageSize: channelSecondaryPageSize, total: bindings.length, onChange: setBindingPage })) : null,
           tab === 'messages' ? h(React.Fragment, null, messageWorkspace, h(OperationalPager, { page: messagePage, pageSize: channelSecondaryPageSize, total: conversations.length, onChange: next => { setMessagePage(next); setSelectedConversationId(''); } })) : null,
