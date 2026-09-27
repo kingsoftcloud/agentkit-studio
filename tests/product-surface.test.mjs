@@ -93,6 +93,18 @@ test('operations pages expose the old Studio operational workflows', () => {
   assert.match(clientSource, /function OperationalPager/);
 });
 
+test('operational pages keep the old Studio hierarchy without stacked duplicate headers', () => {
+  assert.match(clientSource, /function OperationalPageHeading/);
+  assert.match(clientSource, /function OperationalPanel/);
+  assert.match(clientSource, /function OperationalBars/);
+  assert.match(clientSource, /运行趋势/);
+  assert.match(clientSource, /DSH 原生会话自动化 \$\{nativeTasks.length\} · 展开查看/);
+  assert.match(clientSource, /连接配置 · 点击设置/);
+  assert.match(clientSource, /配对请求 \$\{pairings.length\}/);
+  assert.match(clientSource, /会话绑定 \$\{bindings.length\}/);
+  assert.match(clientSource, /消息记录 \$\{messages.length\}/);
+});
+
 test('Studio marketplace exposes the old Studio plugin lifecycle through Host routes', () => {
   assert.match(clientSource, /hostRemote\.installDshPlugin/);
   assert.match(clientSource, /hostRemote\.enableDshPlugin/);

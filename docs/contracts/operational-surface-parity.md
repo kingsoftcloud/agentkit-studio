@@ -1,5 +1,9 @@
 # 运营工作台与旧版 Studio 对齐记录
 
+> 本轮 UI 对照更新：2026-09-28。旧版参考实现位于
+> `ksadk-python/ksadk/studio/react-ui/src/pages/`；下面的“当前插件实现”描述的是
+> AgentKit Studio 通过 Host/API 的真实投影，不把旧版的本地状态存储复制进插件。
+
 本记录用于逐项核对旧版 `ksadk-python/ksadk/studio/react-ui/src/pages/` 与
 `agentkit-studio` 插件的四个运营页面。页面继续使用 AgentKit Studio 的外观和 DSH
 左侧导航；数据、写操作和错误状态均来自 Host/API，不用静态演示数据代替真实结果。
@@ -13,6 +17,15 @@
 | 观测 | 时间范围、Agent/状态筛选、Trace 列表分页、Span/属性/事件/资源/轨迹/Raw OTLP、Session 导出 | 聚合指标、24 小时/7 天、Agent/状态筛选、Trace 分页、Span 选择、属性/事件/资源/轨迹/Raw OTLP、Session 导出 | 没有 Trace 时显示真实空态；详情读取失败不能伪造 Span |
 | 评测 | EvalSet 文件导入、A2A/源码/Build 目标、超时、失败即停、评估器选择、运行筛选、运行详情的用例/断言/轨迹 | EvalSet 导入、三类目标、超时、失败即停、四种评估器、运行/评测集/目标分页、运行详情摘要/用例/断言/轨迹 | `createEvaluation` 使用幂等键；运行状态、结果和目标目录来自 Host |
 
+## 本轮版式和交互收口
+
+- 四个页面都使用单层文档头：运行中心外壳提供全局标题，页面正文只保留标题、说明和动作；不再在正文重复 `Studio domain / …` 的第二个大标题。
+- 二级页签继续使用旧版 Studio 的下划线样式。Channels 页签明确显示渠道、配对请求、会话绑定和消息记录的真实条数，切换页签会重置对应分页。
+- Channels 的连接配置是可展开面板；已保存时首屏显示配置状态，凭证字段仍由 Host 管理。渠道表、配对审批、绑定接管/释放和消息会话均保留独立分页。
+- 自动化的 DSH 原生会话目录改为折叠面板，Host Scheduler 任务仍显示看板/列表、筛选、详情和 occurrence 历史；不会把两套调度存储混在一起。
+- 观测页增加由 Trace Store 返回的 24 小时时间桶趋势；没有桶数据时不绘制估算图。评测详情增加真实运行摘要卡，再展开用例、断言和轨迹。
+- 所有列表仍使用真实 Host 空态、错误态和刷新动作。页面高度由内容决定；表格内部滚动，窄视口使用横向滚动，不用固定大空白填充视口。
+
 ## 版式约束
 
 - 页面标题只由运行中心外壳显示一次，子页面使用说明行和旧 Studio 的下划线二级页签。
@@ -24,9 +37,10 @@
 
 ## 仍依赖外部合同的项目
 
-1. Channel 二维码需要 Connector 实现 `GetConnectQr`；没有该 Action 时只展示明确的 Host 错误，不生成假二维码。
+1. Channel 二维码需要 Connector 实现 `GetConnectQr`；没有该 Action 时只展示明确的 Host 错误，不生成假二维码。当前插件展示 Connector 返回的连接地址，二维码图像由 Connector/Host 决定。
 2. 观测指标和 Trace 内容需要 Runtime 上报；没有上报的耗时、Token 和 Span 显示“未上报”。
 3. 评测运行器由 Host/Server 执行；插件不在浏览器内执行 evaluator，也不把静态数字当成结果。
+4. 旧版评测详情中的“取消运行”按钮没有对应的公开 Host Action，因此当前插件不会伪造取消请求；待 Host 发布取消合同后再接入。
 
 ## 验证
 
