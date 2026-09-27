@@ -64,8 +64,8 @@ function presentedData(value) {
   return value;
 }
 
-function dshContent(part) {
-  if (part.content_type === 'text') return { type: 'text', text: part.text ?? '' };
+function dshContent(part, { reasoning = false } = {}) {
+  if (part.content_type === 'text') return { type: reasoning ? 'reasoning' : 'text', text: part.text ?? '' };
   if (part.content_type === 'json') return { type: 'text', text: JSON.stringify(part.value) };
   if (part.content_type === 'tool_call') {
     return {
@@ -188,7 +188,9 @@ function payload(event, mappedType = dshType(event)) {
     data.message = {
       id: event.item_id,
       role: 'assistant',
-      content: contentParts(event).map(dshContent),
+      content: contentParts(event).map(part => dshContent(part, {
+        reasoning: event.item_kind === 'reasoning',
+      })),
       source: { kind: 'model', provider: 'ksadk', model: 'agentkit-studio' },
     };
     delete data.item_id;
@@ -318,6 +320,70 @@ export class CanonicalDshSessionAdapter {
 
   wireSnapshot(snapshot) {
     return this.projectSnapshot(snapshot).events.map(event => this.wireEvent(event));
+  }
+
+  /**
+   * Build the DSH Client event window. Durable canonical events stay ordinary
+   * `event` entries; an unsettled item.updated text delta is a Client-only
+   * `assistant/live-chunk` transient. Those frames must never be emitted by
+   * wireSnapshot(), because they do not belong in the durable Session journal.
+   */
+  clientSnapshot(snapshot) {
+    const projected = this.projectSnapshot(snapshot);
+    const events = (Array.isArray(snapshot.events) ? snapshot.events : [])
+      .map(item => item?.event ?? item)
+      .sort((left, right) => left.seq - right.seq);
+    const completedItems = new Set(events
+      .filter(event => event.event_type === 'item.completed' && typeof event.item_id === 'string')
+      .map(event => event.item_id));
+    const entries = projected.events.map(event => ({ type: 'event', event: this.wireEvent(event) }));
+    const terminalRuns = new Set();
+    let transientIndex = 0;
+    for (const event of events) {
+      const terminal = ['run.completed', 'run.failed', 'run.canceled', 'run.interrupted']
+        .includes(event.event_type);
+      const lateAfterTerminal = terminalRuns.has(event.run_id);
+      if (!lateAfterTerminal
+        && event.event_type === 'item.updated'
+        && (event.item_kind === 'message' || event.item_kind === 'reasoning')
+        && event.update?.content_type === 'text'
+        && typeof event.item_id === 'string'
+        && !completedItems.has(event.item_id)) {
+        const { turn, step } = coordinate(event);
+        const text = event.update.text ?? '';
+        const chunk = {
+          type: event.item_kind === 'reasoning' ? 'reasoning-delta' : 'text-delta',
+          index: transientIndex,
+          text,
+        };
+        // Fractional cursors are the official DSH representation for rows
+        // between durable sequence numbers. They preserve order without
+        // pretending a transient frame is a journal event.
+        entries.push({
+          type: 'transient',
+          event: {
+            type: 'assistant/live-chunk',
+            seq: event.seq + 0.5,
+            time: timeMs(event.timestamp),
+            data: {
+              attemptId: `${event.run_id}:${event.item_id}`,
+              turn,
+              step,
+              chunk,
+            },
+          },
+        });
+        transientIndex += 1;
+      }
+      if (terminal) terminalRuns.add(event.run_id);
+    }
+    entries.sort((left, right) => left.event.seq - right.event.seq);
+    return {
+      session_id: projected.session_id,
+      watermark: projected.watermark,
+      entries,
+      hasMore: snapshot.hasMore === true || snapshot.has_more === true,
+    };
   }
 }
 

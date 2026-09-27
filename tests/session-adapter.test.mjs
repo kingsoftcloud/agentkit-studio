@@ -141,3 +141,32 @@ test('snapshot watermark must cover the event tail', () => {
   const adapter = new CanonicalDshSessionAdapter();
   assert.throws(() => adapter.projectSnapshot({ ...p1Matrix, watermark: 19 }), /watermark must cover/);
 });
+
+test('reasoning remains reasoning in the official assistant message', () => {
+  const adapter = new CanonicalDshSessionAdapter();
+  const reasoning = adapter.wireSnapshot(p1Matrix).find(event => event.seq === 7);
+  assert.deepEqual(reasoning.data.message.content, [{ type: 'reasoning', text: 'inspect' }]);
+});
+
+test('unsettled text and reasoning reach the client window as transient chunks', () => {
+  const adapter = new CanonicalDshSessionAdapter();
+  const snapshot = { ...p1Matrix, watermark: 6, events: p1Matrix.events.slice(0, 7) };
+  const window = adapter.clientSnapshot(snapshot);
+  assert.equal(window.watermark, 6);
+  const chunks = window.entries.filter(entry => entry.type === 'transient');
+  // Completed answer deltas must not be replayed alongside the final message.
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].event.type, 'assistant/live-chunk');
+  assert.deepEqual(chunks[0].event.data.chunk, { type: 'reasoning-delta', index: 0, text: 'inspect' });
+  // Durable wire output must never contain client-only frames.
+  assert.ok(adapter.wireSnapshot(snapshot).every(event => event.type !== 'assistant/live-chunk'));
+});
+
+test('an unsettled assistant message uses a text delta until it settles', () => {
+  const adapter = new CanonicalDshSessionAdapter();
+  const snapshot = { ...p1Matrix, watermark: 3, events: p1Matrix.events.slice(0, 4) };
+  const chunks = adapter.clientSnapshot(snapshot).entries
+    .filter(entry => entry.type === 'transient')
+    .map(entry => entry.event.data.chunk);
+  assert.deepEqual(chunks, [{ type: 'text-delta', index: 0, text: 'The answer is ready.' }]);
+});
