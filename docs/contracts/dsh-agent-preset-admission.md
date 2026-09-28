@@ -1,6 +1,6 @@
 # DSH rc.2 Agent preset admission audit
 
-> 状态：窄合同已补齐，并已落地一个受限的无资源 dsh-native 准入闭环。资源型 Agent 的动态执行仍未签收。本文记录公开接缝和停止条件，不能用来验收“绑定了模型、MCP、Skill、知识库或记忆库后这些资源已经生效”。
+> 状态：窄合同已补齐，并已落地一个受限的 dsh-native 准入闭环：模型绑定必须与 DSH 当前活动路由一致，系统 Prompt 通过官方 persona row 挂载；MCP、Skill、Tool、知识库和记忆库等资源型执行仍未签收。本文记录公开接缝和停止条件，不能用来验收这些资源已经生效。
 
 ## 1. 已确认的官方公开边界
 
@@ -21,25 +21,26 @@ ctx.sessions.create({ cwd, sessionId?, workspaceId?, agentPreset? })
 
 - DSH Client feature 可以使用类型安全的 `ctx.sessions.create({ agentPreset })`，不必绕过公开 Remote 或拼接未声明的 RPC。
 - Session 创建事实仍由 DSH Host 持久化；preset projection、锁定首轮后的切换拒绝、`agent-preset/selected` 事件继续由官方 registry 负责。
-- 这条边界适合静态 profile preset 和后续正式的 Studio admission/provider 实现，也适合先做一个最小“无资源 DSH Native Agent”验证。
+- 这条边界适合静态 profile preset 和后续正式的 Studio admission/provider 实现，也适合先做一个最小“当前 DSH 模型路由 + Agent Prompt”的真实 DSH Native Agent 验证。
 
 ## 3. 当前 Studio 实现的边界
 
-Studio Host 现在通过 `agents/ensure-preset` 使用公开 `ctx.agentPresets.register({ id, name, description, plugins: [] })` 注册一个稳定的、按 Agent Revision 版本化的 preset；浏览器只在官方 session-scoped `conversation.hero.agentPreset` 槽位中调用 `ctx.remote.agentPresets.select(sessionId, presetId)`。首轮之后 DSH 自己锁定 preset，Studio 不注入 InputHub、SessionCommandController，也不维护第二套会话状态。
+Studio Host 现在通过 `agents/ensure-preset` 使用公开 `ctx.agentPresets.register` 注册一个稳定的、按 Agent Revision 版本化的 preset；对有系统 Prompt 的准入 Revision 挂载官方 `@deepseek-ai/dsh-persona` row。浏览器只在官方 session-scoped `conversation.hero.agentPreset` 槽位中调用 `ctx.remote.agentPresets.select(sessionId, presetId)`。首轮之后 DSH 自己锁定 preset，Studio 不注入 InputHub、SessionCommandController，也不维护第二套会话状态。
 
 这条链只接受同时满足以下条件的 Revision：
 
 - runtime 是 `dsh-native`；
-- 没有模型、Tool、MCP、Skill、知识库、记忆库或其他插件绑定；
+- 最多一个模型绑定，且模型 id 必须与 Studio 全局配置解析出的 DSH 当前活动模型一致；
+- 不含 Tool、MCP、Skill、知识库、记忆库或其他插件绑定；
 - DSH Host 已提供 `agentPresets` registry 和公开 Remote。
 
-不满足条件时 Host 返回 typed error（`DSH_PRESET_REGISTRY_UNAVAILABLE`、`STUDIO_PRESET_RUNTIME_UNSUPPORTED` 或 `STUDIO_PRESET_RESOURCE_UNSUPPORTED`），浏览器保留“无 Agent · DSH 原生会话”，不会把默认 DSH loop 冒充成 Studio Agent。这个最小闭环只证明 Agent Revision 的会话准入与锁定，不证明 Agent 的模型提示或资源执行。
+不满足条件时 Host 返回 typed error（`DSH_PRESET_REGISTRY_UNAVAILABLE`、`STUDIO_PRESET_RUNTIME_UNSUPPORTED` 或 `STUDIO_PRESET_RESOURCE_UNSUPPORTED`），浏览器保留“无 Agent · DSH 原生会话”，不会把默认 DSH loop 冒充成 Studio Agent。当前已验证模型路由一致时系统 Prompt 会通过 persona row 进入 DSH composition；这仍不证明资源执行。
 
 ## 4. 仍然没有解决的事情
 
 ### 4.1 Studio Agent ID 不是 DSH preset ID
 
-AgentKit Studio 的 Agent Catalog、Revision 和资源绑定在 KsADK server 侧；DSH Host 的 preset roster 来自本地 profile 的 Cordis composition。除了上面的无资源窄准入以外，当前没有一个公开合同把：
+AgentKit Studio 的 Agent Catalog、Revision 和资源绑定在 KsADK server 侧；DSH Host 的 preset roster 来自本地 profile 的 Cordis composition。除了上面的模型路由一致窄准入以外，当前没有一个公开合同把：
 
 ```text
 Studio AgentRevision → DSH PresetDefinition → session/create.agentPreset
@@ -53,7 +54,7 @@ Studio Revision 中的模型白名单、MCP、Skill、知识库和记忆库是 K
 
 ### 4.3 资源型 selector 仍不能验收真实执行
 
-当前 Studio 对话页对无资源 dsh-native Revision 已经调用 Host 准入和 `agentPresets.select`；资源型 Revision 仍会在准入阶段被拒绝。2026-09-28 使用 rc.2 本地 Host 的真实 Agent `resource-lifecycle-agent-e193611841b2`（Revision 4，含 model、MCP、Skill 和 platform plugin 绑定）复核了这一拒绝，证据见 [`rc2-resource-agent-admission-failclosed-2026-09-28.json`](../../../.scratch/studio-dsh-native-2026-09-24/rc2-resource-agent-admission-failclosed-2026-09-28.json)。因此以下结果都不能验收绑定资源后的 Agent 执行：
+当前 Studio 对话页对模型路由一致的 dsh-native Revision 已经调用 Host 准入和 `agentPresets.select`；资源型 Revision 仍会在准入阶段被拒绝。2026-09-28 使用 rc.2 本地 Host 的真实 Agent `resource-lifecycle-agent-e193611841b2`（Revision 4，含 model、MCP、Skill 和 platform plugin 绑定）复核了这一拒绝，证据见 [`rc2-resource-agent-admission-failclosed-2026-09-28.json`](../../../.scratch/studio-dsh-native-2026-09-24/rc2-resource-agent-admission-failclosed-2026-09-28.json)。因此以下结果都不能验收绑定资源后的 Agent 执行：
 
 - 下拉框显示了 Agent 名称；
 - DSH 原生会话能正常回显；

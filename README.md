@@ -33,9 +33,10 @@ Host 继续执行。
   资源库不选择 Agent，也不写 Agent Revision；绑定关系只在创建页或编辑页提交，和 Revision
   一起保存、审计和回滚。
 - **对话**：不选择 Agent 也能走 DSH 原生循环；选择已创建 Agent 后打开绑定对话，绑定
-  Agent 的流式会话由 Host canonical conversation 接口承载。当前 DSH 官方 Composer 尚未
-  提供把任意 Studio Revision 动态映射为 preset 的公共 admission/provider 合同，因此
-  不能把顶部“候选智能体”选择器当作已切换执行器的证据。
+  Agent 的流式会话由 Host canonical conversation 接口承载。当前公开准入先支持
+  `dsh-native` 且模型绑定与 DSH 当前活动路由完全一致的 Revision；其系统 Prompt 通过官方
+  `@deepseek-ai/dsh-persona` preset row 生效。带 MCP、Skill、Tool、知识库或记忆库的 Revision
+  仍会 typed fail-closed，不能把下拉框显示当作这些资源已经执行的证据。
 - **运行中心**：构建、部署、评测、观测、Channel 和自动化都通过 Host/AgentEngine Server
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
 - **插件市场**：分别管理 DSH 与 Codex 原生插件。Codex Runtime 创建失败并出现“Codex
