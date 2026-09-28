@@ -19,6 +19,8 @@
 - 修正 Agent 卡片的模型、MCP、Skill、Tool、知识库、记忆库和 Skill Center 计数。
 - 明确未选择 Agent 的对话继续走 DSH 原生会话，避免把候选 Agent 选择误显示为已经切换执行器。
 - 将 DSH 宿主兼容补丁按 `patches/dsh-v<version>/` 隔离，补充基线校验、应用顺序和删除条件。
+- 将远端默认分支统一为 `master`，删除重复的 `main` 分支；维护中的 `src/` 和 `scripts/`
+  JavaScript 源文件统一纳入 1000 行门禁。
 
 ### 已知限制
 
