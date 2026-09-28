@@ -106,9 +106,9 @@ Studio 自动恢复全局配置，也不会让两个项目的同名 Agent、Sess
 
 ## 补丁维护
 
-`patches/dsh-0.1.7-rc.1-hero-brand-name.patch` 仅适用于固定 commit
-`46a7f68b0922371ce7144b668b90e377d8e799f4`。它增加一个 slot、保留默认标题和徽标，并增加替换测试；不改输入框、会话控制器或执行循环。
+`patches/dsh-v0.1.7-rc.2/` 保存固定 DSH `0.1.7-rc.2` 的有序补丁集，基线为 commit
+`477b4f420553e8a52c2fbccc464d7561b239c443`。补丁只覆盖品牌 fallback、思考态/输入占位文案和动态侧栏生命周期，不改输入框、会话控制器或执行循环。
 
-替代方式（覆盖 locale namespace、DOM/CSS 隐藏、复制 Hero/Conversation）会导致冲突或扩大维护面，未采用。上游提供等价品牌 slot 后删除此补丁，Studio 注册迁移到官方接口；每次升级复跑 fallback、品牌替换、输入框保留和浏览器重启检查。
+补丁按版本目录隔离；不同 DSH 版本不得共用或覆盖同一目录。上游提供等价公开扩展点后删除对应补丁，Studio 注册迁移到官方接口；每次升级复跑 fallback、品牌替换、输入框保留和浏览器重启检查。
 
-恢复构建：在固定 DSH checkout 执行 `git apply --check <patch>`、`git apply <patch>`，随后运行 `pnpm --filter @deepseek-ai/dsh-client-ui-conversation bundle`。已应用的 checkout 不应重复应用。
+恢复构建：阅读 `patches/dsh-v0.1.7-rc.2/README.md`，先执行所有补丁的 `git apply --check`，再按数字顺序应用并运行 Web/Desktop 构建。已应用的 checkout 不应重复应用。

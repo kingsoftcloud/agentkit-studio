@@ -44,6 +44,7 @@ Agent 的普通对话由所连接的运行时执行。
 ## 本地开发
 
 环境要求：Node.js `>=22.19.0`、pnpm、官方 DSH `dsh-v0.1.7-rc.2` checkout。
+新同事从零配置请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；仓库内不依赖任何个人绝对路径。
 
 ```sh
 # 插件自身检查（语法、合同测试、产品表面测试）
@@ -51,6 +52,13 @@ make check
 
 # 打包 npm tarball（版本来自 package.json）
 make pack
+
+# 把打包后的插件安装到指定 DSH profile（会修改 DSH_HOME）
+make profile-install DSH_ROOT=/path/to/deepseek-harness
+
+# 检查/应用当前 DSH 版本目录中的宿主兼容补丁
+make patch-check DSH_ROOT=/path/to/deepseek-harness
+make patch-apply DSH_ROOT=/path/to/deepseek-harness
 
 # 对真实 DSH node-store 做 Host smoke
 make verify-dsh DSH_ROOT=/path/to/deepseek-harness
@@ -77,6 +85,14 @@ make desktop-build DSH_ROOT=/path/to/deepseek-harness
 `apps/desktop/.env.macos` 填写本机签名/发布配置；缺少该文件时会主动拒绝打包，避免生成
 不可发布的假包。
 
+新 checkout 没有 DSH profile 时，先执行 `make profile-install`；`make web-dev` 不会隐式修改
+用户的 DSH_HOME。官方 DSH checkout、Node/pnpm、profile 安装和 macOS 签名配置仍是宿主层
+前置条件，不能仅靠 npm tarball 自动获得。
+
+宿主兼容补丁按 `patches/dsh-v<version>/` 隔离。每个目录包含固定基线、应用顺序、删除条件和
+补丁清单；升级 DSH 时必须新建版本目录并重新执行 `git apply --check`，禁止把不同版本的
+补丁平铺在同一个目录。
+
 ## 配置来源
 
 Studio Node Host 默认读取 `~/.agentkit/config.yaml`，也支持 `AGENTKIT_HOME` 指定目录。项目
@@ -101,6 +117,7 @@ Host/Server 合同和真实凭证验收为准。
 - `src/index.mjs`：DSH Host 插件入口和 AgentEngine Server 控制通道。
 - `src/host-remote.mjs`：Host API 与 AgentEngine Server Action 客户端。
 - `docs/`：架构、合同、复用清单和验收证据。
+- `CONTRIBUTING.md`：可分发的协作开发、profile 安装和发布前门禁。
 - `Makefile`：Web、桌面开发、打包和 CI 入口。
 - `.github/workflows/ci.yml`：无凭证 CI 检查。
 

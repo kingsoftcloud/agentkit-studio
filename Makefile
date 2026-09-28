@@ -9,8 +9,13 @@ DSH_PROFILE ?= agentkit-studio
 DSH_HOST ?= 127.0.0.1
 DSH_WEB_PORT ?= 3098
 PACK_DIR ?= .artifacts
+DSH_VERSION ?= 0.1.7-rc.2
+DSH_COMMIT ?= 477b4f420553e8a52c2fbccc464d7561b239c443
+PATCH_ROOT ?= $(abspath patches/dsh-v$(DSH_VERSION))
+PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
+PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
 
-.PHONY: check test pack verify-dsh verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check test pack profile-install patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-check-package ci clean
@@ -24,6 +29,30 @@ test:
 pack:
 	mkdir -p "$(PACK_DIR)"
 	pnpm pack --pack-destination "$(PACK_DIR)"
+
+# Install the packed plugin into a DSH profile. This is intentionally
+# explicit: it mutates DSH_HOME and must not happen as a side effect of a
+# read-only check or a normal package build.
+profile-install: pack
+	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
+	@test -f "$(PLUGIN_TARBALL)" || (echo "插件包不存在：$(PLUGIN_TARBALL)" >&2; exit 2)
+	@profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
+	if test ! -f "$$profile_dir/package.json"; then \
+		(cd "$(DSH_ROOT)" && pnpm dsh --profile "$(DSH_PROFILE)" --from-default-profile web --dump-config >/dev/null); \
+	fi
+	cd "$(DSH_ROOT)" && pnpm dsh plugin --profile "$(DSH_PROFILE)" add "file:$(PLUGIN_TARBALL)"
+
+# Patches are versioned host compatibility inputs, not runtime source. Check
+# the exact DSH baseline and a clean checkout before applying any of them.
+patch-check:
+	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
+	@test -d "$(PATCH_ROOT)" || (echo "补丁目录不存在：$(PATCH_ROOT)" >&2; exit 2)
+	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是 $(DSH_VERSION) 基线 $(DSH_COMMIT)" >&2; exit 2)
+	@test -z "$$(git -C "$(DSH_ROOT)" status --porcelain)" || (echo "DSH checkout 有未提交改动；请先清理或使用独立 checkout" >&2; exit 2)
+	@set -e; for patch in "$(PATCH_ROOT)"/*.patch; do git -C "$(DSH_ROOT)" apply --check "$$patch"; done
+
+patch-apply: patch-check
+	@set -e; for patch in "$(PATCH_ROOT)"/*.patch; do git -C "$(DSH_ROOT)" apply "$$patch"; done
 
 verify-dsh:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
@@ -43,7 +72,7 @@ web-build:
 # contain this plugin and any optional provider packages.
 web-dev:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-}" pnpm dsh --profile "$(DSH_PROFILE)" web --host "$(DSH_HOST)" --no-open --port "$(DSH_WEB_PORT)"
+	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-}" pnpm dsh --profile "$(DSH_PROFILE)" --host "$(DSH_HOST)" --no-open --port "$(DSH_WEB_PORT)"
 
 web-start: web-dev
 
