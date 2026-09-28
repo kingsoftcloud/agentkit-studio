@@ -10,7 +10,8 @@
 - 官方 DSH `0.1.7-rc.2`，commit `477b4f420553e8a52c2fbccc464d7561b239c443`
 - macOS DMG 还需要 DSH Desktop 的签名、公证和发布配置；普通 Web/Node 检查不需要云端密钥
 
-仓库不复制 DSH 源码。通过环境变量指定官方 checkout 和用户数据目录：
+Studio 基于公开 DSH 源码和扩展合同二次开发，但本仓库不复制 DSH 源码；运行和宿主验证需要
+固定版本的官方 checkout。通过环境变量指定官方 checkout 和用户数据目录：
 
 ```sh
 export DSH_ROOT=/path/to/deepseek-harness
@@ -69,7 +70,8 @@ make check
 make pack
 git diff --check
 
-# 无需 DSH checkout 的完整插件发布门禁
+# 只验证 Studio 包本身的完整发布门禁（不启动 DSH 宿主）
+make patch-format-check
 make release-check
 ```
 

@@ -5,8 +5,8 @@ Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和
 可以选择官方 DSH，也可以选择 Studio 内置的独立 Harness provider。
 
 当前首个公开可复现版本为 **0.0.1**，固定验证基线为 **DSH v0.1.7-rc.2**（commit
-`477b4f420553e8a52c2fbccc464d7561b239c443`）。插件不复制 DSH 源码，也不包含 Python
-运行时。
+`477b4f420553e8a52c2fbccc464d7561b239c443`）。Studio 基于 DSH 的公开宿主和扩展合同二次开发；
+仓库不复制 DSH 源码，也不包含 Python 运行时。
 
 ## 是否必须安装 DSH 桌面端
 
@@ -60,6 +60,7 @@ make profile-install DSH_ROOT=/path/to/deepseek-harness
 make profile-check
 
 # 检查/应用当前 DSH 版本目录中的宿主兼容补丁
+make patch-format-check
 make patch-check DSH_ROOT=/path/to/deepseek-harness
 make patch-apply DSH_ROOT=/path/to/deepseek-harness
 
@@ -141,6 +142,7 @@ Host/Server 合同和真实凭证验收为准。
 make release-check
 ```
 
-这条命令不需要官方 DSH checkout，会执行 82 个本地合同测试、生成 0.0.1 tarball、检查
-manifest/导出/rc.2 补丁和个人路径泄漏，再执行 `git diff --check`。然后审阅
+这条命令只验证 Studio 包本身，不启动 DSH 宿主；会执行 82 个本地合同测试、检查 rc.2 补丁均为
+标准 unified diff、生成 0.0.1 tarball、检查 manifest/导出和个人路径泄漏，再执行
+`git diff --check`。然后审阅
 `CHANGELOG.md`，再在 macOS 发布机上补跑 DSH Host、App package closure、签名和公证门禁。

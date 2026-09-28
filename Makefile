@@ -18,7 +18,7 @@ DESKTOP_PLUGIN_BUNDLES ?= @kingsoftcloud/agentkit-studio
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
 
-.PHONY: check test pack release-check profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check test pack release-check patch-format-check profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package ci clean
@@ -33,9 +33,12 @@ pack:
 	mkdir -p "$(PACK_DIR)"
 	pnpm pack --pack-destination "$(PACK_DIR)"
 
-release-check: check pack
+release-check: check patch-format-check pack
 	node scripts/check-package.mjs "$(PLUGIN_TARBALL)"
 	git diff --check
+
+patch-format-check:
+	node scripts/check-patch-format.mjs "$(PATCH_ROOT)"
 
 # Install the packed plugin into a DSH profile. This is intentionally
 # explicit: it mutates DSH_HOME and must not happen as a side effect of a
