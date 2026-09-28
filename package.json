@@ -25,6 +25,7 @@
     "src/brand.js",
     "assets",
     "studio.plugin.json",
+    "CHANGELOG.md",
     "docs",
     "tests",
     "scripts",

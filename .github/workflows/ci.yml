@@ -17,8 +17,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
-      - run: pnpm pack --pack-destination .artifacts
+      - run: make release-check
 
   dsh-node-store:
     if: ${{ vars.DSH_CHECKOUT != '' }}

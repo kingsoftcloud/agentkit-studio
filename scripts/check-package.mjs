@@ -1,0 +1,39 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
+
+const archive = process.argv[2];
+if (!archive) {
+  console.error('usage: node scripts/check-package.mjs <tarball>');
+  process.exit(2);
+}
+
+const tarball = resolve(archive);
+const list = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' })
+  .split(/\r?\n/).filter(Boolean);
+const files = new Set(list.map(path => path.replace(/^package\//, '')));
+const read = path => execFileSync('tar', ['-xOzf', tarball, `package/${path}`], { encoding: 'utf8' });
+const packageJson = JSON.parse(read('package.json'));
+const manifest = JSON.parse(read('studio.plugin.json'));
+const expected = [
+  'package.json', 'studio.plugin.json', 'README.md', 'CHANGELOG.md',
+  'src/index.mjs', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
+  'scripts/build-client.mjs', 'docs/studio-dsh-native-architecture.md',
+  'patches/dsh-v0.1.7-rc.2/README.md',
+];
+const missing = expected.filter(path => !files.has(path));
+if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);
+if (packageJson.name !== '@kingsoftcloud/agentkit-studio') throw new Error(`unexpected package name: ${String(packageJson.name)}`);
+if (!/^\d+\.\d+\.\d+$/.test(String(packageJson.version))) throw new Error(`package version must be stable semver: ${String(packageJson.version)}`);
+if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.version) throw new Error('plugin manifest identity/version does not match package.json');
+if (manifest.requiredDsh !== '0.1.7-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
+if (packageJson.private !== true) throw new Error('package.json must remain private until registry publication is approved');
+
+for (const path of list) {
+  if (!path.startsWith('package/') || path.endsWith('/')) continue;
+  const body = execFileSync('tar', ['-xOzf', tarball, path], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  if (/\/Users\/|\/home\/[^/]+\/|file:\/\/\/Users\//.test(body)) throw new Error(`package contains a personal absolute path: ${path}`);
+  if (/AGENTKIT_MODEL_API_KEY\s*[:=]\s*['"]?[A-Za-z0-9_-]{12,}/.test(body)) throw new Error(`package contains a model credential-looking value: ${path}`);
+}
+
+console.log(`package integrity: ${basename(tarball)} (${files.size} files) passed`);

@@ -66,6 +66,9 @@ DMG 目标只能在 macOS 上运行，并且按官方 DSH 规则读取
 make check
 make pack
 git diff --check
+
+# 无需 DSH checkout 的完整插件发布门禁
+make release-check
 ```
 
 涉及官方 DSH 或浏览器的改动还要记录 `make verify-dsh`、profile smoke 和对应的真实浏览器

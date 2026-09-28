@@ -131,7 +131,9 @@ Host/Server 合同和真实凭证验收为准。
 版本信息同时写入 `package.json`、`studio.plugin.json` 和运行时品牌信息。发布前运行：
 
 ```sh
-make ci
+make release-check
 ```
 
-然后审阅 `CHANGELOG.md`，再提交并推送到 AgentKit Studio 远程仓库。
+这条命令不需要官方 DSH checkout，会执行 80 个本地合同测试、生成 0.0.1 tarball、检查
+manifest/导出/rc.2 补丁和个人路径泄漏，再执行 `git diff --check`。然后审阅
+`CHANGELOG.md`，再在 macOS 发布机上补跑 DSH Host、App package closure、签名和公证门禁。
