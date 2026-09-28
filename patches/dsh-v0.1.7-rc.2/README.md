@@ -37,5 +37,12 @@ done
 | `003-generated-locale-brand.patch` | 移除 DSH 默认 Hero 品牌文案 | 上游提供稳定品牌 slot 并覆盖所有 fallback locale |
 | `004-sidebar-panel-lifecycle.patch` | 修复动态面板注册后的侧栏选择 | 上游侧栏生命周期修复进入发布版本 |
 | `005-studio-fallback-brand.patch` | 宿主启动慢时不闪现 DSH Hero 品牌 | 上游 fallback 已提供产品级品牌扩展点 |
+| `006-desktop-plugin-package-set.patch` | 让官方 Desktop package-set 接受额外的 Studio tarball，并把 Studio bundle 写入内置 Profile | 上游支持外部产品 bundle 的 Desktop package-set/profile 配置 |
+
+`006-desktop-plugin-package-set.patch` 应用后，Studio 的 macOS 目标会把
+`DESKTOP_PLUGIN_INPUTS` 目录中的 tarball 作为 package-set 根包，并用
+`DSH_DESKTOP_PLUGIN_ROOTS` / `DSH_DESKTOP_PLUGIN_BUNDLES` 写入运行时 Profile。Studio
+Makefile 的四个 macOS package 目标会先检查这个补丁确实已应用；未应用时主动失败，避免
+生成不含 Studio 的桌面包。默认构建仍不会偷偷修改 DSH checkout。
 
 每个补丁都应在对应 DSH 升级时重新执行 `git apply --check`、Web/Desktop 构建和品牌/会话 smoke；上游具备等价能力后删除补丁，不保留“永久 patch”。

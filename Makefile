@@ -12,13 +12,16 @@ PACK_DIR ?= .artifacts
 DSH_VERSION ?= 0.1.7-rc.2
 DSH_COMMIT ?= 477b4f420553e8a52c2fbccc464d7561b239c443
 PATCH_ROOT ?= $(abspath patches/dsh-v$(DSH_VERSION))
+DESKTOP_PLUGIN_INPUTS ?= $(abspath $(PACK_DIR))
+DESKTOP_PLUGIN_ROOTS ?= @kingsoftcloud/agentkit-studio
+DESKTOP_PLUGIN_BUNDLES ?= @kingsoftcloud/agentkit-studio
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
 
-.PHONY: check test pack release-check profile-install patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check test pack release-check profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
-        desktop-package-mac-x64-dir desktop-check-package ci clean
+        desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package ci clean
 
 check:
 	pnpm check
@@ -45,6 +48,15 @@ profile-install: pack
 		(cd "$(DSH_ROOT)" && pnpm dsh --profile "$(DSH_PROFILE)" --from-default-profile web --dump-config >/dev/null); \
 	fi
 	cd "$(DSH_ROOT)" && pnpm dsh plugin --profile "$(DSH_PROFILE)" add "file:$(PLUGIN_TARBALL)"
+	@profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
+		node scripts/check-profile.mjs "$$profile_dir" "$(PLUGIN_VERSION)"
+
+# Verify a previously installed profile without mutating DSH_HOME. PROFILE_DIR
+# can point at an unpacked release profile when checking a Desktop build.
+profile-check:
+	@profile_dir="$(PROFILE_DIR)"; \
+		if test -z "$$profile_dir"; then profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; fi; \
+		node scripts/check-profile.mjs "$$profile_dir" "$(PLUGIN_VERSION)"
 
 # Patches are versioned host compatibility inputs, not runtime source. Check
 # the exact DSH baseline and a clean checkout before applying any of them.
@@ -96,21 +108,29 @@ desktop-start:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
 	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-}" pnpm run start:desktop
 
-desktop-package-mac-arm64:
-	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && pnpm run package:desktop:mac:arm64
+desktop-package-preflight: pack
+	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
+	@test -f "$(DSH_ROOT)/apps/desktop/scripts/prepare-package-set.ts" \
+		&& grep -q "DSH_DESKTOP_PLUGIN_INPUTS" "$(DSH_ROOT)/apps/desktop/scripts/prepare-package-set.ts" \
+		&& grep -q "DSH_DESKTOP_PLUGIN_BUNDLES" "$(DSH_ROOT)/apps/desktop/src/project-manager.ts" \
+		|| (echo "DSH rc.2 desktop plugin package-set patch 未应用；先执行 make patch-apply DSH_ROOT=..." >&2; exit 2)
+	@test -f "$(PLUGIN_TARBALL)" || (echo "插件包不存在：$(PLUGIN_TARBALL)" >&2; exit 2)
 
-desktop-package-mac-arm64-dir:
+desktop-package-mac-arm64: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && pnpm run package:desktop:mac:arm64:dir
+	cd "$(DSH_ROOT)" && DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:arm64
 
-desktop-package-mac-x64:
+desktop-package-mac-arm64-dir: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && pnpm run package:desktop:mac:x64
+	cd "$(DSH_ROOT)" && DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:arm64:dir
 
-desktop-package-mac-x64-dir:
+desktop-package-mac-x64: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && pnpm run package:desktop:mac:x64:dir
+	cd "$(DSH_ROOT)" && DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:x64
+
+desktop-package-mac-x64-dir: desktop-package-preflight
+	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
+	cd "$(DSH_ROOT)" && DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:x64:dir
 
 desktop-check-package:
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS package checks must run on macOS" >&2; exit 2)

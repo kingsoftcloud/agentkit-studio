@@ -25,11 +25,13 @@ pnpm install --frozen-lockfile
 make check
 make pack
 make profile-install DSH_ROOT="$DSH_ROOT"
+make profile-check
 make web-dev DSH_ROOT="$DSH_ROOT"
 ```
 
 `profile-install` 会在缺少 profile 时从官方 `web` 模板初始化一个独立 profile，再安装
-Studio tarball；它是有副作用的显式步骤。`web-dev` 启动后会打印带短期 token 的 URL，使用
+Studio tarball，并自动校验 bundle 与安装文件。`profile-check` 是可单独运行的只读门禁，也可用
+`PROFILE_DIR=/path/to/profile make profile-check` 检查解包后的发布 Profile。`web-dev` 启动后会打印带短期 token 的 URL，使用
 该 URL 打开浏览器。
 
 ## DSH 补丁
@@ -52,9 +54,9 @@ make desktop-build DSH_ROOT="$DSH_ROOT"
 make desktop-start DSH_ROOT="$DSH_ROOT"
 ```
 
-这些目标构建或启动官方 DSH 宿主。Studio 插件 tarball 不会自动进入 DSH Desktop 的内置
-runtime；桌面发布流程必须把该 tarball 纳入发布 profile/package set，并由发布流水线验证
-品牌和插件加载。
+这些目标构建或启动官方 DSH 宿主。`make desktop-package-mac-arm64[-dir]` 和 x64 对应目标
+会先检查 `006-desktop-plugin-package-set.patch` 已应用，然后把 Studio tarball 纳入发布
+Profile/package set；否则目标会主动失败。构建后的品牌和插件加载仍需发布流水线验证。
 
 DMG 目标只能在 macOS 上运行，并且按官方 DSH 规则读取
 `$DSH_ROOT/apps/desktop/.env.macos`。该文件应从 `.env.macos.example` 生成，不能提交到仓库。

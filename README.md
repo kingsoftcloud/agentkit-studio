@@ -56,6 +56,9 @@ make pack
 # 把打包后的插件安装到指定 DSH profile（会修改 DSH_HOME）
 make profile-install DSH_ROOT=/path/to/deepseek-harness
 
+# 只读校验 Profile 确实声明并安装了当前版本插件
+make profile-check
+
 # 检查/应用当前 DSH 版本目录中的宿主兼容补丁
 make patch-check DSH_ROOT=/path/to/deepseek-harness
 make patch-apply DSH_ROOT=/path/to/deepseek-harness
@@ -80,12 +83,16 @@ make desktop-build DSH_ROOT=/path/to/deepseek-harness
 桌面启动时必须由某个 DSH Host 加载它。`make desktop-start` 使用已经生成的官方桌面构建，
 `make desktop-package-mac-arm64` / `make desktop-package-mac-x64` 调用官方 DSH 的 macOS
 打包脚本；本地只想验证 `.app` 目录时使用对应的 `*-dir` 目标，使用
-`make desktop-check-package` 做包内容检查。macOS 签名、公证和发布版本仍由 DSH Desktop
+`make desktop-check-package` 做包内容检查。四个 macOS package 目标会先要求应用当前
+rc.2 的 `006-desktop-plugin-package-set.patch`，再将 Studio tarball 纳入 Desktop package
+set 和内置 Profile；没有这个补丁会直接失败。macOS 签名、公证和发布版本仍由 DSH Desktop
 的发布配置负责。官方打包脚本要求先在 DSH checkout 的
 `apps/desktop/.env.macos` 填写本机签名/发布配置；缺少该文件时会主动拒绝打包，避免生成
 不可发布的假包。
 
-新 checkout 没有 DSH profile 时，先执行 `make profile-install`；`make web-dev` 不会隐式修改
+新 checkout 没有 DSH profile 时，先执行 `make profile-install`；安装结束会自动执行
+`profile-check`，核对 Profile bundle、安装包、插件 manifest、DSH 基线和运行文件。
+`make web-dev` 不会隐式修改
 用户的 DSH_HOME。官方 DSH checkout、Node/pnpm、profile 安装和 macOS 签名配置仍是宿主层
 前置条件，不能仅靠 npm tarball 自动获得。
 
@@ -134,6 +141,6 @@ Host/Server 合同和真实凭证验收为准。
 make release-check
 ```
 
-这条命令不需要官方 DSH checkout，会执行 80 个本地合同测试、生成 0.0.1 tarball、检查
+这条命令不需要官方 DSH checkout，会执行 82 个本地合同测试、生成 0.0.1 tarball、检查
 manifest/导出/rc.2 补丁和个人路径泄漏，再执行 `git diff --check`。然后审阅
 `CHANGELOG.md`，再在 macOS 发布机上补跑 DSH Host、App package closure、签名和公证门禁。
