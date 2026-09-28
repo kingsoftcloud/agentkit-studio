@@ -11,6 +11,8 @@
 - 模型与云端凭证支持全局 `~/.agentkit` 配置，默认提供商为金山云模型服务，并提供 API Key 控制台入口。
 - 插件市场接入 DSH 与 Codex 原生插件的安装、启用、停用、更新和卸载操作。
 - 新增 Makefile、中文 README、无凭证 CI，以及 Web 和 macOS Desktop 的官方宿主开发/打包入口。
+- 新增 `make dsh-bootstrap`，从公开 GitHub 固定 rc.2 tag 准备 DSH checkout；发布门禁增加
+  版本补丁格式校验，CI 会实际拉取固定 DSH 并运行两个官方 node-store probe。
 
 ### 修正
 
