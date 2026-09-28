@@ -135,7 +135,7 @@ Host/Server 合同和真实凭证验收为准。
 - `docs/`：架构、合同、复用清单和验收证据。
 - `CONTRIBUTING.md`：可分发的协作开发、profile 安装和发布前门禁。
 - `Makefile`：Web、桌面开发、打包和 CI 入口。
-- `.github/workflows/ci.yml`：无凭证 CI 检查。
+- `.github/workflows/ci.yml`：Studio 包门禁，以及从 DSH 公网固定 rc.2 checkout 运行的 node-store probe。
 
 ## 发布
 
