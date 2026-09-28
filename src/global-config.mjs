@@ -49,6 +49,7 @@ function normalizeProfiles(value) {
     baseUrl: scalar(profile.baseUrl) || scalar(profile.baseURL) || '',
     credentialName: scalar(profile.credentialName) || '',
     enabled: profile.enabled !== false,
+    ...(Array.isArray(profile.input) ? { input: [...new Set(profile.input.filter(item => ['text', 'image'].includes(item)))] } : {}),
   })).filter(profile => profile.modelName);
 }
 
@@ -100,13 +101,18 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
     for (const [source, layer] of layers) for (const [key, value] of Object.entries(layer)) {
       if (value) { values[key] = value; sources[key] = source; }
     }
+    // Resolve keys after merging layers so workspace profiles can reuse global
+    // credentials, and environment overrides retain their documented precedence.
+    if (values.modelProfiles) values.modelProfiles = values.modelProfiles.map(profile => ({ ...profile,
+      apiKey: scalar(env[profile.credentialName]) || scalar(values.modelProfileKeys?.[profile.credentialName]) || (profile.credentialName === 'AGENTKIT_MODEL_API_KEY' ? values.modelApiKey : '') || '',
+    }));
     return { values, sources };
   }
   async function describe() {
     const { values, sources } = await resolve();
     return {
       modelProvider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash',
-      modelProfiles: (values.modelProfiles?.length ? values.modelProfiles : [{ id: 'default', provider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash', baseUrl: values.modelBaseUrl || 'http://kspmas.ksyun.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY', enabled: true }]).map(({ apiKey, ...profile }) => ({ ...profile, credentialConfigured: Boolean(apiKey) })),
+      modelProfiles: (values.modelProfiles?.length ? values.modelProfiles : [{ id: 'default', provider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash', baseUrl: values.modelBaseUrl || 'http://kspmas.ksyun.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY', enabled: true, apiKey: values.modelApiKey }]).map(({ apiKey, ...profile }) => ({ ...profile, credentialConfigured: Boolean(apiKey) })),
       modelBaseUrl: values.modelBaseUrl || 'http://kspmas.ksyun.com/v1',
       cloudRegion: values.cloudRegion || 'cn-beijing-6',
       cloudServerUrl: values.cloudServerUrl || 'https://aicp.api.ksyun.com',

@@ -134,7 +134,8 @@
             const document = await dshModel.describe();
             const defaultNamespace = (document.namespaces || []).find(item => item.ns === DSH_DEFAULT_MODEL_SETTINGS_NS);
             const defaultValue = defaultNamespace?.value || defaultNamespace?.user || {};
-            if (defaultValue?.model === active.modelName && defaultValue?.provider) return;
+            // Reconcile the full catalog, including credentials/modalities and removed rows.
+            // A matching default model alone does not prove synchronization.
             await dshModel.applyProfiles({ profiles, keys: {} });
           } catch (reason) {
             // DSH remains usable when the optional Studio Host is offline;

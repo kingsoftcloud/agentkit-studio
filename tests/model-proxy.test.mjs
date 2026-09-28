@@ -19,7 +19,7 @@ test('Responses request preserves multimodal input and maps Kspmas-compatible fi
   assert.deepEqual(result.messages[0], { role: 'system', content: 'You are concise.' });
   assert.deepEqual(result.messages[1].content, [
     { type: 'text', text: 'What is in this image?' },
-    { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA', detail: 'high' } },
   ]);
   assert.equal(result.max_tokens, 128);
   assert.equal(result.reasoning_effort, 'high');
@@ -71,4 +71,21 @@ test('stream transformer keeps interleaved tool calls independent', () => {
   assert.match(second + last, /"arguments":"\{\}"/);
   assert.match(second + last, /"arguments":"\{\\"x\\":1\}"/);
   assert.match(last, /response\.completed/);
+});
+
+test('Responses stream announces items before deltas and keeps final output, usage and image detail', () => {
+  const request = responsesToChat({ model: 'vision', input: [{ role: 'user', content: [{ type: 'input_image', image_url: 'data:image/png;base64,AA', detail: 'high' }] }] });
+  assert.equal(request.messages[0].content[0].image_url.detail, 'high');
+  const t = createResponsesStreamTransformer({ id: 'resp-complete', model: 'vision' });
+  const wire = t.handle({ choices: [{ delta: { content: 'Hi' } }] })
+    + t.handle({ choices: [{ delta: { content: '!' }, finish_reason: 'length' }], usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } }) + t.finish();
+  const events = wire.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
+  const added = events.findIndex(e => e.type === 'response.output_item.added');
+  const delta = events.findIndex(e => e.type === 'response.output_text.delta');
+  assert.ok(added >= 0 && added < delta);
+  assert.equal(events[delta].output_index, 0);
+  const final = events.at(-1).response;
+  assert.equal(final.status, 'incomplete');
+  assert.equal(final.output[0].content[0].text, 'Hi!');
+  assert.equal(final.usage.total_tokens, 6);
 });

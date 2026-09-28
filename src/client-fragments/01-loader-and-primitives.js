@@ -155,7 +155,7 @@ window.__ModuleLoader__.load({
       }
       async function syncModelCredential() {
         if (!connection?.rpc?.call) return { configured: false, source: 'host-unavailable' };
-        const result = await connection.rpc.call('/agentkit', 'models/sync-credential', {});
+        const result = await connection.rpc.call('/agentkit', 'server/action', { action: 'models/sync-credential', payload: {} });
         if (!result?.ok) {
           const error = new Error(result?.error?.message || 'Studio 模型凭证同步失败');
           error.code = result?.error?.code || 'MODEL_CREDENTIAL_SYNC_FAILED';
@@ -163,13 +163,19 @@ window.__ModuleLoader__.load({
         }
         return result.value || { configured: false, source: 'missing' };
       }
+      async function studioCall(action, payload = {}) {
+        const result = await connection.rpc.call('/agentkit', 'server/action', { action, payload });
+        if (!result?.ok) throw Object.assign(new Error(result?.error?.message || 'Studio 请求失败'), { code: result?.error?.code });
+        return result.value;
+      }
       return {
         get baseUrl() { return baseUrl; },
         exchangeSession: ensureSession,
         health: () => directServer() ? Promise.resolve({ status: 'ok', source: 'agentengine-server', controlPlane: true }) : request('/api/v1/system/health'),
         bootstrap: () => directServer() ? Promise.resolve({ workspaceReady: true, source: 'agentengine-server' }) : request('/api/v1/system/bootstrap'),
-        settings: () => request('/api/v1/system/settings'),
-        updateSettings: payload => request('/api/v1/system/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+        settings: () => studioCall('settings/get'),
+        modelCatalog: profileId => studioCall('models/catalog', { profileId }),
+        updateSettings: payload => studioCall('settings/update', payload),
         runtimes: () => directServer()
           ? Promise.resolve({ items: [{ runtimeType: 'dsh-native', label: 'DSH Native Harness', source: 'dsh' }], source: 'dsh' })
           : request('/api/v1/catalog/runtimes'),

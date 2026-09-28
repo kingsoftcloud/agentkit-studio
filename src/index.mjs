@@ -12,7 +12,6 @@
  */
 import { registerAuthoringTools } from './authoring-tools.mjs';
 import { DshPresetAdmission } from './agent-preset-admission.mjs';
-import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 
 export const name = 'agentkit-studio';
 export const inject = ['connection', 'webServer', 'credentials'];
@@ -45,10 +44,8 @@ async function registerControlPlane(ctx) {
   // available on typed service contexts and is absent in the plain plugin
   // apply context used by the DSH loader.
   const credentials = ctx.get('credentials');
-  const syncModelCredential = async () => syncGlobalModelCredential({
-    configuration: await configurationPromise,
-    credentials,
-  });
+  const models = await import('./model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
+  const syncModelCredential = models.sync;
   // The DSH loader awaits an async plugin apply. Do this before returning from
   // activation so the first prompt cannot race the global ~/.agentkit key
   // being copied into the official credential service. The previous fire and
@@ -77,13 +74,16 @@ async function registerControlPlane(ctx) {
     getActiveModel: async () => (await configurationPromise).resolve(),
   });
   if (presetRegistry) presetAdmission.setRegistry(presetRegistry);
-  const allowed = new Set(['agents/list', 'agents/ensure-preset', 'models/sync-credential', 'server/action']);
+  const allowed = new Set(['agents/list', 'agents/ensure-preset', 'models/sync-credential', 'models/catalog', 'settings/get', 'settings/update', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
     }
     try {
       if (endpoint === 'models/sync-credential') return { ok: true, value: await syncModelCredential() };
+      if (endpoint === 'settings/get') return { ok: true, value: await models.settings() };
+      if (endpoint === 'settings/update') return { ok: true, value: await models.save(payload) };
+      if (endpoint === 'models/catalog') return { ok: true, value: await models.catalog(String(payload?.profileId || '')) };
       const serverClient = await serverClientPromise;
       // Agent catalog reads are now owned by the Studio Node host and call the
       // existing AgentEngine Action API directly. The DSH connection only
@@ -111,6 +111,10 @@ async function registerControlPlane(ctx) {
       if (endpoint === 'server/action') {
         const action = String(payload?.action || '');
         const body = payload?.payload && typeof payload.payload === 'object' ? payload.payload : {};
+        if (action === 'settings/get') return { ok: true, value: await models.settings() };
+        if (action === 'settings/update') return { ok: true, value: await models.save(body) };
+        if (action === 'models/catalog') return { ok: true, value: await models.catalog(String(body.profileId || '')) };
+        if (action === 'models/sync-credential') return { ok: true, value: await syncModelCredential() };
         if (action === 'GetAgent') {
           const value = await serverClient.getAgent(String(body.AgentId || body.agentId || ''));
           return { ok: true, value };
@@ -132,7 +136,10 @@ async function registerControlPlane(ctx) {
   // the plugin uses the same public Connection admission and WebServer route
   // boundary directly so this optional control plane can coexist with DSH's
   // single shared /api Typert interceptor.
+  const { createModelProxyHandler } = await import('./model-proxy-handler.mjs');
   ctx.inject(['connection', 'webServer'], (webCtx) => {
+    const modelRoute = webCtx.webServer.register({ kind: 'prefix', path: '/agentkit/models/', handler: createModelProxyHandler({ models, admit: request => webCtx.connection.admit(request) }) });
+    webCtx.effect(() => modelRoute, 'agentkit-studio: model compatibility route');
     const registration = webCtx.webServer.register({
       kind: 'prefix',
       path: CONTROL_CHANNEL,

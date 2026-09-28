@@ -312,6 +312,11 @@
         [data-agentkit-studio="product-application"] [data-studio-tabs] > button { flex: 0 0 auto; white-space: nowrap; }
         [data-agentkit-studio="product-application"] [data-studio-heading],
         [data-agentkit-studio="product-application"] [data-studio-content-intro] { flex-wrap: wrap; align-items: flex-start; }
+        [data-studio-model-settings] { container-type: inline-size; }
+        [data-studio-model-settings] input, [data-studio-model-settings] select { min-width: 0; box-sizing: border-box; }
+        @container (max-width: 540px) {
+          [data-studio-model-settings] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+        }
         @media (max-width: 960px) {
           [data-agentkit-studio="product-application"] > main { padding: 18px 16px 28px !important; }
           [data-agentkit-studio="product-application"] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
@@ -385,8 +390,8 @@
     const DSH_MODEL_CREDENTIAL = 'AGENTKIT_MODEL_API_KEY';
 
     /**
-     * Bridge Studio's product form to the DSH model contract. KsADK remains
-     * the source for Studio defaults and cloud credentials, but DSH chat only
+     * Publish Studio model profiles through the public DSH model contract.
+     * Studio owns global defaults and cloud credentials; DSH chat only
      * sees providers registered through its own settings/credentials Remotes.
      * Keeping this bridge on the public Remote surface avoids a second model
      * catalog or a browser-owned chat implementation.
@@ -426,10 +431,11 @@
             // back to text-only unless the capability is declared explicitly.
             // Keep the input contract on each profile so read_image and native
             // image messages are admitted consistently with the upstream model.
-            models: [{ id: modelName, name: modelName, contextWindow: 262144, maxTokens: 32768, input: ['text', 'image'] }],
+            models: [{ id: modelName, name: modelName, contextWindow: 262144, maxTokens: 32768, input: profile.input || ['text'] }],
           } } };
         });
         const response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, [
+          ...Object.keys(namespace?.value?.providers || {}).filter(route => route.startsWith('agentkit-studio-') && !operations.some(item => item.route === route)).map(route => ({ op: 'unset', path: ['providers', route] })),
           ...operations.map(item => item.operation),
         ], namespace?.revision);
         if (!response?.ok) throw new Error(response?.error?.message || 'DSH 模型配置保存失败');
@@ -496,14 +502,14 @@
       useEffect(() => { load(); }, []);
       const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
       const setProfile = (index, key, value) => setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => cursor === index ? { ...profile, [key]: value } : profile) }));
-      const addProfile = () => setForm(current => ({ ...current, profiles: [...current.profiles, { id: `profile-${Date.now()}`, provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: '', credentialName: `AGENTKIT_MODEL_API_KEY_${current.profiles.length + 1}`, apiKey: '', enabled: true }] }));
+      const addProfile = () => setForm(current => ({ ...current, profiles: [...current.profiles, { id: `profile-${Date.now()}`, provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: '', credentialName: `AGENTKIT_MODEL_API_KEY_${Date.now().toString(36).toUpperCase()}`, apiKey: '', enabled: true }] }));
       const removeProfile = index => setForm(current => ({ ...current, profiles: current.profiles.length <= 1 ? current.profiles : current.profiles.filter((_, cursor) => cursor !== index) }));
       const sourceLabel = source => ({ global: '全局 ~/.agentkit', workspace: '当前工作区', environment: '环境变量', 'workspace-alias': '当前工作区别名', 'global-alias': '全局 ~/.agentkit（兼容别名）', session: '本次 Host 会话', missing: '未配置' }[source] || source || '未配置');
       const save = async event => {
         event.preventDefault(); if (saving || status !== 'ready') return;
         setSaving(true); setMessage(''); setError('');
         try {
-          const profiles = form.profiles.map((profile, index) => ({ id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: profile.baseUrl.trim() || (profile.provider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : ''), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false }));
+          const profiles = form.profiles.map((profile, index) => ({ id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: profile.baseUrl.trim() || (profile.provider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : ''), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false, input: profile.input || ['text'] }));
           if (profiles.some(profile => !profile.modelName)) throw new Error('每个模型配置都需要填写模型名称');
           const keys = Object.fromEntries(form.profiles.map((profile, index) => [modelCredentialName(profile, index), String(profile.apiKey || '').trim()]).filter(([, value]) => value));
           const first = profiles[0];
@@ -511,7 +517,17 @@
           if (form.cloudAccessKey?.trim()) payload.cloudAccessKey = form.cloudAccessKey.trim();
           if (form.cloudSecretKey?.trim()) payload.cloudSecretKey = form.cloudSecretKey.trim();
           await hostRemote.updateSettings(payload);
-          for (const [name, value] of Object.entries(keys)) await hostRemote.putCredential(name, value);
+          await hostRemote.syncModelCredential();
+          // Upstream metadata is authoritative. Unknown models stay text-only
+          // unless the user explicitly enables image input in the profile.
+          for (const profile of profiles) {
+            try {
+              const catalog = await hostRemote.modelCatalog(profile.id);
+              const model = catalog.items.find(item => item.id === profile.modelName);
+              if (model) profile.input = model.input;
+            } catch { /* Some providers have no discovery API; preserve user choice. */ }
+          }
+          await hostRemote.updateSettings({ modelProfiles: profiles });
           await dshModel.applyProfiles({ profiles, keys });
           setForm(current => ({ ...current, profiles: current.profiles.map(profile => ({ ...profile, apiKey: '' })), cloudAccessKey: '', cloudSecretKey: '' }));
           setMessage('已保存多个模型配置；新会话可以直接选择默认模型，Agent 可在创建或编辑时绑定多个模型。');
@@ -519,15 +535,16 @@
         } catch (reason) { setError(reason?.message || '保存模型与凭证失败'); } finally { setSaving(false); }
       };
       const field = (label, key, placeholder, type = 'text') => h('label', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, label, h('input', { type, value: form[key] || '', placeholder, autoComplete: type === 'password' ? 'new-password' : 'off', onChange: event => setField(key, event.target.value), style: inputStyle() }));
-      return h('div', { style: { color: BRAND.ink, fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif' } },
+      return h('div', { 'data-studio-model-settings': true, style: { color: BRAND.ink, minWidth: 0, padding: '4px 2px 18px', fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif' } },
         status === 'error' ? h('div', { role: 'alert', style: { marginBottom: '10px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
         h('form', { onSubmit: save, style: { display: 'grid', gap: '14px', maxWidth: '1100px' } },
           h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' } }, h('div', null, h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '14px' } }, '模型与提供商'), h('p', { style: { margin: '3px 0 0', color: BRAND.inkMuted, fontSize: '11px' } }, '可配置多个提供商和模型；每个条目独立保存凭证。默认模型取第一条。')), h(Pill, { tone: dshStatus.configured ? 'accent' : 'signal' }, dshStatus.configured ? 'DSH 已识别' : '待同步')),
             h('div', { style: { display: 'grid', gap: '10px' } }, form.profiles.map((profile, index) => h('article', { key: profile.id || index, style: { border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '12px', background: BRAND.canvas } },
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('strong', { style: { fontSize: '12px', color: BRAND.ink } }, `模型 ${index + 1}`), h('button', { type: 'button', onClick: () => removeProfile(index), disabled: form.profiles.length <= 1, style: { ...buttonStyle(), padding: '4px 8px', fontSize: '10px' } }, '移除')),
-              h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(150px, .8fr) minmax(180px, 1.2fr)', gap: '9px' } }, h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '提供商', h('input', { value: profile.provider, onChange: event => setProfile(index, 'provider', event.target.value), style: inputStyle() })), h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '模型名称', h('input', { value: profile.modelName, placeholder: DEFAULT_KSYUN_MODEL, onChange: event => setProfile(index, 'modelName', event.target.value), style: inputStyle() }))),
+              h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(150px, .8fr) minmax(180px, 1.2fr)', gap: '9px' } }, h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '提供商', h('select', { value: profile.provider === 'ksyun' || profile.provider === 'openai' ? profile.provider : 'custom', onChange: event => { setProfile(index, 'provider', event.target.value); setProfile(index, 'baseUrl', event.target.value === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : event.target.value === 'openai' ? 'https://api.openai.com/v1' : ''); }, style: inputStyle() }, h('option', { value: 'ksyun' }, '金山云模型服务'), h('option', { value: 'openai' }, 'OpenAI'), h('option', { value: 'custom' }, '自定义提供商'))), h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '模型名称', h('input', { value: profile.modelName, placeholder: DEFAULT_KSYUN_MODEL, onChange: event => setProfile(index, 'modelName', event.target.value), style: inputStyle() }))),
               profile.provider === 'ksyun' ? h('div', { style: { marginTop: '8px', color: BRAND.inkMuted, fontSize: '10px' } }, '金山云模型服务使用默认地址，无需填写 API 地址。') : h('label', { style: { display: 'block', marginTop: '8px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'API 地址', h('input', { value: profile.baseUrl, placeholder: '例如：https://api.example.com/v1', onChange: event => setProfile(index, 'baseUrl', event.target.value), style: inputStyle() })),
+              h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', fontSize: '12px' } }, h('input', { type: 'checkbox', checked: profile.input?.includes('image') || false, onChange: event => setProfile(index, 'input', event.target.checked ? ['text', 'image'] : ['text']) }), '支持图片输入（保存时优先读取模型目录）'),
               h('label', { style: { display: 'block', marginTop: '8px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'API Key（留空表示不修改）', h('input', { type: 'password', value: profile.apiKey, placeholder: modelStatus[profile.credentialName]?.configured ? '已配置，留空保持不变' : '由本机 Host 安全保存', autoComplete: 'new-password', onChange: event => setProfile(index, 'apiKey', event.target.value), style: inputStyle() }), h('div', { style: { display: 'flex', gap: '10px', marginTop: '4px', color: BRAND.inkMuted, fontSize: '10px', flexWrap: 'wrap' } }, h('span', null, '来源：', sourceLabel(modelStatus[profile.credentialName]?.source)), profile.provider === 'ksyun' ? h('a', { href: 'https://ksp.console.ksyun.com/#/apiKey', target: '_blank', rel: 'noopener noreferrer', style: { color: BRAND.accentStrong, textDecoration: 'underline' } }, '获取 Key') : null))
             ))),
             h('button', { type: 'button', onClick: addProfile, style: { ...buttonStyle(), marginTop: '10px' } }, '＋ 添加提供商或模型')),

@@ -10,7 +10,7 @@ AgentKit Studio 是零代码产品，运行在 DSH Desktop 中，以 DSH 的公�
 
 本地无 Agent 的临时对话继续使用 DSH 自身会话；选择了 Studio Agent 的会话必须由 Host 建立 canonical Session、Run 和事件流，即使执行地点是本机，也要把 canonical 事件上行到服务端。这样刷新恢复、取消、审计、评测、观测、定时任务和跨端连续性才有唯一事实源。
 
-所有集成都只走公开 wire 边界：DSH agent/provider 扩展点，或官方 JSON-RPC SDK 协议。向 DSH 内核注入 InputHub、SessionCommandController，或用 sink/bridge 把外部会话硬塞进内核，已实测失败，正式废弃。
+所有跨进程集成都只走公开 wire 边界：DSH agent/provider 扩展点，或官方 JSON-RPC SDK 协议；Studio Harness 的进程内执行是 Studio 自己的 TypeScript provider，不依赖 DSH 内核私有对象。向 DSH 内核注入 InputHub、SessionCommandController，或用 sink/bridge 把外部会话硬塞进内核，已实测失败，正式废弃。
 
 当前 UI 已完成产品壳、真实 DSH 无 Agent 对话、运营页面的 Host-backed 接线以及 AgentKit Host 的接线骨架；一个无资源 `dsh-native` Revision 已通过官方 preset registry 做到窄准入。知识库、记忆库、MCP、Skill Center、本地 Skill 的资源运行时物化，以及云端 Agent 创建、编辑、构建和部署，仍需要按本 RFC 接入真实 server API，不能以页面或 Revision 写入成功验收。
 
@@ -40,6 +40,7 @@ flowchart LR
   DSH 自身 harness]
   D --> KP[ksadk provider]
   D --> CP[codex provider]
+  UI --> SH[Studio Harness provider\n独立 TypeScript runtime]
   S --> CAT[Agent/Revision/Resource Catalog]
   S --> CAN[Canonical Session/Run/Transcript]
   S --> OBS[Schedule/Channel/Eval/Observe]
@@ -109,8 +110,9 @@ interface SessionPort {
 ### 3.4 本地执行路线与多 Harness
 
 - **dsh-native**：直接使用 DSH 自身 harness、模型选择和工具生态。Studio 不另造一个“DSH harness”插件，也不模拟 DSH 的回显。
-- **ksadk / codex / 自研 harness**：以 DSH agent/provider 扩展注册执行循环。**运行时集成只允许一种形态：以 DSH provider 扩展 + wire 协议（subprocess jsonrpc）把 ksadk harness 当外部执行器接进来**，不允许任何其它进程内集成方式。`subagent-codex` 可作为 provider 参考实现，但它目前是 one-shot；持久 thread、恢复、取消（即支持持久 thread/恢复/取消的 provider）是**最大技术风险**，时间盒 1–2 周验证，不能用一次性成功当作长期方案；到期决策点见 Step 1。
-- **互不调用的限定**：“ksadk 与 agentkit-studio 互不调用”限定为产品面/内部 API；运行时集成不受此限——ksadk harness 经 DSH provider 扩展 + wire 作为外部执行器接入，不属于违反该约定。
+- **ksadk / codex**：需要接入 DSH 时以公开 agent/provider 扩展注册执行循环；`subagent-codex` 仅作 provider 参考实现，目前 one-shot，持久 thread、恢复、取消是最大技术风险，时间盒 1–2 周验证。
+- **Studio Harness**：位于本仓库 `src/providers/agentkit-harness.mjs` 的独立 TypeScript/Node provider，不导入 KsADK/Python，不注入 DSH InputHub 或 SessionCommandController。首个切片提供本地 Session、文本流、per-session canonical envelope、幂等回放、取消和 cancel+resend 恢复；MCP、Skill、知识库和记忆适配器在同一 ProviderPort 上逐步接入。它可以直接由 Studio Node Host 或端侧 endpoint 启动，也可以由 server worker 托管。
+- **兄弟关系**：ksadk 与 agentkit-studio 是平等客户端，各自直连 agentengine-server；Studio Harness 不以 KsADK 为库依赖。只有明确选择 KsADK 托管运行时、且需要驱动 DSH 工具生态时，才使用公开 wire/JSON-RPC 集成。
 - **官方 Python SDK**：PyPI 包名 `deepseek-harness-sdk`，由 Python 侧启动 `dsh --profile sdk` 子进程，通过 newline-delimited JSON-RPC over stdio 驱动；SDK 支持按 `sessionId` 排队 prompt、流式事件和服务端入站请求。KsADK 托管运行时需要驱动 DSH 工具生态时可使用它。它是公开协议集成，不是向 DSH 内核注入私有桥。
 - **macOS App**：不打包 Python，不内置私有 runtime。ksadk-harness 本地执行仅存在于开发 / CI / 独立 CLI；产品内高代码 agent 一律云端执行（Step 5 端侧端点自带运行时是后话）。需要本地 Python 执行时由用户或开发环境提供独立运行时，桌面插件仍只调用公开 provider/JSON-RPC。
 
@@ -240,10 +242,11 @@ interface DeploymentPort {
   "errorInfo": null,
   "executionLocus": "cloud|endpoint-id",
   "timestamp": "2026-09-24T00:00:00Z",
-  "kind": "assistant.delta"
+  "kind": { "type": "assistant.delta", "data": { "text": "增量" } }
 }
 ```
 
+- `kind` 是带 `type` 和 provider payload 的标记对象；payload 不再新增顶层字段，保持 Envelope 顶层 12 字段。
 - `runId` 标识事件所属 Run，是事件的属性而非排序依据。
 - `sequence` 为 **per-session** 序号，作用域写死为单个 Session 内单调递增、**跨 Run 连续**；它服务于跨 run 恢复与 snapshot-replay 边界判定。不同 Session 的序号互不相干，同一 Session 的不同 Run 不重置序号。
 - `watermark` 标记消费端已确认的事件边界；`snapshotReplay` 区分快照、实时、补放和边界事件。
@@ -474,7 +477,7 @@ flowchart TB
 
 ### 15.2 DSH 能力复用
 
-DSH workspace、session log、文件、命令、审批、provider 注册和模型流式渲染直接复用；品牌、Agent 生命周期、资源中心、评测观测面板、Channel/Schedule 产品逻辑由 Studio 自己实现。
+DSH workspace、session log、文件、命令、审批、provider 注册和模型流式渲染直接复用；Studio Harness 自己实现 SessionStore、事件流和模型适配；品牌、Agent 生命周期、资源中心、评测观测面板、Channel/Schedule 产品逻辑由 Studio 自己实现。
 
 ### 15.3 评测与观测归位
 

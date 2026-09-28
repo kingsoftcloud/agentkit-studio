@@ -39,7 +39,7 @@ test('model settings keep multiple providers and profiles independently configur
   assert.match(clientSource, /modelProfileKeys/);
   assert.match(clientSource, /ksp\.console\.ksyun\.com\/#\/apiKey/);
   assert.match(clientSource, /applyProfiles/);
-  assert.match(clientSource, /input: \['text', 'image'\]/);
+  assert.match(clientSource, /input: profile\.input \|\| \[\'text\'\]/);
 });
 
 test('bound Agent conversations use the Host canonical stream entry', () => {
@@ -160,6 +160,7 @@ test('resource surface exposes real MCP and Skill lifecycle actions', () => {
 
 test('global Agent and runtime lists expose bounded pagination and Codex provider state', () => {
   assert.match(clientSource, /hostRemote\.agents\(\{ page, pageSize, query \}\)/);
+  assert.doesNotMatch(clientSource, /const hydratedAgents = await Promise\.all\(listedAgents\.map/);
   assert.match(clientSource, /maxHeight: 'min\(64vh, 680px\)'/);
   assert.match(clientSource, /Provider 未注册/);
   assert.match(clientSource, /@deepseek-ai\/dsh-subagent-codex/);

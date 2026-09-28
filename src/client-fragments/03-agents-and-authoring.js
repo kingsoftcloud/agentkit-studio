@@ -188,28 +188,11 @@
         try {
           // Agent cards are rendered from the catalog's Revision metadata.
           // Runtime capability discovery belongs to the separate Runtime tab;
-          // local rows therefore do not trigger a second Host capability call.
+          // the list path must never fan out into one detail/capability call
+          // per card. Detail is loaded only when the user opens edit/inspect.
           const agentResult = await hostRemote.agents({ page, pageSize, query });
           const listedAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
-          // The list contract is intentionally compact and omits build
-          // history. Hydrate each card from the detail contract so status
-          // filters, build badges and capability counts reflect the actual
-          // Agent Revision instead of a permanently empty list row.
-          const hydratedAgents = await Promise.all(listedAgents.map(async item => {
-            const id = item?.metadata?.id || item?.id;
-            // Local Studio AgentDraft rows already contain the full Revision
-            // spec. Do not call the control-plane detail endpoint just to
-            // rediscover model/MCP/Skill counts; only Delivery needs build
-            // history and loads that detail when it is actually opened.
-            if (!id || item?.source === 'local-studio') return item;
-            try {
-              const detail = await hostRemote.agent(id);
-              return detail ? { ...item, ...detail } : item;
-            } catch {
-              return item;
-            }
-          }));
-          setAgents(hydratedAgents);
+          setAgents(listedAgents);
           setTotal(Number.isFinite(Number(agentResult?.total)) ? Number(agentResult.total) : listedAgents.length);
           setStatus('ready');
         } catch (reason) {

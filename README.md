@@ -1,8 +1,8 @@
 # AgentKit Studio
 
-AgentKit Studio 是一个运行在官方 DeepSeek Harness（DSH）之上的 AgentKit 产品插件。它提供
-Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面，并复用 DSH
-原生的会话、工作区、文件工具、审批 UI、设置框架和桌面壳。
+AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
+Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时
+可以选择官方 DSH，也可以选择 Studio 内置的独立 Harness provider。
 
 当前首个公开可复现版本为 **0.0.1**，固定验证基线为 **DSH v0.1.7-rc.2**（commit
 `477b4f420553e8a52c2fbccc464d7561b239c443`）。插件不复制 DSH 源码，也不包含 Python
@@ -12,17 +12,14 @@ Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和
 
 不必须。桌面端是可选的宿主形态：
 
-- **浏览器形态**：用官方 DSH Web Host 启动插件，浏览器访问带会话 token 的地址即可。用户不
-  安装 Electron 桌面端也能使用；本地调试需要 Node.js 和官方 DSH checkout，生产环境可以由
-  统一的 Web Host 或 AgentEngine Server 托管。
+- **浏览器形态**：浏览器访问 Studio Web Host 或 AgentEngine Server 即可。用户不安装 Electron
+  桌面端也能使用；本地 DSH 对话调试才需要 Node.js 和官方 DSH checkout。
 - **桌面形态**：官方 DSH Electron 壳负责窗口、更新、托盘和本地 Host。AgentKit Studio
-  插件本身不打包 Electron，也不把 Python/KsADK 塞进桌面应用。桌面端尚需把本插件加入
-  DSH Desktop 的发布 profile，才能显示 AgentKit Studio 品牌；直接启动官方裸壳只会显示
-  DeepSeek Harness 欢迎页。
+  插件本身不打包 Electron，也不把 Python/KsADK 塞进桌面应用。桌面端只是一种可选的本地
+  Host 形态，发布 profile 载入插件后显示 AgentKit Studio 品牌。
 
-因此桌面端不是产品 API 依赖，但使用本地 DSH 会话和本地文件工具时仍需要一个 DSH Host。
-若用户没有本地 Host，应连接 AgentEngine Server；无 Agent 的普通对话则由所连接的 DSH
-Host 继续执行。
+因此桌面端不是产品 API 依赖。若用户没有本地 Host，可以直接连接 AgentEngine Server；无
+Agent 的普通对话由所连接的运行时执行。
 
 ## 主要产品边界
 

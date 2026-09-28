@@ -1,0 +1,19 @@
+/** Incremental UTF-8 SSE parser shared by model transports. */
+export async function* readSse(body) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for await (const bytes of body) {
+    buffer += decoder.decode(bytes, { stream: true });
+    let match;
+    while ((match = /\r?\n\r?\n/.exec(buffer))) {
+      const frame = buffer.slice(0, match.index);
+      buffer = buffer.slice(match.index + match[0].length);
+      const data = frame.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+      if (data === '[DONE]') return;
+      if (data) yield JSON.parse(data);
+    }
+    if (buffer.length > 4 * 1024 * 1024) throw Object.assign(new Error('模型事件超出大小限制'), { code: 'UPSTREAM_EVENT_TOO_LARGE' });
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) throw Object.assign(new Error('模型流在事件结束前断开'), { code: 'UPSTREAM_STREAM_TRUNCATED' });
+}
