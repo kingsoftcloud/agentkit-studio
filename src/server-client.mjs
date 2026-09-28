@@ -70,6 +70,56 @@ function normalizeAgent(item = {}) {
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
 export function createAgentEngineClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, sessionToken = '', serverUrl = '' }) {
+  async function listLocalAgents({ page = 1, pageSize = 20, query = '' } = {}, options = {}) {
+    const { values } = await configuration.resolve();
+    let base;
+    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
+    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || !sessionToken) {
+      throw new AgentEngineError('SERVER_ACTION_FAILED', '本地 Agent 列表接口不可用', { status: 404, action: 'ListAgents' });
+    }
+    // The local Studio registry already returns the complete AgentDraft,
+    // including runtime and resource bindings. Keep that catalog local: the
+    // browser must not fan out to a server Action per row just to render
+    // capability counts. Build history remains a detail concern of Delivery.
+    const limit = Math.min(200, Math.max(page * pageSize, pageSize));
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (String(query || '').trim()) params.set('query', String(query).trim());
+    const url = new URL(`/api/v1/agents?${params.toString()}`, base);
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'X-AgentKit-Session': sessionToken },
+        redirect: 'error',
+        signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      });
+    } catch {
+      throw new AgentEngineError('SERVER_UNAVAILABLE', '本地 Host 请求未完成，请检查连接', { action: 'ListAgents' });
+    }
+    let payload;
+    try { payload = await response.json(); }
+    catch { throw new AgentEngineError('SERVER_INVALID_RESPONSE', '本地 Host 未返回有效 JSON', { status: response.status, action: 'ListAgents' }); }
+    if (!response.ok || !payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
+      throw new AgentEngineError('SERVER_INVALID_RESPONSE', '本地 Agent 列表格式不兼容', { status: response.status, action: 'ListAgents' });
+    }
+    const items = payload.items.map(item => ({ ...normalizeAgent(item), source: 'local-studio' }));
+    const start = (page - 1) * pageSize;
+    const nextCursor = payload.nextCursor || null;
+    // The local catalog is cursor-backed rather than total-count-backed. If
+    // another cursor exists, expose a conservative lower bound that keeps the
+    // next-page control enabled; the following read refines the bound again.
+    return {
+      items: items.slice(start, start + pageSize),
+      total: items.length + (nextCursor ? 1 : 0),
+      page,
+      pageSize,
+      nextCursor,
+      source: 'local-studio',
+      requestId: String(response.headers.get('x-request-id') || ''),
+    };
+  }
+
   async function getLocalAgent(agentId, options = {}) {
     const { values } = await configuration.resolve();
     let base;
@@ -175,6 +225,15 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
   async function listAgents({ page = 1, pageSize = 20, query = '' } = {}, options) {
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100 || typeof query !== 'string') {
       throw new AgentEngineError('INVALID_QUERY', '分页参数无效');
+    }
+    // A packaged/local Studio Host is the owner of its on-disk AgentDraft
+    // registry. Read that complete local catalog first so a local Agent row
+    // does not depend on AgentEngine Server capabilities or N detail calls.
+    try {
+      const local = await listLocalAgents({ page, pageSize, query }, options);
+      return local;
+    } catch (error) {
+      if (!(error?.status === 404 || error?.code === 'SERVER_ACTION_FAILED')) throw error;
     }
     const result = await action('ListAgents', { Page: page, PageSize: pageSize, ...(query.trim() ? { Name: query.trim() } : {}) }, options);
     if (!Array.isArray(result.data?.Agents)) throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server Agent 列表格式不兼容');

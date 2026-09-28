@@ -3,8 +3,8 @@
 /**
  * Browser half of AgentKit Studio.
  *
- * Studio contributes one DSH global panel containing its product shell. The
- * shell owns Studio navigation and control-plane pages; DSH keeps ownership
+ * Studio contributes one DSH global panel containing its product surface. The
+ * product surface owns Studio navigation and control-plane pages; DSH keeps ownership
  * of conversation, session, tool and dock state.
  */
 window.__ModuleLoader__.load({
@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     const ALLOWED_RUNTIME_TYPES = ['dsh-native', 'harness', 'codex'];
     const RUNTIME_LABELS = {
       'dsh-native': 'DSH Native Harness',
-      harness: 'KsADK Harness（外部运行时）',
+      harness: 'AgentKit Harness',
       codex: 'Codex Agent',
     };
 
@@ -366,10 +366,8 @@ window.__ModuleLoader__.load({
     }
 
     const BRAND = {
-      // Match the original Studio neutral console tokens. The AgentKit mark
-      // remains ours, while surfaces, controls and status colors follow the
-      // old Studio so the plugin feels like one product instead of a second
-      // visual system mounted inside DSH.
+      // Use the established Studio neutral console tokens. The AgentKit mark,
+      // layout and product surfaces remain owned by this application.
       ink: 'var(--dsw-alias-label-primary, #0d0d0d)',
       inkMuted: 'var(--dsw-alias-label-secondary, #676767)',
       canvas: 'var(--dsw-alias-bg-base, #f9f9f9)',
@@ -462,7 +460,7 @@ window.__ModuleLoader__.load({
     }
 
     function SectionHeading({ eyebrow, title, detail, action }) {
-      return h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '20px', marginBottom: '18px' } },
+      return h('div', { 'data-studio-heading': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '20px', marginBottom: '18px' } },
         h('div', null,
           eyebrow ? h('div', { style: { color: BRAND.accentStrong, fontSize: '11px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '7px' } }, eyebrow) : null,
           h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '22px', letterSpacing: '-0.02em' } }, title),
@@ -470,13 +468,14 @@ window.__ModuleLoader__.load({
         action || null);
     }
 
-    // Operational pages use the old Studio document-header rhythm: one
+    // Operational pages use the compact document-header rhythm: one
     // compact title row, a short description and the actions at the same
-    // baseline.  The shell already owns the global page title, so repeating
+    // baseline.  The application already owns the global page title, so repeating
     // the all-caps eyebrow here only consumed vertical space and made the
     // Channels/Automation/Evaluation pages look like nested mock screens.
     function OperationalPageHeading({ title, detail, action }) {
       return h('div', {
+        'data-studio-heading': 'true',
         style: {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           gap: '16px', flexWrap: 'wrap', marginBottom: '14px', paddingBottom: '12px',
@@ -501,10 +500,11 @@ window.__ModuleLoader__.load({
       children);
     }
 
-    // The StudioShell already owns the page title. Inner workspaces use this
+    // The Studio application already owns the page title. Inner workspaces use this
     // compact context row so a panel never renders the same title twice.
     function ContentIntro({ detail, action }) {
       return h('div', {
+        'data-studio-content-intro': 'true',
         style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '16px' },
       }, h('p', { style: { color: BRAND.inkMuted, margin: 0, lineHeight: 1.55, fontSize: '12px' } }, detail), action || null);
     }
@@ -543,4 +543,3 @@ window.__ModuleLoader__.load({
         style: { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '8px 12px', color: 'var(--dsw-alias-label-tertiary, #8290a1)', background: 'var(--dsw-alias-bg-layer-2, #f4f7fa)', fontSize: '12px', fontWeight: 700, cursor: 'not-allowed' },
       }, children);
     }
-

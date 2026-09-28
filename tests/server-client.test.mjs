@@ -109,6 +109,43 @@ test('local Studio Agent detail falls back when shared GetAgent action is not mo
   ]);
 });
 
+test('local Studio Agent catalog returns complete revisions without a Server Action fan-out', async () => {
+  const calls = [];
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789' }),
+    sessionToken: 'studio-session',
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), method: init.method });
+      return new Response(JSON.stringify({ items: [{
+        metadata: { id: 'local-agent', name: 'Local Agent', revision: 4 },
+        spec: { runtime: { type: 'dsh-native' }, bindings: {
+          modelProfileIds: ['model:one', 'model:two'],
+          mcpServers: ['mcp:one'], skills: ['skill:one'],
+        } },
+      }], nextCursor: null }), { status: 200 });
+    },
+  });
+  const result = await client.listAgents({ page: 1, pageSize: 20 });
+  assert.equal(result.source, 'local-studio');
+  assert.equal(result.items[0].spec.bindings.mcpServers.length, 1);
+  assert.match(calls[0].url, /127\.0\.0\.1:8789\/api\/v1\/agents\?limit=20/);
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(calls.length, 1);
+});
+
+test('local cursor catalog keeps the next page reachable when the first window is full', async () => {
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789' }),
+    sessionToken: 'studio-session',
+    fetchImpl: async () => new Response(JSON.stringify({ items: Array.from({ length: 20 }, (_, index) => ({
+      metadata: { id: `agent-${index}`, name: `Agent ${index}` }, spec: { runtime: { type: 'dsh-native' }, bindings: {} },
+    })), nextCursor: 'more' }), { status: 200 }),
+  });
+  const result = await client.listAgents({ page: 1, pageSize: 20 });
+  assert.equal(result.nextCursor, 'more');
+  assert.equal(result.total, 21);
+});
+
 test('direct server client does not expose unapproved destructive actions', async () => {
   const client = createAgentEngineClient({ configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789' }) });
   await assert.rejects(() => client.action('DeleteAgent', { AgentId: 'a1' }), error => error instanceof AgentEngineError && error.code === 'ACTION_NOT_ALLOWED');

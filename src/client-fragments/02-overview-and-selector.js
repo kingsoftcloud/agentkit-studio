@@ -23,7 +23,7 @@
       const hostReady = connection.status === 'ready';
       const readiness = hostReady ? 4 : 3;
       const statusRows = [
-        ['AgentKit Studio 外壳', true],
+        ['AgentKit Studio 应用', true],
         ['官方会话内核', true],
         ['工作台 Dock', true],
         [directServerMode ? 'AgentEngine Server' : 'DSH Host', hostReady],
@@ -49,11 +49,11 @@
           h('div', { style: { marginTop: '18px', height: '5px', borderRadius: '5px', background: BRAND.accentSoft } },
             h('div', { style: { width: `${readiness * 25}%`, height: '100%', borderRadius: '5px', background: BRAND.primaryFill } })))));
       const metrics = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: '12px', marginTop: '18px' } },
-        h(Metric, { label: 'Agent', value: String(connection.agents), detail: connection.agents ? '当前工作区' : '尚未读取' }), h(Metric, { label: '运行时', value: String(connection.runtimes), detail: hostReady ? 'DSH Native / KsADK Harness / Codex 可用' : (directServerMode ? '等待 AgentEngine Server' : '等待 DSH Host'), tone: hostReady ? 'neutral' : 'signal' }),
+        h(Metric, { label: 'Agent', value: String(connection.agents), detail: connection.agents ? '当前工作区' : '尚未读取' }), h(Metric, { label: '运行时', value: String(connection.runtimes), detail: hostReady ? 'DSH Native / AgentKit Harness / Codex 可用' : (directServerMode ? '等待 AgentEngine Server' : '等待 DSH Host'), tone: hostReady ? 'neutral' : 'signal' }),
         h(Metric, { label: '资源', value: '—', detail: '尚未绑定' }), h(Metric, { label: '交付', value: '—', detail: '尚未构建' }));
       const cards = h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0,1.12fr) minmax(260px,0.88fr)', gap: '18px', marginTop: '18px' } },
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '20px', background: BRAND.surface } },
-          h(SectionHeading, { eyebrow: 'Start here', title: '从一个 Agent 开始', detail: directServerMode ? 'Agent、运行时和资源由 AgentEngine Server 控制面提供；本地 DSH 只承载 Studio 壳和原生会话。' : 'Agent、运行时和资源会在接入 DSH Host 后成为可操作的产品对象。' }),
+          h(SectionHeading, { eyebrow: 'Start here', title: '从一个 Agent 开始', detail: directServerMode ? 'Agent、运行时和资源由 AgentEngine Server 控制面提供；本地运行时承载会话与工具执行。' : 'Agent、运行时和资源会在接入 DSH Host 后成为可操作的产品对象。' }),
           connection.status === 'loading' ? h(EmptyState, { icon: '·', title: directServerMode ? '正在读取 AgentEngine Server' : '正在读取 DSH Host', detail: directServerMode ? '读取 Server catalog、详情和运行时能力。' : '读取 health、workspace 和 runtime capability。' }) : connection.status === 'error' ? h(EmptyState, { icon: '!', title: directServerMode ? 'AgentEngine Server 不可达' : 'DSH Host 尚未连接', detail: connection.error || (directServerMode ? '检查 ~/.agentkit 配置、云端凭证和网络。' : '启动本地 DSH Host 后点击重试。'), action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新连接') }) : h(EmptyState, { icon: '✦', title: connection.agents ? '继续配置 Agent' : '创建第一个 Agent', detail: directServerMode ? 'Server catalog 和运行时能力已通过，可以进入 Agents 页面继续。' : 'Host health 与运行时能力已通过，可以进入 Agents 页面创建本地 Agent。', action: h('button', { type: 'button', onClick: () => onNavigate && onNavigate('studio-agents'), style: buttonStyle() }, '查看 Agents') })),
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '20px', background: BRAND.surface } },
           h(SectionHeading, { eyebrow: 'System', title: '工作区状态', detail: '所有状态都来自唯一的 Host 与会话来源。' }),
@@ -105,7 +105,7 @@
      * `agentPresets.select` Remote. Resource-bearing or non-DSH revisions stay
      * fail-closed until their provider can materialize the bindings.
      */
-    function AgentContextSelector({ sessionId, useSessions, studioRemote } = {}) {
+    function AgentContextSelector({ sessionId, useSessions, studioRemote, inputActions } = {}) {
       const [agents, setAgents] = useState([]);
       const [selected, setSelected] = useState(() => readConversationAgent(sessionId));
       const [busy, setBusy] = useState(false);
@@ -221,15 +221,14 @@
       })),
       h(Pill, { tone: notice && !notice.includes('已绑定') ? 'signal' : selected ? 'accent' : 'neutral' }, busy ? '准入中…' : notice || (selected ? (started ? '已锁定' : '已绑定') : 'DSH 原生')),
       !sessionId && selected && selectedAgent ? h('button', { type: 'button', onClick: openBoundConversation, title: '打开一个空白会话再绑定该 Agent', style: { height: '28px', border: '1px solid ' + BRAND.border, borderRadius: '7px', padding: '0 8px', color: BRAND.ink, background: BRAND.surface, fontSize: '10px', fontWeight: 750, cursor: 'pointer' } }, '打开绑定对话') : null,
-      h('button', { type: 'button', onClick: () => { try { window.localStorage.setItem('agentkit-studio:open-authoring', 'conversation'); } catch {} window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring', { detail: 'conversation' })); }, style: { height: '28px', border: '1px solid ' + BRAND.border, borderRadius: '7px', padding: '0 8px', color: BRAND.ink, background: BRAND.surface, fontSize: '10px', fontWeight: 750, cursor: 'pointer' } }, '创建 Agent'));
-      // This entry point is available from the real DSH conversation header.
-      // It opens Studio's multi-turn authoring surface without replacing the
-      // native session composer or pretending that an Agent has been bound.
+      h(NativeAuthoringButton, { inputActions }));
+
     }
 
     function StudioSubnav({ items, value, onChange }) {
       return h('nav', {
         'aria-label': 'Studio 二级导航',
+        'data-studio-tabs': 'true',
         style: { display: 'flex', flexWrap: 'wrap', gap: 0, padding: 0, marginBottom: '20px', border: 0, borderBottom: '1px solid ' + BRAND.border, borderRadius: 0, background: 'transparent' },
       }, items.map(item => h('button', {
         key: item.id,
@@ -243,6 +242,7 @@
     function StudioPageTabs({ items, value, onChange, ariaLabel }) {
       return h('nav', {
         'aria-label': ariaLabel || '页面标签',
+        'data-studio-tabs': 'true',
         role: 'tablist',
         style: { display: 'flex', flexWrap: 'wrap', gap: 0, padding: 0, marginBottom: '14px', border: 0, borderBottom: '1px solid ' + BRAND.border, borderRadius: 0, background: 'transparent' },
       }, items.map(item => h('button', {
@@ -281,7 +281,7 @@
         h(SectionHeading, { eyebrow: 'Agents / Runtime target', title: '运行目标', detail: '运行时回答“这个 Agent 由谁执行”；它属于 Agent Revision，不是独立会话类型。对话页未选择 Agent 时仍走 DSH 原生会话。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? '目录已读取' : 'Host 待接入') }),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取运行目标', detail: directServerMode ? '从 AgentEngine Server 读取已注册的运行时能力。' : '从本地 Host 读取可用 Harness capability。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: '运行目标不可用', detail: error, action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新读取') }) : null,
-        status === 'ready' && !items.length ? h(EmptyState, { icon: '⌁', title: '没有可用运行目标', detail: 'Host 没有返回 DSH Native、KsADK Harness 或 Codex capability。' }) : null,
+        status === 'ready' && !items.length ? h(EmptyState, { icon: '⌁', title: '没有可用运行目标', detail: 'Host 没有返回 DSH Native、AgentKit Harness 或 Codex capability。' }) : null,
         status === 'ready' && items.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '12px' } }, items.map(item => {
           const codexUnavailable = item.runtimeType === 'codex' && !codexProviderReady;
           return h('article', { key: item.runtimeType, style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '16px', background: BRAND.surface } },

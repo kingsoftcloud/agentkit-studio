@@ -20,6 +20,26 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /首轮发送后锁定/);
   assert.match(clientSource, /agentkit-studio:open-bound-conversation/);
   assert.match(clientSource, /打开绑定对话/);
+  assert.match(clientSource, /空白会话可以绑定一个 Agent；首轮发送后锁定/);
+  assert.match(clientSource, /conversationAgentStorageKey\(sessionId\)/);
+});
+
+test('Agent authoring starts in the current DSH composer and uses reviewed Host tools', () => {
+  assert.match(clientSource, /conversation\.input\.left/);
+  assert.match(clientSource, /function NativeAuthoringButton/);
+  assert.match(clientSource, /studio_agent_draft/);
+  assert.match(clientSource, /studio_agent_create/);
+  assert.match(clientSource, /agentkit-studio:seed-authoring/);
+  assert.doesNotMatch(clientSource, /function ConversationalAgentCreatePage/);
+});
+
+test('model settings keep multiple providers and profiles independently configurable', () => {
+  assert.match(clientSource, /modelProfiles/);
+  assert.match(clientSource, /添加提供商或模型/);
+  assert.match(clientSource, /modelProfileKeys/);
+  assert.match(clientSource, /ksp\.console\.ksyun\.com\/#\/apiKey/);
+  assert.match(clientSource, /applyProfiles/);
+  assert.match(clientSource, /input: \['text', 'image'\]/);
 });
 
 test('bound Agent conversations use the Host canonical stream entry', () => {
@@ -143,6 +163,8 @@ test('global Agent and runtime lists expose bounded pagination and Codex provide
   assert.match(clientSource, /maxHeight: 'min\(64vh, 680px\)'/);
   assert.match(clientSource, /Provider 未注册/);
   assert.match(clientSource, /@deepseek-ai\/dsh-subagent-codex/);
+  assert.match(clientSource, /data-studio-pager/);
+  assert.match(clientSource, /installResponsiveStyles/);
 });
 
 test('host-facing settings use product-neutral Studio Host wording', () => {

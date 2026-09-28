@@ -8,7 +8,7 @@
         h(SettingsRow, { label: '默认执行目标', value: 'Local Host', detail: '创建 Agent 和运行会话时使用的默认目标', tone: 'signal' }),
         h(SettingsRow, { label: 'Studio Host', value: '待接入', detail: 'Health、capability 和 Session Remote 尚未连接', tone: 'signal' }),
         h(SettingsRow, { label: '事件流诊断', value: '关闭', detail: '连接 Host 后可以开启结构化 Session 事件日志' }),
-        h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '产品外壳与运行适配层版本' }),
+        h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '产品功能与运行适配层版本' }),
         h(SettingsRow, { label: 'DSH 宿主兼容版本', value: DSH_VERSION, detail: '固定的宿主基线，不代表 Studio 产品版本' })),
       h('div', { style: { marginTop: '16px', padding: '14px 16px', borderRadius: '12px', color: BRAND.inkMuted, background: BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } }, '工作区、会话、模型和凭证的通用设置继续由系统设置页承载；Studio 只扩展自己的执行目标、Host 能力和产品选项。'));
     }
@@ -17,13 +17,14 @@
       activeConnection = ctx.connection;
       // Schedule is a capability, not a hard requirement for the fixed
       // dsh-v0.1.7-rc.2 host. Older profiles can still expose the Studio
-      // shell and all model/agent/resource surfaces while the automation
+      // product surface and all model/agent/resource surfaces while the automation
       // panel reports that its host service is unavailable.
       const scheduleRemote = ctx.remote && typeof ctx.remote.schedule?.catalog === 'function'
         ? ctx.remote.schedule
         : null;
       ctx.effect(() => adoptProductDocumentTitle(), 'agentkit-studio: document title');
       ctx.effect(() => adoptProductDocumentBrand(), 'agentkit-studio: document favicon');
+      ctx.effect(() => installResponsiveStyles(), 'agentkit-studio: responsive layout');
       // DSH owns the official composer and its native session.prompt path.
       // Studio does not inject a sink or bridge into InputHub. The authoring
       // tools registered by the Host let this native conversation create and
@@ -61,9 +62,13 @@
         props => h(AgentContextSelector, { ...props, studioRemote: ctx.remote }),
       ));
 
+      ctx.slots.inject('conversation.input.left', () => ctx.slots.register(
+        { name: 'conversation.input.left', id: 'studio-authoring', order: 150 },
+        props => h(NativeAuthoringButton, props),
+      ));
+
       // Each product domain is a first-class DSH main panel. The rows land in
-      // the official panel list directly below New Session, matching the old
-      // Studio information architecture. Page-level resource tabs remain in
+      // the official panel list directly below New Session, using the product information architecture. Page-level resource tabs remain in
       // the content area; the four product domains never become a second row
       // of tabs inside their own detail page.
       const navigateStudio = target => {
@@ -71,10 +76,10 @@
         if (next) ctx.layout.selectPanel(next.id);
       };
       ctx.effect(() => {
-        const openAuthoring = event => {
-          if (event?.detail !== 'conversation') return;
-          try { window.localStorage.setItem('agentkit-studio:open-authoring', 'conversation'); } catch {}
-          navigateStudio('studio-agents');
+        const openAuthoring = () => {
+          pendingAuthoring = true;
+          ctx.layout.selectPanel(null);
+          window.dispatchEvent(new CustomEvent('agentkit-studio:seed-authoring'));
         };
         const openBoundConversation = event => {
           const agentId = String(event?.detail?.agentId || '').trim();
@@ -101,8 +106,8 @@
       });
 
 
-      // Settings remains the official DSH modal and navigation shell. Studio
-      // contributes native sections into that shell. The model page is Studio
+      // Settings remains the official DSH modal and navigation surface. Studio
+      // contributes native sections into that settings dialog. The model page is Studio
       // owned; its save path also writes DSH's public llm-pi-ai settings and
       // credentials contracts so the official composer model seat can resolve it.
       const dshModel = createDshModelBridge(ctx);
@@ -121,30 +126,16 @@
             // Settings modal has never been opened in this profile.
             await hostRemote.syncModelCredential();
             const settings = await hostRemote.settings();
-            const modelName = String(settings?.modelName || DEFAULT_KSYUN_MODEL).trim();
-            const modelProvider = String(settings?.modelProvider || 'ksyun').trim() || 'ksyun';
-            const baseUrl = String(settings?.modelBaseUrl || '').trim()
-              || (modelProvider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : '');
-            if (!modelName || !baseUrl) return;
+            const profiles = Array.isArray(settings?.modelProfiles) && settings.modelProfiles.length
+              ? settings.modelProfiles.map((profile, index) => ({ ...profile, credentialName: modelCredentialName(profile, index) }))
+              : [{ provider: settings?.modelProvider || 'ksyun', modelName: settings?.modelName || DEFAULT_KSYUN_MODEL, baseUrl: settings?.modelBaseUrl || DEFAULT_KSYUN_BASE_URL, credentialName: DSH_MODEL_CREDENTIAL }];
+            const active = profiles.find(profile => profile.enabled !== false && profile.modelName);
+            if (!active?.modelName) return;
             const document = await dshModel.describe();
-            const providerNamespace = (document.namespaces || []).find(item => item.ns === DSH_MODEL_SETTINGS_NS);
-            const providerProfile = providerNamespace?.value?.providers?.[DSH_MODEL_ROUTE]
-              || providerNamespace?.user?.providers?.[DSH_MODEL_ROUTE]
-              || {};
             const defaultNamespace = (document.namespaces || []).find(item => item.ns === DSH_DEFAULT_MODEL_SETTINGS_NS);
             const defaultValue = defaultNamespace?.value || defaultNamespace?.user || {};
-            const currentModel = providerProfile?.models?.[0]?.id || '';
-            const currentBaseUrl = providerProfile?.baseURL || '';
-            if (currentModel === modelName
-              && currentBaseUrl === baseUrl
-              && defaultValue?.provider === DSH_MODEL_ROUTE
-              && defaultValue?.model === modelName) return;
-            await dshModel.apply({
-              provider: modelProvider,
-              baseUrl,
-              modelName,
-              apiKey: '',
-            });
+            if (defaultValue?.model === active.modelName && defaultValue?.provider) return;
+            await dshModel.applyProfiles({ profiles, keys: {} });
           } catch (reason) {
             // DSH remains usable when the optional Studio Host is offline;
             // the settings surface reports the actionable error on demand.

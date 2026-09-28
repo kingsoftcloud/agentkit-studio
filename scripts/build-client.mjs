@@ -7,6 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fragments = [
   '01-loader-and-primitives.js',
   '02-overview-and-selector.js',
+  '02-native-authoring.js',
   '03-agents-and-authoring.js',
   '04-create-edit-and-resources.js',
   '05-resource-workspaces.js',

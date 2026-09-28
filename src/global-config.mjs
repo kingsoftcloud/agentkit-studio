@@ -14,8 +14,9 @@ const FIELDS = {
   cloudServerUrl: ['AGENTENGINE_SERVER_URL'], cloudBucket: ['KS3_BUCKET'],
   cloudSessionToken: ['KSYUN_SESSION_TOKEN'], cloudServiceToken: ['AGENTENGINE_SERVICE_TOKEN'],
   cloudCustomSource: ['AGENTENGINE_PRE_CUSTOM_SOURCE'],
+  modelProfiles: [], modelProfileKeys: [],
 };
-const SECRET_FIELDS = new Set(['modelApiKey', 'cloudAccessKey', 'cloudSecretKey', 'cloudSessionToken', 'cloudServiceToken']);
+const SECRET_FIELDS = new Set(['modelApiKey', 'cloudAccessKey', 'cloudSecretKey', 'cloudSessionToken', 'cloudServiceToken', 'modelProfileKeys']);
 const MODEL_ALIASES = {
   modelName: ['model', 'model_name', 'modelName'], modelBaseUrl: ['base_url', 'api_base', 'apiBase'],
   modelApiKey: ['api_key', 'apiKey', 'model_api_key', 'modelApiKey'], modelProvider: ['provider'],
@@ -39,10 +40,35 @@ async function readDocument(path, json = false) {
   } catch { throw new ConfigurationError('全局配置格式无效，请检查配置文件'); }
 }
 
+function normalizeProfiles(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(record).map(profile => ({
+    id: scalar(profile.id) || `${scalar(profile.provider) || 'provider'}:${scalar(profile.modelName) || scalar(profile.model)}`,
+    provider: scalar(profile.provider) || 'ksyun',
+    modelName: scalar(profile.modelName) || scalar(profile.model),
+    baseUrl: scalar(profile.baseUrl) || scalar(profile.baseURL) || '',
+    credentialName: scalar(profile.credentialName) || '',
+    enabled: profile.enabled !== false,
+  })).filter(profile => profile.modelName);
+}
+
 function project(document) {
   const values = {};
   const sections = ['env', 'environment', 'model', 'cloud', 'settings', 'secrets'].map(key => document[key]).filter(record);
   for (const [field, keys] of Object.entries(FIELDS)) {
+    if (field === 'modelProfiles') {
+      for (const section of [document, ...sections].reverse()) {
+        const profiles = normalizeProfiles(section.modelProfiles);
+        if (profiles.length) { values.modelProfiles = profiles; break; }
+      }
+      continue;
+    }
+    if (field === 'modelProfileKeys') {
+      for (const section of [document, ...sections].reverse()) {
+        if (record(section.modelProfileKeys)) { values.modelProfileKeys = { ...section.modelProfileKeys }; break; }
+      }
+      continue;
+    }
     for (const section of [document, ...sections].reverse()) {
       const value = [field, ...keys].map(key => scalar(section[key])).find(Boolean);
       if (value) { values[field] = value; break; }
@@ -51,6 +77,10 @@ function project(document) {
       values[field] = MODEL_ALIASES[field].map(key => scalar(document.model[key])).find(Boolean);
     }
   }
+  const keys = values.modelProfileKeys || {};
+  if (Array.isArray(values.modelProfiles)) values.modelProfiles = values.modelProfiles.map(profile => ({
+    ...profile, apiKey: scalar(keys[profile.credentialName]) || '',
+  }));
   return values;
 }
 
@@ -76,11 +106,12 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
     const { values, sources } = await resolve();
     return {
       modelProvider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash',
+      modelProfiles: (values.modelProfiles?.length ? values.modelProfiles : [{ id: 'default', provider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash', baseUrl: values.modelBaseUrl || 'http://kspmas.ksyun.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY', enabled: true }]).map(({ apiKey, ...profile }) => ({ ...profile, credentialConfigured: Boolean(apiKey) })),
       modelBaseUrl: values.modelBaseUrl || 'http://kspmas.ksyun.com/v1',
       cloudRegion: values.cloudRegion || 'cn-beijing-6',
       cloudServerUrl: values.cloudServerUrl || 'https://aicp.api.ksyun.com',
       cloudAccountId: values.cloudAccountId || '', cloudBucket: values.cloudBucket || '',
-      modelConfigured: Boolean(values.modelApiKey),
+      modelConfigured: Boolean(values.modelApiKey || values.modelProfiles?.some(profile => profile.apiKey)),
       cloudAccountConfigured: Boolean(values.cloudAccessKey && values.cloudSecretKey),
       configurationSources: sources,
       configurationOwner: 'studio-node',
@@ -90,17 +121,29 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
     if (!record(patch) || Object.keys(patch).some(key => !Object.hasOwn(FIELDS, key))) {
       return Promise.reject(new ConfigurationError('存在不支持的配置字段'));
     }
-    if (Object.values(patch).some(value => typeof value !== 'string')) {
-      return Promise.reject(new ConfigurationError('配置值必须为文本'));
+    for (const [key, value] of Object.entries(patch)) {
+      if (key === 'modelProfiles') {
+        if (!Array.isArray(value) || value.some(profile => !record(profile) || !scalar(profile.modelName) || !scalar(profile.provider))) return Promise.reject(new ConfigurationError('模型目录格式无效'));
+      } else if (key === 'modelProfileKeys') {
+        if (!record(value) || Object.values(value).some(item => typeof item !== 'string')) return Promise.reject(new ConfigurationError('模型凭证格式无效'));
+      } else if (typeof value !== 'string') return Promise.reject(new ConfigurationError('配置值必须为文本'));
     }
     const write = async () => {
       const document = await readDocument(path);
       document.settings = record(document.settings) ? document.settings : {};
       document.secrets = record(document.secrets) ? document.secrets : {};
       for (const [field, value] of Object.entries(patch)) {
-        if (SECRET_FIELDS.has(field)) {
+        if (field === 'modelProfileKeys') {
+          const current = record(document.secrets.modelProfileKeys) ? document.secrets.modelProfileKeys : {};
+          for (const [name, key] of Object.entries(value)) if (String(key).trim()) current[name] = String(key).trim();
+          document.secrets.modelProfileKeys = current;
+        } else if (SECRET_FIELDS.has(field)) {
           if (value.trim()) document.secrets[FIELDS[field][0]] = value.trim();
-        } else document.settings[field] = value.trim();
+        } else if (field === 'modelProfiles') document.settings.modelProfiles = value.map(profile => {
+          const { apiKey, ...metadata } = profile;
+          return metadata;
+        });
+        else document.settings[field] = value.trim();
       }
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       const temporary = `${path}.${randomUUID()}.tmp`;

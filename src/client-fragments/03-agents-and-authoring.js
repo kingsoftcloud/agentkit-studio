@@ -1,11 +1,5 @@
     function AgentWorkspace({ onNavigate }) {
-      const [view, setView] = useState(() => {
-        try {
-          const requested = window.localStorage.getItem('agentkit-studio:open-authoring');
-          if (requested) window.localStorage.removeItem('agentkit-studio:open-authoring');
-          return requested === 'conversation' ? 'conversation-create' : 'list';
-        } catch { return 'list'; }
-      });
+      const [view, setView] = useState('list');
       const [tab, setTab] = useState('agents');
       const [createMode, setCreateMode] = useState('quick');
       const [created, setCreated] = useState(null);
@@ -19,15 +13,12 @@
         } catch { return null; }
       });
       useEffect(() => {
-        const open = event => { if (event?.detail === 'conversation') setView('conversation-create'); };
         const openBound = event => {
           const agentId = String(event?.detail?.agentId || '').trim();
           if (agentId) setPendingBoundAgent(agentId);
         };
-        window.addEventListener('agentkit-studio:open-authoring', open);
         window.addEventListener('agentkit-studio:open-bound-conversation', openBound);
         return () => {
-          window.removeEventListener('agentkit-studio:open-authoring', open);
           window.removeEventListener('agentkit-studio:open-bound-conversation', openBound);
         };
       }, []);
@@ -42,12 +33,6 @@
         }).catch(() => { if (alive) setPendingBoundAgent(null); });
         return () => { alive = false; };
       }, [pendingBoundAgent]);
-      if (view === 'conversation-create') {
-        return h(ConversationalAgentCreatePage, {
-          onBack: () => setView('list'),
-          onCreated: agent => { setCreated(agent); setView('list'); },
-        });
-      }
       if (view === 'bound-conversation') {
         return h(BoundAgentConversationPage, {
           agent: conversationAgent,
@@ -73,7 +58,7 @@
         onTabChange: setTab,
         onEdit: agent => { setEditingAgent(agent?.metadata?.id || agent.id); setView('edit'); },
         onOpenConversation: agent => { setConversationAgent(agent); setView('bound-conversation'); },
-        onCreate: mode => { setCreated(null); if (mode === 'conversation') setView('conversation-create'); else { setCreateMode(mode); setView('create'); } },
+        onCreate: mode => { setCreated(null); if (mode === 'conversation') window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring')); else { setCreateMode(mode); setView('create'); } },
       });
     }
 
@@ -189,7 +174,6 @@
     function AgentsPage({ onCreate, created, onNavigate, onOpenConversation, onEdit, tab, onTabChange }) {
       const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
       const [agents, setAgents] = useState([]);
-      const [runtimes, setRuntimes] = useState([]);
       const [status, setStatus] = useState('loading');
       const [error, setError] = useState('');
       const [query, setQuery] = useState('');
@@ -202,7 +186,10 @@
         setStatus('loading');
         setError('');
         try {
-          const [agentResult, runtimeResult] = await Promise.all([hostRemote.agents({ page, pageSize, query }), hostRemote.runtimes()]);
+          // Agent cards are rendered from the catalog's Revision metadata.
+          // Runtime capability discovery belongs to the separate Runtime tab;
+          // local rows therefore do not trigger a second Host capability call.
+          const agentResult = await hostRemote.agents({ page, pageSize, query });
           const listedAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
           // The list contract is intentionally compact and omits build
           // history. Hydrate each card from the detail contract so status
@@ -210,7 +197,11 @@
           // Agent Revision instead of a permanently empty list row.
           const hydratedAgents = await Promise.all(listedAgents.map(async item => {
             const id = item?.metadata?.id || item?.id;
-            if (!id) return item;
+            // Local Studio AgentDraft rows already contain the full Revision
+            // spec. Do not call the control-plane detail endpoint just to
+            // rediscover model/MCP/Skill counts; only Delivery needs build
+            // history and loads that detail when it is actually opened.
+            if (!id || item?.source === 'local-studio') return item;
             try {
               const detail = await hostRemote.agent(id);
               return detail ? { ...item, ...detail } : item;
@@ -220,7 +211,6 @@
           }));
           setAgents(hydratedAgents);
           setTotal(Number.isFinite(Number(agentResult?.total)) ? Number(agentResult.total) : listedAgents.length);
-          setRuntimes((runtimeResult?.items || []).filter(item => ALLOWED_RUNTIME_TYPES.includes(item.runtimeType)));
           setStatus('ready');
         } catch (reason) {
           setStatus('error');
@@ -272,10 +262,10 @@
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, RUNTIME_LABELS[runtime] || runtime),
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, counts.length ? counts.map(([label, count]) => `${count} ${label}`).join(' · ') : '—'),
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `r${metadata.revision || 1}`),
-              h('td', { style: { padding: '13px 14px' } }, h(Pill, { tone: built ? 'accent' : 'signal' }, built ? '已构建' : '草稿')),
+              h('td', { style: { padding: '13px 14px' } }, h(Pill, { tone: built ? 'accent' : 'signal' }, built ? '已构建' : agent.source === 'local-studio' ? '本地配置' : '草稿')),
               h('td', { style: { padding: '13px 14px', whiteSpace: 'nowrap' } }, h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: () => onOpenConversation?.(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' } }, '打开绑定对话'), h('button', { type: 'button', onClick: () => onEdit(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '编辑 Agent'))));
           })))),
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '1px solid ' + BRAND.border, color: BRAND.inkMuted, fontSize: '11px' } },
+        h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '1px solid ' + BRAND.border, color: BRAND.inkMuted, fontSize: '11px' } },
           h('span', null, `${total || filteredPageAgents.length} 个 Agent · 第 ${Math.min(page, pageCount)}/${pageCount} 页`),
           h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
             h('select', { value: String(pageSize), onChange: event => { setPageSize(Number(event.target.value)); setPage(1); }, 'aria-label': '每页显示数量', style: { ...inputStyle(), width: '112px', marginTop: 0, padding: '0 7px' } }, h('option', { value: '10' }, '每页 10 条'), h('option', { value: '20' }, '每页 20 条'), h('option', { value: '50' }, '每页 50 条')),
@@ -286,11 +276,11 @@
         h(StudioSubnav, { value: tab, onChange: onTabChange, items: [{ id: 'agents', label: 'Agent 列表' }, { id: 'runtime', label: '运行目标' }] }),
         tab === 'runtime' ? h(RuntimeCatalogPage, { onNavigate }) : null,
         tab === 'runtime' ? null : h(React.Fragment, null,
-        h('section', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '18px', background: BRAND.surface, marginBottom: '18px' } },
+        h('section', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap', border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '18px', background: BRAND.surface, marginBottom: '18px' } },
           h('div', null,
             h('div', { style: { color: BRAND.ink, fontSize: '15px', fontWeight: 800 } }, '从最短路径创建 Agent'),
             h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, marginTop: '5px' } }, '快速创建保留最少字段；一键创建使用内置模板；复杂编排可用多轮对话逐步生成并确认。')),
-          h('div', { style: { display: 'flex', gap: '8px', flexShrink: 0 } },
+          h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
             h('button', { type: 'button', onClick: () => onCreate('quick'), disabled: status !== 'ready', style: { height: '38px', border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '0 14px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px', fontWeight: 800 } }, '快速创建'),
             h('button', { type: 'button', onClick: () => onCreate('conversation'), disabled: status !== 'ready', style: { height: '38px', border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '0 14px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px', fontWeight: 800 } }, '对话创建'),
             h('button', { type: 'button', onClick: () => onCreate('one-click'), disabled: status !== 'ready', style: { height: '38px', border: 0, borderRadius: '9px', padding: '0 14px', color: 'var(--dsw-static-neutral-00, #fff)', background: status !== 'ready' ? 'var(--dsw-alias-label-tertiary, #aab7c4)' : BRAND.primaryFill, fontSize: '12px', fontWeight: 800 } }, '一键创建'))),
@@ -364,18 +354,3 @@
         })),
         error ? h('div', { role: 'alert', style: { marginTop: '8px', color: BRAND.danger, fontSize: '11px' } }, error) : null);
     }
-
-    function conversationalSlug(value) {
-      const slug = String(value || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-      return (slug || `conversation-agent-${Date.now()}`).slice(0, 63) || 'conversation-agent';
-    }
-
-    function authoringMessageText(message) {
-      if (message.role !== 'assistant') return message.content;
-      try {
-        const snapshot = JSON.parse(message.content);
-        return `草稿已更新：${snapshot.name || '待确认 Agent'}\n${snapshot.spec?.description || snapshot.description || '可以继续补充需求。'}`;
-      } catch { return message.content; }
-    }
-
-    /** Multi-turn authoring uses the Host authoring contract; it never owns a DSH session. */

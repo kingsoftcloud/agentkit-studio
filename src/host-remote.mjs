@@ -4,7 +4,7 @@
  * The DSH renderer remains the only conversation/session UI owner. This
  * module only carries the typed control-plane calls that Studio owns. It is
  * deliberately fetch based so the same contract can be used by Web and the
- * future Electron shell without introducing a second state store.
+ * desktop application without introducing a second state store.
  */
 
 export class StudioHostError extends Error {

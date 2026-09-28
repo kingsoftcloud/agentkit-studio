@@ -65,7 +65,7 @@
           setAgents(nextAgents);
           const nextTasks = Array.isArray(scheduleResult?.items) ? scheduleResult.items : [];
           setTasks(nextTasks);
-          // The old Studio board grouped tasks by the latest occurrence. The
+          // The operations board groups tasks by the latest occurrence. The
           // Host schedule list stays light, so hydrate a bounded index for the
           // board and detail view without making one failed row fail the page.
           const occurrencePairs = await Promise.all(nextTasks.slice(0, 100).map(async task => {
@@ -362,7 +362,7 @@
 
     function OperationalPager({ page, pageSize, total, onChange }) {
       const pageCount = Math.max(1, Math.ceil(total / pageSize));
-      return h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '10px', padding: '4px 0', color: BRAND.inkMuted, fontSize: '11px' } },
+      return h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '10px', padding: '4px 0', color: BRAND.inkMuted, fontSize: '11px' } },
         h('span', null, total ? `${page * pageSize + 1}–${Math.min(total, (page + 1) * pageSize)} / ${total}` : '0 条'),
         h('div', { style: { display: 'flex', gap: '6px', flexShrink: 0 } },
           h('button', { type: 'button', 'aria-label': '运行中心上一页', disabled: page <= 0, onClick: () => onChange(Math.max(0, page - 1)), style: pagerButtonStyle(page <= 0) }, '上一页'),

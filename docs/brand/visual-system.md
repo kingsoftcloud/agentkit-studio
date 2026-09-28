@@ -7,9 +7,9 @@ deep ink foundation, and one sharp teal signal for active execution. The visual 
 should feel like an operations console for building and running agents, not a generic chat
 application.
 
-The official DSH shell remains the chrome and typography owner. Studio styles are scoped to
-Studio panels, cards, badges, and domain artwork so the plugin does not change DSH's global
-appearance or create a second design system for the conversation UI.
+The DSH runtime supplies the conversation primitives and Studio owns its product navigation,
+panels, cards, badges, and domain artwork. Product styles stay scoped to the Studio surface
+so the conversation primitives and product pages remain visually consistent.
 
 ## Logo
 

@@ -200,7 +200,7 @@ export async function apply(ctx) {
       sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || null,
     },
   }));
-  // The DSH shell owns the browser document, so a React panel cannot
+  // The DSH application owns the browser document, so a React panel cannot
   // reliably replace its favicon from the plugin sandbox.  Use the public
   // webserver index injection seam to install the product mark in the
   // top-level document after the shell's own links have been parsed.

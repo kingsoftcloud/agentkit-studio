@@ -432,7 +432,7 @@ DSH profile 只保存本地扩展、模型提供商配置和 endpoint 配对信�
 - salvage 已完成：`3cae2806`（events: codex→canonical 映射）、`53869ff0`（model-proxy 限流预算）、`17f620b1`（kernel admission/幂等/durable turn.cancel）、`274cf46b`（harness 重试预算，含一处真实回归修复：`error_category=unknown` 毒化子代理重试回落）已入本地 master，经 `salvage/764a-runtime-assets` 分支走代码评审 #130 合入。
 - `764a` 与 `ksadk-web-studio` worktree 已归档；ksadk-web 的 resumable session transport 与 core/conversation 资产已存 `.scratch`，供共享合同复用。
 - 散落 worktree 已清扫；合并留痕按 MANIFEST 处理，不保留并行旧壳。
-- DSH 官方 Python SDK、事件映射、canonical probe、Host runtime adapter 和 Studio shell 的基础测试已通过。
+- DSH 官方 Python SDK、事件映射、canonical probe、Host runtime adapter 和 Studio 应用页面的基础测试已通过。
 - Studio UI 已改为 AgentKit Studio 品牌和四个一级域；无 Agent 的 DSH 原生对话和 Host 连接错误态是真实路径。
 - 2026-09-28 验证刷新：Studio `pnpm check` 54/54、Python focused suite 312 passed/8 skipped，
   `make ci` 打包通过；当前 rc.2 packed artifact 与 browser profile 均能启动，独立 fixture 与 SDK transcript
