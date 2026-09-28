@@ -1,7 +1,7 @@
 # AgentKit Studio 协作开发
 
 这份文档是仓库内可分发的开发约定。个人机器上的 `AGENTS.md` 只用于本地自动化，不作为
-项目依赖，也不应在文档中写入某位同事的绝对路径、密钥或本机 profile 内容。
+项目依赖，也不应在文档中写入个人绝对路径、密钥或本机 profile 内容。
 
 ## 环境
 
@@ -18,6 +18,10 @@ export DSH_ROOT=/path/to/deepseek-harness
 export DSH_HOME=/path/to/dsh-home       # 可选；默认 ~/.dsh
 export AGENTKIT_HOME=/path/to/agentkit  # 可选；默认 ~/.agentkit
 ```
+
+如果本机还没有 DSH checkout，可以在 Studio 仓库目录执行 `make dsh-bootstrap`。该目标从
+公开 DSH GitHub 仓库拉取固定 `dsh-v0.1.7-rc.2` tag，校验 commit 并在 checkout 内安装依赖；
+源码仍位于 `DSH_ROOT`，不会进入 Studio Git 历史。
 
 ## 首次 checkout
 

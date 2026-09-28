@@ -44,7 +44,7 @@ Agent 的普通对话由所连接的运行时执行。
 ## 本地开发
 
 环境要求：Node.js `>=22.19.0`、pnpm、官方 DSH `dsh-v0.1.7-rc.2` checkout。
-新同事从零配置请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；仓库内不依赖任何个人绝对路径。
+首次配置请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；仓库内不依赖任何个人绝对路径。
 
 ```sh
 # 插件自身检查（语法、合同测试、产品表面测试）
@@ -52,6 +52,9 @@ make check
 
 # 打包 npm tarball（版本来自 package.json）
 make pack
+
+# 未配置 DSH checkout 时，从公开 GitHub 固定 tag 拉取并安装宿主依赖
+make dsh-bootstrap
 
 # 把打包后的插件安装到指定 DSH profile（会修改 DSH_HOME）
 make profile-install DSH_ROOT=/path/to/deepseek-harness

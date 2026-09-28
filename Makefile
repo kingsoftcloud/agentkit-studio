@@ -11,6 +11,8 @@ DSH_WEB_PORT ?= 3098
 PACK_DIR ?= .artifacts
 DSH_VERSION ?= 0.1.7-rc.2
 DSH_COMMIT ?= 477b4f420553e8a52c2fbccc464d7561b239c443
+DSH_REPO ?= https://github.com/deepseek-ai/deepseek-harness.git
+DSH_REF ?= dsh-v$(DSH_VERSION)
 PATCH_ROOT ?= $(abspath patches/dsh-v$(DSH_VERSION))
 DESKTOP_PLUGIN_INPUTS ?= $(abspath $(PACK_DIR))
 DESKTOP_PLUGIN_ROOTS ?= @kingsoftcloud/agentkit-studio
@@ -18,7 +20,7 @@ DESKTOP_PLUGIN_BUNDLES ?= @kingsoftcloud/agentkit-studio
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
 
-.PHONY: check test pack release-check patch-format-check profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check test pack release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package ci clean
@@ -39,6 +41,20 @@ release-check: check patch-format-check pack
 
 patch-format-check:
 	node scripts/check-patch-format.mjs "$(PATCH_ROOT)"
+
+# Fetch the public DSH source only when a collaborator does not already have a
+# checkout. The source stays outside this repository; all later host targets
+# still use the pinned commit and the versioned patches below.
+dsh-bootstrap:
+	@if test -e "$(DSH_ROOT)/.git"; then \
+		echo "复用已有 DSH checkout：$(DSH_ROOT)"; \
+	else \
+		test ! -e "$(DSH_ROOT)" || (echo "DSH_ROOT 已存在但不是 Git checkout：$(DSH_ROOT)" >&2; exit 2); \
+		mkdir -p "$$(dirname "$(DSH_ROOT)")"; \
+		git clone --branch "$(DSH_REF)" --depth 1 "$(DSH_REPO)" "$(DSH_ROOT)"; \
+	fi
+	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是 $(DSH_VERSION) 基线 $(DSH_COMMIT)" >&2; exit 2)
+	cd "$(DSH_ROOT)" && pnpm install --frozen-lockfile
 
 # Install the packed plugin into a DSH profile. This is intentionally
 # explicit: it mutates DSH_HOME and must not happen as a side effect of a
