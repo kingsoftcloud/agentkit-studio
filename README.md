@@ -101,6 +101,11 @@ Studio Node Host 默认读取 `~/.agentkit/config.yaml`，也支持 `AGENTKIT_HO
 [控制台 API Key](https://ksp.console.ksyun.com/#/apiKey)。云端 AK/SK、区域、控制面地址和
 服务凭证也在同一页配置并写入全局配置。
 
+模型设置页可以保存多个提供商和多个模型，每条配置有独立的凭证引用；“默认”只表示无 Agent
+新会话使用的模型，不限制可配置的数量。Agent 创建页和编辑页可以多选模型作为绑定白名单，
+再单独指定其中一个作为该 Agent 的默认模型。设置页保存的是可复用目录，Agent 绑定会写入
+自己的 Revision。
+
 ## 真实验证边界
 
 `pnpm check`、`pnpm pack` 和官方 DSH node-store probe 是插件发布前的硬门禁。浏览器 smoke

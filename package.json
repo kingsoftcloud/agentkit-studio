@@ -32,7 +32,7 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "check": "node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node --test tests/*.test.mjs",
+    "check": "node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node --test tests/*.test.mjs",
     "build:client": "node scripts/build-client.mjs",
     "precheck": "node scripts/build-client.mjs",
     "pretest": "node scripts/build-client.mjs",

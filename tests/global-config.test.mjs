@@ -43,8 +43,8 @@ test('global config supports multiple model profiles with separate redacted cred
   });
   const resolved = await config.resolve();
   assert.deepEqual(resolved.values.modelProfiles.map(({ apiKey, ...profile }) => profile), [
-    { id: 'ksyun-flash', provider: 'ksyun', modelName: 'deepseek-v4.1-flash', baseUrl: '', credentialName: 'AGENTKIT_MODEL_API_KEY', enabled: true },
-    { id: 'openai-mini', provider: 'openai', modelName: 'gpt-4.1-mini', baseUrl: 'https://api.openai.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY_OPENAI', enabled: true },
+    { id: 'ksyun-flash', provider: 'ksyun', modelName: 'deepseek-v4.1-flash', baseUrl: '', credentialName: 'AGENTKIT_MODEL_API_KEY', enabled: true, default: true },
+    { id: 'openai-mini', provider: 'openai', modelName: 'gpt-4.1-mini', baseUrl: 'https://api.openai.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY_OPENAI', enabled: true, default: false },
   ]);
   assert.deepEqual(resolved.values.modelProfiles.map(profile => profile.apiKey), ['sk-ksyun', 'sk-openai']);
   const described = await config.describe();
@@ -55,4 +55,16 @@ test('global config supports multiple model profiles with separate redacted cred
   assert.equal(text.includes('apiKey:'), false);
   assert.equal(text.includes('sk-ksyun'), true);
   assert.equal(text.includes('sk-openai'), true);
+});
+
+test('global config keeps exactly one explicit default when profiles are reordered or legacy-shaped', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-global-default-'));
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home } });
+  await config.update({ modelProfiles: [
+    { id: 'first', provider: 'ksyun', modelName: 'first', credentialName: 'KEY_FIRST', enabled: true, default: false },
+    { id: 'second', provider: 'openai', modelName: 'second', credentialName: 'KEY_SECOND', enabled: true, default: true },
+    { id: 'third', provider: 'custom', modelName: 'third', credentialName: 'KEY_THIRD', enabled: true, default: true },
+  ] });
+  const profiles = (await config.resolve()).values.modelProfiles;
+  assert.deepEqual(profiles.map(profile => [profile.id, profile.default]), [['first', false], ['second', true], ['third', false]]);
 });

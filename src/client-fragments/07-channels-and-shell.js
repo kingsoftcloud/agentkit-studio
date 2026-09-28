@@ -415,7 +415,8 @@
       const applyProfiles = async ({ profiles, keys = {} }) => {
         const document = await describe();
         const namespace = (document.namespaces || []).find(item => item.ns === DSH_MODEL_SETTINGS_NS);
-        const valid = profiles.filter(profile => profile?.enabled !== false && String(profile?.modelName || '').trim());
+        const valid = profiles.filter(profile => profile?.enabled !== false && String(profile?.modelName || '').trim())
+          .sort((left, right) => Number(right.default === true) - Number(left.default === true));
         if (!valid.length) throw new Error('至少保留一个模型配置');
         const operations = valid.map((profile, index) => {
           const route = `agentkit-studio-${modelProfileId(profile, index).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 64);
@@ -471,7 +472,7 @@
 
     function ModelSettingsSection({ dshModel }) {
       const [form, setForm] = useState({
-        profiles: [{ id: 'default', provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: DEFAULT_KSYUN_MODEL, credentialName: DSH_MODEL_CREDENTIAL, apiKey: '', enabled: true }],
+        profiles: [{ id: 'default', provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: DEFAULT_KSYUN_MODEL, credentialName: DSH_MODEL_CREDENTIAL, apiKey: '', enabled: true, default: true }],
         cloudAccessKey: '', cloudSecretKey: '', cloudAccountId: '', cloudRegion: '', cloudServerUrl: '', cloudBucket: '',
       });
       const [modelStatus, setModelStatus] = useState({});
@@ -487,7 +488,9 @@
         try {
           const [settings, dshDocument] = await Promise.all([hostRemote.settings(), dshModel.describe()]);
           const legacy = { id: 'default', provider: settings?.modelProvider || 'ksyun', modelName: settings?.modelName || DEFAULT_KSYUN_MODEL, baseUrl: settings?.modelBaseUrl || (settings?.modelProvider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : ''), credentialName: DSH_MODEL_CREDENTIAL, enabled: true };
-          const profiles = (Array.isArray(settings?.modelProfiles) && settings.modelProfiles.length ? settings.modelProfiles : [legacy]).map((profile, index) => ({ ...legacy, ...profile, id: modelProfileId(profile, index), credentialName: modelCredentialName(profile, index), apiKey: '' }));
+          const loaded = (Array.isArray(settings?.modelProfiles) && settings.modelProfiles.length ? settings.modelProfiles : [legacy]);
+          const hasDefault = loaded.some(profile => profile.default === true);
+          const profiles = loaded.map((profile, index) => ({ ...legacy, ...profile, id: modelProfileId(profile, index), credentialName: modelCredentialName(profile, index), default: hasDefault ? profile.default === true : index === 0, apiKey: '' }));
           const credentialStatuses = await Promise.all(profiles.map(async profile => [profile.credentialName, await dshModel.credentialStatus(profile.credentialName).catch(() => ({ configured: false }))]));
           const statusMap = Object.fromEntries(credentialStatuses);
           setModelStatus(statusMap);
@@ -502,17 +505,25 @@
       useEffect(() => { load(); }, []);
       const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
       const setProfile = (index, key, value) => setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => cursor === index ? { ...profile, [key]: value } : profile) }));
-      const addProfile = () => setForm(current => ({ ...current, profiles: [...current.profiles, { id: `profile-${Date.now()}`, provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: '', credentialName: `AGENTKIT_MODEL_API_KEY_${Date.now().toString(36).toUpperCase()}`, apiKey: '', enabled: true }] }));
-      const removeProfile = index => setForm(current => ({ ...current, profiles: current.profiles.length <= 1 ? current.profiles : current.profiles.filter((_, cursor) => cursor !== index) }));
+      const addProfile = () => setForm(current => ({ ...current, profiles: [...current.profiles, { id: `profile-${Date.now()}`, provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: '', credentialName: `AGENTKIT_MODEL_API_KEY_${Date.now().toString(36).toUpperCase()}`, apiKey: '', enabled: true, default: false }] }));
+      const setDefaultProfile = index => setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => ({ ...profile, default: cursor === index })) }));
+      const removeProfile = index => setForm(current => {
+        if (current.profiles.length <= 1) return current;
+        const removedDefault = current.profiles[index]?.default === true;
+        const profiles = current.profiles.filter((_, cursor) => cursor !== index);
+        return { ...current, profiles: removedDefault ? profiles.map((profile, cursor) => ({ ...profile, default: cursor === 0 })) : profiles };
+      });
       const sourceLabel = source => ({ global: '全局 ~/.agentkit', workspace: '当前工作区', environment: '环境变量', 'workspace-alias': '当前工作区别名', 'global-alias': '全局 ~/.agentkit（兼容别名）', session: '本次 Host 会话', missing: '未配置' }[source] || source || '未配置');
       const save = async event => {
         event.preventDefault(); if (saving || status !== 'ready') return;
         setSaving(true); setMessage(''); setError('');
         try {
-          const profiles = form.profiles.map((profile, index) => ({ id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: profile.baseUrl.trim() || (profile.provider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : ''), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false, input: profile.input || ['text'] }));
+          const rawProfiles = form.profiles.map((profile, index) => ({ id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: profile.baseUrl.trim() || (profile.provider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : ''), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false, default: profile.default === true, input: profile.input || ['text'] }));
+          const defaultIndex = rawProfiles.findIndex(profile => profile.default);
+          const profiles = rawProfiles.map((profile, index) => ({ ...profile, default: defaultIndex < 0 ? index === 0 : index === defaultIndex }));
           if (profiles.some(profile => !profile.modelName)) throw new Error('每个模型配置都需要填写模型名称');
           const keys = Object.fromEntries(form.profiles.map((profile, index) => [modelCredentialName(profile, index), String(profile.apiKey || '').trim()]).filter(([, value]) => value));
-          const first = profiles[0];
+          const first = profiles.find(profile => profile.default === true) || profiles[0];
           const payload = { modelProvider: first.provider, modelBaseUrl: first.baseUrl, modelName: first.modelName, modelProfiles: profiles, modelProfileKeys: keys, cloudAccountId: form.cloudAccountId.trim(), cloudRegion: form.cloudRegion.trim(), cloudServerUrl: form.cloudServerUrl.trim(), cloudBucket: form.cloudBucket.trim() };
           if (form.cloudAccessKey?.trim()) payload.cloudAccessKey = form.cloudAccessKey.trim();
           if (form.cloudSecretKey?.trim()) payload.cloudSecretKey = form.cloudSecretKey.trim();
@@ -530,7 +541,7 @@
           await hostRemote.updateSettings({ modelProfiles: profiles });
           await dshModel.applyProfiles({ profiles, keys });
           setForm(current => ({ ...current, profiles: current.profiles.map(profile => ({ ...profile, apiKey: '' })), cloudAccessKey: '', cloudSecretKey: '' }));
-          setMessage('已保存多个模型配置；新会话可以直接选择默认模型，Agent 可在创建或编辑时绑定多个模型。');
+          setMessage('已保存多个模型配置；标记为“默认”的模型用于新会话，Agent 可在创建或编辑时多选模型绑定。');
           await load();
         } catch (reason) { setError(reason?.message || '保存模型与凭证失败'); } finally { setSaving(false); }
       };
@@ -539,9 +550,9 @@
         status === 'error' ? h('div', { role: 'alert', style: { marginBottom: '10px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
         h('form', { onSubmit: save, style: { display: 'grid', gap: '14px', maxWidth: '1100px' } },
           h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' } }, h('div', null, h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '14px' } }, '模型与提供商'), h('p', { style: { margin: '3px 0 0', color: BRAND.inkMuted, fontSize: '11px' } }, '可配置多个提供商和模型；每个条目独立保存凭证。默认模型取第一条。')), h(Pill, { tone: dshStatus.configured ? 'accent' : 'signal' }, dshStatus.configured ? 'DSH 已识别' : '待同步')),
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' } }, h('div', null, h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '14px' } }, '模型与提供商'), h('p', { style: { margin: '3px 0 0', color: BRAND.inkMuted, fontSize: '11px' } }, '这里管理可复用的多个提供商和模型；每条配置独立保存凭证，并明确指定一个聊天默认模型。Agent 创建页仍可从这些模型中多选绑定。')), h(Pill, { tone: dshStatus.configured ? 'accent' : 'signal' }, dshStatus.configured ? 'DSH 已识别' : '待同步')),
             h('div', { style: { display: 'grid', gap: '10px' } }, form.profiles.map((profile, index) => h('article', { key: profile.id || index, style: { border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '12px', background: BRAND.canvas } },
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('strong', { style: { fontSize: '12px', color: BRAND.ink } }, `模型 ${index + 1}`), h('button', { type: 'button', onClick: () => removeProfile(index), disabled: form.profiles.length <= 1, style: { ...buttonStyle(), padding: '4px 8px', fontSize: '10px' } }, '移除')),
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('div', { style: { display: 'flex', alignItems: 'center', gap: '7px' } }, h('strong', { style: { fontSize: '12px', color: BRAND.ink } }, `模型 ${index + 1}`), profile.default ? h(Pill, { tone: 'accent' }, '默认') : null), h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: () => setDefaultProfile(index), disabled: profile.default, style: { ...buttonStyle(), padding: '4px 8px', fontSize: '10px' } }, profile.default ? '当前默认' : '设为默认'), h('button', { type: 'button', onClick: () => removeProfile(index), disabled: form.profiles.length <= 1, style: { ...buttonStyle(), padding: '4px 8px', fontSize: '10px' } }, '移除'))),
               h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(150px, .8fr) minmax(180px, 1.2fr)', gap: '9px' } }, h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '提供商', h('select', { value: profile.provider === 'ksyun' || profile.provider === 'openai' ? profile.provider : 'custom', onChange: event => { setProfile(index, 'provider', event.target.value); setProfile(index, 'baseUrl', event.target.value === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : event.target.value === 'openai' ? 'https://api.openai.com/v1' : ''); }, style: inputStyle() }, h('option', { value: 'ksyun' }, '金山云模型服务'), h('option', { value: 'openai' }, 'OpenAI'), h('option', { value: 'custom' }, '自定义提供商'))), h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '模型名称', h('input', { value: profile.modelName, placeholder: DEFAULT_KSYUN_MODEL, onChange: event => setProfile(index, 'modelName', event.target.value), style: inputStyle() }))),
               profile.provider === 'ksyun' ? h('div', { style: { marginTop: '8px', color: BRAND.inkMuted, fontSize: '10px' } }, '金山云模型服务使用默认地址，无需填写 API 地址。') : h('label', { style: { display: 'block', marginTop: '8px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'API 地址', h('input', { value: profile.baseUrl, placeholder: '例如：https://api.example.com/v1', onChange: event => setProfile(index, 'baseUrl', event.target.value), style: inputStyle() })),
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', fontSize: '12px' } }, h('input', { type: 'checkbox', checked: profile.input?.includes('image') || false, onChange: event => setProfile(index, 'input', event.target.checked ? ['text', 'image'] : ['text']) }), '支持图片输入（保存时优先读取模型目录）'),

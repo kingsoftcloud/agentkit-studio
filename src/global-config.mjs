@@ -42,15 +42,21 @@ async function readDocument(path, json = false) {
 
 function normalizeProfiles(value) {
   if (!Array.isArray(value)) return [];
-  return value.filter(record).map(profile => ({
+  const profiles = value.filter(record).map(profile => ({
     id: scalar(profile.id) || `${scalar(profile.provider) || 'provider'}:${scalar(profile.modelName) || scalar(profile.model)}`,
     provider: scalar(profile.provider) || 'ksyun',
     modelName: scalar(profile.modelName) || scalar(profile.model),
     baseUrl: scalar(profile.baseUrl) || scalar(profile.baseURL) || '',
     credentialName: scalar(profile.credentialName) || '',
     enabled: profile.enabled !== false,
+    default: profile.default === true,
     ...(Array.isArray(profile.input) ? { input: [...new Set(profile.input.filter(item => ['text', 'image'].includes(item)))] } : {}),
   })).filter(profile => profile.modelName);
+  if (!profiles.length) return profiles;
+  // Older config files did not have a default marker. Preserve their first
+  // valid profile as the default and normalize multiple markers to one.
+  const defaultIndex = profiles.findIndex(profile => profile.default);
+  return profiles.map((profile, index) => ({ ...profile, default: defaultIndex < 0 ? index === 0 : index === defaultIndex }));
 }
 
 function project(document) {

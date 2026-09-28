@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { CanonicalDshSessionAdapter } from '../src/session-adapter.mjs';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const dshRoot = resolve(process.env.AGENTKIT_DSH_ROOT || '../deepseek-harness');
+const defaultDshRoot = resolve(projectRoot, '../../deepseek-harness');
+const dshRoot = resolve(process.env.AGENTKIT_DSH_ROOT || defaultDshRoot);
 const fixture = JSON.parse(await readFile(join(projectRoot, 'tests/fixtures/p1-runtime-matrix.json'), 'utf8'));
 const expectedPath = join(projectRoot, 'tests/fixtures/expected-p1-nodes.json');
 const adapter = new CanonicalDshSessionAdapter();

@@ -70,3 +70,7 @@ git diff --check
 
 涉及官方 DSH 或浏览器的改动还要记录 `make verify-dsh`、profile smoke 和对应的真实浏览器
 证据。fixture 测试只能证明合同投影，不能替代模型、资源绑定、云端部署或签名 DMG 验收。
+
+设置页的模型目录支持多个提供商和多个模型。请确认新增条目使用独立的
+`credentialName`，且恰好一个条目标记为默认；Agent Revision 的多模型绑定应在创建页或
+编辑页验证，不要把“默认模型”误当成“只能配置一个模型”。

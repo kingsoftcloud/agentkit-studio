@@ -129,7 +129,8 @@
             const profiles = Array.isArray(settings?.modelProfiles) && settings.modelProfiles.length
               ? settings.modelProfiles.map((profile, index) => ({ ...profile, credentialName: modelCredentialName(profile, index) }))
               : [{ provider: settings?.modelProvider || 'ksyun', modelName: settings?.modelName || DEFAULT_KSYUN_MODEL, baseUrl: settings?.modelBaseUrl || DEFAULT_KSYUN_BASE_URL, credentialName: DSH_MODEL_CREDENTIAL }];
-            const active = profiles.find(profile => profile.enabled !== false && profile.modelName);
+            const active = profiles.find(profile => profile.enabled !== false && profile.default === true && profile.modelName)
+              || profiles.find(profile => profile.enabled !== false && profile.modelName);
             if (!active?.modelName) return;
             const document = await dshModel.describe();
             const defaultNamespace = (document.namespaces || []).find(item => item.ns === DSH_DEFAULT_MODEL_SETTINGS_NS);

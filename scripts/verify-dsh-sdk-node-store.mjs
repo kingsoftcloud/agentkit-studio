@@ -12,7 +12,8 @@ import { CanonicalDshSessionAdapter } from '../src/session-adapter.mjs';
  * result proves the live SDK boundary is visible in the official node store.
  */
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const dshRoot = resolve(process.env.AGENTKIT_DSH_ROOT || '../deepseek-harness');
+const defaultDshRoot = resolve(projectRoot, '../../deepseek-harness');
+const dshRoot = resolve(process.env.AGENTKIT_DSH_ROOT || defaultDshRoot);
 const reportPath = resolve(process.argv[2] || resolve(projectRoot, '../.scratch/studio-dsh-native-2026-09-24/rc1-sdk-canonical-2026-09-24.json'));
 const report = JSON.parse(await readFile(reportPath, 'utf8'));
 const canonical = report.canonical;
