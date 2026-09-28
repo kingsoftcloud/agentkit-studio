@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-const clientSource = readFileSync(resolve(import.meta.dirname, '../src/client.js'), 'utf8');
+const fragmentDir = resolve(import.meta.dirname, '../src/client-fragments');
+const clientSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
 
 test('Studio conversation surface does not ship the legacy DSH hero copy', () => {
   assert.doesNotMatch(clientSource, /探索未至之境|预览版/);
@@ -14,6 +15,7 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /无 Agent · DSH 原生会话/);
   assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'agents\/ensure-preset'/);
   assert.match(clientSource, /agentPresets\.select\(sessionId, admission\.presetId\)/);
+  assert.match(clientSource, /typeof selectedPreset === 'object' && selectedPreset\.ok === false/);
   assert.match(clientSource, /conversation\.hero\.agentPreset/);
   assert.match(clientSource, /首轮发送后锁定/);
   assert.match(clientSource, /agentkit-studio:open-bound-conversation/);

@@ -98,7 +98,8 @@ Host/Server 合同和真实凭证验收为准。
 
 ## 目录
 
-- `src/client.js`：Studio 浏览器页面、资源目录、Agent 创建/编辑和二级导航。
+- `src/client.js` 是保持在门禁内的入口注释；浏览器实现按功能拆分在
+  `src/client-fragments/`，由 `scripts/build-client.mjs` 按固定顺序生成 `dist/client.js`。
 - `src/index.mjs`：DSH Host 插件入口和 AgentEngine Server 控制通道。
 - `src/host-remote.mjs`：Host API 与 AgentEngine Server Action 客户端。
 - `docs/`：架构、合同、复用清单和验收证据。

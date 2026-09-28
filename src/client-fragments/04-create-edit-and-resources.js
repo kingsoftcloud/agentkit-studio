@@ -1,0 +1,661 @@
+    function ConversationalAgentCreatePage({ onBack, onCreated }) {
+      const [messages, setMessages] = useState([]);
+      const [input, setInput] = useState('');
+      const [proposal, setProposal] = useState(null);
+      const [draft, setDraft] = useState({ name: '', slug: '', description: '', prompt: '', task: '' });
+      const [runtime, setRuntime] = useState('dsh-native');
+      const [catalog, setCatalog] = useState({ model: [], mcp: [], skill: [] });
+      const [authoringModel, setAuthoringModel] = useState('');
+      const [agentModels, setAgentModels] = useState([]);
+      const [mcp, setMcp] = useState([]);
+      const [skills, setSkills] = useState([]);
+      const [platformBindings, setPlatformBindings] = useState([]);
+      const [memoryEnabled, setMemoryEnabled] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [stage, setStage] = useState('');
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
+      const [settingsOpen, setSettingsOpen] = useState(false);
+      const activeRequest = useRef(null);
+
+      useEffect(() => () => { activeRequest.current = null; }, []);
+
+      useEffect(() => {
+        let alive = true;
+        Promise.allSettled(['model', 'mcp', 'skill'].map(kind => hostRemote.resources({ kind, limit: 100 }))).then(results => {
+          if (!alive) return;
+          const next = {};
+          ['model', 'mcp', 'skill'].forEach((kind, index) => {
+            next[kind] = results[index]?.status === 'fulfilled' && Array.isArray(results[index].value?.items) ? results[index].value.items : [];
+          });
+          setCatalog(next);
+          const first = next.model[0]?.resourceId || '';
+          setAuthoringModel(value => value || first);
+          setAgentModels(value => value.length ? value : (first ? [first] : []));
+          if (!first) setError('没有可用于生成草稿的模型，请先在设置中配置模型。');
+        });
+        return () => { alive = false; };
+      }, []);
+
+      const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
+      const toggle = (setter, id) => setter(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
+      const pollStatus = async requestId => {
+        for (let index = 0; index < 100 && activeRequest.current === requestId; index += 1) {
+          await wait(600);
+          if (activeRequest.current !== requestId) return;
+          try {
+            const result = await hostRemote.authoringConversationStatus(requestId);
+            if (activeRequest.current === requestId && result?.stage) setStage(String(result.stage));
+            if (['done', 'failed'].includes(String(result?.stage || '').toLowerCase())) return;
+          } catch { return; }
+        }
+      };
+
+      const send = async event => {
+        event?.preventDefault?.();
+        const text = input.trim();
+        if (!text || busy) return;
+        if (!authoringModel || !agentModels.length) { setError('请先选择至少一个模型。'); setSettingsOpen(true); return; }
+        setError(''); setNotice(''); setBusy(true); setStage('resolving_model'); setInput('');
+        const next = [...messages, { role: 'user', content: text }];
+        setMessages(next);
+        const requestId = `studio-conversation-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        activeRequest.current = requestId;
+        const statusPromise = pollStatus(requestId);
+        // Include edits made in the review pane in the next model request,
+        // while keeping earlier visible messages as immutable snapshots.
+        const history = next.map(item => ({ role: item.role, content: item.content }));
+        const previousIndex = history.findLastIndex(item => item.role === 'assistant');
+        if (proposal && previousIndex >= 0) history[previousIndex].content = JSON.stringify({
+          ...proposal, name: draft.name, slug: draft.slug, description: draft.description,
+          spec: { ...proposal.spec, description: draft.description, instructions: { ...proposal.spec?.instructions, system: draft.prompt, task: draft.task } },
+        });
+        try {
+          const result = await hostRemote.composeAuthoringConversation({
+            messages: history,
+            modelProfileId: authoringModel,
+            runtimeType: runtime,
+            agentModelProfileIds: agentModels,
+            agentDefaultModelProfileId: agentModels[0] || null,
+            toolResourceIds: [],
+            mcpResourceIds: mcp,
+            skillResourceIds: skills,
+            requestId,
+          });
+          if (activeRequest.current !== requestId) return;
+          const nextProposal = result?.proposal;
+          if (!nextProposal) throw new Error('Host 没有返回可审查的 Agent 草稿');
+          const spec = nextProposal.spec || {};
+          setProposal(nextProposal);
+          setDraft({
+            name: String(nextProposal.name || '待确认 Agent'),
+            slug: conversationalSlug(nextProposal.slug || nextProposal.name),
+            description: String(spec.description || nextProposal.description || ''),
+            prompt: String(spec.instructions?.system || nextProposal.instructions?.system || ''),
+            task: String(spec.instructions?.task || ''),
+          });
+          // Keep the full structured proposal in the assistant turn. The
+          // server parses this turn on the next request so a follow-up can
+          // refine the existing Agent instead of starting from scratch.
+          setMessages([...next, { role: 'assistant', content: JSON.stringify(nextProposal) }]);
+          setStage('done');
+          if (result?.fallback?.active) setNotice('生成模型暂时不可用，Host 已生成可编辑的本地兜底草稿；确认前请检查内容。');
+        } catch (reason) {
+          if (activeRequest.current === requestId) { setStage('failed'); setError(reason?.message || '对话构建失败'); }
+        } finally {
+          if (activeRequest.current === requestId) { activeRequest.current = null; setBusy(false); }
+          void statusPromise;
+        }
+      };
+
+      const create = async event => {
+        event?.preventDefault?.();
+        if (!proposal || busy) return;
+        if (!draft.name.trim() || !draft.slug.trim() || !draft.prompt.trim()) { setError('请补全名称、Agent ID 和系统 Prompt。'); return; }
+        if (!agentModels.length) { setError('请至少为 Agent 选择一个模型。'); setSettingsOpen(true); return; }
+        setBusy(true); setError(''); setNotice(''); setStage('creating');
+        try {
+          const proposalSpec = proposal.spec || {};
+          const spec = {
+            ...proposalSpec,
+            description: draft.description.trim() || proposalSpec.description || proposal.description || '',
+            runtime: null,
+            model: null,
+            instructions: { ...(proposalSpec.instructions || {}), system: draft.prompt.trim(), task: draft.task.trim() },
+            bindings: {
+              ...(proposalSpec.bindings || {}),
+              modelProfileId: agentModels[0] || authoringModel,
+              modelProfileIds: agentModels.length ? agentModels : [authoringModel],
+              policyTemplate: proposalSpec.bindings?.policyTemplate || 'strict',
+              tools: runtime === 'dsh-native' || runtime === 'codex' ? [] : (proposalSpec.bindings?.tools || []),
+              mcpServers: mcp.map(resourceId => ({ resourceId })),
+              skills: skills.map(resourceId => ({ resourceId })),
+              plugins: platformBindings,
+            },
+            memory: { ...(proposalSpec.memory || {}), enabled: memoryEnabled, recall: { ...(proposalSpec.memory?.recall || {}), enabled: memoryEnabled } },
+          };
+          const created = await hostRemote.quickAuthorAgent({ name: draft.name.trim(), slug: draft.slug.trim(), runtimeType: runtime, template: 'blank', description: spec.description, spec });
+          const metadata = created?.metadata || {};
+          onCreated({ id: metadata.id || draft.slug.trim(), name: metadata.name || draft.name.trim(), revision: metadata.revision || 1 });
+        } catch (reason) { setStage('failed'); setError(reason?.message || '创建 Agent 失败'); }
+        finally { setBusy(false); }
+      };
+
+      const picker = (kind, values, setter, label) => h('div', null,
+        h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700, marginBottom: '6px' } }, `${label}（${values.length}）`),
+        catalog[kind].length ? h('div', { style: { display: 'grid', gap: '5px', maxHeight: '150px', overflow: 'auto' } }, catalog[kind].map(item => {
+          const id = item.resourceId; const checked = values.includes(id);
+          return h('label', { key: id, style: { display: 'flex', alignItems: 'center', gap: '7px', padding: '6px 8px', border: '1px solid ' + (checked ? BRAND.accentStrong : BRAND.border), borderRadius: '7px', background: checked ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, fontSize: '11px' } }, h('input', { type: 'checkbox', checked, onChange: () => toggle(setter, id) }), item.displayName || item.name || id);
+        })) : h('div', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, '暂无资源'));
+
+      const draftPanel = h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '14px', background: BRAND.surface } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' } },
+          h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, '草稿'),
+          h(Pill, { tone: proposal ? 'accent' : 'signal' }, proposal ? '可检查' : '待生成')),
+        proposal ? h('form', { onSubmit: create, style: { display: 'grid', gap: '9px' } },
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '名称', h('input', { value: draft.name, onChange: event => setDraft(current => ({ ...current, name: event.target.value })), style: inputStyle() })),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Agent ID', h('input', { value: draft.slug, onChange: event => setDraft(current => ({ ...current, slug: event.target.value })), style: inputStyle() })),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '系统 Prompt', h('textarea', { value: draft.prompt, onChange: event => setDraft(current => ({ ...current, prompt: event.target.value })), rows: 6, style: { ...inputStyle(), height: 'auto', padding: '10px', resize: 'vertical' } })),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '任务要求', h('textarea', { value: draft.task, onChange: event => setDraft(current => ({ ...current, task: event.target.value })), rows: 5, style: { ...inputStyle(), height: 'auto', padding: '10px', resize: 'vertical' } })),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '用途描述', h('textarea', { value: draft.description, onChange: event => setDraft(current => ({ ...current, description: event.target.value })), rows: 3, style: { ...inputStyle(), height: 'auto', padding: '10px', resize: 'vertical' } })),
+          h('button', { type: 'submit', disabled: busy, style: { ...buttonStyle(), color: busy ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: busy ? BRAND.accentSoft : BRAND.primaryFill, borderColor: busy ? BRAND.border : 'transparent' } }, busy ? '创建中…' : '确认创建 Agent'))
+          : h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.55 } }, '先在左侧描述需求。每一轮都会保留上下文，草稿生成后可在这里检查并确认。'));
+      const settingsPanel = h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '14px', background: BRAND.surface } },
+        h('button', { type: 'button', onClick: () => setSettingsOpen(value => !value), style: { display: 'flex', justifyContent: 'space-between', width: '100%', border: 0, padding: 0, color: BRAND.ink, background: 'transparent', fontWeight: 800, fontSize: '13px', cursor: 'pointer' } }, h('span', null, '创建配置'), h('span', null, settingsOpen ? '收起' : '展开')),
+        settingsOpen ? h('div', { style: { display: 'grid', gap: '10px', marginTop: '12px' } },
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '运行时', h('select', { value: runtime, disabled: busy, onChange: event => setRuntime(event.target.value), style: inputStyle() }, ALLOWED_RUNTIME_TYPES.map(value => h('option', { key: value, value }, RUNTIME_LABELS[value] || value)))),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '生成模型', h('select', { value: authoringModel, onChange: event => setAuthoringModel(event.target.value), style: inputStyle() }, catalog.model.map(item => h('option', { key: item.resourceId, value: item.resourceId }, item.displayName || item.resourceId)))),
+          picker('model', agentModels, setAgentModels, 'Agent 可用模型'),
+          picker('mcp', mcp, setMcp, 'MCP Server'),
+          picker('skill', skills, setSkills, 'Skill'),
+          h(PlatformResourcePicker, { value: platformBindings, onChange: setPlatformBindings, onMemory: setMemoryEnabled }),
+          h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.55 } }, '模型、MCP、Skill 可多选；知识库、记忆库各绑定一个。确认创建会保存绑定，能否执行还需通过运行时构建校验。', runtime === 'dsh-native' ? ' DSH Native 使用自身工具循环，不绑定 KsADK 原生 Tool。' : '')) : null);
+      return h('div', null,
+        h(SectionHeading, { title: '对话创建 Agent', detail: '描述需求、补充细节，检查草稿后确认创建。', action: h('button', { type: 'button', disabled: busy, onClick: onBack, style: buttonStyle() }, '返回 Agents') }),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 370px), 1fr))', gap: '16px', alignItems: 'start' } },
+          h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, '需求对话'), h(Pill, { tone: messages.length ? 'accent' : 'neutral' }, messages.length ? `${Math.ceil(messages.length / 2)} 轮上下文` : '持续保留上下文')),
+            h('div', { style: { display: 'grid', gap: '8px', minHeight: '230px', maxHeight: '430px', overflow: 'auto' } }, messages.length ? messages.map((item, index) => h('div', { key: index, style: { alignSelf: item.role === 'user' ? 'end' : 'start', maxWidth: '88%', padding: '10px 12px', borderRadius: '10px', color: BRAND.ink, background: item.role === 'user' ? BRAND.accentSoft : BRAND.canvas, fontSize: '12px', lineHeight: 1.5, whiteSpace: 'pre-wrap' } }, authoringMessageText(item))) : h('div', { style: { display: 'grid', placeItems: 'center', minHeight: '220px', color: BRAND.inkMuted, fontSize: '12px', textAlign: 'center' } }, h('div', null, h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '14px' } }, '从一句需求开始'), h('p', { style: { margin: '7px 0 0' } }, '例如：帮我做一个销售日报 Agent，能汇总群聊记录并标出待跟进事项。')))),
+            busy ? h('div', { role: 'status', style: { color: BRAND.accentStrong, fontSize: '11px', margin: '8px 0' } }, stage === 'creating' ? '正在写入 Agent Revision…' : `正在${stage === 'generating' ? '生成草稿' : stage === 'validating' ? '校验绑定' : '理解你的需求'}…`) : null,
+            error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '11px', margin: '8px 0' } }, error) : null,
+            notice ? h('div', { role: 'status', style: { color: BRAND.signal, fontSize: '11px', margin: '8px 0' } }, notice) : null,
+            h('form', { onSubmit: send, style: { marginTop: '10px' } }, h('textarea', { value: input, onChange: event => setInput(event.target.value), onKeyDown: event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(event); } }, rows: 3, placeholder: '描述或调整你的 Agent…（Enter 发送，Shift + Enter 换行）', style: { ...inputStyle(), height: 'auto', padding: '10px', resize: 'vertical' } }), h('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '8px' } }, h('button', { type: 'submit', disabled: busy || !input.trim(), style: { ...buttonStyle(), color: busy || !input.trim() ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: busy || !input.trim() ? BRAND.accentSoft : BRAND.primaryFill, borderColor: busy || !input.trim() ? BRAND.border : 'transparent' } }, busy ? '处理中…' : '发送并更新草稿')))),
+          h('aside', { style: { display: 'grid', gap: '12px' } }, draftPanel, settingsPanel))
+      );
+    }
+
+    function AgentEditPage({ agentId, onBack, onSaved }) {
+      const [agent, setAgent] = useState(null);
+      const [error, setError] = useState('');
+      useEffect(() => {
+        let alive = true;
+        hostRemote.agent(agentId).then(value => { if (alive) setAgent(value?.draft || value); })
+          .catch(reason => { if (alive) setError(reason?.message || '读取 Agent 失败'); });
+        return () => { alive = false; };
+      }, [agentId]);
+      if (!agent) return h(EmptyState, { title: error || '正在读取 Agent', detail: '读取当前版本和已有绑定。', action: h('button', { onClick: onBack, style: buttonStyle() }, '返回 Agents') });
+      return h(AgentCreatePage, { initialAgent: agent, onBack, onCreated: onSaved });
+    }
+
+    function AgentCreatePage({ mode = 'quick', initialAgent = null, onBack, onCreated }) {
+      const editing = Boolean(initialAgent);
+      const originalSpec = initialAgent?.spec || {};
+      const originalBindings = originalSpec.bindings || {};
+      const idsOf = items => (items || []).map(item => typeof item === 'string' ? item : item.resourceId).filter(Boolean);
+      const [step, setStep] = useState(0);
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState('');
+      const [catalogStatus, setCatalogStatus] = useState('loading');
+      const [catalog, setCatalog] = useState({ model: [], tool: [], mcp: [], skill: [] });
+      const [selectedModel, setSelectedModel] = useState(originalBindings.modelProfileId || '');
+      const [selectedModels, setSelectedModels] = useState(originalBindings.modelProfileIds || (originalBindings.modelProfileId ? [originalBindings.modelProfileId] : []));
+      const [selectedTools, setSelectedTools] = useState(idsOf(originalBindings.tools));
+      const [selectedMcp, setSelectedMcp] = useState(idsOf(originalBindings.mcpServers));
+      const [selectedSkills, setSelectedSkills] = useState(idsOf(originalBindings.skills));
+      const [platformBindings, setPlatformBindings] = useState(originalBindings.plugins || []);
+      const [memoryEnabled, setMemoryEnabled] = useState(Boolean(originalSpec.memory?.enabled));
+      const [policy, setPolicy] = useState(originalBindings.policyTemplate || 'strict');
+      const [form, setForm] = useState({
+        id: initialAgent?.metadata?.id || 'local-agent', name: initialAgent?.metadata?.name || '我的第一个 Agent', runtime: originalSpec.runtime?.type || 'dsh-native',
+        description: originalSpec.description || '', prompt: originalSpec.instructions?.system || '', template: 'blank',
+      });
+      const runtimeOptions = ALLOWED_RUNTIME_TYPES.map(runtimeType => ({ runtimeType, displayName: RUNTIME_LABELS[runtimeType] }));
+      const templates = [['blank', '通用助手', '干净的 DSH Native Agent，创建后按需绑定能力。'], ['research', '研究助手', '适合资料检索、分析和带来源输出。']];
+      const steps = mode === 'one-click'
+        ? [['选择模板', '确定一键创建的起点'], ['绑定能力', '模型、Tool、MCP、Skill'], ['运行策略', '执行目标与权限'], ['检查并创建', '确认后写入 Host']]
+        : [['定义 Agent', '身份、Prompt 与用途'], ['绑定能力', '模型、Tool、MCP、Skill'], ['运行策略', '执行目标与权限'], ['检查并创建', '确认后写入 Host']];
+      const update = (key, value) => setForm(previous => ({ ...previous, [key]: value }));
+
+      useEffect(() => {
+        if (form.runtime === 'dsh-native' && !editing) setSelectedTools([]);
+      }, [form.runtime]);
+
+      useEffect(() => {
+        let alive = true;
+        setCatalogStatus('loading');
+        Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => hostRemote.resources(kind)))
+          .then(results => {
+            if (!alive) return;
+            const next = {};
+            ['model', 'tool', 'mcp', 'skill'].forEach((kind, index) => {
+              next[kind] = results[index]?.status === 'fulfilled' && Array.isArray(results[index].value?.items)
+                ? results[index].value.items : [];
+            });
+            setCatalog(next);
+            if (!editing) {
+              setSelectedModel(current => current || next.model?.[0]?.resourceId || '');
+              setSelectedModels(current => current.length ? current : (next.model?.[0]?.resourceId ? [next.model[0].resourceId] : []));
+            }
+            if (next.model.length) setCatalogStatus('ready');
+            else {
+              setCatalogStatus('error');
+              const failed = results.find(result => result.status === 'rejected');
+              setError(failed?.reason?.message || '模型资源目录读取失败');
+            }
+          });
+        return () => { alive = false; };
+      }, []);
+
+      const canNext = step === 0
+        ? Boolean(form.id.trim() && form.name.trim())
+        : step === 1 ? Boolean(selectedModel) : true;
+
+      const create = async () => {
+        if (saving || !form.id.trim() || !form.name.trim() || !selectedModel) return;
+        setSaving(true); setError('');
+        const id = form.id.trim().toLowerCase();
+        try {
+          const prompt = form.prompt.trim() || form.description.trim() || '你是一个可靠的通用助手，请直接回答用户问题；信息不足时先提出澄清问题。';
+          // The managed Harness executes through the local host process. Its
+          // runtime admission contract requires this capability explicitly;
+          // without it the build can succeed but conversation-surface must
+          // fail closed with PLUGIN_PERMISSION_DENIED. MCP adds its own
+          // network lease. DSH Native and Codex keep the deny-by-default
+          // permission set because their native loops do not need the
+          // KsADK host-user capability.
+          const allowedPermissions = form.runtime === 'harness'
+            ? ['process:host-user', ...(selectedMcp.length ? ['network:mcp'] : [])]
+            : [];
+          const spec = {
+            ...originalSpec,
+            description: form.description.trim() || '由 AgentKit Studio 本地创建',
+            runtime: { ...originalSpec.runtime, type: form.runtime },
+            instructions: { ...originalSpec.instructions, system: prompt, task: originalSpec.instructions?.task || '' },
+            security: editing ? originalSpec.security : { toolPolicy: 'deny-by-default', allowedPermissions },
+            bindings: {
+              ...originalBindings,
+              modelProfileId: selectedModel,
+              modelProfileIds: selectedModels.length ? selectedModels : [selectedModel],
+              policyTemplate: policy,
+              tools: selectedTools.map(resourceId => (originalBindings.tools || []).find(item => item.resourceId === resourceId) || { resourceId }),
+              mcpServers: selectedMcp.map(resourceId => (originalBindings.mcpServers || []).find(item => item.resourceId === resourceId) || { resourceId }),
+              skills: selectedSkills.map(resourceId => (originalBindings.skills || []).find(item => item.resourceId === resourceId) || { resourceId }),
+              plugins: platformBindings,
+            },
+            memory: { ...originalSpec.memory, providerRef: platformBindings.some(item => item?.config?.binding?.resource?.kind === 'memory-instance') ? 'binding://platform-memory-instance' : originalSpec.memory?.providerRef === 'binding://platform-memory-instance' ? 'local-default' : originalSpec.memory?.providerRef || 'local-default', enabled: memoryEnabled, recall: { ...originalSpec.memory?.recall, enabled: memoryEnabled } },
+          };
+          const created = editing ? await hostRemote.updateAgent(id, spec, initialAgent.metadata.revision, form.name.trim()) : await hostRemote.quickAuthorAgent({
+            name: form.name.trim(), slug: id, runtimeType: form.runtime,
+            template: mode === 'one-click' ? form.template : 'blank',
+            description: form.description.trim() || '由 AgentKit Studio 本地创建', spec,
+          });
+          const metadata = created?.metadata || {};
+          onCreated({ id: metadata.id || id, name: metadata.name || form.name.trim(), revision: metadata.revision || 1 });
+        } catch (reason) { setError(reason?.message || '创建 Agent 失败'); }
+        finally { setSaving(false); }
+      };
+
+      const templateCards = mode === 'one-click' ? h('div', { style: { marginBottom: '20px' } },
+        h('div', { style: { color: BRAND.ink, fontSize: '13px', fontWeight: 800, marginBottom: '10px' } }, '选择一键模板'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' } }, templates.map(([value, title, detail]) => h('button', {
+          key: value, type: 'button', onClick: () => update('template', value),
+          style: { minHeight: '88px', textAlign: 'left', border: '1px solid ' + (form.template === value ? BRAND.accentStrong : BRAND.border), borderRadius: '10px', padding: '13px', background: form.template === value ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' },
+        }, h('div', { style: { fontWeight: 800, fontSize: '13px' } }, title), h('div', { style: { marginTop: '5px', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, detail))))) : null;
+
+      const capabilityPicker = (kind, title, values, setValues) => h('section', {
+        style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface },
+      }, h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '9px' } },
+        h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, title),
+        h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, `${values.length} 已选择`)),
+      catalog[kind]?.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '7px' } }, catalog[kind].map(resource => {
+        const id = resource.resourceId;
+        const checked = values.includes(id);
+        return h('label', { key: id, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 10px', border: '1px solid ' + (checked ? BRAND.accentStrong : BRAND.border), borderRadius: '8px', background: checked ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' } },
+          h('input', { type: 'checkbox', checked, onChange: event => setValues(current => event.target.checked ? [...current, id] : current.filter(value => value !== id)) }),
+          h('span', null, h('strong', { style: { display: 'block', fontSize: '12px' } }, resource.displayName || resource.name || id), h('span', { style: { display: 'block', marginTop: '2px', color: BRAND.inkMuted, fontSize: '10px' } }, resource.description || resource.version || id)));
+      })) : h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', padding: '6px 0' } }, catalogStatus === 'loading' ? '正在读取目录…' : '暂无可用资源'));
+
+      const stepContent = step === 0 ? h(React.Fragment, null,
+        templateCards,
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: '14px' } },
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Agent ID', h('input', { value: form.id, disabled: editing, onChange: e => update('id', e.target.value), placeholder: 'local-agent', style: inputStyle() })),
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '名称', h('input', { value: form.name, onChange: e => update('name', e.target.value), placeholder: '我的 Agent', style: inputStyle() })),
+          h('label', { style: { gridColumn: '1 / -1', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '用途描述', h('textarea', { value: form.description, onChange: e => update('description', e.target.value), placeholder: '例如：企业知识库问答与资料检索', rows: 4, style: { ...inputStyle(), height: 'auto', padding: '10px', resize: 'vertical' } })),
+          h('label', { style: { gridColumn: '1 / -1', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '运行时', h('select', { value: form.runtime, disabled: editing, onChange: e => update('runtime', e.target.value), style: inputStyle() }, runtimeOptions.map(item => h('option', { key: item.runtimeType, value: item.runtimeType }, item.displayName)))),
+        ),
+        h('label', { style: { display: 'block', marginTop: '14px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '角色与系统 Prompt', h('textarea', { value: form.prompt, onChange: e => update('prompt', e.target.value), placeholder: '描述 Agent 的身份、边界和回答方式', rows: 5, style: { ...inputStyle(), height: 'auto', padding: '10px', resize: 'vertical' } })),
+      ) : step === 1 ? h(React.Fragment, null,
+        h('div', { style: { marginBottom: '14px', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55 } }, '模型、MCP、Skill 支持多选；知识库和记忆库各选一个。保存后形成新的 Agent 配置版本。'),
+        h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginBottom: '10px' } },
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '默认模型', h('select', { value: selectedModel, onChange: event => { setSelectedModel(event.target.value); setSelectedModels(current => current.includes(event.target.value) ? current : [event.target.value, ...current]); }, style: inputStyle() }, h('option', { value: '' }, catalogStatus === 'loading' ? '正在读取模型…' : '请选择模型'), catalog.model.map(resource => h('option', { key: resource.resourceId, value: resource.resourceId }, `${resource.displayName || resource.name} · ${resource.resourceId}`)))),
+          h('div', { style: { marginTop: '12px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '可用模型（可多选）'),
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '7px', marginTop: '7px' } }, catalog.model.map(resource => {
+            const checked = selectedModels.includes(resource.resourceId);
+            return h('label', { key: resource.resourceId, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 9px', border: '1px solid ' + (checked ? BRAND.accentStrong : BRAND.border), borderRadius: '8px', background: checked ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' } }, h('input', { type: 'checkbox', checked, onChange: event => setSelectedModels(current => event.target.checked ? [...current, resource.resourceId] : current.filter(id => id !== resource.resourceId)) }), h('span', null, resource.displayName || resource.name || resource.resourceId));
+          }))),
+        form.runtime === 'dsh-native'
+          ? h('div', { style: { marginBottom: '10px', padding: '11px 12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, 'DSH Native 使用 DSH 自身的工具循环；本次创建不会绑定 KsADK 原生 Tool。MCP、Skill 和平台资源仍可按需绑定。')
+          : capabilityPicker('tool', 'Tools', selectedTools, setSelectedTools),
+        capabilityPicker('mcp', 'MCP Servers', selectedMcp, setSelectedMcp),
+        capabilityPicker('skill', 'Skills', selectedSkills, setSelectedSkills),
+        h(PlatformResourcePicker, { value: platformBindings, onChange: setPlatformBindings, onMemory: value => setMemoryEnabled(value) }),
+      ) : step === 2 ? h(React.Fragment, null,
+        h('h3', { style: { margin: '0 0 6px', color: BRAND.ink, fontSize: '16px' } }, '运行目标与策略'),
+        h('p', { style: { margin: '0 0 16px', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55 } }, '运行目标会写入 Agent Revision。DSH Native 是本地原生循环，KsADK Harness 和 Codex 由各自 Host 执行。'),
+        h('div', { style: { display: 'grid', gap: '8px' } }, runtimeOptions.map(item => h('button', { key: item.runtimeType, type: 'button', onClick: () => update('runtime', item.runtimeType), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', border: '1px solid ' + (form.runtime === item.runtimeType ? BRAND.accentStrong : BRAND.border), borderRadius: '10px', padding: '14px', background: form.runtime === item.runtimeType ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' } }, h('span', null, h('strong', { style: { display: 'block', fontSize: '13px' } }, item.displayName), h('span', { style: { display: 'block', marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px' } }, item.runtimeType)), form.runtime === item.runtimeType ? h(Pill, { tone: 'accent' }, '已选择') : null))),
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '16px' } },
+          h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '权限策略', h('select', { value: policy, onChange: event => setPolicy(event.target.value), style: inputStyle() }, h('option', { value: 'strict' }, '严格权限'), h('option', { value: 'loose' }, '宽松权限'), h('option', { value: 'custom' }, '自定义权限'))),
+          h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '23px', color: BRAND.ink, fontSize: '12px', fontWeight: 700 } }, h('input', { type: 'checkbox', checked: memoryEnabled, onChange: event => setMemoryEnabled(event.target.checked) }), '启用跨会话记忆')),
+        h('div', { style: { marginTop: '18px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '运行目标属于 Agent Revision；权限策略和记忆开关会随本次创建一起保存。'),
+      ) : h(React.Fragment, null,
+        h('h3', { style: { margin: '0 0 14px', color: BRAND.ink, fontSize: '16px' } }, '检查并创建'),
+        h('div', { style: { display: 'grid', borderTop: '1px solid ' + BRAND.border } }, [['Agent ID', form.id.trim().toLowerCase()], ['名称', form.name.trim()], ['运行目标', RUNTIME_LABELS[form.runtime] || form.runtime], ['默认模型', catalog.model.find(item => item.resourceId === selectedModel)?.displayName || selectedModel || '未选择'], ['模型白名单', `${selectedModels.length || (selectedModel ? 1 : 0)} 个`], ['能力', `${selectedTools.length} Tool · ${selectedMcp.length} MCP · ${selectedSkills.length} Skill`], ['平台资源', `${platformBindings.length} 项（知识库 / 记忆库 / Skill Center）`], ['记忆', memoryEnabled ? '已启用' : '未启用'], ['模板', mode === 'one-click' ? templates.find(item => item[0] === form.template)?.[1] : '通用助手']].map(([label, value]) => h('div', { key: label, style: { display: 'flex', justifyContent: 'space-between', gap: '20px', padding: '12px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: '12px' } }, h('span', { style: { color: BRAND.inkMuted } }, label), h('strong', { style: { color: BRAND.ink, textAlign: 'right' } }, value)))),
+        h('div', { style: { marginTop: '16px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, editing ? `保存后创建新的配置版本；当前版本为 r${initialAgent.metadata.revision}。已有会话和构建不会被自动切换。` : '创建后保存 Prompt、模型和资源绑定，随后可构建并开始对话。'),
+      );
+      return h('div', null,
+        h(SectionHeading, { eyebrow: 'Studio domain / Agents', title: editing ? '编辑 Agent' : mode === 'one-click' ? '一键创建 Agent' : '快速创建 Agent', detail: '沿用旧版 Studio 的创建工作台；基础信息、Prompt、资源绑定和运行策略在同一条创建流程中完成。', action: h('button', { type: 'button', onClick: onBack, style: buttonStyle() }, '返回 Agents') }),
+        !editing && h('div', { style: { display: 'flex', gap: '4px', padding: '4px', marginBottom: '16px', border: '1px solid ' + BRAND.border, borderRadius: '10px', background: BRAND.surface, width: 'fit-content' } }, ['quick', 'one-click'].map(value => h('button', { key: value, type: 'button', onClick: () => { if (value !== mode) onBack(); }, style: { minHeight: '32px', border: 0, borderRadius: '7px', padding: '0 12px', color: value === mode ? BRAND.ink : BRAND.inkMuted, background: value === mode ? BRAND.accentSoft : 'transparent', fontSize: '12px', fontWeight: value === mode ? 800 : 650 } }, value === 'quick' ? '快速创建' : '一键创建'))),
+        h('section', { style: { display: 'grid', gridTemplateColumns: '210px minmax(0, 1fr)', gap: '20px', alignItems: 'start' } },
+          h('aside', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '12px', background: BRAND.surface } },
+            h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '8px 10px 12px' } }, '创建流程'),
+            h('div', null, steps.map(([label, detail], index) => h('button', { key: label, type: 'button', onClick: () => (editing || index <= step) && setStep(index), style: { display: 'block', width: '100%', border: 0, borderLeft: '2px solid ' + (index === step ? BRAND.accentStrong : BRAND.border), borderRadius: '0 8px 8px 0', padding: '10px 10px 10px 12px', textAlign: 'left', color: index === step ? BRAND.ink : BRAND.inkMuted, background: index === step ? BRAND.accentSoft : 'transparent', cursor: editing || index <= step ? 'pointer' : 'default' } }, h('div', { style: { fontSize: '12px', fontWeight: 800 } }, `${index + 1}. ${label}`), h('div', { style: { marginTop: '3px', fontSize: '10px', lineHeight: 1.45 } }, detail)))),
+            h('div', { style: { margin: '14px 10px 6px', paddingTop: '12px', borderTop: '1px solid ' + BRAND.border, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.55 } }, '模型、MCP、Skill、知识库、记忆库、Prompt 和记忆策略可在本次创建直接绑定；创建后仍可在 Agent 详情中继续编辑。')),
+          h('div', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '22px', background: BRAND.surface, minWidth: 0 } },
+            stepContent,
+            error ? h('div', { role: 'alert', style: { marginTop: '16px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: '24px' } },
+              h('button', { type: 'button', onClick: step === 0 ? onBack : () => setStep(step - 1), style: buttonStyle() }, step === 0 ? '取消' : '上一步'),
+              step < 3 ? h('button', { type: 'button', disabled: !canNext, onClick: () => setStep(step + 1), style: { ...buttonStyle(), color: canNext ? 'var(--dsw-static-neutral-00, #fff)' : BRAND.inkMuted, background: canNext ? BRAND.primaryFill : BRAND.accentSoft, borderColor: canNext ? 'transparent' : BRAND.border } }, '下一步') : h('button', { type: 'button', disabled: saving || !canNext, onClick: create, style: { ...buttonStyle(), color: saving || !canNext ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: saving || !canNext ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !canNext ? BRAND.border : 'transparent' } }, saving ? '保存中…' : editing ? '保存 Agent' : mode === 'one-click' ? '一键创建并开始使用' : '快速创建并开始使用'))
+          )
+        )
+      );
+    }
+
+    function inputStyle() {
+      return { display: 'block', boxSizing: 'border-box', width: '100%', height: '36px', marginTop: '6px', padding: '0 10px', border: '1px solid ' + BRAND.border, borderRadius: '8px', color: BRAND.ink, background: 'var(--dsw-alias-bg-layer-1, #fbfdff)', fontSize: '12px' };
+    }
+
+    function buttonStyle() {
+      return { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '8px 12px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px', fontWeight: 700, cursor: 'pointer' };
+    }
+
+    function pagerButtonStyle(disabled = false) {
+      return {
+        ...buttonStyle(), display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        minWidth: '68px', minHeight: '30px', padding: '6px 10px', flex: '0 0 auto',
+        color: disabled ? 'var(--dsw-alias-label-secondary, #676767)' : BRAND.ink,
+        background: disabled ? 'var(--dsw-alias-bg-layer-2, #f4f4f4)' : BRAND.surface,
+        border: '1px solid ' + BRAND.border,
+        opacity: 1,
+      };
+    }
+
+    function DomainPage({ page }) {
+      const content = {
+        agents: ['Agent', '创建、配置和版本化可运行的 Agent。', '✦', 'Agent Catalog 与 Revision 接通后，这里会成为 Agent 的工作台。'],
+        runtime: ['运行时', '选择执行目标，查看能力和运行状态。', '⌁', '当前 Agent 运行目标为 DSH Native、KsADK Harness 和 Codex；不绑定 Agent 时使用 DSH 原生会话。资源绑定会在 Host 能力未就绪时明确阻止构建。ADK / LangGraph 不进入新版 Studio 的产品选择器。'],
+        resources: ['资源', '管理模型、工具、MCP 与 Skill 的目录生命周期。', '◈', '资源目录只负责发现、导入、探测、查看、刷新和删除；Agent 绑定在创建或编辑页完成。'],
+        delivery: ['构建与部署', '从 Revision 到 Build、Deploy 和回滚。', '↗', '云端 API gap 完成核对后，这里接入真实异步 operation 和部署状态。'],
+      }[page];
+      return h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '22px', background: BRAND.surface } },
+        h(SectionHeading, { eyebrow: 'Studio domain', title: content[0], detail: content[1], action: h(Pill, { tone: 'signal' }, 'Host 待接入') }),
+        h(EmptyState, { icon: content[2], title: content[0] + '正在准备', detail: content[3], action: h(DisabledAction, null, '等待 Host 能力') }));
+    }
+
+    function ResourceDialog({ title, detail, children, onClose, wide = false }) {
+      return h('div', {
+        role: 'presentation',
+        onMouseDown: event => { if (event.target === event.currentTarget) onClose(); },
+        style: { position: 'fixed', inset: 0, zIndex: 50, display: 'grid', placeItems: 'center', padding: '24px', background: 'rgba(7, 14, 24, 0.46)' },
+      }, h('section', {
+        role: 'dialog', 'aria-modal': 'true', 'aria-label': title,
+        style: { width: `min(${wide ? 920 : 680}px, 100%)`, maxHeight: 'min(760px, calc(100vh - 48px))', overflow: 'auto', border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '20px', background: BRAND.surface, boxShadow: '0 22px 70px rgba(7, 14, 24, 0.28)' },
+      }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start', marginBottom: '16px' } },
+        h('div', null, h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '18px' } }, title), detail ? h('p', { style: { margin: '6px 0 0', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.5 } }, detail) : null),
+        h('button', { type: 'button', 'aria-label': '关闭', onClick: onClose, style: { ...buttonStyle(), padding: '5px 9px', fontSize: '14px' } }, '×')),
+        children));
+    }
+
+    function McpResourceDialog({ onClose, onCreated }) {
+      const [form, setForm] = useState({ displayName: '', name: '', description: '', version: '1.0.0', transport: 'http', endpointUrl: '', command: '', args: '', apiKeyName: '', apiKeyValue: '', envRefs: '' });
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState('');
+      const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
+      const save = async event => {
+        event.preventDefault();
+        if (saving) return;
+        setError('');
+        const name = form.name.trim() || form.displayName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        if (!name || !form.displayName.trim()) { setError('请填写 MCP 名称和显示名称。'); return; }
+        if ((form.transport === 'http' || form.transport === 'sse') && !form.endpointUrl.trim()) { setError('HTTP/SSE MCP 需要填写服务地址。'); return; }
+        if (form.transport === 'stdio' && !form.command.trim()) { setError('stdio MCP 需要填写启动命令。'); return; }
+        const envRefs = {};
+        form.envRefs.split(',').map(item => item.trim()).filter(Boolean).forEach(item => { const [key, ref] = item.split('=').map(part => part.trim()); if (key && ref) envRefs[key] = ref; });
+        const credentialName = form.apiKeyName.trim();
+        if (credentialName && form.apiKeyValue.trim()) {
+          try { await hostRemote.putCredential(credentialName, form.apiKeyValue.trim()); }
+          catch (reason) { setError(reason?.message || 'MCP 凭证保存失败'); return; }
+          envRefs[form.transport === 'stdio' ? credentialName : 'Authorization'] = `env://${credentialName}`;
+        }
+        setSaving(true);
+        try {
+          const created = await hostRemote.createMcpResource({
+            displayName: form.displayName.trim(), description: form.description.trim(),
+            server: { name, version: form.version.trim() || '1.0.0', transport: form.transport, endpointUrl: form.endpointUrl.trim() || undefined, command: form.command.trim() || undefined, args: form.args.split(/\s+/).map(item => item.trim()).filter(Boolean), envRefs },
+          });
+          // Match the old Studio lifecycle: a newly added MCP is not bindable
+          // until the Host has performed a real probe and persisted its tool
+          // contract. The probe stays on the Host; the browser never connects.
+          await hostRemote.probeMcpResource(created.resourceId);
+          onCreated?.(created);
+          onClose();
+        } catch (reason) { setError(reason?.message || 'MCP 创建失败'); }
+        finally { setSaving(false); }
+      };
+      const field = (label, key, placeholder, type = 'text') => h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, label, h('input', { type, value: form[key], placeholder, onChange: event => setField(key, event.target.value), style: inputStyle() }));
+      return h(ResourceDialog, { title: '添加 MCP Server', detail: '创建后 Host 会保存连接声明并完成探测；绑定关系请在 Agent 创建或编辑页维护。', onClose },
+        h('form', { onSubmit: save, style: { display: 'grid', gap: '12px' } },
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('显示名称', 'displayName', '例如：企业搜索'), field('资源名称', 'name', '例如：enterprise-search')),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('版本', 'version', '1.0.0'), h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '传输方式', h('select', { value: form.transport, onChange: event => setField('transport', event.target.value), style: inputStyle() }, h('option', { value: 'http' }, 'HTTP'), h('option', { value: 'sse' }, 'SSE'), h('option', { value: 'stdio' }, 'stdio')))),
+          field('说明', 'description', '这个 MCP 提供什么能力？'),
+          (form.transport === 'stdio' ? field('启动命令', 'command', '例如：npx') : field('服务地址', 'endpointUrl', '例如：https://mcp.example.com')),
+          form.transport === 'stdio' ? field('命令参数', 'args', '例如：-y @acme/search-mcp') : null,
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('凭证名称（可选）', 'apiKeyName', '例如：SEARCH_API_KEY'), field('API Key（仅本次保存）', 'apiKeyValue', '不会写入资源目录', 'password')),
+          field('环境变量引用（可选）', 'envRefs', '例如：API_KEY=env://SEARCH_API_KEY'),
+          error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: 'var(--dsw-static-neutral-00, #fff)', background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '正在探测…' : '保存并探测'))));
+    }
+
+    function formatResourceSize(value) {
+      const bytes = Number(value || 0);
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+      return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+    }
+
+    // Keep the file tree in the browser surface, but let the Host remain the
+    // only authority that reads file contents. This mirrors the old Studio's
+    // SkillFileBrowser without copying its React component or adding a second
+    // resource store.
+    function buildSkillFileTree(files) {
+      const root = { name: '', path: '', directory: true, children: [] };
+      for (const file of files) {
+        const parts = String(file?.path || '').split('/').filter(Boolean);
+        let parent = root;
+        parts.forEach((part, index) => {
+          const path = parts.slice(0, index + 1).join('/');
+          const directory = index < parts.length - 1;
+          let node = parent.children.find(item => item.name === part && item.directory === directory);
+          if (!node) {
+            node = { name: part, path, directory, file: directory ? undefined : file, children: [] };
+            parent.children.push(node);
+          }
+          parent = node;
+        });
+      }
+      const sortNodes = nodes => {
+        nodes.sort((left, right) => Number(right.directory) - Number(left.directory) || left.name.localeCompare(right.name));
+        nodes.forEach(node => sortNodes(node.children));
+      };
+      sortNodes(root.children);
+      return root.children;
+    }
+
+    function SkillPreviewDialog({ title, preview, file, onClose, onSelect }) {
+      const files = Array.isArray(preview?.files) ? preview.files : [];
+      const [collapsed, setCollapsed] = useState(() => new Set());
+      const tree = buildSkillFileTree(files);
+      const renderNodes = (nodes, depth = 0) => nodes.map(node => {
+        if (node.directory) {
+          const isCollapsed = collapsed.has(node.path);
+          return h('div', { key: `dir:${node.path}` },
+            h('button', {
+              type: 'button',
+              'aria-expanded': !isCollapsed,
+              onClick: () => setCollapsed(current => {
+                const next = new Set(current);
+                if (next.has(node.path)) next.delete(node.path); else next.add(node.path);
+                return next;
+              }),
+              style: { display: 'flex', alignItems: 'center', gap: '5px', width: '100%', border: 0, borderRadius: '7px', padding: `6px 8px 6px ${8 + depth * 14}px`, textAlign: 'left', color: BRAND.ink, background: 'transparent', cursor: 'pointer', fontSize: '11px', fontWeight: 750 },
+            }, isCollapsed ? '▸' : '▾', '▰', h('span', { title: node.name }, node.name)),
+            !isCollapsed ? h('div', null, renderNodes(node.children, depth + 1)) : null);
+        }
+        const selected = file?.path === node.path;
+        return h('button', {
+          key: `file:${node.path}`,
+          type: 'button',
+          'aria-selected': selected,
+          onClick: () => onSelect?.(node.path),
+          style: { display: 'flex', alignItems: 'center', gap: '6px', width: '100%', border: 0, borderRadius: '7px', padding: `6px 8px 6px ${20 + depth * 14}px`, textAlign: 'left', color: BRAND.ink, background: selected ? BRAND.accentSoft : 'transparent', cursor: 'pointer', fontSize: '11px' },
+        }, node.file?.kind === 'script' ? '▧' : '▤', h('span', { title: node.path, style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, node.name));
+      });
+      return h(ResourceDialog, { title: title || 'Skill 预览', detail: '只读查看 Skill 文件；导入前不会写入工作区。目录树和文件内容都由 Host 读取。', onClose },
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(190px, 0.8fr) minmax(0, 1.6fr)', gap: '12px', minHeight: '300px' } },
+          h('div', { role: 'tree', 'aria-label': 'Skill 文件树', style: { border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '8px', overflow: 'auto', background: BRAND.surface } }, files.length ? renderNodes(tree) : h('div', { style: { color: BRAND.inkMuted, padding: '10px', fontSize: '12px' } }, '没有可预览文件。')),
+          h('div', { style: { minWidth: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: '8px' } },
+            h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, file ? `${file.path} · ${file.kind || 'text'} · ${formatResourceSize(file.size)}` : '选择左侧文件查看内容'),
+            h('pre', { style: { margin: 0, minHeight: '260px', maxHeight: '460px', overflow: 'auto', border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '12px', color: BRAND.ink, background: BRAND.canvas, whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: 1.5 } }, file ? (file.content || `${file.path} · ${formatResourceSize(file.size)}`) : '选择左侧文件查看内容'))));
+    }
+
+    function McpToolsDialog({ resource, onClose }) {
+      const tools = Array.isArray(resource?.contract?.discoveredTools) ? resource.contract.discoveredTools : (Array.isArray(resource?.health?.tools) ? resource.health.tools : []);
+      return h(ResourceDialog, { title: `${resource?.displayName || resource?.name || 'MCP'} · 工具清单`, detail: '以下清单来自 Host 最近一次 MCP 探测；绑定关系请在 Agent 创建或编辑页维护。', onClose },
+        tools.length ? h('div', { style: { display: 'grid', gap: '8px', maxHeight: '520px', overflow: 'auto' } }, tools.map(tool => h('article', { key: tool.name, style: { border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', background: BRAND.surface } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline' } }, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, tool.name || '未命名 Tool'), h('span', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, tool.version || tool.executor || 'MCP')),
+          h('p', { style: { margin: '5px 0 0', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, tool.description || '没有描述'),
+          h('div', { style: { marginTop: '6px', color: BRAND.inkMuted, fontSize: '10px' } }, `${tool.approval ? `审批：${tool.approval}` : '审批策略由 Host 决定'}${tool.sideEffect ? ` · 副作用：${tool.sideEffect}` : ''}`)))) : h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', padding: '20px 8px', textAlign: 'center' } }, 'Host 尚未返回工具清单，请先重新探测 MCP。'));
+    }
+
+    function SkillDiscoveryDialog({ onClose, onImported }) {
+      const [scanPaths, setScanPaths] = useState('');
+      const [discovery, setDiscovery] = useState(null);
+      const [selected, setSelected] = useState([]);
+      const [preview, setPreview] = useState(null);
+      const [previewFile, setPreviewFile] = useState(null);
+      const [status, setStatus] = useState('idle');
+      const [error, setError] = useState('');
+      const candidates = Array.isArray(discovery?.candidates) ? discovery.candidates : [];
+      const scan = async () => {
+        setStatus('scanning'); setError(''); setPreview(null); setPreviewFile(null); setSelected([]);
+        try { setDiscovery(await hostRemote.discoverSkills(scanPaths.split(',').map(item => item.trim()).filter(Boolean))); setStatus('ready'); }
+        catch (reason) { setStatus('error'); setError(reason?.message || 'Skill 扫描失败'); }
+      };
+      const toggle = id => setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
+      const showPreview = async candidate => {
+        try { const files = await hostRemote.previewDiscoveredSkill(discovery.inspectionToken, candidate.candidateId); setPreview({ title: candidate.displayName || candidate.name, files, candidate }); setPreviewFile(null); }
+        catch (reason) { setError(reason?.message || 'Skill 预览失败'); }
+      };
+      const selectFile = async path => {
+        if (!preview) return;
+        try { setPreviewFile(await hostRemote.previewDiscoveredSkill(discovery.inspectionToken, preview.candidate.candidateId, path)); }
+        catch (reason) { setError(reason?.message || 'Skill 文件读取失败'); }
+      };
+      const commit = async () => {
+        if (!discovery?.inspectionToken || !selected.length || status === 'committing') return;
+        setStatus('committing'); setError('');
+        try { for (const id of selected) await hostRemote.commitDiscoveredSkill(discovery.inspectionToken, id, false); onImported?.(); onClose(); }
+        catch (reason) { setStatus('error'); setError(reason?.message || 'Skill 导入失败；冲突项需要重新扫描后确认覆盖。'); }
+      };
+      return h(ResourceDialog, { title: '发现本地 Skill', detail: '扫描安全默认目录或指定工作区相对路径，预览后确认导入。', onClose },
+        h('div', { style: { display: 'grid', gap: '12px' } },
+          h('div', { style: { display: 'flex', gap: '8px', alignItems: 'end' } }, h('label', { style: { flex: 1, display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '扫描目录（逗号分隔）', h('input', { value: scanPaths, onChange: event => setScanPaths(event.target.value), placeholder: '留空扫描 skills, .agents/skills, .codex/skills, .claude/skills', style: inputStyle() })), h('button', { type: 'button', disabled: status === 'scanning', onClick: scan, style: buttonStyle() }, status === 'scanning' ? '扫描中…' : '扫描')),
+          error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
+          candidates.length ? h('div', { style: { display: 'grid', gap: '7px', maxHeight: '330px', overflow: 'auto' } }, candidates.map(candidate => h('div', { key: candidate.candidateId, style: { display: 'flex', alignItems: 'center', gap: '9px', padding: '10px', border: '1px solid ' + BRAND.border, borderRadius: '9px', background: BRAND.surface } }, h('input', { type: 'checkbox', checked: selected.includes(candidate.candidateId), disabled: candidate.status === 'invalid', onChange: () => toggle(candidate.candidateId), 'aria-label': `选择 ${candidate.displayName || candidate.name}` }), h('div', { style: { flex: 1, minWidth: 0 } }, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, candidate.displayName || candidate.name), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${candidate.path || '—'} · ${candidate.version || '未知版本'} · ${candidate.fileCount || 0} 文件`), candidate.risk?.requiresReview ? h('span', { style: { color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', fontSize: '10px' } }, '包含脚本或网络标记，需人工复核') : null), h(Pill, { tone: candidate.status === 'ready' ? 'accent' : 'signal' }, candidate.status === 'conflict' ? '已安装' : candidate.status === 'invalid' ? '无效' : '可导入'), h('button', { type: 'button', onClick: () => void showPreview(candidate), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '预览')))) : status === 'ready' ? h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', padding: '22px 0', textAlign: 'center' } }, '安全扫描目录中没有发现 Skill。') : null,
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '3px' } }, h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, discovery ? `发现 ${candidates.length} 个候选 · 已选择 ${selected.length}` : '请先扫描'), h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'button', disabled: !selected.length || status === 'committing', onClick: commit, style: { ...buttonStyle(), color: 'var(--dsw-static-neutral-00, #fff)', background: !selected.length || status === 'committing' ? BRAND.accentSoft : BRAND.primaryFill, borderColor: !selected.length || status === 'committing' ? BRAND.border : 'transparent' } }, status === 'committing' ? '导入中…' : '导入选中 Skill')))),
+          preview ? h(SkillPreviewDialog, { title: preview.title, preview: preview.files, onClose: () => setPreview(null), onSelect: async path => { await selectFile(path); }, file: previewFile }) : null);
+    }
+
+    function ModelResourceDialog({ onClose, onCreated }) {
+      const [form, setForm] = useState({ name: '', displayName: '', model: '', endpointUrl: '', credentialRef: 'env://MODEL_API_KEY', description: '' });
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState('');
+      const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
+      const save = async event => {
+        event.preventDefault();
+        if (saving) return;
+        const name = form.name.trim().toLowerCase();
+        if (!/^[a-z][a-z0-9._-]{1,127}$/.test(name)) { setError('名称需要是 2-128 位小写字母、数字、点、下划线或短横线。'); return; }
+        if (!form.displayName.trim() || !form.model.trim() || !form.endpointUrl.trim()) { setError('请填写显示名称、模型 ID 和接口地址。'); return; }
+        setSaving(true); setError('');
+        try {
+          const result = await hostRemote.createModelResource({
+            name,
+            displayName: form.displayName.trim(),
+            version: '1.0.0',
+            description: form.description.trim(),
+            spec: { provider: 'openai-compatible', model: form.model.trim(), endpointUrl: form.endpointUrl.trim(), credentialRef: form.credentialRef.trim() || undefined, wireApi: 'chat' },
+          });
+          onCreated?.(result); onClose();
+        } catch (reason) { setError(reason?.message || '模型创建失败'); }
+        finally { setSaving(false); }
+      };
+      const field = (label, key, placeholder, type = 'text') => h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, label, h('input', { type, value: form[key], placeholder, onChange: event => setField(key, event.target.value), style: inputStyle() }));
+      return h(ResourceDialog, { title: '添加模型资源', detail: '资源页只登记模型端点；API Key 由设置页和全局配置管理，Agent 绑定在创建或编辑页完成。', onClose },
+        h('form', { onSubmit: save, style: { display: 'grid', gap: '12px' } },
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('资源名称', 'name', 'ksyun-chat'), field('显示名称', 'displayName', '金山云 Chat')),
+          field('模型 ID', 'model', 'deepseek-v4-flash'),
+          field('接口地址', 'endpointUrl', 'https://api.example.com/v1/chat/completions'),
+          field('凭证引用（可选）', 'credentialRef', 'env://MODEL_API_KEY'),
+          field('说明（可选）', 'description', '模型用途和协议说明'),
+          error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: 'var(--dsw-static-neutral-00, #fff)', background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '创建中…' : '创建模型'))));
+    }
+
+    function ToolResourceDialog({ onClose, onCreated }) {
+      const [form, setForm] = useState({ name: '', displayName: '', description: '', category: 'custom', executor: 'builtin' });
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState('');
+      const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
+      const save = async event => {
+        event.preventDefault();
+        if (saving) return;
+        const name = form.name.trim();
+        if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) { setError('Tool 名称需要使用字母、数字和下划线。'); return; }
+        if (!form.displayName.trim()) { setError('请填写显示名称。'); return; }
+        setSaving(true); setError('');
+        try {
+          const result = await hostRemote.createToolResource({ displayName: form.displayName.trim(), category: form.category.trim() || 'custom', contract: { name, version: '1.0.0', description: form.description.trim(), inputSchema: { type: 'object', properties: {} }, outputSchema: { type: 'object' }, executor: form.executor } });
+          onCreated?.(result); onClose();
+        } catch (reason) { setError(reason?.message || 'Tool 创建失败'); }
+        finally { setSaving(false); }
+      };
+      const field = (label, key, placeholder) => h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, label, h('input', { value: form[key], placeholder, onChange: event => setField(key, event.target.value), style: inputStyle() }));
+      return h(ResourceDialog, { title: '添加 Tool 资源', detail: '先登记 Tool Contract，再在 Agent 创建或编辑页选择一个或多个 Tool。', onClose },
+        h('form', { onSubmit: save, style: { display: 'grid', gap: '12px' } },
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('Tool 名称', 'name', 'lookup_customer'), field('显示名称', 'displayName', '客户查询')),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('分类', 'category', 'custom'), h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '执行器', h('select', { value: form.executor, onChange: event => setField('executor', event.target.value), style: inputStyle() }, h('option', { value: 'builtin' }, 'builtin'), h('option', { value: 'deferred' }, 'deferred'), h('option', { value: 'python' }, 'python'), h('option', { value: 'mcp' }, 'mcp')))),
+          field('说明（可选）', 'description', 'Tool 的用途和副作用'),
+          error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: 'var(--dsw-static-neutral-00, #fff)', background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '创建中…' : '创建 Tool'))));
+    }

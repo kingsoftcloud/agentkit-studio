@@ -30,6 +30,25 @@ test('resource-bearing or non-DSH revisions fail closed', () => {
   assert.equal(dshPresetEligibility(agent({ spec: { runtime: { type: 'codex' }, bindings: {} } })).code, 'STUDIO_PRESET_RUNTIME_UNSUPPORTED');
 });
 
+test('the active DSH model route and official persona row make a real native preset', async () => {
+  const registered = [];
+  const revision = agent({
+    spec: {
+      runtime: { type: 'dsh-native' },
+      instructions: { system: '只用简洁中文回答。' },
+      bindings: { modelProfileIds: ['model:provider:deepseek-v4-flash:live'] },
+    },
+  });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => revision,
+    getActiveModel: async () => ({ values: { modelName: 'deepseek-v4-flash' } }),
+  });
+  await admission.ensure('demo/agent');
+  assert.equal(registered[0].plugins[0].name, '@deepseek-ai/dsh-persona');
+  assert.equal(registered[0].plugins[0].config.prefix, '只用简洁中文回答。');
+});
+
 test('admission registers once and unregisters replaced revisions', async () => {
   const registered = [];
   const unregistered = [];

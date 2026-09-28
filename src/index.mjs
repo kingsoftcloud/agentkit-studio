@@ -12,9 +12,10 @@
  */
 import { registerAuthoringTools } from './authoring-tools.mjs';
 import { DshPresetAdmission } from './agent-preset-admission.mjs';
+import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 
 export const name = 'agentkit-studio';
-export const inject = ['connection', 'webServer'];
+export const inject = ['connection', 'webServer', 'credentials'];
 
 const CONTROL_CHANNEL = '/agentkit';
 const runtimeEnv = typeof process === 'object' && process?.env ? process.env : {};
@@ -26,14 +27,38 @@ const runtimeEnv = typeof process === 'object' && process?.env ? process.env : {
  * Node Host owns credentials and calls the public Action API; no KsADK/Python
  * process is involved in this path.
  */
-function registerControlPlane(ctx) {
+async function registerControlPlane(ctx) {
   // Keep Node-only configuration and HTTPS/KOP dependencies out of the
   // browser-facing plugin module graph. DSH loads this module for both the
   // Host and client faces; importing node:fs or aws4 at activation time makes
   // the whole plugin fail before the Host route can be registered.
-  const serverClientPromise = import('./global-config.mjs').then(({ createGlobalConfiguration }) =>
+  const configurationPromise = import('./global-config.mjs').then(({ createGlobalConfiguration }) =>
+    createGlobalConfiguration({ env: runtimeEnv }));
+  const serverClientPromise = configurationPromise.then(configuration =>
     import('./server-client.mjs').then(({ createAgentEngineClient }) =>
-      createAgentEngineClient({ configuration: createGlobalConfiguration({ env: runtimeEnv }) })));
+      createAgentEngineClient({
+        configuration,
+        sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '',
+        serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
+      })));
+  // Cordis exposes injected services through `get`; property access is only
+  // available on typed service contexts and is absent in the plain plugin
+  // apply context used by the DSH loader.
+  const credentials = ctx.get('credentials');
+  const syncModelCredential = async () => syncGlobalModelCredential({
+    configuration: await configurationPromise,
+    credentials,
+  });
+  // The DSH loader awaits an async plugin apply. Do this before returning from
+  // activation so the first prompt cannot race the global ~/.agentkit key
+  // being copied into the official credential service. The previous fire and
+  // forget call made a fresh browser session intermittently fail with
+  // llm-pi-ai/no-credential even though the Models page was already configured.
+  try {
+    await syncModelCredential();
+  } catch (error) {
+    console.warn('[agentkit-studio] model credential sync skipped:', error?.message || error);
+  }
   let presetRegistry;
   let presetAdmission;
   // The registry is an optional DSH service. Older profiles can still load
@@ -49,14 +74,16 @@ function registerControlPlane(ctx) {
   });
   presetAdmission = new DshPresetAdmission({
     getAgent: async agentId => (await serverClientPromise).getAgent(agentId),
+    getActiveModel: async () => (await configurationPromise).resolve(),
   });
   if (presetRegistry) presetAdmission.setRegistry(presetRegistry);
-  const allowed = new Set(['agents/list', 'agents/ensure-preset', 'server/action']);
+  const allowed = new Set(['agents/list', 'agents/ensure-preset', 'models/sync-credential', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
     }
     try {
+      if (endpoint === 'models/sync-credential') return { ok: true, value: await syncModelCredential() };
       const serverClient = await serverClientPromise;
       // Agent catalog reads are now owned by the Studio Node host and call the
       // existing AgentEngine Action API directly. The DSH connection only
@@ -155,9 +182,9 @@ function registerControlPlane(ctx) {
   });
 }
 
-export function apply(ctx) {
+export async function apply(ctx) {
   registerAuthoringTools(ctx);
-  registerControlPlane(ctx);
+  await registerControlPlane(ctx);
   ctx.on('webserver/index-inject', table => table.push({
     kind: 'global',
     name: '__AGENTKIT_STUDIO__',

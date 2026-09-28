@@ -19,6 +19,26 @@ const SERVER_ACTIONS = new Set([
 ]);
 
 function normalizeAgent(item = {}) {
+  // Local Studio's REST catalog returns the same normalized `metadata/spec`
+  // shape consumed by the browser, while cloud Action responses use the
+  // Basic/ComponentConfig envelope below. Preserve the local shape instead
+  // of dropping its identity when the shared GetAgent Action is unavailable.
+  if (item && typeof item === 'object' && (item.metadata || item.spec)) {
+    const metadata = item.metadata || {};
+    const spec = item.spec || {};
+    const id = metadata.id || item.id || '';
+    const name = metadata.name || item.name || id;
+    const runtimeType = String(spec.runtime?.type || item.runtime?.type || item.framework || 'dsh-native').toLowerCase();
+    return {
+      ...item,
+      id,
+      name,
+      description: metadata.description || item.description || spec.description || '',
+      metadata: { ...metadata, id, name },
+      spec: { ...spec, runtime: { ...(spec.runtime || {}), type: runtimeType }, bindings: spec.bindings || {} },
+      source: 'agentengine-server',
+    };
+  }
   const basic = item.Basic || item.basic || item;
   const deployment = item.Deployment || item.deployment || {};
   const component = item.ComponentConfig || item.componentConfig || item.Advanced?.ComponentConfig || {};
@@ -49,13 +69,42 @@ function normalizeAgent(item = {}) {
 }
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
-export function createAgentEngineClient({ configuration, fetchImpl = fetch, timeoutMs = 15000 }) {
+export function createAgentEngineClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, sessionToken = '', serverUrl = '' }) {
+  async function getLocalAgent(agentId, options = {}) {
+    const { values } = await configuration.resolve();
+    let base;
+    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
+    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || !sessionToken) {
+      throw new AgentEngineError('SERVER_ACTION_FAILED', '本地 Agent 详情接口不可用', { status: 404, action: 'GetAgent' });
+    }
+    const url = new URL(`/api/v1/agents/${encodeURIComponent(agentId)}`, base);
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'X-AgentKit-Session': sessionToken },
+        redirect: 'error',
+        signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      });
+    } catch {
+      throw new AgentEngineError('SERVER_UNAVAILABLE', 'Server 请求未完成，请检查连接；写请求不会自动重试', { action: 'GetAgent' });
+    }
+    let payload;
+    try { payload = await response.json(); }
+    catch { throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server 未返回有效 JSON', { status: response.status, action: 'GetAgent' }); }
+    if (!response.ok || !payload || typeof payload !== 'object') {
+      throw new AgentEngineError('SERVER_ACTION_FAILED', 'GetAgent 请求失败', { status: response.status, action: 'GetAgent' });
+    }
+    return { ...normalizeAgent(payload.draft || payload.agent || payload), requestId: String(response.headers.get('x-request-id') || '') };
+  }
+
   async function action(name, payload = {}, { signal } = {}) {
     if (!/^[A-Z][A-Za-z0-9]+$/.test(name)) throw new AgentEngineError('INVALID_ACTION', '无效 Server Action');
     if (!SERVER_ACTIONS.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     const { values } = await configuration.resolve();
     let base;
-    try { base = new URL(values.cloudServerUrl || 'https://aicp.api.ksyun.com'); }
+    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
     catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
     if (base.username || base.password || base.search || base.hash || base.pathname !== '/' ||
@@ -85,6 +134,13 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
       } else {
         // Custom server origins must have their own credential. Never sign them using cloud AK/SK.
         if (values.cloudServiceToken) headers.Authorization = `Bearer ${values.cloudServiceToken}`;
+        // The local AgentEngine Studio server protects its shared Action API
+        // with the short-lived Studio session. Keep this on the Node side so
+        // the browser never has to proxy a server credential through a
+        // renderer request. The token is intentionally only attached to
+        // loopback origins; remote custom origins still require their own
+        // explicit service token.
+        if (loopback && sessionToken) headers['X-AgentKit-Session'] = sessionToken;
         else if (!loopback) throw new AgentEngineError('SERVER_CREDENTIALS_MISSING', '自定义 Server 需要专属服务凭证');
       }
       let response;
@@ -129,8 +185,17 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
   }
   async function getAgent(agentId, options) {
     if (typeof agentId !== 'string' || !agentId.trim()) throw new AgentEngineError('INVALID_AGENT_ID', 'AgentId 不能为空');
-    const result = await action('GetAgent', { AgentId: agentId.trim() }, options);
-    return { ...normalizeAgent(result.data), requestId: result.requestId };
+    try {
+      const result = await action('GetAgent', { AgentId: agentId.trim() }, options);
+      return { ...normalizeAgent(result.data), requestId: result.requestId };
+    } catch (error) {
+      // Older local Studio servers expose the same resource through their
+      // REST catalog but have not yet mounted the shared Web Action name.
+      // Keep the public Action API first, then use that authenticated local
+      // read-only seam instead of reporting a misleading network failure.
+      if (error?.status === 404 && sessionToken) return getLocalAgent(agentId.trim(), options);
+      throw error;
+    }
   }
   async function listResource(kind, payload = {}, options) {
     const actions = {

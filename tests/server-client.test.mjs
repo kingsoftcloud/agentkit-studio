@@ -84,6 +84,31 @@ test('direct server client normalizes Agent detail and platform resources', asyn
   assert.deepEqual(calls.map(call => call.body), [{ AgentId: 'a1' }, {}]);
 });
 
+test('local Studio Agent detail falls back when shared GetAgent action is not mounted', async () => {
+  const calls = [];
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789' }),
+    sessionToken: 'studio-session',
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), method: init.method, session: init.headers['X-AgentKit-Session'] });
+      if (String(url).endsWith('/agentengine/api/v1/GetAgent')) {
+        return new Response(JSON.stringify({ Code: 404, Message: 'Studio 尚未实现共享 Web 动作：GetAgent' }), { status: 404 });
+      }
+      return new Response(JSON.stringify({ draft: {
+        metadata: { id: 'local-a1', name: 'Local Agent', revision: 2 },
+        spec: { runtime: { type: 'dsh-native' }, bindings: {} },
+      } }), { status: 200, headers: { 'x-request-id': 'local-req' } });
+    },
+  });
+  const agent = await client.getAgent('local-a1');
+  assert.equal(agent.metadata.id, 'local-a1');
+  assert.equal(agent.metadata.revision, 2);
+  assert.deepEqual(calls, [
+    { url: 'http://127.0.0.1:8789/agentengine/api/v1/GetAgent', method: 'POST', session: 'studio-session' },
+    { url: 'http://127.0.0.1:8789/api/v1/agents/local-a1', method: 'GET', session: 'studio-session' },
+  ]);
+});
+
 test('direct server client does not expose unapproved destructive actions', async () => {
   const client = createAgentEngineClient({ configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789' }) });
   await assert.rejects(() => client.action('DeleteAgent', { AgentId: 'a1' }), error => error instanceof AgentEngineError && error.code === 'ACTION_NOT_ALLOWED');

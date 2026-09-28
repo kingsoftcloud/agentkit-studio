@@ -2,11 +2,11 @@
  * The narrow bridge between a Studio AgentRevision and the public DSH
  * agent-preset registry.
  *
- * This module intentionally admits only a no-resource dsh-native revision.
- * Studio model/tool/MCP/Skill/platform bindings are not DSH Cordis plugin
+ * This module admits a dsh-native revision only when its model is the active
+ * DSH route. Studio tool/MCP/Skill/platform bindings are not DSH Cordis
  * declarations, so silently putting them in an empty preset would produce a
- * successful looking chat that runs the wrong composition. Resource-bearing
- * revisions stay fail-closed until a real provider contract materializes
+ * successful looking chat that runs the wrong composition. Those resource
+ * bindings stay fail-closed until a real public provider contract materializes
  * their capabilities.
  */
 
@@ -23,17 +23,39 @@ function bindingValueCount(value) {
   return value ? 1 : 0;
 }
 
+function modelProfileIds(agent = {}) {
+  const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
+    ? agent.spec.bindings : {};
+  const values = Array.isArray(bindings.modelProfileIds)
+    ? bindings.modelProfileIds
+    : bindings.modelProfileId ? [bindings.modelProfileId] : [];
+  return values.map(value => typeof value === 'string' ? value : value?.resourceId).filter(Boolean).map(String);
+}
+
+function modelProfileMatchesActiveRoute(profileId, activeModel) {
+  const configured = String(activeModel?.values?.modelName || activeModel?.values?.model || '').trim().toLowerCase();
+  if (!configured) return false;
+  const candidate = String(profileId || '').trim().toLowerCase();
+  if (!candidate) return false;
+  // AgentEngine model resources are namespaced (for example
+  // model:provider:deepseek-v4-flash:live). DSH's native loop has one active
+  // provider route, so only an exact model-id match is safe to admit.
+  return candidate === configured || candidate.split(':').some(part => part === configured);
+}
+
 /**
  * Return the references that the current empty-preset provider cannot apply.
  * @param {object} agent - normalized AgentEngine Agent detail
  */
-export function unsupportedDshBindings(agent = {}) {
+export function unsupportedDshBindings(agent = {}, { activeModel } = {}) {
   const spec = agent.spec && typeof agent.spec === 'object' ? agent.spec : {};
   const bindings = spec.bindings && typeof spec.bindings === 'object' ? spec.bindings : {};
   const refs = [];
+  const profiles = modelProfileIds(agent);
+  if (profiles.length > 1 || (profiles.length === 1 && !modelProfileMatchesActiveRoute(profiles[0], activeModel))) {
+    refs.push('model');
+  }
   for (const [key, label] of [
-    ['modelProfileIds', 'model'],
-    ['modelProfileId', 'model'],
     ['tools', 'tool'],
     ['mcpServers', 'mcp'],
     ['skills', 'skill'],
@@ -49,12 +71,12 @@ export function dshPresetId(agentId, revision = 1) {
   return `agentkit-studio-agent-${encodedId(agentId)}-r${rev}`;
 }
 
-export function dshPresetEligibility(agent = {}) {
+export function dshPresetEligibility(agent = {}, options = {}) {
   const runtime = String(agent?.spec?.runtime?.type || agent?.runtime?.type || agent?.framework || '').trim().toLowerCase();
   if (runtime !== 'dsh-native') {
     return { ok: false, code: 'STUDIO_PRESET_RUNTIME_UNSUPPORTED', message: '只有 dsh-native Agent 可以由 DSH preset 准入', runtime };
   }
-  const unsupported = unsupportedDshBindings(agent);
+  const unsupported = unsupportedDshBindings(agent, options);
   if (unsupported.length) {
     return {
       ok: false,
@@ -75,9 +97,10 @@ export function dshPresetEligibility(agent = {}) {
  * successful registrations so selecting the same revision is idempotent.
  */
 export class DshPresetAdmission {
-  /** @param {{getAgent: (id: string) => Promise<object>, registry?: {register: Function}}} options */
-  constructor({ getAgent, registry } = {}) {
+  /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, registry?: {register: Function}}} options */
+  constructor({ getAgent, getActiveModel, registry } = {}) {
     this.getAgent = getAgent;
+    this.getActiveModel = getActiveModel;
     this.registry = registry;
     this.registrations = new Map();
   }
@@ -98,7 +121,8 @@ export class DshPresetAdmission {
       throw error;
     }
     const agent = await this.getAgent(String(agentId || '').trim());
-    const eligibility = dshPresetEligibility(agent);
+    const activeModel = typeof this.getActiveModel === 'function' ? await this.getActiveModel() : undefined;
+    const eligibility = dshPresetEligibility(agent, { activeModel });
     if (!eligibility.ok) {
       const error = new Error(eligibility.message);
       error.code = eligibility.code;
@@ -108,11 +132,19 @@ export class DshPresetAdmission {
     const previous = this.registrations.get(eligibility.agentId);
     if (previous?.presetId === eligibility.presetId) return { ...eligibility, reused: true };
     if (previous?.unregister) await previous.unregister();
+    const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
+    const task = String(agent?.spec?.instructions?.task || '').trim();
+    const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
     const unregister = await this.registry.register({
       id: eligibility.presetId,
       name: String(agent?.metadata?.name || agent?.name || eligibility.agentId),
-      description: 'AgentKit Studio dsh-native Agent（当前仅准入无资源 Revision）',
-      plugins: [],
+      description: 'AgentKit Studio dsh-native Agent（使用当前 DSH 模型路由）',
+      // Persona is an official DSH preset row. It gives a selected Studio
+      // Agent real system instructions while keeping DSH's own Session
+      // Controller and tool loop in charge. Model binding is admitted only
+      // when it exactly matches the active DSH route; other resources remain
+      // fail-closed until their public provider contract exists.
+      plugins: prefix ? [{ id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix } }] : [],
     });
     this.registrations.set(eligibility.agentId, { presetId: eligibility.presetId, unregister });
     return { ...eligibility, reused: false };
