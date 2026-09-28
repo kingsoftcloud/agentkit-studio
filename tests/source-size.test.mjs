@@ -21,6 +21,23 @@ test('browser source modules stay below the 1000-line gate', async () => {
   }
 });
 
+test('maintained JavaScript sources stay below the 1000-line gate', async () => {
+  const roots = ['src', 'scripts'];
+  const files = [];
+  async function collect(directory) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) await collect(path);
+      else if (/\.(?:mjs|js)$/.test(entry.name)) files.push(path);
+    }
+  }
+  for (const directory of roots) await collect(resolve(root, directory));
+  assert.ok(files.length > 0, 'maintained JavaScript sources are missing');
+  for (const path of files) {
+    assert.ok((await lineCount(path)) <= 1000, `${path} exceeds the source gate`);
+  }
+});
+
 test('packed browser entry is generated from the fragment build', async () => {
   const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
   assert.equal(packageJson.exports['./client'], './dist/client.js');
