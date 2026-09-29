@@ -180,7 +180,7 @@
       const remove = async task => {
         const targetAgent = task?.target?.agentId;
         if (!targetAgent || !task?.taskId) return;
-        if (typeof window !== 'undefined' && !window.confirm(`删除自动化“${task.displayName || task.taskId}”？`)) return;
+        if (typeof window !== 'undefined' && !(await (window.__AGENTKIT_CONFIRM__ ? window.__AGENTKIT_CONFIRM__({ title: '删除自动化', detail: `删除自动化“${task.displayName || task.taskId}”？此操作不可撤销。`, confirmLabel: '删除', danger: true }) : Promise.resolve(window.confirm(`删除自动化“${task.displayName || task.taskId}”？`))))) return;
         setBusyTask(task.taskId); setError('');
         try { await hostRemote.deleteSchedule(targetAgent, task.taskId); setMessage('自动化已删除。'); if (detailTask?.taskId === task.taskId) { setDetailTask(null); setDetailOccurrences([]); } await load(); }
         catch (reason) { setError(reason?.message || '自动化删除失败'); }

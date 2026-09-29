@@ -545,6 +545,54 @@ window.__ModuleLoader__.load({
       window.dispatchEvent(new CustomEvent('agentkit-studio:conversation-context-change', { detail: value }));
     }
 
+    // Global confirm dialog: a Studio-styled replacement for window.confirm.
+    // Built with native DOM (no React mount point needed — StudioShell's
+    // structure stays untouched) and returns a Promise<boolean>.
+    function confirmDialog(options = {}) {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(10,14,18,0.55);backdrop-filter:blur(2px)';
+        const card = document.createElement('div');
+        card.setAttribute('role', 'dialog');
+        card.setAttribute('aria-modal', 'true');
+        card.style.cssText = 'width:min(420px,calc(100vw - 48px));border:1px solid var(--dsw-alias-border-l1,#e5e5e5);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff);padding:20px;box-shadow:0 18px 50px rgba(10,14,18,0.28);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+        const title = document.createElement('strong');
+        title.textContent = options.title || '确认操作';
+        title.style.cssText = 'display:block;color:var(--dsw-alias-label-primary,#0d0d0d);font-size:15px';
+        card.append(title);
+        if (options.detail) {
+          const detail = document.createElement('p');
+          detail.textContent = options.detail;
+          detail.style.cssText = 'color:var(--dsw-alias-label-secondary,#676767);font-size:12px;line-height:1.6;margin:10px 0 0;white-space:pre-wrap';
+          card.append(detail);
+        }
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px';
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = options.cancelLabel || '取消';
+        cancel.style.cssText = 'font:inherit;cursor:pointer;padding:6px 12px;border-radius:9px;border:1px solid var(--dsw-alias-border-l1,#e5e5e5);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#0d0d0d)';
+        const confirm = document.createElement('button');
+        confirm.type = 'button';
+        confirm.textContent = options.confirmLabel || '确定';
+        confirm.autofocus = true;
+        const danger = options.danger !== false;
+        confirm.style.cssText = 'font:inherit;cursor:pointer;padding:6px 12px;border-radius:9px;border:1px solid transparent;color:var(--dsw-static-neutral-00,#fff);background:' + (danger ? 'var(--dsw-alias-state-danger-primary,#c2402a)' : 'var(--dsw-alias-brand-primary,#0aa6a6)');
+        const settle = value => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(value); };
+        const onKey = event => { if (event.key === 'Escape') settle(false); if (event.key === 'Enter') settle(true); };
+        cancel.addEventListener('click', () => settle(false));
+        confirm.addEventListener('click', () => settle(true));
+        overlay.addEventListener('click', event => { if (event.target === overlay) settle(false); });
+        document.addEventListener('keydown', onKey);
+        actions.append(cancel, confirm);
+        card.append(actions);
+        overlay.append(card);
+        document.body.append(overlay);
+        confirm.focus();
+      });
+    }
+    window.__AGENTKIT_CONFIRM__ = confirmDialog;
+
     const BRAND = {
       // Use the established Studio neutral console tokens. The AgentKit mark,
       // layout and product surfaces remain owned by this application.

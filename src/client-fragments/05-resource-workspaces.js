@@ -80,7 +80,7 @@
       const remove = async resource => {
         if (deleting) return;
         const name = resource.displayName || resource.name || resource.resourceId;
-        if (typeof window !== 'undefined' && !window.confirm(`确定从资源目录删除“${name}”吗？Agent 已有的 Revision 不会被这里静默改写。`)) return;
+        if (typeof window !== 'undefined' && !(await (window.__AGENTKIT_CONFIRM__ ? window.__AGENTKIT_CONFIRM__({ title: '删除资源', detail: `确定从资源目录删除“${name}”吗？Agent 已有的 Revision 不会被这里静默改写。`, confirmLabel: '删除', danger: true }) : Promise.resolve(window.confirm(`确定从资源目录删除“${name}”吗？`))))) return;
         setDeleting(true); setError(''); setMessage('');
         try {
           await hostRemote.deleteResource(resource.resourceId);

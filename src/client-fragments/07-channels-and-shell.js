@@ -77,7 +77,7 @@
       };
       const deleteChannel = async channel => {
         const id = operationalId(channel);
-        if (!id || !window.confirm(`删除渠道“${channelLabel(channel)}”？`)) return;
+        if (!id || !(await (window.__AGENTKIT_CONFIRM__ ? window.__AGENTKIT_CONFIRM__({ title: '删除渠道', detail: `删除渠道“${channelLabel(channel)}”？此操作不可撤销。`, confirmLabel: '删除', danger: true }) : Promise.resolve(window.confirm(`删除渠道“${channelLabel(channel)}”？`))))) return;
         setActionBusy(id); setError('');
         try { await hostRemote.channelAction('DeleteChannel', { Id: id }); await load(); }
         catch (reason) { setError(reason?.message || '渠道删除失败'); }
@@ -97,7 +97,7 @@
       };
       const deleteBinding = async binding => {
         const id = operationalId(binding);
-        if (!id || !window.confirm('解除这个渠道会话绑定？')) return;
+        if (!id || !(await (window.__AGENTKIT_CONFIRM__ ? window.__AGENTKIT_CONFIRM__({ title: '解除会话绑定', detail: '解除这个渠道会话绑定？', confirmLabel: '解除', danger: true }) : Promise.resolve(window.confirm('解除这个渠道会话绑定？'))))) return;
         setActionBusy(id); setError('');
         try { await hostRemote.channelAction('DeleteBinding', { Id: id }); await load(); }
         catch (reason) { setError(reason?.message || '解除绑定失败'); }

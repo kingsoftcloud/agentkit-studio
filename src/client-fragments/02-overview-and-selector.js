@@ -167,6 +167,15 @@
           setNotice('请先打开一个空白会话再绑定 Agent');
           return;
         }
+        if (String(value).startsWith('ar-local-')) {
+          // Conversation-created agents run through the plugin's local
+          // runtime (model+prompt); DSH preset admission does not apply.
+          writeConversationAgent(value, sessionId);
+          setSelected(value);
+          setNotice('已绑定（本地运行时）');
+          setBusy(false);
+          return;
+        }
         if (typeof studioRemote?.agentPresets?.select !== 'function') {
           // Never present a localStorage value as a successful binding when
           // the official DSH Remote is absent. The profile must mount the
