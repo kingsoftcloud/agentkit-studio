@@ -16,7 +16,7 @@
     function apply(ctx) {
       activeConnection = ctx.connection;
       // Schedule is a capability, not a hard requirement for the fixed
-      // dsh-v0.2.0-rc.1 host. Older profiles can still expose the Studio
+      // dsh-v0.2.0-rc.2 host. Older profiles can still expose the Studio
       // product surface and all model/agent/resource surfaces while the automation
       // panel reports that its host service is unavailable.
       const scheduleRemote = ctx.remote && typeof ctx.remote.schedule?.catalog === 'function'

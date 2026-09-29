@@ -53,6 +53,25 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
   const dbPath = join(storeDir, 'scheduler.sqlite3');
   let db = null;
   let timer = null;
+  const runOccurrence = async (row, scheduledFor = new Date(clock.now())) => {
+    const occurrenceId = `occ_${randomUUID().replace(/-/g, '')}`;
+    const sessionId = `ses_${randomUUID().replace(/-/g, '')}`;
+    const scheduledAt = scheduledFor.toISOString();
+    db.prepare('INSERT INTO occurrences (occurrence_id, task_id, scheduled_for, session_id, state, attempt, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(occurrenceId, row.task_id, scheduledAt, sessionId, 'running', 1, scheduledAt);
+    db.prepare('UPDATE schedules SET last_fired_at = ?, updated_at = ? WHERE task_id = ?').run(scheduledAt, scheduledAt, row.task_id);
+    if (typeof runner === 'function') {
+      try {
+        const result = await runner({ occurrenceId, taskId: row.task_id, agentId: row.agent_id, sessionId, input: row.prompt });
+        db.prepare('UPDATE occurrences SET state = ?, completed_at = ?, run_id = ? WHERE occurrence_id = ?').run('succeeded', new Date(clock.now()).toISOString(), String(result?.runId || ''), occurrenceId);
+      } catch {
+        db.prepare('UPDATE occurrences SET state = ?, completed_at = ? WHERE occurrence_id = ?').run('failed', new Date(clock.now()).toISOString(), occurrenceId);
+      }
+    } else {
+      db.prepare('UPDATE occurrences SET state = ?, completed_at = ? WHERE occurrence_id = ?').run('failed', new Date(clock.now()).toISOString(), occurrenceId);
+    }
+    return rowToOccurrence(db.prepare('SELECT * FROM occurrences WHERE occurrence_id = ?').get(occurrenceId));
+  };
+
   const tick = async () => {
     if (!db) return;
     const now = new Date(clock.now());
@@ -64,16 +83,7 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
       else if (row.kind === 'cron') { const fields = JSON.parse(row.cron_fields); if (cronMatches(now, fields)) fire = true; }
       if (!fire) continue;
       if (row.kind === 'once' && row.last_fired_at) continue;
-      const occurrenceId = `occ_${randomUUID().replace(/-/g, '')}`;
-      const sessionId = `ses_${randomUUID().replace(/-/g, '')}`;
-      db.prepare('INSERT INTO occurrences (occurrence_id, task_id, scheduled_for, session_id, state, attempt, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(occurrenceId, row.task_id, now.toISOString(), sessionId, 'running', 1, now.toISOString());
-      db.prepare('UPDATE schedules SET last_fired_at = ? WHERE task_id = ?').run(now.toISOString(), row.task_id);
-      if (typeof runner === 'function') {
-        try { const result = await runner({ occurrenceId, taskId: row.task_id, agentId: row.agent_id, sessionId, input: row.prompt }); db.prepare('UPDATE occurrences SET state = ?, completed_at = ?, run_id = ? WHERE occurrence_id = ?').run('succeeded', new Date(clock.now()).toISOString(), String(result?.runId || ''), occurrenceId); }
-        catch (error) { db.prepare('UPDATE occurrences SET state = ?, completed_at = ? WHERE occurrence_id = ?').run('failed', new Date(clock.now()).toISOString(), occurrenceId); }
-      } else {
-        db.prepare('UPDATE occurrences SET state = ?, completed_at = ? WHERE occurrence_id = ?').run('failed', new Date(clock.now()).toISOString(), occurrenceId);
-      }
+      await runOccurrence(row, now);
     }
   };
 
@@ -148,6 +158,14 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
     return db.prepare(query).all(...params).map(rowToOccurrence);
   }
 
+  async function runNow(taskId) {
+    await ensureReady();
+    const row = db.prepare('SELECT * FROM schedules WHERE task_id = ?').get(taskId);
+    if (!row) throw new StudioSchedulerError('SCHEDULE_NOT_FOUND', '调度任务不存在', { taskId });
+    if (!row.enabled) throw new StudioSchedulerError('SCHEDULE_DISABLED', '已暂停的调度任务不能立即运行', { taskId });
+    return runOccurrence(row);
+  }
+
   function rowToSchedule(row) {
     return { taskId: row.task_id, agentId: row.agent_id, displayName: row.display_name, kind: row.kind, at: row.at, everySeconds: row.every_seconds, expression: row.expression, misfirePolicy: row.misfire_policy, prompt: row.prompt, enabled: Boolean(row.enabled), createdAt: row.created_at, updatedAt: row.updated_at, lastFiredAt: row.last_fired_at };
   }
@@ -155,5 +173,5 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
     return { occurrenceId: row.occurrence_id, taskId: row.task_id, scheduledFor: row.scheduled_for, sessionId: row.session_id, state: row.state, attempt: row.attempt, runId: row.run_id, startedAt: row.started_at, completedAt: row.completed_at };
   }
 
-  return { createSchedule, listSchedules, getSchedule, updateSchedule, deleteSchedule, listOccurrences, ensureReady, tick };
+  return { createSchedule, listSchedules, getSchedule, updateSchedule, deleteSchedule, listOccurrences, runNow, ensureReady, tick };
 }

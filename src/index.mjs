@@ -118,7 +118,7 @@ async function registerControlPlane(ctx) {
     getActiveModel: async () => (await configurationPromise).resolve(),
   });
   if (presetRegistry) presetAdmission.setRegistry(presetRegistry);
-  const allowed = new Set(['agents/list', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
+  const allowed = new Set(['agents/list', 'agents/create-local', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
@@ -143,9 +143,19 @@ async function registerControlPlane(ctx) {
           return { ok: false, error: { code: error?.code || 'LOCAL_AGENT_FAILED', message: error instanceof Error ? error.message : String(error), details: {} } };
         }
       }
-      if (endpoint === 'agents/local-get' || endpoint === 'agents/update-local') {
+      if (endpoint === 'agents/create-local' || endpoint === 'agents/local-get' || endpoint === 'agents/update-local') {
         const store = await agentStorePromise;
         try {
+          if (endpoint === 'agents/create-local') {
+            const record = await store.create({
+              name: payload?.name,
+              runtimeType: payload?.runtimeType || payload?.spec?.runtime?.type || 'dsh-native',
+              description: payload?.description || payload?.spec?.description || '',
+              spec: payload?.spec || {},
+              bindings: payload?.bindings || payload?.spec?.bindings || {},
+            });
+            return { ok: true, value: { ...record, builds: [] } };
+          }
           if (endpoint === 'agents/local-get') return { ok: true, value: await store.get(String(payload?.agentId || '')) };
           const record = await store.update(String(payload?.agentId || ''), {
             name: payload?.name, description: payload?.description,
@@ -299,6 +309,7 @@ async function registerControlPlane(ctx) {
             if (endpoint === 'schedules/get') return { ok: true, value: await scheduler.getSchedule(payload?.taskId) };
             if (endpoint === 'schedules/update') return { ok: true, value: await scheduler.updateSchedule(payload?.taskId, payload?.patch || payload) };
             if (endpoint === 'schedules/delete') return { ok: true, value: await scheduler.deleteSchedule(payload?.taskId) };
+            if (endpoint === 'schedules/run') return { ok: true, value: await scheduler.runNow(payload?.taskId) };
             if (endpoint === 'schedules/occurrences') return { ok: true, value: { items: await scheduler.listOccurrences(payload?.taskId, payload?.agentId) } };
           }
           if (endpoint.startsWith('traces/')) {
@@ -479,7 +490,7 @@ export async function apply(ctx) {
       version: '0.0.1',
       // Allow an isolated release-candidate process to report its own DSH
       // version without rebuilding the plugin artifact.
-      dshVersion: runtimeEnv.AGENTKIT_STUDIO_DSH_VERSION || '0.2.0-rc.1',
+      dshVersion: runtimeEnv.AGENTKIT_STUDIO_DSH_VERSION || '0.2.0-rc.2',
       hostUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
       controlPlane: 'agentengine-server',
       // The Studio Host owns this short-lived local session token. It is not

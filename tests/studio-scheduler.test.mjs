@@ -55,3 +55,15 @@ test('occurrences are recorded as failed without a runner', async () => {
     assert.equal(occurrences[0].state, 'failed');
   } finally { await rm(store, { recursive: true, force: true }).catch(() => {}); }
 });
+
+test('manual run creates an occurrence instead of only listing history', async () => {
+  const store = await makeStore();
+  const scheduler = createStudioScheduler({ storeDir: store, tickIntervalMs: 600000, runner: null });
+  try {
+    await scheduler.createSchedule('ar-1', { taskId: 'manual-run', kind: 'interval', everySeconds: 3600, prompt: 'go' });
+    const occurrence = await scheduler.runNow('manual-run');
+    assert.equal(occurrence.taskId, 'manual-run');
+    assert.equal(occurrence.state, 'failed');
+    assert.equal((await scheduler.listOccurrences('manual-run')).length, 1);
+  } finally { await rm(store, { recursive: true, force: true }).catch(() => {}); }
+});

@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const { createElement: h, useEffect, useRef, useState } = React;
     const STUDIO_VERSION = '0.0.1';
-    const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.1');
+    const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.2');
     const CONVERSATION_AGENT_KEY = 'agentkit-studio:conversation-agent';
     const OPEN_BOUND_CONVERSATION_KEY = 'agentkit-studio:open-bound-agent';
     // DSH Native is the official DSH SDK-backed loop. Resource-bearing
@@ -282,8 +282,16 @@ window.__ModuleLoader__.load({
           : request('/api/v1/agents/' + encodeURIComponent(id)),
         ensureDshPreset,
         syncModelCredential,
-        createAgent: payload => request('/api/v1/agents', { method: 'POST', body: JSON.stringify(payload) }),
-        quickAuthorAgent: payload => request('/api/v1/authoring/quick', { method: 'POST', body: JSON.stringify(payload) }),
+        // Direct Server mode has no legacy Studio REST host. Keep local Agent
+        // authoring on the authenticated control-plane bridge so the create
+        // wizard does not render a form that can only fail with
+        // CLOUD_CONTRACT_UNAVAILABLE.
+        createAgent: payload => directServer()
+          ? studioBridgeOperation('agents/create-local', payload)
+          : request('/api/v1/agents', { method: 'POST', body: JSON.stringify(payload) }),
+        quickAuthorAgent: payload => directServer()
+          ? studioBridgeOperation('agents/create-local', payload)
+          : request('/api/v1/authoring/quick', { method: 'POST', body: JSON.stringify(payload) }),
         composeAuthoringConversation: payload => request('/api/v1/authoring/conversations:compose', { method: 'POST', body: JSON.stringify(payload) }),
         authoringConversationStatus: requestId => request('/api/v1/authoring/conversations:status/' + encodeURIComponent(requestId)),
         updateAgent: (id, spec, revision, name) => directServer() && String(id).startsWith('ar-local-')
@@ -472,7 +480,7 @@ window.__ModuleLoader__.load({
         createSchedule: (agentId, payload) => directServer() ? studioBridgeOperation('schedules/create', { agentId, spec: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules', { method: 'POST', body: JSON.stringify(payload) }),
         updateSchedule: (agentId, taskId, payload) => directServer() ? studioBridgeOperation('schedules/update', { taskId, patch: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
         deleteSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/delete', { taskId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
-        runSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/occurrences', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
+        runSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/run', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
         dshPlugins: () => directServer() ? studioBridgeOperation('plugins/dsh-list', {}) : request('/api/v1/plugin-ecosystems/dsh/plugins'),
         installDshPlugin: (source, acceptHostPermissions = false) => directServer() ? studioBridgeOperation('plugins/dsh-install', { source, acceptHostPermissions }) : request('/api/v1/plugin-ecosystems/dsh/plugins:install', {
           method: 'POST', body: JSON.stringify({ source, acceptHostPermissions }),

@@ -9,8 +9,8 @@ DSH_PROFILE ?= agentkit-studio
 DSH_HOST ?= 127.0.0.1
 DSH_WEB_PORT ?= 3098
 PACK_DIR ?= .artifacts
-DSH_VERSION ?= 0.2.0-rc.1
-DSH_COMMIT ?= 4878cdabd87d4041bdaff61d04c966883b9fd07a
+DSH_VERSION ?= 0.2.0-rc.2
+DSH_COMMIT ?= 639ed015397290b3745d163aafe02ffee4aa3f84
 DSH_REPO ?= https://github.com/deepseek-ai/deepseek-harness.git
 DSH_REF ?= dsh-v$(DSH_VERSION)
 PATCH_ROOT ?= $(abspath patches/dsh-v$(DSH_VERSION))
@@ -132,7 +132,7 @@ desktop-package-preflight: pack
 	@test -f "$(DSH_ROOT)/apps/desktop/scripts/prepare-package-set.ts" \
 		&& grep -q "DSH_DESKTOP_PLUGIN_INPUTS" "$(DSH_ROOT)/apps/desktop/scripts/prepare-package-set.ts" \
 		&& grep -q "DSH_DESKTOP_PLUGIN_BUNDLES" "$(DSH_ROOT)/apps/desktop/src/project-manager.ts" \
-		|| (echo "DSH rc.1 desktop plugin package-set patch 未应用；先执行 make patch-apply DSH_ROOT=..." >&2; exit 2)
+		|| (echo "DSH rc.2 desktop plugin package-set patch 未应用；先执行 make patch-apply DSH_ROOT=..." >&2; exit 2)
 	@test -f "$(PLUGIN_TARBALL)" || (echo "插件包不存在：$(PLUGIN_TARBALL)" >&2; exit 2)
 
 desktop-package-mac-arm64: desktop-package-preflight

@@ -4,8 +4,8 @@ AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时
 可以选择官方 DSH，也可以选择 Studio 内置的独立 Harness provider。
 
-当前首个公开可复现版本为 **0.0.1**，固定验证基线为 **DSH v0.2.0-rc.1**（commit
-`4878cdabd87d4041bdaff61d04c966883b9fd07a`）。Studio 基于 DSH 的公开宿主和扩展合同二次开发；
+当前首个公开可复现版本为 **0.0.1**，固定验证基线为 **DSH v0.2.0-rc.2**（commit
+`639ed015397290b3745d163aafe02ffee4aa3f84`）。Studio 基于 DSH 的公开宿主和扩展合同二次开发；
 仓库不复制 DSH 源码，也不包含 Python 运行时。
 
 ## 是否必须安装 DSH 桌面端
@@ -43,7 +43,7 @@ Agent 的普通对话由所连接的运行时执行。
 
 ## 本地开发
 
-环境要求：Node.js `>=22.19.0`、pnpm、官方 DSH `dsh-v0.2.0-rc.1` checkout。
+环境要求：Node.js `>=22.19.0`、pnpm、官方 DSH `dsh-v0.2.0-rc.2` checkout。
 首次配置请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；仓库内不依赖任何个人绝对路径。
 
 ```sh
@@ -88,7 +88,7 @@ make desktop-build DSH_ROOT=/path/to/deepseek-harness
 `make desktop-package-mac-arm64` / `make desktop-package-mac-x64` 调用官方 DSH 的 macOS
 打包脚本；本地只想验证 `.app` 目录时使用对应的 `*-dir` 目标，使用
 `make desktop-check-package` 做包内容检查。四个 macOS package 目标会先要求应用当前
-rc.1 的 `006-desktop-plugin-package-set.patch`，再将 Studio tarball 纳入 Desktop package
+rc.2 的 `006-desktop-plugin-package-set.patch`，再将 Studio tarball 纳入 Desktop package
 set 和内置 Profile；没有这个补丁会直接失败。macOS 签名、公证和发布版本仍由 DSH Desktop
 的发布配置负责。官方打包脚本要求先在 DSH checkout 的
 `apps/desktop/.env.macos` 填写本机签名/发布配置；缺少该文件时会主动拒绝打包，避免生成
@@ -135,7 +135,7 @@ Host/Server 合同和真实凭证验收为准。
 - `docs/`：架构、合同、复用清单和验收证据。
 - `CONTRIBUTING.md`：可分发的协作开发、profile 安装和发布前门禁。
 - `Makefile`：Web、桌面开发、打包和 CI 入口。
-- `.github/workflows/ci.yml`：Studio 包门禁，以及从 DSH 公网固定 rc.1 checkout 运行的 node-store probe。
+- `.github/workflows/ci.yml`：Studio 包门禁，以及从 DSH 公网固定 rc.2 checkout 运行的 node-store probe。
 
 ## 发布
 
@@ -145,7 +145,7 @@ Host/Server 合同和真实凭证验收为准。
 make release-check
 ```
 
-这条命令只验证 Studio 包本身，不启动 DSH 宿主；会执行 82 个本地合同测试、检查 rc.1 补丁均为
+这条命令只验证 Studio 包本身，不启动 DSH 宿主；会执行 82 个本地合同测试、检查 rc.2 补丁均为
 标准 unified diff、生成 0.0.1 tarball、检查 manifest/导出和个人路径泄漏，再执行
 `git diff --check`。然后审阅
 `CHANGELOG.md`，再在 macOS 发布机上补跑 DSH Host、App package closure、签名和公证门禁。

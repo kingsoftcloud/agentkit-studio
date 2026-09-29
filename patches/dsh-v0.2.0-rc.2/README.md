@@ -1,10 +1,10 @@
-# DSH v0.2.0-rc.1 补丁集
+# DSH v0.2.0-rc.2 补丁集
 
-本目录保存 AgentKit Studio 对官方 DSH `v0.2.0-rc.1` 的**可审计、版本锁定的临时兼容补丁**。补丁不是 Studio 的运行时依赖，也不会被浏览器直接加载；它们只在官方 DSH 尚未提供等价公开扩展点时，供宿主构建或本地复现使用。
+本目录保存 AgentKit Studio 对官方 DSH `v0.2.0-rc.2` 的**可审计、版本锁定的临时兼容补丁**。补丁不是 Studio 的运行时依赖，也不会被浏览器直接加载；它们只在官方 DSH 尚未提供等价公开扩展点时，供宿主构建或本地复现使用。
 
 ## 基线
 
-- DSH 版本：`0.2.0-rc.1`
+- DSH 版本：`0.2.0-rc.2`
 - 基线 commit：`4878cdabd87d4041bdaff61d04c966883b9fd07a`
 - 上游 checkout：由 `DSH_ROOT` 指定，不能写死本机路径
 
@@ -14,7 +14,7 @@
 
 ```sh
 DSH_ROOT=/path/to/deepseek-harness
-PATCH_ROOT=/path/to/agentkit-studio/patches/dsh-v0.2.0-rc.1
+PATCH_ROOT=/path/to/agentkit-studio/patches/dsh-v0.2.0-rc.2
 
 test "$(git -C "$DSH_ROOT" rev-parse HEAD)" = \
   4878cdabd87d4041bdaff61d04c966883b9fd07a
@@ -32,7 +32,7 @@ done
 
 | 文件 | 作用 | 删除条件 |
 | --- | --- | --- |
-| `001-chat-thinking-copy.patch` | 将思考态文案改为产品中性的"正在思考中"（v0.2.0-rc.1 上游将 locale key 迁移为 `chat.deepDiving`/`chat.deepDivingFor`，补丁已按新基线重新生成） | 上游提供可配置文案或 Studio 公共 locale slot |
+| `001-chat-thinking-copy.patch` | 将思考态文案改为产品中性的"正在思考中"（v0.2.0-rc.2 上游沿用 locale key 迁移为 `chat.deepDiving`/`chat.deepDivingFor`，补丁已按新基线重新生成） | 上游提供可配置文案或 Studio 公共 locale slot |
 | `002-generated-conversation-copy.patch` | 调整会话输入占位文案 | 上游提供可配置 placeholder |
 | `003-generated-locale-brand.patch` | 移除 DSH 默认 Hero 品牌文案 | 上游提供稳定品牌 slot 并覆盖所有 fallback locale |
 | `004-sidebar-panel-lifecycle.patch` | 修复动态面板注册后的侧栏选择 | 上游侧栏生命周期修复进入发布版本 |

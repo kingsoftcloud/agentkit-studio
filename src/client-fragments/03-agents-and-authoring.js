@@ -53,7 +53,7 @@
       });
       return h(AgentsPage, {
         created,
-        onDeleteLocal: async agentId => { try { await hostRemote.deleteLocalAgent(agentId); } catch (reason) { window.dispatchEvent(new CustomEvent('agentkit-studio:local-agent-error', { detail: reason?.message })); } },
+        onDeleteLocal: async agentId => { try { await hostRemote.deleteLocalAgent(agentId); window.dispatchEvent(new CustomEvent('agentkit-studio:local-agent-changed', { detail: { agentId } })); } catch (reason) { window.dispatchEvent(new CustomEvent('agentkit-studio:local-agent-error', { detail: reason?.message })); } },
         onNavigate,
         tab,
         onTabChange: setTab,
@@ -190,7 +190,7 @@
           h('form', { onSubmit: send, style: { display: 'flex', gap: '8px', alignItems: 'flex-end', borderTop: '1px solid ' + BRAND.border, paddingTop: '10px' } }, h('textarea', { value: input, onChange: event => setInput(event.target.value), disabled: status === 'running', rows: 2, placeholder: '输入消息，发送到这个 Agent…', style: { ...inputStyle(), height: 'auto', padding: '9px 10px', resize: 'vertical', marginTop: 0, flex: 1 } }), h('button', { type: 'submit', disabled: status === 'running' || !input.trim(), style: { ...buttonStyle(), color: status === 'running' || !input.trim() ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: status === 'running' || !input.trim() ? BRAND.accentSoft : BRAND.primaryFill, borderColor: status === 'running' || !input.trim() ? BRAND.border : 'transparent' } }, status === 'running' ? '运行中…' : '发送'))));
     }
 
-    function AgentsPage({ onCreate, created, onNavigate, onOpenConversation, onEdit, tab, onTabChange }) {
+    function AgentsPage({ onCreate, created, onNavigate, onOpenConversation, onEdit, tab, onTabChange, onDeleteLocal }) {
       const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
       const [agents, setAgents] = useState([]);
       const [status, setStatus] = useState('loading');
@@ -319,6 +319,11 @@
         setStatus(Object.keys(next).length ? 'ready' : 'error');
       };
       useEffect(() => { void load(); }, []);
+      useEffect(() => {
+        const changed = () => void load();
+        window.addEventListener('agentkit-studio:local-agent-changed', changed);
+        return () => window.removeEventListener('agentkit-studio:local-agent-changed', changed);
+      }, [load]);
       const bindingKind = binding => String(binding?.config?.binding?.resource?.kind || '');
       const selectedId = kind => String(value.find(binding => bindingKind(binding) === kind)?.config?.binding?.resource?.id || '');
       const select = (kind, resourceId) => {

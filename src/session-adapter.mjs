@@ -397,5 +397,5 @@ export function validateInteractionAnswer(answer) {
 }
 
 export const STUDIO_SESSION_CONTRACT = 'p1-session-contract-v0.1';
-export const DSH_VERSION = '0.2.0-rc.1';
-export const DSH_COMMIT = '4878cdabd87d4041bdaff61d04c966883b9fd07a';
+export const DSH_VERSION = '0.2.0-rc.2';
+export const DSH_COMMIT = '639ed015397290b3745d163aafe02ffee4aa3f84';

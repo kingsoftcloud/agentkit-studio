@@ -44,6 +44,9 @@
   `~/.agents/skills`、`~/.codex/skills`、`~/.claude/skills` 中的 `SKILL.md` 清单，提供
   候选预览、脚本/网络风险标记、导入到 `~/.agentkit/studio/skills` 与已导入目录读取，
   合同与旧版 Studio Host 一致，经 `/agentkit` 桥的 `skills/*` 端点服务。
+- DSH 宿主升级到 `dsh-v0.2.0-rc.2`（commit `639ed01539`）：7 个补丁全部重验（仅 001 思考态
+  文案按新基线重新生成，rc.2 的 `chat.deepDivingFor` 尾缀变为 `···`），版本钉点、CI、
+  门禁脚本同步更新，补丁目录更名为 `patches/dsh-v0.2.0-rc.2/`。全量 lib/web 重建。
 - 按用户决策不做 rc.2 旧本地会话数据兼容：已清除 `~/.dsh/sessions/` 与
   session_projcache 的旧会话日志，浏览器端 Studio 站点的 localStorage 一并重置后即为
   全新状态（曾临时生成的 008 兼容补丁已撤回）。

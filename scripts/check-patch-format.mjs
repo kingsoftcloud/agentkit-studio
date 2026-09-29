@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '..')
-const patchRoot = resolve(repoRoot, process.argv[2] ?? 'patches/dsh-v0.2.0-rc.1')
+const patchRoot = resolve(repoRoot, process.argv[2] ?? 'patches/dsh-v0.2.0-rc.2')
 
 function fail(message) {
   console.error(`patch-format: ${message}`)

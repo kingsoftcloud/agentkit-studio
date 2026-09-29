@@ -92,6 +92,14 @@ test('bound conversations resolve the surface through the control-plane bridge i
   assert.match(clientSource, /BUILD_NOT_READY/);
 });
 
+test('directServer Agent authoring persists through the Host bridge', async () => {
+  const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
+  assert.match(clientSource, /studioBridgeOperation\('agents\/create-local', payload\)/);
+  assert.match(hostSource, /'agents\/create-local'/);
+  assert.match(hostSource, /if \(endpoint === 'agents\/create-local'\)/);
+  assert.match(hostSource, /store\.create\(\{/);
+});
+
 test('Studio domains use the DSH left panel list and old Studio underline tabs', () => {
   assert.match(clientSource, /ctx\.slots\.register\(\s*\{ name: 'main', key: panel\.id \}/s);
   assert.match(clientSource, /ctx\.slots\.register\(\s*\{ name: 'sidebar\.panellist', id: panel\.id/s);
@@ -109,6 +117,7 @@ test('Studio automation surface keeps Host-backed task management affordances', 
   assert.match(clientSource, /需关注/);
   assert.match(clientSource, /Automation detail/);
   assert.match(clientSource, /taskPageSize/);
+  assert.match(clientSource, /studioBridgeOperation\('schedules\/run', \{ taskId, agentId \}\)/);
 });
 
 test('Studio automation surface does not hide DSH session schedules', () => {

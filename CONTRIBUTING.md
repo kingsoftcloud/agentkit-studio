@@ -7,7 +7,7 @@
 
 - Node.js `22.19.0`（版本写在 `.node-version`）
 - pnpm `10.33.2`（版本写在 `package.json` 的 `packageManager`）
-- 官方 DSH `0.2.0-rc.1`，commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`
+- 官方 DSH `0.2.0-rc.2`，commit `639ed015397290b3745d163aafe02ffee4aa3f84`
 - macOS DMG 还需要 DSH Desktop 的签名、公证和发布配置；普通 Web/Node 检查不需要云端密钥
 
 Studio 基于公开 DSH 源码和扩展合同二次开发，但本仓库不复制 DSH 源码；运行和宿主验证需要
@@ -20,7 +20,7 @@ export AGENTKIT_HOME=/path/to/agentkit  # 可选；默认 ~/.agentkit
 ```
 
 如果本机还没有 DSH checkout，可以在 Studio 仓库目录执行 `make dsh-bootstrap`。该目标从
-公开 DSH GitHub 仓库拉取固定 `dsh-v0.2.0-rc.1` tag，校验 commit 并在 checkout 内安装依赖；
+公开 DSH GitHub 仓库拉取固定 `dsh-v0.2.0-rc.2` tag，校验 commit 并在 checkout 内安装依赖；
 源码仍位于 `DSH_ROOT`，不会进入 Studio Git 历史。
 
 ## 首次 checkout
@@ -80,7 +80,7 @@ make release-check
 ```
 
 涉及官方 DSH 或浏览器的改动还要记录 `make verify-dsh`、profile smoke 和对应的真实浏览器
-证据。CI 会从公网固定 rc.1 tag 运行两个 node-store probe；fixture 测试只能证明合同投影，
+证据。CI 会从公网固定 rc.2 tag 运行两个 node-store probe；fixture 测试只能证明合同投影，
 不能替代模型、资源绑定、云端部署或签名 DMG 验收。
 
 设置页的模型目录支持多个提供商和多个模型。请确认新增条目使用独立的
