@@ -84,6 +84,12 @@
   Build 合同未开放时返回 typed `BUILD_NOT_READY`。交付/长任务写路径同样返回
   typed 合同缺失错误。
 
+- 插件市场切换到 DSH 0.2.0-rc.2 原生插件管理：`studio-plugins.mjs` 直调宿主进程内的
+  `PluginManager`/`PluginInventoryGateway` 服务（listBundles/listPlugins/inspect/
+  installBundle/removeBundle/setBundleEnabled/setPluginEnabled），替代 profile 文件
+  读取与 `dsh plugin` CLI 转发；市场列表为产品 bundle（安装/内置/启用/停用），
+  Loader 的 ~200 个内部插件行归 DSH 设置页插件管理。Codex 生态接 `codex plugin`
+  CLI 的结构化 JSON 清单（0.159.0，installed/enabled/marketplace）与 add/remove。
 ### 修正
 
 - 删除资源目录中的”保存到 Agent Revision”操作；绑定关系只在 Agent 创建或编辑时提交。

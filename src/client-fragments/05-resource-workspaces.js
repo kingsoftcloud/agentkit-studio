@@ -230,14 +230,16 @@
         const isDsh = (item.ecosystem || '').toLowerCase() === 'dsh';
         const btn = (label, operation, extra = {}) => h('button', { type: 'button', disabled: Boolean(busyKey), onClick: event => { event.stopPropagation(); void mutate(item, operation); }, style: { ...buttonStyle(), padding: compact ? '4px 9px' : '5px 10px', fontSize: '10px', ...extra } }, busyKey === key ? '处理中…' : label);
         const isCodex = (item.ecosystem || '').toLowerCase() === 'codex';
-        const codexInstalled = isCodex && item.installed !== false;
-        const installed = item.source === 'profile' || item.source === 'local-tarball' || item.source === 'codex-home' || item.source === 'codex-cli' && item.installed || item.source === 'bundle' || item.source === 'codex-curated' || item.source === 'codex-bundled';
+        const installed = item.installed !== false;
         return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', flexShrink: 0 } },
-          !installed && isDsh ? btn('安装', 'install', { color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' }) : null,
-          installed && isDsh && item.source !== 'bundle' ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
-          item.source === 'bundle' ? h(Pill, null, '内置') : null,
-          isCodex && !codexInstalled ? btn('安装', 'install', { color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' }) : null,
-          isCodex && codexInstalled ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
+          isDsh && !installed ? btn('安装', 'install', { color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' }) : null,
+          isDsh && installed && item.source === 'profile' ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
+          isDsh && item.source === 'bundled' ? h(Pill, null, '内置') : null,
+          isDsh && item.enabled !== false ? h(Pill, { tone: 'accent' }, '已启用') : null,
+          isDsh && item.enabled === false ? btn('启用', 'enable') : null,
+          isDsh && item.enabled !== false ? btn('停用', 'disable') : null,
+          isCodex && !installed ? btn('安装', 'install', { color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' }) : null,
+          isCodex && installed ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
         );
       };
       const discoveryRow = item => h('button', { key: `${item.ecosystem}-${item.pluginId || item.name}`, type: 'button', onClick: () => setSelected(item), style: { display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', padding: '11px 10px', minWidth: 0, border: '1px solid transparent', borderRadius: '10px', background: 'transparent', color: BRAND.ink, cursor: 'pointer', width: '100%' } },

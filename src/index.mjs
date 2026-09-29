@@ -228,16 +228,16 @@ async function registerControlPlane(ctx) {
       }
       if (endpoint.startsWith('plugins/')) {
         try {
-          const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({}));
+          const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({ getService: name => ctx.get(name) }));
           if (endpoint === 'plugins/dsh-list') return { ok: true, value: await plugins.listDsh() };
           if (endpoint === 'plugins/dsh-install') return { ok: true, value: await plugins.installDsh(payload?.source, payload?.acceptHostPermissions === true) };
           if (endpoint === 'plugins/dsh-remove') return { ok: true, value: await plugins.uninstallDsh(payload?.pluginName) };
           if (endpoint === 'plugins/dsh-enable' || endpoint === 'plugins/dsh-disable') {
-            const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({}));
+            const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({ getService: name => ctx.get(name) }));
             return { ok: true, value: await plugins.setDshEnabled(payload?.pluginName, endpoint === 'plugins/dsh-enable') };
           }
           if (endpoint === 'plugins/dsh-update') {
-            const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({}));
+            const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({ getService: name => ctx.get(name) }));
             return { ok: true, value: await plugins.updateDsh(payload?.pluginName) };
           }
           if (endpoint === 'plugins/codex-install' || endpoint === 'plugins/codex-remove') {

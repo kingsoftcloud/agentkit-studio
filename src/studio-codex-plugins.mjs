@@ -43,25 +43,25 @@ export function createStudioCodexPlugins({ codexHome } = {}) {
   }
 
   async function listCodex() {
-    // `codex plugin list` is the authoritative inventory (installed/enabled
-    // status, version, marketplace); the cache scan stays as fallback when
-    // the CLI is unavailable.
+    // `codex plugin list --json` is the authoritative inventory: structured
+    // rows with installed/enabled flags and marketplace names. The CLI also
+    // exposes add/remove for the lifecycle actions.
     try {
-      const { stdout } = await execImpl('codex', ['plugin', 'list'], { timeout: 30000, windowsHide: true });
-      const items = [];
-      for (const line of String(stdout || '').split('\n')) {
-        const match = /^([\w@.-]+)\s+(installed,\s*)?(enabled|disabled|available)\s+(\S+)\s+(.+)$/.exec(line.trim());
-        if (!match) continue;
-        const [, name, , state, version, source] = match;
-        items.push({
-          pluginId: name, name, displayName: name,
-          description: source, version,
-          source: 'codex-cli', state,
-          installed: state === 'installed' || state === 'enabled',
-          enabled: state === 'enabled' || state === 'installed',
-          kind: 'codex',
-        });
-      }
+      const { stdout } = await execImpl('codex', ['plugin', 'list', '--json'], { timeout: 60000, windowsHide: true });
+      const parsed = JSON.parse(String(stdout || '{}'));
+      const rows = [...(parsed.installed || []), ...(parsed.available || [])];
+      const items = rows.map(row => ({
+        pluginId: String(row.pluginId || `${row.name}@${row.marketplaceName || ''}`),
+        name: String(row.name || ''),
+        displayName: String(row.name || ''),
+        description: String(row.description || row.summary || ''),
+        version: String(row.version || ''),
+        marketplace: String(row.marketplaceName || ''),
+        source: row.installed ? 'codex-installed' : 'codex-available',
+        installed: row.installed === true,
+        enabled: row.enabled === true,
+        kind: 'codex',
+      }));
       if (items.length) return { items, source: 'codex-cli' };
     } catch { /* CLI missing or failed: fall through to the cache scan */ }
     const items = [];
