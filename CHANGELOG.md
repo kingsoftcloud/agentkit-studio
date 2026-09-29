@@ -52,6 +52,13 @@
   （内容寻址 `build_<digest>`、`agent-bundle.zip` 打包、`~/.agentkit/studio/dist` 存储）。
   构建与部署页恢复可用：提交构建、Build 历史、部署选择器读取本地 Build；部署上云仍待
   AgentEngine Server 合同（`builds/create`、`operations/*` 桥端点）。
+- 本地 Agent 真实执行：新增 `local-runtime.mjs`（网关 chat-completions 流适配 +
+  canonical 事件信封）与同源 SSE 路由 `/agentkit/local-conversation`，对话页对
+  `ar-local-` 前缀 Agent 直接走本地运行（模型+Prompt，资源绑定仍 fail-closed）。
+  注意宿主 IncomingMessage 的 abort signal 在 body 读取后即失效，不得传递给上游
+  模型请求（改用超时保护）。
+- 观测页接入云端统计：`GetObservabilityOverview`（epoch 毫秒时间）与
+  `ListAgentRuntimeStats` 与本地 trace store 合并展示。
 - 对话创建 Agent 的工具改为进程内数据源（注入 remote 工厂）：资源查询走模型网关目录
   与云端资源 Action，创建的 Agent 写入本地 Agent 存储（`~/.agentkit/studio/agents/`），
   Agents 列表合并本地与云端行。不再调用已下线的 8789 本地 Host REST。云端快速创建合同

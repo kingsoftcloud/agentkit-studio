@@ -304,8 +304,38 @@ async function registerControlPlane(ctx) {
           if (endpoint.startsWith('traces/')) {
             const observability = await studioObservabilityPromise;
             if (!observability) return { ok: false, error: { code: 'OBSERVABILITY_UNAVAILABLE', message: '观测模块未初始化', details: {} } };
-            if (endpoint === 'traces/overview') return { ok: true, value: await observability.overview(payload || {}) };
-            if (endpoint === 'traces/list') return { ok: true, value: await observability.list(payload || {}) };
+            if (endpoint === 'traces/overview') {
+              const local = await observability.overview(payload || {});
+              try {
+                const cloud = await serverClient.getObservabilityOverview({ range: payload?.range || '24h' }, { signal });
+                const summary = cloud?.Summary || {};
+                const series = cloud?.Series?.Sessions || cloud?.Series?.Runs || [];
+                return { ok: true, value: {
+                  buckets: series.map(item => ({ startedAt: new Date(Number(item.Timestamp)).toISOString(), runs: Number(item.Value) || 0, completed: Number(item.Value) || 0, failed: 0 })),
+                  totalRuns: Number(summary.SessionCount ?? local.totalRuns ?? 0),
+                  totalTokens: Number(summary.TokenCount ?? local.totalTokens ?? 0),
+                  agents: local.agents || [],
+                  cloud: { agentRuntimeCount: summary.AgentRuntimeCount, errorCount: summary.ErrorCount, errorRate: summary.ErrorRate },
+                } };
+              } catch { return { ok: true, value: local }; }
+            }
+            if (endpoint === 'traces/list') {
+              const local = await observability.list(payload || {});
+              try {
+                const cloud = await serverClient.listAgentRuntimeStats({ Page: 1, PageSize: 100 }, { signal });
+                const rows = cloud?.Items || cloud?.items || [];
+                const cloudItems = rows.map(row => ({
+                  traceId: String(row.AgentId || row.RuntimeId || ''),
+                  agentId: String(row.AgentId || ''),
+                  agentName: String(row.AgentName || row.AgentId || ''),
+                  sessionId: '', status: String(row.Status || row.Phase || ''),
+                  startedAt: row.StartTime || row.CreatedAt || null, completedAt: row.EndTime || null,
+                  tokenUsage: { totalTokens: Number(row.TokenCount || row.TotalTokens || 0) },
+                  spanCount: 0,
+                }));
+                return { ok: true, value: { items: [...local.items, ...cloudItems] } };
+              } catch { return { ok: true, value: local }; }
+            }
             if (endpoint === 'traces/get') return { ok: true, value: await observability.get(payload?.traceId) };
             if (endpoint === 'traces/otlp') return { ok: true, value: await observability.getOtlp(payload?.traceId) };
           }
@@ -414,6 +444,25 @@ async function registerControlPlane(ctx) {
         }
       },
     });
+    const localRoute = webCtx.webServer.register({
+      kind: 'prefix',
+      path: '/agentkit/local-conversation',
+      handler: (request, response) => {
+        const admission = webCtx.connection.admit(request);
+        if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden'); return; }
+        void Promise.all([agentStorePromise, configurationPromise]).then(async ([store, configuration]) => {
+          const credentials = ctx.get('credentials');
+          const models = await import('./model-service.mjs').then(({ createModelService }) => createModelService({ configuration, credentials }));
+          const { createLocalConversationHandler } = await import('./local-runtime.mjs');
+          return createLocalConversationHandler({ agentStore: async () => store, modelService: models });
+        }).then(handler => handler(request, response)).catch(error => {
+          console.error('[local-runtime] handler failed:', error?.stack || error);
+          if (!response.headersSent) response.writeHead(500);
+          response.end(JSON.stringify({ error: { message: String(error?.message || error).slice(0, 200) } }));
+        });
+      },
+    });
+    webCtx.effect(() => localRoute, 'agentkit-studio: local conversation route');
     webCtx.effect(() => registration, 'agentkit-studio: control-plane route');
   });
   // Authoring tools need the in-process remote factory (cloud/resource data);

@@ -327,6 +327,24 @@ window.__ModuleLoader__.load({
         // The official DSH composer currently has no public sink/input hook,
         // so this helper is not invoked by the native session.prompt path.
         streamAgentConversation: async (agentId, sessionId, input, signal) => {
+          // Locally-stored agents execute through the plugin's same-origin
+          // local runtime route (harness + gateway model) — no cloud Build.
+          if (directServer() && String(agentId).startsWith('ar-local-')) {
+            const response = await window.fetch(baseUrl + '/agentkit/local-conversation', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ agentId, input: input?.parts?.[0]?.text || input?.input || String(input || '') }),
+              signal,
+            });
+            if (!response.ok || !response.body) {
+              const text = await response.text().catch(() => '');
+              let message = `本地运行失败（${response.status}）`;
+              try { message = JSON.parse(text)?.error?.message || message; } catch {}
+              throw Object.assign(new Error(message), { code: 'LOCAL_RUN_FAILED' });
+            }
+            return response;
+          }
           // In directServer mode the local Studio Host REST surface does not
           // exist; resolve the conversation surface through the authenticated
           // control-plane bridge, which reports the cloud Build contract gap

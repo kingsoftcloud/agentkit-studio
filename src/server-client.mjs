@@ -231,6 +231,19 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
     };
     return requestAgainst(base);
   }
+  async function getObservabilityOverview({ range = '24h' } = {}, options) {
+    const hours = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[String(range || '24h')] || 24;
+    const end = Date.now();
+    const result = await action('GetObservabilityOverview', { StartTime: end - hours * 3600 * 1000, EndTime: end }, options);
+    return result.data || {};
+  }
+
+  async function listAgentRuntimeStats({ Page = 1, PageSize = 50 } = {}, options) {
+    const end = Date.now();
+    const result = await action('ListAgentRuntimeStats', { Page, PageSize, StartTime: end - 24 * 3600 * 1000, EndTime: end }, options);
+    return result.data || {};
+  }
+
   async function listAgents({ page = 1, pageSize = 20, query = '' } = {}, options) {
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100 || typeof query !== 'string') {
       throw new AgentEngineError('INVALID_QUERY', '分页参数无效');
@@ -286,5 +299,6 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
       disabled: Boolean(item.Disabled ?? item.disabled),
     })), total: raw.Total ?? raw.total ?? candidates.length, requestId: result.requestId, source: 'agentengine-server' };
   }
-  return { action, listAgents, getAgent, listResource };
+  return {
+    getObservabilityOverview, listAgentRuntimeStats, action, listAgents, getAgent, listResource };
 }
