@@ -1,5 +1,5 @@
     let pendingAuthoring = false;
-    const AUTHORING_PROMPT = '请帮我创建一个 Agent。先使用 studio_agent_draft 读取草稿，通过多轮对话补充用途、运行时、Prompt 和资源绑定；用 studio_agent_resources 查询真实资源。展示草稿并等我确认后，再调用 studio_agent_create。我的需求是：';
+    const AUTHORING_PROMPT = '请帮我创建一个 Agent。尽量一轮完成：先用 studio_agent_resources 查询真实的模型/MCP/Skill ID，再用 studio_agent_draft 一次性填好名称、运行时（默认 dsh-native）、系统 Prompt 和资源绑定，然后把草稿摘要（名称、运行时、Prompt 要点、绑定列表）展示给我；我确认后再调用 studio_agent_create 创建。只有当我说的需求缺少关键信息（比如完全没说用途）时才先追问，不要逐项反复确认。我的需求是：';
     function seedAgentAuthoring(inputActions) {
       if (!inputActions?.captureInsertion || !inputActions?.insertText) return false;
       return inputActions.insertText(AUTHORING_PROMPT, inputActions.captureInsertion()) !== false;

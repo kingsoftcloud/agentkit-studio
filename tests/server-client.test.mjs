@@ -60,7 +60,22 @@ test('KOP falls back to the intranet endpoint for inner-only accounts', async ()
     },
   });
   await client.listAgents();
-  assert.match(urls[1], /^https:\/\/aicp\.inner\.api\.ksyun\.com\//);
+  assert.match(urls[1], /^http:\/\/aicp\.inner\.api\.ksyun\.com\//);
+});
+
+test('pre-online region signs with the real control region and keeps the pre source marker', async () => {
+  const headersSeen = [];
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+    fetchImpl: async (_url, init) => {
+      headersSeen.push(init.headers);
+      return new Response(JSON.stringify({ Code: 0, Data: { Agents: [], Total: 0, Page: 1, PageSize: 20 } }), { status: 200 });
+    },
+  });
+  await client.listAgents();
+  assert.equal(headersSeen[0]['X-Ksc-Region'], 'cn-beijing-6');
+  assert.equal(headersSeen[0]['X-KSC-CUSTOM-SOURCE'], 'pre');
+  assert.match(headersSeen[0].Authorization, /cn-beijing-6\/aicp\/aws4_request/);
 });
 
 test('direct server client normalizes Agent detail and platform resources', async () => {

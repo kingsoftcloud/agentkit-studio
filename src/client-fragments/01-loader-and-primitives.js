@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const { createElement: h, useEffect, useRef, useState } = React;
     const STUDIO_VERSION = '0.0.1';
-    const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.1.7-rc.2');
+    const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.1');
     const CONVERSATION_AGENT_KEY = 'agentkit-studio:conversation-agent';
     const OPEN_BOUND_CONVERSATION_KEY = 'agentkit-studio:open-bound-agent';
     // DSH Native is the official DSH SDK-backed loop. Resource-bearing
@@ -59,6 +59,15 @@ window.__ModuleLoader__.load({
         return exchangePromise;
       }
       async function request(path, init = {}) {
+        if (directServer() && path !== '/api/v1/system/session') {
+          // In directServer mode no local Studio Host serves the REST
+          // surface. Failing fast with a typed error beats a doomed fetch to
+          // the default hostUrl that reports as "Studio Host 不可达".
+          const unavailable = new Error(`云端控制面暂未提供 REST 合同（${path}）；该接口需 AgentEngine Server 开放对应 Action 或本地 Studio Host`);
+          unavailable.code = 'CLOUD_CONTRACT_UNAVAILABLE';
+          unavailable.details = { path };
+          throw unavailable;
+        }
         if (path !== '/api/v1/system/session' && sessionToken && !csrfToken) await ensureSession();
         const method = init.method || 'GET';
         if (method !== 'GET' && method !== 'HEAD' && !sessionToken) {
@@ -94,6 +103,12 @@ window.__ModuleLoader__.load({
         return payload;
       }
       async function streamRequest(path, init = {}) {
+        if (directServer() && !path.startsWith('/agentkit/')) {
+          const unavailable = new Error(`云端控制面暂未提供流式 REST 合同（${path}）；该流需本地 Studio Host 或 AgentEngine Server 开放对应合同`);
+          unavailable.code = 'CLOUD_CONTRACT_UNAVAILABLE';
+          unavailable.details = { path };
+          throw unavailable;
+        }
         if (sessionToken && !csrfToken) await ensureSession();
         const method = init.method || 'GET';
         const headers = new Headers(init.headers || {});
@@ -138,6 +153,28 @@ window.__ModuleLoader__.load({
         }
         return result.value;
       }
+      // Cloud control-plane contract gaps must surface as typed, actionable
+      // errors — never as the misleading local-Studio-Host "unreachable".
+      function cloudUnsupported(what) {
+        const error = new Error(`云端控制面暂未提供${what}合同；该资源面在 AgentEngine Server 开放对应 Action 前不可用`);
+        error.code = 'CLOUD_CONTRACT_UNAVAILABLE';
+        return Promise.reject(error);
+      }
+      // Local studio operations (builds/tasks) run inside the plugin Node
+      // host; this helper reaches them over the authenticated bridge with a
+      // local-Host REST fallback for packaged hosts.
+      async function studioBridgeOperation(endpoint, payload) {
+        if (connection?.rpc?.call) {
+          const result = await connection.rpc.call('/agentkit', endpoint, payload);
+          if (!result?.ok) {
+            const error = new Error(result?.error?.message || 'Studio 本地任务请求失败');
+            error.code = result?.error?.code || 'STUDIO_OPERATION_FAILED';
+            throw error;
+          }
+          return result.value;
+        }
+        throw Object.assign(new Error('Studio 本地任务需要已连接的 Studio Host'), { code: 'HOST_CONNECTION_MISSING' });
+      }
       async function ensureDshPreset(agentId) {
         if (!connection?.rpc?.call) {
           const error = new Error('DSH Agent preset 准入需要已连接的 Studio Host');
@@ -167,6 +204,29 @@ window.__ModuleLoader__.load({
         const result = await connection.rpc.call('/agentkit', 'server/action', { action, payload });
         if (!result?.ok) throw Object.assign(new Error(result?.error?.message || 'Studio 请求失败'), { code: result?.error?.code });
         return result.value;
+      }
+      // Skill discovery runs locally inside the plugin Node host over the
+      // same authenticated bridge; the legacy Studio Host REST routes are
+      // kept for a local-Host deployment only. Declared in factory scope so
+      // every hostRemote method can reach it.
+      async function skillBridgeCall(endpoint, payload = {}) {
+        if (connection?.rpc?.call) {
+          const result = await connection.rpc.call('/agentkit', endpoint, payload);
+          if (!result?.ok) {
+            const error = new Error(result?.error?.message || '本地 Skill 操作失败');
+            error.code = result?.error?.code || 'SKILL_DISCOVERY_FAILED';
+            error.details = result?.error?.details;
+            throw error;
+          }
+          return result.value;
+        }
+        const bridgeByEndpoint = {
+          'skills/discover': scanPaths => request('/api/v1/catalog/skills:discover', { method: 'POST', body: JSON.stringify({ scanPaths: Array.isArray(scanPaths) ? scanPaths : [] }) }),
+          'skills/preview-discovered': ({ inspectionToken, candidateId, path }) => request('/api/v1/catalog/skills/discoveries/' + encodeURIComponent(inspectionToken) + '/candidates/' + encodeURIComponent(candidateId) + '/files' + (path ? '?path=' + encodeURIComponent(path) : '')),
+          'skills/commit-discovered': ({ inspectionToken, candidateId, overwrite }) => request('/api/v1/catalog/skills/discoveries/' + encodeURIComponent(inspectionToken) + ':commit', { method: 'POST', body: JSON.stringify({ candidateId, overwrite }) }),
+          'skills/preview-installed': ({ resourceId, path }) => request('/api/v1/catalog/skills/' + encodeURIComponent(resourceId) + '/files' + (path ? '?path=' + encodeURIComponent(path) : '')),
+        };
+        return bridgeByEndpoint[endpoint](payload);
       }
       return {
         get baseUrl() { return baseUrl; },
@@ -206,7 +266,19 @@ window.__ModuleLoader__.load({
           return Array.isArray(payload) ? { items: payload } : payload;
         },
         agent: id => directServer()
-          ? serverAction('GetAgent', { AgentId: id }).catch(() => request('/api/v1/agents/' + encodeURIComponent(id)))
+          ? (async () => {
+              // Local agents (conversation-created) live in the plugin store;
+              // cloud agents come from GetAgent. Reading order: local, cloud.
+              try {
+                const local = await studioBridgeOperation('agents/local-get', { agentId: id });
+                if (local) return { ...local, builds: [] };
+              } catch { /* fall through to the cloud read */ }
+              const detail = await serverAction('GetAgent', { AgentId: id });
+              try {
+                const local = await studioBridgeOperation('builds/list', { agentId: id });
+                return { ...detail, builds: Array.isArray(local?.items) ? local.items : [] };
+              } catch { return detail; }
+            })()
           : request('/api/v1/agents/' + encodeURIComponent(id)),
         ensureDshPreset,
         syncModelCredential,
@@ -214,36 +286,68 @@ window.__ModuleLoader__.load({
         quickAuthorAgent: payload => request('/api/v1/authoring/quick', { method: 'POST', body: JSON.stringify(payload) }),
         composeAuthoringConversation: payload => request('/api/v1/authoring/conversations:compose', { method: 'POST', body: JSON.stringify(payload) }),
         authoringConversationStatus: requestId => request('/api/v1/authoring/conversations:status/' + encodeURIComponent(requestId)),
-        updateAgent: (id, spec, revision, name) => request('/api/v1/agents/' + encodeURIComponent(id) + (name ? '?name=' + encodeURIComponent(name) : ''), {
-          method: 'PUT',
-          headers: { 'If-Match': String(revision) },
-          body: JSON.stringify(spec),
-        }),
-        updateAgentBindings: (id, bindings, revision) => request('/api/v1/agents/' + encodeURIComponent(id) + '/bindings', {
-          method: 'PUT',
-          headers: { 'If-Match': String(revision) },
-          body: JSON.stringify(bindings),
-        }),
-        createBuild: (id, revision, idempotencyKey) => request('/api/v1/agents/' + encodeURIComponent(id) + '/builds', {
-          method: 'POST',
-          headers: { 'Idempotency-Key': idempotencyKey },
-          body: JSON.stringify({ revision }),
-        }),
+        updateAgent: (id, spec, revision, name) => directServer() && String(id).startsWith('ar-local-')
+          ? studioBridgeOperation('agents/update-local', { agentId: id, spec, name })
+          : request('/api/v1/agents/' + encodeURIComponent(id) + (name ? '?name=' + encodeURIComponent(name) : ''), {
+            method: 'PUT',
+            headers: { 'If-Match': String(revision) },
+            body: JSON.stringify(spec),
+          }),
+        deleteLocalAgent: id => directServer() ? studioBridgeOperation('agents/local-delete', { agentId: id }) : Promise.reject(Object.assign(new Error('本地 Agent 删除需要 Studio Host'), { code: 'HOST_CONNECTION_MISSING' })),
+        updateAgentBindings: (id, bindings, revision) => directServer() && String(id).startsWith('ar-local-')
+          ? studioBridgeOperation('agents/update-local', { agentId: id, bindings })
+          : request('/api/v1/agents/' + encodeURIComponent(id) + '/bindings', {
+            method: 'PUT',
+            headers: { 'If-Match': String(revision) },
+            body: JSON.stringify(bindings),
+          }),
+        createBuild: (id, revision, idempotencyKey) => directServer()
+          ? studioBridgeOperation('builds/create', { agentId: id, revision, idempotencyKey })
+          : request('/api/v1/agents/' + encodeURIComponent(id) + '/builds', {
+            method: 'POST',
+            headers: { 'Idempotency-Key': idempotencyKey },
+            body: JSON.stringify({ revision }),
+          }),
         build: id => request('/api/v1/builds/' + encodeURIComponent(id)),
         createDeployment: (buildId, payload, idempotencyKey) => request('/api/v1/builds/' + encodeURIComponent(buildId) + '/deployments', {
           method: 'POST',
           headers: { 'Idempotency-Key': idempotencyKey },
           body: JSON.stringify(payload),
         }),
-        deployments: () => request('/api/v1/deployments'),
-        operations: () => request('/api/v1/workspaces/operations'),
-        cancelOperation: id => request('/api/v1/operations/' + encodeURIComponent(id) + ':cancel', { method: 'POST' }),
+        deployments: () => directServer()
+          ? Promise.resolve({ items: [], source: 'cloud-contract-missing' })
+          : request('/api/v1/deployments'),
+        operations: () => directServer()
+          ? studioBridgeOperation('operations/list', {}).then(value => ({ items: Array.isArray(value?.items) ? value.items : [] }))
+          : request('/api/v1/workspaces/operations'),
+        cancelOperation: id => directServer()
+          ? studioBridgeOperation('operations/cancel', { operationId: id })
+          : request('/api/v1/operations/' + encodeURIComponent(id) + ':cancel', { method: 'POST' }),
         // Host-owned route reserved for the bound-Agent admission contract.
         // The official DSH composer currently has no public sink/input hook,
         // so this helper is not invoked by the native session.prompt path.
         streamAgentConversation: async (agentId, sessionId, input, signal) => {
-          const surface = await request('/api/v1/agents/' + encodeURIComponent(agentId)
-            + '/conversation-surface?sessionId=' + encodeURIComponent(sessionId));
+          // In directServer mode the local Studio Host REST surface does not
+          // exist; resolve the conversation surface through the authenticated
+          // control-plane bridge, which reports the cloud Build contract gap
+          // as a typed error instead of an unreachable host.
+          const surface = directServer()
+            ? await (async () => {
+              if (!connection?.rpc?.call) {
+                const error = new Error('AgentEngine Server 连接不可用');
+                error.code = 'SERVER_CONNECTION_MISSING';
+                throw error;
+              }
+              const result = await connection.rpc.call('/agentkit', 'agents/conversation-surface', { agentId, sessionId });
+              if (!result?.ok) {
+                const error = new Error(result?.error?.message || '会话面解析失败');
+                error.code = result?.error?.code || 'CONVERSATION_SURFACE_FAILED';
+                throw error;
+              }
+              return result.value;
+            })()
+            : await request('/api/v1/agents/' + encodeURIComponent(agentId)
+              + '/conversation-surface?sessionId=' + encodeURIComponent(sessionId));
           const buildId = String(surface?.buildId || '').trim();
           if (!buildId) {
             const error = new Error('Agent 尚无可运行的 Build');
@@ -259,10 +363,51 @@ window.__ModuleLoader__.load({
         },
         resources: options => {
           const value = typeof options === 'string' ? { kind: options, limit: 200 } : (options || {});
-          if (directServer() && ['mcp', 'skill'].includes(value.kind)) {
-            const action = value.kind === 'mcp' ? 'ListMCPs' : 'ListSkillWorkspaces';
-            return serverAction(action, { Page: 1, PageSize: Math.min(Number(value.limit || 200), 100) })
-              .catch(() => request('/api/v1/catalog/resources?' + new URLSearchParams({ kind: value.kind, limit: String(value.limit || 20), ...(value.cursor ? { cursor: value.cursor } : {}), ...(value.query ? { query: value.query } : {}) }).toString()));
+          if (directServer()) {
+            // Resource catalogs with a public Server Action read from the
+            // authenticated control plane. The model catalog comes from the
+            // configured model gateway's OpenAI-compatible /models endpoint
+            // (same discovery the legacy Studio used) via the Node-side
+            // model service. `skill` is the locally-imported skill catalog —
+            // a local-Host contract with no cloud Action; the platform skill
+            // workspace list lives under the `skill-space` kind instead.
+            const cloudActions = {
+              mcp: 'ListMCPs',
+              'knowledge-base': 'ListKnowledgeBases',
+              'memory-instance': 'ListMemoryInstances',
+            };
+            const action = cloudActions[value.kind];
+            if (action) {
+              return serverAction(action, { Page: 1, PageSize: Math.min(Number(value.limit || 200), 100) })
+                .catch(() => request('/api/v1/catalog/resources?' + new URLSearchParams({ kind: value.kind, limit: String(value.limit || 20), ...(value.cursor ? { cursor: value.cursor } : {}), ...(value.query ? { query: value.query } : {}) }).toString()));
+            }
+            if (value.kind === 'model') {
+              return studioCall('models/catalog', {}).then(catalog => ({
+                items: (catalog?.items || []).map(item => ({
+                  resourceId: item.id, name: item.name || item.id, source: '模型网关',
+                  status: 'available', kind: 'model', contract: { model: item.id, input: item.input },
+                })),
+                source: 'model-gateway', nextCursor: null, total: catalog?.items?.length || 0,
+              }));
+            }
+            if (value.kind === 'tool') return cloudUnsupported('Tool 目录');
+            if (value.kind === 'skill') {
+              // The imported-skill catalog lives in the plugin Node store;
+              // discovery/preview/commit run locally over the same bridge.
+              if (!connection?.rpc?.call) {
+                const error = new Error('本地 Skill 目录需要已连接的 Studio Host');
+                error.code = 'SKILL_DISCOVERY_FAILED';
+                return Promise.reject(error);
+              }
+              return connection.rpc.call('/agentkit', 'skills/list', {}).then(result => {
+                if (!result?.ok) {
+                  const error = new Error(result?.error?.message || '本地 Skill 目录读取失败');
+                  error.code = result?.error?.code || 'SKILL_DISCOVERY_FAILED';
+                  throw error;
+                }
+                return result.value;
+              });
+            }
           }
           const params = new URLSearchParams();
           if (value.kind) params.set('kind', value.kind);
@@ -283,10 +428,13 @@ window.__ModuleLoader__.load({
         createToolResource: payload => request('/api/v1/catalog/tools', { method: 'POST', body: JSON.stringify(payload) }),
         deleteResource: resourceId => request('/api/v1/catalog/resources/' + encodeURIComponent(resourceId), { method: 'DELETE' }),
         probeMcpResource: (resourceId, timeoutSeconds = 15) => request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId) + ':probe?timeoutSeconds=' + encodeURIComponent(timeoutSeconds), { method: 'POST' }),
-        discoverSkills: scanPaths => request('/api/v1/catalog/skills:discover', { method: 'POST', body: JSON.stringify({ scanPaths: Array.isArray(scanPaths) ? scanPaths : [] }) }),
-        previewDiscoveredSkill: (inspectionToken, candidateId, path) => request('/api/v1/catalog/skills/discoveries/' + encodeURIComponent(inspectionToken) + '/candidates/' + encodeURIComponent(candidateId) + '/files' + (path ? '?path=' + encodeURIComponent(path) : '')),
-        commitDiscoveredSkill: (inspectionToken, candidateId, overwrite = false) => request('/api/v1/catalog/skills/discoveries/' + encodeURIComponent(inspectionToken) + ':commit', { method: 'POST', body: JSON.stringify({ candidateId, overwrite }) }),
-        previewInstalledSkill: (resourceId, path) => request('/api/v1/catalog/skills/' + encodeURIComponent(resourceId) + '/files' + (path ? '?path=' + encodeURIComponent(path) : '')),
+        // Skill discovery runs locally inside the plugin Node host over the
+        // same authenticated bridge; the legacy Studio Host REST routes are
+        // kept for a local-Host deployment only.
+        discoverSkills: (scanPaths = []) => skillBridgeCall('skills/discover', { scanPaths: Array.isArray(scanPaths) ? scanPaths : [] }),
+        previewDiscoveredSkill: (inspectionToken, candidateId, path = '') => skillBridgeCall('skills/preview-discovered', { inspectionToken, candidateId, path }),
+        commitDiscoveredSkill: (inspectionToken, candidateId, overwrite = false) => skillBridgeCall('skills/commit-discovered', { inspectionToken, candidateId, overwrite }),
+        previewInstalledSkill: (resourceId, path = '') => skillBridgeCall('skills/preview-installed', { resourceId, path }),
         putCredential: (name, value) => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value, persistence: 'session' }) }),
         platformResources: kind => {
           if (directServer()) {
@@ -299,50 +447,50 @@ window.__ModuleLoader__.load({
           return request('/api/v1/platform-resources?kind=' + encodeURIComponent(kind));
         },
         bootstrapPlatformResources: () => request('/api/v1/resource-connections:bootstrap', { method: 'POST' }),
-        schedules: agentId => request(agentId ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules' : '/api/v1/schedules'),
-        scheduleOccurrences: (taskId, agentId) => request(agentId
+        schedules: agentId => directServer() ? studioBridgeOperation('schedules/list', { agentId }) : request(agentId ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules' : '/api/v1/schedules'),
+        scheduleOccurrences: (taskId, agentId) => directServer() ? studioBridgeOperation('schedules/occurrences', { taskId, agentId }) : request(agentId
           ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + '/occurrences'
           : '/api/v1/schedules/' + encodeURIComponent(taskId) + '/occurrences'),
-        createSchedule: (agentId, payload) => request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules', { method: 'POST', body: JSON.stringify(payload) }),
-        updateSchedule: (agentId, taskId, payload) => request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
-        deleteSchedule: (agentId, taskId) => request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
-        runSchedule: (agentId, taskId) => request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
-        dshPlugins: () => request('/api/v1/plugin-ecosystems/dsh/plugins'),
-        installDshPlugin: (source, acceptHostPermissions = false) => request('/api/v1/plugin-ecosystems/dsh/plugins:install', {
+        createSchedule: (agentId, payload) => directServer() ? studioBridgeOperation('schedules/create', { agentId, spec: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules', { method: 'POST', body: JSON.stringify(payload) }),
+        updateSchedule: (agentId, taskId, payload) => directServer() ? studioBridgeOperation('schedules/update', { taskId, patch: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
+        deleteSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/delete', { taskId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
+        runSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/occurrences', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
+        dshPlugins: () => directServer() ? studioBridgeOperation('plugins/dsh-list', {}) : request('/api/v1/plugin-ecosystems/dsh/plugins'),
+        installDshPlugin: (source, acceptHostPermissions = false) => directServer() ? studioBridgeOperation('plugins/dsh-install', { source, acceptHostPermissions }) : request('/api/v1/plugin-ecosystems/dsh/plugins:install', {
           method: 'POST', body: JSON.stringify({ source, acceptHostPermissions }),
         }),
-        enableDshPlugin: pluginName => request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':enable', { method: 'POST' }),
-        disableDshPlugin: pluginName => request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':disable', { method: 'POST' }),
-        updateDshPlugin: pluginName => request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':update', {
+        enableDshPlugin: pluginName => directServer() ? studioBridgeOperation('plugins/dsh-enable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':enable', { method: 'POST' }),
+        disableDshPlugin: pluginName => directServer() ? studioBridgeOperation('plugins/dsh-disable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':disable', { method: 'POST' }),
+        updateDshPlugin: pluginName => directServer() ? studioBridgeOperation('plugins/dsh-update', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':update', {
           method: 'POST', body: JSON.stringify({ acceptHostPermissions: true }),
         }),
-        uninstallDshPlugin: pluginName => request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
-        codexPlugins: () => request('/api/v1/plugin-ecosystems/codex/plugins'),
-        installCodexPlugin: (pluginId, marketplaceName) => request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId) + ':install', {
+        uninstallDshPlugin: pluginName => directServer() ? studioBridgeOperation('plugins/dsh-remove', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
+        codexPlugins: () => directServer() ? studioBridgeOperation('plugins/codex-list', {}) : request('/api/v1/plugin-ecosystems/codex/plugins'),
+        installCodexPlugin: (pluginId, marketplaceName) => directServer() ? studioBridgeOperation('plugins/codex-install', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId) + ':install', {
           method: 'POST', body: JSON.stringify({ marketplaceName: marketplaceName || undefined, acceptUndeclaredPermissions: true }),
         }),
-        uninstallCodexPlugin: pluginId => request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId), { method: 'DELETE' }),
+        uninstallCodexPlugin: pluginId => directServer() ? studioBridgeOperation('plugins/codex-remove', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId), { method: 'DELETE' }),
         models: () => request('/api/v1/catalog/models'),
         credential: name => request('/api/v1/credentials/' + encodeURIComponent(name)),
         putCredential: (name, value) => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value, persistence: 'session' }) }),
         deleteCredential: name => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'DELETE' }),
         probeModelEndpoint: payload => request('/api/v1/model-endpoints:probe', { method: 'POST', body: JSON.stringify(payload) }),
-        evaluationTargets: (query = '') => request('/api/v1/evaluation-targets' + (query ? '?' + query : '')),
-        evaluations: (query = '') => request('/api/v1/evaluations' + (query ? '?' + query : '')),
-        evaluation: id => request('/api/v1/evaluations/' + encodeURIComponent(id)),
-        evaluationRun: id => request('/api/v1/evaluation-runs/' + encodeURIComponent(id)),
-        evaluationRuns: (query = '') => request('/api/v1/evaluation-runs' + (query ? '?' + query : '')),
-        createEvaluation: (payload, idempotencyKey) => request('/api/v1/evaluations', { method: 'POST', headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined, body: JSON.stringify(payload) }),
-        importEvaluationFile: body => request('/api/v1/evaluation-files', { method: 'POST', body }),
-        tracesOverview: (query = '') => request('/api/v1/traces/overview' + (query ? '?' + query : '')),
-        traces: (query = '') => request('/api/v1/traces' + (query ? '?' + query : '')),
-        trace: id => request('/api/v1/traces/' + encodeURIComponent(id)),
-        traceOtlp: id => request('/api/v1/traces/' + encodeURIComponent(id) + '/otlp'),
+        evaluationTargets: (query = '') => directServer() ? studioBridgeOperation('evaluations/targets', {}) : request('/api/v1/evaluation-targets' + (query ? '?' + query : '')),
+        evaluations: (query = '') => directServer() ? studioBridgeOperation('evaluations/list', {}) : request('/api/v1/evaluations' + (query ? '?' + query : '')),
+        evaluation: id => directServer() ? studioBridgeOperation('evaluations/get', { runId: id }) : request('/api/v1/evaluations/' + encodeURIComponent(id)),
+        evaluationRun: id => directServer() ? studioBridgeOperation('evaluations/get', { runId: id }) : request('/api/v1/evaluation-runs/' + encodeURIComponent(id)),
+        evaluationRuns: (query = '') => directServer() ? studioBridgeOperation('evaluations/list', {}) : request('/api/v1/evaluation-runs' + (query ? '?' + query : '')),
+        createEvaluation: (payload, idempotencyKey) => directServer() ? studioBridgeOperation('evaluations/create', payload) : request('/api/v1/evaluations', { method: 'POST', headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined, body: JSON.stringify(payload) }),
+        importEvaluationFile: body => directServer() ? studioBridgeOperation('evaluations/import', { content: typeof body === 'string' ? body : JSON.stringify(body), fileName: 'uploaded.yaml' }) : request('/api/v1/evaluation-files', { method: 'POST', body }),
+        tracesOverview: (query = '') => directServer() ? studioBridgeOperation('traces/overview', Object.fromEntries(new URLSearchParams(query))) : request('/api/v1/traces/overview' + (query ? '?' + query : '')),
+        traces: (query = '') => directServer() ? studioBridgeOperation('traces/list', Object.fromEntries(new URLSearchParams(query))) : request('/api/v1/traces' + (query ? '?' + query : '')),
+        trace: id => directServer() ? studioBridgeOperation('traces/get', { traceId: id }) : request('/api/v1/traces/' + encodeURIComponent(id)),
+        traceOtlp: id => directServer() ? studioBridgeOperation('traces/otlp', { traceId: id }) : request('/api/v1/traces/' + encodeURIComponent(id) + '/otlp'),
         exportSessionLog: (id, query = '') => request('/api/v1/sessions/' + encodeURIComponent(id) + ':export' + (query ? '?' + query : '')),
-        channelConnection: () => request('/api/v1/channels/connection'),
-        updateChannelConnection: payload => request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
+        channelConnection: () => directServer() ? studioBridgeOperation('channels/connection', {}) : request('/api/v1/channels/connection'),
+        updateChannelConnection: payload => directServer() ? studioBridgeOperation('channels/update', payload) : request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
         updateAgentChannelConnection: (id, payload) => request('/api/v1/channels/agents/' + encodeURIComponent(id) + '/connection', { method: 'PUT', body: JSON.stringify(payload) }),
-        channelAction: (action, payload = {}) => request('/agentengine/api/v1/' + encodeURIComponent(action), { method: 'POST', body: JSON.stringify(payload) }),
+        channelAction: (action, payload = {}) => directServer() ? studioBridgeOperation('channels/action', { action, payload }) : request('/agentengine/api/v1/' + encodeURIComponent(action), { method: 'POST', body: JSON.stringify(payload) }),
       };
     }
 

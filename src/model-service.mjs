@@ -13,7 +13,10 @@ export function createModelService({ configuration, credentials, fetchImpl = fet
   async function profile(id) {
     const { values } = await configuration.resolve();
     const profiles = values.modelProfiles?.length ? values.modelProfiles : [{ id: 'default', provider: values.modelProvider || 'ksyun', modelName: values.modelName, baseUrl: values.modelBaseUrl, credentialName: 'AGENTKIT_MODEL_API_KEY', apiKey: values.modelApiKey }];
-    const selected = profiles.find(item => item.id === id && item.enabled !== false);
+    // An empty id selects the default profile (first valid when no marker
+    // exists), matching the model proxy's routing default.
+    const effectiveId = String(id || '').trim() || (profiles.find(item => item.default)?.id || profiles[0]?.id || '');
+    const selected = profiles.find(item => item.id === effectiveId && item.enabled !== false);
     if (!selected) throw Object.assign(new Error('模型配置不存在或已停用'), { code: 'MODEL_NOT_FOUND', status: 404 });
     const resolved = await credentials.resolve(selected.credentialName || 'AGENTKIT_MODEL_API_KEY');
     const key = resolved?.value || selected.apiKey;

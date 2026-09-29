@@ -27,7 +27,8 @@ async function hostRemote(signal) {
   return remote;
 }
 
-export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio', 'authoring'), remoteFactory = hostRemote } = {}) {
+export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio', 'authoring'), remoteFactory } = {}) {
+  const resolveRemote = remoteFactory || hostRemote;
   function pathFor(exec) {
     const id = exec.agent?.session?.id;
     if (!id) fail('AUTHORING_SESSION_REQUIRED', 'Use this tool from a DSH conversation.');
@@ -84,7 +85,7 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
       output,
       async execute(args, exec) {
         if (!KINDS.includes(args.kind)) fail('RESOURCE_KIND_UNSUPPORTED', 'Choose model, mcp or skill.');
-        return { items: await catalog(await remoteFactory(exec.signal), args.kind, args.query || '') };
+        return { items: await catalog(await resolveRemote(exec.signal), args.kind, args.query || '') };
       },
       presentCall: () => ({ card: 'generic', title: '读取 Agent 可用资源', kind: 'read' }),
     },
@@ -160,8 +161,8 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
   ];
 }
 
-export function registerAuthoringTools(ctx) {
+export function registerAuthoringTools(ctx, { remoteFactory } = {}) {
   ctx.inject(['tools'], scoped => {
-    for (const tool of createAuthoringTools()) scoped.tools.register(tool);
+    for (const tool of createAuthoringTools({ remoteFactory: remoteFactory || hostRemote })) scoped.tools.register(tool);
   });
 }

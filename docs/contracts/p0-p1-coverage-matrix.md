@@ -2,6 +2,8 @@
 
 更新时间：2026-09-28。按用户最新指令，验收基线升级为官方最新 RC `dsh-v0.1.7-rc.2`，commit `477b4f420553e8a52c2fbccc464d7561b239c443`。rc.1 记录保留为历史；未在 rc.2 重跑的门禁不得沿用为通过。去 KsADK 依赖不改变 Studio 直连 agentengine-server 的目标，Node Host 是该接口的客户端。
 
+> **2026-09-29 升级**：DSH 基线已从 `dsh-v0.1.7-rc.2`（commit `477b4f4…`）升级到 `dsh-v0.2.0-rc.1`（commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`）。上方 rc.2 证据保留为历史对照；`make check`（83/83）、`make patch-check`（6/6）已在 0.2.0-rc.1 重跑通过，但 rc.2 上记录的资源 Agent admission、内存基线等 P0 证据尚未在新基线重跑，不得沿用为通过。
+
 这张表用于防止把“页面能打开”或“原生 DSH 能对话”误报成 Studio P0/P1 完成。
 
 | 目标要求 | 当前证据 | 状态 | 剩余工作或限制 |

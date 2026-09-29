@@ -164,17 +164,23 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
     const body = JSON.stringify(payload);
     const requestAgainst = async (requestBase, allowInnerFallback = true) => {
       const kop = KOP_HOSTS.has(requestBase.hostname);
+      // `pre-online` is a logical environment, not a signing region: KOP and
+      // AWS4 require a real region (cn-beijing-6) plus the X-KSC-CUSTOM-SOURCE
+      // marker. Signing with the literal value makes KOP reject the request.
+      const controlRegion = values.cloudRegion?.toLowerCase() === 'pre-online'
+        ? 'cn-beijing-6'
+        : (values.cloudRegion || 'cn-beijing-6');
       const headers = { 'Content-Type': 'application/json', Accept: 'application/json',
-        'X-Ksc-Request-Id': randomUUID(), 'X-Ksc-Region': values.cloudRegion || 'cn-beijing-6',
+        'X-Ksc-Request-Id': randomUUID(), 'X-Ksc-Region': controlRegion,
         'X-Ksc-Source': 'agentkit-studio' };
       if (values.cloudAccountId) headers['X-Ksc-Account-Id'] = values.cloudAccountId;
       const url = new URL(kop ? `/?Action=${name}&Version=${API_VERSION}` : `/agentengine/api/v1/${name}`, requestBase);
       if (kop) {
         if (!values.cloudAccessKey || !values.cloudSecretKey) throw new AgentEngineError('CLOUD_CREDENTIALS_MISSING', '请在模型与凭证中配置云端 AK/SK');
-        if (values.cloudRegion === 'pre-online') headers['X-KSC-CUSTOM-SOURCE'] = values.cloudCustomSource || 'pre';
+        if (values.cloudRegion?.toLowerCase() === 'pre-online') headers['X-KSC-CUSTOM-SOURCE'] = values.cloudCustomSource || 'pre';
         Object.assign(headers, { 'X-Action': name, 'X-Version': API_VERSION });
         const signedRequest = aws4.sign({ host: url.host, path: url.pathname + url.search, method: 'POST',
-          service: 'aicp', region: values.cloudRegion || 'cn-beijing-6', headers, body },
+          service: 'aicp', region: controlRegion, headers, body },
         { accessKeyId: values.cloudAccessKey, secretAccessKey: values.cloudSecretKey,
           sessionToken: values.cloudSessionToken });
         // aws4 signs and returns the request object; it does not replace the
@@ -210,7 +216,10 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
         // is endpoint selection, not a retry of a mutating action: reuse the
         // same request id only at the transport layer and never fallback on
         // arbitrary 4xx responses.
-        return requestAgainst(new URL('https://aicp.inner.api.ksyun.com'), false);
+        // The intranet AICP endpoint serves plain HTTP on the inner network
+        // (matching the legacy SDK client); HTTPS there presents a certificate
+        // for another SAN and fails with ERR_TLS_CERT_ALTNAME_INVALID.
+        return requestAgainst(new URL('http://aicp.inner.api.ksyun.com'), false);
       }
       if (!response.ok || !envelope || ![0, 200].includes(Number(envelope.Code)) || envelope.Code == null) {
         const status = !response.ok ? response.status : Number(envelope?.Code) || 502;

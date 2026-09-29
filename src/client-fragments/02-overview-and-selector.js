@@ -126,6 +126,9 @@
       const select = async event => {
         const value = event.target.value || null;
         setNotice('');
+        // Studio patch 007: sync the sidebar filter so the DSH session list
+        // narrows to sessions bound to the selected Agent.
+        if (window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__) window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__(value || '');
         if (!value) {
           if (started || !sessionId || typeof studioRemote?.agentPresets?.select !== 'function') {
             setSelected(null);

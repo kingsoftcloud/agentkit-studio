@@ -53,6 +53,7 @@
       });
       return h(AgentsPage, {
         created,
+        onDeleteLocal: async agentId => { try { await hostRemote.deleteLocalAgent(agentId); } catch (reason) { window.dispatchEvent(new CustomEvent('agentkit-studio:local-agent-error', { detail: reason?.message })); } },
         onNavigate,
         tab,
         onTabChange: setTab,
@@ -61,6 +62,17 @@
         onCreate: mode => { setCreated(null); if (mode === 'conversation') window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring')); else { setCreateMode(mode); setView('create'); } },
       });
     }
+
+    // Host Markdown primitives are a platform seed word in the DSH module
+    // table, so no inject declaration is needed. Resolve them once and keep a
+    // plain-text fallback for surfaces where the word is absent: the page must
+    // degrade, not break.
+    let HOST_MARKDOWN = null;
+    try { HOST_MARKDOWN = require('@deepseek-ai/dsh-client-ui-primitives') || null; } catch { HOST_MARKDOWN = null; }
+    const HOST_MARKDOWN_LABELS = {
+      code: { copyLabel: '复制', copiedLabel: '已复制', toolbarLabels: { codeLabel: '代码', wrapLabel: '自动换行', unwrapLabel: '取消换行' } },
+      footnotes: '脚注',
+    };
 
     function BoundAgentConversationPage({ agent, onBack }) {
       const metadata = agent?.metadata || agent || {};
@@ -160,12 +172,19 @@
         } finally { if (abortRef.current === controller) abortRef.current = null; }
       };
 
+      const renderMessageBody = message => {
+        if (message.role === 'assistant' && HOST_MARKDOWN?.MarkdownText) {
+          return h(HOST_MARKDOWN.MarkdownText, { text: message.text || '…', streaming: status === 'running' && !message.completed, labels: HOST_MARKDOWN_LABELS });
+        }
+        return message.text || (message.role === 'reasoning' ? '正在思考…' : '…');
+      };
+
       if (!agentId) return h(EmptyState, { icon: '!', title: '没有选择 Agent', detail: '从 Agents 列表打开一个已创建的 Agent。', action: h('button', { type: 'button', onClick: onBack, style: buttonStyle() }, '返回 Agents') });
       return h('div', null,
         h(SectionHeading, { eyebrow: 'Studio domain / Bound conversation', title: agentName, detail: `绑定 Agent 对话 · ${RUNTIME_LABELS[runtime] || runtime} · 会话 ${sessionId.current}`, action: h('button', { type: 'button', onClick: onBack, style: buttonStyle() }, '返回 Agents') }),
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '14px', background: BRAND.surface, minHeight: '260px', display: 'flex', flexDirection: 'column', gap: '10px' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, 'Host canonical conversation'), h(Pill, { tone: status === 'completed' ? 'accent' : status === 'failed' ? 'signal' : 'neutral' }, status === 'running' ? '运行中' : status === 'completed' ? '已完成' : status === 'failed' ? '失败' : '就绪')),
-          h('div', { style: { flex: 1, display: 'grid', alignContent: 'start', gap: '8px', overflow: 'auto', padding: '4px 0' } }, messages.length ? messages.map(message => h('div', { key: message.id, style: { maxWidth: '82%', justifySelf: message.role === 'user' ? 'end' : 'start', padding: '9px 11px', borderRadius: '10px', whiteSpace: 'pre-wrap', color: BRAND.ink, background: message.role === 'user' ? BRAND.accentSoft : BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } }, message.text || (message.role === 'reasoning' ? '正在思考…' : '…'))) : h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', padding: '28px 0', textAlign: 'center' } }, '发送一条消息，验证当前 Agent 的真实运行时与资源绑定。')),
+          h('div', { style: { flex: 1, display: 'grid', alignContent: 'start', gap: '8px', overflow: 'auto', padding: '4px 0' } }, messages.length ? messages.map(message => h('div', { key: message.id, style: { maxWidth: '82%', justifySelf: message.role === 'user' ? 'end' : 'start', padding: '9px 11px', borderRadius: '10px', whiteSpace: message.role === 'assistant' && HOST_MARKDOWN?.MarkdownText ? undefined : 'pre-wrap', color: BRAND.ink, background: message.role === 'user' ? BRAND.accentSoft : BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } }, renderMessageBody(message))) : h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', padding: '28px 0', textAlign: 'center' } }, '发送一条消息，验证当前 Agent 的真实运行时与资源绑定。')),
           runId ? h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `Run ${runId}`) : null,
           error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '11px' } }, error) : null,
           h('form', { onSubmit: send, style: { display: 'flex', gap: '8px', alignItems: 'flex-end', borderTop: '1px solid ' + BRAND.border, paddingTop: '10px' } }, h('textarea', { value: input, onChange: event => setInput(event.target.value), disabled: status === 'running', rows: 2, placeholder: '输入消息，发送到这个 Agent…', style: { ...inputStyle(), height: 'auto', padding: '9px 10px', resize: 'vertical', marginTop: 0, flex: 1 } }), h('button', { type: 'submit', disabled: status === 'running' || !input.trim(), style: { ...buttonStyle(), color: status === 'running' || !input.trim() ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: status === 'running' || !input.trim() ? BRAND.accentSoft : BRAND.primaryFill, borderColor: status === 'running' || !input.trim() ? BRAND.border : 'transparent' } }, status === 'running' ? '运行中…' : '发送'))));
@@ -246,7 +265,7 @@
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, counts.length ? counts.map(([label, count]) => `${count} ${label}`).join(' · ') : '—'),
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `r${metadata.revision || 1}`),
               h('td', { style: { padding: '13px 14px' } }, h(Pill, { tone: built ? 'accent' : 'signal' }, built ? '已构建' : agent.source === 'local-studio' ? '本地配置' : '草稿')),
-              h('td', { style: { padding: '13px 14px', whiteSpace: 'nowrap' } }, h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: () => onOpenConversation?.(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' } }, '打开绑定对话'), h('button', { type: 'button', onClick: () => onEdit(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '编辑 Agent'))));
+              h('td', { style: { padding: '13px 14px', whiteSpace: 'nowrap' } }, h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: () => onOpenConversation?.(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' } }, '打开绑定对话'), h('button', { type: 'button', onClick: () => onEdit(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '编辑 Agent'), agent?.metadata?.local ? h('button', { type: 'button', onClick: () => { if (window.confirm(`确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？`)) void onDeleteLocal?.(agent?.metadata?.id); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.danger } }, '删除') : null)));
           })))),
         h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '1px solid ' + BRAND.border, color: BRAND.inkMuted, fontSize: '11px' } },
           h('span', null, `${total || filteredPageAgents.length} 个 Agent · 第 ${Math.min(page, pageCount)}/${pageCount} 页`),

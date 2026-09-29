@@ -25,7 +25,9 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
 });
 
 test('Agent authoring starts in the current DSH composer and uses reviewed Host tools', () => {
-  assert.match(clientSource, /conversation\.input\.left/);
+  // The composer-left injection was removed: conversation authoring is a
+  // fresh-session flow, so the hero selector button is the only entry.
+  assert.doesNotMatch(clientSource, /conversation\.input\.left/);
   assert.match(clientSource, /function NativeAuthoringButton/);
   assert.match(clientSource, /studio_agent_draft/);
   assert.match(clientSource, /studio_agent_create/);
@@ -50,6 +52,44 @@ test('bound Agent conversations use the Host canonical stream entry', () => {
   assert.match(clientSource, /conversation\.ksadk\.io\/v1/);
   assert.match(clientSource, /Idempotency-Key/);
   assert.match(clientSource, /run\.completed/);
+});
+
+test('bound Agent conversations render assistant text with the Host Markdown primitives', () => {
+  assert.match(clientSource, /require\('@deepseek-ai\/dsh-client-ui-primitives'\)/);
+  assert.match(clientSource, /HOST_MARKDOWN_LABELS/);
+  assert.match(clientSource, /h\(HOST_MARKDOWN\.MarkdownText, \{ text: message\.text/);
+  // The primitives are a platform seed word; hosts without them must keep the
+  // plain-text path instead of failing the whole panel.
+  assert.match(clientSource, /catch \{ HOST_MARKDOWN = null; \}/);
+  assert.match(clientSource, /renderMessageBody/);
+});
+
+test('resource catalogs route cloud-backed kinds through Server Actions and fail typed on contract gaps', () => {
+  assert.match(clientSource, /mcp: 'ListMCPs'/);
+  assert.match(clientSource, /'knowledge-base': 'ListKnowledgeBases'/);
+  assert.match(clientSource, /'memory-instance': 'ListMemoryInstances'/);
+  // The model catalog auto-discovers through the model gateway's
+  // OpenAI-compatible /models endpoint via the Node-side model service —
+  // the same discovery the legacy Studio used.
+  assert.match(clientSource, /studioCall\('models\/catalog', \{\}\)/);
+  assert.match(clientSource, /source: '模型网关'/);
+  // tool has no cloud Action and the imported-skill catalog is served from
+  // the plugin Node store; the platform skill workspace list lives under the
+  // `skill-space` kind instead.
+  assert.match(clientSource, /cloudUnsupported\('Tool 目录'\)/);
+  assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'skills\/list', \{\}\)/);
+  assert.doesNotMatch(clientSource, /skill: 'ListSkillWorkspaces'/);
+});
+
+test('direct REST surface fails typed instead of probing the absent local Studio Host', () => {
+  assert.match(clientSource, /if \(directServer\(\) && path !== '\/api\/v1\/system\/session'\)/);
+  assert.match(clientSource, /if \(directServer\(\) && !path\.startsWith\('\/agentkit\/'\)\)/);
+  assert.doesNotMatch(clientSource, /deployments: \(\) => request\('\/api\/v1\/deployments'\)/);
+});
+
+test('bound conversations resolve the surface through the control-plane bridge in directServer mode', () => {
+  assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'agents\/conversation-surface', \{ agentId, sessionId \}\)/);
+  assert.match(clientSource, /BUILD_NOT_READY/);
 });
 
 test('Studio domains use the DSH left panel list and old Studio underline tabs', () => {

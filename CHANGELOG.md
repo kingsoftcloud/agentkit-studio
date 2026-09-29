@@ -1,22 +1,82 @@
 # 更新日志
 
-## 0.0.1 — 2026-09-27
+## 0.0.1 — 2026-09-29
 
 ### 新增
 
-- 以官方 DeepSeek Harness `dsh-v0.1.7-rc.2` 为宿主基线，接入 AgentKit Studio 品牌、侧边栏和二级导航。
+- 以官方 DeepSeek Harness `dsh-v0.2.0-rc.1` 为宿主基线，接入 AgentKit Studio 品牌、侧边栏和二级导航。
 - Agent 列表支持搜索、状态筛选、页大小、页码、表格滚动和能力计数。
 - Agent 创建与编辑页支持运行目标选择；模型、Tool、MCP、Skill 可多选，知识库、记忆库、Skill Center 每类一个。
 - 资源库收敛为资源生命周期页：模型、Tool、MCP、Skill、知识库、记忆库和 Skill Center 的发现、导入、探测、查看、刷新、删除和分页列表。
 - 模型与云端凭证支持全局 `~/.agentkit` 配置，默认提供商为金山云模型服务，并提供 API Key 控制台入口。
 - 插件市场接入 DSH 与 Codex 原生插件的安装、启用、停用、更新和卸载操作。
 - 新增 Makefile、中文 README、无凭证 CI，以及 Web 和 macOS Desktop 的官方宿主开发/打包入口。
-- 新增 `make dsh-bootstrap`，从公开 GitHub 固定 rc.2 tag 准备 DSH checkout；发布门禁增加
+- 新增 `make dsh-bootstrap`，从公开 GitHub 固定 tag 准备 DSH checkout；发布门禁增加
   版本补丁格式校验，CI 会实际拉取固定 DSH 并运行两个官方 node-store probe。
+- 绑定 Agent 对话页的助手消息改用宿主 `@deepseek-ai/dsh-client-ui-primitives` 的
+  `MarkdownText` 渲染（Markdown、代码块、脚注），替代纯文本气泡；流式期间走增量渲染。
+  该包是 DSH ModuleLoader 的平台 seed 模块，无需扩展 `dsh.client.inject`；seed 不存在的
+  环境自动回退纯文本，页面不因宿主缺包而失效。
+
+### 变更
+
+- DSH 宿主基线从 `dsh-v0.1.7-rc.2`（commit `477b4f4…`）升级到 `dsh-v0.2.0-rc.1`（commit
+  `4878cdabd87d4041bdaff61d04c966883b9fd07a`）。`Makefile`、`studio.plugin.json`、
+  `src/index.mjs`、`src/session-adapter.mjs`、CI、profile/patch/package 门禁脚本和
+  `README`/`CONTRIBUTING` 中的版本钉点同步更新；旧 `patches/dsh-v0.1.7-rc.2/` 目录已删除。
+- 补丁集迁移到 `patches/dsh-v0.2.0-rc.1/`。`001-chat-thinking-copy.patch` 按新基线重新生成
+ （v0.2.0-rc.1 上游将 locale key 从 `message.turnProcess.deepDivingFor` 迁移为
+  `chat.deepDiving`/`chat.deepDivingFor`，补丁已跟随）；其余 5 个补丁原样适用，全部通过
+  `git apply --check`。6 个补丁的作用与删除条件不变。
+- 云端控制面链路对齐旧版 KsADK Studio：`server-client.mjs` 的 AWS4 签名把 `pre-online`
+  逻辑环境归一化为真实签名 region（`cn-beijing-6`，与旧版 `_normalize_control_region`
+  一致），内网专属账号的回退端点改为 `http://aicp.inner.api.ksyun.com`（旧版
+  `_INNER_AICP_BASE_URL` 语义，HTTPS 在内网域名上证书不匹配）。
+- 资源库的 MCP、Skill、知识库、记忆库目录直接读取云端 Server Action；模型目录经
+  `model-service` 的 OpenAI 兼容 `/models` 自动发现（与旧版 Studio 同款机制，空 profile
+  回退默认 profile）。Tool 目录在本迭代从资源库移除（云端无对应 Action）。
+- 新增补丁 `007-sidebar-session-filter.patch`：
+  007 在 `ui-workspace/tree.ts` 暴露 `registerSessionFilter` 注册点，插件在 Agent 选择器
+  选中 Agent 后按"会话 → Agent 绑定"过滤 DSH 侧栏会话列表，清除选择恢复全部；
+  008 修复旧日志空 stream run 记录（缺 `args`/`texts`）导致的会话投影崩溃——该 bug 使
+  rc.2 时代会话在升级后无法恢复、新建会话失败、侧栏会话全部消失。
+- 本地 Skill 发现迁移到插件 Node 侧（`src/skill-discovery.mjs`）：扫描 `~/skills`、
+  `~/.agents/skills`、`~/.codex/skills`、`~/.claude/skills` 中的 `SKILL.md` 清单，提供
+  候选预览、脚本/网络风险标记、导入到 `~/.agentkit/studio/skills` 与已导入目录读取，
+  合同与旧版 Studio Host 一致，经 `/agentkit` 桥的 `skills/*` 端点服务。
+- 按用户决策不做 rc.2 旧本地会话数据兼容：已清除 `~/.dsh/sessions/` 与
+  session_projcache 的旧会话日志，浏览器端 Studio 站点的 localStorage 一并重置后即为
+  全新状态（曾临时生成的 008 兼容补丁已撤回）。
+- 运行中心的本地能力开始迁入插件 Node 侧（对齐旧版 Studio Host 实现）：
+  异步 operation 框架（幂等键去重、JSON 持久化、宿主重启中断恢复）与本地 Agent Build
+  （内容寻址 `build_<digest>`、`agent-bundle.zip` 打包、`~/.agentkit/studio/dist` 存储）。
+  构建与部署页恢复可用：提交构建、Build 历史、部署选择器读取本地 Build；部署上云仍待
+  AgentEngine Server 合同（`builds/create`、`operations/*` 桥端点）。
+- 对话创建 Agent 的工具改为进程内数据源（注入 remote 工厂）：资源查询走模型网关目录
+  与云端资源 Action，创建的 Agent 写入本地 Agent 存储（`~/.agentkit/studio/agents/`），
+  Agents 列表合并本地与云端行。不再调用已下线的 8789 本地 Host REST。云端快速创建合同
+  未开放前，本地 Agent 可被列出与构建（本地 bundle）。
+- 运行中心四个域迁入插件 Node 侧（对齐旧版 Studio Host，纯本地实现）：
+  - **自动化**：`studio-scheduler.mjs`（SQLite 存储 schedules/occurrences、进程内 cron 引擎
+    30 秒 tick、once/interval/cron 三种 kind、misfire 策略、幂等 task_id）。桥端点
+    `schedules/*`。NL assistant 留后续（需模型端点）。
+  - **观测**：`studio-observability.mjs`（RunEvent→OTLP JSON 投影写 `~/.agentkit/studio/traces/`、
+    overview 分桶统计、list/get/getOtlp 读模型）。桥端点 `traces/*`。
+  - **评测**：`studio-evaluation.mjs`（evalset 解析 native/studio_suite、断言评估 13 种 type、
+    本地 run 存储 `~/.agentkit/studio/evaluations/`、runner 注入式执行器）。桥端点
+    `evaluations/*`。无 runner 时诚实记录为 failed。
+  - **Channels**：`studio-channels.mjs`（连接配置本地存储 + 渠道服务 API proxy）。桥端点
+    `channels/*`。WebSocket 长连接器留后续。
+- directServer 模式下 `request()`/`streamRequest()` 对没有云端合同的旧本地 Host REST
+  路径直接返回 typed `CLOUD_CONTRACT_UNAVAILABLE`（含路径），不再尝试注定失败的本地
+  请求；Skill 与 Skill Center 目录分别对应本地导入目录与云端 `ListSkillWorkspaces`。
+- 绑定 Agent 对话的 conversation-surface 在 directServer 模式下经 `/agentkit` 桥解析；云端
+  Build 合同未开放时返回 typed `BUILD_NOT_READY`。交付/长任务写路径同样返回
+  typed 合同缺失错误。
 
 ### 修正
 
-- 删除资源目录中的“保存到 Agent Revision”操作；绑定关系只在 Agent 创建或编辑时提交。
+- 删除资源目录中的”保存到 Agent Revision”操作；绑定关系只在 Agent 创建或编辑时提交。
 - 修正资源列表分页、页大小、表格滚动和暗色主题下的表面颜色继承。
 - 修正 Agent 卡片的模型、MCP、Skill、Tool、知识库、记忆库和 Skill Center 计数。
 - 明确未选择 Agent 的对话继续走 DSH 原生会话，避免把候选 Agent 选择误显示为已经切换执行器。

@@ -10,6 +10,8 @@
  * through DSH's public agent-preset registry; resource-bearing revisions
  * remain fail-closed until their provider contract is implemented.
  */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { registerAuthoringTools } from './authoring-tools.mjs';
 import { DshPresetAdmission } from './agent-preset-admission.mjs';
 
@@ -31,6 +33,48 @@ async function registerControlPlane(ctx) {
   // browser-facing plugin module graph. DSH loads this module for both the
   // Host and client faces; importing node:fs or aws4 at activation time makes
   // the whole plugin fail before the Host route can be registered.
+  const skillDiscoveryPromise = import('./skill-discovery.mjs').then(({ createSkillDiscovery }) => createSkillDiscovery({}));
+  const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
+  const studioBuildPromise = Promise.all([
+    import('./studio-operations.mjs').then(({ createOperationManager }) => createOperationManager({ storeDir: join(studioStoreDir, 'operations') })),
+    import('./studio-build.mjs').then(({ createStudioBuild }) => createStudioBuild({ storeDir: studioStoreDir })),
+  ]).then(([operations, build]) => ({ operations, build }));
+  const studioSchedulerPromise = import('./studio-scheduler.mjs').then(({ createStudioScheduler }) => createStudioScheduler({ storeDir: join(studioStoreDir, 'scheduler') })).catch(error => { console.warn('[agentkit-studio] scheduler init failed:', error?.message || error); return null; });
+  const studioObservabilityPromise = import('./studio-observability.mjs').then(({ createStudioObservability }) => createStudioObservability({ storeDir: join(studioStoreDir, 'traces') })).catch(error => { console.warn('[agentkit-studio] observability init failed:', error?.message || error); return null; });
+  const studioEvaluationPromise = import('./studio-evaluation.mjs').then(({ createStudioEvaluation }) => createStudioEvaluation({ storeDir: join(studioStoreDir, 'evaluations') })).catch(error => { console.warn('[agentkit-studio] evaluation init failed:', error?.message || error); return null; });
+  const studioChannelsPromise = import('./studio-channels.mjs').then(({ createStudioChannels }) => createStudioChannels({ storeDir: studioStoreDir })).catch(error => { console.warn('[agentkit-studio] channels init failed:', error?.message || error); return null; });
+  const agentStorePromise = import('./agent-store.mjs').then(({ createAgentStore }) => createAgentStore({ storeDir: join(studioStoreDir, 'agents') }));
+  // Authoring tools + resource catalogs read cloud/resource data through this
+  // in-process remote — the legacy 8789 local Studio Host no longer exists.
+  const authoringRemoteFactory = signal => Promise.all([serverClientPromise, agentStorePromise]).then(([serverClient]) => ({
+    exchangeSession: async () => {},
+    resources: async query => {
+      const kind = new URLSearchParams(String(query || '')).get('kind') || 'model';
+      if (kind === 'model') {
+        const configuration = await configurationPromise;
+        const credentials = ctx.get('credentials');
+        const models = await import('./model-service.mjs').then(({ createModelService }) => createModelService({ configuration, credentials }));
+        const catalog = await models.catalog('');
+        return { items: catalog.items.map(item => ({ resourceId: item.id, name: item.name || item.id })) };
+      }
+      const actions = { mcp: 'ListMCPs', skill: 'ListSkillWorkspaces' };
+      const action = actions[kind];
+      if (!action) return { items: [] };
+      const serverClient = await serverClientPromise;
+      const result = await serverClient.action(action, { Page: 1, PageSize: 100 }, { signal });
+      const raw = result.data || {};
+      const rows = raw.MCPs || raw.SkillWorkspaces || raw.KnowledgeBases || raw.MemoryInstances || raw.Items || [];
+      return { items: rows.map(row => ({ resourceId: String(row.mcp_id || row.Id || row.id || ''), name: String(row.display_name || row.Name || row.name || row.mcp_id || row.Id || row.id || '') })) };
+    },
+    quickAuthorAgent: async payload => {
+      const store = await agentStorePromise;
+      const record = await store.create({
+        name: payload?.name, runtimeType: payload?.runtimeType, description: payload?.description,
+        spec: payload?.spec, bindings: payload?.spec?.bindings || {},
+      });
+      return { metadata: record.metadata, spec: record.spec };
+    },
+  }));
   const configurationPromise = import('./global-config.mjs').then(({ createGlobalConfiguration }) =>
     createGlobalConfiguration({ env: runtimeEnv }));
   const serverClientPromise = configurationPromise.then(configuration =>
@@ -74,7 +118,7 @@ async function registerControlPlane(ctx) {
     getActiveModel: async () => (await configurationPromise).resolve(),
   });
   if (presetRegistry) presetAdmission.setRegistry(presetRegistry);
-  const allowed = new Set(['agents/list', 'agents/ensure-preset', 'models/sync-credential', 'models/catalog', 'settings/get', 'settings/update', 'server/action']);
+  const allowed = new Set(['agents/list', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
@@ -88,11 +132,37 @@ async function registerControlPlane(ctx) {
       // Agent catalog reads are now owned by the Studio Node host and call the
       // existing AgentEngine Action API directly. The DSH connection only
       // authenticates the browser-to-host hop; it is not a KsADK dependency.
+      if (endpoint === 'agents/local-delete') {
+        const store = await agentStorePromise;
+        try {
+          const record = await store.get(String(payload?.agentId || ''));
+          if (!record) return { ok: false, error: { code: 'AGENT_NOT_FOUND', message: '本地 Agent 不存在', details: {} } };
+          await store.remove(String(payload.agentId));
+          return { ok: true, value: { agentId: String(payload.agentId), deleted: true } };
+        } catch (error) {
+          return { ok: false, error: { code: error?.code || 'LOCAL_AGENT_FAILED', message: error instanceof Error ? error.message : String(error), details: {} } };
+        }
+      }
+      if (endpoint === 'agents/local-get' || endpoint === 'agents/update-local') {
+        const store = await agentStorePromise;
+        try {
+          if (endpoint === 'agents/local-get') return { ok: true, value: await store.get(String(payload?.agentId || '')) };
+          const record = await store.update(String(payload?.agentId || ''), {
+            name: payload?.name, description: payload?.description,
+            spec: payload?.spec, bindings: payload?.bindings,
+          });
+          return { ok: true, value: { ...record, builds: [] } };
+        } catch (error) {
+          return { ok: false, error: { code: error?.code || 'LOCAL_AGENT_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
+        }
+      }
       if (endpoint === 'agents/list') {
         const value = await serverClient.listAgents({
           page: Number(payload?.page || 1), pageSize: Number(payload?.limit || 50), query: String(payload?.query || ''),
         }, { signal });
-        return { ok: true, value };
+        const local = await agentStorePromise.then(store => store.list()).catch(() => []);
+        const items = [...local, ...(Array.isArray(value.items) ? value.items : [])];
+        return { ok: true, value: { ...value, items, total: (value.total || 0) + local.length } };
       }
       if (endpoint === 'agents/ensure-preset') {
         const agentId = String(payload?.agentId || '').trim();
@@ -106,6 +176,165 @@ async function registerControlPlane(ctx) {
             message: error instanceof Error ? error.message : String(error),
             details: error?.details || {},
           } };
+        }
+      }
+      if (endpoint === 'agents/conversation-surface') {
+        // The bound-Agent conversation needs a runnable Build. The cloud
+        // control plane has no public Build/Deployment Action yet (see
+        // docs/contracts/cloud-api-gap.md), so the honest surface result is a
+        // typed BUILD_NOT_READY unless a build surface already exists.
+        const agentId = String(payload?.agentId || '').trim();
+        if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
+        try {
+          const agent = await serverClient.getAgent(agentId, { signal });
+          const buildId = String(agent?.spec?.buildId || agent?.buildId || '').trim();
+          if (!buildId) {
+            return { ok: false, error: { code: 'BUILD_NOT_READY', message: '云端控制面尚未提供 Build/部署合同，绑定 Agent 对话暂不可用（见 cloud-api-gap）', details: { agentId } } };
+          }
+          return { ok: true, value: { agentId, buildId, sessionId: String(payload?.sessionId || '') } };
+        } catch (error) {
+          return { ok: false, error: {
+            code: error?.code === 'SERVER_ACTION_FAILED' && error?.status === 404 ? 'AGENT_NOT_FOUND' : (error?.code || 'CONVERSATION_SURFACE_FAILED'),
+            message: error instanceof Error ? error.message : String(error),
+            details: error?.details || {},
+          } };
+        }
+      }
+      if (endpoint === 'skills/discover' || endpoint === 'skills/preview-discovered' || endpoint === 'skills/commit-discovered' || endpoint === 'skills/list' || endpoint === 'skills/preview-installed') {
+        const skills = await skillDiscoveryPromise;
+        try {
+          if (endpoint === 'skills/discover') return { ok: true, value: await skills.discover(Array.isArray(payload?.scanPaths) ? payload.scanPaths : null) };
+          if (endpoint === 'skills/preview-discovered') return { ok: true, value: await skills.previewDiscovered(payload?.inspectionToken, payload?.candidateId, String(payload?.path || '')) };
+          if (endpoint === 'skills/commit-discovered') return { ok: true, value: await skills.commitDiscovered(payload?.inspectionToken, payload?.candidateId, payload?.overwrite === true) };
+          if (endpoint === 'skills/list') return { ok: true, value: await skills.listInstalled() };
+          return { ok: true, value: await skills.previewInstalled(payload?.resourceId, String(payload?.path || '')) };
+        } catch (error) {
+          return { ok: false, error: {
+            code: error?.code || 'SKILL_DISCOVERY_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            details: error?.details || {},
+          } };
+        }
+      }
+      if (endpoint.startsWith('plugins/')) {
+        try {
+          const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({}));
+          if (endpoint === 'plugins/dsh-list') return { ok: true, value: await plugins.listDsh() };
+          if (endpoint === 'plugins/dsh-install') return { ok: true, value: await plugins.installDsh(payload?.source, payload?.acceptHostPermissions === true) };
+          if (endpoint === 'plugins/dsh-remove') return { ok: true, value: await plugins.uninstallDsh(payload?.pluginName) };
+          if (endpoint === 'plugins/dsh-enable' || endpoint === 'plugins/dsh-disable') {
+            const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({}));
+            return { ok: true, value: await plugins.setDshEnabled(payload?.pluginName, endpoint === 'plugins/dsh-enable') };
+          }
+          if (endpoint === 'plugins/dsh-update') {
+            const plugins = await import('./studio-plugins.mjs').then(({ createStudioPlugins }) => createStudioPlugins({}));
+            return { ok: true, value: await plugins.updateDsh(payload?.pluginName) };
+          }
+          if (endpoint === 'plugins/codex-install' || endpoint === 'plugins/codex-remove') {
+            const codex = await import('./studio-codex-plugins.mjs').then(({ createStudioCodexPlugins }) => createStudioCodexPlugins({}));
+            const result = endpoint === 'plugins/codex-install'
+              ? await codex.installCodex(payload?.pluginId)
+              : await codex.uninstallCodex(payload?.pluginId);
+            return { ok: true, value: result };
+          }
+          if (endpoint === 'plugins/codex-list') return { ok: true, value: await import('./studio-codex-plugins.mjs').then(({ createStudioCodexPlugins }) => createStudioCodexPlugins({})).then(codex => codex.listCodex()) };
+        } catch (error) {
+          return { ok: false, error: { code: error?.code || 'PLUGIN_ECOSYSTEM_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
+        }
+      }
+      if (endpoint === 'builds/create' || endpoint === 'builds/list' || endpoint === 'operations/list' || endpoint === 'operations/cancel') {
+        const studio = await studioBuildPromise;
+        try {
+          if (endpoint === 'builds/create') {
+            const agentId = String(payload?.agentId || '').trim();
+            if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
+            const detail = await serverClient.getAgent(agentId, { signal });
+            const agentName = String(detail?.metadata?.name || detail?.name || agentId);
+            const revision = Number(payload?.revision || detail?.metadata?.revision || 1);
+            // Freeze the cloud Agent definition into a local content-addressed
+            // bundle. Deployment-to-cloud remains a separate server contract.
+            const operation = await studio.operations.submit({
+              kind: 'build',
+              resourceId: agentId,
+              idempotencyKey: String(payload?.idempotencyKey || `build-${agentId}-${revision}`),
+              metadata: { agentName, revision },
+              runner: async () => {
+                const record = await studio.build.build({
+                  agentId, agentName, revision,
+                  spec: detail?.spec ?? null,
+                  bindings: detail?.spec?.bindings ?? detail?.bindings ?? {},
+                  metadata: detail?.metadata ?? {},
+                });
+                return { buildId: record.id, summary: record.id };
+              },
+            });
+            return { ok: true, value: { operationId: operation.id, status: operation.status, buildId: null } };
+          }
+          if (endpoint === 'builds/list') {
+            const agentId = String(payload?.agentId || '').trim();
+            if (!agentId) return { ok: true, value: { items: [] } };
+            return { ok: true, value: { items: await studio.build.list(agentId) } };
+          }
+          if (endpoint === 'operations/list') {
+            const items = await studio.operations.list({ resourceId: String(payload?.resourceId || '') || undefined, kind: String(payload?.kind || '') || undefined });
+            return { ok: true, value: { items } };
+          }
+          const operation = await studio.operations.cancel(String(payload?.operationId || ''));
+          return { ok: true, value: operation };
+        } catch (error) {
+          return { ok: false, error: {
+            code: error?.code || 'STUDIO_OPERATION_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            details: error?.details || {},
+          } };
+        }
+      }
+      if (endpoint.startsWith('schedules/') || endpoint.startsWith('traces/') || endpoint.startsWith('evaluations/') || endpoint.startsWith('channels/')) {
+        try {
+          if (endpoint.startsWith('schedules/')) {
+            const scheduler = await studioSchedulerPromise;
+            if (!scheduler) return { ok: false, error: { code: 'SCHEDULER_UNAVAILABLE', message: '调度器未初始化', details: {} } };
+            if (endpoint === 'schedules/list') return { ok: true, value: { items: await scheduler.listSchedules(payload?.agentId || undefined) } };
+            if (endpoint === 'schedules/create') return { ok: true, value: await scheduler.createSchedule(payload?.agentId || '', payload?.spec || payload) };
+            if (endpoint === 'schedules/get') return { ok: true, value: await scheduler.getSchedule(payload?.taskId) };
+            if (endpoint === 'schedules/update') return { ok: true, value: await scheduler.updateSchedule(payload?.taskId, payload?.patch || payload) };
+            if (endpoint === 'schedules/delete') return { ok: true, value: await scheduler.deleteSchedule(payload?.taskId) };
+            if (endpoint === 'schedules/occurrences') return { ok: true, value: { items: await scheduler.listOccurrences(payload?.taskId, payload?.agentId) } };
+          }
+          if (endpoint.startsWith('traces/')) {
+            const observability = await studioObservabilityPromise;
+            if (!observability) return { ok: false, error: { code: 'OBSERVABILITY_UNAVAILABLE', message: '观测模块未初始化', details: {} } };
+            if (endpoint === 'traces/overview') return { ok: true, value: await observability.overview(payload || {}) };
+            if (endpoint === 'traces/list') return { ok: true, value: await observability.list(payload || {}) };
+            if (endpoint === 'traces/get') return { ok: true, value: await observability.get(payload?.traceId) };
+            if (endpoint === 'traces/otlp') return { ok: true, value: await observability.getOtlp(payload?.traceId) };
+          }
+          if (endpoint.startsWith('evaluations/')) {
+            const evaluation = await studioEvaluationPromise;
+            if (!evaluation) return { ok: false, error: { code: 'EVALUATION_UNAVAILABLE', message: '评测模块未初始化', details: {} } };
+            if (endpoint === 'evaluations/list') return { ok: true, value: await evaluation.listRuns(payload || {}) };
+            if (endpoint === 'evaluations/get') return { ok: true, value: await evaluation.getRun(payload?.runId) };
+            if (endpoint === 'evaluations/targets') {
+              const studio = await studioBuildPromise;
+              const builds = [];
+              for (const agent of (await serverClient.listAgents({ page: 1, pageSize: 50 }, { signal })).items || []) {
+                builds.push(...await studio.build.list(agent?.metadata?.id || agent?.id || ''));
+              }
+              return { ok: true, value: await evaluation.listTargets({ builds }) };
+            }
+            if (endpoint === 'evaluations/evalsets') return { ok: true, value: await evaluation.listEvalsets() };
+            if (endpoint === 'evaluations/import') return { ok: true, value: await evaluation.importEvalset({ content: payload?.content, fileName: payload?.fileName }) };
+            if (endpoint === 'evaluations/create') return { ok: true, value: await evaluation.createEvaluation(payload || {}) };
+          }
+          if (endpoint.startsWith('channels/')) {
+            const channels = await studioChannelsPromise;
+            if (!channels) return { ok: false, error: { code: 'CHANNELS_UNAVAILABLE', message: '渠道模块未初始化', details: {} } };
+            if (endpoint === 'channels/connection') return { ok: true, value: await channels.getConnection() };
+            if (endpoint === 'channels/update') return { ok: true, value: await channels.updateConnection(payload || {}) };
+            if (endpoint === 'channels/action') return { ok: true, value: await channels.proxyAction(payload?.action || '', payload?.payload || {}) };
+          }
+        } catch (error) {
+          return { ok: false, error: { code: error?.code || 'STUDIO_LOCAL_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
         }
       }
       if (endpoint === 'server/action') {
@@ -187,10 +416,12 @@ async function registerControlPlane(ctx) {
     });
     webCtx.effect(() => registration, 'agentkit-studio: control-plane route');
   });
+  // Authoring tools need the in-process remote factory (cloud/resource data);
+  // they live here because that factory is scoped to this function.
+  registerAuthoringTools(ctx, { remoteFactory: authoringRemoteFactory });
 }
 
 export async function apply(ctx) {
-  registerAuthoringTools(ctx);
   await registerControlPlane(ctx);
   ctx.on('webserver/index-inject', table => table.push({
     kind: 'global',
@@ -199,7 +430,7 @@ export async function apply(ctx) {
       version: '0.0.1',
       // Allow an isolated release-candidate process to report its own DSH
       // version without rebuilding the plugin artifact.
-      dshVersion: runtimeEnv.AGENTKIT_STUDIO_DSH_VERSION || '0.1.7-rc.2',
+      dshVersion: runtimeEnv.AGENTKIT_STUDIO_DSH_VERSION || '0.2.0-rc.1',
       hostUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
       controlPlane: 'agentengine-server',
       // The Studio Host owns this short-lived local session token. It is not

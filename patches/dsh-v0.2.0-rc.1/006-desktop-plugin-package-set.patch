@@ -1,6 +1,8 @@
+diff --git a/apps/desktop/scripts/prepare-package-set.ts b/apps/desktop/scripts/prepare-package-set.ts
+index 7e7d62eea2..67581e026a 100644
 --- a/apps/desktop/scripts/prepare-package-set.ts
 +++ b/apps/desktop/scripts/prepare-package-set.ts
-@@ -12,7 +12,7 @@
+@@ -12,7 +12,7 @@ import {
    statSync,
    writeFileSync,
  } from 'node:fs'
@@ -9,7 +11,7 @@
  import { parseArgs } from 'node:util'
  import * as yaml from 'js-yaml'
  import {
-@@ -29,6 +29,18 @@
+@@ -29,6 +29,18 @@ import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
  
  const DSH_PACKAGE = '@deepseek-ai/dsh'
  const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const
@@ -23,12 +25,12 @@
 +function configuredInputs(): string[] {
 +  const raw = process.env.DSH_DESKTOP_PLUGIN_INPUTS?.trim()
 +  if (raw === undefined || raw === '') return []
-+  return raw.split(delimiter).map(value => value.trim()).filter(Boolean).map(resolve)
++  return raw.split(delimiter).map(value => value.trim()).filter(Boolean).map(value => resolve(value))
 +}
  const APP_ROOT = resolve(import.meta.dirname, '..')
  const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
  
-@@ -58,6 +70,7 @@
+@@ -58,6 +70,7 @@ function dependencyNames(manifest: Readonly<Record<string, unknown>>, section: s
   */
  export function selectDesktopPackageClosure(
    available: ReadonlyMap<string, PackedDesktopPackage>,
@@ -36,7 +38,7 @@
  ): PackedDesktopPackage[] {
    const workspace = yaml.load(readFileSync(join(REPOSITORY_ROOT, 'pnpm-workspace.yaml'), 'utf8')) as { packages: string[] }
    const workspaceNames = new Set(globSync(workspace.packages.map(pattern => `${pattern}/package.json`), { cwd: REPOSITORY_ROOT })
-@@ -80,7 +93,7 @@
+@@ -80,7 +93,7 @@ export function selectDesktopPackageClosure(
        if (available.has(dependency)) visit(dependency)
      }
    }
@@ -45,7 +47,7 @@
      if (!available.has(name)) throw new Error(`desktop package set: packed inputs omit ${name}`)
      visit(name)
    }
-@@ -128,8 +141,12 @@
+@@ -128,8 +141,12 @@ export function assertDesktopHostPackageFiles(files: readonly string[]): void {
  }
  
  /** Prepare a package set from release tarball directories. */
@@ -60,7 +62,7 @@
    const host = selected.find(packed => packed.manifest.name === DESKTOP_HOST_PACKAGE)
    if (host === undefined) throw new Error(`desktop package set: selected closure omits ${DESKTOP_HOST_PACKAGE}`)
    assertDesktopHostPackageFiles(tarballFiles(host.tarball))
-@@ -164,6 +181,7 @@
+@@ -164,6 +181,7 @@ function main(): void {
      buildPaths.packedDsh,
      buildPaths.packedVendor,
      buildPaths.packedLandlock,
@@ -68,7 +70,7 @@
    ]
    const { values } = parseArgs({
      options: { from: { type: 'string', multiple: true }, out: { type: 'string' } },
-@@ -171,7 +189,7 @@
+@@ -171,7 +189,7 @@ function main(): void {
    })
    const inputs = (values.from ?? defaultInputs).map(path => resolve(REPOSITORY_ROOT, path))
    const output = values.out === undefined ? buildPaths.packageSet : resolve(REPOSITORY_ROOT, values.out)
@@ -77,9 +79,11 @@
    console.log(`desktop package set: prepared ${output}`)
  }
  
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index 270d87d6b2..5058ea05e5 100644
 --- a/apps/desktop/src/project-manager.ts
 +++ b/apps/desktop/src/project-manager.ts
-@@ -31,6 +31,12 @@
+@@ -31,6 +31,12 @@ const DSH_PACKAGE = '@deepseek-ai/dsh'
  const CORE_BUILD_PACKAGE = '@deepseek-ai/dsh-subprocess-local'
  const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate
  const WORKSPACE_SETTINGS = 'nodeLinker: hoisted\nautoInstallPeers: false\n'
@@ -92,7 +96,7 @@
  function writeJson(path: string, value: unknown): void {
    writeFileSync(path, `${JSON.stringify(value, undefined, 2)}\n`, { mode: 0o600 })
  }
-@@ -139,7 +145,7 @@
+@@ -139,7 +145,7 @@ export function createRuntimeProjectMetadata(projectDir: string, release: Deskto
      private: true,
      version: '0.0.0',
      dependencies: desktopCorePackageOverrides(packageSet),

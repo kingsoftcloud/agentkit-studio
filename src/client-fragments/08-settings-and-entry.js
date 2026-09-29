@@ -16,7 +16,7 @@
     function apply(ctx) {
       activeConnection = ctx.connection;
       // Schedule is a capability, not a hard requirement for the fixed
-      // dsh-v0.1.7-rc.2 host. Older profiles can still expose the Studio
+      // dsh-v0.2.0-rc.1 host. Older profiles can still expose the Studio
       // product surface and all model/agent/resource surfaces while the automation
       // panel reports that its host service is unavailable.
       const scheduleRemote = ctx.remote && typeof ctx.remote.schedule?.catalog === 'function'
@@ -62,19 +62,43 @@
         props => h(AgentContextSelector, { ...props, studioRemote: ctx.remote }),
       ));
 
-      ctx.slots.inject('conversation.input.left', () => ctx.slots.register(
-        { name: 'conversation.input.left', id: 'studio-authoring', order: 150 },
-        props => h(NativeAuthoringButton, props),
-      ));
+      // Authoring entry: only the hero selector keeps the "创建 Agent" button.
+      // The composer-left injection was removed — conversation authoring is a
+      // fresh-session flow, and a composer button let users seed it mid-chat.
 
       // Each product domain is a first-class DSH main panel. The rows land in
       // the official panel list directly below New Session, using the product information architecture. Page-level resource tabs remain in
       // the content area; the four product domains never become a second row
       // of tabs inside their own detail page.
+      const ACTIVE_PANEL_KEY = 'agentkit-studio:active-panel';
       const navigateStudio = target => {
         const next = PANELS.find(item => item.page === target || item.id === target);
         if (next) ctx.layout.selectPanel(next.id);
       };
+      // A reload lands back on the native conversation panel by default.
+      // Persist every panel selection (sidebar clicks included — they go
+      // through layout.selectPanel, not navigateStudio) via the panelInfo
+      // observable, and restore the last one after the panels register.
+      ctx.effect(() => {
+        const subscription = ctx.layout.panelInfo?.subscribe?.(() => {
+          try {
+            const info = ctx.layout.panelInfo.getSnapshot?.();
+            const id = String(info?.activePanelId || '');
+            if (id) window.localStorage.setItem(ACTIVE_PANEL_KEY, id);
+          } catch { /* layout store unavailable */ }
+        });
+        const timer = setTimeout(() => {
+          try {
+            const last = window.localStorage.getItem(ACTIVE_PANEL_KEY);
+            const next = PANELS.find(item => item.id === last);
+            if (next) ctx.layout.selectPanel(next.id);
+          } catch { /* private mode */ }
+        }, 0);
+        return () => {
+          clearTimeout(timer);
+          subscription?.unsubscribe?.();
+        };
+      }, 'agentkit-studio:active-panel-restore');
       ctx.effect(() => {
         const openAuthoring = () => {
           pendingAuthoring = true;
@@ -94,6 +118,63 @@
           window.removeEventListener('agentkit-studio:open-bound-conversation', openBoundConversation);
         };
       }, 'agentkit-studio:authoring-entry');
+      // Studio patch 007: register a sidebar session filter so selecting an
+      // Agent in the hero selector narrows the DSH sidebar to sessions bound
+      // to that Agent. The filter reads a global variable (synced from the
+      // selector) so it stays reactive without a DSH re-derive trigger.
+      ctx.effect(() => {
+        let unregister = null;
+        try {
+          const mod = require('@deepseek-ai/dsh-client-ui-workspace');
+          if (mod && typeof mod.registerSessionFilter === 'function') {
+            // Expose a setter on the window so the selector can update the
+            // active Agent without re-registering the filter.
+            window.__AGENTKIT_STUDIO_SESSION_FILTER__ = { activeAgentId: '' };
+            window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__ = agentId => {
+              window.__AGENTKIT_STUDIO_SESSION_FILTER__.activeAgentId = String(agentId || '');
+            };
+            const filter = session => {
+              if (session.blank) return true;
+              const activeId = window.__AGENTKIT_STUDIO_SESSION_FILTER__?.activeAgentId || '';
+              if (!activeId) return true;
+              try {
+                const raw = window.localStorage.getItem(`${CONVERSATION_AGENT_KEY}:${session.id}`);
+                if (!raw) return false;
+                const value = JSON.parse(raw);
+                return String(value?.agentId || '') === activeId;
+              } catch { return true; }
+            };
+            unregister = mod.registerSessionFilter(filter);
+          }
+        } catch { /* ui-workspace not loaded or patch not applied; sidebar stays unfiltered */ }
+        return () => { if (unregister) unregister(); };
+      }, 'agentkit-studio:sidebar-session-filter');
+      // After a long suspend (laptop sleep / frozen tab) the DSH web client
+      // reconnects, but statically-loaded plugin panel registrations are not
+      // rebuilt by the platform's reconnect path — the Studio panel rows
+      // vanish until a manual reload. Detect that state when the tab becomes
+      // visible or the network returns and reload once (30 s loop guard).
+      ctx.effect(() => {
+        const recover = () => {
+          if (document.visibilityState !== 'visible') return;
+          const hasStudioPanel = [...document.querySelectorAll('button')]
+            .some(button => button.textContent?.trim() === 'Agents');
+          if (hasStudioPanel) return;
+          try {
+            const last = Number(window.sessionStorage.getItem('agentkit-studio:reload-guard') || 0);
+            if (Date.now() - last < 30000) return;
+            window.sessionStorage.setItem('agentkit-studio:reload-guard', String(Date.now()));
+          } catch { /* private mode: still reload once per visibility event */ }
+          window.location.reload();
+        };
+        document.addEventListener('visibilitychange', recover);
+        window.addEventListener('online', recover);
+        recover();
+        return () => {
+          document.removeEventListener('visibilitychange', recover);
+          window.removeEventListener('online', recover);
+        };
+      }, 'agentkit-studio:auto-recover');
       PANELS.forEach((panel, index) => {
         ctx.slots.inject('main', () => ctx.slots.register(
           { name: 'main', key: panel.id },

@@ -23,8 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DSH_ROOT: ${{ runner.temp }}/deepseek-harness
-      DSH_REF: dsh-v0.1.7-rc.2
-      DSH_COMMIT: 477b4f420553e8a52c2fbccc464d7561b239c443
+      DSH_REF: dsh-v0.2.0-rc.1
+      DSH_COMMIT: 4878cdabd87d4041bdaff61d04c966883b9fd07a
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

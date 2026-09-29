@@ -19,14 +19,14 @@ const expected = [
   'package.json', 'studio.plugin.json', 'README.md', 'CHANGELOG.md',
   'src/index.mjs', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
   'scripts/build-client.mjs', 'docs/studio-dsh-native-architecture.md',
-  'patches/dsh-v0.1.7-rc.2/README.md',
+  'patches/dsh-v0.2.0-rc.1/README.md',
 ];
 const missing = expected.filter(path => !files.has(path));
 if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);
 if (packageJson.name !== '@kingsoftcloud/agentkit-studio') throw new Error(`unexpected package name: ${String(packageJson.name)}`);
 if (!/^\d+\.\d+\.\d+$/.test(String(packageJson.version))) throw new Error(`package version must be stable semver: ${String(packageJson.version)}`);
 if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.version) throw new Error('plugin manifest identity/version does not match package.json');
-if (manifest.requiredDsh !== '0.1.7-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
+if (manifest.requiredDsh !== '0.2.0-rc.1') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
 if (packageJson.private !== true) throw new Error('package.json must remain private until registry publication is approved');
 
 for (const path of list) {

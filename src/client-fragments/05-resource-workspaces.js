@@ -18,14 +18,13 @@
       const [skillPreview, setSkillPreview] = useState(null);
       const [skillPreviewFile, setSkillPreviewFile] = useState(null);
       const [modelDialogOpen, setModelDialogOpen] = useState(false);
-      const [toolDialogOpen, setToolDialogOpen] = useState(false);
       const [resourcePreview, setResourcePreview] = useState(null);
       const [deleting, setDeleting] = useState(false);
       const platformKinds = ['knowledge-base', 'memory-instance', 'skill-space'];
       const isPlatform = platformKinds.includes(resourceKind);
       const requestSeq = useRef(0);
       const resourceKinds = [
-        ['model', '模型'], ['tool', 'Tool'], ['mcp', 'MCP'], ['skill', 'Skill'],
+        ['model', '模型'], ['mcp', 'MCP'], ['skill', 'Skill'],
         ['knowledge-base', '知识库'], ['memory-instance', '记忆库'], ['skill-space', 'Skill Center'],
       ];
       const label = resourceKinds.find(item => item[0] === resourceKind)?.[1] || '资源';
@@ -135,7 +134,6 @@
       return h('div', null,
         h(ContentIntro, { detail: '资源库只负责资源目录生命周期：发现、导入、探测、查看、删除和状态刷新。新增或变更 Agent 绑定关系请在 Agent 创建页或编辑页完成。模型、Tool、MCP、Skill 可绑定多个；知识库、记忆库和 Skill Center 每类默认绑定一个。', action: h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
           resourceKind === 'model' ? h('button', { type: 'button', onClick: () => setModelDialogOpen(true), style: buttonStyle() }, '添加模型') : null,
-          resourceKind === 'tool' ? h('button', { type: 'button', onClick: () => setToolDialogOpen(true), style: buttonStyle() }, '添加 Tool') : null,
           resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpDialogOpen(true), style: buttonStyle() }, '添加 MCP') : null,
           resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => setSkillDialogOpen(true), style: buttonStyle() }, '扫描本地 Skill') : null,
           h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '刷新'),
@@ -155,7 +153,6 @@
           error ? h('div', { role: 'alert', style: { marginTop: '10px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
         ) : null,
         modelDialogOpen ? h(ModelResourceDialog, { onClose: () => setModelDialogOpen(false), onCreated: reloadCatalog }) : null,
-        toolDialogOpen ? h(ToolResourceDialog, { onClose: () => setToolDialogOpen(false), onCreated: reloadCatalog }) : null,
         mcpDialogOpen ? h(McpResourceDialog, { onClose: () => setMcpDialogOpen(false), onCreated: reloadCatalog }) : null,
         mcpPreview ? h(McpToolsDialog, { resource: mcpPreview, onClose: () => setMcpPreview(null) }) : null,
         skillDialogOpen ? h(SkillDiscoveryDialog, { onClose: () => setSkillDialogOpen(false), onImported: reloadCatalog }) : null,
@@ -176,7 +173,7 @@
         const next = [];
         const nextErrors = [];
         for (const [index, result] of results.entries()) {
-          const ecosystem = index === 0 ? 'DSH' : 'Codex';
+          const ecosystem = index === 0 ? 'dsh' : 'codex';
           if (result.status === 'fulfilled') {
             for (const item of (result.value?.items || [])) next.push({ ...item, ecosystem });
             if (result.value?.error?.message) nextErrors.push(`${ecosystem}：${result.value.error.message}`);
@@ -201,9 +198,9 @@
             else if (operation === 'update') await hostRemote.updateDshPlugin(pluginId);
             else if (operation === 'uninstall') await hostRemote.uninstallDshPlugin(pluginId);
           } else if (operation === 'install') {
-            await hostRemote.installCodexPlugin(pluginId, item.marketplaceName);
+            await hostRemote.installCodexPlugin(String(item.name || pluginId.replace(/^codex-(cli|curated|bundled):/, '')), item.marketplaceName);
           } else if (operation === 'uninstall') {
-            await hostRemote.uninstallCodexPlugin(pluginId);
+            await hostRemote.uninstallCodexPlugin(String(item.name || pluginId.replace(/^codex-(cli|curated|bundled):/, '')));
           }
           setMessage(`${item.displayName || pluginId}：${operation === 'install' ? '已安装' : operation === 'uninstall' ? '已卸载' : operation === 'enable' ? '已启用' : operation === 'disable' ? '已停用' : '已更新'}。`);
           await load();
@@ -212,26 +209,74 @@
         } finally { setBusyKey(''); }
       };
       useEffect(() => { void load(); }, []);
+      // Store-style market: pill ecosystem tabs, rounded search, two-column
+      // discovery rows with an icon square, and a click-through detail view —
+      // layout follows the legacy Studio plugin store.
+      const [eco, setEco] = useState('dsh');
+      const [query, setQuery] = useState('');
+      const [selected, setSelected] = useState(null);
+      const ecoItems = items.filter(item => (item.ecosystem || '').toLowerCase() === eco);
+      const normalized = query.trim().toLowerCase();
+      const visibleItems = ecoItems.filter(item => !normalized || `${item.displayName || ''} ${item.name || ''} ${item.pluginId || ''} ${item.description || ''}`.toLowerCase().includes(normalized));
+      const iconLetter = item => String(item?.displayName || item?.name || item?.pluginId || '?').trim().charAt(0).toUpperCase() || '?';
+      const iconSquare = (item, size = 40) => {
+        const style = { width: size + 'px', height: size + 'px', borderRadius: Math.round(size * 0.28) + 'px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: Math.round(size * 0.34) + 'px', fontWeight: 750, flex: '0 0 auto', overflow: 'hidden', border: '1px solid ' + BRAND.border, background: BRAND.canvas, color: BRAND.inkMuted };
+        if (item?.iconDataUrl) return h('span', { style: { ...style, background: 'var(--dsw-alias-bg-layer-1, #fff)' } }, h('img', { src: item.iconDataUrl, alt: '', style: { width: '72%', height: '72%', objectFit: 'contain' } }));
+        return h('span', { style }, iconLetter(item));
+      };
+      const ecosystemTone = eco === 'dsh' ? 'accent' : 'neutral';
+      const lifecycleButtons = (item, compact = false) => {
+        const key = `${item.ecosystem}:${item.pluginId || item.id}`;
+        const isDsh = (item.ecosystem || '').toLowerCase() === 'dsh';
+        const btn = (label, operation, extra = {}) => h('button', { type: 'button', disabled: Boolean(busyKey), onClick: event => { event.stopPropagation(); void mutate(item, operation); }, style: { ...buttonStyle(), padding: compact ? '4px 9px' : '5px 10px', fontSize: '10px', ...extra } }, busyKey === key ? '处理中…' : label);
+        const isCodex = (item.ecosystem || '').toLowerCase() === 'codex';
+        const codexInstalled = isCodex && item.installed !== false;
+        const installed = item.source === 'profile' || item.source === 'local-tarball' || item.source === 'codex-home' || item.source === 'codex-cli' && item.installed || item.source === 'bundle' || item.source === 'codex-curated' || item.source === 'codex-bundled';
+        return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', flexShrink: 0 } },
+          !installed && isDsh ? btn('安装', 'install', { color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' }) : null,
+          installed && isDsh && item.source !== 'bundle' ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
+          item.source === 'bundle' ? h(Pill, null, '内置') : null,
+          isCodex && !codexInstalled ? btn('安装', 'install', { color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' }) : null,
+          isCodex && codexInstalled ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
+        );
+      };
+      const discoveryRow = item => h('button', { key: `${item.ecosystem}-${item.pluginId || item.name}`, type: 'button', onClick: () => setSelected(item), style: { display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', padding: '11px 10px', minWidth: 0, border: '1px solid transparent', borderRadius: '10px', background: 'transparent', color: BRAND.ink, cursor: 'pointer', width: '100%' } },
+        iconSquare(item),
+        h('span', { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' } },
+          h('strong', { style: { fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.displayName || item.name || item.pluginId || '未命名插件'),
+          h('small', { style: { color: BRAND.inkMuted, fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.description || item.pluginId || '由插件生态提供的可选能力。')),
+        h(Pill, { tone: item.source === 'codex-curated' || item.source === 'codex-bundled' ? 'neutral' : 'accent' }, item.version || '—'),
+        lifecycleButtons(item, true));
+      const infoRow = (label, value) => h('div', { style: { display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', gap: '14px', padding: '8px 0', fontSize: '12px' } }, h('dt', { style: { color: BRAND.inkMuted } }, label), h('dd', { style: { margin: 0, color: BRAND.ink, wordBreak: 'break-all' } }, value || '—'));
+      const detailView = selected ? h('div', null,
+        h('button', { type: 'button', onClick: () => setSelected(null), style: { ...buttonStyle(), background: BRAND.surface, marginBottom: '16px' } }, '← 返回插件市场'),
+        h('header', { style: { display: 'flex', justifyContent: 'space-between', gap: '18px', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 } },
+            iconSquare(selected, 52),
+            h('div', { style: { minWidth: 0 } }, h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '18px' } }, selected.displayName || selected.name || selected.pluginId || '未命名插件'), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '4px', wordBreak: 'break-all' } }, selected.pluginId || selected.name || '—'))),
+          lifecycleButtons(selected)),
+        selected.description ? h('p', { style: { whiteSpace: 'pre-wrap', color: BRAND.ink, lineHeight: 1.65, margin: '18px 0', fontSize: '13px' } }, selected.description) : null,
+        h('dl', { style: { margin: '20px 0', padding: '14px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '1px solid ' + BRAND.border, display: 'grid', gap: '2px' } },
+          infoRow('插件 ID', selected.pluginId || selected.name),
+          infoRow('版本', selected.version),
+          infoRow('生态', (selected.ecosystem || '').toUpperCase()),
+          infoRow('来源', selected.source || '—'),
+          selected.installSpec ? infoRow('安装源', selected.installSpec) : null,
+          selected.risk ? infoRow('风险标记', JSON.stringify(selected.risk)) : null),
+      ) : null;
       return h('div', null,
         h(SectionHeading, { eyebrow: 'Studio domain', title: '插件市场', detail: '统一管理 DSH 与 Codex 两个插件生态；变更会调用对应 Host，并在 Profile 重载后生效。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? '目录已读取' : '正在读取') }),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取插件目录', detail: '分别询问 DSH Profile Host 和 Codex App Server。' }) : null,
         errors.length ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', background: 'var(--dsw-alias-state-warn-tertiary, #fff3da)', color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', fontSize: '12px' } }, errors.join('；')) : null,
         message ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', background: BRAND.accentSoft, color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
-        status === 'ready' && items.length === 0 ? h(EmptyState, { icon: '⌘', title: '暂时没有可展示的插件', detail: '两个插件宿主都没有返回可见插件。', action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新读取') }) : null,
-        items.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '12px' } }, items.map((item, index) => h('article', { key: `${item.ecosystem}-${item.pluginId || item.id || index}`, style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'flex-start' } },
-            h('div', null, h('div', { style: { color: BRAND.ink, fontWeight: 750, fontSize: '14px' } }, item.displayName || item.name || item.pluginId || '未命名插件'), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '5px', wordBreak: 'break-all' } }, item.pluginId || item.id || '—')),
-            h(Pill, { tone: item.ready || item.enabled || item.installed ? 'accent' : 'neutral' }, item.ecosystem)),
-          h('p', { style: { color: BRAND.inkMuted, lineHeight: 1.55, margin: '12px 0 0', fontSize: '12px' } }, item.description || item.interface?.shortDescription || '由插件生态提供的可选能力。'),
-          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '12px' } }, item.resolvedVersion ? h(Pill, null, 'v' + item.resolvedVersion) : null, item.providerRef ? h(Pill, { tone: 'accent' }, 'AgentProvider') : null, item.clientExtension ? h(Pill, null, '界面扩展') : null),
-          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '7px', marginTop: '14px' } },
-            !item.installed ? h('button', { type: 'button', disabled: Boolean(busyKey), onClick: () => mutate(item, 'install'), style: buttonStyle() }, busyKey === `${item.ecosystem}:${item.pluginId || item.id}` ? '处理中…' : '安装') : null,
-            item.installed && item.ecosystem === 'dsh' ? h('button', { type: 'button', disabled: Boolean(busyKey), onClick: () => mutate(item, item.enabled ? 'disable' : 'enable'), style: buttonStyle() }, item.enabled ? '停用' : '启用') : null,
-            item.installed && item.ecosystem === 'dsh' ? h('button', { type: 'button', disabled: Boolean(busyKey), onClick: () => mutate(item, 'update'), style: buttonStyle() }, '更新') : null,
-            item.installed ? h('button', { type: 'button', disabled: Boolean(busyKey), onClick: () => { if (window.confirm(`确定卸载 ${item.displayName || item.pluginId || item.id} 吗？`)) void mutate(item, 'uninstall'); }, style: { ...buttonStyle(), color: BRAND.danger } }, '卸载') : null,
-          ),
-        ))) : null,
-        status === 'ready' ? h('button', { type: 'button', onClick: load, style: { ...buttonStyle(), marginTop: '16px' } }, '刷新目录') : null,
+        status === 'ready' && !selected ? h('div', null,
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' } },
+            h('div', { style: { display: 'inline-flex', gap: '4px', padding: '3px', border: '1px solid ' + BRAND.border, borderRadius: '18px', background: BRAND.surface } }, [['dsh', 'DSH 插件'], ['codex', 'Codex 插件']].map(([id, label]) => h('button', { key: id, type: 'button', 'aria-selected': eco === id ? 'true' : 'false', onClick: () => { setEco(id); setSelected(null); }, style: { border: 0, boxShadow: 'none', padding: '6px 14px', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', fontWeight: 650, color: eco === id ? BRAND.accentStrong : BRAND.inkMuted, background: eco === id ? BRAND.accentSoft : 'transparent' } }, label))),
+            h('input', { value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索插件…', style: { ...inputStyle(), width: '220px', borderRadius: '20px', padding: '8px 14px', marginTop: 0 } })),
+          visibleItems.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '2px 22px' } }, visibleItems.map(discoveryRow)) : h(EmptyState, { icon: '⌘', title: eco === 'dsh' ? 'DSH 生态暂无可见插件' : 'Codex 生态暂无可见插件', detail: eco === 'codex' ? '本机 Codex home 没有已缓存插件；在 Codex 里安装后会出现在这里。' : 'Profile 没有返回可见插件。', action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新读取') }),
+          h('div', { style: { marginTop: '16px' } }, h('button', { type: 'button', onClick: load, style: { ...buttonStyle(), background: BRAND.surface } }, '刷新目录')),
+        ) : null,
+        status === 'ready' && selected ? detailView : null,
       );
     }
 
@@ -251,12 +296,28 @@
       const load = async () => {
         setStatus('loading'); setError('');
         try {
-          const [catalog, bootstrap, deploymentResult] = await Promise.all([
+          // directServer aggregate: the runtime resources are the same live
+          // catalogs the resource library reads (gateway models + cloud
+          // resource Actions); deployments stay empty until the cloud
+          // deployment contract exists.
+          const [catalog, bootstrap, deploymentResult, models, mcps, skills, knowledge, memories] = await Promise.all([
             hostRemote.resources({ limit: 200 }),
             hostRemote.bootstrap(),
             hostRemote.deployments(),
+            hostRemote.resources({ kind: 'model', limit: 100 }).catch(() => ({ items: [] })),
+            hostRemote.resources({ kind: 'mcp', limit: 100 }).catch(() => ({ items: [] })),
+            hostRemote.resources({ kind: 'skill', limit: 100 }).catch(() => ({ items: [] })),
+            hostRemote.resources({ kind: 'knowledge-base', limit: 100 }).catch(() => ({ items: [] })),
+            hostRemote.resources({ kind: 'memory-instance', limit: 100 }).catch(() => ({ items: [] })),
           ]);
-          setResources(Array.isArray(catalog?.items) ? catalog.items : []);
+          const merged = [
+            ...((models?.items || []).map(item => ({ ...item, kind: 'model', kindLabel: '模型', status: item.status || 'ready' }))),
+            ...((mcps?.items || []).map(item => ({ ...item, kind: 'mcp', kindLabel: 'MCP', status: item.status || 'ready' }))),
+            ...((skills?.items || []).map(item => ({ ...item, kind: 'skill', kindLabel: 'Skill', status: item.status || 'ready' }))),
+            ...((knowledge?.items || []).map(item => ({ ...item, kind: 'knowledge-base', kindLabel: '知识库', status: item.status || 'ready' }))),
+            ...((memories?.items || []).map(item => ({ ...item, kind: 'memory-instance', kindLabel: '记忆库', status: item.status || 'ready' }))),
+          ];
+          setResources(Array.isArray(catalog?.items) && catalog.items.length ? catalog.items : merged);
           setWorkspace(bootstrap?.workspace || bootstrap || null);
           setDeployments(Array.isArray(deploymentResult?.items) ? deploymentResult.items : []);
           setStatus('ready');

@@ -1,6 +1,8 @@
 # AgentKit Studio DSH Native 重构方案（RFC 终稿）
 
-> 状态：终稿，作为本轮实现、评审和验收的唯一架构基线。  
+> 状态：终稿，作为本轮实现、评审和验收的唯一架构基线。
+>
+> **2026-09-29 升级**：DSH 基线从 `dsh-v0.1.7-rc.2`（commit `477b4f4…`）升级到 `dsh-v0.2.0-rc.1`（commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`）。本文中 rc.2 相关描述保留为历史对照；`make check`（83/83）与 `make patch-check`（6/6）已在 0.2.0-rc.1 重跑通过，但 rc.2 上记录的资源 Agent admission、preset 准入等 P0 证据尚未在新基线重跑。
 > 范围：AgentKit Studio、DSH Desktop、ksadk-python、agentengine-server 的本地与云端协作。  
 > 原则：先把真实执行链路和控制面合同钉死，再收口界面和插件市场；任何页面占位都不能代替一条可追踪的执行链。
 
