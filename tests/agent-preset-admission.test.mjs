@@ -274,3 +274,23 @@ test('the cloud bridge rejects a truncated SSE stream without completion', async
     for await (const _chunk of adapter.stream({ model: 'cloud:agent-1', messages: [{ role: 'user', content: '运行' }] })) {}
   }, error => error.code === 'CLOUD_STREAM_INCOMPLETE');
 });
+
+test('the cloud bridge propagates an aborted stream as cancellation', async () => {
+  const controller = new AbortController();
+  let readerCancelled = false;
+  const body = new ReadableStream({
+    start() {},
+    cancel() { readerCancelled = true; },
+  });
+  const adapter = createDshRuntimeAdapter({ cloudClient: { streamAction: async () => ({ body }) } });
+  const iterator = adapter.stream({
+    model: 'cloud:agent-1',
+    signal: controller.signal,
+    messages: [{ role: 'user', content: '运行' }],
+  });
+  const pending = iterator.next();
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(pending, error => error.code === 'CLOUD_RUN_CANCELLED');
+  assert.equal(readerCancelled, true);
+});

@@ -48,27 +48,48 @@ function lastUser(messages) {
     .find(message => message?.role === 'user');
 }
 
-async function* parseSse(body) {
+function cloudCancelledError(reason) {
+  const detail = reason instanceof Error ? reason.message : String(reason || '');
+  return Object.assign(new Error(detail && detail !== 'This operation was aborted' ? `云端 Agent 运行已取消：${detail}` : '云端 Agent 运行已取消'), {
+    code: 'CLOUD_RUN_CANCELLED',
+  });
+}
+
+async function* parseSse(body, signal) {
+  if (signal?.aborted) throw cloudCancelledError(signal.reason);
   if (!body) return;
   const reader = body.getReader?.();
   if (!reader) return;
   const decoder = new TextDecoder();
   let buffer = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let split = buffer.indexOf('\n\n');
-    while (split >= 0) {
-      const record = buffer.slice(0, split);
-      buffer = buffer.slice(split + 2);
-      const data = record.split(/\r?\n/).filter(line => line.startsWith('data:'))
-        .map(line => line.slice(5).trimStart()).join('\n');
-      if (data && data !== '[DONE]') {
-        try { yield JSON.parse(data); } catch { /* ignore malformed provider frames */ }
+  const abort = () => { try { void reader.cancel?.(signal.reason); } catch {} };
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    for (;;) {
+      if (signal?.aborted) throw cloudCancelledError(signal.reason);
+      const { done, value } = await reader.read();
+      if (signal?.aborted) throw cloudCancelledError(signal.reason);
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let split = buffer.indexOf('\n\n');
+      while (split >= 0) {
+        if (signal?.aborted) throw cloudCancelledError(signal.reason);
+        const record = buffer.slice(0, split);
+        buffer = buffer.slice(split + 2);
+        const data = record.split(/\r?\n/).filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trimStart()).join('\n');
+        if (data && data !== '[DONE]') {
+          try { yield JSON.parse(data); } catch { /* ignore malformed provider frames */ }
+        }
+        split = buffer.indexOf('\n\n');
       }
-      split = buffer.indexOf('\n\n');
     }
+  } catch (error) {
+    if (signal?.aborted) throw cloudCancelledError(signal.reason);
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', abort);
+    try { reader.releaseLock?.(); } catch {}
   }
 }
 
@@ -254,10 +275,11 @@ async function* localFrames(handler, payload) {
   }
 }
 
-async function* cloudFrames(body) {
+async function* cloudFrames(body, signal) {
   const state = createChunkState();
   let completed = false;
-  for await (const event of parseSse(body)) {
+  for await (const event of parseSse(body, signal)) {
+    if (signal?.aborted) throw cloudCancelledError(signal.reason);
     const type = String(event?.type || event?.event || '');
     if (/^response\.(failed|error)$/i.test(type) || /^error$/i.test(type)) {
       const detail = String(event?.error?.message || event?.message || '云端 Agent 运行失败').slice(0, 500);
@@ -298,6 +320,7 @@ async function* cloudFrames(body) {
       if (text) yield* appendBlock(state, 'text', text);
     }
   }
+  if (signal?.aborted) throw cloudCancelledError(signal.reason);
   if (!completed) throw Object.assign(new Error('云端 Agent 流未收到 response.completed'), { code: 'CLOUD_STREAM_INCOMPLETE' });
   yield* finishBlocks(state);
 }
@@ -366,7 +389,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
         Stream: true,
         ApiFormat: 'responses',
       }, { signal: options.signal });
-      yield* cloudFrames(upstream.body);
+      yield* cloudFrames(upstream.body, options.signal);
     },
   };
 }

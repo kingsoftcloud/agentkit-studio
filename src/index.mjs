@@ -639,6 +639,9 @@ async function registerControlPlane(ctx) {
         const admission = webCtx.connection.admit(request);
         if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden'); return; }
         if (request.method !== 'POST') { response.writeHead(404); response.end('not found'); return; }
+        const controller = new AbortController();
+        const disconnect = () => { if (!response.writableEnded) controller.abort(); };
+        response.on?.('close', disconnect);
         const chunks = []; let size = 0;
         try {
           for await (const chunk of request) {
@@ -656,13 +659,16 @@ async function registerControlPlane(ctx) {
           const upstream = await client.streamAction('RunAgent', {
             AgentId: agentId, SessionId: sessionId, Messages: [{ role: 'user', content: text }],
             Stream: true, ApiFormat: 'responses', InvocationId: String(input?.inputId || body?.idempotencyKey || ''),
-          });
+          }, { signal: controller.signal });
           response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
           for await (const chunk of upstream.body) response.write(chunk);
           response.end();
         } catch (error) {
+          if (response.destroyed) return;
           if (!response.headersSent) response.writeHead(error?.status || 502, { 'content-type': 'application/json' });
           if (!response.writableEnded) response.end(JSON.stringify({ error: { code: error?.code || 'CLOUD_CONVERSATION_FAILED', message: error instanceof Error ? error.message : String(error) } }));
+        } finally {
+          response.off?.('close', disconnect);
         }
       },
     });

@@ -22,6 +22,9 @@
 - HTTP 错误、Action 错误、断流和取消保持不同错误码；网络请求完成不等于 Agent 运行成功。
 - Host 只有在收到 `response.completed` 后才发出成功终态；`response.failed`、`response.incomplete`
   或提前断流分别转成 typed failure/incomplete，不把半截文本当成成功回答。
+- 浏览器取消会沿 Host cloud-conversation route 的 response close 信号中止上游 `RunAgent` 请求；
+  SSE reader 必须释放，适配器返回 `CLOUD_RUN_CANCELLED`，不能把取消后的半截流当成
+  `CLOUD_STREAM_INCOMPLETE`。
 - `ListSessionEvents` 的 `SeqId` 是 Server 游标。当前页面只恢复已返回的历史事件；完整的
   seq watermark、实时订阅、重复事件去重和缺口重放仍由下一阶段的 SessionEventStore 适配补齐。
 - `ResumeRun`、`SubmitInteraction` 已在 Node Action 白名单中，但本轮页面尚未自动展示
