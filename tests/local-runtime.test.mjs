@@ -84,3 +84,24 @@ test('local runtime injects cloud Skill Space and memory recall into the model t
   assert.match(system, /用户偏好轻松口吻/);
   assert.match(response.chunks.join(''), /已结合绑定资源/);
 });
+
+test('local runtime keeps a text-only turn alive when MCP discovery is temporarily unavailable', async () => {
+  const response = responseSink();
+  let requestBody;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: { bindings: { mcpServers: ['mcp-unavailable'] } } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: {
+      listMcpTools: async () => { throw Object.assign(new Error('Endpoint TLS 无法验证'), { code: 'MCP_CONNECT_FAILED' }); },
+    },
+    observability: { syncTrace: async () => {} },
+    fetchImpl: async (_url, init) => {
+      requestBody = JSON.parse(init.body);
+      return new Response('data: {"choices":[{"delta":{"content":"普通文本对话可继续"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 's-mcp', input: '你是谁' })]), response);
+  assert.equal(response.status, 200);
+  assert.match(requestBody.messages[0].content, /MCP mcp-unavailable 当前不可用/);
+  assert.match(response.chunks.join(''), /普通文本对话可继续/);
+});

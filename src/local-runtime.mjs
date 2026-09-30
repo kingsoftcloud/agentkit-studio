@@ -37,16 +37,28 @@ function toolDefinition(tool) {
 }
 
 async function collectTools(resourceAdapter, bindings) {
-  const mcpIds = bindingIds(bindings, 'mcpServers');
+  const mcpBindings = Array.isArray(bindings?.mcpServers) ? bindings.mcpServers : [];
   const tools = [];
-  for (const id of mcpIds) {
-    const listed = await resourceAdapter.listMcpTools(id);
+  const warnings = [];
+  for (const binding of mcpBindings) {
+    const id = typeof binding === 'string' ? binding : binding?.resourceId || binding?.id || '';
+    let listed;
+    try {
+      listed = await resourceAdapter.listMcpTools(binding);
+    } catch (error) {
+      // MCP discovery is needed only when the model elects to call a tool.
+      // Keep a text-only turn usable when an endpoint is temporarily
+      // unreachable (for example, a private endpoint or invalid TLS chain),
+      // while still telling the model why the bound resource was skipped.
+      warnings.push(`MCP ${id} 当前不可用：${String(error?.message || error).slice(0, 240)}`);
+      continue;
+    }
     for (const tool of listed || []) {
       if (tools.some(existing => existing.name === tool.name)) throw new LocalRuntimeError('MCP_TOOL_NAME_COLLISION', '多个 MCP 绑定暴露了同名工具', { name: tool.name });
-      tools.push({ ...tool, _resourceId: id });
+      tools.push({ ...tool, _resourceId: binding });
     }
   }
-  return tools;
+  return { tools, warnings };
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
@@ -87,6 +99,8 @@ function createGatewayModel({ profile, fetchImpl = fetch }) { void profile;
               const parsed = JSON.parse(data);
               const delta = parsed?.choices?.[0]?.delta;
               if (delta?.content) yield { type: 'text', text: delta.content };
+              const reasoning = delta?.reasoning_content || delta?.reasoning;
+              if (reasoning) yield { type: 'reasoning', text: reasoning };
               for (const call of delta?.tool_calls || []) {
                 const index = Number(call.index || 0);
                 const current = toolCalls.get(index) || { id: '', name: '', arguments: '' };
@@ -176,7 +190,9 @@ export function createLocalConversationHandler({ agentStore, modelService, resou
         const hits = await resourceAdapter.searchMemory(resourceId, input, parsed.userId || parsed.sessionId || agentId);
         resourceContext += (hits || []).map(hit => `Memory: ${extractText(hit.content || hit.text || hit.memory || hit)}`).join('\n');
       }
-      tools = resourceAdapter ? await collectTools(resourceAdapter, bindings) : [];
+      const collected = resourceAdapter ? await collectTools(resourceAdapter, bindings) : { tools: [], warnings: [] };
+      tools = collected.tools;
+      if (collected.warnings.length) resourceContext += `\n\nBound resource warnings:\n${collected.warnings.join('\n')}`;
     } catch (error) {
       response.writeHead(409);
       response.end(JSON.stringify({ error: { code: error?.code || 'RESOURCE_EXECUTION_FAILED', message: error?.message || '资源加载失败', details: error?.details || {} } }));
@@ -197,10 +213,12 @@ export function createLocalConversationHandler({ agentStore, modelService, resou
       // The harness owns the canonical loop; this local provider drives the
       // configured model while resource calls remain explicit Host actions.
       let text = '';
+      let reasoning = '';
       for (let turn = 0; turn < 3; turn += 1) {
         let calls = [];
         for await (const chunk of model.stream({ messages, tools: tools.map(toolDefinition) })) {
           if (chunk.type === 'text') { text += chunk.text; send({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
+          if (chunk.type === 'reasoning') { reasoning += chunk.text; send({ kind: 'assistant_reasoning', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
           if (chunk.type === 'tool_calls') calls = chunk.calls;
         }
         if (!calls.length) break;
@@ -217,6 +235,7 @@ export function createLocalConversationHandler({ agentStore, modelService, resou
           send({ kind: 'tool_result', lifecycle: 'completed', payload: { callId: call.id, text: resultText } });
         }
       }
+      if (reasoning) send({ kind: 'assistant_reasoning', lifecycle: 'completed', payload: { text: reasoning } });
       send({ kind: 'assistant_text', lifecycle: 'completed', payload: { text } });
       send({ kind: 'progress', lifecycle: 'completed', payload: { status: 'completed' } });
       await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, status: 'completed', events: [{ event_type: 'run.completed', at: new Date().toISOString(), run_id: runId }] }).catch(error => console.warn('[local-runtime] trace sync failed:', error?.message || error));

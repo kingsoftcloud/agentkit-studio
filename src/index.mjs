@@ -79,6 +79,7 @@ async function registerControlPlane(ctx) {
   }));
   const configurationPromise = import('./global-config.mjs').then(({ createGlobalConfiguration }) =>
     createGlobalConfiguration({ env: runtimeEnv }));
+  const credentialsService = ctx.get('credentials');
   const serverClientPromise = configurationPromise.then(configuration =>
     import('./server-client.mjs').then(({ createAgentEngineClient }) =>
       createAgentEngineClient({
@@ -91,7 +92,7 @@ async function registerControlPlane(ctx) {
     serverClientPromise,
   ]).then(async ([skillDiscovery, serverClient]) => {
     const { createLocalResourceAdapters } = await import('./local-resource-adapters.mjs');
-    return createLocalResourceAdapters({ serverClient, skillDiscovery });
+    return createLocalResourceAdapters({ serverClient, skillDiscovery, credentials: credentialsService });
   });
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the
@@ -106,8 +107,7 @@ async function registerControlPlane(ctx) {
         resourceAdaptersPromise,
         studioObservabilityPromise,
       ]).then(async ([store, configuration, resourceAdapters, observability]) => {
-        const credentials = ctx.get('credentials');
-        const localModels = await import('./model-service.mjs').then(({ createModelService }) => createModelService({ configuration, credentials }));
+        const localModels = await import('./model-service.mjs').then(({ createModelService }) => createModelService({ configuration, credentials: credentialsService }));
         const { createLocalConversationHandler } = await import('./local-runtime.mjs');
         return createLocalConversationHandler({
           agentStore: async () => store,
@@ -138,7 +138,7 @@ async function registerControlPlane(ctx) {
   // Cordis exposes injected services through `get`; property access is only
   // available on typed service contexts and is absent in the plain plugin
   // apply context used by the DSH loader.
-  const credentials = ctx.get('credentials');
+  const credentials = credentialsService;
   const models = await import('./model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
   const syncModelCredential = models.sync;
   // The DSH loader awaits an async plugin apply. Do this before returning from

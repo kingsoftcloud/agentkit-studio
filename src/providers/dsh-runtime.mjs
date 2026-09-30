@@ -72,21 +72,105 @@ async function* parseSse(body) {
   }
 }
 
-function makeDshChunks(text) {
-  const value = String(text || '');
-  return value ? [
-    { type: 'block-start', index: 0, blockType: 'text' },
-    { type: 'text-delta', index: 0, text: value },
-    { type: 'block-end', index: 0, block: { type: 'text', text: value } },
-    { type: 'finish', reason: { kind: 'stop' } },
-  ] : [
-    { type: 'finish', reason: { kind: 'stop' } },
-  ];
+function createChunkState() {
+  return { text: '', reasoning: '', textStarted: false, reasoningStarted: false, textEnded: false, reasoningEnded: false };
+}
+
+function closeBlock(state, kind) {
+  const isReasoning = kind === 'reasoning';
+  const started = isReasoning ? state.reasoningStarted : state.textStarted;
+  const endedKey = isReasoning ? 'reasoningEnded' : 'textEnded';
+  if (!started || state[endedKey]) return [];
+  state[endedKey] = true;
+  const value = isReasoning ? state.reasoning : state.text;
+  return [{ type: 'block-end', index: isReasoning ? 0 : 1, block: { type: isReasoning ? 'reasoning' : 'text', text: value } }];
+}
+
+function appendBlock(state, kind, value) {
+  const text = String(value || '');
+  if (!text) return [];
+  const frames = [];
+  if (kind === 'text' && state.reasoningStarted && !state.reasoningEnded) frames.push(...closeBlock(state, 'reasoning'));
+  if (kind === 'reasoning' && state.textStarted && !state.textEnded) frames.push(...closeBlock(state, 'text'));
+  const isReasoning = kind === 'reasoning';
+  const startedKey = isReasoning ? 'reasoningStarted' : 'textStarted';
+  const endedKey = isReasoning ? 'reasoningEnded' : 'textEnded';
+  if (!state[startedKey]) {
+    state[startedKey] = true;
+    frames.push({ type: 'block-start', index: isReasoning ? 0 : 1, blockType: kind });
+  }
+  if (state[endedKey]) return frames;
+  if (isReasoning) state.reasoning += text;
+  else state.text += text;
+  frames.push({ type: isReasoning ? 'reasoning-delta' : 'text-delta', index: isReasoning ? 0 : 1, text });
+  return frames;
+}
+
+function finishBlocks(state) {
+  return [...closeBlock(state, 'reasoning'), ...closeBlock(state, 'text'), { type: 'finish', reason: { kind: 'stop' } }];
+}
+
+function createAsyncQueue() {
+  const values = [];
+  const waiters = [];
+  let closed = false;
+  let failure;
+  return {
+    push(value) {
+      if (closed) return;
+      const waiter = waiters.shift();
+      if (waiter) waiter.resolve({ value, done: false });
+      else values.push(value);
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      while (waiters.length) waiters.shift().resolve({ value: undefined, done: true });
+    },
+    fail(error) {
+      if (closed) return;
+      closed = true;
+      failure = error;
+      while (waiters.length) waiters.shift().reject(error);
+    },
+    async next() {
+      if (values.length) return { value: values.shift(), done: false };
+      if (failure) throw failure;
+      if (closed) return { value: undefined, done: true };
+      return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+    },
+    [Symbol.asyncIterator]() { return this; },
+  };
+}
+
+function parseLocalRecord(record, state) {
+  const line = String(record).split(/\r?\n/).find(item => item.startsWith('data:'));
+  if (!line) return [];
+  const raw = line.slice(5).trim();
+  if (!raw || raw === '[DONE]') return [];
+  let event;
+  try { event = JSON.parse(raw); } catch { return []; }
+  const item = event?.conversationItem;
+  if (item?.kind === 'error') {
+    const error = new Error(String(item.payload?.message || 'AgentKit Studio 本地运行失败'));
+    error.code = 'STUDIO_LOCAL_RUNTIME_FAILED';
+    throw error;
+  }
+  if (event?.runtimeEvent?.event_type === 'run.failed') {
+    const error = new Error('AgentKit Studio 本地运行失败');
+    error.code = 'STUDIO_LOCAL_RUNTIME_FAILED';
+    throw error;
+  }
+  if (item?.kind === 'assistant_reasoning') return appendBlock(state, 'reasoning', item.payload?.operation === 'append' ? item.payload.text : '');
+  if (item?.kind === 'assistant_text') return appendBlock(state, 'text', item.payload?.operation === 'append' ? item.payload.text : '');
+  if (event?.runtimeEvent?.event_type === 'run.completed') return finishBlocks(state);
+  return [];
 }
 
 async function* localFrames(handler, payload) {
   const requestBody = Buffer.from(JSON.stringify(payload));
-  const chunks = [];
+  const queue = createAsyncQueue();
+  const responseChunks = [];
   const request = {
     async *[Symbol.asyncIterator]() { yield requestBody; },
   };
@@ -95,36 +179,68 @@ async function* localFrames(handler, payload) {
     writableEnded: false,
     statusCode: 200,
     writeHead(status) { this.headersSent = true; this.statusCode = status; },
-    write(chunk) { chunks.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)); },
-    end(chunk = '') { if (chunk) this.write(chunk); this.writableEnded = true; },
+    write(chunk) {
+      const value = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+      responseChunks.push(value);
+      queue.push(value);
+      return true;
+    },
+    end(chunk = '') { if (chunk) this.write(chunk); this.writableEnded = true; queue.close(); },
   };
-  await handler(request, response);
-  if (response.statusCode >= 400) {
-    const raw = chunks.join('');
-    let detail;
-    try { detail = JSON.parse(raw)?.error; } catch { detail = undefined; }
-    const error = new Error(detail?.message || `Studio local runtime failed (${response.statusCode})`);
-    error.code = detail?.code || 'STUDIO_LOCAL_RUNTIME_FAILED';
+  const handlerPromise = Promise.resolve().then(() => handler(request, response)).catch(error => {
+    queue.fail(error);
+    throw error;
+  });
+  const state = createChunkState();
+  let buffer = '';
+  try {
+    for await (const chunk of queue) {
+      buffer += chunk;
+      let split = buffer.indexOf('\n\n');
+      while (split >= 0) {
+        const record = buffer.slice(0, split);
+        buffer = buffer.slice(split + 2);
+        yield* parseLocalRecord(record, state);
+        split = buffer.indexOf('\n\n');
+      }
+    }
+    if (buffer.trim()) yield* parseLocalRecord(buffer, state);
+    await handlerPromise;
+    if (response.statusCode >= 400) {
+      let detail;
+      try { detail = JSON.parse(responseChunks.join(''))?.error; } catch { detail = undefined; }
+      const error = new Error(detail?.message || `Studio local runtime failed (${response.statusCode})`);
+      error.code = detail?.code || 'STUDIO_LOCAL_RUNTIME_FAILED';
+      throw error;
+    }
+  } catch (error) {
+    await handlerPromise.catch(() => {});
+    if (response.statusCode >= 400) {
+      const detail = String(error?.message || 'Studio local runtime failed');
+      const wrapped = new Error(detail);
+      wrapped.code = error?.code || 'STUDIO_LOCAL_RUNTIME_FAILED';
+      throw wrapped;
+    }
     throw error;
   }
-  const records = chunks.join('').split(/(?=data: )/g);
-  let text = '';
-  for (const record of records) {
-    const line = record.split(/\r?\n/).find(item => item.startsWith('data:'));
-    if (!line) continue;
-    const raw = line.slice(5).trim();
-    if (!raw || raw === '[DONE]') continue;
-    try {
-      const event = JSON.parse(raw);
-      const item = event?.conversationItem;
-      if (item?.kind === 'assistant_text') {
-        const payloadText = String(item?.payload?.text || '');
-        if (item?.payload?.operation === 'append') text += payloadText;
-        else if (payloadText) text = payloadText;
-      }
-    } catch { /* ignore non-json terminal marker */ }
+}
+
+async function* cloudFrames(body) {
+  const state = createChunkState();
+  for await (const event of parseSse(body)) {
+    const type = String(event?.type || event?.event || '');
+    if (type.includes('reasoning_summary_text.delta')) yield* appendBlock(state, 'reasoning', event.delta);
+    else if (type.includes('output_text.delta')) yield* appendBlock(state, 'text', event.delta);
+    else if (type.includes('reasoning_summary_text.done')) yield* closeBlock(state, 'reasoning');
+    else if (type.includes('output_text.done')) yield* closeBlock(state, 'text');
+    else {
+      const reasoning = event?.reasoning_content || event?.reasoning;
+      const text = event?.delta || event?.output_text?.delta || event?.response?.output_text?.delta;
+      if (reasoning) yield* appendBlock(state, 'reasoning', reasoning);
+      if (text) yield* appendBlock(state, 'text', text);
+    }
   }
-  yield* makeDshChunks(text);
+  yield* finishBlocks(state);
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
@@ -163,12 +279,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler } = {}) {
         Stream: true,
         ApiFormat: 'responses',
       }, { signal: options.signal });
-      let text = '';
-      for await (const event of parseSse(upstream.body)) {
-        const delta = event?.delta || event?.output_text?.delta || event?.response?.output_text?.delta;
-        if (typeof delta === 'string') text += delta;
-      }
-      yield* makeDshChunks(text);
+      yield* cloudFrames(upstream.body);
     },
   };
 }

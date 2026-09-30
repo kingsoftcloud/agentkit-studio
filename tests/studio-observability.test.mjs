@@ -10,15 +10,19 @@ async function makeStore() { return mkdtemp(join(tmpdir(), 'agentkit-traces-'));
 test('syncTrace projects events into OTLP and persists', async () => {
   const store = await makeStore();
   const obs = createStudioObservability({ storeDir: store });
+  const startedAt = new Date(Date.now() - 60_000).toISOString();
+  const toolStartedAt = new Date(Date.now() - 50_000).toISOString();
+  const toolCompletedAt = new Date(Date.now() - 40_000).toISOString();
+  const completedAt = new Date(Date.now() - 30_000).toISOString();
   try {
     await obs.syncTrace({
       traceId: 'trace_abc', sessionId: 'ses-1', agentId: 'ar-1', agentName: 'My Agent',
-      status: 'succeeded', startedAt: '2026-09-29T10:00:00Z', completedAt: '2026-09-29T10:01:00Z',
+      status: 'succeeded', startedAt, completedAt,
       events: [
-        { seq: 1, event_type: 'turn.start', at: '2026-09-29T10:00:00Z', run_id: 'run-1', session_id: 'ses-1', payload: {} },
-        { seq: 2, event_type: 'tool.start', at: '2026-09-29T10:00:10Z', payload: { name: 'read_file' } },
-        { seq: 3, event_type: 'tool.completed', at: '2026-09-29T10:00:20Z', payload: { name: 'read_file' } },
-        { seq: 4, event_type: 'turn.completed', at: '2026-09-29T10:01:00Z', payload: { usage: { input_tokens: 100, output_tokens: 50 } } },
+        { seq: 1, event_type: 'turn.start', at: startedAt, run_id: 'run-1', session_id: 'ses-1', payload: {} },
+        { seq: 2, event_type: 'tool.start', at: toolStartedAt, payload: { name: 'read_file' } },
+        { seq: 3, event_type: 'tool.completed', at: toolCompletedAt, payload: { name: 'read_file' } },
+        { seq: 4, event_type: 'turn.completed', at: completedAt, payload: { usage: { input_tokens: 100, output_tokens: 50 } } },
       ],
     });
     const trace = await obs.get('trace_abc');
@@ -41,9 +45,13 @@ test('syncTrace projects events into OTLP and persists', async () => {
 test('overview and list filter by range and agentId', async () => {
   const store = await makeStore();
   const obs = createStudioObservability({ storeDir: store });
+  const firstStartedAt = new Date(Date.now() - 60_000).toISOString();
+  const firstCompletedAt = new Date(Date.now() - 50_000).toISOString();
+  const secondStartedAt = new Date(Date.now() - 40_000).toISOString();
+  const secondCompletedAt = new Date(Date.now() - 30_000).toISOString();
   try {
-    await obs.syncTrace({ traceId: 't1', agentId: 'ar-1', agentName: 'A', status: 'succeeded', startedAt: '2026-09-29T10:00:00Z', completedAt: '2026-09-29T10:01:00Z', events: [] });
-    await obs.syncTrace({ traceId: 't2', agentId: 'ar-2', agentName: 'B', status: 'failed', startedAt: '2026-09-29T11:00:00Z', completedAt: '2026-09-29T11:01:00Z', events: [] });
+    await obs.syncTrace({ traceId: 't1', agentId: 'ar-1', agentName: 'A', status: 'succeeded', startedAt: firstStartedAt, completedAt: firstCompletedAt, events: [] });
+    await obs.syncTrace({ traceId: 't2', agentId: 'ar-2', agentName: 'B', status: 'failed', startedAt: secondStartedAt, completedAt: secondCompletedAt, events: [] });
     const byAgent = await obs.list({ agentId: 'ar-2' });
     assert.equal(byAgent.items.length, 1);
     assert.equal(byAgent.items[0].traceId, 't2');

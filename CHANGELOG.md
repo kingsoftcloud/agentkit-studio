@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- MCP 工具发现暂时不可用时保留绑定告警并继续纯文本回合；模型实际发起工具调用后仍严格失败闭环。
+- 外部 Streamable HTTP MCP 绑定现在支持 Endpoint、请求头和 `env://` credential reference；
+  DSH 原生会话可继续消费本地模型的 reasoning/text 增量。
+
 - 修复云端 Skill Space UUID 被误当作本地 Skill 的兼容迁移；本地运行时现在可通过
   AgentEngine/Skill Service 读取云端 Skill、知识库和记忆库，并通过 `GetMCP` 物化绑定的 MCP。
 - 云端 Agent 继续通过 AgentEngine Server `RunAgent` 合同执行，本地 Agent 保留本地 Skill 目录

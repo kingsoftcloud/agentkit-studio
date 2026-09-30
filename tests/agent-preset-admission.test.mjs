@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DshPresetAdmission, dshPresetEligibility, dshPresetId, unsupportedDshBindings } from '../src/agent-preset-admission.mjs';
-import { setDshRuntimeAdapter, streamDshRuntime } from '../src/providers/dsh-runtime.mjs';
+import { createDshRuntimeAdapter, setDshRuntimeAdapter, streamDshRuntime } from '../src/providers/dsh-runtime.mjs';
 
 function agent(overrides = {}) {
   return {
@@ -108,4 +108,32 @@ test('the native bridge keeps the DSH model header while routing the transport b
   assert.equal(original.model, 'deepseek-v4-flash');
   assert.deepEqual(chunks, [{ type: 'finish', reason: { kind: 'stop' } }]);
   dispose();
+});
+
+test('the runtime bridge forwards local text and reasoning deltas as they arrive', async () => {
+  const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
+  const adapter = createDshRuntimeAdapter({
+    localHandler: async () => async (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write(event({ kind: 'assistant_reasoning', lifecycle: 'running', payload: { operation: 'append', text: '先分析' } }));
+      await new Promise(resolve => setTimeout(resolve, 15));
+      response.write(event({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: '答案' } }));
+      response.write(event({ kind: 'runtime', lifecycle: 'completed', payload: {} }));
+      response.write(`data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`);
+      response.end('data: [DONE]\n\n');
+    },
+  });
+  const iterator = adapter.stream({ model: 'local:demo/agent', messages: [{ role: 'user', content: 'hi' }] });
+  const first = await iterator.next();
+  assert.deepEqual(first.value, { type: 'block-start', index: 0, blockType: 'reasoning' });
+  const rest = [];
+  for await (const chunk of iterator) rest.push(chunk);
+  assert.deepEqual(rest, [
+    { type: 'reasoning-delta', index: 0, text: '先分析' },
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: '先分析' } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '答案' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '答案' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]);
 });

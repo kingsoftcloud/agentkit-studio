@@ -12,20 +12,36 @@ function looksLikeCloudSkillSpace(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resourceId(value));
 }
 
-export function createLocalResourceAdapters({ serverClient, skillDiscovery } = {}) {
+async function resolveCredential(credentials, reference) {
+  const value = String(reference || '').trim();
+  if (!value) return '';
+  const name = value.startsWith('env://') ? value.slice('env://'.length) : value;
+  if (credentials && typeof credentials.resolve === 'function') {
+    const resolved = await credentials.resolve(name).catch(() => null);
+    if (resolved?.value) return String(resolved.value);
+  }
+  return String(process.env[name] || '');
+}
+
+export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, fetchImpl = fetch } = {}) {
   const mcpClients = new Map();
   const cloudSkillSpaces = new Map();
 
-  async function mcp(id) {
-    const key = resourceId(id);
+  async function mcp(binding) {
+    const key = resourceId(binding);
     if (!key) throw new LocalResourceError('MCP_ID_MISSING', 'MCP 资源 ID 不能为空');
     if (mcpClients.has(key)) return mcpClients.get(key);
-    const detail = (await serverClient.action('GetMCP', { Id: key })).data || {};
-    const endpoint = detail.mcp_endpoint || detail.private_mcp_endpoint || detail.endpoint;
+    const config = binding && typeof binding === 'object' ? binding : {};
+    const detail = config.endpoint || config.endpointUrl || config.url
+      ? config
+      : (await serverClient.action('GetMCP', { Id: key })).data || {};
+    const endpoint = detail.endpoint || detail.endpointUrl || detail.url || detail.mcp_endpoint || detail.private_mcp_endpoint;
     if (!endpoint || !/^https?:\/\//i.test(endpoint)) throw new LocalResourceError('MCP_ENDPOINT_UNAVAILABLE', 'MCP 没有可用的 HTTP Endpoint', { resourceId: key });
-    const headers = detail.api_key ? { Authorization: `Bearer ${detail.api_key}` } : undefined;
+    const headers = { ...(detail.headers || config.headers || {}) };
+    const apiKey = detail.api_key || detail.apiKey || await resolveCredential(credentials, detail.credentialRef || config.credentialRef);
+    if (apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization')) headers.Authorization = `Bearer ${apiKey}`;
     const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' });
-    const transport = new StreamableHTTPClientTransport(new URL(endpoint), headers ? { requestInit: { headers } } : undefined);
+    const transport = new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl });
     try {
       await client.connect(transport);
     } catch (error) {
