@@ -222,3 +222,28 @@ test('the native bridge projects Codex dynamic-tool status into expandable reaso
     { type: 'finish', reason: { kind: 'stop' } },
   ]);
 });
+
+test('the cloud bridge projects Responses tool lifecycle into expandable reasoning', async () => {
+  const frame = value => `data: ${JSON.stringify(value)}\n\n`;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(frame({ type: 'response.output_item.added', item: { type: 'function_call', id: 'call-1', name: 'search' } })));
+      controller.enqueue(new TextEncoder().encode(frame({ type: 'response.output_item.done', item: { type: 'function_call', id: 'call-1', name: 'search', status: 'completed' } })));
+      controller.enqueue(new TextEncoder().encode(frame({ type: 'response.output_text.delta', delta: '云端结果' })));
+      controller.close();
+    },
+  });
+  const adapter = createDshRuntimeAdapter({ cloudClient: { streamAction: async () => ({ body }) } });
+  const chunks = [];
+  for await (const chunk of adapter.stream({ model: 'cloud:agent-1', messages: [{ role: 'user', content: '搜索' }] })) chunks.push(chunk);
+  assert.deepEqual(chunks, [
+    { type: 'block-start', index: 0, blockType: 'reasoning' },
+    { type: 'reasoning-delta', index: 0, text: '工具 search 正在调用。' },
+    { type: 'reasoning-delta', index: 0, text: '工具 search 已完成。' },
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: '工具 search 正在调用。工具 search 已完成。' } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '云端结果' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '云端结果' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]);
+});

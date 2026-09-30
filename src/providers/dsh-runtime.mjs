@@ -75,7 +75,7 @@ async function* parseSse(body) {
 function createChunkState() {
   return {
     text: '', reasoning: '', textStarted: false, reasoningStarted: false, textEnded: false, reasoningEnded: false,
-    toolNames: new Map(),
+    toolNames: new Map(), toolStarted: new Set(),
   };
 }
 
@@ -258,6 +258,23 @@ async function* cloudFrames(body) {
   const state = createChunkState();
   for await (const event of parseSse(body)) {
     const type = String(event?.type || event?.event || '');
+    const item = event?.item || event?.output_item || event?.response?.output_item || event?.data?.item || {};
+    const callId = String(event?.call_id || event?.callId || item?.call_id || item?.callId || item?.id || '').trim();
+    const toolName = String(event?.name || event?.tool_name || item?.name || item?.function?.name || item?.function?.function?.name || state.toolNames.get(callId) || '').trim();
+    const itemType = String(item?.type || event?.tool_type || '').toLowerCase();
+    const toolEvent = Boolean(toolName) && (itemType.includes('tool') || itemType.includes('call') || type.includes('tool') || type.includes('function_call'));
+    if (toolEvent) {
+      if (callId) state.toolNames.set(callId, toolName);
+      const start = /output_item\.added|tool[_/.]call|function_call_arguments\.delta/i.test(type);
+      const finish = /output_item\.done|tool[_/.]result|function_call_output/i.test(type);
+      const failed = /fail|error/i.test(String(event?.status || item?.status || '')) || Boolean(event?.error || item?.error);
+      if (start && (!callId || !state.toolStarted.has(callId))) {
+        if (callId) state.toolStarted.add(callId);
+        yield* appendBlock(state, 'reasoning', `工具 ${toolName} 正在调用。`);
+      }
+      if (finish) yield* appendBlock(state, 'reasoning', `工具 ${toolName} ${failed ? '失败' : '已完成'}。`);
+      continue;
+    }
     if (type.includes('reasoning_summary_text.delta')) yield* appendBlock(state, 'reasoning', event.delta);
     else if (type.includes('output_text.delta')) yield* appendBlock(state, 'text', event.delta);
     else if (type.includes('reasoning_summary_text.done')) yield* closeBlock(state, 'reasoning');
