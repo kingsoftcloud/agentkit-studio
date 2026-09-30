@@ -137,3 +137,32 @@ test('the runtime bridge forwards local text and reasoning deltas as they arrive
     { type: 'finish', reason: { kind: 'stop' } },
   ]);
 });
+
+test('the runtime bridge routes Codex Agents to the Codex provider instead of the gateway', async () => {
+  const calls = [];
+  const adapter = createDshRuntimeAdapter({
+    codexRuntime: {
+      async *stream(options) {
+        calls.push(options);
+        yield { type: 'reasoning', text: '思考' };
+        yield { type: 'text', text: '回答' };
+      },
+    },
+  });
+  const chunks = [];
+  for await (const chunk of adapter.stream({
+    model: 'local:codex-agent',
+    messages: [{ role: 'user', content: '你好' }],
+    studioRuntime: 'codex',
+  })) chunks.push(chunk);
+  assert.equal(calls[0].input, '你好');
+  assert.deepEqual(chunks, [
+    { type: 'block-start', index: 0, blockType: 'reasoning' },
+    { type: 'reasoning-delta', index: 0, text: '思考' },
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: '思考' } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '回答' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '回答' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]);
+});

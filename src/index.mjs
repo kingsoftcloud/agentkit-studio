@@ -98,6 +98,12 @@ async function registerControlPlane(ctx) {
   // The provider is selected by the preset-scoped listener and delegates the
   // assembled turn to the local Harness or AgentEngine cloud stream.
   const { createDshRuntimeAdapter, setDshRuntimeAdapter } = await import('./providers/dsh-runtime.mjs');
+  // Codex is a native App Server runtime, not another gateway model. Keep its
+  // optional child-process boundary lazy so Studio can still load on hosts
+  // without a Codex binary and report CODEX_PROVIDER_UNAVAILABLE only when a
+  // Codex Agent is selected.
+  const { createCodexRuntime } = await import('./providers/codex-runtime.mjs');
+  const codexRuntime = createCodexRuntime();
   let localRuntimeHandlerPromise;
   const localRuntimeHandler = async () => {
     if (!localRuntimeHandlerPromise) {
@@ -122,6 +128,7 @@ async function registerControlPlane(ctx) {
   const dshRuntimeAdapter = createDshRuntimeAdapter({
     cloudClient: await serverClientPromise,
     localHandler: localRuntimeHandler,
+    codexRuntime,
   });
   setDshRuntimeAdapter(dshRuntimeAdapter);
   ctx.inject(['llm'], llmCtx => {

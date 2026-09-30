@@ -4,6 +4,11 @@
 
 > **2026-09-29 升级**：DSH 基线已从 `dsh-v0.1.7-rc.2`（commit `477b4f4…`）升级到 `dsh-v0.2.0-rc.1`（commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`）。上方 rc.2 证据保留为历史对照；`make check`（83/83）、`make patch-check`（6/6）已在 0.2.0-rc.1 重跑通过，但 rc.2 上记录的资源 Agent admission、内存基线等 P0 证据尚未在新基线重跑，不得沿用为通过。
 
+> **2026-10-01 当前迭代**：本地 `runtime: codex` 已通过官方 `codex app-server --stdio`
+> 协议接入 DSH preset-scoped provider。真实 DSH Web 会话中绑定临时 Codex Agent 后，发送
+> `请只回复：CODEX_WEB_OK` 收到同内容，第二轮仍在同一 DSH 会话中完成；该证据证明本机
+> Codex provider 可用和原生会话复用，不替代持久 Codex Thread、云端资源授权或生产部署验收。
+
 这张表用于防止把“页面能打开”或“原生 DSH 能对话”误报成 Studio P0/P1 完成。
 
 | 目标要求 | 当前证据 | 状态 | 剩余工作或限制 |

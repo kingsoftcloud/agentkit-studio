@@ -48,6 +48,20 @@ runtime 不在支持集合时 Host 返回 typed error（`DSH_PRESET_REGISTRY_UNA
 provider 返回 typed runtime error，不会静默回退为默认 DSH Agent。当前已验证模型路由一致时
 系统 Prompt 会通过 persona row 进入 DSH composition；资源执行需看对应的工具/检索事件。
 
+### Codex Provider（当前实现）
+
+本地 `runtime: codex` Revision 已接入同一个 preset-scoped provider，但实际模型执行走官方
+Codex App Server 的 newline-delimited JSON-RPC：Host 启动 `codex app-server --stdio`，完成
+`initialize`、`thread/start` 和 `turn/start` 后，把 `item/agentMessage/delta` 以及 reasoning/plan
+增量映射回 DSH `llm/stream` block。每个 DSH turn 使用一个 ephemeral Thread，默认 cwd 为系统临时目录，
+因此选择 Agent 不会强制绑定 DSH Workspace；Workspace 仍由 DSH 自己管理文件和命令上下文。
+
+当前 Provider 明确采用无人值守策略（默认 `approvalPolicy=never`），命令、文件变更、权限申请和
+交互输入不会被静默批准。Codex 二进制不存在、App Server 提前退出、超时和失败会以
+`CODEX_PROVIDER_UNAVAILABLE`、`CODEX_TRANSPORT_*`、`CODEX_TIMEOUT` 或 `CODEX_TURN_FAILED`
+返回。DSH 负责外层 Session/历史/渲染，Codex Thread 的长期恢复和跨 turn 原生持久化仍不是本适配器
+的承诺；DSH 会话历史会在下一次临时 turn 中作为文本上下文传入。
+
 ## 4. 仍然没有解决的事情
 
 ### 4.1 Studio Agent ID 不是 DSH preset ID

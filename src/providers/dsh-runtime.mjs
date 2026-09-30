@@ -110,6 +110,15 @@ function finishBlocks(state) {
   return [...closeBlock(state, 'reasoning'), ...closeBlock(state, 'text'), { type: 'finish', reason: { kind: 'stop' } }];
 }
 
+async function* codexFrames(codexRuntime, options) {
+  const state = createChunkState();
+  for await (const chunk of codexRuntime.stream(options)) {
+    if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
+    else if (chunk?.type === 'text') yield* appendBlock(state, 'text', chunk.text);
+  }
+  yield* finishBlocks(state);
+}
+
 function createAsyncQueue() {
   const values = [];
   const waiters = [];
@@ -244,7 +253,7 @@ async function* cloudFrames(body) {
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, localHandler } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime } = {}) {
   return {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -261,6 +270,21 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler } = {}) {
       const input = textOf(user).trim();
       if (!agentId || !input) throw new Error('AgentKit Studio runtime requires an AgentId and user input');
       if (mode === 'local') {
+        if (options.studioRuntime === 'codex') {
+          if (!codexRuntime || typeof codexRuntime.stream !== 'function') {
+            const error = new Error('Codex Provider 未注册；请安装并启用官方 Codex App Server Provider');
+            error.code = 'CODEX_PROVIDER_UNAVAILABLE';
+            throw error;
+          }
+          yield* codexFrames(codexRuntime, {
+            agentId,
+            sessionId: String(options.sessionId || ''),
+            input,
+            messages: Array.isArray(options.messages) ? options.messages : [],
+            signal: options.signal,
+          });
+          return;
+        }
         if (typeof localHandler !== 'function') throw new Error('AgentKit local runtime is unavailable');
         yield* localFrames(await localHandler(), {
           agentId,

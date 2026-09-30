@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Codex 本地 Agent 现在通过官方 `codex app-server --stdio` 协议运行，不再误用本地
+  OpenAI-compatible 网关模型；每个 DSH turn 创建无工作区绑定的临时 Codex Thread，思考与答案
+  增量继续投影到 DSH 原生会话。未安装 Codex 时返回 `CODEX_PROVIDER_UNAVAILABLE`，默认不授予
+  命令或文件审批。
 - MCP 工具发现暂时不可用时保留绑定告警并继续纯文本回合；模型实际发起工具调用后仍严格失败闭环。
 - 外部 Streamable HTTP MCP 绑定现在支持 Endpoint、请求头和 `env://` credential reference；
   DSH 原生会话可继续消费本地模型的 reasoning/text 增量。
