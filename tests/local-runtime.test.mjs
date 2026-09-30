@@ -41,6 +41,11 @@ test('local runtime executes bound MCP tools and records a local trace', async (
   assert.match(output, /工具结果已使用/);
   assert.match(output, /run.completed/);
   assert.equal(traces[0].status, 'completed');
+  assert.deepEqual(traces[0].events.filter(event => event.event_type.startsWith('tool.')).map(event => [event.event_type, event.payload.name]), [
+    ['tool.started', 'search'],
+    ['tool.completed', 'search'],
+  ]);
+  assert.ok(traces[0].events.some(event => event.event_type === 'turn.text'));
 });
 
 test('local runtime rejects resource-bound agents when the adapter is unavailable', async () => {
@@ -150,6 +155,6 @@ test('local runtime aborts the model stream and records a canceled trace', async
   await pending;
   assert.equal(upstreamAborted, true);
   assert.equal(traces[0].status, 'canceled');
-  assert.equal(traces[0].events[0].event_type, 'run.canceled');
+  assert.equal(traces[0].events.at(-1).event_type, 'run.canceled');
   assert.doesNotMatch(response.chunks.join(''), /run\.failed/);
 });

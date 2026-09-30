@@ -47,6 +47,11 @@ Server `CancelRun` 路由是否存在的重新判断；它证明当前 Studio sh
 适配层尚未把该路由接到 DSH Client 的停止命令。P0/P1 必须保留该缺口，直到真实
 取消 receipt、终态事件和迟到事件处理完成。
 
+这段记录是 2026-09-24 固定基线的历史证据。当前 AgentKit Studio 已通过 Host-owned
+`cancelAgentConversation` 调用 `CancelRun`，并让浏览器 response close 中止 Host 到 `RunAgent`
+的 SSE；真实租户的取消 receipt 和迟到事件排序仍需集成环境验证，不能把本地 typed
+`CLOUD_RUN_CANCELLED` 测试当作 Server receipt 证明。
+
 ## 建议的 Server 增补最小请求/响应
 
 1. `CreateBuild`：`AgentId: string`、`SourceDigest: string`、`IdempotencyKey: string` 必填；

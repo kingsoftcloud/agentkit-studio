@@ -24,6 +24,8 @@
   不再在用户停止后继续等待模型超时或伪造 `run.failed`。
 - Codex 本地 Agent 现在也写入同一套 trace store：工具调用、思考和回答事件会保留为轻量事件，
   完成、失败和取消分别写入对应的运行终态，观测页不再漏掉 Codex turn。
+- Harness 本地 trace 也保留输入、思考、回答和 MCP 工具开始/完成事件；观测页可以看到一次本地
+  运行实际经过的资源调用，而不是只有最终运行状态。
 - MCP 工具发现暂时不可用时保留绑定告警并继续纯文本回合；模型实际发起工具调用后仍严格失败闭环。
 - 外部 Streamable HTTP MCP 绑定现在支持 Endpoint、请求头和 `env://` credential reference；
   DSH 原生会话可继续消费本地模型的 reasoning/text 增量。
