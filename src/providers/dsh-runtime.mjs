@@ -256,8 +256,20 @@ async function* localFrames(handler, payload) {
 
 async function* cloudFrames(body) {
   const state = createChunkState();
+  let completed = false;
   for await (const event of parseSse(body)) {
     const type = String(event?.type || event?.event || '');
+    if (/^response\.(failed|error)$/i.test(type) || /^error$/i.test(type)) {
+      const detail = String(event?.error?.message || event?.message || '云端 Agent 运行失败').slice(0, 500);
+      throw Object.assign(new Error(detail), { code: 'CLOUD_RUN_FAILED' });
+    }
+    if (/^response\.incomplete$/i.test(type)) {
+      throw Object.assign(new Error('云端 Agent 流未完整结束'), { code: 'CLOUD_STREAM_INCOMPLETE' });
+    }
+    if (/^response\.completed$/i.test(type)) {
+      completed = true;
+      continue;
+    }
     const item = event?.item || event?.output_item || event?.response?.output_item || event?.data?.item || {};
     const callId = String(event?.call_id || event?.callId || item?.call_id || item?.callId || item?.id || '').trim();
     const toolName = String(event?.name || event?.tool_name || item?.name || item?.function?.name || item?.function?.function?.name || state.toolNames.get(callId) || '').trim();
@@ -286,6 +298,7 @@ async function* cloudFrames(body) {
       if (text) yield* appendBlock(state, 'text', text);
     }
   }
+  if (!completed) throw Object.assign(new Error('云端 Agent 流未收到 response.completed'), { code: 'CLOUD_STREAM_INCOMPLETE' });
   yield* finishBlocks(state);
 }
 

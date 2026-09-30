@@ -230,6 +230,7 @@ test('the cloud bridge projects Responses tool lifecycle into expandable reasoni
       controller.enqueue(new TextEncoder().encode(frame({ type: 'response.output_item.added', item: { type: 'function_call', id: 'call-1', name: 'search' } })));
       controller.enqueue(new TextEncoder().encode(frame({ type: 'response.output_item.done', item: { type: 'function_call', id: 'call-1', name: 'search', status: 'completed' } })));
       controller.enqueue(new TextEncoder().encode(frame({ type: 'response.output_text.delta', delta: '云端结果' })));
+      controller.enqueue(new TextEncoder().encode(frame({ type: 'response.completed' })));
       controller.close();
     },
   });
@@ -246,4 +247,30 @@ test('the cloud bridge projects Responses tool lifecycle into expandable reasoni
     { type: 'block-end', index: 1, block: { type: 'text', text: '云端结果' } },
     { type: 'finish', reason: { kind: 'stop' } },
   ]);
+});
+
+test('the cloud bridge rejects an upstream failure event', async () => {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'response.failed', error: { message: 'upstream unavailable' } })}\n\n`));
+      controller.close();
+    },
+  });
+  const adapter = createDshRuntimeAdapter({ cloudClient: { streamAction: async () => ({ body }) } });
+  await assert.rejects(async () => {
+    for await (const _chunk of adapter.stream({ model: 'cloud:agent-1', messages: [{ role: 'user', content: '运行' }] })) {}
+  }, error => error.code === 'CLOUD_RUN_FAILED' && error.message === 'upstream unavailable');
+});
+
+test('the cloud bridge rejects a truncated SSE stream without completion', async () => {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"半截"}\n\n'));
+      controller.close();
+    },
+  });
+  const adapter = createDshRuntimeAdapter({ cloudClient: { streamAction: async () => ({ body }) } });
+  await assert.rejects(async () => {
+    for await (const _chunk of adapter.stream({ model: 'cloud:agent-1', messages: [{ role: 'user', content: '运行' }] })) {}
+  }, error => error.code === 'CLOUD_STREAM_INCOMPLETE');
 });

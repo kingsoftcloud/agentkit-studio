@@ -20,6 +20,8 @@
 - `response.output_text.delta` 聚合为当前助手消息；Responses 的 `output_item` / function-call
   工具事件会投影为可展开的 reasoning 状态；`response.completed` 才能把运行标记为完成。
 - HTTP 错误、Action 错误、断流和取消保持不同错误码；网络请求完成不等于 Agent 运行成功。
+- Host 只有在收到 `response.completed` 后才发出成功终态；`response.failed`、`response.incomplete`
+  或提前断流分别转成 typed failure/incomplete，不把半截文本当成成功回答。
 - `ListSessionEvents` 的 `SeqId` 是 Server 游标。当前页面只恢复已返回的历史事件；完整的
   seq watermark、实时订阅、重复事件去重和缺口重放仍由下一阶段的 SessionEventStore 适配补齐。
 - `ResumeRun`、`SubmitInteraction` 已在 Node Action 白名单中，但本轮页面尚未自动展示
