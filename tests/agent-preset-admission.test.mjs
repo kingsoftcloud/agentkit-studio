@@ -82,7 +82,9 @@ test('admission registers once and unregisters replaced revisions', async () => 
   revision.metadata.revision = 2;
   const replaced = await admission.ensure('demo/agent');
   assert.equal(replaced.presetId, dshPresetId('demo/agent', 2));
-  assert.deepEqual(unregistered, [dshPresetId('demo/agent', 1)]);
+  // Keep old revision presets alive: existing native Sessions may still
+  // reference them after a newer revision is admitted.
+  assert.deepEqual(unregistered, []);
   await admission.dispose();
   assert.deepEqual(unregistered, [dshPresetId('demo/agent', 1), dshPresetId('demo/agent', 2)]);
 });

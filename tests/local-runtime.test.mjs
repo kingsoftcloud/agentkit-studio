@@ -105,3 +105,23 @@ test('local runtime keeps a text-only turn alive when MCP discovery is temporari
   assert.match(requestBody.messages[0].content, /MCP mcp-unavailable 当前不可用/);
   assert.match(response.chunks.join(''), /普通文本对话可继续/);
 });
+
+test('local runtime executes the frozen Build instead of the mutable Agent record', async () => {
+  const response = responseSink();
+  let requestBody;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: { instructions: { system: 'new prompt' } } }) }),
+    buildStore: { resolve: async () => ({ metadata: { local: true }, spec: { instructions: { system: 'frozen prompt' }, bindings: {} }, bindings: {} }) },
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: { listMcpTools: async () => [] },
+    observability: { syncTrace: async () => {} },
+    fetchImpl: async (_url, init) => {
+      requestBody = JSON.parse(init.body);
+      return new Response('data: {"choices":[{"delta":{"content":"冻结版本"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', buildId: 'build_11111111111111111111', input: '运行' })]), response);
+  assert.equal(response.status, 200);
+  assert.match(requestBody.messages[0].content, /frozen prompt/);
+  assert.doesNotMatch(requestBody.messages[0].content, /new prompt/);
+});

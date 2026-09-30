@@ -18,6 +18,7 @@ export function apply(ctx, config = {}) {
     agentId,
     runtime: config.runtime,
     local: config.local === true,
+    buildId: config.buildId || '',
   }));
 }
 

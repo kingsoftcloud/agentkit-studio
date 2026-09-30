@@ -20,11 +20,11 @@ export function setDshRuntimeAdapter(adapter) {
   return () => { if (activeAdapter === adapter) activeAdapter = undefined; };
 }
 
-export function streamDshRuntime(options, { agentId, runtime, local } = {}) {
+export function streamDshRuntime(options, { agentId, runtime, local, buildId } = {}) {
   const id = String(agentId || '').trim();
   if (!id || !activeAdapter) throw new Error('AgentKit Studio runtime bridge is unavailable');
   const mode = local === true ? 'local' : 'cloud';
-  return activeAdapter.stream({ ...options, model: `${mode}:${id}`, studioRuntime: runtime });
+  return activeAdapter.stream({ ...options, model: `${mode}:${id}`, studioRuntime: runtime, ...(buildId ? { buildId } : {}) });
 }
 
 function textOf(message) {
@@ -288,6 +288,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
         if (typeof localHandler !== 'function') throw new Error('AgentKit local runtime is unavailable');
         yield* localFrames(await localHandler(), {
           agentId,
+          ...(options.buildId ? { buildId: options.buildId } : {}),
           sessionId: String(options.sessionId || ''),
           userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,

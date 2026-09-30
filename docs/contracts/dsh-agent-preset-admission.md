@@ -28,6 +28,14 @@ ctx.sessions.create({ cwd, sessionId?, workspaceId?, agentPreset? })
 
 ## 3. 当前 Studio 实现的边界
 
+### 冻结 Build 会话
+
+本地 Build 的 `buildId` 会进入 preset identity（`agentId + revision + buildId`）。Host 从
+`agent-bundle.zip` 读取并校验 `manifest.json` 后才注册 preset；目录越界、错误压缩格式、CRC
+不一致或内容摘要不匹配都会返回 typed error。通过构建与部署页的“在新会话运行”进入的 DSH
+Session 会一直使用该 Build 的 Prompt、模型和资源绑定，后续编辑 Agent 不会改变这个会话。
+旧版本 preset 不在新版本准入时注销，以免破坏仍在使用它的原生 Session；Host 销毁时统一清理。
+
 Studio Host 现在通过 `agents/ensure-preset` 使用公开 `ctx.agentPresets.register` 注册一个稳定的、按 Agent Revision 版本化的 preset；对有系统 Prompt 的准入 Revision 挂载官方 `@deepseek-ai/dsh-persona` row。浏览器只在官方 session-scoped `conversation.hero.agentPreset` 槽位中调用 `ctx.remote.agentPresets.select(sessionId, presetId)`。首轮之后 DSH 自己锁定 preset，Studio 不注入 InputHub、SessionCommandController，也不维护第二套会话状态。
 
 这条链对所有 Studio 支持的 `dsh-native`、`harness`、`codex` Revision 都建立 preset；其中
@@ -66,13 +74,13 @@ Codex App Server 的 newline-delimited JSON-RPC：Host 启动 `codex app-server 
 
 ### 4.1 Studio Agent ID 不是 DSH preset ID
 
-AgentKit Studio 的 Agent Catalog、Revision 和资源绑定在 KsADK server 侧；DSH Host 的 preset roster 来自本地 profile 的 Cordis composition。除了上面的模型路由一致窄准入以外，当前没有一个公开合同把：
+AgentKit Studio 的 Agent Catalog、Revision 和资源绑定在 KsADK server 侧；DSH Host 的 preset roster 来自本地 profile 的 Cordis composition。早期版本除了模型路由一致窄准入以外没有公开合同把：
 
 ```text
 Studio AgentRevision → DSH PresetDefinition → session/create.agentPreset
 ```
 
-动态地连起来。把资源型 Studio Agent ID 直接当成 preset ID，或在浏览器 localStorage 里做同名映射，都会让 DSH Host 运行默认 composition，属于假绑定。
+动态地连起来。当前 Host 已通过 `agents/ensure-preset` 和 revision/build-scoped registry 完成这层映射；把资源型 Studio Agent ID 直接当成 preset ID，或在浏览器 localStorage 里做同名映射，仍属于假绑定。
 
 ### 4.2 资源绑定不能靠 preset 字符串自动出现
 

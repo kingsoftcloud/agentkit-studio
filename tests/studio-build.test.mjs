@@ -94,3 +94,23 @@ test('build id changes when the definition changes', () => {
   const b = buildIdFor({ agentId: 'x', revision: 2 });
   assert.notEqual(a, b);
 });
+
+test('a successful local build resolves to its frozen agent definition', async () => {
+  const store = await makeStore();
+  const build = createStudioBuild({ storeDir: store });
+  const input = {
+    agentId: 'ar-local-aaaaaaaaaaaaaaaa', agentName: 'Frozen', revision: 7,
+    spec: { runtime: { type: 'harness' }, instructions: { system: 'old prompt' } },
+    bindings: { mcpServers: [{ resourceId: 'mcp-old' }] },
+    metadata: { local: true },
+  };
+  const record = await build.build(input);
+  const frozen = await build.resolve(input.agentId, record.id);
+  assert.equal(frozen.buildId, record.id);
+  assert.equal(frozen.metadata.local, true);
+  assert.equal(frozen.metadata.revision, 7);
+  assert.equal(frozen.spec.instructions.system, 'old prompt');
+  assert.deepEqual(frozen.bindings, input.bindings);
+  await assert.rejects(build.resolve(input.agentId, 'build_00000000000000000000'), error => error.code === 'BUILD_NOT_FOUND');
+  await rm(store, { recursive: true, force: true }).catch(() => {});
+});

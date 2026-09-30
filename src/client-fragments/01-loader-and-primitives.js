@@ -175,13 +175,13 @@ window.__ModuleLoader__.load({
         }
         throw Object.assign(new Error('Studio 本地任务需要已连接的 Studio Host'), { code: 'HOST_CONNECTION_MISSING' });
       }
-      async function ensureDshPreset(agentId) {
+      async function ensureDshPreset(agentId, buildId = '') {
         if (!connection?.rpc?.call) {
           const error = new Error('DSH Agent preset 准入需要已连接的 Studio Host');
           error.code = 'DSH_PRESET_HOST_CONNECTION_MISSING';
           throw error;
         }
-        const result = await connection.rpc.call('/agentkit', 'agents/ensure-preset', { agentId });
+        const result = await connection.rpc.call('/agentkit', 'agents/ensure-preset', { agentId, ...(buildId ? { buildId } : {}) });
         if (!result?.ok) {
           const error = new Error(result?.error?.message || 'DSH Agent preset 准入失败');
           error.code = result?.error?.code || 'DSH_PRESET_ADMISSION_FAILED';

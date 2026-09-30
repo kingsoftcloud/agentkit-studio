@@ -66,9 +66,9 @@ export function unsupportedDshBindings(agent = {}, { activeModel } = {}) {
   return [...new Set(refs)];
 }
 
-export function dshPresetId(agentId, revision = 1) {
+export function dshPresetId(agentId, revision = 1, buildId = '') {
   const rev = Number.isFinite(Number(revision)) && Number(revision) > 0 ? Number(revision) : 1;
-  return `agentkit-studio-agent-${encodedId(agentId)}-r${rev}`;
+  return `agentkit-studio-agent-${encodedId(agentId)}-r${rev}${buildId ? `-${encodedId(buildId)}` : ''}`;
 }
 
 export function dshPresetEligibility(agent = {}, options = {}) {
@@ -130,9 +130,17 @@ export class DshPresetAdmission {
       error.details = { agentId, ...(eligibility.unsupported ? { unsupported: eligibility.unsupported } : {}), ...(eligibility.runtime ? { runtime: eligibility.runtime } : {}) };
       throw error;
     }
-    const previous = this.registrations.get(eligibility.agentId);
+    const buildId = agent.buildId || '';
+    if (buildId) {
+      if (!/^build_[0-9a-f]{20}$/.test(buildId) || agent.metadata?.local !== true) {
+        throw Object.assign(new Error('只有本地 Agent Build 支持冻结版本会话'), { code: 'BUILD_RUNTIME_UNSUPPORTED' });
+      }
+      eligibility.buildId = buildId;
+      eligibility.presetId = dshPresetId(eligibility.agentId, eligibility.revision, buildId);
+      eligibility.mode = 'studio-bridge';
+    }
+    const previous = this.registrations.get(eligibility.presetId);
     if (previous?.presetId === eligibility.presetId) return { ...eligibility, reused: true };
-    if (previous?.unregister) await previous.unregister();
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
@@ -146,19 +154,22 @@ export class DshPresetAdmission {
           agentId: eligibility.agentId,
           runtime: eligibility.runtime,
           local: agent?.metadata?.local === true,
+          ...(buildId ? { buildId } : {}),
         },
       });
     }
     const unregister = await this.registry.register({
       id: eligibility.presetId,
-      name: String(agent?.metadata?.name || agent?.name || eligibility.agentId),
-      description: 'AgentKit Studio dsh-native Agent（使用当前 DSH 模型路由）',
+      name: `${String(agent?.metadata?.name || agent?.name || eligibility.agentId)}${buildId ? ` · Revision ${eligibility.revision} · ${buildId.slice(-8)}` : ''}`,
+      description: buildId ? `AgentKit Studio 冻结版本 ${buildId}` : 'AgentKit Studio Agent',
       // The persona row is optional. Resource-bearing Harness/Codex revisions
       // add the Studio runtime listener, which changes only the provider route;
       // DSH still owns the Session Controller, durable loop and renderer.
       plugins,
     });
-    this.registrations.set(eligibility.agentId, { presetId: eligibility.presetId, unregister });
+    // A newer revision must not remove a preset still referenced by an older
+    // native Session. Dispose all registrations with the Host scope instead.
+    this.registrations.set(eligibility.presetId, { presetId: eligibility.presetId, unregister });
     return { ...eligibility, reused: false };
   }
 

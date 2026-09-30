@@ -8,7 +8,7 @@
  */
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createZip, buildIdFor } from './zip.mjs';
+import { createZip, buildIdFor, readZipEntry } from './zip.mjs';
 
 export class BuildError extends Error {
   constructor(code, message, details = {}) {
@@ -23,6 +23,7 @@ export function createStudioBuild({ storeDir } = {}) {
   const root = storeDir;
 
   function agentDir(agentId) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$/.test(String(agentId)) || agentId === '..') throw new BuildError('BUILD_AGENT_ID_INVALID', 'AgentId 格式无效');
     return join(root, 'dist', agentId);
   }
 
@@ -81,8 +82,31 @@ export function createStudioBuild({ storeDir } = {}) {
   }
 
   async function artifactPath(agentId, buildId) {
+    if (!/^build_[0-9a-f]{20}$/.test(String(buildId))) throw new BuildError('BUILD_ID_INVALID', 'BuildId 格式无效');
     return join(agentDir(agentId), buildId, 'agent-bundle.zip');
   }
 
-  return { build, list, artifactPath };
+  async function resolve(agentId, buildId) {
+    const path = await artifactPath(agentId, buildId);
+    let zip;
+    try { zip = await readFile(path); } catch (error) {
+      if (error.code === 'ENOENT') throw new BuildError('BUILD_NOT_FOUND', '构建产物不存在', { agentId, buildId });
+      throw error;
+    }
+    try {
+      const manifest = JSON.parse(readZipEntry(zip, 'agent-bundle/manifest.json').toString('utf8'));
+      const { createdAt, ...identity } = manifest;
+      if (manifest.format !== 'agentkit.agent-bundle/v1' || manifest.agentId !== agentId || buildIdFor(identity) !== buildId || !manifest.spec) throw new Error('bundle identity mismatch');
+      return {
+        metadata: { ...manifest.metadata, id: agentId, name: manifest.name, revision: manifest.revision },
+        spec: { ...manifest.spec, bindings: manifest.bindings },
+        bindings: manifest.bindings,
+        buildId,
+      };
+    } catch (error) {
+      throw new BuildError('BUILD_ARTIFACT_INVALID', '构建产物损坏或与 BuildId 不匹配', { agentId, buildId });
+    }
+  }
+
+  return { build, list, artifactPath, resolve };
 }

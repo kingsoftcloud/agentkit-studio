@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 本地 Build 现在可作为可运行的冻结版本：Build ZIP 会经过目录、大小、CRC 和内容身份校验，
+  DSH 原生会话可从构建与部署页选择“在新会话运行”。会话使用该 Build 的 Prompt、模型和资源绑定，
+  不再悄悄读取 Agent 后续编辑的最新 Revision；旧 Build 对应的 preset 会保留到 Host 生命周期结束。
+
 - Codex 本地 Agent 现在通过官方 `codex app-server --stdio` 协议运行，不再误用本地
   OpenAI-compatible 网关模型；每个 DSH turn 创建无工作区绑定的临时 Codex Thread，思考与答案
   增量继续投影到 DSH 原生会话。未安装 Codex 时返回 `CODEX_PROVIDER_UNAVAILABLE`，默认不授予

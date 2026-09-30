@@ -85,3 +85,33 @@ export function buildIdFor(manifest) {
   const digest = createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
   return `build_${digest.slice(0, 20)}`;
 }
+
+/** Read our STORED bundle entries in memory, with bounds and CRC validation. */
+export function readZipEntry(buffer, name) {
+  if (!Buffer.isBuffer(buffer) || buffer.length > 20 * 1024 * 1024) throw new Error('invalid bundle size');
+  const end = buffer.length - 22;
+  if (end < 0 || buffer.readUInt32LE(end) !== 0x06054b50) throw new Error('invalid bundle directory');
+  const count = buffer.readUInt16LE(end + 10);
+  let cursor = buffer.readUInt32LE(end + 16);
+  if (cursor + buffer.readUInt32LE(end + 12) !== end) throw new Error('invalid bundle directory bounds');
+  let result;
+  for (let index = 0; index < count; index += 1) {
+    if (cursor + 46 > end || buffer.readUInt32LE(cursor) !== 0x02014b50) throw new Error('invalid bundle entry');
+    const size = buffer.readUInt32LE(cursor + 24);
+    const nameLength = buffer.readUInt16LE(cursor + 28);
+    const next = cursor + 46 + nameLength + buffer.readUInt16LE(cursor + 30) + buffer.readUInt16LE(cursor + 32);
+    if (next > end) throw new Error('invalid bundle entry bounds');
+    if (buffer.toString('utf8', cursor + 46, cursor + 46 + nameLength) === name) {
+      if (result || buffer.readUInt16LE(cursor + 10) !== 0 || buffer.readUInt32LE(cursor + 20) !== size) throw new Error('unsupported bundle entry');
+      const offset = buffer.readUInt32LE(cursor + 42);
+      if (offset + 30 > cursor || buffer.readUInt32LE(offset) !== 0x04034b50) throw new Error('invalid bundle local header');
+      const start = offset + 30 + buffer.readUInt16LE(offset + 26) + buffer.readUInt16LE(offset + 28);
+      if (start + size > cursor) throw new Error('invalid bundle content bounds');
+      result = buffer.subarray(start, start + size);
+      if (crc32(result) !== buffer.readUInt32LE(cursor + 16)) throw new Error('bundle checksum mismatch');
+    }
+    cursor = next;
+  }
+  if (cursor !== end || !result) throw new Error('bundle entry missing');
+  return result;
+}

@@ -129,7 +129,7 @@ function envelope(runId, sessionId, item) {
   return `data: ${JSON.stringify({ conversationItem: item, runId })}\n\n`;
 }
 
-export function createLocalConversationHandler({ agentStore, modelService, resourceAdapter, observability, fetchImpl = fetch } = {}) {
+export function createLocalConversationHandler({ agentStore, buildStore, modelService, resourceAdapter, observability, fetchImpl = fetch } = {}) {
 
   return async function handle(request, response) {
     let body = '';
@@ -142,10 +142,20 @@ export function createLocalConversationHandler({ agentStore, modelService, resou
     if (!agentId || !input) { response.writeHead(400); response.end('agentId and input required'); return; }
 
     let record;
+    if (parsed.buildId) {
+      try {
+        if (!buildStore?.resolve) throw new LocalRuntimeError('BUILD_RUNTIME_UNAVAILABLE', '本地 Build 运行适配器未启用');
+        record = await buildStore.resolve(agentId, String(parsed.buildId));
+        if (record.metadata?.local !== true) throw new LocalRuntimeError('BUILD_RUNTIME_UNSUPPORTED', '只有本地 Agent Build 支持冻结版本会话');
+      } catch (error) {
+        response.writeHead(409); response.end(JSON.stringify({ error: { code: error.code || 'BUILD_EXECUTION_FAILED', message: error.message } })); return;
+      }
+    } else {
     try {
       const store = await agentStore();
       record = await store.get(agentId);
     } catch { record = null; }
+    }
     if (!record) { response.writeHead(404); response.end('local agent not found'); return; }
 
     const systemPrompt = [record.spec?.instructions?.system || record.spec?.description || '', record.spec?.instructions?.task || ''].filter(Boolean).join('\n\n');
@@ -158,7 +168,8 @@ export function createLocalConversationHandler({ agentStore, modelService, resou
       response.writeHead(409); response.end(JSON.stringify({ error: { code: 'RESOURCE_ADAPTER_MISSING', message: '该 Agent 绑定了资源，但本地资源适配器未启用' } })); return;
     }
     let profile;
-    try { profile = await modelService.profile(''); } catch (error) {
+    const modelId = record.spec?.bindings?.modelProfileId || bindingIds(record.spec?.bindings, 'modelProfileIds')[0] || '';
+    try { profile = await (modelService.profileForAgent || modelService.profile)(modelId); } catch (error) {
       response.writeHead(409); response.end(JSON.stringify({ error: { code: error?.code || 'MODEL_CREDENTIAL_MISSING', message: error?.message || '模型配置不可用' } }));
       return;
     }

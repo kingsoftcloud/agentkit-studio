@@ -117,6 +117,7 @@ async function registerControlPlane(ctx) {
         const { createLocalConversationHandler } = await import('./local-runtime.mjs');
         return createLocalConversationHandler({
           agentStore: async () => store,
+          buildStore: (await studioBuildPromise).build,
           modelService: localModels,
           resourceAdapter: resourceAdapters,
           observability,
@@ -238,8 +239,12 @@ async function registerControlPlane(ctx) {
         try {
           const localStore = await agentStorePromise;
           const local = await localStore.get(agentId);
+          const buildId = String(payload?.buildId || '').trim();
+          const build = buildId ? await (await studioBuildPromise).build.resolve(agentId, buildId) : null;
+          // The no-build path remains the original local admission contract:
+          // presetAdmission.ensure(agentId, { agent: local }).
           const value = local
-            ? await presetAdmission.ensure(agentId, { agent: local })
+            ? await presetAdmission.ensure(agentId, { agent: build ? { ...build, metadata: { ...local.metadata, ...build.metadata, local: true } } : local })
             : await presetAdmission.ensure(agentId);
           return { ok: true, value };
         } catch (error) {
