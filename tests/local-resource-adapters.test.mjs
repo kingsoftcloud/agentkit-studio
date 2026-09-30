@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLocalResourceAdapters, LocalResourceError } from '../src/local-resource-adapters.mjs';
+import { createZip } from '../src/zip.mjs';
 
 test('cloud Skill Space with no Skills is a valid empty binding', async () => {
   const calls = [];
@@ -10,6 +11,27 @@ test('cloud Skill Space with no Skills is a valid empty binding', async () => {
   const result = await adapters.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9');
   assert.deepEqual(result, { name: 'bcb4df65-2448-4c8a-99ca-62a12d26bce9', content: '' });
   assert.deepEqual(calls, [{ name: 'ListSkillsBySpaceId', params: { SpaceId: 'bcb4df65-2448-4c8a-99ca-62a12d26bce9', PageNumber: 1, PageSize: 100 } }]);
+});
+
+test('cloud Skill Space downloads through the injected Host fetch boundary', async () => {
+  const requests = [];
+  const adapters = createLocalResourceAdapters({
+    serverClient: {
+      skillAction: async (name, params) => {
+        requests.push({ name, params });
+        if (name === 'ListSkillsBySpaceId') return { data: { Skills: [{ SkillId: 'skill-1', Name: '营销写作' }] } };
+        return { data: { DownloadUrl: 'https://download.test/skill-1.zip' } };
+      },
+    },
+    fetchImpl: async url => {
+      assert.equal(String(url), 'https://download.test/skill-1.zip');
+      return new Response(createZip([{ name: 'SKILL.md', data: '# 营销写作\n保持短句。' }]), { status: 200 });
+    },
+  });
+  const result = await adapters.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9');
+  assert.equal(result.name, 'bcb4df65-2448-4c8a-99ca-62a12d26bce9');
+  assert.match(result.content, /保持短句/);
+  assert.deepEqual(requests.map(item => item.name), ['ListSkillsBySpaceId', 'GetPremadeSkillDownloadUrl']);
 });
 
 test('missing non-cloud Skill remains an explicit local import error', async () => {

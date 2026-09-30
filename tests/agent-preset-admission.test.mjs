@@ -140,6 +140,32 @@ test('the runtime bridge forwards local text and reasoning deltas as they arrive
   ]);
 });
 
+test('the native bridge projects local MCP calls into expandable reasoning', async () => {
+  const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
+  const adapter = createDshRuntimeAdapter({
+    localHandler: async () => async (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write(event({ kind: 'tool_call', lifecycle: 'running', payload: { callId: 'call-1', name: 'metaso_web_search' } }));
+      response.write(event({ kind: 'tool_result', lifecycle: 'completed', payload: { callId: 'call-1', text: '命中一条结果' } }));
+      response.write(event({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: '搜索完成' } }));
+      response.write(`data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`);
+      response.end('data: [DONE]\n\n');
+    },
+  });
+  const chunks = [];
+  for await (const chunk of adapter.stream({ model: 'local:demo/agent', messages: [{ role: 'user', content: '搜索' }] })) chunks.push(chunk);
+  assert.deepEqual(chunks, [
+    { type: 'block-start', index: 0, blockType: 'reasoning' },
+    { type: 'reasoning-delta', index: 0, text: '工具 metaso_web_search 正在调用。' },
+    { type: 'reasoning-delta', index: 0, text: '工具 metaso_web_search 已完成。' },
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: '工具 metaso_web_search 正在调用。工具 metaso_web_search 已完成。' } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '搜索完成' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '搜索完成' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]);
+});
+
 test('the runtime bridge routes Codex Agents to the Codex provider instead of the gateway', async () => {
   const calls = [];
   const adapter = createDshRuntimeAdapter({

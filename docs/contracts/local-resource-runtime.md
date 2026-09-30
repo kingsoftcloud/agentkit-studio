@@ -27,6 +27,10 @@
   Host 会把工具调用的开始、完成和失败状态投影成 DSH reasoning 增量，因此原生会话可以展开
   查看资源调用过程；不会伪造 DSH `tool-call` block，避免 DSH loop 再次执行同一个 MCP 工具。
 
+Harness 本地运行时同样把 `tool_call` / `tool_result` 事件投影成 reasoning 增量，并通过 callId
+关联工具名；云端 Skill Space 的压缩包下载必须经过 Host 注入的 `fetchImpl`，不能在资源适配器
+内部直接绕过 Host 网络边界。
+
 模型的 tool call 会先记录为本地 conversation item，Host 执行 MCP 后以 tool result 继续最多两次
 工具续跑（最多三次模型请求）。MCP 返回 `isError`、参数 JSON 非法、资源缺失或模型实际调用
 工具失败都会生成失败终态；一次文本回合开始前的 `tools/list` 连接失败会作为受限资源告警注入

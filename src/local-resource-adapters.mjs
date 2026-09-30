@@ -115,7 +115,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       const download = await serverClient.skillAction(versionId ? 'GetSkillDownloadUrl' : 'GetPremadeSkillDownloadUrl', { SkillId: skillId, ...(versionId ? { VersionId: versionId } : {}) });
       const url = String(download.data?.DownloadUrl || download.data?.download_url || '').trim();
       if (!/^https:\/\//i.test(url)) throw new LocalResourceError('SKILL_DOWNLOAD_URL_INVALID', '云端 Skill 下载地址无效', { resourceId: skillId });
-      const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30000) });
+      const response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(30000) });
       if (!response.ok) throw new LocalResourceError('SKILL_DOWNLOAD_FAILED', `云端 Skill 下载失败（${response.status}）`, { resourceId: skillId });
       const length = Number(response.headers.get('content-length') || 0);
       if (length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });

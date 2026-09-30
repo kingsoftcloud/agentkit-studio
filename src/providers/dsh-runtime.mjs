@@ -73,7 +73,10 @@ async function* parseSse(body) {
 }
 
 function createChunkState() {
-  return { text: '', reasoning: '', textStarted: false, reasoningStarted: false, textEnded: false, reasoningEnded: false };
+  return {
+    text: '', reasoning: '', textStarted: false, reasoningStarted: false, textEnded: false, reasoningEnded: false,
+    toolNames: new Map(),
+  };
 }
 
 function closeBlock(state, kind) {
@@ -177,6 +180,18 @@ function parseLocalRecord(record, state) {
   }
   if (item?.kind === 'assistant_reasoning') return appendBlock(state, 'reasoning', item.payload?.operation === 'append' ? item.payload.text : '');
   if (item?.kind === 'assistant_text') return appendBlock(state, 'text', item.payload?.operation === 'append' ? item.payload.text : '');
+  if (item?.kind === 'tool_call') {
+    const callId = String(item.payload?.callId || '');
+    const name = String(item.payload?.name || 'bound tool');
+    if (callId) state.toolNames.set(callId, name);
+    return appendBlock(state, 'reasoning', `工具 ${name} 正在调用。`);
+  }
+  if (item?.kind === 'tool_result') {
+    const callId = String(item.payload?.callId || '');
+    const name = state.toolNames.get(callId) || 'bound tool';
+    const phase = item.lifecycle === 'failed' ? '失败' : '已完成';
+    return appendBlock(state, 'reasoning', `工具 ${name} ${phase}。`);
+  }
   if (event?.runtimeEvent?.event_type === 'run.completed') return finishBlocks(state);
   return [];
 }
