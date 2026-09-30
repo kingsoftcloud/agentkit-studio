@@ -253,7 +253,7 @@ async function* cloudFrames(body) {
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, codexResourceContext } = {}) {
   return {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -276,12 +276,24 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
             error.code = 'CODEX_PROVIDER_UNAVAILABLE';
             throw error;
           }
+          const resources = typeof codexResourceContext === 'function'
+            ? await codexResourceContext({
+              agentId,
+              buildId: String(options.buildId || ''),
+              input,
+              sessionId: String(options.sessionId || ''),
+              userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
+            })
+            : {};
           yield* codexFrames(codexRuntime, {
             agentId,
             sessionId: String(options.sessionId || ''),
             input,
             messages: Array.isArray(options.messages) ? options.messages : [],
             signal: options.signal,
+            systemPrompt: resources.systemPrompt || '',
+            dynamicTools: resources.dynamicTools || [],
+            toolHandler: resources.toolHandler,
           });
           return;
         }

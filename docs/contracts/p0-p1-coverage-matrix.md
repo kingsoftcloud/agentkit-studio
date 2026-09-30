@@ -7,7 +7,9 @@
 > **2026-10-01 当前迭代**：本地 `runtime: codex` 已通过官方 `codex app-server --stdio`
 > 协议接入 DSH preset-scoped provider。真实 DSH Web 会话中绑定临时 Codex Agent 后，发送
 > `请只回复：CODEX_WEB_OK` 收到同内容，第二轮仍在同一 DSH 会话中完成；该证据证明本机
-> Codex provider 可用和原生会话复用，不替代持久 Codex Thread、云端资源授权或生产部署验收。
+> Codex provider 可用和原生会话复用。随后使用同一 Agent 绑定的 Streamable HTTP MCP，真实
+> 触发 `item/tool/call` 并返回搜索结果，证明 Host-owned dynamic tool bridge 已贯通；这不替代
+> 持久 Codex Thread、云端资源授权或生产部署验收。
 
 这张表用于防止把“页面能打开”或“原生 DSH 能对话”误报成 Studio P0/P1 完成。
 
@@ -28,11 +30,11 @@
 | Web、Node Host、Python Host、Browser guest、Harness 内存基线 | `memory-baseline.md` 及 `.scratch` JSON/日志；新增 rc.1 Web/Host 真实会话两批负载（3 warmup + 10 turns、追加 10 turns、官方 Dock）、Tool/Goal 真实负载切片，以及 rc.1/rc.2 官方 SDK 3+10 固定 session 重跑 | 部分完成 | Web/Host 真实会话 A/B、Tool/Goal 和 rc.2 Harness 窄负载已有 RSS/退出残留证据（JS heap 未取得）；Approval、Browser guest、Harness 同口径工具负载及完整残留门禁仍未完成 |
 | 真实测试与复现证据 | `pnpm check` 54/54；`verify-dsh` 2/2；`verify-dsh-sdk` 2/2；`make ci`；`uv run pytest tests/studio tests/runtime tests/events -q` 312 passed、8 skipped（2026-09-28 重跑）；rc.2 preset/admission 84/84；`git diff --check`；隔离 rc.2 浏览器四个运行中心页面和会话 Agent 选择器冒烟 | 已完成（当前覆盖） | 完整 P1 cloud/memory 证据仍需补齐；资源型 Agent 准入未签收 |
 | UI 快速创建的 Codex / KsADK 本地 Agent | 页面真实提交两份 Revision；Codex 与修复权限后的 KsADK 均 Build `SUCCEEDED`，SSE 均收到 `message.delta`、`message.completed`、`run.completed`；带唯一 marker 的结果见 `ui-created-codex-ksadk-e2e-2026-09-27.json` | 已完成（本地模型 + Tool） | 平台知识库/记忆库、MCP/Skill 运行激活仍需各自独立证据 |
-| Agent 选择器与 Agent Teams | Agent 目录通过 DSH Connection `/agentkit` 控制通道返回真实 Host Agent；浏览器显示无 Agent、Codex、KsADK Harness 与 DSH Native 选项。`agent-team-profile`、Team、持久化、投影、工具、UI 与浏览器官方测试 116/116，官方 headless E2E 1/1；Studio 实际完成 `list_agents` 和 `spawn_teammate` 委派，复跑记录见 [`verification-rerun-2026-09-27.json`](../../../.scratch/studio-dsh-native-2026-09-24/verification-rerun-2026-09-27.json)；`Agents` → `打开绑定对话` 已通过 DSH Native Host canonical SSE 实测；当前页面 AX 核对见 [`agent-selector-session-scope-2026-09-27.json`](../../../.scratch/studio-dsh-native-2026-09-24/agent-selector-session-scope-2026-09-27.json) | 部分完成（DSH Native 目录/Teams/窄准入） | 无资源 dsh-native Revision 已改为会话级 `agents/ensure-preset` + `agentPresets.select`，首轮后锁定；带模型/Tool/MCP/Skill/知识库/记忆库的 Revision 仍会 typed fail-closed。选择不会重建左侧本地会话列表，也不是中途动态切换；Codex 当前因 provider 未注册阻塞，KsADK Host Teams lifecycle 当前 `authority_profile_unavailable`，因此不能声称 Codex/KsADK Agent 流或 Host Teams 默认可用 |
-| 绑定 Agent 的官方 Composer 路线 | `docs/contracts/dsh-agent-preset-admission.md` 固定 rc.2 公开 `session/create.agentPreset`、`agentPresets.select`；Studio 已把无资源 dsh-native Revision 接到官方 session-scoped hero slot，并在真实 rc.2 Web Host 中验证 selector/锁定提示；资源型 Revision 保持 typed fail-closed | 部分完成且资源执行仍为 P0 风险 | 仍需动态 Revision provider、模型/工具/平台资源物化、真实 `agents/ensure-preset` 目录 Agent、首轮资源调用和恢复证据；禁止 DOM/bridge/sink 注入 |
+| Agent 选择器与 Agent Teams | Agent 目录通过 DSH Connection `/agentkit` 控制通道返回真实 Host Agent；浏览器显示无 Agent、Codex、KsADK Harness 与 DSH Native 选项。`agent-team-profile`、Team、持久化、投影、工具、UI 与浏览器官方测试 116/116，官方 headless E2E 1/1；Studio 实际完成 `list_agents` 和 `spawn_teammate` 委派，复跑记录见 [`verification-rerun-2026-09-27.json`](../../../.scratch/studio-dsh-native-2026-09-24/verification-rerun-2026-09-27.json)；`Agents` → `打开绑定对话` 已通过 DSH Native Host canonical SSE 实测；当前页面 AX 核对见 [`agent-selector-session-scope-2026-09-27.json`](../../../.scratch/studio-dsh-native-2026-09-24/agent-selector-session-scope-2026-09-27.json) | 部分完成（DSH Native 目录/Teams/本地 Codex 资源桥） | 无资源 dsh-native Revision 已改为会话级 `agents/ensure-preset` + `agentPresets.select`，首轮后锁定；本地 Codex 已通过官方 App Server 和 Host dynamic tool bridge 验证 MCP 执行。选择不会重建左侧本地会话列表，也不是中途动态切换；KsADK Host Teams lifecycle 当前 `authority_profile_unavailable`，云端资源和生产流仍需独立验收 |
+| 绑定 Agent 的官方 Composer 路线 | `docs/contracts/dsh-agent-preset-admission.md` 固定 rc.2 公开 `session/create.agentPreset`、`agentPresets.select`；Studio 已把无资源 dsh-native Revision 接到官方 session-scoped hero slot，并在真实 Web Host 中验证 selector/锁定提示；本地 Harness/Codex 资源型 Revision 复用同一原生 Session/Loop，Codex MCP 已完成真实首轮调用 | 部分完成且云端合同仍待补齐 | 仍需云端资源授权、云端部署/恢复和生产流证据；禁止 DOM/bridge/sink 注入 |
 
 ## 当前结论
 
-原生 DSH 会话、官方宿主加载、资源目录读取、适配器映射和本地控制面已具备可复现证据；
-“选择一个 Studio Agent 后由该 Agent 的模型/MCP/Skill/知识库/记忆真实执行”还没有满足验收条件。
-因此本矩阵和 P0/P1 报告保持 **未整体签收**，直到绑定 Agent 路线、云端合同和完整内存门禁都有直接证据。
+原生 DSH 会话、官方宿主加载、资源目录读取、Host 适配器映射以及本地 Harness/Codex 的资源
+执行已具备可复现证据；云端资源授权、云端部署/恢复和完整内存门禁仍未签收。因此本矩阵和
+P0/P1 报告保持 **未整体签收**，直到这些云端与发布边界都有直接证据。

@@ -126,10 +126,40 @@ async function registerControlPlane(ctx) {
     }
     return localRuntimeHandlerPromise;
   };
+  const codexResourceContext = async ({ agentId, buildId, input, userId, sessionId } = {}) => {
+    const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
+    let record = buildId ? await buildState.build.resolve(agentId, buildId) : await store.get(agentId);
+    if (!record) throw Object.assign(new Error('本地 Codex Agent 不存在'), { code: 'AGENT_NOT_FOUND' });
+    const { prepareLocalResourceContext, codexToolBindings } = await import('./local-runtime.mjs');
+    const prepared = await prepareLocalResourceContext({
+      record,
+      input,
+      resourceAdapter,
+      userId: userId || sessionId || agentId,
+    });
+    const toolBindings = codexToolBindings(prepared.tools);
+    const systemPrompt = [
+      record.spec?.instructions?.system || record.spec?.description || '',
+      record.spec?.instructions?.task || '',
+      prepared.resourceContext ? `Relevant resources:\n${prepared.resourceContext}` : '',
+    ].filter(Boolean).join('\n\n');
+    return {
+      systemPrompt,
+      dynamicTools: toolBindings.map(item => item.spec),
+      toolHandler: async ({ name, arguments: args }) => {
+        const binding = toolBindings.find(item => item.name === name);
+        if (!binding?.tool?._resourceId) {
+          throw Object.assign(new Error(`Codex 请求了未绑定的工具：${name}`), { code: 'MCP_TOOL_NOT_BOUND' });
+        }
+        return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {});
+      },
+    };
+  };
   const dshRuntimeAdapter = createDshRuntimeAdapter({
     cloudClient: await serverClientPromise,
     localHandler: localRuntimeHandler,
     codexRuntime,
+    codexResourceContext,
   });
   setDshRuntimeAdapter(dshRuntimeAdapter);
   ctx.inject(['llm'], llmCtx => {

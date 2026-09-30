@@ -36,6 +36,33 @@ function toolDefinition(tool) {
   return { type: 'function', function: { name: String(tool.name), description: String(tool.description || ''), parameters: tool.inputSchema || tool.parameters || { type: 'object', properties: {} } } };
 }
 
+function codexName(value, index) {
+  const candidate = String(value || '').replace(/[^A-Za-z0-9_-]/g, '_').replace(/^_+|_+$/g, '').slice(0, 120);
+  return candidate || `mcp_tool_${index + 1}`;
+}
+
+/** Convert Host-materialized MCP tools to Codex app-server dynamic tools. */
+export function codexToolBindings(tools = []) {
+  const used = new Set();
+  return tools.map((tool, index) => {
+    const base = codexName(tool.name, index);
+    let name = base;
+    let suffix = 2;
+    while (used.has(name)) name = `${base.slice(0, 110)}_${suffix++}`;
+    used.add(name);
+    return {
+      name,
+      tool,
+      spec: {
+        type: 'function',
+        name,
+        description: String(tool.description || `MCP tool ${tool.name}`),
+        inputSchema: tool.inputSchema || tool.parameters || { type: 'object', properties: {} },
+      },
+    };
+  });
+}
+
 async function collectTools(resourceAdapter, bindings) {
   const mcpBindings = Array.isArray(bindings?.mcpServers) ? bindings.mcpServers : [];
   const tools = [];
@@ -59,6 +86,47 @@ async function collectTools(resourceAdapter, bindings) {
     }
   }
   return { tools, warnings };
+}
+
+/**
+ * Resolve the resources attached to a revision once, before a model turn.
+ * Harness and Codex use the same Host-owned materialization path so a bound
+ * MCP/Skill/knowledge/memory resource has identical semantics in both local
+ * runtimes.
+ */
+export async function prepareLocalResourceContext({ record, input, resourceAdapter, userId, resourceMode = 'full' } = {}) {
+  const bindings = resourceMode === 'prompt-only' ? {} : record?.spec?.bindings || record?.bindings || {};
+  const skillIds = bindingIds(bindings, 'skills');
+  const knowledge = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'knowledge-base');
+  const memory = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'memory-instance');
+  const skillSpace = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'skill-space');
+  if ((skillIds.length || knowledge || memory || skillSpace || (Array.isArray(bindings.mcpServers) && bindings.mcpServers.length)) && !resourceAdapter) {
+    throw new LocalRuntimeError('RESOURCE_ADAPTER_MISSING', '该 Agent 绑定了资源，但本地资源适配器未启用');
+  }
+  let resourceContext = '';
+  if (skillIds.length) {
+    const skills = await Promise.all(skillIds.map(id => resourceAdapter.loadSkill(id)));
+    resourceContext += skills.filter(Boolean).map(skill => `Skill ${skill.name || ''}:\n${String(skill.content || '').slice(0, 12000)}`).join('\n\n');
+  }
+  if (skillSpace) {
+    const resourceId = skillSpace.config.binding.resource.id || skillSpace.config.binding.resource.resourceId;
+    const skill = await resourceAdapter.loadSkill(resourceId);
+    if (skill?.content) resourceContext += `\n\n${String(skill.content).slice(0, 24000)}`;
+  }
+  if (knowledge) {
+    const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;
+    const hits = await resourceAdapter.searchKnowledge(resourceId, input);
+    resourceContext += (hits || []).map(hit => `Knowledge: ${extractText(hit.content || hit.text || hit)}`).join('\n');
+  }
+  if (memory) {
+    const resourceId = memory.config.binding.resource.id || memory.config.binding.resource.resourceId;
+    if (typeof resourceAdapter.searchMemory !== 'function') throw new LocalRuntimeError('MEMORY_ADAPTER_MISSING', '记忆库适配器未启用');
+    const hits = await resourceAdapter.searchMemory(resourceId, input, userId);
+    resourceContext += (hits || []).map(hit => `Memory: ${extractText(hit.content || hit.text || hit.memory || hit)}`).join('\n');
+  }
+  const collected = resourceAdapter ? await collectTools(resourceAdapter, bindings) : { tools: [], warnings: [] };
+  if (collected.warnings.length) resourceContext += `\n\nBound resource warnings:\n${collected.warnings.join('\n')}`;
+  return { bindings, resourceContext, tools: collected.tools, warnings: collected.warnings };
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
@@ -159,14 +227,6 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     if (!record) { response.writeHead(404); response.end('local agent not found'); return; }
 
     const systemPrompt = [record.spec?.instructions?.system || record.spec?.description || '', record.spec?.instructions?.task || ''].filter(Boolean).join('\n\n');
-    const bindings = parsed.resourceMode === 'prompt-only' ? {} : record.spec?.bindings || record.bindings || {};
-    const skillIds = bindingIds(bindings, 'skills');
-    const knowledge = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'knowledge-base');
-    const memory = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'memory-instance');
-    const skillSpace = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'skill-space');
-    if ((skillIds.length || knowledge || memory || skillSpace) && !resourceAdapter) {
-      response.writeHead(409); response.end(JSON.stringify({ error: { code: 'RESOURCE_ADAPTER_MISSING', message: '该 Agent 绑定了资源，但本地资源适配器未启用' } })); return;
-    }
     let profile;
     const modelId = record.spec?.bindings?.modelProfileId || bindingIds(record.spec?.bindings, 'modelProfileIds')[0] || '';
     try { profile = await (modelService.profileForAgent || modelService.profile)(modelId); } catch (error) {
@@ -181,29 +241,15 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     let resourceContext = '';
     let tools = [];
     try {
-      if (skillIds.length) {
-        const skills = await Promise.all(skillIds.map(id => resourceAdapter.loadSkill(id)));
-        resourceContext += skills.filter(Boolean).map(skill => `Skill ${skill.name || ''}:\n${String(skill.content || '').slice(0, 12000)}`).join('\n\n');
-      }
-      if (skillSpace) {
-        const resourceId = skillSpace.config.binding.resource.id || skillSpace.config.binding.resource.resourceId;
-        const skill = await resourceAdapter.loadSkill(resourceId);
-        if (skill?.content) resourceContext += `\n\n${String(skill.content).slice(0, 24000)}`;
-      }
-      if (knowledge) {
-        const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;
-        const hits = await resourceAdapter.searchKnowledge(resourceId, input);
-        resourceContext += (hits || []).map(hit => `Knowledge: ${extractText(hit.content || hit.text || hit)}`).join('\n');
-      }
-      if (memory) {
-        const resourceId = memory.config.binding.resource.id || memory.config.binding.resource.resourceId;
-        if (typeof resourceAdapter.searchMemory !== 'function') throw new LocalRuntimeError('MEMORY_ADAPTER_MISSING', '记忆库适配器未启用');
-        const hits = await resourceAdapter.searchMemory(resourceId, input, parsed.userId || parsed.sessionId || agentId);
-        resourceContext += (hits || []).map(hit => `Memory: ${extractText(hit.content || hit.text || hit.memory || hit)}`).join('\n');
-      }
-      const collected = resourceAdapter ? await collectTools(resourceAdapter, bindings) : { tools: [], warnings: [] };
-      tools = collected.tools;
-      if (collected.warnings.length) resourceContext += `\n\nBound resource warnings:\n${collected.warnings.join('\n')}`;
+      const prepared = await prepareLocalResourceContext({
+        record,
+        input,
+        resourceAdapter,
+        userId: parsed.userId || parsed.sessionId || agentId,
+        resourceMode: parsed.resourceMode,
+      });
+      resourceContext = prepared.resourceContext;
+      tools = prepared.tools;
     } catch (error) {
       response.writeHead(409);
       response.end(JSON.stringify({ error: { code: error?.code || 'RESOURCE_EXECUTION_FAILED', message: error?.message || '资源加载失败', details: error?.details || {} } }));

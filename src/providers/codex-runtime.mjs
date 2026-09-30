@@ -105,6 +105,21 @@ function isReasoningPhase(phase) {
   return phase === 'commentary' || phase === 'analysis' || phase === 'reasoning';
 }
 
+function dynamicToolContent(value) {
+  const values = Array.isArray(value) ? value : [value];
+  const contentItems = values.flatMap(item => {
+    if (item && typeof item === 'object') {
+      if (item.type === 'inputText' && typeof item.text === 'string') return [item];
+      if ((item.type === 'image' || item.type === 'inputImage') && typeof (item.imageUrl || item.image_url) === 'string') return [{ type: 'inputImage', imageUrl: item.imageUrl || item.image_url }];
+      if (item.type === 'audio' && typeof (item.audioUrl || item.audio_url) === 'string') return [{ type: 'inputAudio', audioUrl: item.audioUrl || item.audio_url }];
+      if (typeof item.text === 'string') return [{ type: 'inputText', text: item.text }];
+    }
+    if (item !== undefined && item !== null) return [{ type: 'inputText', text: typeof item === 'string' ? item : JSON.stringify(item) }];
+    return [];
+  });
+  return contentItems.length ? contentItems : [{ type: 'inputText', text: '' }];
+}
+
 /**
  * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, timeoutMs?: number }} options
  */
@@ -120,7 +135,7 @@ export function createCodexRuntime(options = {}) {
   return {
     executable,
     cwd,
-    async *stream({ input, messages = [], signal } = {}) {
+    async *stream({ input, messages = [], signal, systemPrompt = '', dynamicTools = [], toolHandler } = {}) {
       const prompt = String(input || '').trim();
       if (!prompt) throw new CodexRuntimeError('CODEX_INPUT_INVALID', 'Codex 输入不能为空');
       if (signal?.aborted) throw asError(signal.reason, 'Codex 请求已取消');
@@ -179,15 +194,33 @@ export function createCodexRuntime(options = {}) {
         ));
       };
       const onExit = (_code, _signal) => { if (!closed) finish(new CodexRuntimeError('CODEX_TRANSPORT_CLOSED', 'Codex App Server 提前退出')); };
-      const handleMessage = message => {
-        if (message.id !== undefined && pending.has(message.id)) {
-          const resolver = pending.get(message.id);
-          pending.delete(message.id);
-          if (message.error) resolver.reject(new CodexRuntimeError('CODEX_PROTOCOL_ERROR', String(message.error.message || 'Codex 请求失败'), { error: message.error }));
-          else resolver.resolve(message);
-          return;
+      const handleDynamicToolCall = async message => {
+        const params = object(message.params || {}, 'dynamic tool 参数');
+        let result;
+        try {
+          if (typeof toolHandler !== 'function') throw new CodexRuntimeError('CODEX_TOOL_UNAVAILABLE', `Codex 请求了未注册的工具：${String(params.tool || '')}`);
+          const output = await toolHandler({
+            name: String(params.tool || ''),
+            namespace: params.namespace || null,
+            arguments: params.arguments && typeof params.arguments === 'object' ? params.arguments : {},
+            callId: String(params.callId || ''),
+            threadId: String(params.threadId || threadId),
+            turnId: String(params.turnId || turnId),
+          });
+          result = { contentItems: dynamicToolContent(output), success: true };
+        } catch (error) {
+          result = { contentItems: [{ type: 'inputText', text: String(error?.message || error).slice(0, 2000) }], success: false };
         }
-        if (message.id !== undefined && message.method) {
+        try { writeJson(child.stdin, { jsonrpc: '2.0', id: message.id, result }); } catch (error) { finish(asError(error)); }
+      };
+      const handleMessage = message => {
+        // Server-initiated requests have a method and an id. Handle those
+        // before matching response ids because both sides use integer ids.
+        if (message.method && message.id !== undefined) {
+          if (message.method === 'item/tool/call') {
+            void handleDynamicToolCall(message);
+            return;
+          }
           // Unattended Studio turns never grant filesystem/command approvals.
           // Replying keeps the app-server protocol healthy and lets it publish
           // a typed declined item in the native conversation stream.
@@ -199,6 +232,13 @@ export function createCodexRuntime(options = {}) {
                 ? { action: 'decline', content: null, _meta: null }
                 : { decision: 'decline' };
           writeJson(child.stdin, { jsonrpc: '2.0', id: message.id, result });
+          return;
+        }
+        if (message.id !== undefined && pending.has(message.id)) {
+          const resolver = pending.get(message.id);
+          pending.delete(message.id);
+          if (message.error) resolver.reject(new CodexRuntimeError('CODEX_PROTOCOL_ERROR', String(message.error.message || 'Codex 请求失败'), { error: message.error }));
+          else resolver.resolve(message);
           return;
         }
         if (message.method) queue.push(message);
@@ -231,9 +271,18 @@ export function createCodexRuntime(options = {}) {
         try { child.kill?.('SIGTERM'); } catch {}
       };
       try {
-        await request('initialize', { clientInfo: { name: 'agentkit-studio', version: '0.0.1' }, capabilities: {} });
+        await request('initialize', { clientInfo: { name: 'agentkit-studio', version: '0.0.1' }, capabilities: { experimentalApi: true } });
         writeJson(child.stdin, { method: 'initialized', params: {} });
-        const threadParams = { cwd, ephemeral: true, approvalPolicy, ...(sandbox ? { sandbox } : {}), ...(model ? { model } : {}) };
+        const developerInstructions = [String(systemPrompt || '').trim()].filter(Boolean).join('\n\n');
+        const threadParams = {
+          cwd,
+          ephemeral: true,
+          approvalPolicy,
+          ...(sandbox ? { sandbox } : {}),
+          ...(model ? { model } : {}),
+          ...(developerInstructions ? { developerInstructions } : {}),
+          ...(Array.isArray(dynamicTools) && dynamicTools.length ? { dynamicTools } : {}),
+        };
         threadId = idOf(await request('thread/start', threadParams), 'thread id');
         const turn = await request('turn/start', { threadId, input: [{ type: 'text', text: promptFor({ input: prompt, messages }), text_elements: [] }] });
         turnId = idOf(turn, 'turn id');

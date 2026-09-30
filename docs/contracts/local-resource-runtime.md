@@ -20,6 +20,11 @@
   Streamable HTTP 连接，调用 `tools/list` 和 `tools/call`。只允许模型请求当前 Agent 绑定且已
   发现的工具；同名工具绑定会直接失败，避免路由歧义。
 
+- **Codex**：Codex Agent 复用上面的 Host 资源上下文。Skill、知识库和记忆库以 developer
+  context 注入官方 Codex App Server Thread；MCP 工具转换为实验性 `dynamicTools`，Codex
+  发出 `item/tool/call` 后由 Host 校验绑定并调用同一 MCP adapter，再以 `contentItems` 返回。
+  这条路径仍由 DSH 原生 Session/Loop 承载，Codex 不会获得 Studio 工作区或 MCP 凭证。
+
 模型的 tool call 会先记录为本地 conversation item，Host 执行 MCP 后以 tool result 继续最多两次
 工具续跑（最多三次模型请求）。MCP 返回 `isError`、参数 JSON 非法、资源缺失或模型实际调用
 工具失败都会生成失败终态；一次文本回合开始前的 `tools/list` 连接失败会作为受限资源告警注入

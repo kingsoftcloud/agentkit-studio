@@ -10,6 +10,9 @@
   OpenAI-compatible 网关模型；每个 DSH turn 创建无工作区绑定的临时 Codex Thread，思考与答案
   增量继续投影到 DSH 原生会话。未安装 Codex 时返回 `CODEX_PROVIDER_UNAVAILABLE`，默认不授予
   命令或文件审批。
+- Codex Agent 现在会复用本地资源物化层：绑定的 Skill、知识库和记忆库作为 Codex developer
+  context 注入，MCP tools 通过 app-server 实验性 `dynamicTools` 注册，并由 Host 响应
+  `item/tool/call` 执行绑定 Endpoint；Codex 与 Harness 使用同一套资源凭证边界。
 - MCP 工具发现暂时不可用时保留绑定告警并继续纯文本回合；模型实际发起工具调用后仍严格失败闭环。
 - 外部 Streamable HTTP MCP 绑定现在支持 Endpoint、请求头和 `env://` credential reference；
   DSH 原生会话可继续消费本地模型的 reasoning/text 增量。
