@@ -54,5 +54,5 @@ Harness 本地运行时同样把 `tool_call` / `tool_result` 事件投影成 rea
 ## 观测
 
 每次 Harness 或 Codex 本地运行完成、失败或取消后调用 `StudioObservability.syncTrace`。两条路径都
-写入输入、思考、回答和工具生命周期的轻量事件；工具名和字符数会保留，完整回答不会复制到 trace。
+写入输入、思考、回答和工具生命周期的轻量事件；工具名、失败码和字符数会保留，完整回答不会复制到 trace。
 trace 写失败只记录 Host 警告，不改变模型运行结果。运行 session ID 来自对话请求，便于观测页按会话追踪。

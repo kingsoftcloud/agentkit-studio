@@ -25,7 +25,7 @@ test('local runtime executes bound MCP tools and records a local trace', async (
   const response = responseSink();
   const traces = [];
   const handler = createLocalConversationHandler({
-    agentStore: async () => ({ get: async () => ({ spec: { instructions: { system: 'test' }, bindings: { mcpServers: [{ resourceId: 'mcp-1' }] } } }) }),
+    agentStore: async () => ({ get: async () => ({ metadata: { name: '搜索助手' }, spec: { instructions: { system: 'test' }, bindings: { mcpServers: [{ resourceId: 'mcp-1' }] } } }) }),
     modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
     resourceAdapter: {
       listMcpTools: async () => [{ name: 'search', description: 'Search' }],
@@ -41,11 +41,34 @@ test('local runtime executes bound MCP tools and records a local trace', async (
   assert.match(output, /工具结果已使用/);
   assert.match(output, /run.completed/);
   assert.equal(traces[0].status, 'completed');
+  assert.equal(traces[0].agentName, '搜索助手');
   assert.deepEqual(traces[0].events.filter(event => event.event_type.startsWith('tool.')).map(event => [event.event_type, event.payload.name]), [
     ['tool.started', 'search'],
     ['tool.completed', 'search'],
   ]);
   assert.ok(traces[0].events.some(event => event.event_type === 'turn.text'));
+});
+
+test('local runtime records a failed MCP tool in the local trace', async () => {
+  const response = responseSink();
+  const traces = [];
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ metadata: { name: '失败搜索助手' }, spec: { bindings: { mcpServers: [{ resourceId: 'mcp-1' }] } } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: {
+      listMcpTools: async () => [{ name: 'search' }],
+      callMcpTool: async () => { throw Object.assign(new Error('remote search failed'), { code: 'MCP_TOOL_FAILED' }); },
+    },
+    observability: { syncTrace: async record => traces.push(record) },
+    fetchImpl: async () => new Response('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-fail","function":{"name":"search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n'),
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 's-fail', input: '搜索' })]), response);
+  assert.equal(response.status, 200);
+  assert.equal(traces[0].status, 'failed');
+  assert.deepEqual(traces[0].events.filter(event => event.event_type.startsWith('tool.')).map(event => [event.event_type, event.payload.name]), [
+    ['tool.started', 'search'],
+    ['tool.failed', 'search'],
+  ]);
 });
 
 test('local runtime rejects resource-bound agents when the adapter is unavailable', async () => {

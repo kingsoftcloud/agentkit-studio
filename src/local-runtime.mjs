@@ -236,6 +236,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     }
     if (!record) { response.writeHead(404); response.end('local agent not found'); return; }
 
+    const agentName = String(record.metadata?.name || record.name || agentId);
     const systemPrompt = [record.spec?.instructions?.system || record.spec?.description || '', record.spec?.instructions?.task || ''].filter(Boolean).join('\n\n');
     let profile;
     const modelId = record.spec?.bindings?.modelProfileId || bindingIds(record.spec?.bindings, 'modelProfileIds')[0] || '';
@@ -307,7 +308,13 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
           const tool = tools.find(candidate => candidate.name === call.name);
           if (!tool?._resourceId) throw new LocalRuntimeError('MCP_TOOL_NOT_BOUND', '模型请求了未绑定的工具', { name: call.name });
           send({ kind: 'tool_call', lifecycle: 'running', payload: { callId: call.id, name: call.name, arguments: args } });
-          const result = await resourceAdapter.callMcpTool(tool._resourceId, call.name, args);
+          let result;
+          try {
+            result = await resourceAdapter.callMcpTool(tool._resourceId, call.name, args);
+          } catch (error) {
+            noteTrace('tool.failed', { name: call.name, code: String(error?.code || 'MCP_TOOL_FAILED') });
+            throw error;
+          }
           const resultText = extractText(result) || JSON.stringify(result);
           messages.push({ role: 'tool', tool_call_id: call.id, content: resultText });
           send({ kind: 'tool_result', lifecycle: 'completed', payload: { callId: call.id, name: call.name, text: resultText } });
@@ -316,17 +323,17 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       if (reasoning) send({ kind: 'assistant_reasoning', lifecycle: 'completed', payload: { text: reasoning } });
       send({ kind: 'assistant_text', lifecycle: 'completed', payload: { text } });
       send({ kind: 'progress', lifecycle: 'completed', payload: { status: 'completed' } });
-      await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, status: 'completed', events: [...traceEvents, { event_type: 'run.completed', at: new Date().toISOString(), run_id: runId }] }).catch(error => console.warn('[local-runtime] trace sync failed:', error?.message || error));
+      await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'completed', events: [...traceEvents, { event_type: 'run.completed', at: new Date().toISOString(), run_id: runId }] }).catch(error => console.warn('[local-runtime] trace sync failed:', error?.message || error));
       response.write(`data: ${JSON.stringify({ runId, runtimeEvent: { event_type: 'run.completed' } })}\n\n`);
       response.end('data: [DONE]\n\n');
     } catch (error) {
       if (signal?.aborted || error?.code === 'REQUEST_CANCELLED' || error?.name === 'AbortError') {
-        await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, status: 'canceled', events: [...traceEvents, { event_type: 'run.canceled', at: new Date().toISOString(), run_id: runId, payload: { reason: 'client disconnected' } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
+        await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'canceled', events: [...traceEvents, { event_type: 'run.canceled', at: new Date().toISOString(), run_id: runId, payload: { reason: 'client disconnected' } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
         if (!response.writableEnded && !response.destroyed) response.end('data: [DONE]\n\n');
         return;
       }
       send({ kind: 'error', lifecycle: 'completed', payload: { message: String(error?.message || error).slice(0, 300) } });
-      await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, status: 'failed', events: [...traceEvents, { event_type: 'run.failed', at: new Date().toISOString(), run_id: runId, payload: { error: String(error?.message || error) } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
+      await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'failed', events: [...traceEvents, { event_type: 'run.failed', at: new Date().toISOString(), run_id: runId, payload: { error: String(error?.message || error) } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
       response.write(`data: ${JSON.stringify({ runId, runtimeEvent: { event_type: 'run.failed' } })}\n\n`);
       response.end('data: [DONE]\n\n');
     }
