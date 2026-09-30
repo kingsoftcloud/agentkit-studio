@@ -20,6 +20,8 @@
   只显示最终文本而隐藏工具过程。
 - 云端会话现在沿用浏览器的取消信号关闭 Host 到 `RunAgent` 的上游流；SSE 读取器会释放连接，
   取消会返回独立的 `CLOUD_RUN_CANCELLED`，不会再被误判为截断流或成功完成。
+- 本地 Harness 会话也沿用浏览器断开信号中止模型流，并把本地 trace 写成 `canceled` 终态，
+  不再在用户停止后继续等待模型超时或伪造 `run.failed`。
 - MCP 工具发现暂时不可用时保留绑定告警并继续纯文本回合；模型实际发起工具调用后仍严格失败闭环。
 - 外部 Streamable HTTP MCP 绑定现在支持 Endpoint、请求头和 `env://` credential reference；
   DSH 原生会话可继续消费本地模型的 reasoning/text 增量。

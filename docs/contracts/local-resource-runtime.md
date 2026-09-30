@@ -36,6 +36,9 @@ Harness 本地运行时同样把 `tool_call` / `tool_result` 事件投影成 rea
 工具失败都会生成失败终态；一次文本回合开始前的 `tools/list` 连接失败会作为受限资源告警注入
 上下文，让不需要工具的文本回合继续运行，并在下一回合重新尝试发现工具。
 
+浏览器取消或断开本地流时，Host 将同一个 `AbortSignal` 传给模型请求；上游模型连接会被中止，
+运行 trace 写入 `canceled` 终态，不再继续等待超时或写入 `run.failed`。
+
 ## 安全和边界
 
 - AK/SK、MCP API Key、模型 API Key 全部留在 Node Host；外部 MCP Agent 绑定只持久化 Endpoint

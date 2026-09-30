@@ -125,3 +125,31 @@ test('local runtime executes the frozen Build instead of the mutable Agent recor
   assert.match(requestBody.messages[0].content, /frozen prompt/);
   assert.doesNotMatch(requestBody.messages[0].content, /new prompt/);
 });
+
+test('local runtime aborts the model stream and records a canceled trace', async () => {
+  const response = responseSink();
+  const controller = new AbortController();
+  const traces = [];
+  let upstreamAborted = false;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: { bindings: {} } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: { listMcpTools: async () => [] },
+    observability: { syncTrace: async record => traces.push(record) },
+    fetchImpl: async (_url, init) => {
+      await new Promise((resolve, reject) => {
+        if (init.signal.aborted) { upstreamAborted = true; reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); return; }
+        init.signal.addEventListener('abort', () => { upstreamAborted = true; reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+      });
+      return new Response('');
+    },
+  });
+  const pending = handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 's-cancel', input: '运行' })]), response, { signal: controller.signal });
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  await pending;
+  assert.equal(upstreamAborted, true);
+  assert.equal(traces[0].status, 'canceled');
+  assert.equal(traces[0].events[0].event_type, 'run.canceled');
+  assert.doesNotMatch(response.chunks.join(''), /run\.failed/);
+});

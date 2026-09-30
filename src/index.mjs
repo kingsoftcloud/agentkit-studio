@@ -620,16 +620,20 @@ async function registerControlPlane(ctx) {
       handler: (request, response) => {
         const admission = webCtx.connection.admit(request);
         if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden'); return; }
+        const controller = new AbortController();
+        const disconnect = () => { if (!response.writableEnded) controller.abort(); };
+        response.on?.('close', disconnect);
         void Promise.all([agentStorePromise, configurationPromise, resourceAdaptersPromise, studioObservabilityPromise]).then(async ([store, configuration, resourceAdapters, observability]) => {
           const credentials = ctx.get('credentials');
           const models = await import('./model-service.mjs').then(({ createModelService }) => createModelService({ configuration, credentials }));
           const { createLocalConversationHandler } = await import('./local-runtime.mjs');
           return createLocalConversationHandler({ agentStore: async () => store, modelService: models, resourceAdapter: resourceAdapters, observability });
-        }).then(handler => handler(request, response)).catch(error => {
+        }).then(handler => handler(request, response, { signal: controller.signal })).catch(error => {
           console.error('[local-runtime] handler failed:', error?.stack || error);
+          if (response.destroyed) return;
           if (!response.headersSent) response.writeHead(500);
           response.end(JSON.stringify({ error: { message: String(error?.message || error).slice(0, 200) } }));
-        });
+        }).finally(() => response.off?.('close', disconnect));
       },
     });
     const cloudConversationRoute = webCtx.webServer.register({

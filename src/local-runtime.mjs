@@ -36,6 +36,10 @@ function toolDefinition(tool) {
   return { type: 'function', function: { name: String(tool.name), description: String(tool.description || ''), parameters: tool.inputSchema || tool.parameters || { type: 'object', properties: {} } } };
 }
 
+function runtimeCancelledError() {
+  return new LocalRuntimeError('REQUEST_CANCELLED', '本地 Agent 运行已取消');
+}
+
 function codexName(value, index) {
   const candidate = String(value || '').replace(/[^A-Za-z0-9_-]/g, '_').replace(/^_+|_+$/g, '').slice(0, 120);
   return candidate || `mcp_tool_${index + 1}`;
@@ -130,17 +134,20 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
-function createGatewayModel({ profile, fetchImpl = fetch }) { void profile;
+function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profile;
   if (!profile?.baseUrl || !profile?.apiKey) throw new LocalRuntimeError('MODEL_PROFILE_INVALID', '模型配置缺少 baseUrl 或 API Key');
   return {
     async *stream({ messages, tools = [] }) {
-      // NOTE: the host's IncomingMessage signal reads aborted once its body
-      // is consumed, so it must NOT gate the upstream model request.
+      if (signal?.aborted) throw runtimeCancelledError();
+      // The explicit route signal comes from the response lifecycle. Do not
+      // substitute the IncomingMessage signal here: its body is already
+      // consumed before the model request starts.
+      const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000);
       const response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${profile.apiKey}` },
         body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, ...(tools.length ? { tools, tool_choice: 'auto' } : {}) }),
-        signal: AbortSignal.timeout(180000),
+        signal: requestSignal,
       });
       if (!response.ok || !response.body) {
         const detail = await response.text().catch(() => '');
@@ -152,7 +159,9 @@ function createGatewayModel({ profile, fetchImpl = fetch }) { void profile;
       const toolCalls = new Map();
       let finishReason = '';
       for (;;) {
+        if (signal?.aborted) throw runtimeCancelledError();
         const { done, value } = await reader.read();
+        if (signal?.aborted) throw runtimeCancelledError();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         let split = buffer.indexOf('\n\n');
@@ -199,7 +208,7 @@ function envelope(runId, sessionId, item) {
 
 export function createLocalConversationHandler({ agentStore, buildStore, modelService, resourceAdapter, observability, fetchImpl = fetch } = {}) {
 
-  return async function handle(request, response) {
+  return async function handle(request, response, { signal } = {}) {
     let body = '';
     for await (const chunk of request) body += chunk;
     if (body.length > 1024 * 1024) { response.writeHead(413); response.end('request too large'); return; }
@@ -208,6 +217,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     const agentId = String(parsed.agentId || '');
     const input = String(parsed.input || '').trim();
     if (!agentId || !input) { response.writeHead(400); response.end('agentId and input required'); return; }
+    if (signal?.aborted) throw runtimeCancelledError();
 
     let record;
     if (parsed.buildId) {
@@ -266,7 +276,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     send({ kind: 'assistant_text', lifecycle: 'running', payload: { text: '' } });
 
     try {
-      const model = createGatewayModel({ profile, fetchImpl });
+      const model = createGatewayModel({ profile, fetchImpl, signal });
       // The harness owns the canonical loop; this local provider drives the
       // configured model while resource calls remain explicit Host actions.
       let text = '';
@@ -281,6 +291,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         if (!calls.length) break;
         messages.push({ role: 'assistant', content: null, tool_calls: calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) });
         for (const call of calls) {
+          if (signal?.aborted) throw runtimeCancelledError();
           let args;
           try { args = JSON.parse(call.arguments || '{}'); } catch { throw new LocalRuntimeError('MCP_TOOL_ARGUMENTS_INVALID', '模型生成的工具参数不是有效 JSON', { name: call.name }); }
           const tool = tools.find(candidate => candidate.name === call.name);
@@ -299,6 +310,11 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       response.write(`data: ${JSON.stringify({ runId, runtimeEvent: { event_type: 'run.completed' } })}\n\n`);
       response.end('data: [DONE]\n\n');
     } catch (error) {
+      if (signal?.aborted || error?.code === 'REQUEST_CANCELLED' || error?.name === 'AbortError') {
+        await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, status: 'canceled', events: [{ event_type: 'run.canceled', at: new Date().toISOString(), run_id: runId, payload: { reason: 'client disconnected' } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
+        if (!response.writableEnded && !response.destroyed) response.end('data: [DONE]\n\n');
+        return;
+      }
       send({ kind: 'error', lifecycle: 'completed', payload: { message: String(error?.message || error).slice(0, 300) } });
       await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, status: 'failed', events: [{ event_type: 'run.failed', at: new Date().toISOString(), run_id: runId, payload: { error: String(error?.message || error) } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
       response.write(`data: ${JSON.stringify({ runId, runtimeEvent: { event_type: 'run.failed' } })}\n\n`);
