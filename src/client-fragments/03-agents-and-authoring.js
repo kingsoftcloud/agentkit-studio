@@ -161,7 +161,7 @@
         const changed = () => void load();
         window.addEventListener('agentkit-studio:local-agent-changed', changed);
         return () => window.removeEventListener('agentkit-studio:local-agent-changed', changed);
-      }, [load]);
+      }, []);
       const bindingKind = binding => String(binding?.config?.binding?.resource?.kind || '');
       const selectedId = kind => String(value.find(binding => bindingKind(binding) === kind)?.config?.binding?.resource?.id || '');
       const select = (kind, resourceId) => {

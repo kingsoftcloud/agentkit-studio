@@ -90,6 +90,12 @@ test('resource-bound Agents use the same native DSH preset bridge as model-only 
   assert.match(selector, /已绑定原生会话适配器/);
 });
 
+test('platform resource picker does not refetch on every render', () => {
+  const picker = clientSource.slice(clientSource.indexOf('function PlatformResourcePicker'), clientSource.indexOf('function AgentCreatePage'));
+  assert.match(picker, /agentkit-studio:local-agent-changed/);
+  assert.doesNotMatch(picker, /window\.removeEventListener\('agentkit-studio:local-agent-changed', changed\);\s*\}, \[load\]\)/);
+});
+
 test('native bridge intercepts the DSH stream without rewriting the visible model route', async () => {
   const pluginSource = await readFile(resolve(import.meta.dirname, '../src/providers/dsh-runtime-plugin.mjs'), 'utf8');
   assert.match(pluginSource, /ctx\.on\('llm\/stream'/);
