@@ -193,6 +193,12 @@ test('operations pages expose the old Studio operational workflows', () => {
   assert.match(clientSource, /function OperationalPager/);
 });
 
+test('Delivery waits for local build and deployment operations before refreshing state', () => {
+  assert.match(clientSource, /const waitForOperation = async operationId/);
+  assert.match(clientSource, /await waitForOperation\(result\?\.operationId\)/);
+  assert.match(clientSource, /operation\?\.result\?\.buildId/);
+});
+
 test('operational pages keep the old Studio hierarchy without stacked duplicate headers', () => {
   assert.match(clientSource, /function OperationalPageHeading/);
   assert.match(clientSource, /function OperationalPanel/);

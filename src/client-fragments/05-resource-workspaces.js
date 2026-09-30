@@ -403,6 +403,19 @@
       const readyBuilds = builds.filter(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
       const canRunBuild = currentAgent?.metadata?.local === true;
       const idempotency = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+      const waitForOperation = async operationId => {
+        if (!operationId) return null;
+        const deadline = Date.now() + 10000;
+        let latest = null;
+        while (Date.now() < deadline) {
+          const result = await hostRemote.operations();
+          latest = (result?.items || []).find(item => item?.id === operationId) || latest;
+          const state = String(latest?.status || '').toLowerCase();
+          if (['succeeded', 'failed', 'cancelled'].includes(state)) return latest;
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        return latest;
+      };
       const chooseAgent = event => {
         const id = event.target.value;
         setSelectedAgent(id);
@@ -428,7 +441,10 @@
           const detail = await hostRemote.agent(selectedAgent);
           const revision = Number(detail?.metadata?.revision || detail?.draft?.metadata?.revision || currentAgent?.metadata?.revision || 1);
           const result = await hostRemote.createBuild(selectedAgent, revision, idempotency('studio-build'));
-          setMessage(`Build 已提交：${result?.buildId || result?.id || '等待异步完成'}`);
+          const operation = await waitForOperation(result?.operationId);
+          if (String(operation?.status || '').toLowerCase() === 'failed') throw new Error(operation?.result?.message || 'Build 执行失败');
+          const buildId = operation?.result?.buildId || result?.buildId || result?.id || '';
+          setMessage(buildId ? `Build 已完成：${buildId}` : 'Build 已提交，正在等待 Host 完成');
           await load(selectedAgent);
         } catch (reason) { setError(reason?.message || 'Build 提交失败'); }
         finally { setSaving(false); }
@@ -442,7 +458,9 @@
             binding: {},
             release_policy: { strategy: 'rolling', approval: 'none' },
           }, idempotency('studio-deploy'));
-          setMessage(`部署已提交：${result?.operationId || result?.id || '等待异步完成'}`);
+          const operation = await waitForOperation(result?.operationId);
+          if (String(operation?.status || '').toLowerCase() === 'failed') throw new Error(operation?.result?.message || '部署执行失败');
+          setMessage(`部署已提交：${operation?.id || result?.operationId || result?.id || '等待异步完成'}`);
           await load(selectedAgent);
         } catch (reason) { setError(reason?.message || '部署提交失败'); }
         finally { setSaving(false); }
