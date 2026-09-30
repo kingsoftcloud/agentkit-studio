@@ -168,3 +168,31 @@ test('the runtime bridge routes Codex Agents to the Codex provider instead of th
     { type: 'finish', reason: { kind: 'stop' } },
   ]);
 });
+
+test('the native bridge projects Codex dynamic-tool status into expandable reasoning', async () => {
+  const adapter = createDshRuntimeAdapter({
+    codexRuntime: {
+      async *stream() {
+        yield { type: 'tool', phase: 'started', name: 'metaso_web_search' };
+        yield { type: 'tool', phase: 'completed', name: 'metaso_web_search' };
+        yield { type: 'text', text: '搜索完成' };
+      },
+    },
+  });
+  const chunks = [];
+  for await (const chunk of adapter.stream({
+    model: 'local:codex-agent',
+    messages: [{ role: 'user', content: '搜索一下' }],
+    studioRuntime: 'codex',
+  })) chunks.push(chunk);
+  assert.deepEqual(chunks, [
+    { type: 'block-start', index: 0, blockType: 'reasoning' },
+    { type: 'reasoning-delta', index: 0, text: '工具 metaso_web_search 正在调用。' },
+    { type: 'reasoning-delta', index: 0, text: '工具 metaso_web_search 已完成。' },
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: '工具 metaso_web_search 正在调用。工具 metaso_web_search 已完成。' } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '搜索完成' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '搜索完成' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]);
+});

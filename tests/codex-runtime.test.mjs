@@ -118,5 +118,9 @@ test('Codex runtime registers dynamic tools and answers item/tool/call on the Ho
   assert.equal(threadParams.dynamicTools[0].name, 'search');
   assert.equal(toolResponse.success, true);
   assert.deepEqual(toolResponse.contentItems, [{ type: 'inputText', text: 'hit' }]);
-  assert.deepEqual(chunks, [{ type: 'text', text: '工具已执行' }]);
+  assert.deepEqual(chunks, [
+    { type: 'tool', phase: 'started', name: 'search' },
+    { type: 'tool', phase: 'completed', name: 'search' },
+    { type: 'text', text: '工具已执行' },
+  ]);
 });

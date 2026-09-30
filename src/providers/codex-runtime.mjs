@@ -196,6 +196,19 @@ export function createCodexRuntime(options = {}) {
       const onExit = (_code, _signal) => { if (!closed) finish(new CodexRuntimeError('CODEX_TRANSPORT_CLOSED', 'Codex App Server 提前退出')); };
       const handleDynamicToolCall = async message => {
         const params = object(message.params || {}, 'dynamic tool 参数');
+        // The app-server owns the actual dynamic-tool lifecycle, but DSH still
+        // owns the visible Session. Publish a small internal status event so
+        // the native renderer can show the resource call while the request is
+        // in flight. This is deliberately not a DSH `tool-call` block: DSH's
+        // loop would try to execute that block a second time.
+        queue.push({
+          method: 'agentkit/tool/status',
+          params: {
+            phase: 'started',
+            name: String(params.tool || ''),
+            callId: String(params.callId || ''),
+          },
+        });
         let result;
         try {
           if (typeof toolHandler !== 'function') throw new CodexRuntimeError('CODEX_TOOL_UNAVAILABLE', `Codex 请求了未注册的工具：${String(params.tool || '')}`);
@@ -211,7 +224,17 @@ export function createCodexRuntime(options = {}) {
         } catch (error) {
           result = { contentItems: [{ type: 'inputText', text: String(error?.message || error).slice(0, 2000) }], success: false };
         }
-        try { writeJson(child.stdin, { jsonrpc: '2.0', id: message.id, result }); } catch (error) { finish(asError(error)); }
+        try {
+          queue.push({
+            method: 'agentkit/tool/status',
+            params: {
+              phase: result.success ? 'completed' : 'failed',
+              name: String(params.tool || ''),
+              callId: String(params.callId || ''),
+            },
+          });
+          writeJson(child.stdin, { jsonrpc: '2.0', id: message.id, result });
+        } catch (error) { finish(asError(error)); }
       };
       const handleMessage = message => {
         // Server-initiated requests have a method and an id. Handle those
@@ -295,6 +318,13 @@ export function createCodexRuntime(options = {}) {
           if (method === 'item/started') {
             const item = object(params.item || {}, 'item');
             if (item.id) phases.set(String(item.id), item.phase);
+            continue;
+          }
+          if (method === 'agentkit/tool/status') {
+            const phase = String(params.phase || '');
+            const name = String(params.name || 'bound tool');
+            if (phase === 'started') yield { type: 'tool', phase, name };
+            else if (phase === 'completed' || phase === 'failed') yield { type: 'tool', phase, name };
             continue;
           }
           if (method === 'item/agentMessage/delta') {

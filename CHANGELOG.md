@@ -12,7 +12,8 @@
   命令或文件审批。
 - Codex Agent 现在会复用本地资源物化层：绑定的 Skill、知识库和记忆库作为 Codex developer
   context 注入，MCP tools 通过 app-server 实验性 `dynamicTools` 注册，并由 Host 响应
-  `item/tool/call` 执行绑定 Endpoint；Codex 与 Harness 使用同一套资源凭证边界。
+  `item/tool/call` 执行绑定 Endpoint；Codex 与 Harness 使用同一套资源凭证边界。工具调用状态
+  会投影到 DSH 原生会话的可展开 reasoning 流，避免工具已执行但页面没有过程反馈。
 - MCP 工具发现暂时不可用时保留绑定告警并继续纯文本回合；模型实际发起工具调用后仍严格失败闭环。
 - 外部 Streamable HTTP MCP 绑定现在支持 Endpoint、请求头和 `env://` credential reference；
   DSH 原生会话可继续消费本地模型的 reasoning/text 增量。

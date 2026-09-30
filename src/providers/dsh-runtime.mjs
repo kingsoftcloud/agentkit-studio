@@ -114,6 +114,11 @@ async function* codexFrames(codexRuntime, options) {
   const state = createChunkState();
   for await (const chunk of codexRuntime.stream(options)) {
     if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
+    else if (chunk?.type === 'tool') {
+      const name = String(chunk.name || 'bound tool');
+      const phase = chunk.phase === 'started' ? '正在调用' : chunk.phase === 'completed' ? '已完成' : '失败';
+      yield* appendBlock(state, 'reasoning', `工具 ${name} ${phase}。`);
+    }
     else if (chunk?.type === 'text') yield* appendBlock(state, 'text', chunk.text);
   }
   yield* finishBlocks(state);

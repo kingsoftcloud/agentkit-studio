@@ -191,12 +191,66 @@ async function registerControlPlane(ctx) {
   }
   let presetRegistry;
   let presetAdmission;
+  // DSH restores a Session's selected preset before the browser can issue a
+  // fresh agents/ensure-preset RPC. Dynamic Studio presets therefore need a
+  // small startup reconciliation pass; otherwise a restart leaves persisted
+  // sessions pointing at an unregistered agentkit-studio-agent-* preset and
+  // the native page reports "Unknown agent preset" before the first prompt.
+  const restorePersistedPresets = async () => {
+    if (!presetAdmission) return;
+    const rows = new Map();
+    try {
+      const store = await agentStorePromise;
+      for (const item of await store.list()) {
+        const id = String(item?.metadata?.id || item?.id || '').trim();
+        if (id) rows.set(id, item);
+      }
+      const { build } = await studioBuildPromise;
+      for (const item of [...rows.values()]) {
+        const agentId = String(item?.metadata?.id || item?.id || '').trim();
+        if (!agentId) continue;
+        for (const buildRow of await build.list(agentId)) {
+          const buildId = String(buildRow?.id || '').trim();
+          if (!buildId) continue;
+          try {
+            const frozen = await build.resolve(agentId, buildId);
+            rows.set(`${agentId}:${buildId}`, { ...frozen, metadata: { ...item.metadata, ...frozen.metadata, local: true } });
+          } catch (error) {
+            console.warn('[agentkit-studio] persisted Build preset skipped:', error?.message || error);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[agentkit-studio] persisted local preset restore skipped:', error?.message || error);
+    }
+    try {
+      const cloud = await serverClientPromise;
+      const catalog = await cloud.listAgents({ page: 1, pageSize: 50 });
+      for (const item of catalog.items || []) {
+        const id = String(item?.metadata?.id || item?.id || '').trim();
+        if (id && !rows.has(id)) rows.set(id, item);
+      }
+    } catch (error) {
+      // Cloud credentials are optional for a local-only profile. Local
+      // sessions still recover when the cloud catalog is unavailable.
+      console.warn('[agentkit-studio] persisted cloud preset restore skipped:', error?.message || error);
+    }
+    for (const [key, item] of rows) {
+      const id = String(item?.metadata?.id || item?.id || '').trim();
+      if (!id) continue;
+      try { await presetAdmission.ensure(id, { agent: item }); }
+      catch (error) { console.warn(`[agentkit-studio] preset restore skipped (${key}):`, error?.message || error); }
+    }
+  };
   // The registry is an optional DSH service. Older profiles can still load
   // the Studio catalog and UI, but an Agent binding must return a typed
   // unavailable error instead of silently selecting the default DSH loop.
   ctx.inject(['agentPresets'], presetCtx => {
     presetRegistry = presetCtx.agentPresets;
-    if (presetAdmission) presetAdmission.setRegistry(presetRegistry);
+    if (presetAdmission) {
+      presetAdmission.setRegistry(presetRegistry);
+      void restorePersistedPresets();
+    }
     presetCtx.effect(() => async () => {
       await presetAdmission?.dispose();
       presetRegistry = undefined;
@@ -206,7 +260,10 @@ async function registerControlPlane(ctx) {
     getAgent: async agentId => (await serverClientPromise).getAgent(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
   });
-  if (presetRegistry) presetAdmission.setRegistry(presetRegistry);
+  if (presetRegistry) {
+    presetAdmission.setRegistry(presetRegistry);
+    void restorePersistedPresets();
+  }
   const allowed = new Set(['agents/list', 'agents/create-local', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
