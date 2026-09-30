@@ -18,8 +18,9 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /typeof selectedPreset === 'object' && selectedPreset\.ok === false/);
   assert.match(clientSource, /conversation\.hero\.agentPreset/);
   assert.match(clientSource, /首轮发送后锁定/);
-  assert.match(clientSource, /agentkit-studio:open-bound-conversation/);
-  assert.match(clientSource, /打开绑定对话/);
+  assert.match(clientSource, /__AGENTKIT_STUDIO_BIND_AGENT__/);
+  assert.match(clientSource, /绑定到新会话/);
+  assert.match(clientSource, /uiWorkspace\.openSession\(sessionId\)/);
   assert.match(clientSource, /空白会话可以绑定一个 Agent；首轮发送后锁定/);
   assert.match(clientSource, /conversationAgentStorageKey\(sessionId\)/);
 });
@@ -44,24 +45,13 @@ test('model settings keep multiple providers and profiles independently configur
   assert.match(clientSource, /input: profile\.input \|\| \[\'text\'\]/);
 });
 
-test('bound Agent conversations use the Host canonical stream entry', () => {
-  assert.match(clientSource, /function BoundAgentConversationPage/);
-  assert.match(clientSource, /onOpenConversation/);
-  assert.match(clientSource, /打开绑定对话/);
-  assert.match(clientSource, /hostRemote\.streamAgentConversation\(agentId/);
-  assert.match(clientSource, /conversation\.ksadk\.io\/v1/);
-  assert.match(clientSource, /Idempotency-Key/);
-  assert.match(clientSource, /run\.completed/);
-});
-
-test('bound Agent conversations render assistant text with the Host Markdown primitives', () => {
-  assert.match(clientSource, /require\('@deepseek-ai\/dsh-client-ui-primitives'\)/);
-  assert.match(clientSource, /HOST_MARKDOWN_LABELS/);
-  assert.match(clientSource, /h\(HOST_MARKDOWN\.MarkdownText, \{ text: message\.text/);
-  // The primitives are a platform seed word; hosts without them must keep the
-  // plain-text path instead of failing the whole panel.
-  assert.match(clientSource, /catch \{ HOST_MARKDOWN = null; \}/);
-  assert.match(clientSource, /renderMessageBody/);
+test('bound Agents use the official DSH native conversation surface', () => {
+  assert.doesNotMatch(clientSource, /function BoundAgentConversationPage/);
+  assert.doesNotMatch(clientSource, /onOpenConversation/);
+  assert.match(clientSource, /__AGENTKIT_STUDIO_BIND_AGENT__/);
+  assert.match(clientSource, /sessions\.create\(\{\}\)/);
+  assert.match(clientSource, /agentPresets\?\.select\?\./);
+  assert.match(clientSource, /uiWorkspace\.openSession\(sessionId\)/);
 });
 
 test('resource catalogs route cloud-backed kinds through Server Actions and fail typed on contract gaps', () => {
@@ -87,9 +77,42 @@ test('direct REST surface fails typed instead of probing the absent local Studio
   assert.doesNotMatch(clientSource, /deployments: \(\) => request\('\/api\/v1\/deployments'\)/);
 });
 
-test('bound conversations resolve the surface through the control-plane bridge in directServer mode', () => {
-  assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'agents\/conversation-surface', \{ agentId, sessionId \}\)/);
-  assert.match(clientSource, /BUILD_NOT_READY/);
+test('Delivery surface states the direct Server deployment contract boundary', () => {
+  assert.match(clientSource, /const directServerMode = Boolean\(window\.__AGENTKIT_STUDIO__\?\.controlPlane === 'agentengine-server'\)/);
+  assert.match(clientSource, /Deployment 合同尚未提供/);
+  assert.match(clientSource, /AgentEngine Server 尚未提供 Deployment 合同/);
+  assert.match(clientSource, /directServerMode \|\| saving \|\| !selectedBuild/);
+});
+
+test('resource-bound Agents use the same native DSH preset bridge as model-only Agents', () => {
+  const selector = clientSource.slice(clientSource.indexOf('function AgentContextSelector'), clientSource.indexOf('function StudioSubnav'));
+  assert.match(selector, /resourceBound\(selectedRecord\)/);
+  assert.match(selector, /已绑定原生会话适配器/);
+});
+
+test('native bridge intercepts the DSH stream without rewriting the visible model route', async () => {
+  const pluginSource = await readFile(resolve(import.meta.dirname, '../src/providers/dsh-runtime-plugin.mjs'), 'utf8');
+  assert.match(pluginSource, /ctx\.on\('llm\/stream'/);
+  assert.doesNotMatch(pluginSource, /provider:\s*'agentkit-studio'/);
+  assert.doesNotMatch(pluginSource, /agent\/request/);
+});
+
+test('model-only local Agent admission can use the native DSH session UI', async () => {
+  const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
+  const admissionSource = await readFile(resolve(import.meta.dirname, '../src/agent-preset-admission.mjs'), 'utf8');
+  assert.match(clientSource, /studioRemote\.agentPresets\.select\(sessionId, admission\.presetId\)/);
+  assert.match(hostSource, /localStore\.get\(agentId\)/);
+  assert.match(hostSource, /presetAdmission\.ensure\(agentId, \{ agent: local \}\)/);
+  assert.match(admissionSource, /suppliedAgent \|\| await this\.getAgent/);
+  assert.match(admissionSource, /mode: bridge \? 'studio-bridge' : 'dsh-native'/);
+});
+
+test('cloud Agent execution remains available through the control-plane bridge', async () => {
+  const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
+  assert.match(hostSource, /CreateSession/);
+  assert.match(hostSource, /RunAgent/);
+  assert.match(hostSource, /createDshRuntimeAdapter/);
+  assert.match(hostSource, /streamAction\('RunAgent'/);
 });
 
 test('directServer Agent authoring persists through the Host bridge', async () => {
@@ -184,7 +207,9 @@ test('Studio marketplace exposes the old Studio plugin lifecycle through Host ro
   assert.match(clientSource, /hostRemote\.uninstallDshPlugin/);
   assert.match(clientSource, /hostRemote\.installCodexPlugin/);
   assert.match(clientSource, /hostRemote\.uninstallCodexPlugin/);
-  assert.match(clientSource, /变更会调用对应 Host/);
+  assert.match(clientSource, /data-plugin-market/);
+  assert.match(clientSource, /pluginSection\('已安装'/);
+  assert.match(clientSource, /pluginSection\('发现插件'/);
 });
 
 test('resource surface exposes real MCP and Skill lifecycle actions', () => {

@@ -4,41 +4,6 @@
       const [createMode, setCreateMode] = useState('quick');
       const [created, setCreated] = useState(null);
       const [editingAgent, setEditingAgent] = useState(null);
-      const [conversationAgent, setConversationAgent] = useState(null);
-      const [pendingBoundAgent, setPendingBoundAgent] = useState(() => {
-        try {
-          const value = window.localStorage.getItem(OPEN_BOUND_CONVERSATION_KEY);
-          if (value) window.localStorage.removeItem(OPEN_BOUND_CONVERSATION_KEY);
-          return value || null;
-        } catch { return null; }
-      });
-      useEffect(() => {
-        const openBound = event => {
-          const agentId = String(event?.detail?.agentId || '').trim();
-          if (agentId) setPendingBoundAgent(agentId);
-        };
-        window.addEventListener('agentkit-studio:open-bound-conversation', openBound);
-        return () => {
-          window.removeEventListener('agentkit-studio:open-bound-conversation', openBound);
-        };
-      }, []);
-      useEffect(() => {
-        if (!pendingBoundAgent) return undefined;
-        let alive = true;
-        hostRemote.agent(pendingBoundAgent).then(agent => {
-          if (!alive || !agent) return;
-          setConversationAgent(agent);
-          setPendingBoundAgent(null);
-          setView('bound-conversation');
-        }).catch(() => { if (alive) setPendingBoundAgent(null); });
-        return () => { alive = false; };
-      }, [pendingBoundAgent]);
-      if (view === 'bound-conversation') {
-        return h(BoundAgentConversationPage, {
-          agent: conversationAgent,
-          onBack: () => { setConversationAgent(null); setView('list'); },
-        });
-      }
       if (view === 'create') {
         return h(AgentCreatePage, {
           mode: createMode,
@@ -58,139 +23,12 @@
         tab,
         onTabChange: setTab,
         onEdit: agent => { setEditingAgent(agent?.metadata?.id || agent.id); setView('edit'); },
-        onOpenConversation: agent => { setConversationAgent(agent); setView('bound-conversation'); },
+        onBindAgent: agent => window.__AGENTKIT_STUDIO_BIND_AGENT__?.(agent?.metadata?.id || agent?.id),
         onCreate: mode => { setCreated(null); if (mode === 'conversation') window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring')); else { setCreateMode(mode); setView('create'); } },
       });
     }
 
-    // Host Markdown primitives are a platform seed word in the DSH module
-    // table, so no inject declaration is needed. Resolve them once and keep a
-    // plain-text fallback for surfaces where the word is absent: the page must
-    // degrade, not break.
-    let HOST_MARKDOWN = null;
-    try { HOST_MARKDOWN = require('@deepseek-ai/dsh-client-ui-primitives') || null; } catch { HOST_MARKDOWN = null; }
-    const HOST_MARKDOWN_LABELS = {
-      code: { copyLabel: '复制', copiedLabel: '已复制', toolbarLabels: { codeLabel: '代码', wrapLabel: '自动换行', unwrapLabel: '取消换行' } },
-      footnotes: '脚注',
-    };
-
-    function BoundAgentConversationPage({ agent, onBack }) {
-      const metadata = agent?.metadata || agent || {};
-      const agentId = String(metadata.id || agent?.id || '').trim();
-      const agentName = metadata.name || agent?.name || agentId || '未命名 Agent';
-      const runtime = agent?.spec?.runtime?.type || agent?.runtime?.type || 'harness';
-      const sessionId = useRef(`studio-agent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
-      const abortRef = useRef(null);
-      const [input, setInput] = useState('');
-      const [messages, setMessages] = useState([]);
-      const [status, setStatus] = useState('ready');
-      const [error, setError] = useState('');
-      const [runId, setRunId] = useState('');
-
-      useEffect(() => () => abortRef.current?.abort(), []);
-
-      const applyItem = item => {
-        if (!item || item.visibility === 'hidden') return;
-        const id = String(item.itemId || item.item_id || `item-${Date.now()}`);
-        const kind = String(item.kind || 'unknown');
-        const payload = item.payload && typeof item.payload === 'object' ? item.payload : {};
-        const text = typeof payload.text === 'string' ? payload.text : '';
-        if (kind === 'user_message') return;
-        if (kind === 'assistant_text' || kind === 'reasoning') {
-          setMessages(current => {
-            const index = current.findIndex(message => message.id === id);
-            const previous = index >= 0 ? current[index] : { id, role: kind === 'reasoning' ? 'reasoning' : 'assistant', text: '' };
-            const nextText = item.operation === 'append' ? previous.text + text : (text || previous.text);
-            const next = { ...previous, role: kind === 'reasoning' ? 'reasoning' : 'assistant', text: nextText, completed: item.lifecycle === 'completed' };
-            if (index < 0) return [...current, next];
-            return current.map((message, cursor) => cursor === index ? next : message);
-          });
-        }
-        if (kind === 'progress' && payload.status) setStatus(String(payload.status));
-        if (kind === 'error') {
-          setError(String(payload.message || payload.error || 'Agent 运行失败'));
-          setStatus('failed');
-        }
-        if (item.runId || item.run_id) setRunId(String(item.runId || item.run_id));
-      };
-
-      const consume = async response => {
-        if (!response?.body) throw new Error('Host 没有返回事件流');
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        const feed = chunk => {
-          buffer += chunk;
-          let split = buffer.indexOf('\n\n');
-          while (split >= 0) {
-            const record = buffer.slice(0, split); buffer = buffer.slice(split + 2);
-            const data = record.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-            if (data && data !== '[DONE]') {
-              try {
-                const payload = JSON.parse(data);
-                if (payload.conversationItem) applyItem(payload.conversationItem);
-                if (payload.runId) setRunId(String(payload.runId));
-                const eventType = payload.runtimeEvent?.event_type || payload.type || '';
-                if (eventType === 'run.completed') setStatus('completed');
-                if (eventType === 'run.failed') setStatus('failed');
-              } catch { /* malformed event is ignored; Host contract reports terminal error separately */ }
-            }
-            split = buffer.indexOf('\n\n');
-          }
-        };
-        try {
-          while (true) {
-            const result = await reader.read();
-            if (result.done) break;
-            feed(decoder.decode(result.value, { stream: true }));
-          }
-          feed(decoder.decode());
-        } finally { reader.releaseLock(); }
-      };
-
-      const send = async event => {
-        event?.preventDefault?.();
-        const text = input.trim();
-        if (!text || status === 'running' || !agentId) return;
-        const inputId = `input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const idempotencyKey = `studio-${sessionId.current}-${inputId}`;
-        const controller = new AbortController();
-        abortRef.current = controller;
-        setInput(''); setError(''); setStatus('running'); setRunId('');
-        setMessages(current => [...current, { id: inputId, role: 'user', text }]);
-        try {
-          const response = await hostRemote.streamAgentConversation(agentId, sessionId.current, {
-            apiVersion: 'conversation.ksadk.io/v1',
-            kind: 'ConversationInput', inputId, sessionId: sessionId.current, idempotencyKey,
-            parts: [{ kind: 'text', text }],
-          }, controller.signal);
-          await consume(response);
-          setStatus(current => current === 'running' ? 'completed' : current);
-        } catch (reason) {
-          if (reason?.name === 'AbortError' || controller.signal.aborted) return;
-          setError(reason?.message || '绑定 Agent 对话失败'); setStatus('failed');
-        } finally { if (abortRef.current === controller) abortRef.current = null; }
-      };
-
-      const renderMessageBody = message => {
-        if (message.role === 'assistant' && HOST_MARKDOWN?.MarkdownText) {
-          return h(HOST_MARKDOWN.MarkdownText, { text: message.text || '…', streaming: status === 'running' && !message.completed, labels: HOST_MARKDOWN_LABELS });
-        }
-        return message.text || (message.role === 'reasoning' ? '正在思考…' : '…');
-      };
-
-      if (!agentId) return h(EmptyState, { icon: '!', title: '没有选择 Agent', detail: '从 Agents 列表打开一个已创建的 Agent。', action: h('button', { type: 'button', onClick: onBack, style: buttonStyle() }, '返回 Agents') });
-      return h('div', null,
-        h(SectionHeading, { eyebrow: 'Studio domain / Bound conversation', title: agentName, detail: `绑定 Agent 对话 · ${RUNTIME_LABELS[runtime] || runtime} · 会话 ${sessionId.current}`, action: h('button', { type: 'button', onClick: onBack, style: buttonStyle() }, '返回 Agents') }),
-        h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '14px', background: BRAND.surface, minHeight: '260px', display: 'flex', flexDirection: 'column', gap: '10px' } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, 'Host canonical conversation'), h(Pill, { tone: status === 'completed' ? 'accent' : status === 'failed' ? 'signal' : 'neutral' }, status === 'running' ? '运行中' : status === 'completed' ? '已完成' : status === 'failed' ? '失败' : '就绪')),
-          h('div', { style: { flex: 1, display: 'grid', alignContent: 'start', gap: '8px', overflow: 'auto', padding: '4px 0' } }, messages.length ? messages.map(message => h('div', { key: message.id, style: { maxWidth: '82%', justifySelf: message.role === 'user' ? 'end' : 'start', padding: '9px 11px', borderRadius: '10px', whiteSpace: message.role === 'assistant' && HOST_MARKDOWN?.MarkdownText ? undefined : 'pre-wrap', color: BRAND.ink, background: message.role === 'user' ? BRAND.accentSoft : BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } }, renderMessageBody(message))) : h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', padding: '28px 0', textAlign: 'center' } }, '发送一条消息，验证当前 Agent 的真实运行时与资源绑定。')),
-          runId ? h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `Run ${runId}`) : null,
-          error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '11px' } }, error) : null,
-          h('form', { onSubmit: send, style: { display: 'flex', gap: '8px', alignItems: 'flex-end', borderTop: '1px solid ' + BRAND.border, paddingTop: '10px' } }, h('textarea', { value: input, onChange: event => setInput(event.target.value), disabled: status === 'running', rows: 2, placeholder: '输入消息，发送到这个 Agent…', style: { ...inputStyle(), height: 'auto', padding: '9px 10px', resize: 'vertical', marginTop: 0, flex: 1 } }), h('button', { type: 'submit', disabled: status === 'running' || !input.trim(), style: { ...buttonStyle(), color: status === 'running' || !input.trim() ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: status === 'running' || !input.trim() ? BRAND.accentSoft : BRAND.primaryFill, borderColor: status === 'running' || !input.trim() ? BRAND.border : 'transparent' } }, status === 'running' ? '运行中…' : '发送'))));
-    }
-
-    function AgentsPage({ onCreate, created, onNavigate, onOpenConversation, onEdit, tab, onTabChange, onDeleteLocal }) {
+    function AgentsPage({ onCreate, created, onNavigate, onBindAgent, onEdit, tab, onTabChange, onDeleteLocal }) {
       const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
       const [agents, setAgents] = useState([]);
       const [status, setStatus] = useState('loading');
@@ -265,7 +103,7 @@
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, counts.length ? counts.map(([label, count]) => `${count} ${label}`).join(' · ') : '—'),
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `r${metadata.revision || 1}`),
               h('td', { style: { padding: '13px 14px' } }, h(Pill, { tone: built ? 'accent' : 'signal' }, built ? '已构建' : agent.source === 'local-studio' ? '本地配置' : '草稿')),
-              h('td', { style: { padding: '13px 14px', whiteSpace: 'nowrap' } }, h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: () => onOpenConversation?.(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' } }, '打开绑定对话'), h('button', { type: 'button', onClick: () => onEdit(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '编辑 Agent'), agent?.metadata?.local ? h('button', { type: 'button', onClick: async () => { if (!(window.__AGENTKIT_CONFIRM__ ? await window.__AGENTKIT_CONFIRM__({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true }) : window.confirm(`确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？`))) return; void onDeleteLocal?.(agent?.metadata?.id); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.danger } }, '删除') : null)));
+              h('td', { style: { padding: '13px 14px', whiteSpace: 'nowrap' } }, h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: () => onBindAgent?.(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' } }, '绑定到新会话'), h('button', { type: 'button', onClick: () => onEdit(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '编辑 Agent'), agent?.metadata?.local ? h('button', { type: 'button', onClick: async () => { if (!(window.__AGENTKIT_CONFIRM__ ? await window.__AGENTKIT_CONFIRM__({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true }) : window.confirm(`确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？`))) return; void onDeleteLocal?.(agent?.metadata?.id); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.danger } }, '删除') : null)));
           })))),
         h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '1px solid ' + BRAND.border, color: BRAND.inkMuted, fontSize: '11px' } },
           h('span', null, `${total || filteredPageAgents.length} 个 Agent · 第 ${Math.min(page, pageCount)}/${pageCount} 页`),

@@ -6,8 +6,8 @@
  * DSH route. Studio tool/MCP/Skill/platform bindings are not DSH Cordis
  * declarations, so silently putting them in an empty preset would produce a
  * successful looking chat that runs the wrong composition. Those resource
- * bindings stay fail-closed until a real public provider contract materializes
- * their capabilities.
+ * bindings are routed through the Studio DSH provider bridge, which keeps the
+ * native Session UI and loop while delegating the model turn to Studio.
  */
 
 function encodedId(value) {
@@ -73,22 +73,23 @@ export function dshPresetId(agentId, revision = 1) {
 
 export function dshPresetEligibility(agent = {}, options = {}) {
   const runtime = String(agent?.spec?.runtime?.type || agent?.runtime?.type || agent?.framework || '').trim().toLowerCase();
-  if (runtime !== 'dsh-native') {
-    return { ok: false, code: 'STUDIO_PRESET_RUNTIME_UNSUPPORTED', message: '只有 dsh-native Agent 可以由 DSH preset 准入', runtime };
+  if (!['dsh-native', 'harness', 'codex'].includes(runtime)) {
+    return { ok: false, code: 'STUDIO_PRESET_RUNTIME_UNSUPPORTED', message: '当前 Agent runtime 没有 DSH 原生会话适配器', runtime };
   }
   const unsupported = unsupportedDshBindings(agent, options);
-  if (unsupported.length) {
-    return {
-      ok: false,
-      code: 'STUDIO_PRESET_RESOURCE_UNSUPPORTED',
-      message: '该 Agent 含有当前 DSH provider 尚未实现的资源绑定',
-      unsupported,
-    };
-  }
   const agentId = String(agent?.metadata?.id || agent?.id || '').trim();
   if (!agentId) return { ok: false, code: 'STUDIO_PRESET_AGENT_ID_MISSING', message: 'AgentId 不能为空' };
   const revision = Number(agent?.metadata?.revision || agent?.revision || 1) || 1;
-  return { ok: true, agentId, revision, presetId: dshPresetId(agentId, revision), runtime: 'dsh-native' };
+  const bridge = runtime !== 'dsh-native' || unsupported.length > 0;
+  return {
+    ok: true,
+    agentId,
+    revision,
+    presetId: dshPresetId(agentId, revision),
+    runtime,
+    mode: bridge ? 'studio-bridge' : 'dsh-native',
+    ...(unsupported.length ? { unsupported } : {}),
+  };
 }
 
 /**
@@ -109,7 +110,7 @@ export class DshPresetAdmission {
     this.registry = registry;
   }
 
-  async ensure(agentId) {
+  async ensure(agentId, { agent: suppliedAgent } = {}) {
     if (!this.registry || typeof this.registry.register !== 'function') {
       const error = new Error('DSH agent preset registry 不可用');
       error.code = 'DSH_PRESET_REGISTRY_UNAVAILABLE';
@@ -120,7 +121,7 @@ export class DshPresetAdmission {
       error.code = 'AGENTENGINE_SERVER_UNAVAILABLE';
       throw error;
     }
-    const agent = await this.getAgent(String(agentId || '').trim());
+    const agent = suppliedAgent || await this.getAgent(String(agentId || '').trim());
     const activeModel = typeof this.getActiveModel === 'function' ? await this.getActiveModel() : undefined;
     const eligibility = dshPresetEligibility(agent, { activeModel });
     if (!eligibility.ok) {
@@ -135,16 +136,27 @@ export class DshPresetAdmission {
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
+    const plugins = [];
+    if (prefix) plugins.push({ id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix } });
+    if (eligibility.mode === 'studio-bridge') {
+      plugins.push({
+        id: 'studio-runtime',
+        name: '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin',
+        config: {
+          agentId: eligibility.agentId,
+          runtime: eligibility.runtime,
+          local: agent?.metadata?.local === true,
+        },
+      });
+    }
     const unregister = await this.registry.register({
       id: eligibility.presetId,
       name: String(agent?.metadata?.name || agent?.name || eligibility.agentId),
       description: 'AgentKit Studio dsh-native Agent（使用当前 DSH 模型路由）',
-      // Persona is an official DSH preset row. It gives a selected Studio
-      // Agent real system instructions while keeping DSH's own Session
-      // Controller and tool loop in charge. Model binding is admitted only
-      // when it exactly matches the active DSH route; other resources remain
-      // fail-closed until their public provider contract exists.
-      plugins: prefix ? [{ id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix } }] : [],
+      // The persona row is optional. Resource-bearing Harness/Codex revisions
+      // add the Studio runtime listener, which changes only the provider route;
+      // DSH still owns the Session Controller, durable loop and renderer.
+      plugins,
     });
     this.registrations.set(eligibility.agentId, { presetId: eligibility.presetId, unregister });
     return { ...eligibility, reused: false };

@@ -29,9 +29,9 @@
       // Studio does not inject a sink or bridge into InputHub. The authoring
       // tools registered by the Host let this native conversation create and
       // refine a reviewed Agent draft. A selected no-resource dsh-native
-      // Agent is admitted through the public DSH preset Remote; resource
-      // bindings remain explicitly fail-closed until a provider materializes
-      // them.
+      // Agent is admitted through the public DSH preset Remote. Harness,
+      // Codex and resource-bearing revisions add a preset-scoped provider
+      // listener; the DSH Session, loop and renderer stay in charge.
       // Replace the official DSH brand row through its public slots. This
       // preserves the frame while giving the product its own identity.
       ctx.slots.inject('sidebar.brand.mark', () => ctx.slots.register(
@@ -75,6 +75,37 @@
         const next = PANELS.find(item => item.page === target || item.id === target);
         if (next) ctx.layout.selectPanel(next.id);
       };
+      // Agents are bound from the Studio Agents page. Create the Session,
+      // admit its preset, select it before the first turn, then hand the
+      // Session to DSH's own navigation service. This keeps the native
+      // composer visible from the first frame and makes binding an explicit
+      // action rather than a side effect of opening a custom chat page.
+      ctx.inject(['uiWorkspace', 'sessions'], navCtx => {
+        window.__AGENTKIT_STUDIO_BIND_AGENT__ = async agentId => {
+          const value = String(agentId || '').trim();
+          if (!value) return;
+          try {
+            // Keep the DSH-native blank-session semantics. An Agent binding
+            // must not force a filesystem Workspace; users can choose one in
+            // the native composer when they need workspace tools.
+            const sessionId = await navCtx.sessions.create({});
+            const admission = await hostRemote.ensureDshPreset(value);
+            const selected = await ctx.remote?.agentPresets?.select?.(sessionId, admission.presetId);
+            if (selected === undefined || selected === null || (typeof selected === 'object' && selected.ok === false)) {
+              throw new Error(selected?.error?.message || 'DSH 拒绝绑定该 Agent');
+            }
+            writeConversationAgent(value, sessionId);
+            window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(value);
+            navCtx.uiWorkspace.openSession(sessionId);
+            ctx.layout.selectPanel(null);
+          } catch (error) {
+            const message = error?.message || 'Agent 绑定失败';
+            console.error('[agentkit-studio] native Agent binding failed:', error);
+            window.__AGENTKIT_CONFIRM__?.({ title: 'Agent 绑定失败', detail: message, confirmLabel: '知道了' });
+          }
+        };
+        return () => { try { delete window.__AGENTKIT_STUDIO_BIND_AGENT__; } catch {} };
+      });
       // A reload lands back on the native conversation panel by default.
       // Persist every panel selection (sidebar clicks included — they go
       // through layout.selectPanel, not navigateStudio) via the panelInfo
@@ -105,17 +136,9 @@
           ctx.layout.selectPanel(null);
           window.dispatchEvent(new CustomEvent('agentkit-studio:seed-authoring'));
         };
-        const openBoundConversation = event => {
-          const agentId = String(event?.detail?.agentId || '').trim();
-          if (!agentId) return;
-          try { window.localStorage.setItem(OPEN_BOUND_CONVERSATION_KEY, agentId); } catch {}
-          navigateStudio('studio-agents');
-        };
         window.addEventListener('agentkit-studio:open-authoring', openAuthoring);
-        window.addEventListener('agentkit-studio:open-bound-conversation', openBoundConversation);
         return () => {
           window.removeEventListener('agentkit-studio:open-authoring', openAuthoring);
-          window.removeEventListener('agentkit-studio:open-bound-conversation', openBoundConversation);
         };
       }, 'agentkit-studio:authoring-entry');
       // Studio patch 007: register a sidebar session filter so selecting an

@@ -314,6 +314,10 @@
         [data-agentkit-studio="product-application"] [data-studio-content-intro] { flex-wrap: wrap; align-items: flex-start; }
         [data-studio-model-settings] { container-type: inline-size; }
         [data-studio-model-settings] input, [data-studio-model-settings] select { min-width: 0; box-sizing: border-box; }
+        [data-plugin-market] [data-studio-heading] h2 { font-size: 30px !important; font-weight: 650; }
+        [data-plugin-market] [data-studio-heading] p { font-size: 16px !important; }
+        [data-plugin-row]:hover { background: var(--dsw-alias-bg-layer-2, #f7f8fa) !important; }
+        [data-plugin-row] button:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4b73e8); outline-offset: 4px; }
         @container (max-width: 540px) {
           [data-studio-model-settings] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
         }
@@ -345,7 +349,7 @@
       const activeNav = PANELS.find(item => item.page === page) || PANELS[0];
       return h('div', {
         'data-agentkit-studio': 'product-application',
-        style: { height: '100%', minHeight: 0, minWidth: 0, overflow: 'auto', background: BRAND.canvas, color: BRAND.ink, fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
+        style: { height: '100%', minHeight: 0, minWidth: 0, overflow: 'auto', background: page === 'resource-hub' ? BRAND.surface : BRAND.canvas, color: BRAND.ink, fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
       },
       h('main', { 'data-studio-shell-main': 'true', style: { minWidth: 0, minHeight: '100%', boxSizing: 'border-box', padding: '24px 28px 32px' } },
         h('header', { 'data-studio-header': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', marginBottom: '24px' } },

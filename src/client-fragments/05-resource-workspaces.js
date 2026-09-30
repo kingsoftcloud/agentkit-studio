@@ -219,7 +219,7 @@
       const normalized = query.trim().toLowerCase();
       const visibleItems = ecoItems.filter(item => !normalized || `${item.displayName || ''} ${item.name || ''} ${item.pluginId || ''} ${item.description || ''}`.toLowerCase().includes(normalized));
       const iconLetter = item => String(item?.displayName || item?.name || item?.pluginId || '?').trim().charAt(0).toUpperCase() || '?';
-      const iconSquare = (item, size = 40) => {
+      const iconSquare = (item, size = 52) => {
         const style = { width: size + 'px', height: size + 'px', borderRadius: Math.round(size * 0.28) + 'px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: Math.round(size * 0.34) + 'px', fontWeight: 750, flex: '0 0 auto', overflow: 'hidden', border: '1px solid ' + BRAND.border, background: BRAND.canvas, color: BRAND.inkMuted };
         if (item?.iconDataUrl) return h('span', { style: { ...style, background: 'var(--dsw-alias-bg-layer-1, #fff)' } }, h('img', { src: item.iconDataUrl, alt: '', style: { width: '72%', height: '72%', objectFit: 'contain' } }));
         return h('span', { style }, iconLetter(item));
@@ -242,13 +242,12 @@
           isCodex && installed ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
         );
       };
-      const discoveryRow = item => h('button', { key: `${item.ecosystem}-${item.pluginId || item.name}`, type: 'button', onClick: () => setSelected(item), style: { display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', padding: '11px 10px', minWidth: 0, border: '1px solid transparent', borderRadius: '10px', background: 'transparent', color: BRAND.ink, cursor: 'pointer', width: '100%' } },
+      const discoveryRow = item => h('div', { key: `${item.ecosystem}-${item.pluginId || item.name}`, 'data-plugin-row': 'true', style: { display: 'flex', alignItems: 'center', gap: '16px', textAlign: 'left', padding: '18px 0', minWidth: 0, borderRadius: '12px', background: 'transparent', color: BRAND.ink, width: '100%' } },
         iconSquare(item),
-        h('span', { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' } },
-          h('strong', { style: { fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.displayName || item.name || item.pluginId || '未命名插件'),
-          h('small', { style: { color: BRAND.inkMuted, fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.description || item.pluginId || '由插件生态提供的可选能力。')),
-        h(Pill, { tone: item.source === 'codex-curated' || item.source === 'codex-bundled' ? 'neutral' : 'accent' }, item.version || '—'),
-        lifecycleButtons(item, true));
+        h('button', { type: 'button', onClick: () => setSelected(item), style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '5px', textAlign: 'left', border: 0, background: 'transparent', color: BRAND.ink, cursor: 'pointer', padding: 0 } },
+          h('strong', { style: { fontWeight: 550, fontSize: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' } }, item.displayName || item.name || item.pluginId || '未命名插件'),
+          h('small', { style: { color: BRAND.inkMuted, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' } }, item.description || '查看插件详情与可用能力')),
+        h('button', { type: 'button', 'aria-label': `${item.installed === false ? '安装' : '管理'} ${item.displayName || item.name || item.pluginId}`, disabled: Boolean(busyKey), onClick: () => item.installed === false ? void mutate(item, 'install') : setSelected(item), style: { border: 0, background: 'transparent', color: BRAND.ink, width: '36px', height: '36px', fontSize: '24px', cursor: 'pointer', flexShrink: 0 } }, item.installed === false ? '+' : '···'));
       const infoRow = (label, value) => h('div', { style: { display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', gap: '14px', padding: '8px 0', fontSize: '12px' } }, h('dt', { style: { color: BRAND.inkMuted } }, label), h('dd', { style: { margin: 0, color: BRAND.ink, wordBreak: 'break-all' } }, value || '—'));
       const detailView = selected ? h('div', null,
         h('button', { type: 'button', onClick: () => setSelected(null), style: { ...buttonStyle(), background: BRAND.surface, marginBottom: '16px' } }, '← 返回插件市场'),
@@ -266,16 +265,17 @@
           selected.installSpec ? infoRow('安装源', selected.installSpec) : null,
           selected.risk ? infoRow('风险标记', JSON.stringify(selected.risk)) : null),
       ) : null;
-      return h('div', null,
-        h(SectionHeading, { eyebrow: 'Studio domain', title: '插件市场', detail: '统一管理 DSH 与 Codex 两个插件生态；变更会调用对应 Host，并在 Profile 重载后生效。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? '目录已读取' : '正在读取') }),
+      const pluginSection = (title, rows) => rows.length ? h('section', { style: { marginTop: '32px' } }, h('h3', { style: { margin: '0 0 10px', fontSize: '16px', fontWeight: 650, color: BRAND.ink } }, title), h('div', { 'data-plugin-grid': 'true', style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px 48px' } }, rows.map(discoveryRow))) : null;
+      return h('div', { 'data-plugin-market': 'true', style: { maxWidth: '1120px', margin: '12px auto', padding: '8px 12px 40px' } },
+        h(SectionHeading, { title: '插件', detail: '为你的 Agent 添加工具与能力。', action: h('input', { type: 'search', 'aria-label': '搜索插件', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索插件', style: { ...inputStyle(), width: '280px', borderRadius: '24px', padding: '11px 18px', marginTop: 0 } }) }),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取插件目录', detail: '分别询问 DSH Profile Host 和 Codex App Server。' }) : null,
         errors.length ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', background: 'var(--dsw-alias-state-warn-tertiary, #fff3da)', color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', fontSize: '12px' } }, errors.join('；')) : null,
         message ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', background: BRAND.accentSoft, color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
         status === 'ready' && !selected ? h('div', null,
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' } },
             h('div', { style: { display: 'inline-flex', gap: '4px', padding: '3px', border: '1px solid ' + BRAND.border, borderRadius: '18px', background: BRAND.surface } }, [['dsh', 'DSH 插件'], ['codex', 'Codex 插件']].map(([id, label]) => h('button', { key: id, type: 'button', 'aria-selected': eco === id ? 'true' : 'false', onClick: () => { setEco(id); setSelected(null); }, style: { border: 0, boxShadow: 'none', padding: '6px 14px', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', fontWeight: 650, color: eco === id ? BRAND.accentStrong : BRAND.inkMuted, background: eco === id ? BRAND.accentSoft : 'transparent' } }, label))),
-            h('input', { value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索插件…', style: { ...inputStyle(), width: '220px', borderRadius: '20px', padding: '8px 14px', marginTop: 0 } })),
-          visibleItems.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '2px 22px' } }, visibleItems.map(discoveryRow)) : h(EmptyState, { icon: '⌘', title: eco === 'dsh' ? 'DSH 生态暂无可见插件' : 'Codex 生态暂无可见插件', detail: eco === 'codex' ? '本机 Codex home 没有已缓存插件；在 Codex 里安装后会出现在这里。' : 'Profile 没有返回可见插件。', action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新读取') }),
+            h('button', { type: 'button', onClick: load, style: { ...buttonStyle(), background: 'transparent' } }, '刷新')),
+          visibleItems.length ? h(React.Fragment, null, pluginSection('已安装', visibleItems.filter(item => item.installed !== false)), pluginSection('发现插件', visibleItems.filter(item => item.installed === false))) : h(EmptyState, { icon: '⌘', title: eco === 'dsh' ? 'DSH 生态暂无可见插件' : 'Codex 生态暂无可见插件', detail: eco === 'codex' ? '本机 Codex home 没有已缓存插件；在 Codex 里安装后会出现在这里。' : 'Profile 没有返回可见插件。', action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新读取') }),
           h('div', { style: { marginTop: '16px' } }, h('button', { type: 'button', onClick: load, style: { ...buttonStyle(), background: BRAND.surface } }, '刷新目录')),
         ) : null,
         status === 'ready' && selected ? detailView : null,
@@ -349,6 +349,7 @@
     }
 
     function DeliveryPage() {
+      const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
       const [agents, setAgents] = useState([]);
       const [deployments, setDeployments] = useState([]);
       const [operations, setOperations] = useState([]);
@@ -432,7 +433,7 @@
         finally { setSaving(false); }
       };
       const createDeployment = async () => {
-        if (!selectedBuild || saving) return;
+        if (directServerMode || !selectedBuild || saving) return;
         setSaving(true); setError(''); setMessage('');
         try {
           const result = await hostRemote.createDeployment(selectedBuild, {
@@ -454,7 +455,7 @@
         h('td', { style: { padding: '10px 12px', color: BRAND.inkMuted } }, item.revision ? `Revision ${item.revision}` : '—'),
         h('td', { style: { padding: '10px 12px' } }, h(Pill, { tone: String(item.status || '').toUpperCase() === 'SUCCEEDED' ? 'accent' : 'signal' }, item.status || 'UNKNOWN')))) : h('tr', null, h('td', { colSpan: 3, style: { padding: '18px 12px', color: BRAND.inkMuted } }, '当前 Agent 还没有 Build。'));
       return h('div', null,
-        h(SectionHeading, { eyebrow: 'Studio domain / Delivery', title: '构建与部署', detail: 'Build 固化 Agent Revision；Deployment 只接受已成功的 Build，所有动作由本地 Host 通过异步 operation 承载。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中') }),
+        h(SectionHeading, { eyebrow: 'Studio domain / Delivery', title: '构建与部署', detail: directServerMode ? 'Build 固化 Agent Revision；当前 AgentEngine Server 只开放构建与运行合同，Deployment 合同尚未提供。' : 'Build 固化 Agent Revision；Deployment 只接受已成功的 Build，所有动作由本地 Host 通过异步 operation 承载。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中') }),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: '交付状态不可用', detail: error, action: h('button', { type: 'button', onClick: () => load(), style: buttonStyle() }, '重新读取') }) : null,
         status === 'ready' ? h(React.Fragment, null,
@@ -465,14 +466,15 @@
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid ' + BRAND.border } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, 'Build 历史'), h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, `${builds.length} 个`)),
             h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } }, h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas } }, ['Build', '版本', '状态'].map(label => h('th', { key: label, style: { padding: '10px 12px', fontWeight: 750 } }, label)))), h('tbody', null, buildRows))),
           h('section', { style: { marginTop: '14px', display: 'grid', gap: '12px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
-            h('div', { style: { color: BRAND.ink, fontWeight: 800, fontSize: '14px' } }, '部署已成功的 Build'),
+            h('div', { style: { color: BRAND.ink, fontWeight: 800, fontSize: '14px' } }, directServerMode ? '云端部署' : '部署已成功的 Build'),
+            directServerMode ? h('div', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, padding: '10px 12px', borderRadius: '9px', background: BRAND.canvas } }, 'AgentEngine Server 当前没有 Deployment Action；本页不会提交旧版 Studio REST 请求。完成 Build 后可直接在本地运行对话。') : null,
             h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 1fr 1fr auto', gap: '9px', alignItems: 'end' } },
-              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Build', h('select', { value: selectedBuild, onChange: event => setSelectedBuild(event.target.value), style: inputStyle() }, h('option', { value: '' }, readyBuilds.length ? '请选择 Build' : '暂无成功 Build'), readyBuilds.map(item => h('option', { key: item.id, value: item.id }, `${item.id} · Revision ${item.revision || '—'}`)))),
-              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '区域', h('input', { value: region, onChange: event => setRegion(event.target.value), style: inputStyle() })),
-              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '环境', h('input', { value: environment, onChange: event => setEnvironment(event.target.value), style: inputStyle() })),
-              h('button', { type: 'button', onClick: createDeployment, disabled: saving || !selectedBuild, style: { ...buttonStyle(), color: saving || !selectedBuild ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: saving || !selectedBuild ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !selectedBuild ? BRAND.border : 'transparent' } }, '提交部署'))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Build', h('select', { value: selectedBuild, onChange: event => setSelectedBuild(event.target.value), disabled: directServerMode, style: inputStyle() }, h('option', { value: '' }, readyBuilds.length ? '请选择 Build' : '暂无成功 Build'), readyBuilds.map(item => h('option', { key: item.id, value: item.id }, `${item.id} · Revision ${item.revision || '—'}`)))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '区域', h('input', { value: region, onChange: event => setRegion(event.target.value), disabled: directServerMode, style: inputStyle() })),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '环境', h('input', { value: environment, onChange: event => setEnvironment(event.target.value), disabled: directServerMode, style: inputStyle() })),
+              h('button', { type: 'button', onClick: createDeployment, disabled: directServerMode || saving || !selectedBuild, style: { ...buttonStyle(), color: directServerMode || saving || !selectedBuild ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: directServerMode || saving || !selectedBuild ? BRAND.accentSoft : BRAND.primaryFill, borderColor: directServerMode || saving || !selectedBuild ? BRAND.border : 'transparent' } }, directServerMode ? '等待云端合同' : '提交部署'))),
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px', marginTop: '14px' } },
-            h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, '部署记录'), deployments.length ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '12px' } }, deployments.slice(0, 8).map(item => h('div', { key: item.id, style: { display: 'flex', justifyContent: 'space-between', gap: '8px', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, item.id || '—'), h(Pill, { tone: item.status === 'READY' ? 'accent' : 'signal' }, item.status || 'UNKNOWN')))) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '暂无部署记录。')),
+            h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, '部署记录'), deployments.length ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '12px' } }, deployments.slice(0, 8).map(item => h('div', { key: item.id, style: { display: 'flex', justifyContent: 'space-between', gap: '8px', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, item.id || '—'), h(Pill, { tone: item.status === 'READY' ? 'accent' : 'signal' }, item.status || 'UNKNOWN')))) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, directServerMode ? 'AgentEngine Server 尚未提供 Deployment 合同。' : '暂无部署记录。')),
             h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, '异步操作'), operations.length ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '12px' } }, operations.slice(0, 8).map(item => h('div', { key: item.id, style: { display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, `${item.kind || item.type || 'operation'} · ${item.status || 'UNKNOWN'}`), ['RUNNING', 'PENDING', 'ADMITTING', 'DEPLOYING'].includes(String(item.status || '').toUpperCase()) ? h('button', { type: 'button', onClick: () => cancel(item.id), style: { ...buttonStyle(), padding: '4px 7px', fontSize: '10px' } }, '取消') : null))) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '暂无异步操作。'))),
           message ? h('div', { role: 'status', style: { marginTop: '12px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
           error ? h('div', { role: 'alert', style: { marginTop: '12px', color: BRAND.danger, fontSize: '12px' } }, error) : null,

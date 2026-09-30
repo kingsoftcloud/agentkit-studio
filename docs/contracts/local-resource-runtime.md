@@ -1,0 +1,34 @@
+# 本地资源运行时合同
+
+核对日期：2026-09-30。
+
+本合同只适用于插件 Node Host 内执行的本地 Agent。浏览器不读取资源凭证，也不直接访问 MCP
+或知识库 Endpoint。
+
+## 执行路径
+
+- **Skill**：绑定的本地 Skill Resource ID 映射到已导入 Skill 目录，只读取 `SKILL.md`，截断
+  后注入 system context；文件不会因为 Agent 对话自动执行。
+- **Knowledge Base**：绑定的 Dataset ID 通过 `RetrieveKnowledge` 查询，默认取 5 条结果，
+  结果以只读 context 注入本轮模型输入。
+- **MCP**：Host 先调用 Server `GetMCP` 获取 Endpoint 和认证信息，再使用
+  `@modelcontextprotocol/sdk` 建立 Streamable HTTP 连接，调用 `tools/list` 和 `tools/call`。
+  只允许模型请求当前 Agent 绑定且已发现的工具；同名工具绑定会直接失败，避免路由歧义。
+
+模型的 tool call 会先记录为本地 conversation item，Host 执行 MCP 后以 tool result 继续最多两次
+工具续跑（最多三次模型请求）。MCP 返回 `isError`、参数 JSON 非法、连接失败或资源缺失都会
+生成失败终态。
+
+## 安全和边界
+
+- AK/SK、MCP API Key、模型 API Key 全部留在 Node Host。
+- 本地 Skill 只读，不执行其中脚本。
+- 资源运行适配器不把 Server 的资源目录接口误当作通用 Agent binding；绑定数据仍来自
+  Agent Revision。
+- 本轮没有实现 stdio MCP 自动启动、memory service recall、资源级 secret rotation 或
+  多租户策略编排；这些情况必须返回明确错误或使用 Server 已有能力。
+
+## 观测
+
+每次本地运行完成或失败后调用 `StudioObservability.syncTrace`。trace 写失败只记录 Host 警告，
+不改变模型运行结果。运行 session ID 来自对话请求，便于观测页按会话追踪。

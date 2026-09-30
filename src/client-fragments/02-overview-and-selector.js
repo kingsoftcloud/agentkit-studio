@@ -103,7 +103,8 @@
      * conversation. A dsh-native, no-resource Studio revision is admitted via
      * the Host's public preset registry and selected through DSH's public
      * `agentPresets.select` Remote. Resource-bearing or non-DSH revisions stay
-     * fail-closed until their provider can materialize the bindings.
+     * The Host admits them through the preset-scoped Studio provider bridge;
+     * unsupported resource execution still fails with a typed runtime error.
      */
     function AgentContextSelector({ sessionId, useSessions, studioRemote, inputActions } = {}) {
       const [agents, setAgents] = useState([]);
@@ -112,6 +113,10 @@
       const [notice, setNotice] = useState('');
       const session = useSessions ? useSessions(state => state?.byId?.[sessionId]) : null;
       const started = Boolean(session && session.blank === false);
+      const resourceBound = agent => {
+        const bindings = agent?.spec?.bindings || agent?.bindings || {};
+        return ['tools', 'mcpServers', 'skills', 'plugins'].some(key => Array.isArray(bindings[key]) ? bindings[key].length > 0 : Boolean(bindings[key]));
+      };
 
       useEffect(() => {
         let alive = true;
@@ -167,15 +172,7 @@
           setNotice('请先打开一个空白会话再绑定 Agent');
           return;
         }
-        if (String(value).startsWith('ar-local-')) {
-          // Conversation-created agents run through the plugin's local
-          // runtime (model+prompt); DSH preset admission does not apply.
-          writeConversationAgent(value, sessionId);
-          setSelected(value);
-          setNotice('已绑定（本地运行时）');
-          setBusy(false);
-          return;
-        }
+        const selectedRecord = agents.find(agent => (agent?.metadata?.id || agent?.id) === value);
         if (typeof studioRemote?.agentPresets?.select !== 'function') {
           // Never present a localStorage value as a successful binding when
           // the official DSH Remote is absent. The profile must mount the
@@ -198,17 +195,12 @@
           }
           setSelected(value);
           writeConversationAgent(value, sessionId);
-          setNotice('已绑定当前会话');
+          setNotice(resourceBound(selectedRecord) ? '已绑定原生会话适配器' : '已绑定当前会话');
         } catch (error) {
           setNotice(error?.message || 'Agent 尚未具备可用的 DSH provider');
         } finally {
           setBusy(false);
         }
-      };
-      const openBoundConversation = () => {
-        if (!selected) return;
-        try { window.localStorage.setItem(OPEN_BOUND_CONVERSATION_KEY, selected); } catch {}
-        window.dispatchEvent(new CustomEvent('agentkit-studio:open-bound-conversation', { detail: { agentId: selected } }));
       };
       const selectedAgent = agents.find(agent => (agent?.metadata?.id || agent?.id) === selected);
       return h('div', {
@@ -232,7 +224,7 @@
         return h('option', { key: id, value: id }, `${name} · ${RUNTIME_LABELS[runtime] || runtime || 'Agent'}`);
       })),
       h(Pill, { tone: notice && !notice.includes('已绑定') ? 'signal' : selected ? 'accent' : 'neutral' }, busy ? '准入中…' : notice || (selected ? (started ? '已锁定' : '已绑定') : 'DSH 原生')),
-      !sessionId && selected && selectedAgent ? h('button', { type: 'button', onClick: openBoundConversation, title: '打开一个空白会话再绑定该 Agent', style: { height: '28px', border: '1px solid ' + BRAND.border, borderRadius: '7px', padding: '0 8px', color: BRAND.ink, background: BRAND.surface, fontSize: '10px', fontWeight: 750, cursor: 'pointer' } }, '打开绑定对话') : null,
+      !sessionId && selected && selectedAgent ? h('span', { title: '请从 Agents 页面使用“绑定到新会话”创建原生会话', style: { color: BRAND.inkMuted, fontSize: '10px' } }, '请从 Agents 页面绑定') : null,
       h(NativeAuthoringButton, { inputActions }));
 
     }

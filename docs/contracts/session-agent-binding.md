@@ -58,33 +58,27 @@ MCP、Skill、知识库和记忆库的默认绑定属于 Agent Revision。Worksp
 
 ## 当前实现状态
 
-当前 Studio 已经提供 DSH 原生宿主和本地 Agent Catalog 的创建入口。绑定 Agent 的
-执行路线是类型化 `conversation:stream`；Host 负责 Build/Run admission 和 canonical
-Session，DSH 仍负责无 Agent 会话的原生渲染、日志和恢复。无 Agent 时仍直接走原生
-`session.prompt`。本地 Host 已用官方 `deepseek-harness-sdk` 驱动 rc.2 DSH Native，完成
-真实创建后的 Build、surface、SSE 流和 terminal `run.completed` 验证；证据在
-`agent-selection-dsh-native-real-2026-09-27.json`。浏览器绑定 Agent 的入口尚未把该 Host
-stream 接到官方 composer，因此不能把 composer 的 context 选择器当成执行切换。
+当前 Studio 已经提供 DSH 原生宿主和本地 Agent Catalog 的创建入口。Agents 页的“绑定到新
+会话”通过 Host `agents/ensure-preset` 创建/注册 Revision preset，调用公开
+`agentPresets.select`，再由 `uiWorkspace.openSession` 打开 DSH 原生 Conversation。无
+Agent 时仍直接走原生 `session.prompt`；Harness、Codex 和资源型 Revision 在同一 DSH
+Session/Loop 中由 preset-scoped `llm/stream` provider bridge 委托给 Studio transport。
+Workspace 选择仍是 DSH 原生 composer 的独立上下文，不是 Agent 绑定条件；已有 Agent
+Session 在未选择 Workspace 时也可以直接发送，Workspace 只在需要 cwd、文件和工作区工具
+时作为额外上下文加入。
 
 对话页的 Agent 选择器通过 DSH Connection 的 `/agentkit` 本地控制通道读取真实 Host
-目录，避免 opaque `srcdoc` iframe 的跨域读取失败。它当前显示为 `候选智能体`，选中后
-显示 `未绑定当前会话`，只负责在新会话前记录候选 Agent；这个选择不会重新筛选或重建
-DSH 左侧本地会话列表，也不会改变已经打开的会话。直到动态 `AgentRevision → DSH
-admission/provider` 合同落地，不会把普通
-DSH `session.prompt` 误报成绑定 Agent 执行。选择器与 Host 的 catalog 传输已
-在 rc.2 浏览器中验证，当前 10 个真实 Host Agent 可列出并可选择；最新目录和选择语义
-留存在 [`agent-selection-live-2026-09-27.json`](../../../.scratch/studio-dsh-native-2026-09-24/agent-selection-live-2026-09-27.json)。
+目录，避免 opaque `srcdoc` iframe 的跨域读取失败。它仍只允许在空白会话首轮前切换
+Agent；首轮后由 DSH preset registry 锁定。选择器与 Host 的 catalog 传输已在 rc.2 浏览器
+中验证，当前 10 个真实 Host Agent 可列出并可选择；最新目录和选择语义留存在
+[`agent-selection-live-2026-09-27.json`](../../../.scratch/studio-dsh-native-2026-09-24/agent-selection-live-2026-09-27.json)。
 当前页面 AX 核对确认，候选选择不会重建 DSH 左侧会话树；记录见
 [`agent-selector-session-scope-2026-09-27.json`](../../../.scratch/studio-dsh-native-2026-09-24/agent-selector-session-scope-2026-09-27.json)。
-选中可读取的 Agent 后，选择器提供“打开绑定对话”动作；该动作切到 Studio 的
-Host-owned conversation 并固定这个 Agent，当前 DSH 会话继续保留，不发生隐式动态切换。
-要真正选择 Agent 对话，产品入口应从 Agent 卡片/详情打开 Host-owned conversation；当前
-Host stream 已经可运行，但该浏览器入口仍是下一项产品收口工作。现阶段不要把对话页下拉框
-当成这个入口：它只保存上下文引用，用户若直接发送，仍然是 DSH 原生会话。收口后的明确
-路径是“Agents → 选择 Agent → 打开绑定 Agent 对话”，由 Host 创建/恢复该 Agent 的
-canonical Session，并将输入提交到 `conversation:stream`；无 Agent 的“新会话”继续走
-DSH 原生 composer。这样选择动作与执行目标一一对应，不会把三种 runtime 的事件混到同一
-个 DSH session log。
+选中可读取的 Agent 后，选择器提供“绑定到新会话”动作；该动作创建新的 DSH Session、
+在首轮前固定 Agent preset，然后直接打开官方 Conversation。它不会进入 Studio 自定义
+聊天页，也不会为 Agent 自动创建或切换 Workspace；用户仍可使用 DSH 原生 Workspace
+选择器。这样选择动作与执行目标一一对应，不会把三种 runtime 的事件混到同一个 DSH
+session log。
 
 Agent Teams 已在 AgentKit 的 rc.2 profile 中默认装载并通过官方 116/116 测试和 1/1
 headless E2E；Studio 对话中真实完成了 `list_agents` 和 `spawn_teammate`。该默认范围是

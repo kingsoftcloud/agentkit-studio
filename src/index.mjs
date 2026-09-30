@@ -7,8 +7,9 @@
  * is exposed through the public DSH ToolRegistry: native conversations can
  * inspect catalogs, maintain a reviewed draft and explicitly commit it via
  * the Host API. A selected no-resource dsh-native Studio Agent is admitted
- * through DSH's public agent-preset registry; resource-bearing revisions
- * remain fail-closed until their provider contract is implemented.
+ * through DSH's public agent-preset registry; Harness, Codex and
+ * resource-bearing revisions use the Studio provider bridge while DSH keeps
+ * ownership of the Session, loop and renderer.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -57,7 +58,8 @@ async function registerControlPlane(ctx) {
         const catalog = await models.catalog('');
         return { items: catalog.items.map(item => ({ resourceId: item.id, name: item.name || item.id })) };
       }
-      const actions = { mcp: 'ListMCPs', skill: 'ListSkillWorkspaces' };
+      if (kind === 'skill') return (await skillDiscoveryPromise).listInstalled();
+      const actions = { mcp: 'ListMCPs' };
       const action = actions[kind];
       if (!action) return { items: [] };
       const serverClient = await serverClientPromise;
@@ -84,6 +86,55 @@ async function registerControlPlane(ctx) {
         sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '',
         serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
       })));
+  const resourceAdaptersPromise = Promise.all([
+    skillDiscoveryPromise,
+    serverClientPromise,
+  ]).then(async ([skillDiscovery, serverClient]) => {
+    const { createLocalResourceAdapters } = await import('./local-resource-adapters.mjs');
+    return createLocalResourceAdapters({ serverClient, skillDiscovery });
+  });
+  // Studio-owned revisions still enter through DSH's native Session/Loop.
+  // The provider is selected by the preset-scoped listener and delegates the
+  // assembled turn to the local Harness or AgentEngine cloud stream.
+  const { createDshRuntimeAdapter, setDshRuntimeAdapter } = await import('./providers/dsh-runtime.mjs');
+  let localRuntimeHandlerPromise;
+  const localRuntimeHandler = async () => {
+    if (!localRuntimeHandlerPromise) {
+      localRuntimeHandlerPromise = Promise.all([
+        agentStorePromise,
+        configurationPromise,
+        resourceAdaptersPromise,
+        studioObservabilityPromise,
+      ]).then(async ([store, configuration, resourceAdapters, observability]) => {
+        const credentials = ctx.get('credentials');
+        const localModels = await import('./model-service.mjs').then(({ createModelService }) => createModelService({ configuration, credentials }));
+        const { createLocalConversationHandler } = await import('./local-runtime.mjs');
+        return createLocalConversationHandler({
+          agentStore: async () => store,
+          modelService: localModels,
+          resourceAdapter: resourceAdapters,
+          observability,
+        });
+      });
+    }
+    return localRuntimeHandlerPromise;
+  };
+  const dshRuntimeAdapter = createDshRuntimeAdapter({
+    cloudClient: await serverClientPromise,
+    localHandler: localRuntimeHandler,
+  });
+  setDshRuntimeAdapter(dshRuntimeAdapter);
+  ctx.inject(['llm'], llmCtx => {
+    // registerAdapter already returns a disposer. Put the registration call
+    // inside the owner effect so Cordis runs it on mount and calls its
+    // disposer only when the llm service scope is torn down. Returning the
+    // already-created disposer from a second effect would unregister the
+    // route immediately and surface NO_ADAPTER on the first native turn.
+    llmCtx.effect(
+      () => llmCtx.llm.registerAdapter(['agentkit-studio'], dshRuntimeAdapter),
+      'agentkit-studio: DSH runtime provider',
+    );
+  });
   // Cordis exposes injected services through `get`; property access is only
   // available on typed service contexts and is absent in the plain plugin
   // apply context used by the DSH loader.
@@ -178,7 +229,11 @@ async function registerControlPlane(ctx) {
         const agentId = String(payload?.agentId || '').trim();
         if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
         try {
-          const value = await presetAdmission.ensure(agentId);
+          const localStore = await agentStorePromise;
+          const local = await localStore.get(agentId);
+          const value = local
+            ? await presetAdmission.ensure(agentId, { agent: local })
+            : await presetAdmission.ensure(agentId);
           return { ok: true, value };
         } catch (error) {
           return { ok: false, error: {
@@ -189,19 +244,23 @@ async function registerControlPlane(ctx) {
         }
       }
       if (endpoint === 'agents/conversation-surface') {
-        // The bound-Agent conversation needs a runnable Build. The cloud
-        // control plane has no public Build/Deployment Action yet (see
-        // docs/contracts/cloud-api-gap.md), so the honest surface result is a
-        // typed BUILD_NOT_READY unless a build surface already exists.
+        // A cloud Agent can run through the existing Session/Run Actions. A
+        // local Studio Build is not required for this transport; Build is a
+        // separate deployment concern and remains explicitly unsupported.
         const agentId = String(payload?.agentId || '').trim();
         if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
         try {
           const agent = await serverClient.getAgent(agentId, { signal });
-          const buildId = String(agent?.spec?.buildId || agent?.buildId || '').trim();
-          if (!buildId) {
-            return { ok: false, error: { code: 'BUILD_NOT_READY', message: '云端控制面尚未提供 Build/部署合同，绑定 Agent 对话暂不可用（见 cloud-api-gap）', details: { agentId } } };
+          const sessionId = String(payload?.sessionId || '').trim();
+          if (!sessionId) return { ok: false, error: { code: 'INVALID_SESSION_ID', message: 'SessionId 不能为空', details: { agentId } } };
+          try {
+            await serverClient.action('GetSession', { SessionId: sessionId }, { signal });
+          } catch (error) {
+            if (error?.status !== 404) throw error;
+            await serverClient.action('CreateSession', { AgentId: agentId, SessionId: sessionId, Tags: { source: 'agentkit-studio' } }, { signal });
           }
-          return { ok: true, value: { agentId, buildId, sessionId: String(payload?.sessionId || '') } };
+          const history = await serverClient.action('ListSessionEvents', { AgentId: agentId, SessionId: sessionId, Limit: 200 }, { signal });
+          return { ok: true, value: { agentId, sessionId, transport: 'agentengine-action', events: history.data?.Events || [], watermark: history.data?.AfterSeqId || 0 } };
         } catch (error) {
           return { ok: false, error: {
             code: error?.code === 'SERVER_ACTION_FAILED' && error?.status === 404 ? 'AGENT_NOT_FOUND' : (error?.code || 'CONVERSATION_SURFACE_FAILED'),
@@ -258,7 +317,8 @@ async function registerControlPlane(ctx) {
           if (endpoint === 'builds/create') {
             const agentId = String(payload?.agentId || '').trim();
             if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
-            const detail = await serverClient.getAgent(agentId, { signal });
+            const localStore = await agentStorePromise;
+            const detail = await localStore.get(agentId) || await serverClient.getAgent(agentId, { signal });
             const agentName = String(detail?.metadata?.name || detail?.name || agentId);
             const revision = Number(payload?.revision || detail?.metadata?.revision || 1);
             // Freeze the cloud Agent definition into a local content-addressed
@@ -461,11 +521,11 @@ async function registerControlPlane(ctx) {
       handler: (request, response) => {
         const admission = webCtx.connection.admit(request);
         if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden'); return; }
-        void Promise.all([agentStorePromise, configurationPromise]).then(async ([store, configuration]) => {
+        void Promise.all([agentStorePromise, configurationPromise, resourceAdaptersPromise, studioObservabilityPromise]).then(async ([store, configuration, resourceAdapters, observability]) => {
           const credentials = ctx.get('credentials');
           const models = await import('./model-service.mjs').then(({ createModelService }) => createModelService({ configuration, credentials }));
           const { createLocalConversationHandler } = await import('./local-runtime.mjs');
-          return createLocalConversationHandler({ agentStore: async () => store, modelService: models });
+          return createLocalConversationHandler({ agentStore: async () => store, modelService: models, resourceAdapter: resourceAdapters, observability });
         }).then(handler => handler(request, response)).catch(error => {
           console.error('[local-runtime] handler failed:', error?.stack || error);
           if (!response.headersSent) response.writeHead(500);
@@ -473,7 +533,42 @@ async function registerControlPlane(ctx) {
         });
       },
     });
+    const cloudConversationRoute = webCtx.webServer.register({
+      kind: 'prefix',
+      path: '/agentkit/cloud-conversation',
+      handler: async (request, response) => {
+        const admission = webCtx.connection.admit(request);
+        if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden'); return; }
+        if (request.method !== 'POST') { response.writeHead(404); response.end('not found'); return; }
+        const chunks = []; let size = 0;
+        try {
+          for await (const chunk of request) {
+            size += chunk.length;
+            if (size > 1024 * 1024) { response.writeHead(413); response.end('request too large'); return; }
+            chunks.push(chunk);
+          }
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          const agentId = String(body?.agentId || '').trim();
+          const sessionId = String(body?.sessionId || '').trim();
+          const input = body?.input;
+          const text = Array.isArray(input?.parts) ? input.parts.filter(part => part?.kind === 'text').map(part => part.text || '').join('') : String(input?.input || input || '');
+          if (!agentId || !sessionId || !text.trim()) throw Object.assign(new Error('AgentId、SessionId 和文本输入不能为空'), { code: 'INVALID_CONVERSATION_INPUT' });
+          const client = await serverClientPromise;
+          const upstream = await client.streamAction('RunAgent', {
+            AgentId: agentId, SessionId: sessionId, Messages: [{ role: 'user', content: text }],
+            Stream: true, ApiFormat: 'responses', InvocationId: String(input?.inputId || body?.idempotencyKey || ''),
+          });
+          response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+          for await (const chunk of upstream.body) response.write(chunk);
+          response.end();
+        } catch (error) {
+          if (!response.headersSent) response.writeHead(error?.status || 502, { 'content-type': 'application/json' });
+          if (!response.writableEnded) response.end(JSON.stringify({ error: { code: error?.code || 'CLOUD_CONVERSATION_FAILED', message: error instanceof Error ? error.message : String(error) } }));
+        }
+      },
+    });
     webCtx.effect(() => localRoute, 'agentkit-studio: local conversation route');
+    webCtx.effect(() => cloudConversationRoute, 'agentkit-studio: cloud conversation route');
     webCtx.effect(() => registration, 'agentkit-studio: control-plane route');
   });
   // Authoring tools need the in-process remote factory (cloud/resource data);

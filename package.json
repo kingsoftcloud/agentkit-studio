@@ -15,6 +15,8 @@
     "./session-adapter": "./src/session-adapter.mjs",
     "./manifest": "./studio.plugin.json",
     "./agentkit-harness": "./src/providers/agentkit-harness.mjs",
+    "./dsh-runtime": "./src/providers/dsh-runtime.mjs",
+    "./dsh-runtime-plugin": "./src/providers/dsh-runtime-plugin.mjs",
     "./model-service": "./src/model-service.mjs",
     "./model-proxy-handler": "./src/model-proxy-handler.mjs",
     "./sse": "./src/sse.mjs"
@@ -63,6 +65,7 @@
     "@deepseek-ai/cordis": "^4.0.4"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
     "aws4": "1.13.2",
     "yaml": "2.9.1"
   },

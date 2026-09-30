@@ -12,10 +12,12 @@ export class AgentEngineError extends Error {
 }
 
 const SERVER_ACTIONS = new Set([
-  'ListAgents', 'GetAgent', 'ListKnowledgeBases', 'ListMemoryInstances', 'ListMCPs',
+  'ListAgents', 'GetAgent', 'CreateSession', 'ListKnowledgeBases', 'ListMemoryInstances', 'ListMCPs',
+  'GetMCP', 'RetrieveKnowledge',
   'ListSkillWorkspaces', 'ListAgentModels', 'ListSessions', 'GetSession',
   'ListSessionMessages', 'ListSessionEvents', 'ListAgentSchedules', 'GetAgentSchedule',
   'ListAgentScheduleOccurrences', 'GetObservabilityOverview', 'ListAgentRuntimeStats',
+  'RunAgent', 'CancelRun', 'ResumeRun', 'SubmitInteraction', 'SubmitAgentControl',
 ]);
 
 function normalizeAgent(item = {}) {
@@ -149,7 +151,7 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
     return { ...normalizeAgent(payload.draft || payload.agent || payload), requestId: String(response.headers.get('x-request-id') || '') };
   }
 
-  async function action(name, payload = {}, { signal } = {}) {
+  async function action(name, payload = {}, { signal, apiVersion = API_VERSION } = {}) {
     if (!/^[A-Z][A-Za-z0-9]+$/.test(name)) throw new AgentEngineError('INVALID_ACTION', '无效 Server Action');
     if (!SERVER_ACTIONS.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     const { values } = await configuration.resolve();
@@ -174,11 +176,11 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
         'X-Ksc-Request-Id': randomUUID(), 'X-Ksc-Region': controlRegion,
         'X-Ksc-Source': 'agentkit-studio' };
       if (values.cloudAccountId) headers['X-Ksc-Account-Id'] = values.cloudAccountId;
-      const url = new URL(kop ? `/?Action=${name}&Version=${API_VERSION}` : `/agentengine/api/v1/${name}`, requestBase);
+      const url = new URL(kop ? `/?Action=${name}&Version=${apiVersion}` : `/agentengine/api/v1/${name}`, requestBase);
       if (kop) {
         if (!values.cloudAccessKey || !values.cloudSecretKey) throw new AgentEngineError('CLOUD_CREDENTIALS_MISSING', '请在模型与凭证中配置云端 AK/SK');
         if (values.cloudRegion?.toLowerCase() === 'pre-online') headers['X-KSC-CUSTOM-SOURCE'] = values.cloudCustomSource || 'pre';
-        Object.assign(headers, { 'X-Action': name, 'X-Version': API_VERSION });
+        Object.assign(headers, { 'X-Action': name, 'X-Version': apiVersion });
         const signedRequest = aws4.sign({ host: url.host, path: url.pathname + url.search, method: 'POST',
           service: 'aicp', region: controlRegion, headers, body },
         { accessKeyId: values.cloudAccessKey, secretAccessKey: values.cloudSecretKey,
@@ -230,6 +232,58 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
       return { data: envelope.Data, requestId: String(envelope.RequestId || '') };
     };
     return requestAgainst(base);
+  }
+
+  // Streaming Server Actions use the same Node-only credential boundary as
+  // action(). Keep this separate from the JSON envelope parser: RunAgent's
+  // Stream=true response is an OpenAI-compatible SSE body, not an Action
+  // envelope. The browser only receives the Host's authenticated stream.
+  async function streamAction(name, payload = {}, { signal } = {}, overrideBase = null) {
+    if (!SERVER_ACTIONS.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
+    const { values } = await configuration.resolve();
+    let base;
+    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
+    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
+    if (base.username || base.password || base.search || base.hash || base.pathname !== '/' ||
+      (base.protocol !== 'https:' && !(base.protocol === 'http:' && loopback))) {
+      throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；仅本机开发允许 HTTP');
+    }
+    const body = JSON.stringify(payload);
+    const requestBase = overrideBase || base;
+    const kop = KOP_HOSTS.has(requestBase.hostname);
+    const controlRegion = values.cloudRegion?.toLowerCase() === 'pre-online' ? 'cn-beijing-6' : (values.cloudRegion || 'cn-beijing-6');
+    const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'X-Ksc-Request-Id': randomUUID(), 'X-Ksc-Region': controlRegion, 'X-Ksc-Source': 'agentkit-studio' };
+    if (values.cloudAccountId) headers['X-Ksc-Account-Id'] = values.cloudAccountId;
+    const url = new URL(kop ? `/?Action=${name}&Version=${API_VERSION}` : `/agentengine/api/v1/${name}`, requestBase);
+    if (kop) {
+      if (!values.cloudAccessKey || !values.cloudSecretKey) throw new AgentEngineError('CLOUD_CREDENTIALS_MISSING', '请在模型与凭证中配置云端 AK/SK');
+      if (values.cloudRegion?.toLowerCase() === 'pre-online') headers['X-KSC-CUSTOM-SOURCE'] = values.cloudCustomSource || 'pre';
+      Object.assign(headers, { 'X-Action': name, 'X-Version': API_VERSION });
+      Object.assign(headers, aws4.sign({ host: url.host, path: url.pathname + url.search, method: 'POST', headers, body }, {
+        accessKeyId: values.cloudAccessKey, secretAccessKey: values.cloudSecretKey, sessionToken: values.cloudSessionToken,
+      }).headers);
+    } else {
+      if (values.cloudServiceToken) headers.Authorization = `Bearer ${values.cloudServiceToken}`;
+      if (loopback && sessionToken) headers['X-AgentKit-Session'] = sessionToken;
+      else if (!loopback) throw new AgentEngineError('SERVER_CREDENTIALS_MISSING', '自定义 Server 需要专属服务凭证');
+    }
+    let response;
+    try {
+      response = await fetchImpl(url, { method: 'POST', headers, body, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
+    } catch {
+      throw new AgentEngineError(signal?.aborted ? 'REQUEST_CANCELLED' : 'SERVER_UNAVAILABLE', signal?.aborted ? '请求已取消' : 'Server 请求未完成，请检查连接；写请求不会自动重试', { action: name });
+    }
+    if (!response.ok || !response.body) {
+      const text = await response.text().catch(() => '');
+      let envelope = null; try { envelope = text ? JSON.parse(text) : null; } catch {}
+      const upstreamMessage = String(envelope?.Error?.Message || envelope?.Message || '').toLowerCase();
+      if (requestBase.hostname === 'aicp.api.ksyun.com' && response.status === 403 && upstreamMessage.includes('inner account')) {
+        return streamAction(name, payload, { signal }, new URL('http://aicp.inner.api.ksyun.com'));
+      }
+      throw new AgentEngineError('SERVER_ACTION_FAILED', `${name} 请求失败（${response.status}）`, { status: response.status, requestId: String(envelope?.RequestId || ''), action: name });
+    }
+    return response;
   }
   async function getObservabilityOverview({ range = '24h' } = {}, options) {
     const hours = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[String(range || '24h')] || 24;
@@ -300,5 +354,5 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
     })), total: raw.Total ?? raw.total ?? candidates.length, requestId: result.requestId, source: 'agentengine-server' };
   }
   return {
-    getObservabilityOverview, listAgentRuntimeStats, action, listAgents, getAgent, listResource };
+    getObservabilityOverview, listAgentRuntimeStats, action, streamAction, listAgents, getAgent, listResource };
 }

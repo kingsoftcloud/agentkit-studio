@@ -6,7 +6,7 @@
  * them. Shape matches the browser's `{ metadata, spec, bindings }` contract.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, rm, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 export class AgentStoreError extends Error {
@@ -23,7 +23,10 @@ export function createAgentStore({ storeDir } = {}) {
 
   async function ensureDir() { await mkdir(root, { recursive: true, mode: 0o700 }); }
 
-  function pathFor(agentId) { return join(root, `${agentId}.json`); }
+  function pathFor(agentId) {
+    if (!/^ar-local-[a-f0-9]{16}$/.test(agentId)) throw new AgentStoreError('INVALID_AGENT_ID', '本地 Agent ID 无效');
+    return join(root, `${agentId}.json`);
+  }
 
   async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {} }) {
     await ensureDir();
@@ -38,8 +41,8 @@ export function createAgentStore({ storeDir } = {}) {
         updatedAt: new Date().toISOString(),
         local: true,
       },
-      spec: { ...spec, runtime: { type: runtimeType } },
-      bindings,
+      spec: { ...spec, bindings: spec.bindings ?? bindings, runtime: { type: runtimeType } },
+      bindings: spec.bindings ?? bindings,
     };
     const target = pathFor(agentId);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
@@ -84,6 +87,8 @@ export function createAgentStore({ storeDir } = {}) {
     if (patch.description !== undefined) record.metadata.description = String(patch.description);
     if (patch.spec) record.spec = { ...record.spec, ...patch.spec, runtime: patch.spec?.runtime || record.spec?.runtime || { type: 'dsh-native' } };
     if (patch.bindings) record.bindings = { ...record.bindings, ...patch.bindings };
+    if (patch.spec?.bindings) record.bindings = patch.spec.bindings;
+    else if (patch.bindings) record.spec.bindings = record.bindings;
     record.metadata.revision = (Number(record.metadata.revision) || 1) + 1;
     record.metadata.updatedAt = new Date().toISOString();
     const target = pathFor(agentId);

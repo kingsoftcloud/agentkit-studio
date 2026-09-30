@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DshPresetAdmission, dshPresetEligibility, dshPresetId, unsupportedDshBindings } from '../src/agent-preset-admission.mjs';
+import { setDshRuntimeAdapter, streamDshRuntime } from '../src/providers/dsh-runtime.mjs';
 
 function agent(overrides = {}) {
   return {
@@ -20,14 +21,15 @@ test('dsh preset admission uses a stable revision-scoped id', () => {
     revision: 3,
     presetId: 'agentkit-studio-agent-demo_2Fagent-r3',
     runtime: 'dsh-native',
+    mode: 'dsh-native',
   });
 });
 
-test('resource-bearing or non-DSH revisions fail closed', () => {
+test('resource-bearing and non-DSH revisions use the native DSH runtime bridge', () => {
   const resourceAgent = agent({ spec: { runtime: { type: 'dsh-native' }, bindings: { modelProfileIds: ['model:one'], mcpServers: [{ resourceId: 'mcp:one' }] } } });
   assert.deepEqual(unsupportedDshBindings(resourceAgent), ['model', 'mcp']);
-  assert.equal(dshPresetEligibility(resourceAgent).code, 'STUDIO_PRESET_RESOURCE_UNSUPPORTED');
-  assert.equal(dshPresetEligibility(agent({ spec: { runtime: { type: 'codex' }, bindings: {} } })).code, 'STUDIO_PRESET_RUNTIME_UNSUPPORTED');
+  assert.equal(dshPresetEligibility(resourceAgent).mode, 'studio-bridge');
+  assert.equal(dshPresetEligibility(agent({ spec: { runtime: { type: 'codex' }, bindings: {} } })).mode, 'studio-bridge');
 });
 
 test('the active DSH model route and official persona row make a real native preset', async () => {
@@ -47,6 +49,18 @@ test('the active DSH model route and official persona row make a real native pre
   await admission.ensure('demo/agent');
   assert.equal(registered[0].plugins[0].name, '@deepseek-ai/dsh-persona');
   assert.equal(registered[0].plugins[0].config.prefix, '只用简洁中文回答。');
+});
+
+test('the bridge preset declares the Studio provider listener for local Harness and Codex', async () => {
+  const registered = [];
+  const revision = agent({ metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 1, local: true }, spec: { runtime: { type: 'harness' }, bindings: {} } });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => revision,
+  });
+  await admission.ensure('demo/agent');
+  assert.equal(registered[0].plugins[0].name, '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin');
+  assert.equal(registered[0].plugins[0].config.local, true);
 });
 
 test('admission registers once and unregisters replaced revisions', async () => {
@@ -76,4 +90,22 @@ test('admission registers once and unregisters replaced revisions', async () => 
 test('admission reports missing registry as typed error', async () => {
   const admission = new DshPresetAdmission({ getAgent: async () => agent() });
   await assert.rejects(admission.ensure('demo/agent'), error => error.code === 'DSH_PRESET_REGISTRY_UNAVAILABLE');
+});
+
+test('the native bridge keeps the DSH model header while routing the transport by Agent', async () => {
+  let received;
+  const dispose = setDshRuntimeAdapter({
+    async *stream(options) {
+      received = options;
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    },
+  });
+  const original = { provider: 'deepseek-official', model: 'deepseek-v4-flash', messages: [] };
+  const chunks = [];
+  for await (const chunk of streamDshRuntime(original, { agentId: 'demo/agent', runtime: 'harness', local: true })) chunks.push(chunk);
+  assert.equal(received.provider, original.provider);
+  assert.equal(received.model, 'local:demo/agent');
+  assert.equal(original.model, 'deepseek-v4-flash');
+  assert.deepEqual(chunks, [{ type: 'finish', reason: { kind: 'stop' } }]);
+  dispose();
 });

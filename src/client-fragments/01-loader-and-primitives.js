@@ -15,10 +15,9 @@ window.__ModuleLoader__.load({
     const STUDIO_VERSION = '0.0.1';
     const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.2');
     const CONVERSATION_AGENT_KEY = 'agentkit-studio:conversation-agent';
-    const OPEN_BOUND_CONVERSATION_KEY = 'agentkit-studio:open-bound-agent';
-    // DSH Native is the official DSH SDK-backed loop. Resource-bearing
-    // revisions still fail closed in the Host until their resource profile is
-    // materialized, while a no-resource Agent is a real selectable target.
+    // DSH Native is the official DSH SDK-backed loop. Resource-bearing and
+    // non-DSH revisions use the preset-scoped Studio provider bridge, while
+    // the DSH loop and native conversation renderer remain authoritative.
     const ALLOWED_RUNTIME_TYPES = ['dsh-native', 'harness', 'codex'];
     const RUNTIME_LABELS = {
       'dsh-native': 'DSH Native Harness',
@@ -34,6 +33,7 @@ window.__ModuleLoader__.load({
       const config = window.__AGENTKIT_STUDIO__ || {};
       const directServer = () => config.controlPlane === 'agentengine-server' && Boolean(connection?.rpc?.call);
       const baseUrl = String(config.hostUrl || 'http://127.0.0.1:8789').replace(/\/$/, '');
+      const streamBaseUrl = () => directServer() ? window.location.origin : baseUrl;
       let csrfToken = config.csrfToken || null;
       // `ksadk studio` puts its short-lived Host handoff in the launch URL
       // fragment (`#session=...`). Packaged DSH runs inject the same value
@@ -82,7 +82,7 @@ window.__ModuleLoader__.load({
         if (sessionToken) headers.set('X-AgentKit-Session', sessionToken);
         let response;
         try {
-          response = await window.fetch(baseUrl + path, { ...init, method, headers, credentials: 'include' });
+          response = await window.fetch(streamBaseUrl() + path, { ...init, method, headers, credentials: 'include' });
         } catch (error) {
           const unavailable = new Error('Studio Host 不可达');
           unavailable.code = 'HOST_UNAVAILABLE';
@@ -118,7 +118,7 @@ window.__ModuleLoader__.load({
         if (sessionToken) headers.set('X-AgentKit-Session', sessionToken);
         let response;
         try {
-          response = await window.fetch(baseUrl + path, { ...init, method, headers, credentials: 'include' });
+          response = await window.fetch(streamBaseUrl() + path, { ...init, method, headers, credentials: 'include' });
         } catch (error) {
           const unavailable = new Error('Studio Host 不可达');
           unavailable.code = 'HOST_UNAVAILABLE';
@@ -271,7 +271,10 @@ window.__ModuleLoader__.load({
               // cloud agents come from GetAgent. Reading order: local, cloud.
               try {
                 const local = await studioBridgeOperation('agents/local-get', { agentId: id });
-                if (local) return { ...local, builds: [] };
+                if (local) {
+                  const builds = await studioBridgeOperation('builds/list', { agentId: id });
+                  return { ...local, builds: Array.isArray(builds?.items) ? builds.items : [] };
+                }
               } catch { /* fall through to the cloud read */ }
               const detail = await serverAction('GetAgent', { AgentId: id });
               try {
@@ -280,6 +283,14 @@ window.__ModuleLoader__.load({
               } catch { return detail; }
             })()
           : request('/api/v1/agents/' + encodeURIComponent(id)),
+        conversationSurface: (agentId, sessionId) => directServer()
+          ? (async () => {
+              if (!connection?.rpc?.call) throw Object.assign(new Error('AgentEngine Server 连接不可用'), { code: 'SERVER_CONNECTION_MISSING' });
+              const result = await connection.rpc.call('/agentkit', 'agents/conversation-surface', { agentId, sessionId });
+              if (!result?.ok) throw Object.assign(new Error(result?.error?.message || '会话面解析失败'), { code: result?.error?.code || 'CONVERSATION_SURFACE_FAILED' });
+              return result.value;
+            })()
+          : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/conversation-surface?sessionId=' + encodeURIComponent(sessionId)),
         ensureDshPreset,
         syncModelCredential,
         // Direct Server mode has no legacy Studio REST host. Keep local Agent
@@ -338,11 +349,11 @@ window.__ModuleLoader__.load({
           // Locally-stored agents execute through the plugin's same-origin
           // local runtime route (harness + gateway model) — no cloud Build.
           if (directServer() && String(agentId).startsWith('ar-local-')) {
-            const response = await window.fetch(baseUrl + '/agentkit/local-conversation', {
+            const response = await window.fetch(streamBaseUrl() + '/agentkit/local-conversation', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'include',
-              body: JSON.stringify({ agentId, input: input?.parts?.[0]?.text || input?.input || String(input || '') }),
+              body: JSON.stringify({ agentId, sessionId, input: input?.parts?.[0]?.text || input?.input || String(input || ''), resourceMode: input?.resourceMode, history: input?.history }),
               signal,
             });
             if (!response.ok || !response.body) {
@@ -353,27 +364,23 @@ window.__ModuleLoader__.load({
             }
             return response;
           }
-          // In directServer mode the local Studio Host REST surface does not
-          // exist; resolve the conversation surface through the authenticated
-          // control-plane bridge, which reports the cloud Build contract gap
-          // as a typed error instead of an unreachable host.
+          // Resolve the surface through the authenticated control-plane bridge.
           const surface = directServer()
             ? await (async () => {
-              if (!connection?.rpc?.call) {
-                const error = new Error('AgentEngine Server 连接不可用');
-                error.code = 'SERVER_CONNECTION_MISSING';
-                throw error;
-              }
+              if (!connection?.rpc?.call) throw Object.assign(new Error('AgentEngine Server 连接不可用'), { code: 'SERVER_CONNECTION_MISSING' });
               const result = await connection.rpc.call('/agentkit', 'agents/conversation-surface', { agentId, sessionId });
-              if (!result?.ok) {
-                const error = new Error(result?.error?.message || '会话面解析失败');
-                error.code = result?.error?.code || 'CONVERSATION_SURFACE_FAILED';
-                throw error;
-              }
+              if (!result?.ok) throw Object.assign(new Error(result?.error?.message || '会话面解析失败'), { code: result?.error?.code || 'CONVERSATION_SURFACE_FAILED' });
               return result.value;
             })()
-            : await request('/api/v1/agents/' + encodeURIComponent(agentId)
-              + '/conversation-surface?sessionId=' + encodeURIComponent(sessionId));
+            : await request('/api/v1/agents/' + encodeURIComponent(agentId) + '/conversation-surface?sessionId=' + encodeURIComponent(sessionId));
+          if (surface?.transport === 'agentengine-action') {
+            return streamRequest('/agentkit/cloud-conversation', {
+              method: 'POST',
+              headers: { 'Idempotency-Key': input.idempotencyKey },
+              body: JSON.stringify({ agentId, sessionId, input }),
+              signal,
+            });
+          }
           const buildId = String(surface?.buildId || '').trim();
           if (!buildId) {
             const error = new Error('Agent 尚无可运行的 Build');
@@ -387,6 +394,9 @@ window.__ModuleLoader__.load({
             signal,
           });
         },
+        cancelAgentConversation: (agentId, sessionId, invocationId) => directServer()
+          ? serverAction('CancelRun', { AgentId: agentId, SessionId: sessionId, InvocationId: invocationId })
+          : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/conversation:cancel', { method: 'POST', body: JSON.stringify({ invocationId }) }),
         resources: options => {
           const value = typeof options === 'string' ? { kind: options, limit: 200 } : (options || {});
           if (directServer()) {

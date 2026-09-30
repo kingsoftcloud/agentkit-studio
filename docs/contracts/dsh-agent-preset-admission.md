@@ -1,6 +1,9 @@
 # DSH rc.2 Agent preset admission audit
 
-> 状态：窄合同已补齐，并已落地一个受限的 dsh-native 准入闭环：模型绑定必须与 DSH 当前活动路由一致，系统 Prompt 通过官方 persona row 挂载；MCP、Skill、Tool、知识库和记忆库等资源型执行仍未签收。本文记录公开接缝和停止条件，不能用来验收这些资源已经生效。
+> 状态：窄合同已补齐，并已落地 DSH 原生会话准入闭环。无资源 `dsh-native` 直接使用官方
+> preset composition；Harness、Codex 及资源型 Revision 通过 preset-scoped Studio
+> `llm/stream` provider bridge 进入同一 Session/Loop/Renderer。资源适配器的真实调用仍需按
+> 资源类型分别验收，本文不能把一次文本响应扩大解释为所有资源已经生效。
 
 ## 1. 已确认的官方公开边界
 
@@ -27,14 +30,23 @@ ctx.sessions.create({ cwd, sessionId?, workspaceId?, agentPreset? })
 
 Studio Host 现在通过 `agents/ensure-preset` 使用公开 `ctx.agentPresets.register` 注册一个稳定的、按 Agent Revision 版本化的 preset；对有系统 Prompt 的准入 Revision 挂载官方 `@deepseek-ai/dsh-persona` row。浏览器只在官方 session-scoped `conversation.hero.agentPreset` 槽位中调用 `ctx.remote.agentPresets.select(sessionId, presetId)`。首轮之后 DSH 自己锁定 preset，Studio 不注入 InputHub、SessionCommandController，也不维护第二套会话状态。
 
-这条链只接受同时满足以下条件的 Revision：
+这条链对所有 Studio 支持的 `dsh-native`、`harness`、`codex` Revision 都建立 preset；其中
+无资源、模型路由一致的 `dsh-native` 走官方模型适配器，其他 Revision 在 preset 内挂载
+`@kingsoftcloud/agentkit-studio/dsh-runtime-plugin`，由 `llm/stream` waterfall 只替换实际
+传输。DSH 的 request header 保留用户选择的 provider/model，因此原生模型选择器不会显示
+内部的 `agentkit-studio/local:<agentId>` 路由。
+
+官方直连准入仍要求：
 
 - runtime 是 `dsh-native`；
 - 最多一个模型绑定，且模型 id 必须与 Studio 全局配置解析出的 DSH 当前活动模型一致；
 - 不含 Tool、MCP、Skill、知识库、记忆库或其他插件绑定；
 - DSH Host 已提供 `agentPresets` registry 和公开 Remote。
 
-不满足条件时 Host 返回 typed error（`DSH_PRESET_REGISTRY_UNAVAILABLE`、`STUDIO_PRESET_RUNTIME_UNSUPPORTED` 或 `STUDIO_PRESET_RESOURCE_UNSUPPORTED`），浏览器保留“无 Agent · DSH 原生会话”，不会把默认 DSH loop 冒充成 Studio Agent。当前已验证模型路由一致时系统 Prompt 会通过 persona row 进入 DSH composition；这仍不证明资源执行。
+runtime 不在支持集合时 Host 返回 typed error（`DSH_PRESET_REGISTRY_UNAVAILABLE` 或
+`STUDIO_PRESET_RUNTIME_UNSUPPORTED`）。资源加载、MCP 调用或知识库检索失败则由 Studio
+provider 返回 typed runtime error，不会静默回退为默认 DSH Agent。当前已验证模型路由一致时
+系统 Prompt 会通过 persona row 进入 DSH composition；资源执行需看对应的工具/检索事件。
 
 ## 4. 仍然没有解决的事情
 
@@ -50,11 +62,11 @@ Studio AgentRevision → DSH PresetDefinition → session/create.agentPreset
 
 ### 4.2 资源绑定不能靠 preset 字符串自动出现
 
-Studio Revision 中的模型白名单、MCP、Skill、知识库和记忆库是 KsADK 资源合同；DSH preset 的 `plugins` 是 DSH Host 侧的 Cordis 插件声明。两者的类型、权限、生命周期和 secret 归属不同。当前 DSH Native Runtime Adapter 对带 MCP/Skill/Tool/platform resource 的 Build 会 fail closed（`DSH_NATIVE_RESOURCE_ADAPTER_UNAVAILABLE`），因此一次普通 DSH 回显不能作为资源已经生效的证据。
+Studio Revision 中的模型白名单、MCP、Skill、知识库和记忆库是 KsADK 资源合同；DSH preset 的 `plugins` 是 DSH Host 侧的 Cordis 插件声明。两者的类型、权限、生命周期和 secret 归属不同。Studio provider 会把已绑定资源交给 Host-owned Resource Adapter；适配器物化失败时返回 `RESOURCE_*` typed error。preset 字符串本身仍不携带资源 secret，也不能替代真实工具调用或检索事件。
 
 ### 4.3 资源型 selector 仍不能验收真实执行
 
-当前 Studio 对话页对模型路由一致的 dsh-native Revision 已经调用 Host 准入和 `agentPresets.select`；资源型 Revision 仍会在准入阶段被拒绝。2026-09-28 使用 rc.2 本地 Host 的真实 Agent `resource-lifecycle-agent-e193611841b2`（Revision 4，含 model、MCP、Skill 和 platform plugin 绑定）复核了这一拒绝，证据见 [`rc2-resource-agent-admission-failclosed-2026-09-28.json`](../../../.scratch/studio-dsh-native-2026-09-24/rc2-resource-agent-admission-failclosed-2026-09-28.json)。因此以下结果都不能验收绑定资源后的 Agent 执行：
+当前 Studio 对话页对资源型 Revision 已调用 Host 准入、`agentPresets.select` 和 provider bridge；本地 Harness 的 Skill/MCP/知识库路径已有单测和本地运行探针。云端资源的授权、secret 解析和生产 MCP/知识库事件仍要按 Server/资源服务的真实凭证补充验收。因此以下结果仍不能单独验收绑定资源后的完整生产执行：
 
 - 下拉框显示了 Agent 名称；
 - DSH 原生会话能正常回显；
@@ -70,7 +82,7 @@ Studio Revision 中的模型白名单、MCP、Skill、知识库和记忆库是 K
 3. **资源闭环**：至少一个 MCP 或 Skill 在真实首轮中被调用，并在 canonical event 中带 `agentId`、`revisionId`、`resourceRefs`；仅“列表里有绑定”不算通过。
 4. **恢复闭环**：刷新/重启后从 DSH projection 和 KsADK canonical transcript 恢复同一 Agent Revision；首轮后的 preset 切换必须得到官方 `agent-preset/locked` 或等价 typed error。
 
-在资源 provider 合同落地前，Studio 应继续把“无 Agent · DSH 原生会话”“无资源 dsh-native Agent preset”和“绑定 Agent · KsADK canonical conversation”分开显示，资源绑定入口 fail closed，不把当前 DSH 默认 preset 冒充 Studio Agent。
+Studio 继续把“无 Agent · DSH 原生会话”和“绑定 Agent · DSH 原生 Session + Studio provider bridge”分开显示；Workspace 由 DSH 原生选择器管理，不是 Agent 绑定条件。没有可用 provider 或资源适配器时返回 typed error，不把默认 DSH preset 冒充 Studio Agent。
 
 ## 6. 公开 DSH 变更记录
 

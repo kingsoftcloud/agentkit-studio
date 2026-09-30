@@ -1,5 +1,51 @@
 # 更新日志
 
+## 0.0.1 — 2026-09-30
+
+### 变更
+
+- 云端绑定 Agent 对话改用 AgentEngine Server 现有的 `GetSession`、`CreateSession`、
+  `ListSessionEvents` 和 `RunAgent(Stream=true)` Action，不再把本地 `buildId` 当成云端对话
+  的前置条件；Host 负责 AWS4/服务令牌签名和 SSE 转发，浏览器不接触云端凭证。
+- 对话页启动时恢复 Server 会话事件，流式响应消费 `response.output_text.delta` 和
+  `response.completed`，运行中的请求提供 `CancelRun` 停止入口；本地 `ar-local-*` 路径保持
+  原有本地运行合同。
+- `server-client.mjs` 增加受控的 `streamAction`，仅开放本轮实际使用的会话运行 Action。
+  独立 Build、部署停止和通用 Agent 资源绑定仍保持明确的云端合同缺口。
+
+### 验证边界
+
+- `pnpm check`、`git diff --check` 和打包检查覆盖的是本地模拟 Action、Host 签名边界和浏览器
+  源码合同；本轮没有带真实租户凭证验证云端 Agent Runtime 的最终输出、断线重连或取消 receipt。
+
+### 资源运行时迭代
+
+- 本地 Agent Runtime 增加 Host-owned Resource Adapter：Skill 以只读 `SKILL.md` 内容注入，
+  知识库通过 AICP `RetrieveKnowledge` 检索，MCP 通过官方 TypeScript SDK 的 Streamable HTTP
+  transport 发现工具并执行调用；MCP 工具结果会回填模型继续生成，工具名冲突和未绑定工具会
+  fail-closed。
+- 本地运行完成和失败都会投影到 Studio trace store，观测页可以看到本地运行记录；trace 写入
+  失败不会改变已经产生的运行终态。
+- 本地 Agent 构建优先读取插件自己的 Agent Store，云端 Agent 才回退到 Server `GetAgent`。
+  云端部署仍未伪装成本地部署成功。
+- 构建与部署页在直连 AgentEngine Server 时明确展示当前合同边界：Build 和本地运行可用，
+  云端 Deployment 控件保持禁用并显示等待合同，不再触发旧版 Studio REST 请求。
+- 修正原生会话选择本地 Agent 后仅保存下拉框状态、实际仍运行编码助手的问题：直连模式
+  选择 Agent 会打开该 Agent 的独立对话，由本地或云端实际 transport 执行；流请求使用同源
+  插件路由。本地 Agent 详情同时加载真实 Build 历史。
+- 模型与 Prompt 已满足 DSH preset 合同的本地 `dsh-native` Agent 现在复用 DSH 原生会话页；
+  Harness、Codex 以及带 MCP/Skill/知识库绑定的 Revision 也通过 preset-scoped Studio
+  `llm/stream` provider bridge 复用同一原生 Session、Loop 和渲染器。桥接不会改写 DSH
+  会话记录中的可见模型路由；资源适配失败时返回 typed runtime error。
+- Agents 页的“绑定到新会话”直接创建 DSH Session、注册/选择 Agent preset 后导航到官方
+  Conversation，不再打开 Studio 自定义 Bound conversation。Workspace 仍由 DSH 原生选择器
+  管理，不作为 Agent 绑定条件；已有 Agent Session 未选择 Workspace 时也可直接发送，
+  Workspace 只作为 cwd、文件和工作区工具的可选上下文。
+- 新增 DSH rc.2 兼容补丁 `008-agent-session-without-workspace.patch`，让原生 composer 只在
+  没有 Session 的冷启动页面禁用；绑定 Agent 后不会因为未选择 Workspace 而变成不可发送。
+- 插件页采用白底、两列发现列表、大图标与简洁操作，按已安装/发现分组；管理操作集中到
+  详情页，移除列表中的多组状态与按钮堆叠。
+
 ## 0.0.1 — 2026-09-29
 
 ### 新增

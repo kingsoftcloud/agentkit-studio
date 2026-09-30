@@ -165,3 +165,35 @@ test('direct server client does not expose unapproved destructive actions', asyn
   const client = createAgentEngineClient({ configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789' }) });
   await assert.rejects(() => client.action('DeleteAgent', { AgentId: 'a1' }), error => error instanceof AgentEngineError && error.code === 'ACTION_NOT_ALLOWED');
 });
+
+test('streamAction keeps RunAgent SSE on the Node credential boundary', async () => {
+  let request;
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudServiceToken: 'local-token' }),
+    fetchImpl: async (url, init) => {
+      request = { url: String(url), init };
+      return new Response('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n', {
+        status: 200, headers: { 'content-type': 'text/event-stream' },
+      });
+    },
+  });
+  const response = await client.streamAction('RunAgent', { AgentId: 'a1', SessionId: 's1', Stream: true });
+  assert.equal(response.status, 200);
+  assert.equal(request.init.headers.Authorization, 'Bearer local-token');
+  assert.equal(request.init.headers.Accept, 'text/event-stream');
+  assert.match(request.url, /\/agentengine\/api\/v1\/RunAgent$/);
+});
+
+test('knowledge retrieval can select the AICP action version without changing the default API', async () => {
+  let url;
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+    fetchImpl: async (requestUrl) => {
+      url = String(requestUrl);
+      return new Response(JSON.stringify({ Code: 0, Data: { Records: [] } }), { status: 200 });
+    },
+  });
+  await client.action('RetrieveKnowledge', { DatasetId: 'kb-1', Query: 'hello' }, { apiVersion: '2025-11-14' });
+  assert.match(url, /Action=RetrieveKnowledge/);
+  assert.match(url, /Version=2025-11-14/);
+});

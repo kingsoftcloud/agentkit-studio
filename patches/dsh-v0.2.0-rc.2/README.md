@@ -39,3 +39,4 @@ done
 | `005-studio-fallback-brand.patch` | 宿主启动慢时不闪现 DSH Hero 品牌 | 上游 fallback 已提供产品级品牌扩展点 |
 | `006-desktop-plugin-package-set.patch` | 让官方 Desktop package-set 接受额外的 Studio tarball，并把 Studio bundle 写入内置 Profile | 上游支持外部产品 bundle 的 Desktop package-set/profile 配置 |
 | `007-sidebar-session-filter.patch` | 在 `ui-workspace/tree.ts` 新增模块级 `registerSessionFilter` API，让插件按 Agent 过滤侧栏会话列表 | 上游提供 `sidebar.workspaces.session.filter` 公共 slot |
+| `008-agent-session-without-workspace.patch` | 允许已有 Agent 会话在未选择 Workspace 时直接使用原生 composer；Workspace 仍可作为 cwd/文件工具上下文 | 上游把 Workspace 从会话发送前置条件改为可选上下文 |
