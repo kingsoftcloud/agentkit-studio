@@ -137,14 +137,17 @@ export function createStudioCodexPlugins({ codexHome } = {}) {
   async function installCodex(pluginId) {
     const name = String(pluginId || '').trim();
     if (!name) throw new StudioCodexPluginsError('CODEX_PLUGIN_ID_MISSING', '插件名不能为空');
-    const { stdout } = await execImpl('codex', ['plugin', 'add', name], { timeout: 120000, windowsHide: true });
+    // The CLI expects PLUGIN@MARKETPLACE (or --marketplace) since 0.159.
+    const spec = name.includes('@') || !name.startsWith('codex-') ? name : name.replace(/^codex-/, '');
+    const { stdout } = await execImpl('codex', ['plugin', 'add', spec], { timeout: 120000, windowsHide: true });
     return { ok: true, output: String(stdout || '').slice(-600) };
   }
 
   async function uninstallCodex(pluginId) {
     const name = String(pluginId || '').trim();
     if (!name) throw new StudioCodexPluginsError('CODEX_PLUGIN_ID_MISSING', '插件名不能为空');
-    const { stdout } = await execImpl('codex', ['plugin', 'remove', name], { timeout: 120000, windowsHide: true });
+    const spec = name.includes('@') || !name.startsWith('codex-') ? name : name.replace(/^codex-/, '');
+    const { stdout } = await execImpl('codex', ['plugin', 'remove', spec], { timeout: 120000, windowsHide: true });
     return { ok: true, output: String(stdout || '').slice(-600) };
   }
 

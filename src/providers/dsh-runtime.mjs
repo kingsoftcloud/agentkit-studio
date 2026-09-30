@@ -149,6 +149,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler } = {}) {
         yield* localFrames(await localHandler(), {
           agentId,
           sessionId: String(options.sessionId || ''),
+          userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,
           history: historyOf(options.messages),
         });

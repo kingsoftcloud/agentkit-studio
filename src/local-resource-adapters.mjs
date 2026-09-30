@@ -1,15 +1,20 @@
 /** Host-owned adapters for resources bound to a local Agent revision. */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { inflateRawSync } from 'node:zlib';
 
 export class LocalResourceError extends Error {
   constructor(code, message, details = {}) { super(message); this.name = 'LocalResourceError'; this.code = code; this.details = details; }
 }
 
 function resourceId(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
+function looksLikeCloudSkillSpace(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resourceId(value));
+}
 
 export function createLocalResourceAdapters({ serverClient, skillDiscovery } = {}) {
   const mcpClients = new Map();
+  const cloudSkillSpaces = new Map();
 
   async function mcp(id) {
     const key = resourceId(id);
@@ -21,7 +26,12 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery } = {
     const headers = detail.api_key ? { Authorization: `Bearer ${detail.api_key}` } : undefined;
     const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' });
     const transport = new StreamableHTTPClientTransport(new URL(endpoint), headers ? { requestInit: { headers } } : undefined);
-    await client.connect(transport);
+    try {
+      await client.connect(transport);
+    } catch (error) {
+      await Promise.resolve(transport.close?.()).catch(() => {});
+      throw new LocalResourceError('MCP_CONNECT_FAILED', 'MCP Endpoint 连接失败，请检查 Endpoint TLS、网络和认证配置', { resourceId: key, cause: String(error?.cause?.code || error?.code || error?.message || error) });
+    }
     const entry = { client, transport };
     mcpClients.set(key, entry);
     return entry;
@@ -40,17 +50,84 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery } = {
     return result?.content || result;
   }
 
-  async function loadSkill(id) {
-    if (!skillDiscovery) throw new LocalResourceError('SKILL_ADAPTER_MISSING', 'Skill 适配器未启用');
-    const installed = await skillDiscovery.listInstalled();
-    if (!installed.items?.some(item => item.resourceId === resourceId(id))) {
-      throw new LocalResourceError('SKILL_NOT_INSTALLED', `绑定的 Skill（${resourceId(id)}）不在本地导入目录中；请在 Agent 编辑页重新选择 Skill。Skill Center 不能作为本地 Skill 使用。`, { resourceId: resourceId(id) });
+  function archiveSkillManifest(buffer, skillId) {
+    if (!Buffer.isBuffer(buffer) || buffer.length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
+    const end = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    if (end < 0 || end + 22 > buffer.length) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包格式无效', { resourceId: skillId });
+    const count = buffer.readUInt16LE(end + 10);
+    const centralOffset = buffer.readUInt32LE(end + 16);
+    let cursor = centralOffset;
+    for (let index = 0; index < count && cursor + 46 <= buffer.length; index += 1) {
+      if (buffer.readUInt32LE(cursor) !== 0x02014b50) break;
+      const compression = buffer.readUInt16LE(cursor + 10);
+      const compressedSize = buffer.readUInt32LE(cursor + 20);
+      const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+      const nameLength = buffer.readUInt16LE(cursor + 28);
+      const extraLength = buffer.readUInt16LE(cursor + 30);
+      const commentLength = buffer.readUInt16LE(cursor + 32);
+      const localOffset = buffer.readUInt32LE(cursor + 42);
+      const name = buffer.toString('utf8', cursor + 46, cursor + 46 + nameLength);
+      cursor += 46 + nameLength + extraLength + commentLength;
+      if (!/^(?:^|\/)SKILL\.md$/i.test(name) && !/\/SKILL\.md$/i.test(name)) continue;
+      if (uncompressedSize > 1024 * 1024 || localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== 0x04034b50) {
+        throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 的 SKILL.md 超过大小限制或压缩包损坏', { resourceId: skillId });
+      }
+      const localNameLength = buffer.readUInt16LE(localOffset + 26);
+      const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+      const start = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = buffer.subarray(start, start + compressedSize);
+      let content;
+      if (compression === 0) content = compressed;
+      else if (compression === 8) content = inflateRawSync(compressed);
+      else throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 使用了不支持的压缩算法', { resourceId: skillId });
+      return content.toString('utf8');
     }
-    const value = await skillDiscovery.previewInstalled(resourceId(id));
-    const manifest = value.files?.find(file => file.path === 'SKILL.md');
-    if (!manifest) throw new LocalResourceError('SKILL_MANIFEST_MISSING', 'Skill 缺少 SKILL.md', { resourceId: resourceId(id) });
-    const content = (await skillDiscovery.previewInstalled(resourceId(id), 'SKILL.md')).content || '';
-    return { name: resourceId(id), content };
+    throw new LocalResourceError('SKILL_MANIFEST_MISSING', '云端 Skill 缺少 SKILL.md', { resourceId: skillId });
+  }
+
+  async function loadCloudSkillSpace(id) {
+    const key = resourceId(id);
+    if (cloudSkillSpaces.has(key)) return cloudSkillSpaces.get(key);
+    if (!serverClient?.skillAction) throw new LocalResourceError('SKILL_SERVICE_UNAVAILABLE', '云端 Skill Service 适配器未启用', { resourceId: key });
+    const listed = await serverClient.skillAction('ListSkillsBySpaceId', { SpaceId: key, PageNumber: 1, PageSize: 100 });
+    const raw = listed.data?.Skills || listed.data?.skills || listed.data?.Items || listed.data?.items || [];
+    const manifests = [];
+    for (const item of raw.slice(0, 20)) {
+      const skillId = String(item.SkillId || item.skill_id || item.Id || item.id || '').trim();
+      const versionId = String(item.VersionId || item.version_id || '').trim();
+      if (!skillId) continue;
+      const download = await serverClient.skillAction(versionId ? 'GetSkillDownloadUrl' : 'GetPremadeSkillDownloadUrl', { SkillId: skillId, ...(versionId ? { VersionId: versionId } : {}) });
+      const url = String(download.data?.DownloadUrl || download.data?.download_url || '').trim();
+      if (!/^https:\/\//i.test(url)) throw new LocalResourceError('SKILL_DOWNLOAD_URL_INVALID', '云端 Skill 下载地址无效', { resourceId: skillId });
+      const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30000) });
+      if (!response.ok) throw new LocalResourceError('SKILL_DOWNLOAD_FAILED', `云端 Skill 下载失败（${response.status}）`, { resourceId: skillId });
+      const length = Number(response.headers.get('content-length') || 0);
+      if (length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
+      const content = archiveSkillManifest(Buffer.from(await response.arrayBuffer()), skillId);
+      manifests.push({ name: String(item.Name || item.name || skillId), content });
+    }
+    const result = manifests.length ? manifests.map(item => `Skill ${item.name}:\n${item.content}`).join('\n\n') : '';
+    cloudSkillSpaces.set(key, result);
+    return result;
+  }
+
+  async function loadSkill(id) {
+    const key = resourceId(id);
+    if (skillDiscovery) {
+      const installed = await skillDiscovery.listInstalled();
+      if (installed.items?.some(item => item.resourceId === key)) {
+        const value = await skillDiscovery.previewInstalled(key);
+        const manifest = value.files?.find(file => file.path === 'SKILL.md');
+        if (!manifest) throw new LocalResourceError('SKILL_MANIFEST_MISSING', 'Skill 缺少 SKILL.md', { resourceId: key });
+        const content = (await skillDiscovery.previewInstalled(key, 'SKILL.md')).content || '';
+        return { name: key, content };
+      }
+    }
+    if (!looksLikeCloudSkillSpace(key)) {
+      throw new LocalResourceError('SKILL_NOT_INSTALLED', `绑定的 Skill（${key}）不在本地导入目录中；请在 Agent 编辑页重新选择 Skill。`, { resourceId: key });
+    }
+    const content = await loadCloudSkillSpace(key);
+    return { name: key, content };
   }
 
   async function searchKnowledge(id, query) {
@@ -61,10 +138,21 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery } = {
     return result.data?.Records || result.data?.records || [];
   }
 
+  async function searchMemory(id, query, userId) {
+    if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用', { resourceId: resourceId(id) });
+    const result = await serverClient.action('QueryMemorySdk', {
+      MemoryCollectionId: resourceId(id), AgentUserId: String(userId || 'studio-anonymous'),
+      Query: String(query || ''), Limit: 5, SceneId: '_sys_general',
+    }, { apiVersion: '2025-11-14' });
+    const data = result.data;
+    if (Array.isArray(data)) return data.flatMap(item => Array.isArray(item?.Memories || item?.memories) ? (item.Memories || item.memories) : [item]);
+    return data?.Memories || data?.memories || data?.Records || data?.records || [];
+  }
+
   async function close() {
     for (const { client } of mcpClients.values()) await client.close().catch(() => {});
     mcpClients.clear();
   }
 
-  return { listMcpTools, callMcpTool, loadSkill, searchKnowledge, close };
+  return { listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, close };
 }

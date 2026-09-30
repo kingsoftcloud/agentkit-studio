@@ -7,10 +7,13 @@
 
 ## 执行路径
 
-- **Skill**：绑定的本地 Skill Resource ID 映射到已导入 Skill 目录，只读取 `SKILL.md`，截断
-  后注入 system context；文件不会因为 Agent 对话自动执行。
+- **Skill**：本地 Skill Resource ID 映射到已导入 Skill 目录，只读取 `SKILL.md`；云端 Skill
+  Space 则通过 Skill Service 的 `ListSkillsBySpaceId` 与下载 URL 合同拉取 Skill 包并读取其中
+  的 `SKILL.md`。两者都会截断后注入 system context，文件内容不会因为 Agent 对话自动执行。
 - **Knowledge Base**：绑定的 Dataset ID 通过 `RetrieveKnowledge` 查询，默认取 5 条结果，
   结果以只读 context 注入本轮模型输入。
+- **Memory**：绑定的 Memory Instance ID 通过 `QueryMemorySdk` 查询，使用请求中的用户 ID；
+  没有用户 ID 时使用 session/Agent 范围的隔离回退值，结果以只读 context 注入本轮模型输入。
 - **MCP**：Host 先调用 Server `GetMCP` 获取 Endpoint 和认证信息，再使用
   `@modelcontextprotocol/sdk` 建立 Streamable HTTP 连接，调用 `tools/list` 和 `tools/call`。
   只允许模型请求当前 Agent 绑定且已发现的工具；同名工具绑定会直接失败，避免路由歧义。
@@ -24,9 +27,11 @@
 - AK/SK、MCP API Key、模型 API Key 全部留在 Node Host。
 - 本地 Skill 只读，不执行其中脚本。
 - 资源运行适配器不把 Server 的资源目录接口误当作通用 Agent binding；绑定数据仍来自
-  Agent Revision。
-- 本轮没有实现 stdio MCP 自动启动、memory service recall、资源级 secret rotation 或
-  多租户策略编排；这些情况必须返回明确错误或使用 Server 已有能力。
+  Agent Revision。旧版本把云端 Skill Space UUID 写进 `bindings.skills` 的记录会在读取时迁移
+  成 `skill-space` 云端绑定，本地 Skill ID 仍保持原有语义。
+- 云端 Agent 由 AgentEngine Server 的 `RunAgent` 合同执行，Studio 不在本地重复执行云端 Agent
+  的 loop；本地 Agent 才在 Node Host 物化这些绑定。仍未实现 stdio MCP 自动启动、资源级 secret
+  rotation 或多租户策略编排，这些情况必须返回明确错误或使用 Server 已有能力。
 
 ## 观测
 

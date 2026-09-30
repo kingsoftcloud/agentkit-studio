@@ -18,6 +18,35 @@ export class AgentStoreError extends Error {
   }
 }
 
+function resourceId(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
+
+function looksLikeCloudSkillSpace(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resourceId(value));
+}
+
+/** Migrate the pre-platform-picker shape without changing local Skill IDs. */
+export function normalizeAgentBindings(bindings = {}) {
+  const source = bindings && typeof bindings === 'object' ? bindings : {};
+  const plugins = Array.isArray(source.plugins) ? [...source.plugins] : [];
+  const hasSkillSpace = plugins.some(item => item?.config?.binding?.resource?.kind === 'skill-space');
+  const skills = [];
+  for (const value of Array.isArray(source.skills) ? source.skills : []) {
+    if (looksLikeCloudSkillSpace(value)) {
+      if (!hasSkillSpace) plugins.push({
+        ecosystem: 'dsh', pluginRef: '@kingsoftcloud/agentkit-studio/platform-resources', enabled: true,
+        config: { schemaVersion: 1, selectionMode: 'discovery', executionMode: 'outer-agent', binding: { id: 'platform-skill-space', resource: { kind: 'skill-space', id: resourceId(value), required: true } } },
+      });
+    } else skills.push(value);
+  }
+  return { ...source, skills, plugins };
+}
+
+function normalizeRecord(record) {
+  if (!record || typeof record !== 'object') return record;
+  const bindings = normalizeAgentBindings(record.spec?.bindings || record.bindings || {});
+  return { ...record, spec: { ...(record.spec || {}), bindings }, bindings };
+}
+
 export function createAgentStore({ storeDir } = {}) {
   const root = storeDir;
 
@@ -31,6 +60,7 @@ export function createAgentStore({ storeDir } = {}) {
   async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {} }) {
     await ensureDir();
     const agentId = `ar-local-${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+    const normalizedBindings = normalizeAgentBindings(spec.bindings ?? bindings);
     const record = {
       metadata: {
         id: agentId,
@@ -41,8 +71,8 @@ export function createAgentStore({ storeDir } = {}) {
         updatedAt: new Date().toISOString(),
         local: true,
       },
-      spec: { ...spec, bindings: spec.bindings ?? bindings, runtime: { type: runtimeType } },
-      bindings: spec.bindings ?? bindings,
+      spec: { ...spec, bindings: normalizedBindings, runtime: { type: runtimeType } },
+      bindings: normalizedBindings,
     };
     const target = pathFor(agentId);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
@@ -63,7 +93,7 @@ export function createAgentStore({ storeDir } = {}) {
     const items = [];
     for (const name of names.filter(item => item.endsWith('.json')).sort()) {
       try {
-        const record = JSON.parse(await readFile(join(root, name), 'utf8'));
+        const record = normalizeRecord(JSON.parse(await readFile(join(root, name), 'utf8')));
         items.push({
           metadata: record.metadata,
           spec: record.spec || {},
@@ -77,7 +107,7 @@ export function createAgentStore({ storeDir } = {}) {
   }
 
   async function get(agentId) {
-    try { return JSON.parse(await readFile(pathFor(agentId), 'utf8')); } catch { return null; }
+    try { return normalizeRecord(JSON.parse(await readFile(pathFor(agentId), 'utf8'))); } catch { return null; }
   }
 
   async function update(agentId, patch = {}) {
@@ -89,6 +119,9 @@ export function createAgentStore({ storeDir } = {}) {
     if (patch.bindings) record.bindings = { ...record.bindings, ...patch.bindings };
     if (patch.spec?.bindings) record.bindings = patch.spec.bindings;
     else if (patch.bindings) record.spec.bindings = record.bindings;
+    const normalized = normalizeAgentBindings(record.spec.bindings || record.bindings || {});
+    record.spec.bindings = normalized;
+    record.bindings = normalized;
     record.metadata.revision = (Number(record.metadata.revision) || 1) + 1;
     record.metadata.updatedAt = new Date().toISOString();
     const target = pathFor(agentId);

@@ -1,5 +1,12 @@
 # 更新日志
 
+## Unreleased
+
+- 修复云端 Skill Space UUID 被误当作本地 Skill 的兼容迁移；本地运行时现在可通过
+  AgentEngine/Skill Service 读取云端 Skill、知识库和记忆库，并通过 `GetMCP` 物化绑定的 MCP。
+- 云端 Agent 继续通过 AgentEngine Server `RunAgent` 合同执行，本地 Agent 保留本地 Skill 目录
+  适配；两条路径共用 DSH 原生会话页。
+
 ## 0.0.1 — 2026-09-30
 
 ### 变更

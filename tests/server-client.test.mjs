@@ -197,3 +197,38 @@ test('knowledge retrieval can select the AICP action version without changing th
   assert.match(url, /Action=RetrieveKnowledge/);
   assert.match(url, /Version=2025-11-14/);
 });
+
+test('Skill Service uses a signed GET action for cloud Skill Spaces', async () => {
+  let request;
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+    fetchImpl: async (url, init) => {
+      request = { url: String(url), init };
+      return new Response(JSON.stringify({ Code: 0, RequestId: 'skill-req', Data: { Skills: [] } }), { status: 200 });
+    },
+  });
+  const result = await client.skillAction('ListSkillsBySpaceId', { SpaceId: 'space-1', PageNumber: 1, PageSize: 100 });
+  assert.deepEqual(result.data, { Skills: [] });
+  assert.match(request.url, /Action=ListSkillsBySpaceId/);
+  assert.match(request.url, /SpaceId=space-1/);
+  assert.equal(request.init.method, 'GET');
+  assert.match(request.init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
+});
+
+test('QueryMemorySdk accepts the native response shape without a Code field', async () => {
+  let body;
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+    fetchImpl: async (_url, init) => {
+      body = JSON.parse(init.body);
+      return new Response(JSON.stringify({ Data: [{ Memories: [{ content: 'remembered' }] }] }), { status: 200 });
+    },
+  });
+  const result = await client.action('QueryMemorySdk', { MemoryCollectionId: 'mem-1', AgentUserId: 'u-1', Query: 'q', Limit: 5, SceneId: '_sys_general' }, { apiVersion: '2025-11-14' });
+  assert.deepEqual(result.data, [{ Memories: [{ content: 'remembered' }] }]);
+  assert.equal(body.MemoryCollectionId, 'mem-1');
+  assert.equal(body.AgentUserId, 'u-1');
+  assert.equal(body.Service, 'aicp');
+  assert.equal(body.Action, 'QueryMemorySdk');
+  assert.equal(body.Version, '2025-11-14');
+});

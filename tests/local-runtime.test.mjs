@@ -53,3 +53,34 @@ test('local runtime rejects resource-bound agents when the adapter is unavailabl
   assert.equal(response.status, 409);
   assert.match(response.chunks.join(''), /RESOURCE_ADAPTER_MISSING/);
 });
+
+test('local runtime injects cloud Skill Space and memory recall into the model turn', async () => {
+  const response = responseSink();
+  let requestBody;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: {
+      instructions: { system: '你是营销助手' },
+      bindings: { plugins: [
+        { config: { binding: { resource: { kind: 'skill-space', id: 'space-1' } } } },
+        { config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } },
+      ] },
+    } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: {
+      loadSkill: async id => { assert.equal(id, 'space-1'); return { name: '云端技能', content: '标题要短，语气友好' }; },
+      searchMemory: async (id, query, userId) => { assert.deepEqual([id, query, userId], ['memory-1', '写一篇', 'session-1']); return [{ content: '用户偏好轻松口吻' }]; },
+      listMcpTools: async () => [],
+    },
+    observability: { syncTrace: async () => {} },
+    fetchImpl: async (_url, init) => {
+      requestBody = JSON.parse(init.body);
+      return new Response('data: {"choices":[{"delta":{"content":"已结合绑定资源"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 'session-1', input: '写一篇' })]), response);
+  assert.equal(response.status, 200);
+  const system = requestBody.messages[0].content;
+  assert.match(system, /标题要短，语气友好/);
+  assert.match(system, /用户偏好轻松口吻/);
+  assert.match(response.chunks.join(''), /已结合绑定资源/);
+});
