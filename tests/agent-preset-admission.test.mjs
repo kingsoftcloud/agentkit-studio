@@ -223,6 +223,45 @@ test('the native bridge projects Codex dynamic-tool status into expandable reaso
   ]);
 });
 
+test('the Codex bridge records a completed local trace', async () => {
+  const traces = [];
+  const adapter = createDshRuntimeAdapter({
+    observability: { syncTrace: async record => traces.push(record) },
+    codexRuntime: {
+      async *stream() {
+        yield { type: 'reasoning', text: '分析' };
+        yield { type: 'tool', phase: 'started', name: 'search' };
+        yield { type: 'tool', phase: 'completed', name: 'search' };
+        yield { type: 'text', text: '完成' };
+      },
+    },
+  });
+  for await (const _chunk of adapter.stream({ model: 'local:codex-agent', sessionId: 'session-codex', messages: [{ role: 'user', content: '搜索' }], studioRuntime: 'codex' })) {}
+  assert.equal(traces.length, 1);
+  assert.equal(traces[0].status, 'completed');
+  assert.equal(traces[0].sessionId, 'session-codex');
+  assert.equal(traces[0].events.at(-1).event_type, 'run.completed');
+  assert.deepEqual(traces[0].events.filter(event => event.event_type === 'tool.started').map(event => event.payload.name), ['search']);
+});
+
+test('the Codex bridge records a canceled local trace before rethrowing', async () => {
+  const traces = [];
+  const adapter = createDshRuntimeAdapter({
+    observability: { syncTrace: async record => traces.push(record) },
+    codexRuntime: {
+      async *stream() {
+        yield { type: 'reasoning', text: '分析' };
+        throw Object.assign(new Error('已取消'), { code: 'CODEX_CANCELED' });
+      },
+    },
+  });
+  await assert.rejects(async () => {
+    for await (const _chunk of adapter.stream({ model: 'local:codex-agent', sessionId: 'session-codex-cancel', messages: [{ role: 'user', content: '停止' }], studioRuntime: 'codex' })) {}
+  }, error => error.code === 'CODEX_CANCELED');
+  assert.equal(traces[0].status, 'canceled');
+  assert.equal(traces[0].events.at(-1).event_type, 'run.canceled');
+});
+
 test('the cloud bridge projects Responses tool lifecycle into expandable reasoning', async () => {
   const frame = value => `data: ${JSON.stringify(value)}\n\n`;
   const body = new ReadableStream({

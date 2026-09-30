@@ -134,9 +134,10 @@ function finishBlocks(state) {
   return [...closeBlock(state, 'reasoning'), ...closeBlock(state, 'text'), { type: 'finish', reason: { kind: 'stop' } }];
 }
 
-async function* codexFrames(codexRuntime, options) {
+async function* codexFrames(codexRuntime, options, onChunk) {
   const state = createChunkState();
   for await (const chunk of codexRuntime.stream(options)) {
+    onChunk?.(chunk);
     if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
     else if (chunk?.type === 'tool') {
       const name = String(chunk.name || 'bound tool');
@@ -325,8 +326,22 @@ async function* cloudFrames(body, signal) {
   yield* finishBlocks(state);
 }
 
+async function syncCodexTrace(observability, { traceId, sessionId, agentId, agentName, startedAt, status, events }) {
+  if (typeof observability?.syncTrace !== 'function') return;
+  await observability.syncTrace({
+    traceId,
+    sessionId,
+    agentId,
+    agentName,
+    status,
+    startedAt,
+    completedAt: new Date().toISOString(),
+    events,
+  }).catch(error => console.warn('[agentkit-studio] Codex trace sync failed:', error?.message || error));
+}
+
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, codexResourceContext } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, codexResourceContext, observability } = {}) {
   return {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -358,16 +373,48 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
               userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
             })
             : {};
-          yield* codexFrames(codexRuntime, {
-            agentId,
-            sessionId: String(options.sessionId || ''),
-            input,
-            messages: Array.isArray(options.messages) ? options.messages : [],
-            signal: options.signal,
-            systemPrompt: resources.systemPrompt || '',
-            dynamicTools: resources.dynamicTools || [],
-            toolHandler: resources.toolHandler,
-          });
+          const startedAt = new Date().toISOString();
+          const traceId = String(options.runId || options.turnId || `run_codex_${Date.now().toString(36)}`);
+          const traceEvents = [];
+          const recordChunk = chunk => {
+            const type = String(chunk?.type || '');
+            const at = new Date().toISOString();
+            if (type === 'tool') traceEvents.push({ event_type: `tool.${String(chunk.phase || 'update')}`, at, run_id: traceId, payload: { name: String(chunk.name || 'bound tool') } });
+            else if (type === 'reasoning' || type === 'text') traceEvents.push({ event_type: `turn.${type}`, at, run_id: traceId, payload: { chars: String(chunk.text || '').length } });
+          };
+          try {
+            yield* codexFrames(codexRuntime, {
+              agentId,
+              sessionId: String(options.sessionId || ''),
+              input,
+              messages: Array.isArray(options.messages) ? options.messages : [],
+              signal: options.signal,
+              systemPrompt: resources.systemPrompt || '',
+              dynamicTools: resources.dynamicTools || [],
+              toolHandler: resources.toolHandler,
+            }, recordChunk);
+            await syncCodexTrace(observability, {
+              traceId,
+              sessionId: String(options.sessionId || ''),
+              agentId,
+              agentName: resources.agentName || '',
+              startedAt,
+              status: 'completed',
+              events: [...traceEvents, { event_type: 'run.completed', at: new Date().toISOString(), run_id: traceId }],
+            });
+          } catch (error) {
+            const canceled = options.signal?.aborted || error?.code === 'CODEX_CANCELED';
+            await syncCodexTrace(observability, {
+              traceId,
+              sessionId: String(options.sessionId || ''),
+              agentId,
+              agentName: resources.agentName || '',
+              startedAt,
+              status: canceled ? 'canceled' : 'failed',
+              events: [...traceEvents, { event_type: canceled ? 'run.canceled' : 'run.failed', at: new Date().toISOString(), run_id: traceId, payload: { code: String(error?.code || '') } }],
+            });
+            throw error;
+          }
           return;
         }
         if (typeof localHandler !== 'function') throw new Error('AgentKit local runtime is unavailable');

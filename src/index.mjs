@@ -144,6 +144,7 @@ async function registerControlPlane(ctx) {
       prepared.resourceContext ? `Relevant resources:\n${prepared.resourceContext}` : '',
     ].filter(Boolean).join('\n\n');
     return {
+      agentName: String(record.metadata?.name || record.name || ''),
       systemPrompt,
       dynamicTools: toolBindings.map(item => item.spec),
       toolHandler: async ({ name, arguments: args }) => {
@@ -160,6 +161,7 @@ async function registerControlPlane(ctx) {
     localHandler: localRuntimeHandler,
     codexRuntime,
     codexResourceContext,
+    observability: await studioObservabilityPromise,
   });
   setDshRuntimeAdapter(dshRuntimeAdapter);
   ctx.inject(['llm'], llmCtx => {

@@ -53,5 +53,6 @@ Harness 本地运行时同样把 `tool_call` / `tool_result` 事件投影成 rea
 
 ## 观测
 
-每次本地运行完成或失败后调用 `StudioObservability.syncTrace`。trace 写失败只记录 Host 警告，
-不改变模型运行结果。运行 session ID 来自对话请求，便于观测页按会话追踪。
+每次 Harness 或 Codex 本地运行完成、失败或取消后调用 `StudioObservability.syncTrace`。Codex
+工具、思考和回答只写入事件类型、工具名和字符数等轻量字段，不把完整回答复制到 trace；trace
+写失败只记录 Host 警告，不改变模型运行结果。运行 session ID 来自对话请求，便于观测页按会话追踪。
