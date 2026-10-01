@@ -83,20 +83,27 @@ export function dshPresetId(agentId, revision = 1, buildId = '') {
 
 export function dshPresetEligibility(agent = {}, options = {}) {
   const runtime = String(agent?.spec?.runtime?.type || agent?.runtime?.type || agent?.framework || '').trim().toLowerCase();
-  if (!['dsh-native', 'harness', 'codex'].includes(runtime)) {
+  // Cloud AgentEngine revisions can use server-owned runtimes such as
+  // langgraph, hermes, openclaw and adk. They still enter the DSH native
+  // session through the cloud RunAgent bridge; only a local revision needs a
+  // Studio provider that we can execute on this Host.
+  const local = agent?.metadata?.local === true || agent?.source === 'local-studio'
+    || (agent?.source === undefined && agent?.metadata?.local !== false);
+  if (local && !['dsh-native', 'harness', 'codex'].includes(runtime)) {
     return { ok: false, code: 'STUDIO_PRESET_RUNTIME_UNSUPPORTED', message: '当前 Agent runtime 没有 DSH 原生会话适配器', runtime };
   }
   const unsupported = unsupportedDshBindings(agent, options);
   const agentId = String(agent?.metadata?.id || agent?.id || '').trim();
   if (!agentId) return { ok: false, code: 'STUDIO_PRESET_AGENT_ID_MISSING', message: 'AgentId 不能为空' };
   const revision = Number(agent?.metadata?.revision || agent?.revision || 1) || 1;
-  const bridge = runtime !== 'dsh-native' || unsupported.length > 0;
+  const bridge = !local || runtime !== 'dsh-native' || unsupported.length > 0;
   return {
     ok: true,
     agentId,
     revision,
     presetId: dshPresetId(agentId, revision),
     runtime,
+    local,
     mode: bridge ? 'studio-bridge' : 'dsh-native',
     ...(unsupported.length ? { unsupported } : {}),
   };
@@ -158,7 +165,10 @@ export class DshPresetAdmission {
     const plugins = [];
     if (prefix) plugins.push({ id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix } });
     if (eligibility.mode === 'studio-bridge') {
-      const toolContracts = typeof this.getToolContracts === 'function'
+      // Cloud tools/resources are executed by AgentEngine's RunAgent action;
+      // asking the local DSH registry to materialize them would incorrectly
+      // turn a valid cloud Agent into a local binding failure.
+      const toolContracts = eligibility.local && typeof this.getToolContracts === 'function'
         ? await this.getToolContracts(agent)
         : [];
       plugins.push({
@@ -167,7 +177,7 @@ export class DshPresetAdmission {
         config: {
           agentId: eligibility.agentId,
           runtime: eligibility.runtime,
-          local: agent?.metadata?.local === true,
+          local: eligibility.local,
           ...(buildId ? { buildId } : {}),
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),
           ...(toolContracts.length ? { toolContracts } : {}),

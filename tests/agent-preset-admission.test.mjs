@@ -22,6 +22,7 @@ test('dsh preset admission uses a stable revision-scoped id', () => {
     revision: 3,
     presetId: 'agentkit-studio-agent-demo_2Fagent-r3',
     runtime: 'dsh-native',
+    local: true,
     mode: 'dsh-native',
   });
 });
@@ -31,6 +32,28 @@ test('resource-bearing and non-DSH revisions use the native DSH runtime bridge',
   assert.deepEqual(unsupportedDshBindings(resourceAgent), ['model', 'mcp']);
   assert.equal(dshPresetEligibility(resourceAgent).mode, 'studio-bridge');
   assert.equal(dshPresetEligibility(agent({ spec: { runtime: { type: 'codex' }, bindings: {} } })).mode, 'studio-bridge');
+});
+
+test('cloud-owned runtimes use the cloud RunAgent bridge through the native session', async () => {
+  const registered = [];
+  const cloud = agent({
+    source: 'agentengine-server',
+    metadata: { id: 'cloud/agent', name: 'Cloud Agent', revision: 4 },
+    spec: { runtime: { type: 'langgraph' }, bindings: {} },
+  });
+  const eligibility = dshPresetEligibility(cloud);
+  assert.equal(eligibility.ok, true);
+  assert.equal(eligibility.local, false);
+  assert.equal(eligibility.mode, 'studio-bridge');
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => cloud,
+    getToolContracts: async () => { throw new Error('cloud Agent must not query local Tool registry'); },
+  });
+  await admission.ensure('cloud/agent');
+  assert.equal(registered[0].plugins[0].name, '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin');
+  assert.equal(registered[0].plugins[0].config.local, false);
+  assert.equal(registered[0].plugins[0].config.runtime, 'langgraph');
 });
 
 test('the active DSH model route and official persona row make a real native preset', async () => {

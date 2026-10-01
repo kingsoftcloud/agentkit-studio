@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 云端 Agent 的 `langgraph`、`hermes`、`openclaw`、`adk` 等服务端运行时现在可以直接绑定到
+  DSH 原生会话；Host 不再把它们误判为本地 runtime，也不会要求本地 Tool Registry 物化云端工具，
+  实际执行统一交给 AgentEngine `RunAgent` 流。未知的本地 runtime 仍保持明确拒绝。
 - 本地 MCP 现在会在每次探测和工具调用前重新解析 DSH credential；凭证轮换会自动替换旧连接，
   不再把过期的连接缓存到 Host 生命周期结束。HTTP 401/403/404、缺少凭证和工具目录失败分别
   返回可操作的错误码，并把最近一次探测错误保存在资源健康状态中，资源库可以直接看到失败原因。

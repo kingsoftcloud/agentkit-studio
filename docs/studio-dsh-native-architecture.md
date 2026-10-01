@@ -3,6 +3,8 @@
 > 状态：终稿，作为本轮实现、评审和验收的唯一架构基线。
 >
 > **2026-09-29 升级**：DSH 基线从 `dsh-v0.1.7-rc.2`（commit `477b4f4…`）升级到 `dsh-v0.2.0-rc.1`（commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`）。本文中 rc.2 相关描述保留为历史对照；`make check`（83/83）与 `make patch-check`（6/6）已在 0.2.0-rc.1 重跑通过，但 rc.2 上记录的资源 Agent admission、preset 准入等 P0 证据尚未在新基线重跑。
+>
+> **2026-10-01 实现状态更新**：上面的窄准入描述保留为历史基线。本轮 Studio Host 已把本地资源型 `dsh-native`/Harness/Codex Revision 接入 `studio-bridge`，并把来源为 `agentengine-server` 的云端运行时（已验证 `langgraph`）交给 `RunAgent`；两类 Agent 都复用 DSH 原生会话页。云端知识库、记忆库、Skill 和部署仍需分别补齐真实 API/E2E 证据，不能由本地 MCP 或单个云端运行时样例替代。
 > 范围：AgentKit Studio、DSH Desktop、ksadk-python、agentengine-server 的本地与云端协作。  
 > 原则：先把真实执行链路和控制面合同钉死，再收口界面和插件市场；任何页面占位都不能代替一条可追踪的执行链。
 
@@ -14,7 +16,7 @@ AgentKit Studio 是零代码产品，运行在 DSH Desktop 中，以 DSH 的公�
 
 所有跨进程集成都只走公开 wire 边界：DSH agent/provider 扩展点，或官方 JSON-RPC SDK 协议；Studio Harness 的进程内执行是 Studio 自己的 TypeScript provider，不依赖 DSH 内核私有对象。向 DSH 内核注入 InputHub、SessionCommandController，或用 sink/bridge 把外部会话硬塞进内核，已实测失败，正式废弃。
 
-当前 UI 已完成产品壳、真实 DSH 无 Agent 对话、运营页面的 Host-backed 接线以及 AgentKit Host 的接线骨架；一个无资源 `dsh-native` Revision 已通过官方 preset registry 做到窄准入。知识库、记忆库、MCP、Skill Center、本地 Skill 的资源运行时物化，以及云端 Agent 创建、编辑、构建和部署，仍需要按本 RFC 接入真实 server API，不能以页面或 Revision 写入成功验收。
+当前 UI 已完成产品壳、真实 DSH 无 Agent 对话、运营页面的 Host-backed 接线以及 AgentKit Host 的接线骨架。无资源 `dsh-native` Revision 仍走官方 preset registry；本地资源型 Agent 走 Studio provider bridge，云端 Agent 则走服务端 `RunAgent` bridge。资源目录的完整 CRUD、授权审计、云端知识库/记忆库/Skill 执行，以及云端构建和部署，仍需要按本 RFC 接入真实 server API，不能以页面或 Revision 写入成功验收。
 
 ## 2. 问题边界与术语
 
@@ -62,18 +64,19 @@ DSH 层负责 Desktop、会话输入输出、provider/agent 注册、审批 UI �
 
 **本地集成教训。** 早期 sink/bridge 路线尝试把外部 Session 硬接进内核对象（`InputHub`、`SessionCommandController`），出现会话 ID 不一致、取消和恢复无落点、刷新后状态丢失等问题。该路线已实测失败并正式废弃，相关内容已从方案中删除；后续代码和文档不得再把它列为备选方案。
 
-**公开 Agent Preset 接缝（已落地窄准入，完整资源路径仍未验收）。** DSH 的 wire 合同包含
+**公开 Agent Preset 接缝（无资源路径）。** DSH 的 wire 合同包含
 `SessionCreateRequest.agentPreset`，rc.2 的客户端 `sessions.create({ agentPreset })` 已把该字段透传到
 官方 Remote；Preset Registry 也提供公开注册点组合 provider、工具和能力。Studio 现在通过
 `agents/ensure-preset` 注册一个按 Agent Revision 版本化的 preset，并在官方
 `conversation.hero.agentPreset` 槽位调用 `agentPresets.select`。该路径只接受 `dsh-native` 且没有模型、Tool、
-MCP、Skill、知识库、记忆库或插件绑定的 Revision；首轮后由 DSH 官方锁定。真实 rc.2 Web Host selector
-冒烟和真实资源型 Revision 的 typed fail-closed 证据分别记录在
+MCP、Skill、知识库、记忆库或插件绑定的 Revision；首轮后由 DSH 官方锁定。资源型 Revision 不再伪装成
+原生 preset，而是由 Studio provider bridge 承担运行时适配；云端来源的 Agent 则直接由服务端
+`RunAgent` 承担执行。真实 rc.2 Web Host selector 冒烟和早期资源型 Revision 的 typed fail-closed 证据分别记录在
 `.scratch/studio-dsh-native-2026-09-24/rc2-studio-preset-admission-smoke-2026-09-28.json` 与
 `.scratch/studio-dsh-native-2026-09-24/rc2-resource-agent-admission-failclosed-2026-09-28.json`。
-这证明合法的窄准入，不证明资源型 Studio Agent 的模型/工具/平台资源已经执行。动态
-AgentRevision/ResourceBinding 到 DSH PresetDefinition 的完整映射、事件、资源授权、取消和恢复仍需公开
-provider 合同；不得通过 DOM、React 状态、`session.append` 或私有 sink 补齐缺口。
+这两份文件是历史证据，不覆盖当前 bridge。当前实现已用真实 MCP 工具调用和云端 `langgraph` Agent
+完成浏览器验证；动态 AgentRevision/ResourceBinding 的完整映射、事件、资源授权、取消和恢复仍需公开
+provider/server 合同，不能通过 DOM、React 状态、`session.append` 或私有 sink 补齐缺口。
 
 ### 3.2 Studio 产品层
 
@@ -439,11 +442,13 @@ DSH profile 只保存本地扩展、模型提供商配置和 endpoint 配对信�
 - 散落 worktree 已清扫；合并留痕按 MANIFEST 处理，不保留并行旧壳。
 - DSH 官方 Python SDK、事件映射、canonical probe、Host runtime adapter 和 Studio 应用页面的基础测试已通过。
 - Studio UI 已改为 AgentKit Studio 品牌和四个一级域；无 Agent 的 DSH 原生对话和 Host 连接错误态是真实路径。
-- 2026-09-28 验证刷新：Studio `pnpm check` 54/54、Python focused suite 312 passed/8 skipped，
+- 2026-10-01 验证刷新：本地 MCP 资源在 DSH 原生会话中完成真实工具调用；云端 `langgraph` Agent 在同一
+  原生会话中完成 `RunAgent` 执行并返回固定探针文本。Studio `pnpm check` 与 Agent admission focused suite
+  均通过；Python focused suite 312 passed/8 skipped，
   `make ci` 打包通过；当前 rc.2 packed artifact 与 browser profile 均能启动，独立 fixture 与 SDK transcript
   的 node-store probe 仍保留为历史/协议证据；直连 AgentEngine 的目录、详情和平台资源读取已由 Studio Node
-  Host 接管。无资源 `dsh-native` Agent 的官方 preset 窄准入已接入，资源型 Revision、云端合同、资源激活和
-  完整内存门禁仍未签收。
+  Host 接管。无资源 `dsh-native` Agent 的官方 preset 窄准入、本地资源 bridge 和云端 Runtime bridge 已接入；
+  云端资源激活、完整资源合同和内存门禁仍未签收。
 
 ### 13.2 未完成且不能标绿
 
@@ -452,7 +457,7 @@ DSH profile 只保存本地扩展、模型提供商配置和 endpoint 配对信�
 | Agent 创建/编辑/Revision | 有基础页，server 全量合同未接完 | server Agent/Revision/Build 查询与回归测试 |
 | 知识库/记忆库/MCP/Skill 生命周期 | 入口和数据模型草案存在，CRUD/授权/审计未完 | ResourceCatalog golden + 真实 API E2E |
 | 云构建与部署 | UI 不再伪造成功，待接 DeploymentPort(buildId) | 构建、部署、回滚和幂等证据 |
-| 绑定 Agent 的流式会话 | 无资源 `dsh-native` 已走官方 preset registry 的会话级准入和首轮锁定；资源型 Revision 仍 fail-closed | 无资源 preset 的真实 Host selector/lock、资源型拒绝证据；资源执行还需 server transcript + DSH UI 日志 |
+| 绑定 Agent 的流式会话 | 无资源 `dsh-native` 走官方 preset registry；本地资源型 Agent 走 Studio bridge；云端 Agent 走 `RunAgent` bridge，均复用 DSH 原生会话页 | 已验证无资源 selector/lock、本地 MCP 工具调用和云端 `langgraph` RunAgent；云端知识库/记忆库/Skill 及取消恢复仍需 server transcript + DSH UI E2E |
 | 评测、观测、Channel、Schedule | 归位已确定，端到端接线未完 | 一次 occurrence 单 owner 的 E2E |
 | 端云协同 | 未开始 | 配对、授权、lease、离线补放与审计 |
 
