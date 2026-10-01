@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,23 +20,38 @@ test('cloud Skill Space with no Skills is a valid empty binding', async () => {
 
 test('cloud Skill Space downloads through the injected Host fetch boundary', async () => {
   const requests = [];
+  const archive = createZip([{ name: 'SKILL.md', data: '# 营销写作\n保持短句。' }]);
+  const digest = createHash('sha256').update(archive).digest('hex');
   const adapters = createLocalResourceAdapters({
     serverClient: {
       skillAction: async (name, params) => {
         requests.push({ name, params });
-        if (name === 'ListSkillsBySpaceId') return { data: { Skills: [{ SkillId: 'skill-1', Name: '营销写作' }] } };
+        if (name === 'ListSkillsBySpaceId') return { data: { Skills: [{ SkillId: 'skill-1', Name: '营销写作', ContentHash: `sha256:${digest}` }] } };
         return { data: { DownloadUrl: 'https://download.test/skill-1.zip' } };
       },
     },
     fetchImpl: async url => {
       assert.equal(String(url), 'https://download.test/skill-1.zip');
-      return new Response(createZip([{ name: 'SKILL.md', data: '# 营销写作\n保持短句。' }]), { status: 200 });
+      return new Response(archive, { status: 200 });
     },
   });
   const result = await adapters.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9');
   assert.equal(result.name, 'bcb4df65-2448-4c8a-99ca-62a12d26bce9');
   assert.match(result.content, /保持短句/);
   assert.deepEqual(requests.map(item => item.name), ['ListSkillsBySpaceId', 'GetPremadeSkillDownloadUrl']);
+});
+
+test('cloud Skill Space rejects a downloaded archive with a mismatched ContentHash', async () => {
+  const archive = createZip([{ name: 'SKILL.md', data: '# 营销写作' }]);
+  const adapters = createLocalResourceAdapters({
+    serverClient: {
+      skillAction: async name => name === 'ListSkillsBySpaceId'
+        ? { data: { Skills: [{ SkillId: 'skill-1', ContentHash: 'sha256:' + '0'.repeat(64) }] } }
+        : { data: { DownloadUrl: 'https://download.test/skill-1.zip' } },
+    },
+    fetchImpl: async () => new Response(archive, { status: 200 }),
+  });
+  await assert.rejects(() => adapters.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9'), error => error instanceof LocalResourceError && error.code === 'SKILL_ARCHIVE_HASH_MISMATCH' && error.details.resourceId === 'skill-1');
 });
 
 test('missing non-cloud Skill remains an explicit local import error', async () => {

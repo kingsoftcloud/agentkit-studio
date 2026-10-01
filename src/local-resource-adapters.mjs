@@ -1,5 +1,5 @@
 /** Host-owned adapters for resources bound to a local Agent revision. */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { inflateRawSync } from 'node:zlib';
@@ -9,6 +9,12 @@ export class LocalResourceError extends Error {
 }
 
 function resourceId(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
+function contentHash(value, skillId) {
+  const raw = String(value || '').trim().toLowerCase().replace(/^sha256:/, '');
+  if (!raw) return '';
+  if (!/^[0-9a-f]{64}$/.test(raw)) throw new LocalResourceError('SKILL_ARCHIVE_HASH_INVALID', '云端 Skill 的 ContentHash 不是有效的 sha256 摘要', { resourceId: skillId });
+  return raw;
+}
 function looksLikeCloudSkillSpace(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resourceId(value));
 }
@@ -119,6 +125,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       const skillId = String(item.SkillId || item.skill_id || item.Id || item.id || '').trim();
       const versionId = String(item.VersionId || item.version_id || '').trim();
       if (!skillId) continue;
+      const expectedHash = contentHash(item.ContentHash || item.contentHash || item.content_hash || item.Hash || item.hash, skillId);
       const download = await serverClient.skillAction(versionId ? 'GetSkillDownloadUrl' : 'GetPremadeSkillDownloadUrl', { SkillId: skillId, ...(versionId ? { VersionId: versionId } : {}) });
       const url = String(download.data?.DownloadUrl || download.data?.download_url || '').trim();
       if (!/^https:\/\//i.test(url)) throw new LocalResourceError('SKILL_DOWNLOAD_URL_INVALID', '云端 Skill 下载地址无效', { resourceId: skillId });
@@ -126,7 +133,13 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       if (!response.ok) throw new LocalResourceError('SKILL_DOWNLOAD_FAILED', `云端 Skill 下载失败（${response.status}）`, { resourceId: skillId });
       const length = Number(response.headers.get('content-length') || 0);
       if (length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
-      const content = archiveSkillManifest(Buffer.from(await response.arrayBuffer()), skillId);
+      const archive = Buffer.from(await response.arrayBuffer());
+      if (archive.length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
+      if (expectedHash) {
+        const actualHash = createHash('sha256').update(archive).digest('hex');
+        if (actualHash !== expectedHash) throw new LocalResourceError('SKILL_ARCHIVE_HASH_MISMATCH', '云端 Skill 压缩包完整性校验失败', { resourceId: skillId, expected: expectedHash, actual: actualHash });
+      }
+      const content = archiveSkillManifest(archive, skillId);
       manifests.push({ name: String(item.Name || item.name || skillId), content });
     }
     const result = manifests.length ? manifests.map(item => `Skill ${item.name}:\n${item.content}`).join('\n\n') : '';

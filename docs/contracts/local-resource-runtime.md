@@ -8,8 +8,10 @@
 ## 执行路径
 
 - **Skill**：本地 Skill Resource ID 映射到已导入 Skill 目录，只读取 `SKILL.md`；云端 Skill
-  Space 则通过 Skill Service 的 `ListSkillsBySpaceId` 与下载 URL 合同拉取 Skill 包并读取其中
-  的 `SKILL.md`。两者都会截断后注入 system context，文件内容不会因为 Agent 对话自动执行。
+  Space 则通过 Skill Service 的 `ListSkillsBySpaceId` 与下载 URL 合同拉取 Skill 包，先按
+  `ContentHash` 做 sha256 完整性校验，再读取其中的 `SKILL.md`。缺少摘要的历史条目仍可兼容
+  读取，但摘要格式非法或校验不匹配会以 typed error 终止本次资源物化。两者都会截断后注入
+  system context，文件内容不会因为 Agent 对话自动执行。
 - **Knowledge Base**：绑定的 Dataset ID 通过 `RetrieveKnowledge` 查询，默认取 5 条结果，
   结果以只读 context 注入本轮模型输入。
 - **Memory**：绑定的 Memory Instance ID 通过 `QueryMemorySdk` 查询，使用请求中的用户 ID；

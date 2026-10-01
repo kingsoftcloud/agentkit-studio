@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 云端 Skill Space 下载现在会在读取 `SKILL.md` 前校验服务返回的 `ContentHash` sha256 摘要；
+  摘要格式非法或压缩包被替换时返回明确的 `SKILL_ARCHIVE_HASH_INVALID`/
+  `SKILL_ARCHIVE_HASH_MISMATCH`，避免错误资源被注入本地 Agent 上下文。
 - 云端 Agent 的原生会话在用户停止生成或连接断开时，会先中止本地 `RunAgent` SSE，再由 Host
   发送 `CancelRun`（携带 Agent、Session 和可用的 Invocation 身份）；取消动作失败不会覆盖
   原始 `CLOUD_RUN_CANCELLED` 终态。
