@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 云端 Agent 的原生会话在用户停止生成或连接断开时，会先中止本地 `RunAgent` SSE，再由 Host
+  发送 `CancelRun`（携带 Agent、Session 和可用的 Invocation 身份）；取消动作失败不会覆盖
+  原始 `CLOUD_RUN_CANCELLED` 终态。
 - 绑定记忆库的本地 Agent 现在在回答完成后按 `spec.memory.write.mode`（`candidate` 或
   `explicit_only`）把本轮 user/assistant 对话通过 `CreateMemorySdk` 写回云端；写入使用
   session/user/Agent 隔离、限制消息数量和长度，并作为后置副作用记录 trace，写入失败不会吞掉

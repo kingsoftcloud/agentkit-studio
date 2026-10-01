@@ -480,14 +480,32 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
         return;
       }
       if (!cloudClient || typeof cloudClient.streamAction !== 'function') throw new Error('AgentEngine cloud runtime is unavailable');
-      const upstream = await cloudClient.streamAction('RunAgent', {
-        AgentId: agentId,
-        SessionId: String(options.sessionId || ''),
-        Messages: [{ role: 'user', content: input }],
-        Stream: true,
-        ApiFormat: 'responses',
-      }, { signal: options.signal });
-      yield* cloudFrames(upstream.body, options.signal);
+      const sessionId = String(options.sessionId || '');
+      const invocationId = String(options.invocationId || options.runId || '').trim();
+      try {
+        const upstream = await cloudClient.streamAction('RunAgent', {
+          AgentId: agentId,
+          SessionId: sessionId,
+          Messages: [{ role: 'user', content: input }],
+          Stream: true,
+          ApiFormat: 'responses',
+          ...(invocationId ? { InvocationId: invocationId } : {}),
+        }, { signal: options.signal });
+        yield* cloudFrames(upstream.body, options.signal);
+      } catch (error) {
+        if (options.signal?.aborted && typeof cloudClient.action === 'function') {
+          // Closing the local SSE is not a cloud cancellation. Send the
+          // explicit Server control action after the upstream stream is
+          // aborted; cancellation is best-effort because the original
+          // cancellation must still surface as CLOUD_RUN_CANCELLED.
+          await cloudClient.action('CancelRun', {
+            AgentId: agentId,
+            SessionId: sessionId,
+            ...(invocationId ? { InvocationId: invocationId } : {}),
+          }).catch(() => {});
+        }
+        throw error;
+      }
     },
   };
 }

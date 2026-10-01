@@ -429,3 +429,30 @@ test('the cloud bridge propagates an aborted stream as cancellation', async () =
   await assert.rejects(pending, error => error.code === 'CLOUD_RUN_CANCELLED');
   assert.equal(readerCancelled, true);
 });
+
+test('the cloud bridge sends CancelRun after an aborted upstream stream', async () => {
+  const controller = new AbortController();
+  let cancelled;
+  const body = new ReadableStream({
+    start() {},
+    cancel() {},
+  });
+  const adapter = createDshRuntimeAdapter({
+    cloudClient: {
+      streamAction: async () => ({ body }),
+      action: async (...args) => { cancelled = args; return { data: { Status: 'CANCELLED' } }; },
+    },
+  });
+  const iterator = adapter.stream({
+    model: 'cloud:agent-1',
+    sessionId: 'cloud-session-1',
+    runId: 'invocation-1',
+    signal: controller.signal,
+    messages: [{ role: 'user', content: '运行' }],
+  });
+  const pending = iterator.next();
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(pending, error => error.code === 'CLOUD_RUN_CANCELLED');
+  assert.deepEqual(cancelled, ['CancelRun', { AgentId: 'agent-1', SessionId: 'cloud-session-1', InvocationId: 'invocation-1' }]);
+});
