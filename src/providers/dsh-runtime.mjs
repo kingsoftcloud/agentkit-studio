@@ -8,6 +8,35 @@
 
 const ROUTE = 'agentkit-studio';
 let activeAdapter;
+const agentRoutes = new Map();
+
+/**
+ * Agent preset scopes dispatch `agent/request` before the root Agent loop
+ * calls `llm.stream`. Keep the selected scope's transport context across that
+ * boundary without exposing a Studio-specific model in the native picker.
+ */
+export function bindDshAgentRoute(sessionId, binding = {}) {
+  const id = String(sessionId || '').trim();
+  if (!id) return () => {};
+  const route = {
+    agentId: String(binding.agentId || '').trim(),
+    agent: binding.agent,
+    runtime: String(binding.runtime || 'harness').trim(),
+    local: binding.local === true,
+    toolAdapter: binding.toolAdapter,
+  };
+  agentRoutes.set(id, route);
+  return () => {
+    if (agentRoutes.get(id) === route) agentRoutes.delete(id);
+  };
+}
+
+export function unbindDshAgentRoutes(agentId) {
+  const id = String(agentId || '').trim();
+  for (const [sessionId, route] of agentRoutes) {
+    if (route.agentId === id) agentRoutes.delete(sessionId);
+  }
+}
 
 /**
  * Publish the Host-owned bridge to preset-scoped DSH plugins. The plugin uses
@@ -218,7 +247,7 @@ function parseLocalRecord(record, state) {
   return [];
 }
 
-async function* localFrames(handler, payload, { signal, toolAdapter } = {}) {
+async function* localFrames(handler, payload, { signal, toolAdapter, agent } = {}) {
   const requestBody = Buffer.from(JSON.stringify(payload));
   const queue = createAsyncQueue();
   const responseChunks = [];
@@ -238,7 +267,7 @@ async function* localFrames(handler, payload, { signal, toolAdapter } = {}) {
     },
     end(chunk = '') { if (chunk) this.write(chunk); this.writableEnded = true; queue.close(); },
   };
-  const handlerPromise = Promise.resolve().then(() => handler(request, response, { signal, toolAdapter })).catch(error => {
+  const handlerPromise = Promise.resolve().then(() => handler(request, response, { signal, toolAdapter, agent })).catch(error => {
     queue.fail(error);
     throw error;
   });
@@ -350,15 +379,19 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
       return { model: metadata, stream: options => this.stream(options) };
     },
     async *stream(options = {}) {
+      const routed = agentRoutes.get(String(options.sessionId || '').trim());
       const model = String(options.model || '');
       const separator = model.indexOf(':');
-      const mode = separator > 0 ? model.slice(0, separator) : 'cloud';
-      const agentId = separator > 0 ? model.slice(separator + 1) : model;
+      const mode = routed ? (routed.local ? 'local' : 'cloud') : separator > 0 ? model.slice(0, separator) : 'cloud';
+      const agentId = routed?.agentId || (separator > 0 ? model.slice(separator + 1) : model);
+      const runtime = routed?.runtime || options.studioRuntime;
+      const toolAdapter = options.studioToolAdapter || routed?.toolAdapter;
+      const toolAgent = routed?.agent || options.agent;
       const user = lastUser(options.messages);
       const input = textOf(user).trim();
       if (!agentId || !input) throw new Error('AgentKit Studio runtime requires an AgentId and user input');
       if (mode === 'local') {
-        if (options.studioRuntime === 'codex') {
+        if (runtime === 'codex') {
           if (!codexRuntime || typeof codexRuntime.stream !== 'function') {
             const error = new Error('Codex Provider 未注册；请安装并启用官方 Codex App Server Provider');
             error.code = 'CODEX_PROVIDER_UNAVAILABLE';
@@ -371,7 +404,8 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
               input,
               sessionId: String(options.sessionId || ''),
               userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
-              toolAdapter: options.studioToolAdapter,
+              toolAdapter,
+              agent: toolAgent,
             })
             : {};
           const startedAt = new Date().toISOString();
@@ -426,7 +460,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,
           history: historyOf(options.messages),
-        }, { signal: options.signal, toolAdapter: options.studioToolAdapter });
+        }, { signal: options.signal, toolAdapter, agent: toolAgent });
         return;
       }
       if (!cloudClient || typeof cloudClient.streamAction !== 'function') throw new Error('AgentEngine cloud runtime is unavailable');

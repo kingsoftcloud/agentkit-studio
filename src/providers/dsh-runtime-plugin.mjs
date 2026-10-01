@@ -6,10 +6,12 @@
 
 export const name = 'agentkit-studio-dsh-runtime';
 export const inject = ['tools'];
+const STUDIO_PROVIDER = 'agentkit-studio';
+const AGENT_REQUEST_EVENT = ['agent', 'request'].join('/');
 import { spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { streamDshRuntime } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
+import { bindDshAgentRoute, streamDshRuntime, unbindDshAgentRoutes } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
 
 // Keep the builtin executor in the Studio host. The Python toolset remains
 // the source of truth for AgentEngine tool semantics (workspace confinement,
@@ -146,9 +148,25 @@ function createBuiltinExecutor(config = {}) {
 }
 
 function registerBuiltinTools(ctx, contracts, config) {
-  const values = (Array.isArray(contracts) ? contracts : [])
+  const declared = (Array.isArray(contracts) ? contracts : [])
     .filter(contract => contract && contract.executor === 'builtin' && contract.enabled !== false && contract.name);
+  // A persisted DSH preset can outlive the catalog request that originally
+  // admitted it. Preserve the Agent's explicit builtin bindings in that case;
+  // the Python executor still validates the name against ksadk toolsets.
+  const declaredNames = new Set(declared.map(contract => String(contract.name)));
+  const fallback = toolNames(config.toolBindings)
+    .filter(name => !declaredNames.has(name))
+    .map(name => ({
+      name,
+      description: `AgentEngine 内置 Tool：${name}`,
+      parameters: { type: 'object', properties: {} },
+      executor: 'builtin',
+      timeoutSeconds: 20,
+      enabled: true,
+    }));
+  const values = [...declared, ...fallback];
   if (!values.length) return;
+  if (typeof ctx.tools?.register !== 'function') return;
   const executeBuiltin = createBuiltinExecutor(config);
   const install = () => {
     const disposers = values.map(contract => ctx.tools.register({
@@ -178,27 +196,28 @@ function toolNames(values) {
 function createToolAdapter(ctx, bindings) {
   const allowed = new Set(toolNames(bindings));
   if (!allowed.size) return undefined;
-  const schemas = () => (ctx.tools.schemas?.() || []).filter(schema => allowed.has(String(schema.name)));
-  const resolve = name => {
+  const schemas = agent => (ctx.tools.schemas?.(agent) || []).filter(schema => allowed.has(String(schema.name)));
+  const resolve = (name, agent) => {
     const candidate = String(name || '');
-    const schema = schemas().find(item => item.name === candidate);
+    const schema = schemas(agent).find(item => item.name === candidate);
     if (!schema) throw Object.assign(new Error(`DSH Tool 未注册或不在当前 Agent 绑定范围内：${candidate}`), { code: 'TOOL_NOT_FOUND' });
     return schema;
   };
   return {
-    listTools() {
-      const available = new Set(schemas().map(schema => schema.name));
+    listTools(_ids = [], agent) {
+      const available = new Set(schemas(agent).map(schema => schema.name));
       const missing = [...allowed].filter(name => !available.has(name));
       if (missing.length) throw Object.assign(new Error(`DSH Tool 未注册或不在当前 Agent 绑定范围内：${missing.join(', ')}`), { code: 'TOOL_NOT_FOUND', details: { names: missing } });
-      return schemas().map(schema => ({ name: schema.name, description: schema.description, parameters: schema.parameters, resourceId: schema.name }));
+      return schemas(agent).map(schema => ({ name: schema.name, description: schema.description, parameters: schema.parameters, resourceId: schema.name }));
     },
-    async callTool(name, args = {}, { callId, signal } = {}) {
-      const schema = resolve(name);
+    async callTool(name, args = {}, { callId, signal, agent } = {}) {
+      const schema = resolve(name, agent);
       const result = await ctx.tools.execute({
         callId: String(callId || `studio-tool-${Date.now().toString(36)}`),
         name: schema.name,
         arguments: args,
         signal: signal || new AbortController().signal,
+        agent,
       });
       if (result?.isError) {
         const error = new Error(`DSH Tool ${schema.name} 执行失败`);
@@ -216,6 +235,22 @@ export function apply(ctx, config = {}) {
   if (!agentId) throw new Error('agentkit-studio-dsh-runtime: agentId is required');
   registerBuiltinTools(ctx, config.toolContracts, config);
   const toolAdapter = createToolAdapter(ctx, config.toolBindings);
+  // The Agent loop dispatches its request waterfall through the selected Agent
+  // scope, then invokes `llm.stream` from the root loop context. Bind the
+  // Studio provider at the scoped request boundary so the root adapter can
+  // recover this Agent's runtime and Tool adapter by session id.
+  ctx.on(AGENT_REQUEST_EVENT, async (payload, next) => {
+    const resolved = await next();
+    const sessionId = String(payload?.agent?.id || '').trim();
+    if (sessionId) bindDshAgentRoute(sessionId, {
+      agentId,
+      agent: payload?.agent,
+      runtime: config.runtime,
+      local: config.local === true,
+      toolAdapter,
+    });
+    return { ...resolved, provider: STUDIO_PROVIDER };
+  });
   // Keep the DSH request header on the user's selected provider/model. The
   // scoped waterfall owns only this Agent's model transport, which avoids
   // showing an internal `agentkit-studio/local:*` model in the native UI.
@@ -226,6 +261,7 @@ export function apply(ctx, config = {}) {
     buildId: config.buildId || '',
     toolAdapter,
   }));
+  if (typeof ctx.effect === 'function') ctx.effect(() => () => unbindDshAgentRoutes(agentId), 'agentkit-studio: runtime route cleanup');
 }
 
 export default { name, inject, apply };

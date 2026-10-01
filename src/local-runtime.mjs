@@ -100,19 +100,19 @@ function boundToolIds(bindings) {
   }).filter(Boolean).map(String);
 }
 
-async function collectDshTools(toolAdapter, bindings) {
+async function collectDshTools(toolAdapter, bindings, agent) {
   const ids = boundToolIds(bindings?.tools);
   if (!ids.length) return [];
   if (!toolAdapter || typeof toolAdapter.listTools !== 'function') {
     throw new LocalRuntimeError('TOOL_ADAPTER_MISSING', '该 Agent 绑定了 DSH Tool，但当前会话没有可用的 Tool 适配器', { resourceIds: ids });
   }
-  const listed = await toolAdapter.listTools(ids);
+  const listed = await toolAdapter.listTools(ids, agent);
   return (listed || []).map(tool => ({ ...tool, _source: 'dsh', _resourceId: tool.resourceId || tool.name }));
 }
 
-async function collectBoundTools(resourceAdapter, toolAdapter, bindings) {
+async function collectBoundTools(resourceAdapter, toolAdapter, bindings, agent) {
   const mcp = resourceAdapter ? await collectTools(resourceAdapter, bindings) : { tools: [], warnings: [] };
-  const dsh = await collectDshTools(toolAdapter, bindings);
+  const dsh = await collectDshTools(toolAdapter, bindings, agent);
   const tools = [...mcp.tools, ...dsh];
   const seen = new Set();
   for (const tool of tools) {
@@ -128,7 +128,7 @@ async function collectBoundTools(resourceAdapter, toolAdapter, bindings) {
  * MCP/Skill/knowledge/memory resource has identical semantics in both local
  * runtimes.
  */
-export async function prepareLocalResourceContext({ record, input, resourceAdapter, toolAdapter, userId, resourceMode = 'full' } = {}) {
+export async function prepareLocalResourceContext({ record, input, resourceAdapter, toolAdapter, userId, agent, resourceMode = 'full' } = {}) {
   const bindings = resourceMode === 'prompt-only' ? {} : record?.spec?.bindings || record?.bindings || {};
   const skillIds = bindingIds(bindings, 'skills');
   const knowledge = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'knowledge-base');
@@ -162,7 +162,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
     const hits = await resourceAdapter.searchMemory(resourceId, input, userId);
     resourceContext += (hits || []).map(hit => `Memory: ${extractText(hit.content || hit.text || hit.memory || hit)}`).join('\n');
   }
-  const collected = await collectBoundTools(resourceAdapter, toolAdapter, bindings);
+  const collected = await collectBoundTools(resourceAdapter, toolAdapter, bindings, agent);
   if (collected.warnings.length) resourceContext += `\n\nBound resource warnings:\n${collected.warnings.join('\n')}`;
   return { bindings, resourceContext, tools: collected.tools, warnings: collected.warnings };
 }
@@ -242,7 +242,7 @@ function envelope(runId, sessionId, item) {
 
 export function createLocalConversationHandler({ agentStore, buildStore, modelService, resourceAdapter, observability, fetchImpl = fetch } = {}) {
 
-  return async function handle(request, response, { signal, toolAdapter } = {}) {
+  return async function handle(request, response, { signal, toolAdapter, agent } = {}) {
     let body = '';
     for await (const chunk of request) body += chunk;
     if (body.length > 1024 * 1024) { response.writeHead(413); response.end('request too large'); return; }
@@ -301,6 +301,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         resourceAdapter,
         toolAdapter,
         userId: parsed.userId || parsed.sessionId || agentId,
+        agent,
         resourceMode: parsed.resourceMode,
       });
       resourceContext = prepared.resourceContext;
@@ -346,7 +347,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
           let result;
           try {
             result = tool._source === 'dsh'
-              ? await toolAdapter.callTool(call.name, args, { callId: call.id, signal })
+              ? await toolAdapter.callTool(call.name, args, { callId: call.id, signal, agent })
               : await resourceAdapter.callMcpTool(tool._resourceId, call.name, args);
           } catch (error) {
             noteTrace('tool.failed', { name: call.name, code: String(error?.code || 'MCP_TOOL_FAILED') });

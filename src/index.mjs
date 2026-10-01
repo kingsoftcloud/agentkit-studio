@@ -126,7 +126,7 @@ async function registerControlPlane(ctx) {
     }
     return localRuntimeHandlerPromise;
   };
-  const codexResourceContext = async ({ agentId, buildId, input, userId, sessionId, toolAdapter } = {}) => {
+  const codexResourceContext = async ({ agentId, buildId, input, userId, sessionId, toolAdapter, agent } = {}) => {
     const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
     let record = buildId ? await buildState.build.resolve(agentId, buildId) : await store.get(agentId);
     if (!record) throw Object.assign(new Error('本地 Codex Agent 不存在'), { code: 'AGENT_NOT_FOUND' });
@@ -137,6 +137,7 @@ async function registerControlPlane(ctx) {
       resourceAdapter,
       toolAdapter,
       userId: userId || sessionId || agentId,
+      agent,
     });
     const toolBindings = codexToolBindings(prepared.tools);
     const systemPrompt = [
@@ -154,7 +155,7 @@ async function registerControlPlane(ctx) {
           throw Object.assign(new Error(`Codex 请求了未绑定的工具：${name}`), { code: 'BOUND_TOOL_NOT_FOUND' });
         }
         if (binding.tool._source === 'dsh') {
-          return toolAdapter.callTool(binding.tool.name, args || {}, { callId, signal });
+          return toolAdapter.callTool(binding.tool.name, args || {}, { callId, signal, agent });
         }
         return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {});
       },

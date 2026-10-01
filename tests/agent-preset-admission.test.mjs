@@ -91,24 +91,72 @@ test('the DSH runtime plugin exposes only bound registry tools to Studio', async
   let listener;
   let forwarded;
   let executed;
+  const scopeAgent = { id: 'scope-agent', ctx: {} };
   const dispose = setDshRuntimeAdapter({
     async *stream(options) { forwarded = options; yield { type: 'finish', reason: { kind: 'stop' } }; },
   });
   applyDshRuntimePlugin({
     tools: {
-      schemas: () => [{ name: 'component_status', description: '状态', parameters: { type: 'object', properties: {} } }, { name: 'other', description: '其他', parameters: {} }],
+      schemas: agent => agent === scopeAgent
+        ? [{ name: 'component_status', description: '状态', parameters: { type: 'object', properties: {} } }, { name: 'other', description: '其他', parameters: {} }]
+        : [],
       execute: async call => { executed = call; return { isError: false, content: [{ type: 'text', text: 'healthy' }] }; },
     },
     on: (_event, callback) => { listener = callback; return () => {}; },
   }, { agentId: 'demo/agent', runtime: 'harness', local: true, toolBindings: ['component_status'] });
-  const iterator = listener({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: '状态' }] });
+  const iterator = listener({ model: 'deepseek-v4-flash', agent: scopeAgent, messages: [{ role: 'user', content: '状态' }] });
   await iterator.next();
-  const listed = forwarded.studioToolAdapter.listTools();
+  const listed = forwarded.studioToolAdapter.listTools([], scopeAgent);
   assert.deepEqual(listed.map(tool => tool.name), ['component_status']);
-  assert.deepEqual(await forwarded.studioToolAdapter.callTool('component_status', {}, { callId: 'call-1' }), [{ type: 'text', text: 'healthy' }]);
+  assert.deepEqual(await forwarded.studioToolAdapter.callTool('component_status', {}, { callId: 'call-1', agent: scopeAgent }), [{ type: 'text', text: 'healthy' }]);
   assert.equal(executed.name, 'component_status');
   assert.equal(executed.callId, 'call-1');
+  assert.equal(executed.agent, scopeAgent);
   dispose();
+});
+
+test('the DSH runtime plugin restores bound builtin tools when a preset has no contract snapshot', () => {
+  const registered = [];
+  applyDshRuntimePlugin({
+    tools: {
+      register: tool => { registered.push(tool); return () => {}; },
+      schemas: () => registered.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+      execute: async () => ({}),
+    },
+    on: () => () => {},
+  }, { agentId: 'demo/agent', runtime: 'harness', local: true, toolBindings: ['component_status'] });
+  assert.deepEqual(registered.map(tool => tool.name), ['component_status']);
+});
+
+test('the bridge rewrites the scoped Agent request and routes the root loop by session', async () => {
+  const listeners = new Map();
+  applyDshRuntimePlugin({
+    tools: { schemas: () => [], execute: async () => ({}) },
+    on: (event, callback) => { listeners.set(event, callback); return () => {}; },
+  }, { agentId: 'demo/agent', runtime: 'harness', local: true });
+  const request = await listeners.get('agent/request')({ agent: { id: 'session-1' } }, async () => ({
+    provider: 'agentkit-studio-default', model: 'glm-5.3-flash',
+  }));
+  assert.equal(request.provider, 'agentkit-studio');
+  assert.equal(request.model, 'glm-5.3-flash');
+
+  const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
+  const adapter = createDshRuntimeAdapter({
+    localHandler: async () => async (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write(event({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: 'session-routed' } }));
+      response.write(`data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`);
+      response.end('data: [DONE]\n\n');
+    },
+  });
+  const chunks = [];
+  for await (const chunk of adapter.stream({
+    provider: request.provider,
+    model: request.model,
+    sessionId: 'session-1',
+    messages: [{ role: 'user', content: 'hello' }],
+  })) chunks.push(chunk);
+  assert.equal(chunks.some(chunk => chunk.type === 'text-delta' && chunk.text === 'session-routed'), true);
 });
 
 test('admission registers once and unregisters replaced revisions', async () => {

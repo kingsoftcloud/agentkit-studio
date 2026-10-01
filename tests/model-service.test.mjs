@@ -36,6 +36,9 @@ test('model service resolves independent provider credentials and catalog capabi
   const second = await service.profile('openai-text');
   assert.equal(second.baseUrl, 'https://example.test/v1');
   assert.equal(second.apiKey, 'secret-2');
+  const byModelName = await service.profile('gpt');
+  assert.equal(byModelName.id, 'openai-text');
+  assert.equal(byModelName.modelName, 'gpt');
 });
 
 test('model service returns typed errors for missing credentials and unknown profiles', async () => {

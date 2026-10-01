@@ -16,7 +16,11 @@ export function createModelService({ configuration, credentials, fetchImpl = fet
     // An empty id selects the default profile (first valid when no marker
     // exists), matching the model proxy's routing default.
     const effectiveId = String(id || '').trim() || (profiles.find(item => item.default)?.id || profiles[0]?.id || '');
-    const selected = profiles.find(item => item.id === effectiveId && item.enabled !== false);
+    // Agent specs historically stored the model name in `modelProfileId`,
+    // while Studio settings use a stable profile id.  Accept both forms so
+    // existing agents keep running after profile-backed routing is enabled.
+    const selected = profiles.find(item => item.id === effectiveId && item.enabled !== false)
+      || profiles.find(item => item.modelName === effectiveId && item.enabled !== false);
     if (!selected) throw Object.assign(new Error('模型配置不存在或已停用'), { code: 'MODEL_NOT_FOUND', status: 404 });
     const resolved = await credentials.resolve(selected.credentialName || 'AGENTKIT_MODEL_API_KEY');
     const key = resolved?.value || selected.apiKey;
