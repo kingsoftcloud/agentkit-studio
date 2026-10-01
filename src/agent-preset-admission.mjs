@@ -108,10 +108,11 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  * successful registrations so selecting the same revision is idempotent.
  */
 export class DshPresetAdmission {
-  /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, registry } = {}) {
+  /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
+  constructor({ getAgent, getActiveModel, getToolContracts, registry } = {}) {
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
+    this.getToolContracts = getToolContracts;
     this.registry = registry;
     this.registrations = new Map();
   }
@@ -157,6 +158,9 @@ export class DshPresetAdmission {
     const plugins = [];
     if (prefix) plugins.push({ id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix } });
     if (eligibility.mode === 'studio-bridge') {
+      const toolContracts = typeof this.getToolContracts === 'function'
+        ? await this.getToolContracts(agent)
+        : [];
       plugins.push({
         id: 'studio-runtime',
         name: '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin',
@@ -166,6 +170,7 @@ export class DshPresetAdmission {
           local: agent?.metadata?.local === true,
           ...(buildId ? { buildId } : {}),
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),
+          ...(toolContracts.length ? { toolContracts } : {}),
         },
       });
     }

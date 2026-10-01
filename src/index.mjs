@@ -265,6 +265,63 @@ async function registerControlPlane(ctx) {
   presetAdmission = new DshPresetAdmission({
     getAgent: async agentId => (await serverClientPromise).getAgent(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
+    getToolContracts: async agent => {
+      const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
+        ? agent.spec.bindings : {};
+      const refs = (Array.isArray(bindings.tools) ? bindings.tools : []).map(value => {
+        if (typeof value === 'string') return value;
+        return value?.resourceId || value?.id || value?.name || '';
+      }).filter(Boolean).map(String);
+      if (!refs.length) return [];
+      let page;
+      try {
+        page = await (await serverClientPromise).listCatalogResources({ kind: 'tool', limit: 200 });
+      } catch (error) {
+        // A local Agent can still be admitted when the optional catalog
+        // process is temporarily unavailable. The Python builtin executor
+        // remains the final authority and will fail closed for unknown names;
+        // this avoids turning a valid binding into “暂不可读取”.
+        if (error?.code !== 'CATALOG_UNAVAILABLE' && error?.code !== 'SERVER_UNAVAILABLE') throw error;
+        return refs.map(name => ({
+          resourceId: name,
+          name,
+          description: `AgentEngine 内置 Tool：${name}`,
+          parameters: { type: 'object', properties: {} },
+          executor: 'builtin',
+          timeoutSeconds: 20,
+          sideEffect: 'none',
+          permissions: [],
+          enabled: true,
+        }));
+      }
+      const byRef = new Map();
+      for (const item of page.items || []) {
+        const contract = item?.contract && typeof item.contract === 'object' ? item.contract : {};
+        const resourceId = String(item?.resourceId || item?.id || '').trim();
+        const name = String(contract.name || item?.name || resourceId).trim();
+        const normalized = {
+          resourceId: resourceId || name,
+          name,
+          description: String(contract.description || item?.description || ''),
+          parameters: contract.inputSchema || contract.input_schema || { type: 'object', properties: {} },
+          executor: String(contract.executor || 'builtin'),
+          timeoutSeconds: Number(contract.timeoutSeconds || contract.timeout_seconds || 20),
+          sideEffect: String(contract.sideEffect || contract.side_effect || 'none'),
+          permissions: Array.isArray(contract.permissions) ? contract.permissions : [],
+          enabled: contract.enabled !== false,
+        };
+        if (resourceId) byRef.set(resourceId, normalized);
+        if (name) byRef.set(name, normalized);
+      }
+      const missing = refs.filter(ref => !byRef.has(ref));
+      if (missing.length) {
+        const error = new Error(`绑定的 Tool 不在本地资源目录中：${missing.join(', ')}`);
+        error.code = 'BOUND_TOOL_NOT_FOUND';
+        error.details = { missing };
+        throw error;
+      }
+      return refs.map(ref => byRef.get(ref));
+    },
   });
   if (presetRegistry) {
     presetAdmission.setRegistry(presetRegistry);

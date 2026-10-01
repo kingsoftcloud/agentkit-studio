@@ -75,6 +75,18 @@ test('the bridge preset forwards bound DSH tool names to the runtime plugin', as
   assert.deepEqual(registered[0].plugins[0].config.toolBindings, ['component_status']);
 });
 
+test('the bridge preset forwards AgentEngine builtin Tool contracts for native registration', async () => {
+  const registered = [];
+  const revision = agent({ metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 1, local: true }, spec: { runtime: { type: 'harness' }, bindings: { tools: [{ resourceId: 'component_status' }] } } });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => revision,
+    getToolContracts: async () => [{ resourceId: 'component_status', name: 'component_status', executor: 'builtin', parameters: { type: 'object', properties: {} } }],
+  });
+  await admission.ensure('demo/agent');
+  assert.deepEqual(registered[0].plugins[0].config.toolContracts, [{ resourceId: 'component_status', name: 'component_status', executor: 'builtin', parameters: { type: 'object', properties: {} } }]);
+});
+
 test('the DSH runtime plugin exposes only bound registry tools to Studio', async () => {
   let listener;
   let forwarded;
