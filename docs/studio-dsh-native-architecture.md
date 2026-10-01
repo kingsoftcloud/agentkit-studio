@@ -4,7 +4,7 @@
 >
 > **2026-09-29 升级**：DSH 基线从 `dsh-v0.1.7-rc.2`（commit `477b4f4…`）升级到 `dsh-v0.2.0-rc.1`（commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`）。本文中 rc.2 相关描述保留为历史对照；`make check`（83/83）与 `make patch-check`（6/6）已在 0.2.0-rc.1 重跑通过，但 rc.2 上记录的资源 Agent admission、preset 准入等 P0 证据尚未在新基线重跑。
 >
-> **2026-10-01 实现状态更新**：上面的窄准入描述保留为历史基线。本轮 Studio Host 已把本地资源型 `dsh-native`/Harness/Codex Revision 接入 `studio-bridge`，并把来源为 `agentengine-server` 的云端运行时（已验证 `langgraph`）交给 `RunAgent`；两类 Agent 都复用 DSH 原生会话页。云端知识库、记忆库、Skill 和部署仍需分别补齐真实 API/E2E 证据，不能由本地 MCP 或单个云端运行时样例替代。
+> **2026-10-01 实现状态更新**：上面的窄准入描述保留为历史基线。本轮 Studio Host 已把本地资源型 `dsh-native`/Harness/Codex Revision 接入 `studio-bridge`，并把来源为 `agentengine-server` 的云端运行时（已验证 `langgraph`）交给 `RunAgent`；两类 Agent 都复用 DSH 原生会话页。云端 Agent 的知识库、记忆库和 Skill Center 绑定已通过 Host 代签 `UpdateAgent` 保存 `ComponentConfig`，但仍需补齐真实资源首轮执行和部署 E2E 证据，不能由本地 MCP 或单个云端运行时样例替代。
 > 范围：AgentKit Studio、DSH Desktop、ksadk-python、agentengine-server 的本地与云端协作。  
 > 原则：先把真实执行链路和控制面合同钉死，再收口界面和插件市场；任何页面占位都不能代替一条可追踪的执行链。
 
@@ -455,7 +455,7 @@ DSH profile 只保存本地扩展、模型提供商配置和 endpoint 配对信�
 | 工作 | 当前状态 | 完成证据 |
 | --- | --- | --- |
 | Agent 创建/编辑/Revision | 有基础页，server 全量合同未接完 | server Agent/Revision/Build 查询与回归测试 |
-| 知识库/记忆库/MCP/Skill 生命周期 | 入口和数据模型草案存在，CRUD/授权/审计未完 | ResourceCatalog golden + 真实 API E2E |
+| 知识库/记忆库/MCP/Skill 生命周期 | 目录读取和云端 Agent ComponentConfig 绑定保存已接入；完整 CRUD、授权、审计及资源首轮执行未完 | ResourceCatalog golden + UpdateAgent 保存回读 + 真实 API E2E |
 | 云构建与部署 | UI 不再伪造成功，待接 DeploymentPort(buildId) | 构建、部署、回滚和幂等证据 |
 | 绑定 Agent 的流式会话 | 无资源 `dsh-native` 走官方 preset registry；本地资源型 Agent 走 Studio bridge；云端 Agent 走 `RunAgent` bridge，均复用 DSH 原生会话页 | 已验证无资源 selector/lock、本地 MCP 工具调用和云端 `langgraph` RunAgent；云端知识库/记忆库/Skill 及取消恢复仍需 server transcript + DSH UI E2E |
 | 评测、观测、Channel、Schedule | 归位已确定，端到端接线未完 | 一次 occurrence 单 owner 的 E2E |

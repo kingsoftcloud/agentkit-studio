@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 云端 Agent 编辑页现在通过 Host 代签 `UpdateAgent` Action 保存知识库、记忆库和 Skill Center
+  ComponentConfig；云端页面不再调用不存在的旧本地 REST 路由。模型、MCP、本地 Skill 和 Tool 等
+  不属于该云端合同的绑定会在保存前明确拒绝，避免出现页面成功但云端未更新。
 - 云端 Agent 的 `langgraph`、`hermes`、`openclaw`、`adk` 等服务端运行时现在可以直接绑定到
   DSH 原生会话；Host 不再把它们误判为本地 runtime，也不会要求本地 Tool Registry 物化云端工具，
   实际执行统一交给 AgentEngine `RunAgent` 流。未知的本地 runtime 仍保持明确拒绝。

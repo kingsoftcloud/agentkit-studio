@@ -171,7 +171,7 @@
         if (!resourceId) { onChange(retained); if (kind === 'memory-instance') onMemory(false); return; }
         const resource = (catalog.items || []).find(item => item.id === resourceId);
         if (!resource || resource.disabled) return;
-        const config = { schemaVersion: 1, binding: { id: `platform-${kind}`, connectionRef: catalog.connectionRef, resource: { kind, id: resource.id, region: resource.region }, required: true } };
+        const config = { schemaVersion: 1, binding: { id: `platform-${kind}`, connectionRef: catalog.connectionRef, resource: { kind, id: resource.id, name: resource.name, region: resource.region }, required: true } };
         if (kind === 'knowledge-base') config.retrieval = { mode: 'tool', topK: 5, maxChars: 16000 };
         if (kind === 'skill-space') Object.assign(config, { selectionMode: 'discovery', selectedSkills: [], includePublic: false, executionMode: 'outer-agent' });
         onChange([...retained, { ecosystem: 'dsh', pluginRef: catalog.pluginRef, snapshotDigest: catalog.pluginSnapshotDigest, components: [catalog.componentId], enabled: true, config }]);

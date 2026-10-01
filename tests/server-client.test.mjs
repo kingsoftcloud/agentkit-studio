@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentEngineClient, AgentEngineError } from '../src/server-client.mjs';
+import { buildCloudAgentUpdate, createAgentEngineClient, AgentEngineError } from '../src/server-client.mjs';
 
 function configuration(values) { return { resolve: async () => ({ values, sources: {} }) }; }
 
@@ -60,6 +60,22 @@ test('KOP falls back to the intranet endpoint for inner-only accounts', async ()
     },
   });
   await client.listAgents();
+  assert.match(urls[1], /^http:\/\/aicp\.inner\.api\.ksyun\.com\//);
+});
+
+test('regular KOP Actions fall back when inner-account denial is XML', async () => {
+  const urls = [];
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+    fetchImpl: async (url, init) => {
+      urls.push(String(url));
+      if (urls.length === 1) return new Response('<ErrorResponse><Error><Code>InnerAccountCanOnlyAccessThroughIntranet</Code><Message>The inner account can only access through intranet</Message></Error></ErrorResponse>', { status: 403, headers: { 'content-type': 'application/xml' } });
+      assert.match(init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
+      return new Response(JSON.stringify({ Code: 0, Data: { SessionId: 's1' } }), { status: 200 });
+    },
+  });
+  const result = await client.action('CreateSession', { AgentId: 'a1', SessionId: 's1' });
+  assert.equal(result.data.SessionId, 's1');
   assert.match(urls[1], /^http:\/\/aicp\.inner\.api\.ksyun\.com\//);
 });
 
@@ -182,6 +198,30 @@ test('direct server client does not expose unapproved destructive actions', asyn
   await assert.rejects(() => client.action('DeleteAgent', { AgentId: 'a1' }), error => error instanceof AgentEngineError && error.code === 'ACTION_NOT_ALLOWED');
 });
 
+test('cloud Agent updates translate Studio platform bindings to ComponentConfig', () => {
+  const payload = buildCloudAgentUpdate('ar-cloud-1', {
+    name: '知识助手',
+    description: '云端检索助手',
+    spec: { bindings: { plugins: [
+      { config: { binding: { resource: { kind: 'knowledge-base', id: 'kb-1', name: '企业知识库' } } } },
+      { config: { binding: { resource: { kind: 'memory-instance', id: 'mem-1' } } } },
+      { config: { binding: { resource: { kind: 'skill-space', id: 'space-1' } } } },
+    ] } },
+  });
+  assert.deepEqual(payload, {
+    AgentId: 'ar-cloud-1', Name: '知识助手', Description: '云端检索助手',
+    ComponentConfig: {
+      KnowledgeBase: { Id: 'kb-1', Name: '企业知识库' },
+      Memory: { Id: 'mem-1' },
+      SkillWorkspace: { Id: 'space-1' },
+    },
+  });
+});
+
+test('cloud Agent updates reject local-only bindings instead of dropping them', () => {
+  assert.throws(() => buildCloudAgentUpdate('ar-cloud-1', { spec: { bindings: { mcpServers: ['mcp-1'] } } }), error => error instanceof AgentEngineError && error.code === 'CLOUD_BINDING_UNSUPPORTED');
+});
+
 test('streamAction keeps RunAgent SSE on the Node credential boundary', async () => {
   let request;
   const client = createAgentEngineClient({
@@ -198,6 +238,35 @@ test('streamAction keeps RunAgent SSE on the Node credential boundary', async ()
   assert.equal(request.init.headers.Authorization, 'Bearer local-token');
   assert.equal(request.init.headers.Accept, 'text/event-stream');
   assert.match(request.url, /\/agentengine\/api\/v1\/RunAgent$/);
+});
+
+test('streamAction falls back when KOP returns an XML inner-account denial', async () => {
+  const urls = [];
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+    fetchImpl: async (url, init) => {
+      urls.push(String(url));
+      if (urls.length === 1) return new Response('<ErrorResponse><Error><Code>InnerAccountCanOnlyAccessThroughIntranet</Code><Message>The inner account can only access through intranet</Message></Error></ErrorResponse>', { status: 403, headers: { 'content-type': 'application/xml' } });
+      assert.match(init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
+      return new Response('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    },
+  });
+  const response = await client.streamAction('RunAgent', { AgentId: 'a1', SessionId: 's1', Stream: true });
+  assert.equal(response.status, 200);
+  assert.match(urls[0], /^https:\/\/aicp\.api\.ksyun\.com\//);
+  assert.match(urls[1], /^http:\/\/aicp\.inner\.api\.ksyun\.com\//);
+});
+
+test('GetAgent uses the deployed framework when Basic omits it', async () => {
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudServiceToken: 'local-token' }),
+    fetchImpl: async () => new Response(JSON.stringify({ Code: 0, Data: {
+      Basic: { AgentId: 'cloud-langgraph', Name: 'Cloud LangGraph' },
+      Deployment: { Framework: 'langgraph' },
+    } }), { status: 200 }),
+  });
+  const agent = await client.getAgent('cloud-langgraph');
+  assert.equal(agent.spec.runtime.type, 'langgraph');
 });
 
 test('knowledge retrieval can select the AICP action version without changing the default API', async () => {

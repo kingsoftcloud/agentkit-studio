@@ -12,7 +12,7 @@ export class AgentEngineError extends Error {
 }
 
 const SERVER_ACTIONS = new Set([
-  'ListAgents', 'GetAgent', 'CreateSession', 'ListKnowledgeBases', 'ListMemoryInstances', 'ListMCPs',
+  'ListAgents', 'GetAgent', 'UpdateAgent', 'CreateSession', 'ListKnowledgeBases', 'ListMemoryInstances', 'ListMCPs',
   'GetMCP', 'RetrieveKnowledge',
   'QueryMemorySdk', 'CreateMemorySdk',
   'ListSkillWorkspaces', 'ListAgentModels', 'ListSessions', 'GetSession',
@@ -57,7 +57,11 @@ function normalizeAgent(item = {}) {
     status: basic.Status || basic.status || item.Status || item.status,
     phase: basic.Phase || basic.phase || item.Phase || item.phase,
   };
-  const runtimeType = String(item.HarnessRuntimeKind || item.harnessRuntimeKind || basic.Framework || basic.framework || item.Framework || item.framework || 'dsh-native').toLowerCase();
+  // GetAgent puts the deployed framework under Deployment while ListAgents
+  // usually exposes it on Basic.Framework. Preserve that server-owned
+  // runtime when opening the edit page; otherwise every cloud Agent falls
+  // back to the misleading DSH Native label.
+  const runtimeType = String(item.HarnessRuntimeKind || item.harnessRuntimeKind || basic.Framework || basic.framework || item.Framework || item.framework || deployment.Framework || deployment.framework || 'dsh-native').toLowerCase();
   const knowledge = component.KnowledgeBase || component.knowledge_base || component.knowledgeBase;
   const memory = component.Memory || component.memory;
   const skill = component.SkillWorkspace || component.skill_workspace || component.skillWorkspace;
@@ -73,6 +77,43 @@ function normalizeAgent(item = {}) {
     deployment: { ...deployment }, builds: Array.isArray(item.Builds || item.builds) ? (item.Builds || item.builds) : [],
     source: 'agentengine-server',
   };
+}
+
+/**
+ * Translate the Studio binding snapshot into the public AgentEngine update
+ * contract.  The cloud API owns ComponentConfig; local MCP/Skill/Tool and
+ * model profile IDs are Host concepts and must never be silently serialized
+ * as an apparently successful cloud update.
+ */
+export function buildCloudAgentUpdate(agentId, { spec = {}, name = '', description = '' } = {}) {
+  const id = String(agentId || '').trim();
+  if (!id) throw new AgentEngineError('INVALID_AGENT_ID', 'AgentId 不能为空');
+  const bindings = spec?.bindings && typeof spec.bindings === 'object' ? spec.bindings : {};
+  const unsupported = [];
+  for (const [key, label] of [['mcpServers', 'MCP'], ['skills', '本地 Skill'], ['tools', 'Tool'], ['modelProfileIds', '模型']]) {
+    const value = key === 'modelProfileIds' && !Array.isArray(bindings[key])
+      ? (bindings.modelProfileId ? [bindings.modelProfileId] : []) : bindings[key];
+    if ((Array.isArray(value) && value.length) || (value && !Array.isArray(value))) unsupported.push(label);
+  }
+  if (unsupported.length) {
+    throw new AgentEngineError('CLOUD_BINDING_UNSUPPORTED', `云端 Agent 不能通过 ComponentConfig 保存${unsupported.join('、')}绑定；请在云端运行时配置中管理`, { action: 'UpdateAgent' });
+  }
+  const components = { KnowledgeBase: null, Memory: null, SkillWorkspace: null };
+  const componentFields = { 'knowledge-base': 'KnowledgeBase', 'memory-instance': 'Memory', 'skill-space': 'SkillWorkspace' };
+  for (const binding of Array.isArray(bindings.plugins) ? bindings.plugins : []) {
+    const resource = binding?.config?.binding?.resource || {};
+    const field = componentFields[String(resource.kind || '').trim()];
+    const resourceId = String(resource.id || resource.resourceId || '').trim();
+    if (!field || !resourceId) continue;
+    components[field] = {
+      Id: resourceId,
+      ...(resource.name ? { Name: String(resource.name) } : {}),
+    };
+  }
+  const payload = { AgentId: id, ComponentConfig: components };
+  if (name !== undefined && String(name).trim()) payload.Name = String(name).trim();
+  if (description !== undefined) payload.Description = String(description || '');
+  return payload;
 }
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
@@ -223,9 +264,16 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
           signal?.aborted ? '请求已取消' : 'Server 请求未完成，请检查连接；写请求不会自动重试', { action: name });
       }
       let envelope;
-      try { envelope = await response.json(); }
-      catch { throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server 未返回有效 JSON', { status: response.status, action: name }); }
-      const upstreamMessage = String(envelope?.Error?.Message || envelope?.Message || '').toLowerCase();
+      let responseText = '';
+      try {
+        responseText = await response.text();
+        envelope = responseText ? JSON.parse(responseText) : null;
+      } catch { envelope = null; }
+      // KOP emits XML for the same inner-account transport denial on both
+      // regular Actions and streaming Actions. Keep the fallback symmetric so
+      // a fresh cloud Session can be admitted before its first RunAgent.
+      const xmlMessage = responseText.match(/<Message>([^<]{0,400})<\/Message>/i)?.[1] || '';
+      const upstreamMessage = String(envelope?.Error?.Message || envelope?.Message || xmlMessage).toLowerCase();
       if (allowInnerFallback && requestBase.hostname === 'aicp.api.ksyun.com' && response.status === 403 && upstreamMessage.includes('inner account')) {
         // Some account keys are restricted to the intranet AICP endpoint. This
         // is endpoint selection, not a retry of a mutating action: reuse the
@@ -236,6 +284,7 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
         // for another SAN and fails with ERR_TLS_CERT_ALTNAME_INVALID.
         return requestAgainst(new URL('http://aicp.inner.api.ksyun.com'), false);
       }
+      if (!envelope) throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server 未返回有效 JSON', { status: response.status, action: name });
       const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk'].includes(name);
       const codeValid = envelope?.Code == null ? nativeResource : [0, 200].includes(Number(envelope.Code));
       if (!response.ok || !envelope || !codeValid || envelope.Error || envelope.ResponseMetadata?.Error) {
@@ -349,7 +398,12 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => '');
       let envelope = null; try { envelope = text ? JSON.parse(text) : null; } catch {}
-      const upstreamMessage = String(envelope?.Error?.Message || envelope?.Message || '').toLowerCase();
+      // KOP returns an XML ErrorResponse for transport-level denials, while
+      // normal Action errors are JSON. Parse only the bounded message fields
+      // needed for the inner-account endpoint fallback; never surface the
+      // response body to the renderer.
+      const xmlMessage = text.match(/<Message>([^<]{0,400})<\/Message>/i)?.[1] || '';
+      const upstreamMessage = String(envelope?.Error?.Message || envelope?.Message || xmlMessage).toLowerCase();
       if (requestBase.hostname === 'aicp.api.ksyun.com' && response.status === 403 && upstreamMessage.includes('inner account')) {
         return streamAction(name, payload, { signal }, new URL('http://aicp.inner.api.ksyun.com'));
       }

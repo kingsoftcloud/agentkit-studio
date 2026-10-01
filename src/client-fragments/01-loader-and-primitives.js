@@ -316,11 +316,13 @@ window.__ModuleLoader__.load({
         authoringConversationStatus: requestId => request('/api/v1/authoring/conversations:status/' + encodeURIComponent(requestId)),
         updateAgent: (id, spec, revision, name) => directServer() && String(id).startsWith('ar-local-')
           ? studioBridgeOperation('agents/update-local', { agentId: id, spec, name })
-          : request('/api/v1/agents/' + encodeURIComponent(id) + (name ? '?name=' + encodeURIComponent(name) : ''), {
+          : directServer()
+            ? studioBridgeOperation('agents/update-cloud', { agentId: id, spec, revision, name })
+            : request('/api/v1/agents/' + encodeURIComponent(id) + (name ? '?name=' + encodeURIComponent(name) : ''), {
             method: 'PUT',
             headers: { 'If-Match': String(revision) },
             body: JSON.stringify(spec),
-          }),
+            }),
         deleteLocalAgent: id => directServer() ? studioBridgeOperation('agents/local-delete', { agentId: id }) : Promise.reject(Object.assign(new Error('本地 Agent 删除需要 Studio Host'), { code: 'HOST_CONNECTION_MISSING' })),
         updateAgentBindings: (id, bindings, revision) => directServer() && String(id).startsWith('ar-local-')
           ? studioBridgeOperation('agents/update-local', { agentId: id, bindings })

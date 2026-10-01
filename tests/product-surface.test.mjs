@@ -128,8 +128,13 @@ test('cloud Agent execution remains available through the control-plane bridge',
 test('directServer Agent authoring persists through the Host bridge', async () => {
   const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
   assert.match(clientSource, /studioBridgeOperation\('agents\/create-local', payload\)/);
+  assert.match(clientSource, /studioBridgeOperation\('agents\/update-cloud'/);
+  assert.match(clientSource, /cloudEditing/);
   assert.match(hostSource, /'agents\/create-local'/);
+  assert.match(hostSource, /'agents\/update-cloud'/);
   assert.match(hostSource, /if \(endpoint === 'agents\/create-local'\)/);
+  assert.match(hostSource, /if \(endpoint === 'agents\/update-cloud'\)/);
+  assert.match(hostSource, /buildCloudAgentUpdate/);
   assert.match(hostSource, /store\.create\(\{/);
 });
 
