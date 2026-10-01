@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- DSH 本地面板现在会在 Connection RPC 可用时直接通过 Studio Host 创建、保存和探测 MCP；即使嵌入页没有注入云端 control-plane 标记，也不会误调用不存在的旧版凭证 REST 合同。MCP 声明与探测到的工具契约由 Host 本地目录持久化，凭证值仍只由 DSH 凭证服务或进程环境持有；环境注入的只读凭证也可以用于本次 MCP 保存和运行。
 - 原生 DSH 会话绑定 Studio Agent 时继续保留用户选择的 provider/model 标识；Studio provider 只接管
   实际传输，不再让模型选择器显示内部 `agentkit-studio/*` 路由。通过“在新会话运行”选择的本地
   Build ID 也会跨 scoped Agent request 传到 Harness/Codex 资源物化层，冻结版本不会误读最新 Agent。

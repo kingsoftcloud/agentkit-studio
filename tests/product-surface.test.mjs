@@ -55,6 +55,7 @@ test('bound Agents use the official DSH native conversation surface', () => {
 });
 
 test('resource catalogs route cloud-backed kinds through Server Actions and fail typed on contract gaps', () => {
+  assert.match(clientSource, /const bridgeAvailable = \(\) => Boolean\(connection\?\.rpc\?\.call\)/);
   assert.match(clientSource, /mcp: 'ListMCPs'/);
   assert.match(clientSource, /'knowledge-base': 'ListKnowledgeBases'/);
   assert.match(clientSource, /'memory-instance': 'ListMemoryInstances'/);
@@ -69,6 +70,8 @@ test('resource catalogs route cloud-backed kinds through Server Actions and fail
   assert.match(clientSource, /value\.kind === 'tool' \|\| value\.kind === 'skill'/);
   assert.match(clientSource, /studioBridgeOperation\('resources\/list', value\)/);
   assert.match(clientSource, /resources\/list/);
+  assert.match(clientSource, /value\.kind === 'mcp' && bridgeAvailable\(\)/);
+  assert.match(clientSource, /localMcpId = resourceId => String\(resourceId \|\| ''\)\.startsWith\('mcp-local-'\)/);
   assert.doesNotMatch(clientSource, /cloudUnsupported\('Tool 目录'\)/);
 });
 

@@ -32,6 +32,13 @@ window.__ModuleLoader__.load({
     function createHostRemote(connection) {
       const config = window.__AGENTKIT_STUDIO__ || {};
       const directServer = () => config.controlPlane === 'agentengine-server' && Boolean(connection?.rpc?.call);
+      // DSH embeds the product panel in an opaque srcdoc frame.  Packaged
+      // local Hosts may omit the global control-plane marker even though the
+      // authenticated Connection RPC is available.  Resource mutations must
+      // still use the Node Host bridge in that mode; falling back to the old
+      // REST surface loses local credentials before an MCP can be created.
+      const bridgeAvailable = () => Boolean(connection?.rpc?.call);
+      const localMcpId = resourceId => String(resourceId || '').startsWith('mcp-local-');
       const baseUrl = String(config.hostUrl || 'http://127.0.0.1:8789').replace(/\/$/, '');
       const streamBaseUrl = () => directServer() ? window.location.origin : baseUrl;
       let csrfToken = config.csrfToken || null;
@@ -413,6 +420,13 @@ window.__ModuleLoader__.load({
               'memory-instance': 'ListMemoryInstances',
             };
             const action = cloudActions[value.kind];
+            if (value.kind === 'mcp') {
+              // MCPs can be authored in the local Host catalog. Merge that
+              // catalog with the cloud Action instead of sending a write/read
+              // request to a REST contract that direct Server mode does not
+              // expose.
+              return studioBridgeOperation('resources/list', value);
+            }
             if (action) {
               return serverAction(action, { Page: 1, PageSize: Math.min(Number(value.limit || 200), 100) })
                 .catch(() => request('/api/v1/catalog/resources?' + new URLSearchParams({ kind: value.kind, limit: String(value.limit || 20), ...(value.cursor ? { cursor: value.cursor } : {}), ...(value.query ? { query: value.query } : {}) }).toString()));
@@ -428,6 +442,7 @@ window.__ModuleLoader__.load({
             }
             if (value.kind === 'tool' || value.kind === 'skill') return studioBridgeOperation('resources/list', value);
           }
+          if (value.kind === 'mcp' && bridgeAvailable()) return studioBridgeOperation('resources/list', value);
           const params = new URLSearchParams();
           if (value.kind) params.set('kind', value.kind);
           params.set('limit', String(value.limit || 20));
@@ -442,11 +457,17 @@ window.__ModuleLoader__.load({
         // catalog page uses these public contracts to create/probe MCPs and
         // to inspect/commit local Skills; it never writes the workspace from
         // the browser itself.
-        createMcpResource: payload => request('/api/v1/catalog/mcp-servers', { method: 'POST', body: JSON.stringify(payload) }),
+        createMcpResource: payload => bridgeAvailable()
+          ? studioBridgeOperation('mcp/create', payload)
+          : request('/api/v1/catalog/mcp-servers', { method: 'POST', body: JSON.stringify(payload) }),
         createModelResource: payload => request('/api/v1/catalog/model-profiles', { method: 'POST', body: JSON.stringify(payload) }),
         createToolResource: payload => request('/api/v1/catalog/tools', { method: 'POST', body: JSON.stringify(payload) }),
-        deleteResource: resourceId => request('/api/v1/catalog/resources/' + encodeURIComponent(resourceId), { method: 'DELETE' }),
-        probeMcpResource: (resourceId, timeoutSeconds = 15) => request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId) + ':probe?timeoutSeconds=' + encodeURIComponent(timeoutSeconds), { method: 'POST' }),
+        deleteResource: resourceId => (bridgeAvailable() && (localMcpId(resourceId) || directServer()))
+          ? studioBridgeOperation('resources/delete', { resourceId })
+          : request('/api/v1/catalog/resources/' + encodeURIComponent(resourceId), { method: 'DELETE' }),
+        probeMcpResource: (resourceId, timeoutSeconds = 15) => (bridgeAvailable() && (localMcpId(resourceId) || directServer()))
+          ? studioBridgeOperation('mcp/probe', { resourceId, timeoutSeconds })
+          : request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId) + ':probe?timeoutSeconds=' + encodeURIComponent(timeoutSeconds), { method: 'POST' }),
         // Skill discovery runs locally inside the plugin Node host over the
         // same authenticated bridge; the legacy Studio Host REST routes are
         // kept for a local-Host deployment only.
@@ -454,7 +475,9 @@ window.__ModuleLoader__.load({
         previewDiscoveredSkill: (inspectionToken, candidateId, path = '') => skillBridgeCall('skills/preview-discovered', { inspectionToken, candidateId, path }),
         commitDiscoveredSkill: (inspectionToken, candidateId, overwrite = false) => skillBridgeCall('skills/commit-discovered', { inspectionToken, candidateId, overwrite }),
         previewInstalledSkill: (resourceId, path = '') => skillBridgeCall('skills/preview-installed', { resourceId, path }),
-        putCredential: (name, value) => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value, persistence: 'session' }) }),
+        putCredential: (name, value) => bridgeAvailable()
+          ? studioBridgeOperation('credentials/put', { name, value, persistence: 'session' })
+          : request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value, persistence: 'session' }) }),
         platformResources: kind => {
           if (directServer()) {
             const actions = { 'knowledge-base': 'ListKnowledgeBases', 'memory-instance': 'ListMemoryInstances', 'skill-space': 'ListSkillWorkspaces' };
@@ -491,7 +514,9 @@ window.__ModuleLoader__.load({
         uninstallCodexPlugin: pluginId => directServer() ? studioBridgeOperation('plugins/codex-remove', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId), { method: 'DELETE' }),
         models: () => request('/api/v1/catalog/models'),
         credential: name => request('/api/v1/credentials/' + encodeURIComponent(name)),
-        putCredential: (name, value) => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value, persistence: 'session' }) }),
+        putCredential: (name, value) => bridgeAvailable()
+          ? studioBridgeOperation('credentials/put', { name, value, persistence: 'session' })
+          : request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value, persistence: 'session' }) }),
         deleteCredential: name => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'DELETE' }),
         probeModelEndpoint: payload => request('/api/v1/model-endpoints:probe', { method: 'POST', body: JSON.stringify(payload) }),
         evaluationTargets: (query = '') => directServer() ? studioBridgeOperation('evaluations/targets', {}) : request('/api/v1/evaluation-targets' + (query ? '?' + query : '')),

@@ -23,7 +23,7 @@ async function resolveCredential(credentials, reference) {
   return String(process.env[name] || '');
 }
 
-export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, fetchImpl = fetch } = {}) {
+export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = fetch } = {}) {
   const mcpClients = new Map();
   const cloudSkillSpaces = new Map();
 
@@ -34,10 +34,16 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const config = binding && typeof binding === 'object' ? binding : {};
     const detail = config.endpoint || config.endpointUrl || config.url
       ? config
-      : (await serverClient.action('GetMCP', { Id: key })).data || {};
-    const endpoint = detail.endpoint || detail.endpointUrl || detail.url || detail.mcp_endpoint || detail.private_mcp_endpoint;
+      : (await resourceStore?.get(key)) || (await serverClient.action('GetMCP', { Id: key })).data || {};
+    const server = detail.server && typeof detail.server === 'object' ? detail.server : {};
+    const endpoint = detail.endpoint || detail.endpointUrl || detail.url || detail.mcp_endpoint || detail.private_mcp_endpoint || server.endpointUrl;
     if (!endpoint || !/^https?:\/\//i.test(endpoint)) throw new LocalResourceError('MCP_ENDPOINT_UNAVAILABLE', 'MCP 没有可用的 HTTP Endpoint', { resourceId: key });
     const headers = { ...(detail.headers || config.headers || {}) };
+    const envRefs = { ...(server.envRefs || detail.envRefs || config.envRefs || {}) };
+    for (const [header, reference] of Object.entries(envRefs)) {
+      const resolved = await resolveCredential(credentials, reference);
+      if (resolved && !Object.keys(headers).some(name => name.toLowerCase() === String(header).toLowerCase())) headers[header] = String(header).toLowerCase() === 'authorization' && !/^\s*\w+\s+/i.test(resolved) ? `Bearer ${resolved}` : resolved;
+    }
     const apiKey = detail.api_key || detail.apiKey || await resolveCredential(credentials, detail.credentialRef || config.credentialRef);
     if (apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization')) headers.Authorization = `Bearer ${apiKey}`;
     const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' });

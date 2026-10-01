@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createLocalResourceAdapters, LocalResourceError } from '../src/local-resource-adapters.mjs';
+import { createLocalMcpStore } from '../src/local-mcp-store.mjs';
 import { createZip } from '../src/zip.mjs';
 
 test('cloud Skill Space with no Skills is a valid empty binding', async () => {
@@ -77,4 +81,32 @@ test('inline MCP descriptors resolve env credentials and execute through Streama
   assert.deepEqual(await adapters.callMcpTool(binding, 'search', { query: 'hello' }), [{ type: 'text', text: 'ok' }]);
   assert.ok(requests.filter(item => item.method === 'initialize').every(item => item.authorization === 'Bearer secret-from-credential-service'));
   await adapters.close();
+});
+
+test('local MCP records resolve nested server endpoint and authorization reference', async () => {
+  const requests = [];
+  const dir = await mkdtemp(join(tmpdir(), 'agentkit-local-mcp-'));
+  const fetchImpl = async (url, init = {}) => {
+    const message = init.body ? JSON.parse(init.body) : null;
+    if (message) requests.push({ method: message.method, authorization: init.headers?.get?.('authorization') });
+    if (message?.method === 'initialize') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'nested', version: '1' } } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'nested-session' } });
+    if (message?.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (message?.method === 'tools/list') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'nested_search', inputSchema: { type: 'object' } }] } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'nested-session' } });
+    return new Response(null, { status: 405 });
+  };
+  try {
+    const store = createLocalMcpStore({ storeDir: dir });
+    const record = await store.create({ displayName: 'Nested MCP', server: {
+      name: 'nested', transport: 'http', endpointUrl: 'https://example.test/nested',
+      envRefs: { Authorization: 'env://MCP_TEST_TOKEN' },
+    }});
+    const adapters = createLocalResourceAdapters({
+      resourceStore: store, fetchImpl,
+      credentials: { resolve: async name => name === 'MCP_TEST_TOKEN' ? { value: 'nested-secret' } : undefined },
+      serverClient: { action: async () => { throw new Error('local record must not call GetMCP'); } },
+    });
+    assert.deepEqual(await adapters.listMcpTools(record.resourceId), [{ name: 'nested_search', inputSchema: { type: 'object' } }]);
+    assert.equal(requests.find(item => item.method === 'initialize')?.authorization, 'Bearer nested-secret');
+    await adapters.close();
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

@@ -45,6 +45,7 @@ async function registerControlPlane(ctx) {
   const studioEvaluationPromise = import('./studio-evaluation.mjs').then(({ createStudioEvaluation }) => createStudioEvaluation({ storeDir: join(studioStoreDir, 'evaluations') })).catch(error => { console.warn('[agentkit-studio] evaluation init failed:', error?.message || error); return null; });
   const studioChannelsPromise = import('./studio-channels.mjs').then(({ createStudioChannels }) => createStudioChannels({ storeDir: studioStoreDir })).catch(error => { console.warn('[agentkit-studio] channels init failed:', error?.message || error); return null; });
   const agentStorePromise = import('./agent-store.mjs').then(({ createAgentStore }) => createAgentStore({ storeDir: join(studioStoreDir, 'agents') }));
+  const localMcpStorePromise = import('./local-mcp-store.mjs').then(({ createLocalMcpStore }) => createLocalMcpStore({ storeDir: join(studioStoreDir, 'resources', 'mcp') }));
   // Authoring tools + resource catalogs read cloud/resource data through this
   // in-process remote — the legacy 8789 local Studio Host no longer exists.
   const authoringRemoteFactory = signal => Promise.all([serverClientPromise, agentStorePromise]).then(([serverClient]) => ({
@@ -90,9 +91,10 @@ async function registerControlPlane(ctx) {
   const resourceAdaptersPromise = Promise.all([
     skillDiscoveryPromise,
     serverClientPromise,
-  ]).then(async ([skillDiscovery, serverClient]) => {
+    localMcpStorePromise,
+  ]).then(async ([skillDiscovery, serverClient, localMcpStore]) => {
     const { createLocalResourceAdapters } = await import('./local-resource-adapters.mjs');
-    return createLocalResourceAdapters({ serverClient, skillDiscovery, credentials: credentialsService });
+    return createLocalResourceAdapters({ serverClient, skillDiscovery, credentials: credentialsService, resourceStore: localMcpStore });
   });
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the
@@ -328,7 +330,7 @@ async function registerControlPlane(ctx) {
     presetAdmission.setRegistry(presetRegistry);
     void restorePersistedPresets();
   }
-  const allowed = new Set(['agents/list', 'agents/create-local', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'resources/list', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
+  const allowed = new Set(['agents/list', 'agents/create-local', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
@@ -358,9 +360,65 @@ async function registerControlPlane(ctx) {
           const value = await serverClient.listCatalogResources({ kind: 'tool', query: payload?.query, limit: payload?.limit, cursor: payload?.cursor, source: payload?.source, status: payload?.status }, { signal });
           return { ok: true, value };
         }
-        const resourceKind = kind === 'mcp' ? 'mcp' : kind;
+        if (kind === 'mcp') {
+          const localStore = await localMcpStorePromise;
+          const localItems = await localStore.list({ query: payload?.query, limit: payload?.limit });
+          let cloud = { items: [], total: 0 };
+          try { cloud = await serverClient.listResource('mcp', { Page: 1, PageSize: Math.min(Number(payload?.limit || 100), 100) }, { signal }); } catch { /* local MCPs remain usable when cloud catalog is unavailable */ }
+          const seen = new Set(localItems.map(item => String(item.resourceId)));
+          const cloudItems = (cloud.items || []).filter(item => !seen.has(String(item.resourceId || item.id))).map(item => ({ ...item, source: item.source || 'agentengine-server' }));
+          const items = [...localItems, ...cloudItems];
+          return { ok: true, value: { items, total: items.length, nextCursor: null, source: 'agentkit-studio' } };
+        }
+        const resourceKind = kind;
         const value = await serverClient.listResource(resourceKind, { Page: 1, PageSize: Math.min(Number(payload?.limit || 100), 100) }, { signal });
         return { ok: true, value };
+      }
+      if (endpoint === 'credentials/put') {
+        const name = String(payload?.name || '').trim();
+        const value = String(payload?.value || '');
+        if (!/^[A-Za-z_][A-Za-z0-9_./:-]{0,127}$/.test(name)) return { ok: false, error: { code: 'CREDENTIAL_NAME_INVALID', message: '凭证名称无效', details: {} } };
+        if (!value) return { ok: false, error: { code: 'CREDENTIAL_VALUE_MISSING', message: '凭证值不能为空', details: {} } };
+        try {
+          await credentialsService.set(name, value);
+        } catch (error) {
+          // Process-injected credentials are intentionally read-only in DSH.
+          // The browser may still submit the same name when the value was
+          // supplied through the Host environment; acknowledge that existing
+          // effective credential without persisting or echoing its value.
+          const current = typeof credentialsService.describe === 'function'
+            ? await credentialsService.describe(name).catch(() => null)
+            : null;
+          if (!(current?.configured && current.source === 'env')) throw error;
+          return { ok: true, value: { name, configured: true, source: 'env', persistence: 'process-environment' } };
+        }
+        return { ok: true, value: { name, configured: true, persistence: String(payload?.persistence || 'session') } };
+      }
+      if (endpoint === 'mcp/create') {
+        const localStore = await localMcpStorePromise;
+        return { ok: true, value: await localStore.create(payload || {}) };
+      }
+      if (endpoint === 'mcp/probe') {
+        const localStore = await localMcpStorePromise;
+        const resourceId = String(payload?.resourceId || '').trim();
+        const record = await localStore.get(resourceId);
+        if (!record) return { ok: false, error: { code: 'MCP_NOT_FOUND', message: '本地 MCP 资源不存在', details: { resourceId } } };
+        try {
+          const adapters = await resourceAdaptersPromise;
+          const tools = await adapters.listMcpTools(record);
+          const updated = await localStore.markProbe(resourceId, { tools });
+          return { ok: true, value: { ...updated, resourceId, toolCount: tools.length, health: updated.health } };
+        } catch (error) {
+          await localStore.markProbe(resourceId, { error: error?.message || error }).catch(() => {});
+          return { ok: false, error: { code: error?.code || 'MCP_PROBE_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || { resourceId } } };
+        }
+      }
+      if (endpoint === 'mcp/delete' || endpoint === 'resources/delete') {
+        const localStore = await localMcpStorePromise;
+        const resourceId = String(payload?.resourceId || '').trim();
+        const record = await localStore.get(resourceId);
+        if (!record) return { ok: false, error: { code: 'RESOURCE_NOT_FOUND', message: '本地资源不存在或不可删除', details: { resourceId } } };
+        return { ok: true, value: await localStore.remove(resourceId) };
       }
       // Agent catalog reads are now owned by the Studio Node host and call the
       // existing AgentEngine Action API directly. The DSH connection only
