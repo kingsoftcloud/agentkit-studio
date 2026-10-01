@@ -63,12 +63,13 @@ test('resource catalogs route cloud-backed kinds through Server Actions and fail
   // the same discovery the legacy Studio used.
   assert.match(clientSource, /studioCall\('models\/catalog', \{\}\)/);
   assert.match(clientSource, /source: '模型网关'/);
-  // tool has no cloud Action and the imported-skill catalog is served from
-  // the plugin Node store; the platform skill workspace list lives under the
-  // `skill-space` kind instead.
-  assert.match(clientSource, /cloudUnsupported\('Tool 目录'\)/);
-  assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'skills\/list', \{\}\)/);
-  assert.doesNotMatch(clientSource, /skill: 'ListSkillWorkspaces'/);
+  // Tool and Skill catalogs are now routed through the authenticated Studio
+  // bridge, which can merge the local workspace catalog with cloud Skill
+  // Spaces instead of rejecting them as an unsupported cloud surface.
+  assert.match(clientSource, /value\.kind === 'tool' \|\| value\.kind === 'skill'/);
+  assert.match(clientSource, /studioBridgeOperation\('resources\/list', value\)/);
+  assert.match(clientSource, /resources\/list/);
+  assert.doesNotMatch(clientSource, /cloudUnsupported\('Tool 目录'\)/);
 });
 
 test('direct REST surface fails typed instead of probing the absent local Studio Host', () => {

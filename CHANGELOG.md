@@ -30,6 +30,12 @@
   产物并可从同一页进入原生 DSH 会话，不再因一次即时刷新遗漏异步结果。
 - 本地 Harness trace 现在带 Agent 名称，并记录 MCP 工具失败事件；观测页可以区分“运行失败”与
   “哪一个绑定工具失败”。
+- Agent 绑定的 DSH Tool 现在会随资源白名单进入会话级 preset；官方 DSH Tool Registry 负责 schema
+  投影和执行，Harness/Codex 的本地运行都复用 `ctx.tools.execute()`，不再出现“已绑定但运行时
+  静默忽略”的情况。
+- 直连 AgentEngine Server 时，Tool 和 Skill 目录现在通过现有 `/api/v1/catalog/resources`
+  合同进入 Studio bridge；云端 Skill Space 会与本地导入 Skill 合并展示，Tool 目录缺失时返回
+  明确的不可用状态，不再被前端硬编码成不支持。
 - MCP 工具发现暂时不可用时保留绑定告警并继续纯文本回合；模型实际发起工具调用后仍严格失败闭环。
 - 外部 Streamable HTTP MCP 绑定现在支持 Endpoint、请求头和 `env://` credential reference；
   DSH 原生会话可继续消费本地模型的 reasoning/text 增量。

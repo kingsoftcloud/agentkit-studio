@@ -219,6 +219,7 @@ export function createCodexRuntime(options = {}) {
             callId: String(params.callId || ''),
             threadId: String(params.threadId || threadId),
             turnId: String(params.turnId || turnId),
+            signal,
           });
           result = { contentItems: dynamicToolContent(output), success: true };
         } catch (error) {

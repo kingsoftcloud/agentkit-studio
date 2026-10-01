@@ -427,6 +427,51 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
       disabled: Boolean(item.Disabled ?? item.disabled),
     })), total: raw.Total ?? raw.total ?? candidates.length, requestId: result.requestId, source: 'agentengine-server' };
   }
+
+  /**
+   * Read the local AgentEngine catalog when the Python Server exposes the
+   * workspace-backed resource contract.  Cloud Action APIs intentionally do
+   * not pretend to expose this catalog: Tool resources in particular are
+   * authored by the local Studio workspace and have no ListTools Action.
+   */
+  async function listCatalogResources({ kind = '', query = '', limit = 100, cursor = '', source = '', status = '' } = {}, options = {}) {
+    const { values } = await configuration.resolve();
+    let base;
+    try { base = new URL(values.cloudServerUrl || serverUrl || 'http://127.0.0.1:8789'); }
+    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
+    if (!loopback || !sessionToken) {
+      throw new AgentEngineError('CATALOG_UNAVAILABLE', '当前连接没有可用的本地 AgentEngine 资源目录', { status: 404, action: 'CatalogResources' });
+    }
+    const params = new URLSearchParams();
+    if (kind) params.set('kind', String(kind));
+    if (query) params.set('query', String(query));
+    params.set('limit', String(Math.min(200, Math.max(1, Number(limit) || 100))));
+    if (cursor) params.set('cursor', String(cursor));
+    if (source) params.set('source', String(source));
+    if (status) params.set('status', String(status));
+    const url = new URL(`/api/v1/catalog/resources?${params.toString()}`, base);
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'X-AgentKit-Session': sessionToken },
+        redirect: 'error',
+        signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      });
+    } catch {
+      throw new AgentEngineError(options.signal?.aborted ? 'REQUEST_CANCELLED' : 'CATALOG_UNAVAILABLE', options.signal?.aborted ? '请求已取消' : '本地 AgentEngine 资源目录不可用', { action: 'CatalogResources' });
+    }
+    let payload;
+    try { payload = await response.json(); }
+    catch { throw new AgentEngineError('SERVER_INVALID_RESPONSE', '本地资源目录未返回有效 JSON', { status: response.status, action: 'CatalogResources' }); }
+    if (!response.ok || !payload || !Array.isArray(payload.items)) {
+      throw new AgentEngineError('CATALOG_UNAVAILABLE', '本地 AgentEngine 资源目录请求失败', { status: response.status, action: 'CatalogResources' });
+    }
+    return { ...payload, source: 'agentengine-server', requestId: String(response.headers.get('x-request-id') || '') };
+  }
   return {
-    getObservabilityOverview, listAgentRuntimeStats, action, skillAction, streamAction, listAgents, getAgent, listResource };
+    getObservabilityOverview, listAgentRuntimeStats, action, skillAction, streamAction,
+    listAgents, getAgent, listResource, listCatalogResources,
+  };
 }

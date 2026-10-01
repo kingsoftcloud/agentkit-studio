@@ -148,6 +148,22 @@ test('local Studio Agent catalog returns complete revisions without a Server Act
   assert.equal(calls.length, 1);
 });
 
+test('local AgentEngine catalog exposes Tool resources through the existing REST contract', async () => {
+  let request;
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789' }),
+    sessionToken: 'studio-session',
+    fetchImpl: async (url, init) => {
+      request = { url: String(url), init };
+      return new Response(JSON.stringify({ items: [{ resourceId: 'tool:builtin:component-status:1.0.0', kind: 'tool', source: 'builtin', name: 'component_status', contract: { executor: 'builtin' } }], nextCursor: null }), { status: 200, headers: { 'x-request-id': 'catalog-1' } });
+    },
+  });
+  const result = await client.listCatalogResources({ kind: 'tool', limit: 20 });
+  assert.equal(result.items[0].resourceId, 'tool:builtin:component-status:1.0.0');
+  assert.match(request.url, /\/api\/v1\/catalog\/resources\?kind=tool&limit=20/);
+  assert.equal(request.init.headers['X-AgentKit-Session'], 'studio-session');
+});
+
 test('local cursor catalog keeps the next page reachable when the first window is full', async () => {
   const client = createAgentEngineClient({
     configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789' }),

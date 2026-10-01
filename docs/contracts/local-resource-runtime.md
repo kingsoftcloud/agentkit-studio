@@ -19,6 +19,15 @@
   credential service 或同名进程环境变量解析。随后使用 `@modelcontextprotocol/sdk` 建立
   Streamable HTTP 连接，调用 `tools/list` 和 `tools/call`。只允许模型请求当前 Agent 绑定且已
   发现的工具；同名工具绑定会直接失败，避免路由歧义。
+- **DSH Tool**：资源绑定中的 Tool 名称进入会话级 DSH preset。Studio runtime plugin 通过官方
+  `ctx.tools.schemas()` 做白名单投影，并用 `ctx.tools.execute()` 保留 DSH 的参数校验、审批和
+  生命周期策略；本地 Harness 与 Codex 都复用这条适配器，未注册或未绑定的工具会返回明确的
+  `TOOL_NOT_FOUND`/`TOOL_ADAPTER_MISSING`，不会把绑定静默当成普通文本。
+
+直连 AgentEngine Server 时，Tool 目录通过现有 `/api/v1/catalog/resources?kind=tool` 读取；该
+接口不可用时返回 typed unavailable，而不是伪造一个空目录。Skill 目录由本地导入 Skill 与
+`ListSkillWorkspaces` 返回的云端 Skill Space 合并，实际读取云端 Skill 仍由 Host-owned
+Skill Service 适配器完成。
 
 - **Codex**：Codex Agent 复用上面的 Host 资源上下文。Skill、知识库和记忆库以 developer
   context 注入官方 Codex App Server Thread；MCP 工具转换为实验性 `dynamicTools`，Codex
@@ -31,8 +40,8 @@ Harness 本地运行时同样把 `tool_call` / `tool_result` 事件投影成 rea
 关联工具名；云端 Skill Space 的压缩包下载必须经过 Host 注入的 `fetchImpl`，不能在资源适配器
 内部直接绕过 Host 网络边界。
 
-模型的 tool call 会先记录为本地 conversation item，Host 执行 MCP 后以 tool result 继续最多两次
-工具续跑（最多三次模型请求）。MCP 返回 `isError`、参数 JSON 非法、资源缺失或模型实际调用
+模型的 tool call 会先记录为本地 conversation item，Host 执行绑定的 MCP 或 DSH Tool 后以 tool
+result 继续最多两次工具续跑（最多三次模型请求）。MCP/DSH Tool 返回 `isError`、参数 JSON 非法、资源缺失或模型实际调用
 工具失败都会生成失败终态；一次文本回合开始前的 `tools/list` 连接失败会作为受限资源告警注入
 上下文，让不需要工具的文本回合继续运行，并在下一回合重新尝试发现工具。
 

@@ -426,24 +426,7 @@ window.__ModuleLoader__.load({
                 source: 'model-gateway', nextCursor: null, total: catalog?.items?.length || 0,
               }));
             }
-            if (value.kind === 'tool') return cloudUnsupported('Tool 目录');
-            if (value.kind === 'skill') {
-              // The imported-skill catalog lives in the plugin Node store;
-              // discovery/preview/commit run locally over the same bridge.
-              if (!connection?.rpc?.call) {
-                const error = new Error('本地 Skill 目录需要已连接的 Studio Host');
-                error.code = 'SKILL_DISCOVERY_FAILED';
-                return Promise.reject(error);
-              }
-              return connection.rpc.call('/agentkit', 'skills/list', {}).then(result => {
-                if (!result?.ok) {
-                  const error = new Error(result?.error?.message || '本地 Skill 目录读取失败');
-                  error.code = result?.error?.code || 'SKILL_DISCOVERY_FAILED';
-                  throw error;
-                }
-                return result.value;
-              });
-            }
+            if (value.kind === 'tool' || value.kind === 'skill') return studioBridgeOperation('resources/list', value);
           }
           const params = new URLSearchParams();
           if (value.kind) params.set('kind', value.kind);

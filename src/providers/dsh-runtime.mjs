@@ -20,11 +20,11 @@ export function setDshRuntimeAdapter(adapter) {
   return () => { if (activeAdapter === adapter) activeAdapter = undefined; };
 }
 
-export function streamDshRuntime(options, { agentId, runtime, local, buildId } = {}) {
+export function streamDshRuntime(options, { agentId, runtime, local, buildId, toolAdapter } = {}) {
   const id = String(agentId || '').trim();
   if (!id || !activeAdapter) throw new Error('AgentKit Studio runtime bridge is unavailable');
   const mode = local === true ? 'local' : 'cloud';
-  return activeAdapter.stream({ ...options, model: `${mode}:${id}`, studioRuntime: runtime, ...(buildId ? { buildId } : {}) });
+  return activeAdapter.stream({ ...options, model: `${mode}:${id}`, studioRuntime: runtime, ...(buildId ? { buildId } : {}), ...(toolAdapter ? { studioToolAdapter: toolAdapter } : {}) });
 }
 
 function textOf(message) {
@@ -218,7 +218,7 @@ function parseLocalRecord(record, state) {
   return [];
 }
 
-async function* localFrames(handler, payload) {
+async function* localFrames(handler, payload, { signal, toolAdapter } = {}) {
   const requestBody = Buffer.from(JSON.stringify(payload));
   const queue = createAsyncQueue();
   const responseChunks = [];
@@ -238,7 +238,7 @@ async function* localFrames(handler, payload) {
     },
     end(chunk = '') { if (chunk) this.write(chunk); this.writableEnded = true; queue.close(); },
   };
-  const handlerPromise = Promise.resolve().then(() => handler(request, response)).catch(error => {
+  const handlerPromise = Promise.resolve().then(() => handler(request, response, { signal, toolAdapter })).catch(error => {
     queue.fail(error);
     throw error;
   });
@@ -371,6 +371,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
               input,
               sessionId: String(options.sessionId || ''),
               userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
+              toolAdapter: options.studioToolAdapter,
             })
             : {};
           const startedAt = new Date().toISOString();
@@ -425,7 +426,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,
           history: historyOf(options.messages),
-        });
+        }, { signal: options.signal, toolAdapter: options.studioToolAdapter });
         return;
       }
       if (!cloudClient || typeof cloudClient.streamAction !== 'function') throw new Error('AgentEngine cloud runtime is unavailable');

@@ -49,6 +49,48 @@ test('local runtime executes bound MCP tools and records a local trace', async (
   assert.ok(traces[0].events.some(event => event.event_type === 'turn.text'));
 });
 
+test('local runtime executes bound DSH tools through the session adapter', async () => {
+  const response = responseSink();
+  let requestBody;
+  let called;
+  let call = 0;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ metadata: { name: '工作区助手' }, spec: { bindings: { tools: ['component_status'] } } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: { listMcpTools: async () => [] },
+    observability: { syncTrace: async () => {} },
+    fetchImpl: async (_url, init) => {
+      requestBody = JSON.parse(init.body);
+      call += 1;
+      if (call === 1) return new Response('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-dsh","function":{"name":"component_status","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
+      assert.equal(requestBody.messages.at(-1).role, 'tool');
+      return new Response('data: {"choices":[{"delta":{"content":"工作区状态已读取"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', input: '检查状态' })]), response, {
+    toolAdapter: {
+      listTools: async ids => { assert.deepEqual(ids, ['component_status']); return [{ name: 'component_status', description: '读取状态', parameters: { type: 'object', properties: {} } }]; },
+      callTool: async (name, args, meta) => { called = [name, args, meta.callId]; return [{ type: 'text', text: 'healthy' }]; },
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(requestBody.tools[0].function.name, 'component_status');
+  assert.deepEqual(called, ['component_status', {}, 'call-dsh']);
+  assert.match(response.chunks.join(''), /工作区状态已读取/);
+});
+
+test('local runtime rejects bound DSH tools without the session adapter', async () => {
+  const response = responseSink();
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: { bindings: { tools: ['component_status'] } } }) }),
+    modelService: { profile: async () => ({}) },
+    resourceAdapter: { listMcpTools: async () => [] },
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', input: 'run' })]), response);
+  assert.equal(response.status, 409);
+  assert.match(response.chunks.join(''), /TOOL_ADAPTER_MISSING/);
+});
+
 test('local runtime records a failed MCP tool in the local trace', async () => {
   const response = responseSink();
   const traces = [];

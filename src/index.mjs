@@ -126,7 +126,7 @@ async function registerControlPlane(ctx) {
     }
     return localRuntimeHandlerPromise;
   };
-  const codexResourceContext = async ({ agentId, buildId, input, userId, sessionId } = {}) => {
+  const codexResourceContext = async ({ agentId, buildId, input, userId, sessionId, toolAdapter } = {}) => {
     const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
     let record = buildId ? await buildState.build.resolve(agentId, buildId) : await store.get(agentId);
     if (!record) throw Object.assign(new Error('本地 Codex Agent 不存在'), { code: 'AGENT_NOT_FOUND' });
@@ -135,6 +135,7 @@ async function registerControlPlane(ctx) {
       record,
       input,
       resourceAdapter,
+      toolAdapter,
       userId: userId || sessionId || agentId,
     });
     const toolBindings = codexToolBindings(prepared.tools);
@@ -147,10 +148,13 @@ async function registerControlPlane(ctx) {
       agentName: String(record.metadata?.name || record.name || ''),
       systemPrompt,
       dynamicTools: toolBindings.map(item => item.spec),
-      toolHandler: async ({ name, arguments: args }) => {
+      toolHandler: async ({ name, arguments: args, callId, signal }) => {
         const binding = toolBindings.find(item => item.name === name);
-        if (!binding?.tool?._resourceId) {
-          throw Object.assign(new Error(`Codex 请求了未绑定的工具：${name}`), { code: 'MCP_TOOL_NOT_BOUND' });
+        if (!binding?.tool?._source) {
+          throw Object.assign(new Error(`Codex 请求了未绑定的工具：${name}`), { code: 'BOUND_TOOL_NOT_FOUND' });
+        }
+        if (binding.tool._source === 'dsh') {
+          return toolAdapter.callTool(binding.tool.name, args || {}, { callId, signal });
         }
         return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {});
       },
@@ -266,7 +270,7 @@ async function registerControlPlane(ctx) {
     presetAdmission.setRegistry(presetRegistry);
     void restorePersistedPresets();
   }
-  const allowed = new Set(['agents/list', 'agents/create-local', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
+  const allowed = new Set(['agents/list', 'agents/create-local', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'resources/list', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
@@ -277,6 +281,29 @@ async function registerControlPlane(ctx) {
       if (endpoint === 'settings/update') return { ok: true, value: await models.save(payload) };
       if (endpoint === 'models/catalog') return { ok: true, value: await models.catalog(String(payload?.profileId || '')) };
       const serverClient = await serverClientPromise;
+      if (endpoint === 'resources/list') {
+        const kind = String(payload?.kind || '').trim();
+        if (!kind) return { ok: false, error: { code: 'INVALID_RESOURCE_KIND', message: '资源类型不能为空', details: {} } };
+        if (kind === 'model') return { ok: true, value: await models.catalog(String(payload?.profileId || '')) };
+        if (kind === 'skill') {
+          const installed = await (await skillDiscoveryPromise).listInstalled().catch(() => ({ items: [] }));
+          const cloud = await serverClient.listResource('skill-space', { Page: 1, PageSize: Math.min(Number(payload?.limit || 100), 100) }, { signal }).catch(() => ({ items: [] }));
+          const localItems = (installed.items || []).map(item => ({ ...item, kind: 'skill', source: item.source || 'local' }));
+          const cloudItems = (cloud.items || []).map(item => ({
+            ...item, kind: 'skill', source: item.source || 'agentengine-server',
+            resourceId: item.resourceId || item.id, name: item.name || item.displayName || item.resourceId || item.id,
+          }));
+          const seen = new Set();
+          return { ok: true, value: { items: [...localItems, ...cloudItems].filter(item => { const id = String(item.resourceId || item.id || ''); if (!id || seen.has(id)) return false; seen.add(id); return true; }), nextCursor: null } };
+        }
+        if (kind === 'tool') {
+          const value = await serverClient.listCatalogResources({ kind: 'tool', query: payload?.query, limit: payload?.limit, cursor: payload?.cursor, source: payload?.source, status: payload?.status }, { signal });
+          return { ok: true, value };
+        }
+        const resourceKind = kind === 'mcp' ? 'mcp' : kind;
+        const value = await serverClient.listResource(resourceKind, { Page: 1, PageSize: Math.min(Number(payload?.limit || 100), 100) }, { signal });
+        return { ok: true, value };
+      }
       // Agent catalog reads are now owned by the Studio Node host and call the
       // existing AgentEngine Action API directly. The DSH connection only
       // authenticates the browser-to-host hop; it is not a KsADK dependency.

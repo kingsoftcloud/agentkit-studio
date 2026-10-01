@@ -32,6 +32,16 @@ function modelProfileIds(agent = {}) {
   return values.map(value => typeof value === 'string' ? value : value?.resourceId).filter(Boolean).map(String);
 }
 
+function toolBindingRefs(agent = {}) {
+  const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
+    ? agent.spec.bindings : {};
+  const values = Array.isArray(bindings.tools) ? bindings.tools : [];
+  return values.map(value => {
+    if (typeof value === 'string') return value;
+    return value?.resourceId || value?.id || value?.name || '';
+  }).filter(Boolean).map(String);
+}
+
 function modelProfileMatchesActiveRoute(profileId, activeModel) {
   const configured = String(activeModel?.values?.modelName || activeModel?.values?.model || '').trim().toLowerCase();
   if (!configured) return false;
@@ -155,6 +165,7 @@ export class DshPresetAdmission {
           runtime: eligibility.runtime,
           local: agent?.metadata?.local === true,
           ...(buildId ? { buildId } : {}),
+          ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),
         },
       });
     }

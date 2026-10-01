@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DshPresetAdmission, dshPresetEligibility, dshPresetId, unsupportedDshBindings } from '../src/agent-preset-admission.mjs';
 import { createDshRuntimeAdapter, setDshRuntimeAdapter, streamDshRuntime } from '../src/providers/dsh-runtime.mjs';
+import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 
 function agent(overrides = {}) {
   return {
@@ -61,6 +62,41 @@ test('the bridge preset declares the Studio provider listener for local Harness 
   await admission.ensure('demo/agent');
   assert.equal(registered[0].plugins[0].name, '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin');
   assert.equal(registered[0].plugins[0].config.local, true);
+});
+
+test('the bridge preset forwards bound DSH tool names to the runtime plugin', async () => {
+  const registered = [];
+  const revision = agent({ metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 1, local: true }, spec: { runtime: { type: 'harness' }, bindings: { tools: [{ resourceId: 'component_status' }] } } });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => revision,
+  });
+  await admission.ensure('demo/agent');
+  assert.deepEqual(registered[0].plugins[0].config.toolBindings, ['component_status']);
+});
+
+test('the DSH runtime plugin exposes only bound registry tools to Studio', async () => {
+  let listener;
+  let forwarded;
+  let executed;
+  const dispose = setDshRuntimeAdapter({
+    async *stream(options) { forwarded = options; yield { type: 'finish', reason: { kind: 'stop' } }; },
+  });
+  applyDshRuntimePlugin({
+    tools: {
+      schemas: () => [{ name: 'component_status', description: '状态', parameters: { type: 'object', properties: {} } }, { name: 'other', description: '其他', parameters: {} }],
+      execute: async call => { executed = call; return { isError: false, content: [{ type: 'text', text: 'healthy' }] }; },
+    },
+    on: (_event, callback) => { listener = callback; return () => {}; },
+  }, { agentId: 'demo/agent', runtime: 'harness', local: true, toolBindings: ['component_status'] });
+  const iterator = listener({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: '状态' }] });
+  await iterator.next();
+  const listed = forwarded.studioToolAdapter.listTools();
+  assert.deepEqual(listed.map(tool => tool.name), ['component_status']);
+  assert.deepEqual(await forwarded.studioToolAdapter.callTool('component_status', {}, { callId: 'call-1' }), [{ type: 'text', text: 'healthy' }]);
+  assert.equal(executed.name, 'component_status');
+  assert.equal(executed.callId, 'call-1');
+  dispose();
 });
 
 test('admission registers once and unregisters replaced revisions', async () => {
