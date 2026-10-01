@@ -7,6 +7,7 @@
  * Resource adapters are deliberately injected by the Host. The runtime does
  * not discover credentials or reach the control plane from the model loop.
  */
+import { readSse } from './sse.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -214,46 +215,38 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
         const detail = await response.text().catch(() => '');
         throw new LocalRuntimeError('MODEL_STREAM_FAILED', `模型流请求失败（${response.status}）`, { status: response.status, detail: detail.slice(0, 200) });
       }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
       const toolCalls = new Map();
       let finishReason = '';
-      for (;;) {
+      try {
+        for await (const parsed of readSse(response.body)) {
         if (signal?.aborted) throw runtimeCancelledError();
-        const { done, value } = await reader.read();
-        if (signal?.aborted) throw runtimeCancelledError();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let split = buffer.indexOf('\n\n');
-        while (split >= 0) {
-          const record = buffer.slice(0, split);
-          buffer = buffer.slice(split + 2);
-          for (const line of record.split(/\r?\n/)) {
-            if (!line.startsWith('data:')) continue;
-            const data = line.slice(5).trim();
-            if (!data || data === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed?.choices?.[0]?.delta;
-              if (delta?.content) yield { type: 'text', text: delta.content };
-              const reasoning = delta?.reasoning_content || delta?.reasoning;
-              if (reasoning) yield { type: 'reasoning', text: reasoning };
-              for (const call of delta?.tool_calls || []) {
-                const index = Number(call.index || 0);
-                const current = toolCalls.get(index) || { id: '', name: '', arguments: '' };
-                current.id = call.id || current.id;
-                current.name = call.function?.name || current.name;
-                current.arguments += call.function?.arguments || '';
-                toolCalls.set(index, current);
-              }
-              finishReason = parsed?.choices?.[0]?.finish_reason || finishReason;
-              const usage = parsed?.usage;
-              if (usage) yield { type: 'usage', inputTokens: usage.prompt_tokens || 0, outputTokens: usage.completion_tokens || 0 };
-            } catch { /* malformed SSE chunk ignored */ }
-          }
-          split = buffer.indexOf('\n\n');
+        if (parsed?.error) {
+          throw new LocalRuntimeError('MODEL_STREAM_FAILED', '模型流返回错误', { upstreamCode: String(parsed.error.code || '') });
         }
+        const delta = parsed?.choices?.[0]?.delta;
+        if (delta?.content) yield { type: 'text', text: delta.content };
+        const reasoning = delta?.reasoning_content || delta?.reasoning;
+        if (reasoning) yield { type: 'reasoning', text: reasoning };
+        for (const call of delta?.tool_calls || []) {
+          const index = Number(call.index || 0);
+          const current = toolCalls.get(index) || { id: '', name: '', arguments: '' };
+          current.id = call.id || current.id;
+          current.name = call.function?.name || current.name;
+          current.arguments += call.function?.arguments || '';
+          toolCalls.set(index, current);
+        }
+        finishReason = parsed?.choices?.[0]?.finish_reason || finishReason;
+        const usage = parsed?.usage;
+        if (usage) yield { type: 'usage', inputTokens: usage.prompt_tokens || 0, outputTokens: usage.completion_tokens || 0 };
+      }
+      } catch (error) {
+        if (error instanceof LocalRuntimeError) throw error;
+        if (error?.code === 'UPSTREAM_STREAM_TRUNCATED') throw new LocalRuntimeError('UPSTREAM_STREAM_TRUNCATED', '模型流在结束前断开');
+        if (error instanceof SyntaxError) throw new LocalRuntimeError('MODEL_STREAM_INVALID', '模型流包含无效事件');
+        throw error;
+      }
+      if (finishReason === 'length' || finishReason === 'content_filter') {
+        throw new LocalRuntimeError('MODEL_OUTPUT_INCOMPLETE', '模型输出未完整结束', { reason: finishReason });
       }
       if (finishReason === 'tool_calls' || toolCalls.size) {
         yield { type: 'tool_calls', calls: [...toolCalls.values()] };
@@ -357,15 +350,19 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       // configured model while resource calls remain explicit Host actions.
       let text = '';
       let reasoning = '';
-      for (let turn = 0; turn < 3; turn += 1) {
+      const configuredSteps = Number(record.spec?.execution?.maxSteps || record.execution?.maxSteps || 12);
+      const maxSteps = Math.min(100, Math.max(1, Number.isFinite(configuredSteps) ? Math.floor(configuredSteps) : 12));
+      for (let turn = 0; turn < maxSteps; turn += 1) {
         let calls = [];
+        let turnText = '';
+        let turnReasoning = '';
         for await (const chunk of model.stream({ messages, tools: tools.map(toolDefinition) })) {
-          if (chunk.type === 'text') { text += chunk.text; send({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
-          if (chunk.type === 'reasoning') { reasoning += chunk.text; send({ kind: 'assistant_reasoning', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
+          if (chunk.type === 'text') { text += chunk.text; turnText += chunk.text; send({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
+          if (chunk.type === 'reasoning') { reasoning += chunk.text; turnReasoning += chunk.text; send({ kind: 'assistant_reasoning', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
           if (chunk.type === 'tool_calls') calls = chunk.calls;
         }
         if (!calls.length) break;
-        messages.push({ role: 'assistant', content: null, tool_calls: calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) });
+        messages.push({ role: 'assistant', content: turnText || null, tool_calls: calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })), ...(turnReasoning ? { reasoning_content: turnReasoning } : {}) });
         for (const call of calls) {
           if (signal?.aborted) throw runtimeCancelledError();
           let args;
@@ -386,6 +383,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
           messages.push({ role: 'tool', tool_call_id: call.id, content: resultText });
           send({ kind: 'tool_result', lifecycle: 'completed', payload: { callId: call.id, name: call.name, text: resultText } });
         }
+        if (turn + 1 >= maxSteps) throw new LocalRuntimeError('LOCAL_EXECUTION_LIMIT', `Agent 达到最大执行步数（${maxSteps}）`, { maxSteps });
       }
       if (reasoning) send({ kind: 'assistant_reasoning', lifecycle: 'completed', payload: { text: reasoning } });
       send({ kind: 'assistant_text', lifecycle: 'completed', payload: { text } });
@@ -409,7 +407,11 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         if (!response.writableEnded && !response.destroyed) response.end('data: [DONE]\n\n');
         return;
       }
-      send({ kind: 'error', lifecycle: 'completed', payload: { message: String(error?.message || error).slice(0, 300) } });
+      send({ kind: 'error', lifecycle: 'completed', payload: {
+        code: String(error?.code || 'LOCAL_RUNTIME_FAILED'),
+        message: String(error?.message || error).slice(0, 300),
+        ...(error?.details && typeof error.details === 'object' ? { details: error.details } : {}),
+      } });
       await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'failed', events: [...traceEvents, { event_type: 'run.failed', at: new Date().toISOString(), run_id: runId, payload: { error: String(error?.message || error) } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
       response.write(`data: ${JSON.stringify({ runId, runtimeEvent: { event_type: 'run.failed' } })}\n\n`);
       response.end('data: [DONE]\n\n');

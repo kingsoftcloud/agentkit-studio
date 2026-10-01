@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 本地 Harness 的模型 SSE 现在复用统一解析器，兼容 `\n`、`\r\n` 和分片 UTF-8 帧；上游截断、无效事件、错误帧和 `length/content_filter` 不完整输出会以带错误码的失败事件结束，不再吞掉思考、工具调用或误报成功。
+- 本地 Harness 的 MCP 循环现在保留每轮 assistant 文本、reasoning 和 tool call 历史，并按 Agent Revision 的 `execution.maxSteps` 执行（默认 12、上限 100）；达到预算会返回 `LOCAL_EXECUTION_LIMIT`，不会写入记忆或发出 `run.completed`。
 - 云端 Agent 编辑页现在通过 Host 代签 `UpdateAgent` Action 保存知识库、记忆库和 Skill Center
   ComponentConfig；云端页面不再调用不存在的旧本地 REST 路由。模型、MCP、本地 Skill 和 Tool 等
   不属于该云端合同的绑定会在保存前明确拒绝，避免出现页面成功但云端未更新。

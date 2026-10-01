@@ -4,7 +4,7 @@
 >
 > **2026-09-29 升级**：DSH 基线从 `dsh-v0.1.7-rc.2`（commit `477b4f4…`）升级到 `dsh-v0.2.0-rc.1`（commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`）。本文中 rc.2 相关描述保留为历史对照；`make check`（83/83）与 `make patch-check`（6/6）已在 0.2.0-rc.1 重跑通过，但 rc.2 上记录的资源 Agent admission、preset 准入等 P0 证据尚未在新基线重跑。
 >
-> **2026-10-01 实现状态更新**：上面的窄准入描述保留为历史基线。本轮 Studio Host 已把本地资源型 `dsh-native`/Harness/Codex Revision 接入 `studio-bridge`，并把来源为 `agentengine-server` 的云端运行时（已验证 `langgraph`）交给 `RunAgent`；两类 Agent 都复用 DSH 原生会话页。云端 Agent 的知识库、记忆库和 Skill Center 绑定已通过 Host 代签 `UpdateAgent` 保存 `ComponentConfig`，但仍需补齐真实资源首轮执行和部署 E2E 证据，不能由本地 MCP 或单个云端运行时样例替代。
+> **2026-10-01 实现状态更新**：上面的窄准入描述保留为历史基线。本轮 Studio Host 已把本地资源型 `dsh-native`/Harness/Codex Revision 接入 `studio-bridge`，并把来源为 `agentengine-server` 的云端运行时（已验证 `langgraph`）交给 `RunAgent`；两类 Agent 都复用 DSH 原生会话页。云端 Agent 的知识库、记忆库和 Skill Center 绑定已通过 Host 代签 `UpdateAgent` 保存 `ComponentConfig`，但仍需补齐真实资源首轮执行和部署 E2E 证据，不能由本地 MCP 或单个云端运行时样例替代。2026-10-01 之后，本地 Harness 的 Gateway SSE 已统一支持 CRLF/分片事件、思考与工具交替投影，并按冻结 Revision 的 `execution.maxSteps` 终止工具循环；这些是本地执行证据，不替代云端资源首轮执行证据。
 > 范围：AgentKit Studio、DSH Desktop、ksadk-python、agentengine-server 的本地与云端协作。  
 > 原则：先把真实执行链路和控制面合同钉死，再收口界面和插件市场；任何页面占位都不能代替一条可追踪的执行链。
 
