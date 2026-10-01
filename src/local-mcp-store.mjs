@@ -102,7 +102,9 @@ export function createLocalMcpStore({ storeDir } = {}) {
       inputSchema: tool?.inputSchema && typeof tool.inputSchema === 'object' ? tool.inputSchema : { type: 'object', properties: {} },
     })).filter(tool => tool.name) : [];
     const failed = Boolean(error);
-    return save({ ...current, status: failed ? 'error' : 'ready', contract: { ...(current.contract || {}), discoveredTools: safeTools }, health: { status: failed ? 'error' : 'ready', toolCount: safeTools.length, tools: safeTools, ...(failed ? { error: String(error) } : {}) }, updatedAt: new Date().toISOString() });
+    const errorMessage = failed ? String(error?.message || error).slice(0, 500) : '';
+    const errorCode = failed && error?.code ? String(error.code) : '';
+    return save({ ...current, status: failed ? 'error' : 'ready', contract: { ...(current.contract || {}), discoveredTools: safeTools }, health: { status: failed ? 'error' : 'ready', toolCount: safeTools.length, tools: safeTools, ...(failed ? { error: errorMessage, ...(errorCode ? { errorCode } : {}) } : {}) }, updatedAt: new Date().toISOString() });
   }
   async function remove(resourceId) {
     const id = idOf(resourceId);

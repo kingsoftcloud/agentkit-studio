@@ -176,6 +176,8 @@ window.__ModuleLoader__.load({
           if (!result?.ok) {
             const error = new Error(result?.error?.message || 'Studio 本地任务请求失败');
             error.code = result?.error?.code || 'STUDIO_OPERATION_FAILED';
+            error.status = result?.error?.details?.status || result?.error?.status;
+            error.details = result?.error?.details;
             throw error;
           }
           return result.value;

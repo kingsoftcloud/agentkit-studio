@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 本地 MCP 现在会在每次探测和工具调用前重新解析 DSH credential；凭证轮换会自动替换旧连接，
+  不再把过期的连接缓存到 Host 生命周期结束。HTTP 401/403/404、缺少凭证和工具目录失败分别
+  返回可操作的错误码，并把最近一次探测错误保存在资源健康状态中，资源库可以直接看到失败原因。
 - 云端 Skill Space 下载现在会在读取 `SKILL.md` 前校验服务返回的 `ContentHash` sha256 摘要；
   摘要格式非法或压缩包被替换时返回明确的 `SKILL_ARCHIVE_HASH_INVALID`/
   `SKILL_ARCHIVE_HASH_MISMATCH`，避免错误资源被注入本地 Agent 上下文。

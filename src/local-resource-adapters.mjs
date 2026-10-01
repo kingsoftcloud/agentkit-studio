@@ -30,6 +30,38 @@ async function resolveCredential(credentials, reference) {
   return String(process.env[name] || '');
 }
 
+function numericStatus(value) {
+  const number = Number(String(value ?? '').match(/\b(401|403|404|408|429|5\d{2})\b/)?.[1] || 0);
+  return number || 0;
+}
+
+function mcpStatus(error) {
+  return numericStatus(error?.status) || numericStatus(error?.statusCode)
+    || numericStatus(error?.cause?.status) || numericStatus(error?.cause?.statusCode)
+    || numericStatus(error?.code) || numericStatus(error?.cause?.code)
+    || numericStatus(error?.message) || numericStatus(error?.cause?.message);
+}
+
+function mcpFailure(error, resourceId, phase = 'connect') {
+  if (error instanceof LocalResourceError && !['MCP_CONNECT_FAILED', 'MCP_TOOL_DISCOVERY_FAILED'].includes(error.code)) return error;
+  const status = mcpStatus(error);
+  const code = status === 401 ? 'MCP_AUTH_FAILED'
+    : status === 403 ? 'MCP_PERMISSION_DENIED'
+      : status === 404 ? 'MCP_ENDPOINT_NOT_FOUND'
+        : phase === 'list' ? 'MCP_TOOL_DISCOVERY_FAILED' : 'MCP_CONNECT_FAILED';
+  const message = status === 401
+    ? 'MCP Endpoint 鉴权失败（HTTP 401），请更新凭证后重新探测'
+    : status === 403
+      ? 'MCP Endpoint 拒绝访问（HTTP 403），请检查凭证权限后重新探测'
+      : status === 404
+        ? 'MCP Endpoint 不存在（HTTP 404），请检查地址后重新探测'
+        : phase === 'list'
+          ? 'MCP 工具目录读取失败，请检查 Endpoint 和网络配置'
+          : 'MCP Endpoint 连接失败，请检查 Endpoint TLS、网络和认证配置';
+  const cause = String(error?.cause?.message || error?.cause?.code || error?.message || error || '').slice(0, 240);
+  return new LocalResourceError(code, message, { resourceId, ...(status ? { status } : {}), ...(cause ? { cause } : {}) });
+}
+
 export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = fetch } = {}) {
   const mcpClients = new Map();
   const cloudSkillSpaces = new Map();
@@ -37,7 +69,6 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   async function mcp(binding) {
     const key = resourceId(binding);
     if (!key) throw new LocalResourceError('MCP_ID_MISSING', 'MCP 资源 ID 不能为空');
-    if (mcpClients.has(key)) return mcpClients.get(key);
     const config = binding && typeof binding === 'object' ? binding : {};
     const detail = config.endpoint || config.endpointUrl || config.url
       ? config
@@ -49,33 +80,64 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const envRefs = { ...(server.envRefs || detail.envRefs || config.envRefs || {}) };
     for (const [header, reference] of Object.entries(envRefs)) {
       const resolved = await resolveCredential(credentials, reference);
-      if (resolved && !Object.keys(headers).some(name => name.toLowerCase() === String(header).toLowerCase())) headers[header] = String(header).toLowerCase() === 'authorization' && !/^\s*\w+\s+/i.test(resolved) ? `Bearer ${resolved}` : resolved;
+      const existing = Object.keys(headers).find(name => name.toLowerCase() === String(header).toLowerCase());
+      if (!resolved && !String(existing ? headers[existing] : '').trim()) {
+        throw new LocalResourceError('MCP_CREDENTIAL_MISSING', `MCP 缺少 ${header} 凭证，请在 Host 设置中配置后重新探测`, { resourceId: key, header: String(header), reference: String(reference) });
+      }
+      if (resolved && !existing) headers[header] = String(header).toLowerCase() === 'authorization' && !/^\s*\w+\s+/i.test(resolved) ? `Bearer ${resolved}` : resolved;
     }
-    const apiKey = detail.api_key || detail.apiKey || await resolveCredential(credentials, detail.credentialRef || config.credentialRef);
+    const credentialRef = detail.credentialRef || config.credentialRef;
+    const apiKey = detail.api_key || detail.apiKey || await resolveCredential(credentials, credentialRef);
+    if (credentialRef && !apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization' && String(headers[name] || '').trim())) {
+      throw new LocalResourceError('MCP_CREDENTIAL_MISSING', 'MCP 缺少访问凭证，请在 Host 设置中配置后重新探测', { resourceId: key, reference: String(credentialRef) });
+    }
     if (apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization')) headers.Authorization = `Bearer ${apiKey}`;
+    // DSH credentials are mutable. Re-resolve them on every operation and
+    // replace a cached client when the effective auth material changes. The
+    // fingerprint is one-way and never leaves this process.
+    const fingerprint = createHash('sha256').update(JSON.stringify({ endpoint, headers: Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)) })).digest('hex');
+    const cached = mcpClients.get(key);
+    if (cached?.fingerprint === fingerprint) return cached;
+    if (cached) {
+      await Promise.resolve(cached.client.close?.()).catch(() => {});
+      mcpClients.delete(key);
+    }
     const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' });
     const transport = new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl });
     try {
       await client.connect(transport);
     } catch (error) {
       await Promise.resolve(transport.close?.()).catch(() => {});
-      throw new LocalResourceError('MCP_CONNECT_FAILED', 'MCP Endpoint 连接失败，请检查 Endpoint TLS、网络和认证配置', { resourceId: key, cause: String(error?.cause?.code || error?.code || error?.message || error) });
+      throw mcpFailure(error, key);
     }
-    const entry = { client, transport };
+    const entry = { client, transport, fingerprint };
     mcpClients.set(key, entry);
     return entry;
   }
 
   async function listMcpTools(id) {
-    const { client } = await mcp(id);
-    return (await client.listTools()).tools || [];
+    const key = resourceId(id);
+    const entry = await mcp(id);
+    try { return (await entry.client.listTools()).tools || []; }
+    catch (error) {
+      await Promise.resolve(entry.client.close?.()).catch(() => {});
+      if (mcpClients.get(key) === entry) mcpClients.delete(key);
+      throw mcpFailure(error, key, 'list');
+    }
   }
 
   async function callMcpTool(id, name, args = {}) {
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
-    const { client } = await mcp(id);
-    const result = await client.callTool({ name: String(name), arguments: args });
-    if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: resourceId(id), name });
+    const key = resourceId(id);
+    const entry = await mcp(id);
+    let result;
+    try { result = await entry.client.callTool({ name: String(name), arguments: args }); }
+    catch (error) {
+      await Promise.resolve(entry.client.close?.()).catch(() => {});
+      if (mcpClients.get(key) === entry) mcpClients.delete(key);
+      throw mcpFailure(error, key, 'call');
+    }
+    if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: key, name });
     return result?.content || result;
   }
 

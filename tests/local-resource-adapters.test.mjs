@@ -148,3 +148,51 @@ test('local MCP records resolve nested server endpoint and authorization referen
     await adapters.close();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test('MCP HTTP auth failures are actionable and missing credentials fail before network access', async () => {
+  let requests = 0;
+  const fetchImpl = async () => { requests += 1; return new Response('unauthorized', { status: 401 }); };
+  const adapters = createLocalResourceAdapters({
+    credentials: { resolve: async () => undefined }, fetchImpl,
+    serverClient: { action: async () => { throw new Error('must not call GetMCP'); } },
+  });
+  await assert.rejects(
+    () => adapters.listMcpTools({ resourceId: 'auth-mcp', endpointUrl: 'https://example.test/mcp', envRefs: { Authorization: 'env://MISSING_TOKEN' } }),
+    error => error instanceof LocalResourceError && error.code === 'MCP_CREDENTIAL_MISSING' && error.details.resourceId === 'auth-mcp',
+  );
+  assert.equal(requests, 0);
+
+  const authAdapters = createLocalResourceAdapters({
+    credentials: { resolve: async () => ({ value: 'expired-token' }) }, fetchImpl,
+    serverClient: { action: async () => { throw new Error('inline descriptor must not call GetMCP'); } },
+  });
+  await assert.rejects(
+    () => authAdapters.listMcpTools({ resourceId: 'auth-mcp', endpointUrl: 'https://example.test/mcp', credentialRef: 'env://MISSING_TOKEN' }),
+    error => error instanceof LocalResourceError && error.code === 'MCP_AUTH_FAILED' && error.details.status === 401 && !JSON.stringify(error).includes('expired-token'),
+  );
+});
+
+test('MCP clients are replaced when a DSH credential rotates', async () => {
+  let token = 'first-token';
+  const authorizations = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (!init.body) return new Response(null, { status: 405 });
+    const message = JSON.parse(init.body);
+    authorizations.push(init.headers?.get?.('authorization'));
+    if (message.method === 'initialize') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'rotating', version: '1' } } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': `session-${authorizations.length}` } });
+    if (message.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (message.method === 'tools/list') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'search', inputSchema: { type: 'object' } }] } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'rotating-session' } });
+    return new Response(null, { status: 405 });
+  };
+  const adapters = createLocalResourceAdapters({
+    credentials: { resolve: async () => ({ value: token }) }, fetchImpl,
+    serverClient: { action: async () => { throw new Error('inline descriptor must not call GetMCP'); } },
+  });
+  const binding = { resourceId: 'rotating-mcp', endpointUrl: 'https://example.test/mcp', credentialRef: 'env://TOKEN' };
+  await adapters.listMcpTools(binding);
+  token = 'second-token';
+  await adapters.listMcpTools(binding);
+  const distinct = authorizations.filter(Boolean).filter((value, index, values) => index === 0 || value !== values[index - 1]);
+  assert.deepEqual(distinct, ['Bearer first-token', 'Bearer second-token']);
+  await adapters.close();
+});

@@ -420,7 +420,7 @@ async function registerControlPlane(ctx) {
           const updated = await localStore.markProbe(resourceId, { tools });
           return { ok: true, value: { ...updated, resourceId, toolCount: tools.length, health: updated.health } };
         } catch (error) {
-          await localStore.markProbe(resourceId, { error: error?.message || error }).catch(() => {});
+          await localStore.markProbe(resourceId, { error }).catch(() => {});
           return { ok: false, error: { code: error?.code || 'MCP_PROBE_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || { resourceId } } };
         }
       }

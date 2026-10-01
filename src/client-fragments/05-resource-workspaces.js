@@ -114,7 +114,7 @@
               h('td', { style: { padding: '12px 13px', color: BRAND.ink } }, h('strong', null, name), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' } }, id)),
               h('td', { style: { padding: '12px 13px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, sourceLabel(resource)),
               h('td', { style: { padding: '12px 13px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, kindDetail(resource)),
-              h('td', { style: { padding: '12px 13px', whiteSpace: 'nowrap' } }, h(Pill, { tone: resource.disabled ? 'signal' : String(resource.status || 'ready').toLowerCase() === 'ready' ? 'accent' : 'signal' }, resource.disabled ? '不可用' : resource.status || 'ready')),
+              h('td', { style: { padding: '12px 13px', whiteSpace: 'nowrap' } }, h(Pill, { tone: resource.disabled ? 'signal' : String(resource.status || 'ready').toLowerCase() === 'ready' ? 'accent' : 'signal' }, resource.disabled ? '不可用' : resource.health?.errorCode ? `${resource.status || 'error'} · ${resource.health.errorCode}` : resource.status || 'ready')),
               h('td', { style: { padding: '12px 13px', whiteSpace: 'nowrap' } },
                 h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
                   h('button', { type: 'button', onClick: () => setResourcePreview(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看'),
