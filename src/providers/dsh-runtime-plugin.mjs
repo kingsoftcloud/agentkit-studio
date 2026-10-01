@@ -6,7 +6,6 @@
 
 export const name = 'agentkit-studio-dsh-runtime';
 export const inject = ['tools'];
-const STUDIO_PROVIDER = 'agentkit-studio';
 const AGENT_REQUEST_EVENT = ['agent', 'request'].join('/');
 import { spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -247,9 +246,13 @@ export function apply(ctx, config = {}) {
       agent: payload?.agent,
       runtime: config.runtime,
       local: config.local === true,
+      buildId: config.buildId,
       toolAdapter,
     });
-    return { ...resolved, provider: STUDIO_PROVIDER };
+    // Keep the DSH-visible provider/model header unchanged. The preset-scoped
+    // listener below owns the transport interception; exposing the Studio
+    // provider here would make the native picker appear to switch models.
+    return resolved;
   });
   // Keep the DSH request header on the user's selected provider/model. The
   // scoped waterfall owns only this Agent's model transport, which avoids

@@ -137,7 +137,7 @@ test('the bridge rewrites the scoped Agent request and routes the root loop by s
   const request = await listeners.get('agent/request')({ agent: { id: 'session-1' } }, async () => ({
     provider: 'agentkit-studio-default', model: 'glm-5.3-flash',
   }));
-  assert.equal(request.provider, 'agentkit-studio');
+  assert.equal(request.provider, 'agentkit-studio-default');
   assert.equal(request.model, 'glm-5.3-flash');
 
   const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;

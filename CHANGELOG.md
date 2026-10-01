@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 原生 DSH 会话绑定 Studio Agent 时继续保留用户选择的 provider/model 标识；Studio provider 只接管
+  实际传输，不再让模型选择器显示内部 `agentkit-studio/*` 路由。通过“在新会话运行”选择的本地
+  Build ID 也会跨 scoped Agent request 传到 Harness/Codex 资源物化层，冻结版本不会误读最新 Agent。
+- 本地 Harness、Codex 和云端流的 reasoning/text 投影现在支持交替出现的多个内容 block；多轮工具调用
+  后不会因为第一段文本已经结束而吞掉后续工具状态、思考或最终回答。插件市场页面同步采用原生 DSH
+  的宽松双列目录节奏、图标卡片、搜索框和圆形新增/刷新入口；客户端清单补齐 DSH 原生
+  layout/sidebar 依赖，确保这些 Studio 面板在新 Profile 中可见。
+
 - 本地 Build 现在可作为可运行的冻结版本：Build ZIP 会经过目录、大小、CRC 和内容身份校验，
   DSH 原生会话可从构建与部署页选择“在新会话运行”。会话使用该 Build 的 Prompt、模型和资源绑定，
   不再悄悄读取 Agent 后续编辑的最新 Revision；旧 Build 对应的 preset 会保留到 Host 生命周期结束。

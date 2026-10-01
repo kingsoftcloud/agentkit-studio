@@ -23,6 +23,7 @@ export function bindDshAgentRoute(sessionId, binding = {}) {
     agent: binding.agent,
     runtime: String(binding.runtime || 'harness').trim(),
     local: binding.local === true,
+    buildId: String(binding.buildId || '').trim(),
     toolAdapter: binding.toolAdapter,
   };
   agentRoutes.set(id, route);
@@ -124,43 +125,45 @@ async function* parseSse(body, signal) {
 
 function createChunkState() {
   return {
-    text: '', reasoning: '', textStarted: false, reasoningStarted: false, textEnded: false, reasoningEnded: false,
+    currentKind: '', currentIndex: -1, currentText: '', nextIndex: 0,
     toolNames: new Map(), toolStarted: new Set(),
   };
 }
 
+function closeCurrentBlock(state) {
+  if (!state.currentKind || state.currentIndex < 0) return [];
+  const index = state.currentIndex;
+  const block = { type: state.currentKind, text: state.currentText };
+  state.currentKind = '';
+  state.currentIndex = -1;
+  state.currentText = '';
+  return [{ type: 'block-end', index, block }];
+}
+
 function closeBlock(state, kind) {
-  const isReasoning = kind === 'reasoning';
-  const started = isReasoning ? state.reasoningStarted : state.textStarted;
-  const endedKey = isReasoning ? 'reasoningEnded' : 'textEnded';
-  if (!started || state[endedKey]) return [];
-  state[endedKey] = true;
-  const value = isReasoning ? state.reasoning : state.text;
-  return [{ type: 'block-end', index: isReasoning ? 0 : 1, block: { type: isReasoning ? 'reasoning' : 'text', text: value } }];
+  if (state.currentKind !== kind) return [];
+  return closeCurrentBlock(state);
 }
 
 function appendBlock(state, kind, value) {
   const text = String(value || '');
   if (!text) return [];
   const frames = [];
-  if (kind === 'text' && state.reasoningStarted && !state.reasoningEnded) frames.push(...closeBlock(state, 'reasoning'));
-  if (kind === 'reasoning' && state.textStarted && !state.textEnded) frames.push(...closeBlock(state, 'text'));
-  const isReasoning = kind === 'reasoning';
-  const startedKey = isReasoning ? 'reasoningStarted' : 'textStarted';
-  const endedKey = isReasoning ? 'reasoningEnded' : 'textEnded';
-  if (!state[startedKey]) {
-    state[startedKey] = true;
-    frames.push({ type: 'block-start', index: isReasoning ? 0 : 1, blockType: kind });
+  if (state.currentKind !== kind) {
+    frames.push(...closeCurrentBlock(state));
+    const index = state.nextIndex++;
+    state.currentKind = kind;
+    state.currentIndex = index;
+    state.currentText = '';
+    frames.push({ type: 'block-start', index, blockType: kind });
   }
-  if (state[endedKey]) return frames;
-  if (isReasoning) state.reasoning += text;
-  else state.text += text;
-  frames.push({ type: isReasoning ? 'reasoning-delta' : 'text-delta', index: isReasoning ? 0 : 1, text });
+  state.currentText += text;
+  frames.push({ type: kind === 'reasoning' ? 'reasoning-delta' : 'text-delta', index: state.currentIndex, text });
   return frames;
 }
 
 function finishBlocks(state) {
-  return [...closeBlock(state, 'reasoning'), ...closeBlock(state, 'text'), { type: 'finish', reason: { kind: 'stop' } }];
+  return [...closeCurrentBlock(state), { type: 'finish', reason: { kind: 'stop' } }];
 }
 
 async function* codexFrames(codexRuntime, options, onChunk) {
@@ -386,6 +389,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
       const agentId = routed?.agentId || (separator > 0 ? model.slice(separator + 1) : model);
       const runtime = routed?.runtime || options.studioRuntime;
       const toolAdapter = options.studioToolAdapter || routed?.toolAdapter;
+      const buildId = String(options.buildId || routed?.buildId || '').trim();
       const toolAgent = routed?.agent || options.agent;
       const user = lastUser(options.messages);
       const input = textOf(user).trim();
@@ -400,7 +404,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           const resources = typeof codexResourceContext === 'function'
             ? await codexResourceContext({
               agentId,
-              buildId: String(options.buildId || ''),
+              buildId,
               input,
               sessionId: String(options.sessionId || ''),
               userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
@@ -455,7 +459,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
         if (typeof localHandler !== 'function') throw new Error('AgentKit local runtime is unavailable');
         yield* localFrames(await localHandler(), {
           agentId,
-          ...(options.buildId ? { buildId: options.buildId } : {}),
+          ...(buildId ? { buildId } : {}),
           sessionId: String(options.sessionId || ''),
           userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,

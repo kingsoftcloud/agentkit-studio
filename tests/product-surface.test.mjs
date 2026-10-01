@@ -222,7 +222,7 @@ test('Studio marketplace exposes the old Studio plugin lifecycle through Host ro
   assert.match(clientSource, /hostRemote\.uninstallCodexPlugin/);
   assert.match(clientSource, /data-plugin-market/);
   assert.match(clientSource, /pluginSection\('已安装'/);
-  assert.match(clientSource, /pluginSection\('发现插件'/);
+  assert.match(clientSource, /pluginSection\('插件目录'/);
 });
 
 test('resource surface exposes real MCP and Skill lifecycle actions', () => {
