@@ -74,6 +74,18 @@ test('memory adapter uses QueryMemorySdk and normalizes the returned memories', 
   assert.deepEqual(call[2], { apiVersion: '2025-11-14' });
 });
 
+test('knowledge adapter bounds DSH search text to the RetrieveKnowledge contract', async () => {
+  let call;
+  const adapters = createLocalResourceAdapters({
+    serverClient: { action: async (...args) => { call = args; return { data: { Records: [] } }; } },
+  });
+  await adapters.searchKnowledge('kb-1', `${'前置检索意图 '.repeat(80)}尾部上下文`);
+  assert.equal(call[0], 'RetrieveKnowledge');
+  assert.equal(call[1].DatasetId, 'kb-1');
+  assert.equal(call[1].Query.length, 250);
+  assert.equal(call[2].apiVersion, '2025-11-14');
+});
+
 test('memory adapter writes a bounded conversation through CreateMemorySdk', async () => {
   let call;
   const adapters = createLocalResourceAdapters({

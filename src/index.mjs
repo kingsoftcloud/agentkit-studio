@@ -179,6 +179,7 @@ async function registerControlPlane(ctx) {
     localHandler: localRuntimeHandler,
     codexRuntime,
     codexResourceContext,
+    resourceAdapter: await resourceAdaptersPromise,
     observability: await studioObservabilityPromise,
   });
   setDshRuntimeAdapter(dshRuntimeAdapter);

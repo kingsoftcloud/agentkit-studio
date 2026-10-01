@@ -210,11 +210,11 @@ test('cloud Agent updates translate Studio platform bindings to ComponentConfig'
   });
   assert.deepEqual(payload, {
     AgentId: 'ar-cloud-1', Name: '知识助手', Description: '云端检索助手',
-    ComponentConfig: {
+    Advanced: { ComponentConfig: {
       KnowledgeBase: { Id: 'kb-1', Name: '企业知识库' },
       Memory: { Id: 'mem-1' },
       SkillWorkspace: { Id: 'space-1' },
-    },
+    } },
   });
 });
 

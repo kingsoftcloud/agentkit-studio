@@ -7,6 +7,10 @@
 - 云端 Agent 编辑页现在通过 Host 代签 `UpdateAgent` Action 保存知识库、记忆库和 Skill Center
   ComponentConfig；云端页面不再调用不存在的旧本地 REST 路由。模型、MCP、本地 Skill 和 Tool 等
   不属于该云端合同的绑定会在保存前明确拒绝，避免出现页面成功但云端未更新。
+- 云端 Agent 的知识库、记忆库和 Skill Space 绑定现在会在进入 `RunAgent` 前由 Host 物化为受限上下文，
+  再交给云端运行时生成回答；这补齐了自定义运行时只保存 ComponentConfig、却没有自动注册资源工具的缺口。
+- 知识库检索会把 DSH 会话中的长输入限制在 `RetrieveKnowledge` 支持的 250 字符以内，避免云端
+  Action 因查询过长返回 400。
 - 云端 Agent 的 `langgraph`、`hermes`、`openclaw`、`adk` 等服务端运行时现在可以直接绑定到
   DSH 原生会话；Host 不再把它们误判为本地 runtime，也不会要求本地 Tool Registry 物化云端工具，
   实际执行统一交给 AgentEngine `RunAgent` 流。未知的本地 runtime 仍保持明确拒绝。

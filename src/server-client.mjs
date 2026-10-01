@@ -110,7 +110,12 @@ export function buildCloudAgentUpdate(agentId, { spec = {}, name = '', descripti
       ...(resource.name ? { Name: String(resource.name) } : {}),
     };
   }
-  const payload = { AgentId: id, ComponentConfig: components };
+  // AgentEngine accepts a legacy top-level ComponentConfig for compatibility,
+  // but its public BFF contract is Advanced.ComponentConfig.  Sending the
+  // binding only in the canonical envelope keeps the request from being
+  // interpreted as a legacy override and lets the server regenerate the
+  // component runtime environment (KB/Memory/Skill Space) for the next run.
+  const payload = { AgentId: id, Advanced: { ComponentConfig: components } };
   if (name !== undefined && String(name).trim()) payload.Name = String(name).trim();
   if (description !== undefined) payload.Description = String(description || '');
   return payload;

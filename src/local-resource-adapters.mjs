@@ -229,11 +229,24 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   }
 
   async function searchKnowledge(id, query) {
-    const result = await serverClient.action('RetrieveKnowledge', {
-      DatasetId: resourceId(id), Query: String(query || ''),
-      RetrievalModel: { SearchMethod: 'semantic', TopK: 5, RerankingEnable: true },
-    }, { apiVersion: '2025-11-14' });
-    return result.data?.Records || result.data?.records || [];
+    const datasetId = resourceId(id);
+    // RetrieveKnowledge rejects queries longer than 250 characters. DSH can
+    // include pasted context or slash-command text in the final user turn;
+    // keep the lookup within the cloud contract while preserving the leading
+    // intent that normally carries the search terms.
+    const searchQuery = String(query || '').trim().slice(0, 250);
+    try {
+      const result = await serverClient.action('RetrieveKnowledge', {
+        DatasetId: datasetId, Query: searchQuery,
+        RetrievalModel: { SearchMethod: 'semantic', TopK: 5, RerankingEnable: true },
+      }, { apiVersion: '2025-11-14' });
+      return result.data?.Records || result.data?.records || [];
+    } catch (error) {
+      console.warn('[agentkit-studio] cloud knowledge lookup failed', JSON.stringify({
+        resourceId: datasetId, code: error?.code || '', status: error?.status || 0,
+      }));
+      throw error;
+    }
   }
 
   async function searchMemory(id, query, userId) {

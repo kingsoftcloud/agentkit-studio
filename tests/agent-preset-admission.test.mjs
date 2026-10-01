@@ -407,6 +407,42 @@ test('the cloud bridge projects Responses tool lifecycle into expandable reasoni
   ]);
 });
 
+test('the cloud bridge materializes bound platform resources before RunAgent', async () => {
+  const frame = value => `data: ${JSON.stringify(value)}\n\n`;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(frame({ type: 'response.output_text.delta', delta: '基于知识库回答' })));
+      controller.enqueue(new TextEncoder().encode(frame({ type: 'response.completed' })));
+      controller.close();
+    },
+  });
+  let request;
+  const adapter = createDshRuntimeAdapter({
+    resourceAdapter: {
+      searchKnowledge: async () => [{ content: '知识库片段：AgentEngine 使用 RunAgent。' }],
+      searchMemory: async () => [],
+      loadSkill: async () => ({ name: '绑定 Skill', content: '仅用于测试。' }),
+      listMcpTools: async () => [],
+    },
+    cloudClient: {
+      getAgent: async () => ({
+        id: 'agent-1',
+        spec: { bindings: { plugins: [{ config: { binding: { resource: { kind: 'knowledge-base', id: 'kb-1' } } } }] } },
+      }),
+      streamAction: async (_name, payload) => { request = payload; return { body }; },
+    },
+  });
+  const chunks = [];
+  for await (const chunk of adapter.stream({
+    model: 'cloud:agent-1',
+    messages: [{ role: 'user', content: '知识库里怎么说？' }],
+  })) chunks.push(chunk);
+  assert.equal(request.Messages[0].role, 'system');
+  assert.match(request.Messages[0].content, /知识库片段：AgentEngine 使用 RunAgent/);
+  assert.deepEqual(request.Messages[1], { role: 'user', content: '知识库里怎么说？' });
+  assert.equal(chunks.at(-1).type, 'finish');
+});
+
 test('the cloud bridge rejects an upstream failure event', async () => {
   const body = new ReadableStream({
     start(controller) {

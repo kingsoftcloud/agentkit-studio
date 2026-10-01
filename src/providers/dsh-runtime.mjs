@@ -5,6 +5,7 @@
  * event loop in charge. Studio only translates the assembled DSH request into
  * the AgentEngine/local-runtime stream and back into DSH text chunks.
  */
+import { prepareLocalResourceContext } from '../local-runtime.mjs';
 
 const ROUTE = 'agentkit-studio';
 let activeAdapter;
@@ -373,7 +374,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, codexResourceContext, observability } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, codexResourceContext, resourceAdapter, observability } = {}) {
   return {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -482,11 +483,57 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
       if (!cloudClient || typeof cloudClient.streamAction !== 'function') throw new Error('AgentEngine cloud runtime is unavailable');
       const sessionId = String(options.sessionId || '');
       const invocationId = String(options.invocationId || options.runId || '').trim();
+      // ComponentConfig persists a cloud resource reference, but a custom
+      // runtime does not automatically expose a knowledge or Skill tool to
+      // RunAgent. Materialize bound resources at the Host boundary and send
+      // the bounded context as a system message before the user turn.
+      let cloudMessages = [{ role: 'user', content: input }];
+      let cloudRecord = toolAgent && typeof toolAgent === 'object'
+        ? toolAgent : { id: agentId };
+      // The preset-scoped DSH Agent object is intentionally lightweight. Read
+      // the authoritative cloud Agent detail when it does not carry the
+      // normalized ComponentConfig projection needed by the resource adapter.
+      if ((!Array.isArray(cloudRecord.spec?.bindings?.plugins)) && typeof cloudClient.getAgent === 'function') {
+        cloudRecord = await cloudClient.getAgent(agentId, { signal: options.signal });
+      }
+      const cloudBindings = cloudRecord.spec?.bindings;
+      const hasPlatformBindings = Array.isArray(cloudBindings?.plugins)
+        && cloudBindings.plugins.some(item => {
+          const kind = item?.config?.binding?.resource?.kind;
+          return kind === 'knowledge-base' || kind === 'memory-instance' || kind === 'skill-space';
+        });
+      if (hasPlatformBindings) {
+        if (!resourceAdapter) {
+          const error = new Error('云端 Agent 绑定了平台资源，但 Studio 资源适配器不可用');
+          error.code = 'CLOUD_RESOURCE_ADAPTER_MISSING';
+          throw error;
+        }
+        const prepared = await prepareLocalResourceContext({
+          record: cloudRecord,
+          input,
+          resourceAdapter,
+          userId: String(options.userId || options.metadata?.userId || sessionId || agentId),
+          agent: toolAgent,
+        });
+        if (prepared.resourceContext) {
+          cloudMessages = [
+            {
+              role: 'system',
+              content: [
+                '以下内容由 AgentKit Studio 在本轮从当前 Agent 绑定的知识库、记忆库或 Skill Space 读取。',
+                '请把它作为受限上下文使用；如果上下文没有答案，请明确说明，不要编造召回结果。',
+                prepared.resourceContext.slice(0, 48000),
+              ].join('\n\n'),
+            },
+            ...cloudMessages,
+          ];
+        }
+      }
       try {
         const upstream = await cloudClient.streamAction('RunAgent', {
           AgentId: agentId,
           SessionId: sessionId,
-          Messages: [{ role: 'user', content: input }],
+          Messages: cloudMessages,
           Stream: true,
           ApiFormat: 'responses',
           ...(invocationId ? { InvocationId: invocationId } : {}),
