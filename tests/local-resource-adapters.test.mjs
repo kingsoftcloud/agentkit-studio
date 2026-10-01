@@ -58,6 +58,28 @@ test('memory adapter uses QueryMemorySdk and normalizes the returned memories', 
   assert.deepEqual(call[2], { apiVersion: '2025-11-14' });
 });
 
+test('memory adapter writes a bounded conversation through CreateMemorySdk', async () => {
+  let call;
+  const adapters = createLocalResourceAdapters({
+    serverClient: { action: async (...args) => { call = args; return { data: { accepted: true } }; } },
+  });
+  const result = await adapters.writeMemory('mem-1', 'user-1', [
+    { role: 'user', content: '我喜欢轻松口吻' },
+    { role: 'assistant', content: '好的，我会保持轻松口吻。' },
+  ], { sessionId: 'session-1', agentId: 'agent-1' });
+  assert.deepEqual(result, { accepted: true, data: { accepted: true } });
+  assert.equal(call[0], 'CreateMemorySdk');
+  assert.deepEqual(call[1], {
+    MemoryCollectionId: 'mem-1', AgentUserId: 'user-1', SceneId: '_sys_general', DataType: 'conversation',
+    Data: { Conversation: [
+      { Role: 'user', CreatedAt: call[1].Data.Conversation[0].CreatedAt, MessageId: call[1].Data.Conversation[0].MessageId, Content: [{ Type: 'input_text', Text: '我喜欢轻松口吻' }] },
+      { Role: 'assistant', CreatedAt: call[1].Data.Conversation[1].CreatedAt, MessageId: call[1].Data.Conversation[1].MessageId, Content: [{ Type: 'input_text', Text: '好的，我会保持轻松口吻。' }] },
+    ] },
+    AgentId: 'agent-1', SessionId: 'session-1',
+  });
+  assert.deepEqual(call[2], { apiVersion: '2025-11-14' });
+});
+
 test('inline MCP descriptors resolve env credentials and execute through Streamable HTTP', async () => {
   const requests = [];
   const fetchImpl = async (url, init = {}) => {

@@ -155,6 +155,55 @@ test('local runtime injects cloud Skill Space and memory recall into the model t
   assert.match(response.chunks.join(''), /已结合绑定资源/);
 });
 
+test('local runtime writes a bound memory conversation after a completed turn', async () => {
+  const response = responseSink();
+  let write;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ metadata: { id: 'ar-local-aaaaaaaaaaaaaaaa', name: 'Memory Agent' }, spec: {
+      memory: { enabled: true, write: { mode: 'candidate' } },
+      bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } }] },
+    } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: {
+      listMcpTools: async () => [],
+      searchMemory: async () => [],
+      writeMemory: async (...args) => { write = args; return { accepted: true }; },
+    },
+    observability: { syncTrace: async () => {} },
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      assert.match(body.messages.at(-1).content, /记住/);
+      return new Response('data: {"choices":[{"delta":{"content":"已记录"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 'session-1', userId: 'user-1', input: '记住我喜欢轻松口吻' })]), response);
+  assert.equal(response.status, 200);
+  assert.equal(write[0], 'memory-1');
+  assert.equal(write[1], 'user-1');
+  assert.deepEqual(write[2], [{ role: 'user', content: '记住我喜欢轻松口吻' }, { role: 'assistant', content: '已记录' }]);
+  assert.deepEqual(write[3], { sessionId: 'session-1', agentId: 'ar-local-aaaaaaaaaaaaaaaa', flush: false });
+  assert.match(response.chunks.join(''), /已记录/);
+});
+
+test('local runtime keeps explicit-only memory off for ordinary turns', async () => {
+  const response = responseSink();
+  let writes = 0;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: {
+      memory: { enabled: true, write: { mode: 'explicit_only' } },
+      bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } }] },
+    } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: { listMcpTools: async () => [], searchMemory: async () => [], writeMemory: async () => { writes += 1; return { accepted: true }; } },
+    observability: { syncTrace: async () => {} },
+    fetchImpl: async () => new Response('data: {"choices":[{"delta":{"content":"普通回答"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'),
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 'session-1', input: '你好' })]), response);
+  assert.equal(response.status, 200);
+  assert.equal(writes, 0);
+  assert.match(response.chunks.join(''), /普通回答/);
+});
+
 test('local runtime keeps a text-only turn alive when MCP discovery is temporarily unavailable', async () => {
   const response = responseSink();
   let requestBody;

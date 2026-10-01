@@ -1,4 +1,5 @@
 /** Host-owned adapters for resources bound to a local Agent revision. */
+import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { inflateRawSync } from 'node:zlib';
@@ -171,10 +172,36 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     return data?.Memories || data?.memories || data?.Records || data?.records || [];
   }
 
+  async function writeMemory(id, userId, messages, { sessionId = '', agentId = '', flush = false } = {}) {
+    if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用', { resourceId: resourceId(id) });
+    const conversation = (Array.isArray(messages) ? messages : [])
+      .filter(message => ['user', 'assistant'].includes(message?.role) && String(message?.content || '').trim())
+      .slice(-20)
+      .map(message => ({
+        Role: message.role,
+        CreatedAt: Date.now(),
+        MessageId: `${String(sessionId || 'studio')}-${randomUUID()}`,
+        Content: [{ Type: 'input_text', Text: String(message.content).slice(0, 16000) }],
+      }));
+    if (!conversation.length) return { accepted: false, reason: 'empty' };
+    const payload = {
+      MemoryCollectionId: resourceId(id),
+      AgentUserId: String(userId || 'studio-anonymous'),
+      SceneId: '_sys_general',
+      DataType: 'conversation',
+      Data: { Conversation: conversation },
+      ...(agentId ? { AgentId: String(agentId) } : {}),
+      ...(sessionId ? { SessionId: String(sessionId) } : {}),
+      ...(flush === true ? { Flush: true } : {}),
+    };
+    const result = await serverClient.action('CreateMemorySdk', payload, { apiVersion: '2025-11-14' });
+    return { accepted: true, data: result.data || {} };
+  }
+
   async function close() {
     for (const { client } of mcpClients.values()) await client.close().catch(() => {});
     mcpClients.clear();
   }
 
-  return { listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, close };
+  return { listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, close };
 }

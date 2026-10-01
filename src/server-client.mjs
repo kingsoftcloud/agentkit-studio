@@ -14,7 +14,7 @@ export class AgentEngineError extends Error {
 const SERVER_ACTIONS = new Set([
   'ListAgents', 'GetAgent', 'CreateSession', 'ListKnowledgeBases', 'ListMemoryInstances', 'ListMCPs',
   'GetMCP', 'RetrieveKnowledge',
-  'QueryMemorySdk',
+  'QueryMemorySdk', 'CreateMemorySdk',
   'ListSkillWorkspaces', 'ListAgentModels', 'ListSessions', 'GetSession',
   'ListSessionMessages', 'ListSessionEvents', 'ListAgentSchedules', 'GetAgentSchedule',
   'ListAgentScheduleOccurrences', 'GetObservabilityOverview', 'ListAgentRuntimeStats',
@@ -236,7 +236,7 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
         // for another SAN and fails with ERR_TLS_CERT_ALTNAME_INVALID.
         return requestAgainst(new URL('http://aicp.inner.api.ksyun.com'), false);
       }
-      const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk'].includes(name);
+      const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk'].includes(name);
       const codeValid = envelope?.Code == null ? nativeResource : [0, 200].includes(Number(envelope.Code));
       if (!response.ok || !envelope || !codeValid || envelope.Error || envelope.ResponseMetadata?.Error) {
         const status = !response.ok ? response.status : Number(envelope?.Code) || 502;

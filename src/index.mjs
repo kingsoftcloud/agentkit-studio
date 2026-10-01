@@ -132,7 +132,7 @@ async function registerControlPlane(ctx) {
     const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
     let record = buildId ? await buildState.build.resolve(agentId, buildId) : await store.get(agentId);
     if (!record) throw Object.assign(new Error('本地 Codex Agent 不存在'), { code: 'AGENT_NOT_FOUND' });
-    const { prepareLocalResourceContext, codexToolBindings } = await import('./local-runtime.mjs');
+    const { prepareLocalResourceContext, codexToolBindings, writeBoundMemory } = await import('./local-runtime.mjs');
     const prepared = await prepareLocalResourceContext({
       record,
       input,
@@ -151,6 +151,17 @@ async function registerControlPlane(ctx) {
       agentName: String(record.metadata?.name || record.name || ''),
       systemPrompt,
       dynamicTools: toolBindings.map(item => item.spec),
+      writeMemory: prepared.memoryWrite
+        ? async assistantText => writeBoundMemory({
+          binding: prepared.memory,
+          resourceAdapter,
+          input,
+          assistantText,
+          userId: userId || sessionId || agentId,
+          sessionId,
+          agentId,
+        })
+        : null,
       toolHandler: async ({ name, arguments: args, callId, signal }) => {
         const binding = toolBindings.find(item => item.name === name);
         if (!binding?.tool?._source) {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 绑定记忆库的本地 Agent 现在在回答完成后按 `spec.memory.write.mode`（`candidate` 或
+  `explicit_only`）把本轮 user/assistant 对话通过 `CreateMemorySdk` 写回云端；写入使用
+  session/user/Agent 隔离、限制消息数量和长度，并作为后置副作用记录 trace，写入失败不会吞掉
+  已生成的回答。`QueryMemorySdk` 与 `CreateMemorySdk` 都留在 Host 的签名边界内。
 - DSH 本地面板现在会在 Connection RPC 可用时直接通过 Studio Host 创建、保存和探测 MCP；即使嵌入页没有注入云端 control-plane 标记，也不会误调用不存在的旧版凭证 REST 合同。MCP 声明与探测到的工具契约由 Host 本地目录持久化，凭证值仍只由 DSH 凭证服务或进程环境持有；环境注入的只读凭证也可以用于本次 MCP 保存和运行。
 - 原生 DSH 会话绑定 Studio Agent 时继续保留用户选择的 provider/model 标识；Studio provider 只接管
   实际传输，不再让模型选择器显示内部 `agentkit-studio/*` 路由。通过“在新会话运行”选择的本地

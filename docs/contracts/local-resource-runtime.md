@@ -14,6 +14,10 @@
   结果以只读 context 注入本轮模型输入。
 - **Memory**：绑定的 Memory Instance ID 通过 `QueryMemorySdk` 查询，使用请求中的用户 ID；
   没有用户 ID 时使用 session/Agent 范围的隔离回退值，结果以只读 context 注入本轮模型输入。
+  当 `spec.memory.enabled=true` 且 `spec.memory.write.mode` 为 `candidate` 或
+  `explicit_only` 时，回答完成后会把本轮 user/assistant 对话通过 `CreateMemorySdk` 排队写回；
+  `explicit_only` 仅在用户输入包含“记住 / 别忘了 / remember”等显式记忆意图时写入。
+  这是后置副作用，写入失败只记入 trace，不改变已生成的回答。Harness 与 Codex 共用同一回写适配器。
 - **MCP**：Host 对只有 `resourceId` 的绑定调用 Server `GetMCP` 获取 Endpoint 和认证信息；
   也接受带 `endpointUrl`/`url`、`headers` 和 `credentialRef` 的外部 MCP 描述，凭证引用由 DSH
   credential service 或同名进程环境变量解析。随后使用 `@modelcontextprotocol/sdk` 建立

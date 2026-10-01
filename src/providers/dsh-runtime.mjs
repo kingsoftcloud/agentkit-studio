@@ -415,11 +415,15 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           const startedAt = new Date().toISOString();
           const traceId = String(options.runId || options.turnId || `run_codex_${Date.now().toString(36)}`);
           const traceEvents = [];
+          let responseText = '';
           const recordChunk = chunk => {
             const type = String(chunk?.type || '');
             const at = new Date().toISOString();
             if (type === 'tool') traceEvents.push({ event_type: `tool.${String(chunk.phase || 'update')}`, at, run_id: traceId, payload: { name: String(chunk.name || 'bound tool') } });
-            else if (type === 'reasoning' || type === 'text') traceEvents.push({ event_type: `turn.${type}`, at, run_id: traceId, payload: { chars: String(chunk.text || '').length } });
+            else if (type === 'reasoning' || type === 'text') {
+              if (type === 'text') responseText += String(chunk.text || '');
+              traceEvents.push({ event_type: `turn.${type}`, at, run_id: traceId, payload: { chars: String(chunk.text || '').length } });
+            }
           };
           try {
             yield* codexFrames(codexRuntime, {
@@ -432,6 +436,14 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
               dynamicTools: resources.dynamicTools || [],
               toolHandler: resources.toolHandler,
             }, recordChunk);
+            if (typeof resources.writeMemory === 'function') {
+              try {
+                const result = await resources.writeMemory(responseText);
+                traceEvents.push({ event_type: 'memory.write', at: new Date().toISOString(), run_id: traceId, payload: { accepted: result?.accepted === true } });
+              } catch (error) {
+                traceEvents.push({ event_type: 'memory.write.failed', at: new Date().toISOString(), run_id: traceId, payload: { code: String(error?.code || 'MEMORY_WRITE_FAILED') } });
+              }
+            }
             await syncCodexTrace(observability, {
               traceId,
               sessionId: String(options.sessionId || ''),

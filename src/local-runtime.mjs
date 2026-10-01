@@ -100,6 +100,33 @@ function boundToolIds(bindings) {
   }).filter(Boolean).map(String);
 }
 
+function memoryBinding(bindings) {
+  return Array.isArray(bindings?.plugins)
+    ? bindings.plugins.find(item => item?.config?.binding?.resource?.kind === 'memory-instance')
+    : null;
+}
+
+function explicitMemoryIntent(input) {
+  return /(?:记住|别忘了|请记|remember(?:\s+that)?)/i.test(String(input || ''));
+}
+
+function memoryWriteEnabled(record, binding, input) {
+  if (!binding || record?.spec?.memory?.enabled !== true) return false;
+  const mode = String(record?.spec?.memory?.write?.mode || 'candidate').trim().toLowerCase();
+  if (mode === 'candidate') return true;
+  return mode === 'explicit_only' && explicitMemoryIntent(input);
+}
+
+/** Persist one completed turn through the Host-owned memory adapter. */
+export async function writeBoundMemory({ binding, resourceAdapter, input, assistantText, userId, sessionId, agentId } = {}) {
+  if (!binding || typeof resourceAdapter?.writeMemory !== 'function') return { accepted: false, reason: 'adapter_unavailable' };
+  const resource = binding.config?.binding?.resource || {};
+  return resourceAdapter.writeMemory(resource.id || resource.resourceId, userId || sessionId || agentId, [
+    { role: 'user', content: input },
+    { role: 'assistant', content: assistantText },
+  ], { sessionId: String(sessionId || ''), agentId: String(agentId || ''), flush: false });
+}
+
 async function collectDshTools(toolAdapter, bindings, agent) {
   const ids = boundToolIds(bindings?.tools);
   if (!ids.length) return [];
@@ -132,7 +159,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   const bindings = resourceMode === 'prompt-only' ? {} : record?.spec?.bindings || record?.bindings || {};
   const skillIds = bindingIds(bindings, 'skills');
   const knowledge = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'knowledge-base');
-  const memory = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'memory-instance');
+  const memory = memoryBinding(bindings);
   const skillSpace = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'skill-space');
   const toolIds = boundToolIds(bindings.tools);
   if ((skillIds.length || knowledge || memory || skillSpace || (Array.isArray(bindings.mcpServers) && bindings.mcpServers.length)) && !resourceAdapter) {
@@ -164,7 +191,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   }
   const collected = await collectBoundTools(resourceAdapter, toolAdapter, bindings, agent);
   if (collected.warnings.length) resourceContext += `\n\nBound resource warnings:\n${collected.warnings.join('\n')}`;
-  return { bindings, resourceContext, tools: collected.tools, warnings: collected.warnings };
+  return { bindings, resourceContext, tools: collected.tools, warnings: collected.warnings, memory, memoryWrite: memoryWriteEnabled(record, memory, input) };
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
@@ -294,6 +321,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
 
     let resourceContext = '';
     let tools = [];
+    let preparedMemoryWrite = null;
     try {
       const prepared = await prepareLocalResourceContext({
         record,
@@ -306,6 +334,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       });
       resourceContext = prepared.resourceContext;
       tools = prepared.tools;
+      preparedMemoryWrite = prepared.memoryWrite ? prepared.memory : null;
     } catch (error) {
       response.writeHead(409);
       response.end(JSON.stringify({ error: { code: error?.code || 'RESOURCE_EXECUTION_FAILED', message: error?.message || '资源加载失败', details: error?.details || {} } }));
@@ -360,6 +389,16 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       }
       if (reasoning) send({ kind: 'assistant_reasoning', lifecycle: 'completed', payload: { text: reasoning } });
       send({ kind: 'assistant_text', lifecycle: 'completed', payload: { text } });
+      if (preparedMemoryWrite && typeof resourceAdapter?.writeMemory === 'function') {
+        try {
+          const result = await writeBoundMemory({ binding: preparedMemoryWrite, resourceAdapter, input, assistantText: text, userId: parsed.userId, sessionId: parsed.sessionId, agentId });
+          noteTrace('memory.write', { accepted: result?.accepted === true });
+        } catch (error) {
+          // Memory persistence is a post-response side effect. Keep the
+          // completed answer visible while recording the typed write failure.
+          noteTrace('memory.write.failed', { code: String(error?.code || 'MEMORY_WRITE_FAILED') });
+        }
+      }
       send({ kind: 'progress', lifecycle: 'completed', payload: { status: 'completed' } });
       await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'completed', events: [...traceEvents, { event_type: 'run.completed', at: new Date().toISOString(), run_id: runId }] }).catch(error => console.warn('[local-runtime] trace sync failed:', error?.message || error));
       response.write(`data: ${JSON.stringify({ runId, runtimeEvent: { event_type: 'run.completed' } })}\n\n`);

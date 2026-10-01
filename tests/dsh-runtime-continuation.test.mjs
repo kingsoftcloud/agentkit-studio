@@ -113,3 +113,15 @@ test('Codex intermediate text does not suppress later tools, reasoning or final 
     [3, 'text', '最终回答'], [4, 'reasoning', '补充说明'],
   ]);
 });
+
+test('Codex completed text is persisted through the bound memory adapter', async () => {
+  let written;
+  const adapter = createDshRuntimeAdapter({
+    codexResourceContext: async () => ({
+      writeMemory: async text => { written = text; return { accepted: true }; },
+    }),
+    codexRuntime: { async *stream() { yield { type: 'text', text: '已记住你的偏好' }; } },
+  });
+  for await (const _chunk of adapter.stream({ ...prompt, model: 'local:codex-memory-agent', studioRuntime: 'codex', sessionId: 'memory-session' })) {}
+  assert.equal(written, '已记住你的偏好');
+});
