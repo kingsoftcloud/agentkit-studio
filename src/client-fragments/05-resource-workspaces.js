@@ -13,6 +13,7 @@
       const [message, setMessage] = useState('');
       const [error, setError] = useState('');
       const [mcpDialogOpen, setMcpDialogOpen] = useState(false);
+      const [mcpEditing, setMcpEditing] = useState(null);
       const [mcpPreview, setMcpPreview] = useState(null);
       const [skillDialogOpen, setSkillDialogOpen] = useState(false);
       const [skillPreview, setSkillPreview] = useState(null);
@@ -57,6 +58,9 @@
       }, [query]);
       useEffect(() => { void load(resourceKind, null, true); }, [resourceKind, pageSize, submittedQuery]);
       const reloadCatalog = () => load(resourceKind, null, true);
+      const openMcpCreate = () => { setMcpEditing(null); setMcpDialogOpen(true); };
+      const openMcpEdit = resource => { setMcpEditing(resource); setMcpDialogOpen(true); };
+      const closeMcpDialog = () => { setMcpDialogOpen(false); setMcpEditing(null); };
       const probeMcp = async resource => {
         setMessage(''); setError('');
         try {
@@ -118,6 +122,7 @@
               h('td', { style: { padding: '12px 13px', whiteSpace: 'nowrap' } },
                 h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
                   h('button', { type: 'button', onClick: () => setResourcePreview(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看'),
+                  resourceKind === 'mcp' && canDelete ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '编辑凭证') : null,
                   resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => void probeMcp(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '重新探测') : null,
                   resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpPreview(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看工具') : null,
                   resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看文件') : null,
@@ -134,7 +139,7 @@
       return h('div', null,
         h(ContentIntro, { detail: '资源库只负责资源目录生命周期：发现、导入、探测、查看、删除和状态刷新。新增或变更 Agent 绑定关系请在 Agent 创建页或编辑页完成。模型、Tool、MCP、Skill 可绑定多个；知识库、记忆库和 Skill Center 每类默认绑定一个。', action: h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
           resourceKind === 'model' ? h('button', { type: 'button', onClick: () => setModelDialogOpen(true), style: buttonStyle() }, '添加模型') : null,
-          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpDialogOpen(true), style: buttonStyle() }, '添加 MCP') : null,
+          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: openMcpCreate, style: buttonStyle() }, '添加 MCP') : null,
           resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => setSkillDialogOpen(true), style: buttonStyle() }, '扫描本地 Skill') : null,
           h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '刷新'),
           h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : 'Host 待接入')) }),
@@ -153,7 +158,7 @@
           error ? h('div', { role: 'alert', style: { marginTop: '10px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
         ) : null,
         modelDialogOpen ? h(ModelResourceDialog, { onClose: () => setModelDialogOpen(false), onCreated: reloadCatalog }) : null,
-        mcpDialogOpen ? h(McpResourceDialog, { onClose: () => setMcpDialogOpen(false), onCreated: reloadCatalog }) : null,
+        mcpDialogOpen ? h(McpResourceDialog, { resource: mcpEditing, onClose: closeMcpDialog, onCreated: reloadCatalog }) : null,
         mcpPreview ? h(McpToolsDialog, { resource: mcpPreview, onClose: () => setMcpPreview(null) }) : null,
         skillDialogOpen ? h(SkillDiscoveryDialog, { onClose: () => setSkillDialogOpen(false), onImported: reloadCatalog }) : null,
         skillPreview ? h(SkillPreviewDialog, { title: skillPreview.title, preview: skillPreview.files, file: skillPreviewFile, onClose: () => { setSkillPreview(null); setSkillPreviewFile(null); }, onSelect: loadSkillFile }) : null,

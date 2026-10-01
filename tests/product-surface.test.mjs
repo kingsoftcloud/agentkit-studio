@@ -241,7 +241,9 @@ test('resource surface exposes real MCP and Skill lifecycle actions', () => {
   assert.match(clientSource, /hostRemote\.createToolResource/);
   assert.match(clientSource, /hostRemote\.deleteResource/);
   assert.match(clientSource, /hostRemote\.createMcpResource/);
+  assert.match(clientSource, /hostRemote\.updateMcpResource/);
   assert.match(clientSource, /hostRemote\.probeMcpResource/);
+  assert.match(clientSource, /编辑凭证/);
   assert.match(clientSource, /hostRemote\.discoverSkills/);
   assert.match(clientSource, /hostRemote\.commitDiscoveredSkill/);
   assert.match(clientSource, /hostRemote\.previewInstalledSkill/);

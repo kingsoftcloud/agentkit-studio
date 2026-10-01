@@ -252,8 +252,19 @@
         children));
     }
 
-    function McpResourceDialog({ onClose, onCreated }) {
-      const [form, setForm] = useState({ displayName: '', name: '', description: '', version: '1.0.0', transport: 'http', endpointUrl: '', command: '', args: '', apiKeyName: '', apiKeyValue: '', envRefs: '' });
+    function McpResourceDialog({ resource, onClose, onCreated }) {
+      const editing = Boolean(resource?.resourceId);
+      const server = resource?.server || {};
+      const existingEnvRefs = server.envRefs && typeof server.envRefs === 'object' ? server.envRefs : {};
+      const existingAuthorization = String(existingEnvRefs.Authorization || '');
+      const initialCredentialName = existingAuthorization.startsWith('env://') ? existingAuthorization.slice(6) : '';
+      const [form, setForm] = useState(() => ({
+        displayName: String(resource?.displayName || resource?.name || ''), name: String(resource?.name || server.name || ''),
+        description: String(resource?.description || ''), version: String(resource?.version || server.version || '1.0.0'),
+        transport: String(server.transport || 'http'), endpointUrl: String(server.endpointUrl || ''), command: String(server.command || ''),
+        args: Array.isArray(server.args) ? server.args.join(' ') : '', apiKeyName: initialCredentialName, apiKeyValue: '',
+        envRefs: Object.entries(existingEnvRefs).map(([key, value]) => `${key}=${value}`).join(', '),
+      }));
       const [saving, setSaving] = useState(false);
       const [error, setError] = useState('');
       const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
@@ -268,28 +279,26 @@
         const envRefs = {};
         form.envRefs.split(',').map(item => item.trim()).filter(Boolean).forEach(item => { const [key, ref] = item.split('=').map(part => part.trim()); if (key && ref) envRefs[key] = ref; });
         const credentialName = form.apiKeyName.trim();
-        if (credentialName && form.apiKeyValue.trim()) {
-          try { await hostRemote.putCredential(credentialName, form.apiKeyValue.trim()); }
-          catch (reason) { setError(reason?.message || 'MCP 凭证保存失败'); return; }
-          envRefs[form.transport === 'stdio' ? credentialName : 'Authorization'] = `env://${credentialName}`;
-        }
         setSaving(true);
         try {
-          const created = await hostRemote.createMcpResource({
+          if (credentialName && form.apiKeyValue.trim()) await hostRemote.putCredential(credentialName, form.apiKeyValue.trim());
+          if (credentialName && form.apiKeyValue.trim()) envRefs[form.transport === 'stdio' ? credentialName : 'Authorization'] = `env://${credentialName}`;
+          const payload = {
             displayName: form.displayName.trim(), description: form.description.trim(),
             server: { name, version: form.version.trim() || '1.0.0', transport: form.transport, endpointUrl: form.endpointUrl.trim() || undefined, command: form.command.trim() || undefined, args: form.args.split(/\s+/).map(item => item.trim()).filter(Boolean), envRefs },
-          });
+          };
+          const saved = editing ? await hostRemote.updateMcpResource(resource.resourceId, payload) : await hostRemote.createMcpResource(payload);
           // A newly added MCP is not bindable until the Host has performed a
           // real probe and persisted its tool contract. The probe stays on the
           // Host; the browser never connects.
-          await hostRemote.probeMcpResource(created.resourceId);
-          onCreated?.(created);
+          await hostRemote.probeMcpResource(saved.resourceId || resource.resourceId);
+          onCreated?.(saved);
           onClose();
-        } catch (reason) { setError(reason?.message || 'MCP 创建失败'); }
+        } catch (reason) { setError(reason?.message || (editing ? 'MCP 更新失败' : 'MCP 创建失败')); }
         finally { setSaving(false); }
       };
       const field = (label, key, placeholder, type = 'text') => h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, label, h('input', { type, value: form[key], placeholder, onChange: event => setField(key, event.target.value), style: inputStyle() }));
-      return h(ResourceDialog, { title: '添加 MCP Server', detail: '创建后 Host 会保存连接声明并完成探测；绑定关系请在 Agent 创建或编辑页维护。', onClose },
+      return h(ResourceDialog, { title: editing ? '编辑 MCP Server' : '添加 MCP Server', detail: '凭证只保存到 Host 凭证服务；修改后会重新探测工具契约。绑定关系请在 Agent 创建或编辑页维护。', onClose },
         h('form', { onSubmit: save, style: { display: 'grid', gap: '12px' } },
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('显示名称', 'displayName', '例如：企业搜索'), field('资源名称', 'name', '例如：enterprise-search')),
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('版本', 'version', '1.0.0'), h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '传输方式', h('select', { value: form.transport, onChange: event => setField('transport', event.target.value), style: inputStyle() }, h('option', { value: 'http' }, 'HTTP'), h('option', { value: 'sse' }, 'SSE'), h('option', { value: 'stdio' }, 'stdio')))),
@@ -299,7 +308,7 @@
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('凭证名称（可选）', 'apiKeyName', '例如：SEARCH_API_KEY'), field('API Key（仅本次保存）', 'apiKeyValue', '不会写入资源目录', 'password')),
           field('环境变量引用（可选）', 'envRefs', '例如：API_KEY=env://SEARCH_API_KEY'),
           error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
-          h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: 'var(--dsw-static-neutral-00, #fff)', background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '正在探测…' : '保存并探测'))));
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: 'var(--dsw-static-neutral-00, #fff)', background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '正在探测…' : editing ? '保存修改并探测' : '保存并探测'))));
     }
 
     function formatResourceSize(value) {

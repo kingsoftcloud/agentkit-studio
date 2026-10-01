@@ -133,6 +133,7 @@ export function createStudioHostRemote(options = {}) {
     models: () => request('/api/v1/catalog/models'),
     resources: (query = '') => request(`/api/v1/catalog/resources${query ? `?${query}` : ''}`),
     createMcpResource: payload => request('/api/v1/catalog/mcp-servers', { method: 'POST', body: JSON.stringify(payload) }),
+    updateMcpResource: (resourceId, payload) => request(`/api/v1/catalog/mcp-servers/${encodeURIComponent(resourceId)}`, { method: 'PUT', body: JSON.stringify(payload) }),
     probeMcpResource: (resourceId, timeoutSeconds = 15) => request(`/api/v1/catalog/mcp-servers/${encodeURIComponent(resourceId)}:probe?timeoutSeconds=${encodeURIComponent(timeoutSeconds)}`, { method: 'POST' }),
     discoverSkills: scanPaths => request('/api/v1/catalog/skills:discover', { method: 'POST', body: JSON.stringify({ scanPaths: Array.isArray(scanPaths) ? scanPaths : [] }) }),
     previewDiscoveredSkill: (inspectionToken, candidateId, path) => request(`/api/v1/catalog/skills/discoveries/${encodeURIComponent(inspectionToken)}/candidates/${encodeURIComponent(candidateId)}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`),

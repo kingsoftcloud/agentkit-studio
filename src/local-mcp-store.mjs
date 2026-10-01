@@ -94,6 +94,31 @@ export function createLocalMcpStore({ storeDir } = {}) {
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
   }
+  async function update(resourceId, payload = {}) {
+    const id = idOf(resourceId);
+    const current = await get(id);
+    if (!current) throw new LocalMcpStoreError('MCP_NOT_FOUND', '本地 MCP 资源不存在', { resourceId: id });
+    const server = payload.server && typeof payload.server === 'object' ? payload.server : current.server;
+    const name = String(server.name || payload.name || current.name || '').trim();
+    const displayName = String(payload.displayName || payload.name || current.displayName || name).trim();
+    const transport = String(server.transport || current.server?.transport || 'http').trim().toLowerCase();
+    if (!name || !displayName) throw new LocalMcpStoreError('MCP_NAME_MISSING', 'MCP 名称不能为空');
+    if (!['http', 'sse', 'stdio'].includes(transport)) throw new LocalMcpStoreError('MCP_TRANSPORT_INVALID', 'MCP 传输方式无效');
+    if (transport !== 'stdio' && !/^https?:\/\//i.test(String(server.endpointUrl || ''))) throw new LocalMcpStoreError('MCP_ENDPOINT_INVALID', 'HTTP/SSE MCP 需要有效的服务地址');
+    if (transport === 'stdio' && !String(server.command || '').trim()) throw new LocalMcpStoreError('MCP_COMMAND_INVALID', 'stdio MCP 需要启动命令');
+    return save({
+      ...current,
+      name,
+      displayName,
+      description: payload.description === undefined ? current.description : String(payload.description || ''),
+      version: String(server.version || payload.version || current.version || '1.0.0'),
+      server: { ...server, name, transport, envRefs: server.envRefs && typeof server.envRefs === 'object' ? server.envRefs : {} },
+      status: 'pending',
+      contract: { discoveredTools: [] },
+      health: { status: 'pending', toolCount: 0, tools: [] },
+      updatedAt: new Date().toISOString(),
+    });
+  }
   async function markProbe(resourceId, { tools = [], error = null } = {}) {
     const current = await get(resourceId);
     if (!current) throw new LocalMcpStoreError('MCP_NOT_FOUND', '本地 MCP 资源不存在', { resourceId });
@@ -112,5 +137,5 @@ export function createLocalMcpStore({ storeDir } = {}) {
     await rm(pathFor(id), { force: true });
     return { resourceId: id, deleted: true };
   }
-  return { list, get, create, markProbe, remove, root: storeDir };
+  return { list, get, create, update, markProbe, remove, root: storeDir };
 }

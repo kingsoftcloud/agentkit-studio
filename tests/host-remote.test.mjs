@@ -156,6 +156,7 @@ test('resource lifecycle remote exposes MCP and local Skill discovery contracts'
     },
   });
   await remote.createMcpResource({ displayName: 'Search', server: { name: 'search', version: '1.0.0', transport: 'http', endpointUrl: 'https://mcp.test' } });
+  await remote.updateMcpResource('mcp/search', { displayName: 'Updated Search', server: { name: 'search', transport: 'http', endpointUrl: 'https://mcp-new.test' } });
   await remote.probeMcpResource('mcp/search');
   await remote.discoverSkills(['skills']);
   await remote.previewDiscoveredSkill('token/a', 'candidate/a', 'SKILL.md');
@@ -163,6 +164,7 @@ test('resource lifecycle remote exposes MCP and local Skill discovery contracts'
   await remote.previewInstalledSkill('skill/local/search', 'SKILL.md');
   assert.deepEqual(calls.map(call => [call.method, call.url]), [
     ['POST', '/api/v1/catalog/mcp-servers'],
+    ['PUT', '/api/v1/catalog/mcp-servers/mcp%2Fsearch'],
     ['POST', '/api/v1/catalog/mcp-servers/mcp%2Fsearch:probe?timeoutSeconds=15'],
     ['POST', '/api/v1/catalog/skills:discover'],
     ['GET', '/api/v1/catalog/skills/discoveries/token%2Fa/candidates/candidate%2Fa/files?path=SKILL.md'],
@@ -170,6 +172,6 @@ test('resource lifecycle remote exposes MCP and local Skill discovery contracts'
     ['GET', '/api/v1/catalog/skills/skill%2Flocal%2Fsearch/files?path=SKILL.md'],
   ]);
   assert.deepEqual(JSON.parse(calls[0].body).server.name, 'search');
-  assert.deepEqual(JSON.parse(calls[2].body), { scanPaths: ['skills'] });
-  assert.deepEqual(JSON.parse(calls[4].body), { candidateId: 'candidate/a', overwrite: true });
+  assert.deepEqual(JSON.parse(calls[3].body), { scanPaths: ['skills'] });
+  assert.deepEqual(JSON.parse(calls[5].body), { candidateId: 'candidate/a', overwrite: true });
 });

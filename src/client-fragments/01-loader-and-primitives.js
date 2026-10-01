@@ -464,6 +464,9 @@ window.__ModuleLoader__.load({
         createMcpResource: payload => bridgeAvailable()
           ? studioBridgeOperation('mcp/create', payload)
           : request('/api/v1/catalog/mcp-servers', { method: 'POST', body: JSON.stringify(payload) }),
+        updateMcpResource: (resourceId, payload) => (bridgeAvailable() && localMcpId(resourceId))
+          ? studioBridgeOperation('mcp/update', { resourceId, ...payload })
+          : request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId), { method: 'PUT', body: JSON.stringify(payload) }),
         createModelResource: payload => request('/api/v1/catalog/model-profiles', { method: 'POST', body: JSON.stringify(payload) }),
         createToolResource: payload => request('/api/v1/catalog/tools', { method: 'POST', body: JSON.stringify(payload) }),
         deleteResource: resourceId => (bridgeAvailable() && (localMcpId(resourceId) || directServer()))

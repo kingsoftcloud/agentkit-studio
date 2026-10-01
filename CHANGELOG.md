@@ -17,6 +17,10 @@
 - 本地 MCP 现在会在每次探测和工具调用前重新解析 DSH credential；凭证轮换会自动替换旧连接，
   不再把过期的连接缓存到 Host 生命周期结束。HTTP 401/403/404、缺少凭证和工具目录失败分别
   返回可操作的错误码，并把最近一次探测错误保存在资源健康状态中，资源库可以直接看到失败原因。
+- MCP 资源库现在支持编辑已有本地 MCP 的 endpoint、环境变量引用和凭证；保存后会使旧工具契约失效并
+  重新探测，用户不必删除资源后重建。凭证值仍只进入 DSH credential service，不会写入资源声明。
+- 云端 RunAgent SSE 现在兼容 CRLF 分帧和 authoritative snapshot 替换语义；DSH runtime context 不会再
+  被误当成人类问题发送，知识库 `Segment.Content` 与文档名也会保留到受限上下文中。
 - 云端 Skill Space 下载现在会在读取 `SKILL.md` 前校验服务返回的 `ContentHash` sha256 摘要；
   摘要格式非法或压缩包被替换时返回明确的 `SKILL_ARCHIVE_HASH_INVALID`/
   `SKILL_ARCHIVE_HASH_MISMATCH`，避免错误资源被注入本地 Agent 上下文。

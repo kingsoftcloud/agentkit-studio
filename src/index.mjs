@@ -342,7 +342,7 @@ async function registerControlPlane(ctx) {
     presetAdmission.setRegistry(presetRegistry);
     void restorePersistedPresets();
   }
-  const allowed = new Set(['agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
+  const allowed = new Set(['agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
@@ -409,6 +409,11 @@ async function registerControlPlane(ctx) {
       if (endpoint === 'mcp/create') {
         const localStore = await localMcpStorePromise;
         return { ok: true, value: await localStore.create(payload || {}) };
+      }
+      if (endpoint === 'mcp/update') {
+        const localStore = await localMcpStorePromise;
+        const resourceId = String(payload?.resourceId || '').trim();
+        return { ok: true, value: await localStore.update(resourceId, payload || {}) };
       }
       if (endpoint === 'mcp/probe') {
         const localStore = await localMcpStorePromise;

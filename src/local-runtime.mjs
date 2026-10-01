@@ -182,7 +182,12 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   if (knowledge) {
     const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;
     const hits = await resourceAdapter.searchKnowledge(resourceId, input);
-    resourceContext += (hits || []).map(hit => `Knowledge: ${extractText(hit.content || hit.text || hit)}`).join('\n');
+    resourceContext += (hits || []).map(hit => {
+      const segment = hit?.Segment || hit?.segment || hit;
+      const content = extractText(segment);
+      const title = segment?.Document?.Name || segment?.document?.name || '';
+      return content ? `Knowledge${title ? ` (${String(title)})` : ''}: ${content}` : '';
+    }).filter(Boolean).join('\n');
   }
   if (memory) {
     const resourceId = memory.config.binding.resource.id || memory.config.binding.resource.resourceId;

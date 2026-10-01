@@ -6,6 +6,7 @@
  * the AgentEngine/local-runtime stream and back into DSH text chunks.
  */
 import { prepareLocalResourceContext } from '../local-runtime.mjs';
+import { readSse } from '../sse.mjs';
 
 const ROUTE = 'agentkit-studio';
 let activeAdapter;
@@ -69,14 +70,18 @@ function textOf(message) {
 
 function historyOf(messages) {
   return (Array.isArray(messages) ? messages : [])
-    .filter(message => message?.role === 'user' || message?.role === 'assistant')
+    .filter(message => isUserInput(message) || message?.role === 'assistant')
     .map(message => ({ role: message.role, content: textOf(message) }))
     .filter(message => message.content);
 }
 
+function isUserInput(message) {
+  return message?.role === 'user' && (!message.source || message.source.kind === 'user');
+}
+
 function lastUser(messages) {
   return [...(Array.isArray(messages) ? messages : [])].reverse()
-    .find(message => message?.role === 'user');
+    .find(isUserInput);
 }
 
 function cloudCancelledError(reason) {
@@ -91,32 +96,25 @@ async function* parseSse(body, signal) {
   if (!body) return;
   const reader = body.getReader?.();
   if (!reader) return;
-  const decoder = new TextDecoder();
-  let buffer = '';
   const abort = () => { try { void reader.cancel?.(signal.reason); } catch {} };
   signal?.addEventListener('abort', abort, { once: true });
   try {
-    for (;;) {
-      if (signal?.aborted) throw cloudCancelledError(signal.reason);
-      const { done, value } = await reader.read();
-      if (signal?.aborted) throw cloudCancelledError(signal.reason);
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let split = buffer.indexOf('\n\n');
-      while (split >= 0) {
-        if (signal?.aborted) throw cloudCancelledError(signal.reason);
-        const record = buffer.slice(0, split);
-        buffer = buffer.slice(split + 2);
-        const data = record.split(/\r?\n/).filter(line => line.startsWith('data:'))
-          .map(line => line.slice(5).trimStart()).join('\n');
-        if (data && data !== '[DONE]') {
-          try { yield JSON.parse(data); } catch { /* ignore malformed provider frames */ }
+    const chunks = {
+      async *[Symbol.asyncIterator]() {
+        for (;;) {
+          if (signal?.aborted) throw cloudCancelledError(signal.reason);
+          const { done, value } = await reader.read();
+          if (signal?.aborted) throw cloudCancelledError(signal.reason);
+          if (done) break;
+          yield value;
         }
-        split = buffer.indexOf('\n\n');
-      }
-    }
+      },
+    };
+    yield* readSse(chunks);
   } catch (error) {
     if (signal?.aborted) throw cloudCancelledError(signal.reason);
+    if (error instanceof SyntaxError) throw Object.assign(new Error('云端 Agent 流包含无效事件'), { code: 'CLOUD_STREAM_INVALID' });
+    if (error?.code === 'UPSTREAM_STREAM_TRUNCATED') throw Object.assign(new Error('云端 Agent 流在事件结束前断开'), { code: 'CLOUD_STREAM_INCOMPLETE' });
     throw error;
   } finally {
     signal?.removeEventListener('abort', abort);
@@ -127,7 +125,7 @@ async function* parseSse(body, signal) {
 function createChunkState() {
   return {
     currentKind: '', currentIndex: -1, currentText: '', nextIndex: 0,
-    toolNames: new Map(), toolStarted: new Set(),
+    toolNames: new Map(), toolStarted: new Set(), lastTextByKind: new Map(),
   };
 }
 
@@ -135,6 +133,7 @@ function closeCurrentBlock(state) {
   if (!state.currentKind || state.currentIndex < 0) return [];
   const index = state.currentIndex;
   const block = { type: state.currentKind, text: state.currentText };
+  state.lastTextByKind.set(state.currentKind, state.currentText);
   state.currentKind = '';
   state.currentIndex = -1;
   state.currentText = '';
@@ -159,8 +158,25 @@ function appendBlock(state, kind, value) {
     frames.push({ type: 'block-start', index, blockType: kind });
   }
   state.currentText += text;
+  state.lastTextByKind.set(kind, state.currentText);
   frames.push({ type: kind === 'reasoning' ? 'reasoning-delta' : 'text-delta', index: state.currentIndex, text });
   return frames;
+}
+
+function appendSnapshot(state, kind, value) {
+  const text = String(value || '');
+  if (!text) return [];
+  const previous = state.lastTextByKind.get(kind) || '';
+  if (text === previous) return [];
+  if (text.startsWith(previous)) return appendBlock(state, kind, text.slice(previous.length));
+  if (state.currentKind === kind && state.currentText === previous) {
+    // The provider's done/replace event is authoritative. Update the open
+    // block without emitting the same full snapshot as a second delta.
+    state.currentText = text;
+    state.lastTextByKind.set(kind, text);
+    return [];
+  }
+  return [...closeCurrentBlock(state), ...appendBlock(state, kind, text)];
 }
 
 function finishBlocks(state) {
@@ -343,10 +359,17 @@ async function* cloudFrames(body, signal) {
       if (finish) yield* appendBlock(state, 'reasoning', `工具 ${toolName} ${failed ? '失败' : '已完成'}。`);
       continue;
     }
-    if (type.includes('reasoning_summary_text.delta')) yield* appendBlock(state, 'reasoning', event.delta);
-    else if (type.includes('output_text.delta')) yield* appendBlock(state, 'text', event.delta);
-    else if (type.includes('reasoning_summary_text.done')) yield* closeBlock(state, 'reasoning');
-    else if (type.includes('output_text.done')) yield* closeBlock(state, 'text');
+    if (type.includes('reasoning_summary_text.delta')) {
+      yield* (event.replace === true ? appendSnapshot(state, 'reasoning', event.delta) : appendBlock(state, 'reasoning', event.delta));
+    } else if (type.includes('output_text.delta')) {
+      yield* (event.replace === true ? appendSnapshot(state, 'text', event.delta) : appendBlock(state, 'text', event.delta));
+    } else if (type.includes('reasoning_summary_text.done')) {
+      if (typeof event.text === 'string') yield* appendSnapshot(state, 'reasoning', event.text);
+      yield* closeBlock(state, 'reasoning');
+    } else if (type.includes('output_text.done')) {
+      if (typeof event.text === 'string') yield* appendSnapshot(state, 'text', event.text);
+      yield* closeBlock(state, 'text');
+    }
     else {
       const reasoning = event?.reasoning_content || event?.reasoning;
       const text = event?.delta || event?.output_text?.delta || event?.response?.output_text?.delta;
