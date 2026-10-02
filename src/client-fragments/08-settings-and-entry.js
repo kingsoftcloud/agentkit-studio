@@ -218,32 +218,6 @@
         } catch { /* ui-workspace not loaded or patch not applied; sidebar stays unfiltered */ }
         return () => { if (unregister) unregister(); };
       }, 'agentkit-studio:sidebar-session-filter');
-      // After a long suspend (laptop sleep / frozen tab) the DSH web client
-      // reconnects, but statically-loaded plugin panel registrations are not
-      // rebuilt by the platform's reconnect path — the Studio panel rows
-      // vanish until a manual reload. Detect that state when the tab becomes
-      // visible or the network returns and reload once (30 s loop guard).
-      ctx.effect(() => {
-        const recover = () => {
-          if (document.visibilityState !== 'visible') return;
-          const hasStudioPanel = [...document.querySelectorAll('button')]
-            .some(button => button.textContent?.trim() === 'Agents');
-          if (hasStudioPanel) return;
-          try {
-            const last = Number(window.sessionStorage.getItem('agentkit-studio:reload-guard') || 0);
-            if (Date.now() - last < 30000) return;
-            window.sessionStorage.setItem('agentkit-studio:reload-guard', String(Date.now()));
-          } catch { /* private mode: still reload once per visibility event */ }
-          window.location.reload();
-        };
-        document.addEventListener('visibilitychange', recover);
-        window.addEventListener('online', recover);
-        recover();
-        return () => {
-          document.removeEventListener('visibilitychange', recover);
-          window.removeEventListener('online', recover);
-        };
-      }, 'agentkit-studio:auto-recover');
       PANELS.forEach((panel, index) => {
         ctx.slots.inject('main', () => ctx.slots.register(
           { name: 'main', key: panel.id },
@@ -254,8 +228,6 @@
           props => h(StudioPanelIcon, { ...props, glyph: panel.glyph, panelId: panel.id }),
         ));
       });
-
-
       // Settings remains the official DSH modal and navigation surface. Studio
       // contributes native sections into that settings dialog. The model page is Studio
       // owned; its save path also writes DSH's public llm-pi-ai settings and
