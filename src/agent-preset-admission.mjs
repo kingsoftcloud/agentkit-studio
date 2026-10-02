@@ -163,7 +163,16 @@ export class DshPresetAdmission {
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
     const plugins = [];
-    if (prefix) plugins.push({ id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix } });
+    if (prefix) plugins.push({
+      id: 'persona',
+      name: '@deepseek-ai/dsh-persona',
+      // Agent selection is independent from DSH's optional filesystem
+      // workspace. The Studio runtime owns bound MCP/Skill/knowledge
+      // resources, so inheriting the host's runtime context would silently
+      // attach the current workspace and make a blank Agent session appear
+      // workspace-bound in the native conversation UI.
+      config: { prefix, includeRuntimeContext: false },
+    });
     if (eligibility.mode === 'studio-bridge') {
       // Cloud tools/resources are executed by AgentEngine's RunAgent action;
       // asking the local DSH registry to materialize them would incorrectly

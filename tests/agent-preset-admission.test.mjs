@@ -73,6 +73,7 @@ test('the active DSH model route and official persona row make a real native pre
   await admission.ensure('demo/agent');
   assert.equal(registered[0].plugins[0].name, '@deepseek-ai/dsh-persona');
   assert.equal(registered[0].plugins[0].config.prefix, '只用简洁中文回答。');
+  assert.equal(registered[0].plugins[0].config.includeRuntimeContext, false);
 });
 
 test('the bridge preset declares the Studio provider listener for local Harness and Codex', async () => {
