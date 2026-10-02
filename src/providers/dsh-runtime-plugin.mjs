@@ -10,7 +10,7 @@ const AGENT_REQUEST_EVENT = ['agent', 'request'].join('/');
 import { spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bindDshAgentRoute, streamDshRuntime, unbindDshAgentRoutes } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
+import { bindDshAgentRoute, executeDshResourceTool, streamDshRuntime, unbindDshAgentRoutes } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
 
 // Keep the builtin executor in the Studio host. The Python toolset remains
 // the source of truth for AgentEngine tool semantics (workspace confinement,
@@ -63,6 +63,25 @@ function builtinPython(config = {}, root) {
 
 function builtinError(code, message, details = {}) {
   return Object.assign(new Error(message), { code, details });
+}
+
+// DSH's ToolRegistry validates successful values against the declared output
+// schema. MCP servers may return any JSON root (including arrays), so expose a
+// stable object envelope to the registry and keep the lossless payload in its
+// string field. The rendered content remains the original JSON representation
+// that the model and native conversation can consume.
+const BRIDGED_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: { result: { type: 'string' } },
+  required: ['result'],
+};
+
+function bridgedOutput(value) {
+  return { result: typeof value === 'string' ? value : JSON.stringify(value) ?? '' };
+}
+
+function renderBridgedOutput(_args, value) {
+  return [{ type: 'text', text: String(value?.result || '') }];
 }
 
 function createBuiltinExecutor(config = {}) {
@@ -172,16 +191,47 @@ function registerBuiltinTools(ctx, contracts, config) {
       name: String(contract.name),
       description: String(contract.description || `AgentEngine 内置 Tool：${contract.name}`),
       parameters: contract.parameters || { type: 'object', properties: {} },
-      output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }] },
-      execute: (args, exec) => executeBuiltin(contract, args, {
+      output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
+      execute: async (args, exec) => bridgedOutput(await executeBuiltin(contract, args, {
         signal: exec?.signal,
         callId: exec?.callId,
         agentId: config.agentId,
-      }),
+      })),
     }));
     return () => disposers.forEach(dispose => { try { dispose?.(); } catch {} });
   };
   if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: builtin tool bindings');
+  else install();
+}
+
+function registerMcpTools(ctx, contracts, config) {
+  const values = (Array.isArray(contracts) ? contracts : [])
+    .filter(contract => contract && contract.executor === 'mcp' && contract.enabled !== false && contract.name)
+    .map(contract => ({
+      ...contract,
+      resourceId: String(contract.mcpResourceId || contract.resourceId || '').trim(),
+    }))
+    .filter(contract => contract.resourceId);
+  if (!values.length || typeof ctx.tools?.register !== 'function') return;
+  const install = () => {
+    const disposers = values.map(contract => ctx.tools.register({
+      name: String(contract.name),
+      description: String(contract.description || `MCP Tool：${contract.name}`),
+      parameters: contract.parameters || { type: 'object', properties: {} },
+      output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
+      execute: async (args, exec) => bridgedOutput(await executeDshResourceTool({
+        agentId: config.agentId,
+        resourceId: contract.resourceId,
+        name: contract.name,
+        arguments: args || {},
+        signal: exec?.signal,
+        callId: exec?.callId,
+        agent: exec?.agent,
+      })),
+    }));
+    return () => disposers.forEach(dispose => { try { dispose?.(); } catch {} });
+  };
+  if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: MCP tool bindings');
   else install();
 }
 
@@ -233,7 +283,10 @@ export function apply(ctx, config = {}) {
   const agentId = String(config.agentId || '').trim();
   if (!agentId) throw new Error('agentkit-studio-dsh-runtime: agentId is required');
   registerBuiltinTools(ctx, config.toolContracts, config);
+  registerMcpTools(ctx, config.toolContracts, config);
   const toolAdapter = createToolAdapter(ctx, config.toolBindings);
+  const nativeTools = config.local === true
+    && (Array.isArray(config.toolContracts) ? config.toolContracts : []).some(contract => ['mcp', 'builtin'].includes(contract?.executor));
   // The Agent loop dispatches its request waterfall through the selected Agent
   // scope, then invokes `llm.stream` from the root loop context. Bind the
   // Studio provider at the scoped request boundary so the root adapter can
@@ -248,6 +301,7 @@ export function apply(ctx, config = {}) {
       local: config.local === true,
       buildId: config.buildId,
       toolAdapter,
+      nativeTools,
     });
     // Keep the DSH-visible provider/model header unchanged. The preset-scoped
     // listener below owns the transport interception; exposing the Studio
@@ -263,6 +317,7 @@ export function apply(ctx, config = {}) {
     local: config.local === true,
     buildId: config.buildId || '',
     toolAdapter,
+    nativeTools,
   }));
   if (typeof ctx.effect === 'function') ctx.effect(() => () => unbindDshAgentRoutes(agentId), 'agentkit-studio: runtime route cleanup');
 }

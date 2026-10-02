@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DshPresetAdmission, dshPresetEligibility, dshPresetId, unsupportedDshBindings } from '../src/agent-preset-admission.mjs';
-import { createDshRuntimeAdapter, setDshRuntimeAdapter, streamDshRuntime } from '../src/providers/dsh-runtime.mjs';
+import { createDshRuntimeAdapter, setDshResourceToolExecutor, setDshRuntimeAdapter, streamDshRuntime } from '../src/providers/dsh-runtime.mjs';
 import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 
 function agent(overrides = {}) {
@@ -151,6 +151,39 @@ test('the DSH runtime plugin restores bound builtin tools when a preset has no c
   assert.deepEqual(registered.map(tool => tool.name), ['component_status']);
 });
 
+test('the DSH runtime plugin registers MCP contracts in the native ToolRegistry', async () => {
+  const registered = [];
+  const executed = [];
+  const disposeExecutor = setDshResourceToolExecutor(async input => {
+    executed.push(input);
+    return [{ type: 'text', text: 'ok' }];
+  });
+  try {
+    applyDshRuntimePlugin({
+      tools: {
+        register: tool => { registered.push(tool); return () => {}; },
+        schemas: () => registered.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+        execute: async () => ({}),
+      },
+      on: () => () => {},
+    }, {
+      agentId: 'demo/agent', runtime: 'harness', local: true,
+      toolContracts: [{
+        resourceId: 'mcp-search', mcpResourceId: 'mcp-search', name: 'metaso_web_search',
+        description: '网页搜索', parameters: { type: 'object', properties: { query: { type: 'string' } } }, executor: 'mcp', enabled: true,
+      }],
+    });
+    assert.deepEqual(registered.map(tool => tool.name), ['metaso_web_search']);
+    const result = await registered[0].execute({ query: 'agentkit' }, { callId: 'call-1', signal: new AbortController().signal });
+    assert.deepEqual(result, { result: '[{"type":"text","text":"ok"}]' });
+    assert.deepEqual(executed.map(item => ({ agentId: item.agentId, resourceId: item.resourceId, name: item.name, arguments: item.arguments, callId: item.callId })), [{
+      agentId: 'demo/agent', resourceId: 'mcp-search', name: 'metaso_web_search', arguments: { query: 'agentkit' }, callId: 'call-1',
+    }]);
+  } finally {
+    disposeExecutor();
+  }
+});
+
 test('the bridge rewrites the scoped Agent request and routes the root loop by session', async () => {
   const listeners = new Map();
   applyDshRuntimePlugin({
@@ -283,6 +316,55 @@ test('the native bridge projects local MCP calls into expandable reasoning', asy
     { type: 'block-end', index: 1, block: { type: 'text', text: '搜索完成' } },
     { type: 'finish', reason: { kind: 'stop' } },
   ]);
+});
+
+test('the native bridge emits a DSH tool-call block and tool-calls finish reason', async () => {
+  const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
+  const adapter = createDshRuntimeAdapter({
+    localHandler: async () => async (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write(event({ kind: 'tool_call', lifecycle: 'completed', payload: { protocol: 'dsh', callId: 'call-1', name: 'metaso_web_search', arguments: '{"query":"agentkit"}' } }));
+      response.write(event({ kind: 'progress', lifecycle: 'completed', payload: { status: 'tool_calls' } }));
+      response.end('data: [DONE]\n\n');
+    },
+  });
+  const chunks = [];
+  for await (const chunk of adapter.stream({
+    model: 'local:demo/agent',
+    messages: [{ role: 'user', content: '搜索' }],
+    tools: [{ name: 'metaso_web_search', description: '网页搜索', parameters: { type: 'object', properties: {} } }],
+  })) chunks.push(chunk);
+  assert.deepEqual(chunks, [
+    { type: 'block-start', index: 0, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 0, id: 'call-1', name: 'metaso_web_search', argumentsDelta: '{"query":"agentkit"}' },
+    { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'call-1', name: 'metaso_web_search', arguments: '{"query":"agentkit"}' } },
+    { type: 'finish', reason: { kind: 'tool-calls' } },
+  ]);
+});
+
+test('the native bridge forwards DSH ToolSchema and nativeTools to the local handler', async () => {
+  let payload;
+  const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
+  const adapter = createDshRuntimeAdapter({
+    localHandler: async () => async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write(event({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: 'done' } }));
+      response.write(`data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`);
+      response.end('data: [DONE]\n\n');
+    },
+  });
+  for await (const _chunk of adapter.stream({
+    model: 'local:demo/agent',
+    sessionId: 'session-native-tools',
+    studioNativeTools: true,
+    messages: [{ role: 'user', content: '搜索' }],
+    tools: [{ name: 'metaso_web_search', description: '网页搜索', parameters: { type: 'object', properties: {} } }],
+  })) {}
+  assert.equal(payload.nativeTools, true);
+  assert.deepEqual(payload.tools, [{ name: 'metaso_web_search', description: '网页搜索', parameters: { type: 'object', properties: {} } }]);
 });
 
 test('the runtime bridge routes Codex Agents to the Codex provider instead of the gateway', async () => {

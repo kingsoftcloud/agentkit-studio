@@ -10,6 +10,7 @@ import { readSse } from '../sse.mjs';
 
 const ROUTE = 'agentkit-studio';
 let activeAdapter;
+let resourceToolExecutor;
 const agentRoutes = new Map();
 
 /**
@@ -27,6 +28,7 @@ export function bindDshAgentRoute(sessionId, binding = {}) {
     local: binding.local === true,
     buildId: String(binding.buildId || '').trim(),
     toolAdapter: binding.toolAdapter,
+    nativeTools: binding.nativeTools === true,
   };
   agentRoutes.set(id, route);
   return () => {
@@ -52,11 +54,39 @@ export function setDshRuntimeAdapter(adapter) {
   return () => { if (activeAdapter === adapter) activeAdapter = undefined; };
 }
 
-export function streamDshRuntime(options, { agentId, runtime, local, buildId, toolAdapter } = {}) {
+/**
+ * Install the Host-owned executor used by the public DSH ToolRegistry bridge.
+ * The registry lives in the DSH loop, while MCP credentials and transports
+ * remain private to the Studio Host process.
+ */
+export function setDshResourceToolExecutor(executor) {
+  resourceToolExecutor = typeof executor === 'function' ? executor : undefined;
+  return () => {
+    if (resourceToolExecutor === executor) resourceToolExecutor = undefined;
+  };
+}
+
+export async function executeDshResourceTool(input = {}) {
+  if (typeof resourceToolExecutor !== 'function') {
+    const error = new Error('AgentKit Studio MCP Tool executor is unavailable');
+    error.code = 'MCP_TOOL_EXECUTOR_UNAVAILABLE';
+    throw error;
+  }
+  return resourceToolExecutor(input);
+}
+
+export function streamDshRuntime(options, { agentId, runtime, local, buildId, toolAdapter, nativeTools } = {}) {
   const id = String(agentId || '').trim();
   if (!id || !activeAdapter) throw new Error('AgentKit Studio runtime bridge is unavailable');
   const mode = local === true ? 'local' : 'cloud';
-  return activeAdapter.stream({ ...options, model: `${mode}:${id}`, studioRuntime: runtime, ...(buildId ? { buildId } : {}), ...(toolAdapter ? { studioToolAdapter: toolAdapter } : {}) });
+  return activeAdapter.stream({
+    ...options,
+    model: `${mode}:${id}`,
+    studioRuntime: runtime,
+    ...(buildId ? { buildId } : {}),
+    ...(toolAdapter ? { studioToolAdapter: toolAdapter } : {}),
+    ...(nativeTools ? { studioNativeTools: true } : {}),
+  });
 }
 
 function textOf(message) {
@@ -69,10 +99,29 @@ function textOf(message) {
 }
 
 function historyOf(messages) {
-  return (Array.isArray(messages) ? messages : [])
-    .filter(message => isUserInput(message) || message?.role === 'assistant')
-    .map(message => ({ role: message.role, content: textOf(message) }))
-    .filter(message => message.content);
+  const history = [];
+  for (const message of (Array.isArray(messages) ? messages : [])) {
+    if (isUserInput(message)) {
+      const content = textOf(message);
+      if (content) history.push({ role: 'user', content });
+      continue;
+    }
+    if (message?.role === 'assistant') {
+      const calls = Array.isArray(message.content)
+        ? message.content.filter(block => block?.type === 'tool-call').map(block => ({
+          id: String(block.id || ''), type: 'function', function: { name: String(block.name || ''), arguments: String(block.arguments || '{}') },
+        })).filter(call => call.id && call.function.name)
+        : [];
+      const content = textOf(message);
+      if (content || calls.length) history.push({ role: 'assistant', content: content || null, ...(calls.length ? { tool_calls: calls } : {}) });
+      continue;
+    }
+    if (message?.role === 'tool') {
+      const content = textOf(message);
+      if (message.toolCallId && content) history.push({ role: 'tool', tool_call_id: String(message.toolCallId), content });
+    }
+  }
+  return history;
 }
 
 function isUserInput(message) {
@@ -125,7 +174,7 @@ async function* parseSse(body, signal) {
 function createChunkState() {
   return {
     currentKind: '', currentIndex: -1, currentText: '', nextIndex: 0,
-    toolNames: new Map(), toolStarted: new Set(), lastTextByKind: new Map(),
+    toolNames: new Map(), toolStarted: new Set(), lastTextByKind: new Map(), finished: false,
   };
 }
 
@@ -179,8 +228,23 @@ function appendSnapshot(state, kind, value) {
   return [...closeCurrentBlock(state), ...appendBlock(state, kind, text)];
 }
 
-function finishBlocks(state) {
-  return [...closeCurrentBlock(state), { type: 'finish', reason: { kind: 'stop' } }];
+function finishBlocks(state, kind = 'stop') {
+  if (state.finished) return [];
+  state.finished = true;
+  return [...closeCurrentBlock(state), { type: 'finish', reason: { kind } }];
+}
+
+function appendNativeToolCall(state, call) {
+  const id = String(call?.id || '').trim();
+  const name = String(call?.name || '').trim();
+  if (!id || !name) return [];
+  const index = state.nextIndex++;
+  return [
+    ...closeCurrentBlock(state),
+    { type: 'block-start', index, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index, id, name, argumentsDelta: String(call.arguments || '{}') },
+    { type: 'block-end', index, block: { type: 'tool-call', id, name, arguments: String(call.arguments || '{}') } },
+  ];
 }
 
 async function* codexFrames(codexRuntime, options, onChunk) {
@@ -255,6 +319,7 @@ function parseLocalRecord(record, state) {
     const callId = String(item.payload?.callId || '');
     const name = String(item.payload?.name || 'bound tool');
     if (callId) state.toolNames.set(callId, name);
+    if (item.payload?.protocol === 'dsh') return appendNativeToolCall(state, { id: callId, name, arguments: item.payload?.arguments });
     return appendBlock(state, 'reasoning', `工具 ${name} 正在调用。`);
   }
   if (item?.kind === 'tool_result') {
@@ -263,6 +328,7 @@ function parseLocalRecord(record, state) {
     const phase = item.lifecycle === 'failed' ? '失败' : '已完成';
     return appendBlock(state, 'reasoning', `工具 ${name} ${phase}。`);
   }
+  if (item?.kind === 'progress' && item.payload?.status === 'tool_calls') return finishBlocks(state, 'tool-calls');
   if (event?.runtimeEvent?.event_type === 'run.completed') return finishBlocks(state);
   return [];
 }
@@ -413,6 +479,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
       const agentId = routed?.agentId || (separator > 0 ? model.slice(separator + 1) : model);
       const runtime = routed?.runtime || options.studioRuntime;
       const toolAdapter = options.studioToolAdapter || routed?.toolAdapter;
+      const nativeTools = options.studioNativeTools === true || routed?.nativeTools === true;
       const buildId = String(options.buildId || routed?.buildId || '').trim();
       const toolAgent = routed?.agent || options.agent;
       const user = lastUser(options.messages);
@@ -500,6 +567,8 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,
           history: historyOf(options.messages),
+          nativeTools,
+          tools: Array.isArray(options.tools) ? options.tools : [],
         }, { signal: options.signal, toolAdapter, agent: toolAgent });
         return;
       }

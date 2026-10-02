@@ -49,6 +49,51 @@ test('local runtime executes bound MCP tools and records a local trace', async (
   assert.ok(traces[0].events.some(event => event.event_type === 'turn.text'));
 });
 
+test('local runtime hands native DSH MCP calls back to the loop without executing them', async () => {
+  const response = responseSink();
+  let requestBody;
+  let calls = 0;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: { bindings: { mcpServers: [{ resourceId: 'mcp-1' }] } } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: {
+      listMcpTools: async () => { throw new Error('native DSH path must not rediscover MCP tools'); },
+      callMcpTool: async () => { calls += 1; return []; },
+    },
+    fetchImpl: async (_url, init) => {
+      requestBody = JSON.parse(init.body);
+      return new Response('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-native","function":{"name":"search","arguments":"{\\"query\\":\\"hello\\"}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  await handler(Readable.from([JSON.stringify({
+    agentId: 'ar-local-aaaaaaaaaaaaaaaa', input: '搜索', nativeTools: true,
+    tools: [{ name: 'search', description: 'Search', parameters: { type: 'object', properties: { query: { type: 'string' } } } }],
+  })]), response);
+  assert.equal(response.status, 200);
+  assert.equal(requestBody.tools[0].function.name, 'search');
+  assert.equal(calls, 0);
+  assert.match(response.chunks.join(''), /"protocol":"dsh"/);
+  assert.match(response.chunks.join(''), /"status":"tool_calls"/);
+});
+
+test('native DSH continuation does not duplicate the current user message', async () => {
+  const requests = [];
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ metadata: { name: 'native' }, spec: { instructions: {}, bindings: { modelProfileId: 'p' } } }) }),
+    modelService: { profile: async () => ({ id: 'p', modelName: 'm', baseUrl: 'https://model.invalid', apiKey: 'k' }) },
+    fetchImpl: async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+    },
+  });
+  const chunks = [];
+  const request = { async *[Symbol.asyncIterator]() { yield JSON.stringify({ agentId: 'a', input: '继续', history: [{ role: 'user', content: '继续' }] }); } };
+  const response = { writableEnded: false, writeHead() {}, write(chunk) { chunks.push(String(chunk)); }, end() { this.writableEnded = true; } };
+  await handler(request, response, {});
+  assert.equal(requests[0].messages.filter(item => item.role === 'user').length, 1);
+  assert.match(chunks.join(''), /ok/);
+});
+
 test('local runtime executes bound DSH tools through the session adapter', async () => {
   const response = responseSink();
   let requestBody;

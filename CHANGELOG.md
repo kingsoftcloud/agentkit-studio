@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 本地 Harness 的绑定 MCP/AgentEngine Tool 现在会在 preset 准入时读取真实工具 schema，并注册到 DSH
+  原生 ToolRegistry；模型发出的工具调用由 DSH loop 执行，MCP 凭证和传输仍由 Host 持有，原生轨迹会
+  记录可展开的 `tool-call` block 和 `tool-calls` 终态，不再只把调用过程伪装成 reasoning 文本。
 - 本地 Harness 的模型 SSE 现在复用统一解析器，兼容 `\n`、`\r\n` 和分片 UTF-8 帧；上游截断、无效事件、错误帧和 `length/content_filter` 不完整输出会以带错误码的失败事件结束，不再吞掉思考、工具调用或误报成功。
 - 本地 Harness 的 MCP 循环现在保留每轮 assistant 文本、reasoning 和 tool call 历史，并按 Agent Revision 的 `execution.maxSteps` 执行（默认 12、上限 100）；达到预算会返回 `LOCAL_EXECUTION_LIMIT`，不会写入记忆或发出 `run.completed`。
 - 云端 Agent 编辑页现在通过 Host 代签 `UpdateAgent` Action 保存知识库、记忆库和 Skill Center

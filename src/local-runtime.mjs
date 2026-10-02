@@ -37,6 +37,13 @@ function toolDefinition(tool) {
   return { type: 'function', function: { name: String(tool.name), description: String(tool.description || ''), parameters: tool.inputSchema || tool.parameters || { type: 'object', properties: {} } } };
 }
 
+function modelToolDefinitions(values = []) {
+  return (Array.isArray(values) ? values : []).map(tool => {
+    if (tool?.type === 'function' && tool.function) return tool;
+    return toolDefinition(tool);
+  }).filter(tool => tool.function?.name);
+}
+
 function runtimeCancelledError() {
   return new LocalRuntimeError('REQUEST_CANCELLED', '本地 Agent 运行已取消');
 }
@@ -157,7 +164,10 @@ async function collectBoundTools(resourceAdapter, toolAdapter, bindings, agent) 
  * runtimes.
  */
 export async function prepareLocalResourceContext({ record, input, resourceAdapter, toolAdapter, userId, agent, resourceMode = 'full' } = {}) {
-  const bindings = resourceMode === 'prompt-only' ? {} : record?.spec?.bindings || record?.bindings || {};
+  const promptOnly = resourceMode === 'prompt-only';
+  const contextOnly = resourceMode === 'context-only';
+  const toolsOnly = resourceMode === 'tools-only';
+  const bindings = toolsOnly ? (record?.spec?.bindings || record?.bindings || {}) : promptOnly ? {} : record?.spec?.bindings || record?.bindings || {};
   const skillIds = bindingIds(bindings, 'skills');
   const knowledge = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'knowledge-base');
   const memory = memoryBinding(bindings);
@@ -170,16 +180,16 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
     throw new LocalRuntimeError('TOOL_ADAPTER_MISSING', '该 Agent 绑定了 DSH Tool，但当前会话没有可用的 Tool 适配器', { resourceIds: toolIds });
   }
   let resourceContext = '';
-  if (skillIds.length) {
+  if (!toolsOnly && skillIds.length) {
     const skills = await Promise.all(skillIds.map(id => resourceAdapter.loadSkill(id)));
     resourceContext += skills.filter(Boolean).map(skill => `Skill ${skill.name || ''}:\n${String(skill.content || '').slice(0, 12000)}`).join('\n\n');
   }
-  if (skillSpace) {
+  if (!toolsOnly && skillSpace) {
     const resourceId = skillSpace.config.binding.resource.id || skillSpace.config.binding.resource.resourceId;
     const skill = await resourceAdapter.loadSkill(resourceId);
     if (skill?.content) resourceContext += `\n\n${String(skill.content).slice(0, 24000)}`;
   }
-  if (knowledge) {
+  if (!toolsOnly && knowledge) {
     const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;
     const hits = await resourceAdapter.searchKnowledge(resourceId, input);
     resourceContext += (hits || []).map(hit => {
@@ -189,15 +199,17 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
       return content ? `Knowledge${title ? ` (${String(title)})` : ''}: ${content}` : '';
     }).filter(Boolean).join('\n');
   }
-  if (memory) {
+  if (!toolsOnly && memory) {
     const resourceId = memory.config.binding.resource.id || memory.config.binding.resource.resourceId;
     if (typeof resourceAdapter.searchMemory !== 'function') throw new LocalRuntimeError('MEMORY_ADAPTER_MISSING', '记忆库适配器未启用');
     const hits = await resourceAdapter.searchMemory(resourceId, input, userId);
     resourceContext += (hits || []).map(hit => `Memory: ${extractText(hit.content || hit.text || hit.memory || hit)}`).join('\n');
   }
-  const collected = await collectBoundTools(resourceAdapter, toolAdapter, bindings, agent);
-  if (collected.warnings.length) resourceContext += `\n\nBound resource warnings:\n${collected.warnings.join('\n')}`;
-  return { bindings, resourceContext, tools: collected.tools, warnings: collected.warnings, memory, memoryWrite: memoryWriteEnabled(record, memory, input) };
+  const collected = contextOnly || toolsOnly || promptOnly
+    ? { tools: [], warnings: [] }
+    : await collectBoundTools(resourceAdapter, toolAdapter, bindings, agent);
+  if (!toolsOnly && collected.warnings.length) resourceContext += `\n\nBound resource warnings:\n${collected.warnings.join('\n')}`;
+  return { bindings, resourceContext, tools: collected.tools, warnings: collected.warnings, memory, memoryWrite: !toolsOnly && memoryWriteEnabled(record, memory, input) };
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
@@ -296,6 +308,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     if (!record) { response.writeHead(404); response.end('local agent not found'); return; }
 
     const agentName = String(record.metadata?.name || record.name || agentId);
+    const nativeTools = parsed.nativeTools === true;
     const systemPrompt = [record.spec?.instructions?.system || record.spec?.description || '', record.spec?.instructions?.task || ''].filter(Boolean).join('\n\n');
     let profile;
     const modelId = record.spec?.bindings?.modelProfileId || bindingIds(record.spec?.bindings, 'modelProfileIds')[0] || '';
@@ -328,18 +341,33 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         toolAdapter,
         userId: parsed.userId || parsed.sessionId || agentId,
         agent,
-        resourceMode: parsed.resourceMode,
+        resourceMode: nativeTools ? 'context-only' : parsed.resourceMode,
       });
       resourceContext = prepared.resourceContext;
-      tools = prepared.tools;
+      tools = nativeTools ? modelToolDefinitions(parsed.tools) : prepared.tools;
       preparedMemoryWrite = prepared.memoryWrite ? prepared.memory : null;
     } catch (error) {
       response.writeHead(409);
       response.end(JSON.stringify({ error: { code: error?.code || 'RESOURCE_EXECUTION_FAILED', message: error?.message || '资源加载失败', details: error?.details || {} } }));
       return;
     }
-    const history = Array.isArray(parsed.history) ? parsed.history.filter(item => ['user', 'assistant'].includes(item?.role) && typeof item.content === 'string').slice(-20).map(item => ({ role: item.role, content: item.content.slice(0, 16000) })) : [];
-    const messages = [{ role: 'system', content: [systemPrompt || 'You are a helpful assistant.', resourceContext ? `Relevant resources:\n${resourceContext}` : ''].filter(Boolean).join('\n\n') }, ...history, { role: 'user', content: input }];
+    const history = Array.isArray(parsed.history) ? parsed.history
+      .filter(item => ['user', 'assistant', 'tool'].includes(item?.role)
+        && (item.role === 'assistant' || typeof item.content === 'string')
+        && (item.role !== 'tool' || String(item.tool_call_id || '').trim()))
+      .slice(-20)
+      .map(item => ({
+        role: item.role,
+        content: typeof item.content === 'string' ? item.content.slice(0, 16000) : null,
+        ...(Array.isArray(item.tool_calls) ? { tool_calls: item.tool_calls } : {}),
+        ...(item.tool_call_id ? { tool_call_id: String(item.tool_call_id) } : {}),
+      })) : [];
+    // DSH sends the current user message in `history` and also passes it as
+    // the explicit runtime input. Keep one canonical user turn in the model
+    // request; duplicating it makes tool continuations start with two user
+    // messages and breaks the assistant/tool pairing on the next round.
+    const hasCurrentInput = [...history].reverse().some(item => item.role === 'user' && item.content === input);
+    const messages = [{ role: 'system', content: [systemPrompt || 'You are a helpful assistant.', resourceContext ? `Relevant resources:\n${resourceContext}` : ''].filter(Boolean).join('\n\n') }, ...history, ...(hasCurrentInput ? [] : [{ role: 'user', content: input }])];
     response.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -361,12 +389,22 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         let calls = [];
         let turnText = '';
         let turnReasoning = '';
-        for await (const chunk of model.stream({ messages, tools: tools.map(toolDefinition) })) {
+        for await (const chunk of model.stream({ messages, tools: nativeTools ? tools : tools.map(toolDefinition) })) {
           if (chunk.type === 'text') { text += chunk.text; turnText += chunk.text; send({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
           if (chunk.type === 'reasoning') { reasoning += chunk.text; turnReasoning += chunk.text; send({ kind: 'assistant_reasoning', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
           if (chunk.type === 'tool_calls') calls = chunk.calls;
         }
         if (!calls.length) break;
+        if (nativeTools) {
+          for (const call of calls) {
+            send({ kind: 'tool_call', lifecycle: 'completed', payload: {
+              callId: call.id, name: call.name, arguments: call.arguments, protocol: 'dsh',
+            } });
+          }
+          send({ kind: 'progress', lifecycle: 'completed', payload: { status: 'tool_calls' } });
+          response.end('data: [DONE]\n\n');
+          return;
+        }
         messages.push({ role: 'assistant', content: turnText || null, tool_calls: calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })), ...(turnReasoning ? { reasoning_content: turnReasoning } : {}) });
         for (const call of calls) {
           if (signal?.aborted) throw runtimeCancelledError();
