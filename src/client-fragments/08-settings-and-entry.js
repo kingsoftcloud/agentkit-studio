@@ -22,6 +22,40 @@
       const scheduleRemote = ctx.remote && typeof ctx.remote.schedule?.catalog === 'function'
         ? ctx.remote.schedule
         : null;
+      const encodedAgentId = value => encodeURIComponent(String(value))
+        .replace(/%/g, '_').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 180) || 'unknown';
+      const presetIdForAgent = agent => {
+        const id = String(agent?.metadata?.id || agent?.id || '').trim();
+        const revision = Number(agent?.metadata?.revision || agent?.revision || 1) || 1;
+        return id ? `agentkit-studio-agent-${encodedAgentId(id)}-r${revision}` : '';
+      };
+      // The official DSH preset picker calls the public agentPresets Remote
+      // directly, so the Studio selector cannot be the only place that
+      // applies an Agent's model and permission defaults. Observe the same
+      // public selection event and project the Agent binding onto the blank
+      // Session after DSH has accepted the preset.
+      const applyNativeAgentDefaults = async (sessionId, selectedPreset) => {
+        try {
+          const roster = await hostRemote.agents();
+          const presetId = String(selectedPreset || ctx.sessions?.list?.getSnapshot?.().byId?.[sessionId]?.projectionValues?.agentPreset || '');
+          const agent = (roster?.items || []).find(item => presetIdForAgent(item) === presetId);
+          if (!agent) return;
+          const agentId = String(agent?.metadata?.id || agent?.id || '').trim();
+          const admission = await hostRemote.ensureDshPreset(agentId);
+          if (admission.modelSelection && ctx.modelDirectories?.directoryFor) {
+            const selected = await ctx.modelDirectories.directoryFor(sessionId).select(admission.modelSelection);
+            if (!selected?.ok) console.warn('[agentkit-studio] Agent model selection failed:', selected.error?.message || selected.error);
+          }
+          const permission = await ctx.remote?.commands?.execute?.(sessionId, '/permission read-only', []);
+          if (permission && permission.ok === false) console.warn('[agentkit-studio] Agent permission default was not applied:', permission.error?.message || permission.error);
+        } catch (error) {
+          console.warn('[agentkit-studio] Native Agent session defaults unavailable:', error?.message || error);
+        }
+      };
+      ctx.effect(() => {
+        const unsubscribe = ctx.remote.$on?.('agent-preset/selected', (sessionId, selectedPreset) => { void applyNativeAgentDefaults(sessionId, selectedPreset); });
+        return () => unsubscribe?.();
+      }, 'agentkit-studio:native-agent-session-defaults');
       ctx.effect(() => adoptProductDocumentTitle(), 'agentkit-studio: document title');
       ctx.effect(() => adoptProductDocumentBrand(), 'agentkit-studio: document favicon');
       ctx.effect(() => installResponsiveStyles(), 'agentkit-studio: responsive layout');
@@ -99,6 +133,12 @@
             if (admission.modelSelection) {
               const result = await navCtx.modelDirectories.directoryFor(sessionId).select(admission.modelSelection);
               if (!result?.ok) throw new Error(result?.error?.message || 'Agent 绑定的模型不可用');
+            }
+            try {
+              const permission = await ctx.remote?.commands?.execute?.(sessionId, '/permission read-only', []);
+              if (permission && permission.ok === false) console.warn('[agentkit-studio] Agent permission default was not applied:', permission.error?.message || permission.error);
+            } catch (error) {
+              console.warn('[agentkit-studio] Agent permission default unavailable:', error?.message || error);
             }
             writeConversationAgent(value, sessionId);
             window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(value);
@@ -270,7 +310,7 @@
 
     return {
       name: 'agentkit-studio',
-      inject: ['slots', 'layout', 'connection', 'remote', 'remote.settings', 'remote.credentials', 'remote.llm', 'remote.agentPresets'],
+      inject: ['slots', 'layout', 'connection', 'remote', 'remote.settings', 'remote.credentials', 'remote.llm', 'remote.agentPresets', 'remote.commands', 'sessions', 'modelDirectories'],
       apply,
     };
   },

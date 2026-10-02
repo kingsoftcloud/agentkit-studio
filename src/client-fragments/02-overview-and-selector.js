@@ -117,6 +117,17 @@
         const bindings = agent?.spec?.bindings || agent?.bindings || {};
         return ['tools', 'mcpServers', 'skills', 'plugins'].some(key => Array.isArray(bindings[key]) ? bindings[key].length > 0 : Boolean(bindings[key]));
       };
+      const setAgentPermission = async targetSessionId => {
+        try {
+          const result = await studioRemote?.commands?.execute?.(targetSessionId, '/permission read-only', []);
+          if (result && result.ok === false) console.warn('[agentkit-studio] Agent permission default was not applied:', result.error?.message || result.error);
+        } catch (error) {
+          // Older DSH profiles may not expose the permission command. The
+          // Agent binding remains valid because runtime context is already
+          // disabled in the Studio persona configuration.
+          console.warn('[agentkit-studio] Agent permission default unavailable:', error?.message || error);
+        }
+      };
 
       useEffect(() => {
         let alive = true;
@@ -197,6 +208,7 @@
             const selectedModel = await modelDirectories.directoryFor(sessionId).select(admission.modelSelection);
             if (!selectedModel?.ok) throw new Error(selectedModel?.error?.message || 'Agent 绑定的模型不可用');
           }
+          await setAgentPermission(sessionId);
           setSelected(value);
           writeConversationAgent(value, sessionId);
           setNotice(resourceBound(selectedRecord) ? '已绑定原生会话适配器' : '已绑定当前会话');
