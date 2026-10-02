@@ -59,7 +59,7 @@
         // picker at this product entry point; the Host still owns the same
         // public registry and session lock semantics underneath.
         { name: 'conversation.hero.agentPreset', priority: -20 },
-        props => h(AgentContextSelector, { ...props, studioRemote: ctx.remote }),
+        props => h(AgentContextSelector, { ...props, studioRemote: ctx.remote, modelDirectories: ctx.modelDirectories }),
       ));
 
       // Authoring entry: only the hero selector keeps the "创建 Agent" button.
@@ -80,7 +80,7 @@
       // Session to DSH's own navigation service. This keeps the native
       // composer visible from the first frame and makes binding an explicit
       // action rather than a side effect of opening a custom chat page.
-      ctx.inject(['uiWorkspace', 'sessions'], navCtx => {
+      ctx.inject(['uiWorkspace', 'sessions', 'modelDirectories'], navCtx => {
         window.__AGENTKIT_STUDIO_BIND_AGENT__ = async (agentOrOptions, requestedBuildId = '') => {
           const options = agentOrOptions && typeof agentOrOptions === 'object' ? agentOrOptions : { agentId: agentOrOptions, buildId: requestedBuildId };
           const value = String(options.agentId || '').trim();
@@ -95,6 +95,10 @@
             const selected = await ctx.remote?.agentPresets?.select?.(sessionId, admission.presetId);
             if (selected === undefined || selected === null || (typeof selected === 'object' && selected.ok === false)) {
               throw new Error(selected?.error?.message || 'DSH 拒绝绑定该 Agent');
+            }
+            if (admission.modelSelection) {
+              const result = await navCtx.modelDirectories.directoryFor(sessionId).select(admission.modelSelection);
+              if (!result?.ok) throw new Error(result?.error?.message || 'Agent 绑定的模型不可用');
             }
             writeConversationAgent(value, sessionId);
             window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(value);

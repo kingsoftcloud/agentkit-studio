@@ -106,7 +106,7 @@
      * The Host admits them through the preset-scoped Studio provider bridge;
      * unsupported resource execution still fails with a typed runtime error.
      */
-    function AgentContextSelector({ sessionId, useSessions, studioRemote, inputActions } = {}) {
+    function AgentContextSelector({ sessionId, useSessions, studioRemote, modelDirectories, inputActions } = {}) {
       const [agents, setAgents] = useState([]);
       const [selected, setSelected] = useState(() => readConversationAgent(sessionId));
       const [busy, setBusy] = useState(false);
@@ -192,6 +192,10 @@
             refusal.code = selectedPreset?.error?.code || 'DSH_PRESET_SELECT_FAILED';
             refusal.details = selectedPreset?.error?.details;
             throw refusal;
+          }
+          if (admission.modelSelection && modelDirectories?.directoryFor) {
+            const selectedModel = await modelDirectories.directoryFor(sessionId).select(admission.modelSelection);
+            if (!selectedModel?.ok) throw new Error(selectedModel?.error?.message || 'Agent 绑定的模型不可用');
           }
           setSelected(value);
           writeConversationAgent(value, sessionId);

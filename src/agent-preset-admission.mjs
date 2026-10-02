@@ -32,6 +32,30 @@ function modelProfileIds(agent = {}) {
   return values.map(value => typeof value === 'string' ? value : value?.resourceId).filter(Boolean).map(String);
 }
 
+function dshModelRoute(profile = {}, index = 0) {
+  const provider = String(profile?.provider || 'ksyun').trim() || 'ksyun';
+  const model = String(profile?.modelName || '').trim() || `model-${index + 1}`;
+  const id = String(profile?.id || `${provider}:${model}`).trim();
+  return `agentkit-studio-${id.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 64);
+}
+
+/**
+ * Resolve the Agent's primary bound model to the exact DSH route published by
+ * the Studio model bridge. An Agent may advertise fallback models, but a DSH
+ * Session still needs one deterministic initial route; the first binding is
+ * the persisted primary (`modelProfileId`) and users can switch afterward.
+ */
+export function dshModelSelection(agent = {}, settings = {}) {
+  const ids = modelProfileIds(agent);
+  if (!ids.length) return undefined;
+  const profiles = Array.isArray(settings?.values?.modelProfiles) ? settings.values.modelProfiles : [];
+  const bound = String(ids[0]).trim();
+  const index = profiles.findIndex(profile => profile?.enabled !== false && (String(profile?.id || '').trim() === bound || String(profile?.modelName || '').trim() === bound));
+  const profile = index >= 0 ? profiles[index] : undefined;
+  if (!profile?.modelName || profile.enabled === false) return undefined;
+  return { provider: dshModelRoute(profile, index), model: String(profile.modelName).trim() };
+}
+
 function toolBindingRefs(agent = {}) {
   const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
     ? agent.spec.bindings : {};
@@ -115,10 +139,11 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  * successful registrations so selecting the same revision is idempotent.
  */
 export class DshPresetAdmission {
-  /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getToolContracts, registry } = {}) {
+  /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, registry } = {}) {
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
+    this.getModelSelection = getModelSelection;
     this.getToolContracts = getToolContracts;
     this.registry = registry;
     this.registrations = new Map();
@@ -141,6 +166,7 @@ export class DshPresetAdmission {
     }
     const agent = suppliedAgent || await this.getAgent(String(agentId || '').trim());
     const activeModel = typeof this.getActiveModel === 'function' ? await this.getActiveModel() : undefined;
+    const modelSelection = typeof this.getModelSelection === 'function' ? await this.getModelSelection(agent) : undefined;
     const eligibility = dshPresetEligibility(agent, { activeModel });
     if (!eligibility.ok) {
       const error = new Error(eligibility.message);
@@ -158,7 +184,7 @@ export class DshPresetAdmission {
       eligibility.mode = 'studio-bridge';
     }
     const previous = this.registrations.get(eligibility.presetId);
-    if (previous?.presetId === eligibility.presetId) return { ...eligibility, reused: true };
+    if (previous?.presetId === eligibility.presetId) return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: true };
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
@@ -205,7 +231,7 @@ export class DshPresetAdmission {
     // A newer revision must not remove a preset still referenced by an older
     // native Session. Dispose all registrations with the Host scope instead.
     this.registrations.set(eligibility.presetId, { presetId: eligibility.presetId, unregister });
-    return { ...eligibility, reused: false };
+    return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: false };
   }
 
   async dispose() {

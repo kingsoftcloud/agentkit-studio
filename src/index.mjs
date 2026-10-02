@@ -14,7 +14,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { registerAuthoringTools } from './authoring-tools.mjs';
-import { DshPresetAdmission } from './agent-preset-admission.mjs';
+import { DshPresetAdmission, dshModelSelection } from './agent-preset-admission.mjs';
 
 export const name = 'agentkit-studio';
 export const inject = ['connection', 'webServer', 'credentials'];
@@ -293,6 +293,7 @@ async function registerControlPlane(ctx) {
   presetAdmission = new DshPresetAdmission({
     getAgent: async agentId => (await serverClientPromise).getAgent(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
+    getModelSelection: async agent => dshModelSelection(agent, await configurationPromise),
     getToolContracts: async agent => {
       const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
         ? agent.spec.bindings : {};

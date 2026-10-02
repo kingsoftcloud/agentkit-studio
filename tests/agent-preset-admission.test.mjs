@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DshPresetAdmission, dshPresetEligibility, dshPresetId, unsupportedDshBindings } from '../src/agent-preset-admission.mjs';
+import { DshPresetAdmission, dshModelSelection, dshPresetEligibility, dshPresetId, unsupportedDshBindings } from '../src/agent-preset-admission.mjs';
 import { createDshRuntimeAdapter, setDshResourceToolExecutor, setDshRuntimeAdapter, streamDshRuntime } from '../src/providers/dsh-runtime.mjs';
 import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 
@@ -74,6 +74,29 @@ test('the active DSH model route and official persona row make a real native pre
   assert.equal(registered[0].plugins[0].name, '@deepseek-ai/dsh-persona');
   assert.equal(registered[0].plugins[0].config.prefix, '只用简洁中文回答。');
   assert.equal(registered[0].plugins[0].config.includeRuntimeContext, false);
+});
+
+test('a single Agent model resolves to the Studio-published DSH session route', () => {
+  const revision = agent({ spec: { runtime: { type: 'harness' }, bindings: { modelProfileIds: ['deepseek-v4-flash'] } } });
+  assert.deepEqual(dshModelSelection(revision, { values: { modelProfiles: [{ id: 'ksyun:deepseek-v4-flash', provider: 'ksyun', modelName: 'deepseek-v4-flash', enabled: true }] } }), {
+    provider: 'agentkit-studio-ksyun-deepseek-v4-flash', model: 'deepseek-v4-flash',
+  });
+  assert.deepEqual(dshModelSelection(agent({ spec: { bindings: { modelProfileIds: ['deepseek-v4-flash', 'other-model'] } } }), { values: { modelProfiles: [{ id: 'profile', provider: 'ksyun', modelName: 'deepseek-v4-flash', enabled: true }] } }), {
+    provider: 'agentkit-studio-profile', model: 'deepseek-v4-flash',
+  });
+});
+
+test('preset admission returns the session model selection without changing eligibility', async () => {
+  const registered = [];
+  const revision = agent({ metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 1, local: true }, spec: { runtime: { type: 'harness' }, bindings: { modelProfileIds: ['deepseek-v4-flash'] } } });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => revision,
+    getModelSelection: async () => ({ provider: 'agentkit-studio-ksyun-deepseek-v4-flash', model: 'deepseek-v4-flash' }),
+  });
+  const result = await admission.ensure('demo/agent');
+  assert.deepEqual(result.modelSelection, { provider: 'agentkit-studio-ksyun-deepseek-v4-flash', model: 'deepseek-v4-flash' });
+  assert.equal(registered.length, 1);
 });
 
 test('the bridge preset declares the Studio provider listener for local Harness and Codex', async () => {
