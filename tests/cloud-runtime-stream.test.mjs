@@ -47,3 +47,32 @@ test('cloud bridge sends the human prompt rather than a trailing DSH runtime con
   ] })) {}
   assert.deepEqual(sent.Messages, [{ role: 'user', content: '金山云 AgentEngine' }]);
 });
+
+test('cloud platform memory writes after a completed RunAgent turn', async () => {
+  let written;
+  const adapter = createDshRuntimeAdapter({
+    cloudClient: {
+      streamAction: async () => ({ body: new Response([
+        'data: {"type":"response.output_text.delta","delta":"云端回答"}',
+        'data: {"type":"response.output_text.done","text":"云端回答"}',
+        'data: {"type":"response.completed"}',
+      ].join('\n\n') + '\n\n').body }),
+    },
+    resourceAdapter: {
+      searchMemory: async () => [],
+      writeMemory: async (_id, _userId, messages) => { written = messages; return { accepted: true }; },
+    },
+  });
+  const agent = {
+    metadata: { id: 'cloud-memory-agent', local: false },
+    spec: {
+      memory: { enabled: true, write: { mode: 'candidate' } },
+      bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } }] },
+    },
+  };
+  for await (const _chunk of adapter.stream({
+    model: 'cloud:cloud-memory-agent', sessionId: 'cloud-memory-session',
+    messages: [{ role: 'user', content: '请记住我喜欢简洁回答' }], agent,
+  })) {}
+  assert.deepEqual(written?.map(item => item.content), ['请记住我喜欢简洁回答', '云端回答']);
+});

@@ -5,7 +5,7 @@
  * event loop in charge. Studio only translates the assembled DSH request into
  * the AgentEngine/local-runtime stream and back into DSH text chunks.
  */
-import { prepareLocalResourceContext } from '../local-runtime.mjs';
+import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.mjs';
 import { readSse } from '../sse.mjs';
 
 const ROUTE = 'agentkit-studio';
@@ -582,6 +582,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
       let cloudMessages = [{ role: 'user', content: input }];
       let cloudRecord = toolAgent && typeof toolAgent === 'object'
         ? toolAgent : { id: agentId };
+      let preparedCloudResources = null;
       // The preset-scoped DSH Agent object is intentionally lightweight. Read
       // the authoritative cloud Agent detail when it does not carry the
       // normalized ComponentConfig projection needed by the resource adapter.
@@ -607,6 +608,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           userId: String(options.userId || options.metadata?.userId || sessionId || agentId),
           agent: toolAgent,
         });
+        preparedCloudResources = prepared;
         if (prepared.resourceContext) {
           cloudMessages = [
             {
@@ -630,7 +632,29 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           ApiFormat: 'responses',
           ...(invocationId ? { InvocationId: invocationId } : {}),
         }, { signal: options.signal });
-        yield* cloudFrames(upstream.body, options.signal);
+        let assistantText = '';
+        for await (const frame of cloudFrames(upstream.body, options.signal)) {
+          if (frame?.type === 'text-delta') assistantText += String(frame.text || '');
+          yield frame;
+        }
+        if (preparedCloudResources?.memoryWrite && preparedCloudResources.memory) {
+          try {
+            await writeBoundMemory({
+              binding: preparedCloudResources.memory,
+              resourceAdapter,
+              input,
+              assistantText,
+              userId: String(options.userId || options.metadata?.userId || sessionId || agentId),
+              sessionId,
+              agentId,
+            });
+          } catch (error) {
+            // Memory persistence is a post-response side effect. Preserve the
+            // completed cloud answer while allowing the adapter to report the
+            // typed write error through its own trace/logging path.
+            console.warn('[agentkit-studio] cloud memory write failed:', error?.message || error);
+          }
+        }
       } catch (error) {
         if (options.signal?.aborted && typeof cloudClient.action === 'function') {
           // Closing the local SSE is not a cloud cancellation. Send the
