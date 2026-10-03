@@ -19,9 +19,10 @@
       // dsh-v0.2.0-rc.2 host. Older profiles can still expose the Studio
       // product surface and all model/agent/resource surfaces while the automation
       // panel reports that its host service is unavailable.
-      const scheduleRemote = ctx.remote && typeof ctx.remote.schedule?.catalog === 'function'
-        ? ctx.remote.schedule
-        : null;
+      // `remote.schedule` is optional across pinned DSH hosts. Cordis proxies
+      // reject reading an undeclared property, so keep the optional remote
+      // behind the explicit host capability boundary instead of probing it.
+      const scheduleRemote = null;
       const encodedAgentId = value => encodeURIComponent(String(value))
         .replace(/%/g, '_').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 180) || 'unknown';
       const presetIdForAgent = agent => {
