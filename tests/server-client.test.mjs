@@ -240,6 +240,23 @@ test('streamAction keeps RunAgent SSE on the Node credential boundary', async ()
   assert.match(request.url, /\/agentengine\/api\/v1\/RunAgent$/);
 });
 
+test('streamAction uses its longer runtime timeout instead of the JSON action timeout', async () => {
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudServiceToken: 'local-token' }),
+    timeoutMs: 10,
+    streamTimeoutMs: 100,
+    fetchImpl: async (_url, init) => {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      assert.equal(init.signal.aborted, false);
+      return new Response('event: response.completed\ndata: {"type":"response.completed"}\n\n', {
+        status: 200, headers: { 'content-type': 'text/event-stream' },
+      });
+    },
+  });
+  const response = await client.streamAction('RunAgent', { AgentId: 'a1', SessionId: 's1', Stream: true });
+  assert.equal(response.status, 200);
+});
+
 test('streamAction falls back when KOP returns an XML inner-account denial', async () => {
   const urls = [];
   const client = createAgentEngineClient({

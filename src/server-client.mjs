@@ -122,7 +122,7 @@ export function buildCloudAgentUpdate(agentId, { spec = {}, name = '', descripti
 }
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
-export function createAgentEngineClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, sessionToken = '', serverUrl = '' }) {
+export function createAgentEngineClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '' }) {
   async function listLocalAgents({ page = 1, pageSize = 20, query = '' } = {}, options = {}) {
     const { values } = await configuration.resolve();
     let base;
@@ -396,7 +396,15 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
     }
     let response;
     try {
-      response = await fetchImpl(url, { method: 'POST', headers, body, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
+      // A RunAgent stream can spend longer in hosted runtime admission when
+      // the Agent has a knowledge, memory, or Skill context. Keep the normal
+      // control-plane timeout for JSON actions, but give the streaming call a
+      // separate bounded window so a slow first token is not reported as a
+      // connection failure.
+      const requestSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(streamTimeoutMs)])
+        : AbortSignal.timeout(streamTimeoutMs);
+      response = await fetchImpl(url, { method: 'POST', headers, body, redirect: 'error', signal: requestSignal });
     } catch {
       throw new AgentEngineError(signal?.aborted ? 'REQUEST_CANCELLED' : 'SERVER_UNAVAILABLE', signal?.aborted ? '请求已取消' : 'Server 请求未完成，请检查连接；写请求不会自动重试', { action: name });
     }

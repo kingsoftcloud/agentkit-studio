@@ -119,8 +119,12 @@ function explicitMemoryIntent(input) {
 }
 
 function memoryWriteEnabled(record, binding, input) {
-  if (!binding || record?.spec?.memory?.enabled !== true) return false;
-  const mode = String(record?.spec?.memory?.write?.mode || 'candidate').trim().toLowerCase();
+  if (!binding || record?.spec?.memory?.enabled === false) return false;
+  // Cloud Agent details expose a bound memory-instance through ComponentConfig
+  // without Studio's local `spec.memory` projection. The binding itself is the
+  // user's explicit opt-in for recall and post-turn persistence.
+  const config = record?.spec?.memory || {};
+  const mode = String(config.write?.mode || 'candidate').trim().toLowerCase();
   if (mode === 'candidate') return true;
   return mode === 'explicit_only' && explicitMemoryIntent(input);
 }

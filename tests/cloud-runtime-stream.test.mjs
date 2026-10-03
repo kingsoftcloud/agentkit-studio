@@ -33,6 +33,21 @@ test('cloud CRLF frames preserve text and complete the native turn', async () =>
   assert.equal(chunks.find(chunk => chunk.type === 'block-end').block.text, '实际回答');
 });
 
+test('cloud SSE event names complete a response when the payload omits type', async () => {
+  const data = [
+    'event: response.output_text.delta\ndata: {"delta":"事件回答"}',
+    'event: response.output_text.done\ndata: {"text":"事件回答"}',
+    'event: response.completed\ndata: {"output_text":"事件回答"}',
+  ].join('\n\n') + '\n\n';
+  const adapter = createDshRuntimeAdapter({ cloudClient: {
+    streamAction: async () => ({ body: new Response(data).body }),
+  } });
+  const chunks = [];
+  for await (const chunk of adapter.stream({ model: 'cloud:test', messages: [{ role: 'user', content: '检索' }] })) chunks.push(chunk);
+  assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), '事件回答');
+  assert.equal(chunks.at(-1).type, 'finish');
+});
+
 test('cloud bridge sends the human prompt rather than a trailing DSH runtime context', async () => {
   let sent;
   const adapter = createDshRuntimeAdapter({ cloudClient: {
@@ -75,4 +90,31 @@ test('cloud platform memory writes after a completed RunAgent turn', async () =>
     messages: [{ role: 'user', content: '请记住我喜欢简洁回答' }], agent,
   })) {}
   assert.deepEqual(written?.map(item => item.content), ['请记住我喜欢简洁回答', '云端回答']);
+});
+
+test('cloud platform memory binding writes without a local memory projection', async () => {
+  let written;
+  const adapter = createDshRuntimeAdapter({
+    cloudClient: {
+      streamAction: async () => ({ body: new Response([
+        'data: {"type":"response.output_text.delta","delta":"已记住"}',
+        'data: {"type":"response.completed"}',
+      ].join('\n\n') + '\n\n').body }),
+    },
+    resourceAdapter: {
+      searchMemory: async () => [],
+      writeMemory: async (_id, _userId, messages) => { written = messages; return { accepted: true }; },
+    },
+  });
+  const agent = {
+    metadata: { id: 'cloud-memory-agent-no-local-projection', local: false },
+    spec: {
+      bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'memory-2' } } } }] },
+    },
+  };
+  for await (const _chunk of adapter.stream({
+    model: 'cloud:cloud-memory-agent-no-local-projection', sessionId: 'cloud-memory-session-2',
+    messages: [{ role: 'user', content: '请记住我喜欢简洁回答' }], agent,
+  })) {}
+  assert.deepEqual(written?.map(item => item.content), ['请记住我喜欢简洁回答', '已记住']);
 });
