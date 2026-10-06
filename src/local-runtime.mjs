@@ -28,6 +28,8 @@ function extractText(value) {
   if (Array.isArray(value)) return value.map(extractText).filter(Boolean).join('\n');
   if (value && typeof value === 'object') {
     if (Array.isArray(value.Memories || value.memories)) return extractText(value.Memories || value.memories);
+    if (Array.isArray(value.Content) || Array.isArray(value.content)) return extractText(value.Content || value.content);
+    if (value.Data && typeof value.Data === 'object') return extractText(value.Data);
     return String(value.text || value.content || value.Content || value.Text || value.Memory || value.memory || value.output || value.Data || '');
   }
   return '';
@@ -133,10 +135,17 @@ function memoryWriteEnabled(record, binding, input) {
 export async function writeBoundMemory({ binding, resourceAdapter, input, assistantText, userId, sessionId, agentId } = {}) {
   if (!binding || typeof resourceAdapter?.writeMemory !== 'function') return { accepted: false, reason: 'adapter_unavailable' };
   const resource = binding.config?.binding?.resource || {};
-  return resourceAdapter.writeMemory(resource.id || resource.resourceId, userId || sessionId || agentId, [
+  return resourceAdapter.writeMemory(resource.id || resource.resourceId, userId || 'studio-anonymous', [
     { role: 'user', content: input },
     { role: 'assistant', content: assistantText },
-  ], { sessionId: String(sessionId || ''), agentId: String(agentId || ''), flush: false });
+  ], {
+    sessionId: String(sessionId || ''),
+    agentId: String(agentId || ''),
+    // AICP extracts ordinary turn syncs asynchronously. A direct "请记住"
+    // request is an explicit fact-save operation and may flush this session;
+    // candidate writes keep the cheaper queued path.
+    flush: explicitMemoryIntent(input),
+  });
 }
 
 async function collectDshTools(toolAdapter, bindings, agent) {
@@ -167,7 +176,7 @@ async function collectBoundTools(resourceAdapter, toolAdapter, bindings, agent) 
  * MCP/Skill/knowledge/memory resource has identical semantics in both local
  * runtimes.
  */
-export async function prepareLocalResourceContext({ record, input, resourceAdapter, toolAdapter, userId, agent, resourceMode = 'full' } = {}) {
+export async function prepareLocalResourceContext({ record, input, resourceAdapter, toolAdapter, userId, agent, agentId = '', resourceMode = 'full' } = {}) {
   const promptOnly = resourceMode === 'prompt-only';
   const contextOnly = resourceMode === 'context-only';
   const toolsOnly = resourceMode === 'tools-only';
@@ -206,7 +215,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   if (!toolsOnly && memory) {
     const resourceId = memory.config.binding.resource.id || memory.config.binding.resource.resourceId;
     if (typeof resourceAdapter.searchMemory !== 'function') throw new LocalRuntimeError('MEMORY_ADAPTER_MISSING', '记忆库适配器未启用');
-    const hits = await resourceAdapter.searchMemory(resourceId, input, userId);
+    const hits = await resourceAdapter.searchMemory(resourceId, input, userId, { agentId });
     resourceContext += (hits || []).map(hit => `Memory: ${extractText(hit.content || hit.text || hit.memory || hit)}`).join('\n');
   }
   const collected = contextOnly || toolsOnly || promptOnly
@@ -343,7 +352,8 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         input,
         resourceAdapter,
         toolAdapter,
-        userId: parsed.userId || parsed.sessionId || agentId,
+        userId: parsed.userId || 'studio-anonymous',
+        agentId,
         agent,
         resourceMode: nativeTools ? 'context-only' : parsed.resourceMode,
       });

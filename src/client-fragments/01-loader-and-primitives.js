@@ -504,21 +504,21 @@ window.__ModuleLoader__.load({
         updateSchedule: (agentId, taskId, payload) => directServer() ? studioBridgeOperation('schedules/update', { taskId, patch: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
         deleteSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/delete', { taskId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
         runSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/run', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
-        dshPlugins: () => directServer() ? studioBridgeOperation('plugins/dsh-list', {}) : request('/api/v1/plugin-ecosystems/dsh/plugins'),
-        installDshPlugin: (source, acceptHostPermissions = false) => directServer() ? studioBridgeOperation('plugins/dsh-install', { source, acceptHostPermissions }) : request('/api/v1/plugin-ecosystems/dsh/plugins:install', {
+        dshPlugins: () => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-list', {}) : request('/api/v1/plugin-ecosystems/dsh/plugins'),
+        installDshPlugin: (source, acceptHostPermissions = false) => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-install', { source, acceptHostPermissions }) : request('/api/v1/plugin-ecosystems/dsh/plugins:install', {
           method: 'POST', body: JSON.stringify({ source, acceptHostPermissions }),
         }),
-        enableDshPlugin: pluginName => directServer() ? studioBridgeOperation('plugins/dsh-enable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':enable', { method: 'POST' }),
-        disableDshPlugin: pluginName => directServer() ? studioBridgeOperation('plugins/dsh-disable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':disable', { method: 'POST' }),
-        updateDshPlugin: pluginName => directServer() ? studioBridgeOperation('plugins/dsh-update', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':update', {
+        enableDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-enable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':enable', { method: 'POST' }),
+        disableDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-disable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':disable', { method: 'POST' }),
+        updateDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-update', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':update', {
           method: 'POST', body: JSON.stringify({ acceptHostPermissions: true }),
         }),
-        uninstallDshPlugin: pluginName => directServer() ? studioBridgeOperation('plugins/dsh-remove', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
-        codexPlugins: () => directServer() ? studioBridgeOperation('plugins/codex-list', {}) : request('/api/v1/plugin-ecosystems/codex/plugins'),
-        installCodexPlugin: (pluginId, marketplaceName) => directServer() ? studioBridgeOperation('plugins/codex-install', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId) + ':install', {
+        uninstallDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-remove', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
+        codexPlugins: () => bridgeAvailable() ? studioBridgeOperation('plugins/codex-list', {}) : request('/api/v1/plugin-ecosystems/codex/plugins'),
+        installCodexPlugin: (pluginId, marketplaceName) => bridgeAvailable() ? studioBridgeOperation('plugins/codex-install', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId) + ':install', {
           method: 'POST', body: JSON.stringify({ marketplaceName: marketplaceName || undefined, acceptUndeclaredPermissions: true }),
         }),
-        uninstallCodexPlugin: pluginId => directServer() ? studioBridgeOperation('plugins/codex-remove', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId), { method: 'DELETE' }),
+        uninstallCodexPlugin: pluginId => bridgeAvailable() ? studioBridgeOperation('plugins/codex-remove', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId), { method: 'DELETE' }),
         models: () => request('/api/v1/catalog/models'),
         credential: name => request('/api/v1/credentials/' + encodeURIComponent(name)),
         putCredential: (name, value) => bridgeAvailable()

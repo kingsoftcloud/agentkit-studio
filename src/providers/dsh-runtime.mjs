@@ -605,7 +605,8 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           record: cloudRecord,
           input,
           resourceAdapter,
-          userId: String(options.userId || options.metadata?.userId || sessionId || agentId),
+          userId: String(options.userId || options.metadata?.userId || 'studio-anonymous'),
+          agentId,
           agent: toolAgent,
         });
         preparedCloudResources = prepared;
@@ -644,7 +645,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
               resourceAdapter,
               input,
               assistantText,
-              userId: String(options.userId || options.metadata?.userId || sessionId || agentId),
+              userId: String(options.userId || options.metadata?.userId || 'studio-anonymous'),
               sessionId,
               agentId,
             });

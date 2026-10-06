@@ -221,6 +221,8 @@ test('operational pages keep the old Studio hierarchy without stacked duplicate 
 });
 
 test('Studio marketplace exposes the old Studio plugin lifecycle through Host routes', () => {
+  assert.match(clientSource, /dshPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/dsh-list'/);
+  assert.match(clientSource, /codexPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/codex-list'/);
   assert.match(clientSource, /hostRemote\.installDshPlugin/);
   assert.match(clientSource, /hostRemote\.enableDshPlugin/);
   assert.match(clientSource, /hostRemote\.disableDshPlugin/);

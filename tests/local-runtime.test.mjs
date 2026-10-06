@@ -183,7 +183,7 @@ test('local runtime injects cloud Skill Space and memory recall into the model t
     modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
     resourceAdapter: {
       loadSkill: async id => { assert.equal(id, 'space-1'); return { name: '云端技能', content: '标题要短，语气友好' }; },
-      searchMemory: async (id, query, userId) => { assert.deepEqual([id, query, userId], ['memory-1', '写一篇', 'session-1']); return [{ content: '用户偏好轻松口吻' }]; },
+      searchMemory: async (id, query, userId, options) => { assert.deepEqual([id, query, userId, options], ['memory-1', '写一篇', 'studio-anonymous', { agentId: 'ar-local-aaaaaaaaaaaaaaaa' }]); return [{ content: '用户偏好轻松口吻' }]; },
       listMcpTools: async () => [],
     },
     observability: { syncTrace: async () => {} },
@@ -198,6 +198,29 @@ test('local runtime injects cloud Skill Space and memory recall into the model t
   assert.match(system, /标题要短，语气友好/);
   assert.match(system, /用户偏好轻松口吻/);
   assert.match(response.chunks.join(''), /已结合绑定资源/);
+});
+
+test('local runtime renders AICP memory Content arrays as text', async () => {
+  const response = responseSink();
+  let requestBody;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: {
+      bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } }] },
+    } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
+    resourceAdapter: {
+      searchMemory: async () => [{ Content: [{ Type: 'input_text', Text: '用户之前选择了轻松口吻。' }] }],
+      listMcpTools: async () => [],
+    },
+    observability: { syncTrace: async () => {} },
+    fetchImpl: async (_url, init) => {
+      requestBody = JSON.parse(init.body);
+      return new Response('data: {"choices":[{"delta":{"content":"已读取"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 'session-memory-content', input: '你还记得什么？' })]), response);
+  assert.match(requestBody.messages[0].content, /用户之前选择了轻松口吻/);
+  assert.doesNotMatch(requestBody.messages[0].content, /\[object Object\]/);
 });
 
 test('local runtime writes a bound memory conversation after a completed turn', async () => {
@@ -226,7 +249,7 @@ test('local runtime writes a bound memory conversation after a completed turn', 
   assert.equal(write[0], 'memory-1');
   assert.equal(write[1], 'user-1');
   assert.deepEqual(write[2], [{ role: 'user', content: '记住我喜欢轻松口吻' }, { role: 'assistant', content: '已记录' }]);
-  assert.deepEqual(write[3], { sessionId: 'session-1', agentId: 'ar-local-aaaaaaaaaaaaaaaa', flush: false });
+  assert.deepEqual(write[3], { sessionId: 'session-1', agentId: 'ar-local-aaaaaaaaaaaaaaaa', flush: true });
   assert.match(response.chunks.join(''), /已记录/);
 });
 

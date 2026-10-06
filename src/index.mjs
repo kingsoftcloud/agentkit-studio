@@ -138,7 +138,8 @@ async function registerControlPlane(ctx) {
       input,
       resourceAdapter,
       toolAdapter,
-      userId: userId || sessionId || agentId,
+      userId: userId || 'studio-anonymous',
+      agentId,
       agent,
     });
     const toolBindings = codexToolBindings(prepared.tools);
@@ -157,7 +158,7 @@ async function registerControlPlane(ctx) {
           resourceAdapter,
           input,
           assistantText,
-          userId: userId || sessionId || agentId,
+          userId: userId || 'studio-anonymous',
           sessionId,
           agentId,
         })

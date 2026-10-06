@@ -65,13 +65,25 @@ test('missing non-cloud Skill remains an explicit local import error', async () 
 test('memory adapter uses QueryMemorySdk and normalizes the returned memories', async () => {
   let call;
   const adapters = createLocalResourceAdapters({
-    serverClient: { action: async (...args) => { call = args; return { data: [{ Memories: [{ content: '历史偏好' }] }] }; } },
+    serverClient: { action: async (...args) => { call = args; return { data: { Data: [{ Memories: [{ content: '历史偏好' }] }] } }; } },
   });
-  const result = await adapters.searchMemory('mem-1', '偏好', 'user-1');
+  const result = await adapters.searchMemory('mem-1', '偏好', 'user-1', { agentId: 'agent-1' });
   assert.deepEqual(result, [{ content: '历史偏好' }]);
   assert.equal(call[0], 'QueryMemorySdk');
-  assert.deepEqual(call[1], { MemoryCollectionId: 'mem-1', AgentUserId: 'user-1', Query: '偏好', Limit: 5, SceneId: '_sys_general' });
+  assert.equal(call[1].MemoryCollectionId, 'mem-1');
+  assert.match(call[1].AgentUserId, /^mp1-[0-9a-f]{60}$/);
+  assert.equal(call[1].Query, '偏好');
+  assert.equal(call[1].Limit, 5);
+  assert.equal(call[1].SceneId, '_sys_general');
   assert.deepEqual(call[2], { apiVersion: '2025-11-14' });
+});
+
+test('memory adapter parses the JSON-string AICP response wrapper', async () => {
+  const adapters = createLocalResourceAdapters({
+    serverClient: { action: async () => ({ data: JSON.stringify({ Data: [{ Memories: [{ Content: [{ Type: 'input_text', Text: '跨会话偏好' }] }] }] }) }) },
+  });
+  const result = await adapters.searchMemory('mem-1', '偏好', 'user-1', { agentId: 'agent-1' });
+  assert.deepEqual(result, [{ Content: [{ Type: 'input_text', Text: '跨会话偏好' }] }]);
 });
 
 test('knowledge adapter bounds DSH search text to the RetrieveKnowledge contract', async () => {
@@ -97,14 +109,18 @@ test('memory adapter writes a bounded conversation through CreateMemorySdk', asy
   ], { sessionId: 'session-1', agentId: 'agent-1' });
   assert.deepEqual(result, { accepted: true, data: { accepted: true } });
   assert.equal(call[0], 'CreateMemorySdk');
-  assert.deepEqual(call[1], {
-    MemoryCollectionId: 'mem-1', AgentUserId: 'user-1', SceneId: '_sys_general', DataType: 'conversation',
-    Data: { Conversation: [
+  assert.equal(call[1].MemoryCollectionId, 'mem-1');
+  assert.match(call[1].AgentUserId, /^mp1-[0-9a-f]{60}$/);
+  assert.deepEqual({ ...call[1], AgentUserId: undefined, Data: undefined }, {
+    MemoryCollectionId: 'mem-1', AgentUserId: undefined, SceneId: '_sys_general', DataType: 'conversation',
+    Data: undefined,
+    AgentId: 'agent-1', SessionId: call[1].SessionId,
+  });
+  assert.match(call[1].SessionId, /^[0-9a-f]{64}$/);
+  assert.deepEqual(call[1].Data, { Conversation: [
       { Role: 'user', CreatedAt: call[1].Data.Conversation[0].CreatedAt, MessageId: call[1].Data.Conversation[0].MessageId, Content: [{ Type: 'input_text', Text: '我喜欢轻松口吻' }] },
       { Role: 'assistant', CreatedAt: call[1].Data.Conversation[1].CreatedAt, MessageId: call[1].Data.Conversation[1].MessageId, Content: [{ Type: 'input_text', Text: '好的，我会保持轻松口吻。' }] },
-    ] },
-    AgentId: 'agent-1', SessionId: 'session-1',
-  });
+    ] });
   assert.deepEqual(call[2], { apiVersion: '2025-11-14' });
 });
 

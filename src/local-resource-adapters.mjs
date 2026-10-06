@@ -9,6 +9,22 @@ export class LocalResourceError extends Error {
 }
 
 function resourceId(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
+
+/** AICP bounds AgentUserId and SessionId to 64 characters. */
+function memorySubjectId(collectionId, userId, agentId = '') {
+  const encoded = JSON.stringify([
+    'memory-partition/v1',
+    String(collectionId || ''),
+    String(agentId || ''),
+    String(userId || 'studio-anonymous').trim() || 'studio-anonymous',
+  ]);
+  return `mp1-${createHash('sha256').update(encoded).digest('hex').slice(0, 60)}`;
+}
+
+function memorySessionId(sessionId) {
+  const raw = String(sessionId || '').trim();
+  return raw ? createHash('sha256').update(`memory-session/v1|${raw}`).digest('hex') : '';
+}
 function contentHash(value, skillId) {
   const raw = String(value || '').trim().toLowerCase().replace(/^sha256:/, '');
   if (!raw) return '';
@@ -249,37 +265,47 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     }
   }
 
-  async function searchMemory(id, query, userId) {
+  async function searchMemory(id, query, userId, { agentId = '' } = {}) {
     if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用', { resourceId: resourceId(id) });
+    const collectionId = resourceId(id);
+    const subjectId = memorySubjectId(collectionId, userId, agentId);
     const result = await serverClient.action('QueryMemorySdk', {
-      MemoryCollectionId: resourceId(id), AgentUserId: String(userId || 'studio-anonymous'),
+      MemoryCollectionId: collectionId, AgentUserId: subjectId,
       Query: String(query || ''), Limit: 5, SceneId: '_sys_general',
     }, { apiVersion: '2025-11-14' });
-    const data = result.data;
-    if (Array.isArray(data)) return data.flatMap(item => Array.isArray(item?.Memories || item?.memories) ? (item.Memories || item.memories) : [item]);
-    return data?.Memories || data?.memories || data?.Records || data?.records || [];
+    const rawData = result.data;
+    let data = rawData;
+    if (typeof rawData === 'string') {
+      try { data = JSON.parse(rawData); } catch { data = null; }
+    }
+    const items = Array.isArray(data) ? data : Array.isArray(data?.Data) ? data.Data : [];
+    const memories = items.length
+      ? items.flatMap(item => Array.isArray(item?.Memories || item?.memories) ? (item.Memories || item.memories) : [item])
+      : data?.Memories || data?.memories || data?.Records || data?.records || [];
+    return memories;
   }
 
   async function writeMemory(id, userId, messages, { sessionId = '', agentId = '', flush = false } = {}) {
     if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用', { resourceId: resourceId(id) });
+    const collectionId = resourceId(id);
     const conversation = (Array.isArray(messages) ? messages : [])
       .filter(message => ['user', 'assistant'].includes(message?.role) && String(message?.content || '').trim())
       .slice(-20)
       .map(message => ({
         Role: message.role,
         CreatedAt: Date.now(),
-        MessageId: `${String(sessionId || 'studio')}-${randomUUID()}`,
+        MessageId: randomUUID(),
         Content: [{ Type: 'input_text', Text: String(message.content).slice(0, 16000) }],
       }));
     if (!conversation.length) return { accepted: false, reason: 'empty' };
     const payload = {
-      MemoryCollectionId: resourceId(id),
-      AgentUserId: String(userId || 'studio-anonymous'),
+      MemoryCollectionId: collectionId,
+      AgentUserId: memorySubjectId(collectionId, userId, agentId),
       SceneId: '_sys_general',
       DataType: 'conversation',
       Data: { Conversation: conversation },
       ...(agentId ? { AgentId: String(agentId) } : {}),
-      ...(sessionId ? { SessionId: String(sessionId) } : {}),
+      ...(memorySessionId(sessionId) ? { SessionId: memorySessionId(sessionId) } : {}),
       ...(flush === true ? { Flush: true } : {}),
     };
     const result = await serverClient.action('CreateMemorySdk', payload, { apiVersion: '2025-11-14' });
