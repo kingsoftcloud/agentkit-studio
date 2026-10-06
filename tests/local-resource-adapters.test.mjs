@@ -149,6 +149,30 @@ test('inline MCP descriptors resolve env credentials and execute through Streama
   await adapters.close();
 });
 
+test('MCP tool protocol errors remain tool failures instead of connection failures', async () => {
+  const fetchImpl = async (url, init = {}) => {
+    if (!init.body) return new Response(null, { status: 405 });
+    const message = JSON.parse(init.body);
+    if (message.method === 'initialize') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'tool-error', version: '1' } } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'tool-error-session' } });
+    if (message.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (message.method === 'tools/list') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'search', inputSchema: { type: 'object' } }] } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'tool-error-session' } });
+    if (message.method === 'tools/call') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'invalid query' } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'tool-error-session' } });
+    return new Response(null, { status: 405 });
+  };
+  const adapters = createLocalResourceAdapters({ fetchImpl, serverClient: { action: async () => { throw new Error('inline descriptor must not call GetMCP'); } } });
+  const binding = { resourceId: 'tool-error-mcp', endpointUrl: 'https://example.test/mcp' };
+  await adapters.listMcpTools(binding);
+  await assert.rejects(
+    () => adapters.callMcpTool(binding, 'search', { q: 'bad' }),
+    error => error instanceof LocalResourceError
+      && error.code === 'MCP_TOOL_FAILED'
+      && error.details.resourceId === 'tool-error-mcp'
+      && error.details.name === 'search'
+      && !error.message.includes('Endpoint 连接失败'),
+  );
+  await adapters.close();
+});
+
 test('local MCP records resolve nested server endpoint and authorization reference', async () => {
   const requests = [];
   const dir = await mkdtemp(join(tmpdir(), 'agentkit-local-mcp-'));

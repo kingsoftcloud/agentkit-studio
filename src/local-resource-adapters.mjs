@@ -58,13 +58,14 @@ function mcpStatus(error) {
     || numericStatus(error?.message) || numericStatus(error?.cause?.message);
 }
 
-function mcpFailure(error, resourceId, phase = 'connect') {
+function mcpFailure(error, resourceId, phase = 'connect', toolName = '') {
   if (error instanceof LocalResourceError && !['MCP_CONNECT_FAILED', 'MCP_TOOL_DISCOVERY_FAILED'].includes(error.code)) return error;
   const status = mcpStatus(error);
   const code = status === 401 ? 'MCP_AUTH_FAILED'
     : status === 403 ? 'MCP_PERMISSION_DENIED'
       : status === 404 ? 'MCP_ENDPOINT_NOT_FOUND'
-        : phase === 'list' ? 'MCP_TOOL_DISCOVERY_FAILED' : 'MCP_CONNECT_FAILED';
+        : phase === 'list' ? 'MCP_TOOL_DISCOVERY_FAILED'
+          : phase === 'call' ? 'MCP_TOOL_FAILED' : 'MCP_CONNECT_FAILED';
   const message = status === 401
     ? 'MCP Endpoint 鉴权失败（HTTP 401），请更新凭证后重新探测'
     : status === 403
@@ -73,9 +74,16 @@ function mcpFailure(error, resourceId, phase = 'connect') {
         ? 'MCP Endpoint 不存在（HTTP 404），请检查地址后重新探测'
         : phase === 'list'
           ? 'MCP 工具目录读取失败，请检查 Endpoint 和网络配置'
-          : 'MCP Endpoint 连接失败，请检查 Endpoint TLS、网络和认证配置';
+          : phase === 'call'
+            ? 'MCP 工具调用失败，请检查工具参数或服务状态'
+            : 'MCP Endpoint 连接失败，请检查 Endpoint TLS、网络和认证配置';
   const cause = String(error?.cause?.message || error?.cause?.code || error?.message || error || '').slice(0, 240);
-  return new LocalResourceError(code, message, { resourceId, ...(status ? { status } : {}), ...(cause ? { cause } : {}) });
+  return new LocalResourceError(code, message, {
+    resourceId,
+    ...(phase === 'call' && toolName ? { name: String(toolName) } : {}),
+    ...(status ? { status } : {}),
+    ...(cause ? { cause } : {}),
+  });
 }
 
 export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = fetch } = {}) {
@@ -151,7 +159,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     catch (error) {
       await Promise.resolve(entry.client.close?.()).catch(() => {});
       if (mcpClients.get(key) === entry) mcpClients.delete(key);
-      throw mcpFailure(error, key, 'call');
+      throw mcpFailure(error, key, 'call', name);
     }
     if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: key, name });
     return result?.content || result;
