@@ -36,6 +36,10 @@ Host 必须收到显式 `scope: cloud` 才允许云端删除；本地记录不�
 | 云端 MCP / 知识库 / 记忆库 / Skill Space | 目标账户、区域、权限、网络与引用一致或完成映射；记忆隔离标识也需保持一致 |
 | 模型 | 目标 Host 能解析绑定的模型配置并获得独立注入的凭证 |
 
-当前 [冻结 Build HTTP 入口](frozen-build-runtime.md) 仍运行在已配置的 Studio Host 上，
-尚未打通可携带运行产物、资源和凭证注入、上传、云端部署与 Server `/v1/responses` 协议
-适配。部署后的绑定效果未验收，不能承诺直接部署后自动保留本机行为。凭证不得写入 Build ZIP。
+现已补充[可迁移运行包](portable-agent-bundle.md)：导出时冻结模型/MCP 配置和 Skill 文件，
+导入新的 Studio 数据目录并在目标注入凭证。独立 Host 已真实验证 MCP、Skill、知识检索和
+跨会话记忆；这些结果不依赖原电脑的资源目录。运行仍复用
+[冻结 Build HTTP 入口](frozen-build-runtime.md)，且需要已安装的 DSH/Studio Host。
+
+上传、云端运行时发布与 Server `/v1/responses` 协议适配尚未完成。预发部署后的绑定效果
+仍未验收，不能承诺直接部署后自动保留本机行为。凭证不得写入 Build ZIP。

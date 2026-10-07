@@ -94,7 +94,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   const mcpClients = new Map();
   const cloudSkillSpaces = new Map();
 
-  async function mcp(binding) {
+  async function describeMcp(binding) {
     const key = resourceId(binding);
     if (!key) throw new LocalResourceError('MCP_ID_MISSING', 'MCP 资源 ID 不能为空');
     const config = binding && typeof binding === 'object' ? binding : {};
@@ -104,8 +104,13 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const server = detail.server && typeof detail.server === 'object' ? detail.server : {};
     const endpoint = detail.mcp_endpoint || detail.private_mcp_endpoint || detail.endpointUrl || detail.url || server.endpointUrl || detail.endpoint;
     if (!endpoint || !/^https?:\/\//i.test(endpoint)) throw new LocalResourceError('MCP_ENDPOINT_UNAVAILABLE', 'MCP 没有可用的 HTTP Endpoint', { resourceId: key });
-    const headers = { ...(detail.headers || config.headers || {}) };
-    const envRefs = { ...(server.envRefs || detail.envRefs || config.envRefs || {}) };
+    return { resourceId: key, endpoint, headers: { ...(detail.headers || config.headers || {}) },
+      envRefs: { ...(server.envRefs || detail.envRefs || config.envRefs || {}) },
+      credentialRef: detail.credentialRef || config.credentialRef, apiKey: detail.api_key || detail.apiKey };
+  }
+
+  async function mcp(binding) {
+    const { resourceId: key, endpoint, headers, envRefs, credentialRef, apiKey: inlineApiKey } = await describeMcp(binding);
     for (const [header, reference] of Object.entries(envRefs)) {
       const resolved = await resolveCredential(credentials, reference);
       const existing = Object.keys(headers).find(name => name.toLowerCase() === String(header).toLowerCase());
@@ -114,8 +119,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       }
       if (resolved && !existing) headers[header] = String(header).toLowerCase() === 'authorization' && !/^\s*\w+\s+/i.test(resolved) ? `Bearer ${resolved}` : resolved;
     }
-    const credentialRef = detail.credentialRef || config.credentialRef;
-    const apiKey = detail.api_key || detail.apiKey || await resolveCredential(credentials, credentialRef);
+    const apiKey = inlineApiKey || await resolveCredential(credentials, credentialRef);
     if (credentialRef && !apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization' && String(headers[name] || '').trim())) {
       throw new LocalResourceError('MCP_CREDENTIAL_MISSING', 'MCP 缺少访问凭证，请在 Host 设置中配置后重新探测', { resourceId: key, reference: String(credentialRef) });
     }
@@ -294,5 +298,6 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     mcpClients.clear();
   }
 
-  return { listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, close };
+  // Host-only descriptor; it can contain credentials. Never expose it through RPC.
+  return { describeMcp, listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, close };
 }

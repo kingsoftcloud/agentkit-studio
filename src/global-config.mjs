@@ -93,13 +93,13 @@ function project(document) {
 }
 
 /** Resolve per field: explicit environment > workspace > shared global > legacy global. */
-export function createGlobalConfiguration({ env = process.env, home = homedir(), workspace } = {}) {
+export function createGlobalConfiguration({ env = process.env, home = homedir(), workspace, inheritLegacy = true } = {}) {
   const agentkitHome = String(env.AGENTKIT_HOME || join(home, '.agentkit')).replace(/^~(?=\/|$)/, home);
   const path = join(agentkitHome, 'config.yaml');
   let pendingWrite = Promise.resolve();
   async function resolve() {
     const layers = [
-      ['legacy-global', project(await readDocument(join(home, '.agentengine', 'settings.json'), true))],
+      ...(inheritLegacy ? [['legacy-global', project(await readDocument(join(home, '.agentengine', 'settings.json'), true))]] : []),
       ['global', project(await readDocument(path))],
     ];
     if (workspace) layers.push(['workspace', project(await readDocument(join(workspace, '.agentkit', 'config.yaml')))]);

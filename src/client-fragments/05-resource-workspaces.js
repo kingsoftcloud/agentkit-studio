@@ -551,11 +551,25 @@
           setMessage(`已请求下载 ${result.filename}（${result.bytes} 字节），请查看浏览器或系统的下载提示。`);
         } catch (reason) { setError(reason?.message || '构建产物下载失败'); }
       };
+      const exportPortableBuild = async buildId => {
+        if (saving) return;
+        setSaving(true); setError(''); setMessage('正在收集模型、MCP 配置与 Skill 文件…');
+        try {
+          const result = await hostRemote.exportPortableBuild(selectedAgent, buildId);
+          const link = document.createElement('a');
+          link.href = 'api/agentkit.build.download?' + new URLSearchParams({ agentId: selectedAgent, buildId, bundleId: result.bundleId });
+          link.download = result.bundleId + '.zip';
+          document.body.appendChild(link); link.click(); link.remove();
+          const names = [...new Set((result.requirements || []).map(item => item.name))];
+          setMessage(`已请求下载运行包：${result.modelCount} 个模型、${result.mcpCount} 个 MCP、${result.skillCount} 个 Skill。目标 Host 需配置：${names.join('、') || '无资源凭证'}。`);
+        } catch (reason) { setMessage(''); setError(reason?.message || '运行包导出失败'); }
+        finally { setSaving(false); }
+      };
       const buildRows = builds.length ? builds.map(item => h('tr', { key: item.id, style: { borderBottom: '1px solid ' + BRAND.border } },
         h('td', { style: { padding: '10px 12px', color: BRAND.ink, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px' } }, item.id || '—'),
         h('td', { style: { padding: '10px 12px', color: BRAND.inkMuted } }, item.revision ? `Revision ${item.revision}` : '—'),
         h('td', { style: { padding: '10px 12px' } }, h(Pill, { tone: String(item.status || '').toUpperCase() === 'SUCCEEDED' ? 'accent' : 'signal' }, item.status || 'UNKNOWN')),
-        h('td', { style: { padding: '10px 12px', display: 'flex', gap: '6px' } }, canRunBuild && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => window.__AGENTKIT_STUDIO_BIND_AGENT__?.({ agentId: selectedAgent, buildId: item.id }), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '在新会话运行') : null, directServerMode && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => downloadBuild(item.id), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '下载 ZIP') : null))) : h('tr', null, h('td', { colSpan: 4, style: { padding: '18px 12px', color: BRAND.inkMuted } }, '当前 Agent 还没有 Build。'));
+        h('td', { style: { padding: '10px 12px', display: 'flex', gap: '6px' } }, canRunBuild && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => window.__AGENTKIT_STUDIO_BIND_AGENT__?.({ agentId: selectedAgent, buildId: item.id }), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '在新会话运行') : null, directServerMode && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => downloadBuild(item.id), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '下载定义 ZIP') : null, canRunBuild && directServerMode && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', disabled: saving, onClick: () => exportPortableBuild(item.id), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '导出运行包') : null))) : h('tr', null, h('td', { colSpan: 4, style: { padding: '18px 12px', color: BRAND.inkMuted } }, '当前 Agent 还没有 Build。'));
       return h('div', null,
         h(SectionHeading, { eyebrow: 'Studio domain / Delivery', title: '构建与部署', detail: directServerMode ? 'Build 固化 Agent Revision；本页支持本地构建、下载和运行，云端部署尚未接入。' : 'Build 固化 Agent Revision；Deployment 只接受已成功的 Build，所有动作由本地 Host 通过异步 operation 承载。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中') }),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
@@ -569,7 +583,7 @@
             h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } }, h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas } }, ['Build', '版本', '状态', '操作'].map(label => h('th', { key: label, style: { padding: '10px 12px', fontWeight: 750 } }, label)))), h('tbody', null, buildRows))),
           h('section', { style: { marginTop: '14px', display: 'grid', gap: '12px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
             h('div', { style: { color: BRAND.ink, fontWeight: 800, fontSize: '14px' } }, directServerMode ? '云端部署' : '部署已成功的 Build'),
-            directServerMode ? h('div', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, padding: '10px 12px', borderRadius: '9px', background: BRAND.canvas } }, '当前构建产物尚未接入云端发布。你可以下载 Build，或使用冻结版本在本地运行对话。') : null,
+            directServerMode ? h('div', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, padding: '10px 12px', borderRadius: '9px', background: BRAND.canvas } }, '可导出运行包，在独立 Studio Host 中导入运行。包内包含导出时的模型、MCP 配置与 Skill 文件；目标环境需注入凭证，并能访问知识库、记忆库等远程服务。云端发布尚未接入。') : null,
             h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 1fr 1fr auto', gap: '9px', alignItems: 'end' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Build', h('select', { value: selectedBuild, onChange: event => setSelectedBuild(event.target.value), disabled: directServerMode, style: inputStyle() }, h('option', { value: '' }, readyBuilds.length ? '请选择 Build' : '暂无成功 Build'), readyBuilds.map(item => h('option', { key: item.id, value: item.id }, `${item.id} · Revision ${item.revision || '—'}`)))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '区域', h('input', { value: region, onChange: event => setRegion(event.target.value), disabled: directServerMode, style: inputStyle() })),

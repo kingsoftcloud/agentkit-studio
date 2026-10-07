@@ -339,6 +339,7 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({ revision }),
           }),
         codexModels: () => studioBridgeOperation('models/codex'),
+        exportPortableBuild: (agentId, buildId) => studioBridgeOperation('builds/export-portable', { agentId, buildId }),
         downloadBuild: (agentId, buildId) => studioBridgeOperation('builds/download', { agentId, buildId }),
         build: id => request('/api/v1/builds/' + encodeURIComponent(id)),
         createDeployment: (buildId, payload, idempotencyKey) => request('/api/v1/builds/' + encodeURIComponent(buildId) + '/deployments', {

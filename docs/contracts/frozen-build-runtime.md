@@ -8,6 +8,8 @@ RunAgent 或 OpenAI Responses 协议兼容性。
 ## 启动
 
 先通过 Studio 构建 Agent，并确保同一 Host 能解析其模型、MCP、Skill 和平台资源引用。
+迁移到独立 Host 时，可使用[可迁移运行包](portable-agent-bundle.md)携带资源配置与 Skill 文件，
+由目标环境注入凭证；普通定义 ZIP 仍只冻结绑定引用。
 在启动已安装 Studio 插件的 DSH Profile 时注入以下环境变量：
 
 | 变量 | 含义 |

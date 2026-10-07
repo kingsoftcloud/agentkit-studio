@@ -1,5 +1,8 @@
 # AgentKit Studio
 
+跨 Host 运行 Agent 可使用[可迁移运行包](docs/contracts/portable-agent-bundle.md)：在构建页导出
+模型/MCP 配置和 Skill 文件，在新的数据目录导入并注入目标凭证。预发运行时发布仍需后续联调。
+
 AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时
 可以选择官方 DSH，也可以选择 Studio 内置的独立 Harness provider。

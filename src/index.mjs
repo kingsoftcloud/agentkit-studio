@@ -35,6 +35,8 @@ async function registerControlPlane(ctx) {
   // browser-facing plugin module graph. DSH loads this module for both the
   // Host and client faces; importing node:fs or aws4 at activation time makes
   // the whole plugin fail before the Host route can be registered.
+  const { loadPortableRuntime, createPortableBundles } = await import('./portable-bundle.mjs');
+  const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
   const skillDiscoveryPromise = import('./skill-discovery.mjs').then(({ createSkillDiscovery }) => createSkillDiscovery({ storeDir: join(studioStoreDir, 'skills') }));
   const studioBuildPromise = Promise.all([
@@ -44,7 +46,10 @@ async function registerControlPlane(ctx) {
   const { BUILD_DOWNLOAD_PATH, buildDownloadResponse } = await import('./build-download-route.mjs');
   ctx.connection.fetch.register({
     path: BUILD_DOWNLOAD_PATH, methods: ['GET', 'HEAD'], requestBody: 'buffered',
-    fetch: async request => buildDownloadResponse(request, (await studioBuildPromise).build),
+    fetch: async request => {
+      const bundleId = new URL(request.url).searchParams.get('bundleId');
+      return buildDownloadResponse(request, bundleId ? { download: (agentId, buildId) => portableBundles.download(agentId, buildId, bundleId) } : (await studioBuildPromise).build);
+    },
   });
   const studioSchedulerPromise = Promise.all([import('./studio-scheduler.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioScheduler }, { createNativeAutomationRunner }]) => createStudioScheduler({ storeDir: join(studioStoreDir, 'scheduler'), runner: createNativeAutomationRunner({ getService: name => ctx.get(name), admit: async agentId => { const local = await (await agentStorePromise).get(agentId); return presetAdmission.ensure(agentId, local ? { agent: local } : {}); } }) })).catch(error => { console.warn('[agentkit-studio] scheduler init failed:', error?.message || error); return null; });
   const studioObservabilityPromise = import('./studio-observability.mjs').then(({ createStudioObservability }) => createStudioObservability({ storeDir: join(studioStoreDir, 'traces') })).catch(error => { console.warn('[agentkit-studio] observability init failed:', error?.message || error); return null; });
@@ -97,7 +102,7 @@ async function registerControlPlane(ctx) {
     },
   }));
   const configurationPromise = import('./global-config.mjs').then(({ createGlobalConfiguration }) =>
-    createGlobalConfiguration({ env: runtimeEnv }));
+    createGlobalConfiguration({ env: runtimeEnv, inheritLegacy: !portableRuntime }));
   const credentialsService = ctx.get('credentials');
   const serverClientPromise = configurationPromise.then(configuration =>
     import('./server-client.mjs').then(({ createAgentEngineClient }) =>
@@ -112,7 +117,9 @@ async function registerControlPlane(ctx) {
     localMcpStorePromise,
   ]).then(async ([skillDiscovery, serverClient, localMcpStore]) => {
     const { createLocalResourceAdapters } = await import('./local-resource-adapters.mjs');
-    return createLocalResourceAdapters({ serverClient, skillDiscovery, credentials: credentialsService, resourceStore: localMcpStore });
+    const adapters = createLocalResourceAdapters({ serverClient, skillDiscovery, credentials: credentialsService, resourceStore: portableRuntime?.resourceStore || localMcpStore });
+    if (portableRuntime) adapters.loadSkill = portableRuntime.loadSkill;
+    return adapters;
   });
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the
@@ -243,6 +250,8 @@ async function registerControlPlane(ctx) {
   // apply context used by the DSH loader.
   const credentials = credentialsService;
   const models = await import('./model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
+  const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
+    adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
   const syncModelCredential = models.sync;
   // The DSH loader awaits an async plugin apply. Do this before returning from
   // activation so the first prompt cannot race the global ~/.agentkit key
@@ -418,10 +427,26 @@ async function registerControlPlane(ctx) {
     await restorePersistedPresets();
   }
   const { startFrozenBuildRuntime } = await import('./frozen-build-runtime.mjs');
-  const frozenRuntime = await startFrozenBuildRuntime({ ctx, env: runtimeEnv, build: (await studioBuildPromise).build,
+  const startRuntime = async () => startFrozenBuildRuntime({ ctx, env: runtimeEnv, build: (await studioBuildPromise).build,
     admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) });
-  if (frozenRuntime) ctx.effect(() => () => frozenRuntime.close(), 'agentkit-studio: frozen Build runtime');
-  const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-inspect', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/agent-update', 'channels/action', 'server/action']);
+  if (portableRuntime) {
+    // Settings writes reconcile the Loader. Awaiting them inside plugin apply
+    // deadlocks that reconciliation; use the same public startup boundary as DSH Settings.
+    let stopped = false, runtime;
+    ctx.effect(() => () => { stopped = true; return runtime?.close(); }, 'agentkit-studio: portable runtime lifetime');
+    void ctx.root.loader.await().then(async () => {
+      if (stopped) return;
+      const { syncPortableModelProfiles } = await import('./portable-model-bridge.mjs');
+      await syncPortableModelProfiles({ settings: ctx.get('settings'), profiles: portableRuntime.manifest.resources.profiles });
+      if (stopped) return;
+      runtime = await startRuntime();
+      if (stopped) await runtime?.close();
+    }).catch(error => console.error('[agentkit-studio] portable runtime startup failed:', error?.code || 'PORTABLE_STARTUP_FAILED'));
+  } else {
+    const frozenRuntime = await startRuntime();
+    if (frozenRuntime) ctx.effect(() => () => frozenRuntime.close(), 'agentkit-studio: frozen Build runtime');
+  }
+  const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-inspect', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'builds/export-portable', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/agent-update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
@@ -633,7 +658,7 @@ async function registerControlPlane(ctx) {
           return { ok: false, error: { code: error?.code || 'PLUGIN_ECOSYSTEM_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
         }
       }
-      if (endpoint === 'builds/create' || endpoint === 'builds/list' || endpoint === 'builds/download' || endpoint === 'operations/list' || endpoint === 'operations/cancel') {
+      if (endpoint === 'builds/create' || endpoint === 'builds/list' || endpoint === 'builds/download' || endpoint === 'builds/export-portable' || endpoint === 'operations/list' || endpoint === 'operations/cancel') {
         const studio = await studioBuildPromise;
         try {
           if (endpoint === 'builds/create') {
@@ -644,6 +669,10 @@ async function registerControlPlane(ctx) {
             const agentId = String(payload?.agentId || '').trim();
             if (!agentId) return { ok: true, value: { items: [] } };
             return { ok: true, value: { items: await studio.build.list(agentId) } };
+          }
+          if (endpoint === 'builds/export-portable') {
+            try { return { ok: true, value: await portableBundles.prepare(String(payload?.agentId || ''), String(payload?.buildId || '')) }; }
+            catch (error) { return { ok: false, error: { code: error?.code || 'PORTABLE_EXPORT_FAILED', message: error?.code?.startsWith('PORTABLE_') ? error.message : '运行包导出失败，请检查绑定的资源是否可读取' } }; }
           }
           if (endpoint === 'builds/download') return { ok: true, value: await studio.build.download(String(payload?.agentId || ''), String(payload?.buildId || '')) };
           if (endpoint === 'operations/list') {

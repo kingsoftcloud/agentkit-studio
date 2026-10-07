@@ -20,7 +20,7 @@ export async function buildDownloadResponse(request, build) {
       },
     });
   } catch (error) {
-    const status = error?.code === 'BUILD_NOT_FOUND' ? 404 : error?.code === 'BUILD_ARTIFACT_INVALID' ? 409 : 500;
+    const status = ['BUILD_NOT_FOUND', 'ENOENT'].includes(error?.code) ? 404 : ['BUILD_ARTIFACT_INVALID', 'PORTABLE_BUNDLE_INVALID', 'PORTABLE_ID_INVALID'].includes(error?.code) ? 409 : 500;
     // Filesystem errors may contain the Host's home path.
     return new Response(status === 404 ? '构建产物不存在' : status === 409 ? '构建产物校验失败，请重新构建' : '构建产物下载失败', { status });
   }

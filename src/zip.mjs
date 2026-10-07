@@ -90,7 +90,7 @@ export function createZip(entries, { timestamp = new Date() } = {}) {
 
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(0x0314, 4); // Unix permissions preserve executable Skill scripts.
     central.writeUInt16LE(20, 6);
     central.writeUInt16LE(0x0800, 8);
     central.writeUInt16LE(0, 10);
@@ -100,6 +100,7 @@ export function createZip(entries, { timestamp = new Date() } = {}) {
     central.writeUInt32LE(data.length, 20);
     central.writeUInt32LE(data.length, 24);
     central.writeUInt16LE(nameBuffer.length, 28);
+    central.writeUInt32LE(((0o100000 | (entry.executable ? 0o700 : 0o600)) << 16) >>> 0, 38);
     central.writeUInt32LE(offset, 42);
     centrals.push(central, nameBuffer);
     offset += 30 + nameBuffer.length + data.length;
