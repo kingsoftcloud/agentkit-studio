@@ -502,12 +502,12 @@
         setError('');
         try {
           const result = await hostRemote.downloadBuild(selectedAgent, buildId);
-          const bytes = Uint8Array.from(atob(result.base64), character => character.charCodeAt(0));
-          const url = URL.createObjectURL(new Blob([bytes], { type: result.contentType }));
+          // Use DSH's same-origin Fetch carrier, as its native session export
+          // does. Embedded browser download managers may drop blob: URLs.
+          const url = 'api/agentkit.build.download?' + new URLSearchParams({ agentId: selectedAgent, buildId });
           const link = document.createElement('a');
           link.href = url; link.download = result.filename;
           document.body.appendChild(link); link.click(); link.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 60000);
           setMessage(`已请求下载 ${result.filename}（${result.bytes} 字节），请查看浏览器或系统的下载提示。`);
         } catch (reason) { setError(reason?.message || '构建产物下载失败'); }
       };

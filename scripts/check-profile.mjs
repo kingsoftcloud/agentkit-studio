@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const PLUGIN_PACKAGE = '@kingsoftcloud/agentkit-studio';
 const PLUGIN_ID = 'agentkit-studio';
@@ -11,7 +12,7 @@ function readJson(path, label) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-export function checkInstalledProfile(profileDir, expectedVersion) {
+export function checkInstalledProfile(profileDir, expectedVersion, archive) {
   const root = resolve(profileDir);
   const profile = readJson(resolve(root, 'package.json'), 'profile package.json');
   const dependency = profile.dependencies?.[PLUGIN_PACKAGE];
@@ -41,6 +42,20 @@ export function checkInstalledProfile(profileDir, expectedVersion) {
   for (const path of ['dist/client.js', 'src/index.mjs', 'cordis.patch.yml']) {
     if (!existsSync(resolve(pluginRoot, path))) throw new Error(`installed plugin is missing ${path}`);
   }
+  if (archive) {
+    const packed = resolve(archive);
+    const paths = execFileSync('tar', ['-tzf', packed], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean);
+    for (const path of paths) {
+      if (!path.startsWith('package/') || path.split('/').includes('..')) throw new Error('invalid packed artifact path');
+      if (path.endsWith('/')) continue;
+      const relative = path.slice('package/'.length);
+      const installed = resolve(pluginRoot, relative);
+      const expected = execFileSync('tar', ['-xOzf', packed, path], { maxBuffer: 32 * 1024 * 1024 });
+      if (!existsSync(installed) || !readFileSync(installed).equals(expected)) {
+        throw new Error(`installed plugin differs from packed artifact: ${relative}`);
+      }
+    }
+  }
   return { profile: profile.name, version: packageJson.version, dependency };
 }
 
@@ -51,7 +66,7 @@ function main() {
     console.error('usage: node scripts/check-profile.mjs <profile-dir> <expected-version>');
     process.exit(2);
   }
-  const result = checkInstalledProfile(profileDir, expectedVersion);
+  const result = checkInstalledProfile(profileDir, expectedVersion, process.argv[4]);
   console.log(`profile integrity: ${result.profile} loads ${PLUGIN_PACKAGE}@${result.version} (${result.dependency})`);
 }
 

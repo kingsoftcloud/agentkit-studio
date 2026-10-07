@@ -70,9 +70,13 @@ profile-install: pack
 	if test ! -f "$$profile_dir/package.json"; then \
 		(cd "$(DSH_ROOT)" && $(DSH_SOURCE_CLI) --profile "$(DSH_PROFILE)" --from-default-profile web --dump-config >/dev/null); \
 	fi
-	cd "$(DSH_ROOT)" && $(DSH_SOURCE_CLI) plugin --profile "$(DSH_PROFILE)" add --force "file:$(PLUGIN_TARBALL)"
+	@digest="$$(shasum -a 256 "$(PLUGIN_TARBALL)" | cut -d ' ' -f 1)"; \
+		input_dir="$(abspath $(PACK_DIR))/profile-plugin-input/$$digest"; \
+		mkdir -p "$$input_dir"; \
+		cp "$(PLUGIN_TARBALL)" "$$input_dir/plugin.tgz"; \
+		(cd "$(DSH_ROOT)" && $(DSH_SOURCE_CLI) plugin --profile "$(DSH_PROFILE)" add --force "file:$$input_dir/plugin.tgz")
 	@profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
-		node scripts/check-profile.mjs "$$profile_dir" "$(PLUGIN_VERSION)"
+		node scripts/check-profile.mjs "$$profile_dir" "$(PLUGIN_VERSION)" "$(PLUGIN_TARBALL)"
 
 # Verify a previously installed profile without mutating DSH_HOME. PROFILE_DIR
 # can point at an unpacked release profile when checking a Desktop build.

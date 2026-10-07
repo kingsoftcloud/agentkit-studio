@@ -15,6 +15,7 @@
 | C02 | 自研 Harness 使用原生会话，流式文本、可展开思考及工具调用 | 通过 | 原生对话真实执行 MCP、Skill/Bash；思考和工具节点可展开。长回答在未结束且停止按钮仍可用时已显示到第 24 条，正文逐步增长。 |
 | C03 | Codex Agent 使用原生会话和 Codex Runtime，历史上下文正确 | 通过 | 真实 Codex App Server 搜索后重载历史会话，第二轮正确召回 E2E-CODEX-20261007-BETA；新的无工作区会话真实选择 GPT-6-Luna 并回复指定标记，刷新保留会话和模型。 |
 | C07 | 原生回答中的中文相邻网址、加粗及流式链接 | 通过 | 真实 DMG 历史回答原先把中文括号与说明拼进 href；十一号补丁复用 GFM 解析修复。最终 DMG 重放同一 Session，45345、45163 和 directories/5028?type=1 三个链接目标均准确，中文说明位于链接外，加粗恢复；逐字流式更新与显式链接、Unicode 路径回归通过。 |
+| C08 | 冷启动恢复旧会话的 Agent 名称，无需切页或发消息 | 通过 | 网页与最终 DMG 都直接恢复先前打开的 Session，预设恢复后名称自动更新；原始问题是动态目录注册无刷新通知，重新进入页面才恢复。事件传递与读取期间失效的回归先红后绿。 |
 | C04 | 取消生成、重试、刷新与历史恢复，不误报成功或重复回答 | 部分通过 | 长回答停止与后续继续成功；编辑到 r2/r3、Host 重启后原 r1 Session 仍回复旧身份。原生“在新对话中分支”实际生成新 Session 并保留历史、Agent 和 glm 模型，分支继续使用原 r3 Prompt。独立重新生成按钮未在当前原生页暴露，未声称完成该按钮验收。 |
 | M01 | 多模型配置、独立凭证、唯一默认模型及 Agent 默认模型 | 通过 | 真实创建三项独立配置；两个本地合成网关分别校验各自 Bearer 并返回独立 canary，原生会话实际通过。第三配置真实调用 glm-5.3-flash。绑定 Codex 后普通新会话仍使用原有 glm 默认，目录变更无须重启。 |
 | R01 | MCP 创建、编辑凭证、探测、工具清单及错误提示 | 通过 | 秘塔真实探测 6 个工具；连接失败后连续保存只保留 mcp-local-03011b4c1b1e4de0 同一记录。云端 mcp_test 真正到达 Endpoint，证书链验证失败以 MCP_TLS_FAILED 持久化显示，未绕过 TLS。最终 DMG App 清空 envRefs，保留 KSC_AIPRO_API_KEY 引用名且不输入密钥，保存后同一 MCP ID 探测 ready 并显示六项真实工具；凭证值未改写。 |
@@ -27,7 +28,7 @@
 | R08 | 组合绑定 MCP、Skill、知识库和记忆库，无绑定丢失 | 通过 | 测试 Agent 同时绑定模型、秘塔 MCP、smoke 知识库、xiayu-test 记忆库及 Skill Center；分别真实搜索、检索、跨会话召回及执行 Skill 脚本，绑定未丢失。最终 DMG 退出再打开后，r2 会话 12 秒完成秘塔搜索（45 条）、知识库 canary 与真实记忆召回。 |
 | P01 | DSH 插件安装、启停、失败提示和实际使用 | 通过 | 网页与独立 DMG App 经安装表单安装本轮无依赖合成插件 0.0.2，Host 热应用；原生模型实际调用 studio_e2e_echo 并显示 canary。错误的 0.0.1 插件被 Host 拒绝并回滚安装；Schedule 停用与重启用实际改变能力和入口。网页、桌面的本轮测试插件最终均卸载成功。此证据为本地插件包安装，未冒称 npm 新包发布。后续复验发现 Make 启动把 pnpm 11 注入 pnpm 10 的旧 Profile，实际出现 ERR_PNPM_UNEXPECTED_STORE；改为官方源码 CLI 后，同一 Profile 安装命令和网页安装表单均成功。 |
 | P02 | Codex 插件安装、Skill 加载和卸载 | 通过 | 独立 CODEX_HOME 使用本机官方 openai-primary-runtime 市场，通过 Studio 同一适配器安装 documents，CLI 确认为 installed/enabled；实际 App Server skills/list 返回 documents:documents、enabled=true；卸载后目录不再标记安装。另在独立 DMG App 的 Codex 插件添加表单实际安装 documents@openai-primary-runtime；详情显示 26.909.12148 已启用，包内 Node/Codex 的 skills/list 再次确认加载，界面卸载成功。现有用户插件未变更。 |
-| B01 | 本地 Build 打包、下载、历史及冻结版本运行 | 部分通过 | 真实生成 build_6b8bc89fd3966f21e524，Agent Prompt 更新至 r2 后，原生会话仍运行冻结 r1 并回答旧身份。网页下载返回 13117 字节但 IAB 事件超时；真实 DMG App 的 build_de2c5303513698fdc068 ZIP 经 macOS 保存面板落地 2828 字节，ZIP 完整性通过。网页 IAB 下载事件再次超时且 Downloads 无对应文件，未冒称落地；桌面下载已确认。 |
+| B01 | 本地 Build 打包、下载、历史及冻结版本运行 | 通过 | 真实生成 build_6b8bc89fd3966f21e524，Prompt 更新后原生会话仍运行冻结 r1。网页 Blob 下载稳定复现无文件；改为 DSH 已认证的 Fetch 文件响应后，IAB 下载事件返回 Downloads ZIP 路径，实际 13117 字节，解包 manifest 确认 Agent 与 Revision 1，SHA256 为 0f8b2b3c15221283f9aee2a1d40e090899dfb7026c6b184c74eac5b365f7c275。未认证请求返回 401，外源请求返回 403。最终 DMG 经 macOS 保存面板再次下载 2828 字节 ZIP，SHA256 82206458e5fbe04512aef825b11bb8da581c3cd52e63f9fc00e9872015d2e4d4，与原冻结包一致。 |
 | B02 | 部署入口对应真实合同，失败清晰且不生成虚假就绪记录 | 通过 | 真实构建后部署按钮仍禁用并说明 AgentEngine Server 没有 Deployment Action；无新增虚假就绪部署记录。实际云端部署合同缺口仍存在。 |
 | O01 | Studio 自动化创建、编辑、启停、手动运行和执行历史 | 通过 | task-d52e9177 手动运行成功并有原生 Skill stdout；实际 60 秒计划 task-92e195c3 在 13:38:49 触发，13:38:51 完成，occ_8dc6863fe1964b51914cb5f051008e15 与 Session/Run ID 一致。两项测试任务最终暂停。一次性空时间与时区编辑修复另有回归检查。 |
 | O02 | DSH 原生自动化任务目录及任务详情 | 通过 | 独立 DMG App 通过官方 schedule_create 创建一次性提醒 schedule-ab20de53-eae3-4bf8-823a-d86582bcc431，14:18 实际投递 E2E-DSH-SCHEDULE-20261007；原生任务详情显示执行记录和结束状态，无循环任务残留。 |
@@ -50,15 +51,25 @@
 
 ## 最终本机产物与复验
 
-- DMG：`AgentKit-Studio-0.0.1-mac-arm64-local.dmg`，501706731 字节（478.46 MiB）；SHA256 `72ba4a30e162797880bd8775d98f213f83012bd3e4d301dbdb7c5f1485982fad`。这是本机 arm64 未签名验收包。
-- 最终 App 已由 DMG 只读挂载后复制到源码目录之外。包内 local-runtime 源码与本轮最终源码 SHA256 一致，282 项检查、163 文件包完整性、170 个跟踪文件的可分发路径检查通过。
+- DMG：`AgentKit-Studio-0.0.1-mac-arm64-local.dmg`，501722949 字节（478.48 MiB）；SHA256 `0659c0dbdfeced14bd9f61a9d837754eba2b72081279752a9c2a90ade4bf7a58`。这是本机 arm64 未签名验收包。
+- 最终 App 已由 DMG 只读挂载后复制到源码目录之外。包内 local-runtime 源码与本轮最终源码 SHA256 一致，284 项检查与 174 个跟踪文件的可分发路径检查通过；最终 tgz 的 167 文件包完整性通过。
 - 最终包恢复旧 r1 对话后继续返回 E2E-DESKTOP-PERSONA；r2 资源会话与包内 Codex 的实际续问成功。用户已有 Agent 配置未被测试改写，测试自动化均已暂停或结束。
 - 实际图标从最终 App 的 icon.icns 导出，品牌为 AgentKit Studio A；旧版已安装应用不会仅因更新源文件自动改变。本轮未覆盖旧版 0.8.5 安装。
-- 未完成的外部条件：渠道服务连接配置、Deployment Action，以及 macOS 签名和公证配置。内嵌浏览器 ZIP 下载落地与原生重新生成按钮不计为通过。
+- 未完成的外部条件：渠道服务连接配置、Deployment Action，以及 macOS 签名和公证配置。内嵌浏览器 ZIP 下载已补验；原生重新生成按钮仍未验收。
 
 ## 原生链接与插件流程补验
 
 - 新 DMG 经完整官方 build:official、release:pack 和桌面流水线重新生成，包内网页 index.html 与当前构建产物完全一致；重新挂载、复制和启动后重放真实回答验证链接修复。
 - Codex 插件空目录的“添加 Codex 插件”实际打开安装表单；DSH 搜索不存在名称显示“没有匹配的插件”，清空搜索恢复真实列表。
 - 网页旧 Profile 插件安装与卸载均经界面成功，Host 显示测试插件 0.0.2 已加载；测试插件已卸载。Profile 的同版本开发包通过官方 CLI 强制刷新，安装后的 dist/client.js 与当前打包文件 SHA256 一致。
-- 当前矩阵为 35 项：31 项通过、3 项部分通过、1 项外部阻塞；原有签名、渠道配置、云部署合同与浏览器下载落地等未验证项没有改标通过。
+- 本次补验前矩阵为 35 项：31 项通过、3 项部分通过、1 项外部阻塞。后续下载与冷启动补验记录见下方。
+
+## 下载与开发安装补验
+
+- 网页 ZIP 使用 DSH 公开 `connection.fetch.register` 的 GET/HEAD 文件响应；保持异步 RPC 预检，浏览器实际下载成功，确认问题来自 Blob 下载路径。没有新建旁路服务或放宽认证。
+- 同版本、同路径 tarball 的官方安装曾返回成功却保留旧客户端 SHA256；内容摘要路径安装后逐文件与 tgz 核对通过，新增回归拒绝同版本旧内容。
+- 十二号兼容补丁为公开预设目录增加变更事件，并处理事件发生在列表读取期间的情况。179 项相关测试通过，完整客户端 TypeScript 编译通过；网页停止 Host 后重新启动，打开原会话无需切页即显示正确名称。最终 DMG 从只读挂载复制到源码之外，启动时同一旧会话先显示 ID，恢复完成后自动变为 E2E DMG，仍使用 glm-5.3-flash。
+
+- 最终矩阵为 36 项：33 项通过、2 项部分通过、1 项外部阻塞。部分通过为独立重新生成按钮和真实 Channels 连接；签名、公证与云部署合同仍保留明确限制。
+
+- 新 DMG 在仅系统 PATH 的独立安装目录中，资源 Agent 续问用时 8 秒，展开原生工具轨迹核对 `metaso_web_search` 的真实输出 total=41、size=10；回答同时包含本轮 Knowledge 的 SMOKE-KB-CANARY-2026 与 Memory 的 e2e-dmg-memory-20261007。新包图标 icns 与此前已目视验收的 Studio A 图标逐字节一致。

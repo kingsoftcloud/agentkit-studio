@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { checkInstalledProfile } from '../scripts/check-profile.mjs';
+import { execFileSync } from 'node:child_process';
 
 const packageName = '@kingsoftcloud/agentkit-studio';
 
@@ -49,4 +50,17 @@ test('installed profile fails closed when Studio is not a profile bundle', async
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
   }));
   assert.throws(() => checkInstalledProfile(root, '0.0.1'), /bundle list omits/);
+});
+
+test('same-version stale installed files are rejected against the packed artifact', async t => {
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const input = resolve(root, 'input');
+  await mkdir(resolve(input, 'package', 'dist'), { recursive: true });
+  await writeFile(resolve(input, 'package', 'dist', 'client.js'), 'current client');
+  const archive = resolve(root, 'plugin.tgz');
+  execFileSync('tar', ['-czf', archive, '-C', input, 'package']);
+  assert.throws(() => checkInstalledProfile(root, '0.0.1', archive), /differs from packed artifact: dist\/client.js/);
+  await writeFile(resolve(root, 'node_modules', '@kingsoftcloud', 'agentkit-studio', 'dist', 'client.js'), 'current client');
+  assert.equal(checkInstalledProfile(root, '0.0.1', archive).version, '0.0.1');
 });
