@@ -47,6 +47,31 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   ]);
 });
 
+test('native plugin MCP calls reach the Studio event stream, including failures', async () => {
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn(), write = child.stdout.write.bind(child.stdout);
+    child.stdout.write = (data, ...args) => {
+      const message = JSON.parse(String(data));
+      if (message.method === 'item/started' && message.params.item.id === 'item-final') {
+        const common = { threadId: 'thread-fake', turnId: 'turn-fake' };
+        for (const status of ['completed', 'failed']) {
+          const item = { id: status, type: 'mcpToolCall', server: 'plugin-mcp', tool: 'lookup', status };
+          write(JSON.stringify({ method: 'item/started', params: { ...common, item } }) + '\n');
+          write(JSON.stringify({ method: 'item/completed', params: { ...common, item } }) + '\n');
+        }
+      }
+      return write(data, ...args);
+    };
+    return child;
+  } });
+  const tools = [];
+  for await (const chunk of runtime.stream({ input: '查卡片' })) if (chunk.type === 'tool') tools.push(chunk);
+  assert.deepEqual(tools.map(chunk => [chunk.id, chunk.phase, chunk.name]), [
+    ['completed', 'started', 'plugin-mcp/lookup'], ['completed', 'completed', 'plugin-mcp/lookup'],
+    ['failed', 'started', 'plugin-mcp/lookup'], ['failed', 'failed', 'plugin-mcp/lookup'],
+  ]);
+});
+
 test('the selected Codex model reaches thread/start instead of inheriting another default', async () => {
   let selected;
   const runtime = createCodexRuntime({ model: 'configured-default', spawnImpl: () => {

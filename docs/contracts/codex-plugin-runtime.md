@@ -10,6 +10,8 @@
 3. 用户点击安装或输入 `plugin-name@marketplace` 后，Host 执行
    `codex plugin add plugin-name@marketplace --json`；卸载使用 `plugin remove`。
    需要官方安装确认或当前账户不可安装的条目不提供直接安装按钮。
+   CLI 返回值必须是有效 JSON 且包含本次完整 pluginId，退出码为零不能单独确认成功。
+   安装结果保留 authPolicy 和 appsNeedingAuth；不向浏览器回传原始 stdout 或安装路径。
 4. 新建 Codex Agent 会话后，Codex App Server 从同一 `CODEX_HOME` 加载插件。未指定时使用
    默认 Codex 用户目录，因此与该目录的其他 Codex 客户端共享安装状态。
 
@@ -17,6 +19,26 @@
 Studio 当前未完整复刻官方客户端的账户、连接器授权、个人市场发布及全部插件界面能力。
 官方本地市场与通用公开目录的说明见
 [Package your plugin](https://developers.openai.com/plugins/build/plugins)。
+
+## 能力、授权与实际调用
+
+详情通过 `plugin/read` 查询声明的 Skill、MCP 和连接器；本地市场路径只在 Host 内解析。
+连接器状态使用 `app/installed` 的实际快照，按连接器 ID 精确匹配 enabled/callable。
+页面区分可调用、已禁用、尚不可调用、未连接或未加载和状态未确认，并提供官方返回的 HTTPS
+授权地址；用户完成授权后可刷新。读取失败不会伪装为未安装或可调用，也不会自动修改权限。
+
+`plugin/list` 和 `plugin/read` 在官方文档中仍标注为开发中；当前集成限定于固定 CLI 0.159.2，
+须经真实协议验证后才能升级，不把这组接口当作稳定的公开产品兼容保证。生命周期继续使用 CLI，
+未扩展到实验性的 plugin/install。参见 [App Server](https://developers.openai.com/codex/app-server)。
+
+Codex 原生 mcpToolCall 的开始、成功、失败事件转发为 Studio 工具进度和 trace 事件，
+调用仍由 Codex 执行，不把这些事件重新交给 DSH 执行。当前此类插件工具输入/输出尚未映射为
+DSH 独立工具卡；进度和实际调用证据不能被写成原生工具卡已经完整复用。
+
+`node scripts/verify-codex-plugins.mjs --execute` 可在独立 CODEX_HOME 中执行真实模型验收：
+复用现有 auth.json、不复制个人插件配置，安装只含测试 Skill/MCP 的插件，询问普通测试卡片问题。
+工具生成随机校验值，断言服务端实际收到调用、Studio 收到完成事件、回答含校验值，然后卸载并清理。
+此模式需要有效 Codex 登录并消耗模型用量；不带参数的默认模式仅检查安装、加载和卸载。
 
 ## DMG 内容
 

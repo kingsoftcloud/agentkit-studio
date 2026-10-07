@@ -186,12 +186,40 @@
         resourcePreview ? h(ResourceDialog, { title: resourcePreview.displayName || resourcePreview.name || resourcePreview.resourceId, detail: '只读查看 Host 资源声明。Agent 绑定关系不会在资源库页面修改。', onClose: () => setResourcePreview(null) }, h('pre', { style: { margin: 0, maxHeight: '520px', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: BRAND.ink, background: BRAND.canvas, border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '12px', fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(resourcePreview, null, 2))) : null);
     }
 
+    function CodexPluginCapabilities({ pluginId }) {
+      const [state, setState] = useState({ loading: true });
+      const [revision, setRevision] = useState(0);
+      useEffect(() => {
+        let current = true;
+        setState({ loading: true });
+        Promise.resolve().then(() => hostRemote.inspectCodexPlugin(pluginId)).then(value => {
+          if (current) setState({ value });
+        }, error => { if (current) setState({ error: error?.message || '能力与连接状态读取失败' }); });
+        return () => { current = false; };
+      }, [pluginId, revision]);
+      const labels = { callable: '可调用', disabled: '已禁用', 'not-callable': '尚不可调用', 'not-loaded': '未连接或未加载', unknown: '状态未确认' };
+      return h('section', { style: { borderTop: '1px solid ' + BRAND.border, paddingTop: '16px', marginTop: '16px' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('h3', { style: { margin: 0, fontSize: '15px', color: BRAND.ink } }, '能力与连接状态'), h('button', { type: 'button', disabled: state.loading, onClick: () => setRevision(value => value + 1), style: buttonStyle() }, '刷新连接状态')),
+        state.loading ? h('p', { role: 'status' }, '正在读取插件能力和连接状态…') : null,
+        state.error ? h('p', { role: 'alert', style: { color: BRAND.danger } }, state.error) : null,
+        state.value ? h('div', { style: { fontSize: '12px', lineHeight: 1.7, color: BRAND.inkMuted } },
+          state.value.runtimeError ? h('p', { role: 'status' }, state.value.runtimeError) : null,
+          state.value.apps.map(app => h('div', { key: app.id, style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', padding: '12px 0' } }, h('strong', { style: { color: BRAND.ink } }, app.name), h(Pill, { tone: app.state === 'callable' ? 'accent' : 'signal' }, labels[app.state] || labels.unknown), app.installUrl ? h('a', { href: app.installUrl, target: '_blank', rel: 'noopener noreferrer', style: { color: BRAND.accentStrong } }, '打开授权 / 管理连接') : null)),
+          state.value.apps.length ? h('p', null, '授权完成后点击刷新连接状态。可调用表示 Codex 当前允许模型使用该连接器，实际效果仍以会话工具记录为准。') : null,
+          state.value.skills.length ? h('p', null, 'Skill：', state.value.skills.map(item => item.name + (item.enabled ? '' : '（未启用）')).join('、')) : null,
+          state.value.mcpServers.length ? h('p', null, '声明的 MCP：', state.value.mcpServers.join('、'), '。连接和工具执行结果请在 Codex Agent 会话中检查。') : null,
+          !state.value.apps.length && !state.value.skills.length && !state.value.mcpServers.length ? h('p', null, '插件未声明连接器、Skill 或 MCP；其他能力由对应宿主加载。') : null,
+        ) : null);
+    }
+
     function MarketplacePage() {
       const [status, setStatus] = useState('loading');
       const [items, setItems] = useState([]);
       const [errors, setErrors] = useState([]);
       const [busyKey, setBusyKey] = useState('');
       const [message, setMessage] = useState('');
+      const [authApps, setAuthApps] = useState([]);
+      const [inspectionRevision, setInspectionRevision] = useState(0);
       const [installOpen, setInstallOpen] = useState(false);
       const [installSource, setInstallSource] = useState('');
       const load = async ({ preserveMessage = false } = {}) => {
@@ -211,12 +239,13 @@
         setSelected(current => current ? next.find(item => item.ecosystem === current.ecosystem && item.pluginId === current.pluginId) || null : null);
         setErrors(nextErrors);
         setStatus('ready');
+        return next;
       };
       const mutate = async (item, operation) => {
         const pluginId = String(item.pluginId || item.id || '').trim();
         if (!pluginId || busyKey) return false;
         const key = `${item.ecosystem}:${pluginId}`;
-        setBusyKey(key); setMessage(''); setErrors([]);
+        setBusyKey(key); setMessage(''); setErrors([]); setAuthApps([]);
         try {
           let result;
           if (item.ecosystem === 'dsh') {
@@ -232,7 +261,12 @@
           } else if (operation === 'uninstall') {
             result = await hostRemote.uninstallCodexPlugin(pluginId);
           }
-          await load({ preserveMessage: true });
+          const refreshed = await load({ preserveMessage: true });
+          if (item.ecosystem === 'codex' && operation === 'install') {
+            setSelected(refreshed.find(row => row.ecosystem === 'codex' && row.pluginId === pluginId) || null);
+            setAuthApps(result?.appsNeedingAuth || []);
+          }
+          setInspectionRevision(value => value + 1);
           setMessage(`${item.displayName || pluginId}：${operation === 'install' ? '已安装' : operation === 'uninstall' ? '已卸载' : operation === 'enable' ? '已启用' : operation === 'disable' ? '已停用' : '已更新'}。${result?.note || ''}${result?.warnings?.length ? ' 加载提示：' + result.warnings.join('；') : ''}`);
           return true;
         } catch (reason) {
@@ -307,6 +341,7 @@
         selected.error ? h('p', { role: 'alert', style: { color: BRAND.danger, whiteSpace: 'pre-wrap' } }, `加载失败：${selected.error.diagnostic || selected.error.code}`) : null,
         selected.rows?.length ? h('div', null, h('h3', null, 'Host 加载的能力'), selected.rows.map(row => h('div', { key: row.rowId, style: { padding: '8px 0', fontSize: '12px', color: BRAND.inkMuted } }, `${row.moduleName || row.rowId} · ${row.fiberPhase === 'active' ? '已加载' : row.fiberPhase === 'failed' ? '加载失败' : row.fiberPhase || '未加载'}`))) : null,
         h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, selected.ecosystem === 'codex' ? '在新建的 Codex Agent 会话中加载。需要登录的连接器沿用 Codex 授权状态；其他 Harness 请从资源库导入 Skill 或绑定 MCP。' : '插件能力由 DSH Host 加载。需要重启的变更会在操作结果中提示；Agent 的工具绑定在编辑页维护。'),
+        selected.ecosystem === 'codex' ? h(CodexPluginCapabilities, { key: selected.pluginId + ':' + inspectionRevision, pluginId: selected.pluginId }) : null,
       ) : null;
       const pluginSection = (title, rows) => rows.length ? h('section', { style: { marginTop: '34px' } }, h('h3', { style: { margin: '0 0 7px', fontSize: '20px', fontWeight: 650, letterSpacing: '-0.02em', color: BRAND.ink } }, `${title} · ${rows.length}`), h('div', { 'data-plugin-grid': 'true', style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: '48px', rowGap: '0' } }, rows.slice(0, catalogLimit).map(discoveryRow)), rows.length > catalogLimit ? h('button', { type: 'button', onClick: () => setCatalogLimit(limit => limit + 24), style: { ...buttonStyle(), marginTop: '12px' } }, `查看更多${title}（已显示 ${catalogLimit}/${rows.length}）`) : null) : null;
       const installedStrip = eco === 'codex' && !normalized ? h('section', { style: { marginTop: '24px' } }, h('h3', { style: { color: BRAND.ink, fontSize: '18px' } }, `已安装 · ${visibleItems.filter(item => item.installed).length}`), h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '12px' } }, visibleItems.filter(item => item.installed).map(item => h('button', { key: item.pluginId, type: 'button', title: item.displayName || item.name, 'aria-label': `管理 ${item.displayName || item.name || item.pluginId}`, onClick: () => setSelected(item), style: { padding: 0, border: 0, background: 'transparent', cursor: 'pointer' } }, iconSquare(item, 44))))) : null;
@@ -318,6 +353,7 @@
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取插件目录', detail: '读取 DSH Host 和 Codex 官方插件目录。' }) : null,
         errors.length ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', background: 'var(--dsw-alias-state-warn-tertiary, #fff3da)', color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', fontSize: '12px' } }, errors.join('；')) : null,
         message ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', background: BRAND.accentSoft, color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
+        authApps.length ? h('div', { role: 'status' }, '以下连接器仍需授权：', authApps.map(app => h('span', { key: app.id, style: { marginLeft: '12px' } }, app.installUrl ? h('a', { href: app.installUrl, target: '_blank', rel: 'noopener noreferrer' }, app.name) : app.name))) : null,
         busyKey ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, '正在安装或应用插件变更，请稍候…') : null,
         installOpen ? h(ResourceDialog, { title: `添加 ${eco === 'codex' ? 'Codex' : 'DSH'} 插件`, detail: eco === 'codex' ? '输入完整插件标识，例如 plugin-name@marketplace。市场需要已在 Codex 中配置。' : '输入 DSH 插件的 npm 包名、安装源或本地路径。Host 会先检查插件源与兼容性。', onClose: () => { if (!busyKey) setInstallOpen(false); } }, h('form', { onSubmit: async event => { event.preventDefault(); const source = installSource.trim(); if (source && await mutate({ pluginId: source, displayName: source, ecosystem: eco }, 'install')) setInstallOpen(false); }, style: { display: 'grid', gap: '14px' } },
           h('input', { 'aria-label': '插件安装源', value: installSource, onChange: event => setInstallSource(event.target.value), required: true, placeholder: eco === 'codex' ? 'plugin-name@marketplace' : '@scope/plugin-name', style: inputStyle() }),

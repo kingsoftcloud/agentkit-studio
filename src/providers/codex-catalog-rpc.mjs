@@ -30,7 +30,7 @@ export async function withCodexCatalogRpc(read, { executable, spawnImpl = spawn,
   });
   const request = (method, params) => new Promise((resolve, rejectRequest) => {
     if (terminalError) return rejectRequest(terminalError);
-    if (!['initialize', 'config/read', 'model/list', 'plugin/list'].includes(method)) return rejectRequest(failure('CODEX_CATALOG_METHOD_INVALID', '不支持的目录读取方法。'));
+    if (!['initialize', 'config/read', 'model/list', 'plugin/list', 'plugin/read', 'app/installed'].includes(method)) return rejectRequest(failure('CODEX_CATALOG_METHOD_INVALID', '不支持的目录读取方法。'));
     const requestId = ++id; pending.set(requestId, { resolve, reject: rejectRequest });
     try { child.stdin.write(JSON.stringify({ id: requestId, method, params }) + '\n'); }
     catch (error) { pending.delete(requestId); rejectRequest(error); }

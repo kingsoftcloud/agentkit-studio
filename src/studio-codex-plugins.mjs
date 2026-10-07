@@ -2,6 +2,7 @@
 import { resolveCodexCommand } from './providers/codex-command.mjs';
 import { withCodexCatalogRpc } from './providers/codex-catalog-rpc.mjs';
 import { projectCodexPluginCatalog } from './codex-plugin-catalog.mjs';
+import { codexPluginSelector, codexAuthApps, readCodexPluginDetails } from './codex-plugin-details.mjs';
 import { readdir, readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -144,12 +145,17 @@ export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, e
   async function changeCodex(operation, pluginId, marketplaceName = '') {
     const name = String(pluginId || '').trim();
     if (!name) throw new StudioCodexPluginsError('CODEX_PLUGIN_ID_MISSING', '插件名不能为空');
-    const spec = name.includes('@') ? name : marketplaceName ? `${name}@${String(marketplaceName).trim()}` : name;
-    if (!/^[^\s@]+@[^\s@]+$/.test(spec) || spec.startsWith('-')) throw new StudioCodexPluginsError('CODEX_PLUGIN_MARKETPLACE_MISSING', '请使用完整插件标识：插件名@市场名');
+    const { spec } = codexPluginSelector(name, marketplaceName);
     try {
       const { stdout } = await execImpl(command.executable, [...command.prefixArgs, 'plugin', operation, spec, '--json'], cliOptions(120000));
-      return { ok: true, pluginId: spec, output: String(stdout || '').slice(-1200), note: operation === 'add' ? 'Codex 插件已安装；新建 Codex Agent 会话后加载，连接器按 Codex 的授权状态使用。' : 'Codex 插件已卸载。' };
+      let result;
+      try { result = JSON.parse(String(stdout)); } catch { /* Reject an unconfirmed mutation; never retry it automatically. */ }
+      if (result?.pluginId !== spec) throw new StudioCodexPluginsError('CODEX_PLUGIN_RESULT_UNCONFIRMED', 'Codex 返回了未确认的操作结果。请刷新目录检查实际状态，勿重复安装或卸载。');
+      const appsNeedingAuth = codexAuthApps(result.appsNeedingAuth);
+      return { ok: true, pluginId: spec, ...(operation === 'add' ? { authPolicy: result.authPolicy || null, appsNeedingAuth } : {}),
+        note: operation === 'add' ? appsNeedingAuth.length ? '插件文件已安装，仍需完成连接器授权。' : '插件已安装；请查看能力与连接状态，新建 Codex Agent 会话后加载。' : 'Codex 插件已卸载。' };
     } catch (error) {
+      if (error instanceof StudioCodexPluginsError) throw error;
       throw new StudioCodexPluginsError('CODEX_PLUGIN_OPERATION_FAILED', String(error?.stderr || error?.message || 'Codex 插件操作失败').trim().slice(-1200), { pluginId: spec, operation });
     }
   }
@@ -157,5 +163,12 @@ export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, e
   async function installCodex(pluginId, marketplaceName) { return changeCodex('add', pluginId, marketplaceName); }
   async function uninstallCodex(pluginId, marketplaceName) { return changeCodex('remove', pluginId, marketplaceName); }
 
-  return { listCodex, installCodex, uninstallCodex };
+  async function inspectCodex(pluginId) {
+    const selector = codexPluginSelector(pluginId);
+    return catalogRpc(request => readCodexPluginDetails(request, selector), {
+      executable, env: { ...process.env, ...(codexHome ? { CODEX_HOME: codexHome } : {}) }, timeoutMs: 30000, maxBytes: 32 * 1024 * 1024,
+    });
+  }
+
+  return { listCodex, installCodex, uninstallCodex, inspectCodex };
 }

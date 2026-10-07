@@ -15,7 +15,7 @@ function page(hostRemote) {
     return [values[index], value => { values[index] = typeof value === 'function' ? value(values[index]) : value; }];
   };
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(value => value !== null && value !== undefined && value !== false) });
-  const Page = new Function('useState', 'useEffect', 'h', 'React', 'hostRemote', 'BRAND', 'buttonStyle', 'inputStyle', 'Pill', 'EmptyState', 'ResourceDialog', `${source}; return MarketplacePage;`)(useState, effect => { if (!effects.length) effects.push(effect); }, h, { Fragment: 'fragment' }, hostRemote, {}, () => ({}), () => ({}), 'pill', 'empty', 'dialog');
+  const Page = new Function('useState', 'useEffect', 'h', 'React', 'hostRemote', 'BRAND', 'buttonStyle', 'inputStyle', 'Pill', 'EmptyState', 'ResourceDialog', 'CodexPluginCapabilities', `${source}; return MarketplacePage;`)(useState, effect => { if (!effects.length) effects.push(effect); }, h, { Fragment: 'fragment' }, hostRemote, {}, () => ({}), () => ({}), 'pill', 'empty', 'dialog', 'codex-capabilities');
   const render = () => { cursor = 0; return Page(); };
   function walk(node) { return node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : []; }
   const text = node => typeof node === 'string' ? node : node?.children?.map(text).join('') || '';
@@ -36,7 +36,8 @@ test('marketplace Codex install button forwards the complete plugin id', async (
   await ui.settle();
   assert.deepEqual(calls, [['sample@market', 'market']]);
   assert.match(ui.text(ui.render()), /新会话生效/);
-  assert.ok(ui.find('button', '管理 sample'));
+  assert.ok(ui.find('button', '卸载'));
+  assert.equal(ui.walk(ui.render()).find(node => node.type === 'codex-capabilities').props.pluginId, 'sample@market');
 });
 
 test('marketplace enable refreshes selected detail and keeps restart guidance', async () => {
