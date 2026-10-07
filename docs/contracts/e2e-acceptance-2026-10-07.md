@@ -34,7 +34,7 @@
 | O02 | DSH 原生自动化任务目录及任务详情 | 通过 | 独立 DMG App 通过官方 schedule_create 创建一次性提醒 schedule-ab20de53-eae3-4bf8-823a-d86582bcc431，14:18 实际投递 E2E-DSH-SCHEDULE-20261007；原生任务详情显示执行记录和结束状态，无循环任务残留。 |
 | O03 | 运行后 Trace 列表、详情、筛选和导出可用 | 通过 | 真实 Trace 列表、详情、Agent/Run 筛选与合法 OTLP 投影已验证。桌面经官方 DSH Session 日志 API 和 macOS 保存面板导出 43250 字节、28 条合法 JSONL，SHA256 053a09b96607055cc57999f4b8b270ff3aa2c08f2a3bb562c6c7729772fa86e5。投影 Span 不是完整原生工具 Span；完整事实另由导出的 Session 日志提供。 |
 | O04 | 评测集导入、目标选择、真实运行与结果详情 | 通过 | 真实导入 e2e-frozen-build-20261007，选择冻结 Build 并实际执行；eval_97cf683487014b0180e7f8390e5fd704 返回旧 r1 身份，两个断言通过，最终页面显示用例 1/通过 1/失败 0/断言 2。A2A 和本地源码目标仍明确未接入。 |
-| O05 | Channels 配置与平台消息链路 | 部分通过 | 本机真实 Channel API 配置生命周期通过，见 O06；未配置飞书/WPS/企业微信的真实平台凭证，外部消息收发与本地 Connector 数据链路未验收。 |
+| O05 | Channels 配置与平台消息链路 | 部分通过 | 本机真实 Channel API 配置生命周期通过，见 O06；用户授权后经 WPS 官方快速应用页面创建验收机器人成功。查看密钥停在平台验证码，尚未取得 App Secret；外部消息收发与本地 Connector 数据链路未验收。 |
 | O06 | Channels 控制面创建、编辑、连接地址与删除 | 通过 | 浏览器连接独立 SQLite 的真实 Channel API；创建飞书测试配置 44d31039f1174823，编辑 Agent、保留空白凭证输入对应的原值，读取连接地址并删除后目录回到 0。无渠道 Worker、无外发消息，占位平台凭证仅用于控制面合同验证。 |
 | D01 | 固定 DSH 基线和兼容补丁、Studio 包及 Profile 完整性 | 通过 | 最终 Studio 303 项检查及 176 文件包完整性通过；14 个兼容补丁在固定基线私有索引按顺序应用成功。最新桌面启动、语言与 Profile 测试共 180 项通过、1 项平台跳过，相关源文件 lint、桌面 Host TypeScript 和 1158 对双语文档配对检查通过。早先 Session 模型合同 26 项、Markdown 200 项（含逐字流式更新）也通过。六项既有 DSH 文档同步失败已在后续补验中修复，最新全量 43 项通过，详见下方。 |
 | D02 | macOS App 产物包含运行时、插件与依赖，无源码目录依赖 | 通过 | 真实 DMG 的独立 App 内置 Node24.18.1/Python/pnpm/Office；官方 DOCX/XLSX/PPTX→PDF、原生模块冒烟通过。修复根 manifest 插件解析锚点后，源码目录外 App 完整 Studio 页面与原生 Agent 运行成功。 |
@@ -109,3 +109,9 @@
 - 最新 Studio 检查为 306 项通过。矩阵扩展至 37 项：34 项通过、2 项部分通过、1 项外部阻塞；未把控制面验收等同于外部渠道消息投递。
 - 复核服务端当前源码及已有 cloud-api-gap.md：CreateAgentProduct/UpdateAgent 能触发 Code/Container/ManagedRuntime 部署，缺少独立 Deployment Action 不等于没有部署能力。已修正页面归因；本地 Build 到云端产物的适配仍未完成，本轮没有创建云端计算资源。
 - 最终本机 DMG 再次通过完整官方流水线，包内 Node 24.18.1、原生模块及 Office 转 PDF 冒烟通过。实际从 DMG 更新 Applications 内的产品 App，Channels 创建 8f617266dc0b4837、编辑并删除成功；已有小红书会话与模型恢复。安装后的客户端和渠道模块与当前源码逐字节一致，图标摘要与已验收的 Studio A 相同，原生“关于”显示 AgentKit Studio。
+
+## WPS 真实接入准备
+
+- 已在用户授权的 Chrome 登录态中通过 WPS 官方快速应用页面创建“AgentKit Studio 验收助手”，后台确认应用存在，头像为 Studio A。查看 App Secret 触发平台验证码，已请求操作确认；尚未取得或保存密钥，没有声称平台消息收发通过。
+- Channel 源码复核发现 WPS 企业 ID 被用作 AgentEngine 租户 ID，服务端又在精确匹配失败时跨账号兜底。两个账号具有相同渠道标识时可复现选错配置。本地修复让适配器使用配置所属账号，显式账号只允许精确匹配，无账号的旧调用仅允许唯一结果。
+- Channel 的六个新增回归覆盖事件身份、外部字段覆盖、跨租户重名与旧调用唯一性；修复前五项失败，修复后包含飞书、企业微信和网关在内全量 278 项通过。此处仍为隔离 SQLite/ASGI 验证，不能替代新机器人的真实消息测试。
