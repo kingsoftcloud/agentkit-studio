@@ -88,12 +88,16 @@ make desktop-build DSH_ROOT=/path/to/deepseek-harness
 桌面启动时必须由某个 DSH Host 加载它。`make desktop-start` 使用已经生成的官方桌面构建，
 `make desktop-package-mac-arm64` / `make desktop-package-mac-x64` 调用官方 DSH 的 macOS
 打包脚本；本地只想验证 `.app` 目录时使用对应的 `*-dir` 目标，使用
-`make desktop-check-package` 做包内容检查。四个 macOS package 目标会先要求应用当前
+`make desktop-check-package` 做官方签名配置和工具链预检（不构建或校验镜像内容）。四个 macOS package 目标会先要求应用当前
 rc.2 的 `006-desktop-plugin-package-set.patch`，再将 Studio tarball 纳入 Desktop package
 set 和内置 Profile；没有这个补丁会直接失败。macOS 签名、公证和发布版本仍由 DSH Desktop
 的发布配置负责。官方打包脚本要求先在 DSH checkout 的
 `apps/desktop/.env.macos` 填写本机签名/发布配置；缺少该文件时会主动拒绝打包，避免生成
 不可发布的假包。
+
+`desktop-package-*` 会从固定基线和版本化补丁准备独立构建目录，避免发布重建触发开发网页的
+插件热替换。依赖和输出保存在 `PACK_DIR/desktop-checkouts/`，不会复制开发 checkout 的其他
+本地改动或个人 Profile。缓存复用、签名配置与本机未签名 DMG 交付见 [协作说明](CONTRIBUTING.md)。
 
 新 checkout 没有 DSH profile 时，先执行 `make profile-install`；安装结束会自动执行
 `profile-check`，核对 Profile bundle、安装包、插件 manifest、DSH 基线和运行文件。

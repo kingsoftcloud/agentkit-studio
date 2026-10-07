@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, access, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,20 +18,30 @@ async function fixture(t, result = 'success') {
   const dsh = join(directory, 'official checkout');
   const output = join(directory, 'studio output');
   const bin = join(directory, 'bin');
+  const patches = join(directory, 'patches');
+  await mkdir(patches);
   const source = join(dsh, 'apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/deepseek-harness-0.2.0-rc.2-mac-arm64-unsigned.dmg');
   for (const path of [join(dsh, 'apps/desktop/scripts'), join(source, '..'), output, bin]) await mkdir(path, { recursive: true });
   if (result === 'fail') await writeFile(source, 'previous official build');
   if (result === 'empty') await writeFile(source, '');
   await writeFile(join(dsh, 'apps/desktop/scripts/package-target.ts'), 'invocation.unsigned && target.platform');
+  await writeFile(join(dsh, 'package.json'), '{"version":"0.2.0-rc.2"}');
+  await writeFile(join(dsh, '.gitignore'), 'node_modules/\n.desktop-build/\n.env*\n');
+  const git = args => execFileSync('git', args, {cwd:dsh,encoding:'utf8'}).trim();
+  git(['init','-q']); git(['add','.']); git(['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','baseline']);
+  const commit = git(['rev-parse','HEAD']);
+  await writeFile(join(dsh,'marker.txt'),'patch marker\n');
+  git(['add','marker.txt']);
+  await writeFile(join(patches,'001-marker.patch'),git(['diff','--cached'])+'\n');
   // Stub only the expensive official build; exercise the real Make recipe and export.
-  await writeFile(join(bin, 'pnpm'), `#!/usr/bin/env node\nimport { mkdirSync, writeFileSync } from 'node:fs';\nimport { dirname } from 'node:path';\nif (process.env.STUDIO_TEST_RESULT === 'fail') process.exit(1);\nif (process.env.STUDIO_TEST_RESULT === 'success') { mkdirSync(dirname(process.env.STUDIO_TEST_SOURCE), { recursive: true }); writeFileSync(process.env.STUDIO_TEST_SOURCE, ${JSON.stringify(currentImage)}); }\n`, { mode: 0o755 });
+  await writeFile(join(bin, 'pnpm'), `#!/usr/bin/env node\nimport { mkdirSync, writeFileSync } from 'node:fs';\nimport { dirname } from 'node:path';\nif (process.argv.includes('install')) process.exit(0);\nif (process.env.STUDIO_TEST_RESULT === 'fail') process.exit(1);\nconst source = process.cwd() + '/apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/deepseek-harness-0.2.0-rc.2-mac-arm64-unsigned.dmg';\nif (process.env.STUDIO_TEST_RESULT === 'success' || process.env.STUDIO_TEST_RESULT === 'empty') { mkdirSync(dirname(source), { recursive: true }); writeFileSync(source, process.env.STUDIO_TEST_RESULT === 'empty' ? '' : ${JSON.stringify(currentImage)}); }\n`, { mode: 0o755 });
   await writeFile(join(bin, 'uname'), '#!/bin/sh\necho Darwin\n', { mode: 0o755 });
   const artifact = join(output, 'AgentKit-Studio-0.0.1-mac-arm64-local.dmg');
   await writeFile(artifact, 'old image');
-  const execute = () => run('make', ['desktop-package-mac-arm64-unsigned', '-o', 'desktop-package-preflight', `DSH_ROOT=${dsh}`, `PACK_DIR=${output}`], {
-    cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUDIO_TEST_SOURCE: source, STUDIO_TEST_RESULT: result },
+  const execute = (nextResult = result, target = 'desktop-package-mac-arm64-unsigned') => run('make', [target, '-o', 'desktop-package-preflight', `DSH_ROOT=${dsh}`, `PACK_DIR=${output}`, `PATCH_ROOT=${patches}`, `DSH_COMMIT=${commit}`, `DESKTOP_PLUGIN_INPUTS=${patches}`], {
+    cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUDIO_TEST_SOURCE: source, STUDIO_TEST_RESULT: nextResult },
   });
-  return { artifact, output, execute };
+  return { artifact, output, execute, dsh };
 }
 
 test('successful official packaging replaces the Studio delivery image and records its digest', async t => {
@@ -52,4 +62,22 @@ for (const result of ['fail', 'missing', 'empty']) test(`official ${result} outp
   const { artifact, execute } = await fixture(t, result);
   await assert.rejects(execute());
   assert.equal(await readFile(artifact, 'utf8'), 'old image', 'a failed build must not destroy the previous working image');
+});
+
+test('a cached previous image is not exported when a later build produces no image', async t => {
+  const {artifact,execute}=await fixture(t);
+  await execute();
+  await assert.rejects(execute('missing'));
+  assert.equal(await readFile(artifact,'utf8'),currentImage);
+});
+
+test('failed signed preparation removes only its temporary settings and keeps the original', async t => {
+  const {dsh,output,execute}=await fixture(t);
+  const settings="CSC_LINK=./private.p12\nCSC_KEY_PASSWORD='fixture secret'\n";
+  const original=join(dsh,'apps/desktop/.env.macos');
+  await writeFile(original,settings,{mode:0o600});
+  await assert.rejects(execute('fail','desktop-package-mac-arm64'));
+  assert.equal(await readFile(original,'utf8'),settings);
+  const [cache]=await readdir(join(output,'desktop-checkouts'));
+  await assert.rejects(access(join(output,'desktop-checkouts',cache,'source/apps/desktop/.env.macos')));
 });

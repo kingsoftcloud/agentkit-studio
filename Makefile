@@ -21,6 +21,8 @@ DESKTOP_PLUGIN_INPUTS ?= $(STUDIO_DESKTOP_INPUT)
 DESKTOP_PLUGIN_ROOTS ?= @kingsoftcloud/agentkit-studio
 DESKTOP_PLUGIN_BUNDLES ?= @kingsoftcloud/agentkit-studio
 DESKTOP_PRODUCT_ICON ?= $(abspath assets/agentkit-studio-macos.png)
+DESKTOP_PACKAGE = node scripts/package-desktop.mjs --source "$(DSH_ROOT)" --output "$(PACK_DIR)" --patches "$(PATCH_ROOT)" --commit "$(DSH_COMMIT)" --studio-version "$(PLUGIN_VERSION)" --dsh-version "$(DSH_VERSION)"
+DESKTOP_ENV = DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)"
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
 
@@ -147,26 +149,25 @@ desktop-package-preflight: pack
 
 desktop-package-mac-arm64: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:arm64
+	$(DESKTOP_ENV) $(DESKTOP_PACKAGE) --target mac-arm64
 
 # Local artifact uses the official runtime; no release feed or upload record.
 desktop-package-mac-arm64-unsigned: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
 	@rg -q 'invocation.unsigned && target.platform' "$(DSH_ROOT)/apps/desktop/scripts/package-target.ts" || (echo "DSH local macOS package patch 未应用；请应用 009-local-macos-package.patch" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm --dir apps/desktop run package mac-arm64 --unsigned
-	node scripts/export-local-dmg.mjs "$(DSH_ROOT)/apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/deepseek-harness-$(DSH_VERSION)-mac-arm64-unsigned.dmg" "$(PACK_DIR)" "$(PLUGIN_VERSION)" "$(DSH_VERSION)"
+	$(DESKTOP_ENV) $(DESKTOP_PACKAGE) --target mac-arm64 --unsigned
 
 desktop-package-mac-arm64-dir: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:arm64:dir
+	$(DESKTOP_ENV) $(DESKTOP_PACKAGE) --target mac-arm64 --directory
 
 desktop-package-mac-x64: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:x64
+	$(DESKTOP_ENV) $(DESKTOP_PACKAGE) --target mac-x64
 
 desktop-package-mac-x64-dir: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:x64:dir
+	$(DESKTOP_ENV) $(DESKTOP_PACKAGE) --target mac-x64 --directory
 
 desktop-check-package:
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS package checks must run on macOS" >&2; exit 2)

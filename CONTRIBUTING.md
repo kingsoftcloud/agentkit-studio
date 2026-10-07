@@ -70,8 +70,17 @@ make desktop-start DSH_ROOT="$DSH_ROOT"
 会先检查 `006-desktop-plugin-package-set.patch` 已应用，然后把 Studio tarball 纳入发布
 Profile/package set；否则目标会主动失败。构建后的品牌和插件加载仍需发布流水线验证。
 
+所有 `desktop-package-*` 目标在 `PACK_DIR/desktop-checkouts/<摘要>/source` 中运行官方打包，
+不会重建开发网页正在使用的 `DSH_ROOT`。该缓存从固定 `DSH_COMMIT` 创建并按顺序应用
+`PATCH_ROOT` 中的补丁；开发 checkout 的额外修改、忽略文件、用户 Profile 和 node_modules
+不会被复制。要纳入新的宿主修改，应先形成版本化补丁。补丁变化会使用新的缓存目录。
+相同缓存的打包串行互斥；若检测到缓存源码被修改则拒绝构建，不会自动重置文件。
+每次打包先复制一份插件 tarball 输入快照，后续并发 `make pack` 不会替换正在构建的插件版本。
+命令异常中断留下 `active.lock` 时，先读取其中的 owner.json 并确认对应进程已退出，再移除锁。
+
 DMG 目标只能在 macOS 上运行，并且按官方 DSH 规则读取
 `$DSH_ROOT/apps/desktop/.env.macos`。该文件应从 `.env.macos.example` 生成，不能提交到仓库。
+签名目标只临时复制这份配置，文件型凭证引用仍相对于原配置目录解析，命令结束后清除临时配置。
 没有签名、公证配置时，目标会主动失败；这表示环境未准备好，不代表 DMG 构建通过。
 
 本机安装验收可显式使用未签名产物（需要 `009-local-macos-package.patch`）：
@@ -81,7 +90,7 @@ make desktop-package-mac-arm64-unsigned DSH_ROOT="$DSH_ROOT"
 ```
 
 该目标复用官方 Node、Python、package-set 和原生依赖流水线。官方产物保留在
-`apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/`，文件名包含 `unsigned`。
+隔离 checkout 的 `apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/`，文件名包含 `unsigned`。
 成功后自动导出 `.artifacts/AgentKit-Studio-<Studio版本>-mac-arm64-local.dmg`，并写入同名
 `.sha256` 和 `.json` 校验记录，打印实际路径、SHA256 和字节数；`PACK_DIR` 可指定导出目录。
 导出逐字节摘要核对，缺失或空产物会令目标失败，失败构建保留上一次可用包。
