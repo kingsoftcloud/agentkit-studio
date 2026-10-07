@@ -1,17 +1,20 @@
 # 本地资源运行时合同
 
-核对日期：2026-09-30。
+核对日期：2026-10-07。目录状态和预发迁移边界见
+[资源状态、删除与部署](resource-status-and-deployment.md)。
 
 本合同只适用于插件 Node Host 内执行的本地 Agent。浏览器不读取资源凭证，也不直接访问 MCP
 或知识库 Endpoint。
 
 ## 执行路径
 
-- **Skill**：本地 Skill Resource ID 映射到已导入 Skill 目录，只读取 `SKILL.md`；云端 Skill
+- **Skill**：本地 Skill Resource ID 映射到已导入 Skill 完整目录；云端 Skill
   Space 则通过 Skill Service 的 `ListSkillsBySpaceId` 与下载 URL 合同拉取 Skill 包，先按
-  `ContentHash` 做 sha256 完整性校验，再读取其中的 `SKILL.md`。缺少摘要的历史条目仍可兼容
-  读取，但摘要格式非法或校验不匹配会以 typed error 终止本次资源物化。两者都会截断后注入
-  system context，文件内容不会因为 Agent 对话自动执行。
+  `ContentHash` 做 sha256 完整性校验，并校验压缩包路径、大小和 CRC 后加载完整文件。
+  缺少摘要的历史条目仍可兼容读取，但摘要格式非法或校验不匹配会以 typed error 终止物化。
+  文件注册到 Agent 作用域的 DSH SkillRegistry，并启用原生 Skill 和 Bash/Pwsh 工具；
+  模型可按任务请求读取 Skill、执行脚本，执行受当前会话工具策略约束。目录可见或导入成功
+  不等同于脚本依赖齐备，也不意味着每次对话都会调用这个 Skill。
 - **Knowledge Base**：绑定的 Dataset ID 通过 `RetrieveKnowledge` 查询，默认取 5 条结果，
   结果以只读 context 注入本轮模型输入。
 - **Memory**：绑定的 Memory Instance ID 通过 `QueryMemorySdk` 查询，使用请求中的用户 ID；
@@ -42,12 +45,12 @@ Skill Service 适配器完成。
   Host 会把工具调用的开始、完成和失败状态投影成 DSH reasoning 增量，因此原生会话可以展开
   查看资源调用过程；不会伪造 DSH `tool-call` block，避免 DSH loop 再次执行同一个 MCP 工具。
 
-Harness 本地运行时同样把 `tool_call` / `tool_result` 事件投影成 reasoning 增量，并通过 callId
-关联工具名；云端 Skill Space 的压缩包下载必须经过 Host 注入的 `fetchImpl`，不能在资源适配器
-内部直接绕过 Host 网络边界。
+Harness 和有资源的 DSH Native 使用原生模型步骤：MCP 注册到公开 ToolRegistry，调用与结果
+由 DSH Loop 执行、持久化和展示。Codex 的动态工具仍通过 Host 适配器执行并投影过程。
+云端 Skill Space 的压缩包下载经过 Host 注入的 `fetchImpl`。
 
-模型的 tool call 会先记录为本地 conversation item，Host 执行绑定的 MCP 或 DSH Tool 后以 tool
-result 继续最多两次工具续跑（最多三次模型请求）。MCP/DSH Tool 返回 `isError`、参数 JSON 非法、资源缺失或模型实际调用
+原生路径由 DSH Loop 管理工具续跑；独立本地兼容运行路径按 Agent 的 `execution.maxSteps`
+限制步数（默认 12，上限 100）。MCP/DSH Tool 返回 `isError`、参数 JSON 非法、资源缺失或模型实际调用
 工具失败都会生成失败终态；一次文本回合开始前的 `tools/list` 连接失败会作为受限资源告警注入
 上下文，让不需要工具的文本回合继续运行，并在下一回合重新尝试发现工具。
 
@@ -58,7 +61,7 @@ result 继续最多两次工具续跑（最多三次模型请求）。MCP/DSH To
 
 - AK/SK、MCP API Key、模型 API Key 全部留在 Node Host；外部 MCP Agent 绑定只持久化 Endpoint
   和 credential reference，不把 API Key 写入 Agent Revision。
-- 本地 Skill 只读，不执行其中脚本。
+- Skill 可以通过原生工具执行其脚本；只读权限或缺失依赖造成的拒绝不能误报执行成功。
 - 资源运行适配器不把 Server 的资源目录接口误当作通用 Agent binding；绑定数据仍来自
   Agent Revision。旧版本把云端 Skill Space UUID 写进 `bindings.skills` 的记录会在读取时迁移
   成 `skill-space` 云端绑定，本地 Skill ID 仍保持原有语义。

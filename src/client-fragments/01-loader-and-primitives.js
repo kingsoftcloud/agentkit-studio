@@ -465,9 +465,10 @@ window.__ModuleLoader__.load({
           : request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId), { method: 'PUT', body: JSON.stringify(payload) }),
         createModelResource: payload => bridgeAvailable() ? studioBridgeOperation('models/create', payload) : request('/api/v1/catalog/model-profiles', { method: 'POST', body: JSON.stringify(payload) }),
         createToolResource: payload => request('/api/v1/catalog/tools', { method: 'POST', body: JSON.stringify(payload) }),
-        deleteResource: resourceId => (bridgeAvailable() && (localMcpId(resourceId) || directServer()))
-          ? studioBridgeOperation('resources/delete', { resourceId })
-          : request('/api/v1/catalog/resources/' + encodeURIComponent(resourceId), { method: 'DELETE' }),
+        deleteResource: (resourceId, scope = 'local') => bridgeAvailable()
+          ? studioBridgeOperation('resources/delete', { resourceId, scope })
+          : scope === 'cloud' ? Promise.reject(new Error('删除云端 MCP 需要连接 Studio Host'))
+            : request('/api/v1/catalog/resources/' + encodeURIComponent(resourceId), { method: 'DELETE' }),
         probeMcpResource: (resourceId, timeoutSeconds = 15) => (bridgeAvailable() && (localMcpId(resourceId) || directServer()))
           ? studioBridgeOperation('mcp/probe', { resourceId, timeoutSeconds })
           : request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId) + ':probe?timeoutSeconds=' + encodeURIComponent(timeoutSeconds), { method: 'POST' }),

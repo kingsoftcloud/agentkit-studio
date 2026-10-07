@@ -485,11 +485,8 @@ async function registerControlPlane(ctx) {
         return { ok: true, value: await (await mcpProbePromise).probe(resourceId) };
       }
       if (endpoint === 'mcp/delete' || endpoint === 'resources/delete') {
-        const localStore = await localMcpStorePromise;
-        const resourceId = String(payload?.resourceId || '').trim();
-        const record = await localStore.get(resourceId);
-        if (!record) return { ok: false, error: { code: 'RESOURCE_NOT_FOUND', message: '本地资源不存在或不可删除', details: { resourceId } } };
-        return { ok: true, value: await localStore.remove(resourceId) };
+        const { deleteStudioMcp } = await import('./resource-lifecycle.mjs');
+        return { ok: true, value: await deleteStudioMcp(payload, { localStore: await localMcpStorePromise, serverClient: await serverClientPromise }) };
       }
       // Agent catalog reads are now owned by the Studio Node host and call the
       // existing AgentEngine Action API directly. The DSH connection only

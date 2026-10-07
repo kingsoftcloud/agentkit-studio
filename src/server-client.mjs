@@ -13,7 +13,7 @@ export class AgentEngineError extends Error {
 
 const SERVER_ACTIONS = new Set([
   'ListAgents', 'GetAgent', 'UpdateAgent', 'CreateSession', 'ListKnowledgeBases', 'ListMemoryInstances', 'ListMCPs',
-  'GetMCP', 'RetrieveKnowledge',
+  'GetMCP', 'DeleteMCP', 'RetrieveKnowledge',
   'QueryMemorySdk', 'CreateMemorySdk',
   'ListSkillWorkspaces', 'ListAgentModels', 'ListSessions', 'GetSession',
   'ListSessionMessages', 'ListSessionEvents', 'ListAgentSchedules', 'GetAgentSchedule',

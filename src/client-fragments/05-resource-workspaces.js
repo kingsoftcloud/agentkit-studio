@@ -1,3 +1,17 @@
+    function resourceStatusPresentation(resource, kind) {
+      const status = String(resource.status || '').toLowerCase();
+      if (resource.disabled) return { label: '不可用', detail: '资源已停用。', tone: 'signal' };
+      if (kind === 'skill' && resource.source === 'local-import' && status === 'ready') return { label: '本地已导入', detail: 'Skill 文件已导入本机；实际执行还取决于模型调用和脚本依赖。', tone: 'accent' };
+      if ((kind === 'skill' || kind === 'skill-space') && status === 'available') return { label: '云端目录可见', detail: '云端 Skill Space 可在目录中读取；绑定后由 Host 下载加载，不代表所有 Skill 已执行验证。', tone: 'neutral' };
+      if (kind === 'mcp') {
+        if (resource.health?.errorCode || status === 'error') return { label: '探测失败', detail: resource.health?.errorCode || '请重新探测查看连接结果。', tone: 'signal' };
+        if (status === 'ready' && (resource.health?.checkedAt || resource.health?.status === 'ready')) return { label: '探测通过', detail: '最近一次连接和工具列表读取成功；不代表每个工具已实际调用验证。', tone: 'accent' };
+        if (resource.source === 'local') return { label: '已配置，未探测', detail: '已保存本机连接配置，请重新探测确认连通性。', tone: 'neutral' };
+        if (status === 'running') return { label: '云端运行中', detail: '服务端运行状态；本机连通性尚未探测。', tone: 'neutral' };
+      }
+      return { label: ({ available: '目录可见', configured: '已配置', 'credential-missing': '缺少凭证', ready: '就绪', running: '运行中', error: '异常' })[status] || resource.status || '状态未知', detail: '目录状态不代表 Agent 绑定后的实际执行结果。', tone: 'neutral' };
+    }
+
     function ResourcesPage() {
       const [resourceKind, setResourceKind] = useState('model');
       const [resources, setResources] = useState([]);
@@ -85,11 +99,14 @@
       const remove = async resource => {
         if (deleting) return;
         const name = resource.displayName || resource.name || resource.resourceId;
-        if (typeof window !== 'undefined' && !(await (window.__AGENTKIT_CONFIRM__ ? window.__AGENTKIT_CONFIRM__({ title: '删除资源', detail: `确定从资源目录删除“${name}”吗？Agent 已有的 Revision 不会被这里静默改写。`, confirmLabel: '删除', danger: true }) : Promise.resolve(window.confirm(`确定从资源目录删除“${name}”吗？`))))) return;
+        const cloud = resource.source === 'agentengine-server';
+        const title = cloud ? '删除云端 MCP' : '移除本地 MCP 配置';
+        const detail = cloud ? `确定删除云端 MCP“${name}”吗？这会删除云端资源并清理关联运行实例，所有引用它的 Agent 可能无法继续调用。已有 Agent Revision 不会自动解除绑定。` : `确定移除“${name}”的本地连接配置吗？远端 MCP 服务会保留，引用此配置的 Agent 可能无法继续调用；已有 Revision 不会自动解除绑定。`;
+        if (typeof window !== 'undefined' && !(await (window.__AGENTKIT_CONFIRM__ ? window.__AGENTKIT_CONFIRM__({ title, detail, confirmLabel: cloud ? '删除云端 MCP' : '移除配置', danger: true }) : Promise.resolve(window.confirm(detail))))) return;
         setDeleting(true); setError(''); setMessage('');
         try {
-          await hostRemote.deleteResource(resource.resourceId);
-          setMessage(`${name} 已从资源目录删除。需要变更 Agent 绑定时，请到 Agent 创建或编辑页提交新的 Revision。`);
+          await hostRemote.deleteResource(resource.resourceId, cloud ? 'cloud' : 'local');
+          setMessage(`${name} ${cloud ? '已从云端删除' : '的本地连接配置已移除'}。请在 Agent 编辑页更新相关绑定。`);
           await reloadCatalog(true);
         } catch (reason) { setError(reason?.message || '资源删除失败'); }
         finally { setDeleting(false); }
@@ -108,26 +125,28 @@
         await load(resourceKind, nextCursor, false);
       };
       const pageCount = total ? Math.max(1, Math.ceil(total / pageSize)) : (nextCursor ? page + 2 : page + 1);
-      const sourceLabel = item => item.source || item.provider || item.origin || '—';
-      const kindDetail = item => item.contract?.model || item.contract?.entrypoint || item.contract?.transport || item.region || item.version || '—';
+      const sourceLabel = item => ({ local: '本地配置', 'local-import': '本地导入', 'agentengine-server': '云端' })[item.source] || item.source || item.provider || item.origin || '—';
+      const kindDetail = item => resourceKind === 'skill' && item.source === 'agentengine-server' ? 'Skill Space' : item.contract?.model || item.contract?.entrypoint || item.contract?.transport || item.region || item.version || '—';
       const rows = isPlatform ? (platformCatalog?.items || []) : resources;
       const tableRows = rows.map(resource => {
             const id = resource.resourceId || resource.id || resource.name;
             const name = resource.displayName || resource.name || id;
-            const canDelete = !isPlatform && resource.source === 'local';
+            const localMcp = resourceKind === 'mcp' && resource.source === 'local';
+            const canDelete = localMcp || (resourceKind === 'mcp' && resource.source === 'agentengine-server');
+            const displayStatus = resourceStatusPresentation(resource, resourceKind);
             return h('tr', { key: id, style: { borderBottom: '1px solid ' + BRAND.border } },
               h('td', { style: { padding: '12px 13px', color: BRAND.ink } }, h('strong', null, name), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' } }, id)),
               h('td', { style: { padding: '12px 13px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, sourceLabel(resource)),
               h('td', { style: { padding: '12px 13px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, kindDetail(resource)),
-              h('td', { style: { padding: '12px 13px', whiteSpace: 'nowrap' } }, h(Pill, { tone: resource.disabled ? 'signal' : String(resource.status || 'ready').toLowerCase() === 'ready' ? 'accent' : 'signal' }, resource.disabled ? '不可用' : resource.health?.errorCode ? `${resource.status || 'error'} · ${resource.health.errorCode}` : resource.status || 'ready')),
+              h('td', { title: displayStatus.detail, style: { padding: '12px 13px' } }, h(Pill, { tone: displayStatus.tone }, displayStatus.label), resource.health?.errorCode ? h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '4px' } }, resource.health.errorCode) : null),
               h('td', { style: { padding: '12px 13px', whiteSpace: 'nowrap' } },
                 h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
                   h('button', { type: 'button', onClick: () => setResourcePreview(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看'),
-                  resourceKind === 'mcp' && canDelete ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '编辑凭证') : null,
+                  localMcp ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '编辑凭证') : null,
                   resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => void probeMcp(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '重新探测') : null,
                   resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpPreview(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看工具') : null,
-                  resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看文件') : null,
-                  canDelete ? h('button', { type: 'button', disabled: deleting, onClick: () => void remove(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px', color: BRAND.danger } }, '删除') : null,
+                  resourceKind === 'skill' && resource.source === 'local-import' ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看文件') : null,
+                  canDelete ? h('button', { type: 'button', disabled: deleting, onClick: () => void remove(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px', color: BRAND.danger } }, localMcp ? '移除配置' : '删除云端 MCP') : null,
                 )));
       });
       const table = rows.length ? h('div', { style: { maxHeight: 'min(58vh, 620px)', overflow: 'auto', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface } },
@@ -145,6 +164,7 @@
           h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '刷新'),
           h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : 'Host 待接入')) }),
         h(StudioPageTabs, { ariaLabel: '资源类型', value: resourceKind, onChange: setResourceKind, items: resourceKinds.map(([id, value]) => ({ id, label: value })) }),
+        ['skill', 'skill-space', 'mcp'].includes(resourceKind) ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, resourceKind === 'mcp' ? '探测通过表示连接和工具列表读取成功；工具是否能完成任务，需要在绑定的 Agent 中实际调用验证。移除配置只影响本机，删除云端 MCP 会清理云端资源。' : '本地已导入：文件已保存到本机。云端目录可见：绑定后由 Host 下载加载 Skill Space。两种状态都不代表脚本依赖或 Agent 实际执行已验证。') : null,
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取资源目录', detail: '读取 Host 的资源清单和云端平台目录。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: '资源目录不可用', detail: error, action: h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '重新读取') }) : null,
         status === 'ready' ? h(React.Fragment, null,
