@@ -637,30 +637,8 @@ async function registerControlPlane(ctx) {
         const studio = await studioBuildPromise;
         try {
           if (endpoint === 'builds/create') {
-            const agentId = String(payload?.agentId || '').trim();
-            if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
-            const localStore = await agentStorePromise;
-            const detail = await localStore.get(agentId) || await serverClient.getAgent(agentId, { signal });
-            const agentName = String(detail?.metadata?.name || detail?.name || agentId);
-            const revision = Number(payload?.revision || detail?.metadata?.revision || 1);
-            // Freeze the cloud Agent definition into a local content-addressed
-            // bundle. Deployment-to-cloud remains a separate server contract.
-            const operation = await studio.operations.submit({
-              kind: 'build',
-              resourceId: agentId,
-              idempotencyKey: String(payload?.idempotencyKey || `build-${agentId}-${revision}`),
-              metadata: { agentName, revision },
-              runner: async () => {
-                const record = await studio.build.build({
-                  agentId, agentName, revision,
-                  spec: detail?.spec ?? null,
-                  bindings: detail?.spec?.bindings ?? detail?.bindings ?? {},
-                  metadata: detail?.metadata ?? {},
-                });
-                return { buildId: record.id, summary: record.id };
-              },
-            });
-            return { ok: true, value: { operationId: operation.id, status: operation.status, buildId: null } };
+            const { submitAgentBuild } = await import('./build-operation.mjs');
+            return { ok: true, value: await submitAgentBuild({ payload, localStore: await agentStorePromise, serverClient, ...studio, signal }) };
           }
           if (endpoint === 'builds/list') {
             const agentId = String(payload?.agentId || '').trim();

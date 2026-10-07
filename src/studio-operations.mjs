@@ -63,7 +63,9 @@ export function createOperationManager({ storeDir, clock = Date.now } = {}) {
   function withLock(operationId, fn) {
     const prev = locks.get(operationId) || Promise.resolve();
     const next = prev.then(fn, fn);
-    locks.set(operationId, next.catch(() => {}));
+    const settled = next.catch(() => {});
+    locks.set(operationId, settled);
+    void settled.then(() => { if (locks.get(operationId) === settled) locks.delete(operationId); });
     return next;
   }
 
@@ -85,39 +87,51 @@ export function createOperationManager({ storeDir, clock = Date.now } = {}) {
     return null;
   }
 
-  async function submit({ kind, resourceId, idempotencyKey, metadata = {}, runner }) {
+  async function submit({ kind, resourceId, idempotencyKey, requestFingerprint, metadata = {}, runner }) {
+    await ready;
     if (typeof runner !== 'function') throw new OperationError('OPERATION_RUNNER_MISSING', 'operation 需要 runner');
-    const existing = await findByKey(idempotencyKey);
-    if (existing) return existing.operation;
-    const operation = {
-      id: `op_${randomUUID().replace(/-/g, '')}`,
-      kind: String(kind || 'operation'),
-      resourceId: String(resourceId || ''),
-      metadata,
-      status: 'queued',
-      createdAt: new Date(clock()).toISOString(),
-      updatedAt: new Date(clock()).toISOString(),
-      result: null,
-    };
-    const record = { operation, events: [{ at: operation.createdAt, type: 'operation.queued', data: { kind: operation.kind } }], idempotencyKey: String(idempotencyKey || `op-${operation.id}`) };
-    await write(record);
-    const timer = setTimeout(() => { void run(operation.id, runner); }, 0);
-    if (typeof timer.unref === 'function') timer.unref();
-    pending.set(operation.id, timer);
-    return operation;
+    const key = String(idempotencyKey || `request-${randomUUID()}`);
+    return withLock(`submit:${key}`, async () => {
+      const existing = await findByKey(key);
+      if (existing) {
+        if (existing.operation.kind !== String(kind || 'operation') || existing.operation.resourceId !== String(resourceId || '')
+          || existing.requestFingerprint !== requestFingerprint) {
+          throw new OperationError('OPERATION_IDEMPOTENCY_CONFLICT', '该请求标识已用于不同操作或内容，请使用新的请求标识');
+        }
+        return existing.operation;
+      }
+      const operation = {
+        id: `op_${randomUUID().replace(/-/g, '')}`,
+        kind: String(kind || 'operation'),
+        resourceId: String(resourceId || ''),
+        metadata,
+        status: 'queued',
+        createdAt: new Date(clock()).toISOString(),
+        updatedAt: new Date(clock()).toISOString(),
+        result: null,
+      };
+      const record = { operation, events: [{ at: operation.createdAt, type: 'operation.queued', data: { kind: operation.kind } }], idempotencyKey: key, ...(requestFingerprint ? { requestFingerprint } : {}) };
+      await write(record);
+      const timer = setTimeout(() => { void run(operation.id, runner); }, 0);
+      if (typeof timer.unref === 'function') timer.unref();
+      pending.set(operation.id, timer);
+      return operation;
+    });
   }
 
   async function run(operationId, runner) {
     // Claim phase holds the lock; the runner itself must not (cancel has to
     // be able to land while a runner is in flight).
-    await withLock(operationId, async () => {
+    const claimed = await withLock(operationId, async () => {
       const record = await read(operationId);
-      if (!record || record.operation.status !== 'queued') return;
+      if (!record || record.operation.status !== 'queued') return false;
       record.operation.status = 'running';
       record.operation.updatedAt = new Date(clock()).toISOString();
       record.events.push({ at: record.operation.updatedAt, type: 'operation.started', data: {} });
       await write(record);
+      return true;
     });
+    if (!claimed) { pending.delete(operationId); return; }
     const finish = async (status, event, data, result) => {
       await withLock(operationId, async () => {
         const fresh = await read(operationId);
@@ -133,7 +147,8 @@ export function createOperationManager({ storeDir, clock = Date.now } = {}) {
       const result = await runner(operationId);
       await finish('succeeded', 'operation.succeeded', { summary: String(result && typeof result === 'object' ? (result.summary || result.buildId || result.id || '') : String(result ?? '')) }, result ?? null);
     } catch (error) {
-      await finish('failed', 'operation.failed', { message: String(error?.message || error).slice(0, 400) });
+      const failure = { code: String(error?.code || 'OPERATION_FAILED'), message: String(error?.message || error).slice(0, 400) };
+      await finish('failed', 'operation.failed', failure, failure);
     } finally {
       pending.delete(operationId);
     }
@@ -161,6 +176,7 @@ export function createOperationManager({ storeDir, clock = Date.now } = {}) {
       const record = await read(operationId);
       if (!record) throw new OperationError('OPERATION_NOT_FOUND', 'operation 不存在', { operationId });
       if (['succeeded', 'failed', 'cancelled'].includes(record.operation.status)) return record.operation;
+      if (record.operation.status !== 'queued') throw new OperationError('OPERATION_ALREADY_STARTED', '操作已开始，无法撤销已发生的处理，请等待实际结果');
       record.operation.status = 'cancelled';
       record.operation.updatedAt = new Date(clock()).toISOString();
       record.events.push({ at: record.operation.updatedAt, type: 'operation.cancelled', data: {} });

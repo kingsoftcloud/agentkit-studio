@@ -6,7 +6,9 @@
  * (manifest + spec + bindings) so later local runners and schedules execute
  * against a frozen revision. Deployment-to-cloud remains a server contract.
  */
-import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat, rename, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
 import { createZip, buildIdFor, readZipEntry } from './zip.mjs';
 
@@ -21,6 +23,7 @@ export class BuildError extends Error {
 
 export function createStudioBuild({ storeDir } = {}) {
   const root = storeDir;
+  const pending = new Map();
 
   function agentDir(agentId) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$/.test(String(agentId)) || agentId === '..') throw new BuildError('BUILD_AGENT_ID_INVALID', 'AgentId 格式无效');
@@ -36,11 +39,30 @@ export function createStudioBuild({ storeDir } = {}) {
   async function writeBuilds(agentId, items) {
     const dir = agentDir(agentId);
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeFile(join(dir, 'builds.json'), JSON.stringify({ items }, null, 2));
+    await atomicWrite(join(dir, 'builds.json'), JSON.stringify({ items }, null, 2));
   }
 
-  async function build({ agentId, agentName, revision, spec, bindings = {}, metadata = {} }) {
+  async function atomicWrite(path, value) {
+    const temp = `${path}.${randomUUID()}.tmp`;
+    try { await writeFile(temp, value, { mode: 0o600, flag: 'wx' }); await rename(temp, path); }
+    finally { await rm(temp, { force: true }); }
+  }
+
+  function build(input) {
+    const snapshot = structuredClone(input);
+    const key = String(snapshot?.agentId || '');
+    const previous = pending.get(key) || Promise.resolve();
+    const result = previous.then(() => buildSnapshot(snapshot));
+    const settled = result.catch(() => {});
+    pending.set(key, settled);
+    void settled.then(() => { if (pending.get(key) === settled) pending.delete(key); });
+    return result;
+  }
+
+  async function buildSnapshot({ agentId, agentName, revision, spec, bindings = {}, metadata = {} }) {
     if (!agentId) throw new BuildError('BUILD_AGENT_ID_MISSING', 'AgentId 不能为空');
+    if (!Number.isSafeInteger(revision) || revision < 1 || (metadata.revision !== undefined && metadata.revision !== revision)) throw new BuildError('BUILD_REVISION_INVALID', '构建 Revision 无效或与 Agent 定义不一致');
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new BuildError('BUILD_DEFINITION_INVALID', '构建缺少有效的 Agent 定义');
     // The build id is content-addressed over the frozen definition only —
     // never the wall clock — so rebuilding an unchanged revision is idempotent
     // (same contract as the legacy builder's resolved digest).
@@ -51,6 +73,7 @@ export function createStudioBuild({ storeDir } = {}) {
     let existing;
     try { existing = await stat(join(dir, 'agent-bundle.zip')); } catch { existing = null; }
     if (existing?.isFile()) {
+      await verifiedArchive(agentId, buildId);
       const builds = await readBuilds(agentId);
       return builds.find(item => item.id === buildId) || { id: buildId, revision: manifest.revision, status: 'SUCCEEDED', createdAt: manifest.createdAt, artifact: 'agent-bundle.zip' };
     }
@@ -60,7 +83,7 @@ export function createStudioBuild({ storeDir } = {}) {
       { name: 'agent-bundle/README.md', data: `# ${manifest.name}\n\nLocal build ${buildId} of revision ${manifest.revision}.\nFrozen by AgentKit Studio; deployed execution still requires the AgentEngine Server deployment contract.\n` },
     ]);
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeFile(join(dir, 'agent-bundle.zip'), zip);
+    await atomicWrite(join(dir, 'agent-bundle.zip'), zip);
     const record = {
       id: buildId,
       agentId,
@@ -97,6 +120,8 @@ export function createStudioBuild({ storeDir } = {}) {
       const manifest = JSON.parse(readZipEntry(zip, 'agent-bundle/manifest.json').toString('utf8'));
       const { createdAt, ...identity } = manifest;
       if (manifest.format !== 'agentkit.agent-bundle/v1' || manifest.agentId !== agentId || buildIdFor(identity) !== buildId || !manifest.spec) throw new Error('bundle identity mismatch');
+      const spec = JSON.parse(readZipEntry(zip, 'agent-bundle/spec.json').toString('utf8'));
+      if (!isDeepStrictEqual(spec, { spec: manifest.spec, bindings: manifest.bindings })) throw new Error('bundle spec mismatch');
       return { zip, record: {
         metadata: { ...manifest.metadata, id: agentId, name: manifest.name, revision: manifest.revision },
         spec: { ...manifest.spec, bindings: manifest.bindings },
