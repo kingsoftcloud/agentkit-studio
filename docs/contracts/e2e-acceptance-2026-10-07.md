@@ -141,3 +141,14 @@
 - Channel 新增即时绑定、信任边界、配置重载和超时回归；全量 302 项通过（9 项依赖弃用或已有 mock 警告）。此处 Channel 为独立服务修复，未向离线 Studio App 增加 Python 依赖。
 
 - 收尾实际复现“停用渠道后目录变为 0 条”。Channel 将停用与软删除分成独立状态；网页重新验收 disabled 仍列出、同一行重新启用成功，最后停用但保留配置。迁移保留旧库原来隐藏的记录，不自动恢复以前删除的机器人；SQLite 旧表升级与二次启动回归通过。最终三个盲测连接均由界面停用，会话和消息证据保留。
+
+## 冻结 Build HTTP 运行补验
+
+- 新入口通过公开 DSH Session Controller 和 AgentLoop 执行冻结 Build，HTTP 只负责认证、请求身份、事件转发和取消。使用说明与部署边界见 [运行合同](frozen-build-runtime.md)。
+- 盲测用户消息只有“周末想去苏州玩两天，预算800元，帮我安排一下。”，不提示身份或输出标记。测试 Agent r1 仅在系统提示词规定 BUILD-47；构建后草稿 r2 改为 DRAFT-92。运行 build_c7e0124273a8f0b155d4 仍返回 BUILD-47、两项 days 和整数 budget=800，原生页面显示 Revision 1、原绑定 glm-5.3-flash，无文件工作区。
+- 实际 SSE 共 233 个事件，其中 226 个原生 AssistantStreamFrame；首帧 88 ms，完成 3449 ms。重复请求返回同一持久化 runId 和相同答案，原生页仍只有 1 轮；同一 requestId 改内容返回 409。
+- 收到真实模型片段后调用取消，HTTP 终态为 RUNTIME_CANCELLED，无 run.completed；随后同一会话新请求成功，仍使用冻结 Prompt。原生页面可展开运行详情及模型返回的分析内容。
+- 资源 Build 启动实际复现 Duplicate agent preset：恢复和准入同时越过缓存检查，各自探测资源后重复注册。增加同一 preset 的进行中注册共享，失败释放以允许重试；回归先失败后通过，真实 Host 重启后入口启动成功。
+- build_7e3930d82249af527bf4 实际执行 metaso_web_search，返回 total=33、size=10，包含 docs.ksyun.com/directories/5028?type=1、documents/45345、documents/45163；工具结果和回答均写入原生历史。网页展开工具输入/输出成功；截图保存在本机 .artifacts/e2e-build-mcp-native-20261007.png 和 .artifacts/e2e-build-frozen-blind-20261007.png。
+- 325 项全量测试通过。新增范围包括 HTTP 认证与大小限制、流式与取消、失败脱敏、已有请求精确历史定位、重复/冲突以及并发资源注册。
+- 本项证明已有 Host 能消费冻结 Build；单独携带 DSH 的云端产物、配置注入、上传和部署生命周期仍未接通。没有因此创建云端付费资源或虚假部署成功记录。

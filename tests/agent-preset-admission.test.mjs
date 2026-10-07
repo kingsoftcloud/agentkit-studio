@@ -652,3 +652,24 @@ test('the cloud bridge sends CancelRun after an aborted upstream stream', async 
   await assert.rejects(pending, error => error.code === 'CLOUD_RUN_CANCELLED');
   assert.deepEqual(cancelled, ['CancelRun', { AgentId: 'agent-1', SessionId: 'cloud-session-1', InvocationId: 'invocation-1' }]);
 });
+
+test('concurrent resource admission registers a frozen preset once; failure permits retry', async () => {
+  let release, probes = 0, registrations = 0, fail = true;
+  const gate = new Promise(resolve => { release = resolve; });
+  const record = agent({ metadata: { id: 'demo/agent', revision: 1, local: true }, buildId: 'build_0123456789abcdef0123', spec: { runtime: { type: 'harness' }, bindings: {} } });
+  const admission = new DshPresetAdmission({ getAgent: async () => record,
+    getToolContracts: async () => { probes++; await gate; if (fail) throw new Error('probe unavailable'); return []; },
+    registry: { register: async () => { registrations++; return () => {}; } },
+  });
+  const attempts = [admission.ensure('demo/agent'), admission.ensure('demo/agent')];
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  assert.deepEqual((await Promise.allSettled(attempts)).map(value => value.status), ['rejected', 'rejected']);
+  assert.equal(probes, 1);
+  fail = false;
+  const result = await Promise.all([admission.ensure('demo/agent'), admission.ensure('demo/agent')]);
+  assert.equal(registrations, 1);
+  assert.equal(probes, 2);
+  assert.deepEqual(result.map(value => value.reused), [false, true]);
+  await admission.dispose();
+});

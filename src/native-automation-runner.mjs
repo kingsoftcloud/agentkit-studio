@@ -1,14 +1,14 @@
 /** Run automated work through the same public DSH Session/Agent API as native chats. */
 import { readNativeRequestEvents } from './native-request-history.mjs';
 
-export function createNativeAutomationRunner({ getService, admit, timeoutMs = 300000, reuseSession = false } = {}) {
+export function createNativeAutomationRunner({ getService, admit, observe, timeoutMs = 300000, reuseSession = false } = {}) {
   const lanes = new Map();
   const service = name => {
     const value = getService?.(name);
     if (!value) throw Object.assign(new Error(`自动化需要 DSH ${name} 服务`), { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     return value;
   };
-  const run = async ({ agentId, sessionId, occurrenceId, input, buildId = '', timeoutSeconds, signal: callerSignal }) => service('agents').withoutInitiator(async () => {
+  const run = async ({ agentId, sessionId, occurrenceId, input, buildId = '', timeoutSeconds, signal: callerSignal, onFrame }) => service('agents').withoutInitiator(async () => {
     const startedAt = Date.now();
     const controller = service('sessionController');
     const expiry = AbortSignal.timeout(timeoutSeconds ? Math.max(1000, Number(timeoutSeconds) * 1000) : timeoutMs);
@@ -27,30 +27,33 @@ export function createNativeAutomationRunner({ getService, admit, timeoutMs = 30
     const permission = await service('commands').execute(agent, '/permission read-only', [], signal);
     if (!permission) throw Object.assign(new Error('自动化无法设置 Agent 只读权限'), { code: 'AUTOMATION_PERMISSION_UNAVAILABLE' });
     signal.throwIfAborted();
-    await controller.prompt({ sessionId, requestId: occurrenceId, mode: 'queue', content: [{ type: 'text', text: String(input || '') }], clientTimeZone: 'Asia/Shanghai' }, signal);
-    await new Promise((resolve, reject) => {
-      const onAbort = () => { agent.cancel({ kind: 'user' }); reject(signal.reason || Object.assign(new Error('自动化运行超时'), { code: 'AUTOMATION_TIMEOUT' })); };
-      if (signal.aborted) { onAbort(); return; }
-      signal.addEventListener('abort', onAbort, { once: true });
-      agent.whenIdle().then(() => { signal.removeEventListener('abort', onAbort); resolve(); }, error => { signal.removeEventListener('abort', onAbort); reject(error); });
-    });
-    let events;
-    if (reuseSession) events = await readNativeRequestEvents(controller, sessionId, occurrenceId, signal);
-    else {
-      const projection = await controller.projections({ sessionId }, signal);
-      const page = await controller.page({ address: { kind: 'session', sessionId }, throughSeq: projection?.asOfSeq ?? -1, maxMessages: 200 }, signal);
-      events = (page?.records || []).filter(item => item.type === 'event').map(item => item.event);
-    }
-    const end = events.findLast(item => item.type === 'turn/end');
-    if (end?.data?.reason?.kind !== 'completed') {
-      const reason = end?.data?.reason;
-      throw Object.assign(new Error(reason?.error?.message || `自动化运行未完成：${reason?.kind || '没有回合结束记录'}`), { code: reason?.error?.code || 'AUTOMATION_RUN_FAILED' });
-    }
-    const messages = events.filter(event => event.type === 'assistant/message');
-    const output = (messages.at(-1)?.data?.message?.content || []).filter(part => part.type === 'text').map(part => part.text || '').join('');
-    const usages = messages.map(event => event.data?.usage).filter(Boolean);
-    const tokenUsage = usages.length ? { inputTokens: usages.reduce((sum, usage) => sum + Number(usage.inputTokens || 0) + Number(usage.cacheReadTokens || 0) + Number(usage.cacheWriteTokens || 0), 0), outputTokens: usages.reduce((sum, usage) => sum + Number(usage.outputTokens || 0), 0) } : {};
-    return { sessionId, runId: `dsh:${sessionId}:${end.seq}`, output, tokenUsage, latencyMs: Date.now() - startedAt, toolCalls: events.filter(event => event.type === 'tool/call').map(event => ({ name: event.data.name, callId: event.data.callId })) };
+    const unobserve = onFrame ? observe?.(agent, onFrame) : undefined;
+    try {
+      await controller.prompt({ sessionId, requestId: occurrenceId, mode: 'queue', content: [{ type: 'text', text: String(input || '') }], clientTimeZone: 'Asia/Shanghai' }, signal);
+      await new Promise((resolve, reject) => {
+        const onAbort = () => { agent.cancel({ kind: 'user' }); reject(signal.reason || Object.assign(new Error('自动化运行超时'), { code: 'AUTOMATION_TIMEOUT' })); };
+        if (signal.aborted) { onAbort(); return; }
+        signal.addEventListener('abort', onAbort, { once: true });
+        agent.whenIdle().then(() => { signal.removeEventListener('abort', onAbort); resolve(); }, error => { signal.removeEventListener('abort', onAbort); reject(error); });
+      });
+      let events;
+      if (reuseSession) events = await readNativeRequestEvents(controller, sessionId, occurrenceId, signal);
+      else {
+        const projection = await controller.projections({ sessionId }, signal);
+        const page = await controller.page({ address: { kind: 'session', sessionId }, throughSeq: projection?.asOfSeq ?? -1, maxMessages: 200 }, signal);
+        events = (page?.records || []).filter(item => item.type === 'event').map(item => item.event);
+      }
+      const end = events.findLast(item => item.type === 'turn/end');
+      if (end?.data?.reason?.kind !== 'completed') {
+        const reason = end?.data?.reason;
+        throw Object.assign(new Error(reason?.error?.message || `自动化运行未完成：${reason?.kind || '没有回合结束记录'}`), { code: reason?.error?.code || 'AUTOMATION_RUN_FAILED' });
+      }
+      const messages = events.filter(event => event.type === 'assistant/message');
+      const output = (messages.at(-1)?.data?.message?.content || []).filter(part => part.type === 'text').map(part => part.text || '').join('');
+      const usages = messages.map(event => event.data?.usage).filter(Boolean);
+      const tokenUsage = usages.length ? { inputTokens: usages.reduce((sum, usage) => sum + Number(usage.inputTokens || 0) + Number(usage.cacheReadTokens || 0) + Number(usage.cacheWriteTokens || 0), 0), outputTokens: usages.reduce((sum, usage) => sum + Number(usage.outputTokens || 0), 0) } : {};
+      return { sessionId, runId: `dsh:${sessionId}:${end.seq}`, output, tokenUsage, latencyMs: Date.now() - startedAt, toolCalls: events.filter(event => event.type === 'tool/call').map(event => ({ name: event.data.name, callId: event.data.callId })) };
+    } finally { unobserve?.(); }
   });
   return request => {
     const previous = lanes.get(request.sessionId) || Promise.resolve();

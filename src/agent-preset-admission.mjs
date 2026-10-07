@@ -148,6 +148,8 @@ export class DshPresetAdmission {
     this.getSkillDefinitions = getSkillDefinitions;
     this.registry = registry;
     this.registrations = new Map();
+    this.pending = new Map();
+    this.disposed = false;
   }
 
   setRegistry(registry) {
@@ -184,8 +186,23 @@ export class DshPresetAdmission {
       eligibility.presetId = dshPresetId(eligibility.agentId, eligibility.revision, buildId);
       eligibility.mode = 'studio-bridge';
     }
+    if (this.disposed) throw Object.assign(new Error('Agent preset admission is disposed'), { code: 'DSH_PRESET_REGISTRY_UNAVAILABLE' });
     const previous = this.registrations.get(eligibility.presetId);
     if (previous?.presetId === eligibility.presetId) return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: true };
+    const pending = this.pending.get(eligibility.presetId);
+    if (pending) {
+      await pending;
+      return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: true };
+    }
+    const registration = this.register(agent, eligibility, buildId);
+    this.pending.set(eligibility.presetId, registration);
+    try {
+      await registration;
+      return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: false };
+    } finally { this.pending.delete(eligibility.presetId); }
+  }
+
+  async register(agent, eligibility, buildId) {
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
@@ -239,10 +256,11 @@ export class DshPresetAdmission {
     // A newer revision must not remove a preset still referenced by an older
     // native Session. Dispose all registrations with the Host scope instead.
     this.registrations.set(eligibility.presetId, { presetId: eligibility.presetId, unregister });
-    return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: false };
   }
 
   async dispose() {
+    this.disposed = true;
+    await Promise.allSettled(this.pending.values());
     const entries = [...this.registrations.values()];
     this.registrations.clear();
     for (const entry of entries) {
