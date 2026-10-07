@@ -92,7 +92,7 @@ patch-check:
 	@test -d "$(PATCH_ROOT)" || (echo "补丁目录不存在：$(PATCH_ROOT)" >&2; exit 2)
 	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是 $(DSH_VERSION) 基线 $(DSH_COMMIT)" >&2; exit 2)
 	@test -z "$$(git -C "$(DSH_ROOT)" status --porcelain)" || (echo "DSH checkout 有未提交改动；请先清理或使用独立 checkout" >&2; exit 2)
-	@set -e; for patch in "$(PATCH_ROOT)"/*.patch; do git -C "$(DSH_ROOT)" apply --check "$$patch"; done
+	node scripts/check-dsh-patches.mjs "$(DSH_ROOT)" "$(PATCH_ROOT)"
 
 patch-apply: patch-check
 	@set -e; for patch in "$(PATCH_ROOT)"/*.patch; do git -C "$(DSH_ROOT)" apply "$$patch"; done
@@ -154,6 +154,7 @@ desktop-package-mac-arm64-unsigned: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
 	@rg -q 'invocation.unsigned && target.platform' "$(DSH_ROOT)/apps/desktop/scripts/package-target.ts" || (echo "DSH local macOS package patch 未应用；请应用 009-local-macos-package.patch" >&2; exit 2)
 	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm --dir apps/desktop run package mac-arm64 --unsigned
+	node scripts/export-local-dmg.mjs "$(DSH_ROOT)/apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/deepseek-harness-$(DSH_VERSION)-mac-arm64-unsigned.dmg" "$(PACK_DIR)" "$(PLUGIN_VERSION)" "$(DSH_VERSION)"
 
 desktop-package-mac-arm64-dir: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)

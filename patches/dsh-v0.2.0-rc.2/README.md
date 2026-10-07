@@ -18,13 +18,11 @@ PATCH_ROOT=/path/to/agentkit-studio/patches/dsh-v0.2.0-rc.2
 
 test "$(git -C "$DSH_ROOT" rev-parse HEAD)" = \
   639ed015397290b3745d163aafe02ffee4aa3f84
-for patch in "$PATCH_ROOT"/*.patch; do
-  git -C "$DSH_ROOT" apply --check "$patch"
-done
-for patch in "$PATCH_ROOT"/*.patch; do
-  git -C "$DSH_ROOT" apply "$patch"
-done
+make patch-check DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
+make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 ```
+
+`patch-check` 在独立临时索引中依次检查并应用补丁，以验证后续补丁对先前改动的依赖；不会修改 checkout 或当前暂存内容。`patch-apply` 在检查全部通过后才修改工作目录。
 
 已经通过宿主分支或本地 profile 应用过的 checkout 不要重复应用。升级 DSH 版本时，复制本目录为新的 `dsh-v<version>/`，重新生成补丁并更新本说明；禁止在同一目录混放不同版本的补丁。
 
@@ -44,3 +42,5 @@ done
 | `010-session-model-default.patch` | 为公开 `session.selectModel` 增加可选 `saveDefault: false`，Agent 绑定和自动化只修改自己的会话模型；普通模型选择器仍保存默认值 | 上游提供会话模型选择与全局默认值分离的合同 |
 | `011-cjk-autolinks.patch` | 原生 Markdown 的裸网址在中文标点前结束，避免加粗结束符及说明被拼进地址；复用 GFM 解析和既有流式渲染，保留显式链接、Unicode 路径及源位置 | 上游修复中文标点相邻的自动链接 |
 | `012-preset-roster-invalidation.patch` | 注册表声明激活或移除后发布目录事件，经现有 Remote 转发让原生预设界面刷新；会话标签合并请求期间的变更，启动恢复后自动显示 Agent 名称 | 上游提供动态预设目录失效通知和请求合并 |
+| `013-existing-product-profile.patch` | 已有 Desktop Profile 首次遇到新的产品 bundle 时补齐激活项，保留现有插件、设置和锁文件；记录已见默认项，保留后续用户或恢复操作的禁用选择 | 上游支持已有桌面 Profile 的产品默认项迁移 |
+| `014-desktop-product-brand.patch` | 原生菜单、“关于”和恢复提示使用安装产品名称，修复图标已更新但仍显示 DeepSeek Harness 的混合品牌；保留默认 DSH 文案、模型提供方名称和用户数据目录 | 上游提供原生 shell 的产品品牌合同 |

@@ -80,9 +80,17 @@ DMG 目标只能在 macOS 上运行，并且按官方 DSH 规则读取
 make desktop-package-mac-arm64-unsigned DSH_ROOT="$DSH_ROOT"
 ```
 
-该目标复用官方 Node、Python、package-set 和原生依赖流水线，导出到
-`apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/`。
-文件名包含 `unsigned`，不生成更新源或发布记录，也不会跳过正式目标的签名、公证检查。
+该目标复用官方 Node、Python、package-set 和原生依赖流水线。官方产物保留在
+`apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/`，文件名包含 `unsigned`。
+成功后自动导出 `.artifacts/AgentKit-Studio-<Studio版本>-mac-arm64-local.dmg`，并写入同名
+`.sha256` 和 `.json` 校验记录，打印实际路径、SHA256 和字节数；`PACK_DIR` 可指定导出目录。
+导出逐字节摘要核对，缺失或空产物会令目标失败，失败构建保留上一次可用包。
+这不是更新源或发布记录，也不会跳过正式目标的签名、公证检查。下载或交付前在产物目录运行：
+
+```sh
+shasum -a 256 -c AgentKit-Studio-0.0.1-mac-arm64-local.dmg.sha256
+```
+
 验收时应把 DMG 只读挂载、复制 App 到源码目录之外，使用独立的 `DSH_HOME` 和
 `AGENTKIT_HOME` 冷启动；移除 PATH 中的 Node/pnpm 后检查页面、模型设置、Agent 运行和
 退出再打开。离线启动与联网模型、云端资源运行分别记录。旧全局配置迁移仍可能读取

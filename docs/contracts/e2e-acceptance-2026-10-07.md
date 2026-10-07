@@ -35,7 +35,7 @@
 | O03 | 运行后 Trace 列表、详情、筛选和导出可用 | 通过 | 真实 Trace 列表、详情、Agent/Run 筛选与合法 OTLP 投影已验证。桌面经官方 DSH Session 日志 API 和 macOS 保存面板导出 43250 字节、28 条合法 JSONL，SHA256 053a09b96607055cc57999f4b8b270ff3aa2c08f2a3bb562c6c7729772fa86e5。投影 Span 不是完整原生工具 Span；完整事实另由导出的 Session 日志提供。 |
 | O04 | 评测集导入、目标选择、真实运行与结果详情 | 通过 | 真实导入 e2e-frozen-build-20261007，选择冻结 Build 并实际执行；eval_97cf683487014b0180e7f8390e5fd704 返回旧 r1 身份，两个断言通过，最终页面显示用例 1/通过 1/失败 0/断言 2。A2A 和本地源码目标仍明确未接入。 |
 | O05 | Channels 配置、目录和错误处理；外发消息不作为默认测试动作 | 部分通过 | 真实打开未配置目录，显示 connector 不可用；关闭启用开关后提交测试连接也明确要求 serverUrl/accountId，没有伪造连接或外发消息。缺少真实渠道服务配置，联网渠道生命周期未验收。 |
-| D01 | 固定 DSH 基线和兼容补丁、Studio 包及 Profile 完整性 | 通过 | 最终 Studio 282 项检查及 163 文件包完整性通过；DSH 桌面相关 177 项通过、1 项平台跳过，新增 Session 模型合同 26 项通过。十一个兼容补丁在固定基线干净 worktree 上逐个检查和应用成功；新增 Markdown 200 项相关检查（含逐字流式更新）通过，双语文档配对及 TypeScript 检查通过。 |
+| D01 | 固定 DSH 基线和兼容补丁、Studio 包及 Profile 完整性 | 通过 | 最终 Studio 303 项检查及 176 文件包完整性通过；14 个兼容补丁在固定基线私有索引按顺序应用成功。最新桌面启动、语言与 Profile 测试共 180 项通过、1 项平台跳过，相关源文件 lint、桌面 Host TypeScript 和 1158 对双语文档配对检查通过。早先 Session 模型合同 26 项、Markdown 200 项（含逐字流式更新）也通过。DSH 全量文档同步另有 6 项未通过，详见下方。 |
 | D02 | macOS App 产物包含运行时、插件与依赖，无源码目录依赖 | 通过 | 真实 DMG 的独立 App 内置 Node24.18.1/Python/pnpm/Office；官方 DOCX/XLSX/PPTX→PDF、原生模块冒烟通过。修复根 manifest 插件解析锚点后，源码目录外 App 完整 Studio 页面与原生 Agent 运行成功。 |
 | D03 | 离线 DMG 挂载、复制安装、无预装 Node/pnpm 冷启动 | 通过 | DMG 只读挂载并复制到源码目录之外；PATH 仅保留系统路径，失败代理下冷启动完整 Studio、创建本地 Agent、原生会话成功。外层 sandbox 与 Chromium sandbox 冲突的测试未作为证据；最终 DMG 又在新数据目录中仅系统 PATH、外部服务地址不可达环境启动，实际创建 ar-local-050eddcd95ed4273，并在无工作区原生会话通过本地合成模型验证绑定 Prompt。此处验证独立启动与本地运行，不等同云端资源离线可用或 OS 级断网测试。 |
 | D04 | 干净数据目录首次配置、数据持久化、退出再打开 | 通过 | 独立 DSH/AgentKit 数据目录首次 Profile 包含 Studio，模型配置保留；实际创建的本地 Agent、绑定模型与原生会话回答在退出再打开后恢复。旧全局配置迁移仍读取 legacy-global，未声称干净系统账户。 |
@@ -51,10 +51,10 @@
 
 ## 最终本机产物与复验
 
-- DMG：`AgentKit-Studio-0.0.1-mac-arm64-local.dmg`，501691888 字节（478.45 MiB）；SHA256 `528a430eca9e949cdc9cd6a4819dc701d83fdfb1d7c69656276d42a0ea45419d`。这是本机 arm64 未签名验收包。
-- 最终 App 已由 DMG 只读挂载后复制到源码目录之外。包内 local-runtime 源码与本轮最终源码 SHA256 一致，297 项检查与 177 个跟踪文件的可分发路径检查通过；最终 tgz 的 170 文件包完整性通过。
+- DMG：`AgentKit-Studio-0.0.1-mac-arm64-local.dmg`，501765554 字节（478.52 MiB）；SHA256 `8a1ea34d74bb082dad08f099c03a213d49eae219fdd2c1411d13c8505f06749e`。这是本机 arm64 未签名验收包。
+- 最终 App 已由 DMG 只读挂载后复制到源码目录之外。包内 local-runtime 源码与本轮最终源码 SHA256 一致，303 项检查与 183 个跟踪文件的可分发路径检查通过；最终 tgz 的 176 文件包完整性通过。
 - 最终包恢复旧 r1 对话后继续返回 E2E-DESKTOP-PERSONA；r2 资源会话与包内 Codex 的实际续问成功。用户已有 Agent 配置未被测试改写，测试自动化均已暂停或结束。
-- 实际图标从最终 App 的 icon.icns 导出，品牌为 AgentKit Studio A；旧版已安装应用不会仅因更新源文件自动改变。本轮未覆盖旧版 0.8.5 安装。
+- 实际图标从最终 App 的 icon.icns 导出，品牌为 AgentKit Studio A；旧版已安装应用不会仅因更新源文件自动改变。本轮保留旧版 0.8.5 的 AgentKitStudio.app，另将已验收的新包安装为 AgentKit Studio.app。
 - 未完成的外部条件：渠道服务连接配置、Deployment Action，以及 macOS 签名和公证配置。内嵌浏览器 ZIP 下载已补验；原生重新生成按钮仍未验收。
 
 ## 原生链接与插件流程补验
@@ -84,3 +84,17 @@
 - 网页和 DMG 均在 8 秒退避期间点击“停止生成”，页面显示“模型请求重试已取消”，网关计数各为 1；网页 401 只请求一次并显示 AUTH。刷新网页后成功、取消和认证失败记录仍保留，未被重写为成功。
 - 同一最终 DMG 的全新资源会话使用 E2E DMG r2 和真实 glm-5.3-flash，17 秒完成秘塔搜索。展开原生工具输出确认 total=45、size=10、首条官网文档为 `https://docs.ksyun.com/documents/45345`；真实记忆召回 `e2e-dmg-memory-20261007`。本次 Knowledge 命中两个 smoke_kb_test.md 片段但未包含指定 canary，回答如实说明没有命中；本轮未调用绑定的 Skill，Skill 的实际执行证据仍以上述脚本验收为准。
 - 全量检查中捕获原有耗时 fixture 的 1 毫秒竞态，改为用同一时间基准计算开始与结束；没有放宽时长断言。
+
+
+## 正常桌面安装与升级补验
+
+- 将最终 DMG 安装到 macOS Applications，再通过系统应用启动，不使用测试启动脚本、不额外注入模型或 MCP 凭证。原先只显示 DSH 插件入口；已有 Desktop Profile 只有基础 bundle，初始化没有补入 Studio。十三号补丁为已有 Profile 加入首次遇到的产品默认项，并记录已应用的默认项，保留后续用户或恢复操作的禁用选择。
+- 真实旧 Profile 升级后出现 Studio 总览、Agents、资源库与运行中心。原依赖声明、pnpm workspace 和锁文件保持不变；Studio 加载后的原生模型/界面设置同步会更新用户 patch，未将此文件声称为全程逐字节不变。升级阶段保留用户 patch 的行为由真实 DesktopProjectManager 回归覆盖。
+- 正常启动后选择小红书营销文案大师，真实 glm-5.3-flash 在 2 秒内回复正确名称、职责和收纳标题；续问通过 metaso_web_search 返回 total=35、size=10，原生思考、工具输入和输出均可展开。
+- 本地 Make 打包现在自动导出 Studio 命名的 DMG、SHA256 文件和 JSON 摘要。实际完整流水线成功后，导出文件与官方产物摘要一致；挂载时磁盘镜像校验通过，安装后的 icns 与已目视验收的 Studio A 图标一致。
+- 补丁检查改为在私有临时索引中依次应用，14 个补丁在固定基线全部通过，工作目录和暂存内容不变。Make 回归复现并修复了旧下载包、缺失产物误报成功，以及依赖前序改动的补丁被误拒绝的问题。
+- DSH Profile 测试 39 项通过、1 项平台跳过，启动、语言、品牌与打包阶段测试 141 项通过；相关源文件 lint、桌面 Host TypeScript 编译、937 个 Client UI 文件的文案检查及 1158 对文档配对检查通过。全量 doc-sync 为 37 项通过、6 项失败：旧补丁对应的事件图、Cordis 目录、持久化目录及历史未同步，已有 SessionFilter 导出缺少 JSDoc，调试备份目录触发仓库引用检查。本次双语配对、Markdown 链接、文档预算通过；未把全量文档门禁记录为成功。
+
+- 最终品牌复验发现 Electron 的 app.name 仍是内部包名，而官方 build:official 会重置客户端标题。十四号补丁将产品名经桌面专用构建值传到现有原生语言字典；不修改 Electron 数据目录。最终 asar 主程序与构建输出 SHA256 一致（a84638231404fc44be7a017de7eedf80aeefd1ab3cf9423c6fe5d0b231f42689），产品名已固定为 AgentKit Studio。
+- 从最后一版 DMG 重新安装后，通过系统正常启动，实际菜单显示“关于 / 隐藏 / 退出 AgentKit Studio”，“关于”窗口同时显示 Studio A 图标和产品名称。旧会话、Agent 名称及 glm-5.3-flash 模型恢复；再次搜索 2 秒完成，展开原生 metaso_web_search 记录得到 total=29、size=10，回答链接为 docs.ksyun.com/directories/5028?type=1。
+- Web 重启后总览读取 23 个 Agent、4/4 就绪；选择总览再刷新仍停留在总览。最终桌面截图保存在本机 .artifacts/e2e-applications-brand-20261007.png 和 .artifacts/e2e-final-applications-mcp-20261007.png。
