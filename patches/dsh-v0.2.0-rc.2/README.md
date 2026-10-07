@@ -45,3 +45,4 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `013-existing-product-profile.patch` | 已有 Desktop Profile 首次遇到新的产品 bundle 时补齐激活项，保留现有插件、设置和锁文件；记录已见默认项，保留后续用户或恢复操作的禁用选择 | 上游支持已有桌面 Profile 的产品默认项迁移 |
 | `014-desktop-product-brand.patch` | 原生菜单、“关于”和恢复提示使用安装产品名称，修复图标已更新但仍显示 DeepSeek Harness 的混合品牌；保留默认 DSH 文案、模型提供方名称和用户数据目录 | 上游提供原生 shell 的产品品牌合同 |
 | `015-compatibility-docs.patch` | 补齐会话过滤 API 的双语说明与 JSDoc，并通过官方生成器同步事件、Cordis API 与持久化目录；持久化类型摘要未改变 | 上游提供等价过滤、模型选择和预设目录事件合同，并同步对应生成目录 |
+| `016-informational-session-events.patch` | 为 Session.append 的非模型事件开放现有 ignorable 标记，修复下游插件展示记录在磁盘重开时被拒绝的问题；禁止消息事件使用，保留默认 required 和官方静态事件清单，附带单测与双语说明 | 上游公开可写入纯展示事件 ignorable 标记的等价接口 |

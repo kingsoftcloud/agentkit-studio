@@ -20,6 +20,7 @@
     }
 
     function apply(ctx) {
+      ctx.uiConversation.events.register(codexToolDefinition);
       activeConnection = { rpc: ctx.connection.rpc };
       // Schedule is a capability, not a hard requirement for the fixed
       // dsh-v0.2.0-rc.2 host. Older profiles can still expose the Studio
@@ -301,7 +302,7 @@
 
     return {
       name: 'agentkit-studio',
-      inject: ['slots', 'layout', 'connection', 'remote', 'remote.session', 'remote.settings', 'remote.credentials', 'remote.llm', 'remote.agentPresets', 'remote.commands', 'sessions', 'modelDirectories'],
+      inject: ['slots', 'layout', 'connection', 'remote', 'remote.session', 'remote.settings', 'remote.credentials', 'remote.llm', 'remote.agentPresets', 'remote.commands', 'sessions', 'modelDirectories', 'uiConversation'],
       apply,
     };
   },

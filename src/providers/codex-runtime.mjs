@@ -210,6 +210,7 @@ export function createCodexRuntime(options = {}) {
             phase: 'started',
             name: String(params.tool || ''),
             callId: String(params.callId || ''),
+            arguments: params.arguments ?? {},
           },
         });
         let result;
@@ -235,6 +236,8 @@ export function createCodexRuntime(options = {}) {
               phase: result.success ? 'completed' : 'failed',
               name: String(params.tool || ''),
               callId: String(params.callId || ''),
+              arguments: params.arguments ?? {},
+              result,
             },
           });
           writeJson(child.stdin, { jsonrpc: '2.0', id: message.id, result });
@@ -322,14 +325,16 @@ export function createCodexRuntime(options = {}) {
           if (method === 'item/started') {
             const item = object(params.item || {}, 'item');
             if (item.id) phases.set(String(item.id), item.phase);
-            if (item.type === 'mcpToolCall') yield { type: 'tool', phase: 'started', name: `${item.server}/${item.tool}`, id: String(item.id || '') };
+            if (item.type === 'mcpToolCall') yield { type: 'tool', phase: 'started', name: `${item.server}/${item.tool}`, id: String(item.id || ''), arguments: item.arguments ?? {} };
             continue;
           }
           if (method === 'agentkit/tool/status') {
             const phase = String(params.phase || '');
             const name = String(params.name || 'bound tool');
-            if (phase === 'started') yield { type: 'tool', phase, name };
-            else if (phase === 'completed' || phase === 'failed') yield { type: 'tool', phase, name };
+            if (['started', 'completed', 'failed'].includes(phase)) yield {
+              type: 'tool', phase, name, id: String(params.callId || ''), arguments: params.arguments ?? {},
+              ...(params.result ? { result: params.result } : {}),
+            };
             continue;
           }
           if (method === 'item/agentMessage/delta') {
@@ -348,7 +353,11 @@ export function createCodexRuntime(options = {}) {
           if (method === 'item/completed') {
             const item = object(params.item || {}, 'completed item');
             if (item.id) phases.set(String(item.id), item.phase);
-            if (item.type === 'mcpToolCall') yield { type: 'tool', phase: item.status === 'completed' && !item.error && !item.result?.isError ? 'completed' : 'failed', name: `${item.server}/${item.tool}`, id: String(item.id || '') };
+            if (item.type === 'mcpToolCall') yield {
+              type: 'tool', phase: item.status === 'completed' && !item.error && !item.result?.isError ? 'completed' : 'failed',
+              name: `${item.server}/${item.tool}`, id: String(item.id || ''), arguments: item.arguments ?? {},
+              result: item.result ?? null, ...(item.error ? { error: item.error } : {}),
+            };
             if (item.type === 'agentMessage' && !deltaItems.has(String(item.id || '')) && typeof item.text === 'string' && item.text) {
               yield { type: isFinalPhase(item.phase) ? 'text' : 'reasoning', text: item.text };
             }

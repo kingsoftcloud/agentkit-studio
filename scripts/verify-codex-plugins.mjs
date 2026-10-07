@@ -90,7 +90,10 @@ else result={}; process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,resul
     for await (const event of runtime.stream({ input: '请查询测试卡片 P7 的当前状态。', systemPrompt: '准确回答用户问题。' })) events.push(event);
     const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.ok(calls.some(call => call.name === 'lookup_card' && call.arguments.cardId === 'P7'));
-    assert.ok(events.some(event => event.type === 'tool' && event.phase === 'completed' && event.name.endsWith('/lookup_card')));
+    const tool = events.find(event => event.type === 'tool' && event.phase === 'completed' && event.name.endsWith('/lookup_card'));
+    assert.ok(tool);
+    assert.equal(tool.arguments.cardId, 'P7');
+    assert.ok(JSON.stringify(tool.result).includes(canary), 'native plugin output must reach the DSH card projection');
     assert.ok(events.filter(event => event.type === 'text').map(event => event.text).join('').includes(canary));
     console.log(`Live Codex plugin execution passed: model=${model}, real MCP call recorded, native tool event projected, random result verified.`);
   }

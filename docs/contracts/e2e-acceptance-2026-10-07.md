@@ -7,12 +7,24 @@
 目录状态的含义及部署边界见 [资源状态、删除与部署](resource-status-and-deployment.md)。
 下表资源绑定证据针对实际测试样例，不代表目录中每个资源或预发部署已通过。
 
+## Codex 原生工具卡补验
+
+- Codex 插件 MCP 和绑定动态工具现在写入 Studio 专属的非模型会话事件，经公开 Conversation Definition 投影为 DSH 原生工具卡。复用原生展开与输入/输出呈现，无私有状态注入或第二次工具执行。
+- Host 重启验收发现仅有内存重放不足：未携带 ignorable 的外部事件会被官方磁盘读取拒绝。补丁 016 开放已有标记的写入选项，不修改 AgentLoop、静态事件清单或持久化类型。补充真实 zstd 文件写入、关闭、独立后端重开测试，成功、失败和取消三例均通过；DSH Session 79 项单测通过，持久化类型验证显示 changes 为空。
+- 全量检查 341 项通过。固定 DSH 的真实 AgentLoop、Session 重放、Chat assembler 验证成功、失败和取消；每例 DSH 工具执行次数为零，结果单独加载的历史窗口也可恢复。该脚本的 Codex 输入流为测试数据。
+- 网页真实 GPT-6-Astra 会话先用普通官方文档问题验证回复，再明确请求秘塔搜索。真实绑定动态工具 metaso_web_search 返回搜索参数、46 个结果的统计和网页摘要；原生卡可展开输入与输出。测试问题没有提示 Agent 身份或预填系统提示词答案。本项不外推为所有插件、全部富媒体或预发部署已验证。
+- 再次在独立 CODEX_HOME 安装测试插件，真实 GPT-6-Astra 普通卡片查询调用 lookup_card(P7)；原生插件事件保留 cardId 和仅由 MCP 返回的随机校验值，最终答案一致，随后卸载。未修改个人插件或借助用户问题注入工具答案。
+- 修复后新建无工作区 Codex Agent 会话，普通秘塔查询 18 秒完成；停止并重启网页 Host 后，原会话、Agent、GPT-6-Astra、回答和工具卡完整恢复。展开输入核对 q/scope/size/includeSummary，输出保留 total=46 和五条网页结果。截图为 .artifacts/e2e-codex-tool-restored-20261007.png。早期缺少标记的测试失败日志保留，未改写已有 Session。
+- 16 个兼容补丁按顺序在固定基线的私有 Git 索引应用通过，未重置实际 DSH checkout；DSH 完整 lint、文档标准 21 项和 doc-sync 43 项通过。
+- 包含本节修复的新 DMG 为 501855258 字节，SHA256 `a36df931b014c8f7ab403280b0eb6e70f5a293d0e485090ff16f186b26f29bee`。官方打包及包内运行时/Office 冒烟通过，镜像只读挂载校验通过；三份 Studio 运行时文件和客户端与源码逐字节一致，包内 Session 包含补丁 016。生产 manifest 正常裁剪开发脚本与 packageManager，DSH 客户端注入及 Codex 依赖保持一致。直接运行确认 Node v24.21.0、Codex 0.159.2，icns 与已目视验收的 Studio A 一致。此轮未替换或重启用户正在使用的独立桌面 App，不能将其当前窗口声称为新版本。
+- 最新 Studio tarball 的 201 个文件完整性通过，16 个补丁格式通过。本文保留以下历次产物作为历史证据，当前交付镜像以本节摘要为准。
+
 ## Codex 插件执行与连接状态补验
 
 - 复现原安装处理只检查进程退出、忽略 JSON 内容的问题。现在要求完整 pluginId 确认操作，保留授权策略和待授权连接器；异常结果只提示刷新检查，不自动重放安装或卸载。
 - 官方固定 CLI 的真实 plugin/read 与 app/installed 查询确认：Gmail 可调用，Slack 未进入当前连接器运行快照。浏览器分别显示“可调用”与“未连接或未加载”，并提供官方授权/管理链接；未安装 Slack 或扩大任何连接器权限。
 - 真实 GPT-6-Astra 在独立 CODEX_HOME 加载测试插件，用户只问“请查询测试卡片 P7 的当前状态。”，系统提示词不含身份、工具名或答案。MCP 服务端实际记录 lookup_card(P7)，模型回答包含工具生成的随机校验值；Studio 收到原生插件工具完成事件。插件安装、Skill 发现、实际执行和卸载全部通过，个人插件配置未改变。
-- 修复 Codex 原生 mcpToolCall 开始/完成事件被 Studio 丢弃的问题；失败事件保留失败状态。当前通过进度和 trace 展示，独立原生工具输入/输出卡仍未完成，未在本项中宣称完成。
+- 修复 Codex 原生 mcpToolCall 开始/完成事件被 Studio 丢弃的问题；失败事件保留失败状态。本阶段先通过进度和 trace 展示；随后完成的独立原生工具卡见上节，不把两阶段证据混合。
 - 本轮全量检查 338 项通过，新增覆盖连接器身份匹配、各类运行状态、读取失败、授权链接过滤、CLI 假成功和原生插件工具事件。网页截图为 .artifacts/e2e-codex-callable-20261007.png 与 .artifacts/e2e-codex-auth-required-20261007.png。上一轮 DMG 仍对应 c261a2a 的运行时代码，本节新增功能尚未重新打入 DMG。
 
 ## 运行资源与 Codex 目录补验

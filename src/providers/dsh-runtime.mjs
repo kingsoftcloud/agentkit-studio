@@ -9,6 +9,7 @@ import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { dshModelFailure } from '../model-failure.mjs';
+import { createCodexToolRecorder } from './codex-tool-events.mjs';
 
 const ROUTE = 'agentkit-studio';
 let activeAdapter;
@@ -259,12 +260,13 @@ function appendNativeToolCall(state, call) {
   ];
 }
 
-async function* codexFrames(codexRuntime, options, onChunk) {
+async function* codexFrames(codexRuntime, options, onChunk, toolRecorder) {
   const state = createChunkState();
   for await (const chunk of codexRuntime.stream(options)) {
     onChunk?.(chunk);
     if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
     else if (chunk?.type === 'tool') {
+      if (toolRecorder?.record(chunk)) continue;
       const name = String(chunk.name || 'bound tool');
       const phase = chunk.phase === 'started' ? '正在调用' : chunk.phase === 'completed' ? '已完成' : '失败';
       yield* appendBlock(state, 'reasoning', `工具 ${name} ${phase}。`);
@@ -523,6 +525,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           const startedAt = new Date().toISOString();
           const traceId = String(options.runId || options.turnId || `run_codex_${Date.now().toString(36)}`);
           const traceEvents = [];
+          const toolRecorder = createCodexToolRecorder(toolAgent?.session);
           let responseText = '';
           const recordChunk = chunk => {
             const type = String(chunk?.type || '');
@@ -544,7 +547,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
               systemPrompt: resources.systemPrompt || '',
               dynamicTools: resources.dynamicTools || [],
               toolHandler: resources.toolHandler,
-            }, recordChunk);
+            }, recordChunk, toolRecorder);
             if (typeof resources.writeMemory === 'function') {
               try {
                 const result = await resources.writeMemory(responseText);
@@ -574,6 +577,8 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
               events: [...traceEvents, { event_type: canceled ? 'run.canceled' : 'run.failed', at: new Date().toISOString(), run_id: traceId, payload: { code: String(error?.code || '') } }],
             });
             throw error;
+          } finally {
+            toolRecorder?.close();
           }
           return;
         }

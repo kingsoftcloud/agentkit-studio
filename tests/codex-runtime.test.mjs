@@ -55,7 +55,7 @@ test('native plugin MCP calls reach the Studio event stream, including failures'
       if (message.method === 'item/started' && message.params.item.id === 'item-final') {
         const common = { threadId: 'thread-fake', turnId: 'turn-fake' };
         for (const status of ['completed', 'failed']) {
-          const item = { id: status, type: 'mcpToolCall', server: 'plugin-mcp', tool: 'lookup', status };
+          const item = { id: status, type: 'mcpToolCall', server: 'plugin-mcp', tool: 'lookup', status, arguments: { card: 'P7' }, result: { content: [{ type: 'text', text: 'card-result' }] }, ...(status === 'failed' ? { error: { message: 'fixture failure' } } : {}) };
           write(JSON.stringify({ method: 'item/started', params: { ...common, item } }) + '\n');
           write(JSON.stringify({ method: 'item/completed', params: { ...common, item } }) + '\n');
         }
@@ -70,6 +70,9 @@ test('native plugin MCP calls reach the Studio event stream, including failures'
     ['completed', 'started', 'plugin-mcp/lookup'], ['completed', 'completed', 'plugin-mcp/lookup'],
     ['failed', 'started', 'plugin-mcp/lookup'], ['failed', 'failed', 'plugin-mcp/lookup'],
   ]);
+  assert.deepEqual(tools[0].arguments, { card: 'P7' });
+  assert.equal(tools[1].result.content[0].text, 'card-result');
+  assert.equal(tools[3].error.message, 'fixture failure');
 });
 
 test('the selected Codex model reaches thread/start instead of inheriting another default', async () => {
@@ -155,8 +158,8 @@ test('Codex runtime registers dynamic tools and answers item/tool/call on the Ho
   assert.equal(toolResponse.success, true);
   assert.deepEqual(toolResponse.contentItems, [{ type: 'inputText', text: 'hit' }]);
   assert.deepEqual(chunks, [
-    { type: 'tool', phase: 'started', name: 'search' },
-    { type: 'tool', phase: 'completed', name: 'search' },
+    { type: 'tool', phase: 'started', name: 'search', id: 'call-1', arguments: { query: '金山云' } },
+    { type: 'tool', phase: 'completed', name: 'search', id: 'call-1', arguments: { query: '金山云' }, result: { contentItems: [{ type: 'inputText', text: 'hit' }], success: true } },
     { type: 'text', text: '工具已执行' },
   ]);
 });
