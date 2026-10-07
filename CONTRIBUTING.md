@@ -108,12 +108,20 @@ make release-check
 
 ```sh
 AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-adapter.mjs
+AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-retry.mjs
 # 已安装并配置 Codex 时读取真实 model/list；不启动推理回合
 AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-adapter.mjs --codex
 ```
 
 不带 `--codex` 的目录是合成合同数据；带该参数读取本机 Codex 的真实目录。
 目录可见只证明合同可用，模型访问权限仍要由成功的实际会话验证。
+
+`verify-dsh-runtime-retry.mjs` 使用合成网关，经过真实预设插件、DSH AgentLoop、
+Session 和 llm-retry，校验临时故障恢复、认证/配额终止、退避取消、重试上限、
+工具结果复用及失败输出隔离。它不代表真实云端服务发生过这些故障。
+Studio 只返回公开的 `LlmFailure` 结束事件；重试策略、计时、取消和历史仍由 DSH 负责。
+只有本地 Harness 的模型步骤进入该机制，独立本地整轮、云端 RunAgent 与 Codex
+运行不会因此自动重放。
 
 设置页的模型目录支持多个提供商和多个模型。请确认新增条目使用独立的
 `credentialName`，且恰好一个条目标记为默认；Agent Revision 的多模型绑定应在创建页或

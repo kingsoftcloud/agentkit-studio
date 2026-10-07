@@ -68,7 +68,8 @@ test('overview and list filter by range and agentId', async () => {
 test('real trace rows expose measured duration, Run/Session search and completion metrics', async () => {
   const store = await makeStore(); const obs = createStudioObservability({ storeDir: store });
   try {
-    const start = new Date(Date.now()-5000).toISOString(); const end = new Date(Date.now()-1000).toISOString();
+    const now = Date.now();
+    const start = new Date(now-5000).toISOString(); const end = new Date(now-1000).toISOString();
     await obs.syncTrace({ traceId: 'local-trace', sessionId: 'session-canary', agentId: 'agent-canary', status: 'completed', startedAt: start, completedAt: end, events: [] });
     const rows = await obs.list({ query: 'session-canary' }); assert.equal(rows.items.length, 1); assert.equal(rows.items[0].durationMs, 4000);
     assert.equal(rows.items[0].totalTokens, null);

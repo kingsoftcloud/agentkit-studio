@@ -295,8 +295,9 @@ export function apply(ctx, config = {}) {
   registerBuiltinTools(ctx, config.toolContracts, config);
   registerMcpTools(ctx, config.toolContracts, config);
   const toolAdapter = createToolAdapter(ctx, config.toolBindings);
-  const nativeTools = config.local === true
-    && (skills.length > 0 || (Array.isArray(config.toolContracts) ? config.toolContracts : []).some(contract => ['mcp', 'builtin'].includes(contract?.executor)));
+  // Every local Harness request is one DSH-managed model step, including
+  // text-only Agents. Resource count must not switch loop/retry ownership.
+  const nativeTools = config.local === true && config.runtime !== 'codex';
   // The Agent loop dispatches its request waterfall through the selected Agent
   // scope, then invokes `llm.stream` from the root loop context. Bind the
   // Studio provider at the scoped request boundary so the root adapter can

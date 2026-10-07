@@ -8,6 +8,7 @@
 import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
+import { dshModelFailure } from '../model-failure.mjs';
 
 const ROUTE = 'agentkit-studio';
 let activeAdapter;
@@ -316,7 +317,8 @@ function parseLocalRecord(record, state) {
   const item = event?.conversationItem;
   if (item?.kind === 'error') {
     const error = new Error(String(item.payload?.message || 'AgentKit Studio 本地运行失败'));
-    error.code = 'STUDIO_LOCAL_RUNTIME_FAILED';
+    error.code = item.payload?.code || 'STUDIO_LOCAL_RUNTIME_FAILED';
+    error.details = item.payload?.details;
     throw error;
   }
   if (event?.runtimeEvent?.event_type === 'run.failed') {
@@ -576,7 +578,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           return;
         }
         if (typeof localHandler !== 'function') throw new Error('AgentKit local runtime is unavailable');
-        yield* localFrames(await localHandler(), {
+        try { yield* localFrames(await localHandler(), {
           agentId,
           ...(buildId ? { buildId } : {}),
           ...(agentRevision ? {agentRevision} : {}),
@@ -586,7 +588,15 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           history: historyOf(options.messages),
           nativeTools,
           tools: Array.isArray(options.tools) ? options.tools : [],
-        }, { signal: options.signal, toolAdapter, agent: toolAgent });
+        }, { signal: options.signal, toolAdapter, agent: toolAgent }); }
+        catch (error) {
+          // In a waterfall, throwing is a plugin failure. A public failure
+          // finish lets DSH retry this model step and retain durable history.
+          // Never replay a standalone loop that may already have run tools.
+          const failure = nativeTools && !options.signal?.aborted && dshModelFailure(error);
+          if (!failure) throw error;
+          yield { type: 'finish', reason: { kind: 'error', failure } };
+        }
         return;
       }
       if (!cloudClient || typeof cloudClient.streamAction !== 'function') throw new Error('AgentEngine cloud runtime is unavailable');

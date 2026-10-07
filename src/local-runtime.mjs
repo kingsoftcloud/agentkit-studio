@@ -8,6 +8,7 @@
  * not discover credentials or reach the control plane from the model loop.
  */
 import { readSse } from './sse.mjs';
+import { modelFailureDetails } from './model-failure.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -244,27 +245,34 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
       // substitute the IncomingMessage signal here: its body is already
       // consumed before the model request starts.
       const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000);
-      const response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
+      let response;
+      try { response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${profile.apiKey}` },
         body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, ...(tools.length ? { tools, tool_choice: 'auto' } : {}) }),
         signal: requestSignal,
-      });
-      if (!response.ok || !response.body) {
-        const detail = await response.text().catch(() => '');
-        throw new LocalRuntimeError('MODEL_STREAM_FAILED', `模型流请求失败（${response.status}）`, { status: response.status, detail: detail.slice(0, 200) });
+      }); } catch {
+        if (signal?.aborted) throw runtimeCancelledError();
+        throw new LocalRuntimeError(requestSignal.aborted ? 'MODEL_TIMEOUT' : 'MODEL_TRANSPORT_FAILED', requestSignal.aborted ? '模型请求超时' : '模型服务连接失败');
       }
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new LocalRuntimeError('MODEL_STREAM_FAILED', `模型流请求失败（${response.status}）`, modelFailureDetails({ status: response.status, headers: response.headers, error: detail?.error }));
+      }
+      if (!response.body) throw new LocalRuntimeError('MODEL_EMPTY_RESPONSE', '模型未返回响应内容');
       const toolCalls = new Map();
       let finishReason = '';
+      let hasContent = false;
       try {
         for await (const parsed of readSse(response.body)) {
         if (signal?.aborted) throw runtimeCancelledError();
         if (parsed?.error) {
-          throw new LocalRuntimeError('MODEL_STREAM_FAILED', '模型流返回错误', { upstreamCode: String(parsed.error.code || '') });
+          throw new LocalRuntimeError('MODEL_STREAM_FAILED', '模型流返回错误', modelFailureDetails({ error: parsed.error, headers: response.headers }));
         }
         const delta = parsed?.choices?.[0]?.delta;
         if (delta?.content) yield { type: 'text', text: delta.content };
         const reasoning = delta?.reasoning_content || delta?.reasoning;
+        if (delta?.content || reasoning) hasContent = true;
         if (reasoning) yield { type: 'reasoning', text: reasoning };
         for (const call of delta?.tool_calls || []) {
           const index = Number(call.index || 0);
@@ -279,17 +287,20 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
         if (usage) yield { type: 'usage', inputTokens: usage.prompt_tokens || 0, outputTokens: usage.completion_tokens || 0 };
       }
       } catch (error) {
+        if (signal?.aborted) throw runtimeCancelledError();
         if (error instanceof LocalRuntimeError) throw error;
         if (error?.code === 'UPSTREAM_STREAM_TRUNCATED') throw new LocalRuntimeError('UPSTREAM_STREAM_TRUNCATED', '模型流在结束前断开');
         if (error instanceof SyntaxError) throw new LocalRuntimeError('MODEL_STREAM_INVALID', '模型流包含无效事件');
-        throw error;
+        throw new LocalRuntimeError(requestSignal.aborted ? 'MODEL_TIMEOUT' : 'MODEL_TRANSPORT_FAILED', requestSignal.aborted ? '模型流超时' : '模型服务连接中断');
       }
+      if (!finishReason) throw new LocalRuntimeError('UPSTREAM_STREAM_TRUNCATED', '模型流在完成前断开');
       if (finishReason === 'length' || finishReason === 'content_filter') {
         throw new LocalRuntimeError('MODEL_OUTPUT_INCOMPLETE', '模型输出未完整结束', { reason: finishReason });
       }
       if (finishReason === 'tool_calls' || toolCalls.size) {
         yield { type: 'tool_calls', calls: [...toolCalls.values()] };
       }
+      else if (!hasContent) throw new LocalRuntimeError('MODEL_EMPTY_RESPONSE', '模型未返回响应内容');
     },
   };
 }
