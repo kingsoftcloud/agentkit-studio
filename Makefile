@@ -8,6 +8,8 @@ DSH_ROOT ?= $(abspath ../../deepseek-harness)
 DSH_PROFILE ?= agentkit-studio
 DSH_HOST ?= 127.0.0.1
 DSH_WEB_PORT ?= 3098
+# Keep the caller's package manager on PATH for existing Profile dependencies.
+DSH_SOURCE_CLI := node --import tsx/esm apps/cli/src/bin.ts
 PACK_DIR ?= .artifacts
 DSH_VERSION ?= 0.2.0-rc.2
 DSH_COMMIT ?= 639ed015397290b3745d163aafe02ffee4aa3f84
@@ -66,9 +68,9 @@ profile-install: pack
 	@test -f "$(PLUGIN_TARBALL)" || (echo "插件包不存在：$(PLUGIN_TARBALL)" >&2; exit 2)
 	@profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
 	if test ! -f "$$profile_dir/package.json"; then \
-		(cd "$(DSH_ROOT)" && pnpm dsh --profile "$(DSH_PROFILE)" --from-default-profile web --dump-config >/dev/null); \
+		(cd "$(DSH_ROOT)" && $(DSH_SOURCE_CLI) --profile "$(DSH_PROFILE)" --from-default-profile web --dump-config >/dev/null); \
 	fi
-	cd "$(DSH_ROOT)" && pnpm dsh plugin --profile "$(DSH_PROFILE)" add "file:$(PLUGIN_TARBALL)"
+	cd "$(DSH_ROOT)" && $(DSH_SOURCE_CLI) plugin --profile "$(DSH_PROFILE)" add --force "file:$(PLUGIN_TARBALL)"
 	@profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
 		node scripts/check-profile.mjs "$$profile_dir" "$(PLUGIN_VERSION)"
 
@@ -109,7 +111,7 @@ web-build:
 # contain this plugin and any optional provider packages.
 web-dev:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-}" pnpm dsh --profile "$(DSH_PROFILE)" --host "$(DSH_HOST)" --no-open --port "$(DSH_WEB_PORT)"
+	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-}" $(DSH_SOURCE_CLI) --profile "$(DSH_PROFILE)" --host "$(DSH_HOST)" --no-open --port "$(DSH_WEB_PORT)"
 
 web-start: web-dev
 

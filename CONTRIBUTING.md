@@ -39,6 +39,11 @@ Studio tarball，并自动校验 bundle 与安装文件。`profile-check` 是可
 `PROFILE_DIR=/path/to/profile make profile-check` 检查解包后的发布 Profile。`web-dev` 启动后会打印带短期 token 的 URL，使用
 该 URL 打开浏览器。
 
+Profile 安装与 Web 启动通过官方 `apps/cli/src/bin.ts` 和 `tsx/esm` 运行，保留当前
+pnpm 的 PATH。不要改回 `pnpm dsh`：它会把 DSH 工作区的 pnpm 注入子进程，旧 Profile
+由不同 pnpm 主版本安装时会报 `ERR_PNPM_UNEXPECTED_STORE`。DSH 构建仍使用其自己的固定版本。
+安装本地 tarball 时使用 `add --force` 刷新同版本开发包，避免重复打包后仍读取旧内容。
+
 ## DSH 补丁
 
 宿主补丁按 `patches/dsh-v<version>/` 隔离。确认 checkout 是干净的固定 commit 后再执行：
