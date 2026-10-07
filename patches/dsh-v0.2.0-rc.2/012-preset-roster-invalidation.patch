@@ -32,12 +32,12 @@ index cfa73e8bb8..326fcda852 100644
 @@ -37,7 +37,7 @@ Known shipped presets offer mode details and usage examples in a read-only dialo
  <details>
  <summary>Implementation internals — click to expand</summary>
- 
+
 -`agentPresets/list` supplies the roster and marks the current default, and `agentPresets/read` one declaration's YAML for the viewer; default changes write the `agent-preset-registry` settings namespace. The picker, blank-session synchronization and read-only session label use recorded preset identities. Connection resets and settings updates refresh the roster.
 +`agentPresets/list` supplies the roster and marks the current default, and `agentPresets/read` one declaration's YAML for the viewer; default changes write the `agent-preset-registry` settings namespace. The picker, blank-session synchronization and read-only session label use recorded preset identities. Connection resets, settings updates and `agent-preset/catalog-changed` refresh the roster. If a declaration finishes recovery during a roster read, the display store repeats the read after the pending response, so an open session acquires its restored preset name without navigation.
- 
+
  </details>
- 
+
 diff --git a/packages/client/ui-agent-preset/README.zh.md b/packages/client/ui-agent-preset/README.zh.md
 index 210ad0e2b5..ac164ecece 100644
 --- a/packages/client/ui-agent-preset/README.zh.md
@@ -45,12 +45,12 @@ index 210ad0e2b5..ac164ecece 100644
 @@ -37,7 +37,7 @@ kind: "package-reference"
  <details>
  <summary>实现细节 — 点击展开</summary>
- 
+
 -`agentPresets/list` 提供列表并标记当前默认值，`agentPresets/read` 为查看器提供一条声明的 YAML；默认值的修改写入 `agent-preset-registry` settings 命名空间。选择器、空白会话同步和只读会话标签使用记录的 preset 标识。连接重置和设置更新会刷新列表。
 +`agentPresets/list` 提供列表并标记当前默认值，`agentPresets/read` 为查看器提供一条声明的 YAML；默认值的修改写入 `agent-preset-registry` settings 命名空间。选择器、空白会话同步和只读会话标签使用记录的 preset 标识。连接重置、设置更新和 `agent-preset/catalog-changed` 会刷新列表。声明恢复若在列表请求期间完成，显示存储会在当前响应之后重新读取，让已打开的会话无需切页即可显示恢复后的 preset 名称。
- 
+
  </details>
- 
+
 diff --git a/packages/client/ui-agent-preset/src/client/index.ts b/packages/client/ui-agent-preset/src/client/index.ts
 index e443c801c0..e1044aa039 100644
 --- a/packages/client/ui-agent-preset/src/client/index.ts
@@ -73,7 +73,7 @@ index 7344c3fbab..5b011b5ac9 100644
    readonly store: SnapshotStore<AgentPresetSettingsState> = createSnapshotStore(INITIAL)
 +  private active: Promise<void> | undefined
 +  private invalidated = false
- 
+
    /**
     * @param ctx - the browser plugin context (the roster read).
 @@ -150,7 +152,24 @@ export class AgentPresetSettingsController {
@@ -108,7 +108,7 @@ index 6e93b1e836..d88c006874 100644
 +++ b/packages/client/ui-agent-preset/tests/apply.client.spec.ts
 @@ -797,7 +797,7 @@ describe('ui-agent-preset apply', () => {
    })
- 
+
    it('loads the header label from the shared roster store', async () => {
 -    const { ctx, slots } = await bench()
 +    const { ctx, slots, moveDefault, remote } = await bench()
@@ -117,7 +117,7 @@ index 6e93b1e836..d88c006874 100644
      ctx.provide('conversation', {} as never)
 @@ -810,6 +810,11 @@ describe('ui-agent-preset apply', () => {
      await label.load()
- 
+
      expect(label.hooks.agentPresets.getSnapshot().options).toEqual([{ id: 'standard' }])
 +    moveDefault()
 +    remote.emit('agent-preset/catalog-changed', [])
@@ -125,7 +125,7 @@ index 6e93b1e836..d88c006874 100644
 +      expect(label.hooks.agentPresets.getSnapshot().options).toEqual([{ id: 'standard' }, { id: 'minimal' }])
 +    })
    })
- 
+
    it('stages the creator preset and starts a session from the section', async () => {
 diff --git a/packages/client/ui-agent-preset/tests/settings-store.client.spec.ts b/packages/client/ui-agent-preset/tests/settings-store.client.spec.ts
 index 30e6d41c91..9ae4a1dd21 100644
@@ -134,7 +134,7 @@ index 30e6d41c91..9ae4a1dd21 100644
 @@ -5,7 +5,7 @@
   * preference through a narrow field writer in the same settings namespace.
   */
- 
+
 -import { describe, expect, it } from 'vitest'
 +import { describe, expect, it, vi } from 'vitest'
  import type { Context as ClientContext } from '@deepseek-ai/cordis'
@@ -143,7 +143,7 @@ index 30e6d41c91..9ae4a1dd21 100644
 @@ -184,7 +184,7 @@ describe('the agent-preset roster store', () => {
      expect(state.error).toBe('host down')
    })
- 
+
 -  it('ignores a load while one is already in flight', async () => {
 +  it('coalesces loads while one is already in flight', async () => {
      const writes: Recorded[] = []
@@ -152,7 +152,7 @@ index 30e6d41c91..9ae4a1dd21 100644
 @@ -194,6 +194,26 @@ describe('the agent-preset roster store', () => {
      expect(controller.store.getSnapshot().status).toBe('ready')
    })
- 
+
 +  it('re-reads a stale roster when a preset arrives during the first read', async () => {
 +    const gate = Promise.withResolvers<undefined>()
 +    let reads = 0
@@ -174,7 +174,7 @@ index 30e6d41c91..9ae4a1dd21 100644
 +  })
 +
  })
- 
+
  describe('the new-session chip controller', () => {
 diff --git a/packages/preset/agent-preset-registry/README.i18n.yaml b/packages/preset/agent-preset-registry/README.i18n.yaml
 index 411d7b4a02..98ffc57420 100644
@@ -196,12 +196,12 @@ index 1db29f2383..aa2dd1e3d8 100644
 --- a/packages/preset/agent-preset-registry/README.md
 +++ b/packages/preset/agent-preset-registry/README.md
 @@ -55,7 +55,7 @@ The registry writes no declarations. The `read` Remote renders one declaration
- 
+
  Each declaration eagerly creates a registry-owned scope and an in-memory Loader tree. Updating or removing a declaration retires its previous revision. Agents, children and temporary historical reads retain references; releasing the final reference disposes the retired tree. Plugin registrations inherit the preset scope, and the Agent scope’s parent link controls visibility. The Host continues to share the Agent loop.
- 
+
 -Activation auditing checks imports, missing services and globally leaked services. Import failures, activation failures and leaks reject the mount. A row waiting for a Host service stays mounted, and every read and binding re-audits it after the Host Loader tree settles, so startup order does not decide the outcome. Failure prevents new bindings to that definition. Session logs retain the preset ID and blank-session selections; recovery after restart uses the current definition of that ID and rejects a missing definition.
 +Activation auditing checks imports, missing services and globally leaked services. Import failures, activation failures and leaks reject the mount. A row waiting for a Host service stays mounted, and every read and binding re-audits it after the Host Loader tree settles, so startup order does not decide the outcome. Failure prevents new bindings to that definition. The registry emits `agent-preset/catalog-changed` after a definition finishes activation and when it is removed; Remote roster consumers re-read on that event. Session logs retain the preset ID and blank-session selections; recovery after restart uses the current definition of that ID and rejects a missing definition.
- 
+
  | File | Responsibility |
  |---|---|
 diff --git a/packages/preset/agent-preset-registry/README.zh.md b/packages/preset/agent-preset-registry/README.zh.md
@@ -209,12 +209,12 @@ index 3549afc916..533a70dcd3 100644
 --- a/packages/preset/agent-preset-registry/README.zh.md
 +++ b/packages/preset/agent-preset-registry/README.zh.md
 @@ -55,7 +55,7 @@ Web 内置定义来自 `dsh-web-app` bundle。定义使用普通插件行；注
- 
+
  每个声明在启动时创建注册表拥有的 scope 和内存 Loader 树。更新或移除声明会让旧代际退役；Agent、子 Agent 和临时历史读取各自持有引用，最后一个引用释放后才销毁插件树。插件注册继承 preset scope，Agent scope 的父链接决定可见性；Agent loop 仍由宿主共享。
- 
+
 -激活审计检查导入失败、缺失服务和向全局泄漏的服务。导入失败、激活失败和泄漏会拒绝挂载。等待 Host 服务的行保持挂载，每次读取和绑定都在 Host Loader 树结算后重新审计，因此启动顺序不决定结果。失败只禁用该定义的新绑定。会话日志保存 preset ID 和空白会话的切换记录；重启恢复使用该 ID 的当前定义，缺失时拒绝恢复。
 +激活审计检查导入失败、缺失服务和向全局泄漏的服务。导入失败、激活失败和泄漏会拒绝挂载。等待 Host 服务的行保持挂载，每次读取和绑定都在 Host Loader 树结算后重新审计，因此启动顺序不决定结果。失败只禁用该定义的新绑定。注册表在定义完成激活和移除时发出 `agent-preset/catalog-changed`，Remote 列表消费者据此重新读取。会话日志保存 preset ID 和空白会话的切换记录；重启恢复使用该 ID 的当前定义，缺失时拒绝恢复。
- 
+
  | 文件 | 职责 |
  |---|---|
 diff --git a/packages/preset/agent-preset-registry/src/index.ts b/packages/preset/agent-preset-registry/src/index.ts
@@ -236,13 +236,13 @@ index 54c8ae5cfd..d6ea71cd47 100644
 +    this.owner.emit('agent-preset/catalog-changed')
      return unregister
    }
- 
+
 diff --git a/packages/preset/agent-preset-registry/src/types.ts b/packages/preset/agent-preset-registry/src/types.ts
 index c30141d621..b2c0b10839 100644
 --- a/packages/preset/agent-preset-registry/src/types.ts
 +++ b/packages/preset/agent-preset-registry/src/types.ts
 @@ -59,6 +59,11 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
- 
+
  declare module '@deepseek-ai/cordis' {
    interface Events {
 +    /**
@@ -260,7 +260,7 @@ index f504087458..814989a43d 100644
 @@ -246,6 +246,18 @@ it('keeps its own instance off the generated Settings pages', () => omitsGenerat
    return ctx.plugin(AgentPresets, { default: 'standard' })
  }))
- 
+
 +it('invalidates roster consumers after registration and removal', async () => {
 +  const ctx = await setup()
 +  let changes = 0
