@@ -35,3 +35,12 @@ test('resource browser forwards model paging and search to the Host catalog', as
   assert.equal(result.items.length, 10);
   assert.ok(result.nextCursor);
 });
+
+test('untyped runtime resource overview reaches Node Host rather than the absent legacy REST contract', async () => {
+  const calls = [];
+  const window = { location: { origin: 'http://localhost', hash: '' }, __AGENTKIT_STUDIO__: { controlPlane: 'agentengine-server' } };
+  const factory = new Function('window', `${remoteFactory}; return createHostRemote;`)(window);
+  const remote = factory({ rpc: { call: async (channel, endpoint, payload) => { calls.push({ channel, endpoint, payload }); return { ok: true, value: { items: [] } }; } } });
+  await remote.resources({ limit: 200 });
+  assert.deepEqual(calls, [{ channel: '/agentkit', endpoint: 'resources/list', payload: { limit: 200 } }]);
+});

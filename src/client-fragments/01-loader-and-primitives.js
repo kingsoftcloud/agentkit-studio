@@ -412,6 +412,7 @@ window.__ModuleLoader__.load({
           : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/conversation:cancel', { method: 'POST', body: JSON.stringify({ invocationId }) }),
         resources: options => {
           const value = typeof options === 'string' ? { kind: options, limit: 200 } : (options || {});
+          if (!value.kind && bridgeAvailable()) return studioBridgeOperation('resources/list', value);
           if (directServer()) {
             // Resource catalogs with a public Server Action read from the
             // authenticated control plane. The model catalog comes from the

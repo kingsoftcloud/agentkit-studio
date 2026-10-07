@@ -436,10 +436,9 @@ async function registerControlPlane(ctx) {
       const serverClient = await serverClientPromise;
       if (endpoint === 'resources/list') {
         const kind = String(payload?.kind || '').trim();
-        if (!kind) return { ok: false, error: { code: 'INVALID_RESOURCE_KIND', message: '资源类型不能为空', details: {} } };
-        if (['model', 'skill', 'mcp'].includes(kind)) {
-          const { listStudioResources } = await import('./resource-catalog.mjs');
-          return { ok: true, value: await listStudioResources({ query: payload, models, serverClient, signal,
+        if (!kind || ['model', 'skill', 'mcp', 'knowledge-base', 'memory-instance'].includes(kind)) {
+          const { listStudioResources, listStudioRuntimeResources } = await import('./resource-catalog.mjs');
+          return { ok: true, value: await (kind ? listStudioResources : listStudioRuntimeResources)({ query: payload, models, serverClient, signal,
             localMcpStore: await localMcpStorePromise, skillDiscovery: await skillDiscoveryPromise, mcpProbes: await mcpProbePromise }) };
         }
         if (kind === 'tool') {

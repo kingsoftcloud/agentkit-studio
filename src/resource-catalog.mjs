@@ -34,6 +34,9 @@ async function cloudItems(serverClient, kind, signal) {
 
 export async function listStudioResources({ query = {}, models, localMcpStore, skillDiscovery, serverClient, signal, mcpProbes }) {
   const kind = String(query.kind || '');
+  if (['knowledge-base', 'memory-instance'].includes(kind)) {
+    return paginateResources((await cloudItems(serverClient, kind, signal)).map(item => ({ ...item, kind, source: 'agentengine-server' })), query, { source: 'agentengine-server' });
+  }
   if (kind === 'model') {
     const settings = !query.profileId && models.settings ? await models.settings() : {};
     const profiles = (settings.modelProfiles || []).filter(item => item.enabled !== false);
@@ -60,4 +63,24 @@ export async function listStudioResources({ query = {}, models, localMcpStore, s
       resourceId: item.resourceId || item.id, name: item.name || item.displayName || item.resourceId || item.id }))];
   const observed = kind === 'mcp' && mcpProbes ? await Promise.all(items.map(async item => ({ ...item, ...await mcpProbes.get(item.resourceId) }))) : items;
   return paginateResources(observed, query, { source: 'agentkit-studio', warnings });
+}
+
+/** A bounded overview of the same typed catalogs used by Agent authoring. */
+export async function listStudioRuntimeResources(options) {
+  const kinds = ['model', 'mcp', 'skill', 'knowledge-base', 'memory-instance'];
+  const results = await Promise.allSettled(kinds.map(kind => listStudioResources({ ...options, query: { kind, limit: 200 } })));
+  const items = [], warnings = [], counts = [];
+  for (const [index, result] of results.entries()) {
+    const kind = kinds[index];
+    if (result.status === 'rejected') {
+      warnings.push({ kind, code: result.reason?.code || 'RESOURCE_CATALOG_UNAVAILABLE', message: result.reason?.message || '目录读取失败' });
+      counts.push({ kind, total: null, shown: 0 });
+      continue;
+    }
+    items.push(...result.value.items);
+    counts.push({ kind, total: result.value.total, shown: result.value.items.length });
+    warnings.push(...(result.value.warnings || []).map(warning => ({ ...warning, kind })));
+    if (result.value.nextCursor) warnings.push({ kind, code: 'RESOURCE_OVERVIEW_TRUNCATED', message: '总览仅展示该类前 200 项，请到模型与工具页搜索完整目录。' });
+  }
+  return { items, warnings, counts, source: 'agentkit-studio' };
 }

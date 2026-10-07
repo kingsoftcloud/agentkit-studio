@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listStudioResources, paginateResources } from '../src/resource-catalog.mjs';
+import { listStudioResources, listStudioRuntimeResources, paginateResources } from '../src/resource-catalog.mjs';
 
 test('gateway model catalog supports all pages and case insensitive search', async () => {
   const models = { catalog: async () => ({ items: Array.from({ length: 64 }, (_, index) => ({ id: `model-${index}`, name: index === 63 ? 'GLM Flash' : `Model ${index}` })) }) };
@@ -40,4 +40,31 @@ test('a paging cursor cannot silently continue a different resource query', () =
   const cursor = paginateResources([{ id: 'one' }, { id: 'two' }], { kind: 'model', limit: 1 }).nextCursor;
   assert.throws(() => paginateResources([], { kind: 'mcp', cursor }), { code: 'INVALID_RESOURCE_CURSOR' });
   assert.throws(() => paginateResources([], { kind: 'model', query: 'changed', cursor }), { code: 'INVALID_RESOURCE_CURSOR' });
+});
+
+test('runtime overview uses typed catalogs and preserves local entries on a platform failure', async () => {
+  const calls = [];
+  const value = await listStudioRuntimeResources({
+    models: { catalog: async () => ({ items: [{ id: 'model-one' }] }) },
+    localMcpStore: { list: async () => [{ resourceId: 'mcp-local-one' }] },
+    skillDiscovery: { listInstalled: async () => ({ items: [{ resourceId: 'skill-local-one' }] }) },
+    serverClient: { listResource: async kind => {
+      calls.push(kind);
+      if (kind === 'memory-instance') throw Object.assign(new Error('Memory permission denied'), { code: 'SERVER_ACTION_FAILED' });
+      return { items: [{ id: kind + '-cloud', resourceId: kind + '-cloud' }], total: 1 };
+    } },
+  });
+  assert.deepEqual(calls.sort(), ['knowledge-base', 'mcp', 'memory-instance', 'skill-space']);
+  assert.equal(value.items.length, 6);
+  assert.ok(value.items.some(item => item.resourceId === 'knowledge-base-cloud' && item.kind === 'knowledge-base'));
+  assert.ok(value.items.some(item => item.resourceId === 'mcp-local-one'));
+  assert.deepEqual(value.warnings, [{ kind: 'memory-instance', code: 'SERVER_ACTION_FAILED', message: 'Memory permission denied' }]);
+  assert.equal(value.counts.find(item => item.kind === 'memory-instance').total, null);
+});
+
+test('runtime overview explicitly reports truncated categories rather than claiming all resources are loaded', async () => {
+  const value = await listStudioRuntimeResources({ models: { catalog: async () => ({ items: Array.from({ length: 201 }, (_, index) => ({ id: `model-${index}` })) }) }, localMcpStore: { list: async () => [] }, skillDiscovery: { listInstalled: async () => ({ items: [] }) }, serverClient: { listResource: async () => ({ items: [], total: 0 }) } });
+  assert.equal(value.items.length, 200);
+  assert.deepEqual(value.counts[0], { kind: 'model', total: 201, shown: 200 });
+  assert.equal(value.warnings[0].code, 'RESOURCE_OVERVIEW_TRUNCATED');
 });

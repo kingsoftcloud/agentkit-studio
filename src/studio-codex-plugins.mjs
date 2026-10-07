@@ -1,12 +1,7 @@
-/** Local Codex plugin inventory for the Studio plugin Node host.
- *
- * The legacy Studio Host listed the Codex ecosystem from the local Codex
- * home. Codex caches installed plugins under ~/.codex/plugins/cache:
- * - openai-curated-remote/<plugin>/.codex-remote-plugin-install.json + version dirs with skills/
- * - openai-bundled/<plugin>/<version>/.mcp.json
- * This module projects those directories into the marketplace item shape.
- */
+/** Official App Server catalog and CLI lifecycle, with explicit cache-only fallback. */
 import { resolveCodexCommand } from './providers/codex-command.mjs';
+import { withCodexCatalogRpc } from './providers/codex-catalog-rpc.mjs';
+import { projectCodexPluginCatalog } from './codex-plugin-catalog.mjs';
 import { readdir, readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -35,7 +30,7 @@ function parseFrontmatter(source) {
   return metadata;
 }
 
-export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, executable, execImpl = promisify(execFile) } = {}) {
+export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, executable, execImpl = promisify(execFile), catalogRpc = withCodexCatalogRpc } = {}) {
   const command = resolveCodexCommand({ executable });
   const cacheRoot = codexHome ? join(codexHome, 'plugins', 'cache') : join(homedir(), '.codex', 'plugins', 'cache');
   function cliOptions(timeout) { return { timeout, windowsHide: true, ...(codexHome ? { env: { ...process.env, CODEX_HOME: codexHome } } : {}) }; }
@@ -45,11 +40,17 @@ export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, e
   }
 
   async function listCodex() {
+    try {
+      const catalog = await catalogRpc(request => request('plugin/list', { forceRefetch: false }), {
+        executable, env: { ...process.env, ...(codexHome ? { CODEX_HOME: codexHome } : {}) }, timeoutMs: 30000, maxBytes: 32 * 1024 * 1024,
+      });
+      return await projectCodexPluginCatalog(catalog);
+    } catch { /* Older App Servers may only expose the CLI inventory. */ }
     // `codex plugin list --json` is the authoritative inventory: structured
     // rows with installed/enabled flags and marketplace names. The CLI also
     // exposes add/remove for the lifecycle actions.
     try {
-      const { stdout } = await execImpl(command.executable, [...command.prefixArgs, 'plugin', 'list', '--json'], cliOptions(60000));
+      const { stdout } = await execImpl(command.executable, [...command.prefixArgs, 'plugin', 'list', '--available', '--json'], { ...cliOptions(60000), maxBuffer: 16 * 1024 * 1024 });
       const parsed = JSON.parse(String(stdout || '{}'));
       if (!Array.isArray(parsed.installed) || !Array.isArray(parsed.available)) throw new Error('Codex plugin list returned no inventory');
       const rows = [...(parsed.installed || []), ...(parsed.available || [])];
@@ -68,7 +69,7 @@ export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, e
         status: row.installed ? row.enabled ? 'enabled' : 'disabled' : 'available',
         kind: 'codex',
       }));
-      return { items, source: 'codex-cli' };
+      return { items, source: 'codex-cli', error: { code: 'CODEX_PLUGIN_METADATA_UNAVAILABLE', message: 'Codex 完整市场暂不可用，当前显示 CLI 清单；名称说明和图标可能不完整。' } };
     } catch { /* CLI missing or failed: fall through to the cache scan */ }
     const items = [];
     const sections = [
