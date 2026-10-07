@@ -49,7 +49,16 @@ async function registerControlPlane(ctx) {
   const studioSchedulerPromise = Promise.all([import('./studio-scheduler.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioScheduler }, { createNativeAutomationRunner }]) => createStudioScheduler({ storeDir: join(studioStoreDir, 'scheduler'), runner: createNativeAutomationRunner({ getService: name => ctx.get(name), admit: async agentId => { const local = await (await agentStorePromise).get(agentId); return presetAdmission.ensure(agentId, local ? { agent: local } : {}); } }) })).catch(error => { console.warn('[agentkit-studio] scheduler init failed:', error?.message || error); return null; });
   const studioObservabilityPromise = import('./studio-observability.mjs').then(({ createStudioObservability }) => createStudioObservability({ storeDir: join(studioStoreDir, 'traces') })).catch(error => { console.warn('[agentkit-studio] observability init failed:', error?.message || error); return null; });
   const studioEvaluationPromise = Promise.all([import('./studio-evaluation.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioEvaluation }, { createNativeAutomationRunner }]) => createStudioEvaluation({ storeDir: join(studioStoreDir, 'evaluations'), resolveTarget: async locator => { const target = (await listLocalBuildTargets()).find(build => build.id === locator); if (!target) throw Object.assign(new Error('评测 Build 不存在，请选择已完成的本地构建'), { code: 'EVALUATION_TARGET_NOT_FOUND' }); await (await studioBuildPromise).build.resolve(target.agentId, target.id); return target; }, runner: async request => createNativeAutomationRunner({ getService: name => ctx.get(name), admit: async (agentId, buildId) => { const local = await (await agentStorePromise).get(agentId); const frozen = await (await studioBuildPromise).build.resolve(agentId, buildId); return presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...local.metadata, ...frozen.metadata, local: true } } }); } })({ ...request, sessionId: `eval-session-${randomUUID()}`, occurrenceId: `eval-request-${randomUUID()}` }) })).catch(error => { console.warn('[agentkit-studio] evaluation init failed:', error?.message || error); return null; });
-  const studioChannelsPromise = import('./studio-channels.mjs').then(({ createStudioChannels }) => createStudioChannels({ storeDir: studioStoreDir })).catch(error => { console.warn('[agentkit-studio] channels init failed:', error?.message || error); return null; });
+  const studioChannelsPromise = Promise.all([import('./studio-channels.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioChannels }, { createNativeAutomationRunner }]) => createStudioChannels({
+    storeDir: studioStoreDir,
+    getAgent: async id => (await agentStorePromise).get(id),
+    listAgents: async () => (await agentStorePromise).list(),
+    runner: createNativeAutomationRunner({ getService: name => ctx.get(name), reuseSession: true, admit: async agentId => {
+      const local = await (await agentStorePromise).get(agentId);
+      if (!local) throw Object.assign(new Error('渠道绑定的本地 Agent 不存在'), { code: 'CHANNEL_AGENT_UNAVAILABLE' });
+      return presetAdmission.ensure(agentId, { agent: local });
+    } }),
+  })).catch(error => { console.warn('[agentkit-studio] channels init failed:', error?.message || error); return null; });
   const agentStorePromise = import('./agent-store.mjs').then(({ createAgentStore }) => createAgentStore({ storeDir: join(studioStoreDir, 'agents') }));
   const agentCatalogPromise = import('./agent-catalog.mjs').then(({ createAgentCatalog }) => createAgentCatalog({ store: () => agentStorePromise, server: () => serverClientPromise, builds: async id => (await studioBuildPromise).build.list(id) }));
   const listLocalBuildTargets = async () => { const studio = await studioBuildPromise; const agents = await (await agentStorePromise).list(); return (await Promise.all(agents.map(async agent => (await studio.build.list(agent.metadata.id)).map(build => ({ ...build, name: `${agent.metadata.name} · Revision ${build.revision}` }))))).flat().filter(build => build.status === 'SUCCEEDED'); };
@@ -408,7 +417,7 @@ async function registerControlPlane(ctx) {
     presetAdmission.setRegistry(presetRegistry);
     await restorePersistedPresets();
   }
-  const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
+  const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/agent-update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
@@ -731,6 +740,7 @@ async function registerControlPlane(ctx) {
             if (!channels) return { ok: false, error: { code: 'CHANNELS_UNAVAILABLE', message: '渠道模块未初始化', details: {} } };
             if (endpoint === 'channels/connection') return { ok: true, value: await channels.getConnection() };
             if (endpoint === 'channels/update') return { ok: true, value: await channels.updateConnection(payload || {}) };
+            if (endpoint === 'channels/agent-update') return { ok: true, value: await channels.updateAgentConnection(payload?.agentId, payload || {}) };
             if (endpoint === 'channels/action') return { ok: true, value: await channels.proxyAction(payload?.action || '', payload?.payload || {}) };
           }
         } catch (error) {
@@ -883,6 +893,7 @@ async function registerControlPlane(ctx) {
   // Authoring tools need the in-process remote factory (cloud/resource data);
   // they live here because that factory is scoped to this function.
   registerAuthoringTools(ctx, { remoteFactory: authoringRemoteFactory });
+  ctx.effect(async () => { const channels = await studioChannelsPromise; await channels?.ensureReady(); return () => channels?.dispose(); }, 'agentkit-studio: channels lifetime');
   ctx.effect(async () => { const scheduler = await studioSchedulerPromise; await scheduler?.ensureReady(); return () => scheduler?.dispose(); }, 'agentkit-studio: scheduler lifetime');
 }
 

@@ -1,13 +1,15 @@
 /** Channel connector for the Studio plugin Node host.
  *
  * Port of the legacy Studio channel surface: configuration store, proxy
- * forwarding to an external channel gateway, and an optional WebSocket
- * connector stub for live message intake. The gateway URL, account, and
+ * forwarding to an external channel gateway, and an outbound WebSocket
+ * connector for native Agent execution. The gateway URL, account, and
  * workspace come from user configuration stored locally; KOP credentials
  * are not used for the channel service API.
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { createChannelConnector, connectorUrl } from './channel-connector.mjs';
 
 export class ChannelError extends Error {
   constructor(code, message, details = {}) {
@@ -18,33 +20,40 @@ export class ChannelError extends Error {
   }
 }
 
-export function createStudioChannels({ storeDir } = {}) {
+export function createStudioChannels({ storeDir, getAgent, listAgents, runner, connectorFactory = createChannelConnector } = {}) {
   const configPath = join(storeDir, 'channels.json');
+  const connectors = new Map(), connectionKeys = new Map();
+  let mutation = Promise.resolve(), disposed = false;
+  const serialize = work => { const result = mutation.catch(() => {}).then(work); mutation = result; return result; };
+  const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
   async function ensureDir() { await mkdir(dirname(configPath), { recursive: true, mode: 0o700 }); }
 
   async function readConfig() {
-    try { return JSON.parse(await readFile(configPath, 'utf8')); } catch { return { serverUrl: '', accountId: '', workspaceId: '', apiToken: '', enabled: false }; }
+    try { return JSON.parse(await readFile(configPath, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw new ChannelError('CHANNEL_CONFIG_INVALID', '渠道配置无法读取'); return { serverUrl: '', accountId: '', workspaceId: '', apiToken: '', enabled: false }; }
   }
 
   async function writeConfig(config) {
     await ensureDir();
     const record = { ...config, updatedAt: new Date().toISOString() };
-    await writeFile(configPath, JSON.stringify(record, null, 2));
+    const temporary = `${configPath}.${randomUUID()}.tmp`;
+    try { await writeFile(temporary, JSON.stringify(record, null, 2), { mode: 0o600 }); await rename(temporary, configPath); }
+    finally { await rm(temporary, { force: true }); }
     return redact(record);
   }
 
   function redact(config) {
-    const { apiToken, ...safe } = config;
-    return { ...safe, configured: Boolean(config.serverUrl && config.accountId), tokenConfigured: Boolean(apiToken) };
+    const { apiToken, agentConnections = {}, ...safe } = config;
+    return { ...safe, configured: Boolean(config.serverUrl && config.accountId), tokenConfigured: Boolean(apiToken), agentConnections: Object.entries(agentConnections).map(([agentId, entry]) => ({ agentId, enabled: Boolean(entry.enabled), tokenConfigured: Boolean(entry.token), ...(connectors.get(agentId)?.status || { state: entry.enabled ? 'unavailable' : 'stopped', connected: false, activeTasks: 0, lastError: null }) })) };
   }
 
   async function getConnection() {
     const config = await readConfig();
-    return redact(config);
+    const localAgents = listAgents ? (await listAgents()).map(agent => ({ id: agent.metadata.id, name: agent.metadata.name || agent.metadata.id })) : [];
+    return { ...redact(config), localAgents };
   }
 
-  async function updateConnection(patch) {
+  const updateConnection = patch => serialize(async () => {
     const current = await readConfig();
     const next = {
       serverUrl: String(patch.serverUrl !== undefined ? patch.serverUrl : (current.serverUrl || '')).trim(),
@@ -52,6 +61,7 @@ export function createStudioChannels({ storeDir } = {}) {
       workspaceId: String(patch.workspaceId !== undefined ? patch.workspaceId : (current.workspaceId || '')).trim(),
       apiToken: String(patch.apiToken || current.apiToken || '').trim(),
       enabled: patch.enabled !== undefined ? Boolean(patch.enabled) : current.enabled,
+      agentConnections: current.agentConnections || {},
     };
     if (next.serverUrl) {
       try {
@@ -59,12 +69,61 @@ export function createStudioChannels({ storeDir } = {}) {
         if (!['http:', 'https:'].includes(url.protocol)) throw new ChannelError('CHANNEL_URL_INVALID', '渠道地址必须是 http(s)');
       } catch { throw new ChannelError('CHANNEL_URL_INVALID', '渠道地址无效'); }
     }
-    return writeConfig(next);
+    if (['serverUrl', 'accountId', 'workspaceId'].some(key => (current[key] || '') !== next[key])) next.agentConnections = {};
+    if (current.serverUrl !== next.serverUrl && !patch.apiToken) next.apiToken = '';
+    await writeConfig(next); await reconcile(next); return getConnection();
+  });
+
+  async function reconcile(config) {
+    if (disposed || !runner) return;
+    for (const [agentId, connector] of connectors) {
+      const entry = config.agentConnections?.[agentId];
+      const key = digest([config.serverUrl, config.accountId, config.workspaceId, agentId, entry?.token]);
+      if (!entry?.enabled || connectionKeys.get(agentId) !== key) { connector.stop(); connectors.delete(agentId); connectionKeys.delete(agentId); }
+    }
+    for (const [agentId, entry] of Object.entries(config.agentConnections || {})) {
+      if (!entry.enabled) continue;
+      if (connectors.has(agentId)) continue;
+      try {
+        if (!await getAgent?.(agentId)) continue;
+        const identity = [config.serverUrl, config.accountId, config.workspaceId, agentId];
+        const connector = connectorFactory({ url: config.serverUrl, token: entry.token, tenantId: config.accountId, workspaceId: config.workspaceId, agentId,
+          invoke: async request => {
+            const namespace = [...identity, request.channel || '', request.session_id];
+            const result = await runner({ agentId, sessionId: `channel-${digest(namespace)}`, occurrenceId: `channel-request-${digest([...namespace, request.idempotency_key || request.task_id])}`, input: request.message, signal: request.signal });
+            return result.output;
+          },
+        });
+        if (disposed) { connector.stop(); return; }
+        connectors.set(agentId, connector); connectionKeys.set(agentId, digest([...identity, entry.token])); connector.start();
+      } catch { connectors.set(agentId, { status: { state: 'error', connected: false, activeTasks: 0, lastError: 'configuration_invalid' }, stop() {} }); }
+    }
   }
+
+  const updateAgentConnection = (agentId, patch = {}) => serialize(async () => {
+    const config = await readConfig();
+    const entries = { ...config.agentConnections };
+    const current = entries[agentId] || {};
+    const next = { enabled: Boolean(patch.enabled), token: String(patch.token || current.token || '').trim() };
+    if (next.enabled) {
+      if (!runner || !await getAgent?.(agentId)) throw new ChannelError('CHANNEL_AGENT_UNAVAILABLE', '请选择已创建的本地 Agent');
+      if (!config.accountId || !config.workspaceId || !next.token) throw new ChannelError('CHANNEL_CONNECTOR_CONFIG_REQUIRED', '本地 Agent 连接需要账号、工作区 ID 和该 Agent 的连接凭证');
+      connectorUrl(config.serverUrl);
+    }
+    entries[agentId] = next;
+    const updated = { ...config, agentConnections: entries };
+    await writeConfig(updated);
+    connectors.get(agentId)?.stop(); connectors.delete(agentId); connectionKeys.delete(agentId);
+    await reconcile(updated); return getConnection();
+  });
 
   async function proxyAction(action, payload = {}) {
     const config = await readConfig();
     if (!config.serverUrl || !config.accountId) throw new ChannelError('CHANNEL_NOT_CONFIGURED', '请先配置渠道连接（serverUrl 和 accountId）');
+    if (['CreateChannel', 'UpdateChannel'].includes(action) && payload.AgentId && await getAgent?.(payload.AgentId)) {
+      if (!config.agentConnections?.[payload.AgentId]?.enabled || !config.workspaceId) throw new ChannelError('CHANNEL_LOCAL_OFFLINE', '请先启用这个本地 Agent 的渠道连接');
+      payload = { ...payload, ConnectorWorkspaceId: config.workspaceId };
+    }
     const url = new URL(`/agentengine/api/v1/${encodeURIComponent(action)}`, config.serverUrl.replace(/\/$/, ''));
     const headers = { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Ksc-Account-Id': config.accountId };
     if (config.workspaceId) headers['X-Ksc-Workspace-Id'] = config.workspaceId;
@@ -90,5 +149,8 @@ export function createStudioChannels({ storeDir } = {}) {
     return body;
   }
 
-  return { getConnection, updateConnection, proxyAction };
+  return { getConnection, updateConnection, updateAgentConnection, proxyAction,
+    ensureReady: () => serialize(async () => { if (!disposed) await reconcile(await readConfig()); }),
+    dispose() { disposed = true; for (const connector of connectors.values()) connector.stop(); connectors.clear(); connectionKeys.clear(); },
+  };
 }

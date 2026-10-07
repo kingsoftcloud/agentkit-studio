@@ -13,8 +13,10 @@ function harness() {
     return [state[index], value => { state[index] = typeof value === 'function' ? value(state[index]) : value; }];
   };
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
+  const connection = { configured: true, tokenConfigured: true, serverUrl: 'http://localhost', accountId: 'test', workspaceId: 'logical-workspace', localAgents: [{ id: 'local-a', name: 'Local A' }, { id: 'local-b', name: 'Local B' }], agentConnections: [] };
   const host = {
-    channelConnection: async () => ({ configured: true, tokenConfigured: true, serverUrl: 'http://localhost', accountId: 'test' }),
+    channelConnection: async () => connection,
+    updateAgentChannelConnection: async (agentId, patch) => { calls.push({ action: 'connector', agentId, payload: patch }); connection.agentConnections = [{ agentId, enabled: patch.enabled, state: patch.enabled ? 'connected' : 'stopped', tokenConfigured: true }]; return connection; },
     updateChannelConnection: async value => value,
     channelAction: async (action, payload) => {
       calls.push({ action, payload });
@@ -31,9 +33,10 @@ function harness() {
   const button = label => nodes().find(node => node.type === 'button' && text(node) === label);
   const field = label => nodes().find(node => node.type === 'label' && node.children[0] === label)?.children.find(node => node?.type === 'input');
   const fill = (label, value) => field(label).props.onChange({ target: { value } });
+  const select = (label, value) => nodes().find(node => node.type === 'label' && node.children[0] === label).children.find(node => node?.type === 'select').props.onChange({ target: { value } });
   const submit = () => walk(nodes().find(node => node.type === 'ResourceDialog')).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
   const ready = async () => { await nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }); };
-  return { calls, ready, nodes, button, fill, field, submit, fail: value => { fail = value; } };
+  return { calls, ready, nodes, button, fill, field, select, submit, fail: value => { fail = value; } };
 }
 
 test('channel creation includes required credentials, keeps failure visible, and clears successful secret', async () => {
@@ -67,4 +70,23 @@ test('channel edit preserves credentials on blank inputs and locks immutable ide
   const { payload } = ui.calls.find(call => call.action === 'UpdateChannel');
   assert.equal(payload.Id, 'channel-1');
   for (const key of ['AppId', 'AppSecret', 'Channel', 'ChannelAccountId']) assert.equal(key in payload, false);
+});
+
+
+test('local Agent selection updates channel identity and connector secrets never follow another Agent', async () => {
+  const ui = harness(); await ui.ready();
+  ui.select('本地 Agent', 'local-a'); ui.fill('Agent 连接凭证', 'a-private-token');
+  ui.select('本地 Agent', 'local-b');
+  assert.equal(ui.field('Agent 连接凭证').props.value, '');
+  ui.fill('Agent 连接凭证', 'b-private-token');
+  await ui.nodes().find(node => node.type === 'form' && node.children.some(child => child?.type === 'button' && child.children.includes('启用连接'))).props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(ui.calls.find(call => call.action === 'connector'), { action: 'connector', agentId: 'local-b', payload: { enabled: true, token: 'b-private-token' } });
+  assert.equal(ui.field('Agent 连接凭证').props.value, '');
+  await ui.button('停用连接').props.onClick();
+  assert.deepEqual(ui.calls.filter(call => call.action === 'connector').at(-1).payload, { enabled: false });
+  ui.button('新增渠道').props.onClick();
+  ui.select('选择本地 Agent', 'local-b');
+  assert.equal(ui.field('Agent ID').props.value, 'local-b');
+  ui.select('选择本地 Agent', '');
+  assert.equal(ui.field('Agent ID').props.value, '');
 });

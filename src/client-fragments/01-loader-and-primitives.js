@@ -543,7 +543,7 @@ window.__ModuleLoader__.load({
         exportSessionLog: (id, query = '') => directServer() ? studioBridgeOperation('sessions/export-log', { sessionId: id }) : request('/api/v1/sessions/' + encodeURIComponent(id) + ':export' + (query ? '?' + query : '')),
         channelConnection: () => directServer() ? studioBridgeOperation('channels/connection', {}) : request('/api/v1/channels/connection'),
         updateChannelConnection: payload => directServer() ? studioBridgeOperation('channels/update', payload) : request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
-        updateAgentChannelConnection: (id, payload) => request('/api/v1/channels/agents/' + encodeURIComponent(id) + '/connection', { method: 'PUT', body: JSON.stringify(payload) }),
+        updateAgentChannelConnection: (id, payload) => directServer() ? studioBridgeOperation('channels/agent-update', { ...payload, agentId: id }) : request('/api/v1/channels/agents/' + encodeURIComponent(id) + '/connection', { method: 'PUT', body: JSON.stringify(payload) }),
         channelAction: (action, payload = {}) => directServer() ? studioBridgeOperation('channels/action', { action, payload }) : request('/agentengine/api/v1/' + encodeURIComponent(action), { method: 'POST', body: JSON.stringify(payload) }),
       };
     }

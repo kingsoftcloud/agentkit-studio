@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -67,4 +67,46 @@ test('channel proxy honors the service envelope and sanitizes validation errors 
     await new Promise(resolve => server.close(resolve));
     await rm(store, { recursive: true, force: true });
   }
+});
+
+test('local connectors isolate native sessions, redact credentials, and preserve unrelated live connections', async () => {
+  const store = await makeStore(), spawned = [], runs = [];
+  const agents = ['a', 'b'].map(id => ({ metadata: { id, name: `Agent ${id}` } }));
+  const channels = createStudioChannels({ storeDir: store, getAgent: async id => agents.find(agent => agent.metadata.id === id), listAgents: async () => agents,
+    runner: async request => { runs.push(request); return { output: 'native output' }; },
+    connectorFactory: options => { const item = { options, starts: 0, stops: 0, status: { state: 'connected', connected: true }, start() { this.starts++; }, stop() { this.stops++; } }; spawned.push(item); return item; },
+  });
+  try {
+    await channels.updateConnection({ serverUrl: 'https://example.com', accountId: 'tenant', workspaceId: 'workspace', apiToken: 'admin-secret' });
+    await channels.updateAgentConnection('a', { enabled: true, token: 'a-secret' });
+    await channels.updateAgentConnection('b', { enabled: true, token: 'b-secret' });
+    assert.equal(spawned.length, 2); assert.equal(spawned[0].stops, 0);
+    const request = { task_id: 'task', session_id: 'remote-session', channel: 'wps', message: 'hello' };
+    for (const connector of spawned) await connector.options.invoke(request);
+    await spawned[0].options.invoke({ ...request, task_id: 'task2' });
+    await spawned[0].options.invoke({ ...request, channel: 'feishu' });
+    assert.notEqual(runs[0].sessionId, runs[1].sessionId);
+    assert.equal(runs[0].sessionId, runs[2].sessionId);
+    assert.notEqual(runs[0].occurrenceId, runs[2].occurrenceId);
+    assert.notEqual(runs[0].sessionId, runs[3].sessionId);
+    const safe = await channels.getConnection();
+    assert.equal(safe.localAgents.length, 2);
+    assert.equal(JSON.stringify(safe).includes('secret'), false);
+    assert.equal((await stat(join(store, 'channels.json'))).mode & 0o777, 0o600);
+    await channels.updateAgentConnection('b', { enabled: false });
+    assert.equal(spawned[0].stops, 0); assert.equal(spawned[1].stops, 1);
+    await channels.updateConnection({ serverUrl: 'https://new-service.example.com' });
+    assert.equal(spawned[0].stops, 1);
+    const config = JSON.parse(await readFile(join(store, 'channels.json'), 'utf8'));
+    assert.deepEqual(config.agentConnections, {}); assert.equal(config.apiToken, '');
+  } finally { channels.dispose(); await rm(store, { recursive: true, force: true }); }
+});
+
+test('a local Agent cannot be accidentally saved with cloud routing', async () => {
+  const store = await makeStore();
+  const channels = createStudioChannels({ storeDir: store, getAgent: async () => ({ metadata: { id: 'local' } }) });
+  try {
+    await channels.updateConnection({ serverUrl: 'http://127.0.0.1', accountId: 'test' });
+    await assert.rejects(channels.proxyAction('CreateChannel', { AgentId: 'local' }), { code: 'CHANNEL_LOCAL_OFFLINE' });
+  } finally { channels.dispose(); await rm(store, { recursive: true, force: true }); }
 });
