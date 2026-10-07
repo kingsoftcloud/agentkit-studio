@@ -1,20 +1,26 @@
     function StudioSettingsSection() {
+      const [host, setHost] = useState({ status: 'loading', error: '' });
+      useEffect(() => {
+        let active = true;
+        hostRemote.settings().then(() => { if (active) setHost({ status: 'ready', error: '' }); })
+          .catch(error => { if (active) setHost({ status: 'error', error: error?.message || 'Studio Host 不可达' }); });
+        return () => { active = false; };
+      }, []);
       return h('div', {
         style: { color: BRAND.ink, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
       },
-      h(SectionHeading, { eyebrow: 'AgentKit Studio', title: 'Studio 设置', detail: '产品级配置会通过 Studio Host 的 settings schema 持久化。当前 Host 尚未连接，展示项保持只读。' }),
+      h(SectionHeading, { eyebrow: 'AgentKit Studio', title: 'Studio 设置', detail: '查看当前产品与 Host 状态。模型和凭证在「模型与凭证」中配置，资源绑定在 Agent 编辑页完成。' }),
       h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '0 18px', background: BRAND.surface } },
         h(SettingsRow, { label: '会话绑定策略', value: '可选 Agent', detail: '不选择 Agent 时直接使用 DSH 原生会话；选择后在新会话创建时固定主 Agent', tone: 'accent' }),
         h(SettingsRow, { label: '默认执行目标', value: 'Local Host', detail: '创建 Agent 和运行会话时使用的默认目标', tone: 'signal' }),
-        h(SettingsRow, { label: 'Studio Host', value: '待接入', detail: 'Health、capability 和 Session Remote 尚未连接', tone: 'signal' }),
-        h(SettingsRow, { label: '事件流诊断', value: '关闭', detail: '连接 Host 后可以开启结构化 Session 事件日志' }),
+        h(SettingsRow, { label: 'Studio Host', value: host.status === 'ready' ? '已连接' : host.status === 'loading' ? '检查中' : '连接失败', detail: host.status === 'ready' ? '已成功读取 Host 配置' : host.error || '正在读取 Host 配置', tone: 'signal' }),
         h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '产品功能与运行适配层版本' }),
         h(SettingsRow, { label: 'DSH 宿主兼容版本', value: DSH_VERSION, detail: '固定的宿主基线，不代表 Studio 产品版本' })),
       h('div', { style: { marginTop: '16px', padding: '14px 16px', borderRadius: '12px', color: BRAND.inkMuted, background: BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } }, '工作区、会话、模型和凭证的通用设置继续由系统设置页承载；Studio 只扩展自己的执行目标、Host 能力和产品选项。'));
     }
 
     function apply(ctx) {
-      activeConnection = ctx.connection;
+      activeConnection = { rpc: ctx.connection.rpc };
       // Schedule is a capability, not a hard requirement for the fixed
       // dsh-v0.2.0-rc.2 host. Older profiles can still expose the Studio
       // product surface and all model/agent/resource surfaces while the automation
@@ -43,8 +49,8 @@
           if (!agent) return;
           const agentId = String(agent?.metadata?.id || agent?.id || '').trim();
           const admission = await hostRemote.ensureDshPreset(agentId);
-          if (admission.modelSelection && ctx.modelDirectories?.directoryFor) {
-            const selected = await ctx.modelDirectories.directoryFor(sessionId).select(admission.modelSelection);
+          if (admission.modelSelection) {
+            const selected = await ctx.remote.session.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
             if (!selected?.ok) console.warn('[agentkit-studio] Agent model selection failed:', selected.error?.message || selected.error);
           }
           const permission = await ctx.remote?.commands?.execute?.(sessionId, '/permission read-only', []);
@@ -132,7 +138,10 @@
               throw new Error(selected?.error?.message || 'DSH 拒绝绑定该 Agent');
             }
             if (admission.modelSelection) {
-              const result = await navCtx.modelDirectories.directoryFor(sessionId).select(admission.modelSelection);
+              // The new Session may not have a browser scope until it is
+              // opened. Select through DSH's durable Remote first; the native
+              // directory observes the resulting projection when it mounts.
+              const result = await ctx.remote.session.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
               if (!result?.ok) throw new Error(result?.error?.message || 'Agent 绑定的模型不可用');
             }
             try {
@@ -153,30 +162,6 @@
         };
         return () => { try { delete window.__AGENTKIT_STUDIO_BIND_AGENT__; } catch {} };
       });
-      // A reload lands back on the native conversation panel by default.
-      // Persist every panel selection (sidebar clicks included — they go
-      // through layout.selectPanel, not navigateStudio) via the panelInfo
-      // observable, and restore the last one after the panels register.
-      ctx.effect(() => {
-        const subscription = ctx.layout.panelInfo?.subscribe?.(() => {
-          try {
-            const info = ctx.layout.panelInfo.getSnapshot?.();
-            const id = String(info?.activePanelId || '');
-            if (id) window.localStorage.setItem(ACTIVE_PANEL_KEY, id);
-          } catch { /* layout store unavailable */ }
-        });
-        const timer = setTimeout(() => {
-          try {
-            const last = window.localStorage.getItem(ACTIVE_PANEL_KEY);
-            const next = PANELS.find(item => item.id === last);
-            if (next) ctx.layout.selectPanel(next.id);
-          } catch { /* private mode */ }
-        }, 0);
-        return () => {
-          clearTimeout(timer);
-          subscription?.unsubscribe?.();
-        };
-      }, 'agentkit-studio:active-panel-restore');
       ctx.effect(() => {
         const openAuthoring = () => {
           pendingAuthoring = true;
@@ -229,6 +214,34 @@
           props => h(StudioPanelIcon, { ...props, glyph: panel.glyph, panelId: panel.id }),
         ));
       });
+      // A reload lands back on the native conversation panel by default.
+      // Persist every panel selection (sidebar clicks included — they go
+      // through layout.selectPanel, not navigateStudio) via the panelInfo
+      // observable, and restore the last one after the panels register.
+      ctx.effect(() => {
+        let restoring = true;
+        const subscription = ctx.layout.panelInfo?.subscribe?.(() => {
+          if (restoring) return;
+          try {
+            const info = ctx.layout.panelInfo.getSnapshot?.();
+            const id = String(info?.activePanelId || '');
+            if (id) window.localStorage.setItem(ACTIVE_PANEL_KEY, id);
+            else window.localStorage.removeItem(ACTIVE_PANEL_KEY);
+          } catch { /* layout store unavailable */ }
+        });
+        const timer = setTimeout(() => {
+          try {
+            const last = window.localStorage.getItem(ACTIVE_PANEL_KEY);
+            const next = PANELS.find(item => item.id === last);
+            if (next) ctx.layout.selectPanel(next.id);
+          } catch { /* private mode */ }
+          finally { restoring = false; }
+        }, 0);
+        return () => {
+          clearTimeout(timer);
+          subscription?.unsubscribe?.();
+        };
+      }, 'agentkit-studio:active-panel-restore');
       // Settings remains the official DSH modal and navigation surface. Studio
       // contributes native sections into that settings dialog. The model page is Studio
       // owned; its save path also writes DSH's public llm-pi-ai settings and
@@ -273,6 +286,11 @@
       };
       void syncModelFromStudioHost();
       ctx.on('connection/reset', () => { void syncModelFromStudioHost(); });
+      ctx.effect(() => {
+        const sync = () => { void syncModelFromStudioHost(); };
+        window.addEventListener('agentkit-studio:model-changed', sync);
+        return () => window.removeEventListener('agentkit-studio:model-changed', sync);
+      }, 'agentkit-studio: model resource synchronization');
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section', id: 'agentkit-models', order: 190, label: '模型与凭证',
       }, () => h(ModelSettingsSection, { dshModel })));
@@ -283,7 +301,7 @@
 
     return {
       name: 'agentkit-studio',
-      inject: ['slots', 'layout', 'connection', 'remote', 'remote.settings', 'remote.credentials', 'remote.llm', 'remote.agentPresets', 'remote.commands', 'sessions', 'modelDirectories'],
+      inject: ['slots', 'layout', 'connection', 'remote', 'remote.session', 'remote.settings', 'remote.credentials', 'remote.llm', 'remote.agentPresets', 'remote.commands', 'sessions', 'modelDirectories'],
       apply,
     };
   },

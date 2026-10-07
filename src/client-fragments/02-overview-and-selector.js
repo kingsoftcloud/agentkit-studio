@@ -11,8 +11,10 @@
             ? runtimeResult.items.filter(item => ALLOWED_RUNTIME_TYPES.includes(item.runtimeType)) : [];
           setConnection({
             status: health?.status === 'ok' && bootstrap?.workspaceReady !== false ? 'ready' : 'error',
-            agents: Array.isArray(agentResult?.items) ? agentResult.items.length : 0,
-          runtimes: runtimeItems.length,
+            agents: Number(agentResult?.total) || (Array.isArray(agentResult?.items) ? agentResult.items.length : 0),
+            cloudConnected: agentResult?.cloudConnected !== false,
+            warning: (agentResult?.warnings || []).map(item => item.message).join(' '),
+            runtimes: runtimeItems.length,
             error: health?.status === 'ok' ? '' : 'Host health 未通过',
           });
         } catch (reason) {
@@ -21,12 +23,13 @@
       };
       useEffect(() => { load(); }, []);
       const hostReady = connection.status === 'ready';
-      const readiness = hostReady ? 4 : 3;
+      const serverReady = hostReady && (!directServerMode || connection.cloudConnected);
+      const readiness = serverReady ? 4 : 3;
       const statusRows = [
         ['AgentKit Studio 应用', true],
         ['官方会话内核', true],
         ['工作台 Dock', true],
-        [directServerMode ? 'AgentEngine Server' : 'DSH Host', hostReady],
+        [directServerMode ? 'AgentEngine Server' : 'DSH Host', serverReady],
       ].map(([item, ready], index) => h('div', {
         key: item,
         style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: index === 3 ? 'none' : '1px solid ' + BRAND.border, fontSize: '13px' },
@@ -39,22 +42,22 @@
         h('h2', { style: { margin: '18px 0 10px', fontSize: '29px', lineHeight: 1.15, letterSpacing: '-0.04em' } }, '把 Agent 从想法交付到运行'),
         h('p', { style: { maxWidth: '560px', color: BRAND.inkMuted, lineHeight: 1.65, margin: 0, fontSize: '14px' } }, '在同一个工作区管理 Agent、运行时、资源和交付版本。对话与工作台会话由底层运行时统一承载。'),
         h('div', { style: { display: 'flex', gap: '10px', marginTop: '22px', flexWrap: 'wrap' } },
-          h(DisabledAction, null, '创建第一个 Agent'),
+          h('button', { type: 'button', onClick: () => onNavigate && onNavigate('studio-agents'), style: buttonStyle() }, '创建第一个 Agent'),
           h('button', { type: 'button', onClick: () => onNavigate && onNavigate('studio-agents'), style: { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '8px 12px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px', fontWeight: 700 } }, '查看 Agents'))),
       h('div', { style: { alignSelf: 'stretch', borderLeft: '1px solid ' + BRAND.border, paddingLeft: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' } },
         h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' } }, 'Workspace readiness'),
         h('div', null,
           h('div', { style: { fontSize: '34px', fontWeight: 750, letterSpacing: '-0.04em' } }, `${readiness} / 4`),
-          h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginTop: '5px' } }, hostReady ? (directServerMode ? 'AgentEngine 控制面已连接' : 'DSH Host 已连接') : (directServerMode ? '等待 AgentEngine Server' : '等待本机 DSH Host')),
+          h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginTop: '5px' } }, serverReady ? (directServerMode ? 'AgentEngine 控制面已连接' : 'DSH Host 已连接') : (directServerMode ? '本地可用，云端目录未连接' : '等待本机 DSH Host')),
           h('div', { style: { marginTop: '18px', height: '5px', borderRadius: '5px', background: BRAND.accentSoft } },
             h('div', { style: { width: `${readiness * 25}%`, height: '100%', borderRadius: '5px', background: BRAND.primaryFill } })))));
       const metrics = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: '12px', marginTop: '18px' } },
-        h(Metric, { label: 'Agent', value: String(connection.agents), detail: connection.agents ? '当前工作区' : '尚未读取' }), h(Metric, { label: '运行时', value: String(connection.runtimes), detail: hostReady ? 'DSH Native / AgentKit Harness / Codex 可用' : (directServerMode ? '等待 AgentEngine Server' : '等待 DSH Host'), tone: hostReady ? 'neutral' : 'signal' }),
-        h(Metric, { label: '资源', value: '—', detail: '尚未绑定' }), h(Metric, { label: '交付', value: '—', detail: '尚未构建' }));
+        h(Metric, { label: 'Agent', value: String(connection.agents), detail: hostReady ? '当前目录总数' : '尚未读取' }), h(Metric, { label: '运行时', value: String(connection.runtimes), detail: hostReady ? '已发现的运行时类型' : '等待 DSH Host', tone: hostReady ? 'neutral' : 'signal' }),
+        h(Metric, { label: '资源', value: '资源库', detail: '查看与绑定资源' }), h(Metric, { label: '交付', value: '构建与部署', detail: '在 Agent 中管理版本' }));
       const cards = h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0,1.12fr) minmax(260px,0.88fr)', gap: '18px', marginTop: '18px' } },
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '20px', background: BRAND.surface } },
           h(SectionHeading, { eyebrow: 'Start here', title: '从一个 Agent 开始', detail: directServerMode ? 'Agent、运行时和资源由 AgentEngine Server 控制面提供；本地运行时承载会话与工具执行。' : 'Agent、运行时和资源会在接入 DSH Host 后成为可操作的产品对象。' }),
-          connection.status === 'loading' ? h(EmptyState, { icon: '·', title: directServerMode ? '正在读取 AgentEngine Server' : '正在读取 DSH Host', detail: directServerMode ? '读取 Server catalog、详情和运行时能力。' : '读取 health、workspace 和 runtime capability。' }) : connection.status === 'error' ? h(EmptyState, { icon: '!', title: directServerMode ? 'AgentEngine Server 不可达' : 'DSH Host 尚未连接', detail: connection.error || (directServerMode ? '检查 ~/.agentkit 配置、云端凭证和网络。' : '启动本地 DSH Host 后点击重试。'), action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新连接') }) : h(EmptyState, { icon: '✦', title: connection.agents ? '继续配置 Agent' : '创建第一个 Agent', detail: directServerMode ? 'Server catalog 和运行时能力已通过，可以进入 Agents 页面继续。' : 'Host health 与运行时能力已通过，可以进入 Agents 页面创建本地 Agent。', action: h('button', { type: 'button', onClick: () => onNavigate && onNavigate('studio-agents'), style: buttonStyle() }, '查看 Agents') })),
+          connection.status === 'loading' ? h(EmptyState, { icon: '·', title: directServerMode ? '正在读取 AgentEngine Server' : '正在读取 DSH Host', detail: directServerMode ? '读取 Server catalog、详情和运行时能力。' : '读取 health、workspace 和 runtime capability。' }) : connection.status === 'error' ? h(EmptyState, { icon: '!', title: directServerMode ? 'AgentEngine Server 不可达' : 'DSH Host 尚未连接', detail: connection.error || (directServerMode ? '检查 ~/.agentkit 配置、云端凭证和网络。' : '启动本地 DSH Host 后点击重试。'), action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新连接') }) : h(EmptyState, { icon: '✦', title: connection.agents ? '继续配置 Agent' : '创建第一个 Agent', detail: directServerMode ? (connection.warning || 'Server catalog 和运行时能力已通过，可以进入 Agents 页面继续。') : 'Host health 与运行时能力已通过，可以进入 Agents 页面创建本地 Agent。', action: h('button', { type: 'button', onClick: () => onNavigate && onNavigate('studio-agents'), style: buttonStyle() }, '查看 Agents') })),
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '20px', background: BRAND.surface } },
           h(SectionHeading, { eyebrow: 'System', title: '工作区状态', detail: '所有状态都来自唯一的 Host 与会话来源。' }),
           h('div', { style: { display: 'grid', gap: '10px' } }, statusRows)));
@@ -131,11 +134,13 @@
 
       useEffect(() => {
         let alive = true;
-        setSelected(readConversationAgent(sessionId));
+        const selectedAgent = readConversationAgent(sessionId);
+        setSelected(selectedAgent);
+        window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(selectedAgent || '');
         setNotice('');
         hostRemote.agents().then(result => {
           if (alive) setAgents(Array.isArray(result?.items) ? result.items : []);
-        }).catch(() => { /* no Agent is a valid offline/default state */ });
+        }).catch(error => { if (alive) setNotice(error?.message || 'Agent 目录暂不可读取'); });
         return () => { alive = false; };
       }, [sessionId]);
 
@@ -204,8 +209,8 @@
             refusal.details = selectedPreset?.error?.details;
             throw refusal;
           }
-          if (admission.modelSelection && modelDirectories?.directoryFor) {
-            const selectedModel = await modelDirectories.directoryFor(sessionId).select(admission.modelSelection);
+          if (admission.modelSelection) {
+            const selectedModel = await studioRemote.session.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
             if (!selectedModel?.ok) throw new Error(selectedModel?.error?.message || 'Agent 绑定的模型不可用');
           }
           await setAgentPermission(sessionId);

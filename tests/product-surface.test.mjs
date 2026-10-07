@@ -62,8 +62,8 @@ test('resource catalogs route cloud-backed kinds through Server Actions and fail
   // The model catalog auto-discovers through the model gateway's
   // OpenAI-compatible /models endpoint via the Node-side model service —
   // the same discovery the legacy Studio used.
-  assert.match(clientSource, /studioCall\('models\/catalog', \{\}\)/);
-  assert.match(clientSource, /source: '模型网关'/);
+  assert.match(clientSource, /modelCatalog: profileId => studioCall\('models\/catalog'/);
+  assert.match(clientSource, /value\.kind === 'model'[\s\S]*?studioBridgeOperation\('resources\/list', value\)/);
   // Tool and Skill catalogs are now routed through the authenticated Studio
   // bridge, which can merge the local workspace catalog with cloud Skill
   // Spaces instead of rejecting them as an unsupported cloud surface.
@@ -102,7 +102,9 @@ test('platform resource picker does not refetch on every render', () => {
 
 test('native bridge intercepts the DSH stream without rewriting the visible model route', async () => {
   const pluginSource = await readFile(resolve(import.meta.dirname, '../src/providers/dsh-runtime-plugin.mjs'), 'utf8');
-  assert.match(pluginSource, /ctx\.on\('llm\/stream'/);
+  const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
+  assert.match(hostSource, /ctx\.on\('llm\/stream', routeDshRuntime\)/);
+  assert.doesNotMatch(pluginSource, /ctx\.on\('llm\/stream'/);
   assert.doesNotMatch(pluginSource, /provider:\s*'agentkit-studio'/);
   assert.doesNotMatch(pluginSource, /agent\/request/);
 });

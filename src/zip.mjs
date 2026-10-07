@@ -6,6 +6,7 @@
  * definition snapshots, so compression is unnecessary.
  */
 import { createHash } from 'node:crypto';
+import { inflateRawSync } from 'node:zlib';
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -17,10 +18,43 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-function crc32(buffer) {
+export function crc32(buffer) {
   let crc = -1;
   for (let i = 0; i < buffer.length; i++) crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ buffer[i]) & 0xFF];
   return (crc ^ -1) >>> 0;
+}
+
+/** Read bounded regular files from a cloud Skill ZIP, validating paths, sizes and CRCs. */
+export function readZipFiles(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length > 20 * 1024 * 1024) throw new Error('invalid archive size');
+  const end = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (end < 0 || end + 22 > buffer.length || end + 22 + buffer.readUInt16LE(end + 20) !== buffer.length) throw new Error('invalid archive directory');
+  const count = buffer.readUInt16LE(end + 10), central = buffer.readUInt32LE(end + 16);
+  if (count > 2000 || central + buffer.readUInt32LE(end + 12) !== end) throw new Error('invalid archive bounds');
+  const files = [], names = new Set();
+  let cursor = central, totalBytes = 0;
+  for (let index = 0; index < count; index += 1) {
+    if (cursor + 46 > end || buffer.readUInt32LE(cursor) !== 0x02014b50) throw new Error('invalid archive entry');
+    const size = buffer.readUInt32LE(cursor + 24), compressedSize = buffer.readUInt32LE(cursor + 20);
+    const nameLength = buffer.readUInt16LE(cursor + 28), offset = buffer.readUInt32LE(cursor + 42);
+    const next = cursor + 46 + nameLength + buffer.readUInt16LE(cursor + 30) + buffer.readUInt16LE(cursor + 32);
+    if (next > end || offset + 30 > central || buffer.readUInt32LE(offset) !== 0x04034b50) throw new Error('invalid archive entry bounds');
+    const name = buffer.toString('utf8', cursor + 46, cursor + 46 + nameLength);
+    const mode = buffer.readUInt32LE(cursor + 38) >>> 16;
+    if (!name || /[\\\0]/.test(name) || name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.split('/').some(part => part === '..' || part === '.') || names.has(name) || (mode & 0xf000) === 0xa000) throw new Error('unsafe archive path');
+    names.add(name);
+    totalBytes += size;
+    if (size > 8 * 1024 * 1024 || totalBytes > 50 * 1024 * 1024 || (buffer.readUInt16LE(cursor + 8) & 1)) throw new Error('archive expansion limit or encryption');
+    const start = offset + 30 + buffer.readUInt16LE(offset + 26) + buffer.readUInt16LE(offset + 28);
+    if (start + compressedSize > central) throw new Error('invalid archive data bounds');
+    const compression = buffer.readUInt16LE(cursor + 10), packed = buffer.subarray(start, start + compressedSize);
+    const data = compression === 0 ? packed : compression === 8 ? inflateRawSync(packed, { maxOutputLength: 8 * 1024 * 1024 }) : null;
+    if (!data || data.length !== size || crc32(data) !== buffer.readUInt32LE(cursor + 16)) throw new Error('archive checksum mismatch');
+    if (!name.endsWith('/')) files.push({ name, data, executable: Boolean(mode & 0o111) });
+    cursor = next;
+  }
+  if (cursor !== end) throw new Error('invalid archive entry count');
+  return files;
 }
 
 function dosDateTime(date) {

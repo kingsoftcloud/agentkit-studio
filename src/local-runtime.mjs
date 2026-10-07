@@ -183,7 +183,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   const bindings = toolsOnly ? (record?.spec?.bindings || record?.bindings || {}) : promptOnly ? {} : record?.spec?.bindings || record?.bindings || {};
   const skillIds = bindingIds(bindings, 'skills');
   const knowledge = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'knowledge-base');
-  const memory = memoryBinding(bindings);
+  const memory = record?.spec?.memory?.enabled === false ? null : memoryBinding(bindings);
   const skillSpace = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'skill-space');
   const toolIds = boundToolIds(bindings.tools);
   if ((skillIds.length || knowledge || memory || skillSpace || (Array.isArray(bindings.mcpServers) && bindings.mcpServers.length)) && !resourceAdapter) {
@@ -193,6 +193,9 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
     throw new LocalRuntimeError('TOOL_ADAPTER_MISSING', '该 Agent 绑定了 DSH Tool，但当前会话没有可用的 Tool 适配器', { resourceIds: toolIds });
   }
   let resourceContext = '';
+  if (!toolsOnly && record?.spec?.memory?.enabled === false && memoryBinding(bindings)) {
+    resourceContext += '\n\nMemory binding contract: 当前 Agent 的跨会话长期记忆已关闭。Host 本轮没有查询记忆库，也不会写入记忆库；下面即使有 Knowledge，也只属于知识库检索，不能据此声称长期记忆已启用或已召回。\n';
+  }
   if (!toolsOnly && skillIds.length) {
     const skills = await Promise.all(skillIds.map(id => resourceAdapter.loadSkill(id)));
     resourceContext += skills.filter(Boolean).map(skill => `Skill ${skill.name || ''}:\n${String(skill.content || '').slice(0, 12000)}`).join('\n\n');
@@ -205,6 +208,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   if (!toolsOnly && knowledge) {
     const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;
     const hits = await resourceAdapter.searchKnowledge(resourceId, input);
+    resourceContext += '\n\nKnowledge binding contract: 当前 Agent 已绑定知识库，Host 已按当前问题检索该知识库。下面的 Knowledge 是实际检索片段，与长期 Memory 和 MCP 专题目录无关；不能因 MCP 专题为空就声称知识库未绑定。只引用实际片段，没有命中不等于没有绑定。\n';
     resourceContext += (hits || []).map(hit => {
       const segment = hit?.Segment || hit?.segment || hit;
       const content = extractText(segment);
@@ -212,10 +216,15 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
       return content ? `Knowledge${title ? ` (${String(title)})` : ''}: ${content}` : '';
     }).filter(Boolean).join('\n');
   }
-  if (!toolsOnly && memory) {
+  if (!toolsOnly && memory && record?.spec?.memory?.recall?.enabled !== false) {
     const resourceId = memory.config.binding.resource.id || memory.config.binding.resource.resourceId;
     if (typeof resourceAdapter.searchMemory !== 'function') throw new LocalRuntimeError('MEMORY_ADAPTER_MISSING', '记忆库适配器未启用');
     const hits = await resourceAdapter.searchMemory(resourceId, input, userId, { agentId });
+    resourceContext += '\n\nMemory binding contract: 当前 Agent 绑定了长期记忆库，下文的 Memory 召回及后续写入由 Host 管理，与上面的 Knowledge 检索片段和 MCP 专题目录分开，不需要模型调用独立记忆工具。';
+    resourceContext += memoryWriteEnabled(record, memory, input)
+      ? '本轮正常完成后，Host 会按配置向记忆库提交本轮内容；你不能因没有独立工具就声称记忆仅保留在当前会话，也不能在写入结果尚未返回时声称已保存。'
+      : '当前写入策略下本轮不会写入记忆库，只使用实际召回内容；不能承诺已保存新记忆。';
+    resourceContext += '\n实际召回内容来自当前记忆库查询；旧对话文本中的“待写入”等说法不能代替当前的查询结果，也不能据此声称本轮未召回。\n';
     resourceContext += (hits || []).map(hit => `Memory: ${extractText(hit.content || hit.text || hit.memory || hit)}`).join('\n');
   }
   const collected = contextOnly || toolsOnly || promptOnly
@@ -315,7 +324,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     } else {
     try {
       const store = await agentStore();
-      record = await store.get(agentId);
+      record = parsed.agentRevision ? await store.getRevision(agentId,Number(parsed.agentRevision)) : await store.get(agentId);
     } catch { record = null; }
     }
     if (!record) { response.writeHead(404); response.end('local agent not found'); return; }

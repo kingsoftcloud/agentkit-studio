@@ -12,6 +12,8 @@ import { mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import YAML from 'yaml';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv-provider.js';
+const jsonSchema = new AjvJsonSchemaValidator();
 
 export class EvaluationError extends Error {
   constructor(code, message, details = {}) {
@@ -52,7 +54,7 @@ function normalizeNativeCase(raw, index) {
   const id = String(item.id || `case-${index + 1}`);
   const input = String(item.input || item.prompt || '');
   if (!input) throw new EvaluationError('EVALSET_CASE_INVALID', `用例 ${id} 缺少 input`, { caseId: id });
-  return { id, input, expectedOutput: item.expectedOutput || item.expected_output || null, assertions: normalizeAssertions(item.assertions || []), metadata: item.metadata || {} };
+  return { id, input, expectedOutput: item.expectedOutput ?? item.expected_output ?? null, assertions: normalizeAssertions(item.assertions || []), metadata: item.metadata || {} };
 }
 
 function normalizeStudioCase(raw, index) {
@@ -84,17 +86,25 @@ function evaluateAssertion(assertion, result) {
   if (type === 'response.startsWith') return output.startsWith(String(value));
   if (type === 'response.endsWith') return output.endsWith(String(value));
   if (type === 'response.matches') { try { return new RegExp(String(value)).test(output); } catch { return false; } }
-  if (type === 'response.jsonSchema') { try { return typeof output === 'string' && JSON.parse(output) !== null; } catch { return false; } }
-  if (type === 'runtime.maxLatencyMs') return Number(result.latencyMs || 0) <= Number(value);
-  if (type === 'runtime.maxInputTokens') return Number(result.tokenUsage?.inputTokens || 0) <= Number(value);
-  if (type === 'runtime.maxOutputTokens') return Number(result.tokenUsage?.outputTokens || 0) <= Number(value);
+  if (type === 'response.jsonSchema') { try { const data = JSON.parse(output); return value === true ? true : value === false ? false : jsonSchema.getValidator(value)(data).valid; } catch { return false; } }
+  if (type === 'runtime.maxLatencyMs') return Number.isFinite(result.latencyMs) && result.latencyMs <= Number(value);
+  if (type === 'runtime.maxInputTokens') return Number.isFinite(result.tokenUsage?.inputTokens) && result.tokenUsage.inputTokens <= Number(value);
+  if (type === 'runtime.maxOutputTokens') return Number.isFinite(result.tokenUsage?.outputTokens) && result.tokenUsage.outputTokens <= Number(value);
   if (type === 'tool.called') return toolCalls.some(call => String(call.name || call) === String(value));
   if (type === 'tool.notCalled') return !toolCalls.some(call => String(call.name || call) === String(value));
   if (type === 'tool.sequence') { const names = toolCalls.map(call => String(call.name || call)); return JSON.stringify(names) === JSON.stringify(value); }
   return required ? false : true;
 }
 
-export function createStudioEvaluation({ storeDir, runner } = {}) {
+function publicRun(record) {
+  const cases = (record.caseResults || record.cases || []).map(item => ({ ...item, id: item.caseId || item.id, name: item.caseId || item.name, durationMs: item.durationMs ?? item.latencyMs }));
+  const assertions = cases.flatMap(item => (item.assertions || []).map(assertion => ({ ...assertion, name: `${item.caseId || item.id} · ${assertion.type}`, caseId: item.caseId || item.id })));
+  const summary = record.summary || {};
+  const duration = record.completedAt ? Date.parse(record.completedAt) - Date.parse(record.createdAt) : null;
+  return { ...record, cases, assertions, trace: cases.map(item => ({ caseId: item.caseId, sessionId: item.sessionId, runId: item.runId, toolCalls: item.toolCalls || [] })), durationMs: Number.isFinite(duration) ? Math.max(0, duration) : null, summary: { ...summary, totalCases: summary.totalCases ?? summary.total, passedCases: summary.passedCases ?? summary.passed, failedCases: summary.failedCases ?? summary.failed } };
+}
+
+export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {}) {
   const evalsetsDir = join(storeDir, 'evalsets');
   const runsDir = join(storeDir, 'runs');
   const targetsDir = join(storeDir, 'targets');
@@ -125,7 +135,7 @@ export function createStudioEvaluation({ storeDir, runner } = {}) {
 
   async function listTargets({ builds = [] } = {}) {
     // Targets are local Builds; the page shows them as evaluable targets.
-    return { items: builds.map(build => ({ id: build.id, name: build.id, kind: 'studio_build', agentId: build.agentId, status: 'ready' })) };
+    return { items: builds.map(build => ({ id: build.id, name: build.name || build.id, kind: 'studio_build', agentId: build.agentId, status: 'ready' })) };
   }
 
   async function listRuns({ agentId, evalsetId, status } = {}) {
@@ -136,24 +146,29 @@ export function createStudioEvaluation({ storeDir, runner } = {}) {
     for (const name of names.filter(item => item.endsWith('.json')).sort().reverse()) {
       try {
         const run = JSON.parse(await readFile(join(runsDir, name), 'utf8'));
-        if ((!agentId || run.agentId === agentId) && (!evalsetId || run.evalsetId === evalsetId) && (!status || run.status === status)) items.push(run);
+        if ((!agentId || run.agentId === agentId) && (!evalsetId || run.evalsetId === evalsetId) && (!status || run.status === status)) items.push(publicRun(run));
       } catch { /* skip corrupt */ }
     }
     return { items };
   }
 
   async function getRun(runId) {
-    try { return JSON.parse(await readFile(join(runsDir, `${runId}.json`), 'utf8')); } catch { return null; }
+    try { return publicRun(JSON.parse(await readFile(join(runsDir, `${runId}.json`), 'utf8'))); } catch { return null; }
   }
 
-  async function createEvaluation({ evalsetId, target: targetId, agentId, config = {} }) {
+  async function createEvaluation({ evalsetId, evalsetFile, target, agentId, config = {} }) {
+    evalsetId ||= evalsetFile;
+    if (typeof target === 'object' && target?.kind !== 'studio_build') throw new EvaluationError('EVALUATION_TARGET_UNSUPPORTED', '当前评测执行支持 Studio Build；A2A 和本地源码尚未接入运行合同');
+    const targetId = typeof target === 'object' ? String(target.locator || '') : String(target || '');
+    const resolved = resolveTarget ? await resolveTarget(targetId) : null;
+    agentId = resolved?.agentId || agentId;
     await ensureDirs();
     const evalsets = await listEvalsets();
     const evalset = evalsets.items.find(item => item.id === evalsetId);
     if (!evalset) throw new EvaluationError('EVALSET_NOT_FOUND', '评测集不存在', { evalsetId });
     const runId = `eval_${randomUUID().replace(/-/g, '')}`;
     const run = {
-      id: runId, evalsetId, evalsetName: evalset.name, targetId, agentId,
+      id: runId, evalsetId, evalsetName: evalset.name, evalset: { id: evalsetId, name: evalset.name }, target: { id: targetId, name: resolved?.name || targetId, kind: 'studio_build' }, targetId, agentId,
       status: 'pending', createdAt: new Date().toISOString(), completedAt: null,
       config: { timeoutSeconds: Number(config.timeoutSeconds || 120), failFast: Boolean(config.failFast), evaluators: Array.isArray(config.evaluators) ? config.evaluators : [] },
       caseResults: [], summary: { total: evalset.cases.length, passed: 0, failed: 0, skipped: 0 },
@@ -181,13 +196,21 @@ export function createStudioEvaluation({ storeDir, runner } = {}) {
     for (const caseItem of evalset.cases) {
       const started = Date.now();
       try {
-        const result = await runner({ input: caseItem.input, agentId, timeoutSeconds: run.config.timeoutSeconds });
-        const assertions = caseItem.assertions.map(assertion => ({ type: assertion.type, value: assertion.value, passed: evaluateAssertion(assertion, result), message: '' }));
-        const passed = assertions.every(item => item.passed);
-        caseResults.push({ caseId: caseItem.id, status: passed ? 'passed' : 'failed', output: String(result.output || '').slice(0, 2048), toolCalls: result.toolCalls || [], tokenUsage: result.tokenUsage || {}, latencyMs: Date.now() - started, assertions });
+        const result = await runner({ input: caseItem.input, agentId, buildId: run.targetId, timeoutSeconds: run.config.timeoutSeconds });
+        const selectedEvaluators = run.config.evaluators;
+        const enabledAssertions = caseItem.assertions.filter(assertion => !selectedEvaluators.length || selectedEvaluators.includes(assertion.type.startsWith('runtime.') ? 'runtime_budget@v1' : assertion.type.startsWith('tool.') ? 'tool_trajectory@v1' : 'response_contract@v1'));
+        if (selectedEvaluators.includes('reference_match@v1')) {
+          if (caseItem.expectedOutput === null) throw new EvaluationError('EVALUATION_REFERENCE_MISSING', '参考答案匹配需要 expectedOutput');
+          enabledAssertions.push({ type: 'response.equals', value: typeof caseItem.expectedOutput === 'string' ? caseItem.expectedOutput : JSON.stringify(caseItem.expectedOutput), required: true });
+        }
+        if (!enabledAssertions.length) throw new EvaluationError('EVALUATION_ASSERTIONS_MISSING', '该用例未提供所选评估器的断言');
+        const assertions = enabledAssertions.map(assertion => ({ type: assertion.type, value: assertion.value, required: assertion.required, passed: evaluateAssertion(assertion, result), message: '' }));
+        const passed = assertions.every(item => item.required === false || item.passed);
+        caseResults.push({ caseId: caseItem.id, sessionId: result.sessionId, runId: result.runId, status: passed ? 'passed' : 'failed', output: String(result.output || '').slice(0, 2048), toolCalls: result.toolCalls || [], tokenUsage: result.tokenUsage || {}, durationMs: Date.now() - started, latencyMs: Date.now() - started, assertions });
         if (run.config.failFast && !passed) { for (const remaining of evalset.cases.slice(evalset.cases.indexOf(caseItem) + 1)) caseResults.push({ caseId: remaining.id, status: 'skipped', error: 'fail-fast 中止' }); break; }
       } catch (error) {
-        caseResults.push({ caseId: caseItem.id, status: 'failed', error: String(error?.message || error).slice(0, 400), latencyMs: Date.now() - started });
+        caseResults.push({ caseId: caseItem.id, status: 'failed', error: String(error?.message || error).slice(0, 400), durationMs: Date.now() - started, latencyMs: Date.now() - started });
+        if (run.config.failFast) { for (const remaining of evalset.cases.slice(evalset.cases.indexOf(caseItem) + 1)) caseResults.push({ caseId: remaining.id, status: 'skipped', error: 'fail-fast 中止' }); break; }
       }
     }
     const completed = { ...run, status: caseResults.every(item => item.status === 'passed') ? 'succeeded' : (caseResults.some(item => item.status === 'passed') ? 'partial' : 'failed'), completedAt: new Date().toISOString(), caseResults, summary: { total: evalset.cases.length, passed: caseResults.filter(item => item.status === 'passed').length, failed: caseResults.filter(item => item.status === 'failed').length, skipped: caseResults.filter(item => item.status === 'skipped').length } };

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLocalResourceAdapters, LocalResourceError } from '../src/local-resource-adapters.mjs';
@@ -41,6 +41,24 @@ test('cloud Skill Space downloads through the injected Host fetch boundary', asy
   assert.deepEqual(requests.map(item => item.name), ['ListSkillsBySpaceId', 'GetPremadeSkillDownloadUrl']);
 });
 
+test('bound cloud Skill materializes its script beside the DSH skill manifest', async () => {
+  const cacheDir = await mkdtemp(join(tmpdir(), 'studio-cloud-skill-'));
+  try {
+    const archive = createZip([
+      { name: 'demo/SKILL.md', data: '---\nname: demo-skill\ndescription: Check JSON\n---\nRun scripts/check.py.' },
+      { name: 'demo/scripts/check.py', data: 'print("actual-skill-output")\n' },
+    ]);
+    const adapters = createLocalResourceAdapters({ cacheDir,
+      serverClient: { skillAction: async name => name === 'ListSkillsBySpaceId' ? { data: { Skills: [{ SkillId: 'demo-skill' }] } } : { data: { DownloadUrl: 'https://download.test/demo.zip' } } },
+      fetchImpl: async () => new Response(archive),
+    });
+    const result = await adapters.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9');
+    assert.equal(result.definitions?.[0].name, 'demo-skill');
+    assert.equal(result.definitions[0].resourceBase.kind, 'directory');
+    assert.equal(await readFile(join(result.definitions[0].resourceBase.path, 'scripts/check.py'), 'utf8'), 'print("actual-skill-output")\n');
+  } finally { await rm(cacheDir, { recursive: true, force: true }); }
+});
+
 test('cloud Skill Space rejects a downloaded archive with a mismatched ContentHash', async () => {
   const archive = createZip([{ name: 'SKILL.md', data: '# 营销写作' }]);
   const adapters = createLocalResourceAdapters({
@@ -60,6 +78,27 @@ test('missing non-cloud Skill remains an explicit local import error', async () 
     serverClient: { skillAction: async () => { throw new Error('must not call cloud Skill Service'); } },
   });
   await assert.rejects(() => adapters.loadSkill('local-skill-not-installed'), error => error instanceof LocalResourceError && error.code === 'SKILL_NOT_INSTALLED');
+});
+
+test('cloud MCP uses its protocol endpoint instead of the service homepage', async () => {
+  const adapters = createLocalResourceAdapters({
+    serverClient: { action: async () => ({ data: { endpoint: 'https://cloud.test/', mcp_endpoint: 'https://cloud.test/mcp' } }) },
+    fetchImpl: async (url, init = {}) => {
+      if (new URL(url).pathname !== '/mcp') return new Response('not MCP', { status: 404 });
+      if (!init.body) return new Response(null, { status: 405 });
+      const request = JSON.parse(init.body);
+      if (request.method === 'notifications/initialized') return new Response(null, { status: 202 });
+      const result = request.method === 'initialize' ? { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'cloud', version: '1' } } : { tools: [{ name: 'search', inputSchema: { type: 'object' } }] };
+      return Response.json({ jsonrpc: '2.0', id: request.id, result });
+    },
+  });
+  try { assert.equal((await adapters.listMcpTools('mcp-cloud')).length, 1); }
+  finally { await adapters.close(); }
+});
+
+test('MCP certificate failures remain explicit and do not bypass TLS validation', async () => {
+  const adapters = createLocalResourceAdapters({ fetchImpl: async () => { throw Object.assign(new Error('fetch failed'), { cause: Object.assign(new Error('self-signed certificate in certificate chain'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' }) }); } });
+  await assert.rejects(() => adapters.listMcpTools({ resourceId: 'tls-test', endpointUrl: 'https://cloud.test/mcp' }), { code: 'MCP_TLS_FAILED' });
 });
 
 test('memory adapter uses QueryMemorySdk and normalizes the returned memories', async () => {

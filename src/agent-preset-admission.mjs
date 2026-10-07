@@ -29,7 +29,7 @@ function modelProfileIds(agent = {}) {
   const values = Array.isArray(bindings.modelProfileIds)
     ? bindings.modelProfileIds
     : bindings.modelProfileId ? [bindings.modelProfileId] : [];
-  return values.map(value => typeof value === 'string' ? value : value?.resourceId).filter(Boolean).map(String);
+  return [...new Set([bindings.modelProfileId, ...values.map(value => typeof value === 'string' ? value : value?.resourceId)].filter(Boolean).map(String))];
 }
 
 function dshModelRoute(profile = {}, index = 0) {
@@ -45,15 +45,15 @@ function dshModelRoute(profile = {}, index = 0) {
  * Session still needs one deterministic initial route; the first binding is
  * the persisted primary (`modelProfileId`) and users can switch afterward.
  */
-export function dshModelSelection(agent = {}, settings = {}) {
+export function dshModelSelection(agent = {}, settings = {}, { resolvedProfile } = {}) {
   const ids = modelProfileIds(agent);
   if (!ids.length) return undefined;
   const profiles = Array.isArray(settings?.values?.modelProfiles) ? settings.values.modelProfiles : [];
   const bound = String(ids[0]).trim();
-  const index = profiles.findIndex(profile => profile?.enabled !== false && (String(profile?.id || '').trim() === bound || String(profile?.modelName || '').trim() === bound));
+  const index = profiles.findIndex(profile => profile?.enabled !== false && (String(profile?.id || '').trim() === bound || String(profile?.modelName || '').trim() === bound || (resolvedProfile?.id && profile.id === resolvedProfile.id)));
   const profile = index >= 0 ? profiles[index] : undefined;
   if (!profile?.modelName || profile.enabled === false) return undefined;
-  return { provider: dshModelRoute(profile, index), model: String(profile.modelName).trim() };
+  return { provider: dshModelRoute(profile, index), model: String(resolvedProfile?.modelName || profile.modelName).trim() };
 }
 
 function toolBindingRefs(agent = {}) {
@@ -140,11 +140,12 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, registry } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, registry } = {}) {
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
     this.getModelSelection = getModelSelection;
     this.getToolContracts = getToolContracts;
+    this.getSkillDefinitions = getSkillDefinitions;
     this.registry = registry;
     this.registrations = new Map();
   }
@@ -206,6 +207,11 @@ export class DshPresetAdmission {
       const toolContracts = eligibility.local && typeof this.getToolContracts === 'function'
         ? await this.getToolContracts(agent)
         : [];
+      const skillDefinitions = eligibility.local && typeof this.getSkillDefinitions === 'function' ? await this.getSkillDefinitions(agent) : [];
+      if (skillDefinitions.length) {
+        plugins.push({ id: 'bound-skill-loader', name: '@deepseek-ai/dsh-tool-skill' });
+        plugins.push({ id: 'bound-skill-shell', name: process.platform === 'win32' ? '@deepseek-ai/dsh-tool-pwsh' : '@deepseek-ai/dsh-tool-bash' });
+      }
       plugins.push({
         id: 'studio-runtime',
         name: '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin',
@@ -213,9 +219,11 @@ export class DshPresetAdmission {
           agentId: eligibility.agentId,
           runtime: eligibility.runtime,
           local: eligibility.local,
+          ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
           ...(buildId ? { buildId } : {}),
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),
           ...(toolContracts.length ? { toolContracts } : {}),
+          ...(skillDefinitions.length ? { skillDefinitions } : {}),
         },
       });
     }

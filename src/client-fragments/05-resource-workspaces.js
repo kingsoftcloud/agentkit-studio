@@ -30,9 +30,9 @@
       ];
       const label = resourceKinds.find(item => item[0] === resourceKind)?.[1] || '资源';
 
-      const load = async (kind = resourceKind, cursor = null, resetPaging = true) => {
+      const load = async (kind = resourceKind, cursor = null, resetPaging = true, preserveMessage = false) => {
         const seq = ++requestSeq.current;
-        setStatus('loading'); setError(''); setMessage('');
+        setStatus('loading'); setError(''); if (!preserveMessage) setMessage('');
         if (resetPaging) { setPage(0); setCursorStack([null]); setNextCursor(null); }
         try {
           const result = platformKinds.includes(kind)
@@ -46,6 +46,7 @@
             setNextCursor(result?.nextCursor || null);
             setTotal(Number(result?.total) || 0);
             setPlatformCatalog(null);
+            if (result?.warnings?.length) setError(result.warnings.map(item => item.message).join(' '));
           }
           setStatus('ready');
         } catch (reason) {
@@ -57,7 +58,7 @@
         return () => clearTimeout(timer);
       }, [query]);
       useEffect(() => { void load(resourceKind, null, true); }, [resourceKind, pageSize, submittedQuery]);
-      const reloadCatalog = () => load(resourceKind, null, true);
+      const reloadCatalog = (preserveMessage = false) => load(resourceKind, null, true, preserveMessage === true);
       const openMcpCreate = () => { setMcpEditing(null); setMcpDialogOpen(true); };
       const openMcpEdit = resource => { setMcpEditing(resource); setMcpDialogOpen(true); };
       const closeMcpDialog = () => { setMcpDialogOpen(false); setMcpEditing(null); };
@@ -66,8 +67,8 @@
         try {
           const result = await hostRemote.probeMcpResource(resource.resourceId);
           setMessage(`${resource.displayName || resource.name} 已探测，发现 ${result?.health?.toolCount || result?.toolCount || 0} 个 Tool。`);
-          await reloadCatalog();
-        } catch (reason) { setError(reason?.message || 'MCP 探测失败'); }
+          await reloadCatalog(true);
+        } catch (reason) { await reloadCatalog(true); setError(reason?.message || 'MCP 探测失败'); }
       };
       const previewInstalledSkill = async resource => {
         try {
@@ -89,7 +90,7 @@
         try {
           await hostRemote.deleteResource(resource.resourceId);
           setMessage(`${name} 已从资源目录删除。需要变更 Agent 绑定时，请到 Agent 创建或编辑页提交新的 Revision。`);
-          await reloadCatalog();
+          await reloadCatalog(true);
         } catch (reason) { setError(reason?.message || '资源删除失败'); }
         finally { setDeleting(false); }
       };
@@ -497,11 +498,24 @@
         try { await hostRemote.cancelOperation(operationId); await load(selectedAgent); }
         catch (reason) { setError(reason?.message || '取消操作失败'); }
       };
+      const downloadBuild = async buildId => {
+        setError('');
+        try {
+          const result = await hostRemote.downloadBuild(selectedAgent, buildId);
+          const bytes = Uint8Array.from(atob(result.base64), character => character.charCodeAt(0));
+          const url = URL.createObjectURL(new Blob([bytes], { type: result.contentType }));
+          const link = document.createElement('a');
+          link.href = url; link.download = result.filename;
+          document.body.appendChild(link); link.click(); link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+          setMessage(`已请求下载 ${result.filename}（${result.bytes} 字节），请查看浏览器或系统的下载提示。`);
+        } catch (reason) { setError(reason?.message || '构建产物下载失败'); }
+      };
       const buildRows = builds.length ? builds.map(item => h('tr', { key: item.id, style: { borderBottom: '1px solid ' + BRAND.border } },
         h('td', { style: { padding: '10px 12px', color: BRAND.ink, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px' } }, item.id || '—'),
         h('td', { style: { padding: '10px 12px', color: BRAND.inkMuted } }, item.revision ? `Revision ${item.revision}` : '—'),
         h('td', { style: { padding: '10px 12px' } }, h(Pill, { tone: String(item.status || '').toUpperCase() === 'SUCCEEDED' ? 'accent' : 'signal' }, item.status || 'UNKNOWN')),
-        h('td', { style: { padding: '10px 12px' } }, canRunBuild && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => window.__AGENTKIT_STUDIO_BIND_AGENT__?.({ agentId: selectedAgent, buildId: item.id }), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '在新会话运行') : null))) : h('tr', null, h('td', { colSpan: 4, style: { padding: '18px 12px', color: BRAND.inkMuted } }, '当前 Agent 还没有 Build。'));
+        h('td', { style: { padding: '10px 12px', display: 'flex', gap: '6px' } }, canRunBuild && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => window.__AGENTKIT_STUDIO_BIND_AGENT__?.({ agentId: selectedAgent, buildId: item.id }), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '在新会话运行') : null, directServerMode && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => downloadBuild(item.id), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '下载 ZIP') : null))) : h('tr', null, h('td', { colSpan: 4, style: { padding: '18px 12px', color: BRAND.inkMuted } }, '当前 Agent 还没有 Build。'));
       return h('div', null,
         h(SectionHeading, { eyebrow: 'Studio domain / Delivery', title: '构建与部署', detail: directServerMode ? 'Build 固化 Agent Revision；当前 AgentEngine Server 只开放构建与运行合同，Deployment 合同尚未提供。' : 'Build 固化 Agent Revision；Deployment 只接受已成功的 Build，所有动作由本地 Host 通过异步 operation 承载。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中') }),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
@@ -512,7 +526,7 @@
             h('button', { type: 'button', onClick: createBuild, disabled: saving || !selectedAgent, style: { ...buttonStyle(), color: saving || !selectedAgent ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: saving || !selectedAgent ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !selectedAgent ? BRAND.border : 'transparent' } }, saving ? '提交中…' : '构建当前 Revision')),
           h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '14px', overflow: 'hidden', background: BRAND.surface } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid ' + BRAND.border } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, 'Build 历史'), h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, `${builds.length} 个`)),
-            h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } }, h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas } }, ['Build', '版本', '状态'].map(label => h('th', { key: label, style: { padding: '10px 12px', fontWeight: 750 } }, label)))), h('tbody', null, buildRows))),
+            h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } }, h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas } }, ['Build', '版本', '状态', '操作'].map(label => h('th', { key: label, style: { padding: '10px 12px', fontWeight: 750 } }, label)))), h('tbody', null, buildRows))),
           h('section', { style: { marginTop: '14px', display: 'grid', gap: '12px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
             h('div', { style: { color: BRAND.ink, fontWeight: 800, fontSize: '14px' } }, directServerMode ? '云端部署' : '部署已成功的 Build'),
             directServerMode ? h('div', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, padding: '10px 12px', borderRadius: '9px', background: BRAND.canvas } }, 'AgentEngine Server 当前没有 Deployment Action；本页不会提交旧版 Studio REST 请求。完成 Build 后可直接在本地运行对话。') : null,

@@ -13,6 +13,7 @@
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { registerAuthoringTools } from './authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from './agent-preset-admission.mjs';
 
@@ -34,18 +35,21 @@ async function registerControlPlane(ctx) {
   // browser-facing plugin module graph. DSH loads this module for both the
   // Host and client faces; importing node:fs or aws4 at activation time makes
   // the whole plugin fail before the Host route can be registered.
-  const skillDiscoveryPromise = import('./skill-discovery.mjs').then(({ createSkillDiscovery }) => createSkillDiscovery({}));
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
+  const skillDiscoveryPromise = import('./skill-discovery.mjs').then(({ createSkillDiscovery }) => createSkillDiscovery({ storeDir: join(studioStoreDir, 'skills') }));
   const studioBuildPromise = Promise.all([
     import('./studio-operations.mjs').then(({ createOperationManager }) => createOperationManager({ storeDir: join(studioStoreDir, 'operations') })),
     import('./studio-build.mjs').then(({ createStudioBuild }) => createStudioBuild({ storeDir: studioStoreDir })),
   ]).then(([operations, build]) => ({ operations, build }));
-  const studioSchedulerPromise = import('./studio-scheduler.mjs').then(({ createStudioScheduler }) => createStudioScheduler({ storeDir: join(studioStoreDir, 'scheduler') })).catch(error => { console.warn('[agentkit-studio] scheduler init failed:', error?.message || error); return null; });
+  const studioSchedulerPromise = Promise.all([import('./studio-scheduler.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioScheduler }, { createNativeAutomationRunner }]) => createStudioScheduler({ storeDir: join(studioStoreDir, 'scheduler'), runner: createNativeAutomationRunner({ getService: name => ctx.get(name), admit: async agentId => { const local = await (await agentStorePromise).get(agentId); return presetAdmission.ensure(agentId, local ? { agent: local } : {}); } }) })).catch(error => { console.warn('[agentkit-studio] scheduler init failed:', error?.message || error); return null; });
   const studioObservabilityPromise = import('./studio-observability.mjs').then(({ createStudioObservability }) => createStudioObservability({ storeDir: join(studioStoreDir, 'traces') })).catch(error => { console.warn('[agentkit-studio] observability init failed:', error?.message || error); return null; });
-  const studioEvaluationPromise = import('./studio-evaluation.mjs').then(({ createStudioEvaluation }) => createStudioEvaluation({ storeDir: join(studioStoreDir, 'evaluations') })).catch(error => { console.warn('[agentkit-studio] evaluation init failed:', error?.message || error); return null; });
+  const studioEvaluationPromise = Promise.all([import('./studio-evaluation.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioEvaluation }, { createNativeAutomationRunner }]) => createStudioEvaluation({ storeDir: join(studioStoreDir, 'evaluations'), resolveTarget: async locator => { const target = (await listLocalBuildTargets()).find(build => build.id === locator); if (!target) throw Object.assign(new Error('评测 Build 不存在，请选择已完成的本地构建'), { code: 'EVALUATION_TARGET_NOT_FOUND' }); await (await studioBuildPromise).build.resolve(target.agentId, target.id); return target; }, runner: async request => createNativeAutomationRunner({ getService: name => ctx.get(name), admit: async (agentId, buildId) => { const local = await (await agentStorePromise).get(agentId); const frozen = await (await studioBuildPromise).build.resolve(agentId, buildId); return presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...local.metadata, ...frozen.metadata, local: true } } }); } })({ ...request, sessionId: `eval-session-${randomUUID()}`, occurrenceId: `eval-request-${randomUUID()}` }) })).catch(error => { console.warn('[agentkit-studio] evaluation init failed:', error?.message || error); return null; });
   const studioChannelsPromise = import('./studio-channels.mjs').then(({ createStudioChannels }) => createStudioChannels({ storeDir: studioStoreDir })).catch(error => { console.warn('[agentkit-studio] channels init failed:', error?.message || error); return null; });
   const agentStorePromise = import('./agent-store.mjs').then(({ createAgentStore }) => createAgentStore({ storeDir: join(studioStoreDir, 'agents') }));
+  const agentCatalogPromise = import('./agent-catalog.mjs').then(({ createAgentCatalog }) => createAgentCatalog({ store: () => agentStorePromise, server: () => serverClientPromise, builds: async id => (await studioBuildPromise).build.list(id) }));
+  const listLocalBuildTargets = async () => { const studio = await studioBuildPromise; const agents = await (await agentStorePromise).list(); return (await Promise.all(agents.map(async agent => (await studio.build.list(agent.metadata.id)).map(build => ({ ...build, name: `${agent.metadata.name} · Revision ${build.revision}` }))))).flat().filter(build => build.status === 'SUCCEEDED'); };
   const localMcpStorePromise = import('./local-mcp-store.mjs').then(({ createLocalMcpStore }) => createLocalMcpStore({ storeDir: join(studioStoreDir, 'resources', 'mcp') }));
+  const mcpProbePromise = import('./mcp-probes.mjs').then(({ createMcpProbes }) => createMcpProbes({ storeDir: join(studioStoreDir, 'resources', 'mcp-probes'), localStore: () => localMcpStorePromise, adapters: () => resourceAdaptersPromise }));
   // Authoring tools + resource catalogs read cloud/resource data through this
   // in-process remote — the legacy 8789 local Studio Host no longer exists.
   const authoringRemoteFactory = signal => Promise.all([serverClientPromise, agentStorePromise]).then(([serverClient]) => ({
@@ -100,11 +104,14 @@ async function registerControlPlane(ctx) {
   // The provider is selected by the preset-scoped listener and delegates the
   // assembled turn to the local Harness or AgentEngine cloud stream.
   const { createDshRuntimeAdapter, setDshResourceToolExecutor, setDshRuntimeAdapter } = await import('./providers/dsh-runtime.mjs');
+  const { LlmAdapter } = await import('@deepseek-ai/dsh-llm');
   // Codex is a native App Server runtime, not another gateway model. Keep its
   // optional child-process boundary lazy so Studio can still load on hosts
   // without a Codex binary and report CODEX_PROVIDER_UNAVAILABLE only when a
   // Codex Agent is selected.
   const { createCodexRuntime } = await import('./providers/codex-runtime.mjs');
+  const { createCodexModelCatalog, createCodexModelAdapter, codexModelSelection, CODEX_PROVIDER } = await import('./providers/codex-models.mjs');
+  const codexModels = createCodexModelCatalog();
   const codexRuntime = createCodexRuntime();
   let localRuntimeHandlerPromise;
   const localRuntimeHandler = async () => {
@@ -128,9 +135,14 @@ async function registerControlPlane(ctx) {
     }
     return localRuntimeHandlerPromise;
   };
-  const codexResourceContext = async ({ agentId, buildId, input, userId, sessionId, toolAdapter, agent } = {}) => {
+  const codexResourceContext = async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent } = {}) => {
     const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
-    let record = buildId ? await buildState.build.resolve(agentId, buildId) : await store.get(agentId);
+    let record;
+    try { record = buildId ? await buildState.build.resolve(agentId, buildId) : agentRevision ? await store.getRevision(agentId,Number(agentRevision)) : await store.get(agentId); }
+    catch (error) {
+      console.warn('[agentkit-studio] Codex resource resolution failed:', JSON.stringify({ agentId, buildId: buildId || '', code: error?.code || 'UNKNOWN' }));
+      throw error;
+    }
     if (!record) throw Object.assign(new Error('本地 Codex Agent 不存在'), { code: 'AGENT_NOT_FOUND' });
     const { prepareLocalResourceContext, codexToolBindings, writeBoundMemory } = await import('./local-runtime.mjs');
     const prepared = await prepareLocalResourceContext({
@@ -176,6 +188,7 @@ async function registerControlPlane(ctx) {
     };
   };
   const dshRuntimeAdapter = createDshRuntimeAdapter({
+    AdapterBase: LlmAdapter,
     cloudClient: await serverClientPromise,
     localHandler: localRuntimeHandler,
     codexRuntime,
@@ -184,6 +197,8 @@ async function registerControlPlane(ctx) {
     observability: await studioObservabilityPromise,
   });
   setDshRuntimeAdapter(dshRuntimeAdapter);
+  const { routeDshRuntime } = await import('./providers/dsh-runtime.mjs');
+  ctx.on('llm/stream', routeDshRuntime);
   setDshResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal } = {}) => {
     const adapters = await resourceAdaptersPromise;
     if (typeof adapters?.callMcpTool !== 'function') {
@@ -207,6 +222,7 @@ async function registerControlPlane(ctx) {
       () => llmCtx.llm.registerAdapter(['agentkit-studio'], dshRuntimeAdapter),
       'agentkit-studio: DSH runtime provider',
     );
+    llmCtx.effect(() => llmCtx.llm.registerAdapter([CODEX_PROVIDER], createCodexModelAdapter({ catalog: codexModels, runtime: dshRuntimeAdapter })), 'agentkit-studio: Codex model directory');
   });
   // Cordis exposes injected services through `get`; property access is only
   // available on typed service contexts and is absent in the plain plugin
@@ -233,49 +249,18 @@ async function registerControlPlane(ctx) {
   // the native page reports "Unknown agent preset" before the first prompt.
   const restorePersistedPresets = async () => {
     if (!presetAdmission) return;
-    const rows = new Map();
     try {
-      const store = await agentStorePromise;
-      for (const item of await store.list()) {
-        const id = String(item?.metadata?.id || item?.id || '').trim();
-        if (id) rows.set(id, item);
+      const {restoreLocalPresets} = await import('./preset-recovery.mjs');
+      await restoreLocalPresets({store:await agentStorePromise,build:(await studioBuildPromise).build,admission:presetAdmission});
+    } catch(error) { console.warn('[agentkit-studio] local revision recovery failed:',error?.message || error); }
+    // Cloud catalog failures do not delay local Session recovery.
+    void serverClientPromise.then(async cloud => {
+      const catalog = await cloud.listAgents({page:1,pageSize:50});
+      for (const agent of catalog.items || []) {
+        try { await presetAdmission.ensure(agent.metadata.id,{agent}); }
+        catch(error) { console.warn('[agentkit-studio] cloud preset restore skipped:',error?.message || error); }
       }
-      const { build } = await studioBuildPromise;
-      for (const item of [...rows.values()]) {
-        const agentId = String(item?.metadata?.id || item?.id || '').trim();
-        if (!agentId) continue;
-        for (const buildRow of await build.list(agentId)) {
-          const buildId = String(buildRow?.id || '').trim();
-          if (!buildId) continue;
-          try {
-            const frozen = await build.resolve(agentId, buildId);
-            rows.set(`${agentId}:${buildId}`, { ...frozen, metadata: { ...item.metadata, ...frozen.metadata, local: true } });
-          } catch (error) {
-            console.warn('[agentkit-studio] persisted Build preset skipped:', error?.message || error);
-          }
-        }
-      }
-    } catch (error) {
-      console.warn('[agentkit-studio] persisted local preset restore skipped:', error?.message || error);
-    }
-    try {
-      const cloud = await serverClientPromise;
-      const catalog = await cloud.listAgents({ page: 1, pageSize: 50 });
-      for (const item of catalog.items || []) {
-        const id = String(item?.metadata?.id || item?.id || '').trim();
-        if (id && !rows.has(id)) rows.set(id, item);
-      }
-    } catch (error) {
-      // Cloud credentials are optional for a local-only profile. Local
-      // sessions still recover when the cloud catalog is unavailable.
-      console.warn('[agentkit-studio] persisted cloud preset restore skipped:', error?.message || error);
-    }
-    for (const [key, item] of rows) {
-      const id = String(item?.metadata?.id || item?.id || '').trim();
-      if (!id) continue;
-      try { await presetAdmission.ensure(id, { agent: item }); }
-      catch (error) { console.warn(`[agentkit-studio] preset restore skipped (${key}):`, error?.message || error); }
-    }
+    }).catch(error=>console.warn('[agentkit-studio] cloud preset recovery unavailable:',error?.message || error));
   };
   // The registry is an optional DSH service. Older profiles can still load
   // the Studio catalog and UI, but an Agent binding must return a typed
@@ -294,7 +279,26 @@ async function registerControlPlane(ctx) {
   presetAdmission = new DshPresetAdmission({
     getAgent: async agentId => (await serverClientPromise).getAgent(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
-    getModelSelection: async agent => dshModelSelection(agent, await configurationPromise),
+    getModelSelection: async agent => {
+      const local = agent?.metadata?.local !== false && agent?.source !== 'agentengine-server';
+      if (local && !agent.buildId) await (await agentStorePromise).captureRevision(agent);
+      if (local && agent?.spec?.runtime?.type === 'codex') return codexModelSelection(agent, await codexModels.list());
+      const settings = { values: await models.settings() };
+      const configured = dshModelSelection(agent, settings);
+      const bindings = agent?.spec?.bindings || {}, first = bindings.modelProfileIds?.[0];
+      const id = bindings.modelProfileId || (typeof first === 'string' ? first : first?.resourceId);
+      return configured || (!local || !id ? undefined : dshModelSelection(agent, settings, { resolvedProfile: await models.profile(id) }));
+    },
+    getSkillDefinitions: async agent => {
+      const bindings = agent?.spec?.bindings || {};
+      const ids = (bindings.skills || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id).filter(Boolean);
+      const space = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'skill-space')?.config?.binding?.resource;
+      if (space) ids.push(space.id || space.resourceId);
+      if (!ids.length) return [];
+      const adapter = await resourceAdaptersPromise;
+      const loaded = await Promise.all([...new Set(ids)].map(id => adapter.loadSkill(id)));
+      return loaded.flatMap(item => item.definitions || []);
+    },
     getToolContracts: async agent => {
       const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
         ? agent.spec.bindings : {};
@@ -397,47 +401,32 @@ async function registerControlPlane(ctx) {
   });
   if (presetRegistry) {
     presetAdmission.setRegistry(presetRegistry);
-    void restorePersistedPresets();
+    await restorePersistedPresets();
   }
-  const allowed = new Set(['agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/catalog', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
+  const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/action', 'server/action']);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
     }
     try {
       if (endpoint === 'models/sync-credential') return { ok: true, value: await syncModelCredential() };
+      if (endpoint === 'models/create') return { ok: true, value: await models.create(payload) };
       if (endpoint === 'settings/get') return { ok: true, value: await models.settings() };
       if (endpoint === 'settings/update') return { ok: true, value: await models.save(payload) };
       if (endpoint === 'models/catalog') return { ok: true, value: await models.catalog(String(payload?.profileId || '')) };
+      if (endpoint === 'models/codex') return { ok: true, value: await codexModels.list() };
       const serverClient = await serverClientPromise;
       if (endpoint === 'resources/list') {
         const kind = String(payload?.kind || '').trim();
         if (!kind) return { ok: false, error: { code: 'INVALID_RESOURCE_KIND', message: '资源类型不能为空', details: {} } };
-        if (kind === 'model') return { ok: true, value: await models.catalog(String(payload?.profileId || '')) };
-        if (kind === 'skill') {
-          const installed = await (await skillDiscoveryPromise).listInstalled().catch(() => ({ items: [] }));
-          const cloud = await serverClient.listResource('skill-space', { Page: 1, PageSize: Math.min(Number(payload?.limit || 100), 100) }, { signal }).catch(() => ({ items: [] }));
-          const localItems = (installed.items || []).map(item => ({ ...item, kind: 'skill', source: item.source || 'local' }));
-          const cloudItems = (cloud.items || []).map(item => ({
-            ...item, kind: 'skill', source: item.source || 'agentengine-server',
-            resourceId: item.resourceId || item.id, name: item.name || item.displayName || item.resourceId || item.id,
-          }));
-          const seen = new Set();
-          return { ok: true, value: { items: [...localItems, ...cloudItems].filter(item => { const id = String(item.resourceId || item.id || ''); if (!id || seen.has(id)) return false; seen.add(id); return true; }), nextCursor: null } };
+        if (['model', 'skill', 'mcp'].includes(kind)) {
+          const { listStudioResources } = await import('./resource-catalog.mjs');
+          return { ok: true, value: await listStudioResources({ query: payload, models, serverClient, signal,
+            localMcpStore: await localMcpStorePromise, skillDiscovery: await skillDiscoveryPromise, mcpProbes: await mcpProbePromise }) };
         }
         if (kind === 'tool') {
           const value = await serverClient.listCatalogResources({ kind: 'tool', query: payload?.query, limit: payload?.limit, cursor: payload?.cursor, source: payload?.source, status: payload?.status }, { signal });
           return { ok: true, value };
-        }
-        if (kind === 'mcp') {
-          const localStore = await localMcpStorePromise;
-          const localItems = await localStore.list({ query: payload?.query, limit: payload?.limit });
-          let cloud = { items: [], total: 0 };
-          try { cloud = await serverClient.listResource('mcp', { Page: 1, PageSize: Math.min(Number(payload?.limit || 100), 100) }, { signal }); } catch { /* local MCPs remain usable when cloud catalog is unavailable */ }
-          const seen = new Set(localItems.map(item => String(item.resourceId)));
-          const cloudItems = (cloud.items || []).filter(item => !seen.has(String(item.resourceId || item.id))).map(item => ({ ...item, source: item.source || 'agentengine-server' }));
-          const items = [...localItems, ...cloudItems];
-          return { ok: true, value: { items, total: items.length, nextCursor: null, source: 'agentkit-studio' } };
         }
         const resourceKind = kind;
         const value = await serverClient.listResource(resourceKind, { Page: 1, PageSize: Math.min(Number(payload?.limit || 100), 100) }, { signal });
@@ -458,10 +447,11 @@ async function registerControlPlane(ctx) {
           const current = typeof credentialsService.describe === 'function'
             ? await credentialsService.describe(name).catch(() => null)
             : null;
-          if (!(current?.configured && current.source === 'env')) throw error;
+          const effective = current?.configured && current.source === 'env' ? await credentialsService.resolve(name).catch(() => null) : null;
+          if (effective?.value !== value) throw error;
           return { ok: true, value: { name, configured: true, source: 'env', persistence: 'process-environment' } };
         }
-        return { ok: true, value: { name, configured: true, persistence: String(payload?.persistence || 'session') } };
+        return { ok: true, value: { name, configured: true, persistence: 'managed-store' } };
       }
       if (endpoint === 'mcp/create') {
         const localStore = await localMcpStorePromise;
@@ -473,19 +463,8 @@ async function registerControlPlane(ctx) {
         return { ok: true, value: await localStore.update(resourceId, payload || {}) };
       }
       if (endpoint === 'mcp/probe') {
-        const localStore = await localMcpStorePromise;
         const resourceId = String(payload?.resourceId || '').trim();
-        const record = await localStore.get(resourceId);
-        if (!record) return { ok: false, error: { code: 'MCP_NOT_FOUND', message: '本地 MCP 资源不存在', details: { resourceId } } };
-        try {
-          const adapters = await resourceAdaptersPromise;
-          const tools = await adapters.listMcpTools(record);
-          const updated = await localStore.markProbe(resourceId, { tools });
-          return { ok: true, value: { ...updated, resourceId, toolCount: tools.length, health: updated.health } };
-        } catch (error) {
-          await localStore.markProbe(resourceId, { error }).catch(() => {});
-          return { ok: false, error: { code: error?.code || 'MCP_PROBE_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || { resourceId } } };
-        }
+        return { ok: true, value: await (await mcpProbePromise).probe(resourceId) };
       }
       if (endpoint === 'mcp/delete' || endpoint === 'resources/delete') {
         const localStore = await localMcpStorePromise;
@@ -548,12 +527,7 @@ async function registerControlPlane(ctx) {
         }
       }
       if (endpoint === 'agents/list') {
-        const value = await serverClient.listAgents({
-          page: Number(payload?.page || 1), pageSize: Number(payload?.limit || 50), query: String(payload?.query || ''),
-        }, { signal });
-        const local = await agentStorePromise.then(store => store.list()).catch(() => []);
-        const items = [...local, ...(Array.isArray(value.items) ? value.items : [])];
-        return { ok: true, value: { ...value, items, total: (value.total || 0) + local.length } };
+        return { ok: true, value: await (await agentCatalogPromise).list(payload, { signal }) };
       }
       if (endpoint === 'agents/ensure-preset') {
         const agentId = String(payload?.agentId || '').trim();
@@ -645,7 +619,7 @@ async function registerControlPlane(ctx) {
           return { ok: false, error: { code: error?.code || 'PLUGIN_ECOSYSTEM_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
         }
       }
-      if (endpoint === 'builds/create' || endpoint === 'builds/list' || endpoint === 'operations/list' || endpoint === 'operations/cancel') {
+      if (endpoint === 'builds/create' || endpoint === 'builds/list' || endpoint === 'builds/download' || endpoint === 'operations/list' || endpoint === 'operations/cancel') {
         const studio = await studioBuildPromise;
         try {
           if (endpoint === 'builds/create') {
@@ -679,6 +653,7 @@ async function registerControlPlane(ctx) {
             if (!agentId) return { ok: true, value: { items: [] } };
             return { ok: true, value: { items: await studio.build.list(agentId) } };
           }
+          if (endpoint === 'builds/download') return { ok: true, value: await studio.build.download(String(payload?.agentId || ''), String(payload?.buildId || '')) };
           if (endpoint === 'operations/list') {
             const items = await studio.operations.list({ resourceId: String(payload?.resourceId || '') || undefined, kind: String(payload?.kind || '') || undefined });
             return { ok: true, value: { items } };
@@ -693,15 +668,30 @@ async function registerControlPlane(ctx) {
           } };
         }
       }
+      if (endpoint === 'sessions/export-log') {
+        const sessionId = String(payload?.sessionId || '').trim();
+        if (!sessionId) throw Object.assign(new Error('Session ID 不能为空'), { code: 'SESSION_ID_MISSING' });
+        const { readSessionLogText, flushLiveSessionLog, sessionLogExportDeps } = await import('@deepseek-ai/dsh-session-log-export');
+        const deps = sessionLogExportDeps(ctx);
+        if (!deps.sessionPersistence) throw Object.assign(new Error('DSH Session 持久化不可用'), { code: 'SESSION_EXPORT_UNAVAILABLE' });
+        await flushLiveSessionLog(deps, sessionId, signal);
+        const content = await readSessionLogText(deps.sessionPersistence, sessionId, signal);
+        if (content === undefined) throw Object.assign(new Error('Session 不存在'), { code: 'SESSION_NOT_FOUND' });
+        if (Buffer.byteLength(content) > 8 * 1024 * 1024) throw Object.assign(new Error('会话日志超过 8 MiB，请从原生会话使用 /export 导出完整 ZIP'), { code: 'SESSION_EXPORT_TOO_LARGE' });
+        return { ok: true, value: { content, filename: `dsh-session-${sessionId.replace(/[^A-Za-z0-9_-]/g, '_')}.jsonl`, contentType: 'application/x-ndjson' } };
+      }
       if (endpoint.startsWith('schedules/') || endpoint.startsWith('traces/') || endpoint.startsWith('evaluations/') || endpoint.startsWith('channels/')) {
         try {
           if (endpoint.startsWith('schedules/')) {
             const scheduler = await studioSchedulerPromise;
             if (!scheduler) return { ok: false, error: { code: 'SCHEDULER_UNAVAILABLE', message: '调度器未初始化', details: {} } };
-            if (endpoint === 'schedules/list') return { ok: true, value: { items: await scheduler.listSchedules(payload?.agentId || undefined) } };
+            if (endpoint === 'schedules/list') {
+              const native = ctx.get('schedule');
+              return { ok: true, value: { items: await scheduler.listSchedules(payload?.agentId || undefined), nativeItems: native?.catalog ? await native.catalog() : [], availability: { ...scheduler.availability(), nativeScheduleAvailable: Boolean(native?.catalog) } } };
+            }
             if (endpoint === 'schedules/create') return { ok: true, value: await scheduler.createSchedule(payload?.agentId || '', payload?.spec || payload) };
             if (endpoint === 'schedules/get') return { ok: true, value: await scheduler.getSchedule(payload?.taskId) };
-            if (endpoint === 'schedules/update') return { ok: true, value: await scheduler.updateSchedule(payload?.taskId, payload?.patch || payload) };
+            if (endpoint === 'schedules/update') return { ok: true, value: await scheduler.updateSchedule(payload?.taskId, { ...(payload?.patch || payload), ...(payload?.agentId ? { agentId: payload.agentId } : {}) }) };
             if (endpoint === 'schedules/delete') return { ok: true, value: await scheduler.deleteSchedule(payload?.taskId) };
             if (endpoint === 'schedules/run') return { ok: true, value: await scheduler.runNow(payload?.taskId) };
             if (endpoint === 'schedules/occurrences') return { ok: true, value: { items: await scheduler.listOccurrences(payload?.taskId, payload?.agentId) } };
@@ -714,33 +704,10 @@ async function registerControlPlane(ctx) {
               try {
                 const cloud = await serverClient.getObservabilityOverview({ range: payload?.range || '24h' }, { signal });
                 const summary = cloud?.Summary || {};
-                const series = cloud?.Series?.Sessions || cloud?.Series?.Runs || [];
-                return { ok: true, value: {
-                  buckets: series.map(item => ({ startedAt: new Date(Number(item.Timestamp)).toISOString(), runs: Number(item.Value) || 0, completed: Number(item.Value) || 0, failed: 0 })),
-                  totalRuns: Number(summary.SessionCount ?? local.totalRuns ?? 0),
-                  totalTokens: Number(summary.TokenCount ?? local.totalTokens ?? 0),
-                  agents: local.agents || [],
-                  cloud: { agentRuntimeCount: summary.AgentRuntimeCount, errorCount: summary.ErrorCount, errorRate: summary.ErrorRate },
-                } };
+                return { ok: true, value: { ...local, cloud: { sessionCount: summary.SessionCount, tokenCount: summary.TokenCount, agentRuntimeCount: summary.AgentRuntimeCount, errorCount: summary.ErrorCount, errorRate: summary.ErrorRate } } };
               } catch { return { ok: true, value: local }; }
             }
-            if (endpoint === 'traces/list') {
-              const local = await observability.list(payload || {});
-              try {
-                const cloud = await serverClient.listAgentRuntimeStats({ Page: 1, PageSize: 100 }, { signal });
-                const rows = cloud?.Items || cloud?.items || [];
-                const cloudItems = rows.map(row => ({
-                  traceId: String(row.AgentId || row.RuntimeId || ''),
-                  agentId: String(row.AgentId || ''),
-                  agentName: String(row.AgentName || row.AgentId || ''),
-                  sessionId: '', status: String(row.Status || row.Phase || ''),
-                  startedAt: row.StartTime || row.CreatedAt || null, completedAt: row.EndTime || null,
-                  tokenUsage: { totalTokens: Number(row.TokenCount || row.TotalTokens || 0) },
-                  spanCount: 0,
-                }));
-                return { ok: true, value: { items: [...local.items, ...cloudItems] } };
-              } catch { return { ok: true, value: local }; }
-            }
+            if (endpoint === 'traces/list') return { ok: true, value: await observability.list(payload || {}) };
             if (endpoint === 'traces/get') return { ok: true, value: await observability.get(payload?.traceId) };
             if (endpoint === 'traces/otlp') return { ok: true, value: await observability.getOtlp(payload?.traceId) };
           }
@@ -749,14 +716,7 @@ async function registerControlPlane(ctx) {
             if (!evaluation) return { ok: false, error: { code: 'EVALUATION_UNAVAILABLE', message: '评测模块未初始化', details: {} } };
             if (endpoint === 'evaluations/list') return { ok: true, value: await evaluation.listRuns(payload || {}) };
             if (endpoint === 'evaluations/get') return { ok: true, value: await evaluation.getRun(payload?.runId) };
-            if (endpoint === 'evaluations/targets') {
-              const studio = await studioBuildPromise;
-              const builds = [];
-              for (const agent of (await serverClient.listAgents({ page: 1, pageSize: 50 }, { signal })).items || []) {
-                builds.push(...await studio.build.list(agent?.metadata?.id || agent?.id || ''));
-              }
-              return { ok: true, value: await evaluation.listTargets({ builds }) };
-            }
+            if (endpoint === 'evaluations/targets') return { ok: true, value: await evaluation.listTargets({ builds: await listLocalBuildTargets() }) };
             if (endpoint === 'evaluations/evalsets') return { ok: true, value: await evaluation.listEvalsets() };
             if (endpoint === 'evaluations/import') return { ok: true, value: await evaluation.importEvalset({ content: payload?.content, fileName: payload?.fileName }) };
             if (endpoint === 'evaluations/create') return { ok: true, value: await evaluation.createEvaluation(payload || {}) };
@@ -918,6 +878,7 @@ async function registerControlPlane(ctx) {
   // Authoring tools need the in-process remote factory (cloud/resource data);
   // they live here because that factory is scoped to this function.
   registerAuthoringTools(ctx, { remoteFactory: authoringRemoteFactory });
+  ctx.effect(async () => { const scheduler = await studioSchedulerPromise; await scheduler?.ensureReady(); return () => scheduler?.dispose(); }, 'agentkit-studio: scheduler lifetime');
 }
 
 export async function apply(ctx) {

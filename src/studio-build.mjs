@@ -86,7 +86,7 @@ export function createStudioBuild({ storeDir } = {}) {
     return join(agentDir(agentId), buildId, 'agent-bundle.zip');
   }
 
-  async function resolve(agentId, buildId) {
+  async function verifiedArchive(agentId, buildId) {
     const path = await artifactPath(agentId, buildId);
     let zip;
     try { zip = await readFile(path); } catch (error) {
@@ -97,16 +97,23 @@ export function createStudioBuild({ storeDir } = {}) {
       const manifest = JSON.parse(readZipEntry(zip, 'agent-bundle/manifest.json').toString('utf8'));
       const { createdAt, ...identity } = manifest;
       if (manifest.format !== 'agentkit.agent-bundle/v1' || manifest.agentId !== agentId || buildIdFor(identity) !== buildId || !manifest.spec) throw new Error('bundle identity mismatch');
-      return {
+      return { zip, record: {
         metadata: { ...manifest.metadata, id: agentId, name: manifest.name, revision: manifest.revision },
         spec: { ...manifest.spec, bindings: manifest.bindings },
         bindings: manifest.bindings,
         buildId,
-      };
+      } };
     } catch (error) {
       throw new BuildError('BUILD_ARTIFACT_INVALID', '构建产物损坏或与 BuildId 不匹配', { agentId, buildId });
     }
   }
 
-  return { build, list, artifactPath, resolve };
+  async function resolve(agentId, buildId) { return (await verifiedArchive(agentId, buildId)).record; }
+  async function download(agentId, buildId) {
+    const { zip } = await verifiedArchive(agentId, buildId);
+    if (zip.length > 4 * 1024 * 1024) throw new BuildError('BUILD_DOWNLOAD_TOO_LARGE', '构建产物超过本地下载上限（4 MiB）');
+    return { filename: `${agentId}-${buildId}.zip`, contentType: 'application/zip', bytes: zip.length, base64: zip.toString('base64') };
+  }
+
+  return { build, list, artifactPath, resolve, download };
 }

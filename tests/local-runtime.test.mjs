@@ -1,11 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { createLocalConversationHandler } from '../src/local-runtime.mjs';
+import { createLocalConversationHandler, prepareLocalResourceContext } from '../src/local-runtime.mjs';
+
+test('memory context explains Host persistence and does not promise writes in read-only mode', async () => {
+  const memory = { config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } };
+  const resourceAdapter = { searchMemory: async () => [{ content: 'known fact' }] };
+  const prepare = mode => prepareLocalResourceContext({ record: { spec: { memory: { enabled: true, write: { mode } }, bindings: { plugins: [memory] } } }, input: '请记住验收标记', resourceAdapter, resourceMode: 'context-only' });
+  const writable = await prepare('candidate');
+  assert.match(writable.resourceContext, /Host.*完成后.*记忆库/);
+  assert.match(writable.resourceContext, /不能.*仅.*当前会话/);
+  assert.match(writable.resourceContext, /不能.*已保存/);
+  const readOnly = await prepare('off');
+  assert.equal(readOnly.memoryWrite, false);
+  assert.match(readOnly.resourceContext, /本轮不会写入/);
+});
 
 function responseSink() {
   return { headersSent: false, writableEnded: false, chunks: [], writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, write(chunk) { this.chunks.push(String(chunk)); }, end(chunk = '') { if (chunk) this.chunks.push(String(chunk)); this.writableEnded = true; } };
 }
+
+test('a revision-bound request uses the archived prompt and model instead of the edited Agent', async () => {
+  const response=responseSink();
+  const handler=createLocalConversationHandler({
+    agentStore:async()=>({get:async()=>{throw new Error('latest Agent must not be read');},getRevision:async(_id,revision)=>{assert.equal(revision,1);return {metadata:{name:'Original'},spec:{instructions:{system:'original persona'},bindings:{modelProfileId:'old-model'}}};}}),
+    modelService:{profile:async id=>{assert.equal(id,'old-model');return {baseUrl:'http://model.test/v1',apiKey:'test',modelName:id};}},
+    fetchImpl:async(_url,init)=>{assert.equal(JSON.parse(init.body).messages[0].content,'original persona');return new Response('data: {"choices":[{"delta":{"content":"original"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');},
+  });
+  await handler(Readable.from([JSON.stringify({agentId:'ar-local-aaaaaaaaaaaaaaaa',agentRevision:1,input:'身份'})]),response);
+  assert.equal(response.status,200);
+});
 
 function modelFetch() {
   let call = 0;
@@ -339,4 +363,14 @@ test('local runtime aborts the model stream and records a canceled trace', async
   assert.equal(traces[0].status, 'canceled');
   assert.equal(traces[0].events.at(-1).event_type, 'run.canceled');
   assert.doesNotMatch(response.chunks.join(''), /run\.failed/);
+});
+
+test('an explicitly disabled memory binding does not recall or write cloud data', async () => {
+  const binding = { config: { binding: { resource: { kind: 'memory-instance', id: 'memory-off' } } } };
+  const knowledge = { config: { binding: { resource: { kind: 'knowledge-base', id: 'kb' } } } };
+  const result = await prepareLocalResourceContext({ record: { spec: { memory: { enabled: false }, bindings: { plugins: [binding, knowledge] } } }, input: '记忆验收', resourceAdapter: { searchMemory: async () => { throw new Error('disabled memory must not be called'); }, searchKnowledge: async () => [{content:'KB-CANARY'}] }, resourceMode: 'context-only' });
+  assert.match(result.resourceContext, /长期记忆已关闭/);
+  assert.match(result.resourceContext, /Knowledge: KB-CANARY/);
+  assert.doesNotMatch(result.resourceContext, /Memory:/);
+  assert.equal(result.memoryWrite, false);
 });

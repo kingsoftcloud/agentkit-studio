@@ -6,8 +6,9 @@
  * them. Shape matches the browser's `{ metadata, spec, bindings }` contract.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, writeFile, rm, rename } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, rm, rename, link } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 export class AgentStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -57,6 +58,39 @@ export function createAgentStore({ storeDir } = {}) {
     return join(root, `${agentId}.json`);
   }
 
+  function revisionPath(agentId, revision) {
+    pathFor(agentId);
+    if (!Number.isSafeInteger(revision) || revision < 1) throw new AgentStoreError('INVALID_AGENT_REVISION','Agent Revision 无效');
+    return join(root,'revisions',agentId,`${revision}.json`);
+  }
+
+  async function captureRevision(value) {
+    const normalized = normalizeRecord(value);
+    const record = JSON.parse(JSON.stringify({metadata:normalized.metadata,spec:normalized.spec,bindings:normalized.bindings}));
+    const path = revisionPath(record.metadata.id,Number(record.metadata.revision));
+    await mkdir(dirname(path),{recursive:true,mode:0o700});
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try { await writeFile(temporary,JSON.stringify(record,null,2),{flag:'wx',mode:0o600}); await link(temporary,path); }
+    catch(error) {
+      if(error.code!=='EEXIST') throw error;
+      if(!isDeepStrictEqual(JSON.parse(await readFile(path,'utf8')),record)) throw new AgentStoreError('AGENT_REVISION_CONFLICT','已保存的 Agent Revision 不能被覆盖');
+    } finally { await rm(temporary,{force:true}); }
+    return record;
+  }
+
+  async function getRevision(agentId, revision) {
+    try { return normalizeRecord(JSON.parse(await readFile(revisionPath(agentId,Number(revision)),'utf8'))); }
+    catch(error) { if(error.code==='ENOENT') return null; throw error; }
+  }
+
+  async function listRevisions(agentId) {
+    const dir = dirname(revisionPath(agentId,1));
+    const names = await readdir(dir).catch(error=>{if(error.code==='ENOENT') return [];throw error;});
+    const revisions = [];
+    for(const name of names.filter(name=>/^[1-9][0-9]*\.json$/.test(name)).sort((a,b)=>parseInt(a)-parseInt(b))) revisions.push(await getRevision(agentId,parseInt(name)));
+    return revisions.filter(Boolean);
+  }
+
   async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {} }) {
     await ensureDir();
     const agentId = `ar-local-${randomUUID().replace(/-/g, '').slice(0, 16)}`;
@@ -75,6 +109,7 @@ export function createAgentStore({ storeDir } = {}) {
       bindings: normalizedBindings,
     };
     const target = pathFor(agentId);
+    await captureRevision(record);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
     await writeFile(tmp, JSON.stringify(record, null, 2));
     await renameSafe(tmp, target);
@@ -113,6 +148,7 @@ export function createAgentStore({ storeDir } = {}) {
   async function update(agentId, patch = {}) {
     const record = await get(agentId);
     if (!record) throw new AgentStoreError('AGENT_NOT_FOUND', '本地 Agent 不存在', { agentId });
+    await captureRevision(record);
     if (patch.name) record.metadata.name = String(patch.name);
     if (patch.description !== undefined) record.metadata.description = String(patch.description);
     if (patch.spec) record.spec = { ...record.spec, ...patch.spec, runtime: patch.spec?.runtime || record.spec?.runtime || { type: 'dsh-native' } };
@@ -124,6 +160,7 @@ export function createAgentStore({ storeDir } = {}) {
     record.bindings = normalized;
     record.metadata.revision = (Number(record.metadata.revision) || 1) + 1;
     record.metadata.updatedAt = new Date().toISOString();
+    await captureRevision(record);
     const target = pathFor(agentId);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
     await writeFile(tmp, JSON.stringify(record, null, 2));
@@ -134,8 +171,9 @@ export function createAgentStore({ storeDir } = {}) {
   async function remove(agentId) {
     await ensureDir();
     await rm(pathFor(agentId), { force: true });
+    await rm(dirname(revisionPath(agentId,1)),{recursive:true,force:true});
     return { agentId, deleted: true };
   }
 
-  return { create, list, get, update, remove, root };
+  return { create, list, get, update, remove, captureRevision, getRevision, listRevisions, root };
 }

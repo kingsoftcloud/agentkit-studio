@@ -67,3 +67,30 @@ test('manual run creates an occurrence instead of only listing history', async (
     assert.equal((await scheduler.listOccurrences('manual-run')).length, 1);
   } finally { await rm(store, { recursive: true, force: true }).catch(() => {}); }
 });
+
+test('the actual Studio form contract round-trips target, command, schedule and enable changes', async () => {
+  const store = await makeStore();
+  const scheduler = createStudioScheduler({ storeDir: store, tickIntervalMs: 600000, runner: async () => ({ runId: 'native-run' }) });
+  try {
+    const task = await scheduler.createSchedule('agent-a', { displayName: 'Skill probe', prompt: 'run probe', schedule: { kind: 'interval', everySeconds: 86400, timezone: 'Asia/Shanghai' } });
+    assert.equal(task.target.agentId, 'agent-a'); assert.equal(task.command.payload.content, 'run probe');
+    assert.equal(task.schedule.everySeconds, 86400);
+    const changed = await scheduler.updateSchedule(task.taskId, { prompt: 'edited', enabled: false, schedule: { kind: 'interval', everySeconds: 7200, timezone: 'Asia/Shanghai' } });
+    assert.equal(changed.command.payload.content, 'edited'); assert.equal(changed.schedule.everySeconds, 7200); assert.equal(changed.enabled, false);
+    await assert.rejects(() => scheduler.runNow(task.taskId), error => error.code === 'SCHEDULE_DISABLED');
+    await scheduler.updateSchedule(task.taskId, { enabled: true });
+    const occurrence = await scheduler.runNow(task.taskId); assert.equal(occurrence.runId, 'native-run'); assert.equal(occurrence.state, 'succeeded');
+  } finally { await rm(store, { recursive: true, force: true }); }
+});
+
+test('Cron uses the requested time zone and does not fire twice within one matching minute', async () => {
+  const store = await makeStore(); let now = Date.parse('2026-10-07T01:00:05Z');
+  const scheduler = createStudioScheduler({ storeDir: store, clock: { now: () => now }, tickIntervalMs: 600000, runner: async () => ({ runId: 'cron-run' }) });
+  try {
+    await scheduler.createSchedule('a', { taskId: 'cron-local', schedule: { kind: 'cron', expression: '0 9 * * 1-5', timezone: 'Asia/Shanghai' } });
+    await scheduler.createSchedule('a', { taskId: 'cron-utc', schedule: { kind: 'cron', expression: '0 9 * * 1-5', timezone: 'UTC' } });
+    await scheduler.tick(); now += 30000; await scheduler.tick();
+    assert.equal((await scheduler.listOccurrences('cron-local')).length, 1);
+    assert.equal((await scheduler.listOccurrences('cron-utc')).length, 0);
+  } finally { await scheduler.dispose(); await rm(store, { recursive: true, force: true }); }
+});

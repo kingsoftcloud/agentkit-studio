@@ -14,16 +14,18 @@ DSH_COMMIT ?= 639ed015397290b3745d163aafe02ffee4aa3f84
 DSH_REPO ?= https://github.com/deepseek-ai/deepseek-harness.git
 DSH_REF ?= dsh-v$(DSH_VERSION)
 PATCH_ROOT ?= $(abspath patches/dsh-v$(DSH_VERSION))
-DESKTOP_PLUGIN_INPUTS ?= $(abspath $(PACK_DIR))
+STUDIO_DESKTOP_INPUT = $(abspath $(PACK_DIR)/desktop-plugin-input/$(PLUGIN_VERSION))
+DESKTOP_PLUGIN_INPUTS ?= $(STUDIO_DESKTOP_INPUT)
 DESKTOP_PLUGIN_ROOTS ?= @kingsoftcloud/agentkit-studio
 DESKTOP_PLUGIN_BUNDLES ?= @kingsoftcloud/agentkit-studio
+DESKTOP_PRODUCT_ICON ?= $(abspath assets/agentkit-studio-macos.png)
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
 
 .PHONY: check test pack release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
-        desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package ci clean
+        desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package desktop-package-mac-arm64-unsigned ci clean
 
 check:
 	pnpm check
@@ -134,22 +136,30 @@ desktop-package-preflight: pack
 		&& grep -q "DSH_DESKTOP_PLUGIN_BUNDLES" "$(DSH_ROOT)/apps/desktop/src/project-manager.ts" \
 		|| (echo "DSH rc.2 desktop plugin package-set patch 未应用；先执行 make patch-apply DSH_ROOT=..." >&2; exit 2)
 	@test -f "$(PLUGIN_TARBALL)" || (echo "插件包不存在：$(PLUGIN_TARBALL)" >&2; exit 2)
+	@mkdir -p "$(STUDIO_DESKTOP_INPUT)"
+	@cp "$(PLUGIN_TARBALL)" "$(STUDIO_DESKTOP_INPUT)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz"
 
 desktop-package-mac-arm64: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:arm64
+	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:arm64
+
+# Local artifact uses the official runtime; no release feed or upload record.
+desktop-package-mac-arm64-unsigned: desktop-package-preflight
+	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
+	@rg -q 'invocation.unsigned && target.platform' "$(DSH_ROOT)/apps/desktop/scripts/package-target.ts" || (echo "DSH local macOS package patch 未应用；请应用 009-local-macos-package.patch" >&2; exit 2)
+	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm --dir apps/desktop run package mac-arm64 --unsigned
 
 desktop-package-mac-arm64-dir: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:arm64:dir
+	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:arm64:dir
 
 desktop-package-mac-x64: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:x64
+	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:x64
 
 desktop-package-mac-x64-dir: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:x64:dir
+	cd "$(DSH_ROOT)" && DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)" pnpm run package:desktop:mac:x64:dir
 
 desktop-check-package:
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS package checks must run on macOS" >&2; exit 2)

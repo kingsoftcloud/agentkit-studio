@@ -67,6 +67,20 @@ DMG 目标只能在 macOS 上运行，并且按官方 DSH 规则读取
 `$DSH_ROOT/apps/desktop/.env.macos`。该文件应从 `.env.macos.example` 生成，不能提交到仓库。
 没有签名、公证配置时，目标会主动失败；这表示环境未准备好，不代表 DMG 构建通过。
 
+本机安装验收可显式使用未签名产物（需要 `009-local-macos-package.patch`）：
+
+```sh
+make desktop-package-mac-arm64-unsigned DSH_ROOT="$DSH_ROOT"
+```
+
+该目标复用官方 Node、Python、package-set 和原生依赖流水线，导出到
+`apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/`。
+文件名包含 `unsigned`，不生成更新源或发布记录，也不会跳过正式目标的签名、公证检查。
+验收时应把 DMG 只读挂载、复制 App 到源码目录之外，使用独立的 `DSH_HOME` 和
+`AGENTKIT_HOME` 冷启动；移除 PATH 中的 Node/pnpm 后检查页面、模型设置、Agent 运行和
+退出再打开。离线启动与联网模型、云端资源运行分别记录。旧全局配置迁移仍可能读取
+`~/.agentengine/settings.json`，独立产品目录不等于干净系统账户。
+
 ## 提交前门禁
 
 ```sh
@@ -83,6 +97,19 @@ make release-check
 证据。CI 会从公网固定 rc.2 tag 运行两个 node-store probe；fixture 测试只能证明合同投影，
 不能替代模型、资源绑定、云端部署或签名 DMG 验收。
 
+运行适配器还可以在真实 DSH 公开 LLM registry 中单独校验：
+
+```sh
+AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-adapter.mjs
+# 已安装并配置 Codex 时读取真实 model/list；不启动推理回合
+AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-adapter.mjs --codex
+```
+
+不带 `--codex` 的目录是合成合同数据；带该参数读取本机 Codex 的真实目录。
+目录可见只证明合同可用，模型访问权限仍要由成功的实际会话验证。
+
 设置页的模型目录支持多个提供商和多个模型。请确认新增条目使用独立的
 `credentialName`，且恰好一个条目标记为默认；Agent Revision 的多模型绑定应在创建页或
 编辑页验证，不要把“默认模型”误当成“只能配置一个模型”。
+
+macOS 构建默认使用 `assets/agentkit-studio-macos.png`，可通过 `DESKTOP_PRODUCT_ICON` 指定其他绝对路径。打包后的 Info.plist 与 icns 必须核对实际图标；更换源文件不代表已安装的旧 App 已更新。安装包同时包含固定版本的官方 Codex CLI，启动它使用包内 Node。首次 Codex 认证仍由 Codex 的账户/配置合同负责；`AGENTKIT_CODEX_BIN` 可覆盖入口。

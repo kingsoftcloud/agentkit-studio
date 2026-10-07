@@ -47,6 +47,17 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   ]);
 });
 
+test('the selected Codex model reaches thread/start instead of inheriting another default', async () => {
+  let selected;
+  const runtime = createCodexRuntime({ model: 'configured-default', spawnImpl: () => {
+    const child = fakeSpawn(); const write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => { const message = JSON.parse(String(data)); if (message.method === 'thread/start') selected = message.params.model; return write(data, ...args); };
+    return child;
+  } });
+  for await (const chunk of runtime.stream({ input: 'hi', model: 'selected-model' })) { void chunk; }
+  assert.equal(selected, 'selected-model');
+});
+
 test('Codex runtime reports a typed provider error when spawn fails', async () => {
   const runtime = createCodexRuntime({ spawnImpl: () => { throw new Error('missing'); } });
   await assert.rejects(

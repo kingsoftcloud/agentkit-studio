@@ -7,6 +7,7 @@
  */
 import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.mjs';
 import { readSse } from '../sse.mjs';
+import { CODEX_PROVIDER } from './codex-models.mjs';
 
 const ROUTE = 'agentkit-studio';
 let activeAdapter;
@@ -27,6 +28,7 @@ export function bindDshAgentRoute(sessionId, binding = {}) {
     runtime: String(binding.runtime || 'harness').trim(),
     local: binding.local === true,
     buildId: String(binding.buildId || '').trim(),
+    agentRevision: binding.agentRevision,
     toolAdapter: binding.toolAdapter,
     nativeTools: binding.nativeTools === true,
   };
@@ -75,18 +77,27 @@ export async function executeDshResourceTool(input = {}) {
   return resourceToolExecutor(input);
 }
 
-export function streamDshRuntime(options, { agentId, runtime, local, buildId, toolAdapter, nativeTools } = {}) {
+export function streamDshRuntime(options, { agentId, runtime, local, buildId, agentRevision, toolAdapter, nativeTools } = {}) {
   const id = String(agentId || '').trim();
   if (!id || !activeAdapter) throw new Error('AgentKit Studio runtime bridge is unavailable');
   const mode = local === true ? 'local' : 'cloud';
   return activeAdapter.stream({
     ...options,
+    ...(options.provider === CODEX_PROVIDER ? { studioCodexModel: options.model } : {}),
     model: `${mode}:${id}`,
     studioRuntime: runtime,
     ...(buildId ? { buildId } : {}),
+    ...(agentRevision ? {agentRevision} : {}),
     ...(toolAdapter ? { studioToolAdapter: toolAdapter } : {}),
     ...(nativeTools ? { studioNativeTools: true } : {}),
   });
+}
+
+/** A single Host waterfall owns transport selection; unrelated LLM calls
+ * (including titles) retain their original adapter and credentials. */
+export function routeDshRuntime(options, next) {
+  const route = agentRoutes.get(String(options?.sessionId || '').trim());
+  return route ? streamDshRuntime(options, route) : next();
 }
 
 function textOf(message) {
@@ -463,8 +474,8 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, codexResourceContext, resourceAdapter, observability } = {}) {
-  return {
+export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, codexResourceContext, resourceAdapter, observability, AdapterBase } = {}) {
+  const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
     async prepareCall(provider, model) {
@@ -473,6 +484,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
     },
     async *stream(options = {}) {
       const routed = agentRoutes.get(String(options.sessionId || '').trim());
+      if (options.provider === CODEX_PROVIDER && !routed && !options.studioRuntime) throw Object.assign(new Error('请先绑定 Codex Agent，再选择 Codex 模型。'), { code: 'CODEX_AGENT_REQUIRED' });
       const model = String(options.model || '');
       const separator = model.indexOf(':');
       const mode = routed ? (routed.local ? 'local' : 'cloud') : separator > 0 ? model.slice(0, separator) : 'cloud';
@@ -481,12 +493,14 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
       const toolAdapter = options.studioToolAdapter || routed?.toolAdapter;
       const nativeTools = options.studioNativeTools === true || routed?.nativeTools === true;
       const buildId = String(options.buildId || routed?.buildId || '').trim();
+      const agentRevision = routed?.agentRevision || options.agentRevision;
       const toolAgent = routed?.agent || options.agent;
       const user = lastUser(options.messages);
       const input = textOf(user).trim();
       if (!agentId || !input) throw new Error('AgentKit Studio runtime requires an AgentId and user input');
       if (mode === 'local') {
         if (runtime === 'codex') {
+          if (options.provider && options.provider !== CODEX_PROVIDER) throw Object.assign(new Error('此 Agent 使用 Codex，请在原生模型选择器的 Codex 组选择模型。网关模型不适用于该运行时。'), { code: 'CODEX_MODEL_PROVIDER_MISMATCH' });
           if (!codexRuntime || typeof codexRuntime.stream !== 'function') {
             const error = new Error('Codex Provider 未注册；请安装并启用官方 Codex App Server Provider');
             error.code = 'CODEX_PROVIDER_UNAVAILABLE';
@@ -496,6 +510,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
             ? await codexResourceContext({
               agentId,
               buildId,
+              agentRevision,
               input,
               sessionId: String(options.sessionId || ''),
               userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
@@ -519,6 +534,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           try {
             yield* codexFrames(codexRuntime, {
               agentId,
+              model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? options.model : undefined),
               sessionId: String(options.sessionId || ''),
               input,
               messages: Array.isArray(options.messages) ? options.messages : [],
@@ -563,6 +579,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
         yield* localFrames(await localHandler(), {
           agentId,
           ...(buildId ? { buildId } : {}),
+          ...(agentRevision ? {agentRevision} : {}),
           sessionId: String(options.sessionId || ''),
           userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,
@@ -672,6 +689,9 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
       }
     },
   };
+  if (!AdapterBase) return adapter;
+  class StudioAdapter extends AdapterBase {}
+  return Object.assign(new StudioAdapter(), adapter);
 }
 
 export const route = ROUTE;

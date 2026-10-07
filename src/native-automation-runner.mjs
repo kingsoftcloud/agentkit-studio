@@ -1,0 +1,40 @@
+/** Run automated work through the same public DSH Session/Agent API as native chats. */
+export function createNativeAutomationRunner({ getService, admit, timeoutMs = 300000 } = {}) {
+  const service = name => {
+    const value = getService?.(name);
+    if (!value) throw Object.assign(new Error(`自动化需要 DSH ${name} 服务`), { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
+    return value;
+  };
+  return async ({ agentId, sessionId, occurrenceId, input, buildId = '', timeoutSeconds }) => service('agents').withoutInitiator(async () => {
+    const startedAt = Date.now();
+    const admission = await admit(agentId, buildId);
+    const controller = service('sessionController');
+    await controller.create({ sessionId, agentPreset: admission.presetId });
+    if (admission.modelSelection) await controller.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
+    const resolved = await controller.resolveAgent(sessionId);
+    if (resolved.error) throw resolved.error;
+    const agent = resolved.agent;
+    const signal = AbortSignal.timeout(timeoutSeconds ? Math.max(1000, Number(timeoutSeconds) * 1000) : timeoutMs);
+    const permission = await service('commands').execute(agent, '/permission read-only', [], signal);
+    if (!permission) throw Object.assign(new Error('自动化无法设置 Agent 只读权限'), { code: 'AUTOMATION_PERMISSION_UNAVAILABLE' });
+    await controller.prompt({ sessionId, requestId: occurrenceId, mode: 'queue', content: [{ type: 'text', text: String(input || '') }], clientTimeZone: 'Asia/Shanghai' }, signal);
+    await new Promise((resolve, reject) => {
+      const onAbort = () => { agent.cancel({ kind: 'user' }); reject(Object.assign(new Error('自动化运行超时'), { code: 'AUTOMATION_TIMEOUT' })); };
+      signal.addEventListener('abort', onAbort, { once: true });
+      agent.whenIdle().then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    });
+    const projection = await controller.projections({ sessionId }, signal);
+    const page = await controller.page({ address: { kind: 'session', sessionId }, throughSeq: projection?.asOfSeq ?? -1, maxMessages: 200 }, signal);
+    const events = (page?.records || []).filter(item => item.type === 'event').map(item => item.event);
+    const end = events.findLast(item => item.type === 'turn/end');
+    if (end?.data?.reason?.kind !== 'completed') {
+      const reason = end?.data?.reason;
+      throw Object.assign(new Error(reason?.error?.message || `自动化运行未完成：${reason?.kind || '没有回合结束记录'}`), { code: reason?.error?.code || 'AUTOMATION_RUN_FAILED' });
+    }
+    const messages = events.filter(event => event.type === 'assistant/message');
+    const output = (messages.at(-1)?.data?.message?.content || []).filter(part => part.type === 'text').map(part => part.text || '').join('');
+    const usages = messages.map(event => event.data?.usage).filter(Boolean);
+    const tokenUsage = usages.length ? { inputTokens: usages.reduce((sum, usage) => sum + Number(usage.inputTokens || 0) + Number(usage.cacheReadTokens || 0) + Number(usage.cacheWriteTokens || 0), 0), outputTokens: usages.reduce((sum, usage) => sum + Number(usage.outputTokens || 0), 0) } : {};
+    return { sessionId, runId: `dsh:${sessionId}:${end.seq}`, output, tokenUsage, latencyMs: Date.now() - startedAt, toolCalls: events.filter(event => event.type === 'tool/call').map(event => ({ name: event.data.name, callId: event.data.callId })) };
+  });
+}

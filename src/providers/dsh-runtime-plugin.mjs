@@ -5,12 +5,12 @@
  */
 
 export const name = 'agentkit-studio-dsh-runtime';
-export const inject = ['tools'];
+export const inject = ['tools', 'skills'];
 const AGENT_REQUEST_EVENT = ['agent', 'request'].join('/');
 import { spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bindDshAgentRoute, executeDshResourceTool, streamDshRuntime, unbindDshAgentRoutes } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
+import { bindDshAgentRoute, executeDshResourceTool, unbindDshAgentRoutes } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
 
 // Keep the builtin executor in the Studio host. The Python toolset remains
 // the source of truth for AgentEngine tool semantics (workspace confinement,
@@ -282,11 +282,21 @@ function createToolAdapter(ctx, bindings) {
 export function apply(ctx, config = {}) {
   const agentId = String(config.agentId || '').trim();
   if (!agentId) throw new Error('agentkit-studio-dsh-runtime: agentId is required');
+  const skills = Array.isArray(config.skillDefinitions) ? config.skillDefinitions : [];
+  if (skills.length) {
+    if (typeof ctx.skills?.register !== 'function') throw new Error('DSH SkillRegistry 不可用');
+    const install = () => {
+      const disposers = skills.map(skill => ctx.skills.register(skill));
+      return () => disposers.forEach(dispose => dispose?.());
+    };
+    if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: bound skills');
+    else install();
+  }
   registerBuiltinTools(ctx, config.toolContracts, config);
   registerMcpTools(ctx, config.toolContracts, config);
   const toolAdapter = createToolAdapter(ctx, config.toolBindings);
   const nativeTools = config.local === true
-    && (Array.isArray(config.toolContracts) ? config.toolContracts : []).some(contract => ['mcp', 'builtin'].includes(contract?.executor));
+    && (skills.length > 0 || (Array.isArray(config.toolContracts) ? config.toolContracts : []).some(contract => ['mcp', 'builtin'].includes(contract?.executor)));
   // The Agent loop dispatches its request waterfall through the selected Agent
   // scope, then invokes `llm.stream` from the root loop context. Bind the
   // Studio provider at the scoped request boundary so the root adapter can
@@ -300,6 +310,7 @@ export function apply(ctx, config = {}) {
       runtime: config.runtime,
       local: config.local === true,
       buildId: config.buildId,
+      agentRevision: config.agentRevision,
       toolAdapter,
       nativeTools,
     });
@@ -308,17 +319,8 @@ export function apply(ctx, config = {}) {
     // provider here would make the native picker appear to switch models.
     return resolved;
   });
-  // Keep the DSH request header on the user's selected provider/model. The
-  // scoped waterfall owns only this Agent's model transport, which avoids
-  // showing an internal `agentkit-studio/local:*` model in the native UI.
-  ctx.on('llm/stream', options => streamDshRuntime(options, {
-    agentId,
-    runtime: config.runtime,
-    local: config.local === true,
-    buildId: config.buildId || '',
-    toolAdapter,
-    nativeTools,
-  }));
+  // llm/stream is a Host-wide event, not a preset-scoped Agent event.
+  // The Host listener uses the route registered above for this Session only.
   if (typeof ctx.effect === 'function') ctx.effect(() => () => unbindDshAgentRoutes(agentId), 'agentkit-studio: runtime route cleanup');
 }
 

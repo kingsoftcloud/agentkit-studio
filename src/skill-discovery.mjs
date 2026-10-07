@@ -6,7 +6,7 @@
  * Studio store. Paths are only read, never executed.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -46,7 +46,8 @@ export function parseFrontmatter(source) {
 function relativeDisplay(path, roots) {
   for (const root of roots) {
     const rel = relative(root, path);
-    if (rel && !rel.startsWith('..') && !resolve(rel).startsWith('..')) return rel.split(sep).join('/');
+    if (!rel) return '.';
+    if (!rel.startsWith('..')) return rel.split(sep).join('/');
   }
   return path.split(sep).join('/');
 }
@@ -80,7 +81,6 @@ async function directoryDigest(files) {
 export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
   const store = resolve(storeDir || join(home, '.agentkit', 'studio', 'skills'));
   const records = new Map();
-  const rootsForDisplay = [home];
 
   function expandScanPaths(scanPaths) {
     const requested = (Array.isArray(scanPaths) && scanPaths.length ? scanPaths : []).map(item => String(item || '').trim()).filter(Boolean);
@@ -92,31 +92,33 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
 
   async function discover(scanPaths = null) {
     const scans = expandScanPaths(scanPaths);
-    const candidates = [];
+    const candidates = [], sourceDirectories = new Map();
     const seen = new Set();
     for (const scan of scans) {
       let manifests;
       try { manifests = await listFiles(scan.root, scan.root, 0).then(files => files.filter(file => basename(file.absolute) === 'SKILL.md' && file.relative.split('/').length <= MAX_DEPTH + 1)); }
       catch { continue; }
       for (const manifest of manifests) {
-        const directory = dirname(manifest.absolute);
-        const relativePath = relativeDisplay(directory, [scan.root]);
-        const identity = `${scan.source}:${relativePath}`;
+        const directory = await realpath(dirname(manifest.absolute));
+        const relativePath = relativeDisplay(dirname(manifest.absolute), [scan.root]);
+        const identity = directory;
         if (seen.has(identity)) continue;
         seen.add(identity);
-        candidates.push(await inspectCandidate(directory, scan, relativePath));
+        const candidate = await inspectCandidate(directory, scan, relativePath);
+        candidates.push(candidate);
+        sourceDirectories.set(candidate.candidateId, directory);
       }
     }
     candidates.sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.path.localeCompare(b.path));
     const token = `skd_${randomUUID().replace(/-/g, '')}`;
-    records.set(token, { token, candidates, expiresAt: Date.now() + RECORD_TTL_MS });
+    records.set(token, { token, candidates, sourceDirectories, expiresAt: Date.now() + RECORD_TTL_MS });
     for (const [key, value] of records) if (value.expiresAt < Date.now()) records.delete(key);
     return { format: 'agentkit.skill-discovery/v1', inspectionToken: token, scanPaths: scans.map(scan => scan.displayRoot), candidates, requiresConfirmation: true };
   }
 
   async function inspectCandidate(directory, scan, relativePath) {
-    const candidateId = 'skill_' + createHash('sha256').update(`${scan.source}:${relativePath}`).digest('hex').slice(0, 16);
-    const displayPath = `${scan.displayRoot}/${relativePath}`;
+    const candidateId = 'skill_' + createHash('sha256').update(directory).digest('hex').slice(0, 16);
+    const displayPath = relativePath === '.' ? scan.displayRoot : `${scan.displayRoot}/${relativePath}`;
     try {
       const files = await listFiles(directory);
       const metadata = parseFrontmatter(await readFile(join(directory, 'SKILL.md'), 'utf8'));
@@ -163,15 +165,17 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
     return found;
   }
 
-  function sourceDirectory(candidate) {
-    const absolute = resolve(candidate.path.startsWith('~/') ? join(home, candidate.path.slice(2)) : candidate.path);
-    if (!absolute.startsWith(resolve(home))) throw new SkillDiscoveryError('SKILL_DISCOVERY_PATH_INVALID', '候选路径越界', { path: candidate.path });
-    return absolute;
+  function sourceDirectory(token, candidate) {
+    // Only the server-recorded directory from this explicit scan is admitted.
+    // Display paths and browser payloads never become filesystem authority.
+    const directory = record(token).sourceDirectories.get(candidate.candidateId);
+    if (!directory) throw new SkillDiscoveryError('SKILL_DISCOVERY_PATH_INVALID', '候选目录不在本次扫描中');
+    return directory;
   }
 
   async function previewDiscovered(token, candidateId, filePath = '') {
     const candidate = candidateOf(token, candidateId);
-    const directory = sourceDirectory(candidate);
+    const directory = sourceDirectory(token, candidate);
     if (!filePath) {
       const files = await listFiles(directory);
       return { files: files.map(file => ({ path: file.relative, size: file.size })) };
@@ -188,7 +192,7 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
   async function commitDiscovered(token, candidateId, overwrite = false) {
     const candidate = candidateOf(token, candidateId);
     if (candidate.status === 'invalid') throw new SkillDiscoveryError('SKILL_IMPORT_FAILED', '候选 Skill 无法解析', { candidateId });
-    const directory = sourceDirectory(candidate);
+    const directory = sourceDirectory(token, candidate);
     const destination = join(store, candidate.name);
     if (!overwrite) {
       let exists = false;

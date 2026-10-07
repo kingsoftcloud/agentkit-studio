@@ -4,7 +4,7 @@
  * OTLP-shaped JSON files under ~/.agentkit/studio/traces. The read model
  * serves overview, list, detail, and raw OTLP to the observability page.
  */
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -38,12 +38,22 @@ function projectSpans(events) {
 }
 
 function extractTokenUsage(events) {
-  let inputTokens = 0, outputTokens = 0;
+  let inputTokens = 0, outputTokens = 0, reported = false;
   for (const event of events) {
     const usage = event?.payload?.usage || event?.payload?.tokenUsage;
-    if (usage) { inputTokens += Number(usage.input_tokens || usage.inputTokens || 0); outputTokens += Number(usage.output_tokens || usage.outputTokens || 0); }
+    if (usage) { reported = true; inputTokens += Number(usage.input_tokens || usage.inputTokens || 0); outputTokens += Number(usage.output_tokens || usage.outputTokens || 0); }
   }
-  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+  return reported ? { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens } : { inputTokens: null, outputTokens: null, totalTokens: null };
+}
+
+function normalizeTrace(record) {
+  const duration = Date.parse(record.completedAt) - Date.parse(record.startedAt);
+  const tokenUsage = extractTokenUsage(record.events || []);
+  const spans = (record.spans || []).map(span => ({ ...span, durationMs: Math.max(0, Date.parse(span.endedAt) - Date.parse(span.startedAt)) || 0 }));
+  const otlp = structuredClone(record.otlp);
+  const otlpTraceId = createHash('sha256').update(String(record.traceId)).digest('hex').slice(0, 32);
+  for (const resource of otlp?.resourceSpans || []) for (const scope of resource.scopeSpans || []) for (const span of scope.spans || []) { span.traceId = otlpTraceId; if (span.kind === 'INTERNAL') span.kind = 1; if (!span.parentSpanId) delete span.parentSpanId; }
+  return { ...record, spans, otlp, durationMs: Number.isFinite(duration) ? Math.max(0, duration) : null, runId: record.runId || record.events?.find(event => event.run_id)?.run_id || record.traceId, tokenUsage, totalTokens: tokenUsage.totalTokens };
 }
 
 export function createStudioObservability({ storeDir } = {}) {
@@ -70,7 +80,7 @@ export function createStudioObservability({ storeDir } = {}) {
     try { names = await readdir(storeDir); } catch { return []; }
     const records = [];
     for (const name of names.filter(item => item.endsWith('.json')).sort()) {
-      try { records.push(JSON.parse(await readFile(join(storeDir, name), 'utf8'))); } catch { /* skip */ }
+      try { records.push(normalizeTrace(JSON.parse(await readFile(join(storeDir, name), 'utf8')))); } catch { /* skip */ }
     }
     return records;
   }
@@ -91,18 +101,21 @@ export function createStudioObservability({ storeDir } = {}) {
     }
     const agentMap = {};
     for (const record of records) { const key = record.agentId || 'unknown'; if (!agentMap[key]) agentMap[key] = { agentId: key, agentName: record.agentName || key, runs: 0 }; agentMap[key].runs++; }
-    return { buckets: Object.values(buckets).sort((a, b) => a.startedAt.localeCompare(b.startedAt)), totalRuns: records.length, totalTokens: records.reduce((sum, r) => sum + (r.tokenUsage?.totalTokens || 0), 0), agents: Object.values(agentMap) };
+    const completed = records.filter(record => ['completed', 'succeeded'].includes(record.status)).length;
+    const durations = records.map(record => record.durationMs).filter(Number.isFinite);
+    return { total: records.length, successRate: records.length ? completed / records.length : null, avgDurationMs: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null, buckets: Object.values(buckets).sort((a, b) => a.startedAt.localeCompare(b.startedAt)), totalRuns: records.length, totalTokens: records.some(record => record.totalTokens !== null) ? records.reduce((sum, r) => sum + (r.totalTokens || 0), 0) : null, agents: Object.values(agentMap) };
   }
 
   async function list({ range = '24h', agentId, query, limit = 200 } = {}) {
     const ms = parseRange(range);
     const cutoff = Date.now() - ms;
-    const records = (await loadAll()).filter(record => new Date(record.startedAt).getTime() >= cutoff && (!agentId || record.agentId === agentId) && (!query || `${record.agentName} ${record.traceId} ${record.status}`.toLowerCase().includes(String(query).toLowerCase())));
-    return { items: records.slice(0, Number(limit)).map(record => ({ traceId: record.traceId, agentId: record.agentId, agentName: record.agentName, sessionId: record.sessionId, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt, tokenUsage: record.tokenUsage, spanCount: record.spanCount })) };
+    const records = (await loadAll()).filter(record => new Date(record.startedAt).getTime() >= cutoff && (!agentId || record.agentId === agentId) && (!query || `${record.agentName} ${record.agentId} ${record.traceId} ${record.runId} ${record.sessionId} ${record.status}`.toLowerCase().includes(String(query).toLowerCase())));
+    records.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+    return { items: records.slice(0, Number(limit)).map(record => ({ runId: record.runId, durationMs: record.durationMs, totalTokens: record.totalTokens, traceId: record.traceId, agentId: record.agentId, agentName: record.agentName, sessionId: record.sessionId, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt, tokenUsage: record.tokenUsage, spanCount: record.spanCount })) };
   }
 
   async function get(traceId) {
-    try { return JSON.parse(await readFile(join(storeDir, `${traceId}.json`), 'utf8')); } catch { return null; }
+    try { return normalizeTrace(JSON.parse(await readFile(join(storeDir, `${traceId}.json`), 'utf8'))); } catch { return null; }
   }
 
   async function getOtlp(traceId) {

@@ -6,6 +6,7 @@
  * - openai-bundled/<plugin>/<version>/.mcp.json
  * This module projects those directories into the marketplace item shape.
  */
+import { resolveCodexCommand } from './providers/codex-command.mjs';
 import { readdir, readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -34,7 +35,8 @@ function parseFrontmatter(source) {
   return metadata;
 }
 
-export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, executable = process.env.AGENTKIT_CODEX_BIN || 'codex', execImpl = promisify(execFile) } = {}) {
+export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, executable, execImpl = promisify(execFile) } = {}) {
+  const command = resolveCodexCommand({ executable });
   const cacheRoot = codexHome ? join(codexHome, 'plugins', 'cache') : join(homedir(), '.codex', 'plugins', 'cache');
   function cliOptions(timeout) { return { timeout, windowsHide: true, ...(codexHome ? { env: { ...process.env, CODEX_HOME: codexHome } } : {}) }; }
 
@@ -47,7 +49,7 @@ export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, e
     // rows with installed/enabled flags and marketplace names. The CLI also
     // exposes add/remove for the lifecycle actions.
     try {
-      const { stdout } = await execImpl(executable, ['plugin', 'list', '--json'], cliOptions(60000));
+      const { stdout } = await execImpl(command.executable, [...command.prefixArgs, 'plugin', 'list', '--json'], cliOptions(60000));
       const parsed = JSON.parse(String(stdout || '{}'));
       if (!Array.isArray(parsed.installed) || !Array.isArray(parsed.available)) throw new Error('Codex plugin list returned no inventory');
       const rows = [...(parsed.installed || []), ...(parsed.available || [])];
@@ -144,7 +146,7 @@ export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, e
     const spec = name.includes('@') ? name : marketplaceName ? `${name}@${String(marketplaceName).trim()}` : name;
     if (!/^[^\s@]+@[^\s@]+$/.test(spec) || spec.startsWith('-')) throw new StudioCodexPluginsError('CODEX_PLUGIN_MARKETPLACE_MISSING', '请使用完整插件标识：插件名@市场名');
     try {
-      const { stdout } = await execImpl(executable, ['plugin', operation, spec, '--json'], cliOptions(120000));
+      const { stdout } = await execImpl(command.executable, [...command.prefixArgs, 'plugin', operation, spec, '--json'], cliOptions(120000));
       return { ok: true, pluginId: spec, output: String(stdout || '').slice(-1200), note: operation === 'add' ? 'Codex 插件已安装；新建 Codex Agent 会话后加载，连接器按 Codex 的授权状态使用。' : 'Codex 插件已卸载。' };
     } catch (error) {
       throw new StudioCodexPluginsError('CODEX_PLUGIN_OPERATION_FAILED', String(error?.stderr || error?.message || 'Codex 插件操作失败').trim().slice(-1200), { pluginId: spec, operation });

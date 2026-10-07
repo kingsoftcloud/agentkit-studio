@@ -5,7 +5,7 @@
 ## 基线
 
 - DSH 版本：`0.2.0-rc.2`
-- 基线 commit：`4878cdabd87d4041bdaff61d04c966883b9fd07a`
+- 基线 commit：`639ed015397290b3745d163aafe02ffee4aa3f84`
 - 上游 checkout：由 `DSH_ROOT` 指定，不能写死本机路径
 
 ## 补丁顺序
@@ -17,7 +17,7 @@ DSH_ROOT=/path/to/deepseek-harness
 PATCH_ROOT=/path/to/agentkit-studio/patches/dsh-v0.2.0-rc.2
 
 test "$(git -C "$DSH_ROOT" rev-parse HEAD)" = \
-  4878cdabd87d4041bdaff61d04c966883b9fd07a
+  639ed015397290b3745d163aafe02ffee4aa3f84
 for patch in "$PATCH_ROOT"/*.patch; do
   git -C "$DSH_ROOT" apply --check "$patch"
 done
@@ -40,3 +40,5 @@ done
 | `006-desktop-plugin-package-set.patch` | 让官方 Desktop package-set 接受额外的 Studio tarball，并把 Studio bundle 写入内置 Profile | 上游支持外部产品 bundle 的 Desktop package-set/profile 配置 |
 | `007-sidebar-session-filter.patch` | 在 `ui-workspace/tree.ts` 新增模块级 `registerSessionFilter` API，让插件按 Agent 过滤侧栏会话列表 | 上游提供 `sidebar.workspaces.session.filter` 公共 slot |
 | `008-agent-session-without-workspace.patch` | 允许已有 Agent 会话在未选择 Workspace 时直接使用原生 composer；Workspace 仍可作为 cwd/文件工具上下文 | 上游把 Workspace 从会话发送前置条件改为可选上下文 |
+| `009-local-macos-package.patch` | 显式 `--unsigned` macOS 本地测试包复用官方离线运行时流水线；根 manifest 保留产品 bundle，干净 Profile 使用该 bundle，启动器从根 manifest 解析插件；Studio 跳过仅适用于 DeepSeek 的 welcome。支持产品名称和 macOS 图标覆盖，保留普通 DSH 默认品牌；正式签名、公证与发布门禁保持启用 | 上游提供 macOS 本地验收包、产品首次配置和打包插件解析的等价合同 |
+| `010-session-model-default.patch` | 为公开 `session.selectModel` 增加可选 `saveDefault: false`，Agent 绑定和自动化只修改自己的会话模型；普通模型选择器仍保存默认值 | 上游提供会话模型选择与全局默认值分离的合同 |

@@ -44,6 +44,7 @@ function normalizeProfiles(value) {
   if (!Array.isArray(value)) return [];
   const profiles = value.filter(record).map(profile => ({
     id: scalar(profile.id) || `${scalar(profile.provider) || 'provider'}:${scalar(profile.modelName) || scalar(profile.model)}`,
+    ...(scalar(profile.displayName) ? {displayName:scalar(profile.displayName)} : {}),
     provider: scalar(profile.provider) || 'ksyun',
     modelName: scalar(profile.modelName) || scalar(profile.model),
     baseUrl: scalar(profile.baseUrl) || scalar(profile.baseURL) || '',

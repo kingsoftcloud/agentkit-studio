@@ -46,7 +46,14 @@
           : []),
       ];
       const runtimeLabel = runtimeOptions.find(item => item.runtimeType === form.runtime)?.displayName || form.runtime;
-      const templates = [['blank', '通用助手', '干净的 DSH Native Agent，创建后按需绑定能力。'], ['research', '研究助手', '适合资料检索、分析和带来源输出。']];
+      const templates = [['blank', '通用助手', '干净的 DSH Native Agent，创建后按需绑定能力。', '你是一个可靠的通用助手，请直接回答用户问题；信息不足时先提出澄清问题。'], ['research', '研究助手', '适合资料检索、分析和带来源输出。', '你是研究助手。先明确问题与范围，优先使用已绑定的检索资源验证事实；回答给出来源，区分确认事实与推测。缺少资源或证据时直接说明，不得编造引用。']];
+      const chooseTemplate = value => setForm(previous => {
+        const next = templates.find(item => item[0] === value), old = templates.find(item => item[0] === previous.template);
+        return { ...previous, template: value,
+          name: previous.name === '我的第一个 Agent' || previous.name === old?.[1] ? next[1] : previous.name,
+          description: !previous.description.trim() || previous.description === old?.[2] ? next[2] : previous.description,
+          prompt: !previous.prompt.trim() || previous.prompt === old?.[3] ? next[3] : previous.prompt };
+      });
       const steps = mode === 'one-click'
         ? [['选择模板', '确定一键创建的起点'], ['绑定能力', '模型、Tool、MCP、Skill'], ['运行策略', '执行目标与权限'], ['检查并创建', '确认后写入 Host']]
         : [['定义 Agent', '身份、Prompt 与用途'], ['绑定能力', '模型、Tool、MCP、Skill'], ['运行策略', '执行目标与权限'], ['检查并创建', '确认后写入 Host']];
@@ -59,7 +66,7 @@
       useEffect(() => {
         let alive = true;
         setCatalogStatus('loading');
-        Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => hostRemote.resources(kind)))
+        Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => kind === 'model' && form.runtime === 'codex' && !cloudEditing ? hostRemote.codexModels() : hostRemote.resources(kind)))
           .then(results => {
             if (!alive) return;
             const next = {};
@@ -68,9 +75,10 @@
                 ? results[index].value.items : [];
             });
             setCatalog(next);
-            if (!editing) {
-              setSelectedModel(current => current || next.model?.[0]?.resourceId || '');
-              setSelectedModels(current => current.length ? current : (next.model?.[0]?.resourceId ? [next.model[0].resourceId] : []));
+            const defaultId = results[0]?.value?.defaultModel || next.model?.[0]?.resourceId || '';
+            if (!editing || form.runtime === 'codex') {
+              setSelectedModel(current => next.model.some(item => item.resourceId === current) ? current : defaultId);
+              setSelectedModels(current => { const valid = current.filter(id => next.model.some(item => item.resourceId === id)); return valid.length ? valid : (defaultId ? [defaultId] : []); });
             }
             if (next.model.length) setCatalogStatus('ready');
             else {
@@ -80,18 +88,18 @@
             }
           });
         return () => { alive = false; };
-      }, []);
+      }, [form.runtime]);
 
       const canNext = step === 0
         ? Boolean(form.id.trim() && form.name.trim())
-        : step === 1 ? (cloudEditing || Boolean(selectedModel)) : true;
+        : step === 1 || step === 3 ? (cloudEditing || (catalogStatus === 'ready' && Boolean(selectedModel))) : true;
 
       const create = async () => {
-        if (saving || !form.id.trim() || !form.name.trim() || (!cloudEditing && !selectedModel)) return;
+        if (saving || !form.id.trim() || !form.name.trim() || (!cloudEditing && (catalogStatus !== 'ready' || !selectedModel))) return;
         setSaving(true); setError('');
         const id = form.id.trim().toLowerCase();
         try {
-          const prompt = form.prompt.trim() || form.description.trim() || '你是一个可靠的通用助手，请直接回答用户问题；信息不足时先提出澄清问题。';
+          const prompt = form.prompt.trim() || (mode === 'one-click' ? templates.find(item => item[0] === form.template)?.[3] : '') || form.description.trim() || templates[0][3];
           // The managed Harness executes through the local host process. Its
           // runtime admission contract requires this capability explicitly;
           // without it the build can succeed but conversation-surface must
@@ -133,7 +141,7 @@
       const templateCards = mode === 'one-click' ? h('div', { style: { marginBottom: '20px' } },
         h('div', { style: { color: BRAND.ink, fontSize: '13px', fontWeight: 800, marginBottom: '10px' } }, '选择一键模板'),
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' } }, templates.map(([value, title, detail]) => h('button', {
-          key: value, type: 'button', onClick: () => update('template', value),
+          key: value, type: 'button', onClick: () => chooseTemplate(value),
           style: { minHeight: '88px', textAlign: 'left', border: '1px solid ' + (form.template === value ? BRAND.accentStrong : BRAND.border), borderRadius: '10px', padding: '13px', background: form.template === value ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' },
         }, h('div', { style: { fontWeight: 800, fontSize: '13px' } }, title), h('div', { style: { marginTop: '5px', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, detail))))) : null;
 
@@ -162,6 +170,7 @@
       ) : step === 1 ? h(React.Fragment, null,
         cloudEditing ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '11px 12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55 } }, '当前是云端 Agent。模型、MCP、本地 Skill 和 Tool 由 AgentEngine Runtime 自身管理；本页只保存知识库、记忆库和 Skill Center 这三类云端 ComponentConfig。') : null,
         !cloudEditing ? h('div', { style: { marginBottom: '14px', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55 } }, '模型、MCP、Skill 支持多选；知识库和记忆库各选一个。保存后形成新的 Agent 配置版本。') : null,
+        !cloudEditing && form.runtime === 'codex' ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, '以下模型来自本地 Codex 配置和模型目录，使用 Codex 的登录状态。网关模型凭证不用于 Codex。') : null,
         !cloudEditing ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginBottom: '10px' } },
           h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '默认模型', h('select', { value: selectedModel, onChange: event => { setSelectedModel(event.target.value); setSelectedModels(current => current.includes(event.target.value) ? current : [event.target.value, ...current]); }, style: inputStyle() }, h('option', { value: '' }, catalogStatus === 'loading' ? '正在读取模型…' : '请选择模型'), catalog.model.map(resource => h('option', { key: resource.resourceId, value: resource.resourceId }, `${resource.displayName || resource.name} · ${resource.resourceId}`)))),
           h('div', { style: { marginTop: '12px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '可用模型（可多选）'),
@@ -253,7 +262,8 @@
     }
 
     function McpResourceDialog({ resource, onClose, onCreated }) {
-      const editing = Boolean(resource?.resourceId);
+      const [savedResourceId, setSavedResourceId] = useState(resource?.resourceId || '');
+      const editing = Boolean(savedResourceId);
       const server = resource?.server || {};
       const existingEnvRefs = server.envRefs && typeof server.envRefs === 'object' ? server.envRefs : {};
       const existingAuthorization = String(existingEnvRefs.Authorization || '');
@@ -282,16 +292,20 @@
         setSaving(true);
         try {
           if (credentialName && form.apiKeyValue.trim()) await hostRemote.putCredential(credentialName, form.apiKeyValue.trim());
-          if (credentialName && form.apiKeyValue.trim()) envRefs[form.transport === 'stdio' ? credentialName : 'Authorization'] = `env://${credentialName}`;
+          if (credentialName) envRefs[form.transport === 'stdio' ? credentialName : 'Authorization'] = `env://${credentialName}`;
           const payload = {
             displayName: form.displayName.trim(), description: form.description.trim(),
             server: { name, version: form.version.trim() || '1.0.0', transport: form.transport, endpointUrl: form.endpointUrl.trim() || undefined, command: form.command.trim() || undefined, args: form.args.split(/\s+/).map(item => item.trim()).filter(Boolean), envRefs },
           };
-          const saved = editing ? await hostRemote.updateMcpResource(resource.resourceId, payload) : await hostRemote.createMcpResource(payload);
+          const saved = editing ? await hostRemote.updateMcpResource(savedResourceId, payload) : await hostRemote.createMcpResource(payload);
+          const id = saved.resourceId || savedResourceId;
+          setSavedResourceId(id);
+          onCreated?.(saved);
           // A newly added MCP is not bindable until the Host has performed a
           // real probe and persisted its tool contract. The probe stays on the
           // Host; the browser never connects.
-          await hostRemote.probeMcpResource(saved.resourceId || resource.resourceId);
+          try { await hostRemote.probeMcpResource(id); }
+          catch (reason) { setError(`配置已保存，探测失败：${reason?.message || 'MCP 连接不可用'}。修改后重试会更新同一资源。`); return; }
           onCreated?.(saved);
           onClose();
         } catch (reason) { setError(reason?.message || (editing ? 'MCP 更新失败' : 'MCP 创建失败')); }
@@ -421,7 +435,7 @@
         try { for (const id of selected) await hostRemote.commitDiscoveredSkill(discovery.inspectionToken, id, false); onImported?.(); onClose(); }
         catch (reason) { setStatus('error'); setError(reason?.message || 'Skill 导入失败；冲突项需要重新扫描后确认覆盖。'); }
       };
-      return h(ResourceDialog, { title: '发现本地 Skill', detail: '扫描安全默认目录或指定工作区相对路径，预览后确认导入。', onClose },
+      return h(ResourceDialog, { title: '发现本地 Skill', detail: '扫描默认目录或指定目录，预览后确认导入。', onClose },
         h('div', { style: { display: 'grid', gap: '12px' } },
           h('div', { style: { display: 'flex', gap: '8px', alignItems: 'end' } }, h('label', { style: { flex: 1, display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '扫描目录（逗号分隔）', h('input', { value: scanPaths, onChange: event => setScanPaths(event.target.value), placeholder: '留空扫描 skills, .agents/skills, .codex/skills, .claude/skills', style: inputStyle() })), h('button', { type: 'button', disabled: status === 'scanning', onClick: scan, style: buttonStyle() }, status === 'scanning' ? '扫描中…' : '扫描')),
           error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
@@ -450,6 +464,7 @@
             description: form.description.trim(),
             spec: { provider: 'openai-compatible', model: form.model.trim(), endpointUrl: form.endpointUrl.trim(), credentialRef: form.credentialRef.trim() || undefined, wireApi: 'chat' },
           });
+          window.dispatchEvent(new CustomEvent('agentkit-studio:model-changed'));
           onCreated?.(result); onClose();
         } catch (reason) { setError(reason?.message || '模型创建失败'); }
         finally { setSaving(false); }

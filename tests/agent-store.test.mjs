@@ -5,6 +5,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentStore, normalizeAgentBindings } from '../src/agent-store.mjs';
 
+test('editing and reopening preserve immutable Agent revisions for older native Sessions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agent-revisions-'));
+  try {
+    const store = createAgentStore({storeDir:root});
+    const first = await store.create({name:'Before',spec:{instructions:{system:'r1'},bindings:{modelProfileId:'model-a'}}});
+    await store.update(first.metadata.id,{name:'After',spec:{instructions:{system:'r2'},bindings:{modelProfileId:'model-b'}}});
+    const reopened = createAgentStore({storeDir:root});
+    assert.equal((await reopened.getRevision(first.metadata.id,1)).spec.instructions.system,'r1');
+    assert.equal((await reopened.getRevision(first.metadata.id,2)).spec.instructions.system,'r2');
+    assert.equal((await reopened.listRevisions(first.metadata.id)).length,2);
+    await assert.rejects(()=>reopened.captureRevision({...first,spec:{instructions:{system:'changed'}}}),{code:'AGENT_REVISION_CONFLICT'});
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
+
 const cloudSkillSpace = 'bcb4df65-2448-4c8a-99ca-62a12d26bce9';
 
 test('legacy UUID Skill binding is migrated to a cloud Skill Space while local IDs stay local', () => {

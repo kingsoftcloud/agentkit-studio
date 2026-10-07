@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DshPresetAdmission, dshModelSelection, dshPresetEligibility, dshPresetId, unsupportedDshBindings } from '../src/agent-preset-admission.mjs';
-import { createDshRuntimeAdapter, setDshResourceToolExecutor, setDshRuntimeAdapter, streamDshRuntime } from '../src/providers/dsh-runtime.mjs';
+import { createDshRuntimeAdapter, setDshResourceToolExecutor, setDshRuntimeAdapter, streamDshRuntime, routeDshRuntime, unbindDshAgentRoutes } from '../src/providers/dsh-runtime.mjs';
 import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 
 function agent(overrides = {}) {
@@ -13,6 +13,20 @@ function agent(overrides = {}) {
     ...overrides,
   };
 }
+
+test('Skill-bound presets reuse DSH loader and shell and register definitions in their scope', async () => {
+  let definition;
+  const skill = { name: 'demo-skill', description: 'Check JSON', content: 'Run the script', source: 'custom', resourceBase: { kind: 'directory', path: '/tmp/test-skill' } };
+  const admission = new DshPresetAdmission({ registry: { register: async value => { definition = value; } }, getAgent: async () => agent({ spec: { runtime: { type: 'harness' }, bindings: { skills: ['demo'] } } }), getSkillDefinitions: async () => [skill] });
+  await admission.ensure('demo/agent');
+  assert.ok(definition.plugins.some(item => item.name === '@deepseek-ai/dsh-tool-skill'));
+  assert.ok(definition.plugins.some(item => item.name === '@deepseek-ai/dsh-tool-bash'));
+  const runtime = definition.plugins.find(item => item.name.endsWith('/dsh-runtime-plugin'));
+  assert.deepEqual(runtime.config.skillDefinitions, [skill]);
+  const registrations = [];
+  applyDshRuntimePlugin({ tools: {}, skills: { register: value => { registrations.push(value); return () => {}; } }, on() {}, effect: install => install() }, runtime.config);
+  assert.deepEqual(registrations, [skill]);
+});
 
 test('dsh preset admission uses a stable revision-scoped id', () => {
   assert.equal(dshPresetId('demo/agent', 3), 'agentkit-studio-agent-demo_2Fagent-r3');
@@ -86,6 +100,12 @@ test('a single Agent model resolves to the Studio-published DSH session route', 
   });
 });
 
+test('the explicit primary model takes precedence over the whitelist order', () => {
+  const revision = agent({ spec: { bindings: { modelProfileId: 'primary-b', modelProfileIds: ['other-a', 'primary-b'] } } });
+  const settings = { values: { modelProfiles: [{ id: 'other-a', modelName: 'A' }, { id: 'primary-b', modelName: 'B' }] } };
+  assert.equal(dshModelSelection(revision, settings).model, 'B');
+});
+
 test('preset admission returns the session model selection without changing eligibility', async () => {
   const registered = [];
   const revision = agent({ metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 1, local: true }, spec: { runtime: { type: 'harness' }, bindings: { modelProfileIds: ['deepseek-v4-flash'] } } });
@@ -151,7 +171,8 @@ test('the DSH runtime plugin exposes only bound registry tools to Studio', async
     },
     on: (_event, callback) => { listener = callback; return () => {}; },
   }, { agentId: 'demo/agent', runtime: 'harness', local: true, toolBindings: ['component_status'] });
-  const iterator = listener({ model: 'deepseek-v4-flash', agent: scopeAgent, messages: [{ role: 'user', content: '状态' }] });
+  await listener({ agent: scopeAgent }, async () => ({ model: 'deepseek-v4-flash' }));
+  const iterator = routeDshRuntime({ sessionId: scopeAgent.id, model: 'deepseek-v4-flash', agent: scopeAgent, messages: [{ role: 'user', content: '状态' }] }, () => { throw new Error('bound request bypassed Studio'); });
   await iterator.next();
   const listed = forwarded.studioToolAdapter.listTools([], scopeAgent);
   assert.deepEqual(listed.map(tool => tool.name), ['component_status']);
@@ -160,6 +181,7 @@ test('the DSH runtime plugin exposes only bound registry tools to Studio', async
   assert.equal(executed.callId, 'call-1');
   assert.equal(executed.agent, scopeAgent);
   dispose();
+  unbindDshAgentRoutes('demo/agent');
 });
 
 test('the DSH runtime plugin restores bound builtin tools when a preset has no contract snapshot', () => {
@@ -405,10 +427,12 @@ test('the runtime bridge routes Codex Agents to the Codex provider instead of th
   const chunks = [];
   for await (const chunk of adapter.stream({
     model: 'local:codex-agent',
+    studioCodexModel: 'selected-codex-model',
     messages: [{ role: 'user', content: '你好' }],
     studioRuntime: 'codex',
   })) chunks.push(chunk);
   assert.equal(calls[0].input, '你好');
+  assert.equal(calls[0].model, 'selected-codex-model');
   assert.deepEqual(chunks, [
     { type: 'block-start', index: 0, blockType: 'reasoning' },
     { type: 'reasoning-delta', index: 0, text: '思考' },
@@ -418,6 +442,13 @@ test('the runtime bridge routes Codex Agents to the Codex provider instead of th
     { type: 'block-end', index: 1, block: { type: 'text', text: '回答' } },
     { type: 'finish', reason: { kind: 'stop' } },
   ]);
+});
+
+test('a Codex Agent refuses a gateway selection instead of silently using a different model', async () => {
+  let called = false;
+  const adapter = createDshRuntimeAdapter({ codexRuntime: { async *stream() { called = true; } } });
+  await assert.rejects(async () => { for await (const chunk of adapter.stream({ model: 'local:codex-agent', provider: 'gateway', studioRuntime: 'codex', messages: [{ role: 'user', content: 'hi' }] })) { void chunk; } }, { code: 'CODEX_MODEL_PROVIDER_MISMATCH' });
+  assert.equal(called, false);
 });
 
 test('the native bridge projects Codex dynamic-tool status into expandable reasoning', async () => {

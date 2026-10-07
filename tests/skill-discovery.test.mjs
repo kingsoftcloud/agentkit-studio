@@ -87,3 +87,28 @@ test('preview and commit reject path escapes outside the scanned directory', asy
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test('explicit scan directories outside home can be previewed and imported, including a Skill root', async () => {
+  const home = await makeHome(), outside = await makeHome();
+  try {
+    await writeFile(join(outside, 'SKILL.md'), '---\nname: external-e2e\ndescription: test\n---\nbody');
+    const discovery = createSkillDiscovery({ home });
+    const report = await discovery.discover([outside]);
+    assert.equal(report.candidates.length, 1);
+    assert.match((await discovery.previewDiscovered(report.inspectionToken, report.candidates[0].candidateId, 'SKILL.md')).content, /external-e2e/);
+    const imported = await discovery.commitDiscovered(report.inspectionToken, report.candidates[0].candidateId);
+    assert.equal(imported.name, 'external-e2e');
+    await assert.rejects(discovery.previewDiscovered(report.inspectionToken, report.candidates[0].candidateId, '../outside'), { code: 'SKILL_PREVIEW_PATH_INVALID' });
+  } finally { await rm(home, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+});
+
+test('equal Skill directory names in different explicit roots remain distinct candidates', async () => {
+  const home = await makeHome();
+  try {
+    const roots = [join(home, 'one'), join(home, 'two')];
+    for (const root of roots) { await mkdir(join(root, 'same'), { recursive: true }); await writeFile(join(root, 'same', 'SKILL.md'), '---\nname: same\n---\nbody'); }
+    const result = await createSkillDiscovery({ home }).discover(roots);
+    assert.equal(result.candidates.length, 2);
+    assert.equal(new Set(result.candidates.map(item => item.candidateId)).size, 2);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});

@@ -31,7 +31,7 @@ window.__ModuleLoader__.load({
     // this renderer; the Host owns session exchange and secret storage.
     function createHostRemote(connection) {
       const config = window.__AGENTKIT_STUDIO__ || {};
-      const directServer = () => config.controlPlane === 'agentengine-server' && Boolean(connection?.rpc?.call);
+      const directServer = () => Boolean(connection?.rpc?.call) && (!config.controlPlane || config.controlPlane === 'agentengine-server');
       // DSH embeds the product panel in an opaque srcdoc frame.  Packaged
       // local Hosts may omit the global control-plane marker even though the
       // authenticated Connection RPC is available.  Resource mutations must
@@ -338,6 +338,8 @@ window.__ModuleLoader__.load({
             headers: { 'Idempotency-Key': idempotencyKey },
             body: JSON.stringify({ revision }),
           }),
+        codexModels: () => studioBridgeOperation('models/codex'),
+        downloadBuild: (agentId, buildId) => studioBridgeOperation('builds/download', { agentId, buildId }),
         build: id => request('/api/v1/builds/' + encodeURIComponent(id)),
         createDeployment: (buildId, payload, idempotencyKey) => request('/api/v1/builds/' + encodeURIComponent(buildId) + '/deployments', {
           method: 'POST',
@@ -436,13 +438,7 @@ window.__ModuleLoader__.load({
                 .catch(() => request('/api/v1/catalog/resources?' + new URLSearchParams({ kind: value.kind, limit: String(value.limit || 20), ...(value.cursor ? { cursor: value.cursor } : {}), ...(value.query ? { query: value.query } : {}) }).toString()));
             }
             if (value.kind === 'model') {
-              return studioCall('models/catalog', {}).then(catalog => ({
-                items: (catalog?.items || []).map(item => ({
-                  resourceId: item.id, name: item.name || item.id, source: '模型网关',
-                  status: 'available', kind: 'model', contract: { model: item.id, input: item.input },
-                })),
-                source: 'model-gateway', nextCursor: null, total: catalog?.items?.length || 0,
-              }));
+              return studioBridgeOperation('resources/list', value);
             }
             if (value.kind === 'tool' || value.kind === 'skill') return studioBridgeOperation('resources/list', value);
           }
@@ -467,7 +463,7 @@ window.__ModuleLoader__.load({
         updateMcpResource: (resourceId, payload) => (bridgeAvailable() && localMcpId(resourceId))
           ? studioBridgeOperation('mcp/update', { resourceId, ...payload })
           : request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId), { method: 'PUT', body: JSON.stringify(payload) }),
-        createModelResource: payload => request('/api/v1/catalog/model-profiles', { method: 'POST', body: JSON.stringify(payload) }),
+        createModelResource: payload => bridgeAvailable() ? studioBridgeOperation('models/create', payload) : request('/api/v1/catalog/model-profiles', { method: 'POST', body: JSON.stringify(payload) }),
         createToolResource: payload => request('/api/v1/catalog/tools', { method: 'POST', body: JSON.stringify(payload) }),
         deleteResource: resourceId => (bridgeAvailable() && (localMcpId(resourceId) || directServer()))
           ? studioBridgeOperation('resources/delete', { resourceId })
@@ -501,7 +497,7 @@ window.__ModuleLoader__.load({
           ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + '/occurrences'
           : '/api/v1/schedules/' + encodeURIComponent(taskId) + '/occurrences'),
         createSchedule: (agentId, payload) => directServer() ? studioBridgeOperation('schedules/create', { agentId, spec: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules', { method: 'POST', body: JSON.stringify(payload) }),
-        updateSchedule: (agentId, taskId, payload) => directServer() ? studioBridgeOperation('schedules/update', { taskId, patch: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
+        updateSchedule: (agentId, taskId, payload) => directServer() ? studioBridgeOperation('schedules/update', { agentId, taskId, patch: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
         deleteSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/delete', { taskId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
         runSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/run', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
         dshPlugins: () => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-list', {}) : request('/api/v1/plugin-ecosystems/dsh/plugins'),
@@ -526,18 +522,25 @@ window.__ModuleLoader__.load({
           : request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value, persistence: 'session' }) }),
         deleteCredential: name => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'DELETE' }),
         probeModelEndpoint: payload => request('/api/v1/model-endpoints:probe', { method: 'POST', body: JSON.stringify(payload) }),
+        evaluationSets: () => directServer() ? studioBridgeOperation('evaluations/evalsets', {}) : request('/api/v1/evaluation-files'),
         evaluationTargets: (query = '') => directServer() ? studioBridgeOperation('evaluations/targets', {}) : request('/api/v1/evaluation-targets' + (query ? '?' + query : '')),
         evaluations: (query = '') => directServer() ? studioBridgeOperation('evaluations/list', {}) : request('/api/v1/evaluations' + (query ? '?' + query : '')),
         evaluation: id => directServer() ? studioBridgeOperation('evaluations/get', { runId: id }) : request('/api/v1/evaluations/' + encodeURIComponent(id)),
         evaluationRun: id => directServer() ? studioBridgeOperation('evaluations/get', { runId: id }) : request('/api/v1/evaluation-runs/' + encodeURIComponent(id)),
         evaluationRuns: (query = '') => directServer() ? studioBridgeOperation('evaluations/list', {}) : request('/api/v1/evaluation-runs' + (query ? '?' + query : '')),
         createEvaluation: (payload, idempotencyKey) => directServer() ? studioBridgeOperation('evaluations/create', payload) : request('/api/v1/evaluations', { method: 'POST', headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined, body: JSON.stringify(payload) }),
-        importEvaluationFile: body => directServer() ? studioBridgeOperation('evaluations/import', { content: typeof body === 'string' ? body : JSON.stringify(body), fileName: 'uploaded.yaml' }) : request('/api/v1/evaluation-files', { method: 'POST', body }),
+        importEvaluationFile: async body => {
+          if (!directServer()) return request('/api/v1/evaluation-files', { method: 'POST', body });
+          const file = typeof body?.get === 'function' ? body.get('file') : null;
+          if (file?.size > 1024 * 1024) throw new Error('EvalSet 文件超过 1 MiB 上限');
+          const content = file?.text ? await file.text() : typeof body === 'string' ? body : JSON.stringify(body);
+          return studioBridgeOperation('evaluations/import', { content, fileName: file?.name || 'uploaded.yaml' });
+        },
         tracesOverview: (query = '') => directServer() ? studioBridgeOperation('traces/overview', Object.fromEntries(new URLSearchParams(query))) : request('/api/v1/traces/overview' + (query ? '?' + query : '')),
         traces: (query = '') => directServer() ? studioBridgeOperation('traces/list', Object.fromEntries(new URLSearchParams(query))) : request('/api/v1/traces' + (query ? '?' + query : '')),
         trace: id => directServer() ? studioBridgeOperation('traces/get', { traceId: id }) : request('/api/v1/traces/' + encodeURIComponent(id)),
         traceOtlp: id => directServer() ? studioBridgeOperation('traces/otlp', { traceId: id }) : request('/api/v1/traces/' + encodeURIComponent(id) + '/otlp'),
-        exportSessionLog: (id, query = '') => request('/api/v1/sessions/' + encodeURIComponent(id) + ':export' + (query ? '?' + query : '')),
+        exportSessionLog: (id, query = '') => directServer() ? studioBridgeOperation('sessions/export-log', { sessionId: id }) : request('/api/v1/sessions/' + encodeURIComponent(id) + ':export' + (query ? '?' + query : '')),
         channelConnection: () => directServer() ? studioBridgeOperation('channels/connection', {}) : request('/api/v1/channels/connection'),
         updateChannelConnection: payload => directServer() ? studioBridgeOperation('channels/update', payload) : request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
         updateAgentChannelConnection: (id, payload) => request('/api/v1/channels/agents/' + encodeURIComponent(id) + '/connection', { method: 'PUT', body: JSON.stringify(payload) }),
@@ -553,6 +556,7 @@ window.__ModuleLoader__.load({
     }
 
     function readConversationAgent(sessionId) {
+      if (!sessionId) return null;
       try {
         const raw = window.localStorage.getItem(conversationAgentStorageKey(sessionId));
         if (!raw) return null;

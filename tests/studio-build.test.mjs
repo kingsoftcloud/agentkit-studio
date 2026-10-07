@@ -25,7 +25,7 @@ test('operations run to completion, persist records, and dedupe by idempotency k
     runner: async () => { throw new Error('must not rerun'); },
   });
   assert.equal(duplicate.id, first.id);
-  for (let i = 0; i < 40 && (await manager.get(first.id))?.status === 'queued'; i++) {
+  for (let i = 0; i < 40 && ['queued', 'running'].includes((await manager.get(first.id))?.status); i++) {
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   const done = await manager.get(first.id);

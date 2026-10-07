@@ -7,7 +7,7 @@ import { createStudioCodexPlugins } from '../src/studio-codex-plugins.mjs';
 
 test('Codex lifecycle keeps the marketplace-qualified plugin identity', async () => {
   const calls = [];
-  const plugins = createStudioCodexPlugins({ codexHome: '/tmp/isolated-codex', execImpl: async (...args) => { calls.push(args); return { stdout: '{}' }; } });
+  const plugins = createStudioCodexPlugins({ codexHome: '/tmp/isolated-codex', executable: 'codex', execImpl: async (...args) => { calls.push(args); return { stdout: '{}' }; } });
   await plugins.installCodex('sample', 'local-market');
   await plugins.uninstallCodex('sample@local-market');
   assert.deepEqual(calls.map(call => call[1]), [['plugin', 'add', 'sample@local-market', '--json'], ['plugin', 'remove', 'sample@local-market', '--json']]);

@@ -39,6 +39,8 @@ test('syncTrace projects events into OTLP and persists', async () => {
     assert.equal(overview.agents[0].agentName, 'My Agent');
     const otlp = await obs.getOtlp('trace_abc');
     assert.ok(otlp.resourceSpans[0].scopeSpans[0].spans.length > 0);
+    assert.match(otlp.resourceSpans[0].scopeSpans[0].spans[0].traceId, /^[0-9a-f]{32}$/);
+    assert.equal(otlp.resourceSpans[0].scopeSpans[0].spans[0].kind, 1);
   } finally { await rm(store, { recursive: true, force: true }).catch(() => {}); }
 });
 
@@ -61,4 +63,15 @@ test('overview and list filter by range and agentId', async () => {
     assert.equal(overview.totalRuns, 2);
     assert.equal(overview.agents.length, 2);
   } finally { await rm(store, { recursive: true, force: true }).catch(() => {}); }
+});
+
+test('real trace rows expose measured duration, Run/Session search and completion metrics', async () => {
+  const store = await makeStore(); const obs = createStudioObservability({ storeDir: store });
+  try {
+    const start = new Date(Date.now()-5000).toISOString(); const end = new Date(Date.now()-1000).toISOString();
+    await obs.syncTrace({ traceId: 'local-trace', sessionId: 'session-canary', agentId: 'agent-canary', status: 'completed', startedAt: start, completedAt: end, events: [] });
+    const rows = await obs.list({ query: 'session-canary' }); assert.equal(rows.items.length, 1); assert.equal(rows.items[0].durationMs, 4000);
+    assert.equal(rows.items[0].totalTokens, null);
+    const overview = await obs.overview({}); assert.equal(overview.successRate, 1); assert.equal(overview.avgDurationMs, 4000);
+  } finally { await rm(store, { recursive: true, force: true }); }
 });

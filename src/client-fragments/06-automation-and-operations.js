@@ -11,6 +11,13 @@
         tab === 'models' ? h(ResourcesPage) : tab === 'marketplace' ? h(MarketplacePage) : h(RuntimeResourcesPage));
     }
 
+    function localDateTimeValue(value) {
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return '';
+      const pad = value => String(value).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
     function scheduleLabel(task) {
       const schedule = task?.schedule || {};
       if (schedule.kind === 'cron') return `Cron · ${schedule.expression || '—'}`;
@@ -65,6 +72,7 @@
           setAgents(nextAgents);
           const nextTasks = Array.isArray(scheduleResult?.items) ? scheduleResult.items : [];
           setTasks(nextTasks);
+          setDetailTask(current => current ? nextTasks.find(item => item.taskId === current.taskId) || null : null);
           // The operations board groups tasks by the latest occurrence. The
           // Host schedule list stays light, so hydrate a bounded index for the
           // board and detail view without making one failed row fail the page.
@@ -78,7 +86,7 @@
           }));
           setLatestOccurrences(Object.fromEntries(occurrencePairs.filter(([, occurrence]) => occurrence)));
           try {
-            const records = scheduleRemote?.catalog ? await scheduleRemote.catalog() : [];
+            const records = Array.isArray(scheduleResult?.nativeItems) ? scheduleResult.nativeItems : scheduleRemote?.catalog ? await scheduleRemote.catalog() : [];
             setNativeTasks(Array.isArray(records) ? records : []);
           } catch {
             setNativeTasks([]);
@@ -116,7 +124,11 @@
         const schedule = { kind: form.kind, timezone: 'Asia/Shanghai' };
         if (form.kind === 'interval') schedule.everySeconds = Math.max(60, Number(form.everySeconds) || 3600);
         if (form.kind === 'cron') schedule.expression = form.expression.trim();
-        if (form.kind === 'once') schedule.at = new Date(form.at || Date.now() + 3600000).toISOString();
+        if (form.kind === 'once') {
+          const at = new Date(form.at);
+          if (!form.at || !Number.isFinite(at.getTime()) || at.getTime() <= Date.now()) { setError('请选择未来的执行时间。'); return; }
+          schedule.at = at.toISOString();
+        }
         setSaving(true); setError(''); setMessage('');
         try {
           const payload = { displayName: form.displayName.trim(), prompt: form.prompt.trim(), schedule, enabled: editingTask ? editingTask.enabled !== false : true, continuity: editingTask?.continuity || 'new_session' };
@@ -145,7 +157,7 @@
           kind,
           everySeconds: String(schedule.everySeconds || schedule.every_seconds || 3600),
           expression: String(schedule.expression || '0 9 * * 1-5'),
-          at: schedule.at ? new Date(schedule.at).toISOString().slice(0, 16) : '',
+          at: schedule.at ? localDateTimeValue(schedule.at) : '',
         });
         setEditorOpen(true); setError(''); setMessage('');
       };
@@ -300,7 +312,7 @@
                   h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '12px', marginBottom: '4px' } }, '当前会话还没有 DSH 原生自动化'),
                   h('span', null, '在新会话中直接说“每天 9 点提醒我整理工作摘要”，DSH 会调用 schedule_create；创建后刷新本页即可看到任务。')))),
           detailPanel,
-          section === 'history' ? (historyStatus === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取执行记录', detail: '按任务读取 Host Scheduler 的 occurrence 历史。' }) : !historyRows.length ? h(EmptyState, { icon: '◷', title: '暂无执行记录', detail: visibleTasks.length ? '任务尚未执行，或调整筛选条件。' : '调整搜索或 Agent 筛选条件。' }) : h('div', { style: { display: 'grid', gap: '8px' } }, historyRows.filter(item => visibleTasks.some(task => task.taskId === item.taskId)).slice(0, 100).map(item => h('div', { key: item.occurrenceId || `${item.taskId}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 130px 170px', gap: '12px', alignItems: 'center', border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', background: BRAND.surface, color: BRAND.inkMuted, fontSize: '11px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, item.taskName), h('div', { style: { marginTop: '3px' } }, item.occurrenceId || '—')), h(Pill, { tone: item.state === 'completed' || item.state === 'succeeded' ? 'accent' : item.state === 'failed' ? 'signal' : 'neutral' }, item.state || 'unknown'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—'))))) : (!visibleTasks.length ? h(EmptyState, { icon: '◷', title: tasks.length ? '没有匹配的自动化' : '还没有自动化', detail: tasks.length ? '调整搜索或 Agent 筛选条件。' : agents.length ? '可以在这里创建计划。计划会绑定到 Agent 的当前 Build；也可以先用上面的常用任务模板。' : '先创建并构建一个 Agent，自动化才有可执行目标。' }) : viewMode === 'list' ? h('div', { style: { display: 'grid', gap: '10px' } }, pagedTasks.map(taskCard)) : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' } }, taskGroups.map(group => {
+          section === 'history' ? (historyStatus === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取执行记录', detail: '按任务读取 Host Scheduler 的 occurrence 历史。' }) : !historyRows.length ? h(EmptyState, { icon: '◷', title: '暂无执行记录', detail: visibleTasks.length ? '任务尚未执行，或调整筛选条件。' : '调整搜索或 Agent 筛选条件。' }) : h('div', { style: { display: 'grid', gap: '8px' } }, historyRows.filter(item => visibleTasks.some(task => task.taskId === item.taskId)).slice(0, 100).map(item => h('div', { key: item.occurrenceId || `${item.taskId}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 130px 170px', gap: '12px', alignItems: 'center', border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', background: BRAND.surface, color: BRAND.inkMuted, fontSize: '11px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, item.taskName), h('div', { style: { marginTop: '3px' } }, item.occurrenceId || '—')), h(Pill, { tone: item.state === 'completed' || item.state === 'succeeded' ? 'accent' : item.state === 'failed' ? 'signal' : 'neutral' }, item.state || 'unknown'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—'))))) : (!visibleTasks.length ? h(EmptyState, { icon: '◷', title: tasks.length ? '没有匹配的自动化' : '还没有自动化', detail: tasks.length ? '调整搜索或 Agent 筛选条件。' : agents.length ? '可以在这里创建计划。计划绑定到 Agent，执行时使用其当前 Revision；也可以先用上面的常用任务模板。' : '先创建一个 Agent，自动化才有可执行目标。' }) : viewMode === 'list' ? h('div', { style: { display: 'grid', gap: '10px' } }, pagedTasks.map(taskCard)) : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' } }, taskGroups.map(group => {
             const items = visibleTasks.filter(task => taskStatus(task) === group.id);
             const pageItems = pagedTasks.filter(task => taskStatus(task) === group.id);
             return h('section', { key: group.id, style: { display: 'grid', alignContent: 'start', gap: '10px', minWidth: 0 } }, h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 2px', color: BRAND.inkMuted, fontSize: '12px', fontWeight: 750 } }, h('span', null, group.label), h('span', null, String(items.length))), pageItems.length ? pageItems.map(taskCard) : h('div', { style: { border: '1px dashed ' + BRAND.border, borderRadius: '12px', padding: '18px', color: BRAND.inkMuted, fontSize: '12px', textAlign: 'center' } }, group.id === 'scheduled' ? '新建任务，安排下一次执行' : '暂无任务'));
@@ -330,11 +342,11 @@
     }
 
     function operationalId(item, fallback = '') {
-      return String(item?.id || item?.Id || item?.traceId || item?.TraceId || item?.runId || item?.RunId || fallback);
+      return String(item?.metadata?.id || item?.id || item?.Id || item?.caseId || item?.traceId || item?.TraceId || item?.runId || item?.RunId || fallback);
     }
 
     function operationalLabel(item, fallback = '—') {
-      return String(item?.name || item?.Name || item?.title || item?.Title || item?.displayName || item?.DisplayName || fallback);
+      return String(item?.metadata?.name || item?.name || item?.Name || item?.title || item?.Title || item?.displayName || item?.DisplayName || fallback);
     }
 
     function operationalDate(value) {
@@ -422,7 +434,7 @@
         setStatus('loading'); setError('');
         const result = await Promise.allSettled([
           hostRemote.evaluationTargets(),
-          hostRemote.evaluations('limit=200'),
+          hostRemote.evaluationSets(),
           hostRemote.evaluationRuns('limit=200'),
         ]);
         const firstError = result.find(item => item.status === 'rejected');
@@ -432,7 +444,7 @@
         const targetPayload = result[0].status === 'fulfilled' ? result[0].value : {};
         const evalPayload = result[1].status === 'fulfilled' ? result[1].value : {};
         const runPayload = result[2].status === 'fulfilled' ? result[2].value : {};
-        setTargets(operationalCollection(targetPayload, ['builds', 'targets']));
+        setTargets(operationalCollection(targetPayload, ['items', 'builds', 'targets']));
         setEvalsets(operationalCollection(evalPayload, ['items', 'evalsets', 'evaluationSets']));
         setRuns(operationalCollection(runPayload, ['items', 'runs', 'evaluationRuns']));
         setPage(0); setEvalsetPage(0); setTargetPage(0);
@@ -487,9 +499,9 @@
         setEvalsetUploading(true); setError('');
         try {
           const payload = await hostRemote.importEvaluationFile((() => { const body = new FormData(); body.append('file', file); return body; })());
-          const path = payload?.path || payload?.file?.path || payload?.locator;
-          if (!path) throw new Error('Host 未返回 EvalSet 路径');
-          setEvalsetFile(path); setMessage(`已导入 EvalSet：${path}`);
+          const path = payload?.evalsetId || payload?.id || payload?.path || payload?.file?.path || payload?.locator;
+          if (!path) throw new Error('Host 未返回 EvalSet 标识');
+          setEvalsetFile(path); setMessage(`已导入 EvalSet：${path}`); void load();
         } catch (reason) { setError(reason?.message || 'EvalSet 文件导入失败'); }
         finally { setEvalsetUploading(false); }
       };
@@ -536,7 +548,7 @@
           createOpen ? h(ResourceDialog, { title: '新建评测', detail: '选择 EvalSet、目标和评估器，提交后由 Host 在后台执行。', onClose: () => { if (!creating) setCreateOpen(false); } }, h('form', { onSubmit: startCreate, style: { display: 'grid', gap: '14px' } },
             h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(180px, .8fr)', gap: '12px' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'EvalSet 文件', h('input', { value: evalsetFile, onChange: event => setEvalsetFile(event.target.value), placeholder: '.agentkit/evaluations/example.yaml', style: inputStyle(), required: true }), h('input', { type: 'file', accept: '.yaml,.yml,.json', onChange: importEvalset, disabled: evalsetUploading, style: { ...inputStyle(), marginTop: '6px', padding: '6px' } }), evalsetUploading ? h('span', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, '正在导入…') : null),
-              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '评测目标类型', h('select', { value: targetKind, onChange: event => { setTargetKind(event.target.value); setTarget(''); }, style: inputStyle() }, h('option', { value: 'studio_build' }, 'Studio Build'), h('option', { value: 'a2a' }, 'A2A Agent'), h('option', { value: 'local_source' }, '本地源码')))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '评测目标类型', h('select', { value: targetKind, onChange: event => { setTargetKind(event.target.value); setTarget(''); }, style: inputStyle() }, h('option', { value: 'studio_build' }, 'Studio Build'), h('option', { value: 'a2a', disabled: true }, 'A2A Agent（尚未接入）'), h('option', { value: 'local_source', disabled: true }, '本地源码（尚未接入）')))),
             h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 180px 180px', gap: '12px', alignItems: 'end' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, targetKindLabel, targetKind === 'studio_build'
                 ? h('select', { value: target, onChange: event => setTarget(event.target.value), style: inputStyle(), required: true }, h('option', { value: '' }, '选择可用 Build'), targets.map(item => h('option', { key: operationalId(item), value: operationalId(item) }, `${operationalLabel(item, operationalId(item))} · ${operationalId(item)}`)))
@@ -555,6 +567,7 @@
             message ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null) : null,
           tab === 'sets' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'name', label: '评测集', cell: row => h('strong', null, operationalLabel(row)) }, { id: 'source', label: '来源', cell: row => row?.sourceFormat || row?.source || 'Host' }, { id: 'cases', label: '用例数', cell: row => row?.caseCount ?? row?.cases?.length ?? '—' }, { id: 'updatedAt', label: '更新时间', cell: row => operationalDate(row?.updatedAt || row?.createdAt) }], rows: visibleEvalsets, empty: '暂无已导入评测集。' }), h(OperationalPager, { page: evalsetPage, pageSize, total: evalsets.length, onChange: setEvalsetPage })) : null,
           tab === 'targets' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'name', label: '目标', cell: row => h('strong', null, operationalLabel(row, operationalId(row))) }, { id: 'kind', label: '类型', cell: row => row?.kind || row?.runtime || row?.type || 'Build' }, { id: 'agentId', label: 'Agent', cell: row => row?.agentId || row?.agent?.id || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || 'ready') }], rows: visibleTargets, empty: '暂无可评测目标，请先完成 Agent Build。' }), h(OperationalPager, { page: targetPage, pageSize, total: targets.length, onChange: setTargetPage })) : null,
+          error ? h('div', { role: 'alert', style: { color: BRAND.danger, marginTop: '10px', fontSize: '12px' } }, error) : null,
           selectedDetail) : null);
     }
 
@@ -606,7 +619,7 @@
       }, [status, traces]);
 
       const filtered = traces.filter(trace => {
-        const haystack = [operationalId(trace), trace?.runId, trace?.sessionId, trace?.agentId, trace?.status, trace?.name]
+        const haystack = [operationalId(trace), trace?.runId, trace?.sessionId, trace?.agentId, trace?.status, trace?.name, trace?.agentName]
           .join(' ')
           .toLowerCase();
         const state = String(trace?.status || '').toUpperCase();
@@ -647,14 +660,14 @@
         if (!sessionId) { setError('当前 Trace 没有 Session ID，无法导出会话日志。'); return; }
         try {
           const payload = await hostRemote.exportSessionLog(sessionId);
-          const blob = new Blob([typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)], { type: 'application/json' });
+          const blob = new Blob([payload?.content ?? (typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2))], { type: payload?.contentType || 'application/json' });
           const url = URL.createObjectURL(blob);
-          const link = document.createElement('a'); link.href = url; link.download = `${sessionId}-session.json`; link.click(); URL.revokeObjectURL(url);
+          const link = document.createElement('a'); link.href = url; link.download = payload?.filename || `${sessionId}-session.json`; link.click(); URL.revokeObjectURL(url);
         } catch (reason) { setError(reason?.message || '会话日志导出失败'); }
       };
 
       const summary = [
-        ['运行次数', overview?.total ?? traces.length, range === '7d' ? '近 7 天' : '近 24 小时'],
+        ['运行次数', overview?.total ?? overview?.totalRuns ?? traces.length, range === '7d' ? '近 7 天' : '近 24 小时'],
         ['完成率', overview?.successRate == null ? '—' : `${Math.round(Number(overview.successRate) * 100)}%`, '已完成运行'],
         ['平均耗时', overview?.avgDurationMs == null ? '—' : `${Math.round(Number(overview.avgDurationMs))} ms`, 'Runtime 上报'],
         ['Token 用量', overview?.totalTokens ?? overview?.tokens ?? '—', '输入与输出合计'],
@@ -716,6 +729,7 @@
         status === 'ready' ? h(React.Fragment, null,
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
           overview?.buckets ? h(OperationalBars, { buckets: overview.buckets }) : null,
+          overview?.cloud ? h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginBottom: '12px' } }, `云端统计 · 会话 ${overview.cloud.sessionCount ?? '—'} · Tokens ${overview.cloud.tokenCount ?? '—'} · 错误 ${overview.cloud.errorCount ?? '—'}`) : null,
           h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' },
             h('input', { value: query, onChange: event => { setQuery(event.target.value); setPage(0); }, placeholder: '搜索 Trace、Run、Session 或 Agent', style: { ...inputStyle(), maxWidth: '300px' } }),
             h('select', { value: range, onChange: event => { setRange(event.target.value); setPage(0); }, style: { ...inputStyle(), width: '110px' } }, h('option', { value: '24h' }, '24 小时'), h('option', { value: '7d' }, '7 天')),

@@ -54,3 +54,15 @@ test('evaluation with a runner executes cases and evaluates assertions', async (
     assert.equal(done.caseResults[0].assertions.every(item => item.passed), true);
   } finally { await rm(store, { recursive: true, force: true }); }
 });
+
+test('the Studio create contract resolves a frozen target before running and respects JSON Schema', async () => {
+  const store = await makeStore(); const seen = [];
+  const evaluation = createStudioEvaluation({ storeDir: store, resolveTarget: async id => ({ id, agentId: 'frozen-agent' }), runner: async request => { seen.push(request); return { output: '{"value":"wrong-type"}', toolCalls: [] }; } });
+  try {
+    const imported = await evaluation.importEvalset({ content: JSON.stringify([{ input: 'check', assertions: [{ type: 'response.jsonSchema', value: { type: 'object', properties: { value: { type: 'number' } }, required: ['value'] } }] }]), fileName: 'schema.json' });
+    const run = await evaluation.createEvaluation({ evalsetFile: imported.id, target: { kind: 'studio_build', locator: 'build-frozen' } });
+    for (let i = 0; i < 30; i++) { await new Promise(resolve => setTimeout(resolve, 10)); if ((await evaluation.getRun(run.id)).status === 'failed') break; }
+    assert.equal(seen[0].agentId, 'frozen-agent'); assert.equal(seen[0].buildId, 'build-frozen');
+    assert.equal((await evaluation.getRun(run.id)).summary.failed, 1);
+  } finally { await rm(store, { recursive: true, force: true }); }
+});

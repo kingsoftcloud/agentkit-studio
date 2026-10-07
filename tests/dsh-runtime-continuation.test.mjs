@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
-import { createDshRuntimeAdapter, unbindDshAgentRoutes } from '../src/providers/dsh-runtime.mjs';
+import { createDshRuntimeAdapter, unbindDshAgentRoutes, routeDshRuntime, setDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
 
 const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
 const completed = `data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`;
@@ -15,6 +15,25 @@ async function selectPreset(runtime, sessionId, buildId) {
   }, { agentId: 'frozen-agent', runtime, local: true, buildId });
   await listeners.get('agent/request')({ agent: { id: sessionId } }, async () => prompt);
 }
+
+test('Host transport routes only the selected Session, never another preset or title generation', async t => {
+  t.after(() => unbindDshAgentRoutes('frozen-agent'));
+  await selectPreset('harness', 'older-build-session', 'build_11111111111111111111');
+  await selectPreset('codex', 'new-codex-session');
+  const calls = [];
+  const dispose = setDshRuntimeAdapter({ async *stream(options) { calls.push(options); yield { type: 'text', text: 'bound' }; } });
+  t.after(dispose);
+  const native = async function* () { yield { type: 'text', text: 'native' }; };
+  const read = async options => { const chunks = []; for await (const chunk of routeDshRuntime(options, native)) chunks.push(chunk); return chunks; };
+  assert.equal((await read({ ...prompt, sessionId: 'new-codex-session' }))[0].text, 'bound');
+  assert.equal(calls[0].studioRuntime, 'codex');
+  assert.equal(calls[0].buildId, undefined);
+  assert.equal((await read({ ...prompt, sessionId: 'older-build-session' }))[0].text, 'bound');
+  assert.equal(calls[1].buildId, 'build_11111111111111111111');
+  assert.equal((await read(prompt))[0].text, 'native');
+  assert.equal((await read({ ...prompt, sessionId: 'unbound-session' }))[0].text, 'native');
+  assert.equal(calls.length, 2);
+});
 
 test('frozen Build selection survives the scoped request to root Harness transport', async t => {
   t.after(() => unbindDshAgentRoutes('frozen-agent'));

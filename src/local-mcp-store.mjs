@@ -71,7 +71,7 @@ export function createLocalMcpStore({ storeDir } = {}) {
         items.push(item);
       } catch { /* ignore corrupt records */ }
     }
-    return items.slice(0, Math.min(200, Math.max(1, Number(limit) || 200)));
+    return items.slice(0, Math.max(1, Number(limit) || 200));
   }
   async function get(resourceId) {
     try { return normalize(JSON.parse(await readFile(pathFor(idOf(resourceId)), 'utf8'))); } catch { return null; }

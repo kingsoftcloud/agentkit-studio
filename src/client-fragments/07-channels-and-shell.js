@@ -422,6 +422,7 @@
         const valid = profiles.filter(profile => profile?.enabled !== false && String(profile?.modelName || '').trim())
           .sort((left, right) => Number(right.default === true) - Number(left.default === true));
         if (!valid.length) throw new Error('至少保留一个模型配置');
+        const catalogs = await Promise.all(valid.map(profile => hostRemote.modelCatalog(modelProfileId(profile)).catch(() => null)));
         const operations = valid.map((profile, index) => {
           const route = `agentkit-studio-${modelProfileId(profile, index).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 64);
           const modelName = String(profile.modelName).trim();
@@ -436,7 +437,8 @@
             // back to text-only unless the capability is declared explicitly.
             // Keep the input contract on each profile so read_image and native
             // image messages are admitted consistently with the upstream model.
-            models: [{ id: modelName, name: modelName, contextWindow: 262144, maxTokens: 32768, input: profile.input || ['text'] }],
+            models: (catalogs[index]?.items?.length ? catalogs[index].items : [{ id: modelName, name: modelName, input: profile.input || ['text'] }])
+              .map(model => ({ id: model.id, name: model.name || model.id, contextWindow: 262144, maxTokens: 32768, input: model.input || ['text'] })),
           } } };
         });
         const response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, [

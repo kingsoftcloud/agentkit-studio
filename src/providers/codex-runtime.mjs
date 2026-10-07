@@ -7,6 +7,7 @@
  * ephemeral Codex thread; DSH remains the owner of the visible Session and
  * conversation history.
  */
+import { resolveCodexCommand } from './codex-command.mjs';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
@@ -124,7 +125,8 @@ function dynamicToolContent(value) {
  * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, timeoutMs?: number }} options
  */
 export function createCodexRuntime(options = {}) {
-  const executable = String(options.executable || process.env.AGENTKIT_CODEX_BIN || 'codex');
+  const command = resolveCodexCommand({ executable: options.executable, env: { ...process.env, ...(options.env || {}) } });
+  const executable = command.executable;
   const spawnImpl = options.spawnImpl || nodeSpawn;
   const cwd = String(options.cwd || tmpdir());
   const model = String(options.model || process.env.AGENTKIT_CODEX_MODEL || '').trim() || undefined;
@@ -135,14 +137,15 @@ export function createCodexRuntime(options = {}) {
   return {
     executable,
     cwd,
-    async *stream({ input, messages = [], signal, systemPrompt = '', dynamicTools = [], toolHandler } = {}) {
+    async *stream({ input, messages = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel } = {}) {
+      const selectedModel = String(requestedModel || model || '').trim() || undefined;
       const prompt = String(input || '').trim();
       if (!prompt) throw new CodexRuntimeError('CODEX_INPUT_INVALID', 'Codex 输入不能为空');
       if (signal?.aborted) throw asError(signal.reason, 'Codex 请求已取消');
 
       let child;
       try {
-        child = spawnImpl(executable, ['app-server', '--stdio'], {
+        child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio'], {
           cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ...(options.env || {}) },
@@ -303,7 +306,7 @@ export function createCodexRuntime(options = {}) {
           ephemeral: true,
           approvalPolicy,
           ...(sandbox ? { sandbox } : {}),
-          ...(model ? { model } : {}),
+          ...(selectedModel ? { model: selectedModel } : {}),
           ...(developerInstructions ? { developerInstructions } : {}),
           ...(Array.isArray(dynamicTools) && dynamicTools.length ? { dynamicTools } : {}),
         };
