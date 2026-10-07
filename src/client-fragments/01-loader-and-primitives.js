@@ -515,7 +515,7 @@ window.__ModuleLoader__.load({
         }),
         uninstallDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-remove', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
         codexPlugins: () => bridgeAvailable() ? studioBridgeOperation('plugins/codex-list', {}) : request('/api/v1/plugin-ecosystems/codex/plugins'),
-        installCodexPlugin: (pluginId, marketplaceName) => bridgeAvailable() ? studioBridgeOperation('plugins/codex-install', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId) + ':install', {
+        installCodexPlugin: (pluginId, marketplaceName) => bridgeAvailable() ? studioBridgeOperation('plugins/codex-install', { pluginId, marketplaceName }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId) + ':install', {
           method: 'POST', body: JSON.stringify({ marketplaceName: marketplaceName || undefined, acceptUndeclaredPermissions: true }),
         }),
         uninstallCodexPlugin: pluginId => bridgeAvailable() ? studioBridgeOperation('plugins/codex-remove', { pluginId }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId), { method: 'DELETE' }),

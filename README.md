@@ -36,10 +36,11 @@ Agent 的普通对话由所连接的运行时执行。
   仍会 typed fail-closed，不能把下拉框显示当作这些资源已经执行的证据。
 - **运行中心**：构建、部署、评测、观测、Channel 和自动化都通过 Host/AgentEngine Server
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
-- **插件市场**：分别管理 DSH 与 Codex 原生插件。Codex Runtime 创建失败并出现“Codex
-  Provider 未注册”时，说明当前 DSH/KsADK profile 没有安装并启用官方
-  `@deepseek-ai/dsh-subagent-codex`；安装后必须重启 profile 才会注册 provider。Studio
-  不会伪造一个 Codex provider，也不会把 DSH 的 one-shot 子代理当作完整持续会话。
+- **插件市场**：加号可添加安装源；DSH 自带插件直接启用，其他插件由原生 PluginManager
+  检查、安装并返回真实加载结果。Codex 使用完整的 `plugin@marketplace` 标识调用官方 CLI，
+  Skill 在新建 Codex Agent 会话中加载，连接器继续使用 Codex 原生授权。Studio 的 Codex
+  Runtime 直接调用 `codex app-server`，不要求额外安装 DSH 子代理插件。
+  详见[插件安装与加载合同](docs/contracts/plugin-lifecycle.md)。
 
 ## 本地开发
 

@@ -14,6 +14,16 @@ export class StudioPluginsError extends Error {
   }
 }
 
+function changeResult(change) {
+  if (!change || !['applied', 'restart-required'].includes(change.application) || change.error) {
+    const details = change || {};
+    const diagnostic = String(change?.error?.diagnostic || '').slice(-1200);
+    const code = change?.application === 'cancelled' ? 'DSH_PLUGIN_CANCELLED' : 'DSH_PLUGIN_OPERATION_FAILED';
+    throw new StudioPluginsError(code, diagnostic || `插件操作未生效：${change?.error?.code || change?.application || '宿主没有返回结果'}`, details);
+  }
+  return { ok: true, ...change, note: change.application === 'restart-required' ? '配置已保存，需要重启 Host 后生效。' : 'Host 已应用插件变更。' };
+}
+
 /** Resolve a host service by name from the plugin root context. */
 export function createStudioPlugins({ getService } = {}) {
   function service(name) {
@@ -27,50 +37,65 @@ export function createStudioPlugins({ getService } = {}) {
     // installable, enable/disable-able via setBundleEnabled. The ~200 Loader
     // plugin rows belong to DSH settings' plugin manager page, not a store.
     const manager = service('pluginManager');
-    const bundles = await manager.listBundles().catch(() => []);
-    const items = (bundles || []).map(bundle => ({
-      pluginId: String(bundle.name),
-      name: String(bundle.name),
-      displayName: String(bundle.meta?.displayName || bundle.name),
-      description: String(bundle.description || ''),
-      version: String(bundle.version || ''),
-      source: bundle.installed ? 'profile' : 'bundled',
-      enabled: bundle.enabled !== false,
-      kind: 'dsh',
-      installed: bundle.installed !== false,
-    }));
+    const bundles = await manager.listBundles();
+    const entries = typeof manager.listPlugins === 'function' ? await manager.listPlugins() : [];
+    const byId = new Map(entries.map(entry => [entry.entryId, entry]));
+    const items = (bundles || []).map(bundle => {
+      const rows = (bundle.rows || []).map(row => ({ ...row, ...(byId.get(row.entryId) || {}) }));
+      const activeRows = rows.filter(row => row.fiberPhase === 'active');
+      const failed = rows.some(row => row.fiberPhase === 'failed');
+      const error = bundle.error || (failed ? { code: 'plugin-load-failed' } : undefined);
+      return {
+        pluginId: String(bundle.name),
+        name: String(bundle.name),
+        displayName: String(bundle.meta?.displayName || bundle.name),
+        description: String(bundle.description || ''),
+        version: String(bundle.version || ''),
+        source: bundle.installed ? 'profile' : 'bundled',
+        enabled: bundle.enabled !== false,
+        kind: 'dsh',
+        // installed=false means supplied by the DSH installation, not absent.
+        installed: true,
+        optional: bundle.optional === true,
+        removable: bundle.removable === true,
+        readOnlyReason: bundle.readOnlyReason || (!bundle.installed && !bundle.optional ? 'host-component' : ''),
+        ...(error ? { error } : {}),
+        rows,
+        status: error ? 'error' : !bundle.enabled ? 'disabled'
+          : activeRows.length === rows.length && rows.length ? 'active' : activeRows.length ? 'partial' : 'selected',
+      };
+    });
     return { items, source: 'plugin-manager' };
   }
 
   async function installDsh(spec) {
     const manager = service('pluginManager');
+    const existing = (await manager.listBundles()).find(bundle => bundle.name === String(spec));
+    if (existing) return changeResult(await manager.setBundleEnabled(existing.name, true));
     const inspection = await manager.inspect(String(spec), {});
-    const change = await manager.installBundle(String(spec), inspection?.options || {});
-    const requestId = change?.requestId;
-    if (requestId) await manager.waitForInstall(requestId).catch(() => null);
-    return { ok: true, output: JSON.stringify(change ?? {}).slice(0, 600) };
+    if (inspection?.status !== 'accepted') throw new StudioPluginsError('DSH_PLUGIN_INSPECTION_REFUSED', `插件源检查失败：${inspection?.reason || inspection?.problem || '未返回检查结果'}`, inspection || {});
+    return changeResult(await manager.installBundle(String(spec), { enabled: true, ...(inspection.registry !== undefined ? { registry: inspection.registry } : {}) }));
   }
 
   async function uninstallDsh(name) {
     const manager = service('pluginManager');
-    const change = await manager.removeBundle(String(name));
-    return { ok: true, output: JSON.stringify(change ?? {}).slice(0, 600) };
+    return changeResult(await manager.removeBundle(String(name)));
   }
 
   async function setDshEnabled(target, enabled) {
     const manager = service('pluginManager');
-    // Plugin entries carry colon-joined ids; bundles are plain package names.
-    // Try the bundle switch first and fall back to the entry switch.
-    try {
-      const change = await manager.setBundleEnabled(String(target), Boolean(enabled));
-      return { pluginName: String(target), enabled, note: '原生 setBundleEnabled 已执行；Profile 重载后生效', change: JSON.stringify(change ?? {}).slice(0, 300) };
-    } catch { /* not a bundle — try the loader entry */ }
-    const change = await manager.setPluginEnabled(String(target), Boolean(enabled));
-    return { pluginName: String(target), enabled, note: '原生 setPluginEnabled 已执行；Profile 重载后生效', change: JSON.stringify(change ?? {}).slice(0, 300) };
+    const isBundle = (await manager.listBundles()).some(bundle => bundle.name === String(target));
+    const change = await (isBundle
+      ? manager.setBundleEnabled(String(target), Boolean(enabled))
+      : manager.setPluginEnabled(String(target), Boolean(enabled)));
+    return { pluginName: String(target), enabled: Boolean(enabled), ...changeResult(change) };
   }
 
   async function updateDsh(name) {
-    return uninstallDsh(name).then(() => installDsh(`${name}@latest`));
+    const manager = service('pluginManager');
+    const current = (await manager.listBundles()).find(bundle => bundle.name === String(name));
+    if (!current) throw new StudioPluginsError('DSH_PLUGIN_NOT_FOUND', '待更新的插件不存在');
+    return changeResult(await manager.installBundle(`${name}@latest`, { enabled: current.enabled !== false }));
   }
 
   return { listDsh, installDsh, uninstallDsh, setDshEnabled, updateDsh };

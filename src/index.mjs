@@ -636,8 +636,8 @@ async function registerControlPlane(ctx) {
           if (endpoint === 'plugins/codex-install' || endpoint === 'plugins/codex-remove') {
             const codex = await import('./studio-codex-plugins.mjs').then(({ createStudioCodexPlugins }) => createStudioCodexPlugins({}));
             const result = endpoint === 'plugins/codex-install'
-              ? await codex.installCodex(payload?.pluginId)
-              : await codex.uninstallCodex(payload?.pluginId);
+              ? await codex.installCodex(payload?.pluginId, payload?.marketplaceName)
+              : await codex.uninstallCodex(payload?.pluginId, payload?.marketplaceName);
             return { ok: true, value: result };
           }
           if (endpoint === 'plugins/codex-list') return { ok: true, value: await import('./studio-codex-plugins.mjs').then(({ createStudioCodexPlugins }) => createStudioCodexPlugins({})).then(codex => codex.listCodex()) };

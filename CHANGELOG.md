@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 插件市场的加号现在打开安装源表单。DSH 安装、启停、卸载和更新按原生 `ChangeResult`
+  判断是否生效，失败、取消或配置被覆盖不会再被包装为成功；安装源检查拒绝会在下载前显示。
+  DSH 自带 bundle 直接启用，宿主必需组件保留保护，详情显示 Host 条目的加载状态与失败原因。
+  更新保留原有依赖直至新版本安装完成，重启提示与加载警告不会被目录刷新清除。
+- Codex 插件生命周期保留完整的 `plugin@marketplace` 标识和配置的 `CODEX_HOME`，并展示 CLI
+  失败原因；空的官方清单不会被过期缓存替代，只有缓存时不再声称插件已经启用。
 - 本地 Harness 的绑定 MCP/AgentEngine Tool 现在会在 preset 准入时读取真实工具 schema，并注册到 DSH
   原生 ToolRegistry；模型发出的工具调用由 DSH loop 执行，MCP 凭证和传输仍由 Host 持有，原生轨迹会
   记录可展开的 `tool-call` block 和 `tool-calls` 终态，不再只把调用过程伪装成 reasoning 文本。

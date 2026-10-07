@@ -171,9 +171,11 @@
       const [errors, setErrors] = useState([]);
       const [busyKey, setBusyKey] = useState('');
       const [message, setMessage] = useState('');
-      const load = async () => {
+      const [installOpen, setInstallOpen] = useState(false);
+      const [installSource, setInstallSource] = useState('');
+      const load = async ({ preserveMessage = false } = {}) => {
         setStatus('loading');
-        setMessage('');
+        if (!preserveMessage) setMessage('');
         const results = await Promise.allSettled([hostRemote.dshPlugins(), hostRemote.codexPlugins()]);
         const next = [];
         const nextErrors = [];
@@ -185,32 +187,36 @@
           } else nextErrors.push(`${ecosystem}：${result.reason?.message || '插件宿主不可用'}`);
         }
         setItems(next);
+        setSelected(current => current ? next.find(item => item.ecosystem === current.ecosystem && item.pluginId === current.pluginId) || null : null);
         setErrors(nextErrors);
         setStatus('ready');
       };
       const mutate = async (item, operation) => {
         const pluginId = String(item.pluginId || item.id || '').trim();
-        if (!pluginId || busyKey) return;
+        if (!pluginId || busyKey) return false;
         const key = `${item.ecosystem}:${pluginId}`;
         setBusyKey(key); setMessage(''); setErrors([]);
         try {
+          let result;
           if (item.ecosystem === 'dsh') {
             if (operation === 'install') {
-              const source = item.source?.package || item.distributionName || pluginId;
-              await hostRemote.installDshPlugin(source, true);
-            } else if (operation === 'enable') await hostRemote.enableDshPlugin(pluginId);
-            else if (operation === 'disable') await hostRemote.disableDshPlugin(pluginId);
-            else if (operation === 'update') await hostRemote.updateDshPlugin(pluginId);
-            else if (operation === 'uninstall') await hostRemote.uninstallDshPlugin(pluginId);
+              const source = item.installSpec || item.source?.package || item.distributionName || pluginId;
+              result = await hostRemote.installDshPlugin(source);
+            } else if (operation === 'enable') result = await hostRemote.enableDshPlugin(pluginId);
+            else if (operation === 'disable') result = await hostRemote.disableDshPlugin(pluginId);
+            else if (operation === 'update') result = await hostRemote.updateDshPlugin(pluginId);
+            else if (operation === 'uninstall') result = await hostRemote.uninstallDshPlugin(pluginId);
           } else if (operation === 'install') {
-            await hostRemote.installCodexPlugin(String(item.name || pluginId.replace(/^codex-(cli|curated|bundled):/, '')), item.marketplaceName);
+            result = await hostRemote.installCodexPlugin(pluginId, item.marketplaceName || item.marketplace);
           } else if (operation === 'uninstall') {
-            await hostRemote.uninstallCodexPlugin(String(item.name || pluginId.replace(/^codex-(cli|curated|bundled):/, '')));
+            result = await hostRemote.uninstallCodexPlugin(pluginId);
           }
-          setMessage(`${item.displayName || pluginId}：${operation === 'install' ? '已安装' : operation === 'uninstall' ? '已卸载' : operation === 'enable' ? '已启用' : operation === 'disable' ? '已停用' : '已更新'}。`);
-          await load();
+          await load({ preserveMessage: true });
+          setMessage(`${item.displayName || pluginId}：${operation === 'install' ? '已安装' : operation === 'uninstall' ? '已卸载' : operation === 'enable' ? '已启用' : operation === 'disable' ? '已停用' : '已更新'}。${result?.note || ''}${result?.warnings?.length ? ' 加载提示：' + result.warnings.join('；') : ''}`);
+          return true;
         } catch (reason) {
           setErrors([reason?.message || '插件操作失败']);
+          return false;
         } finally { setBusyKey(''); }
       };
       useEffect(() => { void load(); }, []);
@@ -230,20 +236,23 @@
         if (icon) return h('span', { style }, h('img', { src: icon, alt: '', style: { width: '72%', height: '72%', objectFit: 'contain' } }));
         return h('span', { style: { ...style, background: item?.ecosystem === 'codex' ? '#f2f0ff' : '#eef7ff', color: item?.ecosystem === 'codex' ? '#6656c8' : '#1478c9' } }, iconLetter(item));
       };
-      const ecosystemTone = eco === 'dsh' ? 'accent' : 'neutral';
+      const stateLabel = item => ({ active: '已加载', partial: '部分加载', selected: '已选择', disabled: '未启用', error: '加载失败', cached: '仅缓存', enabled: '已启用', available: '可安装' })[item.status] || (item.enabled ? '已启用' : '未启用');
       const lifecycleButtons = (item, compact = false) => {
         const key = `${item.ecosystem}:${item.pluginId || item.id}`;
         const isDsh = (item.ecosystem || '').toLowerCase() === 'dsh';
         const btn = (label, operation, extra = {}) => h('button', { type: 'button', disabled: Boolean(busyKey), onClick: event => { event.stopPropagation(); void mutate(item, operation); }, style: { ...buttonStyle(), padding: compact ? '4px 9px' : '5px 10px', fontSize: '10px', ...extra } }, busyKey === key ? '处理中…' : label);
         const isCodex = (item.ecosystem || '').toLowerCase() === 'codex';
         const installed = item.installed !== false;
+        if (item.readOnlyReason) return h(Pill, null, item.readOnlyReason === 'host-component' ? '宿主组件' : '宿主必需');
+        if (item.lifecycleAvailable === false) return h(Pill, null, '仅缓存，状态未确认');
         return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', flexShrink: 0 } },
           isDsh && !installed ? btn('安装', 'install', { color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' }) : null,
-          isDsh && installed && item.source === 'profile' ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
+          isDsh && installed && item.removable ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
           isDsh && item.source === 'bundled' ? h(Pill, null, '内置') : null,
-          isDsh && item.enabled !== false ? h(Pill, { tone: 'accent' }, '已启用') : null,
-          isDsh && item.enabled === false ? btn('启用', 'enable') : null,
+          installed ? h(Pill, { tone: item.status === 'error' ? 'signal' : 'accent' }, stateLabel(item)) : null,
+          isDsh && installed && item.enabled === false && !item.error ? btn('启用', 'enable') : null,
           isDsh && item.enabled !== false ? btn('停用', 'disable') : null,
+          isDsh && item.removable ? btn('更新', 'update') : null,
           isCodex && !installed ? btn('安装', 'install', { color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' }) : null,
           isCodex && installed ? btn('卸载', 'uninstall', { color: BRAND.danger }) : null,
         );
@@ -267,19 +276,29 @@
           infoRow('插件 ID', selected.pluginId || selected.name),
           infoRow('版本', selected.version),
           infoRow('生态', (selected.ecosystem || '').toUpperCase()),
+          infoRow('状态', stateLabel(selected)),
+          selected.marketplaceName ? infoRow('市场', selected.marketplaceName) : null,
           infoRow('来源', selected.source || '—'),
           selected.installSpec ? infoRow('安装源', selected.installSpec) : null,
           selected.risk ? infoRow('风险标记', JSON.stringify(selected.risk)) : null),
+        selected.error ? h('p', { role: 'alert', style: { color: BRAND.danger, whiteSpace: 'pre-wrap' } }, `加载失败：${selected.error.diagnostic || selected.error.code}`) : null,
+        selected.rows?.length ? h('div', null, h('h3', null, 'Host 加载的能力'), selected.rows.map(row => h('div', { key: row.rowId, style: { padding: '8px 0', fontSize: '12px', color: BRAND.inkMuted } }, `${row.moduleName || row.rowId} · ${row.fiberPhase === 'active' ? '已加载' : row.fiberPhase === 'failed' ? '加载失败' : row.fiberPhase || '未加载'}`))) : null,
+        h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, selected.ecosystem === 'codex' ? '在新建的 Codex Agent 会话中加载。需要登录的连接器沿用 Codex 授权状态；其他 Harness 请从资源库导入 Skill 或绑定 MCP。' : '插件能力由 DSH Host 加载。需要重启的变更会在操作结果中提示；Agent 的工具绑定在编辑页维护。'),
       ) : null;
       const pluginSection = (title, rows) => rows.length ? h('section', { style: { marginTop: '34px' } }, h('h3', { style: { margin: '0 0 7px', fontSize: '20px', fontWeight: 650, letterSpacing: '-0.02em', color: BRAND.ink } }, title), h('div', { 'data-plugin-grid': 'true', style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: '72px', rowGap: '0' } }, rows.map(discoveryRow))) : null;
       const marketHeading = h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '24px', marginBottom: '28px', flexWrap: 'wrap' } },
         h('div', null, h('h1', { style: { margin: 0, color: BRAND.ink, fontSize: '34px', lineHeight: 1.1, letterSpacing: '-0.04em', fontWeight: 750 } }, '插件'), h('p', { style: { color: BRAND.inkMuted, margin: '10px 0 0', lineHeight: 1.5, fontSize: '16px' } }, '在你常用的工具中与 Agent 协作。')),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } }, h('input', { type: 'search', 'aria-label': '搜索插件', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索插件', style: { ...inputStyle(), width: '320px', borderRadius: '26px', padding: '12px 18px', marginTop: 0, fontSize: '14px', background: BRAND.surface } }), h('button', { type: 'button', 'aria-label': '刷新插件目录', onClick: load, style: { width: '48px', height: '48px', border: '1px solid ' + BRAND.border, borderRadius: '50%', background: BRAND.surface, color: BRAND.ink, fontSize: '30px', lineHeight: 1, cursor: 'pointer', boxShadow: '0 2px 8px rgba(11,18,32,0.04)' } }, '+')));
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } }, h('input', { type: 'search', 'aria-label': '搜索插件', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索插件', style: { ...inputStyle(), width: '320px', borderRadius: '26px', padding: '12px 18px', marginTop: 0, fontSize: '14px', background: BRAND.surface } }), h('button', { type: 'button', 'aria-label': '添加插件', onClick: () => { setInstallSource(''); setInstallOpen(true); }, disabled: Boolean(busyKey), style: { width: '48px', height: '48px', border: '1px solid ' + BRAND.border, borderRadius: '50%', background: BRAND.surface, color: BRAND.ink, fontSize: '30px', lineHeight: 1, cursor: 'pointer', boxShadow: '0 2px 8px rgba(11,18,32,0.04)' } }, '+')));
       return h('div', { 'data-plugin-market': 'true', style: { maxWidth: '1120px', margin: '12px auto', padding: '8px 12px 40px' } },
         marketHeading,
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取插件目录', detail: '分别询问 DSH Profile Host 和 Codex App Server。' }) : null,
         errors.length ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', background: 'var(--dsw-alias-state-warn-tertiary, #fff3da)', color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', fontSize: '12px' } }, errors.join('；')) : null,
         message ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '10px 12px', borderRadius: '9px', background: BRAND.accentSoft, color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
+        busyKey ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, '正在安装或应用插件变更，请稍候…') : null,
+        installOpen ? h(ResourceDialog, { title: `添加 ${eco === 'codex' ? 'Codex' : 'DSH'} 插件`, detail: eco === 'codex' ? '输入完整插件标识，例如 plugin-name@marketplace。市场需要已在 Codex 中配置。' : '输入 DSH 插件的 npm 包名、安装源或本地路径。Host 会先检查插件源与兼容性。', onClose: () => { if (!busyKey) setInstallOpen(false); } }, h('form', { onSubmit: async event => { event.preventDefault(); const source = installSource.trim(); if (source && await mutate({ pluginId: source, displayName: source, ecosystem: eco }, 'install')) setInstallOpen(false); }, style: { display: 'grid', gap: '14px' } },
+          h('input', { 'aria-label': '插件安装源', value: installSource, onChange: event => setInstallSource(event.target.value), required: true, placeholder: eco === 'codex' ? 'plugin-name@marketplace' : '@scope/plugin-name', style: inputStyle() }),
+          errors.length ? h('p', { role: 'alert', style: { color: BRAND.danger, whiteSpace: 'pre-wrap', margin: 0 } }, errors.join('；')) : null,
+          h('button', { type: 'submit', disabled: Boolean(busyKey) || !installSource.trim(), style: buttonStyle() }, busyKey ? '正在安装…' : '安装插件'))) : null,
         status === 'ready' && !selected ? h('div', null,
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' } },
             h('div', { style: { display: 'inline-flex', gap: '4px', padding: '3px', border: '1px solid ' + BRAND.border, borderRadius: '18px', background: BRAND.surface } }, [['dsh', 'DSH 插件'], ['codex', 'Codex 插件']].map(([id, label]) => h('button', { key: id, type: 'button', 'aria-selected': eco === id ? 'true' : 'false', onClick: () => { setEco(id); setSelected(null); }, style: { border: 0, boxShadow: 'none', padding: '6px 14px', borderRadius: '15px', cursor: 'pointer', fontSize: '12px', fontWeight: 650, color: eco === id ? BRAND.accentStrong : BRAND.inkMuted, background: eco === id ? BRAND.accentSoft : 'transparent' } }, label))),

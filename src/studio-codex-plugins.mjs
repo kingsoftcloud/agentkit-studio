@@ -34,9 +34,9 @@ function parseFrontmatter(source) {
   return metadata;
 }
 
-export function createStudioCodexPlugins({ codexHome } = {}) {
-  const execImpl = promisify(execFile);
+export function createStudioCodexPlugins({ codexHome = process.env.CODEX_HOME, executable = process.env.AGENTKIT_CODEX_BIN || 'codex', execImpl = promisify(execFile) } = {}) {
   const cacheRoot = codexHome ? join(codexHome, 'plugins', 'cache') : join(homedir(), '.codex', 'plugins', 'cache');
+  function cliOptions(timeout) { return { timeout, windowsHide: true, ...(codexHome ? { env: { ...process.env, CODEX_HOME: codexHome } } : {}) }; }
 
   async function readJson(path) {
     try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
@@ -47,8 +47,9 @@ export function createStudioCodexPlugins({ codexHome } = {}) {
     // rows with installed/enabled flags and marketplace names. The CLI also
     // exposes add/remove for the lifecycle actions.
     try {
-      const { stdout } = await execImpl('codex', ['plugin', 'list', '--json'], { timeout: 60000, windowsHide: true });
+      const { stdout } = await execImpl(executable, ['plugin', 'list', '--json'], cliOptions(60000));
       const parsed = JSON.parse(String(stdout || '{}'));
+      if (!Array.isArray(parsed.installed) || !Array.isArray(parsed.available)) throw new Error('Codex plugin list returned no inventory');
       const rows = [...(parsed.installed || []), ...(parsed.available || [])];
       const items = rows.map(row => ({
         pluginId: String(row.pluginId || `${row.name}@${row.marketplaceName || ''}`),
@@ -57,12 +58,15 @@ export function createStudioCodexPlugins({ codexHome } = {}) {
         description: String(row.description || row.summary || ''),
         version: String(row.version || ''),
         marketplace: String(row.marketplaceName || ''),
+        marketplaceName: String(row.marketplaceName || ''),
         source: row.installed ? 'codex-installed' : 'codex-available',
         installed: row.installed === true,
         enabled: row.enabled === true,
+        lifecycleAvailable: true,
+        status: row.installed ? row.enabled ? 'enabled' : 'disabled' : 'available',
         kind: 'codex',
       }));
-      if (items.length) return { items, source: 'codex-cli' };
+      return { items, source: 'codex-cli' };
     } catch { /* CLI missing or failed: fall through to the cache scan */ }
     const items = [];
     const sections = [
@@ -123,7 +127,7 @@ export function createStudioCodexPlugins({ codexHome } = {}) {
           description,
           version,
           source: section.source,
-          installed: true, enabled: true,
+          installed: true, enabled: false, status: 'cached', lifecycleAvailable: false,
           kind: 'codex',
           category,
           author,
@@ -131,25 +135,24 @@ export function createStudioCodexPlugins({ codexHome } = {}) {
       }
     }
     items.sort((a, b) => a.pluginId.localeCompare(b.pluginId));
-    return { items, source: 'codex-home' };
+    return { items, source: 'codex-home', error: { code: 'CODEX_PLUGIN_INVENTORY_UNAVAILABLE', message: 'Codex CLI 目录不可用，以下仅为缓存，无法确认是否安装或启用。' } };
   }
 
-  async function installCodex(pluginId) {
+  async function changeCodex(operation, pluginId, marketplaceName = '') {
     const name = String(pluginId || '').trim();
     if (!name) throw new StudioCodexPluginsError('CODEX_PLUGIN_ID_MISSING', '插件名不能为空');
-    // The CLI expects PLUGIN@MARKETPLACE (or --marketplace) since 0.159.
-    const spec = name.includes('@') || !name.startsWith('codex-') ? name : name.replace(/^codex-/, '');
-    const { stdout } = await execImpl('codex', ['plugin', 'add', spec], { timeout: 120000, windowsHide: true });
-    return { ok: true, output: String(stdout || '').slice(-600) };
+    const spec = name.includes('@') ? name : marketplaceName ? `${name}@${String(marketplaceName).trim()}` : name;
+    if (!/^[^\s@]+@[^\s@]+$/.test(spec) || spec.startsWith('-')) throw new StudioCodexPluginsError('CODEX_PLUGIN_MARKETPLACE_MISSING', '请使用完整插件标识：插件名@市场名');
+    try {
+      const { stdout } = await execImpl(executable, ['plugin', operation, spec, '--json'], cliOptions(120000));
+      return { ok: true, pluginId: spec, output: String(stdout || '').slice(-1200), note: operation === 'add' ? 'Codex 插件已安装；新建 Codex Agent 会话后加载，连接器按 Codex 的授权状态使用。' : 'Codex 插件已卸载。' };
+    } catch (error) {
+      throw new StudioCodexPluginsError('CODEX_PLUGIN_OPERATION_FAILED', String(error?.stderr || error?.message || 'Codex 插件操作失败').trim().slice(-1200), { pluginId: spec, operation });
+    }
   }
 
-  async function uninstallCodex(pluginId) {
-    const name = String(pluginId || '').trim();
-    if (!name) throw new StudioCodexPluginsError('CODEX_PLUGIN_ID_MISSING', '插件名不能为空');
-    const spec = name.includes('@') || !name.startsWith('codex-') ? name : name.replace(/^codex-/, '');
-    const { stdout } = await execImpl('codex', ['plugin', 'remove', spec], { timeout: 120000, windowsHide: true });
-    return { ok: true, output: String(stdout || '').slice(-600) };
-  }
+  async function installCodex(pluginId, marketplaceName) { return changeCodex('add', pluginId, marketplaceName); }
+  async function uninstallCodex(pluginId, marketplaceName) { return changeCodex('remove', pluginId, marketplaceName); }
 
   return { listCodex, installCodex, uninstallCodex };
 }
