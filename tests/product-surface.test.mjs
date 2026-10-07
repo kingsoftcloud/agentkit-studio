@@ -83,8 +83,8 @@ test('direct REST surface fails typed instead of probing the absent local Studio
 
 test('Delivery surface states the direct Server deployment contract boundary', () => {
   assert.match(clientSource, /const directServerMode = Boolean\(window\.__AGENTKIT_STUDIO__\?\.controlPlane === 'agentengine-server'\)/);
-  assert.match(clientSource, /Deployment 合同尚未提供/);
-  assert.match(clientSource, /AgentEngine Server 尚未提供 Deployment 合同/);
+  assert.match(clientSource, /云端部署尚未接入/);
+  assert.match(clientSource, /本地 Build 尚未接入云端部署/);
   assert.match(clientSource, /directServerMode \|\| saving \|\| !selectedBuild/);
 });
 

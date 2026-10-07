@@ -6,7 +6,6 @@
  * workspace come from user configuration stored locally; KOP credentials
  * are not used for the channel service API.
  */
-import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -37,7 +36,7 @@ export function createStudioChannels({ storeDir } = {}) {
 
   function redact(config) {
     const { apiToken, ...safe } = config;
-    return { ...safe, configured: Boolean(config.serverUrl && config.accountId && config.workspaceId), tokenConfigured: Boolean(apiToken || config.apiToken) };
+    return { ...safe, configured: Boolean(config.serverUrl && config.accountId), tokenConfigured: Boolean(apiToken) };
   }
 
   async function getConnection() {
@@ -74,9 +73,20 @@ export function createStudioChannels({ storeDir } = {}) {
     try { response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), redirect: 'error', signal: AbortSignal.timeout(30000) }); }
     catch (error) { throw new ChannelError('CHANNEL_PROXY_FAILED', '渠道服务请求未完成', { action, cause: String(error?.cause?.code || error?.message || error).slice(0, 200) }); }
     const text = await response.text();
-    let body = null;
-    if (text) { try { body = JSON.parse(text); } catch { body = { detail: text.slice(0, 256) }; } }
-    if (!response.ok) throw new ChannelError('CHANNEL_PROXY_ERROR', String(body?.message || body?.detail || `渠道服务返回 ${response.status}`), { action, status: response.status });
+    let body;
+    try { body = JSON.parse(text); }
+    catch { throw new ChannelError('CHANNEL_RESPONSE_INVALID', `渠道服务返回了无效响应（HTTP ${response.status}）`, { action, status: response.status }); }
+    const failed = !response.ok || (body?.Code !== undefined && body.Code !== 0);
+    if (failed) {
+      // FastAPI validation errors include input values: expose field names only,
+      // never the echoed AppSecret, credentials, or an untrusted response body.
+      const missing = Array.isArray(body?.detail) ? body.detail.map(item => item?.loc?.filter(part => part !== 'body').join('.')).filter(Boolean) : [];
+      const message = missing.length ? `渠道参数校验失败：${missing.join('、')}` : String(body?.Message || body?.message || `渠道服务返回 ${response.status}`);
+      throw new ChannelError('CHANNEL_PROXY_ERROR', message, { action, status: response.status, ...(body?.Code !== undefined ? { serviceCode: body.Code } : {}) });
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body) || body.Code !== 0 || !Object.hasOwn(body, 'Data')) {
+      throw new ChannelError('CHANNEL_RESPONSE_INVALID', '渠道服务返回了不符合合同的响应', { action, status: response.status });
+    }
     return body;
   }
 

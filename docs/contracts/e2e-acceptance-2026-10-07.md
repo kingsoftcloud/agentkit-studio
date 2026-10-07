@@ -29,13 +29,14 @@
 | P01 | DSH 插件安装、启停、失败提示和实际使用 | 通过 | 网页与独立 DMG App 经安装表单安装本轮无依赖合成插件 0.0.2，Host 热应用；原生模型实际调用 studio_e2e_echo 并显示 canary。错误的 0.0.1 插件被 Host 拒绝并回滚安装；Schedule 停用与重启用实际改变能力和入口。网页、桌面的本轮测试插件最终均卸载成功。此证据为本地插件包安装，未冒称 npm 新包发布。后续复验发现 Make 启动把 pnpm 11 注入 pnpm 10 的旧 Profile，实际出现 ERR_PNPM_UNEXPECTED_STORE；改为官方源码 CLI 后，同一 Profile 安装命令和网页安装表单均成功。 |
 | P02 | Codex 插件安装、Skill 加载和卸载 | 通过 | 独立 CODEX_HOME 使用本机官方 openai-primary-runtime 市场，通过 Studio 同一适配器安装 documents，CLI 确认为 installed/enabled；实际 App Server skills/list 返回 documents:documents、enabled=true；卸载后目录不再标记安装。另在独立 DMG App 的 Codex 插件添加表单实际安装 documents@openai-primary-runtime；详情显示 26.909.12148 已启用，包内 Node/Codex 的 skills/list 再次确认加载，界面卸载成功。现有用户插件未变更。 |
 | B01 | 本地 Build 打包、下载、历史及冻结版本运行 | 通过 | 真实生成 build_6b8bc89fd3966f21e524，Prompt 更新后原生会话仍运行冻结 r1。网页 Blob 下载稳定复现无文件；改为 DSH 已认证的 Fetch 文件响应后，IAB 下载事件返回 Downloads ZIP 路径，实际 13117 字节，解包 manifest 确认 Agent 与 Revision 1，SHA256 为 0f8b2b3c15221283f9aee2a1d40e090899dfb7026c6b184c74eac5b365f7c275。未认证请求返回 401，外源请求返回 403。最终 DMG 经 macOS 保存面板再次下载 2828 字节 ZIP，SHA256 82206458e5fbe04512aef825b11bb8da581c3cd52e63f9fc00e9872015d2e4d4，与原冻结包一致。 |
-| B02 | 部署入口对应真实合同，失败清晰且不生成虚假就绪记录 | 通过 | 真实构建后部署按钮仍禁用并说明 AgentEngine Server 没有 Deployment Action；无新增虚假就绪部署记录。实际云端部署合同缺口仍存在。 |
+| B02 | 部署入口对应真实合同，失败清晰且不生成虚假就绪记录 | 通过 | 本地构建后云部署按钮禁用，无新增虚假就绪记录。后续源码复核确认 Server 已有 CreateAgentProduct/UpdateAgent 部署能力；本地 Studio Build 尚未完成产物转换、上传与部署适配，页面改为说明这一实际限制。此行只验收禁用与错误边界，不代表云端发布通过。 |
 | O01 | Studio 自动化创建、编辑、启停、手动运行和执行历史 | 通过 | task-d52e9177 手动运行成功并有原生 Skill stdout；实际 60 秒计划 task-92e195c3 在 13:38:49 触发，13:38:51 完成，occ_8dc6863fe1964b51914cb5f051008e15 与 Session/Run ID 一致。两项测试任务最终暂停。一次性空时间与时区编辑修复另有回归检查。 |
 | O02 | DSH 原生自动化任务目录及任务详情 | 通过 | 独立 DMG App 通过官方 schedule_create 创建一次性提醒 schedule-ab20de53-eae3-4bf8-823a-d86582bcc431，14:18 实际投递 E2E-DSH-SCHEDULE-20261007；原生任务详情显示执行记录和结束状态，无循环任务残留。 |
 | O03 | 运行后 Trace 列表、详情、筛选和导出可用 | 通过 | 真实 Trace 列表、详情、Agent/Run 筛选与合法 OTLP 投影已验证。桌面经官方 DSH Session 日志 API 和 macOS 保存面板导出 43250 字节、28 条合法 JSONL，SHA256 053a09b96607055cc57999f4b8b270ff3aa2c08f2a3bb562c6c7729772fa86e5。投影 Span 不是完整原生工具 Span；完整事实另由导出的 Session 日志提供。 |
 | O04 | 评测集导入、目标选择、真实运行与结果详情 | 通过 | 真实导入 e2e-frozen-build-20261007，选择冻结 Build 并实际执行；eval_97cf683487014b0180e7f8390e5fd704 返回旧 r1 身份，两个断言通过，最终页面显示用例 1/通过 1/失败 0/断言 2。A2A 和本地源码目标仍明确未接入。 |
-| O05 | Channels 配置、目录和错误处理；外发消息不作为默认测试动作 | 部分通过 | 真实打开未配置目录，显示 connector 不可用；关闭启用开关后提交测试连接也明确要求 serverUrl/accountId，没有伪造连接或外发消息。缺少真实渠道服务配置，联网渠道生命周期未验收。 |
-| D01 | 固定 DSH 基线和兼容补丁、Studio 包及 Profile 完整性 | 通过 | 最终 Studio 303 项检查及 176 文件包完整性通过；14 个兼容补丁在固定基线私有索引按顺序应用成功。最新桌面启动、语言与 Profile 测试共 180 项通过、1 项平台跳过，相关源文件 lint、桌面 Host TypeScript 和 1158 对双语文档配对检查通过。早先 Session 模型合同 26 项、Markdown 200 项（含逐字流式更新）也通过。DSH 全量文档同步另有 6 项未通过，详见下方。 |
+| O05 | Channels 配置与平台消息链路 | 部分通过 | 本机真实 Channel API 配置生命周期通过，见 O06；未配置飞书/WPS/企业微信的真实平台凭证，外部消息收发与本地 Connector 数据链路未验收。 |
+| O06 | Channels 控制面创建、编辑、连接地址与删除 | 通过 | 浏览器连接独立 SQLite 的真实 Channel API；创建飞书测试配置 44d31039f1174823，编辑 Agent、保留空白凭证输入对应的原值，读取连接地址并删除后目录回到 0。无渠道 Worker、无外发消息，占位平台凭证仅用于控制面合同验证。 |
+| D01 | 固定 DSH 基线和兼容补丁、Studio 包及 Profile 完整性 | 通过 | 最终 Studio 303 项检查及 176 文件包完整性通过；14 个兼容补丁在固定基线私有索引按顺序应用成功。最新桌面启动、语言与 Profile 测试共 180 项通过、1 项平台跳过，相关源文件 lint、桌面 Host TypeScript 和 1158 对双语文档配对检查通过。早先 Session 模型合同 26 项、Markdown 200 项（含逐字流式更新）也通过。六项既有 DSH 文档同步失败已在后续补验中修复，最新全量 43 项通过，详见下方。 |
 | D02 | macOS App 产物包含运行时、插件与依赖，无源码目录依赖 | 通过 | 真实 DMG 的独立 App 内置 Node24.18.1/Python/pnpm/Office；官方 DOCX/XLSX/PPTX→PDF、原生模块冒烟通过。修复根 manifest 插件解析锚点后，源码目录外 App 完整 Studio 页面与原生 Agent 运行成功。 |
 | D03 | 离线 DMG 挂载、复制安装、无预装 Node/pnpm 冷启动 | 通过 | DMG 只读挂载并复制到源码目录之外；PATH 仅保留系统路径，失败代理下冷启动完整 Studio、创建本地 Agent、原生会话成功。外层 sandbox 与 Chromium sandbox 冲突的测试未作为证据；最终 DMG 又在新数据目录中仅系统 PATH、外部服务地址不可达环境启动，实际创建 ar-local-050eddcd95ed4273，并在无工作区原生会话通过本地合成模型验证绑定 Prompt。此处验证独立启动与本地运行，不等同云端资源离线可用或 OS 级断网测试。 |
 | D04 | 干净数据目录首次配置、数据持久化、退出再打开 | 通过 | 独立 DSH/AgentKit 数据目录首次 Profile 包含 Studio，模型配置保留；实际创建的本地 Agent、绑定模型与原生会话回答在退出再打开后恢复。旧全局配置迁移仍读取 legacy-global，未声称干净系统账户。 |
@@ -51,11 +52,11 @@
 
 ## 最终本机产物与复验
 
-- DMG：`AgentKit-Studio-0.0.1-mac-arm64-local.dmg`，501765554 字节（478.52 MiB）；SHA256 `8a1ea34d74bb082dad08f099c03a213d49eae219fdd2c1411d13c8505f06749e`。这是本机 arm64 未签名验收包。
+- DMG：`AgentKit-Studio-0.0.1-mac-arm64-local.dmg`，501737822 字节（478.49 MiB）；SHA256 `b1d6903199257e91ed521a0492293ecd73cdcbcb9585a1b01f00f463a33c850b`。这是本机 arm64 未签名验收包。
 - 最终 App 已由 DMG 只读挂载后复制到源码目录之外。包内 local-runtime 源码与本轮最终源码 SHA256 一致，303 项检查与 183 个跟踪文件的可分发路径检查通过；最终 tgz 的 176 文件包完整性通过。
 - 最终包恢复旧 r1 对话后继续返回 E2E-DESKTOP-PERSONA；r2 资源会话与包内 Codex 的实际续问成功。用户已有 Agent 配置未被测试改写，测试自动化均已暂停或结束。
 - 实际图标从最终 App 的 icon.icns 导出，品牌为 AgentKit Studio A；旧版已安装应用不会仅因更新源文件自动改变。本轮保留旧版 0.8.5 的 AgentKitStudio.app，另将已验收的新包安装为 AgentKit Studio.app。
-- 未完成的外部条件：渠道服务连接配置、Deployment Action，以及 macOS 签名和公证配置。内嵌浏览器 ZIP 下载已补验；原生重新生成按钮仍未验收。
+- 未完成项：真实平台渠道凭证、本地 Build 的云端产物与部署适配，以及 macOS 签名和公证配置；部署适配是 Studio 实现缺口，不能归为缺少独立 Deployment Action 的外部阻塞。内嵌浏览器 ZIP 下载已补验；原生重新生成按钮仍未验收。
 
 ## 原生链接与插件流程补验
 
@@ -98,3 +99,13 @@
 - 最终品牌复验发现 Electron 的 app.name 仍是内部包名，而官方 build:official 会重置客户端标题。十四号补丁将产品名经桌面专用构建值传到现有原生语言字典；不修改 Electron 数据目录。最终 asar 主程序与构建输出 SHA256 一致（a84638231404fc44be7a017de7eedf80aeefd1ab3cf9423c6fe5d0b231f42689），产品名已固定为 AgentKit Studio。
 - 从最后一版 DMG 重新安装后，通过系统正常启动，实际菜单显示“关于 / 隐藏 / 退出 AgentKit Studio”，“关于”窗口同时显示 Studio A 图标和产品名称。旧会话、Agent 名称及 glm-5.3-flash 模型恢复；再次搜索 2 秒完成，展开原生 metaso_web_search 记录得到 total=29、size=10，回答链接为 docs.ksyun.com/directories/5028?type=1。
 - Web 重启后总览读取 23 个 Agent、4/4 就绪；选择总览再刷新仍停留在总览。最终桌面截图保存在本机 .artifacts/e2e-applications-brand-20261007.png 和 .artifacts/e2e-final-applications-mcp-20261007.png。
+
+## 兼容合同与渠道控制面补验
+
+- 十五号补丁补齐 SessionFilter/registerSessionFilter 的 JSDoc 和双语使用说明；事件图、Cordis API 目录和持久化目录均由官方生成器更新。62 个持久化根类型摘要逐一相同，没有改写冻结的持久化历史。原先的调试构建备份移出 DSH 文档扫描范围并保留。
+- 官方 `pnpm run test:docs` 21 项、`pnpm run doc-sync` 43 项全部通过；`pnpm run lint:contracts-ready` 全量通过。相关 ui-workspace 测试 69 项、tool-cordis Host 测试 1 项通过；15 个补丁在固定基线私有索引按顺序应用成功。
+- 接通真实 Channel API 后，原表单创建会因缺少 AppId/AppSecret 返回 422，错误文案退化为对象字符串；不存在的渠道返回 HTTP 200/Code 404，却被旧代理当作成功。本轮补齐必填凭证、业务错误码和响应格式校验，校验错误只显示字段名。
+- 连接不再强制工作区，保存后自动刷新目录；凭证已有状态读取正确。编辑不发送空白密钥和不支持修改的渠道身份字段；创建不再发送服务不支持的 Enabled 字段。浏览器完成实际新增、编辑、连接地址读取、删除，独立数据库确认密钥未被空白覆盖且删除为服务的软删除。
+- 最新 Studio 检查为 306 项通过。矩阵扩展至 37 项：34 项通过、2 项部分通过、1 项外部阻塞；未把控制面验收等同于外部渠道消息投递。
+- 复核服务端当前源码及已有 cloud-api-gap.md：CreateAgentProduct/UpdateAgent 能触发 Code/Container/ManagedRuntime 部署，缺少独立 Deployment Action 不等于没有部署能力。已修正页面归因；本地 Build 到云端产物的适配仍未完成，本轮没有创建云端计算资源。
+- 最终本机 DMG 再次通过完整官方流水线，包内 Node 24.18.1、原生模块及 Office 转 PDF 冒烟通过。实际从 DMG 更新 Applications 内的产品 App，Channels 创建 8f617266dc0b4837、编辑并删除成功；已有小红书会话与模型恢复。安装后的客户端和渠道模块与当前源码逐字节一致，图标摘要与已验收的 Studio A 相同，原生“关于”显示 AgentKit Studio。

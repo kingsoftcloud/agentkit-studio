@@ -12,7 +12,7 @@
       const [actionBusy, setActionBusy] = useState('');
       const [channelEditor, setChannelEditor] = useState(null);
       const [channelQr, setChannelQr] = useState(null);
-      const [channelForm, setChannelForm] = useState({ AgentId: '', ConnectorWorkspaceId: '', Channel: 'wps-xiezuo', ChannelAccountId: '', DmPolicy: 'pairing', GroupPolicy: 'allowlist', RequireMention: true, SessionScope: 'per-peer', Enabled: true, ConfigJson: '{}' });
+      const [channelForm, setChannelForm] = useState({ AppId: '', AppSecret: '', AgentId: '', ConnectorWorkspaceId: '', Channel: 'wps-xiezuo', ChannelAccountId: '', DmPolicy: 'pairing', GroupPolicy: 'allowlist', RequireMention: true, SessionScope: 'per-peer', Enabled: true, ConfigJson: '{}' });
       const [channelSaving, setChannelSaving] = useState(false);
       const [channelPage, setChannelPage] = useState(0);
       const [pairingPage, setPairingPage] = useState(0);
@@ -49,19 +49,19 @@
         const firstError = results.find(item => item.status === 'rejected');
         if (results.every(item => item.status === 'rejected')) { setStatus('error'); setError(firstError.reason?.message || 'Channel Host 不可用'); return; }
         setStatus('ready');
-        if (firstError) setError('Channel Connector 未安装或部分数据源不可用；已展示能够读取的连接状态。');
+        if (firstError) setError(firstError.reason?.message || '部分渠道数据读取失败，请检查连接配置。');
       };
       useEffect(() => { void load(); }, []);
       const saveConnection = async event => {
         event.preventDefault(); setSaving(true); setError('');
-        try { const value = await hostRemote.updateChannelConnection({ serverUrl: config.serverUrl.trim(), accountId: config.accountId.trim(), workspaceId: config.workspaceId.trim(), ...(config.apiToken ? { apiToken: config.apiToken } : {}) }); setConnection(value); setConfig(previous => ({ ...previous, apiToken: '' })); }
+        try { const value = await hostRemote.updateChannelConnection({ serverUrl: config.serverUrl.trim(), accountId: config.accountId.trim(), workspaceId: config.workspaceId.trim(), ...(config.apiToken ? { apiToken: config.apiToken } : {}) }); setConnection(value); setConfig(previous => ({ ...previous, apiToken: '' })); await load(); }
         catch (reason) { setError(reason?.message || '保存 Channel 连接失败'); }
         finally { setSaving(false); }
       };
       const pairingAction = async (id, action) => { setActionBusy(id); try { await hostRemote.channelAction(action, { Id: id }); await load(); } catch (reason) { setError(reason?.message || `${action} 失败`); } finally { setActionBusy(''); } };
       const openChannelEditor = channel => {
         setChannelEditor(channel ? operationalId(channel) : 'new');
-        setChannelForm(channel ? { AgentId: channel?.AgentId || channel?.agentId || '', ConnectorWorkspaceId: channel?.ConnectorWorkspaceId || channel?.connectorWorkspaceId || '', Channel: channel?.Channel || channel?.channel || 'wps-xiezuo', ChannelAccountId: channel?.ChannelAccountId || channel?.channelAccountId || '', DmPolicy: channel?.DmPolicy || channel?.dmPolicy || 'pairing', GroupPolicy: channel?.GroupPolicy || channel?.groupPolicy || 'allowlist', RequireMention: channel?.RequireMention ?? channel?.requireMention ?? true, SessionScope: channel?.SessionScope || channel?.sessionScope || 'per-peer', Enabled: channel?.Enabled ?? channel?.enabled ?? true, ConfigJson: channel?.ConfigJson || channel?.configJson || '{}' } : { AgentId: '', ConnectorWorkspaceId: '', Channel: 'wps-xiezuo', ChannelAccountId: '', DmPolicy: 'pairing', GroupPolicy: 'allowlist', RequireMention: true, SessionScope: 'per-peer', Enabled: true, ConfigJson: '{}' });
+        setChannelForm(channel ? { AppId: '', AppSecret: '', AgentId: channel?.AgentId || channel?.agentId || '', ConnectorWorkspaceId: channel?.ConnectorWorkspaceId || channel?.connectorWorkspaceId || '', Channel: channel?.Channel || channel?.channel || 'wps-xiezuo', ChannelAccountId: channel?.ChannelAccountId || channel?.channelAccountId || '', DmPolicy: channel?.DmPolicy || channel?.dmPolicy || 'pairing', GroupPolicy: channel?.GroupPolicy || channel?.groupPolicy || 'allowlist', RequireMention: channel?.RequireMention ?? channel?.requireMention ?? true, SessionScope: channel?.SessionScope || channel?.sessionScope || 'per-peer', Enabled: channel?.Enabled ?? channel?.enabled ?? true, ConfigJson: channel?.ConfigJson || channel?.configJson || '{}' } : { AppId: '', AppSecret: '', AgentId: '', ConnectorWorkspaceId: '', Channel: 'wps-xiezuo', ChannelAccountId: '', DmPolicy: 'pairing', GroupPolicy: 'allowlist', RequireMention: true, SessionScope: 'per-peer', Enabled: true, ConfigJson: '{}' });
       };
       const saveChannel = async event => {
         event.preventDefault();
@@ -69,9 +69,14 @@
         setChannelSaving(true); setError('');
         try {
           const action = channelEditor && channelEditor !== 'new' ? 'UpdateChannel' : 'CreateChannel';
-          const payload = { ...channelForm, AgentId: channelForm.AgentId.trim(), ChannelAccountId: channelForm.ChannelAccountId.trim(), ...(channelEditor && channelEditor !== 'new' ? { Id: channelEditor } : {}) };
+          const creating = action === 'CreateChannel';
+          if (creating && (!channelForm.AppId.trim() || !channelForm.AppSecret.trim())) throw new Error('请填写应用 App ID 和 App Secret');
+          const { AppId, AppSecret, Channel, ChannelAccountId, Enabled, ...policy } = channelForm;
+          const payload = { ...policy, AgentId: channelForm.AgentId.trim(), ...(creating
+            ? { Channel, ChannelAccountId: ChannelAccountId.trim(), AppId: AppId.trim(), AppSecret: AppSecret.trim() }
+            : { Id: channelEditor, Enabled, ...(AppId.trim() ? { AppId: AppId.trim() } : {}), ...(AppSecret.trim() ? { AppSecret: AppSecret.trim() } : {}) }) };
           await hostRemote.channelAction(action, payload);
-          setChannelEditor(null); await load();
+          setChannelForm(previous => ({ ...previous, AppSecret: '' })); setChannelEditor(null); await load();
         } catch (reason) { setError(reason?.message || '渠道保存失败'); }
         finally { setChannelSaving(false); }
       };
@@ -184,8 +189,8 @@
           h('form', { onSubmit: saveConnection, style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '9px', alignItems: 'end', padding: '0 14px 14px' } },
             h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Channel 服务地址', h('input', { value: config.serverUrl, onChange: event => setConfig({ ...config, serverUrl: event.target.value }), placeholder: 'https://channel.example.com', style: inputStyle() })),
             h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '账号 ID', h('input', { value: config.accountId, onChange: event => setConfig({ ...config, accountId: event.target.value }), style: inputStyle() })),
-            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '工作区 ID', h('input', { value: config.workspaceId, onChange: event => setConfig({ ...config, workspaceId: event.target.value }), style: inputStyle() })),
-            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '服务凭证', h('input', { type: 'password', value: config.apiToken, onChange: event => setConfig({ ...config, apiToken: event.target.value }), placeholder: connection?.hasApiToken ? '已保存，留空保留' : '可选', style: inputStyle() })),
+            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '工作区 ID（可选）', h('input', { value: config.workspaceId, onChange: event => setConfig({ ...config, workspaceId: event.target.value }), style: inputStyle() })),
+            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '服务凭证', h('input', { type: 'password', value: config.apiToken, onChange: event => setConfig({ ...config, apiToken: event.target.value }), placeholder: connection?.tokenConfigured ? '已保存，留空保留' : '可选', style: inputStyle() })),
             h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), justifySelf: 'start', background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, saving ? '保存中…' : '保存连接'))),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取 Channel 数据', detail: '读取连接状态、渠道、配对和消息。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: 'Channels 暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
@@ -195,13 +200,17 @@
           channelEditor ? h(ResourceDialog, { title: channelEditor === 'new' ? '新增渠道' : '编辑渠道', detail: '配置渠道连接和会话策略；保存后由 Channel API 管理凭证、配对和消息。', wide: true, onClose: () => { if (!channelSaving) setChannelEditor(null); } }, h('form', { onSubmit: saveChannel, style: { display: 'grid', gap: '10px' } },
             h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '9px' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Agent ID', h('input', { value: channelForm.AgentId, onChange: event => setChannelForm({ ...channelForm, AgentId: event.target.value }), style: inputStyle(), required: true })),
-              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '渠道类型', h('select', { value: channelForm.Channel, onChange: event => setChannelForm({ ...channelForm, Channel: event.target.value }), style: inputStyle() }, h('option', { value: 'wps-xiezuo' }, 'WPS 协作'), h('option', { value: 'feishu' }, '飞书'), h('option', { value: 'wecom' }, '企业微信'))),
-              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '渠道账号 ID', h('input', { value: channelForm.ChannelAccountId, onChange: event => setChannelForm({ ...channelForm, ChannelAccountId: event.target.value }), style: inputStyle(), required: true }))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '渠道类型', h('select', { value: channelForm.Channel, disabled: channelEditor !== 'new', onChange: event => setChannelForm({ ...channelForm, Channel: event.target.value }), style: inputStyle() }, h('option', { value: 'wps-xiezuo' }, 'WPS 协作'), h('option', { value: 'feishu' }, '飞书'), h('option', { value: 'wecom' }, '企业微信'))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '渠道账号 ID', h('input', { value: channelForm.ChannelAccountId, disabled: channelEditor !== 'new', onChange: event => setChannelForm({ ...channelForm, ChannelAccountId: event.target.value }), style: inputStyle(), required: true }))),
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '9px' } },
+              h('label', null, '应用 App ID', h('input', { value: channelForm.AppId, required: channelEditor === 'new', placeholder: channelEditor === 'new' ? '渠道平台的应用 ID' : '留空保留已保存的应用 ID', autoComplete: 'off', onChange: event => setChannelForm({ ...channelForm, AppId: event.target.value }), style: inputStyle() })),
+              h('label', null, '应用 App Secret', h('input', { type: 'password', value: channelForm.AppSecret, required: channelEditor === 'new', placeholder: channelEditor === 'new' ? '渠道平台的应用密钥' : '留空保留已保存的密钥', autoComplete: 'new-password', onChange: event => setChannelForm({ ...channelForm, AppSecret: event.target.value }), style: inputStyle() }))),
+            error ? h('p', { role: 'alert', style: { color: BRAND.danger, margin: 0 } }, error) : null,
             h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '9px' } },
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '私聊策略', h('select', { value: channelForm.DmPolicy, onChange: event => setChannelForm({ ...channelForm, DmPolicy: event.target.value }), style: inputStyle() }, h('option', { value: 'pairing' }, '需配对'), h('option', { value: 'open' }, '开放'))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '群聊策略', h('select', { value: channelForm.GroupPolicy, onChange: event => setChannelForm({ ...channelForm, GroupPolicy: event.target.value }), style: inputStyle() }, h('option', { value: 'allowlist' }, '白名单'), h('option', { value: 'open' }, '开放'))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '会话范围', h('select', { value: channelForm.SessionScope, onChange: event => setChannelForm({ ...channelForm, SessionScope: event.target.value }), style: inputStyle() }, h('option', { value: 'per-peer' }, '按用户'), h('option', { value: 'per-group' }, '按群聊'))),
-              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '7px', paddingTop: '22px' } }, h('input', { type: 'checkbox', checked: channelForm.Enabled, onChange: event => setChannelForm({ ...channelForm, Enabled: event.target.checked }) }), '启用渠道')),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '7px', paddingTop: '22px' } }, h('input', { type: 'checkbox', disabled: channelEditor === 'new', checked: channelForm.Enabled, onChange: event => setChannelForm({ ...channelForm, Enabled: event.target.checked }) }), channelEditor === 'new' ? '新渠道创建后启用' : '启用渠道')),
             h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: () => setChannelEditor(null), disabled: channelSaving, style: { ...buttonStyle(), background: BRAND.surface } }, '取消'), h('button', { type: 'submit', disabled: channelSaving, style: { ...buttonStyle(), background: BRAND.primaryFill, color: 'var(--dsw-static-neutral-00, #fff)', borderColor: 'transparent' } }, channelSaving ? '保存中…' : '保存渠道')))) : null,
           channelQr ? h(ResourceDialog, { title: `连接渠道 · ${channelLabel(channelQr.channel)}`, detail: '连接地址由 Connector 返回；Studio 不生成或保存二维码内容。', onClose: () => setChannelQr(null) },
             channelQr.loading ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, '正在读取连接地址…') : channelQr.error ? h('p', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px', margin: 0 } }, channelQr.error) : channelQr.url ? h('div', { style: { display: 'grid', gap: '8px' } }, h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, channelQr.label || '请打开下面的连接地址完成渠道授权。'), h('a', { href: channelQr.url, target: '_blank', rel: 'noreferrer', style: { color: BRAND.accentStrong, fontSize: '12px', wordBreak: 'break-all' } }, channelQr.url)) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, 'Host 未返回连接地址。')) : null,
