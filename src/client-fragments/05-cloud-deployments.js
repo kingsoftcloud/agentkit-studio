@@ -6,15 +6,16 @@
       const [records, setRecords] = useState([]);
       const [cpu, setCpu] = useState(2);
       const [ratio, setRatio] = useState(4);
+      const [storageGiB, setStorageGiB] = useState(20);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState('');
       const [notice, setNotice] = useState('');
       const [deleting, setDeleting] = useState('');
       const [log, setLog] = useState(null);
       const [rollback, setRollback] = useState({});
-      const resources = { cpu, memoryGiB: cpu * ratio };
+      const resources = { cpu, memoryGiB: cpu * ratio, storageGiB };
       const updateRecord = record => setRecords(previous => [record, ...previous.filter(item => item.id !== record.id)].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))));
-      useEffect(() => { setPreview(null); setRequestKey(''); setError(''); }, [agentId, selectedBuild, cpu, ratio]);
+      useEffect(() => { setPreview(null); setRequestKey(''); setError(''); }, [agentId, selectedBuild, cpu, ratio, storageGiB]);
       useEffect(() => {
         let stopped = false, running = false;
         const poll = async () => {
@@ -83,6 +84,7 @@
           h('label', { style: label }, '构建版本', h('select', { 'aria-label': '云端构建版本', value: selectedBuild, disabled: busy, onChange: event => onBuildChange(event.target.value), style: inputStyle() }, h('option', { value: '' }, '选择 Build'), builds.map(item => h('option', { key: item.id, value: item.id }, `Revision ${item.revision} · ${item.id.slice(-8)}`)))),
           h('label', { style: label }, 'CPU', h('select', { value: cpu, disabled: busy, onChange: event => setCpu(Number(event.target.value)), style: inputStyle() }, [1, 2, 4, 8, 16].map(value => h('option', { key: value, value }, `${value} 核`)))),
           h('label', { style: label }, '内存', h('select', { value: ratio, disabled: busy, onChange: event => setRatio(Number(event.target.value)), style: inputStyle() }, [4, 8].map(value => h('option', { key: value, value }, `${cpu * value} GB`)))),
+          h('label', { style: label }, '对话存储', h('select', { value: storageGiB, disabled: busy, onChange: event => setStorageGiB(Number(event.target.value)), style: inputStyle() }, [20, 50, 100, 200, 500, 0].map(value => h('option', { key: value, value }, value ? `持久化 ${value} GiB` : '临时存储')))),
           h('button', { type: 'button', disabled: busy || !selectedBuild, onClick: inspect, style: buttonStyle() }, busy ? '处理中…' : '检查部署')),
         preview ? h('div', { style: { marginTop: '16px', padding: '16px', borderRadius: '10px', background: BRAND.canvas } },
           h('strong', { style: { color: BRAND.ink } }, `${preview.agentName} · Revision ${preview.revision}`),
@@ -98,7 +100,7 @@
         !records.length ? h('p', { style: label }, '还没有云端部署。') : records.map(record => h('div', { key: record.id, style: { borderTop: '1px solid ' + BRAND.border, padding: '14px 0' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' } },
             h('strong', { style: { fontSize: '13px', color: BRAND.ink } }, `${record.agentName} · Revision ${record.revision}`), h(Pill, { tone: record.state === 'READY' ? 'accent' : 'signal' }, DEPLOYMENT_LABELS[record.state] || record.state)),
-          h('p', { style: { fontSize: '11px', color: BRAND.inkMuted } }, `${record.environment} · ${record.region} · ${record.cloudAgentId || record.name}`),
+          h('p', { style: { fontSize: '11px', color: BRAND.inkMuted } }, `${record.environment} · ${record.region} · ${record.cloudAgentId || record.name} · ${record.resources?.storageGiB ? '持久化 ' + record.resources.storageGiB + ' GiB' : '临时存储'}`),
           record.rollout ? h('p', { style: { fontSize: '12px', color: BRAND.inkMuted } }, `${record.rollout.kind === 'rollback' ? '回滚' : '升级'}到 Revision ${record.rollout.revision} · ${record.rollout.status === 'SUCCEEDED' ? '入口版本已确认' : record.rollout.status === 'FAILED' ? '未提交成功' : '等待目标版本生效'}`) : null,
           record.failure ? h('p', { style: { fontSize: '12px', color: BRAND.danger } }, `${record.failure.code} · ${record.failure.message}`) : null,
           record.state !== 'DELETED' ? h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },

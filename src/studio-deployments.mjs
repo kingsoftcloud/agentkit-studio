@@ -10,16 +10,17 @@ import { portableError, sha256 } from './portable-resources.mjs';
 import { createDeploymentAgents } from './deployment-agents.mjs';
 import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote, probeDeploymentVersion, deploymentVersionId } from './deployment-versions.mjs';
 import { createDeploymentRollouts } from './deployment-rollouts.mjs';
+import { storageSize, deploymentStorage, admitDeploymentStorage, verifyDeploymentStorage } from './deployment-storage.mjs';
 
 const cloudId = value => /^ar-(?!local-)[A-Za-z0-9-]+$/.test(value || '');
 const failure = error => ({ code: /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.code || '') ? error.code : 'DEPLOYMENT_FAILED',
-  message: '操作未完成，请查看部署状态并核对云端结果；不会自动重试云端写操作',
+  message: error?.code === 'DEPLOYMENT_STORAGE_MISMATCH' ? '云端存储与所选配置不符，暂不可对话；请核对实例配置' : '操作未完成，请查看部署状态并核对云端结果；不会自动重试云端写操作',
   ...(typeof error?.requestId === 'string' && /^[a-f0-9-]{36}$/.test(error.requestId) ? { requestId: error.requestId } : {}) });
 const credentialScope = values => sha256(JSON.stringify([values.cloudServerUrl || 'https://aicp.api.ksyun.com', values.cloudRegion || 'cn-beijing-6', values.cloudCustomSource || '', values.cloudAccessKey]));
 const shapeOf = input => {
   const cpu = input?.cpu ?? 2, memoryGiB = input?.memoryGiB ?? 8;
   if (![1, 2, 4, 8, 16].includes(cpu) || ![cpu * 4, cpu * 8].includes(memoryGiB)) throw portableError('DEPLOYMENT_RESOURCE_INVALID', 'CPU 和内存比例须为 1:4 或 1:8');
-  return { cpu, memoryGiB, replicas: 1 };
+  return { cpu, memoryGiB, replicas: 1, storageGiB: storageSize(input?.storageGiB) };
 };
 function endpointFor(detail, record) {
   const value = detail.Network?.PublicEndpoint || detail.QuickAccess?.PublicEndpoint;
@@ -52,7 +53,9 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     const identity = await client.inspectIdentity(), { values } = await configuration.resolve();
     if (identity.kind !== 'subaccount') throw portableError('CLOUD_SUBACCOUNT_REQUIRED', '部署需要已核验的子账号 AK/SK，请在设置中更新云端凭证；不会使用主账号创建资源');
     if (!values.cloudBucket) throw portableError('KS3_BUCKET_REQUIRED', '请先在设置中配置用于私有运行包的 KS3 Bucket');
-    const resources = shapeOf(input.resources), resolved = await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env });
+    const resources = shapeOf(input.resources);
+    admitDeploymentStorage(resources, catalog, runtime);
+    const resolved = await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env });
     // Validate storage and environment before the user commits to a billable create.
     const source = planKs3BundleUpload(zip, { endpoint: ks3BundleEndpoint(catalog.region), bucket: values.cloudBucket, uploadId: randomUUID() });
     createContainerDeploymentEnvironment({ zip, expectedSha256: source.sha256, runtimeToken: randomBytes(32).toString('hex'), credentials: resolved, bundleSource: source });
@@ -68,7 +71,9 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     const { credentialScope: _, bucket, storageEndpoint, ...preview } = plan;
     return { ...preview, previewId: fingerprint, releaseId: plan.image.id,
       warnings: [...plan.image.notices,
-        '单副本按所选规格创建；费用以平台实际计费为准', '当前云端持久化尚未验收，实例重建可能丢失对话历史'] };
+        '单副本按所选规格创建；费用以平台实际计费为准', plan.resources.storageGiB
+          ? `持久化存储 ${plan.resources.storageGiB} GiB；按天计费，删除实例前请备份需要保留的历史`
+          : '使用临时存储，实例重建会丢失对话历史'] };
   }
   async function owned(id) {
     const record = await store.get(id);
@@ -112,6 +117,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
         ContainerConfig: { ImageType: 'Personal', NameSpace: image.namespace, ImageRepo: image.repository, ImageVersion: image.version,
           ImageAddr: image.image, Visibility: 'public', RequireCredential: false, Port: image.port },
         Resource: { Cpu: resources.cpu, Memory: resources.memoryGiB }, Scaling: { MinReplicas: 1, MaxReplicas: 1, QpsPerInstance: 10 },
+        ...(deploymentStorage(resources) ? { Storage: deploymentStorage(resources) } : {}),
         Network: { EnablePublicAccess: true, EnableVpcAccess: false }, Access: { AuthType: 'ApiKey', IsPrivate: true },
         Advanced: { IsPrivate: true, EnableObservability: true, Tags: ['agentkit-studio'], EnvironmentVariables: environment }, AutoPay: true,
       }, { requestId: record.requestId });
@@ -158,7 +164,11 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       const remote = await detail(record), basic = remote.Basic;
       const common = { cloudStatus: String(basic.Status || ''), cloudPhase: String(basic.Phase || ''), readyReplicas: Number(basic.ReadyReplicas || 0), lastCheckedAt: new Date().toISOString(), failure: null };
       if (['FAILED', 'DELETED'].includes(basic.Status)) return publicRecord(await store.update(id, { ...common, state: basic.Status }));
-      if (['DELETING', 'DELETE_UNKNOWN'].includes(record.state)) return publicRecord(await store.update(id, common));
+      if (['DELETING', 'DELETE_UNKNOWN'].includes(record.state)) return publicRecord(await store.update(id, { ...common, failure: record.failure }));
+      if (['RUNNING', 'UPDATING'].includes(basic.Status) && common.readyReplicas > 0) {
+        try { verifyDeploymentStorage(remote, currentDeployment(record)); }
+        catch (error) { return publicRecord(await store.update(id, { ...common, state: 'ACTION_REQUIRED', failure: failure(error) })); }
+      }
       const rolloutState = await rollouts.refresh(record, remote, common);
       if (rolloutState) return publicRecord(rolloutState);
       const key = remote.QuickAccess?.ApiKey;
@@ -221,7 +231,8 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     return exclusive(id, async () => {
       const record = await owned(id);
       if (record.state === 'DELETED') return publicRecord(record);
-      await detail(record);
+      const remote = await detail(record);
+      if (remote.Basic?.Status === 'UPDATING') throw portableError('DEPLOYMENT_DELETE_BUSY', '云端仍在更新，请待平台状态恢复后删除');
       if (!await store.claim(id, 'delete')) return refreshState(id);
       await store.update(id, { state: 'DELETING' });
       try { await client.forAgent(record.cloudAgentId).remove(); }

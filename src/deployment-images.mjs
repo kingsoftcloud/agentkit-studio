@@ -1,5 +1,6 @@
 /** Resolve Studio's own immutable image releases from the existing Server metadata API. */
 import { createHash } from 'node:crypto';
+import { containerStorageCapability } from './deployment-storage.mjs';
 
 export const STUDIO_IMAGE_CONFIG_KEY = 'studio.runtime.images.v1';
 const FORMAT = 'agentkit.runtime-images/v1';
@@ -54,8 +55,9 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
   if (raw.defaultReleaseId !== null && !ID.test(raw.defaultReleaseId || '')) fail('DEPLOYMENT_CATALOG_INVALID', '镜像目录默认版本无效');
   if (raw.defaultReleaseId && !ids.has(raw.defaultReleaseId)) fail('DEPLOYMENT_CATALOG_INVALID', '镜像目录默认版本不存在');
   const defaultReleaseId = releases.some(item => item.id === raw.defaultReleaseId) ? raw.defaultReleaseId : null;
-  return { format: FORMAT, environment: raw.environment, region: raw.region, runtime, defaultReleaseId,
-    revision: createHash('sha256').update(JSON.stringify(raw)).digest('hex'), releases };
+  const containerStorage = containerStorageCapability(data);
+  return { format: FORMAT, environment: raw.environment, region: raw.region, runtime, defaultReleaseId, containerStorage,
+    revision: createHash('sha256').update(JSON.stringify([raw, containerStorage])).digest('hex'), releases };
 }
 
 export function selectStudioImage(catalog, releaseId) {

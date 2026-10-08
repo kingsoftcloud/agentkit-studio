@@ -2,6 +2,7 @@
 import { currentDeployment, deploymentVersions, deploymentVersionId, probeDeploymentVersion } from './deployment-versions.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
+import { verifyDeploymentStorage } from './deployment-storage.mjs';
 
 const supported = new Set(['harness', 'dsh-native', 'codex']);
 const available = new Set(['READY', 'AVAILABLE_UPDATING']);
@@ -40,6 +41,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     const agent = await get(agentId), record = await owned(agent.deployment.id);
     if (!available.has(record.state)) throw portableError('DEPLOYMENT_NOT_READY', '云端部署尚未就绪，请在运行中心刷新状态');
     const remote = await detail(record), token = remote.QuickAccess?.ApiKey;
+    verifyDeploymentStorage(remote, currentDeployment(record));
     if (!['RUNNING', 'UPDATING'].includes(remote.Basic?.Status) || !(remote.Basic?.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_NOT_READY', '云端实例当前不可用，请在运行中心查看状态');
     const endpoint = endpointFor(remote, record);
     if (!endpoint || typeof token !== 'string' || token.length < 24 || token.includes('*')) throw portableError('DEPLOYMENT_NOT_READY', '云端访问配置尚未就绪');

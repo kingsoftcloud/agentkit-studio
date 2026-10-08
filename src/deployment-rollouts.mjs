@@ -46,7 +46,7 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
         resolved: await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env }) };
     } else {
       prepared = await assemble({ ...input, releaseId: input.releaseId || (current.plan.image.runtimeIdentity ? current.plan.image.id : undefined),
-        agentId: current.plan.agentId, resources: current.plan.resources }, exporting);
+        agentId: current.plan.agentId, resources: { ...current.plan.resources, storageGiB: current.plan.resources.storageGiB ?? 0 } }, exporting);
     }
     if (!prepared.plan.image.runtimeIdentity) throw portableError('DEPLOYMENT_IMAGE_UPGRADE_REQUIRED', '目标镜像尚未声明版本探测能力，请先发布支持升级回滚的 Studio 镜像');
     prepared.plan = { ...prepared.plan, name: current.plan.name };
@@ -65,7 +65,7 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
     return { ...preview, deploymentId: record.id, previewId, releaseId: plan.image.id,
       rollbackVersionId: input.rollbackVersionId || null, fromVersionId: deploymentVersionId(record),
       warnings: ['保留当前云端 Agent 和规格；切换期间暂不可发起对话', '完成后请开启新会话，历史会话仍保留',
-        '切换会重建运行实例；当前云端持久化尚未验收'] };
+        plan.resources.storageGiB ? `保留 ${plan.resources.storageGiB} GiB 持久化存储，各冻结版本使用独立历史目录` : '当前实例使用临时存储，切换会丢失原实例的对话历史'] };
   }
   async function run(id, attemptId, prepared) {
     return exclusive(id, async () => {

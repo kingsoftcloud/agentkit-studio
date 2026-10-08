@@ -40,10 +40,10 @@ Server 需要包含 `agentkit.responses/v1` 调度适配，并启用 `CLOUD_SCHE
 保留 peer binding 与人工接管关联；确认新会话后才回复重置成功。旧轮次晚到的结果不能
 覆盖新会话的续聊句柄，保存失败也不能当作正常续聊。不自动重跑可能已执行的资源调用。
 
-Channel 的 PostgreSQL 持久化与 Agent 容器的对话状态是两层存储。目前普通 Harness/Codex
-Container 的 `Storage` 会被 Server 创建计费策略移除，Studio 部署也没有声明已验收的
-持久卷。渠道配置和响应 ID 保留下来，不代表 Agent 容器重建后还能读到对应历史；这项
-需打通创建存储策略、实际挂载及重建后的续聊，不能用进程重启验证替代。
+Channel 的 PostgreSQL 持久化与 Agent 容器的对话状态是两层存储。Studio 新部署默认请求
+20 GiB 持久卷，Server 保留 Harness/Codex Container 的显式存储配置；旧环境未声明支持时
+在创建前拦截。选择临时存储的实例重建后会丢失历史，渠道保存响应 ID 不能弥补这项缺失。
+实际挂载及容器重建后的续聊需要独立验证，不能用 Channel 进程重启结果替代。
 
 Server 在调用 Studio Responses 前持久化执行记录并核对领取租约。
 最多等待 300 秒；未确认完成或进程中断时标记结果未知并暂停后续触发，
@@ -58,5 +58,6 @@ Server 在调用 Studio Responses 前持久化执行记录并核对领取租约�
 - 预发 Server：固定镜像更新后，已通过内部 API 创建单次计划，由云端 Worker 自动执行并持久化 `succeeded` 终态、响应 ID 和已核验的子账号 UUID。测试 Host 未启动；该测试不等于 KOP 产品入口通过。
 - 预发 Channel：补齐 PostgreSQL 持久化、RESP2 连接及 256 字符续聊 ID；已用合成渠道事件调用真实 Server 和云端模型，验证盲测系统提示词、完整响应、重复事件去重；重启 API/Worker 后仍延续同一会话并找回上一轮暗号，暂停、恢复与删除行为也已通过。真实平台消息收发单独验收。
 - Channel 会话管理：324 项自动化检查通过，覆盖跨账号修改/删除拒绝、原子重置、旧轮次回写拦截和重置失败提示；独立预发 API 对真实 PostgreSQL 的重置、续聊句柄清理与账号隔离也已验证。该验证不发送真实平台消息。
+- 持久化联调：三种运行时已通过真实容器替换后的原响应重放与历史续聊；Harness 另通过合成渠道事件 → 真实 Channel/Server → 云端模型的重建后续聊和重复事件去重。详见[持久化验收](cloud-storage-acceptance-2026-10-09.md)。
 - 阻塞：当前预发 KOP 对 `ListAgentSchedules` 返回 `InvalidActionOrVesion`，Studio 云端计划入口尚不可用，需发布调度 Action。
 - 尚未完成：真实机器人收发、三种运行时完整资源组合，以及定时任务结果投递到指定渠道。代码、页面和合成平台事件不能替代这些验收。

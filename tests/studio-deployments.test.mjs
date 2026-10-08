@@ -27,14 +27,15 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
   let deleted = false;
   const client = {
     inspectIdentity: async () => ({ kind: 'subaccount', accountId: 'owner', userUuid: 'actor', userName: 'operator' }),
-    getBootstrapConfig: async () => ({ data: { Product: 'agentkit-studio', ClientType: 'studio', Region: 'cn-beijing-6', Environment: 'pre-online', Configs: { 'studio.runtime.images.v1': {
+    getBootstrapConfig: async () => ({ data: { Product: 'agentkit-studio', ClientType: 'studio', Region: 'cn-beijing-6', Environment: 'pre-online',
+      Capabilities: { ContainerStorage: { Contract: 'agentengine.container-storage/v1', Frameworks: ['harness', 'codex'], MinSizeGi: 20, MaxSizeGi: 500, MaxReplicas: 1, PaymentType: 'Daily' } }, Configs: { 'studio.runtime.images.v1': {
       format: 'agentkit.runtime-images/v1', environment: 'pre-online', region: 'cn-beijing-6', defaultReleaseId: release.id, releases: [release],
     } } } }),
     createAgent: async payload => {
       calls.push(['create', payload]);
       if (createError && !responseLost) throw createError;
       Object.assign(remote, { Basic: { AgentId: cloudAgentId, Name: payload.Name, Status: initialStatus, ReadyReplicas: initialStatus === 'RUNNING' ? 1 : 0 },
-        Deployment: { ArtifactPath: payload.ContainerConfig.ImageAddr }, Advanced: { EnvironmentVariables: payload.Advanced.EnvironmentVariables },
+        Deployment: { ArtifactPath: payload.ContainerConfig.ImageAddr, Storage: payload.Storage }, Advanced: { EnvironmentVariables: payload.Advanced.EnvironmentVariables },
         Network: { PublicEndpoint: `https://${cloudAgentId}.agent-pre.kspmas.ksyun.com` }, QuickAccess: { ApiKey: key } });
       if (createError) throw createError;
       return { data: { AgentId: cloudAgentId } };
@@ -112,6 +113,7 @@ test('three runtimes create from a frozen Build, synchronize the platform token,
     const payload = f.calls.find(([action]) => action === 'create')[1];
     assert.equal(payload.ContainerConfig.ImageAddr, f.release.image);
     assert.equal(payload.Framework, runtime === 'codex' ? 'codex' : 'harness');
+    assert.deepEqual(payload.Storage, { MountPath: '/var/lib/agentkit', SizeGi: 20 });
     assert.equal(payload.Advanced.EnvironmentVariables.find(row => row.Key === 'OPENAI_MODEL_NAME').Value, 'bound-model');
     const serialized = JSON.stringify(await f.service.list());
     const disk = await readFile(join(f.root, 'deployments', `${first.id}.json`), 'utf8');
@@ -138,6 +140,40 @@ test('root credentials stop both preflight and a changed identity before upload 
   const record = await f.service.create(f.request); await f.settled();
   assert.equal((await f.service.get(record.id)).state, 'FAILED');
   assert.equal(f.calls.length, 0);
+});
+
+test('invalid persistence capacities cannot upload or create billable resources', async t => {
+  const f = await fixture(t);
+  for (const storageGiB of [-1, 19, 501, 20.5, '20', null]) {
+    await assert.rejects(() => f.service.prepare({ ...f.input, resources: { ...f.input.resources, storageGiB } }), { code: 'DEPLOYMENT_STORAGE_INVALID' });
+  }
+  assert.equal(f.calls.length, 0);
+});
+
+test('old Server cannot silently discard persistent storage; temporary storage remains explicit', async t => {
+  const f = await fixture(t);
+  const bootstrap = f.options.client.getBootstrapConfig;
+  f.options.client.getBootstrapConfig = async () => { const response = await bootstrap(); delete response.data.Capabilities; return response; };
+  await assert.rejects(() => f.service.prepare(f.input), { code: 'DEPLOYMENT_STORAGE_UNAVAILABLE' });
+  assert.equal(f.calls.length, 0);
+  const input = { ...f.input, resources: { ...f.input.resources, storageGiB: 0 } };
+  const preview = await f.service.prepare(input);
+  const record = await f.service.create({ ...input, bundleId: preview.bundleId, releaseId: preview.releaseId, previewId: preview.previewId, idempotencyKey: 'explicit-temporary' });
+  await f.settled();
+  assert.equal(f.calls.find(([type]) => type === 'create')[1].Storage, undefined);
+  assert.equal((await f.service.refresh(record.id)).state, 'READY');
+});
+
+test('missing or changed cloud storage blocks readiness and invocation, but retains cleanup', async t => {
+  const f = await fixture(t);
+  const record = await f.service.create(f.request); await f.settled();
+  await f.service.refresh(record.id);
+  delete f.remote.Deployment.Storage;
+  await assert.rejects(() => f.service.agents.connect('ar-cloud-test'), { code: 'DEPLOYMENT_STORAGE_MISMATCH' });
+  const checked = await f.service.refresh(record.id);
+  assert.equal(checked.state, 'ACTION_REQUIRED');
+  assert.equal(checked.failure.code, 'DEPLOYMENT_STORAGE_MISMATCH');
+  assert.equal((await f.service.remove(record.id)).state, 'DELETED');
 });
 
 test('cloud admission requires the current credential scope, live availability and frozen provenance', async t => {
@@ -246,6 +282,29 @@ test('durable intent is atomic under concurrent submission; claims survive resta
   await writeFile(join(root, `${id}.json`), '{');
   await assert.rejects(() => store.create(plan, 'same-request-key'), { code: 'DEPLOYMENT_RECORD_CORRUPT' });
   assert.equal((await readdir(root)).filter(name => name.endsWith('.tmp')).length, 0);
+});
+
+test('updating deployment rejects deletion before claiming the action and can be deleted once running', async t => {
+  const f = await fixture(t);
+  const record = await f.service.create(f.request); await f.settled();
+  f.remote.Basic.Status = 'UPDATING';
+  await assert.rejects(() => f.service.remove(record.id), { code: 'DEPLOYMENT_DELETE_BUSY' });
+  assert.equal(f.calls.some(([action]) => action === 'delete'), false);
+  f.remote.Basic.Status = 'RUNNING';
+  assert.equal((await f.service.remove(record.id)).state, 'DELETED');
+});
+
+test('refresh preserves an unknown deletion error without resubmitting deletion', async t => {
+  const f = await fixture(t);
+  const record = await f.service.create(f.request); await f.settled();
+  const forAgent = f.options.client.forAgent; let count = 0;
+  f.options.client.forAgent = id => ({ ...forAgent(id), remove: async () => { count++; throw Object.assign(Error('lost response'), { code: 'SERVER_UNAVAILABLE' }); } });
+  const result = await f.service.remove(record.id);
+  assert.equal(result.state, 'DELETE_UNKNOWN');
+  assert.equal(result.failure.code, 'SERVER_UNAVAILABLE');
+  assert.equal((await f.service.refresh(record.id)).failure.code, 'SERVER_UNAVAILABLE');
+  await f.service.remove(record.id);
+  assert.equal(count, 1);
 });
 
 test('deletion waits for an in-flight health check so a late ready result cannot overwrite deleted state', async t => {
