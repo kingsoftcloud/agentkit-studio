@@ -57,3 +57,13 @@ Studio 本地 Agent 的真实部署记录，不能用运行时名称或历史 Li
 本轮新增的目录分页及持久化 preset 身份测试通过；宿主五个会话/导航文件 256 项通过，
 追加导航竞态与权限失败测试后导航文件 70 项通过，宿主依赖装配两个文件 17 项通过。
 DSH Client/Web 构建及文档同步 43 项通过，18 个补丁顺序检查通过。
+
+三种本地运行时均已完成相同的真实会话补测：DSH Native 返回 `RIVER-29`，
+AgentKit Harness 返回 `PINE-73`，Codex 返回 `MAPLE-61`。标记来自各自已有的
+系统提示词，三条用户消息只有城市、预算和行程要求。Codex 的独立模型
+`deepseek-v4.1-flash` 在取消目录前后保持一致，未被普通会话默认模型覆盖。
+浏览器同时确认本地列表为 14 个 Agent，云端标签显示“暂无 Studio 云端部署”。
+
+对应本机证据：`.artifacts/e2e-harness-workspace-free-20261008.png`、
+`.artifacts/e2e-codex-workspace-free-20261008.png`、`.artifacts/e2e-agent-picker-final-20261008.png`。
+Studio release-check 的 387 项测试及 228 文件 npm 包完整性检查通过。
