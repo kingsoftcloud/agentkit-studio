@@ -182,8 +182,8 @@ Electron 壳可以启动，但只有发布 profile 载入本插件时才会显�
 Host/Server 合同和真实凭证验收为准。
 
 本轮[记忆召回](docs/contracts/memory-acceptance-2026-10-08.md)已按用户确认通过；
-[流式用量](docs/contracts/streaming-usage-acceptance-2026-10-08.md)另有真实 Harness、DSH Native
-Host 验证。Linux 命令沙箱、完整原生工具 Trace、签名 DMG 和预发部署继续按独立门禁推进。
+[流式用量](docs/contracts/streaming-usage-acceptance-2026-10-08.md)另有 Harness、DSH Native 和
+Codex 三种运行时的真实 Host 验证。Linux 命令沙箱、完整原生工具 Trace、签名 DMG 和预发部署继续按独立门禁推进。
 
 ## 目录
 
