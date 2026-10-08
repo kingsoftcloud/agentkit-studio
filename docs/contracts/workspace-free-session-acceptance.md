@@ -67,3 +67,16 @@ AgentKit Harness 返回 `PINE-73`，Codex 返回 `MAPLE-61`。标记来自各自
 对应本机证据：`.artifacts/e2e-harness-workspace-free-20261008.png`、
 `.artifacts/e2e-codex-workspace-free-20261008.png`、`.artifacts/e2e-agent-picker-final-20261008.png`。
 Studio release-check 的 387 项测试及 228 文件 npm 包完整性检查通过。
+
+## 更新后的 macOS 产物
+
+本地 arm64 未签名 DMG 已生成：`AgentKit-Studio-0.0.1-mac-arm64-local.dmg`，
+502,331,809 字节，SHA-256 `60d7ac2f49d42b0db636d5ba0ed7dedbb4a5d9dd5148d6b749a3540d19cc1760`。
+首次镜像封装遇到 ENOSPC；清理本轮重复中间产物后，用官方 electron-builder 的
+`--prepackaged` 从同一已构建 App 重做 DMG，未跳过或替换应用内容。
+
+已只读挂载最终 DMG，核对包内 Studio client/catalog 与当前源码 SHA-256 一致，
+宿主包含配置继承补丁，应用名称与图标正确。官方离线运行时自检通过 Node、PTY、
+Office 文档转换和 Skill CLI。此处为构建、运行时自检及镜像内容检查；三种 Agent 的
+交互证明来自上述真实 Web Host，本次没有重新安装该 DMG 做完整桌面交互回归，
+也不代表签名、公证或云端部署验收。
