@@ -9,6 +9,7 @@
  */
 import { readSse } from './sse.mjs';
 import { modelFailureDetails } from './model-failure.mjs';
+import { formatSkillContext } from './skill-files.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -199,12 +200,12 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   }
   if (!toolsOnly && skillIds.length) {
     const skills = await Promise.all(skillIds.map(id => resourceAdapter.loadSkill(id)));
-    resourceContext += skills.filter(Boolean).map(skill => `Skill ${skill.name || ''}:\n${String(skill.content || '').slice(0, 12000)}`).join('\n\n');
+    resourceContext += skills.filter(Boolean).map(skill => `Skill ${skill.name || ''}:\n${formatSkillContext(skill, { indexOnly: record?.spec?.runtime?.type === 'codex' })}`).join('\n\n');
   }
   if (!toolsOnly && skillSpace) {
     const resourceId = skillSpace.config.binding.resource.id || skillSpace.config.binding.resource.resourceId;
     const skill = await resourceAdapter.loadSkill(resourceId);
-    if (skill?.content) resourceContext += `\n\n${String(skill.content).slice(0, 24000)}`;
+    if (skill) resourceContext += `\n\n${formatSkillContext(skill, { limit: 24000, indexOnly: record?.spec?.runtime?.type === 'codex' })}`;
   }
   if (!toolsOnly && knowledge) {
     const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;

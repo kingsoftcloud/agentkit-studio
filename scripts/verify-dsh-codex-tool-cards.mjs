@@ -19,7 +19,9 @@ const { defineContentToolFixture } = await load('@deepseek-ai/dsh-tools');
 const persistenceRequire = createRequire(join(root, 'packages/session/session-persistence-jsonl/package.json'));
 const { default: JsonlPersistence } = await import(pathToFileURL(persistenceRequire.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href);
 const histories = [];
-for (const outcome of ['completed', 'failed', 'canceled']) {
+const cases = ['lookup', 'codex/command'].flatMap(toolName => ['completed', 'failed', 'canceled'].map(outcome => ({ toolName, outcome })));
+for (const { toolName, outcome } of cases) {
+  const toolArgs = toolName === 'lookup' ? { card: 'P7' } : { command: 'python3 scripts/check.py', cwd: '/imported/skill' };
   const ctx = new Context();
   await ctx.plugin(LlmRuntime); await ctx.plugin(SessionStore);
   for (const name of ['session-projection', 'system-prompt', 'tools', 'agent', 'agent-loop']) await ctx.plugin((await load(`@deepseek-ai/dsh-${name}`)).default, name === 'agent-loop' ? { agents: [] } : undefined);
@@ -27,9 +29,9 @@ for (const outcome of ['completed', 'failed', 'canceled']) {
   ctx.tools.register(defineContentToolFixture({ name: 'lookup', description: 'Must never dispatch from DSH', parameters: {}, execute: async () => { executions++; return [{ type: 'text', text: 'incorrect execution' }]; } }));
   const adapter = createDshRuntimeAdapter({ AdapterBase: LlmAdapter, codexRuntime: { async *stream() {
     streamed++;
-    yield { type: 'tool', phase: 'started', name: 'lookup', id: 'same-provider-id', arguments: { card: 'P7' } };
+    yield { type: 'tool', phase: 'started', name: toolName, id: 'same-provider-id', arguments: toolArgs };
     if (outcome === 'canceled') throw Object.assign(new Error('canceled'), { code: 'CODEX_CANCELED' });
-    yield { type: 'tool', phase: outcome, name: 'lookup', id: 'same-provider-id', arguments: { card: 'P7' }, result: { content: [{ type: 'text', text: 'result-canary' }] }, ...(outcome === 'failed' ? { error: { message: 'upstream-rejected' } } : {}) };
+    yield { type: 'tool', phase: outcome, name: toolName, id: 'same-provider-id', arguments: toolArgs, result: { content: [{ type: 'text', text: 'result-canary' }] }, ...(outcome === 'failed' ? { error: { message: 'upstream-rejected' } } : {}) };
     yield { type: 'text', text: 'Final answer' };
   } } });
   const disposeAdapter = ctx.llm.registerAdapter([CODEX_PROVIDER], adapter);
@@ -65,8 +67,8 @@ for (const outcome of ['completed', 'failed', 'canceled']) {
         try { assert.deepEqual((await reader.read()).events, events); } finally { await reader.close(); }
       } finally { await readerContext.fiber.dispose(); }
     } finally { await rm(disk, { recursive: true, force: true }); }
-    histories.push({ outcome, events: seed });
-    console.log(JSON.stringify({ outcome, recorded: tools.length, dshExecutions: executions, restored: true, diskReopened: true }));
+    histories.push({ outcome, toolArgs, events: seed });
+    console.log(JSON.stringify({ outcome, toolName, recorded: tools.length, dshExecutions: executions, restored: true, diskReopened: true }));
   } finally { disposeRoute(); disposeAdapter(); await ctx.fiber.dispose(); }
 }
 
@@ -83,7 +85,7 @@ import { chatViewDefinition } from '../packages/client/ui-chat/src/client/conver
 const definition = new Function(readFileSync(${JSON.stringify(fragment)}, 'utf8') + '; return codexToolDefinition')()
 const histories = JSON.parse(readFileSync(${JSON.stringify(fixture)}, 'utf8'))
 it('uses the official Chat tool payload live, after JSON replay, and with a result-only window', () => {
-  for (const { outcome, events } of histories) {
+  for (const { outcome, toolArgs, events } of histories) {
     const assembler = new ConversationNodeAssembler({ entries: () => [definition], fallbackEntry: () => undefined }, { entries: () => [chatViewDefinition] })
     assembler.activateTarget('chat')
     const tools = events.filter(event => event.type === 'agentkit/codex-tool')
@@ -97,7 +99,7 @@ it('uses the official Chat tool payload live, after JSON replay, and with a resu
       const cards = [...assembler.snapshot('chat').nodes.values()]
       expect(cards).toHaveLength(1)
       expect(cards[0].kind).toBe('tool-call')
-      expect(cards[0].data.root.call.argsRaw).toBe('{"card":"P7"}')
+      expect(cards[0].data.root.call.argsRaw).toBe(JSON.stringify(toolArgs))
       expect(cards[0].data.root.isError).toBe(outcome !== 'completed')
       if (outcome !== 'canceled') expect(cards[0].data.root.content[0].text).toBe('result-canary')
     }

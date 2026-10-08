@@ -31,7 +31,7 @@ Studio 当前未完整复刻官方客户端的账户、连接器授权、个人�
 须经真实协议验证后才能升级，不把这组接口当作稳定的公开产品兼容保证。生命周期继续使用 CLI，
 未扩展到实验性的 plugin/install。参见 [App Server](https://developers.openai.com/codex/app-server)。
 
-Codex 原生 mcpToolCall 和 Studio 动态工具的开始、成功、失败事实通过公开 Session.append
+Codex 原生 mcpToolCall、commandExecution、fileChange 和 Studio 动态工具的开始、成功、失败事实通过公开 Session.append
 写入 `agentkit/codex-tool` 非模型事件。浏览器使用公开 uiConversation.events Definition，
 投影为 DSH 已有 Chat tool-call payload，复用原生工具卡的展开、输入、输出与失败展示。
 没有新增工具执行器、复制 UI 组件或修改 DSH AgentLoop；不产生会被 DSH 再次执行的模型 tool-call。
@@ -40,6 +40,8 @@ Codex 原生 mcpToolCall 和 Studio 动态工具的开始、成功、失败事�
 同一流按调用 ID 去重，不同流使用独立身份；取消或异常关闭但未收到结果时显示结果未确认。
 记录随 DSH 会话持久化，JSON 重放和只有结果的历史窗口均可恢复。单块展示文本超过 100000
 字符时显式标记截断，非文本 MCP 内容以 JSON 展示；这不代表全部富媒体工具已有专用呈现。
+原生命令保留 command、cwd、实际输出、退出码与耗时；非零退出码或被拒绝不会记为成功。
+事件字段以固定 Codex 0.159.2 的 `app-server generate-ts --experimental` 生成合同为依据。
 
 `node scripts/verify-dsh-codex-tool-cards.mjs` 在固定官方 DSH AgentLoop、Session 与 Chat assembler
 中验证成功、失败、取消、zstd 磁盘关闭重开和零次重复执行；输入流使用测试数据，不替代真实模型调用。

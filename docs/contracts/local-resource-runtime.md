@@ -38,12 +38,14 @@
 `ListSkillWorkspaces` 返回的云端 Skill Space 合并，实际读取云端 Skill 仍由 Host-owned
 Skill Service 适配器完成。
 
-- **Codex**：Codex Agent 复用上面的 Host 资源上下文。Skill、知识库和记忆库以 developer
-  context 注入官方 Codex App Server Thread；MCP 工具转换为实验性 `dynamicTools`，Codex
+- **Codex**：Codex Agent 复用上面的 Host 资源上下文。完整物化的 Skill 只注入名称、说明、
+  当前 Host 上的 SKILL.md 路径与资源目录，正文由 Codex 按任务读取；脚本相对于该 Skill 的
+  目录解析，不相对于工作区，也不沿用导出机器的路径。旧的纯文本 Skill 适配器仍保留正文回退。
+  知识库和记忆库以 developer context 注入官方 Codex App Server Thread；MCP 工具转换为实验性 `dynamicTools`，Codex
   发出 `item/tool/call` 后由 Host 校验绑定并调用同一 MCP adapter，再以 `contentItems` 返回。
   这条路径仍由 DSH 原生 Session/Loop 承载，Codex 不会获得 Studio 工作区或 MCP 凭证。
-  Host 会把工具调用的开始、完成和失败状态投影成 DSH reasoning 增量，因此原生会话可以展开
-  查看资源调用过程；不会伪造 DSH `tool-call` block，避免 DSH loop 再次执行同一个 MCP 工具。
+  Host 将动态工具以及 Codex 原生命令、文件修改和 MCP 的实际事件投影成原生工具卡及运行流；
+  展示事件不参与模型执行，避免 DSH loop 再次执行同一个工具。
 
 Harness 和有资源的 DSH Native 使用原生模型步骤：MCP 注册到公开 ToolRegistry，调用与结果
 由 DSH Loop 执行、持久化和展示。Codex 的动态工具仍通过 Host 适配器执行并投影过程。

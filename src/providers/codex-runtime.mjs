@@ -12,6 +12,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createCodexUsageCounter } from './codex-usage.mjs';
 import { createCodexModelProxy } from './codex-model-proxy.mjs';
+import { codexItemToolChunk } from './codex-tool-events.mjs';
 
 export class CodexRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -352,7 +353,8 @@ export function createCodexRuntime(options = {}) {
           if (method === 'item/started') {
             const item = object(params.item || {}, 'item');
             if (item.id) phases.set(String(item.id), item.phase);
-            if (item.type === 'mcpToolCall') yield { type: 'tool', phase: 'started', name: `${item.server}/${item.tool}`, id: String(item.id || ''), arguments: item.arguments ?? {} };
+            const tool = codexItemToolChunk(item, 'started');
+            if (tool) yield tool;
             continue;
           }
           if (method === 'agentkit/tool/status') {
@@ -380,11 +382,8 @@ export function createCodexRuntime(options = {}) {
           if (method === 'item/completed') {
             const item = object(params.item || {}, 'completed item');
             if (item.id) phases.set(String(item.id), item.phase);
-            if (item.type === 'mcpToolCall') yield {
-              type: 'tool', phase: item.status === 'completed' && !item.error && !item.result?.isError ? 'completed' : 'failed',
-              name: `${item.server}/${item.tool}`, id: String(item.id || ''), arguments: item.arguments ?? {},
-              result: item.result ?? null, ...(item.error ? { error: item.error } : {}),
-            };
+            const tool = codexItemToolChunk(item, 'completed');
+            if (tool) yield tool;
             if (item.type === 'agentMessage' && !deltaItems.has(String(item.id || '')) && typeof item.text === 'string' && item.text) {
               yield { type: isFinalPhase(item.phase) ? 'text' : 'reasoning', text: item.text };
             }

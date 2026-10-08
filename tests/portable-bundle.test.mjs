@@ -10,6 +10,7 @@ import { createGlobalConfiguration } from '../src/global-config.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
 import { createZip, readZipFiles } from '../src/zip.mjs';
+import { prepareLocalResourceContext } from '../src/local-runtime.mjs';
 
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-portable-'));
@@ -50,6 +51,14 @@ test('export and import retain exact build, file modes, resource identity and ta
   assert.equal(skill.definitions.length, 1);
   assert.match(await readFile(join(skill.definitions[0].resourceBase.path, 'scripts', 'format.sh'), 'utf8'), /SKU\|COUNT/);
   assert.ok((await stat(join(skill.definitions[0].resourceBase.path, 'scripts', 'format.sh'))).mode & 0o111);
+  for (const bindings of [{ skills: [f.skillId] }, { plugins: [{ config: { binding: { resource: { kind: 'skill-space', id: f.skillId } } } }] }]) {
+    const context = await prepareLocalResourceContext({ record: { spec: { runtime: { type: 'codex' }, bindings } },
+      resourceAdapter: runtime, input: 'Format inventory', resourceMode: 'context-only' });
+    assert.ok(context.resourceContext.includes(JSON.stringify(skill.definitions[0].path)));
+    assert.ok(context.resourceContext.includes(JSON.stringify(skill.definitions[0].resourceBase.path)));
+    assert.ok(!context.resourceContext.includes(f.skillRoot), 'deleted export path must not reach Codex');
+    assert.ok(!context.resourceContext.includes('Use format SKU|COUNT'), 'Codex reads skill bodies on demand');
+  }
   const frozen = await createStudioBuild({ storeDir: join(target, 'studio') }).resolve(f.agentId, imported.buildId);
   assert.equal(frozen.metadata.id, f.agentId); assert.equal(frozen.spec.bindings.modelProfileId, 'configured-model');
   const config = createGlobalConfiguration({ env, home: f.root, inheritLegacy: false });

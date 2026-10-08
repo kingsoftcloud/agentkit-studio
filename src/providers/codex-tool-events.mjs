@@ -2,6 +2,23 @@ import { randomUUID } from 'node:crypto';
 
 export const CODEX_TOOL_EVENT = 'agentkit/codex-tool';
 
+/** Public App Server ThreadItem facts; Codex remains the executor. */
+export function codexItemToolChunk(item, phase) {
+  if (!item?.id || !['mcpToolCall', 'commandExecution', 'fileChange'].includes(item.type)) return null;
+  const command = item.type === 'commandExecution', files = item.type === 'fileChange';
+  const failed = item.status !== 'completed' || Boolean(item.error || item.result?.isError)
+    || (command && typeof item.exitCode === 'number' && item.exitCode !== 0);
+  const result = command ? {
+    content: [{ type: 'text', text: String(item.aggregatedOutput || '') }],
+    structuredContent: { status: item.status, exitCode: item.exitCode ?? null, durationMs: item.durationMs ?? null },
+  } : files ? { structuredContent: { status: item.status, changes: item.changes || [] } } : item.result ?? null;
+  return { type: 'tool', phase: phase === 'started' ? 'started' : failed ? 'failed' : 'completed',
+    id: String(item.id), name: command ? 'codex/command' : files ? 'codex/file-change' : `${item.server}/${item.tool}`,
+    arguments: command ? { command: item.command, cwd: item.cwd } : files ? { changes: item.changes || [] } : item.arguments ?? {},
+    ...(phase === 'started' ? {} : { result, ...(failed ? { error: item.error || { message: `Codex ${item.type}: ${item.status}${command && item.exitCode != null ? ` (exit ${item.exitCode})` : ''}` } } : {}) }),
+  };
+}
+
 /** Presentation facts only: never append model-facing tool messages or dispatch tools. */
 export function createCodexToolRecorder(session) {
   if (typeof session?.append !== 'function') return null;

@@ -82,7 +82,9 @@ if (!values.execute || !values.archive || !values['env-file'] || !values.cases |
         const toolNames = calls.map(call => call.name);
         for (const expected of item.expectedText || []) assert.ok(completed.output_text.includes(expected), `expected output missing: ${expected}`);
         for (const pattern of item.expectedTools || []) assert.ok(toolNames.some(tool => new RegExp(pattern).test(tool)), `tool missing: ${pattern}`);
-        if (item.expectedToolResult) assert.ok(frames.some(frame => frame.type === 'response.tool_result' && !frame.is_error && frame.output.some(part => String(part.text || '').includes(item.expectedToolResult))), 'expected successful tool result missing');
+        const matchingCalls = calls.filter(call => !item.expectedToolArguments || String(call.arguments).includes(item.expectedToolArguments));
+        if (item.expectedToolArguments) assert.ok(matchingCalls.length, 'expected executed tool arguments missing');
+        if (item.expectedToolResult) assert.ok(frames.some(frame => frame.type === 'response.tool_result' && !frame.is_error && matchingCalls.some(call => call.call_id === frame.call_id) && frame.output.some(part => String(part.text || '').includes(item.expectedToolResult))), 'expected successful tool result missing');
         const textFrames = frames.filter(frame => frame.type === 'response.output_text.delta').length;
         assert.ok(textFrames > 1, 'incremental text stream missing');
         results.push({ id: item.id, passed: true, responseId: completed.id, toolNames, textFrames, firstTextMs,

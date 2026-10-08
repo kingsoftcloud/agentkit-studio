@@ -75,6 +75,40 @@ test('native plugin MCP calls reach the Studio event stream, including failures'
   assert.equal(tools[3].error.message, 'fixture failure');
 });
 
+test('native commands and file changes retain actual inputs, outputs and failure status', async () => {
+  const items = [
+    { id: 'command-ok', type: 'commandExecution', command: 'python3 scripts/check.py', cwd: '/imported/skill', status: 'completed', exitCode: 0, aggregatedOutput: 'nodes: 7', durationMs: 17 },
+    { id: 'command-error', type: 'commandExecution', command: 'python3 missing.py', cwd: '/empty', status: 'completed', exitCode: 2, aggregatedOutput: 'file not found' },
+    { id: 'command-declined', type: 'commandExecution', command: 'blocked command', cwd: '/empty', status: 'declined', exitCode: null },
+    { id: 'file-ok', type: 'fileChange', status: 'completed', changes: [{ path: '/workspace/result.txt', kind: { type: 'add' }, diff: '+result' }] },
+  ];
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn(), write = child.stdout.write.bind(child.stdout);
+    child.stdout.write = (data, ...args) => {
+      const message = JSON.parse(String(data));
+      if (message.method === 'item/started' && message.params.item.id === 'item-final') {
+        const common = { threadId: 'thread-fake', turnId: 'turn-fake' };
+        for (const item of items) {
+          write(JSON.stringify({ method: 'item/started', params: { ...common, item: { ...item, status: 'inProgress', aggregatedOutput: null } } }) + '\n');
+          write(JSON.stringify({ method: 'item/completed', params: { ...common, item } }) + '\n');
+        }
+      }
+      return write(data, ...args);
+    };
+    return child;
+  } });
+  const tools = [];
+  for await (const chunk of runtime.stream({ input: 'Use the bound script' })) if (chunk.type === 'tool') tools.push(chunk);
+  assert.deepEqual(tools.map(chunk => chunk.phase), ['started', 'completed', 'started', 'failed', 'started', 'failed', 'started', 'completed']);
+  assert.deepEqual(tools[0].arguments, { command: items[0].command, cwd: items[0].cwd });
+  assert.equal(tools[1].result.content[0].text, 'nodes: 7');
+  assert.equal(tools[1].result.structuredContent.exitCode, 0);
+  assert.equal(tools[3].result.structuredContent.exitCode, 2);
+  assert.match(tools[5].error.message, /declined/);
+  assert.equal(tools[7].name, 'codex/file-change');
+  assert.deepEqual(tools[7].result.structuredContent.changes, items[3].changes);
+});
+
 test('the selected Codex model reaches thread/start instead of inheriting another default', async () => {
   let selected;
   const runtime = createCodexRuntime({ model: 'configured-default', spawnImpl: () => {
