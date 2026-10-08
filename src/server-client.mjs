@@ -123,8 +123,45 @@ export function buildCloudAgentUpdate(agentId, { spec = {}, name = '', descripti
   return payload;
 }
 
+/** The general Studio client intentionally excludes deployment mutations. */
+export function createAgentEngineClient(options) { return createClient(options, SERVER_ACTIONS); }
+
+/**
+ * Node-only deployment transport. The caller owns the durable deployment
+ * receipt and must reconcile an unknown create result before sending again.
+ * Keep this surface separate from the browser's generic Action bridge.
+ */
+export function createAgentEngineDeploymentClient(options) {
+  const { action } = createClient(options, new Set([
+    'CreateAgentProduct', 'UploadCode', 'GetPresignedUrl', 'GetAgent', 'UpdateAgent',
+    'ListInstances', 'GetAgentLogs', 'DeleteAgent',
+  ]));
+  return {
+    createAgent: (payload, request) => action('CreateAgentProduct', payload, request),
+    uploadCode: (payload, request) => action('UploadCode', payload, request),
+    getUploadUrl: (filename, request) => action('GetPresignedUrl', { Filename: filename }, request),
+    forAgent(agentId) {
+      if (typeof agentId !== 'string' || !/^ar-[A-Za-z0-9-]+$/.test(agentId)) {
+        throw new AgentEngineError('INVALID_AGENT_ID', '部署需要有效的云端 AgentId');
+      }
+      const scoped = (name, payload = {}, request) => {
+        if (payload.AgentId && payload.AgentId !== agentId) throw new AgentEngineError('DEPLOYMENT_AGENT_MISMATCH', '请求与部署记录的 AgentId 不一致');
+        return action(name, { ...payload, AgentId: agentId }, request);
+      };
+      return {
+        get: (payload, request) => scoped('GetAgent', payload, request),
+        update: (payload, request) => scoped('UpdateAgent', payload, request),
+        instances: (payload, request) => scoped('ListInstances', payload, request),
+        logs: (payload, request) => scoped('GetAgentLogs', payload, request),
+        // Removal retains audit history and never deletes shared artifacts.
+        remove: request => scoped('DeleteAgent', { HardDelete: false, SyncDeleteKs3: false, SyncDeleteKcr: false, SyncDeleteKlog: false }, request),
+      };
+    },
+  };
+}
+
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
-export function createAgentEngineClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '' }) {
+function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '' }, allowedActions) {
   async function listLocalAgents({ page = 1, pageSize = 20, query = '' } = {}, options = {}) {
     const { values } = await configuration.resolve();
     let base;
@@ -204,17 +241,22 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
     return { ...normalizeAgent(payload.draft || payload.agent || payload), requestId: String(response.headers.get('x-request-id') || '') };
   }
 
-  async function action(name, payload = {}, { signal, apiVersion = API_VERSION } = {}) {
+  async function action(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID() } = {}) {
     if (!/^[A-Z][A-Za-z0-9]+$/.test(name)) throw new AgentEngineError('INVALID_ACTION', '无效 Server Action');
-    if (!SERVER_ACTIONS.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
+    if (!allowedActions.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw new AgentEngineError('INVALID_REQUEST_ID', '请求 ID 必须是 UUID');
     const { values } = await configuration.resolve();
     let base;
     try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
     catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
+    // The official inner AICP endpoint is HTTP, also used by the explicit
+    // inner-account fallback below. An explicitly configured inner endpoint
+    // must have the same contract; arbitrary remote HTTP origins stay denied.
+    const officialInner = base.hostname === 'aicp.inner.api.ksyun.com' && !base.port;
     if (base.username || base.password || base.search || base.hash || base.pathname !== '/' ||
-      (base.protocol !== 'https:' && !(base.protocol === 'http:' && loopback))) {
-      throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；仅本机开发允许 HTTP');
+      (base.protocol !== 'https:' && !(base.protocol === 'http:' && (loopback || officialInner)))) {
+      throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；HTTP 仅限本机或官方 AICP 内网入口');
     }
     const requestAgainst = async (requestBase, allowInnerFallback = true) => {
       const kop = KOP_HOSTS.has(requestBase.hostname);
@@ -234,7 +276,7 @@ export function createAgentEngineClient({ configuration, fetchImpl = fetch, time
       } : payload;
       const body = JSON.stringify(requestPayload);
       const headers = { 'Content-Type': 'application/json', Accept: 'application/json',
-        'X-Ksc-Request-Id': randomUUID(), 'X-Ksc-Region': controlRegion,
+        'X-Ksc-Request-Id': requestId, 'X-Ksc-Region': controlRegion,
         'X-Ksc-Source': 'agentkit-studio' };
       if (values.cloudAccountId) headers['X-Ksc-Account-Id'] = values.cloudAccountId;
       const url = new URL(kop ? `/?Action=${name}&Version=${apiVersion}` : `/agentengine/api/v1/${name}`, requestBase);

@@ -46,6 +46,7 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
   Agent、模型、命名访问模式及输入草稿一起保留。绑定前先探测资源，准入失败不再生成空白会话。
 - **本地调试与发布**：已保存 Agent Revision 可以直接本地对话，无须先构建；构建用于冻结
   版本并导出运行包。目前对话创建工具尚不提供构建操作，预发产物上传和部署联调尚未完成。
+  云端创建沿用 AgentEngine 的 `CreateAgentProduct`，接口复用和实际发布缺口见[部署 API 合同](docs/contracts/deployment-transport.md)。
 - **设置**：左下角齿轮直接打开 DSH 原生设置弹窗，模型、凭证和 Studio 配置仍在同一处管理。
 - **运行中心**：构建、部署、评测、观测、Channel 和自动化都通过 Host/AgentEngine Server
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
