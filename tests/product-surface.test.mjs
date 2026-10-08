@@ -12,16 +12,16 @@ test('Studio conversation surface does not ship the legacy DSH hero copy', () =>
 
 test('Agent context selector uses the DSH Connection catalog and official session admission seam', () => {
   assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'agents\/list'/);
-  assert.match(clientSource, /无 Agent · DSH 原生会话/);
+  assert.match(clientSource, /不使用 Agent/);
   assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'agents\/ensure-preset'/);
   assert.match(clientSource, /agentPresets\.select\(sessionId, admission\.presetId\)/);
   assert.match(clientSource, /typeof selectedPreset === 'object' && selectedPreset\.ok === false/);
   assert.match(clientSource, /conversation\.hero\.agentPreset/);
-  assert.match(clientSource, /首轮发送后锁定/);
+  assert.match(clientSource, /会话已开始，Agent 已锁定/);
   assert.match(clientSource, /__AGENTKIT_STUDIO_BIND_AGENT__/);
   assert.match(clientSource, /绑定到新会话/);
   assert.match(clientSource, /uiWorkspace\.openSession\(sessionId\)/);
-  assert.match(clientSource, /空白会话可以绑定一个 Agent；首轮发送后锁定/);
+  assert.match(clientSource, /h\(Menu, /);
   assert.match(clientSource, /conversationAgentStorageKey\(sessionId\)/);
 });
 

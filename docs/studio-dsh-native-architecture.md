@@ -1,5 +1,8 @@
 # AgentKit Studio DSH Native 重构方案（RFC 终稿）
 
+> **2026-10-08 产品范围收敛**：新版仅支持本地创建的 DSH Native、Codex、AgentKit Harness，以及后续具有真实部署来源关系的云端实例。停止将历史云端 Agent 混入目录和选择器；OpenClaw 使用原生 Dashboard。下文历史的 LangGraph/通用云端运行桥验证保留为技术记录，不代表当前产品兼容范围。本地 Build 的云端部署尚未接入，云端标签当前为空。
+
+
 > 状态：终稿，作为本轮实现、评审和验收的唯一架构基线。
 >
 > **2026-09-29 升级**：DSH 基线从 `dsh-v0.1.7-rc.2`（commit `477b4f4…`）升级到 `dsh-v0.2.0-rc.1`（commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`）。本文中 rc.2 相关描述保留为历史对照；`make check`（83/83）与 `make patch-check`（6/6）已在 0.2.0-rc.1 重跑通过，但 rc.2 上记录的资源 Agent admission、preset 准入等 P0 证据尚未在新基线重跑。

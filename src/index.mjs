@@ -65,7 +65,7 @@ async function registerControlPlane(ctx) {
     } }),
   })).catch(error => { console.warn('[agentkit-studio] channels init failed:', error?.message || error); return null; });
   const agentStorePromise = import('./agent-store.mjs').then(({ createAgentStore }) => createAgentStore({ storeDir: join(studioStoreDir, 'agents') }));
-  const agentCatalogPromise = import('./agent-catalog.mjs').then(({ createAgentCatalog }) => createAgentCatalog({ store: () => agentStorePromise, server: () => serverClientPromise, builds: async id => (await studioBuildPromise).build.list(id) }));
+  const agentCatalogPromise = import('./agent-catalog.mjs').then(({ createAgentCatalog }) => createAgentCatalog({ store: () => agentStorePromise, builds: async id => (await studioBuildPromise).build.list(id) }));
   const listLocalBuildTargets = async () => { const studio = await studioBuildPromise; const agents = await (await agentStorePromise).list(); return (await Promise.all(agents.map(async agent => (await studio.build.list(agent.metadata.id)).map(build => ({ ...build, name: `${agent.metadata.name} · Revision ${build.revision}` }))))).flat().filter(build => build.status === 'SUCCEEDED'); };
   const localMcpStorePromise = import('./local-mcp-store.mjs').then(({ createLocalMcpStore }) => createLocalMcpStore({ storeDir: join(studioStoreDir, 'resources', 'mcp') }));
   const mcpProbePromise = import('./mcp-probes.mjs').then(({ createMcpProbes }) => createMcpProbes({ storeDir: join(studioStoreDir, 'resources', 'mcp-probes'), localStore: () => localMcpStorePromise, adapters: () => resourceAdaptersPromise }));

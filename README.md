@@ -5,7 +5,7 @@
 
 AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时
-支持 DSH Native、Codex 和 Studio 内置的 AgentKit Harness。新版暂不支持 ADK / LangGraph，
+支持 DSH Native、Codex 和 Studio 内置的 AgentKit Harness。新版只面向本地创建的 Agent 及其云端部署，不兼容历史 ADK / LangChain / LangGraph / OpenClaw / Hermes，
 后续资源绑定、会话交互和部署验收均聚焦这三种运行时。
 
 当前首个公开可复现版本为 **0.0.1**，固定验证基线为 **DSH v0.2.0-rc.2**（commit
@@ -29,7 +29,7 @@ Agent 的普通对话由所连接的运行时执行。
 
 - **Agent**：快速创建、一键创建、对话创建和编辑。模型、Tool、MCP、Skill 可以多选；知识库、
   记忆库、Skill Center 每类默认一个。运行目标属于 Agent Revision，可选择 `dsh-native`、
-  `harness` 或 `codex`。列表按“本地 Agent / 云端 Agent”分栏，独立搜索、分页，最新创建的在前。
+  `harness` 或 `codex`。本地列表支持搜索、分页，最新创建的在前；会话中使用原生搜索菜单选择 Agent。云端标签只接纳 Studio 部署记录，当前本地 Build 尚未接通云端发布，因此显示明确空状态。OpenClaw 使用原生 Dashboard。
 - **资源库**：只做资源生命周期管理，包括发现、导入、探测、查看、刷新、删除和分页列表。
   资源库不选择 Agent，也不写 Agent Revision；绑定关系只在创建页或编辑页提交，和 Revision
   一起保存、审计和回滚。

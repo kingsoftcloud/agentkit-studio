@@ -109,12 +109,16 @@
      * The Host admits them through the preset-scoped Studio provider bridge;
      * unsupported resource execution still fails with a typed runtime error.
      */
-    function AgentContextSelector({ sessionId, useSessions, useWorkspaces, studioRemote, modelDirectories, inputActions } = {}) {
+    function AgentContextSelector({ sessionId, useSessions, studioRemote, modelDirectories, inputActions } = {}) {
       const [agents, setAgents] = useState([]);
       const [selected, setSelected] = useState(() => readConversationAgent(sessionId));
       const [busy, setBusy] = useState(false);
+      const [open, setOpen] = useState(false);
+      const [search, setSearch] = useState('');
+      const [loading, setLoading] = useState(true);
       const [notice, setNotice] = useState('');
       const session = useSessions ? useSessions(state => state?.byId?.[sessionId]) : null;
+      const presetId = session?.projectionValues?.agentPreset;
       const started = Boolean(session && session.blank === false);
       const resourceBound = agent => {
         const bindings = agent?.spec?.bindings || agent?.bindings || {};
@@ -138,14 +142,34 @@
         setSelected(selectedAgent);
         window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(selectedAgent || '');
         setNotice('');
-        hostRemote.agents().then(result => {
-          if (alive) setAgents(Array.isArray(result?.items) ? result.items : []);
-        }).catch(error => { if (alive) setNotice(error?.message || 'Agent 目录暂不可读取'); });
+        setOpen(false);
+        setLoading(true);
+        (async () => {
+          const first = await hostRemote.agents({ source: 'local', pageSize: 100 });
+          const items = [...(first?.items || [])];
+          for (let page = 2; alive && items.length < Number(first?.total || 0); page += 1) {
+            const next = await hostRemote.agents({ source: 'local', pageSize: 100, page });
+            if (!next?.items?.length) break;
+            items.push(...next.items);
+          }
+          return { items };
+        })().then(result => {
+          if (!alive) return;
+          const items = Array.isArray(result?.items) ? result.items : [];
+          setAgents(items);
+          if (typeof presetId === 'string') {
+            const actualAgent = agentFromSessionPreset(presetId, items);
+            setSelected(actualAgent);
+            writeConversationAgent(actualAgent, sessionId);
+            window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(actualAgent || '');
+          }
+        }).catch(error => { if (alive) setNotice(error?.message || 'Agent 目录暂不可读取'); }).finally(() => { if (alive) setLoading(false); });
         return () => { alive = false; };
-      }, [sessionId]);
+      }, [sessionId, presetId]);
 
-      const select = async event => {
-        const value = event.target.value || null;
+      const select = async value => {
+        value = value || null;
+        setOpen(false);
         setNotice('');
         // Studio patch 007: sync the sidebar filter so the DSH session list
         // narrows to sessions bound to the selected Agent.
@@ -224,30 +248,33 @@
         }
       };
       const selectedAgent = agents.find(agent => (agent?.metadata?.id || agent?.id) === selected);
-      return h('div', {
-        title: sessionId ? '空白会话可以绑定一个 Agent；首轮发送后锁定。未选择 Agent 时使用 DSH 原生会话。' : '选择 Agent 后请从空白会话开始；首轮发送后绑定关系锁定。',
-        style: { display: 'inline-flex', alignItems: 'center', gap: '7px', minWidth: '0', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 },
-      },
-      h('span', { style: { color: BRAND.accentStrong, whiteSpace: 'nowrap' } }, '智能体'),
-      h('select', {
-        'aria-label': '选择当前会话智能体',
-        value: selected || '',
-        onChange: select,
-        disabled: busy || started,
-        style: { maxWidth: '230px', height: '30px', padding: '0 9px', border: '1px solid ' + BRAND.border, borderRadius: '8px', color: BRAND.ink, background: BRAND.surface, fontSize: '11px', fontWeight: 700 },
-      },
-      h('option', { value: '' }, '无 Agent · DSH 原生会话'),
-      selected && !selectedAgent ? h('option', { value: selected }, `已选：${selected}（暂不可读取）`) : null,
-      agents.map(agent => {
-        const id = agent?.metadata?.id || agent?.id;
-        const name = agent?.metadata?.name || agent?.name || id;
-        const runtime = agent?.spec?.runtime?.type || agent?.runtime?.type;
-        return h('option', { key: id, value: id }, `${name} · ${RUNTIME_LABELS[runtime] || runtime || 'Agent'}`);
-      })),
-      h(Pill, { tone: notice && !notice.includes('已绑定') ? 'signal' : selected ? 'accent' : 'neutral' }, busy ? '准入中…' : notice || (selected ? (started ? '已锁定' : '已绑定') : 'DSH 原生')),
-      !sessionId && selected && selectedAgent ? h('span', { title: '请从 Agents 页面使用“绑定到新会话”创建原生会话', style: { color: BRAND.inkMuted, fontSize: '10px' } }, '请从 Agents 页面绑定') : null,
-      h(NativeAuthoringButton, { inputActions }));
-
+      const filtered = agents.filter(agent => [agent.metadata?.name, agent.metadata?.id, agent.name, agent.id].filter(Boolean).join(' ').toLowerCase().includes(search.trim().toLowerCase()));
+      const name = selectedAgent?.metadata?.name || selectedAgent?.name || (selected ? '已绑定 Agent' : '选择 Agent');
+      const runtime = selectedAgent?.spec?.runtime?.type;
+      return h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0, color: BRAND.inkMuted, fontSize: '12px' } },
+        h('style', null, `.studio-agent-picker { width: 320px; max-width: calc(100vw - 32px); } .studio-agent-picker > [role="presentation"] { max-height: 320px; overflow-y: auto; } .studio-agent-picker [role="menuitem"] { min-width: 0; } .studio-agent-trigger:hover { background: var(--dsw-alias-interactive-bg-hover, #f3f3f3) !important; }`),
+        h(Menu, {
+          open: open && !busy && !started,
+          portal: true, compact: true, listClassName: 'studio-agent-picker',
+          onClose: () => setOpen(false),
+          anchor: h('button', {
+            type: 'button', className: 'studio-agent-trigger', 'aria-label': '选择当前会话智能体',
+            'aria-haspopup': 'menu', 'aria-expanded': open, disabled: busy || started,
+            title: started ? '会话已开始，Agent 已锁定' : name,
+            onClick: () => { setSearch(''); setOpen(current => !current); },
+            style: { display: 'inline-flex', alignItems: 'center', gap: '6px', maxWidth: '240px', height: '30px', padding: '0 8px', border: 0, borderRadius: '8px', color: BRAND.ink, background: 'transparent', fontSize: '13px', cursor: 'pointer' },
+          }, h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, busy ? '正在绑定…' : name), h(IconChevronDownOutlineRegular, { size: 12 })),
+        },
+          h('div', { style: { display: 'grid', padding: '6px 6px 10px' } }, h(Input, { autoFocus: true, type: 'search', value: search, placeholder: '搜索 Agent', 'aria-label': '搜索会话 Agent', onChange: event => setSearch(event.target.value), onKeyDown: event => { if (['Home', 'End'].includes(event.key)) event.stopPropagation(); } })),
+          h(MenuItemButton, { onSelect: () => select(null) }, '不使用 Agent'),
+          h('div', { role: 'separator', style: { margin: '6px 0', borderTop: '1px solid ' + BRAND.border } }),
+          loading ? h('div', { role: 'status', style: { padding: '12px', color: BRAND.inkMuted } }, '正在加载…') : filtered.length ? filtered.map(agent => {
+            const id = agent.metadata?.id || agent.id;
+            return h(MenuItemButton, { key: id, onSelect: () => select(id) }, h('span', { style: { display: 'flex', alignItems: 'center', gap: '12px' } }, h('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, agent.metadata?.name || agent.name || id), selected === id ? h('span', { 'aria-label': '已选择' }, '✓') : null));
+          }) : h('div', { role: 'status', style: { padding: '12px', color: BRAND.inkMuted } }, search ? '没有匹配的 Agent' : '还没有本地 Agent')),
+        selected && runtime ? h('span', { style: { whiteSpace: 'nowrap', fontSize: '11px' } }, RUNTIME_LABELS[runtime]) : null,
+        notice && !notice.startsWith('已') ? h('span', { role: 'status', style: { maxWidth: '320px', color: BRAND.inkMuted, fontSize: '11px' } }, notice) : null,
+        h(NativeAuthoringButton, { inputActions }));
     }
 
     function StudioSubnav({ items, value, onChange }) {

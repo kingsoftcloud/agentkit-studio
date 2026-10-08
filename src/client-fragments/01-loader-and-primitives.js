@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
   factory: require => {
     const React = require('react');
     const { createElement: h, useEffect, useRef, useState } = React;
-    const { IconSettingsOutlineMedium, Tooltip } = require('@deepseek-ai/dsh-client-ui-primitives');
+    const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip } = require('@deepseek-ai/dsh-client-ui-primitives');
     const STUDIO_VERSION = '0.0.1';
     const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.2');
     const CONVERSATION_AGENT_KEY = 'agentkit-studio:conversation-agent';
@@ -570,6 +570,19 @@ window.__ModuleLoader__.load({
       } catch {
         return null;
       }
+    }
+
+    function agentFromSessionPreset(presetId, agents) {
+      if (typeof presetId !== 'string') return null;
+      // Match the Host's durable preset identity, including frozen revisions/builds.
+      // Storage is only a sidebar cache and must not override the actual Session.
+      const agent = agents.find(item => {
+        const id = item?.metadata?.id || item?.id;
+        if (!id) return false;
+        const encoded = encodeURIComponent(String(id)).replace(/%/g, '_').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 180) || 'unknown';
+        return presetId.startsWith(`agentkit-studio-agent-${encoded}-r`);
+      });
+      return agent?.metadata?.id || agent?.id || null;
     }
 
     function writeConversationAgent(agentId, sessionId) {
