@@ -27,7 +27,7 @@ DESKTOP_ENV = DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DES
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
 
-.PHONY: setup dev doctor
+.PHONY: setup dev doctor cloud-identity
 # Sequential sub-makes also keep `make -j setup` from racing patch/build/profile writes.
 setup:
 	node scripts/development-doctor.mjs --tools-only
@@ -48,6 +48,10 @@ doctor:
 	@profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
 		node scripts/development-doctor.mjs --source "$(DSH_ROOT)" --patches "$(PATCH_ROOT)" \
 		--commit "$(DSH_COMMIT)" --profile "$$profile_dir" --archive "$(PLUGIN_TARBALL)"
+
+# Read-only: show the caller actually resolved from the configured signing key.
+cloud-identity:
+	node scripts/check-cloud-identity.mjs
 
 .PHONY: check test pack release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \

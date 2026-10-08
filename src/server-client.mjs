@@ -1,6 +1,7 @@
 /** Node client for the existing AgentEngine public Action API. */
 import { randomUUID } from 'node:crypto';
 import aws4 from 'aws4';
+import { createCloudIdentityResolver } from './cloud-identity.mjs';
 
 const KOP_HOSTS = new Set(['aicp.api.ksyun.com', 'aicp.inner.api.ksyun.com', 'aicp.internal.api.ksyun.com']);
 const API_VERSION = '2024-06-12';
@@ -132,11 +133,12 @@ export function createAgentEngineClient(options) { return createClient(options, 
  * Keep this surface separate from the browser's generic Action bridge.
  */
 export function createAgentEngineDeploymentClient(options) {
-  const { action } = createClient(options, new Set([
+  const { action, inspectIdentity } = createClient(options, new Set([
     'CreateAgentProduct', 'UploadCode', 'GetPresignedUrl', 'GetAgent', 'UpdateAgent',
     'ListInstances', 'GetAgentLogs', 'DeleteAgent',
   ]));
   return {
+    inspectIdentity,
     createAgent: (payload, request) => action('CreateAgentProduct', payload, request),
     uploadCode: (payload, request) => action('UploadCode', payload, request),
     getUploadUrl: (filename, request) => action('GetPresignedUrl', { Filename: filename }, request),
@@ -162,6 +164,12 @@ export function createAgentEngineDeploymentClient(options) {
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
 function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '' }, allowedActions) {
+  const deploymentIdentity = allowedActions.has('CreateAgentProduct') ? createCloudIdentityResolver({ fetchImpl, timeoutMs }) : null;
+  async function inspectIdentity(options) {
+    if (!deploymentIdentity) throw new AgentEngineError('ACTION_NOT_ALLOWED', '操作人核验仅用于部署客户端');
+    const { values } = await configuration.resolve();
+    return deploymentIdentity.resolve({ ...values, cloudServerUrl: values.cloudServerUrl || serverUrl }, options);
+  }
   async function listLocalAgents({ page = 1, pageSize = 20, query = '' } = {}, options = {}) {
     const { values } = await configuration.resolve();
     let base;
@@ -282,6 +290,12 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
       const url = new URL(kop ? `/?Action=${name}&Version=${apiVersion}` : `/agentengine/api/v1/${name}`, requestBase);
       if (kop) {
         if (!values.cloudAccessKey || !values.cloudSecretKey) throw new AgentEngineError('CLOUD_CREDENTIALS_MISSING', '请在模型与凭证中配置云端 AK/SK');
+        if (deploymentIdentity && ['CreateAgentProduct', 'UpdateAgent', 'DeleteAgent'].includes(name)) {
+          const identity = await deploymentIdentity.resolve({ ...values, cloudServerUrl: values.cloudServerUrl || serverUrl }, { signal });
+          if (identity.userUuid) headers['X-Ksc-User-uuid'] = identity.userUuid;
+          if (identity.accountId) headers['X-Ksc-Account-Id'] = identity.accountId;
+          else delete headers['X-Ksc-Account-Id']; // Let KOP derive the root owner; do not assert an unverified configured ID.
+        }
         if (values.cloudRegion?.toLowerCase() === 'pre-online') headers['X-KSC-CUSTOM-SOURCE'] = values.cloudCustomSource || 'pre';
         Object.assign(headers, { 'X-Action': name, 'X-Version': apiVersion });
         const signedRequest = aws4.sign({ host: url.host, path: url.pathname + url.search, method: 'POST',
@@ -583,6 +597,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
   }
   return {
     getObservabilityOverview, listAgentRuntimeStats, action, skillAction, streamAction,
+    ...(deploymentIdentity ? { inspectIdentity } : {}),
     listAgents, getAgent, listResource, listCatalogResources,
   };
 }

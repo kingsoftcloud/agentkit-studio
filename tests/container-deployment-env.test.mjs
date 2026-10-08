@@ -25,7 +25,7 @@ async function bundle(t, runtime = 'harness', primaryCredential = 'AGENTKIT_MODE
   return Buffer.from((await portable.download(agentId, record.id, result.bundleId)).base64, 'base64');
 }
 const runtimeToken = 'independent-runtime-access-token';
-const credentials = { AGENTKIT_MODEL_API_KEY: 'selected-private-key', OTHER_KEY: 'other-private-key', SEARCH_KEY: 'search-private-key', UNRELATED_SECRET: 'must-not-copy' };
+const credentials = { AGENTKIT_MODEL_API_KEY: 'test-model', OTHER_KEY: 'other-private-key', SEARCH_KEY: 'search-private-key', UNRELATED_SECRET: 'must-not-copy' };
 
 test('all Studio runtimes reuse the frozen primary model key in the existing Container API', async t => {
   for (const runtime of ['harness', 'dsh-native', 'codex']) {

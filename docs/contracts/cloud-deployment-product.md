@@ -17,9 +17,19 @@ AK 同时用于签名及 KOP 公共参数 `Accesskey`；SK 仅用于计算签名
 测试使用主账号密钥，不能从中推导其他子用户身份。模型凭证映射修复避开了自动申请 AICP
 Key，不是子账号身份修复。详见[部署传输边界](deployment-transport.md)。
 
-旧 KsADK 客户端已有 IAM 身份解析和身份 Header 传递，新版 Node 客户端尚未迁移此能力。
-后续部署须验证当前签名凭证对应的操作人及账号一致性，不能手填或复用其他人的 UUID。
-应明确区分主账号、已验证子账号和无法验证的身份，不将查询失败误判为主账号。
+旧 KsADK 客户端已有 IAM 身份解析和身份 Header 传递。新版 Node 部署客户端现已补齐
+`inspectIdentity()`：用当前签名凭证调用 IAM `ListAccessKeys`，只匹配当前 AK；有子用户名
+时再调用 `GetUser` 核对用户名、UUID 和 KRN 中的账号归属，不查询全部子用户密钥。
+`CreateAgentProduct`、`UpdateAgent`、`DeleteAgent` 发送前执行此检查，已验证的子账号
+UUID 和主账号 ID 加入签名 Header；与配置账号不一致或身份查询失败时不发送写请求。
+主账号保留主账号身份，不生成子账号 UUID，所属账号交由 KOP 解析，不发送未核验的配置
+账号 ID；不改变平台自动申请 AICP Key 的限制。
+只读详情、实例和日志查询不依赖 IAM，身份服务异常时仍可诊断既有部署。
+
+检查结果短期缓存在 Node 内存，凭证或会话令牌变化会重新验证；不存储原始 IAM 响应，
+不接受浏览器传入的操作人 UUID。`make cloud-identity` 可只读检查当前配置；
+`node scripts/check-cloud-identity.mjs --require-subaccount` 在主账号情形返回非零状态。
+真实主账号识别已验证；子账号 Header、签名、缓存失效及失败拒绝已有回归测试。
 真实子账号的 Header、创建回调、数据库记录以及两个子账号的权限隔离均尚未验收；
 不能将本轮容器连通性结果表述为子账号部署已通过。
 

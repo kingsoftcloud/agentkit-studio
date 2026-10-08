@@ -5,6 +5,16 @@ import { createAgentEngineClient, createAgentEngineDeploymentClient } from '../s
 const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' };
 const configuration = { resolve: async () => ({ values }) };
 const ok = data => new Response(JSON.stringify({ Code: 0, RequestId: 'server-request', Data: data }));
+// These tests exercise the control-plane transport. Identity-specific behavior
+// is covered separately through the same real deployment client.
+function deploymentClient(options) {
+  return createAgentEngineDeploymentClient({ ...options, fetchImpl: async (url, init) => {
+    if (new URL(url).hostname.startsWith('iam.')) return new Response(JSON.stringify({
+      ListAccessKeyResult: { AccessKeyMetadata: { member: [{ AccessKeyId: values.cloudAccessKey, UserName: '', Status: 'Active' }] } },
+    }));
+    return options.fetchImpl(url, init);
+  } });
+}
 
 test('deployment Actions stay out of the generic Studio bridge', async () => {
   let calls = 0;
@@ -18,7 +28,7 @@ test('deployment Actions stay out of the generic Studio bridge', async () => {
 
 test('deployment create preserves preproduction signing and one correlation id on inner-account fallback', async () => {
   const requests = [], requestId = '83b10098-477d-4e4e-8c87-9c26eb4ee040';
-  const client = createAgentEngineDeploymentClient({ configuration, fetchImpl: async (url, init) => {
+  const client = deploymentClient({ configuration, fetchImpl: async (url, init) => {
     requests.push({ url: String(url), init });
     if (requests.length === 1) return new Response('<Message>The inner account can only access through intranet</Message>', { status: 403 });
     return ok({ AgentId: 'ar-created' });
@@ -39,7 +49,7 @@ test('deployment create preserves preproduction signing and one correlation id o
 
 test('a scoped deployment cannot update another Agent or remove shared artifacts', async () => {
   const calls = [];
-  const client = createAgentEngineDeploymentClient({ configuration, fetchImpl: async (_url, init) => {
+  const client = deploymentClient({ configuration, fetchImpl: async (_url, init) => {
     calls.push(JSON.parse(init.body)); return ok({ deleted: true });
   } });
   assert.throws(() => client.forAgent(''), { code: 'INVALID_AGENT_ID' });
@@ -60,7 +70,7 @@ test('unknown mutation results, capacity errors and redirects are not retried or
     () => new Response(JSON.stringify({ Code: 429, Message: 'secret response payload' }), { status: 429 }),
     () => new Response('', { status: 302, headers: { location: 'https://unrelated.invalid' } })]) {
     let calls = 0;
-    const client = createAgentEngineDeploymentClient({ configuration, fetchImpl: async () => { calls++; return response(); } });
+    const client = deploymentClient({ configuration, fetchImpl: async () => { calls++; return response(); } });
     await assert.rejects(client.createAgent({ Name: 'canary' }), error => {
       assert.doesNotMatch(error.message, /secret|unrelated/); return true;
     });
