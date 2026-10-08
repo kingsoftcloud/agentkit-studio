@@ -136,3 +136,11 @@ node scripts/verify-deployed-bundle.mjs --execute \
 非零用量。`expectedStreamPrefix` 用于系统提示词盲测，不能把前缀写进用户输入。
 `isolatedKnowledge` 要求运行包只绑定远端知识库且没有 MCP、Skill 或记忆，并拒绝外部工具
 调用。该探针不支持重启、延时召回或跨请求续聊用例；这些需要独立生命周期验收。
+
+
+## 子账号落库补验
+
+对上节已删除的隔离测试 Agent，使用只读数据库事务按唯一 Agent ID 查询。
+`creator` 与 IAM 用户名一致，`creator_sub_account_id` 与 IAM 已核验的用户 UUID 一致，
+`is_private=true`，资源状态为 Deleted。该记录证明子账号身份已透传并落库；不等于已验证
+另一子账号无权访问，跨子账号权限测试仍待执行。原始对照结果仅保存在私有验收目录。

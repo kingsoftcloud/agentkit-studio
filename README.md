@@ -54,7 +54,7 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
   云端创建沿用 AgentEngine 的 `CreateAgentProduct`，接口复用和实际发布缺口见[部署 API 合同](docs/contracts/deployment-transport.md)。
   三种运行时共用一套镜像，Node 客户端通过 Server 已有配置表读取固定摘要的版本目录；预发候选目录及 Harness 页面创建已实测。详见[部署交互与镜像维护边界](docs/contracts/cloud-deployment-product.md)。
   `make cloud-identity` 只读核验当前云端凭证的操作人；部署客户端在创建、更新、删除前核验身份，
-  创建部署必须通过子账号核验，主账号或身份不明时拒绝上传与创建。当前子账号创建及 `Creator` 回传已实测；数据库 UUID 与跨子账号隔离仍待验收。只读检查同时显示凭证来源和 AK 指纹，不输出密钥。
+  创建部署必须通过子账号核验，主账号或身份不明时拒绝上传与创建。当前子账号创建及 `Creator` 回传已实测；已对该测试记录只读核对数据库中的创建者子账号 UUID；跨子账号隔离仍待验收。只读检查同时显示凭证来源和 AK 指纹，不输出密钥。
 - **设置**：左下角齿轮直接打开 DSH 原生设置弹窗，模型、凭证和 Studio 配置仍在同一处管理。
 - **运行中心**：构建、部署、评测、观测、Channel 和自动化都通过 Host/AgentEngine Server
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
