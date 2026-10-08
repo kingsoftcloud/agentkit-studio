@@ -96,8 +96,8 @@ Agent/Build 身份、流式文本及用量。Chrome 控制台无错误或警告�
   自动重试未知创建结果。
 - `UpdateAgent` 接受镜像更新后，旧实例仍可能短暂接收请求。验收须核对替换实例已运行，
   再通过实际版本证据确认新镜像接管，不能只检查更新接口成功。
-- 当前 Server 的创建计费/存储策略会移除普通 Harness/Codex Container 的 `Storage`。
-  Runtime Service 本身已有存储支持；这属于需单独处理的控制面策略缺口，不是 Node 入口缺失。
+- 当时 Server 的创建计费/存储策略会移除普通 Harness/Codex Container 的 `Storage`。
+  后续已修复，三种运行时重建后的持久化验收见[存储补验](cloud-storage-acceptance-2026-10-09.md)。
 - 预发 HTTPS 仍需显式配置经过认证来源核对的 CA。本次保持 TLS 校验，未修改系统信任库。
 - 测试 Agent 使用限定 ID 的软删除清理，不联动删除共享 KS3、镜像或日志；独立账单核销
   不在运行资源删除回执的证明范围内。
@@ -135,7 +135,10 @@ node scripts/verify-deployed-bundle.mjs --execute \
 探针校验匿名请求被拒绝、冻结 Agent/Build 身份、匹配的工具调用和成功结果、文本增量及
 非零用量。`expectedStreamPrefix` 用于系统提示词盲测，不能把前缀写进用户输入。
 `isolatedKnowledge` 要求运行包只绑定远端知识库且没有 MCP、Skill 或记忆，并拒绝外部工具
-调用。该探针不支持重启、延时召回或跨请求续聊用例；这些需要独立生命周期验收。
+调用，并要求 `expectedText` 中的知识库核验标记未出现在用户输入、冻结 Agent 定义或资源配置中。
+系统提示词盲测也会拒绝用户输入中已包含期望前缀的用例。该探针不支持重启、延时召回或
+跨请求续聊用例；这些需要独立生命周期验收。三种运行时的独立知识库、Harness 的资源升级
+回滚与渠道调用后续已通过，见[资源隔离补验](cloud-resource-isolation-2026-10-09.md)。
 
 
 ## 子账号落库补验

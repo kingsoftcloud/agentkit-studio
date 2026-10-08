@@ -60,6 +60,7 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
   Channels 可选择本地 Agent 或其云端部署；自动化区分本地与云端，云端计划复用 Server 调度服务。
   预发 Server/Channel 已更新；云端调度触发和合成渠道事件已实测，真实机器人收发及 KOP 调度入口仍待验收，详见[云端渠道与定时任务](docs/contracts/cloud-agent-operations.md)。
+  三种运行时独立知识库盲测、Harness 升级移除和回滚恢复绑定后的渠道调用已通过，详见[资源隔离验收](docs/contracts/cloud-resource-isolation-2026-10-09.md)；完整资源组合仍待验收。
 - **插件市场**：加号可添加安装源；DSH 自带插件直接启用，其他插件由原生 PluginManager
   检查、安装并返回真实加载结果。Codex 使用完整的 `plugin@marketplace` 标识调用官方 CLI，
   Skill 在新建 Codex Agent 会话中加载，连接器继续使用 Codex 原生授权。Studio 的 Codex

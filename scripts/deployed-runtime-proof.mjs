@@ -3,7 +3,7 @@ const requireEvidence = (condition, code) => {
   if (!condition) throw Object.assign(new Error(code), { code });
 };
 
-export function validateDeploymentCases(cases, manifest) {
+export function validateDeploymentCases(cases, manifest, definition) {
   requireEvidence(Array.isArray(cases) && cases.length > 0 && cases.length <= 20, 'PROBE_CASES_INVALID');
   const ids = new Set();
   for (const item of cases) {
@@ -21,10 +21,17 @@ export function validateDeploymentCases(cases, manifest) {
     for (const pattern of item.expectedTools || []) {
       try { new RegExp(pattern); } catch { requireEvidence(false, 'PROBE_TOOL_PATTERN_INVALID'); }
     }
+    const normalize = value => String(value).normalize('NFKC').toLowerCase();
+    if (item.expectedStreamPrefix) requireEvidence(!normalize(item.input).includes(normalize(item.expectedStreamPrefix)), 'PROBE_SYSTEM_PREFIX_NOT_BLIND');
     if (item.isolatedKnowledge) {
       const resources = manifest.resources;
       requireEvidence(resources.remote?.length > 0 && resources.remote.every(resource => resource.kind === 'knowledge-base')
         && !resources.mcps.length && !resources.skills.length, 'PROBE_KNOWLEDGE_NOT_ISOLATED');
+      // A binding alone is not retrieval evidence. Require an answer marker
+      // that was not supplied by the user or embedded in the frozen Agent.
+      requireEvidence(definition && typeof definition === 'object' && item.expectedText?.length > 0, 'PROBE_KNOWLEDGE_MARKER_REQUIRED');
+      const supplied = [item.input, JSON.stringify(definition), JSON.stringify(resources)].map(normalize);
+      requireEvidence(item.expectedText.every(marker => !supplied.some(text => text.includes(normalize(marker)))), 'PROBE_KNOWLEDGE_ANSWER_NOT_BLIND');
     }
   }
 }

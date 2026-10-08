@@ -4,6 +4,7 @@ import { validateDeploymentCases, verifyDeploymentCase } from '../scripts/deploy
 
 const manifest = { agentId: 'ar-local-1234567890abcdef', buildId: 'build_12345678901234567890',
   resources: { mcps: [], skills: [], remote: [{ kind: 'knowledge-base' }] } };
+const definition = { spec: { instructions: { system: '根据绑定知识库的检索片段回答。' } } };
 const item = { id: 'script', input: '请检查 JSON 节点数', expectedText: ['7'], expectedTools: ['bash'],
   expectedToolArguments: 'scripts/check.py', expectedToolResult: '节点数：7', expectedStreamPrefix: 'BOUND' };
 const frames = () => [
@@ -38,14 +39,30 @@ test('a correct answer cannot substitute for an executed tool and its matching s
 });
 
 test('knowledge attribution rejects memory, tools, and skills as alternative sources', () => {
-  const knowledge = { id: 'knowledge', input: '查验收文档', isolatedKnowledge: true };
-  validateDeploymentCases([knowledge], manifest);
+  const knowledge = { id: 'knowledge', input: '查验收文档', isolatedKnowledge: true, expectedText: ['7'] };
+  validateDeploymentCases([knowledge], manifest, definition);
   for (const resources of [
     { ...manifest.resources, remote: [...manifest.resources.remote, { kind: 'memory-instance' }] },
     { ...manifest.resources, mcps: [{ resourceId: 'search' }] },
     { ...manifest.resources, skills: [{ resourceId: 'skill' }] },
-  ]) assert.throws(() => validateDeploymentCases([knowledge], { ...manifest, resources }), { code: 'PROBE_KNOWLEDGE_NOT_ISOLATED' });
+  ]) assert.throws(() => validateDeploymentCases([knowledge], { ...manifest, resources }, definition), { code: 'PROBE_KNOWLEDGE_NOT_ISOLATED' });
   assert.throws(() => verifyDeploymentCase(frames(), knowledge, manifest), { code: 'PROBE_KNOWLEDGE_EXTERNAL_TOOL' });
+});
+
+test('blind acceptance refuses answer cues in the request or frozen configuration before a cloud call', () => {
+  assert.throws(() => validateDeploymentCases([{ ...item, input: '请以 bound 开头' }], manifest), { code: 'PROBE_SYSTEM_PREFIX_NOT_BLIND' });
+  const knowledge = { id: 'knowledge', input: '查验收文档', isolatedKnowledge: true, expectedText: ['KB-CANARY'] };
+  validateDeploymentCases([knowledge], manifest, definition);
+  for (const missing of [undefined, []]) {
+    assert.throws(() => validateDeploymentCases([{ ...knowledge, expectedText: missing }], manifest, definition), { code: 'PROBE_KNOWLEDGE_MARKER_REQUIRED' });
+  }
+  assert.throws(() => validateDeploymentCases([knowledge], manifest), { code: 'PROBE_KNOWLEDGE_MARKER_REQUIRED' });
+  assert.throws(() => validateDeploymentCases([{ ...knowledge, input: '核验标记是不是 kb-canary？' }], manifest, definition), { code: 'PROBE_KNOWLEDGE_ANSWER_NOT_BLIND' });
+  for (const supplied of [{ spec: { instructions: { system: '答案为 KB-CANARY' } } }, { metadata: { name: 'KB-CANARY' } }]) {
+    assert.throws(() => validateDeploymentCases([knowledge], manifest, supplied), { code: 'PROBE_KNOWLEDGE_ANSWER_NOT_BLIND' });
+  }
+  const named = { ...manifest, resources: { ...manifest.resources, remote: [{ kind: 'knowledge-base', name: 'KB-CANARY' }] } };
+  assert.throws(() => validateDeploymentCases([knowledge], named, definition), { code: 'PROBE_KNOWLEDGE_ANSWER_NOT_BLIND' });
 });
 
 test('script evidence must belong to an expected tool, not an unrelated search result', () => {
