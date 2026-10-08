@@ -1,0 +1,90 @@
+# 共享镜像真实资源验收（2026-10-08）
+
+本记录补充此前的 Container 首次连通与私有运行包记录。使用共享镜像
+`studio-runtime:0.0.1-a27bc5d`、DSH `0.2.0-rc.2`、Codex `0.159.2`，模型为冻结配置中的
+GLM-5.3-Flash。三个运行时均通过原有 `CreateAgentProduct` 的 Container 模式创建，
+从私有 KS3 下载各自的冻结包。未更改 Server 或 Runtime Service，也未设置全局默认镜像。
+
+## 实际结果
+
+| 运行时 / 场景 | 证据 | 结论 |
+| --- | --- | --- |
+| Harness 普通问候 | 私有包冷下载；7 个文本帧；用量 758/131/889；系统提示词盲测 | 通过；详见私有运行包记录 |
+| DSH Native 普通问候 | 12 个文本帧；用量 8718/80/8798；系统提示词盲测 | 通过 |
+| DSH Native 联网 MCP | 两次 `metaso_web_search`、两次 `metaso_web_reader`，均有对应成功结果；151 个文本帧 | 通过 |
+| DSH Native Skill | 实际 `skill` / `bash` 调用，参数包含 `scripts/json_structure_checker.py`，结果包含 `节点数：7`；93 个文本帧 | 通过 |
+| Codex 普通问候 | 4 个文本帧；用量 13760/44/13804；系统提示词盲测 | 通过 |
+| Codex 联网 MCP | 诊断实例完成两次 `metaso_web_search`、一次 `metaso_web_reader`，三个对应结果均成功；60 个文本帧 | 工具实际执行已证实；该轮开头未满足系统指定前缀，严格整轮用例仍未通过 |
+| Codex Skill / 原生命令 | 模型发起 `exec_command`，实际工具输出为 Bubblewrap 权限错误，未执行脚本 | 未通过 |
+| 独立知识库归因 | 全资源运行包同时含记忆、MCP 和 Skill，答案不能单独证明知识库召回 | 未验收；需要仅绑定知识库的运行包 |
+| 持久卷 | DSH Native 创建请求带 20 GiB Storage，详情未保留 Storage | 未通过；尚未验收重建后的会话恢复 |
+
+原始 HTTPS 事件、创建/更新/删除回执、固定 Agent/Build 身份和完整日志仅保存在受保护的
+验收目录。这里不保存真实凭证、资源 ID、终端用户内容或内部部署地址。资源绑定成功不能
+由模型声称“已调用”或回答数值正确来替代；Skill 验收同时要求实际脚本参数与匹配的成功结果。
+
+## Codex 最小复现与诊断
+
+普通用户输入要求执行 `python3 -c "print(7)"`。真实 Responses 请求返回 HTTP 200，但
+没有命令调用卡片；不能据此判断命令成功。隔离诊断镜像只记录协议类型和状态，证实：
+
+1. Studio 的 Session 和工具记录器存在。
+2. 协议代理恢复了 `exec_command`；后续模型请求中包含实际失败的工具输出。
+3. 失败内容为 `bwrap: Failed to make / slave: Permission denied`。Codex 没有为这次启动
+   失败发送 `commandExecution` 的 `item/started` / `item/completed`，因此仅转换这些事件
+   不能覆盖启动失败的工具轨迹。
+4. 在同一云端容器中，无模型的只读命令探针也失败。启用 `use_legacy_landlock` 后，固定
+   Codex 版本直接拒绝：`filesystem-restricted execution requires bubblewrap to isolate app-server sockets`。
+   该开关不是可用修复。尚未得到写入、网络限制均通过的 Codex 替代后端。
+
+没有以关闭沙箱、特权容器或扩大工具权限替代验收。后续需让部署环境支持所需隔离能力，
+或完成并验收受支持的执行器适配，同时补齐早期失败的工具轨迹。官方事件合同见
+[Codex App Server](https://learn.chatgpt.com/docs/app-server)，容器要求见
+[Codex Sandbox](https://learn.chatgpt.com/docs/sandboxing)。诊断修改不进入正式源码或共享镜像。
+
+## 创建、更新与存储边界
+
+- 一次创建遇到控制面 503，先按本次唯一名称核对没有创建成功，再人工发起重试；没有
+  自动重试未知创建结果。
+- `UpdateAgent` 接受镜像更新后，旧实例仍可能短暂接收请求。验收须核对替换实例已运行，
+  再通过实际版本证据确认新镜像接管，不能只检查更新接口成功。
+- 当前 Server 的创建计费/存储策略会移除普通 Harness/Codex Container 的 `Storage`。
+  Runtime Service 本身已有存储支持；这属于需单独处理的控制面策略缺口，不是 Node 入口缺失。
+- 预发 HTTPS 仍需显式配置经过认证来源核对的 CA。本次保持 TLS 校验，未修改系统信任库。
+- 测试 Agent 使用限定 ID 的软删除清理，不联动删除共享 KS3、镜像或日志；独立账单核销
+  不在运行资源删除回执的证明范围内。
+
+## 可复用远端探针
+
+在已部署 Agent 上运行，不创建、更新或删除云端实例：
+
+```sh
+node scripts/verify-deployed-bundle.mjs --execute \
+  --archive /absolute/path/to/portable.zip \
+  --endpoint https://your-agent.example.com/ \
+  --token-file /absolute/path/to/private-runtime-token \
+  --cases /absolute/path/to/cases.json \
+  --output /absolute/path/to/new-private-evidence-directory
+```
+
+令牌文件必须是仅当前用户可读写的普通文件；输出目录不能已存在。输出事件可能含资源内容，
+按私有文件保存，不提交。测试 CA 使用进程级 `NODE_EXTRA_CA_CERTS`，不要关闭 TLS 验证。
+
+示例用例（将工具名、脚本和预期结果改为实际绑定的验收资源）：
+
+```json
+[
+  {
+    "id": "bound-script",
+    "input": "请用已绑定的结构检查能力检查这段 JSON：{\"name\":\"Ada\"}。",
+    "expectedTools": ["bash|command"],
+    "expectedToolArguments": "scripts/check.py",
+    "expectedToolResult": "节点数：2"
+  }
+]
+```
+
+探针校验匿名请求被拒绝、冻结 Agent/Build 身份、匹配的工具调用和成功结果、文本增量及
+非零用量。`expectedStreamPrefix` 用于系统提示词盲测，不能把前缀写进用户输入。
+`isolatedKnowledge` 要求运行包只绑定远端知识库且没有 MCP、Skill 或记忆，并拒绝外部工具
+调用。该探针不支持重启、延时召回或跨请求续聊用例；这些需要独立生命周期验收。

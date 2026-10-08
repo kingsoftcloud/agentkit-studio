@@ -27,7 +27,8 @@ Studio 沿用 AgentEngine Server 的 `CreateAgentProduct` Action 创建云端 Ag
 2026-10-08 的真实预发探测发现：`UploadCode` 在公网入口、`GetPresignedUrl` 在公网及
 内网入口均返回 `InvalidActionOrVesion`（API 版本 `2024-06-12`），尚未获得上传地址。
 这是服务路由与 KOP 已发布 Action 之间的缺口，不能把源码中存在的接口当成线上可用。
-冻结运行包上传仍未通过；独立验收镜像可继续使用已有 Container 创建流程验证平台连接。
+随后使用账号 AK/SK 直传私有 KS3，上传和共享镜像冷下载均已通过；详见
+[私有运行包交付](private-bundle-delivery.md)。这不表示预签名 Action 或部署页已接通。
 
 ## 新运行时的接入边界
 
@@ -36,7 +37,7 @@ Studio 沿用 AgentEngine Server 的 `CreateAgentProduct` Action 创建云端 Ag
 `agentengine-images` 负责固定 Node/DSH/Codex 依赖和启动脚本，Studio 负责调用既有接口、
 冻结运行包、注入目标凭证和跟踪状态。
 
-独立连通性验收镜像可内置无凭证的 ZIP。正式交付优先复用账号 KS3 上传及现有只读挂载，
+独立连通性验收镜像可内置无凭证的 ZIP。正式交付采用账号 KS3 私有上传与启动器鉴权下载，
 使用共享基础镜像，不要求桌面用户安装 Docker；需实测权限、路径、摘要和重启后可读取性。
 旧 SDK 的 Code 构建实际使用账号 AK/SK 直传 KS3，因此预签名 Action 未发布不代表必须新增
 Server 上传接口。运行包保持私有，不沿用旧上传器默认的公开读 ACL。
@@ -69,3 +70,6 @@ Node 侧 `createContainerDeploymentEnvironment` 校验固定 ZIP 摘要，从冻
 持久卷、升级或回滚已经通过。正式验收需要记录本地 Agent/Revision/Build、ZIP SHA256、云端 Agent ID、
 镜像 digest、实例状态和真实运行结果。平台目前没有独立 Stop/Start Action，不能将删除
 显示为“停止”。
+
+三种运行时的最新资源证据见[共享镜像验收](deployed-resource-acceptance-2026-10-08.md)，
+身份、统一部署交互及数据库镜像目录的接入边界见[部署产品合同](cloud-deployment-product.md)。

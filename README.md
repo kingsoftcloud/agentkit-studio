@@ -1,7 +1,9 @@
 # AgentKit Studio
 
 跨 Host 运行 Agent 可使用[可迁移运行包](docs/contracts/portable-agent-bundle.md)：在构建页导出
-模型/MCP 配置和 Skill 文件，在新的数据目录导入并注入目标凭证。预发运行时发布仍需后续联调。
+模型/MCP 配置和 Skill 文件，在新的数据目录导入并注入目标凭证。共享镜像配合私有运行包
+已完成预发冷启动；三种运行时的[真实资源验收与剩余限制](docs/contracts/deployed-resource-acceptance-2026-10-08.md)
+分别记录，部署页与完整生命周期仍在联调。
 
 AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时
@@ -45,8 +47,10 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
   “未分组”加号可直接新建无工作区会话；空白会话中点击工作区名称旁的叉号可取消目录，
   Agent、模型、命名访问模式及输入草稿一起保留。绑定前先探测资源，准入失败不再生成空白会话。
 - **本地调试与发布**：已保存 Agent Revision 可以直接本地对话，无须先构建；构建用于冻结
-  版本并导出运行包。目前对话创建工具尚不提供构建操作，预发产物上传和部署联调尚未完成。
+  版本并导出运行包。目前对话创建工具尚不提供构建操作；私有上传和云端运行已有脚本验收，
+  一键部署、云端管理和升级回滚的完整页面流程尚未接通。
   云端创建沿用 AgentEngine 的 `CreateAgentProduct`，接口复用和实际发布缺口见[部署 API 合同](docs/contracts/deployment-transport.md)。
+  三种运行时共用一套镜像，后续通过 Server 已有配置表管理推荐版本，详见[部署交互与镜像维护边界](docs/contracts/cloud-deployment-product.md)。
 - **设置**：左下角齿轮直接打开 DSH 原生设置弹窗，模型、凭证和 Studio 配置仍在同一处管理。
 - **运行中心**：构建、部署、评测、观测、Channel 和自动化都通过 Host/AgentEngine Server
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
