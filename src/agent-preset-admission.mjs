@@ -32,7 +32,7 @@ function modelProfileIds(agent = {}) {
   return [...new Set([bindings.modelProfileId, ...values.map(value => typeof value === 'string' ? value : value?.resourceId)].filter(Boolean).map(String))];
 }
 
-function dshModelRoute(profile = {}, index = 0) {
+export function dshModelRoute(profile = {}, index = 0) {
   const provider = String(profile?.provider || 'ksyun').trim() || 'ksyun';
   const model = String(profile?.modelName || '').trim() || `model-${index + 1}`;
   const id = String(profile?.id || `${provider}:${model}`).trim();

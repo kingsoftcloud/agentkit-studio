@@ -85,6 +85,7 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
   const mode = local === true ? 'local' : 'cloud';
   return activeAdapter.stream({
     ...options,
+    studioSelectedModel: options.model,
     ...(options.provider === CODEX_PROVIDER ? { studioCodexModel: options.model } : {}),
     model: `${mode}:${id}`,
     studioRuntime: runtime,
@@ -478,7 +479,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, codexResourceContext, resourceAdapter, observability, AdapterBase } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, observability, AdapterBase } = {}) {
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -504,7 +505,10 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
       if (!agentId || !input) throw new Error('AgentKit Studio runtime requires an AgentId and user input');
       if (mode === 'local') {
         if (runtime === 'codex') {
-          if (options.provider && options.provider !== CODEX_PROVIDER) throw Object.assign(new Error('此 Agent 使用 Codex，请在原生模型选择器的 Codex 组选择模型。网关模型不适用于该运行时。'), { code: 'CODEX_MODEL_PROVIDER_MISMATCH' });
+          const selection = { provider: options.provider, model: options.studioSelectedModel || options.studioCodexModel || options.model };
+          const selected = options.provider && options.provider !== CODEX_PROVIDER
+            ? await (typeof resolveCodexModel === 'function' ? resolveCodexModel(selection) : Promise.reject(Object.assign(new Error('此模型提供商未配置 Codex 接口，请在模型设置中检查配置。'), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' })))
+            : { model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? selection.model : undefined) };
           if (!codexRuntime || typeof codexRuntime.stream !== 'function') {
             const error = new Error('Codex Provider 未注册；请安装并启用官方 Codex App Server Provider');
             error.code = 'CODEX_PROVIDER_UNAVAILABLE';
@@ -539,7 +543,7 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           try {
             yield* codexFrames(codexRuntime, {
               agentId,
-              model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? options.model : undefined),
+              ...selected,
               sessionId: String(options.sessionId || ''),
               input,
               messages: Array.isArray(options.messages) ? options.messages : [],

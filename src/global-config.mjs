@@ -51,6 +51,7 @@ function normalizeProfiles(value) {
     credentialName: scalar(profile.credentialName) || '',
     enabled: profile.enabled !== false,
     default: profile.default === true,
+    ...(profile.codexApi ? { codexApi: profile.codexApi === 'chat-completions' ? 'chat-completions' : 'responses' } : {}),
     ...(Array.isArray(profile.input) ? { input: [...new Set(profile.input.filter(item => ['text', 'image'].includes(item)))] } : {}),
   })).filter(profile => profile.modelName);
   if (!profiles.length) return profiles;
@@ -137,6 +138,7 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
     for (const [key, value] of Object.entries(patch)) {
       if (key === 'modelProfiles') {
         if (!Array.isArray(value) || value.some(profile => !record(profile) || !scalar(profile.modelName) || !scalar(profile.provider))) return Promise.reject(new ConfigurationError('模型目录格式无效'));
+        if (value.some(profile => profile.codexApi && !['responses', 'chat-completions'].includes(profile.codexApi))) return Promise.reject(new ConfigurationError('Codex 模型接口格式无效'));
       } else if (key === 'modelProfileKeys') {
         if (!record(value) || Object.values(value).some(item => typeof item !== 'string')) return Promise.reject(new ConfigurationError('模型凭证格式无效'));
       } else if (typeof value !== 'string') return Promise.reject(new ConfigurationError('配置值必须为文本'));

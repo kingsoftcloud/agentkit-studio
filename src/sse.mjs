@@ -1,5 +1,5 @@
 /** Incremental UTF-8 SSE parser shared by model transports. */
-export async function* readSse(body) {
+export async function* readSse(body, { onDone } = {}) {
   const decoder = new TextDecoder();
   let buffer = '';
   for await (const bytes of body) {
@@ -11,7 +11,7 @@ export async function* readSse(body) {
       const lines = frame.split(/\r?\n/);
       const eventName = lines.find(line => line.startsWith('event:'))?.slice(6).trim() || '';
       const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-      if (data === '[DONE]') return;
+      if (data === '[DONE]') { onDone?.(); return; }
       if (data) {
         const parsed = JSON.parse(data);
         // Some AgentEngine responses carry the SSE event type on the

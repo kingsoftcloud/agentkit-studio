@@ -64,6 +64,11 @@ Codex App Server 的 newline-delimited JSON-RPC：Host 启动 `codex app-server 
 增量映射回 DSH `llm/stream` block。每个 DSH turn 使用一个 ephemeral Thread，默认 cwd 为系统临时目录，
 因此选择 Agent 不会强制绑定 DSH Workspace；Workspace 仍由 DSH 自己管理文件和命令上下文。
 
+Codex 执行器也可使用 Studio 配置的 Responses 兼容模型。原生选择器的 provider/model 在
+Agent 路由改写之前保留；Host 以对应 URL 和独立凭证设置 Codex custom provider，仍由
+App Server 执行模型循环和工具。网关凭证放进单次子进程环境，不写入个人 Codex 配置。
+创建/编辑页同时提供原生 Codex 与网关模型；详细限制与验收见 [模型绑定](model-binding.md)。
+
 当前 Provider 明确采用无人值守策略（默认 `approvalPolicy=never`），命令、文件变更、权限申请和
 交互输入不会被静默批准。Codex 二进制不存在、App Server 提前退出、超时和失败会以
 `CODEX_PROVIDER_UNAVAILABLE`、`CODEX_TRANSPORT_*`、`CODEX_TIMEOUT` 或 `CODEX_TURN_FAILED`

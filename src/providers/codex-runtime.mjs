@@ -10,6 +10,7 @@
 import { resolveCodexCommand } from './codex-command.mjs';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { createCodexModelProxy } from './codex-model-proxy.mjs';
 
 export class CodexRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -134,21 +135,37 @@ export function createCodexRuntime(options = {}) {
   const sandbox = String(options.sandbox || process.env.AGENTKIT_CODEX_SANDBOX || '').trim() || undefined;
   const timeoutMs = Math.max(10_000, Number(options.timeoutMs) || 180_000);
 
-  return {
+  const runtime = {
     executable,
     cwd,
-    async *stream({ input, messages = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel } = {}) {
+    async *stream({ input, messages = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider } = {}) {
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
       const prompt = String(input || '').trim();
       if (!prompt) throw new CodexRuntimeError('CODEX_INPUT_INVALID', 'Codex 输入不能为空');
       if (signal?.aborted) throw asError(signal.reason, 'Codex 请求已取消');
 
+      // Use Codex's public custom-provider contract. Credentials belong only
+      // to this child environment, never argv, thread RPC, or user config.
+      const providerId = modelProvider ? 'agentkit_gateway' : undefined;
+      const providerArgs = modelProvider ? Object.entries({
+        // Hosted Responses tools have no Chat Completions equivalent. Bound
+        // MCP search tools remain available through Codex's dynamic tools.
+        ...(modelProvider.api === 'chat-completions' ? { web_search: 'disabled' } : {}),
+        model_provider: providerId,
+        [`model_providers.${providerId}.name`]: 'Studio configured model',
+        [`model_providers.${providerId}.base_url`]: modelProvider.baseUrl,
+        [`model_providers.${providerId}.env_key`]: 'AGENTKIT_CODEX_MODEL_API_KEY',
+        [`model_providers.${providerId}.wire_api`]: 'responses',
+        [`model_providers.${providerId}.requires_openai_auth`]: false,
+        [`model_providers.${providerId}.supports_websockets`]: false,
+      }).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]) : [];
+
       let child;
       try {
-        child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio'], {
+        child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...providerArgs], {
           cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ...(options.env || {}) },
+          env: { ...process.env, ...(options.env || {}), ...(modelProvider ? { AGENTKIT_CODEX_MODEL_API_KEY: modelProvider.apiKey } : {}) },
         });
       } catch (error) {
         throw new CodexRuntimeError('CODEX_PROVIDER_UNAVAILABLE', `无法启动 Codex App Server（${executable}）`, { cause: String(error?.message || error) });
@@ -280,6 +297,7 @@ export function createCodexRuntime(options = {}) {
         catch (error) { pending.delete(id); reject(error); }
       });
       child.stdout.on('data', onData);
+      child.stderr?.resume?.();
       child.stdout.on('error', onError);
       child.stdin.on?.('error', onError);
       child.on?.('error', onError);
@@ -310,6 +328,7 @@ export function createCodexRuntime(options = {}) {
           approvalPolicy,
           ...(sandbox ? { sandbox } : {}),
           ...(selectedModel ? { model: selectedModel } : {}),
+          ...(providerId ? { modelProvider: providerId } : {}),
           ...(developerInstructions ? { developerInstructions } : {}),
           ...(Array.isArray(dynamicTools) && dynamicTools.length ? { dynamicTools } : {}),
         };
@@ -365,7 +384,13 @@ export function createCodexRuntime(options = {}) {
           }
           if (method === 'turn/completed') {
             const turnResult = object(params.turn || {}, 'completed turn');
-            if (turnResult.status !== 'completed') throw new CodexRuntimeError('CODEX_TURN_FAILED', `Codex Turn 结束状态：${String(turnResult.status || 'unknown')}`, { error: turnResult.error || null });
+            if (turnResult.status !== 'completed') {
+              const reason = String(turnResult.error?.message || '').split(modelProvider?.apiKey || '\0').join('[redacted]').slice(0, 1600);
+              if (/\b429\b|\b(?:TPM|RPM)[ -]?(?:rate)?limit/i.test(reason)) {
+                throw new CodexRuntimeError('CODEX_MODEL_RATE_LIMITED', '模型服务限流（429），请稍后重试或在模型选择器中切换模型。工具较多、上下文较长时更容易触发每分钟 Token 限额。');
+              }
+              throw new CodexRuntimeError('CODEX_TURN_FAILED', `Codex 运行失败${reason ? `：${reason}` : `（${String(turnResult.status || 'unknown')}）`}`);
+            }
             break;
           }
         }
@@ -376,6 +401,16 @@ export function createCodexRuntime(options = {}) {
         pending.clear();
         dispose();
       }
+    },
+  };
+  return {
+    ...runtime,
+    async *stream(input = {}) {
+      if (input.modelProvider?.api !== 'chat-completions') { yield* runtime.stream(input); return; }
+      if (input.signal?.aborted) throw new CodexRuntimeError('CODEX_CANCELED', 'Codex 运行已取消');
+      const proxy = await createCodexModelProxy({ profile: { ...input.modelProvider, modelName: input.model || model } });
+      try { yield* runtime.stream({ ...input, modelProvider: { api: 'chat-completions', baseUrl: proxy.baseUrl, apiKey: proxy.apiKey } }); }
+      finally { await proxy.close(); }
     },
   };
 }

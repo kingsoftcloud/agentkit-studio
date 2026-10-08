@@ -66,3 +66,22 @@ test('the Studio create contract resolves a frozen target before running and res
     assert.equal((await evaluation.getRun(run.id)).summary.failed, 1);
   } finally { await rm(store, { recursive: true, force: true }); }
 });
+
+test('polling a running evaluation never observes a partially written record', async () => {
+  const store = await makeStore();
+  const evaluation = createStudioEvaluation({ storeDir: store, runner: async () => ({ output: 'ok'.repeat(1024), toolCalls: [] }) });
+  try {
+    const imported = await evaluation.importEvalset({ content: JSON.stringify(Array.from({ length: 24 }, (_, i) => ({ id: `case-${i}`, input: 'check', assertions: [{ type: 'response.contains', value: 'ok' }] }))), fileName: 'poll.json' });
+    const run = await evaluation.createEvaluation({ evalsetId: imported.id, target: 'build-poll', agentId: 'agent-poll' });
+    let missing = 0;
+    await Promise.all(Array.from({ length: 8 }, async () => {
+      for (let i = 0; i < 200; i++) {
+        const record = await evaluation.getRun(run.id);
+        if (!record) missing++;
+        if (record?.status === 'succeeded') return;
+      }
+      assert.fail('evaluation did not complete');
+    }));
+    assert.equal(missing, 0, 'a published run must remain readable while its status is updated');
+  } finally { await rm(store, { recursive: true, force: true }); }
+});

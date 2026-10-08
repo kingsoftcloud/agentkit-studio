@@ -68,3 +68,20 @@ test('global config keeps exactly one explicit default when profiles are reorder
   const profiles = (await config.resolve()).values.modelProfiles;
   assert.deepEqual(profiles.map(profile => [profile.id, profile.default]), [['first', false], ['second', true], ['third', false]]);
 });
+
+test('Codex API format persists per profile without changing default or credentials', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-codex-format-'));
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home } });
+  const profiles = [
+    { id: 'chat', provider: 'custom', modelName: 'one', baseUrl: 'https://chat.example/v1', credentialName: 'CHAT_KEY', default: true, codexApi: 'chat-completions' },
+    { id: 'responses', provider: 'custom', modelName: 'two', baseUrl: 'https://responses.example/v1', credentialName: 'RESPONSES_KEY', codexApi: 'responses' },
+  ];
+  await config.update({ modelProfiles: profiles, modelProfileKeys: { CHAT_KEY: 'private-chat', RESPONSES_KEY: 'private-responses' } });
+  const described = await config.describe();
+  assert.deepEqual(described.modelProfiles.map(p => p.codexApi), ['chat-completions', 'responses']);
+  assert.ok(!JSON.stringify(described).includes('private-'));
+  await config.update({ modelProfiles: described.modelProfiles.map(p => ({ ...p, codexApi: 'responses' })) });
+  const values = (await config.resolve()).values;
+  assert.deepEqual(values.modelProfiles.map(p => [p.apiKey, p.default]), [['private-chat', true], ['private-responses', false]]);
+  await assert.rejects(config.update({ modelProfiles: [{ ...profiles[0], codexApi: 'unknown' }] }), /接口格式无效/);
+});

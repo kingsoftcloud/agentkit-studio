@@ -444,11 +444,21 @@ test('the runtime bridge routes Codex Agents to the Codex provider instead of th
   ]);
 });
 
-test('a Codex Agent refuses a gateway selection instead of silently using a different model', async () => {
-  let called = false;
-  const adapter = createDshRuntimeAdapter({ codexRuntime: { async *stream() { called = true; } } });
-  await assert.rejects(async () => { for await (const chunk of adapter.stream({ model: 'local:codex-agent', provider: 'gateway', studioRuntime: 'codex', messages: [{ role: 'user', content: 'hi' }] })) { void chunk; } }, { code: 'CODEX_MODEL_PROVIDER_MISMATCH' });
-  assert.equal(called, false);
+test('a Codex Agent passes the selected gateway model to the actual Codex runtime', async () => {
+  let selected;
+  const adapter = createDshRuntimeAdapter({
+    resolveCodexModel: async selection => {
+      assert.deepEqual(selection, { provider: 'agentkit-studio-default', model: 'deepseek-v4.1-flash' });
+      return { model: selection.model, modelProvider: { baseUrl: 'https://gateway.example/v1', apiKey: 'test-key' } };
+    },
+    codexRuntime: { async *stream(options) { selected = options; yield { type: 'text', text: 'done' }; } },
+  });
+  const dispose = setDshRuntimeAdapter(adapter);
+  try {
+    for await (const chunk of streamDshRuntime({ model: 'deepseek-v4.1-flash', provider: 'agentkit-studio-default', messages: [{ role: 'user', content: 'hi' }] }, { agentId: 'codex-agent', runtime: 'codex', local: true })) { void chunk; }
+  } finally { dispose(); }
+  assert.equal(selected.model, 'deepseek-v4.1-flash');
+  assert.equal(selected.modelProvider.baseUrl, 'https://gateway.example/v1');
 });
 
 test('the native bridge projects Codex dynamic-tool status into expandable reasoning', async () => {

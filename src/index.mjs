@@ -131,7 +131,8 @@ async function registerControlPlane(ctx) {
   // without a Codex binary and report CODEX_PROVIDER_UNAVAILABLE only when a
   // Codex Agent is selected.
   const { createCodexRuntime } = await import('./providers/codex-runtime.mjs');
-  const { createCodexModelCatalog, createCodexModelAdapter, codexModelSelection, CODEX_PROVIDER } = await import('./providers/codex-models.mjs');
+  const { createCodexModelCatalog, createCodexModelAdapter, CODEX_PROVIDER } = await import('./providers/codex-models.mjs');
+  const { resolveConfiguredCodexModel, selectCodexAgentModel, listCodexAgentModels } = await import('./providers/codex-configured-models.mjs');
   const codexModels = createCodexModelCatalog();
   const codexRuntime = createCodexRuntime();
   let localRuntimeHandlerPromise;
@@ -213,6 +214,7 @@ async function registerControlPlane(ctx) {
     cloudClient: await serverClientPromise,
     localHandler: localRuntimeHandler,
     codexRuntime,
+    resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
     codexResourceContext,
     resourceAdapter: await resourceAdaptersPromise,
     observability: await studioObservabilityPromise,
@@ -305,7 +307,7 @@ async function registerControlPlane(ctx) {
     getModelSelection: async agent => {
       const local = agent?.metadata?.local !== false && agent?.source !== 'agentengine-server';
       if (local && !agent.buildId) await (await agentStorePromise).captureRevision(agent);
-      if (local && agent?.spec?.runtime?.type === 'codex') return codexModelSelection(agent, await codexModels.list());
+      if (local && agent?.spec?.runtime?.type === 'codex') return selectCodexAgentModel(agent, { models, catalog: codexModels });
       const settings = { values: await models.settings() };
       const configured = dshModelSelection(agent, settings);
       const bindings = agent?.spec?.bindings || {}, first = bindings.modelProfileIds?.[0];
@@ -457,7 +459,7 @@ async function registerControlPlane(ctx) {
       if (endpoint === 'settings/get') return { ok: true, value: await models.settings() };
       if (endpoint === 'settings/update') return { ok: true, value: await models.save(payload) };
       if (endpoint === 'models/catalog') return { ok: true, value: await models.catalog(String(payload?.profileId || '')) };
-      if (endpoint === 'models/codex') return { ok: true, value: await codexModels.list() };
+      if (endpoint === 'models/codex') return { ok: true, value: await listCodexAgentModels({ models, catalog: codexModels }) };
       const serverClient = await serverClientPromise;
       if (endpoint === 'resources/list') {
         const kind = String(payload?.kind || '').trim();

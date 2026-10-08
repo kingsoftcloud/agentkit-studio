@@ -67,15 +67,25 @@ export function inputToMessages(input) {
   const items = Array.isArray(input) ? input : [typeof input === 'string' ? { type: 'message', role: 'user', content: input } : input];
   const messages = [];
   const calls = [];
+  let reasoning = '';
+  const attach = message => {
+    if (reasoning) { message.reasoning_content = reasoning; reasoning = ''; }
+    return message;
+  };
   const flush = () => {
-    if (calls.length) messages.push({ role: 'assistant', content: null, tool_calls: calls.splice(0) });
+    if (calls.length) messages.push(attach({ role: 'assistant', content: null, tool_calls: calls.splice(0) }));
   };
   for (const item of items) {
     if (!item || typeof item !== 'object') continue;
     const type = item.type;
     if (!type || type === 'message') {
       flush();
-      messages.push({ role: chatRole(item.role || 'user'), content: contentToChat(item.content) });
+      const message = { role: chatRole(item.role || 'user'), content: contentToChat(item.content) };
+      if (message.role === 'assistant') attach(message);
+      else if (reasoning) { const previous = messages.findLast(row => row.role === 'assistant'); if (previous) previous.reasoning_content = (previous.reasoning_content || '') + reasoning; reasoning = ''; }
+      messages.push(message);
+    } else if (type === 'reasoning') {
+      reasoning += [...(item.summary || []), ...(item.content || [])].map(part => part.text || '').join('\n');
     } else if (type === 'function_call' || type === 'custom_tool_call') {
       calls.push({
         id: item.call_id || `call_${calls.length}`,
@@ -88,6 +98,7 @@ export function inputToMessages(input) {
     }
   }
   flush();
+  if (reasoning) { const previous = messages.findLast(row => row.role === 'assistant'); if (previous) previous.reasoning_content = (previous.reasoning_content || '') + reasoning; }
   return messages;
 }
 
@@ -167,7 +178,7 @@ function usageToResponse(usage = {}) {
 }
 
 /** Chat Completions response -> Responses response. */
-export function chatToResponses(chat, { id = chat?.id || `resp_${Date.now()}`, toolNameMap = {} } = {}) {
+export function chatToResponses(chat, { id = chat?.id || `resp_${Date.now()}`, toolNameMap = {}, toolContext } = {}) {
   const choice = chat?.choices?.[0] || {};
   const message = choice.message || {};
   const output = [];
@@ -177,7 +188,8 @@ export function chatToResponses(chat, { id = chat?.id || `resp_${Date.now()}`, t
   for (const [index, call] of (message.tool_calls || []).entries()) {
     const fn = call.function || {};
     const name = toolNameMap[fn.name] || fn.name;
-    output.push({ id: `fc_${call.id || index}`, type: 'function_call', status: 'completed', call_id: call.id || `call_${index}`, name, arguments: fn.arguments || '' });
+    const item = { id: `fc_${call.id || index}`, type: 'function_call', status: 'completed', call_id: call.id || `call_${index}`, name, arguments: fn.arguments || '' };
+    output.push(toolContext ? toolContext.restore(item) : item);
   }
   const incomplete = choice.finish_reason === 'length' ? 'max_output_tokens' : choice.finish_reason === 'content_filter' ? 'content_filter' : null;
   const result = { id, object: 'response', created_at: chat?.created || Math.floor(Date.now() / 1000), status: incomplete ? 'incomplete' : 'completed', model: chat?.model, output, usage: usageToResponse(chat?.usage) };
@@ -190,7 +202,7 @@ export function chatToResponses(chat, { id = chat?.id || `resp_${Date.now()}`, t
  * The state is intentionally small and keyed by tool-call index, so parallel
  * tool calls cannot truncate each other when Kspmas interleaves their chunks.
  */
-export function createResponsesStreamTransformer({ id, model } = {}) {
+export function createResponsesStreamTransformer({ id, model, toolContext } = {}) {
   const responseId = id || `resp_${Date.now()}`;
   const state = { text: '', reasoning: '', tools: new Map(), items: [], started: false, finished: false, model: model || '', finishReason: null, usage: undefined };
   let sequence = 0;
@@ -241,14 +253,19 @@ export function createResponsesStreamTransformer({ id, model } = {}) {
       const index = call.index || 0;
       let current = state.tools.get(index);
       if (!current) {
-        current = open({ id: `fc_${responseId}_${index}`, call_id: call.id || `call_${index}`, name: call.function?.name || '', type: 'function_call', status: 'in_progress', arguments: '' });
+        current = open({ id: `fc_${responseId}_${index}`, call_id: call.id || `call_${index}`, name: '', type: 'function_call', status: 'in_progress', arguments: '' });
         state.tools.set(index, current);
-        wire += event('response.output_item.added', { output_index: current.index, item: current.item });
       }
       if (call.id) current.item.call_id = call.id;
-      if (call.function?.name) current.item.name = call.function.name;
+      if (call.function?.name) current.item.name += call.function.name;
       current.item.arguments += call.function?.arguments || '';
-      wire += event('response.function_call_arguments.delta', { item_id: current.item.id, output_index: current.index, delta: call.function?.arguments || '' });
+      if (toolContext && !toolContext.has(current.item.name)) continue;
+      const first = !current.added;
+      if (first) {
+        current.added = true;
+        wire += event('response.output_item.added', { output_index: current.index, item: toolContext ? toolContext.restore({ ...current.item, arguments: '' }, true) : { ...current.item, arguments: '' } });
+      }
+      if (!toolContext?.isCustom(current.item.name)) wire += event('response.function_call_arguments.delta', { item_id: current.item.id, output_index: current.index, delta: first ? current.item.arguments : call.function?.arguments || '' });
     }
     return wire;
   };
@@ -270,7 +287,17 @@ export function createResponsesStreamTransformer({ id, model } = {}) {
       wire += event('response.output_text.done', { ...fields, text: state.text });
       wire += event('response.content_part.done', { ...fields, part });
     }
-    for (const entry of state.tools.values()) wire += event('response.function_call_arguments.done', { item_id: entry.item.id, output_index: entry.index, arguments: entry.item.arguments });
+    for (const entry of state.tools.values()) {
+      const original = entry.item;
+      const restored = toolContext ? toolContext.restore(original) : original;
+      if (!entry.added) wire += event('response.output_item.added', { output_index: entry.index, item: toolContext ? toolContext.restore(original, true) : original });
+      const fields = { item_id: original.id, output_index: entry.index };
+      if (restored.type === 'custom_tool_call') {
+        wire += event('response.custom_tool_call_input.delta', { ...fields, delta: restored.input });
+        wire += event('response.custom_tool_call_input.done', { ...fields, input: restored.input });
+      } else wire += event('response.function_call_arguments.done', { ...fields, arguments: original.arguments });
+      entry.item = restored;
+    }
     for (const entry of state.items) {
       entry.item.status = 'completed';
       wire += event('response.output_item.done', { output_index: entry.index, item: entry.item });

@@ -55,8 +55,10 @@ Studio 固定依赖 `@openai/codex@0.159.2`。macOS ARM 离线包同时包含该
 `@openai/codex-darwin-arm64` 原生可执行文件及内置 Node；正常启动优先使用包内文件，
 不要求用户先安装系统 Node、npm 或 Codex。`AGENTKIT_CODEX_BIN` 可显式覆盖执行文件。
 
-打包 CLI 不等同于打包用户个人插件、账户凭证或外部服务。全新环境仍需要配置 Codex 登录，
-按需联网下载插件并完成服务授权。离线可安装、启动 Studio，不表示云模型和联网插件离线可用。
+打包 CLI 不等同于打包用户个人插件、账户凭证或外部服务。使用原生模型需配置 Codex 登录；
+使用 Studio 已配置的网关模型则使用该网关凭证，无需为此另行登录 OpenAI。Responses 直接连接，
+Chat Completions 模型可在设置中选用随包内置的本地协议代理，无需安装 cc-switch。
+插件仍需按需联网下载并完成服务授权。离线可安装、启动 Studio，不表示云模型和联网插件离线可用。
 
 ## 2026-10-07 核验
 

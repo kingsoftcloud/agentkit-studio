@@ -8,7 +8,7 @@
  * reports the gap.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import YAML from 'yaml';
@@ -109,6 +109,14 @@ export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {})
   const runsDir = join(storeDir, 'runs');
   const targetsDir = join(storeDir, 'targets');
 
+  async function publish(path, record) {
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify(record, null, 2), { mode: 0o600, flag: 'wx' });
+      await rename(temporary, path);
+    } finally { await rm(temporary, { force: true }); }
+  }
+
   async function ensureDirs() {
     await Promise.all([mkdir(evalsetsDir, { recursive: true, mode: 0o700 }), mkdir(runsDir, { recursive: true, mode: 0o700 }), mkdir(targetsDir, { recursive: true, mode: 0o700 })]);
   }
@@ -118,7 +126,7 @@ export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {})
     const parsed = parseEvalsetSource(content, fileName);
     const id = parsed.evalsetId;
     const record = { ...parsed, id, caseCount: parsed.cases.length, updatedAt: new Date().toISOString(), createdAt: new Date().toISOString() };
-    await writeFile(join(evalsetsDir, `${id}.json`), JSON.stringify(record, null, 2));
+    await publish(join(evalsetsDir, `${id}.json`), record);
     return record;
   }
 
@@ -173,7 +181,7 @@ export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {})
       config: { timeoutSeconds: Number(config.timeoutSeconds || 120), failFast: Boolean(config.failFast), evaluators: Array.isArray(config.evaluators) ? config.evaluators : [] },
       caseResults: [], summary: { total: evalset.cases.length, passed: 0, failed: 0, skipped: 0 },
     };
-    await writeFile(join(runsDir, `${runId}.json`), JSON.stringify(run, null, 2));
+    await publish(join(runsDir, `${runId}.json`), run);
 
     // Execute asynchronously if a runner is configured; otherwise record the
     // honest gap so the page shows a pending run, not a hidden failure.
@@ -182,7 +190,7 @@ export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {})
     } else {
       const updated = { ...run, status: 'failed', completedAt: new Date().toISOString(), caseResults: evalset.cases.map(caseItem => ({ caseId: caseItem.id, status: 'skipped', error: '评测执行需要 run 合同（harness provider 或云端 RunAgent Action）' })) };
       updated.summary.skipped = evalset.cases.length;
-      await writeFile(join(runsDir, `${runId}.json`), JSON.stringify(updated, null, 2));
+      await publish(join(runsDir, `${runId}.json`), updated);
     }
     return run;
   }
@@ -191,7 +199,7 @@ export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {})
     const run = await getRun(runId);
     if (!run) return;
     run.status = 'running';
-    await writeFile(join(runsDir, `${runId}.json`), JSON.stringify(run, null, 2));
+    await publish(join(runsDir, `${runId}.json`), run);
     const caseResults = [];
     for (const caseItem of evalset.cases) {
       const started = Date.now();
@@ -214,7 +222,7 @@ export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {})
       }
     }
     const completed = { ...run, status: caseResults.every(item => item.status === 'passed') ? 'succeeded' : (caseResults.some(item => item.status === 'passed') ? 'partial' : 'failed'), completedAt: new Date().toISOString(), caseResults, summary: { total: evalset.cases.length, passed: caseResults.filter(item => item.status === 'passed').length, failed: caseResults.filter(item => item.status === 'failed').length, skipped: caseResults.filter(item => item.status === 'skipped').length } };
-    await writeFile(join(runsDir, `${runId}.json`), JSON.stringify(completed, null, 2));
+    await publish(join(runsDir, `${runId}.json`), completed);
   }
 
   return { importEvalset, listEvalsets, listTargets, listRuns, getRun, createEvaluation };

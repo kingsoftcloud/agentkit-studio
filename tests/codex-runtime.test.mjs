@@ -94,6 +94,33 @@ test('Codex runtime reports a typed provider error when spawn fails', async () =
   );
 });
 
+test('a custom provider uses Responses and a per-child credential without altering native turns', async () => {
+  const invocations = [], threads = [];
+  const runtime = createCodexRuntime({ spawnImpl: (_executable, args, options) => {
+    invocations.push({ args, env: options.env });
+    const child = fakeSpawn(), write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...rest) => {
+      const message = JSON.parse(String(data));
+      if (message.method === 'thread/start') threads.push(message.params);
+      return write(data, ...rest);
+    };
+    return child;
+  } });
+  for await (const _chunk of runtime.stream({ input: 'hi', model: 'gateway-model', modelProvider: { baseUrl: 'https://gateway.example/v1', apiKey: 'private-test-key' } })) {}
+  for await (const _chunk of runtime.stream({ input: 'hi', model: 'native-model' })) {}
+  assert.ok(invocations[0].args.includes('model_providers.agentkit_gateway.wire_api="responses"'));
+  assert.ok(invocations[0].args.includes('model_providers.agentkit_gateway.requires_openai_auth=false'));
+  assert.ok(invocations[0].args.includes('model_providers.agentkit_gateway.base_url="https://gateway.example/v1"'));
+  assert.equal(invocations[0].env.AGENTKIT_CODEX_MODEL_API_KEY, 'private-test-key');
+  assert.ok(!JSON.stringify(invocations[0].args).includes('private-test-key'));
+  assert.ok(!JSON.stringify(threads).includes('private-test-key'));
+  assert.equal(threads[0].modelProvider, 'agentkit_gateway');
+  assert.equal(threads[0].model, 'gateway-model');
+  assert.equal(threads[1].modelProvider, undefined);
+  assert.equal(invocations[1].env.AGENTKIT_CODEX_MODEL_API_KEY, process.env.AGENTKIT_CODEX_MODEL_API_KEY);
+  assert.ok(!invocations[1].args.some(arg => arg.includes('agentkit_gateway')));
+});
+
 test('Codex runtime classifies an asynchronous missing executable as provider unavailable', async () => {
   const runtime = createCodexRuntime({
     spawnImpl: () => {
@@ -162,4 +189,40 @@ test('Codex runtime registers dynamic tools and answers item/tool/call on the Ho
     { type: 'tool', phase: 'completed', name: 'search', id: 'call-1', arguments: { query: '金山云' }, result: { contentItems: [{ type: 'inputText', text: 'hit' }], success: true } },
     { type: 'text', text: '工具已执行' },
   ]);
+});
+
+test('Chat provider turns isolate their proxy and disable only hosted search', async () => {
+  const invocations = [];
+  const runtime = createCodexRuntime({ spawnImpl: (_bin, args, options) => {
+    invocations.push({ args, env: options.env }); return fakeSpawn();
+  } });
+  for await (const _chunk of runtime.stream({ input: 'hi', model: 'chat-model', modelProvider: { api: 'chat-completions', baseUrl: 'https://chat.example/v1', apiKey: 'upstream-secret' } })) {}
+  const { args, env } = invocations[0];
+  assert.ok(args.includes('web_search="disabled"'));
+  assert.ok(!JSON.stringify(args).includes('upstream-secret'));
+  assert.notEqual(env.AGENTKIT_CODEX_MODEL_API_KEY, 'upstream-secret');
+  const baseUrl = JSON.parse(args.find(arg => arg.startsWith('model_providers.agentkit_gateway.base_url=')).split('=').slice(1).join('='));
+  assert.match(baseUrl, /^http:\/\/127\.0\.0\.1:/);
+  await assert.rejects(fetch(`${baseUrl}/responses`));
+  for await (const _chunk of runtime.stream({ input: 'hi', modelProvider: { baseUrl: 'https://responses.example/v1', apiKey: 'response-secret' } })) {}
+  assert.ok(!invocations[1].args.some(arg => arg.startsWith('web_search=')));
+});
+
+test('gateway rate limits remain actionable and never expose provider credentials', async () => {
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn(), write = child.stdout.write.bind(child.stdout);
+    child.stdout.write = (data, ...args) => {
+      const message = JSON.parse(String(data));
+      if (message.method === 'turn/completed') message.params.turn = { status: 'failed', error: { message: 'exceeded retry limit, last status: 429 Too Many Requests private-test-key' } };
+      return write(JSON.stringify(message) + '\n', ...args);
+    };
+    return child;
+  } });
+  await assert.rejects(async () => {
+    for await (const _chunk of runtime.stream({ input: 'hi', modelProvider: { baseUrl: 'https://gateway.example/v1', apiKey: 'private-test-key' } })) {}
+  }, error => {
+    assert.equal(error.code, 'CODEX_MODEL_RATE_LIMITED');
+    assert.match(error.message, /限流.*稍后重试.*切换模型/);
+    assert.doesNotMatch(error.message, /private-test-key/); return true;
+  });
 });
