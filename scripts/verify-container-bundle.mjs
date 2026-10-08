@@ -47,8 +47,11 @@ if (!values.execute || !values.archive || !values['env-file'] || !values.cases |
     // Docker has consumed the file; do not retain an additional secret copy with proof logs.
     await rm(runtimeEnv);
     docker(['start', name]);
-    const port = docker(['port', name, '8080/tcp']).split(':').at(-1), origin = `http://127.0.0.1:${port}`;
+    let origin;
     async function ready() {
+      // Docker may assign a new ephemeral published port after a restart.
+      const port = docker(['port', name, '8080/tcp']).split(':').at(-1);
+      origin = `http://127.0.0.1:${port}`;
       for (let i = 0; i < 90; i++) {
         try { if ((await fetch(`${origin}/health`, { signal: AbortSignal.timeout(1000) })).ok) return; } catch {}
         if (docker(['inspect', name, '--format', '{{.State.Running}}']) !== 'true') break;
@@ -81,6 +84,8 @@ if (!values.execute || !values.archive || !values['env-file'] || !values.cases |
         const calls = completed.output.filter(output => output.type === 'function_call');
         const toolNames = calls.map(call => call.name);
         for (const expected of item.expectedText || []) assert.ok(completed.output_text.includes(expected), `expected output missing: ${expected}`);
+        const streamedText = frames.filter(frame => frame.type === 'response.output_text.delta').map(frame => frame.delta || '').join('');
+        if (item.expectedStreamPrefix) assert.ok(streamedText.startsWith(item.expectedStreamPrefix), 'expected answer prefix missing from text stream');
         for (const pattern of item.expectedTools || []) assert.ok(toolNames.some(tool => new RegExp(pattern).test(tool)), `tool missing: ${pattern}`);
         const matchingCalls = calls.filter(call => !item.expectedToolArguments || String(call.arguments).includes(item.expectedToolArguments));
         if (item.expectedToolArguments) assert.ok(matchingCalls.length, 'expected executed tool arguments missing');

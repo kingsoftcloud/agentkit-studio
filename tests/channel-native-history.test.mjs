@@ -34,7 +34,7 @@ test('native channel continuation keeps the existing preset/model and deduplicat
     },
     page: async () => ({ records: events.map(event => ({ type: 'event', event })) }),
   };
-  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) } };
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) }, approval: { setPolicy: (_agent, policy) => assert.equal(policy, 'never') } };
   const run = createNativeAutomationRunner({ reuseSession: true, getService: name => services[name], admit: async () => { admits++; return { presetId: 'frozen-r1', modelSelection: { provider: 'bound', model: 'model' } }; } });
   const first = { agentId: 'agent', sessionId: 'session', occurrenceId: 'one', input: 'first' };
   assert.equal((await run(first)).output, 'first');

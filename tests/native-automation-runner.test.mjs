@@ -6,6 +6,7 @@ function harness(reason = { kind: 'completed' }, extraEvents = []) {
   const services = {
     agents: { withoutInitiator: work => work() },
     commands: { execute: async (...args) => { calls.push(['permission', args[1]]); return { result: {} }; } },
+    approval: { setPolicy: (_agent, policy) => calls.push(['approval', policy]) },
     sessionController: {
       create: async value => calls.push(['create', value]), selectModel: async value => calls.push(['model', value]),
       resolveAgent: async () => ({ agent: { whenIdle: async () => { done = true; }, cancel() {} } }),
@@ -22,7 +23,19 @@ test('automation preserves its Agent preset, model and native Session without a 
   assert.deepEqual(calls[0], ['create', { sessionId: 'session-a', agentPreset: 'frozen-preset' }]);
   assert.deepEqual(calls[1], ['model', { sessionId: 'session-a', provider: 'bound', model: 'model-a', saveDefault: false }]);
   assert.deepEqual(calls[2], ['permission', '/permission read-only']);
-  assert.equal(calls[3][1].content[0].text, 'probe'); assert.equal(result.runId, 'dsh:session-a:9');
+  assert.deepEqual(calls[3], ['approval', 'never']);
+  assert.equal(calls[4][1].content[0].text, 'probe'); assert.equal(result.runId, 'dsh:session-a:9');
+});
+test('headless runs fail before prompting when the approval service is unavailable', async () => {
+  let prompted = false;
+  const services = {
+    agents: { withoutInitiator: work => work() },
+    commands: { execute: async () => ({ result: {} }) },
+    sessionController: { create: async () => {}, resolveAgent: async () => ({ agent: {} }), prompt: async () => { prompted = true; } },
+  };
+  const run = createNativeAutomationRunner({ getService: name => services[name], admit: async () => ({ presetId: 'frozen' }) });
+  await assert.rejects(run({ agentId: 'a', sessionId: 's', input: 'probe' }), { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
+  assert.equal(prompted, false);
 });
 test('a failed native turn is never reported as a successful occurrence', async () => {
   const { run } = harness({ kind: 'error', error: { code: 'NO_ADAPTER', message: 'missing provider' } });

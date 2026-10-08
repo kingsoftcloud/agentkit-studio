@@ -103,9 +103,10 @@ node scripts/verify-container-bundle.mjs --execute \
 ```
 
 此命令会产生真实模型用量和用例指定的资源操作。用例是 JSON 数组，每项包含 `id`、普通用户
-`input`、可选的 `expectedText` 字符串数组、`expectedTools` 工具名正则数组及
+`input`、可选的 `expectedText` 最终回答字符串数组、`expectedStreamPrefix` 整轮文本流前缀、`expectedTools` 工具名正则数组及
 `expectedToolArguments` 调用参数片段及 `expectedToolResult` 成功工具结果片段；同时提供后两者时，
-结果必须来自参数匹配的同一次调用，不能用读文件或另一工具的结果冒充执行成功。`restart: true` 在用例前重启容器；`continueFrom`
+结果必须来自参数匹配的同一次调用，不能用读文件或另一工具的结果冒充执行成功。系统提示词的回答前缀可以用 `expectedStreamPrefix` 验证，保留工具调用前已输出的文本。
+`restart: true` 在用例前重启容器并重新读取 Docker 分配的临时端口；`continueFrom`
 引用先前用例的响应以验证续聊；省略它会创建新会话，适合验证跨会话记忆。
 `delayMs` 最多 60000，可等待云端记忆异步索引。测试标记应只写在 Agent/Skill 提示词中，
 不要在用户问题里提示预期身份或答案。

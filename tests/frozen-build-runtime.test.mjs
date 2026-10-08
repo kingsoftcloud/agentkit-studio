@@ -29,7 +29,7 @@ test('frozen runtime preserves build admission, durable replay and request-input
     },
     page: async ({ address }) => ({ records: history.get(address.sessionId).map(event => ({ type: 'event', event })) }),
   };
-  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) } };
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) }, approval: { setPolicy: (_agent, policy) => assert.equal(policy, 'never') } };
   const frozen = { metadata: { id: 'test-agent', revision: 1 }, buildId, spec: { instructions: { system: 'frozen' } } };
   const runtime = await startFrozenBuildRuntime({ ctx: { get: name => services[name] },
     build: { resolve: async (id, build) => { assert.equal(id, 'test-agent'); assert.equal(build, buildId); return frozen; } },

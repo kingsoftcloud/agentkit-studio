@@ -27,6 +27,9 @@ export function createNativeAutomationRunner({ getService, admit, observe, timeo
     signal.throwIfAborted();
     const permission = await service('commands').execute(agent, '/permission read-only', [], signal);
     if (!permission) throw Object.assign(new Error('自动化无法设置 Agent 只读权限'), { code: 'AUTOMATION_PERMISSION_UNAVAILABLE' });
+    // Headless runs have no person to answer the Host's interactive approval UI.
+    // Keep confinement and reject escalation through the public approval service.
+    service('approval').setPolicy(agent, 'never');
     signal.throwIfAborted();
     const unobserve = onFrame ? observe?.(agent, onFrame) : undefined;
     try {

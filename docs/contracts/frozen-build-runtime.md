@@ -56,7 +56,9 @@ Origin 的浏览器跨源请求。本机默认仅监听回环地址；当前不�
 会话和请求标识只接受 1–128 个 ASCII 字母、数字及 `_.:-`，首字符为字母或数字。
 禁止传入 Agent、模型或 Prompt 覆盖字段；请求体上限 256 KiB、同时在途请求上限 16。
 外部会话标识按 Agent + Build 命名空间映射，不能直接指定已有原生会话 ID。
-同一会话的调用串行执行，权限模式为只读，文件工作区保持可选。
+同一会话的调用串行执行，权限模式为只读，文件工作区保持可选。无人值守运行通过公开的
+DSH ApprovalService 设置 `never`：需要提权的工具自动拒绝，不等待 Web 审批；不会改为
+完整文件访问。Linux 执行 Skill 脚本还要求可用的 Bubblewrap 或 Landlock 沙箱后端。
 
 非流式返回原生 `sessionId`、持久化 `runId`、`output`、Token 用量及工具名记录，另附
 HTTP 运行身份 `runtimeRunId`、调用者的 `requestId` 和 `buildId`。
