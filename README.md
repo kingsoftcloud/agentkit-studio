@@ -3,7 +3,7 @@
 跨 Host 运行 Agent 可使用[可迁移运行包](docs/contracts/portable-agent-bundle.md)：在构建页导出
 模型/MCP 配置和 Skill 文件，在新的数据目录导入并注入目标凭证。共享镜像配合私有运行包
 已完成预发冷启动；三种运行时的[真实资源验收与剩余限制](docs/contracts/deployed-resource-acceptance-2026-10-08.md)
-分别记录，部署页与完整生命周期仍在联调。
+分别记录；运行中心已接入冻结版本的云端创建、状态、日志与删除，升级回滚和完整持久化仍在联调。
 
 AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时
@@ -36,7 +36,7 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
 
 - **Agent**：快速创建、一键创建、对话创建和编辑。模型、Tool、MCP、Skill 可以多选；知识库、
   记忆库、Skill Center 每类默认一个。运行目标属于 Agent Revision，可选择 `dsh-native`、
-  `harness` 或 `codex`。本地列表支持搜索、分页，最新创建的在前；会话中使用原生搜索菜单选择 Agent。云端标签只接纳 Studio 部署记录，当前本地 Build 尚未接通云端发布，因此显示明确空状态。OpenClaw 使用原生 Dashboard。
+  `harness` 或 `codex`。本地列表支持搜索、分页，最新创建的在前；会话中使用原生搜索菜单选择 Agent。云端部署当前在运行中心管理，Agent 云端标签和原生云端对话尚未接入。OpenClaw 使用原生 Dashboard。
 - **资源库**：只做资源生命周期管理，包括发现、导入、探测、查看、刷新、删除和分页列表。
   资源库不选择 Agent，也不写 Agent Revision；绑定关系只在创建页或编辑页提交，和 Revision
   一起保存、审计和回滚。
@@ -47,10 +47,12 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
   “未分组”加号可直接新建无工作区会话；空白会话中点击工作区名称旁的叉号可取消目录，
   Agent、模型、命名访问模式及输入草稿一起保留。绑定前先探测资源，准入失败不再生成空白会话。
 - **本地调试与发布**：已保存 Agent Revision 可以直接本地对话，无须先构建；构建用于冻结
-  版本并导出运行包。目前对话创建工具尚不提供构建操作；私有上传和云端运行已有脚本验收，
-  一键部署、云端管理和升级回滚的完整页面流程尚未接通。
+  版本并导出运行包。目前对话创建工具尚不提供构建操作。运行中心可选择历史 Build、CPU 和内存，
+  检查冻结资源、镜像版本、环境及操作人后确认创建；页面提供持久化部署记录、状态、日志和删除。
+  先在设置中配置云端凭证与私有对象存储桶；运行包私有上传由 Node Host 完成，用户无须运行 Docker。
+  创建结果不明时先核对已有资源，不自动重复创建；升级、回滚和云端原生会话尚未开放。
   云端创建沿用 AgentEngine 的 `CreateAgentProduct`，接口复用和实际发布缺口见[部署 API 合同](docs/contracts/deployment-transport.md)。
-  三种运行时共用一套镜像，Node 客户端通过 Server 已有配置表读取固定摘要的版本目录；预发候选目录已实测，页面接入仍在推进。详见[部署交互与镜像维护边界](docs/contracts/cloud-deployment-product.md)。
+  三种运行时共用一套镜像，Node 客户端通过 Server 已有配置表读取固定摘要的版本目录；预发候选目录及 Harness 页面创建已实测。详见[部署交互与镜像维护边界](docs/contracts/cloud-deployment-product.md)。
   `make cloud-identity` 只读核验当前云端凭证的操作人；部署客户端在创建、更新、删除前核验身份，
   子账号核验失败或账号不一致时拒绝写请求。当前真实测试使用主账号，子账号落库及隔离仍待验收。
 - **设置**：左下角齿轮直接打开 DSH 原生设置弹窗，模型、凭证和 Studio 配置仍在同一处管理。

@@ -257,6 +257,12 @@ async function registerControlPlane(ctx) {
   const models = await import('./model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
+  let deploymentsPromise;
+  const deployments = () => deploymentsPromise ||= Promise.all([import('./studio-deployments.mjs'), import('./server-client.mjs'), configurationPromise, studioBuildPromise, resourceAdaptersPromise])
+    .then(([{ createStudioDeployments }, { createAgentEngineDeploymentClient }, configuration, studio, adapters]) => createStudioDeployments({
+      storeDir: join(studioStoreDir, 'deployments'), ...studio, portableBundles, models, adapters, credentials, configuration, env: runtimeEnv,
+      client: createAgentEngineDeploymentClient({ configuration }),
+    }));
   const syncModelCredential = models.sync;
   // The DSH loader awaits an async plugin apply. Do this before returning from
   // activation so the first prompt cannot race the global ~/.agentkit key
@@ -452,11 +458,17 @@ async function registerControlPlane(ctx) {
     if (frozenRuntime) ctx.effect(() => () => frozenRuntime.close(), 'agentkit-studio: frozen Build runtime');
   }
   const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-inspect', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'builds/export-portable', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/agent-update', 'channels/action', 'server/action']);
+  for (const action of ['prepare', 'create', 'list', 'get', 'refresh', 'repairAccess', 'reconcile', 'logs', 'remove']) allowed.add(`deployments/${action}`);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
     }
     try {
+      if (endpoint.startsWith('deployments/')) {
+        const service = await deployments(), action = endpoint.slice('deployments/'.length);
+        const value = await service[action](action === 'prepare' || action === 'create' ? payload : String(payload?.deploymentId || ''));
+        return { ok: true, value };
+      }
       if (endpoint === 'models/sync-credential') return { ok: true, value: await syncModelCredential() };
       if (endpoint === 'models/create') return { ok: true, value: await models.create(payload) };
       if (endpoint === 'settings/get') return { ok: true, value: await models.settings() };

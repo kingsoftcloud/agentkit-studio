@@ -81,11 +81,12 @@ test('direct REST surface fails typed instead of probing the absent local Studio
   assert.doesNotMatch(clientSource, /deployments: \(\) => request\('\/api\/v1\/deployments'\)/);
 });
 
-test('Delivery surface states the direct Server deployment contract boundary', () => {
+test('Delivery surface uses a Host-owned deployment preflight and explicit billable confirmation', () => {
   assert.match(clientSource, /const directServerMode = Boolean\(window\.__AGENTKIT_STUDIO__\?\.controlPlane === 'agentengine-server'\)/);
-  assert.match(clientSource, /云端部署尚未接入/);
-  assert.match(clientSource, /本地 Build 尚未接入云端部署/);
-  assert.match(clientSource, /directServerMode \|\| saving \|\| !selectedBuild/);
+  assert.match(clientSource, /CloudDeploymentPanel/);
+  assert.match(clientSource, /deployments\/prepare/);
+  assert.match(clientSource, /确认创建云端实例/);
+  assert.match(clientSource, /previewId: preview\.previewId/);
 });
 
 test('resource-bound Agents use the same native DSH preset bridge as model-only Agents', () => {

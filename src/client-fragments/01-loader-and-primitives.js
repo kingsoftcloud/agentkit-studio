@@ -343,13 +343,19 @@ window.__ModuleLoader__.load({
         exportPortableBuild: (agentId, buildId) => studioBridgeOperation('builds/export-portable', { agentId, buildId }),
         downloadBuild: (agentId, buildId) => studioBridgeOperation('builds/download', { agentId, buildId }),
         build: id => request('/api/v1/builds/' + encodeURIComponent(id)),
-        createDeployment: (buildId, payload, idempotencyKey) => request('/api/v1/builds/' + encodeURIComponent(buildId) + '/deployments', {
+        prepareDeployment: payload => studioBridgeOperation('deployments/prepare', payload),
+        refreshDeployment: deploymentId => studioBridgeOperation('deployments/refresh', { deploymentId }),
+        repairDeploymentAccess: deploymentId => studioBridgeOperation('deployments/repairAccess', { deploymentId }),
+        reconcileDeployment: deploymentId => studioBridgeOperation('deployments/reconcile', { deploymentId }),
+        deploymentLogs: deploymentId => studioBridgeOperation('deployments/logs', { deploymentId }),
+        removeDeployment: deploymentId => studioBridgeOperation('deployments/remove', { deploymentId }),
+        createDeployment: (buildId, payload, idempotencyKey) => directServer() ? studioBridgeOperation('deployments/create', { ...payload, buildId, idempotencyKey }) : request('/api/v1/builds/' + encodeURIComponent(buildId) + '/deployments', {
           method: 'POST',
           headers: { 'Idempotency-Key': idempotencyKey },
           body: JSON.stringify(payload),
         }),
         deployments: () => directServer()
-          ? Promise.resolve({ items: [], source: 'cloud-contract-missing' })
+          ? studioBridgeOperation('deployments/list', {})
           : request('/api/v1/deployments'),
         operations: () => directServer()
           ? studioBridgeOperation('operations/list', {}).then(value => ({ items: Array.isArray(value?.items) ? value.items : [] }))

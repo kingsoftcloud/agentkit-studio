@@ -37,7 +37,7 @@ function looksLikeCloudSkillSpace(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resourceId(value));
 }
 
-async function resolveCredential(credentials, reference) {
+async function resolveCredential(credentials, reference, env = process.env) {
   const value = String(reference || '').trim();
   if (!value) return '';
   const name = value.startsWith('env://') ? value.slice('env://'.length) : value;
@@ -45,7 +45,23 @@ async function resolveCredential(credentials, reference) {
     const resolved = await credentials.resolve(name).catch(() => null);
     if (resolved?.value) return String(resolved.value);
   }
-  return String(process.env[name] || '');
+  return String(env[name] || '');
+}
+
+/** Shared Node-only auth materialization for local calls and frozen deployments. */
+export async function resolveMcpConnection(detail, credentials, env = process.env) {
+  const { resourceId, endpoint, envRefs = {}, credentialRef, apiKey: inlineApiKey } = detail;
+  const headers = { ...detail.headers };
+  for (const [header, reference] of Object.entries(envRefs)) {
+    const resolved = await resolveCredential(credentials, reference, env);
+    const existing = Object.keys(headers).find(name => name.toLowerCase() === String(header).toLowerCase());
+    if (!resolved && !String(existing ? headers[existing] : '').trim()) throw new LocalResourceError('MCP_CREDENTIAL_MISSING', `MCP 缺少 ${header} 凭证，请在 Host 设置中配置后重新探测`, { resourceId, header: String(header), reference: String(reference) });
+    if (resolved && !existing) headers[header] = String(header).toLowerCase() === 'authorization' && !/^\s*\w+\s+/i.test(resolved) ? `Bearer ${resolved}` : resolved;
+  }
+  const apiKey = inlineApiKey || await resolveCredential(credentials, credentialRef, env);
+  if (credentialRef && !apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization' && String(headers[name] || '').trim())) throw new LocalResourceError('MCP_CREDENTIAL_MISSING', 'MCP 缺少访问凭证，请在 Host 设置中配置后重新探测', { resourceId, reference: String(credentialRef) });
+  if (apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization')) headers.Authorization = `Bearer ${apiKey}`;
+  return { resourceId, endpoint, headers };
 }
 
 function numericStatus(value) {
@@ -110,20 +126,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   }
 
   async function mcp(binding) {
-    const { resourceId: key, endpoint, headers, envRefs, credentialRef, apiKey: inlineApiKey } = await describeMcp(binding);
-    for (const [header, reference] of Object.entries(envRefs)) {
-      const resolved = await resolveCredential(credentials, reference);
-      const existing = Object.keys(headers).find(name => name.toLowerCase() === String(header).toLowerCase());
-      if (!resolved && !String(existing ? headers[existing] : '').trim()) {
-        throw new LocalResourceError('MCP_CREDENTIAL_MISSING', `MCP 缺少 ${header} 凭证，请在 Host 设置中配置后重新探测`, { resourceId: key, header: String(header), reference: String(reference) });
-      }
-      if (resolved && !existing) headers[header] = String(header).toLowerCase() === 'authorization' && !/^\s*\w+\s+/i.test(resolved) ? `Bearer ${resolved}` : resolved;
-    }
-    const apiKey = inlineApiKey || await resolveCredential(credentials, credentialRef);
-    if (credentialRef && !apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization' && String(headers[name] || '').trim())) {
-      throw new LocalResourceError('MCP_CREDENTIAL_MISSING', 'MCP 缺少访问凭证，请在 Host 设置中配置后重新探测', { resourceId: key, reference: String(credentialRef) });
-    }
-    if (apiKey && !Object.keys(headers).some(name => name.toLowerCase() === 'authorization')) headers.Authorization = `Bearer ${apiKey}`;
+    const { resourceId: key, endpoint, headers } = await resolveMcpConnection(await describeMcp(binding), credentials);
     // DSH credentials are mutable. Re-resolve them on every operation and
     // replace a cached client when the effective auth material changes. The
     // fingerprint is one-way and never leaves this process.
