@@ -1,8 +1,9 @@
 /** Node-only projection: never persist or send this result to the browser. */
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256, validatePortableCredentialNames } from './portable-resources.mjs';
+import { validateKs3BundleReference } from './ks3-bundle-store.mjs';
 
-export function createContainerDeploymentEnvironment({ zip, expectedSha256, runtimeToken, credentials = {} }) {
+export function createContainerDeploymentEnvironment({ zip, expectedSha256, runtimeToken, credentials = {}, bundleSource }) {
   if (!/^[a-f0-9]{64}$/.test(expectedSha256 || '') || sha256(zip) !== expectedSha256) {
     throw portableError('DEPLOYMENT_BUNDLE_MISMATCH', '运行包与部署指定的 SHA256 不一致');
   }
@@ -24,6 +25,14 @@ export function createContainerDeploymentEnvironment({ zip, expectedSha256, runt
   }
   put('AGENTKIT_BUNDLE_SHA256', expectedSha256, false);
   put('AGENTKIT_RUNTIME_TOKEN', runtimeToken, true);
+  if (bundleSource) {
+    validateKs3BundleReference(bundleSource);
+    for (const [key, value] of Object.entries({ sha256: expectedSha256, bytes: zip.length, agentId: manifest.agentId, buildId: manifest.buildId, bundleId: manifest.bundleId })) {
+      if (bundleSource[key] !== value) throw portableError('DEPLOYMENT_BUNDLE_MISMATCH', '私有运行包回执与所选构建不一致');
+    }
+    const source = Object.fromEntries(['format', 'endpoint', 'bucket', 'objectKey', 'sha256', 'bytes', 'agentId', 'buildId', 'bundleId'].map(key => [key, bundleSource[key]]));
+    put('AGENTKIT_BUNDLE_SOURCE', JSON.stringify(source), false);
+  }
   for (const { name } of manifest.requirements) {
     const value = Object.hasOwn(credentials, name) ? credentials[name] : undefined;
     if (typeof value !== 'string' || !value.trim() || value.includes('\0')) {

@@ -7,6 +7,7 @@ import { createStudioBuild } from '../src/studio-build.mjs';
 import { createPortableBundles } from '../src/portable-bundle.mjs';
 import { sha256 } from '../src/portable-resources.mjs';
 import { createContainerDeploymentEnvironment } from '../src/container-deployment-env.mjs';
+import { planKs3BundleUpload } from '../src/ks3-bundle-store.mjs';
 
 async function bundle(t, runtime = 'harness', primaryCredential = 'AGENTKIT_MODEL_API_KEY') {
   const storeDir = await mkdtemp(join(tmpdir(), 'studio-deployment-env-'));
@@ -76,4 +77,14 @@ test('deployment refuses Host control variables as resource credentials before c
     assert.throws(() => createContainerDeploymentEnvironment({ zip, expectedSha256: sha256(zip), runtimeToken,
       credentials: { ...credentials, [reserved]: 'unsafe-override' } }), { code: 'BUNDLE_HOST_CREDENTIAL_RESERVED' });
   }
+});
+
+test('Container delivery references the verified private ZIP and never serializes upload credentials', async t => {
+  const zip = await bundle(t);
+  const reference = planKs3BundleUpload(zip, { endpoint: 'https://ks3-cn-beijing.ksyuncs.com', bucket: 'private-bundles', uploadId: '12345678-1234-1234-1234-123456789012' });
+  const options = { zip, expectedSha256: sha256(zip), runtimeToken, credentials };
+  const rows = createContainerDeploymentEnvironment({ ...options, bundleSource: { ...reference, secretKey: 'must-never-copy' } });
+  const source = rows.find(row => row.Key === 'AGENTKIT_BUNDLE_SOURCE');
+  assert.equal(source.IsSensitive, false); assert.deepEqual(JSON.parse(source.Value), reference);
+  assert.throws(() => createContainerDeploymentEnvironment({ ...options, bundleSource: { ...reference, buildId: 'build_00000000000000000000' } }), { code: 'DEPLOYMENT_BUNDLE_MISMATCH' });
 });

@@ -41,6 +41,9 @@ Studio 沿用 AgentEngine Server 的 `CreateAgentProduct` Action 创建云端 Ag
 旧 SDK 的 Code 构建实际使用账号 AK/SK 直传 KS3，因此预签名 Action 未发布不代表必须新增
 Server 上传接口。运行包保持私有，不沿用旧上传器默认的公开读 ACL。
 
+已实现 [私有运行包交付](private-bundle-delivery.md)：Node 侧签名上传，镜像启动器使用
+平台注入的凭证下载并校验固定摘要；共享镜像无需为每个 Agent 重建。
+
 现有 `ManagedRuntime` 固定的 Python 命令是另一条路径的限制，不是 Container 的限制。
 本阶段不修改旧 ManagedRuntime，也不以改造 Server/Runtime Service 为先决条件；只有
 实际联调证明现有合同不足时，才单独补齐对应缺口。
