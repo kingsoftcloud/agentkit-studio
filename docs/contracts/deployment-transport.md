@@ -31,10 +31,19 @@ Studio 沿用 AgentEngine Server 的 `CreateAgentProduct` Action 创建云端 Ag
 
 ## 新运行时的接入边界
 
-首个预发连通性验收使用 `DeploymentType=Container` 和独立候选镜像。镜像只包含固定
-Node/DSH/Codex 依赖及无凭证的冻结运行包，模型和资源凭证在运行时单独注入。
-现有 `ManagedRuntime` 的启动命令仍指向 Python `ksadk managed-runtime`；正式共享镜像
-交付需要明确支持 Studio 的运行包、启动入口和摘要，不能只替换镜像地址。
+首期部署使用已有的 `DeploymentType=Container`。Runtime Service 已支持自定义镜像、
+镜像 `ENTRYPOINT` 和 `ContainerConfig.Command`，不需要为 Node/DSH 增加专用启动分支。
+`agentengine-images` 负责固定 Node/DSH/Codex 依赖和启动脚本，Studio 负责调用既有接口、
+冻结运行包、注入目标凭证和跟踪状态。
+
+独立连通性验收镜像可内置无凭证的 ZIP。正式交付优先复用账号 KS3 上传及现有只读挂载，
+使用共享基础镜像，不要求桌面用户安装 Docker；需实测权限、路径、摘要和重启后可读取性。
+旧 SDK 的 Code 构建实际使用账号 AK/SK 直传 KS3，因此预签名 Action 未发布不代表必须新增
+Server 上传接口。运行包保持私有，不沿用旧上传器默认的公开读 ACL。
+
+现有 `ManagedRuntime` 固定的 Python 命令是另一条路径的限制，不是 Container 的限制。
+本阶段不修改旧 ManagedRuntime，也不以改造 Server/Runtime Service 为先决条件；只有
+实际联调证明现有合同不足时，才单独补齐对应缺口。
 
 传输层已覆盖签名、预发路由、请求追踪、错误脱敏、无自动重试以及限定 ID 的操作测试。
 这不表示部署页已经接通，也不表示真实云端创建、网关鉴权、资源绑定、持久卷、升级或
