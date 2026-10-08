@@ -6,6 +6,7 @@
 ## 项目边界
 
 - AgentKit Studio 是产品插件、TypeScript 客户端和可选的本地 Harness provider。
+- 新版运行时范围限定为 DSH Native、Codex 和 AgentKit Harness；暂不增加 ADK / LangGraph 的创建、运行、适配或验收目标。
 - Studio 基于公开的 DSH 宿主和扩展合同二次开发；运行与 Web/Desktop 集成需要 DSH。仓库不复制
   DSH 源码，也不注入 DSH 的私有内核对象，开发时通过 `DSH_ROOT` 使用固定版本 checkout。
 - KsADK 是可选的兄弟 SDK、CLI 和托管运行时，不是本项目的 Python 运行时依赖。

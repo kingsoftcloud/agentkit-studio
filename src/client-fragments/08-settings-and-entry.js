@@ -19,6 +19,16 @@
       h('div', { style: { marginTop: '16px', padding: '14px 16px', borderRadius: '12px', color: BRAND.inkMuted, background: BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } }, '工作区、会话、模型和凭证的通用设置继续由系统设置页承载；Studio 只扩展自己的执行目标、Host 能力和产品选项。'));
     }
 
+    function StudioSettingsLauncher({ wide, settingsOpen, settingsShortcut, openSettings, t }) {
+      const label = t('trigger');
+      return h(Tooltip, { disabled: settingsOpen, label, shortcutKeys: settingsShortcut?.keys },
+        h('button', {
+          type: 'button', className: 'agentkit-settings-launcher', 'data-wide': wide,
+          'aria-label': label, 'aria-keyshortcuts': settingsShortcut?.aria,
+          'aria-haspopup': 'dialog', 'aria-expanded': settingsOpen, onClick: openSettings,
+        }, h(IconSettingsOutlineMedium, { size: wide ? 16 : 18 }), wide && h('span', null, label)));
+    }
+
     function apply(ctx) {
       ctx.uiConversation.events.register(codexToolDefinition);
       activeConnection = { rpc: ctx.connection.rpc };
@@ -67,6 +77,11 @@
       ctx.effect(() => adoptProductDocumentTitle(), 'agentkit-studio: document title');
       ctx.effect(() => adoptProductDocumentBrand(), 'agentkit-studio: document favicon');
       ctx.effect(() => installResponsiveStyles(), 'agentkit-studio: responsive layout');
+      // The public launcher owns only the entry button. DSH retains settings
+      // state, shortcuts and the original modal, including Studio's sections.
+      ctx.slots.inject('settings.launcher', () => ctx.slots.register(
+        { name: 'settings.launcher', locale: 'settings', priority: -20 }, StudioSettingsLauncher,
+      ));
       // DSH owns the official composer and its native session.prompt path.
       // Studio does not inject a sink or bridge into InputHub. The authoring
       // tools registered by the Host let this native conversation create and

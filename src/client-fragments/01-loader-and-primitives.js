@@ -12,6 +12,7 @@ window.__ModuleLoader__.load({
   factory: require => {
     const React = require('react');
     const { createElement: h, useEffect, useRef, useState } = React;
+    const { IconSettingsOutlineMedium, Tooltip } = require('@deepseek-ai/dsh-client-ui-primitives');
     const STUDIO_VERSION = '0.0.1';
     const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.2');
     const CONVERSATION_AGENT_KEY = 'agentkit-studio:conversation-agent';

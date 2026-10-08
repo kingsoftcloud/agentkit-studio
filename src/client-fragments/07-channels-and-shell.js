@@ -352,6 +352,15 @@
       const style = ownerDocument.createElement('style');
       style.dataset.agentkitStudioResponsive = 'true';
       style.textContent = `
+        .agentkit-settings-launcher {
+          flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+          height: 42px; padding: 0 10px 0 8px; margin: 0; box-sizing: border-box;
+          border: 0; border-radius: var(--dsw-radius-md, 12px); background: transparent;
+          color: var(--dsw-alias-label-primary); cursor: pointer; font: inherit; font-size: 14px;
+        }
+        .agentkit-settings-launcher:hover { background: var(--dsw-alias-interactive-bg-hover); }
+        .agentkit-settings-launcher:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4b73e8); outline-offset: 2px; }
+        .agentkit-settings-launcher[data-wide="false"] { flex: none; width: 36px; height: 36px; padding: 0; gap: 0; justify-content: center; }
         [data-agentkit-studio="product-application"] [data-studio-tabs] { overflow-x: auto; scrollbar-width: thin; }
         [data-agentkit-studio="product-application"] [data-studio-tabs] > button { flex: 0 0 auto; white-space: nowrap; }
         [data-agentkit-studio="product-application"] [data-studio-heading],

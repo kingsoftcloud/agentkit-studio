@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 左下角直接显示“设置”，移除“更多”中的登录和意见反馈入口；复用 DSH 公开 launcher、齿轮与原生设置弹窗，兼容展开和收起侧栏。新版运行时范围明确为 DSH Native、Codex 和 AgentKit Harness，暂不扩展 ADK / LangGraph。
+
 - 构建页支持导出可迁移运行包：保留冻结 Build、模型/MCP 配置、完整 Skill 文件与执行权限，目标凭证独立注入。导入拒绝覆盖已有目录、损坏产物和不支持的插件；独立 Host 通过公开 DSH Settings 注册模型，消除依赖浏览器初始化导致的模型不可用。云端发布协议与生命周期联调仍未完成。
 - Profile 安装输入放到目标 Profile 的摘要目录，修复跨目录安装时 pnpm 缓存文件名过长导致插件安装失败。
 

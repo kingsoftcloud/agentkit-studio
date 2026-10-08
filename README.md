@@ -5,7 +5,8 @@
 
 AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时
-可以选择官方 DSH，也可以选择 Studio 内置的独立 Harness provider。
+支持 DSH Native、Codex 和 Studio 内置的 AgentKit Harness。新版暂不支持 ADK / LangGraph，
+后续资源绑定、会话交互和部署验收均聚焦这三种运行时。
 
 当前首个公开可复现版本为 **0.0.1**，固定验证基线为 **DSH v0.2.0-rc.2**（commit
 `639ed015397290b3745d163aafe02ffee4aa3f84`）。Studio 基于 DSH 的公开宿主和扩展合同二次开发；
@@ -33,10 +34,10 @@ Agent 的普通对话由所连接的运行时执行。
   资源库不选择 Agent，也不写 Agent Revision；绑定关系只在创建页或编辑页提交，和 Revision
   一起保存、审计和回滚。
 - **对话**：不选择 Agent 也能走 DSH 原生循环；选择已创建 Agent 后打开绑定对话，绑定
-  Agent 的流式会话由 Host canonical conversation 接口承载。当前公开准入先支持
-  `dsh-native` 且模型绑定与 DSH 当前活动路由完全一致的 Revision；其系统 Prompt 通过官方
-  `@deepseek-ai/dsh-persona` preset row 生效。带 MCP、Skill、Tool、知识库或记忆库的 Revision
-  仍会 typed fail-closed，不能把下拉框显示当作这些资源已经执行的证据。
+  在创建会话时完成。三种运行时共用 DSH 原生会话页、事件与持久化历史；Agent Revision
+  固定系统 Prompt、模型与资源绑定。资源在 Host 准入时实际解析和探测，无法加载时明确报错；
+  目录可见不等于资源已执行，跨 Host 的凭证和资源可达性需要独立验收。
+- **设置**：左下角齿轮直接打开 DSH 原生设置弹窗，模型、凭证和 Studio 配置仍在同一处管理。
 - **运行中心**：构建、部署、评测、观测、Channel 和自动化都通过 Host/AgentEngine Server
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
 - **插件市场**：加号可添加安装源；DSH 自带插件直接启用，其他插件由原生 PluginManager
