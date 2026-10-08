@@ -629,7 +629,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         return;
       }
       if (cloudRuntime) {
-        yield* cloudRuntime({ ...options, agentId, userMessage: user, input, session: toolAgent?.session });
+        yield* cloudRuntime({ ...options, agentId, cloudVersionId: routed?.cloudVersionId || options.cloudVersionId, userMessage: user, input, session: toolAgent?.session });
         return;
       }
       if (!cloudClient || typeof cloudClient.streamAction !== 'function') throw new Error('AgentEngine cloud runtime is unavailable');

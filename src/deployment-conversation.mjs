@@ -7,6 +7,9 @@ import { createCodexToolRecorder } from './providers/codex-tool-events.mjs';
 export function createDeploymentConversation({ agents, fetchImpl = fetch }) {
   return async function* stream(options) {
     const { agent, endpoint, token } = await (await agents()).connect(options.agentId);
+    if ((options.cloudVersionId || 'initial') !== (agent.deployment.versionId || 'initial')) {
+      throw portableError('DEPLOYMENT_SESSION_VERSION_CHANGED', '云端 Agent 已升级或回滚，请开启新会话使用当前版本；此会话历史仍保留');
+    }
     const selected = options.studioSelectedModel || options.model;
     if (options.provider !== CLOUD_PROVIDER || selected !== agent.deployment.model) {
       throw portableError('DEPLOYMENT_MODEL_FROZEN', `云端运行使用冻结模型 ${agent.deployment.model}，请在模型选择器的“云端部署”组选择该模型；更换模型需要重新构建部署`);

@@ -1,4 +1,5 @@
 /** Only local deployment receipts establish Studio cloud Agent lineage. */
+import { currentDeployment, deploymentVersions, deploymentVersionId, probeDeploymentVersion } from './deployment-versions.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 
@@ -6,7 +7,7 @@ const supported = new Set(['harness', 'dsh-native', 'codex']);
 const available = new Set(['READY', 'AVAILABLE_UPDATING']);
 export const CLOUD_PROVIDER = 'agentkit-studio-cloud';
 
-export function createDeploymentAgents({ store, build, portableBundles, configuration, credentialScope, owned, detail, endpointFor }) {
+export function createDeploymentAgents({ store, build, portableBundles, configuration, credentialScope, owned, detail, endpointFor, fetchImpl }) {
   async function records(includeDeleted = false) {
     const { values } = await configuration.resolve();
     const scope = credentialScope(values);
@@ -14,6 +15,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
       && row.plan.credentialScope === scope && supported.has(row.plan.runtime));
   }
   async function project(record) {
+    record = currentDeployment(record);
     const frozen = await build.resolve(record.plan.agentId, record.plan.buildId);
     const zip = Buffer.from((await portableBundles.download(record.plan.agentId, record.plan.buildId, record.plan.bundleId)).base64, 'base64');
     if (sha256(zip) !== record.plan.bundleSha256) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包与部署记录不一致');
@@ -23,7 +25,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     if (!profile?.modelName) throw portableError('DEPLOYMENT_MODEL_MISSING', '冻结版本缺少模型配置');
     return { source: 'studio-deployment', metadata: { ...frozen.metadata, id: record.cloudAgentId, local: false,
       name: record.plan.agentName, createdAt: record.createdAt }, spec: frozen.spec,
-      deployment: { id: record.id, agentId: record.plan.agentId, buildId: record.plan.buildId, bundleId: record.plan.bundleId,
+      deployment: { id: record.id, versionId: deploymentVersionId(record), agentId: record.plan.agentId, buildId: record.plan.buildId, bundleId: record.plan.bundleId,
         state: record.state, available: available.has(record.state), model: profile.modelName,
         environment: record.plan.environment, region: record.plan.region } };
   }
@@ -41,6 +43,9 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     if (!['RUNNING', 'UPDATING'].includes(remote.Basic?.Status) || !(remote.Basic?.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_NOT_READY', '云端实例当前不可用，请在运行中心查看状态');
     const endpoint = endpointFor(remote, record);
     if (!endpoint || typeof token !== 'string' || token.length < 24 || token.includes('*')) throw portableError('DEPLOYMENT_NOT_READY', '云端访问配置尚未就绪');
+    if (record.activeVersion && !await probeDeploymentVersion({ fetchImpl, endpoint, token, plan: currentDeployment(record).plan, versionId: deploymentVersionId(record) })) {
+      throw portableError('DEPLOYMENT_NOT_READY', '运行入口尚未确认当前冻结版本，请刷新部署状态后重试');
+    }
     return { agent, endpoint, token };
   }
   async function projectRows(rows) {
@@ -54,7 +59,8 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
   return { list: async () => projectRows(await records()), get, connect,
     // Restore display-only presets even after deletion or a credential switch.
     // Every new turn still passes connect() with the current credential scope.
-    recover: async () => projectRows((await store.list()).filter(row => row.cloudAgentId && supported.has(row.plan.runtime))) };
+    recover: async () => projectRows((await store.list()).filter(row => row.cloudAgentId && supported.has(row.plan.runtime))
+      .flatMap(row => deploymentVersions(row).map(version => ({ ...row, activeVersion: version })))) };
 }
 
 /** Frozen cloud models need no desktop model credentials or local Codex login. */

@@ -95,3 +95,15 @@ test('personal directory links and foreign DSH profiles cannot become deployment
   await assert.rejects(prepareBundleHost(foreign), { code: 'BUNDLE_HOST_STATE_CONFLICT' });
   assert.equal(await readFile(join(foreign.state, 'dsh/cordis.patch.yml'), 'utf8'), 'personal-profile');
 });
+
+test('versioned state isolates immutable bundles and preserves prior history on rollback', async t => {
+  const f = await fixture(t), g = await fixture(t);
+  const first = await prepareBundleHost({ ...f, versionedState: true });
+  const history = join(first.env.DSH_HOME, 'retained-history'); await writeFile(history, 'original-history');
+  const second = await prepareBundleHost({ ...f, archive: g.archive, versionedState: true });
+  assert.notEqual(first.env.DSH_HOME, second.env.DSH_HOME);
+  const restored = await prepareBundleHost({ ...f, versionedState: true });
+  assert.equal(restored.env.DSH_HOME, first.env.DSH_HOME);
+  assert.equal(await readFile(history, 'utf8'), 'original-history');
+  assert.equal(restored.env.AGENTKIT_BUNDLE_SHA256, restored.identity.sha256);
+});

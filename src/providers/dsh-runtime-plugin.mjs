@@ -312,6 +312,7 @@ export function apply(ctx, config = {}) {
       local: config.local === true,
       buildId: config.buildId,
       agentRevision: config.agentRevision,
+      cloudVersionId: config.cloudVersionId,
       toolAdapter,
       nativeTools,
     });

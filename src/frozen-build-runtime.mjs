@@ -48,6 +48,6 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, env = process
   };
   const bindings = frozen.spec?.bindings || {}, primary = bindings.modelProfileIds?.[0];
   const model = bindings.modelProfileId || (typeof primary === 'string' ? primary : primary?.resourceId || primary?.id) || '';
-  return startBuildRuntimeHttp({ agentId, buildId, runner, validatePrevious, model, token: env.AGENTKIT_RUNTIME_TOKEN,
+  return startBuildRuntimeHttp({ agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, validatePrevious, model, token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }

@@ -24,7 +24,7 @@ async function archiveBytes(path) {
 }
 
 /** A deployment owns one persistent state directory and one immutable bundle. */
-export async function prepareBundleHost({ archive, state, installation, env = process.env, expectedSha256 }) {
+export async function prepareBundleHost({ archive, state, installation, env = process.env, expectedSha256, versionedState = false }) {
   const zip = await archiveBytes(resolve(archive)), hash = sha256(zip);
   if (expectedSha256 && (!/^[a-f0-9]{64}$/.test(expectedSha256) || expectedSha256 !== hash)) fail('BUNDLE_HOST_DIGEST_MISMATCH', '运行包与部署指定的 SHA256 不一致');
   const { manifest, definition } = verifyPortableBundle(zip);
@@ -44,7 +44,8 @@ export async function prepareBundleHost({ archive, state, installation, env = pr
   const entry = join(dshRoot, 'lib/bin.js');
   if (!(await exists(entry))?.isFile()) fail('BUNDLE_HOST_INSTALLATION_INCOMPLETE', '镜像未包含已构建的 DSH CLI');
 
-  const root = await directory(resolve(state));
+  const parent = await directory(resolve(state));
+  const root = versionedState ? await directory(join(await directory(join(parent, 'versions')), hash)) : parent;
   const receiptPath = join(root, '.agentkit-runtime.json');
   const receipt = { format: 'agentkit.runtime-state/v1', bundleSha256: hash };
   if (!await exists(receiptPath)) {
@@ -57,11 +58,11 @@ export async function prepareBundleHost({ archive, state, installation, env = pr
   // Only declared resource credentials enter the Host; NODE_OPTIONS, personal
   // profile paths, cloud credentials and proxy configuration are not inherited.
   const childEnv = Object.fromEntries(['PATH', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
-    'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT', ...manifest.requirements.map(item => item.name)]
+    'AGENTKIT_DEPLOYMENT_VERSION', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT', ...manifest.requirements.map(item => item.name)]
     .filter(key => env[key] !== undefined).map(key => [key, env[key]]));
   Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: join(userHome, '.codex'),
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),
-    AGENTKIT_HOME: home, AGENTKIT_RUNTIME_AGENT_ID: manifest.agentId, AGENTKIT_RUNTIME_BUILD_ID: manifest.buildId });
+    AGENTKIT_HOME: home, AGENTKIT_BUNDLE_SHA256: hash, AGENTKIT_RUNTIME_AGENT_ID: manifest.agentId, AGENTKIT_RUNTIME_BUILD_ID: manifest.buildId });
   if (await exists(home)) {
     if (!(await lstat(home)).isDirectory()) fail('BUNDLE_HOST_STATE_INVALID', '已有运行目录不能是符号链接');
     if (sha256(await archiveBytes(join(home, 'portable-bundle.zip'))) !== hash) fail('BUNDLE_HOST_STATE_CONFLICT', '此状态目录属于另一运行包，请为新部署分配独立目录');

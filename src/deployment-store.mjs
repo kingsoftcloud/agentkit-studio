@@ -60,7 +60,7 @@ export function createDeploymentStore({ storeDir, clock = Date.now }) {
     return exclusive(id, async () => {
       const record = await get(id);
       if (!record) throw portableError('DEPLOYMENT_NOT_FOUND', '部署记录不存在');
-      const allowed = new Set(['state', 'cloudAgentId', 'source', 'failure', 'cloudStatus', 'cloudPhase', 'readyReplicas', 'endpoint', 'tokenBound', 'lastCheckedAt']);
+      const allowed = new Set(['state', 'cloudAgentId', 'source', 'failure', 'cloudStatus', 'cloudPhase', 'readyReplicas', 'endpoint', 'tokenBound', 'lastCheckedAt', 'activeVersion', 'versions', 'rollout', 'rolloutHistory']);
       if (Object.keys(patch).some(key => !allowed.has(key))) throw portableError('DEPLOYMENT_PATCH_INVALID', '部署记录只允许更新执行状态');
       const next = { ...record, ...patch, updatedAt: timestamp() };
       if (next.state !== record.state) next.events = [...record.events, { at: next.updatedAt, state: next.state }].slice(-200);
@@ -71,7 +71,7 @@ export function createDeploymentStore({ storeDir, clock = Date.now }) {
     });
   }
   async function claim(id, action) {
-    if (!['upload', 'create', 'token', 'token-repair', 'delete'].includes(action)) throw portableError('DEPLOYMENT_CLAIM_INVALID', '部署动作无效');
+    if (!['upload', 'create', 'token', 'token-repair', 'delete'].includes(action) && !/^upd_[a-f0-9]{32}-(upload|apply)$/.test(action)) throw portableError('DEPLOYMENT_CLAIM_INVALID', '部署动作无效');
     if (!await get(id)) throw portableError('DEPLOYMENT_NOT_FOUND', '部署记录不存在');
     try { await durableWrite(`${path(id)}.${action}`, { at: timestamp() }); await syncDirectory(); return true; }
     catch (error) { if (error.code === 'EEXIST') return false; throw error; }

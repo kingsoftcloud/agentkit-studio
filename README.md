@@ -50,7 +50,7 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
   版本并导出运行包。目前对话创建工具尚不提供构建操作。运行中心可选择历史 Build、CPU 和内存，
   检查冻结资源、镜像版本、环境及操作人后确认创建；页面提供持久化部署记录、状态、日志和删除。
   先在设置中配置云端凭证与私有对象存储桶；运行包私有上传由 Node Host 完成，用户无须运行 Docker。
-  创建结果不明时先核对已有资源，不自动重复创建；升级和回滚尚未开放。
+  创建结果不明时先核对已有资源，不自动重复创建。升级/回滚复用 `UpdateAgent`，需要镜像目录声明版本探测能力；只有实际入口返回目标冻结包和本次切换标识才确认完成。旧会话保留历史，新版本需开启新会话。
   云端创建沿用 AgentEngine 的 `CreateAgentProduct`，接口复用和实际发布缺口见[部署 API 合同](docs/contracts/deployment-transport.md)。
   三种运行时共用一套镜像，Node 客户端通过 Server 已有配置表读取固定摘要的版本目录；预发候选目录及 Harness 页面创建已实测。详见[部署交互与镜像维护边界](docs/contracts/cloud-deployment-product.md)。
   `make cloud-identity` 只读核验当前云端凭证的操作人；部署客户端在创建、更新、删除前核验身份，

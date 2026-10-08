@@ -343,6 +343,8 @@ window.__ModuleLoader__.load({
         exportPortableBuild: (agentId, buildId) => studioBridgeOperation('builds/export-portable', { agentId, buildId }),
         downloadBuild: (agentId, buildId) => studioBridgeOperation('builds/download', { agentId, buildId }),
         build: id => request('/api/v1/builds/' + encodeURIComponent(id)),
+        prepareDeploymentUpdate: payload => studioBridgeOperation('deployments/prepareUpdate', payload),
+        applyDeploymentUpdate: payload => studioBridgeOperation('deployments/applyUpdate', payload),
         prepareDeployment: payload => studioBridgeOperation('deployments/prepare', payload),
         refreshDeployment: deploymentId => studioBridgeOperation('deployments/refresh', { deploymentId }),
         repairDeploymentAccess: deploymentId => studioBridgeOperation('deployments/repairAccess', { deploymentId }),

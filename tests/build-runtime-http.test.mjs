@@ -112,3 +112,16 @@ test('observer forwards only the exact native Agent and disposes both listeners'
   assert.deepEqual(frames.map(frame => frame.kind), ['assistant', 'event', 'event']);
   stop(); assert.equal(listeners.size, 0);
 });
+
+test('authenticated version probe reports the serving bundle without starting a model or session', async t => {
+  const bundleSha256 = 'a'.repeat(64);
+  const server = await startBuildRuntimeHttp({ agentId: 'ar-local-test', buildId, bundleSha256, token,
+    runner: () => assert.fail('probe must not invoke model'), port: 0 });
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address.port}/v1/agentkit/runtime`;
+  assert.equal((await fetch(url)).status, 401);
+  const body = await (await fetch(url, { headers: { Authorization: `Bearer ${token}` } })).json();
+  assert.equal(body.format, 'agentkit.runtime-identity/v1');
+  assert.equal(body.buildId, buildId); assert.equal(body.bundleSha256, bundleSha256);
+  assert(!JSON.stringify(body).includes(token));
+});

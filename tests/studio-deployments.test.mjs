@@ -21,7 +21,7 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
   const build = createStudioBuild({ storeDir: root }), bindings = { modelProfileId: 'model', mcpServers: ['search'] };
   const built = await build.build({ agentId, revision: 2, metadata: { id: agentId, name: 'Agent', local: true, revision: 2 }, spec: { runtime: { type: runtime }, bindings }, bindings });
   const portableBundles = createPortableBundles({ storeDir: root, build, models, adapters, configuration });
-  const release = { id: '0.0.1-test', version: '0.0.1-test', label: 'Test', channel: 'preview', enabled: true, image: `hub-vpc-cn-beijing-6.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`,
+  const release = { id: '0.0.1-test', version: '0.0.1-test', label: 'Test', channel: 'preview', enabled: true, runtimeIdentity: true, image: `hub-vpc-cn-beijing-6.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`,
     platform: 'linux/amd64', port: 8080, runtimes: ['harness', 'dsh-native', 'codex'], bundleFormat: 'agentkit.portable-bundle/v1', minimumStudioVersion: '0.0.1', notices: ['Preview'] };
   const calls = [], remote = {}, key = 'platform-private-runtime-token', access = { ready: authReady, error: 'UNAUTHORIZED' };
   let deleted = false;
@@ -46,9 +46,13 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
         get: async () => { if (deleted) throw Object.assign(Error('missing'), { status: 404 }); return { data: remote }; },
         update: async patch => {
           calls.push(['update', patch]);
-          const token = remote.Advanced.EnvironmentVariables.find(row => row.Key === 'AGENTKIT_RUNTIME_TOKEN');
-          assert.equal(patch.EnvironmentVariablePatch.Upsert[0].Value, key);
-          token.Value = '********'; // Real GetAgent masks sensitive variables.
+          if (access.updateError && !access.responseLost) throw access.updateError;
+          if (patch.ContainerConfig) remote.Deployment.ArtifactPath = patch.ContainerConfig.ImageAddr;
+          const change = patch.EnvironmentVariablePatch;
+          remote.Advanced.EnvironmentVariables = remote.Advanced.EnvironmentVariables.filter(row => !(change.Delete || []).includes(row.Key) && !change.Upsert.some(item => item.Key === row.Key));
+          remote.Advanced.EnvironmentVariables.push(...change.Upsert.map(row => ({ ...row, Value: row.IsSensitive ? '********' : row.Value })));
+          assert.equal(change.Upsert.find(row => row.Key === 'AGENTKIT_RUNTIME_TOKEN').Value, key);
+          if (access.updateError) throw access.updateError;
           return { data: {} };
         },
         remove: async () => { calls.push(['delete']); deleted = true; return { data: { deleted: true } }; },
@@ -61,6 +65,7 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
     storageFactory: () => ({ upload: async (zip, reference) => { calls.push(['upload', reference]); return reference; } }),
     fetchImpl: async (url, init) => {
       calls.push(['health', String(url)]); assert.equal(init.headers.Authorization, `Bearer ${key}`);
+      if (String(url).endsWith('/v1/agentkit/runtime')) return Response.json(access.runtimeIdentity || {});
       if (String(url).endsWith('/v1/responses')) {
         assert.deepEqual(JSON.parse(init.body), { input: '' });
         return Response.json({ error: { code: access.ready ? 'RESPONSES_SINGLE_USER_MESSAGE_REQUIRED' : access.error } }, { status: access.ready ? 400 : 401 });
@@ -277,4 +282,100 @@ test('token synchronization waits for initial readiness; explicit repair require
   f.access.ready = true;
   assert.equal((await f.service.refresh(record.id)).state, 'READY');
   assert.equal(f.calls.filter(([action]) => action === 'create').length, 1);
+});
+
+async function updatePreview(f, id, revision = 3) {
+  const bindings = { modelProfileId: 'model' };
+  const build = await f.options.build.build({ agentId: f.input.agentId, revision, metadata: { id: f.input.agentId, local: true, name: 'Updated', revision },
+    spec: { runtime: { type: f.preview.runtime }, instructions: { system: `revision-${revision}` }, bindings }, bindings });
+  const preview = await f.service.prepareUpdate({ deploymentId: id, buildId: build.id });
+  return { ...preview, idempotencyKey: `upgrade-request-${revision}` };
+}
+function serving(f, preview) {
+  f.access.runtimeIdentity = { deploymentVersion: f.remote.Advanced.EnvironmentVariables.find(row => row.Key === 'AGENTKIT_DEPLOYMENT_VERSION')?.Value, format: 'agentkit.runtime-identity/v1', status: 'ready', agentId: preview.agentId, buildId: preview.buildId, bundleSha256: preview.bundleSha256 };
+}
+
+test('in-place upgrades and exact rollbacks require serving identity; all runtimes preserve history and platform secrets', async t => {
+  for (const runtime of ['harness', 'dsh-native', 'codex']) {
+    const f = await fixture(t, { runtime });
+    const initial = await f.service.create(f.request); await f.settled(); await f.service.refresh(initial.id);
+    const preview = await updatePreview(f, initial.id);
+    f.remote.Advanced.EnvironmentVariables.push({ Key: 'KSYUN_SECRET_KEY', Value: 'platform-injected', IsSensitive: true });
+    const pending = await f.service.applyUpdate(preview); await f.settled();
+    assert.equal(pending.state, 'UPDATING');
+    const patch = f.calls.filter(([action]) => action === 'update').at(-1)[1];
+    assert(patch.EnvironmentVariablePatch.Delete.some(key => key.startsWith('AGENTKIT_BUNDLE_MCP_')));
+    assert(!patch.EnvironmentVariablePatch.Delete.includes('KSYUN_SECRET_KEY'));
+    assert.equal(f.remote.Advanced.EnvironmentVariables.find(row => row.Key === 'KSYUN_SECRET_KEY').Value, 'platform-injected');
+    assert.equal((await f.service.refresh(initial.id)).state, 'UPDATING', 'new control-plane fields and healthy old pod must not pass');
+    await assert.rejects(() => f.service.agents.connect('ar-cloud-test'), { code: 'DEPLOYMENT_NOT_READY' });
+    serving(f, preview); f.remote.Basic.Status = 'UPDATING';
+    assert.equal((await f.service.refresh(initial.id)).state, 'UPDATING', 'do not accept rolling mixed replicas');
+    f.remote.Basic.Status = 'RUNNING';
+    const ready = await f.service.refresh(initial.id);
+    assert.equal(ready.state, 'READY'); assert.equal(ready.buildId, preview.buildId); assert.equal(ready.versions.length, 2);
+    assert.equal((await f.service.agents.get('ar-cloud-test')).deployment.versionId, ready.versionId);
+    assert.equal((await f.service.agents.recover()).items.length, 2);
+    const raw = JSON.parse(await readFile(join(f.root, 'deployments', `${initial.id}.json`)));
+    assert.equal(raw.plan.buildId, f.input.buildId, 'creation intent remains immutable');
+    const restarted = createStudioDeployments(f.options);
+    await restarted.applyUpdate(preview); assert.equal(f.calls.filter(([action]) => action === 'update').length, 2);
+    const rollback = await restarted.prepareUpdate({ deploymentId: initial.id, rollbackVersionId: 'initial' });
+    assert.equal(rollback.bundleSha256, f.preview.bundleSha256);
+    await restarted.applyUpdate({ ...rollback, idempotencyKey: 'rollback-request' }); await f.settled();
+    assert.equal((await restarted.refresh(initial.id)).state, 'UPDATING', 'serving the upgrade must not confirm rollback');
+    serving(f, rollback);
+    const restored = await restarted.refresh(initial.id);
+    assert.equal(restored.state, 'READY'); assert.equal(restored.buildId, f.input.buildId); assert.equal(restored.versions.length, 3);
+    assert.notEqual(restored.versionId, 'initial'); assert.equal(restored.cloudAgentId, 'ar-cloud-test');
+    assert.equal(f.calls.filter(([action]) => action === 'create').length, 1);
+    const publicJson = JSON.stringify(await restarted.list());
+    for (const hidden of ['credentialScope', 'objectKey', 'storageEndpoint', 'platform-injected', 'model-private', 'test-sk']) assert(!publicJson.includes(hidden));
+    assert.equal((await restarted.remove(initial.id)).state, 'DELETED');
+  }
+});
+
+test('changed previews, foreign mutations and root identity cannot submit updates', async t => {
+  const f = await fixture(t); const initial = await f.service.create(f.request); await f.settled(); await f.service.refresh(initial.id);
+  await assert.rejects(() => f.service.prepareUpdate({ deploymentId: initial.id, buildId: f.input.buildId }), { code: 'DEPLOYMENT_VERSION_UNCHANGED' });
+  const preview = await updatePreview(f, initial.id);
+  await assert.rejects(() => f.service.applyUpdate({ ...preview, previewId: 'stale' }), { code: 'DEPLOYMENT_PREVIEW_STALE' });
+  f.options.client.inspectIdentity = async () => ({ kind: 'main-account' });
+  await assert.rejects(() => f.service.applyUpdate(preview), { code: 'CLOUD_SUBACCOUNT_REQUIRED' });
+  f.options.client.inspectIdentity = async () => ({ kind: 'subaccount', accountId: 'owner', userUuid: 'actor' });
+  f.remote.Deployment.ArtifactPath = 'foreign';
+  await assert.rejects(() => f.service.applyUpdate(preview), { code: 'DEPLOYMENT_PROVENANCE_MISMATCH' });
+  assert.equal(f.calls.filter(([action]) => action === 'update').length, 1);
+});
+
+test('lost update responses reconcile by serving identity after restart without replaying a cloud write', async t => {
+  const f = await fixture(t); const initial = await f.service.create(f.request); await f.settled(); await f.service.refresh(initial.id);
+  const preview = await updatePreview(f, initial.id);
+  f.access.updateError = Error('private secret from upstream'); f.access.responseLost = true;
+  await f.service.applyUpdate(preview); await f.settled();
+  assert.equal((await f.service.get(initial.id)).state, 'UPDATE_UNKNOWN');
+  const restarted = createStudioDeployments(f.options);
+  await restarted.applyUpdate(preview);
+  await assert.rejects(() => restarted.applyUpdate({ ...preview, buildId: 'different' }), { code: 'DEPLOYMENT_IDEMPOTENCY_CONFLICT' });
+  assert.equal((await restarted.refresh(initial.id)).state, 'UPDATE_UNKNOWN');
+  serving(f, preview);
+  assert.equal((await restarted.refresh(initial.id)).state, 'READY');
+  assert.equal(f.calls.filter(([action]) => action === 'update').length, 2);
+  assert(!JSON.stringify(await restarted.list()).includes('private secret'));
+});
+
+test('old images cannot advertise an unverifiable update; interrupted pre-submit work can recover without a write', async t => {
+  const f = await fixture(t); const initial = await f.service.create(f.request); await f.settled(); await f.service.refresh(initial.id);
+  f.release.runtimeIdentity = false;
+  await assert.rejects(() => updatePreview(f, initial.id), { code: 'DEPLOYMENT_IMAGE_UPGRADE_REQUIRED' });
+  f.release.runtimeIdentity = true;
+  const preview = await updatePreview(f, initial.id);
+  const store = createDeploymentStore({ storeDir: f.options.storeDir });
+  const raw = await store.get(initial.id);
+  await store.update(initial.id, { state: 'UPDATING', rollout: { id: 'upd_' + 'c'.repeat(32), status: 'PREPARED', plan: raw.plan } });
+  assert.equal((await f.service.refresh(initial.id)).state, 'ACTION_REQUIRED');
+  assert.equal((await f.service.refresh(initial.id)).state, 'READY');
+  await f.service.applyUpdate(preview); await f.settled(); serving(f, preview);
+  assert.equal((await f.service.refresh(initial.id)).state, 'READY');
+  assert.equal(f.calls.filter(([action]) => action === 'update').length, 2);
 });

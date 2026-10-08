@@ -90,3 +90,10 @@ test('frozen cloud model directory is independent of local gateway and Codex cat
   const adapter = createDeploymentModelAdapter({ agents, runtime: {} });
   assert.deepEqual((await adapter.listModels(CLOUD_PROVIDER)).map(item => item.id), ['frozen-model']);
 });
+
+test('old native conversations cannot silently adopt an upgraded or rolled-back cloud version', async () => {
+  const stream = createDeploymentConversation({ agents: async () => ({ connect: async () => ({ agent: { ...agent, deployment: { ...agent.deployment, versionId: 'upd_new' } } }) }),
+    fetchImpl: () => assert.fail('mismatch must stop before a model request') });
+  await assert.rejects(collect(stream(options)), { code: 'DEPLOYMENT_SESSION_VERSION_CHANGED' });
+  await assert.rejects(collect(stream({ ...options, cloudVersionId: 'upd_previous' })), { code: 'DEPLOYMENT_SESSION_VERSION_CHANGED' });
+});

@@ -8,10 +8,12 @@ import { resolveDeploymentCredentials, PLATFORM_CREDENTIAL_NAMES } from './deplo
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { createDeploymentAgents } from './deployment-agents.mjs';
+import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote } from './deployment-versions.mjs';
+import { createDeploymentRollouts } from './deployment-rollouts.mjs';
 
 const cloudId = value => /^ar-(?!local-)[A-Za-z0-9-]+$/.test(value || '');
 const failure = error => ({ code: /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.code || '') ? error.code : 'DEPLOYMENT_FAILED',
-  message: '操作未完成，请查看部署状态并核对云端结果；不会自动重试创建',
+  message: '操作未完成，请查看部署状态并核对云端结果；不会自动重试云端写操作',
   ...(typeof error?.requestId === 'string' && /^[a-f0-9-]{36}$/.test(error.requestId) ? { requestId: error.requestId } : {}) });
 const credentialScope = values => sha256(JSON.stringify([values.cloudServerUrl || 'https://aicp.api.ksyun.com', values.cloudRegion || 'cn-beijing-6', values.cloudCustomSource || '', values.cloudAccessKey]));
 const shapeOf = input => {
@@ -19,13 +21,6 @@ const shapeOf = input => {
   if (![1, 2, 4, 8, 16].includes(cpu) || ![cpu * 4, cpu * 8].includes(memoryGiB)) throw portableError('DEPLOYMENT_RESOURCE_INVALID', 'CPU 和内存比例须为 1:4 或 1:8');
   return { cpu, memoryGiB, replicas: 1 };
 };
-function publicRecord(record) {
-  const { plan, source, fingerprint, format, ...state } = record;
-  return { ...state, agentId: plan.agentId, agentName: plan.agentName, buildId: plan.buildId, bundleId: plan.bundleId,
-    revision: plan.revision, runtime: plan.runtime, region: plan.region, environment: plan.environment,
-    imageVersion: plan.image.version, imageDigest: plan.image.digest, resources: plan.resources,
-    notices: plan.image.notices, identity: plan.identity, name: plan.name, status: record.state };
-}
 function endpointFor(detail, record) {
   const value = detail.Network?.PublicEndpoint || detail.QuickAccess?.PublicEndpoint;
   if (!value) return null;
@@ -34,13 +29,6 @@ function endpointFor(detail, record) {
   const suffix = record.plan.environment === 'pre-online' ? 'agent-pre.kspmas.ksyun.com' : 'agent.kspmas.ksyun.com';
   if (url.protocol !== 'https:' || url.hostname !== `${record.cloudAgentId}.${suffix}` || url.port || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw portableError('DEPLOYMENT_ENDPOINT_INVALID', '云端运行地址与当前部署不匹配');
   return url.origin;
-}
-function verifyRemote(detail, record) {
-  const digest = detail.Advanced?.EnvironmentVariables?.find(item => item.Key === 'AGENTKIT_BUNDLE_SHA256')?.Value;
-  if (detail.Basic?.AgentId !== record.cloudAgentId || detail.Basic.Name !== record.plan.name
-    || detail.Deployment?.ArtifactPath !== record.plan.image.image || digest !== record.plan.bundleSha256) {
-    throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '云端 Agent 与冻结部署记录不一致，已停止管理操作');
-  }
 }
 
 export function createStudioDeployments({ storeDir, build, portableBundles, models, adapters, credentials, configuration,
@@ -92,7 +80,11 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
   async function detail(record) {
     if (!cloudId(record.cloudAgentId)) throw portableError('DEPLOYMENT_CREATE_UNCONFIRMED', '创建结果尚未确认，请先核对云端记录');
     const result = (await client.forAgent(record.cloudAgentId).get({ IncludeApiKey: true })).data;
-    verifyRemote(result, record);
+    try { verifyDeploymentRemote(result, currentDeployment(record)); }
+    catch (error) {
+      if (!pendingRollout(record)) throw error;
+      verifyDeploymentRemote(result, { ...record, plan: record.rollout.plan });
+    }
     return result;
   }
   async function advance(record, prepared) {
@@ -167,6 +159,8 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       const common = { cloudStatus: String(basic.Status || ''), cloudPhase: String(basic.Phase || ''), readyReplicas: Number(basic.ReadyReplicas || 0), lastCheckedAt: new Date().toISOString(), failure: null };
       if (['FAILED', 'DELETED'].includes(basic.Status)) return publicRecord(await store.update(id, { ...common, state: basic.Status }));
       if (['DELETING', 'DELETE_UNKNOWN'].includes(record.state)) return publicRecord(await store.update(id, common));
+      const rolloutState = await rollouts.refresh(record, remote, common);
+      if (rolloutState) return publicRecord(rolloutState);
       const key = remote.QuickAccess?.ApiKey;
       if (typeof key !== 'string' || key.length < 24 || key.includes('*')) return publicRecord(await store.update(id, { ...common, state: 'PROVISIONING' }));
       const runtimeToken = remote.Advanced?.EnvironmentVariables?.find(item => item.Key === 'AGENTKIT_RUNTIME_TOKEN')?.Value;
@@ -263,7 +257,9 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     };
     return { deploymentId: id, lines: (response.data?.Logs || []).slice(-200).map(row => redact(typeof row === 'string' ? row : row.Content || row.Message || row.Log || '')), total: Number(response.data?.Total || 0) };
   }
-  const agents = createDeploymentAgents({ store, build, portableBundles, configuration, credentialScope, owned, detail, endpointFor });
-  return { prepare, create, refresh, repairAccess, reconcile, logs, remove, agents, get: async id => publicRecord(await owned(id)),
+  const rollouts = createDeploymentRollouts({ store, owned, detail, images, assemble, portableBundles, models, adapters, credentials, configuration, env,
+    client, operations, fetchImpl, storageFactory, credentialScope, exclusive, failure, endpointFor });
+  const agents = createDeploymentAgents({ store, build, portableBundles, configuration, credentialScope, owned, detail, endpointFor, fetchImpl });
+  return { prepare, create, prepareUpdate: rollouts.prepare, applyUpdate: rollouts.apply, refresh, repairAccess, reconcile, logs, remove, agents, get: async id => publicRecord(await owned(id)),
     list: async () => ({ items: (await store.list()).map(publicRecord) }) };
 }

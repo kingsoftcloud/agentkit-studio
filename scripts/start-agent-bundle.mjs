@@ -7,10 +7,10 @@ import { prepareBundleHost } from '../src/bundle-host.mjs';
 import { prepareBundleArchive } from '../src/bundle-source.mjs';
 
 try {
-  const { values } = parseArgs({ options: Object.fromEntries(['archive', 'state', 'installation', 'sha256'].map(name => [name, { type: 'string' }])) });
+  const { values } = parseArgs({ options: { ...Object.fromEntries(['archive', 'state', 'installation', 'sha256'].map(name => [name, { type: 'string' }])), 'versioned-state': { type: 'boolean', default: false } } });
   if (!values.archive || !values.state || !values.installation) throw Object.assign(new Error('Usage: start-agent-bundle.mjs --archive portable.zip --state STATE_DIR --installation INSTALLED_RUNTIME [--sha256 SHA256]'), { code: 'BUNDLE_HOST_USAGE' });
   const archive = await prepareBundleArchive({ archive: values.archive, cache: join(dirname(resolve(values.state)), '.bundle-cache') });
-  const plan = await prepareBundleHost({ ...values, archive, expectedSha256: values.sha256 });
+  const plan = await prepareBundleHost({ ...values, archive, expectedSha256: values.sha256, versionedState: values['versioned-state'] });
   console.log(JSON.stringify({ event: 'bundle.host.starting', ...plan.identity }));
   const child = spawn(process.execPath, [plan.entry, ...plan.args], { cwd: plan.cwd, env: plan.env, stdio: 'inherit' });
   let timer;
