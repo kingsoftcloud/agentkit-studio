@@ -115,7 +115,6 @@
       const [busy, setBusy] = useState(false);
       const [notice, setNotice] = useState('');
       const session = useSessions ? useSessions(state => state?.byId?.[sessionId]) : null;
-      const hasWorkspace = useWorkspaces ? useWorkspaces(state => state.items.some(item => item.sessionIds.includes(sessionId))) : false;
       const started = Boolean(session && session.blank === false);
       const resourceBound = agent => {
         const bindings = agent?.spec?.bindings || agent?.bindings || {};
@@ -246,16 +245,6 @@
         return h('option', { key: id, value: id }, `${name} · ${RUNTIME_LABELS[runtime] || runtime || 'Agent'}`);
       })),
       h(Pill, { tone: notice && !notice.includes('已绑定') ? 'signal' : selected ? 'accent' : 'neutral' }, busy ? '准入中…' : notice || (selected ? (started ? '已锁定' : '已绑定') : 'DSH 原生')),
-      !started && (hasWorkspace || !sessionId) ? h('button', {
-        type: 'button', disabled: busy,
-        title: '打开不关联文件夹的空白会话，当前会话和草稿保留',
-        style: { ...buttonStyle('secondary'), padding: '5px 8px', fontSize: '11px' },
-        onClick: async () => {
-          setBusy(true);
-          try { await window.__AGENTKIT_STUDIO_BIND_AGENT__?.({ agentId: selected, workspaceFree: true, modelSelection: session?.projectionValues?.modelSelection?.next }); }
-          finally { setBusy(false); }
-        },
-      }, '新建无工作区会话') : null,
       !sessionId && selected && selectedAgent ? h('span', { title: '请从 Agents 页面使用“绑定到新会话”创建原生会话', style: { color: BRAND.inkMuted, fontSize: '10px' } }, '请从 Agents 页面绑定') : null,
       h(NativeAuthoringButton, { inputActions }));
 
