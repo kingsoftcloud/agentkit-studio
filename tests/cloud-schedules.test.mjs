@@ -76,3 +76,20 @@ test('a failed catalog is not an empty success and does not hide ready targets',
   assert.deepEqual(unavailable.availability.readyAgentIds, []);
   assert.equal(unavailable.availability.catalogReadable, false);
 });
+
+test('delivery is gated by Server capability, scoped and serialized as references only', async () => {
+  const { service, writes, availability, task } = setup();
+  const target = { channelConfigId: 'config', bindingId: 'binding', url: 'https://untrusted', token: 'private' };
+  await assert.rejects(service.execute('create', { agentId: 'ar-cloud', spec: { deliveryTarget: target } }), { code: 'CLOUD_SCHEDULE_DELIVERY_UNAVAILABLE' });
+  assert.deepEqual(writes, []);
+  availability.DeliveryContracts = ['ChannelOutbox/v1'];
+  assert.deepEqual((await service.execute('list')).availability.deliveryReadyAgentIds, ['ar-cloud']);
+  await service.execute('create', { agentId: 'ar-cloud', spec: { deliveryTarget: target } });
+  assert.deepEqual(writes[0][1], { DeliveryTarget: { ChannelConfigId: 'config', BindingId: 'binding' } });
+  task.DeliveryTarget = { ChannelConfigId: 'config', BindingId: 'binding' };
+  assert.deepEqual((await service.execute('get', { agentId: 'ar-cloud', taskId: 'task-1' })).deliveryTarget, { channelConfigId: 'config', bindingId: 'binding' });
+  await service.execute('update', { agentId: 'ar-cloud', taskId: 'task-1', patch: { enabled: false } });
+  assert.equal('DeliveryTarget' in writes.at(-1)[2], false);
+  await service.execute('update', { agentId: 'ar-cloud', taskId: 'task-1', patch: { deliveryTarget: null } });
+  assert.equal(writes.at(-1)[2].DeliveryTarget, null);
+});

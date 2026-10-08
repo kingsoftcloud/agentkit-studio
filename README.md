@@ -220,3 +220,5 @@ make release-check
 标准 unified diff、生成 0.0.1 tarball、检查 manifest/导出和个人路径泄漏，再执行
 `git diff --check`。然后审阅
 `CHANGELOG.md`，再在 macOS 发布机上补跑 DSH Host、App package closure、签名和公证门禁。
+
+云端计划可配置指定渠道会话接收完成结果，详见[云端渠道、定时任务与计划结果投递](docs/contracts/cloud-agent-operations.md)。KOP Action 和云端投递服务需就绪；真实平台验收状态在该文档单独列出。

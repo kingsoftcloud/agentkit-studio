@@ -276,7 +276,7 @@ async function registerControlPlane(ctx) {
       storeDir: join(studioStoreDir, 'deployments'), ...studio, portableBundles, models, adapters, credentials, configuration, env: runtimeEnv,
       client: createAgentEngineDeploymentClient({ configuration }),
     }));
-  const cloudSchedulesPromise = import('./cloud-schedules.mjs').then(({ createCloudSchedules }) => createCloudSchedules({ agents: async () => (await deployments()).agents, client: () => deploymentClientPromise }));
+  const cloudSchedulesPromise = import('./cloud-schedules.mjs').then(({ createCloudSchedules }) => createCloudSchedules({ agents: async () => (await deployments()).agents, client: () => deploymentClientPromise, deliveryTargets: async agentId => (await studioChannelsPromise).deliveryTargets(agentId) }));
   const syncModelCredential = models.sync;
   // The DSH loader awaits an async plugin apply. Do this before returning from
   // activation so the first prompt cannot race the global ~/.agentkit key

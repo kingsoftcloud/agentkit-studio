@@ -1,11 +1,16 @@
 /** Durable schedules belong to Server, never to the desktop's local timer. */
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const lower = value => Object.fromEntries(Object.entries(value).map(([key, item]) => [key[0].toLowerCase() + key.slice(1), item]));
-const taskView = task => ({ ...lower(task), scope: 'cloud', target: { agentId: task.AgentId }, command: { payload: { content: task.Prompt } } });
+const taskView = task => ({ ...lower(task), scope: 'cloud', target: { agentId: task.AgentId }, command: { payload: { content: task.Prompt } }, deliveryTarget: task.DeliveryTarget ? lower(task.DeliveryTarget) : null });
 const specFields = { displayName: 'DisplayName', prompt: 'Prompt', schedule: 'Schedule', continuity: 'Continuity', sessionId: 'SessionId', enabled: 'Enabled', expectedRevision: 'ExpectedRevision' };
-const specPayload = spec => Object.fromEntries(Object.entries(specFields).filter(([key]) => spec[key] !== undefined).map(([key, target]) => [target, spec[key]]));
+const specPayload = spec => {
+  const payload = Object.fromEntries(Object.entries(specFields).filter(([key]) => spec[key] !== undefined).map(([key, target]) => [target, spec[key]]));
+  if (spec.deliveryTarget !== undefined) payload.DeliveryTarget = spec.deliveryTarget === null ? null
+    : { ChannelConfigId: spec.deliveryTarget.channelConfigId, BindingId: spec.deliveryTarget.bindingId };
+  return payload;
+};
 
-export function createCloudSchedules({ agents, client }) {
+export function createCloudSchedules({ agents, client, deliveryTargets }) {
   const apiFor = async agentId => {
     if (!agentId) throw fail('CLOUD_SCHEDULE_AGENT_REQUIRED', '请选择云端部署的 Agent');
     await (await agents()).get(agentId); // Receipt + current credential scope, not arbitrary cloud IDs.
@@ -18,11 +23,13 @@ export function createCloudSchedules({ agents, client }) {
     if (data.Tasks.some(task => task.AgentId !== agentId)) throw fail('CLOUD_SCHEDULE_SCOPE_MISMATCH', '云端定时任务的 Agent 身份不一致');
     const availability = data.Availability || {};
     return { items: data.Tasks.map(taskView), enabled: availability.Enabled === true,
+      deliverySupported: availability.DeliveryContracts?.includes('ChannelOutbox/v1') === true,
       supported: availability.RuntimeContracts?.includes('agentkit.responses/v1') === true };
   }
-  async function ready(agentId) {
+  async function ready(agentId, needsDelivery = false) {
     const result = await catalog(agentId);
     if (!result.enabled) throw fail('CLOUD_SCHEDULER_DISABLED', '云端调度服务未启用；请启用 Server Cloud Scheduler');
+    if (needsDelivery && !result.deliverySupported) throw fail('CLOUD_SCHEDULE_DELIVERY_UNAVAILABLE', '云端渠道投递尚未就绪，请升级并配置云端投递服务');
     if (!result.supported) throw fail('CLOUD_SCHEDULE_RUNTIME_UNSUPPORTED', '云端调度服务尚未支持 Studio 运行时；请升级 Server 的 Responses 调度适配');
   }
   async function ownedTask(agentId, taskId) {
@@ -39,20 +46,26 @@ export function createCloudSchedules({ agents, client }) {
         const results = await Promise.allSettled(targets.map(target => catalog(target.metadata.id)));
         const warnings = [...(catalogResult.warnings || [])], items = [];
         let active = targets.length > 0, readable = 0;
-        const readyAgentIds = [];
+        const readyAgentIds = [], deliveryReadyAgentIds = [];
         results.forEach((result, index) => {
           if (result.status === 'fulfilled') {
             readable++;
+            if (result.value.deliverySupported) deliveryReadyAgentIds.push(targets[index].metadata.id);
             if (result.value.enabled && result.value.supported) readyAgentIds.push(targets[index].metadata.id);
             items.push(...result.value.items);
             if (!result.value.enabled || !result.value.supported) { active = false; warnings.push('云端调度服务未启用或尚未支持 Studio 运行时'); }
           } else { active = false; warnings.push(`云端 Agent ${targets[index].metadata.id} 的任务读取失败：${result.reason?.message || '请求未完成'}`); }
         });
         return { items: items.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)), nativeItems: [], warnings: [...new Set(warnings)],
-          availability: { scope: 'cloud', alwaysOn: true, lifecycleOwner: 'agentengine-server', triggerActive: active, readyAgentIds, catalogReadable: targets.length === 0 || readable > 0 } };
+          availability: { scope: 'cloud', alwaysOn: true, lifecycleOwner: 'agentengine-server', triggerActive: active, readyAgentIds, deliveryReadyAgentIds, catalogReadable: targets.length === 0 || readable > 0 } };
+      }
+      if (operation === 'delivery-targets') {
+        await ready(agentId, true);
+        if (!deliveryTargets) throw fail('CLOUD_SCHEDULE_DELIVERY_UNAVAILABLE', '渠道连接尚未配置');
+        return deliveryTargets(agentId);
       }
       if (operation === 'create') {
-        await ready(agentId);
+        await ready(agentId, Boolean(payload.spec?.deliveryTarget));
         const { data } = await (await apiFor(agentId)).create(specPayload(payload.spec || {}));
         return taskView(data.Task);
       }
@@ -67,7 +80,7 @@ export function createCloudSchedules({ agents, client }) {
       if (operation === 'run') { await ready(agentId); return (await api.run(taskId)).data; }
       if (operation === 'update') {
         const spec = payload.patch || {};
-        if (spec.enabled !== false) await ready(agentId);
+        if (spec.enabled !== false || spec.deliveryTarget) await ready(agentId, Boolean(spec.deliveryTarget));
         const { data } = await api.update(taskId, { ...specPayload(spec), ExpectedRevision: spec.expectedRevision ?? task.Revision });
         return taskView(data.Task);
       }

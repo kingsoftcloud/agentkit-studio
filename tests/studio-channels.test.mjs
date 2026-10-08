@@ -134,6 +134,8 @@ test('cloud channel targets require Studio provenance and the verified tenant, a
     accountId = 'other';
     await assert.rejects(channels.proxyAction('CreateChannel', { AgentId: 'ar-cloud' }), { code: 'CHANNEL_ACCOUNT_MISMATCH' });
     await assert.rejects(channels.proxyAction('CreateChannel', { AgentId: 'legacy-adk' }), { code: 'DEPLOYMENT_AGENT_NOT_FOUND' });
+    await assert.rejects(channels.deliveryTargets('ar-cloud'), { code: 'CHANNEL_ACCOUNT_MISMATCH' });
+    await assert.rejects(channels.deliveryTargets('legacy-adk'), { code: 'DEPLOYMENT_AGENT_NOT_FOUND' });
     assert.equal(requests.length, 2);
   } finally { channels.dispose(); await new Promise(resolve => server.close(resolve)); await rm(store, { recursive: true, force: true }); }
 });

@@ -10,6 +10,7 @@ import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createChannelConnector, connectorUrl } from './channel-connector.mjs';
+import { scheduleDeliveryTargets } from './cloud-schedule-targets.mjs';
 
 export class ChannelError extends Error {
   constructor(code, message, details = {}) {
@@ -165,7 +166,25 @@ export function createStudioChannels({ storeDir, getAgent, listAgents, listCloud
     return body;
   }
 
-  return { getConnection, updateConnection, updateAgentConnection, proxyAction,
+  async function deliveryTargets(agentId) {
+    const config = await readConfig();
+    const target = await resolveCloudAgent?.(agentId);
+    if (!target?.accountId || target.accountId !== config.accountId) throw new ChannelError('CHANNEL_ACCOUNT_MISMATCH', '渠道连接与所选云端 Agent 的账号不一致');
+    const list = async action => {
+      const items = [];
+      for (let offset = 0; offset < 1000; offset += 100) {
+        const { Data } = await proxyAction(action, { AgentId: agentId, Offset: offset, Limit: 100 });
+        if (!Array.isArray(Data?.Items)) throw new ChannelError('CHANNEL_RESPONSE_INVALID', '渠道会话目录格式不兼容');
+        items.push(...Data.Items);
+        if (Data.Items.length < 100 || items.length >= Data.Total) return items;
+      }
+      throw new ChannelError('CHANNEL_CATALOG_TOO_LARGE', '此 Agent 的渠道会话过多，请先整理会话绑定');
+    };
+    const [channels, bindings] = await Promise.all([list('ListChannels'), list('ListBindings')]);
+    return { items: scheduleDeliveryTargets(agentId, channels, bindings) };
+  }
+
+  return { getConnection, updateConnection, updateAgentConnection, proxyAction, deliveryTargets,
     ensureReady: () => serialize(async () => { if (!disposed) await reconcile(await readConfig()); }),
     dispose() { disposed = true; for (const connector of connectors.values()) connector.stop(); connectors.clear(); connectionKeys.clear(); },
   };

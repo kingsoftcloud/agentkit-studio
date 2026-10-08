@@ -505,6 +505,7 @@ window.__ModuleLoader__.load({
         },
         bootstrapPlatformResources: () => request('/api/v1/resource-connections:bootstrap', { method: 'POST' }),
         schedules: (agentId, scope = 'local') => directServer() ? studioBridgeOperation('schedules/list', { agentId, scope }) : request(agentId ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules' : '/api/v1/schedules'),
+        scheduleDeliveryTargets: agentId => studioBridgeOperation('schedules/delivery-targets', { agentId, scope: 'cloud' }),
         scheduleOccurrences: (taskId, agentId) => directServer() ? studioBridgeOperation('schedules/occurrences', { taskId, agentId }) : request(agentId
           ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + '/occurrences'
           : '/api/v1/schedules/' + encodeURIComponent(taskId) + '/occurrences'),

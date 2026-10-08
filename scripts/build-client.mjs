@@ -13,6 +13,7 @@ const fragments = [
   '04-create-edit-and-resources.js',
   '05-resource-workspaces.js',
   '05-cloud-deployments.js',
+  '06-schedule-delivery.js',
   '06-automation-and-operations.js',
   '07-channels-and-shell.js',
   '08-settings-and-entry.js',
