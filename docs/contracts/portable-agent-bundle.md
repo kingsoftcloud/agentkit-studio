@@ -86,6 +86,7 @@ Responses / Chat Completions 选择随模型配置迁移。Codex 原生账户登
 `/v1/responses` 预发集成、UploadCode 上传和 CreateAgentProduct/UpdateAgent 生命周期联调。
 本地独立 Host 调用云资源成功，不能作为这些部署流程已完成的证据。
 已实现的单轮文本 Responses 入口、续聊和取消边界见[协议合同](frozen-runtime-responses.md)。
+无需启动时安装依赖的 Host 入口、独立状态卷和固定 Linux 构建输入见[运行包启动合同](bundle-host-launcher.md)。
 
 ## Codex 独立 Host 迁移验收（2026-10-08）
 

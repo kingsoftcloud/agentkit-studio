@@ -45,6 +45,13 @@ release-check: check patch-format-check pack
 	node scripts/check-package.mjs "$(PLUGIN_TARBALL)"
 	git diff --check
 
+# Build inputs are committed sources, never a copy of a running development checkout.
+RUNTIME_SOURCES_DIR ?= $(PACK_DIR)/runtime-sources
+.PHONY: runtime-source-stage
+runtime-source-stage:
+	node scripts/stage-runtime-sources.mjs --studio "$(CURDIR)" --source "$(DSH_ROOT)" \
+		--output "$(RUNTIME_SOURCES_DIR)" --commit "$(DSH_COMMIT)" --dsh-version "$(DSH_VERSION)"
+
 patch-format-check:
 	node scripts/check-patch-format.mjs "$(PATCH_ROOT)"
 
