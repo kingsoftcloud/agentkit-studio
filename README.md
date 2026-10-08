@@ -3,7 +3,7 @@
 跨 Host 运行 Agent 可使用[可迁移运行包](docs/contracts/portable-agent-bundle.md)：在构建页导出
 模型/MCP 配置和 Skill 文件，在新的数据目录导入并注入目标凭证。共享镜像配合私有运行包
 已完成预发冷启动；三种运行时的[真实资源验收与剩余限制](docs/contracts/deployed-resource-acceptance-2026-10-08.md)
-分别记录；运行中心已接入冻结版本的云端创建、状态、日志与删除，升级回滚和完整持久化仍在联调。
+分别记录；运行中心已接入冻结版本的云端创建、状态、日志与删除，Harness 原实例升级、回滚与原生会话已实测，其他资源组合和完整持久化仍在联调。
 
 AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时

@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDeploymentConversation } from '../src/deployment-conversation.mjs';
 import { CLOUD_PROVIDER, createDeploymentModelAdapter } from '../src/deployment-agents.mjs';
-import { createDshRuntimeAdapter, bindDshAgentRoute } from '../src/providers/dsh-runtime.mjs';
+import { createDshRuntimeAdapter, bindDshAgentRoute, routeDshRuntime, setDshRuntimeAdapter, unbindDshAgentRoutes } from '../src/providers/dsh-runtime.mjs';
+import { DshPresetAdmission } from '../src/agent-preset-admission.mjs';
+import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createRuntimeResponsesContract } from '../src/runtime-responses-contract.mjs';
 import { createRuntimeResponsesStream } from '../src/runtime-responses-stream.mjs';
 
@@ -96,4 +98,35 @@ test('old native conversations cannot silently adopt an upgraded or rolled-back 
     fetchImpl: () => assert.fail('mismatch must stop before a model request') });
   await assert.rejects(collect(stream(options)), { code: 'DEPLOYMENT_SESSION_VERSION_CHANGED' });
   await assert.rejects(collect(stream({ ...options, cloudVersionId: 'upd_previous' })), { code: 'DEPLOYMENT_SESSION_VERSION_CHANGED' });
+});
+
+test('new native presets carry each deployment version through the scoped request and Host waterfall', async t => {
+  let versionId = 'initial', requests = 0;
+  const current = () => ({ ...agent, source: 'studio-deployment', spec: { runtime: { type: 'harness' } },
+    deployment: { ...agent.deployment, id: 'dep_' + 'a'.repeat(32), versionId } });
+  const definitions = new Map();
+  const admission = new DshPresetAdmission({ getAgent: async () => current(),
+    registry: { register: async definition => { definitions.set(definition.id, definition); return () => {}; } } });
+  const cloudRuntime = createDeploymentConversation({ agents: async () => ({ connect: async () => ({ agent: current(),
+    endpoint: 'https://ar-cloud-test.agent-pre.kspmas.ksyun.com', token: 'private-runtime-token' }) }),
+    fetchImpl: async (_url, init) => { requests++; return response(JSON.parse(init.body)); } });
+  t.after(setDshRuntimeAdapter(createDshRuntimeAdapter({ cloudRuntime })));
+  t.after(() => unbindDshAgentRoutes(agent.metadata.id));
+  t.after(() => admission.dispose());
+  const request = sessionId => ({ sessionId, provider: CLOUD_PROVIDER, model: 'frozen-model',
+    messages: [{ role: 'user', id: 'message-1', content: '你好' }] });
+  const stream = sessionId => routeDshRuntime(request(sessionId), () => assert.fail('must use the selected cloud preset'));
+  for (const selected of ['initial', 'upd_upgrade', 'upd_rollback']) {
+    versionId = selected;
+    const { presetId } = await admission.ensure(agent.metadata.id);
+    const config = definitions.get(presetId).plugins.find(plugin => plugin.id === 'studio-runtime').config;
+    const listeners = new Map();
+    applyDshRuntimePlugin({ tools: { schemas: () => [], execute: () => assert.fail('no local tools') },
+      on: (name, callback) => listeners.set(name, callback) }, config);
+    await listeners.get('agent/request')({ agent: { id: selected } }, async () => request(selected));
+    assert.equal((await collect(stream(selected))).find(chunk => chunk.type === 'text-delta').text, '真实回答');
+    if (selected !== 'initial') await assert.rejects(collect(stream('initial')), { code: 'DEPLOYMENT_SESSION_VERSION_CHANGED' });
+  }
+  assert.equal(requests, 3, 'stale sessions must fail before a cloud request');
+  assert.equal(definitions.size, 3, 'each rollout preserves the prior preset even if Agent revision is unchanged');
 });

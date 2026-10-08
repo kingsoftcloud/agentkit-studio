@@ -32,6 +32,7 @@ export function bindDshAgentRoute(sessionId, binding = {}) {
     local: binding.local === true,
     buildId: String(binding.buildId || '').trim(),
     agentRevision: binding.agentRevision,
+    cloudVersionId: binding.cloudVersionId,
     toolAdapter: binding.toolAdapter,
     nativeTools: binding.nativeTools === true,
   };
@@ -80,7 +81,7 @@ export async function executeDshResourceTool(input = {}) {
   return resourceToolExecutor(input);
 }
 
-export function streamDshRuntime(options, { agentId, runtime, local, buildId, agentRevision, toolAdapter, nativeTools } = {}) {
+export function streamDshRuntime(options, { agentId, runtime, local, buildId, agentRevision, cloudVersionId, toolAdapter, nativeTools } = {}) {
   const id = String(agentId || '').trim();
   if (!id || !activeAdapter) throw new Error('AgentKit Studio runtime bridge is unavailable');
   const mode = local === true ? 'local' : 'cloud';
@@ -92,6 +93,7 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
     studioRuntime: runtime,
     ...(buildId ? { buildId } : {}),
     ...(agentRevision ? {agentRevision} : {}),
+    ...(cloudVersionId ? { cloudVersionId } : {}),
     ...(toolAdapter ? { studioToolAdapter: toolAdapter } : {}),
     ...(nativeTools ? { studioNativeTools: true } : {}),
   });
