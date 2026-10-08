@@ -9,9 +9,9 @@ const ok = data => new Response(JSON.stringify({ Code: 0, RequestId: 'server-req
 // is covered separately through the same real deployment client.
 function deploymentClient(options) {
   return createAgentEngineDeploymentClient({ ...options, fetchImpl: async (url, init) => {
-    if (new URL(url).hostname.startsWith('iam.')) return new Response(JSON.stringify({
-      ListAccessKeyResult: { AccessKeyMetadata: { member: [{ AccessKeyId: values.cloudAccessKey, UserName: '', Status: 'Active' }] } },
-    }));
+    if (new URL(url).hostname.startsWith('iam.')) return Response.json(new URLSearchParams(init.body).get('Action') === 'GetUser'
+      ? { GetUserResult: { User: { UserName: 'operator', UserId: 'verified-operator', Krn: 'krn:ksc:iam::123456789:user/operator' } } }
+      : { ListAccessKeyResult: { AccessKeyMetadata: { member: [{ AccessKeyId: values.cloudAccessKey, UserName: 'operator', Status: 'Active' }] } } });
     return options.fetchImpl(url, init);
   } });
 }

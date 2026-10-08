@@ -65,7 +65,8 @@ async function registerControlPlane(ctx) {
     } }),
   })).catch(error => { console.warn('[agentkit-studio] channels init failed:', error?.message || error); return null; });
   const agentStorePromise = import('./agent-store.mjs').then(({ createAgentStore }) => createAgentStore({ storeDir: join(studioStoreDir, 'agents') }));
-  const agentCatalogPromise = import('./agent-catalog.mjs').then(({ createAgentCatalog }) => createAgentCatalog({ store: () => agentStorePromise, builds: async id => (await studioBuildPromise).build.list(id) }));
+  const agentCatalogPromise = import('./agent-catalog.mjs').then(({ createAgentCatalog }) => createAgentCatalog({ store: () => agentStorePromise,
+    builds: async id => (await studioBuildPromise).build.list(id), deployments: async () => (await deployments()).agents.list() }));
   const listLocalBuildTargets = async () => { const studio = await studioBuildPromise; const agents = await (await agentStorePromise).list(); return (await Promise.all(agents.map(async agent => (await studio.build.list(agent.metadata.id)).map(build => ({ ...build, name: `${agent.metadata.name} · Revision ${build.revision}` }))))).flat().filter(build => build.status === 'SUCCEEDED'); };
   const localMcpStorePromise = import('./local-mcp-store.mjs').then(({ createLocalMcpStore }) => createLocalMcpStore({ storeDir: join(studioStoreDir, 'resources', 'mcp') }));
   const mcpProbePromise = import('./mcp-probes.mjs').then(({ createMcpProbes }) => createMcpProbes({ storeDir: join(studioStoreDir, 'resources', 'mcp-probes'), localStore: () => localMcpStorePromise, adapters: () => resourceAdaptersPromise }));
@@ -212,9 +213,11 @@ async function registerControlPlane(ctx) {
       },
     };
   };
+  const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('./deployment-agents.mjs');
+  const { createDeploymentConversation } = await import('./deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({
     AdapterBase: LlmAdapter,
-    cloudClient: await serverClientPromise,
+    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents }),
     localHandler: localRuntimeHandler,
     codexRuntime,
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
@@ -249,6 +252,7 @@ async function registerControlPlane(ctx) {
       'agentkit-studio: DSH runtime provider',
     );
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CODEX_PROVIDER], createCodexModelAdapter({ catalog: codexModels, runtime: dshRuntimeAdapter })), 'agentkit-studio: Codex model directory');
+    llmCtx.effect(() => llmCtx.llm.registerAdapter([CLOUD_PROVIDER], createDeploymentModelAdapter({ agents: async () => (await deployments()).agents, runtime: dshRuntimeAdapter })), 'agentkit-studio: frozen cloud models');
   });
   // Cordis exposes injected services through `get`; property access is only
   // available on typed service contexts and is absent in the plain plugin
@@ -288,8 +292,8 @@ async function registerControlPlane(ctx) {
       await restoreLocalPresets({store:await agentStorePromise,build:(await studioBuildPromise).build,admission:presetAdmission});
     } catch(error) { console.warn('[agentkit-studio] local revision recovery failed:',error?.message || error); }
     // Cloud catalog failures do not delay local Session recovery.
-    void serverClientPromise.then(async cloud => {
-      const catalog = await cloud.listAgents({page:1,pageSize:50});
+    void deployments().then(async service => {
+      const catalog = await service.agents.recover();
       for (const agent of catalog.items || []) {
         try { await presetAdmission.ensure(agent.metadata.id,{agent}); }
         catch(error) { console.warn('[agentkit-studio] cloud preset restore skipped:',error?.message || error); }
@@ -311,10 +315,11 @@ async function registerControlPlane(ctx) {
     }, 'agentkit-studio: dynamic preset cleanup');
   });
   presetAdmission = new DshPresetAdmission({
-    getAgent: async agentId => (await serverClientPromise).getAgent(agentId),
+    getAgent: async agentId => (await deployments()).agents.get(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
     getModelSelection: async agent => {
       const local = agent?.metadata?.local !== false && agent?.source !== 'agentengine-server';
+      if (!local) return { provider: CLOUD_PROVIDER, model: agent.deployment.model };
       if (local && !agent.buildId) await (await agentStorePromise).captureRevision(agent);
       if (local && agent?.spec?.runtime?.type === 'codex') return selectCodexAgentModel(agent, { models, catalog: codexModels });
       const settings = { values: await models.settings() };
@@ -591,6 +596,7 @@ async function registerControlPlane(ctx) {
         try {
           const localStore = await agentStorePromise;
           const local = await localStore.get(agentId);
+          if (!local) await (await deployments()).agents.connect(agentId);
           const buildId = String(payload?.buildId || '').trim();
           const build = buildId ? await (await studioBuildPromise).build.resolve(agentId, buildId) : null;
           // The no-build path remains the original local admission contract:

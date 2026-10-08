@@ -2,12 +2,17 @@
 import { parseArgs } from 'node:util';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
 import { createAgentEngineDeploymentClient } from '../src/server-client.mjs';
+import { createHash } from 'node:crypto';
 
 try {
   const { values } = parseArgs({ options: { workspace: { type: 'string' }, 'require-subaccount': { type: 'boolean' }, help: { type: 'boolean' } } });
   if (values.help) console.log('Usage: node scripts/check-cloud-identity.mjs [--workspace DIRECTORY] [--require-subaccount]\nRead-only IAM check; does not create or update cloud resources.');
   else {
     const configuration = createGlobalConfiguration({ workspace: values.workspace });
+    const resolved = await configuration.resolve();
+    const credentialSources = { accessKey: resolved.sources.cloudAccessKey || 'missing', secretKey: resolved.sources.cloudSecretKey || 'missing' };
+    const accessKeyFingerprint = resolved.values.cloudAccessKey ? createHash('sha256').update(resolved.values.cloudAccessKey).digest('hex').slice(0, 16) : null;
+    console.log(JSON.stringify({ scope: 'configuration-provenance', credentialSources, accessKeyFingerprint }));
     const client = createAgentEngineDeploymentClient({ configuration });
     const identity = await client.inspectIdentity({ forceRefresh: true });
     const accepted = !values['require-subaccount'] || identity.kind === 'subaccount';

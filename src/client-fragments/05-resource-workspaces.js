@@ -435,7 +435,7 @@
         setError('');
         try {
           const [agentResult, deploymentResult, operationResult] = await Promise.all([
-            hostRemote.agents(), hostRemote.deployments(), hostRemote.operations(),
+            hostRemote.agents({ source: 'local', pageSize: 100 }), hostRemote.deployments(), hostRemote.operations(),
           ]);
           const nextAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
           const nextAgent = preferredAgent && nextAgents.some(item => (item?.metadata?.id || item?.id) === preferredAgent)

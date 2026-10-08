@@ -7,6 +7,7 @@ import { createContainerDeploymentEnvironment } from './container-deployment-env
 import { resolveDeploymentCredentials, PLATFORM_CREDENTIAL_NAMES } from './deployment-credentials.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
+import { createDeploymentAgents } from './deployment-agents.mjs';
 
 const cloudId = value => /^ar-(?!local-)[A-Za-z0-9-]+$/.test(value || '');
 const failure = error => ({ code: /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.code || '') ? error.code : 'DEPLOYMENT_FAILED',
@@ -61,6 +62,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     const { manifest } = verifyPortableBundle(zip);
     const runtime = frozen.spec.runtime.type, { catalog, image } = await images.resolve(runtime, input.releaseId);
     const identity = await client.inspectIdentity(), { values } = await configuration.resolve();
+    if (identity.kind !== 'subaccount') throw portableError('CLOUD_SUBACCOUNT_REQUIRED', '部署需要已核验的子账号 AK/SK，请在设置中更新云端凭证；不会使用主账号创建资源');
     if (!values.cloudBucket) throw portableError('KS3_BUCKET_REQUIRED', '请先在设置中配置用于私有运行包的 KS3 Bucket');
     const resources = shapeOf(input.resources), resolved = await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env });
     // Validate storage and environment before the user commits to a billable create.
@@ -77,7 +79,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     const { plan, fingerprint } = await assemble(input, true);
     const { credentialScope: _, bucket, storageEndpoint, ...preview } = plan;
     return { ...preview, previewId: fingerprint, releaseId: plan.image.id,
-      warnings: [...plan.image.notices, ...(plan.identity.kind === 'main-account' ? ['当前为主账号凭证，创建记录不会包含子账号操作人'] : []),
+      warnings: [...plan.image.notices,
         '单副本按所选规格创建；费用以平台实际计费为准', '当前云端持久化尚未验收，实例重建可能丢失对话历史'] };
   }
   async function owned(id) {
@@ -95,6 +97,10 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
   }
   async function advance(record, prepared) {
     try {
+      const identity = await client.inspectIdentity({ forceRefresh: true });
+      if (identity.kind !== 'subaccount' || identity.userUuid !== record.plan.identity.userUuid || identity.accountId !== record.plan.identity.accountId) {
+        throw portableError('CLOUD_SUBACCOUNT_REQUIRED', '部署身份已变化，请重新核验子账号后提交');
+      }
       if (!await store.claim(record.id, 'upload')) return;
       const source = planKs3BundleUpload(prepared.zip, { endpoint: record.plan.storageEndpoint, bucket: record.plan.bucket, uploadId: randomUUID() });
       await store.update(record.id, { state: 'UPLOADING', source });
@@ -257,6 +263,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     };
     return { deploymentId: id, lines: (response.data?.Logs || []).slice(-200).map(row => redact(typeof row === 'string' ? row : row.Content || row.Message || row.Log || '')), total: Number(response.data?.Total || 0) };
   }
-  return { prepare, create, refresh, repairAccess, reconcile, logs, remove, get: async id => publicRecord(await owned(id)),
+  const agents = createDeploymentAgents({ store, build, portableBundles, configuration, credentialScope, owned, detail, endpointFor });
+  return { prepare, create, refresh, repairAccess, reconcile, logs, remove, agents, get: async id => publicRecord(await owned(id)),
     list: async () => ({ items: (await store.list()).map(publicRecord) }) };
 }

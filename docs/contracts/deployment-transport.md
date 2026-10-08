@@ -9,7 +9,7 @@ Studio 沿用 AgentEngine Server 的 `CreateAgentProduct` Action 创建云端 Ag
 
 | 方法 | 现有 Action | 边界 |
 | --- | --- | --- |
-| `inspectIdentity` | IAM `ListAccessKeys/GetUser` | 只读识别当前凭证对应的主账号或子账号，不创建资源；查询失败不是主账号 |
+| `inspectIdentity` | IAM `ListAccessKeys/ListAllUserAccessKeys/GetUser` | 只读识别当前凭证对应的主账号或子账号，不创建资源；查询失败不是主账号 |
 | `createAgent` | `CreateAgentProduct` | 调用方先持久化创建意图；未知结果需核对，不能自动重新创建 |
 | `uploadCode` | `UploadCode` | 获取上传地址；ZIP 单独 PUT 到对象存储，上传地址不能当下载地址 |
 | `getUploadUrl` | `GetPresignedUrl` | 沿用旧客户端的上传入口；返回 Bucket/ObjectKey，可组成持久存储引用 |
@@ -70,8 +70,7 @@ Node 侧 `createContainerDeploymentEnvironment` 校验固定 ZIP 摘要，从冻
 首次 Agent 的 `Basic.Creator` 为空。后续只读 IAM 核验表明测试使用主账号密钥，
 没有可解析的子用户归属。当时新版还缺少旧 KsADK 的 IAM 身份解析与 Header 传递。
 现在部署客户端在创建、更新、删除前查询 IAM，并将已核验的子账号身份加入签名；
-查询失败或账号不一致时拒绝写请求。真实主账号识别已验证，真实子账号的创建回调与
-数据库记录尚待验收，因此不能将此前创建受理和容器运行作为子账号身份完整的证据。
+查询失败或账号不一致时拒绝写请求。后续独立子账号创建已返回与 IAM 用户名一致的 `Basic.Creator`；数据库 UUID 字段与跨子账号隔离仍需独立验收。此前主账号容器运行证据不能替代这些检查。
 不能通过填写其他人的 UUID 绕过身份核验。
 
 传输层已覆盖签名、预发路由、请求追踪、错误脱敏、无自动重试以及限定 ID 的操作测试。

@@ -41,3 +41,14 @@ test('catalog preserves real build history on supported local Agents', async () 
   } });
   assert.deepEqual((await catalog.list()).items[0].builds, [built]);
 });
+
+test('cloud rows come only from deployment receipts, share sorting and never load local build history by cloud ID', async () => {
+  const deployed = { ...row('cloud-new', 'codex', '2026-10-08T00:00:00Z'), source: 'studio-deployment', deployment: { id: 'deployment' } };
+  const local = row('local-old', 'harness', '2026-10-07T00:00:00Z');
+  const catalog = createAgentCatalog({ store: store([local]), deployments: async () => ({ items: [deployed, row('legacy', 'codex')], warnings: ['unreadable build'] }),
+    builds: async id => { assert.equal(id, 'local-old'); return []; } });
+  assert.equal((await catalog.list({ source: 'cloud' })).total, 1);
+  assert.deepEqual((await catalog.list()).items.map(item => item.metadata.id), ['cloud-new', 'local-old']);
+  assert.equal((await catalog.list({ source: 'cloud', query: 'legacy' })).total, 0);
+  assert.deepEqual((await catalog.list({ source: 'local' })).warnings, []);
+});

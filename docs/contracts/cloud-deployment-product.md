@@ -2,7 +2,7 @@
 
 目标是本地创建的 DSH Native、Codex、AgentKit Harness 使用同一套部署交互与管理入口。
 当前 Node 传输、Server 镜像目录和运行中心的冻结版本部署已接通；页面创建、状态与日志已有
-真实预发证据，Harness 的页面创建至就绪、流式回复和删除已通过；详见[验收记录](deployed-resource-acceptance-2026-10-08.md#运行中心部署页面验收)。Agent 云端标签、原生云端会话、升级回滚和完整持久化仍未完成。
+真实预发证据，Harness 的页面创建至就绪、流式回复和删除已通过；详见[验收记录](deployed-resource-acceptance-2026-10-08.md#运行中心部署页面验收)。Agent 云端标签及原生会话已接入，Harness 有真实子账号创建与浏览器对话证据；升级回滚和完整持久化仍未完成。
 
 ## 身份与生命周期
 
@@ -19,19 +19,17 @@ Key，不是子账号身份修复。详见[部署传输边界](deployment-transp
 
 旧 KsADK 客户端已有 IAM 身份解析和身份 Header 传递。新版 Node 部署客户端现已补齐
 `inspectIdentity()`：用当前签名凭证调用 IAM `ListAccessKeys`，只匹配当前 AK；有子用户名
-时再调用 `GetUser` 核对用户名、UUID 和 KRN 中的账号归属，不查询全部子用户密钥。
+时再调用 `GetUser` 核对用户名、UUID 和 KRN 中的账号归属。部分 IAM 环境默认返回所属账号的密钥；当前 AK 未命中时通过 `ListAllUserAccessKeys` 精确匹配用户名，再用带 `UserName` 的 `ListAccessKeys` 核验当前 AK 为 Active。该回退需要对应 IAM 查询权限；缺失、重复、截断或不一致都不能当作主账号或猜测操作人。
 `CreateAgentProduct`、`UpdateAgent`、`DeleteAgent` 发送前执行此检查，已验证的子账号
 UUID 和主账号 ID 加入签名 Header；与配置账号不一致或身份查询失败时不发送写请求。
-主账号保留主账号身份，不生成子账号 UUID，所属账号交由 KOP 解析，不发送未核验的配置
-账号 ID；不改变平台自动申请 AICP Key 的限制。
+主账号仍可被只读识别，但 Studio 部署编排在检查和上传前拒绝主账号创建，不生成子账号 UUID，也不改变平台自动申请 AICP Key 的限制。
 只读详情、实例和日志查询不依赖 IAM，身份服务异常时仍可诊断既有部署。
 
 检查结果短期缓存在 Node 内存，凭证或会话令牌变化会重新验证；不存储原始 IAM 响应，
 不接受浏览器传入的操作人 UUID。`make cloud-identity` 可只读检查当前配置；
 `node scripts/check-cloud-identity.mjs --require-subaccount` 在主账号情形返回非零状态。
 真实主账号识别已验证；子账号 Header、签名、缓存失效及失败拒绝已有回归测试。
-真实子账号的 Header、创建回调、数据库记录以及两个子账号的权限隔离均尚未验收；
-不能将本轮容器连通性结果表述为子账号部署已通过。
+随后使用独立子账号凭证完成创建，`GetAgent.Basic.Creator` 已与 IAM 用户名一致，证明创建者已传递至可读取的 Agent 记录。数据库 UUID 字段以及两个子账号的权限隔离仍未验收，不从 Creator 名称推导这些结论。
 
 三种运行时都走 `CreateAgentProduct(DeploymentType=Container)`、`GetAgent`、
 `UpdateAgent`、`ListInstances`、`GetAgentLogs` 和 `DeleteAgent`。平台尚无独立停止/启动
@@ -66,8 +64,11 @@ Build 可由“构建当前 Revision”生成，也可选历史版本。区域�
 串行，删除后确认 GetAgent 404 或平台已删除状态才记录完成。页面删除实例保留私有运行包
 供审计，当前不自动清理对象；测试专属对象在实例删除后另行核验摘要并清理。
 
-后续将可验证本地来源的部署接入 Agent 云端标签及原生对话。恢复历史、升级和回滚均实测
-通过后再开放对应操作；不能将当前创建和管理证据表述为完整生命周期已完成。
+云端 Agent 标签和原生会话选择器仅加载当前凭证作用域内的部署记录，不调用历史通用 Agent 列表。进入会话及每轮执行都核对云端 ID、名称、镜像和包摘要；本地配置变化不能改变云端冻结模型。用户需重新构建部署以更换云端模型。
+
+Node Host 调用实例的 `/v1/responses`，只发送本轮用户文本、固定模型与稳定的会话/消息标识，不发送桌面系统提示词、历史或工具定义。云端执行冻结的资源绑定；DSH 展示文本、思考、工具结果与用量。工具卡片仅作展示，不在本机重复执行。响应必须返回匹配的 Agent/Build 身份；取消同时中断连接并对已核验的响应发送取消请求。
+
+删除或切换凭证后保留历史展示用的 preset，但每次实际运行仍重新检查当前作用域、部署状态和远端身份。桌面 Host 恢复与云端实例重建的持久化是不同验收项；后者、升级及回滚仍需独立验证。
 
 ## 一套共享镜像
 

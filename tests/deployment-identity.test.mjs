@@ -73,7 +73,7 @@ test('update and delete carry the same verified identity; read-only diagnostics 
   }
 });
 
-test('preflight reports a main account without pretending it is a subaccount', async () => {
+test('preflight diagnoses a main account but transport blocks its creation', async () => {
   let sent;
   const client = createAgentEngineDeploymentClient({ configuration: { resolve: async () => ({ values: { ...values, cloudAccountId: 'unverified-owner' } }) }, fetchImpl: async (url, init) => {
     if (new URL(url).hostname.startsWith('iam.')) return json({ ListAccessKeyResult: { AccessKeyMetadata: { member: [
@@ -85,9 +85,8 @@ test('preflight reports a main account without pretending it is a subaccount', a
   assert.equal(identity.kind, 'main-account');
   assert.equal(identity.userUuid, null);
   assert.doesNotMatch(JSON.stringify(identity), /AK-operator|SK-operator/);
-  await client.createAgent({ Name: 'main-account-deployment' });
-  assert.equal(sent.headers['X-Ksc-User-uuid'], undefined);
-  assert.equal(sent.headers['X-Ksc-Account-Id'], undefined);
+  await assert.rejects(client.createAgent({ Name: 'main-account-deployment' }), { code: 'CLOUD_SUBACCOUNT_REQUIRED' });
+  assert.equal(sent, undefined);
 });
 
 test('a mismatched configured account prevents deployment mutations', async () => {

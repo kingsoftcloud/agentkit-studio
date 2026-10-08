@@ -90,6 +90,7 @@
           record.failure ? h('p', { style: { fontSize: '12px', color: BRAND.danger } }, `${record.failure.code} · ${record.failure.message}`) : null,
           record.state !== 'DELETED' ? h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
             h('button', { type: 'button', disabled: busy, onClick: () => action(record, record.cloudAgentId ? 'refresh' : 'reconcile'), style: buttonStyle() }, record.cloudAgentId ? '刷新状态' : '核对创建结果'),
+            ['READY', 'AVAILABLE_UPDATING'].includes(record.state) ? h('button', { type: 'button', disabled: busy, onClick: () => window.__AGENTKIT_STUDIO_BIND_AGENT__?.(record.cloudAgentId), style: buttonStyle() }, '开始对话') : null,
             record.cloudAgentId ? h('button', { type: 'button', disabled: busy, onClick: () => action(record, 'logs'), style: buttonStyle() }, '日志') : null,
             record.state === 'TOKEN_PENDING' && record.cloudStatus === 'RUNNING' && record.tokenBound === false ? h('button', { type: 'button', disabled: busy, onClick: () => action(record, 'repairAccess'), style: buttonStyle() }, '修复访问配置') : null,
             record.cloudAgentId ? h('button', { type: 'button', disabled: busy, onClick: () => deleting === record.id ? action(record, 'remove') : setDeleting(record.id), style: { ...buttonStyle(), color: BRAND.danger } }, deleting === record.id ? '确认删除云端实例' : '删除') : null,

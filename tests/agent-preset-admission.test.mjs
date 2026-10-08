@@ -48,12 +48,12 @@ test('resource-bearing and non-DSH revisions use the native DSH runtime bridge',
   assert.equal(dshPresetEligibility(agent({ spec: { runtime: { type: 'codex' }, bindings: {} } })).mode, 'studio-bridge');
 });
 
-test('cloud-owned runtimes use the cloud RunAgent bridge through the native session', async () => {
+test('Studio deployments use the frozen cloud bridge through the native session', async () => {
   const registered = [];
   const cloud = agent({
-    source: 'agentengine-server',
-    metadata: { id: 'cloud/agent', name: 'Cloud Agent', revision: 4 },
-    spec: { runtime: { type: 'langgraph' }, bindings: {} },
+    source: 'studio-deployment', deployment: { id: `dep_${'a'.repeat(32)}` },
+    metadata: { id: 'cloud/agent', name: 'Cloud Agent', revision: 4, local: false },
+    spec: { runtime: { type: 'harness' }, bindings: {} },
   });
   const eligibility = dshPresetEligibility(cloud);
   assert.equal(eligibility.ok, true);
@@ -67,7 +67,9 @@ test('cloud-owned runtimes use the cloud RunAgent bridge through the native sess
   await admission.ensure('cloud/agent');
   assert.equal(registered[0].plugins[0].name, '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin');
   assert.equal(registered[0].plugins[0].config.local, false);
-  assert.equal(registered[0].plugins[0].config.runtime, 'langgraph');
+  assert.equal(registered[0].plugins[0].config.runtime, 'harness');
+  for (const type of ['adk', 'langgraph', 'openclaw', 'hermes']) assert.equal(dshPresetEligibility({ ...cloud, spec: { runtime: { type } } }).ok, false);
+  assert.equal(dshPresetEligibility({ ...cloud, source: 'agentengine-server' }).code, 'STUDIO_DEPLOYMENT_REQUIRED');
 });
 
 test('the active DSH model route and official persona row make a real native preset', async () => {

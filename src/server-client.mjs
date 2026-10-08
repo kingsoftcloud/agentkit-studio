@@ -297,6 +297,9 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
         if (!values.cloudAccessKey || !values.cloudSecretKey) throw new AgentEngineError('CLOUD_CREDENTIALS_MISSING', '请在模型与凭证中配置云端 AK/SK');
         if (deploymentIdentity && ['CreateAgentProduct', 'UpdateAgent', 'DeleteAgent'].includes(name)) {
           const identity = await deploymentIdentity.resolve({ ...values, cloudServerUrl: values.cloudServerUrl || serverUrl }, { signal });
+          if (name === 'CreateAgentProduct' && identity.kind !== 'subaccount') {
+            throw new AgentEngineError('CLOUD_SUBACCOUNT_REQUIRED', '云端创建需要已核验的子账号 AK/SK；不会使用主账号创建资源');
+          }
           if (identity.userUuid) headers['X-Ksc-User-uuid'] = identity.userUuid;
           if (identity.accountId) headers['X-Ksc-Account-Id'] = identity.accountId;
           else delete headers['X-Ksc-Account-Id']; // Let KOP derive the root owner; do not assert an unverified configured ID.

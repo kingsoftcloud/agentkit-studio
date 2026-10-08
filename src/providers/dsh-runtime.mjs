@@ -418,12 +418,13 @@ async function* localFrames(handler, payload, { signal, toolAdapter, agent } = {
   }
 }
 
-async function* cloudFrames(body, signal) {
+export async function* cloudFrames(body, signal, { onEvent } = {}) {
   const state = createChunkState();
   let completed = false;
   for await (const event of parseSse(body, signal)) {
     if (signal?.aborted) throw cloudCancelledError(signal.reason);
     const type = String(event?.type || event?.event || '');
+    if (await onEvent?.(event)) continue;
     if (/^response\.(failed|error)$/i.test(type) || /^error$/i.test(type)) {
       const detail = String(event?.error?.message || event?.message || '云端 Agent 运行失败').slice(0, 500);
       throw Object.assign(new Error(detail), { code: 'CLOUD_RUN_FAILED' });
@@ -431,8 +432,14 @@ async function* cloudFrames(body, signal) {
     if (/^response\.incomplete$/i.test(type)) {
       throw Object.assign(new Error('云端 Agent 流未完整结束'), { code: 'CLOUD_STREAM_INCOMPLETE' });
     }
+    if (/^response\.cancel(?:ed|led)$/i.test(type)) throw cloudCancelledError();
     if (/^response\.completed$/i.test(type)) {
       completed = true;
+      const usage = event.response?.usage || event.usage;
+      if (usage && ['input_tokens', 'output_tokens'].every(key => Number.isSafeInteger(usage[key]) && usage[key] >= 0)) {
+        yield { type: 'usage', usage: nativeCodexUsage({ inputTokens: usage.input_tokens, outputTokens: usage.output_tokens,
+          cachedInputTokens: usage.input_tokens_details?.cached_tokens || 0, reasoningTokens: usage.output_tokens_details?.reasoning_tokens }) };
+      }
       continue;
     }
     const item = event?.item || event?.output_item || event?.response?.output_item || event?.data?.item || {};
@@ -490,7 +497,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, observability, AdapterBase } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, observability, AdapterBase } = {}) {
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -619,6 +626,10 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
           if (!failure) throw error;
           yield { type: 'finish', reason: { kind: 'error', failure } };
         }
+        return;
+      }
+      if (cloudRuntime) {
+        yield* cloudRuntime({ ...options, agentId, userMessage: user, input, session: toolAgent?.session });
         return;
       }
       if (!cloudClient || typeof cloudClient.streamAction !== 'function') throw new Error('AgentEngine cloud runtime is unavailable');

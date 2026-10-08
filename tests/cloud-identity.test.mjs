@@ -40,6 +40,29 @@ test('a matching active key with an explicit empty username is a main account, n
   assert.doesNotMatch(JSON.stringify(identity), /test-ak|test-sk|unverified-owner/);
 });
 
+test('owner-default listings resolve a subaccount through an exact AK match and an active user-scoped key', async () => {
+  const calls = [];
+  const resolver = createCloudIdentityResolver({ fetchImpl: async (_url, init) => {
+    const params = new URLSearchParams(init.body), action = params.get('Action'); calls.push([action, params.get('UserName')]);
+    if (action === 'ListAllUserAccessKeys') return json({ AccessKeyList: [{ AccessKey: 'other-ak', UserName: 'another-user' }, { AccessKey: 'test-ak', UserName: 'operator' }] });
+    if (action === 'GetUser') return json({ GetUserResult: { User: user } });
+    return json(params.has('UserName') ? listing() : listing([{ AccessKeyId: 'root-ak', UserName: '', Status: 'Active' }]));
+  } });
+  assert.equal((await resolver.resolve(values)).userUuid, 'user-123');
+  assert.deepEqual(calls, [['ListAccessKeys', null], ['ListAllUserAccessKeys', null], ['ListAccessKeys', 'operator'], ['GetUser', 'operator']]);
+});
+
+test('fallback never guesses an actor from absent, duplicate or inactive subaccount keys', async () => {
+  for (const extra of ['missing', 'duplicate', 'inactive', 'truncated', 'wrong-user']) {
+    const resolver = createCloudIdentityResolver({ fetchImpl: async (_url, init) => {
+      const params = new URLSearchParams(init.body), action = params.get('Action');
+      if (action === 'ListAllUserAccessKeys') return json({ AccessKeyList: extra === 'missing' ? [] : Array.from({ length: extra === 'duplicate' ? 2 : 1 }, () => ({ AccessKey: 'test-ak', UserName: 'operator' })), ...(extra === 'truncated' ? { IsTruncated: true } : {}) });
+      return json(params.has('UserName') ? listing([{ AccessKeyId: 'test-ak', UserName: extra === 'wrong-user' ? 'other' : 'operator', Status: extra === 'inactive' ? 'Inactive' : 'Active' }]) : listing([]));
+    } });
+    await assert.rejects(resolver.resolve(values), { code: 'CLOUD_IDENTITY_UNVERIFIED' });
+  }
+});
+
 test('missing, duplicate, truncated, inactive and malformed key listings stay unverified', async () => {
   const active = { AccessKeyId: 'test-ak', UserName: 'operator', Status: 'Active' };
   for (const payload of [{}, listing([]), listing([active, active]), listing([{ ...active, AccessKeyId: 'other' }]),

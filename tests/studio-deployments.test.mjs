@@ -90,6 +90,18 @@ test('three runtimes create from a frozen Build, synchronize the platform token,
     const first = await f.service.create(f.request); await f.settled();
     assert.equal((await f.service.get(first.id)).state, 'TOKEN_PENDING');
     const ready = await f.service.refresh(first.id); assert.equal(ready.state, 'READY');
+    const cloud = (await f.service.agents.list()).items[0];
+    assert.equal(cloud.metadata.id, ready.cloudAgentId);
+    assert.equal(cloud.metadata.local, false);
+    assert.equal(cloud.source, 'studio-deployment');
+    assert.equal(cloud.deployment.model, 'bound-model');
+    assert.equal(cloud.deployment.buildId, f.input.buildId);
+    assert.equal(cloud.buildId, undefined, 'cloud must not accidentally execute a local Build');
+    f.profile.modelName = 'desktop-model-changed';
+    assert.equal((await f.service.agents.get(ready.cloudAgentId)).deployment.model, 'bound-model');
+    assert.equal((await f.service.agents.connect(ready.cloudAgentId)).token, 'platform-private-runtime-token');
+    f.profile.modelName = 'bound-model';
+    assert.equal(JSON.stringify(cloud).includes('private-runtime-token'), false);
     const duplicate = await f.service.create(f.request); assert.equal(duplicate.id, first.id);
     assert.equal(f.calls.filter(([action]) => action === 'create').length, 1);
     const payload = f.calls.find(([action]) => action === 'create')[1];
@@ -103,8 +115,38 @@ test('three runtimes create from a frozen Build, synchronize the platform token,
     }
     assert.equal((await stat(join(f.root, 'deployments', `${first.id}.json`))).mode & 0o077, 0);
     assert.equal((await f.service.remove(first.id)).state, 'DELETED');
+    assert.equal((await f.service.agents.list()).items.length, 0);
+    assert.equal((await f.service.agents.recover()).items[0].deployment.state, 'DELETED', 'deleted deployment history still restores its native preset');
+    await assert.rejects(() => f.service.agents.connect(ready.cloudAgentId), { code: 'DEPLOYMENT_DELETED' });
     await f.service.remove(first.id); assert.equal(f.calls.filter(([action]) => action === 'delete').length, 1);
   }
+});
+
+test('root credentials stop both preflight and a changed identity before upload or creation', async t => {
+  const f = await fixture(t);
+  f.options.client.inspectIdentity = async () => ({ kind: 'main-account' });
+  await assert.rejects(() => f.service.prepare(f.input), { code: 'CLOUD_SUBACCOUNT_REQUIRED' });
+  assert.equal(f.calls.length, 0);
+  let inspections = 0;
+  f.options.client.inspectIdentity = async () => ++inspections === 1
+    ? { kind: 'subaccount', accountId: 'owner', userUuid: 'actor', userName: 'operator' } : { kind: 'main-account' };
+  const record = await f.service.create(f.request); await f.settled();
+  assert.equal((await f.service.get(record.id)).state, 'FAILED');
+  assert.equal(f.calls.length, 0);
+});
+
+test('cloud admission requires the current credential scope, live availability and frozen provenance', async t => {
+  const f = await fixture(t);
+  const record = await f.service.create(f.request); await f.settled();
+  await assert.rejects(() => f.service.agents.connect('ar-cloud-test'), { code: 'DEPLOYMENT_NOT_READY' });
+  await f.service.refresh(record.id);
+  f.remote.Basic.Status = 'DELETING';
+  await assert.rejects(() => f.service.agents.connect('ar-cloud-test'), { code: 'DEPLOYMENT_NOT_READY' });
+  f.remote.Basic.Status = 'RUNNING'; f.remote.Deployment.ArtifactPath = 'other-image';
+  await assert.rejects(() => f.service.agents.connect('ar-cloud-test'), { code: 'DEPLOYMENT_PROVENANCE_MISMATCH' });
+  f.values.cloudAccessKey = 'another-operator';
+  assert.equal((await f.service.agents.list()).items.length, 0);
+  await assert.rejects(() => f.service.agents.connect('ar-cloud-test'), { code: 'DEPLOYMENT_AGENT_NOT_FOUND' });
 });
 
 test('unknown create outcome persists across restart and never creates again on a repeated request', async t => {

@@ -20,7 +20,7 @@ export function codexItemToolChunk(item, phase) {
 }
 
 /** Presentation facts only: never append model-facing tool messages or dispatch tools. */
-export function createCodexToolRecorder(session) {
+export function createCodexToolRecorder(session, { label = 'Codex', code = 'CODEX' } = {}) {
   if (typeof session?.append !== 'function') return null;
   const runId = randomUUID();
   const calls = new Map();
@@ -37,7 +37,7 @@ export function createCodexToolRecorder(session) {
         arguments: typeof args === 'string' ? args : JSON.stringify(args),
         ...(chunk.phase === 'started' ? {} : {
           content: toolContent(chunk.result),
-          ...(chunk.phase === 'failed' ? { error: { name: 'CodexToolError', code: 'CODEX_TOOL_FAILED', reason: String(chunk.error?.message || 'Codex 工具执行失败') } } : {}),
+          ...(chunk.phase === 'failed' ? { error: { name: 'ToolError', code: `${code}_TOOL_FAILED`, reason: String(chunk.error?.message || `${label} 工具执行失败`) } } : {}),
         }),
       };
       session.append(CODEX_TOOL_EVENT, data, { ignorable: true });
@@ -49,8 +49,8 @@ export function createCodexToolRecorder(session) {
         if (call.settled) continue;
         session.append(CODEX_TOOL_EVENT, {
           callId: call.callId, name: call.name, arguments: call.arguments,
-          phase: 'failed', content: [{ type: 'text', text: '运行已结束，未收到 Codex 的工具完成结果；实际执行结果尚未确认。' }],
-          error: { name: 'Interrupted', code: 'CODEX_TOOL_OUTCOME_UNKNOWN' },
+          phase: 'failed', content: [{ type: 'text', text: `运行已结束，未收到 ${label} 的工具完成结果；实际执行结果尚未确认。` }],
+          error: { name: 'Interrupted', code: `${code}_TOOL_OUTCOME_UNKNOWN` },
         }, { ignorable: true });
         call.settled = true;
       }

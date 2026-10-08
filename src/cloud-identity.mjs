@@ -23,7 +23,7 @@ async function readBounded(response) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function ownKey(response, accessKey) {
+function ownKey(response, accessKey, allowMissing = false) {
   const result = response?.ListAccessKeyResult;
   const entries = result?.AccessKeyMetadata?.member;
   // An incomplete response or missing key is unknown, never evidence of a root key.
@@ -32,8 +32,17 @@ function ownKey(response, accessKey) {
   }
   if (!Array.isArray(entries)) fail();
   const matches = entries.filter(item => item?.AccessKeyId === accessKey);
+  if (!matches.length && allowMissing) return null;
   if (matches.length !== 1 || matches[0].Status !== 'Active' || !text(matches[0].UserName)) fail();
   return matches[0];
+}
+
+function matchingUser(response, accessKey) {
+  if (!response || response.NextMarker || (response.IsTruncated !== undefined && response.IsTruncated !== false)
+    || !Array.isArray(response.AccessKeyList)) fail();
+  const matches = response.AccessKeyList.filter(item => item?.AccessKey === accessKey);
+  if (matches.length !== 1 || !text(matches[0].UserName) || !matches[0].UserName) fail();
+  return matches[0].UserName;
 }
 
 function subaccount(response, expectedName) {
@@ -90,7 +99,17 @@ export function createCloudIdentityResolver({ fetchImpl = fetch, timeoutMs = 150
     else {
       cache.delete(cacheKey);
       const listed = await request(origin, 'ListAccessKeys', {}, credentials, signal);
-      const key = ownKey(listed.payload, cloudAccessKey);
+      let key = ownKey(listed.payload, cloudAccessKey, true);
+      if (!key) {
+        // Some IAM deployments default ListAccessKeys to the owner's keys even
+        // when signed by a subaccount. A missing key is not a root identity.
+        // Resolve only this exact AK, then verify its active user-specific row.
+        const all = await request(listed.origin, 'ListAllUserAccessKeys', {}, credentials, signal);
+        const name = matchingUser(all.payload, cloudAccessKey);
+        const own = await request(all.origin, 'ListAccessKeys', { UserName: name }, credentials, signal);
+        key = ownKey(own.payload, cloudAccessKey);
+        if (key.UserName !== name) fail();
+      }
       if (key.UserName === '') {
         // IAM's default key list matched this active key with an empty username.
         // No subaccount or owning account ID may be fabricated from that result.

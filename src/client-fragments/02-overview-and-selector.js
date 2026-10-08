@@ -145,10 +145,10 @@
         setOpen(false);
         setLoading(true);
         (async () => {
-          const first = await hostRemote.agents({ source: 'local', pageSize: 100 });
+          const first = await hostRemote.agents({ source: 'all', pageSize: 100 });
           const items = [...(first?.items || [])];
           for (let page = 2; alive && items.length < Number(first?.total || 0); page += 1) {
-            const next = await hostRemote.agents({ source: 'local', pageSize: 100, page });
+            const next = await hostRemote.agents({ source: 'all', pageSize: 100, page });
             if (!next?.items?.length) break;
             items.push(...next.items);
           }
@@ -270,7 +270,7 @@
           h('div', { role: 'separator', style: { margin: '6px 0', borderTop: '1px solid ' + BRAND.border } }),
           loading ? h('div', { role: 'status', style: { padding: '12px', color: BRAND.inkMuted } }, '正在加载…') : filtered.length ? filtered.map(agent => {
             const id = agent.metadata?.id || agent.id;
-            return h(MenuItemButton, { key: id, onSelect: () => select(id) }, h('span', { style: { display: 'flex', alignItems: 'center', gap: '12px' } }, h('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, agent.metadata?.name || agent.name || id), selected === id ? h('span', { 'aria-label': '已选择' }, '✓') : null));
+            return h(MenuItemButton, { key: id, disabled: agent.deployment?.available === false, onSelect: () => select(id) }, h('span', { style: { display: 'flex', alignItems: 'center', gap: '12px' } }, h('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, agent.metadata?.name || agent.name || id), agent.deployment ? h('span', { style: { fontSize: '11px', color: BRAND.inkMuted } }, '云端') : null, selected === id ? h('span', { 'aria-label': '已选择' }, '✓') : null));
           }) : h('div', { role: 'status', style: { padding: '12px', color: BRAND.inkMuted } }, search ? '没有匹配的 Agent' : '还没有本地 Agent')),
         selected && runtime ? h('span', { style: { whiteSpace: 'nowrap', fontSize: '11px' } }, RUNTIME_LABELS[runtime]) : null,
         notice && !notice.startsWith('已') ? h('span', { role: 'status', style: { maxWidth: '320px', color: BRAND.inkMuted, fontSize: '11px' } }, notice) : null,

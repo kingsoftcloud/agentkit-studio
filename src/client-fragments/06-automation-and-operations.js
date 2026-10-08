@@ -67,7 +67,7 @@
       const load = async () => {
         setStatus('loading'); setError('');
         try {
-          const [scheduleResult, agentResult] = await Promise.all([hostRemote.schedules(), hostRemote.agents()]);
+          const [scheduleResult, agentResult] = await Promise.all([hostRemote.schedules(), hostRemote.agents({ source: 'local', pageSize: 100 })]);
           const nextAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
           setAgents(nextAgents);
           const nextTasks = Array.isArray(scheduleResult?.items) ? scheduleResult.items : [];
