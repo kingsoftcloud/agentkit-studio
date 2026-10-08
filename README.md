@@ -5,7 +5,7 @@
 已完成预发冷启动；三种运行时的[真实资源验收与剩余限制](docs/contracts/deployed-resource-acceptance-2026-10-08.md)
 分别记录；运行中心已接入冻结版本的云端创建、状态、日志与删除，Harness 冻结包升级回滚与 [Codex 镜像升级回滚](docs/contracts/cloud-codex-tools-2026-10-09.md)已实测，三种运行时的[容器重建后续聊](docs/contracts/cloud-storage-acceptance-2026-10-09.md)已实测，完整资源组合仍在联调。
 这些验收依赖对应的 Server 适配版本。共享环境重新发布后须复查能力声明；2026-10-09 的
-[控制面版本复查](docs/contracts/cloud-control-plane-2026-10-09.md)发现主线镜像尚缺持久化声明，后续资源升级验收因此未通过。
+[控制面版本复查](docs/contracts/cloud-control-plane-2026-10-09.md)记录了主线镜像缺少持久化声明及恢复候选版本的过程；适配仍待纳入主线。
 
 AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时
@@ -62,7 +62,7 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
   Channels 可选择本地 Agent 或其云端部署；自动化区分本地与云端，云端计划复用 Server 调度服务。
   三种运行时已通过[真实 WPS 配对、续聊和定时结果投递](docs/contracts/wps-runtime-acceptance-2026-10-09.md)。计划经受控内部 API 创建，KOP 调度入口及真实飞书/企业微信收发仍待验收，详见[云端渠道与定时任务](docs/contracts/cloud-agent-operations.md)。
-  三种运行时独立知识库盲测、Harness 升级移除和回滚恢复绑定后的渠道调用已通过，详见[资源隔离验收](docs/contracts/cloud-resource-isolation-2026-10-09.md)；完整资源组合仍待验收。
+  三种运行时独立知识库盲测、Harness 升级移除和回滚恢复绑定后的渠道调用，以及 Codex 知识库绑定增删的原实例升级回滚已通过，详见[资源隔离验收](docs/contracts/cloud-resource-isolation-2026-10-09.md)；DSH 资源升级回滚和完整资源组合仍待验收。
 - **插件市场**：加号可添加安装源；DSH 自带插件直接启用，其他插件由原生 PluginManager
   检查、安装并返回真实加载结果。Codex 使用完整的 `plugin@marketplace` 标识调用官方 CLI，
   Skill 在新建 Codex Agent 会话中加载，连接器继续使用 Codex 原生授权。Studio 的 Codex
