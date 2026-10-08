@@ -1,5 +1,6 @@
 /** Run automated work through the same public DSH Session/Agent API as native chats. */
 import { readNativeRequestEvents } from './native-request-history.mjs';
+import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 
 export function createNativeAutomationRunner({ getService, admit, observe, timeoutMs = 300000, reuseSession = false } = {}) {
   const lanes = new Map();
@@ -52,7 +53,8 @@ export function createNativeAutomationRunner({ getService, admit, observe, timeo
       const output = (messages.at(-1)?.data?.message?.content || []).filter(part => part.type === 'text').map(part => part.text || '').join('');
       const usages = messages.map(event => event.data?.usage).filter(Boolean);
       const tokenUsage = usages.length ? { inputTokens: usages.reduce((sum, usage) => sum + Number(usage.inputTokens || 0) + Number(usage.cacheReadTokens || 0) + Number(usage.cacheWriteTokens || 0), 0), outputTokens: usages.reduce((sum, usage) => sum + Number(usage.outputTokens || 0), 0) } : {};
-      return { sessionId, runId: `dsh:${sessionId}:${end.seq}`, output, tokenUsage, latencyMs: Date.now() - startedAt, toolCalls: events.filter(event => event.type === 'tool/call').map(event => ({ name: event.data.name, callId: event.data.callId })) };
+      const toolCalls = [...new Map(events.filter(event => event.type === 'tool/call' || event.type === CODEX_TOOL_EVENT).map(event => [event.data.callId, { name: event.data.name, callId: event.data.callId }])).values()];
+      return { sessionId, runId: `dsh:${sessionId}:${end.seq}`, output, tokenUsage, latencyMs: Date.now() - startedAt, toolCalls };
     } finally { unobserve?.(); }
   });
   return request => {

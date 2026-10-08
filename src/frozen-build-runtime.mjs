@@ -2,8 +2,9 @@
 import { createNativeAutomationRunner } from './native-automation-runner.mjs';
 import { startBuildRuntimeHttp } from './build-runtime-http.mjs';
 import { readNativeRequestEvents } from './native-request-history.mjs';
+import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 
-const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', 'step/end', 'turn/end']);
+const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, 'step/end', 'turn/end']);
 
 export function observeNativeRun(ctx, agent, onFrame) {
   const disposers = [
@@ -36,6 +37,17 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, env = process
     }
     return nativeRun(request);
   };
-  return startBuildRuntimeHttp({ agentId, buildId, runner, token: env.AGENTKIT_RUNTIME_TOKEN,
+  const validatePrevious = async (previous, signal) => {
+    try {
+      const events = await readNativeRequestEvents(ctx.get('sessionController'), previous.sessionId, previous.occurrenceId, signal);
+      if (events.at(-1)?.data?.reason?.kind !== 'completed') throw Object.assign(new Error('previous response did not complete'), { code: 'RESPONSES_PREVIOUS_NOT_COMPLETED', status: 409 });
+    } catch (error) {
+      if (['CHANNEL_REQUEST_NOT_FOUND', 'CHANNEL_TURN_INCOMPLETE'].includes(error.code)) throw Object.assign(new Error('previous response unavailable'), { code: 'RESPONSES_PREVIOUS_NOT_FOUND', status: 404 });
+      throw error;
+    }
+  };
+  const bindings = frozen.spec?.bindings || {}, primary = bindings.modelProfileIds?.[0];
+  const model = bindings.modelProfileId || (typeof primary === 'string' ? primary : primary?.resourceId || primary?.id) || '';
+  return startBuildRuntimeHttp({ agentId, buildId, runner, validatePrevious, model, token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }

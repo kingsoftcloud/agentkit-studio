@@ -108,6 +108,7 @@ test('observer forwards only the exact native Agent and disposes both listeners'
   assert.equal(frames.length, 0);
   listeners.get('agent/assistant-stream')({ agent, frame: { type: 'start', attemptId: 'one' } });
   listeners.get('session/event')(agent.session, { type: 'tool/call' });
-  assert.deepEqual(frames.map(frame => frame.kind), ['assistant', 'event']);
+  listeners.get('session/event')(agent.session, { type: 'agentkit/codex-tool' });
+  assert.deepEqual(frames.map(frame => frame.kind), ['assistant', 'event', 'event']);
   stop(); assert.equal(listeners.size, 0);
 });

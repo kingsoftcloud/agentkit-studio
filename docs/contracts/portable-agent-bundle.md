@@ -83,8 +83,9 @@ Responses / Chat Completions 选择随模型配置迁移。Codex 原生账户登
 安装曾触发 pnpm `ENAMETOOLONG`；安装输入已移至目标 Profile 自身的摘要目录，复测成功。
 
 **预发运行时部署仍未验收**：还需固定目标 Host 及其依赖的发布产物、AgentEngine
-`/v1/responses` 协议适配、UploadCode 上传和 CreateAgentProduct/UpdateAgent 生命周期联调。
+`/v1/responses` 预发集成、UploadCode 上传和 CreateAgentProduct/UpdateAgent 生命周期联调。
 本地独立 Host 调用云资源成功，不能作为这些部署流程已完成的证据。
+已实现的单轮文本 Responses 入口、续聊和取消边界见[协议合同](frozen-runtime-responses.md)。
 
 ## Codex 独立 Host 迁移验收（2026-10-08）
 

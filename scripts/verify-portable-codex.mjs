@@ -15,6 +15,7 @@ import { createModelService } from '../src/model-service.mjs';
 import { createStudioBuild } from '../src/studio-build.mjs';
 import { createPortableBundles, importPortableBundle, verifyPortableBundle } from '../src/portable-bundle.mjs';
 import { runtimeSkill } from '../src/skill-files.mjs';
+import { readSse } from '../src/sse.mjs';
 
 const option = name => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -22,7 +23,7 @@ const listen = server => new Promise((accept, reject) => { server.once('error', 
 async function freePort() { const server = createServer(); const port = await listen(server); await new Promise(r => server.close(r)); return port; }
 
 if (!process.argv.includes('--execute') || !option('--dsh-root')) {
-  console.log('Usage: node scripts/verify-portable-codex.mjs --execute --dsh-root DSH_CHECKOUT [--model glm-5.3-flash] [--keep]. Uses configured model credentials and consumes inference usage.');
+  console.log('Usage: node scripts/verify-portable-codex.mjs --execute --dsh-root DSH_CHECKOUT [--responses] [--model glm-5.3-flash] [--keep]. Uses configured model credentials and consumes inference usage.');
 } else {
   const project = fileURLToPath(new URL('../', import.meta.url));
   const root = await mkdtemp(join(tmpdir(), 'agentkit-codex-portable-'));
@@ -60,7 +61,7 @@ if (!process.argv.includes('--execute') || !option('--dsh-root')) {
     const selected = await models.profile(option('--model') || 'glm-5.3-flash');
     const port = await listen(mcp), source = join(root, 'source'), skillRoot = join(source, 'skill');
     await mkdir(skillRoot, { recursive: true });
-    const skillText = '---\nname: card-format\ndescription: Format card lookup answers\n---\nCard answers must include skill_tag: PEBBLE-42.\n';
+    const skillText = '---\nname: card-format\ndescription: Required output format for card lookup answers\n---\nReturn card lookup answers as JSON with these required fields: card_id, status, verification, route_tag, skill_tag. The skill_tag value must be PEBBLE-42. Copy verification from the tool result; never invent it.\n';
     await writeFile(join(skillRoot, 'SKILL.md'), skillText);
     const agentId = `ar-local-${randomBytes(8).toString('hex')}`;
     const bindings = { modelProfileId: 'portable-model', mcpServers: ['card-mcp'], skills: ['card-format'] };
@@ -86,8 +87,10 @@ if (!process.argv.includes('--execute') || !option('--dsh-root')) {
     const dshRoot = resolve(option('--dsh-root'));
     console.log(JSON.stringify({ phase: 'installing-fresh-profile', root }));
     await command('make', ['profile-install', `DSH_ROOT=${dshRoot}`, 'DSH_PROFILE=portable-codex-proof'], project, env, 300000).done;
-    const host = command('node', ['--import', 'tsx/esm', 'apps/cli/src/bin.ts', '--profile', 'portable-codex-proof', '--host', '127.0.0.1', '--no-open', '--port', String(webPort)], dshRoot, env);
+    const startHost = () => command('node', ['--import', 'tsx/esm', 'apps/cli/src/bin.ts', '--profile', 'portable-codex-proof', '--host', '127.0.0.1', '--no-open', '--port', String(webPort)], dshRoot, env);
+    let host = startHost();
     const origin = `http://127.0.0.1:${runtimePort}`;
+    const waitReady = async () => {
     let ready = false;
     for (let i = 0; i < 90; i++) {
       try { ready = (await fetch(`${origin}/health`, { signal: AbortSignal.timeout(1000) })).ok; } catch {}
@@ -95,22 +98,48 @@ if (!process.argv.includes('--execute') || !option('--dsh-root')) {
       await sleep(1000);
     }
     assert.ok(ready, 'imported Host never became ready; inspect private host.log');
+    };
+    await waitReady();
     console.log(JSON.stringify({ phase: 'running-blind-prompt', model: selected.modelName }));
     const started = Date.now();
-    const response = await fetch(`${origin}/runs`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: '查询 Q7 卡片的状态，给我结论。', requestId: randomUUID(), sessionId: 'blind-card', stream: true }), signal: AbortSignal.timeout(180000) });
+    const responsesApi = process.argv.includes('--responses');
+    const payload = responsesApi
+      ? { input: [{ role: 'user', content: [{ type: 'input_text', text: '查询 Q7 卡片的状态，给我结论。' }] }], request_id: randomUUID(), session_id: 'blind-card', stream: true }
+      : { input: '查询 Q7 卡片的状态，给我结论。', requestId: randomUUID(), sessionId: 'blind-card', stream: true };
+    const post = body => fetch(`${origin}${responsesApi ? '/v1/responses' : '/runs'}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(180000) });
+    const response = await post(payload);
     assert.equal(response.status, 200);
-    const stream = await response.text();
-    const frames = stream.split('\n\n').filter(block => block.startsWith('event:')).map(block => ({ event: block.split('\n')[0].slice(7), data: JSON.parse(block.split('\n').find(line => line.startsWith('data: ')).slice(6)) }));
-    const completed = frames.find(frame => frame.event === 'run.completed');
-    assert.ok(completed, `run failed: ${frames.find(frame => frame.event === 'run.failed')?.data?.code || 'missing completion'}`);
-    for (const marker of ['CLOUD-CODEX-71', 'PEBBLE-42', nonce]) assert.ok(completed.data.output.includes(marker), 'system, Skill or live MCP result missing');
+    const frames = []; let firstTextMs;
+    for await (const frame of readSse(response.body)) {
+      frames.push(frame);
+      if (firstTextMs === undefined && (frame.type === 'response.output_text.delta' || frame.event === 'dsh.assistant' && frame.chunk?.type === 'text-delta')) firstTextMs = Date.now() - started;
+    }
+    const milliseconds = Date.now() - started;
+    const completed = frames.find(frame => frame.event === (responsesApi ? 'response.completed' : 'run.completed'));
+    assert.ok(completed, 'run missing successful completion');
+    for (const marker of ['CLOUD-CODEX-71', 'PEBBLE-42', nonce]) assert.ok((completed.output_text || completed.output).includes(marker), 'system, Skill or live MCP result missing');
     assert.ok(calls.length > 0);
     const proof = { passed: true, scope: 'local-fresh-DSH-Host-real-Codex-model-fixture-MCP', model: selected.modelName, api: 'chat-completions',
-      sourceRemoved: true, agentId, buildId: imported.buildId, bundleId: imported.bundleId, milliseconds: Date.now() - started,
-      toolCalls: calls.length, assistantFrames: frames.filter(frame => frame.event === 'dsh.assistant').length,
-      systemInstructionVerified: true, skillVerified: true, liveMcpResultVerified: true, tokenUsage: completed.data.tokenUsage };
-    assert.ok(proof.assistantFrames > 1, 'streaming frames missing');
+      sourceRemoved: true, agentId, buildId: imported.buildId, bundleId: imported.bundleId,
+      toolCalls: calls.length, assistantFrames: frames.filter(frame => ['dsh.assistant', 'response.output_text.delta'].includes(frame.event)).length,
+      systemInstructionVerified: true, skillVerified: true, liveMcpResultVerified: true, tokenUsage: completed.tokenUsage || completed.usage,
+      endpoint: responsesApi ? '/v1/responses' : '/runs', firstTextMs, milliseconds };
+    assert.ok(proof.assistantFrames > 1 && firstTextMs < milliseconds, 'live streaming frames missing');
+    if (responsesApi) {
+      const before = calls.length;
+      const replay = await post({ ...payload, stream: false });
+      assert.equal(replay.status, 200); assert.equal((await replay.json()).id, completed.id);
+      assert.equal(calls.length, before, 'idempotent retry executed the MCP again');
+      process.kill(-host.child.pid, 'SIGTERM'); await host.done.catch(() => {});
+      host = startHost(); await waitReady();
+      const continued = await post({ input: '上一轮卡片的编号和核验码是什么？不要重新查询。', previous_response_id: completed.id });
+      assert.equal(continued.status, 200);
+      const result = await continued.json();
+      for (const expected of ['Q7', nonce]) assert.ok(result.output_text.includes(expected), 'native history missing after Host restart');
+      Object.assign(proof, { idempotentRetryVerified: true, hostRestartContinuationVerified: true, responsesToolItemVerified: completed.output.some(item => item.type === 'function_call') });
+      assert.ok(proof.responsesToolItemVerified, 'tool item missing');
+    }
     await writeFile(join(root, 'proof.json'), JSON.stringify(proof, null, 2), { mode: 0o600 });
     console.log(JSON.stringify(proof));
   } catch (error) {
