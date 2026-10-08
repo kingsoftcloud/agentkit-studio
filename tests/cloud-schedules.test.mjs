@@ -56,3 +56,23 @@ test('forged, cross-agent, and cross-account schedule references cannot mutate a
   assert.deepEqual(writes, []);
   assert.ok((await service.execute('list')).warnings.length);
 });
+
+
+test('a failed catalog is not an empty success and does not hide ready targets', async () => {
+  const ids = ['ar-ready', 'ar-unregistered'];
+  let failAll = false;
+  const service = createCloudSchedules({ agents: async () => ({ get: async () => ({}),
+    list: async () => ({ items: ids.map(id => ({ metadata: { id } })) }),
+  }), client: async () => ({ forAgent: id => ({ schedules: { list: async () => {
+    if (failAll || id === 'ar-unregistered') throw new Error('Action not registered');
+    return { data: { Tasks: [], Availability: { Enabled: true, RuntimeContracts: ['agentkit.responses/v1'] } } };
+  } } }) }) });
+  const partial = await service.execute('list');
+  assert.deepEqual(partial.availability.readyAgentIds, ['ar-ready']);
+  assert.equal(partial.availability.catalogReadable, true);
+  assert.equal(partial.warnings.length, 1);
+  failAll = true;
+  const unavailable = await service.execute('list');
+  assert.deepEqual(unavailable.availability.readyAgentIds, []);
+  assert.equal(unavailable.availability.catalogReadable, false);
+});

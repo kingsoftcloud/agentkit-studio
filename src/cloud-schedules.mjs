@@ -38,15 +38,18 @@ export function createCloudSchedules({ agents, client }) {
         const targets = catalogResult.items;
         const results = await Promise.allSettled(targets.map(target => catalog(target.metadata.id)));
         const warnings = [...(catalogResult.warnings || [])], items = [];
-        let active = targets.length > 0;
+        let active = targets.length > 0, readable = 0;
+        const readyAgentIds = [];
         results.forEach((result, index) => {
           if (result.status === 'fulfilled') {
+            readable++;
+            if (result.value.enabled && result.value.supported) readyAgentIds.push(targets[index].metadata.id);
             items.push(...result.value.items);
             if (!result.value.enabled || !result.value.supported) { active = false; warnings.push('云端调度服务未启用或尚未支持 Studio 运行时'); }
           } else { active = false; warnings.push(`云端 Agent ${targets[index].metadata.id} 的任务读取失败：${result.reason?.message || '请求未完成'}`); }
         });
         return { items: items.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)), nativeItems: [], warnings: [...new Set(warnings)],
-          availability: { scope: 'cloud', alwaysOn: true, lifecycleOwner: 'agentengine-server', triggerActive: active } };
+          availability: { scope: 'cloud', alwaysOn: true, lifecycleOwner: 'agentengine-server', triggerActive: active, readyAgentIds, catalogReadable: targets.length === 0 || readable > 0 } };
       }
       if (operation === 'create') {
         await ready(agentId);

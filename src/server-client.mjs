@@ -370,6 +370,11 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
       const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk'].includes(name);
       const codeValid = envelope?.Code == null ? nativeResource : [0, 200].includes(Number(envelope.Code));
       if (!response.ok || !envelope || !codeValid || envelope.Error || envelope.ResponseMetadata?.Error) {
+        if (kop && ['InvalidActionOrVesion', 'InvalidActionOrVersion'].includes(envelope?.Error?.Code)) {
+          throw new AgentEngineError('SERVER_ACTION_NOT_REGISTERED',
+            `云端网关尚未开放 ${name}（API ${apiVersion}）；请发布对应 Action 后重试`,
+            { status: response.status, requestId: String(envelope.RequestId || ''), action: name });
+        }
         const status = !response.ok ? response.status : Number(envelope?.Code) || 502;
         // Upstream messages can echo input or credentials. Keep the renderer error bounded and metadata-only.
         throw new AgentEngineError(status === 429 ? 'SERVER_RATE_LIMITED' : 'SERVER_ACTION_FAILED',

@@ -61,3 +61,6 @@ typings/
 .next
 # AgentKit Studio generated tarballs and artifacts
 .artifacts/
+
+# Browser acceptance artifacts
+output/playwright/

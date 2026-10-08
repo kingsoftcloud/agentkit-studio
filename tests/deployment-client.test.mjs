@@ -125,3 +125,22 @@ test('cloud schedule writes use the same verified subaccount signing as deployme
   }
   assert.match(requests[1].url, /Action=RunAgentSchedule&/);
 });
+
+
+test('missing KOP schedule Action is actionable and never bypasses the gateway', async () => {
+  const calls = [];
+  const client = deploymentClient({ configuration, fetchImpl: async (url) => {
+    calls.push(String(url));
+    return Response.json({ RequestId: 'missing-action', Error: {
+      Code: 'InvalidActionOrVesion', Message: 'secret upstream credentials',
+    } }, { status: 400 });
+  } });
+  await assert.rejects(client.forAgent('ar-created').schedules.list(), error => {
+    assert.equal(error.code, 'SERVER_ACTION_NOT_REGISTERED');
+    assert.match(error.message, /ListAgentSchedules/);
+    assert.doesNotMatch(error.message, /secret/);
+    return true;
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0]).hostname, 'aicp.api.ksyun.com');
+});
