@@ -119,6 +119,7 @@ Channel API 管理租约，Redis 保留原子持有者校验。专用节点上�
 
 边界仍需明确：**计划经受控内部 API 创建，KOP 七个调度 Action 尚未发布**。
 本轮复查仍返回 `SERVER_ACTION_NOT_REGISTERED`，Studio 产品入口不能创建云端计划，未绕过此限制。
-真实 WPS 验收只覆盖 Harness；飞书、企业微信确认机制及其他运行时的真实渠道组合仍需分别验收。
+上述批次只覆盖 Harness；随后补齐 DSH Native 和 Codex 的真实 WPS 知识库、续聊及定时投递，
+详见[三运行时渠道验收](wps-runtime-acceptance-2026-10-09.md)。飞书、企业微信确认机制及完整资源组合仍需分别验收。
 
 验收后已停用并软删除三个测试计划，删除隔离 Channel 配置、凭证、绑定及测试数据库行；独立测试 Agent 经 KOP 删除，Namespace、PVC 和 PV 已确认回收。WPS 应用与实际单聊消息保留供用户核对，日常 Studio Host 未改动；最终账单结算不在本次证明范围。Channel 修复已提交 `630c9dd`（配对/发送）与 `d521f7f`（专用节点/API 租约）。

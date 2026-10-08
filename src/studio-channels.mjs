@@ -126,17 +126,34 @@ export function createStudioChannels({ storeDir, getAgent, listAgents, listCloud
     const config = await readConfig();
     let cloudActor;
     if (!config.serverUrl || !config.accountId) throw new ChannelError('CHANNEL_NOT_CONFIGURED', '请先配置渠道连接（serverUrl 和 accountId）');
+    const requireCloudActor = async agentId => {
+      if (!resolveCloudAgent) throw new ChannelError('CHANNEL_AGENT_UNAVAILABLE', '请选择 Studio 创建的本地 Agent 或其云端部署');
+      const target = await resolveCloudAgent(agentId);
+      if (!target?.accountId || target.accountId !== config.accountId) throw new ChannelError('CHANNEL_ACCOUNT_MISMATCH', '渠道账号与当前子账号所属的云端账号不一致，请核对连接配置');
+      if (!target.userUuid) throw new ChannelError('CHANNEL_ACTOR_REQUIRED', '云端渠道操作需要已核验的子账号身份');
+      return target.userUuid;
+    };
+    if (['ApprovePairing', 'RejectPairing'].includes(action)) {
+      // Resolve the stored request, not an Agent ID or actor supplied by the page.
+      let pairing;
+      for (let offset = 0; offset < 1000; offset += 100) {
+        const { Data } = await proxyAction('ListPairingRequests', { Offset: offset, Limit: 100 });
+        if (!Array.isArray(Data?.Items)) throw new ChannelError('CHANNEL_RESPONSE_INVALID', '配对请求目录格式不兼容');
+        pairing = Data.Items.find(item => item.Id === payload.Id);
+        if (pairing || Data.Items.length < 100 || offset + Data.Items.length >= Data.Total) break;
+      }
+      if (!pairing?.AgentId) throw new ChannelError('CHANNEL_PAIRING_UNAVAILABLE', '配对请求不存在或不可访问，请刷新后重试');
+      if (!await getAgent?.(pairing.AgentId)) cloudActor = await requireCloudActor(pairing.AgentId);
+      payload = { Id: pairing.Id };
+    }
     if (['CreateChannel', 'UpdateChannel'].includes(action) && payload.AgentId) {
       if (await getAgent?.(payload.AgentId)) {
         if (!config.agentConnections?.[payload.AgentId]?.enabled || !config.workspaceId) throw new ChannelError('CHANNEL_LOCAL_OFFLINE', '请先启用这个本地 Agent 的渠道连接');
         payload = { ...payload, ConnectorWorkspaceId: config.workspaceId };
       } else {
-        if (!resolveCloudAgent) throw new ChannelError('CHANNEL_AGENT_UNAVAILABLE', '请选择 Studio 创建的本地 Agent 或其云端部署');
-        const target = await resolveCloudAgent(payload.AgentId);
-        if (!target?.accountId || target.accountId !== config.accountId) throw new ChannelError('CHANNEL_ACCOUNT_MISMATCH', '渠道账号与当前子账号所属的云端账号不一致，请核对连接配置');
+        cloudActor = await requireCloudActor(payload.AgentId);
         // Explicitly clear a previous local connector when changing targets.
         // The Channel Worker invokes Server RunAgent even when Studio is closed.
-        cloudActor = target.userUuid;
         payload = { ...payload, ConnectorWorkspaceId: '' };
       }
     }

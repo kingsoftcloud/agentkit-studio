@@ -139,3 +139,41 @@ test('cloud channel targets require Studio provenance and the verified tenant, a
     assert.equal(requests.length, 2);
   } finally { channels.dispose(); await new Promise(resolve => server.close(resolve)); await rm(store, { recursive: true, force: true }); }
 });
+
+test('pairing decisions derive the cloud actor from the stored request and reject foreign targets', async () => {
+  const store = await makeStore(), requests = [], resolved = [];
+  let rows = [{ Id: 'pair', AgentId: 'ar-cloud' }], identity = { accountId: 'account', userUuid: 'verified-child' };
+  const server = createServer(async (req, res) => {
+    let text = ''; for await (const chunk of req) text += chunk;
+    const body = JSON.parse(text), action = req.url.split('/').at(-1);
+    requests.push({ action, body, actor: req.headers['x-ksc-user-uuid'] });
+    res.end(JSON.stringify({ Code: 0, Data: action === 'ListPairingRequests' ? { Items: rows, Total: rows.length } : {} }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const channels = createStudioChannels({ storeDir: store, getAgent: async id => id === 'local' ? {} : null,
+    resolveCloudAgent: async id => { resolved.push(id); return identity; },
+  });
+  try {
+    await channels.updateConnection({ serverUrl: `http://127.0.0.1:${server.address().port}`, accountId: 'account' });
+    for (const action of ['ApprovePairing', 'RejectPairing']) {
+      await channels.proxyAction(action, { Id: 'pair', AgentId: 'browser-spoof', ApprovedBy: 'browser-spoof' });
+      assert.equal(requests.at(-1).actor, 'verified-child');
+      assert.equal(resolved.at(-1), 'ar-cloud');
+      assert.deepEqual(requests.at(-1).body, { Id: 'pair' });
+    }
+    const mutations = () => requests.filter(row => row.action !== 'ListPairingRequests').length;
+    identity = { accountId: 'other', userUuid: 'someone' };
+    await assert.rejects(channels.proxyAction('ApprovePairing', { Id: 'pair' }), { code: 'CHANNEL_ACCOUNT_MISMATCH' });
+    identity = { accountId: 'account' };
+    await assert.rejects(channels.proxyAction('RejectPairing', { Id: 'pair' }), { code: 'CHANNEL_ACTOR_REQUIRED' });
+    rows = [];
+    await assert.rejects(channels.proxyAction('ApprovePairing', { Id: 'pair' }), { code: 'CHANNEL_PAIRING_UNAVAILABLE' });
+    assert.equal(mutations(), 2);
+    rows = [{ Id: 'local-pair', AgentId: 'local' }];
+    await channels.proxyAction('ApprovePairing', { Id: 'local-pair' });
+    assert.equal(requests.at(-1).actor, undefined, 'local pairing does not require cloud credentials');
+  } finally {
+    channels.dispose(); await new Promise(resolve => server.close(resolve));
+    await rm(store, { recursive: true, force: true });
+  }
+});
