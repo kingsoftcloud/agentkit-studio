@@ -63,8 +63,8 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
     const { credentialScope: scope, bucket, storageEndpoint, ...preview } = plan;
     return { ...preview, deploymentId: record.id, previewId, releaseId: plan.image.id,
       rollbackVersionId: input.rollbackVersionId || null, fromVersionId: deploymentVersionId(record),
-      warnings: ['沿用当前云端实例标识和规格；切换期间暂不可发起对话', '完成后请开启新会话，历史会话仍保留',
-        '只有运行入口确认目标冻结包后才算完成；旧镜像不支持版本探测时会保持待核对'] };
+      warnings: ['保留当前云端 Agent 和规格；切换期间暂不可发起对话', '完成后请开启新会话，历史会话仍保留',
+        '切换会重建运行实例；当前云端持久化尚未验收'] };
   }
   async function run(id, attemptId, prepared) {
     return exclusive(id, async () => {

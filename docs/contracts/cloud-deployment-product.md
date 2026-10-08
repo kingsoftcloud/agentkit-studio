@@ -29,7 +29,7 @@ UUID 和主账号 ID 加入签名 Header；与配置账号不一致或身份查�
 不接受浏览器传入的操作人 UUID。`make cloud-identity` 可只读检查当前配置；
 `node scripts/check-cloud-identity.mjs --require-subaccount` 在主账号情形返回非零状态。
 真实主账号识别已验证；子账号 Header、签名、缓存失效及失败拒绝已有回归测试。
-随后使用独立子账号凭证完成创建，`GetAgent.Basic.Creator` 已与 IAM 用户名一致，证明创建者已传递至可读取的 Agent 记录。数据库 UUID 字段以及两个子账号的权限隔离仍未验收，不从 Creator 名称推导这些结论。
+随后使用独立子账号凭证完成创建，`GetAgent.Basic.Creator` 已与 IAM 用户名一致，证明创建者已传递至可读取的 Agent 记录。随后又对同一记录做只读数据库核对，创建者子账号 UUID 与 IAM 一致；两个子账号间的权限隔离仍未验收。
 
 三种运行时都走 `CreateAgentProduct(DeploymentType=Container)`、`GetAgent`、
 `UpdateAgent`、`ListInstances`、`GetAgentLogs` 和 `DeleteAgent`。平台尚无独立停止/启动
@@ -69,6 +69,8 @@ Build 可由“构建当前 Revision”生成，也可选历史版本。区域�
 Node Host 调用实例的 `/v1/responses`，只发送本轮用户文本、固定模型与稳定的会话/消息标识，不发送桌面系统提示词、历史或工具定义。云端执行冻结的资源绑定；DSH 展示文本、思考、工具结果与用量。工具卡片仅作展示，不在本机重复执行。响应必须返回匹配的 Agent/Build 身份；取消同时中断连接并对已核验的响应发送取消请求。
 
 删除或切换凭证后保留历史展示用的 preset，但每次实际运行仍重新检查当前作用域、部署状态和远端身份。桌面 Host 恢复与云端实例重建的持久化是不同验收项；后者、升级及回滚仍需独立验证。
+
+升级/回滚已接入原实例的 `UpdateAgent`，目标镜像须支持运行身份探测。切换期间暂停新对话，成功版本和历史冻结包分开保存，旧会话不会静默跟随升级。完整操作与失败恢复规则见[云端版本升级与回滚](deployment-rollouts.md)。
 
 ## 一套共享镜像
 
