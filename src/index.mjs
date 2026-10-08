@@ -133,8 +133,11 @@ async function registerControlPlane(ctx) {
   const { createCodexRuntime } = await import('./providers/codex-runtime.mjs');
   const { createCodexModelCatalog, createCodexModelAdapter, CODEX_PROVIDER } = await import('./providers/codex-models.mjs');
   const { resolveConfiguredCodexModel, selectCodexAgentModel, listCodexAgentModels } = await import('./providers/codex-configured-models.mjs');
-  const codexModels = createCodexModelCatalog();
-  const codexRuntime = createCodexRuntime();
+  const codexOptions = portableRuntime
+    ? await import('./portable-codex.mjs').then(({ portableCodexOptions }) => portableCodexOptions({ home: runtimeEnv.AGENTKIT_HOME, manifest: portableRuntime.manifest, env: runtimeEnv }))
+    : {};
+  const codexModels = createCodexModelCatalog(codexOptions);
+  const codexRuntime = createCodexRuntime(codexOptions);
   let localRuntimeHandlerPromise;
   const localRuntimeHandler = async () => {
     if (!localRuntimeHandlerPromise) {
@@ -674,7 +677,7 @@ async function registerControlPlane(ctx) {
           }
           if (endpoint === 'builds/export-portable') {
             try { return { ok: true, value: await portableBundles.prepare(String(payload?.agentId || ''), String(payload?.buildId || '')) }; }
-            catch (error) { return { ok: false, error: { code: error?.code || 'PORTABLE_EXPORT_FAILED', message: error?.code?.startsWith('PORTABLE_') ? error.message : '运行包导出失败，请检查绑定的资源是否可读取' } }; }
+            catch (error) { return { ok: false, error: { code: error?.code || 'PORTABLE_EXPORT_FAILED', message: error?.code?.startsWith('PORTABLE_') ? error.message : '运行包导出失败，请检查绑定的资源是否可读取', details: {} } }; }
           }
           if (endpoint === 'builds/download') return { ok: true, value: await studio.build.download(String(payload?.agentId || ''), String(payload?.buildId || '')) };
           if (endpoint === 'operations/list') {

@@ -89,11 +89,39 @@ test('archive rejects changed or extra files, symlinks and traversal before crea
 
 test('unsupported runtime, plugins, builtin tools and inline credentials fail explicitly', async t => {
   for (const [overrides, code] of [
-    [{ runtime: 'codex' }, 'PORTABLE_RUNTIME_UNSUPPORTED'],
+    [{ runtime: 'langgraph' }, 'PORTABLE_RUNTIME_UNSUPPORTED'],
     [{ bindings: { tools: ['shell'] } }, 'PORTABLE_BUILTIN_UNSUPPORTED'],
     [{ bindings: { plugins: [{ pluginRef: 'third-party/plugin' }] } }, 'PORTABLE_PLUGIN_UNSUPPORTED'],
     [{ bindings: { mcpServers: [{ id: 'mcp', endpoint: 'https://mcp.example', headers: { Authorization: 'secret' } }] } }, 'PORTABLE_INLINE_SECRET'],
   ]) { const f = await fixture(t, overrides); await assert.rejects(f.portable.prepare(f.agentId, f.record.id), { code }); }
+});
+
+test('Codex export preserves the selected gateway protocol without shipping login or plugin state', async t => {
+  const f = await fixture(t, { runtime: 'codex' });
+  const originalProfile = f.models.profile;
+  f.models.profile = async id => ({ ...await originalProfile(id), codexApi: 'chat-completions' });
+  const result = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, result.bundleId)).base64, 'base64');
+  const { manifest, definition, files } = verifyPortableBundle(zip);
+  assert.equal(definition.spec.runtime.type, 'codex');
+  assert.equal(manifest.resources.profiles[0].codexApi, 'chat-completions');
+  assert.ok(files.every(file => file.name === 'portable.json' || file.name === 'agent-bundle.zip' || file.name.startsWith('skills/')));
+  const target = join(f.root, 'codex-target');
+  await importPortableBundle(zip, target);
+  const configuration = createGlobalConfiguration({ env: { AGENTKIT_HOME: target }, inheritLegacy: false });
+  const model = await createModelService({ configuration, credentials: { resolve: async () => ({ value: 'target-only-secret' }) } }).profile('configured-model');
+  assert.equal(model.codexApi, 'chat-completions');
+  assert.equal(model.apiKey, 'target-only-secret');
+});
+
+test('Codex export refuses an unportable native-account model instead of omitting it', async t => {
+  const f = await fixture(t, { runtime: 'codex', bindings: { modelProfileIds: ['native-account-model'] } });
+  const originalProfile = f.models.profile;
+  f.models.profile = async id => {
+    if (id === 'native-account-model') throw Object.assign(new Error('model unavailable'), { code: 'MODEL_NOT_FOUND' });
+    return originalProfile(id);
+  };
+  await assert.rejects(f.portable.prepare(f.agentId, f.record.id), { code: 'PORTABLE_CODEX_MODEL_UNAVAILABLE' });
 });
 
 test('portable startup rejects other runtime identities and never inherits legacy model or cloud credentials', async t => {

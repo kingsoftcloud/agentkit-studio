@@ -75,6 +75,7 @@ profile-install: pack
 	# Keep file: references near the target Profile; long cross-directory refs overflow pnpm cache filenames.
 	@digest="$$(shasum -a 256 "$(PLUGIN_TARBALL)" | cut -d ' ' -f 1)"; \
 		profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
+		profile_dir="$$(cd "$$profile_dir" && pwd -P)"; \
 		input_dir="$$profile_dir/.studio-input/$$digest"; \
 		mkdir -p "$$input_dir"; \
 		cp "$(PLUGIN_TARBALL)" "$$input_dir/plugin.tgz"; \

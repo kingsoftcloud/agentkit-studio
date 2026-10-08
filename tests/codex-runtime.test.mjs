@@ -94,6 +94,30 @@ test('Codex runtime reports a typed provider error when spawn fails', async () =
   );
 });
 
+test('portable child environment replaces ambient credentials and model defaults', async () => {
+  const previous = process.env.AGENTKIT_CODEX_MODEL;
+  process.env.AGENTKIT_CODEX_MODEL = 'operator-default-must-not-leak';
+  let childEnv, thread;
+  try {
+    const runtime = createCodexRuntime({ inheritEnv: false, env: { CODEX_HOME: '/isolated', PATH: '/usr/bin' }, spawnImpl: (_exe, _args, options) => {
+      childEnv = options.env;
+      const child = fakeSpawn(), write = child.stdin.write.bind(child.stdin);
+      child.stdin.write = (data, ...args) => {
+        const message = JSON.parse(String(data));
+        if (message.method === 'thread/start') thread = message.params;
+        return write(data, ...args);
+      };
+      return child;
+    } });
+    for await (const _chunk of runtime.stream({ input: 'hi', modelProvider: { baseUrl: 'https://gateway.example/v1', apiKey: 'target-credential' } })) {}
+    assert.deepEqual(childEnv, { CODEX_HOME: '/isolated', PATH: '/usr/bin', AGENTKIT_CODEX_MODEL_API_KEY: 'target-credential' });
+    assert.equal(thread.model, undefined);
+  } finally {
+    if (previous === undefined) delete process.env.AGENTKIT_CODEX_MODEL;
+    else process.env.AGENTKIT_CODEX_MODEL = previous;
+  }
+});
+
 test('a custom provider uses Responses and a per-child credential without altering native turns', async () => {
   const invocations = [], threads = [];
   const runtime = createCodexRuntime({ spawnImpl: (_executable, args, options) => {

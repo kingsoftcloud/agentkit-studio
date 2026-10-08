@@ -561,7 +561,7 @@
           link.download = result.bundleId + '.zip';
           document.body.appendChild(link); link.click(); link.remove();
           const names = [...new Set((result.requirements || []).map(item => item.name))];
-          setMessage(`已请求下载运行包：${result.modelCount} 个模型、${result.mcpCount} 个 MCP、${result.skillCount} 个 Skill。目标 Host 需配置：${names.join('、') || '无资源凭证'}。`);
+          setMessage(`已请求下载运行包：${result.modelCount} 个模型、${result.mcpCount} 个 MCP、${result.skillCount} 个 Skill。目标 Host 需配置：${names.join('、') || '无资源凭证'}。运行包不包含 Codex 登录与个人插件。`);
         } catch (reason) { setMessage(''); setError(reason?.message || '运行包导出失败'); }
         finally { setSaving(false); }
       };

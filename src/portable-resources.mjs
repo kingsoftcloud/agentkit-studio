@@ -50,7 +50,7 @@ export async function capturePortableResources({ record, models, adapters, confi
   rejectInlineSecrets(record.spec);
   rejectInlineSecrets(record.metadata);
   const bindings = record.spec.bindings || record.bindings || {}, runtime = record.spec.runtime?.type;
-  if (!['dsh-native', 'harness'].includes(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '当前运行包支持 DSH Native 和自研 Harness；Codex 仍需独立的登录与插件迁移验收');
+  if (!['dsh-native', 'harness', 'codex'].includes(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '运行包仅支持 DSH Native、Codex 和自研 Harness');
   if (bindings.tools?.length) throw portableError('PORTABLE_BUILTIN_UNSUPPORTED', '该 Agent 绑定的内置工具依赖外部 Python 工具运行时，尚不能导出为可迁移运行包');
   const plugins = bindings.plugins || [];
   if (plugins.some(item => item.enabled === false)) throw portableError('PORTABLE_DISABLED_PLUGIN_UNSUPPORTED', '请先移除已停用的资源插件绑定，当前运行包不迁移其遗留配置');
@@ -68,10 +68,18 @@ export async function capturePortableResources({ record, models, adapters, confi
   if (!boundModels.length) throw portableError('PORTABLE_MODEL_REQUIRED', '请先为 Agent 显式绑定模型，再导出运行包');
   const profiles = [];
   for (const id of boundModels) {
-    const profile = await models.profile(id);
+    let profile;
+    try { profile = await models.profile(id); }
+    catch (error) {
+      if (runtime === 'codex' && ['MODEL_NOT_FOUND', 'MODEL_CREDENTIAL_MISSING'].includes(error?.code)) {
+        throw portableError('PORTABLE_CODEX_MODEL_UNAVAILABLE', '部分绑定模型缺少可迁移的网关配置或凭证。Codex 账户模型不能随包导出；请在 Agent 编辑页只保留已配置的网关模型，再重新构建。');
+      }
+      throw error;
+    }
     const credentialName = requireEnv(refName(profile.credentialName) || `AGENTKIT_BUNDLE_MODEL_${sha256(id).slice(0, 12).toUpperCase()}`, id, 'model');
     profiles.push({ id, provider: profile.provider, modelName: profile.modelName, baseUrl: endpoint(profile.baseUrl),
-      credentialName, enabled: true, default: profiles.length === 0, ...(profile.input ? { input: profile.input } : {}) });
+      credentialName, enabled: true, default: profiles.length === 0, ...(profile.input ? { input: profile.input } : {}),
+      ...(profile.codexApi ? { codexApi: profile.codexApi } : {}) });
   }
   const mcps = [];
   for (const binding of bindings.mcpServers || []) {

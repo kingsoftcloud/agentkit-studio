@@ -27,8 +27,12 @@ ZIP CRC、路径、数量、大小、文件摘要、Build 身份及 manifest/spe
 常见凭证文件、符号链接、超大文件均拒绝导出。Skill 文本/脚本仍是用户提供的内容，这些
 检查不能代替对任意文件内容的秘密扫描。
 
-目前接受本地 `dsh-native` 和 `harness` Build。Codex 登录及插件状态、其他扩展插件、外部
-Python 内置工具运行时尚未迁移，遇到相应绑定会明确拒绝导出。不会用默认 Agent 替代。
+目前接受本地 `dsh-native`、`harness` 和绑定了网关模型的 `codex` Build。Codex 网关的
+Responses / Chat Completions 选择随模型配置迁移。Codex 原生账户登录和个人插件状态
+不在运行包中；目标使用独立 HOME / CODEX_HOME，按运行包划分状态目录，并通过 Host
+注入已绑定的 MCP、Skill、知识库与记忆库，不继承操作人员的 Codex 配置或账户。
+仅使用原生账户模型、其他扩展插件或外部 Python 内置工具的绑定尚不能迁移；缺少明确
+模型配置或存在不支持的绑定时拒绝导出，不会用默认 Agent 替代。
 
 ## 导出与运行
 
@@ -81,3 +85,31 @@ Python 内置工具运行时尚未迁移，遇到相应绑定会明确拒绝导�
 **预发运行时部署仍未验收**：还需固定目标 Host 及其依赖的发布产物、AgentEngine
 `/v1/responses` 协议适配、UploadCode 上传和 CreateAgentProduct/UpdateAgent 生命周期联调。
 本地独立 Host 调用云资源成功，不能作为这些部署流程已完成的证据。
+
+## Codex 独立 Host 迁移验收（2026-10-08）
+
+运行 `node scripts/verify-portable-codex.mjs --execute --dsh-root DSH_CHECKOUT --keep`：
+使用真实 Codex 0.159.2、固定 DSH 0.2.0-rc.2 和已配置的 GLM-5.3-Flash 网关，MCP 为
+本地验收服务。测试只问“查询 Q7 卡片的状态，给我结论。”，没有在用户问题里提示身份。
+
+- 导出冻结 Build、Skill 文件和 MCP 配置；导入全新 AGENTKIT_HOME 后删除源目录。
+- 安装全新 DSH Profile；模型凭证与 MCP Bearer 只通过目标环境注入。
+- 从 `/runs` 真实运行 Codex，经过保留下来的 Chat Completions 代理配置，约 7.6 秒完成。
+- 系统标记 `CLOUD-CODEX-71`、Skill 标记 `PEBBLE-42`、MCP 当次生成的随机核验码均命中；
+  1 次 MCP 调用，98 个原生 assistant 流帧，累计输入 18293 tokens、输出 183 tokens。
+- Codex 子进程 HOME、CODEX_HOME 与工作目录按运行包隔离；没有复制操作人员的账户、
+  插件或环境凭证。单元测试另外验证禁止通过符号链接指向个人目录。
+- 首次安装重现 macOS 临时目录 `/var` 别名造成的 pnpm `ENAMETOOLONG`；安装源路径
+  改为物理路径后，全新 Profile 安装通过。
+
+此证明覆盖 Codex 运行包迁移、系统提示词、Skill、MCP、模型路由和流式输出；不证明
+远端 MCP、知识库/记忆库在 Codex 云端的权限和网络，也不证明已发布 Linux 镜像。
+本机 Docker daemon 本轮未响应镜像列表查询，没有继续构建或替换旧托管镜像。
+交互式 Studio 的个人 Codex 插件仍沿用原配置；本次隔离仅适用于导入的运行包。
+
+浏览器同时验证了两条构建页路径：仅绑定 GLM-5.3-Flash 的 Codex Agent 能构建并下载
+ZIP，下载文件校验通过且保留 `chat-completions` 配置、不包含模型凭证；混合绑定网关
+模型与 Codex 账户模型的 Agent 会显示具体的不可迁移原因。修复了错误响应缺少
+`details` 导致 DSH 只显示 `invalid server-response failure` 的问题。
+本轮在固定 Node 22.19.0 下运行 `make release-check`，通过 393 项测试、18 份补丁格式
+检查与 232 文件的包完整性检查。

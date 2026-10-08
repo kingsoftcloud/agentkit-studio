@@ -124,16 +124,17 @@ function dynamicToolContent(value) {
 }
 
 /**
- * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, timeoutMs?: number }} options
+ * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number }} options
  */
 export function createCodexRuntime(options = {}) {
-  const command = resolveCodexCommand({ executable: options.executable, env: { ...process.env, ...(options.env || {}) } });
+  const baseEnv = { ...(options.inheritEnv === false ? {} : process.env), ...(options.env || {}) };
+  const command = resolveCodexCommand({ executable: options.executable, env: baseEnv });
   const executable = command.executable;
   const spawnImpl = options.spawnImpl || nodeSpawn;
   const cwd = String(options.cwd || tmpdir());
-  const model = String(options.model || process.env.AGENTKIT_CODEX_MODEL || '').trim() || undefined;
-  const approvalPolicy = String(options.approvalPolicy || process.env.AGENTKIT_CODEX_APPROVAL_POLICY || 'never');
-  const sandbox = String(options.sandbox || process.env.AGENTKIT_CODEX_SANDBOX || '').trim() || undefined;
+  const model = String(options.model || baseEnv.AGENTKIT_CODEX_MODEL || '').trim() || undefined;
+  const approvalPolicy = String(options.approvalPolicy || baseEnv.AGENTKIT_CODEX_APPROVAL_POLICY || 'never');
+  const sandbox = String(options.sandbox || baseEnv.AGENTKIT_CODEX_SANDBOX || '').trim() || undefined;
   const timeoutMs = Math.max(10_000, Number(options.timeoutMs) || 180_000);
 
   const runtime = {
@@ -166,7 +167,7 @@ export function createCodexRuntime(options = {}) {
         child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...providerArgs], {
           cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, ...(options.env || {}), ...(modelProvider ? { AGENTKIT_CODEX_MODEL_API_KEY: modelProvider.apiKey } : {}) },
+          env: { ...baseEnv, ...(modelProvider ? { AGENTKIT_CODEX_MODEL_API_KEY: modelProvider.apiKey } : {}) },
         });
       } catch (error) {
         throw new CodexRuntimeError('CODEX_PROVIDER_UNAVAILABLE', `无法启动 Codex App Server（${executable}）`, { cause: String(error?.message || error) });
