@@ -1,10 +1,11 @@
 /** Authenticated model routes hosted by the public DSH WebServer service. */
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { responsesToChat, chatToResponses, createResponsesStreamTransformer } from './model-proxy.mjs';
 import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 
-export function createModelProxyHandler({ models, admit, fetchImpl = fetch, codexTools = false }) {
+export function createModelProxyHandler({ models, admit, fetchImpl = fetch, codexTools = false, onRequestMetrics }) {
   return async (request, response) => {
     const admission = admit(request);
     if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(); return; }
@@ -31,9 +32,19 @@ export function createModelProxyHandler({ models, admit, fetchImpl = fetch, code
       // different profile route to use a different model/credential pair.
       body.model = profile.modelName;
       if (body.stream) body.stream_options = { ...body.stream_options, include_usage: true };
+      const serialized = JSON.stringify(body);
+      if (onRequestMetrics) {
+        const chars = value => JSON.stringify(value).length;
+        const messages = Array.isArray(body.messages) ? body.messages : [];
+        onRequestMetrics({ requestId: randomUUID(), protocol: 'chat-completions', model: profile.modelName,
+          requestChars: serialized.length, requestBytes: Buffer.byteLength(serialized),
+          toolCount: body.tools?.length || 0, toolsChars: body.tools ? chars(body.tools) : 0, messagesChars: chars(messages),
+          instructionsChars: messages.filter(message => ['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0),
+          conversationChars: messages.filter(message => !['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0) });
+      }
       const upstream = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
         method: 'POST', headers: { Authorization: `Bearer ${profile.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body), signal: controller.signal, redirect: 'error',
+        body: serialized, signal: controller.signal, redirect: 'error',
       });
       if (!upstream.ok) {
         await upstream.body?.cancel();

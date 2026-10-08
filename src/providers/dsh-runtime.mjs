@@ -1,3 +1,4 @@
+import { nativeCodexUsage } from './codex-usage.mjs';
 /**
  * DSH LLM adapter for Studio-owned Agent revisions.
  *
@@ -263,9 +264,14 @@ function appendNativeToolCall(state, call) {
 
 async function* codexFrames(codexRuntime, options, onChunk, toolRecorder) {
   const state = createChunkState();
+  const usage = { inputTokens: 0, outputTokens: 0 };
   for await (const chunk of codexRuntime.stream(options)) {
     onChunk?.(chunk);
-    if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
+    if (chunk?.type === 'usage') {
+      for (const [key, value] of Object.entries(chunk.usage)) usage[key] = (usage[key] || 0) + value;
+      yield { type: 'usage', usage: nativeCodexUsage(usage) };
+    }
+    else if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
     else if (chunk?.type === 'tool') {
       if (toolRecorder?.record(chunk)) continue;
       const name = String(chunk.name || 'bound tool');
@@ -528,13 +534,15 @@ export function createDshRuntimeAdapter({ cloudClient, localHandler, codexRuntim
             : {};
           const startedAt = new Date().toISOString();
           const traceId = String(options.runId || options.turnId || `run_codex_${Date.now().toString(36)}`);
-          const traceEvents = [];
+          const traceEvents = [{ event_type: 'run.started', at: startedAt, run_id: traceId, session_id: String(options.sessionId || '') }];
           const toolRecorder = createCodexToolRecorder(toolAgent?.session);
           let responseText = '';
           const recordChunk = chunk => {
             const type = String(chunk?.type || '');
             const at = new Date().toISOString();
-            if (type === 'tool') traceEvents.push({ event_type: `tool.${String(chunk.phase || 'update')}`, at, run_id: traceId, payload: { name: String(chunk.name || 'bound tool') } });
+            if (type === 'usage') traceEvents.push({ event_type: 'model.usage', at, run_id: traceId, payload: { source: 'codex-app-server', usage: chunk.usage } });
+            else if (type === 'request-metrics') traceEvents.push({ event_type: 'model.request', at, run_id: traceId, payload: chunk.metrics });
+            else if (type === 'tool') traceEvents.push({ event_type: `tool.${String(chunk.phase || 'update')}`, at, run_id: traceId, payload: { name: String(chunk.name || 'bound tool') } });
             else if (type === 'reasoning' || type === 'text') {
               if (type === 'text') responseText += String(chunk.text || '');
               traceEvents.push({ event_type: `turn.${type}`, at, run_id: traceId, payload: { chars: String(chunk.text || '').length } });

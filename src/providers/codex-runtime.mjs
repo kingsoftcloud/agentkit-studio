@@ -10,6 +10,7 @@
 import { resolveCodexCommand } from './codex-command.mjs';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { createCodexUsageCounter } from './codex-usage.mjs';
 import { createCodexModelProxy } from './codex-model-proxy.mjs';
 
 export class CodexRuntimeError extends Error {
@@ -181,6 +182,7 @@ export function createCodexRuntime(options = {}) {
       let closed = false;
       let disposed = false;
       let timer;
+      const countUsage = createCodexUsageCounter();
       const phases = new Map();
       const deltaItems = new Set();
       const finish = error => {
@@ -341,6 +343,11 @@ export function createCodexRuntime(options = {}) {
           const params = object(message.params || {}, `${method} 参数`);
           if (params.threadId && params.threadId !== threadId) continue;
           if (params.turnId && params.turnId !== turnId) continue;
+          if (method === 'thread/tokenUsage/updated') {
+            const usage = countUsage(params.tokenUsage?.total);
+            if (usage) yield { type: 'usage', usage };
+            continue;
+          }
           if (method === 'item/started') {
             const item = object(params.item || {}, 'item');
             if (item.id) phases.set(String(item.id), item.phase);
@@ -408,9 +415,17 @@ export function createCodexRuntime(options = {}) {
     async *stream(input = {}) {
       if (input.modelProvider?.api !== 'chat-completions') { yield* runtime.stream(input); return; }
       if (input.signal?.aborted) throw new CodexRuntimeError('CODEX_CANCELED', 'Codex 运行已取消');
-      const proxy = await createCodexModelProxy({ profile: { ...input.modelProvider, modelName: input.model || model } });
-      try { yield* runtime.stream({ ...input, modelProvider: { api: 'chat-completions', baseUrl: proxy.baseUrl, apiKey: proxy.apiKey } }); }
-      finally { await proxy.close(); }
+      const metrics = [];
+      const proxy = await createCodexModelProxy({ profile: { ...input.modelProvider, modelName: input.model || model }, onRequestMetrics: value => metrics.push({ type: 'request-metrics', metrics: value }) });
+      try {
+        for await (const chunk of runtime.stream({ ...input, modelProvider: { api: 'chat-completions', baseUrl: proxy.baseUrl, apiKey: proxy.apiKey } })) {
+          while (metrics.length) yield metrics.shift();
+          yield chunk;
+        }
+      } finally {
+        await proxy.close();
+        while (metrics.length) yield metrics.shift();
+      }
     },
   };
 }

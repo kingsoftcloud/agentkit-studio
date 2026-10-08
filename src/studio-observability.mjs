@@ -30,7 +30,7 @@ function projectSpans(events) {
   spans.push({ spanId: rootSpanId, parentSpanId: null, name: 'run', kind: 'INTERNAL', startedAt: new Date(rootStart).toISOString(), endedAt: new Date(rootEnd).toISOString(), attributes: { 'run.id': events[0]?.run_id || '', 'session.id': events[0]?.session_id || '' } });
   for (const event of events) {
     const type = String(event.event_type || event.type || '');
-    if (type.startsWith('tool.') || type.startsWith('turn.')) {
+    if (type.startsWith('tool.') || type.startsWith('turn.') || type.startsWith('model.')) {
       spans.push({ spanId: randomUUID().replace(/-/g, '').slice(0, 16), parentSpanId: rootSpanId, name: type, kind: 'INTERNAL', startedAt: event.at, endedAt: event.at, attributes: { seq: event.seq || 0, ...event.payload } });
     }
   }

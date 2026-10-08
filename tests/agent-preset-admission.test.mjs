@@ -683,3 +683,19 @@ test('concurrent resource admission registers a frozen preset once; failure perm
   assert.deepEqual(result.map(value => value.reused), [false, true]);
   await admission.dispose();
 });
+
+test('Codex request size and reported usage survive failure in the local trace and native usage stream', async () => {
+  const traces = [], chunks = [];
+  const adapter = createDshRuntimeAdapter({
+    observability: { syncTrace: async record => traces.push(record) },
+    codexRuntime: { async *stream() {
+      yield { type: 'request-metrics', metrics: { requestId: 'r1', requestChars: 560000, toolsChars: 495000, toolCount: 353 } };
+      yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 30, reasoningTokens: 10 } };
+      throw Object.assign(new Error('429'), { code: 'CODEX_MODEL_RATE_LIMITED' });
+    } },
+  });
+  await assert.rejects(async () => { for await (const chunk of adapter.stream({ model: 'local:codex-agent', sessionId: 'usage-session', messages: [{ role: 'user', content: '你好' }], studioRuntime: 'codex' })) chunks.push(chunk); });
+  assert.equal(traces[0].events.find(e => e.event_type === 'model.request')?.payload.toolCount, 353);
+  assert.equal(traces[0].events.find(e => e.event_type === 'model.usage')?.payload.usage.inputTokens, 100);
+  assert.deepEqual(chunks.find(c => c.type === 'usage')?.usage, { inputTokens: 70, outputTokens: 20, totalTokens: 120, cacheReadTokens: 30, cacheWriteTokens: 0, reasoningTokens: 10 });
+});

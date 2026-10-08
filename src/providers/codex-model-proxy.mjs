@@ -3,11 +3,11 @@ import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createModelProxyHandler } from '../model-proxy-handler.mjs';
 
-export async function createCodexModelProxy({ profile, fetchImpl }) {
+export async function createCodexModelProxy({ profile, fetchImpl, onRequestMetrics }) {
   const token = randomBytes(32).toString('hex');
   const authorization = Buffer.from(`Bearer ${token}`);
   const handler = createModelProxyHandler({
-    codexTools: true, fetchImpl,
+    codexTools: true, fetchImpl, onRequestMetrics,
     models: { profile: async id => {
       if (id !== 'bound') throw Object.assign(new Error('模型路由不存在'), { code: 'MODEL_NOT_FOUND', status: 404 });
       return profile;

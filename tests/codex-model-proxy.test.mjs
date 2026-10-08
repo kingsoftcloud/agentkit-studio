@@ -122,3 +122,21 @@ test('coded upstream errors and invalid JSON cannot echo credentials', async () 
     } finally { await proxy.close(); }
   }
 });
+
+test('request metrics measure the actual outbound body without retaining prompt or credential content', async () => {
+  const metrics = []; let body;
+  const proxy = await createCodexModelProxy({ profile, onRequestMetrics: value => metrics.push(value), fetchImpl: async (_url, options) => {
+    body = options.body;
+    return Response.json({ choices: [{ message: { content: 'ok' } }] });
+  } });
+  try {
+    await fetch(`${proxy.baseUrl}/responses`, { method: 'POST', headers: { Authorization: `Bearer ${proxy.apiKey}` }, body: JSON.stringify({ instructions: 'private system instruction', input: '你好 private-input', tools: [{ type: 'function', name: 'private-tool', description: 'private-description', parameters: { type: 'object' } }] }) });
+    assert.equal(metrics.length, 1);
+    assert.equal(metrics[0].requestChars, body.length);
+    assert.equal(metrics[0].requestBytes, Buffer.byteLength(body));
+    assert.equal(metrics[0].toolsChars, JSON.stringify(JSON.parse(body).tools).length);
+    assert.equal(metrics[0].toolCount, 1);
+    assert.ok(metrics[0].instructionsChars > 0);
+    assert.doesNotMatch(JSON.stringify(metrics), /private-|upstream-secret|private system/);
+  } finally { await proxy.close(); }
+});

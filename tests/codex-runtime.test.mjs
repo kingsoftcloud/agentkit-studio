@@ -226,3 +226,25 @@ test('gateway rate limits remain actionable and never expose provider credential
     assert.doesNotMatch(error.message, /private-test-key/); return true;
   });
 });
+
+test('Codex cumulative token notifications reach consumers once without duplicate billing', async () => {
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn(), write = child.stdout.write.bind(child.stdout);
+    child.stdout.write = (data, ...args) => {
+      const message = JSON.parse(String(data));
+      if (message.method === 'turn/completed') {
+        for (const [inputTokens, outputTokens, cachedInputTokens] of [[100, 20, 30], [100, 20, 30], [250, 50, 80]]) {
+          write(JSON.stringify({ method: 'thread/tokenUsage/updated', params: { threadId: 'thread-fake', turnId: 'turn-fake', tokenUsage: { total: { inputTokens, outputTokens, cachedInputTokens, reasoningOutputTokens: 10 }, last: { inputTokens: 999999, outputTokens: 999999 } } } }) + '\n');
+        }
+      }
+      return write(data, ...args);
+    };
+    return child;
+  } });
+  const chunks = [];
+  for await (const chunk of runtime.stream({ input: '你好' })) if (chunk.type === 'usage') chunks.push(chunk);
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks.reduce((sum, chunk) => sum + chunk.usage.inputTokens, 0), 250);
+  assert.equal(chunks.reduce((sum, chunk) => sum + chunk.usage.outputTokens, 0), 50);
+  assert.equal(chunks.reduce((sum, chunk) => sum + chunk.usage.cachedInputTokens, 0), 80);
+});

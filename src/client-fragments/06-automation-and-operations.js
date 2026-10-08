@@ -673,7 +673,17 @@
         ['Token 用量', overview?.totalTokens ?? overview?.tokens ?? '—', '输入与输出合计'],
       ];
 
-      const detailContent = detailTab === 'raw'
+      const requestMetrics = (selected?.events || []).filter(event => event.event_type === 'model.request').map(event => event.payload);
+      const requestDetail = h('div', { style: { display: 'grid', gap: '10px', maxHeight: '36vh', overflow: 'auto' } },
+        h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, '字符数反映请求体大小，不等于 Token 用量；这里只保存统计，不保存提示词正文。'),
+        requestMetrics.length ? requestMetrics.map((item, index) => h('div', { key: item.requestId || index, style: { padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '10px' } },
+          h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, `请求 ${index + 1} · ${item.model || '—'}`),
+          h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginTop: '8px', lineHeight: 1.8 } },
+            `总计 ${Number(item.requestChars || 0).toLocaleString()} 字符 · ${Number(item.requestBytes || 0).toLocaleString()} 字节`,
+            h('br'), `工具定义 ${Number(item.toolsChars || 0).toLocaleString()} 字符（${item.toolCount ?? '—'} 个工具）`,
+            h('br'), `系统提示词 ${Number(item.instructionsChars || 0).toLocaleString()} 字符 · 对话内容 ${Number(item.conversationChars || 0).toLocaleString()} 字符`)))
+          : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '此记录没有请求体统计。当前仅新运行的 Codex Chat Completions 代理提供该统计；不代表请求大小为零。'));
+      const detailContent = detailTab === 'requests' ? requestDetail : detailTab === 'raw'
         ? h(React.Fragment, null,
             h('button', { type: 'button', onClick: loadRaw, style: buttonStyle() }, '读取 OTLP'),
             raw
@@ -709,7 +719,7 @@
               detailLoading
                 ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取 Span…')
                 : h(React.Fragment, null,
-                    h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'attributes', label: '属性' }, { id: 'events', label: '事件' }, { id: 'resource', label: '资源' }, { id: 'trajectory', label: '轨迹' }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
+                    h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'attributes', label: '属性' }, { id: 'events', label: '事件' }, { id: 'resource', label: '资源' }, { id: 'trajectory', label: '轨迹' }, { id: 'requests', label: `模型请求${requestMetrics.length ? ' ' + requestMetrics.length : ''}` }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
                     detailContent)))
         : null;
 

@@ -79,3 +79,24 @@ made the same test pass. The reader no longer sees a partially published update.
   are not certified by these tests.
 - macOS distribution signing/notarization and preproduction deployment remain
   separate gates. The local unsigned ARM DMG is not a signed release.
+
+## 请求开销与观测补全
+
+仅输入“你好”的真实 CLI 探测仍携带 347 个工具：请求约 534k 字符，
+其中工具定义约 480k；模型上报输入 133047 tokens。新会话没有 Studio
+Agent 绑定，说明个人 Codex 插件的全量工具装载本身已带来主要开销。
+原有资源 Agent 的原生页面再次发送“你好”，请求 559849 字符、353 个工具，
+工具定义 482572 字符，系统提示词 73801 字符，对话 3238 字符；实际用量
+140219 tokens，原生会话及观测页均已显示。以上是不同请求，不能混为同一个样本。
+
+修复前 App Server 的 `thread/tokenUsage/updated` 被桥接层忽略；修复后先将
+累计值转换为增量供 Trace 归集，再按 DSH 的累计、缓存分桶约定投影原生用量，
+避免重复计数。Chat 代理额外记录每次出站请求的数字统计。请求大小不是 Token
+估算；没有上报用量的历史记录继续保留为空，不反填或伪造数字。
+
+三项新增回归先失败再通过（累计用量、失败前 Trace 保留、脱敏请求统计）。
+补全后的 `make release-check` 通过 387 项测试和包完整性检查。
+浏览器截图：`.artifacts/e2e-codex-request-metrics-20261008.png`。
+
+只开启 Codex 工具搜索开关未降低当前自定义模型的工具数。工具按需加载及
+Agent 插件范围隔离尚未完成，不把用量可见性修复当作上下文体积已优化。
