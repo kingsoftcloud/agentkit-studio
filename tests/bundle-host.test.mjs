@@ -62,11 +62,21 @@ test('missing credentials, invalid identity and reserved credential names fail b
   await assert.rejects(prepareBundleHost({ ...f, env: { ...f.env, AGENTKIT_RUNTIME_TOKEN: 'short' } }), { code: 'BUNDLE_HOST_TOKEN_REQUIRED' });
   await assert.rejects(prepareBundleHost({ ...f, env: { ...f.env, AGENTKIT_RUNTIME_AGENT_ID: 'wrong' } }), { code: 'PORTABLE_RUNTIME_MISMATCH' });
   await assert.rejects(readFile(join(f.state, 'agentkit/portable-bundle.zip')), { code: 'ENOENT' });
-  const reserved = await fixture(t, 'NODE_OPTIONS');
-  await assert.rejects(prepareBundleHost(reserved), { code: 'BUNDLE_HOST_CREDENTIAL_RESERVED' });
+  for (const name of ['NODE_OPTIONS', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_HOME', 'AGENTKIT_BUNDLE_SHA256']) {
+    const reserved = await fixture(t, name);
+    await assert.rejects(prepareBundleHost(reserved), { code: 'BUNDLE_HOST_CREDENTIAL_RESERVED' });
+  }
   const generated = await fixture(t, 'AGENTKIT_BUNDLE_MODEL_1234567890AB');
   const plan = await prepareBundleHost({ ...generated, env: { ...generated.env, AGENTKIT_BUNDLE_MODEL_1234567890AB: 'generated-target-secret' } });
   assert.equal(plan.env.AGENTKIT_BUNDLE_MODEL_1234567890AB, 'generated-target-secret');
+});
+
+test('a normal Studio model credential survives export and cold Host boot', async t => {
+  const f = await fixture(t, 'AGENTKIT_MODEL_API_KEY');
+  const plan = await prepareBundleHost({ ...f, env: { ...f.env, AGENTKIT_MODEL_API_KEY: 'fake-key' } });
+  assert.equal(plan.env.AGENTKIT_MODEL_API_KEY, 'fake-key');
+  assert.equal(plan.env.OPENAI_API_KEY, undefined);
+  assert.equal(JSON.stringify(plan.identity).includes('fake-key'), false);
 });
 
 test('personal directory links and foreign DSH profiles cannot become deployment state', async t => {

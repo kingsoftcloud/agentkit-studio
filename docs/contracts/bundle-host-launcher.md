@@ -40,7 +40,9 @@ AgentKit、DSH、HOME 和工作目录；符号链接、已有个人目录、不�
 
 子进程仅获得指定资源凭证、访问令牌、监听设置、语言/PATH 和可信 CA 配置。
 不继承操作人员的 NODE_OPTIONS、DSH/Codex Profile、个人模型或云端密钥。资源凭证名称
-不能占用 Host 控制变量；运行包自动生成的 `AGENTKIT_BUNDLE_*` 引用可正常使用。
+不能占用 Host 控制变量。
+默认模型凭证 `AGENTKIT_MODEL_API_KEY` 和导出生成的 `AGENTKIT_BUNDLE_MODEL_*`、
+`AGENTKIT_BUNDLE_MCP_*` 会按声明注入；`AGENTKIT_BUNDLE_SHA256` 等启动控制变量仍禁止用作资源凭证。
 SIGTERM/SIGINT 转发给 DSH，15 秒后仍未退出则终止子进程。
 
 重启时必须保留状态卷和访问令牌，才可通过前一轮 `previous_response_id` 继续会话。
@@ -84,3 +86,26 @@ Node 22.19.0、DSH 0.2.0-rc.2，Studio 从 tarball 解包，DSH 的编译产物�
 DSH 依赖目录后通过。此失败明确说明镜像需要完整运行依赖，不能靠开发环境碰巧解析成功。
 本轮 Docker daemon 的 Unix socket `_ping` 超时，未重启其他容器，Linux 镜像构建和预发
 UploadCode/CreateAgentProduct/UpdateAgent 联调仍未验收。
+
+## 真实容器资源验收入口
+
+`scripts/verify-container-bundle.mjs` 使用已存在的镜像、新容器和独立状态卷，通过实际入口加载
+给定运行包。不会挂载源码或个人 Profile；只注入调用者提供的 owner-only 环境文件，完成后删除
+本次容器和卷。环境文件至少应包含运行包声明的凭证；随机调用令牌和 ZIP 摘要由脚本补充。
+
+```sh
+node scripts/verify-container-bundle.mjs --execute \
+  --archive /path/to/portable.zip --env-file /path/to/private.env \
+  --cases /path/to/cases.json --image VERIFIED_IMAGE --keep
+```
+
+此命令会产生真实模型用量和用例指定的资源操作。用例是 JSON 数组，每项包含 `id`、普通用户
+`input`、可选的 `expectedText` 字符串数组、`expectedTools` 工具名正则数组及
+`expectedToolResult` 成功工具结果片段。`restart: true` 在用例前重启容器；`continueFrom`
+引用先前用例的响应以验证续聊；省略它会创建新会话，适合验证跨会话记忆。
+`delayMs` 最多 60000，可等待云端记忆异步索引。测试标记应只写在 Agent/Skill 提示词中，
+不要在用户问题里提示预期身份或答案。
+
+输出记录 image ID、Build/Bundle 身份、工具名、文本流帧、首字时间和 token 用量。
+完整响应及 Host 日志仅保留在权限受限的临时目录；`--keep` 保留成功记录，失败记录始终保留。
+不能把报告中的本地 Docker 结果当作预发部署成功。运行前须检查每个用例的操作和目标资源。

@@ -29,7 +29,9 @@ export async function prepareBundleHost({ archive, state, installation, env = pr
   if (expectedSha256 && (!/^[a-f0-9]{64}$/.test(expectedSha256) || expectedSha256 !== hash)) fail('BUNDLE_HOST_DIGEST_MISMATCH', '运行包与部署指定的 SHA256 不一致');
   const { manifest, definition } = verifyPortableBundle(zip);
   if (!['dsh-native', 'harness', 'codex'].includes(definition.spec?.runtime?.type)) fail('PORTABLE_RUNTIME_UNSUPPORTED', '此运行包的运行时不受支持');
-  if (manifest.requirements.some(item => /^(?:NODE_|DSH_|CODEX_|AGENTKIT_(?!BUNDLE_)|XDG_|LD_|DYLD_|npm_|pnpm_)/i.test(item.name)
+  // Studio's default model reference is a resource credential. Generated
+  // model/MCP references are allowed too, but not Host controls such as BUNDLE_SHA256.
+  if (manifest.requirements.some(item => /^(?:NODE_|DSH_|CODEX_|AGENTKIT_(?!(?:MODEL_API_KEY$|BUNDLE_(?:MODEL|MCP)_))|XDG_|LD_|DYLD_|npm_|pnpm_)/i.test(item.name)
     || ['HOME', 'PATH', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].includes(item.name))) fail('BUNDLE_HOST_CREDENTIAL_RESERVED', '资源凭证名称不能覆盖 Host 启动配置');
   if (typeof env.AGENTKIT_RUNTIME_TOKEN !== 'string' || env.AGENTKIT_RUNTIME_TOKEN.length < 24) fail('BUNDLE_HOST_TOKEN_REQUIRED', '运行入口需要至少 24 字符的独立访问令牌');
   for (const [key, value] of [['AGENTKIT_RUNTIME_AGENT_ID', manifest.agentId], ['AGENTKIT_RUNTIME_BUILD_ID', manifest.buildId]]) {
