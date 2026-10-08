@@ -11,7 +11,11 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
 async function repo(path, files) {
   await mkdir(path); git(path, 'init'); git(path, 'config', 'user.name', 'Fixture'); git(path, 'config', 'user.email', 'fixture@example.invalid');
   for (const [name, value] of Object.entries(files)) { await mkdir(join(path, name, '..'), { recursive: true }); await writeFile(join(path, name), value); }
-  git(path, 'add', '.'); git(path, 'commit', '-m', 'fixture'); return git(path, 'rev-parse', 'HEAD');
+  git(path, 'add', '.');
+  execFileSync('git', ['commit', '--date=2020-01-01T00:00:00Z', '-m', 'fixture'], {
+    cwd: path, env: { ...process.env, GIT_COMMITTER_DATE: '2020-01-01T00:00:00Z' }, stdio: 'ignore',
+  });
+  return git(path, 'rev-parse', 'HEAD');
 }
 
 test('Linux source inputs exclude working copies, profiles and ignored files while applying committed patches', async t => {
@@ -32,6 +36,11 @@ test('Linux source inputs exclude working copies, profiles and ignored files whi
     for (const secret of ['DO_NOT_EXPORT_SECRET', 'DO_NOT_EXPORT_PROFILE', 'live-unreviewed-change']) assert.equal(bytes.includes(Buffer.from(secret)), false);
   }
   assert.equal(execFileSync('tar', ['-xOf', join(output, 'dsh-source.tar'), 'code.txt'], { encoding: 'utf8' }), 'patched\n');
+  const timestamp = Number(git(source, 'show', '-s', '--format=%ct', commit));
+  assert.equal(Number.parseInt((await readFile(join(output, 'dsh-source.tar'))).subarray(136, 148).toString(), 8), timestamp);
+  git(source, 'config', 'tar.umask', '0077'); git(studio, 'config', 'tar.umask', '0077');
+  const repeated = await stageRuntimeSources({ studio, source, output: join(root, 'repeated'), commit, dshVersion: '0.2.0' });
+  assert.deepEqual(repeated, manifest, 'same committed inputs must not depend on archive time or local tar permissions');
   assert.equal(await readFile(join(source, 'code.txt'), 'utf8'), 'live-unreviewed-change\n');
   await assert.rejects(stageRuntimeSources({ studio, source, output, commit, dshVersion: '0.2.0' }), { code: 'EEXIST' });
   await writeFile(join(studio, 'package.json'), '{"version":"uncommitted"}');

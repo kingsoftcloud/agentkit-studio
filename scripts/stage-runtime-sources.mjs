@@ -20,7 +20,7 @@ export async function stageRuntimeSources({ studio, source, output, commit, dshV
   await mkdir(output, { mode: 0o700 });
   const unpacked = join(output, 'studio');
   try {
-    await git(studio, ['archive', '--format=tar', `--output=${join(output, 'studio-source.tar')}`, studioCommit]);
+    await git(studio, ['-c', 'tar.umask=0022', 'archive', '--format=tar', `--output=${join(output, 'studio-source.tar')}`, studioCommit]);
     await mkdir(unpacked);
     await execute('tar', ['-xf', join(output, 'studio-source.tar'), '-C', unpacked]);
     const studioPackage = JSON.parse(await readFile(join(unpacked, 'package.json'), 'utf8'));
@@ -31,7 +31,10 @@ export async function stageRuntimeSources({ studio, source, output, commit, dshV
       const dshPackage = JSON.parse(await readFile(join(checkout, 'package.json'), 'utf8'));
       if (dshPackage.version !== dshVersion) throw new Error('runtime sources: pinned DSH version mismatch');
       dshTree = await git(checkout, ['write-tree']);
-      await git(checkout, ['archive', '--format=tar', `--output=${join(output, 'dsh-source.tar')}`, dshTree]);
+      // Archiving a tree defaults to the current clock. Use the pinned commit's
+      // time and explicit file modes so another machine can reproduce the lock.
+      const timestamp = await git(checkout, ['show', '-s', '--format=%cI', commit]);
+      await git(checkout, ['-c', 'tar.umask=0022', 'archive', '--format=tar', `--mtime=${timestamp}`, `--output=${join(output, 'dsh-source.tar')}`, dshTree]);
     });
     const manifest = { format: 'agentkit.runtime-sources/v1', studio: { commit: studioCommit, version: studioPackage.version },
       dsh: { commit, version: dshVersion, patchedTree: dshTree },
