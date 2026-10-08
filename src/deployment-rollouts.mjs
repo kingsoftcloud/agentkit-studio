@@ -45,7 +45,8 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
       prepared = { plan: { ...version.plan, image, catalogRevision: catalog.revision }, zip, values,
         resolved: await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env }) };
     } else {
-      prepared = await assemble({ ...input, agentId: current.plan.agentId, resources: current.plan.resources }, exporting);
+      prepared = await assemble({ ...input, releaseId: input.releaseId || (current.plan.image.runtimeIdentity ? current.plan.image.id : undefined),
+        agentId: current.plan.agentId, resources: current.plan.resources }, exporting);
     }
     if (!prepared.plan.image.runtimeIdentity) throw portableError('DEPLOYMENT_IMAGE_UPGRADE_REQUIRED', '目标镜像尚未声明版本探测能力，请先发布支持升级回滚的 Studio 镜像');
     prepared.plan = { ...prepared.plan, name: current.plan.name };
