@@ -10,11 +10,13 @@ test('server client sends existing local Action API without requiring KsADK', as
     configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudRegion: 'cn-beijing-6', cloudServiceToken: 'local-token' }),
     fetchImpl: async (url, init) => {
       request = { url: String(url), init };
-      return new Response(JSON.stringify({ Code: 0, RequestId: 'req-1', Data: { Agents: [{ AgentId: 'a1', Name: 'A', Status: 'READY' }], Total: 1, Page: 1, PageSize: 20 } }), { status: 200 });
+      return new Response(JSON.stringify({ Code: 0, RequestId: 'req-1', Data: { Agents: [{ AgentId: 'a1', Name: 'A', Status: 'READY', CreatedAt: '2026-10-08T00:00:00+00:00Z', UpdatedAt: '2026-10-08T01:00:00+00:00Z' }], Total: 1, Page: 1, PageSize: 20 } }), { status: 200 });
     },
   });
   const result = await client.listAgents({ page: 1, pageSize: 20 });
   assert.equal(result.items[0].id, 'a1');
+  assert.equal(result.items[0].metadata.createdAt, '2026-10-08T00:00:00+00:00Z');
+  assert.equal(result.items[0].metadata.updatedAt, '2026-10-08T01:00:00+00:00Z');
   assert.match(request.url, /\/agentengine\/api\/v1\/ListAgents$/);
   assert.equal(request.init.headers.Authorization, 'Bearer local-token');
   assert.equal(request.init.redirect, 'error');

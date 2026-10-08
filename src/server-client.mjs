@@ -56,6 +56,8 @@ function normalizeAgent(item = {}) {
     revision: Number(basic.Revision || basic.revision || item.Revision || item.revision || 1),
     status: basic.Status || basic.status || item.Status || item.status,
     phase: basic.Phase || basic.phase || item.Phase || item.phase,
+    createdAt: basic.CreatedAt || basic.created_at || item.CreatedAt || item.created_at,
+    updatedAt: basic.UpdatedAt || basic.updated_at || item.UpdatedAt || item.updated_at,
   };
   // GetAgent puts the deployed framework under Deployment while ListAgents
   // usually exposes it on Basic.Framework. Preserve that server-owned

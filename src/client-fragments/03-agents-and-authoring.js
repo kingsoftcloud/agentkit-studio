@@ -1,6 +1,6 @@
     function AgentWorkspace({ onNavigate }) {
       const [view, setView] = useState('list');
-      const [tab, setTab] = useState('agents');
+      const [tab, setTab] = useState('local');
       const [createMode, setCreateMode] = useState('quick');
       const [created, setCreated] = useState(null);
       const [editingAgent, setEditingAgent] = useState(null);
@@ -8,7 +8,7 @@
         return h(AgentCreatePage, {
           mode: createMode,
           onBack: () => setView('list'),
-          onCreated: agent => { setCreated(agent); setView('list'); },
+          onCreated: agent => { setCreated(agent); setTab('local'); setView('list'); },
         });
       }
       if (view === 'edit') return h(AgentEditPage, {
@@ -58,7 +58,7 @@
           // Runtime capability discovery belongs to the separate Runtime tab;
           // the list path must never fan out into one detail/capability call
           // per card. Detail is loaded only when the user opens edit/inspect.
-          const agentResult = await hostRemote.agents({ page, pageSize, query });
+          const agentResult = await hostRemote.agents({ page, pageSize, query, source: tab === 'cloud' ? 'cloud' : 'local' });
           if (version !== requestVersion.current) return;
           setCatalogWarnings(agentResult?.warnings || []);
           const listedAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
@@ -71,7 +71,12 @@
           setError(reason?.message || 'Host 尚未连接');
         }
       };
-      useEffect(() => { void load(); return () => { requestVersion.current += 1; }; }, [page, pageSize, query]);
+      useEffect(() => { if (tab !== 'runtime') void load(); return () => { requestVersion.current += 1; }; }, [page, pageSize, query, tab]);
+      useEffect(() => {
+        const changed = () => { if (tab !== 'runtime') void load(); };
+        window.addEventListener('agentkit-studio:local-agent-changed', changed);
+        return () => window.removeEventListener('agentkit-studio:local-agent-changed', changed);
+      }, [page, pageSize, query, tab]);
       useEffect(() => { setPage(1); }, [query, pageSize]);
 
       const filteredAgents = agents.filter(agent => {
@@ -87,17 +92,18 @@
       const pageCount = Math.max(1, Math.ceil((total || filteredPageAgents.length) / pageSize));
       const agentTable = agents.length || query.trim() ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.surface, overflow: 'hidden' } },
         h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '14px 16px', borderBottom: '1px solid ' + BRAND.border, flexWrap: 'wrap' } },
-          h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, `${filteredAgents.length} / ${agents.length} 个 Agent`),
+          h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, `${total} 个${tab === 'cloud' ? '云端' : '本地'} Agent · 最新创建优先`),
           h('div', { style: { display: 'flex', gap: '8px', minWidth: 'min(100%, 430px)' } },
             h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索 Agent 名称或 ID', 'aria-label': '搜索 Agent', style: { ...inputStyle(), marginTop: 0, flex: 1, minWidth: '180px' } }),
             h('select', { value: statusFilter, onChange: event => setStatusFilter(event.target.value), 'aria-label': '筛选 Agent 状态', style: { ...inputStyle(), marginTop: 0, width: '112px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'built' }, '已构建'), h('option', { value: 'draft' }, '草稿')))),
         h('div', { style: { overflow: 'auto', maxHeight: 'min(64vh, 680px)' } }, h('table', { style: { width: '100%', borderCollapse: 'collapse', minWidth: '860px', fontSize: '12px' } },
-          h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas, position: 'sticky', top: 0, zIndex: 1 } }, ['Agent', '运行时', '能力', '版本', '构建', '操作'].map(label => h('th', { key: label, style: { padding: '11px 14px', borderBottom: '1px solid ' + BRAND.border, fontWeight: 750, whiteSpace: 'nowrap' } }, label)))),
+          h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas, position: 'sticky', top: 0, zIndex: 1 } }, ['Agent', '运行时', '能力', '版本', '创建时间', '构建', '操作'].map(label => h('th', { key: label, style: { padding: '11px 14px', borderBottom: '1px solid ' + BRAND.border, fontWeight: 750, whiteSpace: 'nowrap' } }, label)))),
           h('tbody', null, filteredPageAgents.map(agent => {
             const metadata = agent?.metadata || agent || {};
             const spec = agent?.spec || {};
             const id = metadata.id || agent?.id || '—';
             const runtime = spec.runtime?.type || agent?.runtime?.type || 'harness';
+            const createdTime = new Date(String(metadata.createdAt || agent.createdAt || '').replace(/([+-]\d{2}:\d{2})Z$/, '$1'));
             const bindings = spec.bindings || {};
             const plugins = Array.isArray(bindings.plugins) ? bindings.plugins : [];
             const platformCount = kind => plugins.filter(item => String(item?.config?.binding?.resource?.kind || '') === kind).length;
@@ -116,6 +122,7 @@
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, RUNTIME_LABELS[runtime] || runtime),
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, counts.length ? counts.map(([label, count]) => `${count} ${label}`).join(' · ') : '—'),
               h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `r${metadata.revision || 1}`),
+              h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, Number.isFinite(createdTime.getTime()) ? createdTime.toLocaleString('zh-CN', { hour12: false }) : '—'),
               h('td', { style: { padding: '13px 14px' } }, h(Pill, { tone: built ? 'accent' : 'signal' }, built ? '已构建' : successfulBuilds(agent).length ? '有历史构建' : agent.source === 'local-studio' ? '本地配置' : '草稿')),
               h('td', { style: { padding: '13px 14px', whiteSpace: 'nowrap' } }, h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', disabled: Boolean(bindingAgent), onClick: () => { void bindAgent(agent); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill, borderColor: 'transparent' } }, bindingAgent === (agent?.metadata?.id || agent?.id) ? '正在绑定…' : '绑定到新会话'), h('button', { type: 'button', onClick: () => onEdit(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '编辑 Agent'), agent?.metadata?.local ? h('button', { type: 'button', onClick: async () => { if (!(window.__AGENTKIT_CONFIRM__ ? await window.__AGENTKIT_CONFIRM__({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true }) : window.confirm(`确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？`))) return; void onDeleteLocal?.(agent?.metadata?.id); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.danger } }, '删除') : null)));
           })))),
@@ -127,7 +134,7 @@
             h('button', { type: 'button', 'aria-label': 'Agent 下一页', disabled: page >= pageCount || status === 'loading', onClick: () => setPage(current => Math.min(pageCount, current + 1)), style: pagerButtonStyle(page >= pageCount || status === 'loading') }, '下一页')))
       ) : null;
       return h('div', null,
-        h(StudioSubnav, { value: tab, onChange: onTabChange, items: [{ id: 'agents', label: 'Agent 列表' }, { id: 'runtime', label: '运行目标' }] }),
+        h(StudioSubnav, { value: tab, onChange: value => { if (value === tab) return; setPage(1); setQuery(''); setStatusFilter('all'); setAgents([]); setTotal(0); setStatus('loading'); onTabChange(value); }, items: [{ id: 'local', label: '本地 Agent' }, { id: 'cloud', label: '云端 Agent' }, { id: 'runtime', label: '运行目标' }] }),
         tab === 'runtime' ? h(RuntimeCatalogPage, { onNavigate }) : null,
         tab === 'runtime' ? null : h(React.Fragment, null,
         h('section', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap', border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '18px', background: BRAND.surface, marginBottom: '18px' } },

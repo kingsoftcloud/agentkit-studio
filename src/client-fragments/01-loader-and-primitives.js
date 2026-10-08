@@ -251,13 +251,13 @@ window.__ModuleLoader__.load({
           : request('/api/v1/catalog/runtimes'),
         // `/api/v1/agents` is an older collection endpoint in some Hosts and
         // returns an array; normalize it to the Studio `{ items }` contract.
-        agents: async ({ page = 1, pageSize = 50, query = '' } = {}) => {
+        agents: async ({ page = 1, pageSize = 50, query = '', source = 'all' } = {}) => {
           // DSH Web renders plugin UI in an opaque srcdoc frame.  Use the
           // authenticated Connection carrier for the local control plane;
               // direct cross-origin fetch is blocked before the DSH Host can answer.
           if (connection?.rpc?.call) {
             try {
-              const result = await connection.rpc.call('/agentkit', 'agents/list', { page, limit: pageSize, query });
+              const result = await connection.rpc.call('/agentkit', 'agents/list', { page, limit: pageSize, query, source });
               if (result?.ok) return Array.isArray(result.value) ? { items: result.value, page, pageSize } : result.value;
               const error = new Error(result?.error?.message || 'Agent catalog unavailable');
               error.code = result?.error?.code || 'HOST_REQUEST_FAILED';
@@ -267,12 +267,12 @@ window.__ModuleLoader__.load({
               // when the optional AgentEngine Server is offline. This does not
               // fabricate data: the same authenticated Host catalog is read.
               try {
-                const payload = await request('/api/v1/agents?' + new URLSearchParams({ limit: String(Math.min(pageSize, 100)), page: String(page), ...(query ? { query } : {}) }).toString());
+                const payload = await request('/api/v1/agents?' + new URLSearchParams({ limit: String(Math.min(pageSize, 100)), page: String(page), source, ...(query ? { query } : {}) }).toString());
                 return Array.isArray(payload) ? { items: payload } : payload;
               } catch { throw serverError; }
             }
           }
-          const payload = await request('/api/v1/agents?' + new URLSearchParams({ limit: String(Math.min(pageSize, 100)), page: String(page), ...(query ? { query } : {}) }).toString());
+          const payload = await request('/api/v1/agents?' + new URLSearchParams({ limit: String(Math.min(pageSize, 100)), page: String(page), source, ...(query ? { query } : {}) }).toString());
           return Array.isArray(payload) ? { items: payload } : payload;
         },
         agent: id => directServer()

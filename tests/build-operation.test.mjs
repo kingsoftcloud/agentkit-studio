@@ -118,8 +118,12 @@ test('started work keeps its actual outcome instead of being relabeled cancelled
   const started = new Promise(resolve => { notifyStarted = resolve; });
   const work = new Promise(resolve => { release = resolve; });
   const admitted = await operations.submit({ kind: 'build', resourceId: 'one', runner: async () => { notifyStarted(); await work; return { buildId: 'published' }; } });
-  await started;
-  try { await assert.rejects(operations.cancel(admitted.id), { code: 'OPERATION_ALREADY_STARTED' }); }
-  finally { release(); }
+  // The production host keeps the event loop alive; this isolated fixture has
+  // no host socket and the operation's background timer is intentionally unref'd.
+  const deadline = new AbortController();
+  try {
+    await Promise.race([started, delay(2_000, null, { signal: deadline.signal }).then(() => assert.fail('operation runner did not start'))]);
+    await assert.rejects(operations.cancel(admitted.id), { code: 'OPERATION_ALREADY_STARTED' });
+  } finally { deadline.abort(); release(); }
   assert.equal((await terminal(operations, admitted.id)).status, 'succeeded');
 });

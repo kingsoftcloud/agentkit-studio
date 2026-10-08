@@ -4,6 +4,29 @@ import { createAgentCatalog } from '../src/agent-catalog.mjs';
 
 const row = (id, name = id) => ({ metadata: { id, name } });
 
+test('local tab sorts newest first before pagination and never waits for cloud', async () => {
+  const old = { metadata: { id: 'old', name: 'old', createdAt: '2026-10-07T00:00:00Z' } };
+  const newest = { metadata: { id: 'newest', name: 'newest', createdAt: '2026-10-08T00:00:00Z' } };
+  const catalog = createAgentCatalog({ store: async () => ({ list: async () => [old, newest] }), server: async () => { throw Error('local tab must not query cloud'); } });
+  const result = await catalog.list({ source: 'local', limit: 1 });
+  assert.equal(result.items[0].metadata.id, 'newest');
+  assert.equal(result.total, 2);
+  assert.deepEqual(result.warnings, []);
+  assert.equal((await catalog.list({ source: 'local', page: 2, limit: 1 })).items[0].metadata.id, 'old');
+});
+
+test('cloud tab has independent paging and preserves cloud failures', async () => {
+  const catalog = createAgentCatalog({ store: async () => { throw Error('cloud tab must not read local drafts'); }, server: async () => ({ listAgents: async query => {
+    assert.equal(query.page, 2);
+    assert.equal(query.pageSize, 1);
+    return { items: [row('cloud')], total: 2 };
+  } }) });
+  assert.deepEqual((await catalog.list({ source: 'cloud', page: 2, limit: 1 })).items, [row('cloud')]);
+  const offline = createAgentCatalog({ server: async () => { throw Object.assign(Error('offline'), { code: 'SERVER_UNAVAILABLE' }); } });
+  await assert.rejects(offline.list({ source: 'cloud' }), { code: 'SERVER_UNAVAILABLE' });
+  await assert.rejects(catalog.list({ source: 'invalid' }), { code: 'INVALID_QUERY' });
+});
+
 test('local Agents remain searchable and pageable while cloud is offline, including first use', async () => {
   const catalog = createAgentCatalog({ store: async () => ({ list: async () => [row('local-a', 'Alpha'), row('local-b', 'Beta')] }), server: async () => ({ listAgents: async () => { throw new Error('offline'); } }) });
   const result = await catalog.list({ page: 2, limit: 1 });

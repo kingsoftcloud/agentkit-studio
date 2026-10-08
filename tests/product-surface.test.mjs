@@ -260,7 +260,7 @@ test('resource surface exposes real MCP and Skill lifecycle actions', () => {
 });
 
 test('global Agent and runtime lists expose bounded pagination and Codex provider state', () => {
-  assert.match(clientSource, /hostRemote\.agents\(\{ page, pageSize, query \}\)/);
+  assert.match(clientSource, /hostRemote\.agents\(\{ page, pageSize, query, source: tab === 'cloud' \? 'cloud' : 'local' \}\)/);
   assert.doesNotMatch(clientSource, /const hydratedAgents = await Promise\.all\(listedAgents\.map/);
   assert.match(clientSource, /maxHeight: 'min\(64vh, 680px\)'/);
   assert.match(clientSource, /Provider 未注册/);

@@ -132,8 +132,8 @@
         const next = PANELS.find(item => item.page === target || item.id === target);
         if (next) ctx.layout.selectPanel(next.id);
       };
-      // Agents are bound from the Studio Agents page. Create the Session,
-      // admit its preset, select it before the first turn, then hand the
+      // Agents are bound from the Studio Agents page. Admit the preset,
+      // create its Session, select it before the first turn, then hand the
       // Session to DSH's own navigation service. This keeps the native
       // composer visible from the first frame and makes binding an explicit
       // action rather than a side effect of opening a custom chat page.
@@ -142,22 +142,25 @@
           const options = agentOrOptions && typeof agentOrOptions === 'object' ? agentOrOptions : { agentId: agentOrOptions, buildId: requestedBuildId };
           const value = String(options.agentId || '').trim();
           const buildId = String(options.buildId || '').trim();
-          if (!value) return;
+          if (!value && options.workspaceFree !== true) return;
           try {
             // Keep the DSH-native blank-session semantics. An Agent binding
             // must not force a filesystem Workspace; users can choose one in
             // the native composer when they need workspace tools.
+            const admission = value ? await hostRemote.ensureDshPreset(value, buildId) : null;
             const sessionId = await navCtx.sessions.create({});
-            const admission = await hostRemote.ensureDshPreset(value, buildId);
-            const selected = await ctx.remote?.agentPresets?.select?.(sessionId, admission.presetId);
-            if (selected === undefined || selected === null || (typeof selected === 'object' && selected.ok === false)) {
-              throw new Error(selected?.error?.message || 'DSH 拒绝绑定该 Agent');
+            if (admission) {
+              const selected = await ctx.remote?.agentPresets?.select?.(sessionId, admission.presetId);
+              if (selected === undefined || selected === null || (typeof selected === 'object' && selected.ok === false)) {
+                throw new Error(selected?.error?.message || 'DSH 拒绝绑定该 Agent');
+              }
             }
-            if (admission.modelSelection) {
+            const modelSelection = options.modelSelection || admission?.modelSelection;
+            if (modelSelection) {
               // The new Session may not have a browser scope until it is
               // opened. Select through DSH's durable Remote first; the native
               // directory observes the resulting projection when it mounts.
-              const result = await ctx.remote.session.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
+              const result = await ctx.remote.session.selectModel({ sessionId, ...modelSelection, saveDefault: false });
               if (!result?.ok) throw new Error(result?.error?.message || 'Agent 绑定的模型不可用');
             }
             try {
