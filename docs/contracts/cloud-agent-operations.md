@@ -25,6 +25,11 @@ Channels 仍使用独立 Channel API 的连接配置和授权，不冒充已接�
 Channel Worker 将稳定事件 ID 转成 `InvocationId`，多轮使用标准 `PreviousResponseId`。
 只有收到 `response.completed` 才允许把本轮标记成功；断流、失败、取消均不能发送部分结果冒充成功。
 
+渠道投递与 Agent 执行状态分开处理。Worker 按租户、渠道和机器人账号选择仍持有租约的连接，
+数据库原子领取到期重试；没有连接时保留待重试，不返回假成功。明确未发送的连接失败可退避重试，
+发送结果不确定时记为 `unknown`，不自动重复发送。发送后的审计写入失败也不触发重发。
+WPS、飞书还校验 HTTP 响应中的业务成功码；企业微信的 WebSocket 请求关联确认仍待补齐。
+
 Server 需要包含 `agentkit.responses/v1` 调度适配，并启用 `CLOUD_SCHEDULER_ENABLED`。
 旧 Server 即使能保存任务，Studio 也不会把它当作支持新运行时：缺少
 `Availability.RuntimeContracts` 声明时拒绝创建和立即运行，保留查询和清理操作。
@@ -58,6 +63,7 @@ Server 在调用 Studio Responses 前持久化执行记录并核对领取租约�
 - 预发 Server：固定镜像更新后，已通过内部 API 创建单次计划，由云端 Worker 自动执行并持久化 `succeeded` 终态、响应 ID 和已核验的子账号 UUID。测试 Host 未启动；该测试不等于 KOP 产品入口通过。
 - 预发 Channel：补齐 PostgreSQL 持久化、RESP2 连接及 256 字符续聊 ID；已用合成渠道事件调用真实 Server 和云端模型，验证盲测系统提示词、完整响应、重复事件去重；重启 API/Worker 后仍延续同一会话并找回上一轮暗号，暂停、恢复与删除行为也已通过。真实平台消息收发单独验收。
 - Channel 会话管理：324 项自动化检查通过，覆盖跨账号修改/删除拒绝、原子重置、旧轮次回写拦截和重置失败提示；独立预发 API 对真实 PostgreSQL 的重置、续聊句柄清理与账号隔离也已验证。该验证不发送真实平台消息。
+- Channel 投递修复：`agentengine-channel` 提交 `674af10`，完整回归 366 项通过；预发 API/Worker 均更新到镜像 `sha256:21b82804266d6e83b144a04816030be8a5d541f68b42364a000001c5a2d86b2d`。真实 PostgreSQL、Redis 与 Channel HTTP API 验证并发领取仅一个成功、租约续期及接替保护、审计失败/确认丢失不重发、缺少适配器不误报成功。发送器为隔离模拟，真实 IM 消息数为 0；测试表、key、outbox 和审计行均清理。这是计划结果推送的基础修复，尚未接入计划投递目标。
 - 持久化联调：三种运行时已通过真实容器替换后的原响应重放与历史续聊；Harness 另通过合成渠道事件 → 真实 Channel/Server → 云端模型的重建后续聊和重复事件去重。详见[持久化验收](cloud-storage-acceptance-2026-10-09.md)。
 - 资源与版本联调：三种运行时独立知识库盲测通过；Harness 的同一渠道绑定在升级移除知识库、回滚恢复知识库后，新会话均使用对应冻结资源，重复事件只回复一次。详见[资源隔离验收](cloud-resource-isolation-2026-10-09.md)。该渠道入口仍为合成消息。
 - 阻塞：当前预发 KOP 对 `ListAgentSchedules` 返回 `InvalidActionOrVesion`，Studio 云端计划入口尚不可用，需发布调度 Action。
