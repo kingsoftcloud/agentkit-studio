@@ -109,3 +109,19 @@ test('explicit official inner endpoint is signed; lookalikes and other remote HT
   }
   assert.equal(calls, 1);
 });
+
+test('cloud schedule writes use the same verified subaccount signing as deployment', async () => {
+  const requests = [];
+  const client = deploymentClient({ configuration, fetchImpl: async (url, init) => { requests.push({ url: String(url), init }); return ok({ Task: {} }); } });
+  const schedules = client.forAgent('ar-created').schedules;
+  await schedules.create({ DisplayName: 'Daily', Prompt: 'hello', Schedule: { kind: 'interval', everySeconds: 60 } });
+  await schedules.run('task-one');
+  assert.equal(requests.length, 2);
+  for (const request of requests) {
+    assert.equal(request.init.headers['X-Ksc-User-uuid'], 'verified-operator');
+    assert.equal(request.init.headers['X-Ksc-Account-Id'], '123456789');
+    assert.match(request.init.headers.Authorization, /Credential=AKTEST/);
+    assert.equal(JSON.parse(request.init.body).AgentId, 'ar-created');
+  }
+  assert.match(requests[1].url, /Action=RunAgentSchedule&/);
+});

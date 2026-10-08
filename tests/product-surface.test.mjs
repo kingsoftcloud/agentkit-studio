@@ -149,7 +149,7 @@ test('Studio domains use the DSH left panel list and old Studio underline tabs',
 });
 
 test('Studio automation surface keeps Host-backed task management affordances', () => {
-  assert.match(clientSource, /hostRemote\.schedules\(\)/);
+  assert.match(clientSource, /hostRemote\.schedules\(undefined, scope\)/);
   assert.match(clientSource, /hostRemote\.createSchedule/);
   assert.match(clientSource, /hostRemote\.scheduleOccurrences/);
   assert.match(clientSource, /每日简报/);

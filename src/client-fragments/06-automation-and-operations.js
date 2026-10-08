@@ -36,6 +36,8 @@
     }
 
     function AutomationPage({ scheduleRemote }) {
+      const [scope, setScope] = useState('local');
+      const loadVersion = useRef(0);
       const [status, setStatus] = useState('loading');
       const [tasks, setTasks] = useState([]);
       const [nativeTasks, setNativeTasks] = useState([]);
@@ -65,9 +67,11 @@
       const agentId = item => item?.metadata?.id || item?.id || '';
       const agentName = item => item?.metadata?.name || item?.name || agentId(item);
       const load = async () => {
+        const version = ++loadVersion.current;
         setStatus('loading'); setError('');
         try {
-          const [scheduleResult, agentResult] = await Promise.all([hostRemote.schedules(), hostRemote.agents({ source: 'local', pageSize: 100 })]);
+          const [scheduleResult, agentResult] = await Promise.all([hostRemote.schedules(undefined, scope), hostRemote.agents({ source: scope, pageSize: 100 })]);
+          if (version !== loadVersion.current) return;
           const nextAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
           setAgents(nextAgents);
           const nextTasks = Array.isArray(scheduleResult?.items) ? scheduleResult.items : [];
@@ -84,21 +88,25 @@
               return [task.taskId, latest || null];
             } catch { return [task.taskId, null]; }
           }));
+          if (version !== loadVersion.current) return;
           setLatestOccurrences(Object.fromEntries(occurrencePairs.filter(([, occurrence]) => occurrence)));
           try {
-            const records = Array.isArray(scheduleResult?.nativeItems) ? scheduleResult.nativeItems : scheduleRemote?.catalog ? await scheduleRemote.catalog() : [];
+            const records = scope === 'cloud' ? [] : Array.isArray(scheduleResult?.nativeItems) ? scheduleResult.nativeItems : scheduleRemote?.catalog ? await scheduleRemote.catalog() : [];
             setNativeTasks(Array.isArray(records) ? records : []);
           } catch {
             setNativeTasks([]);
           }
+          if (version !== loadVersion.current) return;
+          setError((scheduleResult?.warnings || []).join('；'));
           setAvailability(scheduleResult?.availability || null);
           setStatus('ready');
           setForm(previous => ({ ...previous, agentId: previous.agentId || agentId(nextAgents[0]) }));
         } catch (reason) {
+          if (version !== loadVersion.current) return;
           setStatus('error'); setError(reason?.message || '自动化目录读取失败');
         }
       };
-      useEffect(() => { void load(); }, []);
+      useEffect(() => { setTasks([]); setNativeTasks([]); setAgents([]); setEditorOpen(false); setDetailTask(null); setHistoryRows([]); setAgentFilter(''); setForm(previous => ({ ...previous, agentId: '' })); void load(); return () => { loadVersion.current++; }; }, [scope]);
       useEffect(() => { setTaskPage(0); }, [query, agentFilter, viewMode]);
       useEffect(() => {
         if (section !== 'history' || status !== 'ready') return undefined;
@@ -131,13 +139,13 @@
         }
         setSaving(true); setError(''); setMessage('');
         try {
-          const payload = { displayName: form.displayName.trim(), prompt: form.prompt.trim(), schedule, enabled: editingTask ? editingTask.enabled !== false : true, continuity: editingTask?.continuity || 'new_session' };
+          const payload = { displayName: form.displayName.trim(), prompt: form.prompt.trim(), schedule, enabled: editingTask ? editingTask.enabled !== false : true, continuity: editingTask?.continuity || 'new_session', ...(editingTask ? { expectedRevision: editingTask.revision } : {}) };
           if (editingTask) {
             await hostRemote.updateSchedule(form.agentId, editingTask.taskId, payload);
             setMessage('自动化已更新。');
           } else {
             await hostRemote.createSchedule(form.agentId, payload);
-            setMessage('自动化已创建，Host 会按计划生成执行记录。');
+            setMessage(scope === 'cloud' ? '云端自动化已创建，关闭应用后仍按计划执行。' : '本地自动化已创建，请保持应用运行。');
           }
           setEditorOpen(false);
           setEditingTask(null);
@@ -170,7 +178,7 @@
             displayName: task.displayName || task.taskId,
             prompt: task?.command?.payload?.content || '',
             schedule: task.schedule,
-            enabled: task.enabled === false,
+            enabled: task.enabled === false, expectedRevision: task.revision,
             continuity: task.continuity || 'new_session',
           });
           setMessage(task.enabled === false ? '自动化已启用。' : '自动化已暂停。');
@@ -278,13 +286,14 @@
         h('div', { style: { marginTop: '14px', paddingTop: '12px', borderTop: '1px solid ' + BRAND.border } }, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, '最近执行'), detailOccurrences.length ? h('div', { style: { display: 'grid', gap: '6px', marginTop: '8px' } }, detailOccurrences.slice(0, 10).map(item => h('div', { key: item.occurrenceId || `${item.state}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: '90px minmax(0,1fr) 170px', gap: '10px', alignItems: 'center', color: BRAND.inkMuted, fontSize: '11px' } }, h(Pill, { tone: ['succeeded', 'completed'].includes(String(item.state).toLowerCase()) ? 'accent' : ['failed', 'error', 'cancelled'].includes(String(item.state).toLowerCase()) ? 'signal' : 'neutral' }, item.state || 'unknown'), h('span', null, item.detail || item.errorCode || item.occurrenceId || '—'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.startedAt ? new Date(item.startedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—')))) : h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px', marginTop: '8px' } }, '暂无执行记录。'))) : null;
 
       return h('div', null,
-        h(OperationalPageHeading, { title: '自动化', detail: '一次性、间隔或 Cron 计划绑定到 Agent；执行和 occurrence 历史由 Host Scheduler 负责。', action: h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, h(Pill, { tone: availability?.triggerActive ? 'accent' : 'neutral' }, availability?.triggerActive ? '调度运行中' : '调度待就绪'), h('button', { type: 'button', onClick: () => { setEditingTask(null); setEditorOpen(true); setMessage(''); }, style: buttonStyle() }, '新建自动化'), h('button', { type: 'button', onClick: () => void load(), style: { ...buttonStyle(), background: BRAND.surface } }, '刷新')) }),
+        h(OperationalPageHeading, { title: '自动化', detail: scope === 'cloud' ? '云端按计划执行，关闭应用后仍然有效。每次执行使用触发时部署的版本。' : '本地按计划执行，需要保持此设备和应用运行。', action: h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, h(Pill, { tone: availability?.triggerActive ? 'accent' : 'neutral' }, availability?.triggerActive ? '调度运行中' : '调度待就绪'), h('button', { type: 'button', onClick: () => { setEditingTask(null); setEditorOpen(true); setMessage(''); }, disabled: status === 'loading' || !agents.length, style: buttonStyle() }, '新建自动化'), h('button', { type: 'button', onClick: () => void load(), style: { ...buttonStyle(), background: BRAND.surface } }, '刷新')) }),
+        h(StudioPageTabs, { value: scope, onChange: setScope, items: [{ id: 'local', label: '本地' }, { id: 'cloud', label: '云端部署' }], ariaLabel: '自动化执行位置' }),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取自动化', detail: '读取计划、可用 Agent 和调度器状态。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: '自动化不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
         status === 'ready' ? h(React.Fragment, null,
-          editorOpen ? h(ResourceDialog, { title: editingTask ? '编辑自动化' : '新建自动化', detail: '选择 Agent 和触发规则；保存后由 Host Scheduler 生成真实执行记录。', onClose: () => { if (!saving) setEditorOpen(false); } }, h('form', { onSubmit: event => { event.preventDefault(); void save(); }, style: { display: 'grid', gap: '14px' } },
+          editorOpen ? h(ResourceDialog, { title: editingTask ? '编辑自动化' : '新建自动化', detail: scope === 'cloud' ? '选择已部署的 Agent 和触发规则，由云端调度执行。' : '选择本地 Agent 和触发规则。', onClose: () => { if (!saving) setEditorOpen(false); } }, h('form', { onSubmit: event => { event.preventDefault(); void save(); }, style: { display: 'grid', gap: '14px' } },
             h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' } },
-              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '绑定 Agent', h('select', { value: form.agentId, onChange: event => setForm(previous => ({ ...previous, agentId: event.target.value })), style: inputStyle() }, agents.map(item => h('option', { key: agentId(item), value: agentId(item) }, `${agentName(item)} · ${agentId(item)}`)))),
+              h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '绑定 Agent', h('select', { value: form.agentId, disabled: Boolean(editingTask), onChange: event => setForm(previous => ({ ...previous, agentId: event.target.value })), style: inputStyle() }, agents.map(item => h('option', { key: agentId(item), value: agentId(item) }, `${agentName(item)} · ${agentId(item)}`)))),
               h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '任务名称', h('input', { value: form.displayName, onChange: event => setForm(previous => ({ ...previous, displayName: event.target.value })), placeholder: '例如：每日工作摘要', style: inputStyle() }))),
             h('label', { style: { display: 'block', marginTop: '12px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '到期时发送给 Agent 的提示词', h('textarea', { value: form.prompt, onChange: event => setForm(previous => ({ ...previous, prompt: event.target.value })), rows: 3, placeholder: '例如：整理今天工作区中的变更并给出摘要', style: { ...inputStyle(), resize: 'vertical' } })),
             h('div', { style: { display: 'grid', gridTemplateColumns: '180px minmax(0, 1fr)', gap: '12px', marginTop: '12px', alignItems: 'end' } },
@@ -300,7 +309,7 @@
               h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, h('input', { value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索任务或提示词', 'aria-label': '搜索自动化', style: { ...inputStyle(), width: '180px' } }), h('select', { value: agentFilter, onChange: event => setAgentFilter(event.target.value), 'aria-label': '按 Agent 筛选', style: { ...inputStyle(), width: '170px' } }, h('option', { value: '' }, '全部 Agent'), agents.map(item => h('option', { key: agentId(item), value: agentId(item) }, agentName(item)))), section === 'tasks' ? h('button', { type: 'button', onClick: () => setViewMode(viewMode === 'board' ? 'list' : 'board'), style: { ...buttonStyle(), background: BRAND.surface } }, viewMode === 'board' ? '列表视图' : '看板视图') : null)),
             section === 'tasks' ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, '从常用任务开始：'), h('button', { type: 'button', onClick: () => openTemplate('daily'), style: { ...buttonStyle(), background: BRAND.surface } }, '每日简报 · 工作日 10:00'), h('button', { type: 'button', onClick: () => openTemplate('interval'), style: { ...buttonStyle(), background: BRAND.surface } }, '定期巡检 · 每 30 分钟'), h('button', { type: 'button', onClick: () => openTemplate('weekly'), style: { ...buttonStyle(), background: BRAND.surface } }, '每周总结 · 周五 17:00')) : null),
 
-          h('details', { style: { display: 'grid', gap: '10px', marginBottom: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface } },
+          scope === 'local' ? h('details', { style: { display: 'grid', gap: '10px', marginBottom: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface } },
             h('summary', { style: { cursor: 'pointer', padding: '11px 14px', color: BRAND.ink, fontWeight: 750, fontSize: '12px' } }, `DSH 原生会话自动化 ${nativeTasks.length} · 展开查看`),
             h('div', { style: { display: 'grid', gap: '10px', padding: '0 14px 14px' } },
               h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, '由对话中的 schedule_create 创建；与 Host Agent 自动化分开存储。'),
@@ -310,9 +319,9 @@
                 h(Pill, { tone: task.status === 'active' ? 'accent' : 'neutral' }, task.status === 'active' ? '已启用' : '已结束'))) :
                 h('div', { style: { border: '1px dashed ' + BRAND.border, borderRadius: '10px', padding: '13px 14px', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } },
                   h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '12px', marginBottom: '4px' } }, '当前会话还没有 DSH 原生自动化'),
-                  h('span', null, '在新会话中直接说“每天 9 点提醒我整理工作摘要”，DSH 会调用 schedule_create；创建后刷新本页即可看到任务。')))),
+                  h('span', null, '在新会话中直接说“每天 9 点提醒我整理工作摘要”，DSH 会调用 schedule_create；创建后刷新本页即可看到任务。')))) : null,
           detailPanel,
-          section === 'history' ? (historyStatus === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取执行记录', detail: '按任务读取 Host Scheduler 的 occurrence 历史。' }) : !historyRows.length ? h(EmptyState, { icon: '◷', title: '暂无执行记录', detail: visibleTasks.length ? '任务尚未执行，或调整筛选条件。' : '调整搜索或 Agent 筛选条件。' }) : h('div', { style: { display: 'grid', gap: '8px' } }, historyRows.filter(item => visibleTasks.some(task => task.taskId === item.taskId)).slice(0, 100).map(item => h('div', { key: item.occurrenceId || `${item.taskId}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 130px 170px', gap: '12px', alignItems: 'center', border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', background: BRAND.surface, color: BRAND.inkMuted, fontSize: '11px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, item.taskName), h('div', { style: { marginTop: '3px' } }, item.occurrenceId || '—')), h(Pill, { tone: item.state === 'completed' || item.state === 'succeeded' ? 'accent' : item.state === 'failed' ? 'signal' : 'neutral' }, item.state || 'unknown'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—'))))) : (!visibleTasks.length ? h(EmptyState, { icon: '◷', title: tasks.length ? '没有匹配的自动化' : '还没有自动化', detail: tasks.length ? '调整搜索或 Agent 筛选条件。' : agents.length ? '可以在这里创建计划。计划绑定到 Agent，执行时使用其当前 Revision；也可以先用上面的常用任务模板。' : '先创建一个 Agent，自动化才有可执行目标。' }) : viewMode === 'list' ? h('div', { style: { display: 'grid', gap: '10px' } }, pagedTasks.map(taskCard)) : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' } }, taskGroups.map(group => {
+          section === 'history' ? (historyStatus === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取执行记录', detail: '读取当前执行位置的任务历史。' }) : !historyRows.length ? h(EmptyState, { icon: '◷', title: '暂无执行记录', detail: visibleTasks.length ? '任务尚未执行，或调整筛选条件。' : '调整搜索或 Agent 筛选条件。' }) : h('div', { style: { display: 'grid', gap: '8px' } }, historyRows.filter(item => visibleTasks.some(task => task.taskId === item.taskId)).slice(0, 100).map(item => h('div', { key: item.occurrenceId || `${item.taskId}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 130px 170px', gap: '12px', alignItems: 'center', border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '10px 12px', background: BRAND.surface, color: BRAND.inkMuted, fontSize: '11px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, item.taskName), h('div', { style: { marginTop: '3px' } }, item.occurrenceId || '—')), h(Pill, { tone: item.state === 'completed' || item.state === 'succeeded' ? 'accent' : item.state === 'failed' ? 'signal' : 'neutral' }, item.state || 'unknown'), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—'))))) : (!visibleTasks.length ? h(EmptyState, { icon: '◷', title: tasks.length ? '没有匹配的自动化' : '还没有自动化', detail: tasks.length ? '调整搜索或 Agent 筛选条件。' : agents.length ? '可以在这里创建计划。计划绑定到 Agent，执行时使用其当前 Revision；也可以先用上面的常用任务模板。' : scope === 'cloud' ? '先将本地 Agent 部署到云端，再创建云端计划。' : '先创建一个 Agent，自动化才有可执行目标。' }) : viewMode === 'list' ? h('div', { style: { display: 'grid', gap: '10px' } }, pagedTasks.map(taskCard)) : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' } }, taskGroups.map(group => {
             const items = visibleTasks.filter(task => taskStatus(task) === group.id);
             const pageItems = pagedTasks.filter(task => taskStatus(task) === group.id);
             return h('section', { key: group.id, style: { display: 'grid', alignContent: 'start', gap: '10px', minWidth: 0 } }, h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 2px', color: BRAND.inkMuted, fontSize: '12px', fontWeight: 750 } }, h('span', null, group.label), h('span', null, String(items.length))), pageItems.length ? pageItems.map(taskCard) : h('div', { style: { border: '1px dashed ' + BRAND.border, borderRadius: '12px', padding: '18px', color: BRAND.inkMuted, fontSize: '12px', textAlign: 'center' } }, group.id === 'scheduled' ? '新建任务，安排下一次执行' : '暂无任务'));

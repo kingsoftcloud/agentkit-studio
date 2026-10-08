@@ -136,6 +136,8 @@ export function createAgentEngineDeploymentClient(options) {
   const { action, inspectIdentity } = createClient(options, new Set([
     'CreateAgentProduct', 'UploadCode', 'GetPresignedUrl', 'GetAgent', 'UpdateAgent',
     'ListInstances', 'GetAgentLogs', 'DeleteAgent', 'GetClientBootstrapConfig', 'ListAgents',
+    'ListAgentSchedules', 'GetAgentSchedule', 'ListAgentScheduleOccurrences',
+    'CreateAgentSchedule', 'UpdateAgentSchedule', 'DeleteAgentSchedule', 'RunAgentSchedule',
   ]));
   return {
     inspectIdentity,
@@ -160,6 +162,15 @@ export function createAgentEngineDeploymentClient(options) {
         update: (payload, request) => scoped('UpdateAgent', payload, request),
         instances: (payload, request) => scoped('ListInstances', payload, request),
         logs: (payload, request) => scoped('GetAgentLogs', payload, request),
+        schedules: {
+          list: request => scoped('ListAgentSchedules', {}, request),
+          get: (taskId, request) => scoped('GetAgentSchedule', { TaskId: taskId }, request),
+          occurrences: (taskId, request) => scoped('ListAgentScheduleOccurrences', { TaskId: taskId, Limit: 100 }, request),
+          create: (payload, request) => scoped('CreateAgentSchedule', payload, request),
+          update: (taskId, payload, request) => scoped('UpdateAgentSchedule', { ...payload, TaskId: taskId }, request),
+          remove: (taskId, request) => scoped('DeleteAgentSchedule', { TaskId: taskId }, request),
+          run: (taskId, request) => scoped('RunAgentSchedule', { TaskId: taskId }, request),
+        },
         // Removal retains audit history and never deletes shared artifacts.
         remove: request => scoped('DeleteAgent', { HardDelete: false, SyncDeleteKs3: false, SyncDeleteKcr: false, SyncDeleteKlog: false }, request),
       };
@@ -295,9 +306,9 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
       const url = new URL(kop ? `/?Action=${name}&Version=${apiVersion}` : `/agentengine/api/v1/${name}`, requestBase);
       if (kop) {
         if (!values.cloudAccessKey || !values.cloudSecretKey) throw new AgentEngineError('CLOUD_CREDENTIALS_MISSING', '请在模型与凭证中配置云端 AK/SK');
-        if (deploymentIdentity && ['CreateAgentProduct', 'UpdateAgent', 'DeleteAgent'].includes(name)) {
+        if (deploymentIdentity && ['CreateAgentProduct', 'UpdateAgent', 'DeleteAgent', 'CreateAgentSchedule', 'UpdateAgentSchedule', 'DeleteAgentSchedule', 'RunAgentSchedule'].includes(name)) {
           const identity = await deploymentIdentity.resolve({ ...values, cloudServerUrl: values.cloudServerUrl || serverUrl }, { signal });
-          if (name === 'CreateAgentProduct' && identity.kind !== 'subaccount') {
+          if ((name === 'CreateAgentProduct' || name.includes('Schedule')) && identity.kind !== 'subaccount') {
             throw new AgentEngineError('CLOUD_SUBACCOUNT_REQUIRED', '云端创建需要已核验的子账号 AK/SK；不会使用主账号创建资源');
           }
           if (identity.userUuid) headers['X-Ksc-User-uuid'] = identity.userUuid;

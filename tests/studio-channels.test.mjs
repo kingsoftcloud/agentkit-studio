@@ -110,3 +110,30 @@ test('a local Agent cannot be accidentally saved with cloud routing', async () =
     await assert.rejects(channels.proxyAction('CreateChannel', { AgentId: 'local' }), { code: 'CHANNEL_LOCAL_OFFLINE' });
   } finally { channels.dispose(); await rm(store, { recursive: true, force: true }); }
 });
+
+test('cloud channel targets require Studio provenance and the verified tenant, and never use a desktop connector', async () => {
+  const store = await makeStore(), requests = [], actors = [];
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    requests.push(JSON.parse(body)); actors.push(req.headers['x-ksc-user-uuid']); res.end(JSON.stringify({ Code: 0, Data: {} }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const cloud = { metadata: { id: 'ar-cloud', name: 'Cloud' }, deployment: { state: 'READY' } };
+  let accountId = 'tenant';
+  const channels = createStudioChannels({ storeDir: store, getAgent: async () => null, listCloudAgents: async () => [cloud],
+    resolveCloudAgent: async id => { if (id !== cloud.metadata.id) throw Object.assign(new Error('not owned'), { code: 'DEPLOYMENT_AGENT_NOT_FOUND' }); return { agent: cloud, accountId, userUuid: 'verified-subaccount' }; },
+    connectorFactory: () => { throw new Error('cloud must not connect to desktop'); },
+  });
+  try {
+    await channels.updateConnection({ serverUrl: `http://127.0.0.1:${server.address().port}`, accountId: 'tenant', workspaceId: 'previous-local-workspace' });
+    assert.deepEqual((await channels.getConnection()).cloudAgents, [{ id: 'ar-cloud', name: 'Cloud', state: 'READY' }]);
+    await channels.proxyAction('CreateChannel', { AgentId: 'ar-cloud', ConnectorWorkspaceId: 'stale' });
+    await channels.proxyAction('UpdateChannel', { AgentId: 'ar-cloud', ConnectorWorkspaceId: 'stale', Id: 'binding' });
+    assert.ok(requests.every(body => body.ConnectorWorkspaceId === ''));
+    assert.deepEqual(actors, ['verified-subaccount', 'verified-subaccount']);
+    accountId = 'other';
+    await assert.rejects(channels.proxyAction('CreateChannel', { AgentId: 'ar-cloud' }), { code: 'CHANNEL_ACCOUNT_MISMATCH' });
+    await assert.rejects(channels.proxyAction('CreateChannel', { AgentId: 'legacy-adk' }), { code: 'DEPLOYMENT_AGENT_NOT_FOUND' });
+    assert.equal(requests.length, 2);
+  } finally { channels.dispose(); await new Promise(resolve => server.close(resolve)); await rm(store, { recursive: true, force: true }); }
+});

@@ -58,6 +58,8 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
 - **设置**：左下角齿轮直接打开 DSH 原生设置弹窗，模型、凭证和 Studio 配置仍在同一处管理。
 - **运行中心**：构建、部署、评测、观测、Channel 和自动化都通过 Host/AgentEngine Server
   的 typed API，浏览器不直接读本地文件或保存云端密钥。
+  Channels 可选择本地 Agent 或其云端部署；自动化区分本地与云端，云端计划复用 Server 调度服务。
+  预发仍需更新 Server/Channel 后完成真实收发和触发验收，详见[云端渠道与定时任务](docs/contracts/cloud-agent-operations.md)。
 - **插件市场**：加号可添加安装源；DSH 自带插件直接启用，其他插件由原生 PluginManager
   检查、安装并返回真实加载结果。Codex 使用完整的 `plugin@marketplace` 标识调用官方 CLI，
   Skill 在新建 Codex Agent 会话中加载，连接器继续使用 Codex 原生授权。Studio 的 Codex

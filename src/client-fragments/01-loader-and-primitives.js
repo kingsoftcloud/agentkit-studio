@@ -504,13 +504,13 @@ window.__ModuleLoader__.load({
           return request('/api/v1/platform-resources?kind=' + encodeURIComponent(kind));
         },
         bootstrapPlatformResources: () => request('/api/v1/resource-connections:bootstrap', { method: 'POST' }),
-        schedules: agentId => directServer() ? studioBridgeOperation('schedules/list', { agentId }) : request(agentId ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules' : '/api/v1/schedules'),
+        schedules: (agentId, scope = 'local') => directServer() ? studioBridgeOperation('schedules/list', { agentId, scope }) : request(agentId ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules' : '/api/v1/schedules'),
         scheduleOccurrences: (taskId, agentId) => directServer() ? studioBridgeOperation('schedules/occurrences', { taskId, agentId }) : request(agentId
           ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + '/occurrences'
           : '/api/v1/schedules/' + encodeURIComponent(taskId) + '/occurrences'),
         createSchedule: (agentId, payload) => directServer() ? studioBridgeOperation('schedules/create', { agentId, spec: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules', { method: 'POST', body: JSON.stringify(payload) }),
         updateSchedule: (agentId, taskId, payload) => directServer() ? studioBridgeOperation('schedules/update', { agentId, taskId, patch: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
-        deleteSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/delete', { taskId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
+        deleteSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/delete', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
         runSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/run', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
         dshPlugins: () => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-list', {}) : request('/api/v1/plugin-ecosystems/dsh/plugins'),
         installDshPlugin: (source, acceptHostPermissions = false) => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-install', { source, acceptHostPermissions }) : request('/api/v1/plugin-ecosystems/dsh/plugins:install', {

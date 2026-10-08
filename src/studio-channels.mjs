@@ -20,7 +20,7 @@ export class ChannelError extends Error {
   }
 }
 
-export function createStudioChannels({ storeDir, getAgent, listAgents, runner, connectorFactory = createChannelConnector } = {}) {
+export function createStudioChannels({ storeDir, getAgent, listAgents, listCloudAgents, resolveCloudAgent, runner, connectorFactory = createChannelConnector } = {}) {
   const configPath = join(storeDir, 'channels.json');
   const connectors = new Map(), connectionKeys = new Map();
   let mutation = Promise.resolve(), disposed = false;
@@ -50,7 +50,11 @@ export function createStudioChannels({ storeDir, getAgent, listAgents, runner, c
   async function getConnection() {
     const config = await readConfig();
     const localAgents = listAgents ? (await listAgents()).map(agent => ({ id: agent.metadata.id, name: agent.metadata.name || agent.metadata.id })) : [];
-    return { ...redact(config), localAgents };
+    let cloudAgents = [], cloudError = '';
+    try {
+      cloudAgents = listCloudAgents ? (await listCloudAgents()).map(agent => ({ id: agent.metadata.id, name: agent.metadata.name, state: agent.deployment?.state })) : [];
+    } catch { cloudError = '云端部署目录读取失败，请检查云端配置后刷新'; }
+    return { ...redact(config), localAgents, cloudAgents, cloudError };
   }
 
   const updateConnection = patch => serialize(async () => {
@@ -119,13 +123,25 @@ export function createStudioChannels({ storeDir, getAgent, listAgents, runner, c
 
   async function proxyAction(action, payload = {}) {
     const config = await readConfig();
+    let cloudActor;
     if (!config.serverUrl || !config.accountId) throw new ChannelError('CHANNEL_NOT_CONFIGURED', '请先配置渠道连接（serverUrl 和 accountId）');
-    if (['CreateChannel', 'UpdateChannel'].includes(action) && payload.AgentId && await getAgent?.(payload.AgentId)) {
-      if (!config.agentConnections?.[payload.AgentId]?.enabled || !config.workspaceId) throw new ChannelError('CHANNEL_LOCAL_OFFLINE', '请先启用这个本地 Agent 的渠道连接');
-      payload = { ...payload, ConnectorWorkspaceId: config.workspaceId };
+    if (['CreateChannel', 'UpdateChannel'].includes(action) && payload.AgentId) {
+      if (await getAgent?.(payload.AgentId)) {
+        if (!config.agentConnections?.[payload.AgentId]?.enabled || !config.workspaceId) throw new ChannelError('CHANNEL_LOCAL_OFFLINE', '请先启用这个本地 Agent 的渠道连接');
+        payload = { ...payload, ConnectorWorkspaceId: config.workspaceId };
+      } else {
+        if (!resolveCloudAgent) throw new ChannelError('CHANNEL_AGENT_UNAVAILABLE', '请选择 Studio 创建的本地 Agent 或其云端部署');
+        const target = await resolveCloudAgent(payload.AgentId);
+        if (!target?.accountId || target.accountId !== config.accountId) throw new ChannelError('CHANNEL_ACCOUNT_MISMATCH', '渠道账号与当前子账号所属的云端账号不一致，请核对连接配置');
+        // Explicitly clear a previous local connector when changing targets.
+        // The Channel Worker invokes Server RunAgent even when Studio is closed.
+        cloudActor = target.userUuid;
+        payload = { ...payload, ConnectorWorkspaceId: '' };
+      }
     }
     const url = new URL(`/agentengine/api/v1/${encodeURIComponent(action)}`, config.serverUrl.replace(/\/$/, ''));
     const headers = { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Ksc-Account-Id': config.accountId };
+    if (cloudActor) headers['X-Ksc-User-uuid'] = cloudActor;
     if (config.workspaceId) headers['X-Ksc-Workspace-Id'] = config.workspaceId;
     if (config.apiToken) headers.Authorization = `Bearer ${config.apiToken}`;
     let response;

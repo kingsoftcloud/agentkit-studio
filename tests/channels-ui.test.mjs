@@ -13,7 +13,7 @@ function harness() {
     return [state[index], value => { state[index] = typeof value === 'function' ? value(state[index]) : value; }];
   };
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
-  const connection = { configured: true, tokenConfigured: true, serverUrl: 'http://localhost', accountId: 'test', workspaceId: 'logical-workspace', localAgents: [{ id: 'local-a', name: 'Local A' }, { id: 'local-b', name: 'Local B' }], agentConnections: [] };
+  const connection = { configured: true, tokenConfigured: true, serverUrl: 'http://localhost', accountId: 'test', workspaceId: 'logical-workspace', cloudAgents: [{ id: 'agent', name: 'Cloud Agent' }], localAgents: [{ id: 'local-a', name: 'Local A' }, { id: 'local-b', name: 'Local B' }], agentConnections: [] };
   const host = {
     channelConnection: async () => connection,
     updateAgentChannelConnection: async (agentId, patch) => { calls.push({ action: 'connector', agentId, payload: patch }); connection.agentConnections = [{ agentId, enabled: patch.enabled, state: patch.enabled ? 'connected' : 'stopped', tokenConfigured: true }]; return connection; },
@@ -42,7 +42,7 @@ function harness() {
 test('channel creation includes required credentials, keeps failure visible, and clears successful secret', async () => {
   const ui = harness(); await ui.ready();
   ui.button('新增渠道').props.onClick();
-  ui.fill('Agent ID', ' agent '); ui.fill('渠道账号 ID', ' account ');
+  ui.select('绑定 Agent', 'agent'); ui.fill('渠道账号 ID', ' account ');
   await ui.submit();
   assert.equal(ui.calls.filter(call => call.action === 'CreateChannel').length, 0);
   ui.fill('应用 App ID', 'app-id'); ui.fill('应用 App Secret', 'test-secret');
@@ -85,8 +85,11 @@ test('local Agent selection updates channel identity and connector secrets never
   await ui.button('停用连接').props.onClick();
   assert.deepEqual(ui.calls.filter(call => call.action === 'connector').at(-1).payload, { enabled: false });
   ui.button('新增渠道').props.onClick();
-  ui.select('选择本地 Agent', 'local-b');
-  assert.equal(ui.field('Agent ID').props.value, 'local-b');
-  ui.select('选择本地 Agent', '');
-  assert.equal(ui.field('Agent ID').props.value, '');
+  ui.select('绑定 Agent', 'local-b');
+  ui.fill('渠道账号 ID', 'account'); ui.fill('应用 App ID', 'id'); ui.fill('应用 App Secret', 'secret');
+  await ui.submit();
+  assert.equal(ui.calls.find(call => call.action === 'CreateChannel').payload.AgentId, 'local-b');
+  ui.button('新增渠道').props.onClick();
+  ui.select('绑定 Agent', '');
+  assert.equal(ui.nodes().some(node => node.type === 'input' && node.props.value === 'local-b'), false);
 });

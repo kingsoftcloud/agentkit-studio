@@ -51,13 +51,20 @@ async function registerControlPlane(ctx) {
       return buildDownloadResponse(request, bundleId ? { download: (agentId, buildId) => portableBundles.download(agentId, buildId, bundleId) } : (await studioBuildPromise).build);
     },
   });
-  const studioSchedulerPromise = Promise.all([import('./studio-scheduler.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioScheduler }, { createNativeAutomationRunner }]) => createStudioScheduler({ storeDir: join(studioStoreDir, 'scheduler'), runner: createNativeAutomationRunner({ getService: name => ctx.get(name), admit: async agentId => { const local = await (await agentStorePromise).get(agentId); return presetAdmission.ensure(agentId, local ? { agent: local } : {}); } }) })).catch(error => { console.warn('[agentkit-studio] scheduler init failed:', error?.message || error); return null; });
+  const studioSchedulerPromise = Promise.all([import('./studio-scheduler.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioScheduler }, { createNativeAutomationRunner }]) => createStudioScheduler({ storeDir: join(studioStoreDir, 'scheduler'), runner: createNativeAutomationRunner({ getService: name => ctx.get(name), admit: async agentId => { const local = await (await agentStorePromise).get(agentId); if (!local) throw Object.assign(new Error('本地自动化目标不存在；云端计划请在云端自动化中创建'), { code: 'SCHEDULE_AGENT_NOT_LOCAL' }); return presetAdmission.ensure(agentId, { agent: local }); } }) })).catch(error => { console.warn('[agentkit-studio] scheduler init failed:', error?.message || error); return null; });
   const studioObservabilityPromise = import('./studio-observability.mjs').then(({ createStudioObservability }) => createStudioObservability({ storeDir: join(studioStoreDir, 'traces') })).catch(error => { console.warn('[agentkit-studio] observability init failed:', error?.message || error); return null; });
   const studioEvaluationPromise = Promise.all([import('./studio-evaluation.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioEvaluation }, { createNativeAutomationRunner }]) => createStudioEvaluation({ storeDir: join(studioStoreDir, 'evaluations'), resolveTarget: async locator => { const target = (await listLocalBuildTargets()).find(build => build.id === locator); if (!target) throw Object.assign(new Error('评测 Build 不存在，请选择已完成的本地构建'), { code: 'EVALUATION_TARGET_NOT_FOUND' }); await (await studioBuildPromise).build.resolve(target.agentId, target.id); return target; }, runner: async request => createNativeAutomationRunner({ getService: name => ctx.get(name), admit: async (agentId, buildId) => { const local = await (await agentStorePromise).get(agentId); const frozen = await (await studioBuildPromise).build.resolve(agentId, buildId); return presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...local.metadata, ...frozen.metadata, local: true } } }); } })({ ...request, sessionId: `eval-session-${randomUUID()}`, occurrenceId: `eval-request-${randomUUID()}` }) })).catch(error => { console.warn('[agentkit-studio] evaluation init failed:', error?.message || error); return null; });
   const studioChannelsPromise = Promise.all([import('./studio-channels.mjs'), import('./native-automation-runner.mjs')]).then(([{ createStudioChannels }, { createNativeAutomationRunner }]) => createStudioChannels({
     storeDir: studioStoreDir,
     getAgent: async id => (await agentStorePromise).get(id),
     listAgents: async () => (await agentStorePromise).list(),
+    listCloudAgents: async () => (await (await deployments()).agents.list()).items,
+    resolveCloudAgent: async id => {
+      const agent = await (await deployments()).agents.get(id);
+      const identity = await (await deploymentClientPromise).inspectIdentity();
+      if (identity.kind !== 'subaccount') throw Object.assign(new Error('云端渠道绑定需要已核验的子账号 AK/SK'), { code: 'CLOUD_SUBACCOUNT_REQUIRED' });
+      return { agent, accountId: identity.accountId, userUuid: identity.userUuid };
+    },
     runner: createNativeAutomationRunner({ getService: name => ctx.get(name), reuseSession: true, admit: async agentId => {
       const local = await (await agentStorePromise).get(agentId);
       if (!local) throw Object.assign(new Error('渠道绑定的本地 Agent 不存在'), { code: 'CHANNEL_AGENT_UNAVAILABLE' });
@@ -262,11 +269,14 @@ async function registerControlPlane(ctx) {
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
   let deploymentsPromise;
+  const deploymentClientPromise = Promise.all([import('./server-client.mjs'), configurationPromise])
+    .then(([{ createAgentEngineDeploymentClient }, configuration]) => createAgentEngineDeploymentClient({ configuration }));
   const deployments = () => deploymentsPromise ||= Promise.all([import('./studio-deployments.mjs'), import('./server-client.mjs'), configurationPromise, studioBuildPromise, resourceAdaptersPromise])
     .then(([{ createStudioDeployments }, { createAgentEngineDeploymentClient }, configuration, studio, adapters]) => createStudioDeployments({
       storeDir: join(studioStoreDir, 'deployments'), ...studio, portableBundles, models, adapters, credentials, configuration, env: runtimeEnv,
       client: createAgentEngineDeploymentClient({ configuration }),
     }));
+  const cloudSchedulesPromise = import('./cloud-schedules.mjs').then(({ createCloudSchedules }) => createCloudSchedules({ agents: async () => (await deployments()).agents, client: () => deploymentClientPromise }));
   const syncModelCredential = models.sync;
   // The DSH loader awaits an async plugin apply. Do this before returning from
   // activation so the first prompt cannot race the global ~/.agentkit key
@@ -727,6 +737,9 @@ async function registerControlPlane(ctx) {
       if (endpoint.startsWith('schedules/') || endpoint.startsWith('traces/') || endpoint.startsWith('evaluations/') || endpoint.startsWith('channels/')) {
         try {
           if (endpoint.startsWith('schedules/')) {
+            if (payload?.scope === 'cloud' || (payload?.agentId && !await (await agentStorePromise).get(payload.agentId))) {
+              return { ok: true, value: await (await cloudSchedulesPromise).execute(endpoint.slice('schedules/'.length), payload) };
+            }
             const scheduler = await studioSchedulerPromise;
             if (!scheduler) return { ok: false, error: { code: 'SCHEDULER_UNAVAILABLE', message: '调度器未初始化', details: {} } };
             if (endpoint === 'schedules/list') {
