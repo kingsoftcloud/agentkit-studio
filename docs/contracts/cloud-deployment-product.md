@@ -6,11 +6,22 @@
 
 ## 身份与生命周期
 
-Studio Node Host 使用用户配置的 AK/SK 对 KOP Action 签名，不自行生成子账号身份。
-正常 KOP 链路将账号与操作人交给 Server：`X-Ksc-Account-Id` 表示资源所属主账号，
-`X-Ksc-User-uuid` 表示子账号操作人；Server 将后者传入创建订单的 `user_uuid`。
-AK 标识调用者，SK 用于签名；不是把明文 AK/SK 作为 Agent 业务字段上传。
-使用子账号凭证仍须满足平台 IAM 授权。当前证据不包含两个不同子账号的权限隔离对照验收。
+Studio Node Host 使用用户配置的 AK/SK 对 KOP Action 签名。**签名成功不代表子账号
+操作人已传递。** `X-Ksc-Account-Id` 表示资源所属主账号，`X-Ksc-User-uuid` 表示子账号
+操作人；Server 读取后者，再传入创建订单的 `user_uuid`，最终创建回调将其持久化。
+AK 同时用于签名及 KOP 公共参数 `Accesskey`；SK 仅用于计算签名，不放入请求正文。
+
+2026-10-08 的独立预发测试确实请求了 AICP 内网 KOP Action 入口，但未发送
+`X-Ksc-User-uuid`，首次失败 Agent 的 `Basic.Creator` 为空。同一套凭证的 IAM 只读核验
+在默认账号密钥列表中命中当前 AK，`UserName` 为空；完整子用户密钥列表未命中，表明该
+测试使用主账号密钥，不能从中推导其他子用户身份。模型凭证映射修复避开了自动申请 AICP
+Key，不是子账号身份修复。详见[部署传输边界](deployment-transport.md)。
+
+旧 KsADK 客户端已有 IAM 身份解析和身份 Header 传递，新版 Node 客户端尚未迁移此能力。
+后续部署须验证当前签名凭证对应的操作人及账号一致性，不能手填或复用其他人的 UUID。
+应明确区分主账号、已验证子账号和无法验证的身份，不将查询失败误判为主账号。
+真实子账号的 Header、创建回调、数据库记录以及两个子账号的权限隔离均尚未验收；
+不能将本轮容器连通性结果表述为子账号部署已通过。
 
 三种运行时都走 `CreateAgentProduct(DeploymentType=Container)`、`GetAgent`、
 `UpdateAgent`、`ListInstances`、`GetAgentLogs` 和 `DeleteAgent`。平台尚无独立停止/启动

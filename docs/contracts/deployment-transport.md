@@ -64,6 +64,13 @@ Node 侧 `createContainerDeploymentEnvironment` 校验固定 ZIP 摘要，从冻
 被主账号创建限制拒绝，尚未产生容器实例。该失败测试 Agent 已软删除，后续 GetAgent
 返回 404。上述映射复用用户已有 Key，不新建 Key，也不改变账号身份。
 
+同一批创建请求使用 AK/SK 签名的 AICP 内网 KOP 入口，并非直连
+`/agentengine/api/v1/CreateAgentProduct`。但客户端没有发送 `X-Ksc-User-uuid`；
+首次 Agent 的 `Basic.Creator` 为空。后续只读 IAM 核验表明测试使用主账号密钥，
+没有可解析的子用户归属。新版还缺少旧 KsADK 的 IAM 身份解析与 Header 传递，
+因此签名成功、创建受理和容器运行都不能作为子账号身份完整的证据。
+身份适配与真实子账号验收仍待完成，不能通过填写其他人的 UUID 绕过。
+
 传输层已覆盖签名、预发路由、请求追踪、错误脱敏、无自动重试以及限定 ID 的操作测试。
 首次 Container 预发创建、网关鉴权和 Harness 流式调用已通过，见
 [真实验收记录](container-preprod-acceptance-2026-10-08.md)。这不表示部署页、资源绑定、
