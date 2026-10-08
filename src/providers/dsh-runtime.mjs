@@ -422,6 +422,43 @@ async function* localFrames(handler, payload, { signal, toolAdapter, agent } = {
 
 export async function* cloudFrames(body, signal, { onEvent } = {}) {
   const state = createChunkState();
+  const textItems = new Map();
+  let activeTextKey;
+  const textFrames = (kind, event, snapshot = false, done = false) => {
+    const identity = event.item_id ?? event.output_index;
+    const text = String((done ? event.text : event.delta) || '');
+    if (identity === undefined) return [
+      ...(snapshot ? appendSnapshot(state, kind, text) : appendBlock(state, kind, text)),
+      ...(done ? closeBlock(state, kind) : []),
+    ];
+    const key = JSON.stringify([kind, identity, event.content_index ?? event.summary_index ?? 0]);
+    const previous = textItems.get(key) || '';
+    if (done && typeof event.text !== 'string') return activeTextKey === key ? closeBlock(state, kind) : [];
+    if (snapshot && text === previous) {
+      return done && activeTextKey === key ? closeBlock(state, kind) : [];
+    }
+    const frames = [];
+    if (snapshot && textItems.has(key) && activeTextKey !== key) {
+      throw Object.assign(new Error('云端已结束的消息内容发生变化'), { code: 'CLOUD_STREAM_ITEM_CHANGED' });
+    }
+    if (snapshot && !text.startsWith(previous)) {
+      // A correction can replace an open block, but a late snapshot must never
+      // overwrite another item's block or append an already displayed answer.
+      if (activeTextKey !== key || state.currentKind !== kind || state.currentText !== previous) {
+        throw Object.assign(new Error('云端已结束的消息内容发生变化'), { code: 'CLOUD_STREAM_ITEM_CHANGED' });
+      }
+      frames.push(...appendSnapshot(state, kind, text));
+    } else {
+      if (activeTextKey !== key) {
+        frames.push(...closeCurrentBlock(state));
+        activeTextKey = key;
+      }
+      frames.push(...appendBlock(state, kind, snapshot ? text.slice(previous.length) : text));
+    }
+    textItems.set(key, snapshot ? text : previous + text);
+    if (done) frames.push(...closeBlock(state, kind));
+    return frames;
+  };
   let completed = false;
   for await (const event of parseSse(body, signal)) {
     if (signal?.aborted) throw cloudCancelledError(signal.reason);
@@ -462,15 +499,13 @@ export async function* cloudFrames(body, signal, { onEvent } = {}) {
       continue;
     }
     if (type.includes('reasoning_summary_text.delta')) {
-      yield* (event.replace === true ? appendSnapshot(state, 'reasoning', event.delta) : appendBlock(state, 'reasoning', event.delta));
+      yield* textFrames('reasoning', event, event.replace === true);
     } else if (type.includes('output_text.delta')) {
-      yield* (event.replace === true ? appendSnapshot(state, 'text', event.delta) : appendBlock(state, 'text', event.delta));
+      yield* textFrames('text', event, event.replace === true);
     } else if (type.includes('reasoning_summary_text.done')) {
-      if (typeof event.text === 'string') yield* appendSnapshot(state, 'reasoning', event.text);
-      yield* closeBlock(state, 'reasoning');
+      yield* textFrames('reasoning', event, true, true);
     } else if (type.includes('output_text.done')) {
-      if (typeof event.text === 'string') yield* appendSnapshot(state, 'text', event.text);
-      yield* closeBlock(state, 'text');
+      yield* textFrames('text', event, true, true);
     }
     else {
       const reasoning = event?.reasoning_content || event?.reasoning;

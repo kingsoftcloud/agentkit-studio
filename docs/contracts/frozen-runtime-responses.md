@@ -43,6 +43,11 @@ curl "$RUNTIME_ENDPOINT/v1/responses" \
 流包含创建、进行中、文字增量、推理摘要增量、输出项完成和最终终态，并以 `[DONE]` 结束。
 生命周期事件同时保留顶层字段和 `response` 对象，兼容 AgentEngine 现有消费者。
 
+Studio 原生会话桥接按 `item_id`（缺失时使用 `output_index`）及内容序号分别核对文本
+与推理快照。不同输出项可以包含相同文字；已接收的完成快照不会再次追加，也不能覆盖
+另一个输出项的正文。缺少完整文本的 done 事件只关闭对应块；较早输出项发生内容修订时
+明确返回 `CLOUD_STREAM_ITEM_CHANGED`，避免把不一致结果显示为成功。
+
 DSH 的失败尝试标记为 incomplete，最终 output 排除其草稿；最终 `output_text` 取 DSH
 持久化运行结果。客户端须按 item/status 处理重试，不能把所有到达过的文字当成最终答案。
 `sequence_number` 仅用于本次连接排序，不是持久化重放游标；`Last-Event-ID` 明确返回

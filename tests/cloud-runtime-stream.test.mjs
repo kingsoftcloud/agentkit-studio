@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
+import { createRuntimeResponsesStream } from '../src/runtime-responses-stream.mjs';
 
 async function project(events, newline = '\n') {
   const data = events.map(event => `data: ${JSON.stringify(event)}${newline}${newline}`).join('');
@@ -10,6 +11,49 @@ async function project(events, newline = '\n') {
   for await (const chunk of adapter.stream({ model: 'cloud:test', messages: [{ role: 'user', content: '检索' }] })) chunks.push(chunk);
   return chunks;
 }
+
+test('cloud message completion snapshots preserve interleaved text and reasoning exactly once', async () => {
+  const frames = [];
+  const stream = createRuntimeResponsesStream({ runId: 'run_interleaved' }, (_type, frame) => frames.push(frame));
+  stream.start();
+  for (const [index, type, text] of [[0, 'text-delta', '开始。'], [1, 'reasoning-delta', '检查'], [2, 'text-delta', '失败。']]) {
+    stream.frame({ kind: 'assistant', value: { type: 'chunk', attemptId: 'one', chunk: { index, type, text } } });
+  }
+  stream.frame({ kind: 'assistant', value: { type: 'end', attemptId: 'one', outcome: { kind: 'committed', eventType: 'assistant/message' } } });
+  stream.complete({ output: '开始。失败。' });
+  const chunks = await project(frames);
+  assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), '开始。失败。');
+  assert.deepEqual(chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block), [
+    { type: 'text', text: '开始。' }, { type: 'reasoning', text: '检查' }, { type: 'text', text: '失败。' },
+  ]);
+});
+
+test('identical text in different cloud content parts is not deduplicated', async () => {
+  const chunks = await project([
+    { type: 'response.output_text.delta', item_id: 'one', content_index: 0, delta: '相同' },
+    { type: 'response.output_text.delta', item_id: 'one', content_index: 1, delta: '相同' },
+    { type: 'response.output_text.done', item_id: 'one', content_index: 0, text: '相同' },
+    { type: 'response.output_text.done', item_id: 'one', content_index: 1, text: '相同' },
+    { type: 'response.output_text.done', item_id: 'one', content_index: 1, text: '相同' },
+    { type: 'response.completed' },
+  ]);
+  assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), '相同相同');
+  assert.deepEqual(chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block.text), ['相同', '相同']);
+});
+
+test('cloud completion without text preserves streamed content and late corrections cannot rewrite another item', async () => {
+  const chunks = await project([
+    { type: 'response.output_text.delta', item_id: 'one', delta: '保留' },
+    { type: 'response.output_text.done', item_id: 'one' }, { type: 'response.completed' },
+  ]);
+  assert.equal(chunks.find(chunk => chunk.type === 'block-end').block.text, '保留');
+  for (const text of ['更正', '先前补充']) await assert.rejects(() => project([
+    { type: 'response.output_text.delta', item_id: 'one', delta: '先前' },
+    { type: 'response.output_text.delta', item_id: 'two', delta: '当前' },
+    { type: 'response.output_text.done', item_id: 'one', text },
+    { type: 'response.completed' },
+  ]), { code: 'CLOUD_STREAM_ITEM_CHANGED' });
+});
 
 test('cloud replacement snapshots do not duplicate streamed answers', async () => {
   const chunks = await project([
