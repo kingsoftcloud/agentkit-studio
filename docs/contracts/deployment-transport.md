@@ -45,8 +45,24 @@ Server 上传接口。运行包保持私有，不沿用旧上传器默认的公�
 本阶段不修改旧 ManagedRuntime，也不以改造 Server/Runtime Service 为先决条件；只有
 实际联调证明现有合同不足时，才单独补齐对应缺口。
 
+## 模型凭证映射
+
+Node 侧 `createContainerDeploymentEnvironment` 校验固定 ZIP 摘要，从冻结定义中选取默认
+绑定模型，只复制运行包声明的目标凭证，并产生 `Advanced.EnvironmentVariables`。
+模型地址和名称取自运行包，不继承当前 Host 的默认模型。凭证及入口令牌均标记
+`IsSensitive=true`；结果不得返回浏览器、写入构建产物或普通日志。
+
+已有控制面用 `OPENAI_API_KEY` 判断调用方是否已提供模型凭证。因此在保留原凭证引用的
+同时，将同一个默认模型 Key 映射到 `OPENAI_API_KEY`，并设置 `OPENAI_BASE_URL`、
+`OPENAI_MODEL_NAME`。缺少声明凭证或变量冲突时在创建前拒绝，不覆盖其他资源的凭证。
+
+真实预发首次创建仅提供 `AGENTKIT_MODEL_API_KEY`，控制面未识别后自动申请 AICP Key，
+被主账号创建限制拒绝，尚未产生容器实例。该失败测试 Agent 已软删除，后续 GetAgent
+返回 404。上述映射复用用户已有 Key，不新建 Key，也不改变账号身份。
+
 传输层已覆盖签名、预发路由、请求追踪、错误脱敏、无自动重试以及限定 ID 的操作测试。
-这不表示部署页已经接通，也不表示真实云端创建、网关鉴权、资源绑定、持久卷、升级或
-回滚已经通过。正式验收需要记录本地 Agent/Revision/Build、ZIP SHA256、云端 Agent ID、
+首次 Container 预发创建、网关鉴权和 Harness 流式调用已通过，见
+[真实验收记录](container-preprod-acceptance-2026-10-08.md)。这不表示部署页、资源绑定、
+持久卷、升级或回滚已经通过。正式验收需要记录本地 Agent/Revision/Build、ZIP SHA256、云端 Agent ID、
 镜像 digest、实例状态和真实运行结果。平台目前没有独立 Stop/Start Action，不能将删除
 显示为“停止”。

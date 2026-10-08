@@ -9,6 +9,14 @@ const idOf = value => String(value?.resourceId || value?.id || value || '');
 const refName = value => String(value || '').replace(/^env:\/\//, '');
 const validEnv = value => /^[A-Za-z_][A-Za-z0-9_]{0,159}$/.test(value);
 
+export function validatePortableCredentialNames(requirements) {
+  // Default/generated model and MCP references are resources, not Host controls.
+  if (requirements.some(item => /^(?:NODE_|DSH_|CODEX_|AGENTKIT_(?!(?:MODEL_API_KEY$|BUNDLE_(?:MODEL|MCP)_))|XDG_|LD_|DYLD_|npm_|pnpm_)/i.test(item.name)
+    || ['HOME', 'PATH', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].includes(item.name))) {
+    throw portableError('BUNDLE_HOST_CREDENTIAL_RESERVED', '资源凭证名称不能覆盖 Host 启动配置');
+  }
+}
+
 function endpoint(value) {
   const url = new URL(value);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
