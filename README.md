@@ -4,6 +4,8 @@
 模型/MCP 配置和 Skill 文件，在新的数据目录导入并注入目标凭证。共享镜像配合私有运行包
 已完成预发冷启动；三种运行时的[真实资源验收与剩余限制](docs/contracts/deployed-resource-acceptance-2026-10-08.md)
 分别记录；运行中心已接入冻结版本的云端创建、状态、日志与删除，Harness 冻结包升级回滚与 [Codex 镜像升级回滚](docs/contracts/cloud-codex-tools-2026-10-09.md)已实测，三种运行时的[容器重建后续聊](docs/contracts/cloud-storage-acceptance-2026-10-09.md)已实测，完整资源组合仍在联调。
+这些验收依赖对应的 Server 适配版本。共享环境重新发布后须复查能力声明；2026-10-09 的
+[控制面版本复查](docs/contracts/cloud-control-plane-2026-10-09.md)发现主线镜像尚缺持久化声明，后续资源升级验收因此未通过。
 
 AgentKit Studio 是 AgentKit 的产品界面、控制面客户端和 TypeScript 运行时提供方。它提供
 Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和自动化等产品页面；本地运行时

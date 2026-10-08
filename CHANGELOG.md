@@ -37,6 +37,7 @@ AgentKit Studio 首个版本，基于 DSH 原生 Web / macOS 界面，支持 DSH
 - 云端创建要求子账号凭证，兼容 IAM 默认列表返回所属账号密钥的情况；通过精确 AK 匹配、用户密钥状态和用户详情核验后携带签名身份 Header。子账号创建、`Creator` 回传及创建者 UUID 落库已实测；Agent 跨子账号权限隔离仍待验收。
 - Codex 插件按 Agent 隔离及工具按需加载尚未完成；连接器另需服务授权，持续原生 Thread 恢复与完整官方插件能力未全部验收。
 - 当前 macOS DMG 为未签名的本地验收包，正式签名与公证尚未完成。离线安装和启动不代表云模型或联网资源可离线使用。
-- Linux 中执行 Skill 脚本仍要求可用的 DSH 命令沙箱；容器能启动不代表宿主内核允许 Landlock 或 Bubblewrap，缺失时保持拒绝执行。
+- Linux 中的 DSH 与官方 Codex 命令沙箱分别验收；预发 DSH 只读脚本探测通过但隔离等级为 partial，Codex 仍在 Bubblewrap 挂载时失败。容器能启动、npm 依赖齐全均不能代替该项验收，缺失时保持拒绝执行。
+- 云端实测依赖已适配的 Server 版本；环境回到尚未合入适配的主线镜像时，Studio 会拒绝缺少持久化声明的部署。历史验收不代表当前环境仍具备这些能力。
 
 详细协议、验收证据和限制见 [项目说明](README.md) 与 [DSH Native 架构](docs/studio-dsh-native-architecture.md)；开发迭代历史保留在 Git 中。

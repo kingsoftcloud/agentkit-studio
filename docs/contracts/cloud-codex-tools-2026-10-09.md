@@ -62,3 +62,22 @@ Host 未改动。候选镜像保留供后续预发使用；最终账单结算不
 
 此项不覆盖全部资源组合、KOP 调度 Action 开通、跨子账号 IAM 矩阵或完整 Linux 沙箱。
 渠道及定时投递的独立实测见 [WPS 三运行时验收](wps-runtime-acceptance-2026-10-09.md)。
+
+## 命令沙箱环境补验
+
+同一候选镜像另建隔离容器，分别运行 DSH 公共 SandboxProvider 和官方 Codex CLI 的只读
+Python 探测。标记文件可读、实际写入被拒绝且命令成功返回，才记为通过；不请求模型。
+
+- 真实预发容器 UID 为 1000，有效 capabilities 为 0，外层 seccomp 未启用；用户命名空间创建成功。
+- DSH 成功执行并拒绝写入，报告 Landlock `enforcement: partial`，不代表完整隔离。
+- Codex 未执行到脚本，Bubblewrap 仍报 `Failed to make / slave: Permission denied`；写入结果记为未知。
+- AppArmor 为 `cri-containerd.apparmor.d (enforce)`。默认挂载限制是首要嫌疑，仍需节点策略及审计日志确认；未使用特权容器或关闭沙箱。
+
+`agentengine-images` 提交 `4692d46` 提供 `make studio-runtime-sandbox-check` 和可在实际
+Pod 中从标准输入运行的检查器，镜像 smoke 也改为要求 DSH 与 Codex 各自通过。Node 定向
+测试 3 项、镜像目录/发布 Python 测试 12 项通过；本地 Docker 的完整 smoke 在沙箱门槛
+失败，不能记为通过。详见该仓库 `deploy/studio-runtime/acceptance-sandbox-environment-2026-10-09.md`。
+
+此次隔离 Agent 已删除且 GetAgent 为 404，命名空间和 PV 均为 NotFound，独占的 1 个私有
+运行包删除后下载为 404。没有生成新镜像或修改日常 Host。这些结果早于后续的
+[控制面版本变化](cloud-control-plane-2026-10-09.md)。
