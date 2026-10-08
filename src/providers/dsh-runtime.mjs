@@ -337,6 +337,11 @@ function parseLocalRecord(record, state) {
   }
   if (item?.kind === 'assistant_reasoning') return appendBlock(state, 'reasoning', item.payload?.operation === 'append' ? item.payload.text : '');
   if (item?.kind === 'assistant_text') return appendBlock(state, 'text', item.payload?.operation === 'append' ? item.payload.text : '');
+  if (item?.kind === 'usage') {
+    state.usage ||= { inputTokens: 0, outputTokens: 0 };
+    for (const [key, value] of Object.entries(item.payload.usage)) state.usage[key] = (state.usage[key] || 0) + value;
+    return [{ type: 'usage', usage: nativeCodexUsage(state.usage) }];
+  }
   if (item?.kind === 'tool_call') {
     const callId = String(item.payload?.callId || '');
     const name = String(item.payload?.name || 'bound tool');

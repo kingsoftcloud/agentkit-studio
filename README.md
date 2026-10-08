@@ -8,22 +8,27 @@ Agent 创建与编辑、资源目录、构建部署、评测观测、Channel 和
 支持 DSH Native、Codex 和 Studio 内置的 AgentKit Harness。新版只面向本地创建的 Agent 及其云端部署，不兼容历史 ADK / LangChain / LangGraph / OpenClaw / Hermes，
 后续资源绑定、会话交互和部署验收均聚焦这三种运行时。
 
-当前首个公开可复现版本为 **0.0.1**，固定验证基线为 **DSH v0.2.0-rc.2**（commit
+当前版本为 **0.0.1（尚未首次发布）**，固定验证基线为 **DSH v0.2.0-rc.2**（commit
 `639ed015397290b3745d163aafe02ffee4aa3f84`）。Studio 基于 DSH 的公开宿主和扩展合同二次开发；
 仓库不复制 DSH 源码，也不包含 Python 运行时。
+
+DSH 来源是[官方源码仓库](https://github.com/deepseek-ai/deepseek-harness)的固定 tag 与 commit，
+不是从 npm 下载一个完整离线应用。`@deepseek-ai/dsh` 是官方 CLI 的 npm 入口，安装时仍需解析
+依赖；Studio 从固定源码应用本仓库的版本化补丁，再用官方 Desktop 流水线生成 DMG。升级 npm
+的 `latest` 不会自动升级本项目基线。
 
 ## 是否必须安装 DSH 桌面端
 
 不必须。桌面端是可选的宿主形态：
 
-- **浏览器形态**：浏览器访问 Studio Web Host 或 AgentEngine Server 即可。用户不安装 Electron
-  桌面端也能使用；本地 DSH 对话调试才需要 Node.js 和官方 DSH checkout。
+- **浏览器形态**：浏览器访问 Studio Web Host，控制面业务接口由 Host 对接 AgentEngine Server。
+  无需安装 Electron 桌面端；本地启动 Host 和对话调试需要 Node.js 及固定 DSH checkout。
 - **桌面形态**：官方 DSH Electron 壳负责窗口、更新、托盘和本地 Host。AgentKit Studio
   插件本身不打包 Electron，也不把 Python/KsADK 塞进桌面应用。桌面端只是一种可选的本地
   Host 形态，发布 profile 载入插件后显示 AgentKit Studio 品牌。
 
-因此桌面端不是产品 API 依赖。若用户没有本地 Host，可以直接连接 AgentEngine Server；无
-Agent 的普通对话由所连接的运行时执行。
+因此桌面端不是产品 API 依赖。浏览器可以连接已部署的 Studio Web Host；单独运行
+AgentEngine Server 并不提供本仓库的完整原生会话界面。
 
 ## 主要产品边界
 
@@ -52,8 +57,10 @@ Agent 的普通对话由所连接的运行时执行。
 
 ## 本地开发
 
-环境要求：Node.js `>=22.19.0`、pnpm、官方 DSH `dsh-v0.2.0-rc.2` checkout。
-首次配置请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；仓库内不依赖任何个人绝对路径。
+在克隆后的 `agentkit-studio` 目录执行。准备 Node.js `22.19.0`（含 `include/node` 开发头文件）、
+Git、Make 和 C/C++ 编译工具；macOS 可通过 `xcode-select --install` 安装 Command Line Tools。
+Corepack 会按各仓库配置选用 Studio 的 pnpm `10.33.2` 和 DSH 的 pnpm `11.7.0`，无需全局安装
+DSH、Codex 或 Python KsADK。首次配置需要访问 GitHub/npm。
 
 ```sh
 corepack enable
@@ -65,7 +72,15 @@ make doctor DSH_ROOT=../deepseek-harness
 
 `setup` 会完成依赖安装、固定源码及补丁、Host/Web 编译和 Profile 安装；首次需联网与编译工具。
 它复用匹配的补丁，但拒绝覆盖额外的本地修改。`dev` 在每次启动前重装当前插件，防止仍加载旧的
-0.0.1。以下是这些流水线的独立步骤，供调试和 CI 按需调用：
+0.0.1；打开终端输出的带鉴权 URL，默认端口为 `3098`。端口被占用可加 `DSH_WEB_PORT=3198`。
+在设置页配置自己的模型及云端凭证，不复制他人的 Profile 或数据目录。
+
+修改代码或 `git pull` 后，停止开发进程并重新执行 `make dev`；依赖或 DSH 补丁变更时先执行
+`make setup`。这不是前端热更新入口。可用 `DSH_HOME`、`AGENTKIT_HOME` 指定独立测试数据目录。
+开发入口已在独立 macOS arm64 目录从首次 checkout 到实际网页验收；Linux/Windows 的验证
+范围及更多说明见 [CONTRIBUTING.md](CONTRIBUTING.md) 和[验收记录](docs/contracts/development-setup-acceptance-2026-10-08.md)。
+
+以下是这些流水线的独立步骤，供调试和 CI 按需调用：
 
 ```sh
 # 插件自身检查（语法、合同测试、产品表面测试）
@@ -104,30 +119,45 @@ make desktop-dev DSH_ROOT=/path/to/deepseek-harness
 make desktop-build DSH_ROOT=/path/to/deepseek-harness
 ```
 
-`make web-build`、`make web-dev`、`make desktop-build` 和 `make desktop-dev` 只是开发宿主流水线；插件可以独立打包，但浏览器或
-桌面启动时必须由某个 DSH Host 加载它。`make desktop-start` 使用已经生成的官方桌面构建，
-`make desktop-package-mac-arm64` / `make desktop-package-mac-x64` 调用官方 DSH 的 macOS
-打包脚本；本地只想验证 `.app` 目录时使用对应的 `*-dir` 目标，使用
-`make desktop-check-package` 做官方签名配置和工具链预检（不构建或校验镜像内容）。四个 macOS package 目标会先要求应用当前
-rc.2 的 `006-desktop-plugin-package-set.patch`，再将 Studio tarball 纳入 Desktop package
-set 和内置 Profile；没有这个补丁会直接失败。macOS 签名、公证和发布版本仍由 DSH Desktop
-的发布配置负责。官方打包脚本要求先在 DSH checkout 的
-`apps/desktop/.env.macos` 填写本机签名/发布配置；缺少该文件时会主动拒绝打包，避免生成
-不可发布的假包。
+## 构建 macOS DMG
 
-`desktop-package-*` 会从固定基线和版本化补丁准备独立构建目录，避免发布重建触发开发网页的
-插件热替换。依赖和输出保存在 `PACK_DIR/desktop-checkouts/`，不会复制开发 checkout 的其他
-本地改动或个人 Profile。缓存复用、签名配置与本机未签名 DMG 交付见 [协作说明](CONTRIBUTING.md)。
+在 Apple Silicon Mac 上，完成上述 `make setup` 后执行：
 
-新 checkout 没有 DSH profile 时，先执行 `make profile-install`；安装结束会自动执行
-`profile-check`，核对 Profile bundle、安装包、插件 manifest、DSH 基线和运行文件。
-`make web-dev` 不会隐式修改
-用户的 DSH_HOME。官方 DSH checkout、Node/pnpm、profile 安装和 macOS 签名配置仍是宿主层
-前置条件，不能仅靠 npm tarball 自动获得。
+```sh
+make release-check
+make desktop-package-mac-arm64-unsigned DSH_ROOT=../deepseek-harness
+(cd .artifacts && shasum -a 256 -c AgentKit-Studio-0.0.1-mac-arm64-local.dmg.sha256)
+open .artifacts/AgentKit-Studio-0.0.1-mac-arm64-local.dmg
+```
 
-宿主兼容补丁按 `patches/dsh-v<version>/` 隔离。每个目录包含固定基线、应用顺序、删除条件和
-补丁清单；升级 DSH 时必须新建版本目录并重新执行 `git apply --check`，禁止把不同版本的
-补丁平铺在同一个目录。
+这是本地验收包，不需要 Apple 签名、公证配置。成功后输出：
+
+- `.artifacts/AgentKit-Studio-0.0.1-mac-arm64-local.dmg`
+- 同名 `.sha256` 校验文件与 `.json` 构建记录。
+
+`PACK_DIR=/path/to/output` 可更改产物目录。挂载后将 App 复制到 Applications，再从安装位置
+启动；需要检验是否真正独立运行时，使用独立数据目录并移除 PATH 中的 Node/pnpm。产物内置
+Electron、Node、Studio 插件、固定 `@openai/codex` CLI 及官方宿主运行依赖，安装使用者不需要
+再执行 npm install。不会打入开发者的模型密钥、用户 Profile 或 Codex 登录凭证。
+“离线包”表示安装和启动不依赖在线安装依赖，云模型、MCP、知识库等联网能力仍需网络和凭证。
+
+首次打包需要联网下载官方运行时及依赖，并编译原生模块；后续复用构建缓存。打包在
+`.artifacts/desktop-checkouts/` 的独立源码目录运行，不重建正在使用的开发 Host，也不包含 DSH
+checkout 中未形成版本化补丁的额外改动。`make pack` 只生成插件 tarball，`desktop-build` 和
+`desktop-start` 只用于开发构建与启动，均不会替代 DMG 目标。
+
+正式签名包需在 `DSH_ROOT/apps/desktop/.env.macos` 中按同目录 `.env.macos.example` 配置
+Apple 签名、公证和官方发布参数，配置文件不得提交。然后执行：
+
+```sh
+make desktop-check-package DSH_ROOT=../deepseek-harness
+make desktop-package-mac-arm64 DSH_ROOT=../deepseek-harness
+# Intel 目标：make desktop-package-mac-x64 DSH_ROOT=../deepseek-harness
+```
+
+签名目标成功后打印实际 `artifacts` 目录；它不会使用本地未签名导出文件名。当前未签名便捷目标
+仅支持 `mac-arm64`，不能用于 Intel Mac。正式签名、公证发布及 x64 实机安装仍未完成验收，
+不要将本地 DMG 当作正式发行包。详细流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 配置来源
 
@@ -151,6 +181,10 @@ Electron 壳可以启动，但只有发布 profile 载入本插件时才会显�
 的 Agent 绑定执行、资源型 DSH Native 运行、Codex 持续 thread 和云端部署仍以对应
 Host/Server 合同和真实凭证验收为准。
 
+本轮[记忆召回](docs/contracts/memory-acceptance-2026-10-08.md)已按用户确认通过；
+[流式用量](docs/contracts/streaming-usage-acceptance-2026-10-08.md)另有真实 Harness、DSH Native
+Host 验证。Linux 命令沙箱、完整原生工具 Trace、签名 DMG 和预发部署继续按独立门禁推进。
+
 ## 目录
 
 - `src/client.js` 是保持在门禁内的入口注释；浏览器实现按功能拆分在
@@ -170,7 +204,7 @@ Host/Server 合同和真实凭证验收为准。
 make release-check
 ```
 
-这条命令只验证 Studio 包本身，不启动 DSH 宿主；会执行 82 个本地合同测试、检查 rc.2 补丁均为
+这条命令只验证 Studio 包本身，不启动 DSH 宿主；会执行全部本地合同测试、检查 rc.2 补丁均为
 标准 unified diff、生成 0.0.1 tarball、检查 manifest/导出和个人路径泄漏，再执行
 `git diff --check`。然后审阅
 `CHANGELOG.md`，再在 macOS 发布机上补跑 DSH Host、App package closure、签名和公证门禁。

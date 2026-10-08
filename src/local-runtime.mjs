@@ -10,6 +10,7 @@
 import { readSse } from './sse.mjs';
 import { modelFailureDetails } from './model-failure.mjs';
 import { formatSkillContext } from './skill-files.mjs';
+import { chatCompletionUsage } from './providers/chat-usage.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -250,7 +251,7 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
       try { response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${profile.apiKey}` },
-        body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, ...(tools.length ? { tools, tool_choice: 'auto' } : {}) }),
+        body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}) }),
         signal: requestSignal,
       }); } catch {
         if (signal?.aborted) throw runtimeCancelledError();
@@ -264,6 +265,7 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
       const toolCalls = new Map();
       let finishReason = '';
       let hasContent = false;
+      let usage;
       try {
         for await (const parsed of readSse(response.body)) {
         if (signal?.aborted) throw runtimeCancelledError();
@@ -284,8 +286,7 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
           toolCalls.set(index, current);
         }
         finishReason = parsed?.choices?.[0]?.finish_reason || finishReason;
-        const usage = parsed?.usage;
-        if (usage) yield { type: 'usage', inputTokens: usage.prompt_tokens || 0, outputTokens: usage.completion_tokens || 0 };
+        usage = chatCompletionUsage(parsed?.usage) || usage;
       }
       } catch (error) {
         if (signal?.aborted) throw runtimeCancelledError();
@@ -298,6 +299,8 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
       if (finishReason === 'length' || finishReason === 'content_filter') {
         throw new LocalRuntimeError('MODEL_OUTPUT_INCOMPLETE', '模型输出未完整结束', { reason: finishReason });
       }
+      // Retain the last valid snapshot; repeated trailer frames are not deltas.
+      if (usage) yield { type: 'usage', usage };
       if (finishReason === 'tool_calls' || toolCalls.size) {
         yield { type: 'tool_calls', calls: [...toolCalls.values()] };
       }
@@ -428,6 +431,10 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
           if (chunk.type === 'text') { text += chunk.text; turnText += chunk.text; send({ kind: 'assistant_text', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
           if (chunk.type === 'reasoning') { reasoning += chunk.text; turnReasoning += chunk.text; send({ kind: 'assistant_reasoning', lifecycle: 'running', payload: { operation: 'append', text: chunk.text } }); }
           if (chunk.type === 'tool_calls') calls = chunk.calls;
+          if (chunk.type === 'usage') {
+            noteTrace('model.usage', { source: 'chat-completions', usage: chunk.usage });
+            send({ kind: 'usage', lifecycle: 'completed', payload: { usage: chunk.usage } });
+          }
         }
         if (!calls.length) break;
         if (nativeTools) {
