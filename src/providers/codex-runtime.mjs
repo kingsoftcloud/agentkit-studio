@@ -12,7 +12,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createCodexUsageCounter } from './codex-usage.mjs';
 import { createCodexModelProxy } from './codex-model-proxy.mjs';
-import { codexItemToolChunk } from './codex-tool-events.mjs';
+import { codexItemToolChunk, createCodexCommandFallback } from './codex-tool-events.mjs';
 
 export class CodexRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -187,6 +187,7 @@ export function createCodexRuntime(options = {}) {
       const countUsage = createCodexUsageCounter();
       const phases = new Map();
       const deltaItems = new Set();
+      const commandFallback = createCodexCommandFallback();
       const finish = error => {
         if (closed) return;
         closed = true;
@@ -329,6 +330,7 @@ export function createCodexRuntime(options = {}) {
         const threadParams = {
           cwd,
           ephemeral: true,
+          experimentalRawEvents: true,
           approvalPolicy,
           ...(sandbox ? { sandbox } : {}),
           ...(selectedModel ? { model: selectedModel } : {}),
@@ -354,7 +356,12 @@ export function createCodexRuntime(options = {}) {
             const item = object(params.item || {}, 'item');
             if (item.id) phases.set(String(item.id), item.phase);
             const tool = codexItemToolChunk(item, 'started');
+            commandFallback.observeNative(tool);
             if (tool) yield tool;
+            continue;
+          }
+          if (method === 'rawResponseItem/completed') {
+            commandFallback.observeRaw(params.item);
             continue;
           }
           if (method === 'agentkit/tool/status') {
@@ -383,6 +390,7 @@ export function createCodexRuntime(options = {}) {
             const item = object(params.item || {}, 'completed item');
             if (item.id) phases.set(String(item.id), item.phase);
             const tool = codexItemToolChunk(item, 'completed');
+            commandFallback.observeNative(tool);
             if (tool) yield tool;
             if (item.type === 'agentMessage' && !deltaItems.has(String(item.id || '')) && typeof item.text === 'string' && item.text) {
               yield { type: isFinalPhase(item.phase) ? 'text' : 'reasoning', text: item.text };
@@ -390,6 +398,7 @@ export function createCodexRuntime(options = {}) {
             continue;
           }
           if (method === 'turn/completed') {
+            yield* commandFallback.flush();
             const turnResult = object(params.turn || {}, 'completed turn');
             if (turnResult.status !== 'completed') {
               const reason = String(turnResult.error?.message || '').split(modelProvider?.apiKey || '\0').join('[redacted]').slice(0, 1600);
@@ -402,6 +411,7 @@ export function createCodexRuntime(options = {}) {
           }
         }
       } catch (error) {
+        yield* commandFallback.flush();
         throw asError(error);
       } finally {
         for (const resolver of pending.values()) resolver.reject(new CodexRuntimeError('CODEX_TRANSPORT_CLOSED', 'Codex 请求已关闭'));

@@ -43,6 +43,17 @@ Codex 原生 mcpToolCall、commandExecution、fileChange 和 Studio 动态工具
 原生命令保留 command、cwd、实际输出、退出码与耗时；非零退出码或被拒绝不会记为成功。
 事件字段以固定 Codex 0.159.2 的 `app-server generate-ts --experimental` 生成合同为依据。
 
+该版本的命令启动错误可能只有 `rawResponseItem/completed`，没有高层 `commandExecution`。
+Studio 为单轮线程显式开启 `experimentalRawEvents`，仅保留 `exec_command` 的调用及匹配结果，
+不持久化原始消息或 reasoning。轮次结束时补齐缺失的命令卡；已有原生命令终态优先且不重复。
+返回的命令退出码来自执行器头部，不能从 stdout 中的错误字样推断；无法识别的结果显示
+“执行状态未确认”。这是固定版本实验协议的适配，升级 CLI 时必须重新验证。
+
+`scripts/verify-codex-command-events.mjs` 用真实 CLI 和 loopback 模型复现命令错误丢失。
+在已知会触发 Codex 沙箱启动失败的 Linux 容器运行，可通过 `AGENTKIT_CODEX_BIN` 指定
+镜像内固定 CLI，保持 `--network none`。它检查真实工具结果进入持久化事件且只形成一张失败卡；
+如果命令能成功执行，此诊断应失败而不是假称复现。它不证明沙箱能力、真实模型或云端 UI 通过。
+
 `node scripts/verify-dsh-codex-tool-cards.mjs` 在固定官方 DSH AgentLoop、Session 与 Chat assembler
 中验证成功、失败、取消、zstd 磁盘关闭重开和零次重复执行；输入流使用测试数据，不替代真实模型调用。
 

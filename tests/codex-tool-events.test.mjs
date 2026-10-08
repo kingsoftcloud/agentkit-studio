@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
-import { createCodexToolRecorder, CODEX_TOOL_EVENT } from '../src/providers/codex-tool-events.mjs';
+import { createCodexToolRecorder, CODEX_TOOL_EVENT, createCodexCommandFallback } from '../src/providers/codex-tool-events.mjs';
 
 const definition = runInNewContext(`${await readFile(new URL('../src/client-fragments/02-codex-tool-nodes.js', import.meta.url), 'utf8')}\ncodexToolDefinition`);
 function recorder() {
@@ -60,4 +60,51 @@ test('native Chat payload restores failures and standalone result windows; close
   context.state = definition.start(context, context.start);
   context.start = { ...context.start, location: { ...location, step: { step: 1, status: 'closed', end: { seq: 4, time: 20 } } } };
   assert.equal(definition.buildViewNode(context).data.root.error.code, 'CODEX_TOOL_OUTCOME_UNKNOWN');
+});
+
+test('raw fallback ignores messages and other tools, and never duplicates native completions', () => {
+  const fallback = createCodexCommandFallback();
+  for (const item of [
+    { type: 'reasoning', call_id: 'private', text: 'not a tool fact' },
+    { type: 'message', call_id: 'private', role: 'developer', content: 'not a tool fact' },
+    { type: 'function_call', call_id: 'search', name: 'search', arguments: '{}' },
+    { type: 'function_call', call_id: 'other-namespace', namespace: 'other', name: 'exec_command', arguments: '{}' },
+  ]) fallback.observeRaw(item);
+  for (const phase of ['completed', 'failed']) {
+    fallback.observeRaw({ type: 'function_call', call_id: phase, name: 'exec_command', arguments: '{}' });
+    fallback.observeRaw({ type: 'function_call_output', call_id: phase, output: 'exec_command failed: raw duplicate' });
+    fallback.observeNative({ type: 'tool', id: phase, phase });
+  }
+  assert.deepEqual([...fallback.flush()], []);
+});
+
+test('raw command status uses executor metadata, never error-looking stdout', () => {
+  const fallback = createCodexCommandFallback();
+  fallback.observeRaw({ type: 'function_call', call_id: 'ok', name: 'exec_command', arguments: '{}' });
+  fallback.observeRaw({ type: 'function_call_output', call_id: 'ok', output: 'Chunk ID: probe\nWall time: 0.01 seconds\nProcess exited with code 0\nOutput:\nProcess exited with code 1\nexec_command failed: printed text' });
+  const result = [...fallback.flush()];
+  assert.equal(result[1].phase, 'completed');
+  assert.equal(result[1].result.structuredContent.exitCode, 0);
+  assert.deepEqual([...fallback.flush()], [], 'turn completion and error cleanup do not emit twice');
+});
+
+test('raw results without a known status remain unknown in persisted tool cards', () => {
+  const fallback = createCodexCommandFallback(), { instance, events } = recorder();
+  fallback.observeRaw({ type: 'function_call', call_id: 'unknown', name: 'exec_command', arguments: '{"cmd":"probe"}' });
+  fallback.observeRaw({ type: 'function_call_output', call_id: 'unknown', output: 'unrecognized future protocol output' });
+  fallback.observeNative({ type: 'tool', id: 'unknown', phase: 'started' });
+  const results = [...fallback.flush()];
+  assert.equal(results.length, 1, 'preserve the existing native start');
+  assert.equal(results[0].result.structuredContent.status, 'unknown');
+  instance.record(results[0]); instance.close();
+  assert.equal(events[0].data.error.code, 'CODEX_TOOL_OUTCOME_UNKNOWN');
+  assert.equal(events[0].data.content[0].text, 'unrecognized future protocol output');
+});
+
+test('raw command calls without a returned result do not claim execution success', () => {
+  const fallback = createCodexCommandFallback();
+  fallback.observeRaw({ type: 'function_call', call_id: 'unfinished', name: 'exec_command', arguments: '{}' });
+  const results = [...fallback.flush()];
+  assert.deepEqual(results.map(result => result.phase), ['started', 'failed']);
+  assert.equal(results[1].error.code, 'CODEX_TOOL_OUTCOME_UNKNOWN');
 });

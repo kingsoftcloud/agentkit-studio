@@ -2,6 +2,52 @@ import { randomUUID } from 'node:crypto';
 
 export const CODEX_TOOL_EVENT = 'agentkit/codex-tool';
 
+/**
+ * Codex 0.159.2 may return an exec startup error without commandExecution items.
+ * Reconcile only command calls from its opt-in raw Responses events. Never expose
+ * message/reasoning items; native lifecycle items remain authoritative when present.
+ */
+export function createCodexCommandFallback() {
+  const calls = new Map(), native = new Map();
+  return {
+    observeRaw(item) {
+      if (!item?.call_id) return;
+      if (item.type === 'function_call' && item.name === 'exec_command' && (!item.namespace || item.namespace === 'functions')) {
+        if (!calls.has(item.call_id)) calls.set(item.call_id, { arguments: item.arguments });
+      } else if (item.type === 'function_call_output' && calls.has(item.call_id)) {
+        calls.get(item.call_id).output = item.output;
+      }
+    },
+    observeNative(chunk) {
+      if (chunk?.type === 'tool') native.set(chunk.id, chunk.phase);
+    },
+    *flush() {
+      for (const [id, call] of calls) {
+        const phase = native.get(id);
+        if (phase === 'completed' || phase === 'failed') continue;
+        const text = typeof call.output === 'string' ? call.output : '';
+        // Parse only the executor's leading metadata, not command stdout which
+        // may itself contain text such as "Process exited with code 1".
+        const match = /^(?:Chunk ID: [^\n]+\n)?Wall time: [^\n]+\nProcess exited with code (-?\d+)\n/.exec(text);
+        const exitCode = match ? Number(match[1]) : null;
+        const rejected = /^exec_command failed:|^Error parsing function call:/.test(text);
+        const known = exitCode !== null || rejected;
+        const failed = !known || rejected || exitCode !== 0;
+        const tool = { type: 'tool', id, name: 'codex/command', arguments: call.arguments ?? {} };
+        if (!phase) yield { ...tool, phase: 'started' };
+        yield { ...tool, phase: failed ? 'failed' : 'completed', result: {
+          content: [{ type: 'text', text }],
+          structuredContent: { status: known ? failed ? 'failed' : 'completed' : 'unknown', exitCode, source: 'codex-raw-command-result' },
+        }, ...(failed ? { error: {
+          code: known ? 'CODEX_TOOL_FAILED' : 'CODEX_TOOL_OUTCOME_UNKNOWN',
+          message: known ? `Codex 命令执行失败${exitCode !== null ? `（exit ${exitCode}）` : ''}` : '未收到 Codex 命令的确定执行状态；请查看返回结果。',
+        } } : {}) };
+      }
+      calls.clear(); native.clear();
+    },
+  };
+}
+
 /** Public App Server ThreadItem facts; Codex remains the executor. */
 export function codexItemToolChunk(item, phase) {
   if (!item?.id || !['mcpToolCall', 'commandExecution', 'fileChange'].includes(item.type)) return null;
@@ -37,7 +83,7 @@ export function createCodexToolRecorder(session, { label = 'Codex', code = 'CODE
         arguments: typeof args === 'string' ? args : JSON.stringify(args),
         ...(chunk.phase === 'started' ? {} : {
           content: toolContent(chunk.result),
-          ...(chunk.phase === 'failed' ? { error: { name: 'ToolError', code: `${code}_TOOL_FAILED`, reason: String(chunk.error?.message || `${label} 工具执行失败`) } } : {}),
+          ...(chunk.phase === 'failed' ? { error: { name: 'ToolError', code: chunk.error?.code === 'CODEX_TOOL_OUTCOME_UNKNOWN' ? `${code}_TOOL_OUTCOME_UNKNOWN` : `${code}_TOOL_FAILED`, reason: String(chunk.error?.message || `${label} 工具执行失败`) } } : {}),
         }),
       };
       session.append(CODEX_TOOL_EVENT, data, { ignorable: true });

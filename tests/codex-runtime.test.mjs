@@ -109,6 +109,38 @@ test('native commands and file changes retain actual inputs, outputs and failure
   assert.deepEqual(tools[7].result.structuredContent.changes, items[3].changes);
 });
 
+test('command startup failures without a native command item reach the tool stream', async () => {
+  let rawEventsRequested;
+  const output = 'Chunk ID: probe\nWall time: 0.0000 seconds\nProcess exited with code 1\nOriginal token count: 9\nOutput:\nbwrap: Failed to make / slave: Permission denied\n';
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn(), read = child.stdout.write.bind(child.stdout), write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => {
+      const request = JSON.parse(String(data));
+      if (request.method === 'thread/start') rawEventsRequested = request.params.experimentalRawEvents;
+      return write(data, ...args);
+    };
+    child.stdout.write = (data, ...args) => {
+      const message = JSON.parse(String(data));
+      if (message.method === 'item/started' && message.params.item.id === 'item-final') {
+        const common = { threadId: 'thread-fake', turnId: 'turn-fake' };
+        for (const item of [
+          { type: 'function_call', call_id: 'early-command', name: 'exec_command', arguments: JSON.stringify({ cmd: 'python3 -c "print(7)"' }) },
+          { type: 'function_call_output', call_id: 'early-command', output },
+        ]) read(JSON.stringify({ method: 'rawResponseItem/completed', params: { ...common, item } }) + '\n');
+      }
+      return read(data, ...args);
+    };
+    return child;
+  } });
+  const chunks = [];
+  for await (const chunk of runtime.stream({ input: 'Print seven using Python' })) chunks.push(chunk);
+  const tools = chunks.filter(chunk => chunk.type === 'tool');
+  assert.deepEqual(tools.map(chunk => chunk.phase), ['started', 'failed']);
+  assert.equal(rawEventsRequested, true);
+  assert.equal(tools[1].result.content[0].text, output);
+  assert.equal(tools[1].result.structuredContent.exitCode, 1);
+});
+
 test('the selected Codex model reaches thread/start instead of inheriting another default', async () => {
   let selected;
   const runtime = createCodexRuntime({ model: 'configured-default', spawnImpl: () => {
