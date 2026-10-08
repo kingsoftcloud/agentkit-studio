@@ -13,6 +13,7 @@ AgentKit Studio 首个版本，基于 DSH 原生 Web / macOS 界面，支持 DSH
 - **运行中心**：提供自动化调度、评测集与执行记录、本地 Trace 和云端统计；Codex 上报 token 用量，Chat 代理记录请求大小及工具定义开销。
 - **渠道接入**：通过 Gateway 将渠道消息路由到本地 Agent，保留模型、资源与会话历史，支持连接状态、重连和停用。
 - **macOS 应用**：统一 AgentKit Studio 名称与图标，提供内置 Node、固定版本官方 Codex CLI 和 Studio 插件的本地 DMG；侧栏直接进入设置。
+- **开发环境**：`make setup` 串联固定 DSH 源码、补丁、编译和插件安装；`make dev` 重装当前插件后启动，`make doctor` 校验环境并保护已有源码改动。
 
 ### 当前限制
 

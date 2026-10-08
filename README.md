@@ -56,13 +56,25 @@ Agent 的普通对话由所连接的运行时执行。
 首次配置请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；仓库内不依赖任何个人绝对路径。
 
 ```sh
+corepack enable
+make setup DSH_ROOT=../deepseek-harness
+make dev DSH_ROOT=../deepseek-harness
+# 后续环境诊断
+make doctor DSH_ROOT=../deepseek-harness
+```
+
+`setup` 会完成依赖安装、固定源码及补丁、Host/Web 编译和 Profile 安装；首次需联网与编译工具。
+它复用匹配的补丁，但拒绝覆盖额外的本地修改。`dev` 在每次启动前重装当前插件，防止仍加载旧的
+0.0.1。以下是这些流水线的独立步骤，供调试和 CI 按需调用：
+
+```sh
 # 插件自身检查（语法、合同测试、产品表面测试）
 make check
 
 # 打包 npm tarball（版本来自 package.json）
 make pack
 
-# 未配置 DSH checkout 时，从公开 GitHub 固定 tag 拉取并安装宿主依赖
+# 单独拉取固定源码和安装依赖；尚不应用补丁或编译（首次启动使用 make setup）
 make dsh-bootstrap
 
 # 把打包后的插件安装到指定 DSH profile（会修改 DSH_HOME）

@@ -1,4 +1,5 @@
 SHELL := /bin/bash
+.DEFAULT_GOAL := check
 
 # AgentKit Studio only ships the plugin. DSH_ROOT points at the official
 # DeepSeek Harness checkout and is never vendored into this repository.
@@ -25,6 +26,28 @@ DESKTOP_PACKAGE = node scripts/package-desktop.mjs --source "$(DSH_ROOT)" --outp
 DESKTOP_ENV = DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)"
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
+
+.PHONY: setup dev doctor
+# Sequential sub-makes also keep `make -j setup` from racing patch/build/profile writes.
+setup:
+	node scripts/development-doctor.mjs --tools-only
+	pnpm install --frozen-lockfile
+	$(MAKE) dsh-bootstrap
+	node scripts/prepare-development.mjs "$(DSH_ROOT)" "$(PATCH_ROOT)" "$(DSH_COMMIT)"
+	cd "$(DSH_ROOT)" && pnpm run build:official
+	$(MAKE) profile-install
+	$(MAKE) doctor
+
+# Repack after edits so the installed 0.0.1 cannot silently remain stale.
+dev:
+	$(MAKE) profile-install
+	$(MAKE) doctor
+	$(MAKE) web-dev
+
+doctor:
+	@profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
+		node scripts/development-doctor.mjs --source "$(DSH_ROOT)" --patches "$(PATCH_ROOT)" \
+		--commit "$(DSH_COMMIT)" --profile "$$profile_dir" --archive "$(PLUGIN_TARBALL)"
 
 .PHONY: check test pack release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \

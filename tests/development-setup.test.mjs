@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { prepareDevelopment } from '../scripts/prepare-development.mjs';
+
+test('development setup applies dependent patches once and preserves developer changes', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'studio-setup-test-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source'), patches = join(root, 'patches'); await mkdir(source); await mkdir(patches);
+  const git = args => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', ...args], { cwd: source, encoding: 'utf8' }).trim();
+  git(['init', '-q']); git(['config', 'user.name', 'Fixture']); git(['config', 'user.email', 'fixture@example.invalid']);
+  await writeFile(join(source, 'value.txt'), 'before\n'); git(['add', '.']); git(['commit', '-qm', 'baseline']);
+  const commit = git(['rev-parse', 'HEAD']);
+  await writeFile(join(source, 'value.txt'), 'middle\n'); await writeFile(join(source, 'added.txt'), 'patch-owned\n');
+  git(['add', '.']); await writeFile(join(patches, '001.patch'), git(['diff', '--cached', '--binary', 'HEAD']) + '\n');
+  git(['commit', '-qm', 'first patch']); await writeFile(join(source, 'value.txt'), 'after\n');
+  await writeFile(join(patches, '002.patch'), git(['diff', '--binary', 'HEAD']) + '\n');
+  git(['reset', '--hard', '-q', commit]);
+  const input = { source, patches, commit };
+  await assert.rejects(prepareDevelopment({ ...input, checkOnly: true }), /make setup/);
+  assert.equal(git(['status', '--porcelain']), '');
+  assert.equal((await prepareDevelopment(input)).status, 'applied');
+  assert.equal(await readFile(join(source, 'added.txt'), 'utf8'), 'patch-owned\n');
+  assert.equal((await prepareDevelopment(input)).status, 'already-applied');
+  assert.equal((await prepareDevelopment({ ...input, checkOnly: true })).status, 'already-applied');
+  const staged = git(['diff', '--cached', '--binary']);
+  await writeFile(join(source, 'value.txt'), 'developer change\n');
+  await assert.rejects(prepareDevelopment(input), /额外改动/);
+  assert.equal(await readFile(join(source, 'value.txt'), 'utf8'), 'developer change\n');
+  assert.equal(git(['diff', '--cached', '--binary']), staged, 'the real staging area is unchanged');
+  await writeFile(join(source, 'value.txt'), 'after\n'); await writeFile(join(source, 'untracked.txt'), 'preserve me');
+  await assert.rejects(prepareDevelopment(input), /额外改动/);
+  assert.equal(await readFile(join(source, 'untracked.txt'), 'utf8'), 'preserve me');
+  await assert.rejects(prepareDevelopment({ ...input, commit: '0'.repeat(40) }), /固定 commit/);
+});

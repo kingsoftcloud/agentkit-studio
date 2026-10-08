@@ -5,9 +5,10 @@
 
 ## 环境
 
-- Node.js `22.19.0`（版本写在 `.node-version`）
+- Node.js `22.19.0`（版本写在 `.node-version`），安装需包含 `include/node` 开发头文件
 - pnpm `10.33.2`（版本写在 `package.json` 的 `packageManager`）
 - 官方 DSH `0.2.0-rc.2`，commit `639ed015397290b3745d163aafe02ffee4aa3f84`
+- Git、GNU Make 和 C/C++ 编译工具；macOS 使用 Xcode Command Line Tools，Linux 使用系统的编译工具链
 - macOS DMG 还需要 DSH Desktop 的签名、公证和发布配置；普通 Web/Node 检查不需要云端密钥
 
 Studio 基于公开 DSH 源码和扩展合同二次开发，但本仓库不复制 DSH 源码；运行和宿主验证需要
@@ -25,14 +26,34 @@ export AGENTKIT_HOME=/path/to/agentkit  # 可选；默认 ~/.agentkit
 
 ## 首次 checkout
 
+支持 macOS 和 Linux；Windows 使用 WSL2，原生 Windows Makefile 流程尚未验收。
+安装 Node.js 后启用 Corepack，由每个仓库的 `packageManager` 分别选择 Studio 的 pnpm 10.33.2
+和 DSH 的 pnpm 11.7.0。无需全局安装 `dsh`、`codex` 或 Python KsADK。
+
 ```sh
-pnpm install --frozen-lockfile
-make check
-make pack
-make profile-install DSH_ROOT="$DSH_ROOT"
-make profile-check
-make web-dev DSH_ROOT="$DSH_ROOT"
+corepack enable
+# 在克隆后的 agentkit-studio 目录执行；指定源码位置不依赖团队成员的目录结构
+make setup DSH_ROOT=../deepseek-harness
+make dev DSH_ROOT=../deepseek-harness
 ```
+
+`setup` 按顺序检查工具、安装 Studio 依赖、克隆固定 DSH tag、核对 commit、应用兼容补丁、
+完整编译 Host/Web 并安装和校验 Profile。首次需要访问 GitHub/npm，包含源码编译，耗时不能
+等同于安装普通 npm 包；以后会复用下载和编译缓存。已有完整补丁可重复执行；源码存在额外改动、
+半套补丁或不符的 commit 时会明确停止，保留现场，绝不自动 reset 开发者的修改。
+
+默认 `DSH_ROOT` 仍是 Studio 上两级目录下的 `deepseek-harness`。团队成员可以一直显式传入
+自己的路径，或 `export DSH_ROOT=/absolute/path/to/deepseek-harness`。可选的 `DSH_HOME`、
+`AGENTKIT_HOME` 和 `DSH_PROFILE` 用于隔离开发数据；首次模型/云端配置在设置页完成，不复制
+其他人的凭证和 Profile。
+
+修改 Studio 后停止开发进程，再执行 `make dev`：它重新打包和安装当前插件、逐文件核对包，
+然后启动 Web Host；浏览器刷新即可载入当前代码。纯前端打包为 `pnpm build:client`，独立测试为
+`make check`。修改 DSH 补丁后重新运行 `make setup`；如现有源码含额外改动，使用新 DSH_ROOT
+完成基线验证。`make doctor` 检查工具、固定 commit、完整补丁、Host/Web 编译产物和已安装插件，
+不读取凭证；它不代表模型服务或云资源已经可用。
+
+独立源码目录的实际配置和网页检查见 [开发环境验收](docs/contracts/development-setup-acceptance-2026-10-08.md)。
 
 `profile-install` 会在缺少 profile 时从官方 `web` 模板初始化一个独立 profile，再安装
 Studio tarball，并自动校验 bundle 与安装文件。`profile-check` 是可单独运行的只读门禁，也可用
