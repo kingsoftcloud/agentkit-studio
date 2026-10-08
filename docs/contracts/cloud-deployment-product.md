@@ -1,8 +1,8 @@
 # 云端部署产品与镜像维护边界
 
 目标是本地创建的 DSH Native、Codex、AgentKit Harness 使用同一套部署交互与管理入口。
-当前 Node 传输和真实 Container 调用已有证据，部署页面编排、镜像目录消费、升级回滚和
-完整持久化尚未完成。本文中的交互和目录接入是待实现合同，不能当作已上线功能。
+当前 Node 传输、真实 Container 调用和 Server 镜像目录读取已有证据，部署页面编排、
+升级回滚和完整持久化尚未完成。下文的页面交互仍是待实现合同，不能当作已上线功能。
 
 ## 身份与生命周期
 
@@ -62,11 +62,24 @@ Action，不将删除显示为停止。MCP/Skill 等绑定冻结在运行包中�
 ## 复用 Server 数据库配置
 
 Server 已有 `client_bootstrap_configs` 表与 `GetClientBootstrapConfig`，可以按产品、客户端、
-运行时、环境和区域下发配置。Studio 应使用独立产品范围的镜像目录，复用此配置能力，
+运行时、环境和区域下发配置。Studio 使用独立产品范围的镜像目录，复用此配置能力，
 不硬编码最新标签，也不改变其他产品的默认镜像。镜像字节在 KCR，数据库保存推荐版本、
 镜像地址/digest、支持的三种运行时、运行包协议版本、兼容 Studio 版本及启停状态。
 
-当前验收脚本仍显式指定镜像；Studio 尚未消费该目录，也未更新服务器数据库配置。
+Node 部署客户端现已接入 `GetClientBootstrapConfig(Product=agentkit-studio, ClientType=studio)`，
+`deployment-images.mjs` 解析 `studio.runtime.images.v1`，按三种运行时与 Studio 版本筛选。
+目录仅接受固定 SHA256 的官方 KCR 镜像与 `linux/amd64` 平台；范围不匹配、缺少目录、
+默认版本被禁用或不兼容时明确拒绝，不回退到旧框架或任意其他镜像。
+每次解析重新读取 Server，预发候选 `preview` 不能作为生产目录中的启用版本。
+
+镜像工程提供独立发布脚本，先校验实际 registry manifest/config 摘要和平台，再预览该
+Studio 范围的数据库变更；写入要求匹配预览版本，并使用事务锁保护并发发布。
+已发布版本内容不可变，只允许启停；升级新增版本、切换默认值，保留历史镜像引用。
+2026-10-08 已发布 `pre-online / cn-beijing-6` 的 `0.0.1-a27bc5d` 候选目录，真实 KOP 查询
+对 DSH Native、Harness、Codex 均返回摘要
+`sha256:ca6925addde8bf2face4fa3e97ba305f770edade3e33eec90309c5e242fbdd40`。
+目录携带持久化、完整资源组合、Codex 命令沙箱的未验收说明；不能据此认定部署页面已接通。
+
 已有 `runtime.catalog` 服务用于 ManagedRuntime 的解析，不直接套用其中的旧 Python
 启动规则。这里继续采用通用 Container 合同；若所需元数据不能由现有配置接口承载，
 以具体缺口补充合同，而不新增另一套运行服务。

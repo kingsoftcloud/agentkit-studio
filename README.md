@@ -50,7 +50,7 @@ AgentEngine Server 并不提供本仓库的完整原生会话界面。
   版本并导出运行包。目前对话创建工具尚不提供构建操作；私有上传和云端运行已有脚本验收，
   一键部署、云端管理和升级回滚的完整页面流程尚未接通。
   云端创建沿用 AgentEngine 的 `CreateAgentProduct`，接口复用和实际发布缺口见[部署 API 合同](docs/contracts/deployment-transport.md)。
-  三种运行时共用一套镜像，后续通过 Server 已有配置表管理推荐版本，详见[部署交互与镜像维护边界](docs/contracts/cloud-deployment-product.md)。
+  三种运行时共用一套镜像，Node 客户端通过 Server 已有配置表读取固定摘要的版本目录；预发候选目录已实测，页面接入仍在推进。详见[部署交互与镜像维护边界](docs/contracts/cloud-deployment-product.md)。
   `make cloud-identity` 只读核验当前云端凭证的操作人；部署客户端在创建、更新、删除前核验身份，
   子账号核验失败或账号不一致时拒绝写请求。当前真实测试使用主账号，子账号落库及隔离仍待验收。
 - **设置**：左下角齿轮直接打开 DSH 原生设置弹窗，模型、凭证和 Studio 配置仍在同一处管理。

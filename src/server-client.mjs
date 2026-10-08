@@ -135,10 +135,14 @@ export function createAgentEngineClient(options) { return createClient(options, 
 export function createAgentEngineDeploymentClient(options) {
   const { action, inspectIdentity } = createClient(options, new Set([
     'CreateAgentProduct', 'UploadCode', 'GetPresignedUrl', 'GetAgent', 'UpdateAgent',
-    'ListInstances', 'GetAgentLogs', 'DeleteAgent',
+    'ListInstances', 'GetAgentLogs', 'DeleteAgent', 'GetClientBootstrapConfig',
   ]));
   return {
     inspectIdentity,
+    getBootstrapConfig: ({ region, runtime, clientVersion = '0.0.1' } = {}, request) => action('GetClientBootstrapConfig', {
+      Product: 'agentkit-studio', ClientType: 'studio', ClientVersion: clientVersion,
+      ...(region ? { Region: region } : {}), ...(runtime ? { Framework: runtime } : {}),
+    }, request),
     createAgent: (payload, request) => action('CreateAgentProduct', payload, request),
     uploadCode: (payload, request) => action('UploadCode', payload, request),
     getUploadUrl: (filename, request) => action('GetPresignedUrl', { Filename: filename }, request),
