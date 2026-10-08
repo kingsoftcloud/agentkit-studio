@@ -316,6 +316,9 @@ test('in-place upgrades and exact rollbacks require serving identity; all runtim
     assert.equal(ready.state, 'READY'); assert.equal(ready.buildId, preview.buildId); assert.equal(ready.versions.length, 2);
     assert.equal((await f.service.agents.get('ar-cloud-test')).deployment.versionId, ready.versionId);
     assert.equal((await f.service.agents.recover()).items.length, 2);
+    f.access.runtimeIdentity.deploymentVersion = 'old-version';
+    assert.equal((await f.service.refresh(initial.id)).state, 'STARTING');
+    serving(f, preview); assert.equal((await f.service.refresh(initial.id)).state, 'READY');
     const raw = JSON.parse(await readFile(join(f.root, 'deployments', `${initial.id}.json`)));
     assert.equal(raw.plan.buildId, f.input.buildId, 'creation intent remains immutable');
     const restarted = createStudioDeployments(f.options);

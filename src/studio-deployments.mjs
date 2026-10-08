@@ -8,7 +8,7 @@ import { resolveDeploymentCredentials, PLATFORM_CREDENTIAL_NAMES } from './deplo
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { createDeploymentAgents } from './deployment-agents.mjs';
-import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote } from './deployment-versions.mjs';
+import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote, probeDeploymentVersion, deploymentVersionId } from './deployment-versions.mjs';
 import { createDeploymentRollouts } from './deployment-rollouts.mjs';
 
 const cloudId = value => /^ar-(?!local-)[A-Za-z0-9-]+$/.test(value || '');
@@ -182,7 +182,8 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
           // GetAgent masks sensitive environment values. Prove token alignment
           // through runtime validation without starting a model run or session.
           const probe = await probeAccess(endpoint, key);
-          next.state = probe.ready ? basic.Status === 'UPDATING' ? 'AVAILABLE_UPDATING' : 'READY' : 'TOKEN_PENDING';
+          const versionReady = !record.activeVersion || await probeDeploymentVersion({ fetchImpl, endpoint, token: key, plan: currentDeployment(record).plan, versionId: deploymentVersionId(record) });
+          next.state = !probe.ready ? 'TOKEN_PENDING' : !versionReady ? 'STARTING' : basic.Status === 'UPDATING' ? 'AVAILABLE_UPDATING' : 'READY';
           next.tokenBound = probe.ready;
         }
       }
