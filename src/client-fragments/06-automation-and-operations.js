@@ -762,7 +762,7 @@
           : detailTab === 'attributes'
             ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selectedSpan?.attributes || {}, null, 2))
             : detailTab === 'resource'
-              ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.resource || selected?.scope || {}, null, 2))
+              ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify({ executionLocation: selected?.executionLocation || 'local', provenance: selected?.provenance, resource: selected?.resource || selected?.scope || {} }, null, 2))
               : detailTab === 'trajectory'
                 ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(selected?.trajectory || selected?.toolCalls || selected?.spans || [], null, 2))
                 : h('div', { style: { display: 'grid', gap: '8px', maxHeight: '32vh', overflow: 'auto' } },
@@ -793,6 +793,7 @@
 
       const columns = [
         { id: 'trace', label: 'Trace', cell: row => h('div', null, h('strong', null, row?.name || operationalId(row)), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) },
+        { id: 'location', label: '执行位置', cell: row => row.executionLocation === 'cloud' ? '云端 · 本机留存凭据' : '本地' },
         { id: 'agent', label: 'Agent / Run', cell: row => `${row?.agentId || '—'} · ${row?.runId || '—'}` },
         { id: 'status', label: '状态', cell: row => operationalStatus(row?.status) },
         { id: 'duration', label: '耗时', cell: row => row?.durationMs == null ? '—' : `${row.durationMs} ms` },

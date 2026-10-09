@@ -1,8 +1,9 @@
 /** Only local deployment receipts establish Studio cloud Agent lineage. */
-import { currentDeployment, deploymentVersions, deploymentVersionId, probeDeploymentVersion } from './deployment-versions.mjs';
+import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDeploymentVersion } from './deployment-versions.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { verifyDeploymentStorage } from './deployment-storage.mjs';
+import { frozenModels } from './frozen-models.mjs';
 
 const supported = new Set(['harness', 'dsh-native', 'codex']);
 const available = new Set(['READY', 'AVAILABLE_UPDATING']);
@@ -22,12 +23,12 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     if (sha256(zip) !== record.plan.bundleSha256) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包与部署记录不一致');
     const { manifest } = verifyPortableBundle(zip);
     if (manifest.agentId !== record.plan.agentId || manifest.buildId !== record.plan.buildId) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包身份不一致');
-    const profile = manifest.resources.profiles.find(item => item.default) || manifest.resources.profiles[0];
-    if (!profile?.modelName) throw portableError('DEPLOYMENT_MODEL_MISSING', '冻结版本缺少模型配置');
+    const models = frozenModels(manifest.resources.profiles), profile = models.find(item => item.default) || models[0];
+    if (!profile) throw portableError('DEPLOYMENT_MODEL_MISSING', '冻结版本缺少模型配置');
     return { source: 'studio-deployment', metadata: { ...frozen.metadata, id: record.cloudAgentId, local: false,
       name: record.plan.agentName, createdAt: record.createdAt }, spec: frozen.spec,
       deployment: { id: record.id, versionId: deploymentVersionId(record), agentId: record.plan.agentId, buildId: record.plan.buildId, bundleId: record.plan.bundleId,
-        state: record.state, available: available.has(record.state), model: profile.modelName,
+        state: record.state, available: available.has(record.state), model: profile.id, models: models.map(item => item.id),
         environment: record.plan.environment, region: record.plan.region } };
   }
   async function get(agentId) {
@@ -45,10 +46,12 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     if (!['RUNNING', 'UPDATING'].includes(remote.Basic?.Status) || !(remote.Basic?.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_NOT_READY', '云端实例当前不可用，请在运行中心查看状态');
     const endpoint = endpointFor(remote, record);
     if (!endpoint || typeof token !== 'string' || token.length < 24 || token.includes('*')) throw portableError('DEPLOYMENT_NOT_READY', '云端访问配置尚未就绪');
-    if (record.activeVersion && !await probeDeploymentVersion({ fetchImpl, endpoint, token, plan: currentDeployment(record).plan, versionId: deploymentVersionId(record) })) {
+    const identityRequired = record.activeVersion || currentDeployment(record).plan.image.runtimeIdentity === true;
+    const identity = identityRequired ? await inspectDeploymentVersion({ fetchImpl, endpoint, token, plan: currentDeployment(record).plan, versionId: deploymentVersionId(record) }) : null;
+    if (identityRequired && !identity) {
       throw portableError('DEPLOYMENT_NOT_READY', '运行入口尚未确认当前冻结版本，请刷新部署状态后重试');
     }
-    return { agent, endpoint, token };
+    return { agent, endpoint, token, capabilities: Array.isArray(identity?.capabilities) ? identity.capabilities : [] };
   }
   async function projectRows(rows) {
     const items = [], warnings = [];
@@ -70,7 +73,7 @@ export function createDeploymentModelAdapter({ agents, runtime }) {
   const metadata = (provider, model) => ({ provider, id: model, name: model, modalities: ['text'] });
   return Object.assign(Object.create(Object.getPrototypeOf(runtime)), runtime, {
     providerInfo(provider) { return { id: provider, name: '云端部署' }; },
-    async listModels(provider) { return [...new Set((await (await agents()).list()).items.map(item => item.deployment.model))].map(model => metadata(provider, model)); },
+    async listModels(provider) { return [...new Set((await (await agents()).list()).items.flatMap(item => item.deployment.models || [item.deployment.model]))].map(model => metadata(provider, model)); },
     // A deleted deployment must still render historical messages. Admission and
     // each invocation separately verify its receipt and live remote identity.
     async resolveModel(provider, model) { return metadata(provider, model); },

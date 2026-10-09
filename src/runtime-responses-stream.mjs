@@ -1,6 +1,7 @@
 /** Project public DSH attempt frames; never turn a discarded attempt into success. */
 import { runtimeResponse } from './runtime-responses-contract.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
+import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
 
 export function createRuntimeResponsesStream(request, write) {
   const items = [], blocks = new Map(), calls = new Map();
@@ -45,6 +46,9 @@ export function createRuntimeResponsesStream(request, write) {
       } else if (frame.kind === 'assistant' && value.type === 'end') {
         const status = value.outcome?.kind === 'committed' && value.outcome.eventType === 'assistant/message' ? 'completed' : 'incomplete';
         for (const record of items) if (record.key?.startsWith(`${value.attemptId}:`)) close(record, status);
+      } else if (frame.kind === 'event' && value.type === RESOURCE_CHECK_EVENT) {
+        const check = sanitizeResourceCheck(value.data);
+        if (check) emit('response.resource_check', { check });
       } else if (frame.kind === 'event' && value.type === CODEX_TOOL_EVENT) {
         const call = value.data;
         // Codex has already executed these tools. Project its presentation

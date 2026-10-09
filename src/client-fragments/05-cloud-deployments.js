@@ -26,9 +26,15 @@
       const [showDeleted, setShowDeleted] = useState(false);
       const [page, setPage] = useState(1);
       const [details, setDetails] = useState({});
+      const [target, setTarget] = useState('auto');
+      const [useRecommendedImage, setUseRecommendedImage] = useState(true);
+      const [recordsLoaded, setRecordsLoaded] = useState(false);
+      const existing = records.filter(record => record.agentId === agentId && record.cloudAgentId && record.state !== 'DELETED').sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      const deploymentTarget = target === 'auto' ? existing[0]?.id || 'new' : target;
+      const targetRecord = existing.find(record => record.id === deploymentTarget);
       const [cpu, ratio] = spec.split(':').map(Number);
       const resources = { cpu, memoryGiB: cpu * ratio, storageGiB };
-      const inputKey = JSON.stringify([agentId, selectedBuild, spec, storageGiB]);
+      const inputKey = JSON.stringify([agentId, selectedBuild, spec, storageGiB, deploymentTarget, useRecommendedImage]);
       const latestInput = useRef(inputKey);
       latestInput.current = inputKey;
       const scopedRecords = records.filter(record => scope === 'all' || record.agentId === agentId);
@@ -37,7 +43,7 @@
       const currentPage = Math.min(page, pageCount);
       const otherAttention = records.filter(record => record.agentId !== agentId && DEPLOYMENT_ATTENTION_STATES.has(record.state)).length;
       const updateRecord = record => setRecords(previous => [record, ...previous.filter(item => item.id !== record.id)].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))));
-      useEffect(() => { setPreview(null); setRequestKey(''); setError(''); }, [agentId, selectedBuild, cpu, ratio, storageGiB]);
+      useEffect(() => { setPreview(null); setRequestKey(''); setError(''); }, [agentId, selectedBuild, cpu, ratio, storageGiB, deploymentTarget, useRecommendedImage]);
       useEffect(() => { setPage(1); }, [scope, showDeleted, agentId]);
       useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
       useEffect(() => {
@@ -52,7 +58,7 @@
               if (!DEPLOYMENT_POLL_STATES.has(item.state)) return item;
               try { return await hostRemote.refreshDeployment(item.id); } catch { return item; }
             }));
-            if (!stopped) setRecords(next);
+            if (!stopped) { setRecords(next); setRecordsLoaded(true); }
           } catch (reason) { if (!stopped) setError(reason?.message || '部署记录读取失败'); }
           finally { running = false; }
         };
@@ -61,6 +67,7 @@
       }, []);
       const inspect = async () => {
         if (!agentId || !selectedBuild || busy) return;
+        if (deploymentTarget !== 'new') { if (targetRecord?.state === 'READY') await inspectUpdate(targetRecord); return; }
         setBusy(true); setError(''); setPreview(null); setNotice('正在检查冻结版本、资源凭证和部署位置…');
         try {
           const result = await hostRemote.prepareDeployment({ agentId, buildId: selectedBuild, resources });
@@ -73,8 +80,8 @@
         setBusy(true); setError(''); setPreview(null); setNotice('正在核对目标冻结版本…');
         try {
           const result = await hostRemote.prepareDeploymentUpdate({ deploymentId: record.id,
-            ...(rollbackVersionId ? { rollbackVersionId } : { buildId: selectedBuild }) });
-          setPreview(result); setRequestKey(`studio-update-${crypto.randomUUID()}`); setNotice('');
+            ...(rollbackVersionId ? { rollbackVersionId } : { buildId: selectedBuild, useRecommendedImage }) });
+          if (latestInput.current === inputKey) { setPreview(result); setRequestKey(`studio-update-${crypto.randomUUID()}`); } setNotice('');
         } catch (reason) { setError(reason?.message || '版本检查失败'); setNotice(''); }
         finally { setBusy(false); }
       };
@@ -104,15 +111,21 @@
       const label = { display: 'grid', gap: '6px', fontSize: '12px', color: BRAND.inkMuted };
       return h(React.Fragment, null,
         h('section', { style: section, 'aria-label': '云端部署' },
-        h(DeliveryStep, { number: '3', title: '检查并部署', detail: '使用上方选中的冻结版本。检查通过后确认创建，部署位置取自设置。' }),
+        h(DeliveryStep, { number: '3', title: '检查并部署', detail: '选择更新已有实例或创建新实例，使用上方选中的冻结版本。' }),
+        h('label', { style: { ...label, marginBottom: '14px' } }, '部署目标', h('select', { 'aria-label': '部署目标', value: deploymentTarget, disabled: busy, onChange: event => setTarget(event.target.value), style: inputStyle() },
+          existing.map(record => h('option', { key: record.id, value: record.id }, `更新 ${record.agentName} · 版本 ${record.revision} · ${record.cloudAgentId}`)), h('option', { value: 'new' }, '创建新的云端实例'))),
+        targetRecord ? h(React.Fragment, null,
+          h('p', { style: { fontSize: '12px', color: BRAND.inkMuted } }, '更新保留实例 ID、规格和存储。检查后确认冻结版本与镜像，新版本需开启新会话。'),
+          h('label', { style: { ...label, display: 'flex', alignItems: 'center', marginBottom: '12px' } }, h('input', { type: 'checkbox', 'aria-label': '使用推荐运行镜像', checked: useRecommendedImage, disabled: busy, onChange: event => setUseRecommendedImage(event.target.checked) }), '使用当前推荐的运行镜像', h('span', null, `当前 ${targetRecord.imageVersion || '—'}`))) : null,
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', alignItems: 'end' } },
+          !targetRecord ? h(React.Fragment, null,
           h('label', { style: label }, '实例规格', h('select', { 'aria-label': '实例规格', value: spec, disabled: busy, onChange: event => setSpec(event.target.value), style: inputStyle() },
             h('optgroup', { label: '通用 · CPU / 内存 1:2' }, [1, 2, 4, 8, 16].map(value => h('option', { key: value, value: `${value}:2` }, `${value} 核 · ${value * 2} GB`))),
             h('optgroup', { label: '更多内存' }, [4, 8].flatMap(memoryRatio => [1, 2, 4, 8, 16].map(value => h('option', { key: `${value}:${memoryRatio}`, value: `${value}:${memoryRatio}` }, `${value} 核 · ${value * memoryRatio} GB`))))),
             h('span', { style: { fontSize: '11px' } }, '默认 2 核 4 GB，可按需调整')),
           h('label', { style: label }, '对话存储', h('select', { 'aria-label': '对话存储', value: storageGiB, disabled: busy, onChange: event => setStorageGiB(Number(event.target.value)), style: inputStyle() }, [20, 50, 100, 200, 500, 0].map(value => h('option', { key: value, value }, value ? `持久化 ${value} GiB` : '临时存储'))),
-            h('span', { style: { fontSize: '11px' } }, storageGiB ? '实例重建后保留会话历史' : '实例重建后不保留会话历史')),
-          h('div', { style: { alignSelf: 'center' } }, h('button', { type: 'button', disabled: busy || !selectedBuild, onClick: inspect, style: { ...buttonStyle(), background: !selectedBuild || busy ? BRAND.canvas : BRAND.primaryFill, color: !selectedBuild || busy ? BRAND.inkMuted : '#fff' } }, busy ? '处理中…' : '检查部署'))),
+            h('span', { style: { fontSize: '11px' } }, storageGiB ? '实例重建后保留会话历史' : '实例重建后不保留会话历史'))) : null,
+          h('div', { style: { alignSelf: 'center' } }, h('button', { type: 'button', disabled: busy || !recordsLoaded || !selectedBuild || (deploymentTarget !== 'new' && (!targetRecord || targetRecord.state !== 'READY' || (!useRecommendedImage && selectedBuild === targetRecord.buildId))), onClick: inspect, style: buttonStyle() }, busy ? '处理中…' : targetRecord ? '检查更新' : '检查部署'))),
         !selectedBuild ? h('p', { style: { fontSize: '12px', color: BRAND.inkMuted } }, '请先构建或选择一个成功的版本。') : null,
         preview ? h('div', { style: { marginTop: '16px', padding: '16px', borderRadius: '10px', background: BRAND.canvas } },
           h('strong', { style: { color: BRAND.ink } }, `${preview.deploymentId ? preview.rollbackVersionId ? '确认回滚' : '确认升级' : '检查通过'} · ${preview.agentName} · 版本 ${preview.revision}`),
@@ -141,7 +154,7 @@
           record.state !== 'DELETED' ? h(React.Fragment, null,
             h('button', { type: 'button', disabled: busy, onClick: () => action(record, record.cloudAgentId ? 'refresh' : 'reconcile'), style: buttonStyle() }, record.cloudAgentId ? '刷新状态' : '核对创建结果'),
             ['READY', 'AVAILABLE_UPDATING'].includes(record.state) ? h('button', { type: 'button', disabled: busy, onClick: () => window.__AGENTKIT_STUDIO_BIND_AGENT__?.(record.cloudAgentId), style: buttonStyle() }, '开始对话') : null,
-            record.state === 'READY' && record.agentId === agentId ? h('button', { type: 'button', disabled: busy || !selectedBuild || selectedBuild === record.buildId, onClick: () => inspectUpdate(record), style: buttonStyle() }, '升级到所选版本') : null,
+            record.state === 'READY' && record.agentId === agentId ? h('button', { type: 'button', disabled: busy || !selectedBuild || (!useRecommendedImage && selectedBuild === record.buildId), onClick: () => inspectUpdate(record), style: buttonStyle() }, '升级到所选版本') : null,
             record.state === 'READY' && (record.versions || []).some(version => version.id !== record.versionId) ? h('div', { style: { display: 'flex', gap: '6px' } },
               h('select', { 'aria-label': '回滚版本 ' + record.agentName, value: rollback[record.id] || '', disabled: busy, style: inputStyle(), onChange: event => setRollback(previous => ({ ...previous, [record.id]: event.target.value })) },
                 h('option', { value: '' }, '选择历史版本'), record.versions.filter(version => version.id !== record.versionId).map(version => h('option', { key: version.id, value: version.id }, `Revision ${version.revision} · ${version.imageVersion} · ${version.completedAt}`))),

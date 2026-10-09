@@ -738,6 +738,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         if (preparedCloudResources?.memoryWrite && preparedCloudResources.memory) {
           try {
             await writeBoundMemory({
+              agent: toolAgent,
               binding: preparedCloudResources.memory,
               resourceAdapter,
               input,

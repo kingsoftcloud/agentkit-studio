@@ -66,7 +66,11 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
     storageFactory: () => ({ upload: async (zip, reference) => { calls.push(['upload', reference]); return reference; } }),
     fetchImpl: async (url, init) => {
       calls.push(['health', String(url)]); assert.equal(init.headers.Authorization, `Bearer ${key}`);
-      if (String(url).endsWith('/v1/agentkit/runtime')) return Response.json(access.runtimeIdentity || {});
+      if (String(url).endsWith('/v1/agentkit/runtime')) return Response.json(access.runtimeIdentity || {
+        format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId: built.id,
+        bundleSha256: remote.Advanced?.EnvironmentVariables?.find(item => item.Key === 'AGENTKIT_BUNDLE_SHA256')?.Value,
+        deploymentVersion: 'initial', capabilities: [],
+      });
       if (String(url).endsWith('/v1/responses')) {
         assert.deepEqual(JSON.parse(init.body), { input: '' });
         return Response.json({ error: { code: access.ready ? 'RESPONSES_SINGLE_USER_MESSAGE_REQUIRED' : access.error } }, { status: access.ready ? 400 : 401 });
@@ -370,6 +374,24 @@ async function updatePreview(f, id, revision = 3) {
 function serving(f, preview) {
   f.access.runtimeIdentity = { deploymentVersion: f.remote.Advanced.EnvironmentVariables.find(row => row.Key === 'AGENTKIT_DEPLOYMENT_VERSION')?.Value, format: 'agentkit.runtime-identity/v1', status: 'ready', agentId: preview.agentId, buildId: preview.buildId, bundleSha256: preview.bundleSha256 };
 }
+
+test('recommended image updates can preserve the same frozen Build and cloud instance', async t => {
+  const f = await fixture(t);
+  const initial = await f.service.create(f.request); await f.settled(); await f.service.refresh(initial.id);
+  const catalog = await f.options.client.getBootstrapConfig();
+  const next = { ...f.release, id: '0.0.1-next', version: '0.0.1-next', image: f.release.image.replace('a'.repeat(64), 'b'.repeat(64)) };
+  const config = catalog.data.Configs['studio.runtime.images.v1']; config.releases.push(next); config.defaultReleaseId = next.id;
+  f.options.client.getBootstrapConfig = async () => catalog;
+  await assert.rejects(f.service.prepareUpdate({ deploymentId: initial.id, buildId: f.input.buildId }), { code: 'DEPLOYMENT_VERSION_UNCHANGED' });
+  const preview = await f.service.prepareUpdate({ deploymentId: initial.id, buildId: f.input.buildId, useRecommendedImage: true });
+  assert.equal(preview.image.id, next.id); assert.equal(preview.buildId, f.input.buildId);
+  assert.equal(f.calls.filter(([action]) => action === 'create').length, 1);
+  await f.service.applyUpdate({ ...preview, idempotencyKey: 'same-build-image-upgrade' }); await f.settled(); serving(f, preview);
+  const updated = await f.service.refresh(initial.id);
+  assert.equal(updated.state, 'READY'); assert.equal(updated.cloudAgentId, 'ar-cloud-test');
+  assert.equal(updated.imageVersion, next.version); assert.equal(updated.buildId, f.input.buildId);
+  assert.equal(f.calls.filter(([action]) => action === 'create').length, 1);
+});
 
 test('in-place upgrades and exact rollbacks require serving identity; all runtimes preserve history and platform secrets', async t => {
   for (const runtime of ['harness', 'dsh-native', 'codex']) {

@@ -118,6 +118,9 @@
         { name: 'conversation.hero.agentPreset', priority: -20 },
         props => h(AgentContextSelector, { ...props, studioRemote: ctx.remote, modelDirectories: ctx.modelDirectories }),
       ));
+      ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+        { name: 'conversation.session.header.actions', id: 'agentkit-studio-cloud-status', order: -10 }, CloudSessionStatus,
+      ));
 
       // Authoring entry: only the hero selector keeps the "创建 Agent" button.
       // The composer-left injection was removed — conversation authoring is a

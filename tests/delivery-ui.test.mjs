@@ -65,6 +65,18 @@ test('a late deployment check cannot confirm an obsolete build', async () => {
   assert.equal(ui.button('确认创建云端实例'), undefined);
 });
 
+test('a ready deployment defaults the primary delivery action to updating that instance', async () => {
+  const ui = harness();
+  ui.rows.push({ id: 'live', agentId: 'a', agentName: 'Existing instance', state: 'READY', cloudAgentId: 'ar-existing', buildId: 'old-build' });
+  ui.api.prepareDeploymentUpdate = async request => { ui.calls.push(['update-check', request]); return { ...preview({ agentId: 'a', buildId: 'build-a', resources: {} }), deploymentId: request.deploymentId }; };
+  await ui.settle();
+  assert.equal(ui.field('部署目标').props.value, 'live');
+  await ui.button('检查更新').props.onClick(); await ui.settle();
+  assert.deepEqual(ui.calls[0], ['update-check', { deploymentId: 'live', buildId: 'build-a', useRecommendedImage: true }]);
+  assert.equal(ui.button('确认创建云端实例'), undefined);
+  assert.ok(ui.button('确认升级当前实例'));
+});
+
 test('records default to the selected Agent, hide deleted history and keep other unresolved creates discoverable', async () => {
   const ui = harness();
   ui.rows.push({ id: 'a-live', agentId: 'a', agentName: 'Current live', state: 'READY' },
@@ -85,11 +97,11 @@ test('deployment history pages newest first and details retain the cloud identit
   const ui = harness();
   for (let i = 0; i < 7; i++) ui.rows.push({ id: `d-${i}`, agentId: 'a', agentName: `Record ${i}`, state: 'READY', cloudAgentId: `ar-cloud-${i}`, createdAt: `2026-10-0${i + 1}T00:00:00Z` });
   await ui.settle();
-  let content = ui.nodes().map(ui.text).join(' ');
+  let content = ui.nodes().filter(node => node.type === 'strong').map(ui.text).join(' ');
   assert.match(content, /Record 6/); assert.doesNotMatch(content, /Record 0/);
   ui.button('详情').props.onClick(); await ui.settle(); assert.match(ui.nodes().map(ui.text).join(' '), /ar-cloud-6/);
   ui.button('下一页').props.onClick(); await ui.settle();
-  content = ui.nodes().map(ui.text).join(' '); assert.match(content, /Record 0/); assert.doesNotMatch(content, /Record 6/);
+  content = ui.nodes().filter(node => node.type === 'strong').map(ui.text).join(' '); assert.match(content, /Record 0/); assert.doesNotMatch(content, /Record 6/);
 });
 
 test('fast Agent changes retain the latest target builds even when the earlier response arrives last', async () => {

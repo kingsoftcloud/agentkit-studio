@@ -1,15 +1,16 @@
 /** Run automated work through the same public DSH Session/Agent API as native chats. */
 import { readNativeRequestEvents } from './native-request-history.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
+import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
 
-export function createNativeAutomationRunner({ getService, admit, observe, timeoutMs = 300000, reuseSession = false } = {}) {
+export function createNativeAutomationRunner({ getService, admit, observe, selectModel, timeoutMs = 300000, reuseSession = false } = {}) {
   const lanes = new Map();
   const service = name => {
     const value = getService?.(name);
     if (!value) throw Object.assign(new Error(`自动化需要 DSH ${name} 服务`), { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     return value;
   };
-  const run = async ({ agentId, sessionId, occurrenceId, input, buildId = '', timeoutSeconds, signal: callerSignal, onFrame }) => service('agents').withoutInitiator(async () => {
+  const run = async ({ agentId, sessionId, occurrenceId, input, model, buildId = '', timeoutSeconds, signal: callerSignal, onFrame }) => service('agents').withoutInitiator(async () => {
     const startedAt = Date.now();
     const controller = service('sessionController');
     const expiry = AbortSignal.timeout(timeoutSeconds ? Math.max(1000, Number(timeoutSeconds) * 1000) : timeoutMs);
@@ -21,9 +22,14 @@ export function createNativeAutomationRunner({ getService, admit, observe, timeo
       await controller.create({ sessionId, agentPreset: admission.presetId });
       if (admission.modelSelection) await controller.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
     }
+    if (model !== undefined && selectModel) {
+      const selection = await selectModel(model);
+      await controller.selectModel({ sessionId, ...selection, saveDefault: false });
+    }
     const resolved = await controller.resolveAgent(sessionId);
     if (resolved.error) throw resolved.error;
     const agent = resolved.agent;
+    if (model !== undefined) agent.session?.append('studio/runtime-model', { requestId: occurrenceId, model });
     signal.throwIfAborted();
     const permission = await service('commands').execute(agent, '/permission read-only', [], signal);
     if (!permission) throw Object.assign(new Error('自动化无法设置 Agent 只读权限'), { code: 'AUTOMATION_PERMISSION_UNAVAILABLE' });
@@ -57,7 +63,8 @@ export function createNativeAutomationRunner({ getService, admit, observe, timeo
       const usages = messages.map(event => event.data?.usage).filter(Boolean);
       const tokenUsage = usages.length ? { inputTokens: usages.reduce((sum, usage) => sum + Number(usage.inputTokens || 0) + Number(usage.cacheReadTokens || 0) + Number(usage.cacheWriteTokens || 0), 0), outputTokens: usages.reduce((sum, usage) => sum + Number(usage.outputTokens || 0), 0) } : {};
       const toolCalls = [...new Map(events.filter(event => event.type === 'tool/call' || event.type === CODEX_TOOL_EVENT).map(event => [event.data.callId, { name: event.data.name, callId: event.data.callId }])).values()];
-      return { sessionId, runId: `dsh:${sessionId}:${end.seq}`, output, tokenUsage, latencyMs: Date.now() - startedAt, toolCalls };
+      const resourceChecks = events.filter(event => event.type === RESOURCE_CHECK_EVENT).map(event => sanitizeResourceCheck(event.data)).filter(Boolean);
+      return { sessionId, runId: `dsh:${sessionId}:${end.seq}`, output, tokenUsage, latencyMs: Date.now() - startedAt, toolCalls, resourceChecks };
     } finally { unobserve?.(); }
   });
   return request => {

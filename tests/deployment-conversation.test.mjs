@@ -9,7 +9,7 @@ import { createRuntimeResponsesContract } from '../src/runtime-responses-contrac
 import { createRuntimeResponsesStream } from '../src/runtime-responses-stream.mjs';
 
 const agent = { metadata: { id: 'ar-cloud-test', local: false }, deployment: { agentId: 'ar-local-test', buildId: 'build-test', model: 'frozen-model' } };
-const contract = createRuntimeResponsesContract({ agentId: agent.deployment.agentId, buildId: agent.deployment.buildId, model: agent.deployment.model, token: 'private-runtime-token' });
+const contract = createRuntimeResponsesContract({ agentId: agent.deployment.agentId, buildId: agent.deployment.buildId, model: agent.deployment.model, models: ['frozen-model', 'alternate-model'], token: 'private-runtime-token' });
 const agents = async () => ({ connect: async id => { assert.equal(id, 'ar-cloud-test'); return { agent, endpoint: 'https://ar-cloud-test.agent-pre.kspmas.ksyun.com', token: 'private-runtime-token' }; }, list: async () => ({ items: [agent] }) });
 const options = { agentId: 'ar-cloud-test', provider: CLOUD_PROVIDER, model: 'frozen-model', input: '你好', userMessage: { id: 'user-1' }, sessionId: 'native-session' };
 const collect = async stream => { const frames = []; for await (const frame of stream) frames.push(frame); return frames; };
@@ -91,6 +91,41 @@ test('stopping a live stream cancels the exact verified remote response', async 
 test('frozen cloud model directory is independent of local gateway and Codex catalogs', async () => {
   const adapter = createDeploymentModelAdapter({ agents, runtime: {} });
   assert.deepEqual((await adapter.listModels(CLOUD_PROVIDER)).map(item => item.id), ['frozen-model']);
+});
+
+test('cloud model directory includes every frozen bound model', async () => {
+  const adapter = createDeploymentModelAdapter({ agents: async () => ({ list: async () => ({ items: [{ ...agent,
+    deployment: { ...agent.deployment, models: ['frozen-model', 'alternate-model'] } }] }) }), runtime: {} });
+  assert.deepEqual((await adapter.listModels(CLOUD_PROVIDER)).map(item => item.id), ['frozen-model', 'alternate-model']);
+});
+
+test('a verified cloud conversation records its remote execution receipt separately from local execution', async () => {
+  const traces = [];
+  const stream = createDeploymentConversation({ agents, observability: { syncTrace: async trace => traces.push(trace) },
+    fetchImpl: async (_url, init) => response(JSON.parse(init.body)) });
+  await collect(stream(options));
+  assert.equal(traces.length, 1);
+  assert.equal(traces[0].executionLocation, 'cloud');
+  assert.equal(traces[0].agentId, 'ar-cloud-test');
+  assert.equal(traces[0].provenance.buildId, 'build-test');
+  assert.match(traces[0].provenance.responseId, /^resp_/);
+});
+
+test('cloud model switching verifies the requested model and records sanitized resource evidence', async () => {
+  const traces = [], requests = [];
+  const boundAgent = { ...agent, deployment: { ...agent.deployment, models: ['frozen-model', 'alternate-model'] } };
+  const stream = createDeploymentConversation({ agents: async () => ({ connect: async () => ({ agent: boundAgent, capabilities: ['bound-model-selection'], endpoint: 'https://runtime.test', token: 'private-runtime-token' }) }),
+    observability: { syncTrace: async trace => traces.push(trace) }, fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body); requests.push(body);
+      return response(body, event => event.type === 'response.completed' ? { ...event, response: { ...event.response,
+        metadata: { agentkit: { ...event.response.metadata.agentkit, resourceChecks: [{ kind: 'knowledge-base', resourceId: 'kb-test', action: 'search', status: 'succeeded', hitCount: 0, snippet: 'private', apiKey: 'private' }] } } } } : event);
+    } });
+  await collect(stream({ ...options, model: 'alternate-model' }));
+  assert.equal(requests[0].model, 'alternate-model'); assert.equal(traces[0].provenance.model, 'alternate-model');
+  assert.equal(traces[0].provenance.resourceChecks[0].hitCount, 0);
+  assert.doesNotMatch(JSON.stringify(traces), /private/);
+  const legacy = createDeploymentConversation({ agents: async () => ({ connect: async () => ({ agent: boundAgent, capabilities: [] }) }), fetchImpl: () => assert.fail('old image must fail before a model call') });
+  await assert.rejects(collect(legacy({ ...options, model: 'alternate-model' })), { code: 'DEPLOYMENT_MODEL_SWITCH_UNAVAILABLE' });
 });
 
 test('old native conversations cannot silently adopt an upgraded or rolled-back cloud version', async () => {

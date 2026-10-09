@@ -29,11 +29,12 @@ export function verifyDeploymentRemote(detail, record) {
     throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '云端 Agent 与冻结部署记录不一致，已停止管理操作');
   }
 }
-export async function probeDeploymentVersion({ fetchImpl = fetch, endpoint, token, plan, versionId }) {
+export async function inspectDeploymentVersion({ fetchImpl = fetch, endpoint, token, plan, versionId }) {
   const response = await fetchImpl(`${endpoint}/v1/agentkit/runtime`, { headers: { Authorization: `Bearer ${token}` },
     redirect: 'error', signal: AbortSignal.timeout(10000) });
-  if (!response.ok) { await response.body?.cancel(); return false; }
+  if (!response.ok) { await response.body?.cancel(); return null; }
   const body = await response.json();
   return body.format === 'agentkit.runtime-identity/v1' && body.status === 'ready' && body.agentId === plan.agentId
-    && body.buildId === plan.buildId && body.bundleSha256 === plan.bundleSha256 && body.deploymentVersion === versionId;
+    && body.buildId === plan.buildId && body.bundleSha256 === plan.bundleSha256 && body.deploymentVersion === versionId ? body : null;
 }
+export async function probeDeploymentVersion(options) { return Boolean(await inspectDeploymentVersion(options)); }

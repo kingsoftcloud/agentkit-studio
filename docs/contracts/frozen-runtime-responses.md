@@ -2,7 +2,7 @@
 
 可迁移运行包启动后，同一 HTTP 服务同时提供原有 `/runs` 与 `POST /v1/responses`。
 后者接收 AgentEngine `ChatService.responses` / `stream_responses` 的单轮文本请求。
-它仍执行包中固定的 Agent、Build、默认模型和资源绑定。
+它执行包中固定的 Agent、Build 和资源绑定，允许逐轮选择包内已绑定的模型。
 
 ## 复用与所有权
 
@@ -28,8 +28,9 @@ curl "$RUNTIME_ENDPOINT/v1/responses" \
 - `request_id`、`Idempotency-Key`、`metadata.agentengine.invocation_id` 是可选幂等标识；
   同时提供时必须一致。不传则每次产生新的请求。相同请求进行中返回 409，完成后从 DSH
   历史返回结果；同一标识配不同输入返回 409，不重复调用资源。
-- `model` 可省略；提供时必须等于冻结 Build 的默认模型资源 ID。当前不提供请求级
-  模型、系统指令、工具或模型参数覆盖。`instructions`、`tools`、`model_options`、
+- `model` 可省略，使用冻结默认模型；提供时必须属于运行入口公布的 `models`。
+  同名模型来自多个提供商时使用对应的 Profile ID，避免路由歧义。切换模型保留会话，
+  重放仍使用原请求的模型。不提供请求级系统指令、工具或模型参数覆盖。`instructions`、`tools`、`model_options`、
   `model_metadata`、`store`、后台执行等未支持字段明确拒绝，不会静默忽略。
 - `user` / `account_id` 参与会话隔离，必须由上游鉴权后的业务身份填充。直接持有此
   Host Bearer 的调用方具有该 Agent 的访问权限；这不是独立的多租户鉴权服务。
@@ -56,6 +57,10 @@ DSH 的失败尝试标记为 incomplete，最终 output 排除其草稿；最终
 工具输出项来自 DSH 的 `tool/call` / `tool/result`，也包含 Codex 已持久化的
 `agentkit/codex-tool` 展示事件。Codex 工具不再执行一次；结果通过扩展事件
 `response.tool_result` 返回，执行次数按 call ID 去重。
+
+资源适配器的实际调用通过 `response.resource_check` 返回，并保留在完成响应的
+`metadata.agentkit.resourceChecks`。命中数为零、定义加载成功和写入受理各有独立语义；
+不返回检索正文或凭证。资源与云端执行凭据见[核验合同](cloud-model-resource-receipts.md)。
 
 `POST /v1/responses/{response_id}/cancel` 使用同一 Bearer，验证活动句柄后返回 202，
 并取消原生 Agent。断开 HTTP 连接也取消运行；取消后不会发出成功终态。错误只返回错误码，

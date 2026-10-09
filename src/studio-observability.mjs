@@ -30,7 +30,7 @@ function projectSpans(events) {
   spans.push({ spanId: rootSpanId, parentSpanId: null, name: 'run', kind: 'INTERNAL', startedAt: new Date(rootStart).toISOString(), endedAt: new Date(rootEnd).toISOString(), attributes: { 'run.id': events[0]?.run_id || '', 'session.id': events[0]?.session_id || '' } });
   for (const event of events) {
     const type = String(event.event_type || event.type || '');
-    if (type.startsWith('tool.') || type.startsWith('turn.') || type.startsWith('model.')) {
+    if (type.startsWith('tool.') || type.startsWith('turn.') || type.startsWith('model.') || type === 'resource.checked') {
       spans.push({ spanId: randomUUID().replace(/-/g, '').slice(0, 16), parentSpanId: rootSpanId, name: type, kind: 'INTERNAL', startedAt: event.at, endedAt: event.at, attributes: { seq: event.seq || 0, ...event.payload } });
     }
   }
@@ -59,13 +59,14 @@ function normalizeTrace(record) {
 export function createStudioObservability({ storeDir } = {}) {
   async function ensureDir() { await mkdir(storeDir, { recursive: true, mode: 0o700 }); }
 
-  async function syncTrace({ traceId, sessionId, agentId, agentName, status, startedAt, completedAt, events = [] }) {
+  async function syncTrace({ traceId, sessionId, agentId, agentName, status, startedAt, completedAt, executionLocation = 'local', provenance, events = [] }) {
     await ensureDir();
     const spans = projectSpans(events);
     const tokenUsage = extractTokenUsage(events);
     const record = {
       traceId: String(traceId || `trace_${randomUUID().replace(/-/g, '')}`),
       sessionId: String(sessionId || ''), agentId: String(agentId || ''), agentName: String(agentName || ''),
+      executionLocation, ...(provenance ? { provenance } : {}),
       status: String(status || 'completed'), startedAt: String(startedAt || (events[0]?.at || new Date().toISOString())),
       completedAt: String(completedAt || (events[events.length - 1]?.at || new Date().toISOString())),
       tokenUsage, spanCount: spans.length, spans, events,
@@ -111,7 +112,7 @@ export function createStudioObservability({ storeDir } = {}) {
     const cutoff = Date.now() - ms;
     const records = (await loadAll()).filter(record => new Date(record.startedAt).getTime() >= cutoff && (!agentId || record.agentId === agentId) && (!query || `${record.agentName} ${record.agentId} ${record.traceId} ${record.runId} ${record.sessionId} ${record.status}`.toLowerCase().includes(String(query).toLowerCase())));
     records.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
-    return { items: records.slice(0, Number(limit)).map(record => ({ runId: record.runId, durationMs: record.durationMs, totalTokens: record.totalTokens, traceId: record.traceId, agentId: record.agentId, agentName: record.agentName, sessionId: record.sessionId, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt, tokenUsage: record.tokenUsage, spanCount: record.spanCount })) };
+    return { items: records.slice(0, Number(limit)).map(record => ({ executionLocation: record.executionLocation || 'local', provenance: record.provenance, runId: record.runId, durationMs: record.durationMs, totalTokens: record.totalTokens, traceId: record.traceId, agentId: record.agentId, agentName: record.agentName, sessionId: record.sessionId, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt, tokenUsage: record.tokenUsage, spanCount: record.spanCount })) };
   }
 
   async function get(traceId) {

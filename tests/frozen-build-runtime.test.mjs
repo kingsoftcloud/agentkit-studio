@@ -8,6 +8,49 @@ test('frozen runtime is opt-in', async () => {
   assert.equal(await startFrozenBuildRuntime({ env: {} }), null);
 });
 
+test('Responses selects each bound model on the native session and preserves its selection and resource evidence across replay', async t => {
+  const history = new Map(), models = new Map(); let turns = 0;
+  const controller = {
+    projections: async ({ sessionId }) => history.has(sessionId) ? { asOfSeq: history.get(sessionId).length - 1 } : null,
+    create: async ({ sessionId }) => history.set(sessionId, []),
+    selectModel: async ({ sessionId, model }) => models.set(sessionId, model),
+    resolveAgent: async sessionId => ({ agent: { whenIdle: async () => {}, cancel() {}, session: { append: (type, data) => history.get(sessionId).push({ type, data, seq: history.get(sessionId).length }) } } }),
+    prompt: async ({ sessionId, requestId, content }) => {
+      const events = history.get(sessionId);
+      if (events.some(item => item.type === 'user/message' && item.data.source.rpcId === requestId)) return;
+      const turn = ++turns;
+      for (const event of [
+        { type: 'turn/start', data: { turn } }, { type: 'user/message', data: { content, source: { rpcId: requestId } } },
+        { type: 'studio/resource-check', data: { kind: 'knowledge-base', resourceId: 'kb-test', action: 'search', status: 'succeeded', hitCount: 0 } },
+        { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: models.get(sessionId) }] } } },
+        { type: 'turn/end', data: { turn, reason: { kind: 'completed' } } },
+      ]) events.push({ ...event, seq: events.length });
+    },
+    page: async ({ address }) => ({ records: history.get(address.sessionId).map(event => ({ type: 'event', event })) }),
+  };
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) }, approval: { setPolicy() {} } };
+  const frozen = { spec: { bindings: { modelProfileId: 'profile-a', modelProfileIds: ['profile-a', 'profile-b'] } } };
+  const start = () => startFrozenBuildRuntime({ ctx: { get: name => services[name], on: () => () => {} }, build: { resolve: async () => frozen },
+    modelService: { profile: async id => ({ modelName: id === 'profile-a' ? 'model-a' : 'model-b' }) },
+    admit: async (_id, record) => ({ presetId: 'preset', modelSelection: { provider: 'bound', model: record.spec.bindings.modelProfileId } }),
+    env: { AGENTKIT_RUNTIME_AGENT_ID: 'test-agent', AGENTKIT_RUNTIME_BUILD_ID: buildId, AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: '0' } });
+  let runtime = await start(); t.after(() => runtime.close());
+  const post = body => fetch(`http://127.0.0.1:${runtime.address.port}/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const firstRequest = { input: 'question', session_id: 'conversation', request_id: 'first', model: 'model-b' };
+  const first = await (await post(firstRequest)).json();
+  assert.equal(first.output_text, 'profile-b'); assert.equal(first.model, 'model-b');
+  assert.equal(first.metadata.agentkit.resourceChecks[0].hitCount, 0);
+  const next = await (await post({ input: 'follow-up', previous_response_id: first.id, request_id: 'second', model: 'model-a' })).json();
+  assert.equal(next.output_text, 'profile-a'); assert.equal(history.size, 1);
+  await runtime.close(); runtime = await start();
+  const replay = await (await post(firstRequest)).json();
+  assert.equal(replay.output_text, first.output_text); assert.equal(replay.id, first.id);
+  assert.deepEqual(replay.metadata.agentkit.resourceChecks, first.metadata.agentkit.resourceChecks);
+  assert.equal((await post({ ...firstRequest, model: 'model-a' })).status, 409);
+  assert.equal((await post({ ...firstRequest, request_id: 'unbound', model: 'desktop-default' })).status, 400);
+  assert.equal(turns, 2);
+});
+
 test('frozen runtime preserves build admission, durable replay and request-input conflict', async t => {
   const history = new Map(), admissions = [], selected = [];
   let turns = 0;

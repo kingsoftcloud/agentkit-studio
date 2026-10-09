@@ -8,10 +8,10 @@ const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
 
-export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, validatePrevious, model = '', host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
+export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, validatePrevious, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
   if (!agentId || !/^build_[0-9a-f]{20}$/.test(buildId || '') || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const tokenHash = hash(token);
-  const responses = createRuntimeResponsesContract({ agentId, buildId, token, model });
+  const responses = createRuntimeResponsesContract({ agentId, buildId, token, model, models });
   const active = new Map();
   let closing = false;
   const json = (res, status, value) => { if (!res.destroyed) { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(value)); } };
@@ -24,7 +24,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
       if (req.headers.origin || !bearer || !timingSafeEqual(hash(bearer[1]), tokenHash)) throw fail('RUNTIME_UNAUTHORIZED', 401);
       if (closing) throw fail('RUNTIME_STOPPING', 503);
       if (req.method === 'GET' && url.pathname === '/v1/agentkit/runtime') {
-        json(res, 200, { format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId, bundleSha256, deploymentVersion, model }); return;
+        json(res, 200, { format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId, bundleSha256, deploymentVersion, model, models, capabilities: ['bound-model-selection', 'resource-checks'] }); return;
       }
       const cancel = /^\/runs\/(run_[0-9a-f]{32})\/cancel$/.exec(url.pathname);
       const cancelResponse = /^\/v1\/responses\/([^/]+)\/cancel$/.exec(url.pathname);
@@ -76,7 +76,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
         else emit('run.started', { runId, sessionId, agentId, buildId, requestId: input.requestId });
         heartbeat = setInterval(() => { if (!res.destroyed && !abort.signal.aborted) res.write(': keepalive\n\n'); }, 15000); heartbeat.unref();
       }
-      const result = await runner({ agentId, buildId, sessionId, occurrenceId: runId, input: input.input, signal: abort.signal,
+      const result = await runner({ agentId, buildId, sessionId, occurrenceId: runId, input: input.input, ...(isResponses ? { model: input.model } : {}), signal: abort.signal,
         ...(input.stream || projection ? { onFrame: frame => { if (!abort.signal.aborted) { if (projection) projection.frame(frame); else emit(frame.kind === 'assistant' ? 'dsh.assistant' : 'dsh.event', frame.value); } } } : {}) });
       if (abort.signal.aborted) throw abort.signal.reason;
       const value = { ...result, requestId: input.requestId, runtimeRunId: runId, buildId };

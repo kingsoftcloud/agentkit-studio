@@ -199,6 +199,7 @@ async function registerControlPlane(ctx) {
       dynamicTools: toolBindings.map(item => item.spec),
       writeMemory: prepared.memoryWrite
         ? async assistantText => writeBoundMemory({
+          agent,
           binding: prepared.memory,
           resourceAdapter,
           input,
@@ -224,7 +225,7 @@ async function registerControlPlane(ctx) {
   const { createDeploymentConversation } = await import('./deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({
     AdapterBase: LlmAdapter,
-    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents }),
+    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise }),
     localHandler: localRuntimeHandler,
     codexRuntime,
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
@@ -453,7 +454,7 @@ async function registerControlPlane(ctx) {
     await restorePersistedPresets();
   }
   const { startFrozenBuildRuntime } = await import('./frozen-build-runtime.mjs');
-  const startRuntime = async () => startFrozenBuildRuntime({ ctx, env: runtimeEnv, build: (await studioBuildPromise).build,
+  const startRuntime = async () => startFrozenBuildRuntime({ ctx, env: runtimeEnv, modelService: models, build: (await studioBuildPromise).build,
     admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) });
   if (portableRuntime) {
     // Settings writes reconcile the Loader. Awaiting them inside plugin apply

@@ -15,7 +15,7 @@ export async function readNativeRequestEvents(controller, sessionId, requestId, 
         const turn = events[start].data.turn;
         const end = events.findIndex((event, index) => index > userIndex && event.type === 'turn/end' && event.data?.turn === turn);
         if (end < 0) throw Object.assign(new Error('渠道请求尚无完整运行终态'), { code: 'CHANNEL_TURN_INCOMPLETE' });
-        return events.slice(start, end + 1);
+        return [...events.slice(0, start).filter(event => event.type === 'studio/runtime-model' && event.data?.requestId === requestId), ...events.slice(start, end + 1)];
       }
     }
     if (!page?.hasMore || !batch.length || (beforeSeq !== undefined && batch[0].seq >= beforeSeq)) break;

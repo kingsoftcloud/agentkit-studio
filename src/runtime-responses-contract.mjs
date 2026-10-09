@@ -1,5 +1,6 @@
 /** Responses ingress for a frozen Agent; DSH owns the underlying conversation. */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { sanitizeResourceCheck } from './resource-checks.mjs';
 
 export const runtimeError = (code, status = 400) => Object.assign(new Error(code), { code, status });
 const digest = value => createHash('sha256').update(value).digest('hex').slice(0, 32);
@@ -21,7 +22,7 @@ function userText(input) {
   return text;
 }
 
-export function createRuntimeResponsesContract({ agentId, buildId, token, model = '' }) {
+export function createRuntimeResponsesContract({ agentId, buildId, token, model = '', models = [model] }) {
   // Handles carry only scoped hashes. Their signature binds Agent, Build and
   // principal without a second transcript/response store beside DSH.
   const sign = (value, principal = '') => createHmac('sha256', token).update(JSON.stringify([agentId, buildId, principal, value])).digest('hex').slice(0, 32);
@@ -43,7 +44,7 @@ export function createRuntimeResponsesContract({ agentId, buildId, token, model 
       const allowed = ['input', 'stream', 'session_id', 'conversation', 'previous_response_id', 'request_id', 'model', 'user', 'account_id', 'metadata'];
       if (!object(input) || Object.keys(input).some(key => !allowed.includes(key))) throw runtimeError('RESPONSES_UNSUPPORTED_FIELD');
       if (input.stream !== undefined && typeof input.stream !== 'boolean') throw runtimeError('RESPONSES_INPUT_INVALID');
-      if (input.model !== undefined && input.model !== model) throw runtimeError('RESPONSES_FROZEN_MODEL_MISMATCH');
+      if (input.model !== undefined && !models.includes(input.model)) throw runtimeError('RESPONSES_FROZEN_MODEL_MISMATCH');
       for (const field of ['session_id', 'user', 'account_id', 'request_id']) if (input[field] !== undefined && !identity(input[field])) throw runtimeError('RESPONSES_INPUT_INVALID');
       if (input.metadata !== undefined && (!object(input.metadata) || Object.entries(input.metadata).some(([key, value]) => key !== 'agentengine' && (key.length > 64 || typeof value !== 'string' || value.length > 512))
         || Object.keys(input.metadata).length > 17)) throw runtimeError('RESPONSES_METADATA_INVALID');
@@ -68,7 +69,7 @@ export function createRuntimeResponsesContract({ agentId, buildId, token, model 
       const run = digest(JSON.stringify([session, requestId]));
       return { input: userText(input.input), requestId, stream: input.stream === true, sessionId: `runtime-${session}`, runId: `run_${run}`,
         responseId: responseHandle(session, run, principal), conversationId: sessionHandle(session, principal), previous,
-        model, createdAt: Math.floor(Date.now() / 1000), metadata: { ...(input.metadata || {}), agentkit: { agentId, buildId } } };
+        model: input.model ?? model, createdAt: Math.floor(Date.now() / 1000), metadata: { ...(input.metadata || {}), agentkit: { agentId, buildId } } };
     },
   };
 }
@@ -77,7 +78,8 @@ export function runtimeResponse(request, result = {}, status = 'in_progress', ou
   const input = Number(result.tokenUsage?.inputTokens || 0), generated = Number(result.tokenUsage?.outputTokens || 0);
   const text = status === 'completed' ? String(result.output || '') : '';
   return { id: request.responseId, object: 'response', created_at: request.createdAt, status, model: request.model,
-    session_id: request.conversationId, conversation: { id: request.conversationId }, metadata: request.metadata,
+    session_id: request.conversationId, conversation: { id: request.conversationId }, metadata: Array.isArray(result.resourceChecks)
+      ? { ...request.metadata, agentkit: { ...request.metadata?.agentkit, resourceChecks: result.resourceChecks.map(sanitizeResourceCheck).filter(Boolean) } } : request.metadata,
     output, output_text: text, error: result.error || null,
     ...(result.tokenUsage ? { usage: { input_tokens: input, output_tokens: generated, total_tokens: input + generated } } : {}) };
 }

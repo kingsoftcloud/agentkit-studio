@@ -15,6 +15,21 @@ async function setup(t, runner, validatePrevious, overrides = {}) {
 const chunk = (request, attemptId, type, text, index = 0) => request.onFrame({ kind: 'assistant', value: { type: 'chunk', attemptId, chunk: { type, text, index } } });
 const settle = (request, attemptId, eventType = 'assistant/message') => request.onFrame({ kind: 'assistant', value: { type: 'end', attemptId, outcome: { kind: 'committed', eventType } } });
 
+test('a frozen runtime switches only among bound models and forwards the selection to its runner', async t => {
+  const requests = [];
+  const { post } = await setup(t, async request => { requests.push(request); return { output: 'ok' }; }, undefined,
+    { models: ['gateway-model', 'alternate-model'] });
+  const first = await post({ input: 'first', session_id: 'same', request_id: 'one', model: 'alternate-model' });
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).model, 'alternate-model');
+  const second = await post({ input: 'second', session_id: 'same', request_id: 'two', model: 'gateway-model' });
+  assert.equal(second.status, 200);
+  assert.equal(requests[0].sessionId, requests[1].sessionId);
+  assert.deepEqual(requests.map(request => request.model), ['alternate-model', 'gateway-model']);
+  assert.equal((await post({ input: 'no', model: 'unbound-model' })).status, 400);
+  assert.equal(requests.length, 2);
+});
+
 test('AgentEngine single-turn payload keeps input and frozen model, with standard response and usage', async t => {
   let request;
   const { post } = await setup(t, async value => { request = value; return { output: '你好', tokenUsage: { inputTokens: 12, outputTokens: 3 } }; });
