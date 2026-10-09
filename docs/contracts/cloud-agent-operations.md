@@ -45,7 +45,7 @@ Server 后端 Action 路由为 `POST /agentengine/api/v1/<Action>`，请求模�
 `app/api/v1/actions/schedule_actions.py`。注册时需保留租户和子账号身份，并同时配置 IAM
 访问权限；暂停/恢复复用 `UpdateAgentSchedule.Enabled`，无须另加两个接口。预发 Server
 还需启用调度 Worker 与 Responses 合同，投递渠道时启用 `ChannelOutbox/v1`。
-2026-10-09 本轮只读复查：`ListAgentSchedules` 仍返回
+2026-10-09 注册前的只读复查：`ListAgentSchedules` 返回
 `SERVER_ACTION_NOT_REGISTERED`（HTTP 400）；没有发起调度写操作。
 云端创建、升级/回滚、查询和删除复用既有部署 Action，上传当前走 Host 私有 KS3 直传，
 这七个调度 Action 是当前产品入口的必补项。
@@ -85,7 +85,9 @@ Server 在调用 Studio Responses 前持久化执行记录并核对领取租约�
 最多等待 300 秒；未确认完成或进程中断时标记结果未知并暂停后续触发，
 不会换入口重复执行。需要核对历史后再恢复。此机制不等同于运行中任务跨 Pod 自动恢复。
 
-## 本轮验收边界
+## 注册前验收记录
+
+以下 KOP 未注册结论为历史记录，已由顶部最新验收替代；其余渠道与资源边界仍按各项记录核对。
 
 - 自动化页面状态修复（2026-10-09）：8 个新增回归覆盖到点刷新、草稿保留、慢请求不叠加、任务切换/关闭/跨执行位置、详情同步终态及失败后恢复；完整 `make release-check` 519 项通过，插件完整性及 18 个补丁格式检查通过。隔离的真实 DSH Web 页面使用受控 RPC 响应验证失败提示、晚到结果隔离、自动刷新保留草稿和部分记录失败；没有创建计划或发送消息，该项只是页面行为验收。同期使用已核验子账号真实复查 KOP，`ListAgentSchedules` 仍返回 `SERVER_ACTION_NOT_REGISTERED`。
 - Studio 单元/合同检查：任务归属、子账号签名、旧 Server 能力拦截、编辑版本冲突、云端渠道路由和账号一致性。
