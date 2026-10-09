@@ -29,7 +29,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     const resolved = await controller.resolveAgent(sessionId);
     if (resolved.error) throw resolved.error;
     const agent = resolved.agent;
-    if (model !== undefined) agent.session?.append('studio/runtime-model', { requestId: occurrenceId, model });
+    if (model !== undefined) agent.session?.append('studio/runtime-model', { requestId: occurrenceId, model }, { ignorable: true });
     signal.throwIfAborted();
     const permission = await service('commands').execute(agent, '/permission read-only', [], signal);
     if (!permission) throw Object.assign(new Error('自动化无法设置 Agent 只读权限'), { code: 'AUTOMATION_PERMISSION_UNAVAILABLE' });

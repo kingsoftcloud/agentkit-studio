@@ -14,7 +14,10 @@ test('Responses selects each bound model on the native session and preserves its
     projections: async ({ sessionId }) => history.has(sessionId) ? { asOfSeq: history.get(sessionId).length - 1 } : null,
     create: async ({ sessionId }) => history.set(sessionId, []),
     selectModel: async ({ sessionId, model }) => models.set(sessionId, model),
-    resolveAgent: async sessionId => ({ agent: { whenIdle: async () => {}, cancel() {}, session: { append: (type, data) => history.get(sessionId).push({ type, data, seq: history.get(sessionId).length }) } } }),
+    resolveAgent: async sessionId => ({ agent: { whenIdle: async () => {}, cancel() {}, session: { append: (type, data, options) => {
+      assert.equal(options?.ignorable, true, 'extension facts require the public DSH cold-history marker');
+      history.get(sessionId).push({ type, data, seq: history.get(sessionId).length });
+    } } } }),
     prompt: async ({ sessionId, requestId, content }) => {
       const events = history.get(sessionId);
       if (events.some(item => item.type === 'user/message' && item.data.source.rpcId === requestId)) return;

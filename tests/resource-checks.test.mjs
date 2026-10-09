@@ -5,7 +5,7 @@ import { prepareLocalResourceContext, writeBoundMemory } from '../src/local-runt
 
 test('resource evidence distinguishes zero hits, loaded definitions, accepted writes and failed calls without exposing content', async () => {
   const checks = [], events = [];
-  const agent = { session: { append: (type, data) => events.push({ type, data }) } };
+  const agent = { session: { append: (type, data, options) => events.push({ type, data, options }) } };
   const binding = kind => ({ config: { binding: { resource: { kind, id: kind + '-test' } } } });
   const record = { spec: { runtime: { type: 'harness' }, bindings: { plugins: ['skill-space', 'knowledge-base', 'memory-instance'].map(binding) } } };
   const resourceAdapter = { loadSkill: async () => ({ definitions: [{ content: 'private skill content' }] }),
@@ -21,6 +21,7 @@ test('resource evidence distinguishes zero hits, loaded definitions, accepted wr
   assert.equal(events.at(-1).data.status, 'failed');
   assert.equal(events.at(-1).data.code, 'KB_ACCESS_DENIED');
   assert.ok(events.every(event => event.type === RESOURCE_CHECK_EVENT));
+  assert.ok(events.every(event => event.options?.ignorable === true), 'extension evidence must remain readable by the DSH cold-history codec');
   assert.doesNotMatch(JSON.stringify(events), /private|Bearer|question|answer/);
 });
 

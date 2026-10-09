@@ -14,7 +14,7 @@ export async function checkedResource({ kind, resourceId, action, agent, onResou
   const start = Date.now();
   const report = result => {
     const check = { kind, resourceId: String(resourceId), action, durationMs: Date.now() - start, ...result };
-    agent?.session?.append(RESOURCE_CHECK_EVENT, check);
+    agent?.session?.append(RESOURCE_CHECK_EVENT, check, { ignorable: true });
     onResource?.(check);
   };
   try {
