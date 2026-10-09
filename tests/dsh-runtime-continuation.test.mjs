@@ -50,8 +50,9 @@ test('frozen Build selection survives the scoped request to root Harness transpo
       response.end('data: [DONE]\n\n');
     },
   });
-  for await (const _chunk of adapter.stream({ ...prompt, sessionId: 'frozen-harness-session' })) {}
+  for await (const _chunk of adapter.stream({ ...prompt, provider: 'agentkit-studio-second', model: 'second-model', sessionId: 'frozen-harness-session' })) {}
   assert.equal(body.buildId, buildId, 'native Session must execute its selected Build, not the latest Agent');
+  assert.deepEqual(body.modelSelection, { provider: 'agentkit-studio-second', model: 'second-model' });
 });
 
 test('frozen Build selection reaches Codex resource materialization', async t => {

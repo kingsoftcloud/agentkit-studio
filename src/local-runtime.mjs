@@ -12,6 +12,7 @@ import { modelFailureDetails } from './model-failure.mjs';
 import { formatSkillContext } from './skill-files.mjs';
 import { chatCompletionUsage } from './providers/chat-usage.mjs';
 import { checkedResource } from './resource-checks.mjs';
+import { dshModelRoute } from './agent-preset-admission.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -351,7 +352,17 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     const systemPrompt = [record.spec?.instructions?.system || record.spec?.description || '', record.spec?.instructions?.task || ''].filter(Boolean).join('\n\n');
     let profile;
     const modelId = record.spec?.bindings?.modelProfileId || bindingIds(record.spec?.bindings, 'modelProfileIds')[0] || '';
-    try { profile = await (modelService.profileForAgent || modelService.profile)(modelId); } catch (error) {
+    try {
+      if (parsed.modelSelection !== undefined) {
+        const selection = parsed.modelSelection;
+        if (typeof selection?.provider !== 'string' || typeof selection?.model !== 'string') throw new LocalRuntimeError('BOUND_MODEL_SELECTION_INVALID', '模型选择格式无效');
+        const ids = [...new Set([modelId, ...bindingIds(record.spec?.bindings, 'modelProfileIds')].filter(Boolean))];
+        const profiles = await Promise.all((ids.length ? ids : ['']).map(id => (modelService.profileForAgent || modelService.profile)(id)));
+        const matches = profiles.filter(item => dshModelRoute(item) === selection.provider && item.modelName === selection.model);
+        if (matches.length !== 1) throw new LocalRuntimeError('BOUND_MODEL_SELECTION_UNAVAILABLE', '所选模型不在此 Agent 的绑定模型中，请重新选择');
+        profile = matches[0];
+      } else profile = await (modelService.profileForAgent || modelService.profile)(modelId);
+    } catch (error) {
       response.writeHead(409); response.end(JSON.stringify({ error: { code: error?.code || 'MODEL_CREDENTIAL_MISSING', message: error?.message || '模型配置不可用' } }));
       return;
     }

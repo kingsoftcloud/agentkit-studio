@@ -17,6 +17,7 @@
 `GET /v1/agentkit/runtime` 返回 `models` 及 `bound-model-selection` 能力；
 `POST /v1/responses` 只允许选择这些模型，未指定时使用冻结默认模型。
 通过公开 DSH `sessionController.selectModel` 在同一会话串行选择，随后运行原生循环；
+Harness/DSH 执行入口按该选择解析唯一的已绑定提供商与模型，实际网关请求和凭证随之切换。
 不会更改全局默认模型，也不将桌面 Prompt、工具目录或资源内容发送到云端。
 重启重放保留该次请求的模型，同一请求 ID 改模型或输入会被拒绝。
 新增模型需要编辑 Agent、构建并更新；旧镜像没有此能力时不悄悄退回默认模型。

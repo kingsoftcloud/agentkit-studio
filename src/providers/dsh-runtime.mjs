@@ -652,6 +652,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,
           history: historyOf(options.messages),
+          ...(options.provider ? { modelSelection: { provider: options.provider, model: options.studioSelectedModel || options.model } } : {}),
           nativeTools,
           tools: Array.isArray(options.tools) ? options.tools : [],
         }, { signal: options.signal, toolAdapter, agent: toolAgent }); }

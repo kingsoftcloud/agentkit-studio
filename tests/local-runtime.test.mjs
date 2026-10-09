@@ -20,6 +20,29 @@ function responseSink() {
   return { headersSent: false, writableEnded: false, chunks: [], writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, write(chunk) { this.chunks.push(String(chunk)); }, end(chunk = '') { if (chunk) this.chunks.push(String(chunk)); this.writableEnded = true; } };
 }
 
+test('native model selection reaches the actual frozen gateway and rejects an unbound route', async () => {
+  const profiles = [
+    { id: 'first', provider: 'openai-compatible', modelName: 'model-a', baseUrl: 'http://first.test/v1', apiKey: 'key-a' },
+    { id: 'second', provider: 'openai-compatible', modelName: 'model-b', baseUrl: 'http://second.test/v1', apiKey: 'key-b' },
+  ];
+  const record = { metadata: { local: true }, spec: { bindings: { modelProfileId: 'first', modelProfileIds: ['first', 'second'] } } };
+  const requests = [];
+  const handler = createLocalConversationHandler({ buildStore: { resolve: async () => record },
+    modelService: { profile: async id => profiles.find(p => p.id === id) },
+    fetchImpl: async (url, init) => { requests.push({ url, model: JSON.parse(init.body).model, auth: init.headers.Authorization });
+      return new Response('data: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); },
+  });
+  const payload = { agentId: 'frozen', buildId: 'build_11111111111111111111', input: 'question', nativeTools: true,
+    modelSelection: { provider: 'agentkit-studio-second', model: 'model-b' } };
+  const response = responseSink(); await handler(Readable.from([JSON.stringify(payload)]), response);
+  assert.equal(response.status, 200);
+  assert.equal(requests[0].url, 'http://second.test/v1/chat/completions');
+  assert.equal(requests[0].model, 'model-b');
+  assert.equal(requests[0].auth, 'Bearer key-b');
+  const denied = responseSink(); await handler(Readable.from([JSON.stringify({ ...payload, modelSelection: { provider: 'unbound', model: 'model-b' } })]), denied);
+  assert.equal(denied.status, 409); assert.equal(requests.length, 1);
+});
+
 test('a revision-bound request uses the archived prompt and model instead of the edited Agent', async () => {
   const response=responseSink();
   const handler=createLocalConversationHandler({
