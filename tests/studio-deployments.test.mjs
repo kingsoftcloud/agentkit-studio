@@ -382,9 +382,11 @@ test('recommended image updates can preserve the same frozen Build and cloud ins
   const next = { ...f.release, id: '0.0.1-next', version: '0.0.1-next', image: f.release.image.replace('a'.repeat(64), 'b'.repeat(64)) };
   const config = catalog.data.Configs['studio.runtime.images.v1']; config.releases.push(next); config.defaultReleaseId = next.id;
   f.options.client.getBootstrapConfig = async () => catalog;
+  f.options.portableBundles.prepare = async () => { throw Error('image-only update must reuse the archived resource files'); };
   await assert.rejects(f.service.prepareUpdate({ deploymentId: initial.id, buildId: f.input.buildId }), { code: 'DEPLOYMENT_VERSION_UNCHANGED' });
   const preview = await f.service.prepareUpdate({ deploymentId: initial.id, buildId: f.input.buildId, useRecommendedImage: true });
   assert.equal(preview.image.id, next.id); assert.equal(preview.buildId, f.input.buildId);
+  assert.equal(preview.bundleSha256, f.preview.bundleSha256);
   assert.equal(f.calls.filter(([action]) => action === 'create').length, 1);
   await f.service.applyUpdate({ ...preview, idempotencyKey: 'same-build-image-upgrade' }); await f.settled(); serving(f, preview);
   const updated = await f.service.refresh(initial.id);
