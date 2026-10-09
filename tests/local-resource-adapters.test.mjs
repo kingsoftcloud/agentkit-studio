@@ -18,6 +18,26 @@ test('cloud Skill Space with no Skills is a valid empty binding', async () => {
   assert.deepEqual(calls, [{ name: 'ListSkillsBySpaceId', params: { SpaceId: 'bcb4df65-2448-4c8a-99ca-62a12d26bce9', PageNumber: 1, PageSize: 100 } }]);
 });
 
+test('missing cloud Skill Space returns an actionable resource error', async () => {
+  const adapters = createLocalResourceAdapters({
+    serverClient: {
+      skillAction: async () => {
+        throw Object.assign(new Error('ListSkillsBySpaceId 请求失败（404）'), {
+          code: 'SKILL_SERVICE_FAILED',
+          status: 404,
+        });
+      },
+    },
+  });
+  await assert.rejects(
+    () => adapters.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9'),
+    error => error instanceof LocalResourceError
+      && error.code === 'SKILL_SPACE_NOT_FOUND'
+      && error.details.resourceId === 'bcb4df65-2448-4c8a-99ca-62a12d26bce9'
+      && /重新选择 Skill Center/.test(error.message),
+  );
+});
+
 test('cloud Skill Space downloads through the injected Host fetch boundary', async () => {
   const requests = [];
   const archive = createZip([{ name: 'SKILL.md', data: '# 营销写作\n保持短句。' }]);

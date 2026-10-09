@@ -6,6 +6,13 @@ import { resolve } from 'node:path';
 const fragmentDir = resolve(import.meta.dirname, '../src/client-fragments');
 const clientSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
 
+test('Studio mounts the official plugin navigation provider required by optional DSH UI bundles', async () => {
+  const packageJson = JSON.parse(await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8'));
+  const patch = await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8');
+  assert.ok(packageJson.dsh?.client?.inject?.includes('@deepseek-ai/dsh-client-ui-plugin-manager'));
+  assert.doesNotMatch(patch, /- id: ui-plugin-manager\s*\n\s*disabled: true/);
+});
+
 test('Studio conversation surface does not ship the legacy DSH hero copy', () => {
   assert.doesNotMatch(clientSource, /探索未至之境|预览版/);
 });

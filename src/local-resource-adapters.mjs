@@ -37,6 +37,12 @@ function looksLikeCloudSkillSpace(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resourceId(value));
 }
 
+function skillServiceStatus(error) {
+  const direct = Number(error?.status || error?.statusCode || error?.cause?.status || error?.cause?.statusCode || 0);
+  if (direct) return direct;
+  return Number(String(error?.message || error?.cause?.message || '').match(/\b(401|403|404|408|429|5\d{2})\b/)?.[1] || 0);
+}
+
 async function resolveCredential(credentials, reference, env = process.env) {
   const value = String(reference || '').trim();
   if (!value) return '';
@@ -180,7 +186,20 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const key = resourceId(id);
     if (cloudSkillSpaces.has(key)) return cloudSkillSpaces.get(key);
     if (!serverClient?.skillAction) throw new LocalResourceError('SKILL_SERVICE_UNAVAILABLE', '云端 Skill Service 适配器未启用', { resourceId: key });
-    const listed = await serverClient.skillAction('ListSkillsBySpaceId', { SpaceId: key, PageNumber: 1, PageSize: 100 });
+    let listed;
+    try {
+      listed = await serverClient.skillAction('ListSkillsBySpaceId', { SpaceId: key, PageNumber: 1, PageSize: 100 });
+    } catch (error) {
+      const status = skillServiceStatus(error);
+      if (status === 404) {
+        throw new LocalResourceError(
+          'SKILL_SPACE_NOT_FOUND',
+          '绑定的 Skill Center 已不存在或当前云端凭证无权访问，请在 Agent 编辑页重新选择 Skill Center。',
+          { resourceId: key, status },
+        );
+      }
+      throw error;
+    }
     const raw = listed.data?.Skills || listed.data?.skills || listed.data?.Items || listed.data?.items || [];
     const manifests = [];
     for (const item of raw) {

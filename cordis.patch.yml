@@ -1,6 +1,4 @@
 # AgentKit Studio domain layer over the official DSH base/web bundles.
-- id: ui-plugin-manager
-  disabled: true
 - id: ui-settings-models
   # Studio owns model, credential and first-run copy. Disabling this whole
   # DSH feature removes both the DeepSeek model page and its welcome notice;

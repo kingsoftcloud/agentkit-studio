@@ -183,6 +183,12 @@
       }, []);
       const bindingKind = binding => String(binding?.config?.binding?.resource?.kind || '');
       const selectedId = kind => String(value.find(binding => bindingKind(binding) === kind)?.config?.binding?.resource?.id || '');
+      const missingBindings = PLATFORM_RESOURCE_META.map(meta => {
+        const id = selectedId(meta.kind);
+        const catalog = catalogs[meta.kind];
+        if (!id || status === 'loading' || !catalog?.connectionRef) return null;
+        return (catalog.items || []).some(item => item.id === id) ? null : { ...meta, id };
+      }).filter(Boolean);
       const select = (kind, resourceId) => {
         const catalog = catalogs[kind];
         if (!catalog?.connectionRef) { setError('请先在设置中填写云端凭证，再连接平台资源。'); return; }
@@ -213,8 +219,12 @@
           return h('label', { key: meta.kind, style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, meta.label,
             h('select', { value: selectedId(meta.kind), onChange: event => select(meta.kind, event.target.value), style: inputStyle() },
               h('option', { value: '' }, catalog?.connectionRef ? `不绑定${meta.label}` : '请先连接云端'),
+              selectedId(meta.kind) && !(catalog?.items || []).some(item => item.id === selectedId(meta.kind))
+                ? h('option', { value: selectedId(meta.kind), disabled: true }, `${selectedId(meta.kind)}（当前不可用，请重新选择）`)
+                : null,
               (catalog?.items || []).map(item => h('option', { key: item.id, value: item.id, disabled: item.disabled }, item.disabled ? `${item.name}（不可绑定）` : `${item.name} · ${item.region}`))),
             h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '10px', fontWeight: 400, lineHeight: 1.4 } }, meta.description));
         })),
+        missingBindings.length ? h('div', { role: 'alert', style: { marginTop: '8px', color: BRAND.danger, fontSize: '11px', lineHeight: 1.5 } }, `检测到已失效的平台资源：${missingBindings.map(item => `${item.label}（${item.id}）`).join('、')}。请重新选择后再保存。`) : null,
         error ? h('div', { role: 'alert', style: { marginTop: '8px', color: BRAND.danger, fontSize: '11px' } }, error) : null);
     }

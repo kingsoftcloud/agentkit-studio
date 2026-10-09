@@ -3,6 +3,18 @@
 Studio 插件市场通过 Host bridge 执行插件生命周期。右上角“添加插件”输入安装源，
 刷新按钮只重读目录。DSH 与 Codex 使用各自原生管理接口。
 
+## 官方精选目录
+
+Studio 当前将以下 DSH 官方组合包作为精选项呈现：
+
+- `@deepseek-ai/dsh-experimental-agent-team-profile`
+- `@deepseek-ai/dsh-experimental-schedule-bundle`
+- `@deepseek-ai/dsh-experimental-voice-input-bundle`
+- `@deepseek-ai/dsh-experimental-auto-review`
+
+精选目录只保存展示元数据、声明行和能力检查清单；安装、依赖解析、构建脚本审批、
+兼容性检查、profile 写入和运行时加载全部交给 DSH `pluginManager`。
+
 ## DSH
 
 - 复用 `pluginManager.listBundles/listPlugins/inspect/installBundle/setBundleEnabled/removeBundle`。
@@ -15,6 +27,13 @@ Studio 插件市场通过 Host bridge 执行插件生命周期。右上角“添
 - 详情中的“已加载”要求全部声明行的实际 `fiberPhase=active`；仅部分条目活跃时显示“部分加载”，
   配置选中但无法确认活跃行时显示“已选择”。
   清单保留 bundle 错误、条目失败、移除权限和宿主必需标记。目录刷新同时更新正在看的详情。
+- 精选插件的安装或启用在 `application=applied` 后必须再次读取 bundle、声明行和对应 Host service。
+  行未全部 active，或 `agentTeams`、`schedule`、`speechToText`、`permissionPresets` 的能力检查失败时，
+  bridge 返回 `DSH_PLUGIN_NOT_USABLE`，页面不能显示“已验证可用”。`restart-required` 只显示“重启后验证”。
+- Schedule 还必须真实调用 `schedule.catalog()`，Voice Input 还必须真实读取 `speechToText.snapshot()`；
+  Teams 和 Auto Review 不在安装阶段伪造 Agent/权限上下文，不触发 teammate、模型审查或用户数据写入。
+- `node scripts/verify-dsh-plugin-market.mjs --execute` 在调用方指定的隔离 `DSH_HOME` 和固定 DSH checkout
+  中执行真实安装/启用与 Host 读取。它不自动批准依赖构建脚本；出现 pending build 时保持失败并要求显式处理。
 
 ## Codex
 
