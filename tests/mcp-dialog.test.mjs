@@ -38,3 +38,30 @@ test('failed MCP probe retry updates the saved resource instead of creating dupl
   assert.equal(closed, 0);
   assert.match(JSON.stringify(render()), /配置已保存.*探测失败/);
 });
+
+test('MCP dialog imports streamable-http mcpServers JSON without retaining inline credentials', async () => {
+  const state = [];
+  let cursor = 0;
+  const useState = initial => {
+    const index = cursor++;
+    if (!(index in state)) state[index] = typeof initial === 'function' ? initial() : initial;
+    return [state[index], value => { state[index] = typeof value === 'function' ? value(state[index]) : value; }];
+  };
+  const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
+  const host = { createMcpResource: async () => ({ resourceId: 'mcp-json' }), probeMcpResource: async () => ({ toolCount: 1 }) };
+  const Dialog = new Function('useState', 'h', 'hostRemote', 'BRAND', 'buttonStyle', 'inputStyle', 'ResourceDialog', `${source}; return McpResourceDialog;`)(useState, h, host, {}, () => ({}), () => ({}), 'dialog');
+  const render = () => { cursor = 0; return Dialog({ onClose() {} }); };
+  const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
+  const json = JSON.stringify({ mcpServers: { 'metaso-inner': { type: 'streamable-http', name: '金山云星流_秘塔AI搜索-inner', description: 'search', url: '[https://metaso-inner.example/mcp](https://metaso-inner.example/mcp)', headers: { Authorization: 'Bearer ${ksc_aipro_API_KEY}' } } } });
+  let node = walk(render()).find(item => item.type === 'textarea' && item.props['aria-label'] === 'MCP JSON');
+  node.props.onChange({ target: { value: json } });
+  node = walk(render()).find(item => item.type === 'button' && item.children.includes('识别并填充'));
+  node.props.onClick();
+  const tree = render();
+  const field = placeholder => walk(tree).find(item => item.type === 'input' && item.props.placeholder === placeholder);
+  assert.equal(field('例如：enterprise-search').props.value, 'metaso-inner');
+  assert.equal(field('例如：https://mcp.example.com').props.value, 'https://metaso-inner.example/mcp');
+  assert.equal(field('例如：SEARCH_API_KEY').props.value, 'ksc_aipro_API_KEY');
+  assert.equal(field('不会写入资源目录').props.value, '');
+  assert.match(JSON.stringify(tree), /Authorization=env:\/\/ksc_aipro_API_KEY/);
+});

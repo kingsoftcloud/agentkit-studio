@@ -272,9 +272,39 @@
         args: Array.isArray(server.args) ? server.args.join(' ') : '', apiKeyName: initialCredentialName, apiKeyValue: '',
         envRefs: Object.entries(existingEnvRefs).map(([key, value]) => `${key}=${value}`).join(', '),
       }));
+      const [jsonDraft, setJsonDraft] = useState('');
+      const [jsonError, setJsonError] = useState('');
       const [saving, setSaving] = useState(false);
       const [error, setError] = useState('');
       const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
+      const importJson = () => {
+        setJsonError('');
+        let parsed;
+        try { parsed = JSON.parse(jsonDraft); }
+        catch { setJsonError('JSON 格式无法解析，请粘贴完整的 mcpServers 配置。'); return; }
+        const entries = parsed?.mcpServers && typeof parsed.mcpServers === 'object' ? Object.entries(parsed.mcpServers) : [];
+        if (!entries.length || !entries[0][1] || typeof entries[0][1] !== 'object') { setJsonError('没有找到 mcpServers 配置。'); return; }
+        const [key, descriptor] = entries[0];
+        const headers = descriptor.headers && typeof descriptor.headers === 'object' ? descriptor.headers : {};
+        const authorization = Object.entries(headers).find(([name]) => name.toLowerCase() === 'authorization')?.[1];
+        const match = String(authorization || '').match(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/);
+        const credentialName = match?.[1] || '';
+        const rawUrl = String(descriptor.url || descriptor.endpointUrl || '').trim();
+        const endpointUrl = rawUrl.replace(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/, '$2');
+        const declaredType = String(descriptor.type || descriptor.transport || '').toLowerCase();
+        const transport = declaredType === 'stdio' || descriptor.command ? 'stdio' : 'http';
+        const envRefs = credentialName ? `Authorization=env://${credentialName}` : '';
+        if (!String(key).trim() || (transport === 'http' && !/^https?:\/\//i.test(endpointUrl)) || (transport === 'stdio' && !String(descriptor.command || '').trim())) {
+          setJsonError('配置缺少有效的 MCP 名称或 Endpoint。'); return;
+        }
+        setForm(current => ({ ...current,
+          displayName: String(descriptor.name || key), name: String(key),
+          description: String(descriptor.description || ''), version: String(descriptor.version || '1.0.0'),
+          transport, endpointUrl: transport === 'http' ? endpointUrl : '', command: String(descriptor.command || ''),
+          args: Array.isArray(descriptor.args) ? descriptor.args.join(' ') : '',
+          apiKeyName: credentialName, apiKeyValue: '', envRefs,
+        }));
+      };
       const save = async event => {
         event.preventDefault();
         if (saving) return;
@@ -311,6 +341,12 @@
       const field = (label, key, placeholder, type = 'text') => h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, label, h('input', { type, value: form[key], placeholder, onChange: event => setField(key, event.target.value), style: inputStyle() }));
       return h(ResourceDialog, { title: editing ? '编辑 MCP Server' : '添加 MCP Server', detail: '凭证只保存到 Host 凭证服务；修改后会重新探测工具契约。绑定关系请在 Agent 创建或编辑页维护。', onClose },
         h('form', { onSubmit: save, style: { display: 'grid', gap: '12px' } },
+          h('section', { style: { display: 'grid', gap: '8px', padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '10px', background: BRAND.canvas } },
+            h('div', { style: { color: BRAND.ink, fontWeight: 750, fontSize: '12px' } }, '从 JSON 识别 MCP'),
+            h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '支持 mcpServers 配置；只读取名称、说明、Endpoint 和环境变量引用，不会把 JSON 中的密钥写入资源目录。'),
+            h('textarea', { 'aria-label': 'MCP JSON', value: jsonDraft, onChange: event => setJsonDraft(event.target.value), placeholder: '{ "mcpServers": { "search": { "type": "streamable-http", "url": "https://...", "headers": { "Authorization": "Bearer ${SEARCH_API_KEY}" } } } }', rows: 5, style: { ...inputStyle(), resize: 'vertical', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px' } }),
+            jsonError ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '11px' } }, jsonError) : null,
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'button', onClick: importJson, disabled: !jsonDraft.trim(), style: buttonStyle() }, '识别并填充'))),
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('显示名称', 'displayName', '例如：企业搜索'), field('资源名称', 'name', '例如：enterprise-search')),
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('版本', 'version', '1.0.0'), h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '传输方式', h('select', { value: form.transport, onChange: event => setField('transport', event.target.value), style: inputStyle() }, h('option', { value: 'http' }, 'HTTP'), h('option', { value: 'sse' }, 'SSE'), h('option', { value: 'stdio' }, 'stdio')))),
           field('说明', 'description', '这个 MCP 提供什么能力？'),

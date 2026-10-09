@@ -231,7 +231,7 @@ index 499aada431..c420cf905a 100644
    ) {
      super(ctx, 'uiWorkspace')
      ctx.effect(() => {
-@@ -202,11 +205,35 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+@@ -202,11 +205,37 @@ class UiWorkspaceService extends Service implements UiWorkspace {
      this.replaceMain(target, this.lifetime.signal, 'reveal')
    }
  
@@ -248,7 +248,9 @@ index 499aada431..c420cf905a 100644
 +      if (settingsFrom !== undefined && workspaceId !== null) throw new Error('Inherited settings are only supported when clearing a Workspace')
 +      const permissions = source?.projectionValues?.permissions
 +      const permission = permissions && typeof permissions === 'object' && 'currentValue' in permissions ? permissions.currentValue : undefined
-+      if (permission === 'custom') throw new Error('Choose a named access mode before clearing the Workspace')
++      // A custom access policy is scoped to the Workspace. Clearing the
++      // Workspace must still create a usable ungrouped Session; let the new
++      // Session use its default named policy instead of aborting navigation.
 +      const preset = source?.projectionValues?.agentPreset
 +      const model = source?.projectionValues?.modelSelection?.next
 +      sessionId = await (workspaceId === null
@@ -260,7 +262,7 @@ index 499aada431..c420cf905a 100644
 +        if (!result.ok) throw new Error(result.error.message)
 +      }
 +      if (navigation.aborted) return
-+      if (typeof permission === 'string') {
++      if (typeof permission === 'string' && permission !== 'custom') {
 +        const result = await this.executeCommand(sessionId, `/permission ${permission}`, [])
 +        if (!result.ok) throw new Error(result.error.message)
 +        if (result.value === undefined) throw new Error('Host cannot restore the access mode')
@@ -333,7 +335,7 @@ index acb80f9725..9eafa9d6ba 100644
  }
  
  describe('UiWorkspaceService', () => {
-@@ -692,6 +696,64 @@ describe('UiWorkspaceService', () => {
+@@ -692,6 +696,65 @@ describe('UiWorkspaceService', () => {
      expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
    })
  
@@ -384,15 +386,16 @@ index acb80f9725..9eafa9d6ba 100644
 +    expect(b.sessions.retain).toHaveBeenLastCalledWith(sid('override'), { source: 'mainView' })
 +  })
 +
-+  it('does not clear the Workspace if its access mode cannot be preserved', async () => {
-+    const current = summary('source', { blank: true, projectionValues: { permissions: { currentValue: 'read-only' } } })
++  it('drops a Workspace-scoped custom access mode while clearing the Workspace', async () => {
++    const current = summary('source', { blank: true, projectionValues: { permissions: { currentValue: 'custom' } } })
 +    const b = bench({ workspaces: workspaceState([workspace('a', [current.id])]), sessions: sessionState([current]) })
 +    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
-+    b.executeCommand.mockResolvedValueOnce({ ok: true, value: undefined })
++    b.executeCommand.mockClear()
 +    const prepare = vi.fn()
-+    await expect(b.uiWorkspace.openWorkspace(null, prepare, current.id)).rejects.toThrow('Host cannot restore the access mode')
-+    expect(prepare).not.toHaveBeenCalled()
-+    expect(b.sessions.retained[0]!.release).not.toHaveBeenCalled()
++    b.sessions.create.mockResolvedValueOnce(sid('no-folder'))
++    await b.uiWorkspace.openWorkspace(null, prepare, current.id)
++    expect(b.executeCommand).not.toHaveBeenCalled()
++    expect(prepare).toHaveBeenCalledExactlyOnceWith(sid('no-folder'))
 +  })
 +
    it('prepares an ungrouped Session before opening it through the Workspace clear action', async () => {
