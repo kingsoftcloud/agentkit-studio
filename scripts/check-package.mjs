@@ -17,8 +17,9 @@ const packageJson = JSON.parse(read('package.json'));
 const manifest = JSON.parse(read('studio.plugin.json'));
 const expected = [
   'package.json', 'studio.plugin.json', 'README.md', 'CHANGELOG.md',
+  'LICENSE',
   'src/index.mjs', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
-  'scripts/build-client.mjs', 'docs/studio-dsh-native-architecture.md',
+  'scripts/build-client.mjs', 'docs/brand/visual-system.md',
   'patches/dsh-v0.2.0-rc.2/README.md',
 ];
 const missing = expected.filter(path => !files.has(path));

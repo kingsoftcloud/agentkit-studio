@@ -1,168 +1,37 @@
-# AgentKit Studio 协作开发
+# Contributing to AgentKit Studio
 
-这份文档是仓库内可分发的开发约定。个人机器上的 `AGENTS.md` 只用于本地自动化，不作为
-项目依赖，也不应在文档中写入个人绝对路径、密钥或本机 profile 内容。
+AgentKit Studio extends the public DeepSeek Harness host. Keep changes focused on Studio behavior and public host contracts; do not copy the DSH source tree into this repository.
 
-## 环境
-
-- Node.js `22.19.0`（版本写在 `.node-version`），安装需包含 `include/node` 开发头文件
-- pnpm `10.33.2`（版本写在 `package.json` 的 `packageManager`）
-- 官方 DSH `0.2.0-rc.2`，commit `639ed015397290b3745d163aafe02ffee4aa3f84`
-- Git、GNU Make 和 C/C++ 编译工具；macOS 使用 Xcode Command Line Tools，Linux 使用系统的编译工具链
-- macOS DMG 还需要 DSH Desktop 的签名、公证和发布配置；普通 Web/Node 检查不需要云端密钥
-
-Studio 基于公开 DSH 源码和扩展合同二次开发，但本仓库不复制 DSH 源码；运行和宿主验证需要
-固定版本的官方 checkout。通过环境变量指定官方 checkout 和用户数据目录：
-
-```sh
-export DSH_ROOT=/path/to/deepseek-harness
-export DSH_HOME=/path/to/dsh-home       # 可选；默认 ~/.dsh
-export AGENTKIT_HOME=/path/to/agentkit  # 可选；默认 ~/.agentkit
-```
-
-如果本机还没有 DSH checkout，可以在 Studio 仓库目录执行 `make dsh-bootstrap`。该目标从
-公开 DSH GitHub 仓库拉取固定 `dsh-v0.2.0-rc.2` tag，校验 commit 并在 checkout 内安装依赖；
-源码仍位于 `DSH_ROOT`，不会进入 Studio Git 历史。
-
-## 首次 checkout
-
-支持 macOS 和 Linux；Windows 使用 WSL2，原生 Windows Makefile 流程尚未验收。
-安装 Node.js 后启用 Corepack，由每个仓库的 `packageManager` 分别选择 Studio 的 pnpm 10.33.2
-和 DSH 的 pnpm 11.7.0。无需全局安装 `dsh`、`codex` 或 Python KsADK。
+## Setup
 
 ```sh
 corepack enable
-# 在克隆后的 agentkit-studio 目录执行；指定源码位置不依赖团队成员的目录结构
 make setup DSH_ROOT=../deepseek-harness
-make dev DSH_ROOT=../deepseek-harness
 ```
 
-`setup` 按顺序检查工具、安装 Studio 依赖、克隆固定 DSH tag、核对 commit、应用兼容补丁、
-完整编译 Host/Web 并安装和校验 Profile。首次需要访问 GitHub/npm，包含源码编译，耗时不能
-等同于安装普通 npm 包；以后会复用下载和编译缓存。已有完整补丁可重复执行；源码存在额外改动、
-半套补丁或不符的 commit 时会明确停止，保留现场，绝不自动 reset 开发者的修改。
+The DSH checkout must match the version and commit declared by the repository Makefile. Keep the checkout and all user data outside Git.
 
-默认 `DSH_ROOT` 仍是 Studio 上两级目录下的 `deepseek-harness`。团队成员可以一直显式传入
-自己的路径，或 `export DSH_ROOT=/absolute/path/to/deepseek-harness`。可选的 `DSH_HOME`、
-`AGENTKIT_HOME` 和 `DSH_PROFILE` 用于隔离开发数据；首次模型/云端配置在设置页完成，不复制
-其他人的凭证和 Profile。
+## Local validation
 
-修改 Studio 后停止开发进程，再执行 `make dev`：它重新打包和安装当前插件、逐文件核对包，
-然后启动 Web Host；浏览器刷新即可载入当前代码。纯前端打包为 `pnpm build:client`，独立测试为
-`make check`。修改 DSH 补丁后重新运行 `make setup`；如现有源码含额外改动，使用新 DSH_ROOT
-完成基线验证。`make doctor` 检查工具、固定 commit、完整补丁、Host/Web 编译产物和已安装插件，
-不读取凭证；它不代表模型服务或云资源已经可用。
-
-独立源码目录的实际配置和网页检查见 [开发环境验收](docs/contracts/development-setup-acceptance-2026-10-08.md)。
-
-`profile-install` 会在缺少 profile 时从官方 `web` 模板初始化一个独立 profile，再安装
-Studio tarball，并自动校验 bundle 与安装文件。`profile-check` 是可单独运行的只读门禁，也可用
-`PROFILE_DIR=/path/to/profile make profile-check` 检查解包后的发布 Profile。`web-dev` 启动后会打印带短期 token 的 URL，使用
-该 URL 打开浏览器。
-
-Profile 安装与 Web 启动通过官方 `apps/cli/src/bin.ts` 和 `tsx/esm` 运行，保留当前
-pnpm 的 PATH。不要改回 `pnpm dsh`：它会把 DSH 工作区的 pnpm 注入子进程，旧 Profile
-由不同 pnpm 主版本安装时会报 `ERR_PNPM_UNEXPECTED_STORE`。DSH 构建仍使用其自己的固定版本。
-安装本地 tarball 时先复制到按 SHA256 区分的输入目录，再通过 `add --force` 安装。
-仅重复使用同版本、同路径的 tarball 会命中 pnpm 旧内容；安装后逐文件对照当前包校验，
-防止命令成功但仍运行旧代码。保留正在使用的 `.artifacts/profile-plugin-input/` 输入目录。
-
-## DSH 补丁
-
-宿主补丁按 `patches/dsh-v<version>/` 隔离。确认 checkout 是干净的固定 commit 后再执行：
+Run the smallest relevant checks first, then the complete package gate for changes that affect the product surface or release package:
 
 ```sh
-make patch-check DSH_ROOT="$DSH_ROOT"
-make patch-apply DSH_ROOT="$DSH_ROOT"
-```
-
-补丁不是 Studio runtime 的第二套实现；上游提供等价公开扩展点后，应删除对应版本目录中的
-补丁并更新构建记录。
-
-## Web、桌面和发布
-
-```sh
-make web-build DSH_ROOT="$DSH_ROOT"
-make desktop-build DSH_ROOT="$DSH_ROOT"
-make desktop-start DSH_ROOT="$DSH_ROOT"
-```
-
-这些目标构建或启动官方 DSH 宿主。`make desktop-package-mac-arm64[-dir]` 和 x64 对应目标
-会先检查 `006-desktop-plugin-package-set.patch` 已应用，然后把 Studio tarball 纳入发布
-Profile/package set；否则目标会主动失败。构建后的品牌和插件加载仍需发布流水线验证。
-
-所有 `desktop-package-*` 目标在 `PACK_DIR/desktop-checkouts/<摘要>/source` 中运行官方打包，
-不会重建开发网页正在使用的 `DSH_ROOT`。该缓存从固定 `DSH_COMMIT` 创建并按顺序应用
-`PATCH_ROOT` 中的补丁；开发 checkout 的额外修改、忽略文件、用户 Profile 和 node_modules
-不会被复制。要纳入新的宿主修改，应先形成版本化补丁。补丁变化会使用新的缓存目录。
-相同缓存的打包串行互斥；若检测到缓存源码被修改则拒绝构建，不会自动重置文件。
-每次打包先复制一份插件 tarball 输入快照，后续并发 `make pack` 不会替换正在构建的插件版本。
-命令异常中断留下 `active.lock` 时，先读取其中的 owner.json 并确认对应进程已退出，再移除锁。
-
-DMG 目标只能在 macOS 上运行，并且按官方 DSH 规则读取
-`$DSH_ROOT/apps/desktop/.env.macos`。该文件应从 `.env.macos.example` 生成，不能提交到仓库。
-签名目标只临时复制这份配置，文件型凭证引用仍相对于原配置目录解析，命令结束后清除临时配置。
-没有签名、公证配置时，目标会主动失败；这表示环境未准备好，不代表 DMG 构建通过。
-
-本机安装验收可显式使用未签名产物（需要 `009-local-macos-package.patch`）：
-
-```sh
-make desktop-package-mac-arm64-unsigned DSH_ROOT="$DSH_ROOT"
-```
-
-该目标复用官方 Node、Python、package-set 和原生依赖流水线。官方产物保留在
-隔离 checkout 的 `apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/`，文件名包含 `unsigned`。
-成功后自动导出 `.artifacts/AgentKit-Studio-<Studio版本>-mac-arm64-local.dmg`，并写入同名
-`.sha256` 和 `.json` 校验记录，打印实际路径、SHA256 和字节数；`PACK_DIR` 可指定导出目录。
-导出逐字节摘要核对，缺失或空产物会令目标失败，失败构建保留上一次可用包。
-这不是更新源或发布记录，也不会跳过正式目标的签名、公证检查。下载或交付前在产物目录运行：
-
-```sh
-shasum -a 256 -c AgentKit-Studio-0.0.1-mac-arm64-local.dmg.sha256
-```
-
-验收时应把 DMG 只读挂载、复制 App 到源码目录之外，使用独立的 `DSH_HOME` 和
-`AGENTKIT_HOME` 冷启动；移除 PATH 中的 Node/pnpm 后检查页面、模型设置、Agent 运行和
-退出再打开。离线启动与联网模型、云端资源运行分别记录。旧全局配置迁移仍可能读取
-`~/.agentengine/settings.json`，独立产品目录不等于干净系统账户。
-
-## 提交前门禁
-
-```sh
+node --check src/index.mjs
+node --test tests/local-resource-adapters.test.mjs
 make check
-make pack
-git diff --check
-
-# 只验证 Studio 包本身的完整发布门禁（不启动 DSH 宿主）
-make patch-format-check
 make release-check
 ```
 
-涉及官方 DSH 或浏览器的改动还要记录 `make verify-dsh`、profile smoke 和对应的真实浏览器
-证据。CI 会从公网固定 rc.2 tag 运行两个 node-store probe；fixture 测试只能证明合同投影，
-不能替代模型、资源绑定、云端部署或签名 DMG 验收。
+Browser or Host changes also require the corresponding real DSH verification. Use an isolated `DSH_HOME`; do not place credentials, profiles, downloads, or runtime artifacts in the repository.
 
-运行适配器还可以在真实 DSH 公开 LLM registry 中单独校验：
+## Public release rules
 
-```sh
-AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-adapter.mjs
-AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-retry.mjs
-# 已安装并配置 Codex 时读取真实 model/list；不启动推理回合
-AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-adapter.mjs --codex
-```
+- Keep public source, tests, and documentation free of credentials, private endpoints, customer data, local paths, and internal deployment evidence.
+- Do not commit `.env` files, profiles, private keys, temporary URLs, generated caches, or `.artifacts` output.
+- Do not claim a cloud, native Host, or desktop result from a fixture or a source-only test.
+- Package and workflow changes require `make release-check` and a clean `git diff --check`.
+- Public `main` changes go through a pull request with required CI and security checks. Release artifacts are produced by GitHub Actions from an approved `main` commit.
 
-不带 `--codex` 的目录是合成合同数据；带该参数读取本机 Codex 的真实目录。
-目录可见只证明合同可用，模型访问权限仍要由成功的实际会话验证。
+## Commit and pull request guidance
 
-`verify-dsh-runtime-retry.mjs` 使用合成网关，经过真实预设插件、DSH AgentLoop、
-Session 和 llm-retry，校验临时故障恢复、认证/配额终止、退避取消、重试上限、
-工具结果复用及失败输出隔离。它不代表真实云端服务发生过这些故障。
-Studio 只返回公开的 `LlmFailure` 结束事件；重试策略、计时、取消和历史仍由 DSH 负责。
-只有本地 Harness 的模型步骤进入该机制，独立本地整轮、云端 RunAgent 与 Codex
-运行不会因此自动重放。
-
-设置页的模型目录支持多个提供商和多个模型。请确认新增条目使用独立的
-`credentialName`，且恰好一个条目标记为默认；Agent Revision 的多模型绑定应在创建页或
-编辑页验证，不要把“默认模型”误当成“只能配置一个模型”。
-
-macOS 构建默认使用 `assets/agentkit-studio-macos.png`，可通过 `DESKTOP_PRODUCT_ICON` 指定其他绝对路径。打包后的 Info.plist 与 icns 必须核对实际图标；更换源文件不代表已安装的旧 App 已更新。安装包同时包含固定版本的官方 Codex CLI，启动它使用包内 Node。首次 Codex 认证仍由 Codex 的账户/配置合同负责；`AGENTKIT_CODEX_BIN` 可覆盖入口。
+Use a single-purpose conventional commit message, add regression coverage for behavior changes, and describe the validation that was actually run. Do not push a release or publish an artifact until review and repository gates have passed.

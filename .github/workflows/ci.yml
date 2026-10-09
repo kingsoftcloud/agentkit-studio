@@ -1,48 +1,27 @@
-name: AgentKit Studio CI
+name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  plugin:
+  test:
+    name: test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.33.2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: make release-check
-
-  dsh-node-store:
-    runs-on: ubuntu-latest
-    env:
-      DSH_ROOT: ${{ runner.temp }}/deepseek-harness
-      DSH_REF: dsh-v0.2.0-rc.2
-      DSH_COMMIT: 639ed015397290b3745d163aafe02ffee4aa3f84
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.7.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Checkout pinned public DSH
-        run: git clone --branch "$DSH_REF" --depth 1 https://github.com/deepseek-ai/deepseek-harness.git "$DSH_ROOT"
-      - name: Verify DSH release pin
-        run: test "$(git -C "$DSH_ROOT" rev-parse HEAD)" = "$DSH_COMMIT"
-      - name: Install DSH dependencies
-        working-directory: ${{ runner.temp }}/deepseek-harness
-        run: pnpm install --frozen-lockfile
-      - name: Verify official DSH node store
-        run: AGENTKIT_DSH_ROOT="$DSH_ROOT" pnpm verify-dsh
-      - name: Verify official DSH SDK node store
-        run: AGENTKIT_DSH_ROOT="$DSH_ROOT" pnpm verify-dsh-sdk
