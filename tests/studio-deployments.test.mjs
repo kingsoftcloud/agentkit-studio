@@ -150,6 +150,23 @@ test('invalid persistence capacities cannot upload or create billable resources'
   assert.equal(f.calls.length, 0);
 });
 
+test('deployment preflight defaults to 1:2 and preserves selected CPU and memory in the create request', async t => {
+  const f = await fixture(t);
+  for (const resources of [undefined, { cpu: 1 }, { cpu: 2, memoryGiB: 4 }, { cpu: 4, memoryGiB: 8 }, { cpu: 2, memoryGiB: 8 }, { cpu: 2, memoryGiB: 16 }]) {
+    const preview = await f.service.prepare({ ...f.input, resources });
+    assert.equal(preview.resources.cpu, resources?.cpu ?? 2);
+    assert.equal(preview.resources.memoryGiB, resources?.memoryGiB ?? (resources?.cpu ?? 2) * 2);
+  }
+  assert.equal(f.calls.length, 0, 'preflight cannot create billable resources');
+  for (const resources of [{ cpu: 3, memoryGiB: 6 }, { cpu: 2, memoryGiB: 6 }, { cpu: 1, memoryGiB: 1 }]) {
+    await assert.rejects(() => f.service.prepare({ ...f.input, resources }), { code: 'DEPLOYMENT_RESOURCE_INVALID' });
+  }
+  const preview = await f.service.prepare({ ...f.input, resources: { cpu: 1, memoryGiB: 2 } });
+  await f.service.create({ ...f.request, previewId: preview.previewId, bundleId: preview.bundleId, resources: preview.resources });
+  await f.settled();
+  assert.deepEqual(f.calls.find(([action]) => action === 'create')[1].Resource, { Cpu: 1, Memory: 2 });
+});
+
 test('old Server cannot silently discard persistent storage; temporary storage remains explicit', async t => {
   const f = await fixture(t);
   const bootstrap = f.options.client.getBootstrapConfig;

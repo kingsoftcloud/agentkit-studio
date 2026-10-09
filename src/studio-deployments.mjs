@@ -18,8 +18,8 @@ const failure = error => ({ code: /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.code || '
   ...(typeof error?.requestId === 'string' && /^[a-f0-9-]{36}$/.test(error.requestId) ? { requestId: error.requestId } : {}) });
 const credentialScope = values => sha256(JSON.stringify([values.cloudServerUrl || 'https://aicp.api.ksyun.com', values.cloudRegion || 'cn-beijing-6', values.cloudCustomSource || '', values.cloudAccessKey]));
 const shapeOf = input => {
-  const cpu = input?.cpu ?? 2, memoryGiB = input?.memoryGiB ?? 8;
-  if (![1, 2, 4, 8, 16].includes(cpu) || ![cpu * 4, cpu * 8].includes(memoryGiB)) throw portableError('DEPLOYMENT_RESOURCE_INVALID', 'CPU 和内存比例须为 1:4 或 1:8');
+  const cpu = input?.cpu ?? 2, memoryGiB = input?.memoryGiB ?? cpu * 2;
+  if (![1, 2, 4, 8, 16].includes(cpu) || ![cpu * 2, cpu * 4, cpu * 8].includes(memoryGiB)) throw portableError('DEPLOYMENT_RESOURCE_INVALID', 'CPU 和内存比例须为 1:2、1:4 或 1:8');
   return { cpu, memoryGiB, replicas: 1, storageGiB: storageSize(input?.storageGiB) };
 };
 function endpointFor(detail, record) {

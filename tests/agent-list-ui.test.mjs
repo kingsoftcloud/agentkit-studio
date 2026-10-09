@@ -39,3 +39,13 @@ test('a previous revision Build is shown as historical, not a built current revi
   assert.ok(nodes.find(node => node.type === 'pill' && node.children.includes('有历史构建')));
   assert.equal(nodes.some(node => node.type === 'pill' && node.children.includes('已构建')), false);
 });
+
+test('Agent creation offers conversation and manual configuration as separate actions', () => {
+  const routes = [];
+  const nodes = render([], '', { onCreate: route => routes.push(route) });
+  const buttons = nodes.filter(node => node.type === 'button');
+  buttons.find(node => node.children.includes('对话创建')).props.onClick();
+  buttons.find(node => node.children.includes('手动配置')).props.onClick();
+  assert.deepEqual(routes, ['conversation', 'manual']);
+  assert.equal(buttons.some(node => node.children.includes('快速创建') || node.children.includes('一键创建')), false);
+});

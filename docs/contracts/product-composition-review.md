@@ -10,10 +10,10 @@
 
 会话产品合同见 [`session-agent-binding.md`](./session-agent-binding.md)：主会话最多绑定一个 Agent Revision，也可以保持 `agentRef=null`；多个 Agent 通过子运行编排协作。MCP、Skill、知识库和记忆库绑定到 Agent Revision，定时任务绑定 Agent Revision 并在触发时创建新的 Session/Run。
 
-创建器按产品入口收敛为两个动作：Agents 页只做快速创建和一键模板创建；需要描述角色、补充
-Prompt、绑定能力或创建定时任务时，回到对话页用自然语言完成。对话编排最终仍调用 Host 的
-Agent Revision/Schedule API，并复用同一个 Agent/Revision 事实源；本轮已完成 Agents 页最小
-创建闭环，自然语言编排入口列为下一段 P1 工作。
+创建入口在后续迭代中收敛为“对话创建”和“手动配置”：前者打开新的无工作区原生会话，
+多轮完善草稿并在明确确认后创建；后者直接填写 Prompt、能力和策略，模板作为可选起点。
+对话编排最终仍调用 Host 的 Agent Revision/Schedule API，复用同一个 Agent/Revision
+事实源。本文其余 P0/P1 证据是 2026-09-24 的历史复核，当前验收以对应合同及日期记录为准。
 
 ## 已核实的复用边界
 

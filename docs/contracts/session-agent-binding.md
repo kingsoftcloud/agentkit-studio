@@ -80,20 +80,24 @@ Agent；首轮后由 DSH preset registry 锁定。选择器与 Host 的 catalog 
 选择器。这样选择动作与执行目标一一对应，不会把三种 runtime 的事件混到同一个 DSH
 session log。
 
-Agent Teams 已在 AgentKit 的 rc.2 profile 中默认装载并通过官方 116/116 测试和 1/1
-headless E2E；Studio 对话中真实完成了 `list_agents` 和 `spawn_teammate`。该默认范围是
-AgentKit profile，不扩展为所有 DSH profile；只有 DSH Native 的普通会话已验证到 Team
-工具。Codex/KsADK 绑定 Agent 的 Teams 能力还要分别通过其运行时合同验证，当前不能在
-它们的 Agent 卡片上显示“Teams 已可用”。KsADK Host 的 `/api/v1/plugins/teams/lifecycle`
-当前还返回 `available=false`、`health=failed`、`reason=authority_profile_unavailable`，
-因此 Host 侧也不能宣称默认启用；该失败证据记录在
+Agent Teams 随官方 DSH CLI 提供，但默认关闭。当前固定的 DSH 0.2.0-rc.2 和 Studio
+`make profile-install` 从官方 Web profile 初始化，不自动加入 Teams bundle；可在插件市场
+启用官方 `@deepseek-ai/dsh-experimental-agent-team-profile`，同时加载工具和团队界面。
+开启会替换普通 subagent 委派工具，不能据此宣称 Codex、AgentKit Harness 或云端也已具备
+同样的 Teams 能力，这些路径仍需独立验收。
+
+历史验收（2026-09-27）曾在临时 AgentKit 0.1.7-rc.2 profile 默认装载 Teams，并通过官方
+116/116 测试和 1/1 headless E2E；Studio 普通 DSH 对话真实完成 `list_agents` 和
+`spawn_teammate`。该结果不代表新版发布 profile 默认开启。同期 KsADK Host Teams lifecycle
+返回 `available=false`、`health=failed`、`reason=authority_profile_unavailable`；历史失败证据见
 [`verification-rerun-2026-09-27.json`](../../../.scratch/studio-dsh-native-2026-09-24/verification-rerun-2026-09-27.json)。
 
-创建入口收敛为两个明确的产品动作：Agents 独立页的“快速创建”只创建最小 Blank
-Revision，“一键创建”使用内置模板（当前包含 Blank 和 Research）。资源绑定不再阻塞
-创建流程；模型、MCP、Skill、知识库和记忆在资源页或 Agent 详情中绑定。对话页的自然
-语言 Agent 编排和定时任务编排可以生成同样的 Host-owned Revision/Schedule，但不能
-另建一套浏览器本地状态。
+创建入口收敛为“对话创建”和“手动配置”。对话创建通过官方 `uiWorkspace.openWorkspace`
+打开新的无工作区会话，清空该新会话的 Agent 绑定及侧栏 Agent 筛选，再向原生输入框填入
+创建引导；不自动发送消息，不修改原会话。多轮讨论逐步澄清用途、提示词和资源，持续更新
+Host 草稿，用户明确确认后才创建 Revision。手动配置直接填写同样的字段，Blank 和 Research
+提示词模板放在可选折叠区。模型、MCP、Skill、知识库和记忆在创建或编辑页绑定，资源库仅
+管理资源生命周期。两种创建方式复用同一个 Host-owned Agent/Revision 事实源。
 
 官方 `deepseek-harness-sdk` 可以作为 DSH Native Agent 的进程间运行时入口，但它
 不会自动完成 Studio Revision 装配或 KsADK canonical Session 写入。采用 SDK 时仍需

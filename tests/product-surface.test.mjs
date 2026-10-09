@@ -25,13 +25,14 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /conversationAgentStorageKey\(sessionId\)/);
 });
 
-test('Agent authoring starts in the current DSH composer and uses reviewed Host tools', () => {
-  // The composer-left injection was removed: conversation authoring is a
-  // fresh-session flow, so the hero selector button is the only entry.
+test('Agent authoring reuses the native composer and starts a fresh session from Agents', () => {
+  // Keep authoring in the native conversation, with entries in the fresh
+  // conversation hero and the Agents page rather than a second composer.
   assert.doesNotMatch(clientSource, /conversation\.input\.left/);
   assert.match(clientSource, /function NativeAuthoringButton/);
-  assert.match(clientSource, /studio_agent_draft/);
-  assert.match(clientSource, /studio_agent_create/);
+  assert.match(clientSource, /openAgentAuthoring/);
+  assert.match(clientSource, /持续更新草稿/);
+  assert.match(clientSource, /我明确确认草稿后再创建/);
   assert.match(clientSource, /agentkit-studio:seed-authoring/);
   assert.doesNotMatch(clientSource, /function ConversationalAgentCreatePage/);
 });

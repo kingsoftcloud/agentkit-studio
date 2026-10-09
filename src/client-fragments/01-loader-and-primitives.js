@@ -611,7 +611,7 @@ window.__ModuleLoader__.load({
         const card = document.createElement('div');
         card.setAttribute('role', 'dialog');
         card.setAttribute('aria-modal', 'true');
-        card.style.cssText = 'width:min(420px,calc(100vw - 48px));border:1px solid var(--dsw-alias-border-l1,#e5e5e5);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff);padding:20px;box-shadow:0 18px 50px rgba(10,14,18,0.28);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+        card.style.cssText = 'width:min(420px,calc(100vw - 48px));border:1px solid var(--dsw-alias-border-l3,#d4d4d4);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff);padding:20px;box-shadow:0 18px 50px rgba(10,14,18,0.28);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
         const title = document.createElement('strong');
         title.textContent = options.title || '确认操作';
         title.style.cssText = 'display:block;color:var(--dsw-alias-label-primary,#0d0d0d);font-size:15px';
@@ -627,7 +627,7 @@ window.__ModuleLoader__.load({
         const cancel = document.createElement('button');
         cancel.type = 'button';
         cancel.textContent = options.cancelLabel || '取消';
-        cancel.style.cssText = 'font:inherit;cursor:pointer;padding:6px 12px;border-radius:9px;border:1px solid var(--dsw-alias-border-l1,#e5e5e5);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#0d0d0d)';
+        cancel.style.cssText = 'font:inherit;cursor:pointer;padding:6px 12px;border-radius:9px;border:1px solid var(--dsw-alias-border-l3,#d4d4d4);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#0d0d0d)';
         const confirm = document.createElement('button');
         confirm.type = 'button';
         confirm.textContent = options.confirmLabel || '确定';
@@ -654,9 +654,10 @@ window.__ModuleLoader__.load({
       // layout and product surfaces remain owned by this application.
       ink: 'var(--dsw-alias-label-primary, #0d0d0d)',
       inkMuted: 'var(--dsw-alias-label-secondary, #676767)',
-      canvas: 'var(--dsw-alias-bg-base, #f9f9f9)',
+      canvas: 'var(--dsw-alias-bg-layer-2, #f4f5f6)',
       surface: 'var(--dsw-alias-bg-layer-1, #ffffff)',
-      border: 'var(--dsw-alias-border-l1, #e5e5e5)',
+      border: 'var(--dsw-alias-border-l3, #d4d4d4)',
+      controlBorder: 'color-mix(in srgb, var(--dsw-alias-label-primary, #0d0d0d) 24%, var(--dsw-alias-bg-layer-1, #ffffff))',
       accent: 'var(--dsw-alias-brand-primary, #0d0d0d)',
       accentStrong: 'var(--dsw-alias-label-primary, #000000)',
       // DSH's primary button token intentionally flips to white in dark mode.

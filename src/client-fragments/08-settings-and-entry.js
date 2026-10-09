@@ -181,17 +181,22 @@
         };
         return () => { try { delete window.__AGENTKIT_STUDIO_BIND_AGENT__; } catch {} };
       });
-      ctx.effect(() => {
-        const openAuthoring = () => {
-          pendingAuthoring = true;
-          ctx.layout.selectPanel(null);
-          window.dispatchEvent(new CustomEvent('agentkit-studio:seed-authoring'));
-        };
-        window.addEventListener('agentkit-studio:open-authoring', openAuthoring);
-        return () => {
-          window.removeEventListener('agentkit-studio:open-authoring', openAuthoring);
-        };
-      }, 'agentkit-studio:authoring-entry');
+      ctx.inject(['uiWorkspace'], authoringCtx => {
+        authoringCtx.effect(() => {
+          let opening = false;
+          const openAuthoring = async () => {
+            if (opening) return;
+            opening = true;
+            try { await openAgentAuthoring(authoringCtx.uiWorkspace); }
+            catch (error) {
+              pendingAuthoring = false;
+              window.__AGENTKIT_CONFIRM__?.({ title: '无法打开创建会话', detail: error?.message || '请稍后重试', confirmLabel: '知道了' });
+            } finally { opening = false; }
+          };
+          window.addEventListener('agentkit-studio:open-authoring', openAuthoring);
+          return () => window.removeEventListener('agentkit-studio:open-authoring', openAuthoring);
+        }, 'agentkit-studio:authoring-entry');
+      });
       // Studio patch 007: register a sidebar session filter so selecting an
       // Agent in the hero selector narrows the DSH sidebar to sessions bound
       // to that Agent. The filter reads a global variable (synced from the

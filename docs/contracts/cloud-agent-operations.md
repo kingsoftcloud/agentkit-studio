@@ -21,6 +21,25 @@ KOP 必须为 API `2024-06-12` 发布上述七个调度 Action，并配置对应
 Server 有 REST 路由不代表 KOP 已开放。返回 `InvalidActionOrVesion` 时明确显示缺少的 Action，
 不降级直连 Server，也不改用本地主账号或本地计时器。
 
+| KOP Action | Studio 用途 |
+| --- | --- |
+| `CreateAgentSchedule` | 创建云端定时任务，可指定渠道结果投递 |
+| `ListAgentSchedules` | 按 Agent 查询任务目录及调度可用性 |
+| `GetAgentSchedule` | 查询任务详情 |
+| `UpdateAgentSchedule` | 修改配置、暂停和恢复；携带 `ExpectedRevision` |
+| `DeleteAgentSchedule` | 删除任务，保留既有执行记录 |
+| `RunAgentSchedule` | 手动立即执行 |
+| `ListAgentScheduleOccurrences` | 查询执行状态、最终文本和渠道投递状态 |
+
+Server 后端 Action 路由为 `POST /agentengine/api/v1/<Action>`，请求模型位于
+`app/api/v1/actions/schedule_actions.py`。注册时需保留租户和子账号身份，并同时配置 IAM
+访问权限；暂停/恢复复用 `UpdateAgentSchedule.Enabled`，无须另加两个接口。预发 Server
+还需启用调度 Worker 与 Responses 合同，投递渠道时启用 `ChannelOutbox/v1`。
+2026-10-09 本轮只读复查：`ListAgentSchedules` 仍返回
+`SERVER_ACTION_NOT_REGISTERED`（HTTP 400）；没有发起调度写操作。
+云端创建、升级/回滚、查询和删除复用既有部署 Action，上传当前走 Host 私有 KS3 直传，
+这七个调度 Action 是当前产品入口的必补项。
+
 Channels 仍使用独立 Channel API 的连接配置和授权，不冒充已接入 KOP。
 绑定云端目标时，Host 核对渠道账号与 AK/SK 经 IAM 核验的所属账号一致，
 将已核验的子账号 UUID 传入创建者 Header；凭证保留在 Host。

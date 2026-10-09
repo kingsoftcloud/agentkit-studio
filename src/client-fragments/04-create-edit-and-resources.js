@@ -11,7 +11,7 @@
       return h(AgentCreatePage, { initialAgent: agent, onBack, onCreated: onSaved });
     }
 
-    function AgentCreatePage({ mode = 'quick', initialAgent = null, onBack, onCreated }) {
+    function AgentCreatePage({ initialAgent = null, onBack, onCreated }) {
       const editing = Boolean(initialAgent);
       const cloudEditing = editing && initialAgent?.source === 'agentengine-server';
       const originalSpec = initialAgent?.spec || {};
@@ -46,7 +46,7 @@
           : []),
       ];
       const runtimeLabel = runtimeOptions.find(item => item.runtimeType === form.runtime)?.displayName || form.runtime;
-      const templates = [['blank', '通用助手', '干净的 DSH Native Agent，创建后按需绑定能力。', '你是一个可靠的通用助手，请直接回答用户问题；信息不足时先提出澄清问题。'], ['research', '研究助手', '适合资料检索、分析和带来源输出。', '你是研究助手。先明确问题与范围，优先使用已绑定的检索资源验证事实；回答给出来源，区分确认事实与推测。缺少资源或证据时直接说明，不得编造引用。']];
+      const templates = [['blank', '通用助手', '通用问答起点，可自由修改提示词。', '你是一个可靠的通用助手，请直接回答用户问题；信息不足时先提出澄清问题。'], ['research', '研究助手', '适合资料检索、分析和带来源输出。', '你是研究助手。先明确问题与范围，优先使用已绑定的检索资源验证事实；回答给出来源，区分确认事实与推测。缺少资源或证据时直接说明，不得编造引用。']];
       const chooseTemplate = value => setForm(previous => {
         const next = templates.find(item => item[0] === value), old = templates.find(item => item[0] === previous.template);
         return { ...previous, template: value,
@@ -54,9 +54,7 @@
           description: !previous.description.trim() || previous.description === old?.[2] ? next[2] : previous.description,
           prompt: !previous.prompt.trim() || previous.prompt === old?.[3] ? next[3] : previous.prompt };
       });
-      const steps = mode === 'one-click'
-        ? [['选择模板', '确定一键创建的起点'], ['绑定能力', '模型、Tool、MCP、Skill'], ['运行策略', '执行目标与权限'], ['检查并创建', '确认后写入 Host']]
-        : [['定义 Agent', '身份、Prompt 与用途'], ['绑定能力', '模型、Tool、MCP、Skill'], ['运行策略', '执行目标与权限'], ['检查并创建', '确认后写入 Host']];
+      const steps = [['定义 Agent', '用途与提示词'], ['绑定能力', '模型、MCP、Skill 等资源'], ['运行策略', '执行目标与权限'], ['检查并创建', '确认后保存配置']];
       const update = (key, value) => setForm(previous => ({ ...previous, [key]: value }));
 
       useEffect(() => {
@@ -99,7 +97,7 @@
         setSaving(true); setError('');
         const id = form.id.trim().toLowerCase();
         try {
-          const prompt = form.prompt.trim() || (mode === 'one-click' ? templates.find(item => item[0] === form.template)?.[3] : '') || form.description.trim() || templates[0][3];
+          const prompt = form.prompt.trim() || form.description.trim() || templates.find(item => item[0] === form.template)?.[3] || templates[0][3];
           // The managed Harness executes through the local host process. Its
           // runtime admission contract requires this capability explicitly;
           // without it the build can succeed but conversation-surface must
@@ -129,7 +127,7 @@
           };
           const created = editing ? await hostRemote.updateAgent(id, spec, initialAgent.metadata.revision, form.name.trim()) : await hostRemote.quickAuthorAgent({
             name: form.name.trim(), slug: id, runtimeType: form.runtime,
-            template: mode === 'one-click' ? form.template : 'blank',
+            template: form.template,
             description: form.description.trim() || '由 AgentKit Studio 本地创建', spec,
           });
           const metadata = created?.metadata || {};
@@ -138,9 +136,9 @@
         finally { setSaving(false); }
       };
 
-      const templateCards = mode === 'one-click' ? h('div', { style: { marginBottom: '20px' } },
-        h('div', { style: { color: BRAND.ink, fontSize: '13px', fontWeight: 800, marginBottom: '10px' } }, '选择一键模板'),
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' } }, templates.map(([value, title, detail]) => h('button', {
+      const templateCards = !editing ? h('details', { style: { marginBottom: '20px' } },
+        h('summary', { style: { color: BRAND.inkMuted, fontSize: '12px', cursor: 'pointer' } }, '使用提示词模板（可选）'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px', marginTop: '12px' } }, templates.map(([value, title, detail]) => h('button', {
           key: value, type: 'button', onClick: () => chooseTemplate(value),
           style: { minHeight: '88px', textAlign: 'left', border: '1px solid ' + (form.template === value ? BRAND.accentStrong : BRAND.border), borderRadius: '10px', padding: '13px', background: form.template === value ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' },
         }, h('div', { style: { fontWeight: 800, fontSize: '13px' } }, title), h('div', { style: { marginTop: '5px', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, detail))))) : null;
@@ -194,12 +192,11 @@
         h('div', { style: { marginTop: '18px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '运行目标属于 Agent Revision；权限策略和记忆开关会随本次创建一起保存。'),
       ) : h(React.Fragment, null,
         h('h3', { style: { margin: '0 0 14px', color: BRAND.ink, fontSize: '16px' } }, '检查并创建'),
-        h('div', { style: { display: 'grid', borderTop: '1px solid ' + BRAND.border } }, [['Agent ID', form.id.trim().toLowerCase()], ['名称', form.name.trim()], ['运行目标', runtimeLabel], ['默认模型', catalog.model.find(item => item.resourceId === selectedModel)?.displayName || selectedModel || '未选择'], ['模型白名单', `${selectedModels.length || (selectedModel ? 1 : 0)} 个`], ['能力', `${selectedTools.length} Tool · ${selectedMcp.length} MCP · ${selectedSkills.length} Skill`], ['平台资源', `${platformBindings.length} 项（知识库 / 记忆库 / Skill Center）`], ['记忆', memoryEnabled ? '已启用' : '未启用'], ['模板', mode === 'one-click' ? templates.find(item => item[0] === form.template)?.[1] : '通用助手']].map(([label, value]) => h('div', { key: label, style: { display: 'flex', justifyContent: 'space-between', gap: '20px', padding: '12px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: '12px' } }, h('span', { style: { color: BRAND.inkMuted } }, label), h('strong', { style: { color: BRAND.ink, textAlign: 'right' } }, value)))),
+        h('div', { style: { display: 'grid', borderTop: '1px solid ' + BRAND.border } }, [['Agent ID', form.id.trim().toLowerCase()], ['名称', form.name.trim()], ['运行目标', runtimeLabel], ['默认模型', catalog.model.find(item => item.resourceId === selectedModel)?.displayName || selectedModel || '未选择'], ['模型白名单', `${selectedModels.length || (selectedModel ? 1 : 0)} 个`], ['能力', `${selectedTools.length} Tool · ${selectedMcp.length} MCP · ${selectedSkills.length} Skill`], ['平台资源', `${platformBindings.length} 项（知识库 / 记忆库 / Skill Center）`], ['记忆', memoryEnabled ? '已启用' : '未启用'], ['模板', templates.find(item => item[0] === form.template)?.[1]]].map(([label, value]) => h('div', { key: label, style: { display: 'flex', justifyContent: 'space-between', gap: '20px', padding: '12px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: '12px' } }, h('span', { style: { color: BRAND.inkMuted } }, label), h('strong', { style: { color: BRAND.ink, textAlign: 'right' } }, value)))),
         h('div', { style: { marginTop: '16px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, editing ? (cloudEditing ? '保存后调用 AgentEngine UpdateAgent；云端已有会话继续使用旧快照，新运行使用更新后的组件绑定。' : `保存后创建新的配置版本；当前版本为 r${initialAgent.metadata.revision}。已有会话和构建不会被自动切换。`) : '创建后保存 Prompt、模型和资源绑定，随后可构建并开始对话。'),
       );
       return h('div', null,
-        h(SectionHeading, { eyebrow: 'Studio domain / Agents', title: editing ? '编辑 Agent' : mode === 'one-click' ? '一键创建 Agent' : '快速创建 Agent', detail: '基础信息、Prompt、资源绑定和运行策略在同一条创建流程中完成。', action: h('button', { type: 'button', onClick: onBack, style: buttonStyle() }, '返回 Agents') }),
-        !editing && h('div', { style: { display: 'flex', gap: '4px', padding: '4px', marginBottom: '16px', border: '1px solid ' + BRAND.border, borderRadius: '10px', background: BRAND.surface, width: 'fit-content' } }, ['quick', 'one-click'].map(value => h('button', { key: value, type: 'button', onClick: () => { if (value !== mode) onBack(); }, style: { minHeight: '32px', border: 0, borderRadius: '7px', padding: '0 12px', color: value === mode ? BRAND.ink : BRAND.inkMuted, background: value === mode ? BRAND.accentSoft : 'transparent', fontSize: '12px', fontWeight: value === mode ? 800 : 650 } }, value === 'quick' ? '快速创建' : '一键创建'))),
+        h(SectionHeading, { title: editing ? '编辑 Agent' : '手动配置 Agent', detail: '直接填写提示词、资源绑定和运行策略，检查后保存。', action: h('button', { type: 'button', onClick: onBack, style: buttonStyle() }, '返回 Agents') }),
         h('section', { style: { display: 'grid', gridTemplateColumns: '210px minmax(0, 1fr)', gap: '20px', alignItems: 'start' } },
           h('aside', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '12px', background: BRAND.surface } },
             h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '8px 10px 12px' } }, '创建流程'),
@@ -210,18 +207,18 @@
             error ? h('div', { role: 'alert', style: { marginTop: '16px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
             h('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: '24px' } },
               h('button', { type: 'button', onClick: step === 0 ? onBack : () => setStep(step - 1), style: buttonStyle() }, step === 0 ? '取消' : '上一步'),
-              step < 3 ? h('button', { type: 'button', disabled: !canNext, onClick: () => setStep(step + 1), style: { ...buttonStyle(), color: canNext ? 'var(--dsw-static-neutral-00, #fff)' : BRAND.inkMuted, background: canNext ? BRAND.primaryFill : BRAND.accentSoft, borderColor: canNext ? 'transparent' : BRAND.border } }, '下一步') : h('button', { type: 'button', disabled: saving || !canNext, onClick: create, style: { ...buttonStyle(), color: saving || !canNext ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: saving || !canNext ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !canNext ? BRAND.border : 'transparent' } }, saving ? '保存中…' : editing ? '保存 Agent' : mode === 'one-click' ? '一键创建并开始使用' : '快速创建并开始使用'))
+              step < 3 ? h('button', { type: 'button', disabled: !canNext, onClick: () => setStep(step + 1), style: { ...buttonStyle(), color: canNext ? 'var(--dsw-static-neutral-00, #fff)' : BRAND.inkMuted, background: canNext ? BRAND.primaryFill : BRAND.accentSoft, borderColor: canNext ? 'transparent' : BRAND.border } }, '下一步') : h('button', { type: 'button', disabled: saving || !canNext, onClick: create, style: { ...buttonStyle(), color: saving || !canNext ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: saving || !canNext ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !canNext ? BRAND.border : 'transparent' } }, saving ? '保存中…' : editing ? '保存 Agent' : '创建 Agent'))
           )
         )
       );
     }
 
     function inputStyle() {
-      return { display: 'block', boxSizing: 'border-box', width: '100%', height: '36px', marginTop: '6px', padding: '0 10px', border: '1px solid ' + BRAND.border, borderRadius: '8px', color: BRAND.ink, background: 'var(--dsw-alias-bg-layer-1, #fbfdff)', fontSize: '12px' };
+      return { display: 'block', boxSizing: 'border-box', width: '100%', height: '36px', marginTop: '6px', padding: '0 10px', border: '1px solid ' + BRAND.controlBorder, borderRadius: '8px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px' };
     }
 
     function buttonStyle() {
-      return { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '8px 12px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px', fontWeight: 700, cursor: 'pointer' };
+      return { border: '1px solid ' + BRAND.controlBorder, borderRadius: '9px', padding: '8px 12px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px', fontWeight: 700, cursor: 'pointer' };
     }
 
     function pagerButtonStyle(disabled = false) {

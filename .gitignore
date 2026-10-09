@@ -64,3 +64,4 @@ typings/
 
 # Browser acceptance artifacts
 output/playwright/
+.playwright-cli/

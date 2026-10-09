@@ -1,12 +1,10 @@
     function AgentWorkspace({ onNavigate }) {
       const [view, setView] = useState('list');
       const [tab, setTab] = useState('local');
-      const [createMode, setCreateMode] = useState('quick');
       const [created, setCreated] = useState(null);
       const [editingAgent, setEditingAgent] = useState(null);
       if (view === 'create') {
         return h(AgentCreatePage, {
-          mode: createMode,
           onBack: () => setView('list'),
           onCreated: agent => { setCreated(agent); setTab('local'); setView('list'); },
         });
@@ -24,7 +22,7 @@
         onTabChange: setTab,
         onEdit: agent => { setEditingAgent(agent?.metadata?.id || agent.id); setView('edit'); },
         onBindAgent: agent => window.__AGENTKIT_STUDIO_BIND_AGENT__?.(agent?.metadata?.id || agent?.id),
-        onCreate: mode => { setCreated(null); if (mode === 'conversation') window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring')); else { setCreateMode(mode); setView('create'); } },
+        onCreate: mode => { setCreated(null); if (mode === 'conversation') window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring')); else setView('create'); },
       });
     }
 
@@ -139,17 +137,16 @@
         tab === 'runtime' ? null : h(React.Fragment, null,
         h('section', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap', border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '18px', background: BRAND.surface, marginBottom: '18px' } },
           h('div', null,
-            h('div', { style: { color: BRAND.ink, fontSize: '15px', fontWeight: 800 } }, '从最短路径创建 Agent'),
-            h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, marginTop: '5px' } }, '快速创建保留最少字段；一键创建使用内置模板；复杂编排可用多轮对话逐步生成并确认。')),
+            h('div', { style: { color: BRAND.ink, fontSize: '15px', fontWeight: 800 } }, '描述需求，创建 Agent'),
+            h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, marginTop: '5px' } }, '通过多轮对话完善提示词和资源绑定，确认草稿后创建；也可以直接手动配置。')),
           h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-            h('button', { type: 'button', onClick: () => onCreate('quick'), disabled: status !== 'ready', style: { height: '38px', border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '0 14px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px', fontWeight: 800 } }, '快速创建'),
-            h('button', { type: 'button', onClick: () => onCreate('conversation'), disabled: status !== 'ready', style: { height: '38px', border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '0 14px', color: BRAND.ink, background: BRAND.surface, fontSize: '12px', fontWeight: 800 } }, '对话创建'),
-            h('button', { type: 'button', onClick: () => onCreate('one-click'), disabled: status !== 'ready', style: { height: '38px', border: 0, borderRadius: '9px', padding: '0 14px', color: 'var(--dsw-static-neutral-00, #fff)', background: status !== 'ready' ? 'var(--dsw-alias-label-tertiary, #aab7c4)' : BRAND.primaryFill, fontSize: '12px', fontWeight: 800 } }, '一键创建'))),
+            h('button', { type: 'button', onClick: () => onCreate('conversation'), disabled: status !== 'ready', style: { ...buttonStyle(), height: '38px', padding: '0 14px', color: 'var(--dsw-static-neutral-00, #fff)', background: status !== 'ready' ? 'var(--dsw-alias-label-tertiary, #aab7c4)' : BRAND.primaryFill, borderColor: 'transparent' } }, '对话创建'),
+            h('button', { type: 'button', onClick: () => onCreate('manual'), disabled: status !== 'ready', style: { ...buttonStyle(), height: '38px', padding: '0 14px' } }, '手动配置'))),
         created ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '11px 13px', borderRadius: '10px', color: BRAND.accentStrong, background: BRAND.accentSoft, fontSize: '12px' } }, `${created.updated ? '已保存' : '已创建'} ${created.name || created.id}，Revision ${created.revision || 1}。可在编辑页调整绑定，在运行中心构建。`) : null,
         status === 'loading' ? h(EmptyState, { icon: '·', title: directServerMode ? '正在读取 AgentEngine Server' : '正在读取 Host', detail: directServerMode ? '从 AgentEngine Server 读取 Agent Catalog 和运行时能力。' : '从 DSH Host 读取 Agent Catalog 和运行时能力。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: directServerMode ? 'AgentEngine Server 不可达' : 'Host 尚未连接', detail: error || (directServerMode ? '请检查全局 ~/.agentkit 配置、云端凭证和网络；当前不会回退到本地 DSH Host。' : '启动本地 DSH Host 后点击刷新。'), action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新连接') }) : null,
         catalogWarnings.length ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, catalogWarnings.map(item => item.message || item).join(' ')) : null,
-        status === 'ready' && agents.length === 0 && !query.trim() ? h(EmptyState, { icon: '✦', title: tab === 'cloud' ? '暂无 Studio 云端部署' : '还没有 Agent', detail: tab === 'cloud' ? '在运行中心将本地构建部署到云端；这里只展示当前账号下的 Studio 部署。' : '使用快速创建或一键创建生成第一个 Agent。' }) : null,
+        status === 'ready' && agents.length === 0 && !query.trim() ? h(EmptyState, { icon: '✦', title: tab === 'cloud' ? '暂无 Studio 云端部署' : '还没有 Agent', detail: tab === 'cloud' ? '在运行中心将本地构建部署到云端；这里只展示当前账号下的 Studio 部署。' : '描述你希望 Agent 完成的任务，或手动填写配置。' }) : null,
         status === 'ready' && (agents.length > 0 || query.trim()) && filteredAgents.length === 0 ? h(EmptyState, { icon: '⌕', title: '没有匹配的 Agent', detail: '调整搜索词或状态筛选。' }) : null,
         agentTable));
     }

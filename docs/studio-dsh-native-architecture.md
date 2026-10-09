@@ -92,7 +92,7 @@ Studio 负责四个产品域：
 | 运行中心 | Run、评测、观测、Channel、Schedule、构建和部署 | 二级导航，所有动作有 server/Host API |
 | 会话 | 无 Agent 的 DSH 对话或绑定 Agent 的 canonical 对话 | DSH 原生会话页投影 |
 
-快速创建和一键创建是独立创建页的两种入口；复杂编排、资源绑定、从对话生成 Agent 或 Schedule 可以在对话页通过自然语言触发，但最终仍必须落 Agent/Revision/ResourceBinding/Build/Deployment 记录。任何“创建成功”提示都必须能回查这些记录。
+Agent 创建提供“对话创建”和“手动配置”：多轮对话完善 Host 草稿，明确确认后保存；手动填写提示词、资源和策略，模板作为可选起点。复杂编排和 Schedule 可以在对话页通过自然语言触发，但最终仍必须落 Agent/Revision/ResourceBinding/Build/Deployment 记录。任何“创建成功”提示都必须能回查这些记录。
 
 ### 3.3 统一 SessionPort（合并原 KsADKSessionPort 与 SessionPort）
 
@@ -371,7 +371,7 @@ Studio 切换为直连 server + DSH provider 后，按 §11.2 删除旧 Studio U
 
 ### Step 4：产品收口
 
-完成 Agent 独立创建/编辑页、资源生命周期、快速创建/一键创建、Agent 详情对话、真实 Run 流式回显、评测、观测、Channel、Schedule 和云部署。
+完成 Agent 独立创建/编辑页、资源生命周期、对话创建/手动配置、Agent 详情对话、真实 Run 流式回显、评测、观测、Channel、Schedule 和云部署。
 
 ### Step 5：端云协同
 

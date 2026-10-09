@@ -429,8 +429,13 @@
       const [saving, setSaving] = useState(false);
       const [error, setError] = useState('');
       const [message, setMessage] = useState('');
+      const [historyLimit, setHistoryLimit] = useState(5);
+      const [agentLoading, setAgentLoading] = useState(false);
+      const [deploymentBusy, setDeploymentBusy] = useState(false);
+      const agentRequest = useRef(0);
 
       const load = async (preferredAgent = selectedAgent) => {
+        const request = ++agentRequest.current;
         setStatus('loading');
         setError('');
         try {
@@ -438,6 +443,7 @@
             hostRemote.agents({ source: 'local', pageSize: 100 }), hostRemote.deployments(), hostRemote.operations(),
           ]);
           const nextAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
+          if (request !== agentRequest.current) return;
           const nextAgent = preferredAgent && nextAgents.some(item => (item?.metadata?.id || item?.id) === preferredAgent)
             ? preferredAgent : (nextAgents[0]?.metadata?.id || nextAgents[0]?.id || '');
           setAgents(nextAgents);
@@ -452,23 +458,27 @@
           // truth as the build mutation route.
           const current = nextAgents.find(item => (item?.metadata?.id || item?.id) === nextAgent);
           const detail = nextAgent ? await hostRemote.agent(nextAgent) : null;
+          if (request !== agentRequest.current) return;
           const builds = Array.isArray(detail?.builds) ? detail.builds : (Array.isArray(current?.builds) ? current.builds : []);
           if (nextAgent && detail) {
             setAgents(nextAgents.map(item => (item?.metadata?.id || item?.id) === nextAgent ? { ...item, ...detail } : item));
           }
-          const readyBuild = builds.find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED') || builds[0];
+          const readyBuild = [...builds].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
           setSelectedBuild(String(readyBuild?.id || ''));
           setStatus('ready');
         } catch (reason) {
+          if (request !== agentRequest.current) return;
           setStatus('error');
           setError(reason?.message || '构建与部署状态不可用');
         }
       };
-      useEffect(() => { void load(); }, []);
+      useEffect(() => { void load(); return () => { agentRequest.current++; }; }, []);
 
       const currentAgent = agents.find(item => (item?.metadata?.id || item?.id) === selectedAgent);
-      const builds = Array.isArray(currentAgent?.builds) ? currentAgent.builds : [];
+      const builds = [...(Array.isArray(currentAgent?.builds) ? currentAgent.builds : [])].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       const readyBuilds = builds.filter(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
+      const deliveryBusy = saving || deploymentBusy;
+      const visibleOperations = operations.filter(item => !item.resourceId || item.resourceId === selectedAgent);
       const canRunBuild = currentAgent?.metadata?.local === true;
       const idempotency = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
       const waitForOperation = async operationId => {
@@ -485,22 +495,26 @@
         return latest;
       };
       const chooseAgent = event => {
+        const request = ++agentRequest.current;
         const id = event.target.value;
         setSelectedAgent(id);
         setSelectedBuild('');
+        setHistoryLimit(5); setError(''); setMessage(''); setAgentLoading(true);
         const nextAgent = agents.find(item => (item?.metadata?.id || item?.id) === id);
         const knownBuilds = Array.isArray(nextAgent?.builds) ? nextAgent.builds : [];
-        const knownReady = knownBuilds.find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED') || knownBuilds[0];
+        const knownReady = [...knownBuilds].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
         if (knownReady) setSelectedBuild(String(knownReady.id || ''));
         // Agent list rows do not carry build history. Hydrate the newly
         // selected row so switching targets does not regress to an empty
         // deployment selector.
         void hostRemote.agent(id).then(detail => {
+          if (request !== agentRequest.current) return;
           const detailBuilds = Array.isArray(detail?.builds) ? detail.builds : [];
           setAgents(previous => previous.map(item => (item?.metadata?.id || item?.id) === id ? { ...item, ...detail } : item));
-          const ready = detailBuilds.find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED') || detailBuilds[0];
+          const ready = [...detailBuilds].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
           setSelectedBuild(String(ready?.id || ''));
-        }).catch(() => { /* the selected agent remains usable for a new build */ });
+        }).catch(reason => { if (request === agentRequest.current) setError(reason?.message || '版本读取失败，请重试'); })
+          .finally(() => { if (request === agentRequest.current) setAgentLoading(false); });
       };
       const createBuild = async () => {
         if (!selectedAgent || saving) return;
@@ -513,7 +527,7 @@
           if (String(operation?.status || '').toLowerCase() === 'failed') throw new Error(operation?.result?.message || 'Build 执行失败');
           if (String(operation?.status || '').toLowerCase() === 'cancelled') throw new Error('构建已取消');
           const buildId = operation?.result?.buildId || result?.buildId || result?.id || '';
-          setMessage(buildId ? `Build 已完成：${buildId}` : 'Build 已提交，正在等待 Host 完成');
+          setMessage(buildId ? '构建完成，已选中新版本，可以检查部署。' : '构建已提交，正在等待 Host 完成');
           await load(selectedAgent);
         } catch (reason) { setError(reason?.message || 'Build 提交失败'); }
         finally { setSaving(false); }
@@ -565,23 +579,31 @@
         } catch (reason) { setMessage(''); setError(reason?.message || '运行包导出失败'); }
         finally { setSaving(false); }
       };
-      const buildRows = builds.length ? builds.map(item => h('tr', { key: item.id, style: { borderBottom: '1px solid ' + BRAND.border } },
-        h('td', { style: { padding: '10px 12px', color: BRAND.ink, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px' } }, item.id || '—'),
-        h('td', { style: { padding: '10px 12px', color: BRAND.inkMuted } }, item.revision ? `Revision ${item.revision}` : '—'),
-        h('td', { style: { padding: '10px 12px' } }, h(Pill, { tone: String(item.status || '').toUpperCase() === 'SUCCEEDED' ? 'accent' : 'signal' }, item.status || 'UNKNOWN')),
+      const buildRows = builds.length ? builds.slice(0, historyLimit).map(item => h('tr', { key: item.id, style: { borderBottom: '1px solid ' + BRAND.border } },
+        h('td', { style: { padding: '10px 12px', color: BRAND.ink } }, h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' } }, h('input', { type: 'radio', name: 'delivery-build', 'aria-label': `选择版本 ${item.revision} ${item.id.slice(-8)}`, checked: selectedBuild === item.id, disabled: deliveryBusy || agentLoading || String(item.status || '').toUpperCase() !== 'SUCCEEDED', onChange: () => setSelectedBuild(item.id) }), `版本 ${item.revision || '—'}`)),
+        h('td', { style: { padding: '10px 12px', color: BRAND.inkMuted }, title: item.id }, `${deliveryDate(item.createdAt)} · ${item.id.slice(-8)}`),
+        h('td', { style: { padding: '10px 12px' } }, h(Pill, { tone: String(item.status || '').toUpperCase() === 'SUCCEEDED' ? 'accent' : 'signal' }, String(item.status || '').toUpperCase() === 'SUCCEEDED' ? '构建成功' : item.status || 'UNKNOWN')),
         h('td', { style: { padding: '10px 12px', display: 'flex', gap: '6px' } }, canRunBuild && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => window.__AGENTKIT_STUDIO_BIND_AGENT__?.({ agentId: selectedAgent, buildId: item.id }), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '在新会话运行') : null, directServerMode && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', onClick: () => downloadBuild(item.id), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '下载定义 ZIP') : null, canRunBuild && directServerMode && String(item.status || '').toUpperCase() === 'SUCCEEDED' ? h('button', { type: 'button', disabled: saving, onClick: () => exportPortableBuild(item.id), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '导出运行包') : null))) : h('tr', null, h('td', { colSpan: 4, style: { padding: '18px 12px', color: BRAND.inkMuted } }, '当前 Agent 还没有 Build。'));
-      return h('div', null,
-        h(SectionHeading, { eyebrow: 'Studio domain / Delivery', title: '构建与部署', detail: directServerMode ? '冻结 Agent Revision，检查绑定资源后部署到云端。' : 'Build 固化 Agent Revision；Deployment 只接受已成功的 Build，所有动作由本地 Host 通过异步 operation 承载。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中') }),
+      return h('div', { style: { maxWidth: '1120px', margin: '0 auto' } },
+        h(SectionHeading, { title: '构建与部署', detail: '选择 Agent 和版本，检查配置后发布到云端。' }),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
         status === 'error' ? h(EmptyState, { icon: '!', title: '交付状态不可用', detail: error, action: h('button', { type: 'button', onClick: () => load(), style: buttonStyle() }, '重新读取') }) : null,
         status === 'ready' ? h(React.Fragment, null,
-          h('section', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '12px', alignItems: 'end', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
-            h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '目标 Agent', h('select', { value: selectedAgent, onChange: chooseAgent, style: inputStyle() }, agents.map(item => { const id = item?.metadata?.id || item?.id; return h('option', { key: id, value: id }, `${item?.metadata?.name || item?.name || id} · ${id}`); }))),
-            h('button', { type: 'button', onClick: createBuild, disabled: saving || !selectedAgent, style: { ...buttonStyle(), color: saving || !selectedAgent ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: saving || !selectedAgent ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !selectedAgent ? BRAND.border : 'transparent' } }, saving ? '提交中…' : '构建当前 Revision')),
-          h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '14px', overflow: 'hidden', background: BRAND.surface } },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid ' + BRAND.border } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, 'Build 历史'), h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, `${builds.length} 个`)),
-            h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } }, h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas } }, ['Build', '版本', '状态', '操作'].map(label => h('th', { key: label, style: { padding: '10px 12px', fontWeight: 750 } }, label)))), h('tbody', null, buildRows))),
-          directServerMode ? h(CloudDeploymentPanel, { key: selectedAgent, agentId: selectedAgent, builds: readyBuilds, selectedBuild, onBuildChange: setSelectedBuild }) : h('section', { style: { marginTop: '14px', display: 'grid', gap: '12px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
+          h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '18px', background: BRAND.surface } },
+            h(DeliveryStep, { number: '1', title: '选择 Agent', detail: '仅展示本地创建的 Agent。' }),
+            h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
+              h('select', { 'aria-label': '目标 Agent', value: selectedAgent, onChange: chooseAgent, disabled: deliveryBusy, style: { ...inputStyle(), flex: '1 1 240px' } }, agents.length ? agents.map(item => { const id = item?.metadata?.id || item?.id; return h('option', { key: id, value: id }, item?.metadata?.name || item?.name || id); }) : h('option', { value: '' }, '暂无本地 Agent')),
+              currentAgent ? h('span', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, `${RUNTIME_LABELS[currentAgent.spec?.runtime?.type] || 'Agent'} · 当前版本 ${currentAgent.metadata?.revision || '—'}`) : null)),
+          h('section', { style: { marginTop: '14px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '18px', background: BRAND.surface } },
+            h(DeliveryStep, { number: '2', title: '选择构建版本', detail: '构建保存当前提示词、模型和资源绑定，部署后使用这个冻结版本。' }),
+            h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },
+              h('label', { style: { flex: '1 1 240px' } }, h('select', { 'aria-label': '构建版本', value: selectedBuild, disabled: deliveryBusy || agentLoading || !readyBuilds.length, onChange: event => setSelectedBuild(event.target.value), style: inputStyle() }, h('option', { value: '' }, agentLoading ? '正在读取版本…' : readyBuilds.length ? '选择成功的版本' : '尚无构建版本'), readyBuilds.map((item, index) => h('option', { key: item.id, value: item.id }, `版本 ${item.revision} · ${deliveryDate(item.createdAt)}${index === 0 ? ' · 最新构建' : ''}`)))),
+              h('button', { type: 'button', onClick: createBuild, disabled: deliveryBusy || agentLoading || !selectedAgent, style: buttonStyle() }, saving ? '构建中…' : '构建当前版本')),
+            h('details', { style: { marginTop: '16px' } },
+              h('summary', { style: { color: BRAND.inkMuted, fontSize: '12px', cursor: 'pointer' } }, `构建历史（${builds.length}）`),
+              h('div', { style: { overflowX: 'auto', marginTop: '12px' } }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } }, h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas } }, ['版本', '构建时间', '状态', '操作'].map(label => h('th', { key: label, style: { padding: '10px 12px', fontWeight: 650 } }, label)))), h('tbody', null, buildRows))),
+              builds.length > historyLimit ? h('button', { type: 'button', onClick: () => setHistoryLimit(historyLimit + 5), style: { ...buttonStyle(), marginTop: '12px' } }, '显示更多版本') : null)),
+          directServerMode ? h(CloudDeploymentPanel, { key: selectedAgent, agentId: selectedAgent, selectedBuild: agentLoading ? '' : selectedBuild, onBusyChange: setDeploymentBusy }) : h('section', { style: { marginTop: '14px', display: 'grid', gap: '12px', border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } },
             h('div', { style: { color: BRAND.ink, fontWeight: 800, fontSize: '14px' } }, '部署已成功的 Build'),
             directServerMode ? h('div', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, padding: '10px 12px', borderRadius: '9px', background: BRAND.canvas } }, '可导出运行包，在独立 Studio Host 中导入运行。包内包含导出时的模型、MCP 配置与 Skill 文件；目标环境需注入凭证，并能访问知识库、记忆库等远程服务。云端发布尚未接入。') : null,
             h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 1fr 1fr auto', gap: '9px', alignItems: 'end' } },
@@ -591,7 +613,7 @@
               h('button', { type: 'button', onClick: createDeployment, disabled: directServerMode || saving || !selectedBuild, style: { ...buttonStyle(), color: directServerMode || saving || !selectedBuild ? BRAND.inkMuted : 'var(--dsw-static-neutral-00, #fff)', background: directServerMode || saving || !selectedBuild ? BRAND.accentSoft : BRAND.primaryFill, borderColor: directServerMode || saving || !selectedBuild ? BRAND.border : 'transparent' } }, directServerMode ? '云端发布未接入' : '提交部署'))),
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px', marginTop: '14px' } },
             !directServerMode ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, '部署记录'), deployments.length ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '12px' } }, deployments.slice(0, 8).map(item => h('div', { key: item.id, style: { display: 'flex', justifyContent: 'space-between', gap: '8px', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, item.id || '—'), h(Pill, { tone: item.status === 'READY' ? 'accent' : 'signal' }, item.status || 'UNKNOWN')))) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '暂无部署记录。')) : null,
-            h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } }, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, '异步操作'), operations.length ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '12px' } }, operations.slice(0, 8).map(item => h('div', { key: item.id, style: { display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, `${item.kind || item.type || 'operation'} · ${item.status || 'UNKNOWN'}`), (directServerMode ? ['QUEUED'] : ['RUNNING', 'PENDING', 'ADMITTING', 'DEPLOYING']).includes(String(item.status || '').toUpperCase()) ? h('button', { type: 'button', onClick: () => cancel(item.id), style: { ...buttonStyle(), padding: '4px 7px', fontSize: '10px' } }, '取消') : null))) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '暂无异步操作。'))),
+            h('details', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px', background: BRAND.surface } }, h('summary', { style: { cursor: 'pointer', color: BRAND.inkMuted, fontSize: '12px' } }, '操作记录'), visibleOperations.length ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '12px' } }, visibleOperations.slice(0, 8).map(item => h('div', { key: item.id, style: { display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, `${item.kind || item.type || 'operation'} · ${item.status || 'UNKNOWN'}`), (directServerMode ? ['QUEUED'] : ['RUNNING', 'PENDING', 'ADMITTING', 'DEPLOYING']).includes(String(item.status || '').toUpperCase()) ? h('button', { type: 'button', onClick: () => cancel(item.id), style: { ...buttonStyle(), padding: '4px 7px', fontSize: '10px' } }, '取消') : null))) : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '暂无操作记录。'))),
           message ? h('div', { role: 'status', style: { marginTop: '12px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
           error ? h('div', { role: 'alert', style: { marginTop: '12px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
         ) : null);
