@@ -231,19 +231,27 @@ test('operational pages keep the old Studio hierarchy without stacked duplicate 
   assert.match(clientSource, /消息记录 \$\{messages.length\}/);
 });
 
-test('Studio marketplace exposes the old Studio plugin lifecycle through Host routes', () => {
+test('Studio preserves Host plugin bridge routes and the Codex lifecycle adapter', () => {
   assert.match(clientSource, /dshPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/dsh-list'/);
   assert.match(clientSource, /codexPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/codex-list'/);
-  assert.match(clientSource, /hostRemote\.installDshPlugin/);
-  assert.match(clientSource, /hostRemote\.enableDshPlugin/);
-  assert.match(clientSource, /hostRemote\.disableDshPlugin/);
-  assert.match(clientSource, /hostRemote\.updateDshPlugin/);
-  assert.match(clientSource, /hostRemote\.uninstallDshPlugin/);
+  assert.match(clientSource, /installDshPlugin: /);
+  assert.match(clientSource, /enableDshPlugin: /);
+  assert.match(clientSource, /disableDshPlugin: /);
+  assert.match(clientSource, /updateDshPlugin: /);
+  assert.match(clientSource, /uninstallDshPlugin: /);
   assert.match(clientSource, /hostRemote\.installCodexPlugin/);
   assert.match(clientSource, /hostRemote\.uninstallCodexPlugin/);
-  assert.match(clientSource, /data-plugin-market/);
-  assert.match(clientSource, /pluginSection\('已安装'/);
-  assert.match(clientSource, /pluginSection\('插件目录'/);
+  assert.match(clientSource, /data-codex-plugin-center/);
+  assert.match(clientSource, /section\('已安装'/);
+  assert.match(clientSource, /section\('插件目录'/);
+});
+
+test('the official DSH plugin center is the only visible market and carries Codex as an official item', () => {
+  assert.match(clientSource, /ctx\.slots\.inject\('plugins\.item'/);
+  assert.match(clientSource, /agentkit-codex-plugin-market/);
+  assert.match(clientSource, /function CodexPluginMarketItem/);
+  assert.match(clientSource, /打开插件中心/);
+  assert.doesNotMatch(clientSource, /id: 'marketplace', label: '插件市场'/);
 });
 
 test('resource surface exposes real MCP and Skill lifecycle actions', () => {

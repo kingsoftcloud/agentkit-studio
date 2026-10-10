@@ -3,12 +3,12 @@
         try {
           const value = window.localStorage.getItem('agentkit-studio:resource-tab');
           if (value) window.localStorage.removeItem('agentkit-studio:resource-tab');
-          return value || 'models';
+          return value === 'runtime-resources' ? value : 'models';
         } catch { return 'models'; }
       });
       return h('div', null,
-        h(StudioSubnav, { value: tab, onChange: setTab, items: [{ id: 'models', label: '模型与工具' }, { id: 'marketplace', label: '插件市场' }, { id: 'runtime-resources', label: '运行资源' }] }),
-        tab === 'models' ? h(ResourcesPage) : tab === 'marketplace' ? h(MarketplacePage) : h(RuntimeResourcesPage));
+        h(StudioSubnav, { value: tab, onChange: setTab, items: [{ id: 'models', label: '模型与工具' }, { id: 'runtime-resources', label: '运行资源' }] }),
+        tab === 'models' ? h(ResourcesPage) : h(RuntimeResourcesPage));
     }
 
     function localDateTimeValue(value) {

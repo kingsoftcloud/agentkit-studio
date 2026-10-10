@@ -46,7 +46,7 @@ function harness() {
     scheduleOccurrences: async id => { calls.push(id); return { items: [] }; },
   };
   const window = { setInterval: callback => { intervals.add(callback); return callback; }, clearInterval: callback => intervals.delete(callback) };
-  const names = ['StudioSubnav', 'ResourcesPage', 'MarketplacePage', 'RuntimeResourcesPage', 'OperationalPageHeading', 'Pill', 'EmptyState', 'ResourceDialog', 'StudioPageTabs', 'OperationalPager', 'ScheduleDeliveryPicker', 'ScheduleDeliveryResult'];
+  const names = ['StudioSubnav', 'ResourcesPage', 'CodexPluginMarketItem', 'RuntimeResourcesPage', 'OperationalPageHeading', 'Pill', 'EmptyState', 'ResourceDialog', 'StudioPageTabs', 'OperationalPager', 'ScheduleDeliveryPicker', 'ScheduleDeliveryResult'];
   const Page = new Function('useState', 'useEffect', 'useRef', 'h', 'hostRemote', 'BRAND', 'React', 'buttonStyle', 'inputStyle', 'window', 'document', ...names, `${source}; return AutomationPage;`)(useState, useEffect, useRef, h, api, {}, { Fragment: 'fragment' }, () => ({}), () => ({}), window, { hidden: false }, ...names);
   const render = () => { cursor = 0; dirty = false; tree = Page({}); for (const effect of effects.splice(0)) effect(); return tree; };
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk), ...walk(node.props.action)] : [];

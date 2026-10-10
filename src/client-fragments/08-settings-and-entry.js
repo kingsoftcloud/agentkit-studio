@@ -32,6 +32,17 @@
     function apply(ctx) {
       ctx.uiConversation.events.register(codexToolDefinition);
       activeConnection = { rpc: ctx.connection.rpc };
+      // DSH owns the single global plugin center. Studio contributes Codex as
+      // an official plugin item through the public plugin-manager slot, so the
+      // existing Codex catalog stays available without a second DSH market.
+      ctx.slots.inject('plugins.item', () => ctx.slots.register({
+        name: 'plugins.item', id: 'agentkit-codex-plugin-market', order: 90, label: 'Codex 插件',
+      }, props => h(CodexPluginMarketItem, props)));
+      ctx.effect(() => {
+        const open = () => ctx.layout?.selectPanel?.('plugins');
+        window.addEventListener('agentkit-studio:open-plugin-center', open);
+        return () => window.removeEventListener('agentkit-studio:open-plugin-center', open);
+      }, 'agentkit-studio:plugin-center-navigation');
       // Schedule is a capability, not a hard requirement for the fixed
       // dsh-v0.2.0-rc.2 host. Older profiles can still expose the Studio
       // product surface and all model/agent/resource surfaces while the automation

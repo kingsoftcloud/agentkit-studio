@@ -680,7 +680,7 @@ window.__ModuleLoader__.load({
     const PANELS = [
       { id: 'studio-overview', page: 'overview', label: '总览', note: '工作区状态', glyph: '⌂' },
       { id: 'studio-agents', page: 'agents', label: 'Agents', note: '创建与版本', glyph: '✦' },
-      { id: 'studio-resources', page: 'resource-hub', label: '资源库', note: '模型、工具与插件', glyph: '◈' },
+      { id: 'studio-resources', page: 'resource-hub', label: '资源库', note: '模型、工具与运行资源', glyph: '◈' },
       { id: 'studio-operations', page: 'operations', label: '运行中心', note: '构建、部署与观测', glyph: '↗' },
     ];
 

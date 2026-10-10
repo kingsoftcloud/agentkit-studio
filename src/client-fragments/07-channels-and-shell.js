@@ -371,10 +371,6 @@
         [data-agentkit-studio="product-application"] [data-studio-content-intro] { flex-wrap: wrap; align-items: flex-start; }
         [data-studio-model-settings] { container-type: inline-size; }
         [data-studio-model-settings] input, [data-studio-model-settings] select { min-width: 0; box-sizing: border-box; }
-        [data-plugin-market] [data-studio-heading] h2 { font-size: 30px !important; font-weight: 650; }
-        [data-plugin-market] [data-studio-heading] p { font-size: 16px !important; }
-        [data-plugin-row]:hover { background: var(--dsw-alias-bg-layer-2, #f7f8fa) !important; }
-        [data-plugin-row] button:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4b73e8); outline-offset: 4px; }
         @container (max-width: 540px) {
           [data-studio-model-settings] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
         }
