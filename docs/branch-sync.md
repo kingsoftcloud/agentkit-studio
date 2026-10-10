@@ -6,6 +6,11 @@ as intake only. The approved change is imported into the internal merge request 
 becomes a canonical commit. A synchronization job then fast-forwards GitHub
 to that exact commit. Neither job performs a force push.
 
+The production mirror is `kingsoftcloud/agentkit-studio`, represented locally
+by `upstream/main`. `AgentArcLab/agentkit-studio` (`github/main`) is a
+development fork and is not the production parity target. The parity workflow
+runs only in the production mirror repository.
+
 Both forges run the same repository-owned gate:
 
 ```sh
@@ -27,7 +32,7 @@ refs:
 ```sh
 make ref-parity \
   PARITY_LEFT_REMOTE=ezone PARITY_LEFT_REF=refs/heads/master \
-  PARITY_RIGHT_REMOTE=github PARITY_RIGHT_REF=refs/heads/main
+  PARITY_RIGHT_REMOTE=upstream PARITY_RIGHT_REF=refs/heads/main
 ```
 
 If the refs diverge, synchronization stops. A one-time baseline reset may be

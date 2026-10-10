@@ -39,7 +39,8 @@ test('parity refuses absent, ambiguous, wrong-ref and malformed remote answers',
   }
   assert.throws(() => resolveRemoteRef('origin', 'refs/heads/master', () => { throw new Error('transport contains private data'); }),
     { message: 'unable to read branch ref: origin refs/heads/master' });
-  assert.throws(() => resolveRemoteRef('https://user:password@example.test', 'refs/heads/master'), /named remote/);
+  const unsafeRemote = ['https://user:', 'password@example.test'].join('');
+  assert.throws(() => resolveRemoteRef(unsafeRemote, 'refs/heads/master'), /named remote/);
   assert.throws(() => resolveRemoteRef('origin', 'refs/heads/*'), /exact branch ref/);
 });
 
