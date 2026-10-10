@@ -14,7 +14,7 @@ export const FORBIDDEN_PATHS = [
   /(^|\/)(?:\.env(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.(?:p12|pfx|p8|key)|.*(?:credentials?|secrets?|tokens?)\.(?:json|ya?ml|toml|ini|env)|.*private[-_]?key.*)$/i,
 ];
 
-// These patterns intentionally target high-confidence private material. Public
+// These patterns intentionally target high-confidence private material.
 // Public service endpoints and short test placeholders are allowed; Gitleaks remains
 // the entropy-aware secret scanner for provider-specific credentials.
 const PRIVATE_MARKERS = [
@@ -83,10 +83,10 @@ async function readRegularFile(file) {
   return readFile(file);
 }
 
-export function trackedFiles() {
-  return execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8' })
+export function trackedFiles(root = process.cwd()) {
+  return [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8', cwd: root })
     .split('\0')
-    .filter(Boolean);
+    .filter(Boolean))];
 }
 
 export async function run() {

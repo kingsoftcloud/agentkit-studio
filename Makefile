@@ -57,7 +57,7 @@ doctor:
 cloud-identity:
 	node scripts/check-cloud-identity.mjs
 
-.PHONY: check test pack public-surface-audit public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package desktop-package-mac-arm64-unsigned ci clean
@@ -73,7 +73,17 @@ public-surface-audit:
 
 # Shared by the internal forge and GitHub. Keep this target free of remote
 # writes; parity is a separate read-only check below.
-public-gate: public-surface-audit check patch-format-check pack
+secret-scan:
+	node scripts/secret-scan.mjs
+
+# Sequential sub-makes also keep make -j from packing before source/security
+# admission or racing client rebuilds against the audit.
+public-gate:
+	$(MAKE) public-surface-audit
+	$(MAKE) secret-scan
+	$(MAKE) check
+	$(MAKE) patch-format-check
+	$(MAKE) pack
 	node scripts/check-package.mjs "$(PLUGIN_TARBALL)"
 	git diff --check
 

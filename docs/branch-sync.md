@@ -2,7 +2,7 @@
 
 The internal forge `master` and GitHub `main` are protected refs. The internal
 forge is the canonical merge authority; GitHub accepts external pull requests
-but the approved change is imported into the internal merge request before it
+as intake only. The approved change is imported into the internal merge request before it
 becomes a canonical commit. A synchronization job then fast-forwards GitHub
 to that exact commit. Neither job performs a force push.
 
@@ -17,8 +17,9 @@ patch format, package contents, and `git diff --check`. The repository's
 Gitleaks job adds entropy-aware secret detection. The internal CI entrypoint is
 [`ci/ezone-public-gate.sh`](../ci/ezone-public-gate.sh); set
 `RUN_REF_PARITY=1` only for the post-merge parity job.
-The Ezone runner must install Gitleaks; the entrypoint fails closed when the
-secret scanner is unavailable.
+Both runners use the pinned Gitleaks `8.30.1` binary through
+[`ci/install-gitleaks.sh`](../ci/install-gitleaks.sh); the entrypoint fails
+closed when the scanner cannot be installed or verified.
 
 Parity is read-only and compares the exact commit IDs of the two protected
 refs:

@@ -31,3 +31,19 @@ test('remote ref parity supports explicit forge and branch names', () => {
     rightRef: 'refs/heads/main',
   });
 });
+
+test('parity refuses absent, ambiguous, wrong-ref and malformed remote answers', () => {
+  const sha = 'a'.repeat(40);
+  for (const output of ['', `${sha}\trefs/heads/main\n`, `${sha}\trefs/heads/master\n${sha}\trefs/heads/master\n`, 'invalid\trefs/heads/master\n']) {
+    assert.throws(() => resolveRemoteRef('origin', 'refs/heads/master', () => output), /not found or invalid/);
+  }
+  assert.throws(() => resolveRemoteRef('origin', 'refs/heads/master', () => { throw new Error('transport contains private data'); }),
+    { message: 'unable to read branch ref: origin refs/heads/master' });
+  assert.throws(() => resolveRemoteRef('https://user:password@example.test', 'refs/heads/master'), /named remote/);
+  assert.throws(() => resolveRemoteRef('origin', 'refs/heads/*'), /exact branch ref/);
+});
+
+test('parity succeeds only when both exact commit IDs match', () => {
+  const sha = 'a'.repeat(40);
+  assert.equal(assertParity({ sha }, { sha }), sha);
+});
