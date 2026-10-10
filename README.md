@@ -38,9 +38,13 @@ pnpm install --frozen-lockfile
 make check
 make pack
 make release-check
+make public-gate
 ```
 
 `make check` runs syntax, portability, source-size, contract, and product-surface checks. `make release-check` additionally validates package contents, DSH patch format, and archive integrity.
+`make public-gate` is the shared source, package, and public-surface gate used by
+both forge pipelines. The read-only [`branch-sync.md`](docs/branch-sync.md)
+contract describes the separate exact-ref parity check.
 
 The curated DSH plugin market can be verified against a real pinned Host in an isolated profile:
 

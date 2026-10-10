@@ -26,6 +26,10 @@ DESKTOP_PACKAGE = node scripts/package-desktop.mjs --source "$(DSH_ROOT)" --outp
 DESKTOP_ENV = DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DESKTOP_PRODUCT_ICON)" DSH_DESKTOP_PLUGIN_INPUTS="$(DESKTOP_PLUGIN_INPUTS)" DSH_DESKTOP_PLUGIN_ROOTS="$(DESKTOP_PLUGIN_ROOTS)" DSH_DESKTOP_PLUGIN_BUNDLES="$(DESKTOP_PLUGIN_BUNDLES)"
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
+PARITY_LEFT_REMOTE ?= origin
+PARITY_LEFT_REF ?= refs/heads/master
+PARITY_RIGHT_REMOTE ?= github
+PARITY_RIGHT_REF ?= refs/heads/main
 
 .PHONY: setup dev doctor cloud-identity
 # Sequential sub-makes also keep `make -j setup` from racing patch/build/profile writes.
@@ -53,7 +57,7 @@ doctor:
 cloud-identity:
 	node scripts/check-cloud-identity.mjs
 
-.PHONY: check test pack release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check test pack public-surface-audit public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package desktop-package-mac-arm64-unsigned ci clean
@@ -64,13 +68,25 @@ check:
 test:
 	pnpm test
 
+public-surface-audit:
+	node scripts/public-surface-audit.mjs
+
+# Shared by the internal forge and GitHub. Keep this target free of remote
+# writes; parity is a separate read-only check below.
+public-gate: public-surface-audit check patch-format-check pack
+	node scripts/check-package.mjs "$(PLUGIN_TARBALL)"
+	git diff --check
+
+ref-parity:
+	PARITY_LEFT_REMOTE="$(PARITY_LEFT_REMOTE)" PARITY_LEFT_REF="$(PARITY_LEFT_REF)" \
+	PARITY_RIGHT_REMOTE="$(PARITY_RIGHT_REMOTE)" PARITY_RIGHT_REF="$(PARITY_RIGHT_REF)" \
+	node scripts/check-ref-parity.mjs
+
 pack:
 	mkdir -p "$(PACK_DIR)"
 	pnpm pack --pack-destination "$(PACK_DIR)"
 
-release-check: check patch-format-check pack
-	node scripts/check-package.mjs "$(PLUGIN_TARBALL)"
-	git diff --check
+release-check: public-gate
 
 # Build inputs are committed sources, never a copy of a running development checkout.
 RUNTIME_SOURCES_DIR ?= $(PACK_DIR)/runtime-sources
@@ -212,7 +228,7 @@ desktop-check-package:
 
 # CI intentionally does not require cloud keys, Codex credentials or a DSH
 # checkout. The real node-store probe is a separately enabled integration job.
-ci: check pack
+ci: public-gate
 
 clean:
 	@test -d "$(PACK_DIR)" && find "$(PACK_DIR)" -maxdepth 1 -type f -delete || true

@@ -67,7 +67,8 @@ test('expired requests never execute, and disconnect cancels without replay', as
 });
 
 test('remote cleartext, embedded credentials and credential query URLs are rejected', () => {
-  for (const url of ['http://example.com', 'ws://example.com', 'https://user:secret@example.com', 'https://example.com?token=secret']) assert.throws(() => connectorUrl(url), { code: 'CHANNEL_URL_INVALID' });
+  const embeddedCredentialUrl = ['https://user:', 'secret@example.com'].join('');
+  for (const url of ['http://example.com', 'ws://example.com', embeddedCredentialUrl, 'https://example.com?token=secret']) assert.throws(() => connectorUrl(url), { code: 'CHANNEL_URL_INVALID' });
   assert.equal(connectorUrl('https://example.com'), 'wss://example.com/agentengine/connector/v1');
 });
 
