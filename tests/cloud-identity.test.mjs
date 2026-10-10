@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createCloudIdentityResolver } from '../src/cloud-identity.mjs';
 
 const values = { cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk' };
+const INNER_KOP_URL = 'http://kop.test';
+const INNER_IAM_URL = 'http://iam.test';
 const json = data => new Response(JSON.stringify(data));
 const listing = (entries = [{ AccessKeyId: 'test-ak', UserName: 'operator', Status: 'Active' }]) => ({ ListAccessKeyResult: { AccessKeyMetadata: { member: entries } } });
 const user = { UserName: 'operator', UserId: 'user-123', Krn: 'krn:ksc:iam::123456789:user/operator' };
@@ -112,21 +114,21 @@ test('cached identity must still match the currently configured account', async 
   assert.equal(calls, 2);
 });
 
-test('IAM uses the inner endpoint only after an explicit public denial or an explicit inner control plane', async () => {
+test('IAM uses the injected inner endpoint only after an explicit public denial or an explicit inner control plane', async () => {
   const hosts = [];
-  const resolver = createCloudIdentityResolver({ fetchImpl: async (url, init) => {
+  const resolver = createCloudIdentityResolver({ innerKopUrl: INNER_KOP_URL, innerIamUrl: INNER_IAM_URL, fetchImpl: async (url, init) => {
     hosts.push(new URL(url).origin);
     if (hosts.length === 1) return new Response('<Error><Code>InnerAccountCanOnlyAccessThroughIntranet</Code></Error>', { status: 403 });
     return new URLSearchParams(init.body).get('Action') === 'ListAccessKeys' ? json(listing()) : json({ GetUserResult: { User: user } });
   } });
   await resolver.resolve(values);
-  assert.deepEqual(hosts, ['https://iam.api.ksyun.com', 'http://iam.inner.api.ksyun.com', 'http://iam.inner.api.ksyun.com']);
+  assert.deepEqual(hosts, ['https://iam.api.ksyun.com', INNER_IAM_URL, INNER_IAM_URL]);
   hosts.length = 0;
-  const direct = createCloudIdentityResolver({ fetchImpl: async url => {
+  const direct = createCloudIdentityResolver({ innerKopUrl: INNER_KOP_URL, innerIamUrl: INNER_IAM_URL, fetchImpl: async url => {
     hosts.push(new URL(url).origin); return json(listing([{ AccessKeyId: 'test-ak', UserName: '', Status: 'Active' }]));
   } });
-  await direct.resolve({ ...values, cloudServerUrl: 'http://aicp.inner.api.ksyun.com' });
-  assert.deepEqual(hosts, ['http://iam.inner.api.ksyun.com']);
+  await direct.resolve({ ...values, cloudServerUrl: INNER_KOP_URL });
+  assert.deepEqual(hosts, [INNER_IAM_URL]);
 });
 
 test('network errors, redirects and generic denials neither leak service details nor downgrade to HTTP', async () => {
@@ -146,7 +148,7 @@ test('identity probes reject custom targets before sending any cloud credentials
   let calls = 0;
   const resolver = createCloudIdentityResolver({ fetchImpl: async () => { calls++; throw Error('must not send'); } });
   for (const cloudServerUrl of ['https://aicp.api.ksyun.com.attacker.invalid', 'http://aicp.api.ksyun.com',
-    'http://aicp.inner.api.ksyun.com:8080', 'https://aicp.api.ksyun.com/path', 'https://user@aicp.api.ksyun.com']) {
+    `${INNER_KOP_URL}:8080`, 'https://aicp.api.ksyun.com/path', 'https://user@aicp.api.ksyun.com']) {
     await assert.rejects(resolver.resolve({ ...values, cloudServerUrl }), { code: 'CLOUD_IDENTITY_TARGET_UNSUPPORTED' });
   }
   assert.equal(calls, 0);

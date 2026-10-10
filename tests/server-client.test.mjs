@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildCloudAgentUpdate, createAgentEngineClient, AgentEngineError } from '../src/server-client.mjs';
 
 function configuration(values) { return { resolve: async () => ({ values, sources: {} }) }; }
+const endpointOptions = { innerKopUrl: 'http://kop.test', innerIamUrl: 'http://iam.test' };
 
 test('server client sends existing local Action API without requiring KsADK', async () => {
   let request;
@@ -40,6 +41,7 @@ test('KOP calls fail closed when cloud credentials are missing', async () => {
 
 test('KOP calls copy the AWS4 Authorization header into fetch', async () => {
   const client = createAgentEngineClient({
+    ...endpointOptions,
     configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
     fetchImpl: async (_url, init) => {
       assert.match(init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
@@ -53,6 +55,7 @@ test('KOP calls copy the AWS4 Authorization header into fetch', async () => {
 test('KOP falls back to the intranet endpoint for inner-only accounts', async () => {
   const urls = [];
   const client = createAgentEngineClient({
+    ...endpointOptions,
     configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
     fetchImpl: async (url, init) => {
       urls.push(String(url));
@@ -62,12 +65,26 @@ test('KOP falls back to the intranet endpoint for inner-only accounts', async ()
     },
   });
   await client.listAgents();
-  assert.match(urls[1], /^http:\/\/aicp\.inner\.api\.ksyun\.com\//);
+  assert.match(urls[1], /^http:\/\/kop\.test\//);
+});
+
+test('inner-account denial stays failed closed when no runtime endpoint is injected', async () => {
+  let calls = 0;
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+    fetchImpl: async () => {
+      calls++;
+      return new Response(JSON.stringify({ Error: { Message: 'The inner account can only access through intranet' } }), { status: 403 });
+    },
+  });
+  await assert.rejects(() => client.listAgents(), { code: 'SERVER_ACTION_FAILED' });
+  assert.equal(calls, 1);
 });
 
 test('regular KOP Actions fall back when inner-account denial is XML', async () => {
   const urls = [];
   const client = createAgentEngineClient({
+    ...endpointOptions,
     configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
     fetchImpl: async (url, init) => {
       urls.push(String(url));
@@ -78,12 +95,13 @@ test('regular KOP Actions fall back when inner-account denial is XML', async () 
   });
   const result = await client.action('CreateSession', { AgentId: 'a1', SessionId: 's1' });
   assert.equal(result.data.SessionId, 's1');
-  assert.match(urls[1], /^http:\/\/aicp\.inner\.api\.ksyun\.com\//);
+  assert.match(urls[1], /^http:\/\/kop\.test\//);
 });
 
 test('pre-online region signs with the real control region and keeps the pre source marker', async () => {
   const headersSeen = [];
   const client = createAgentEngineClient({
+    ...endpointOptions,
     configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
     fetchImpl: async (_url, init) => {
       headersSeen.push(init.headers);
@@ -262,6 +280,7 @@ test('streamAction uses its longer runtime timeout instead of the JSON action ti
 test('streamAction falls back when KOP returns an XML inner-account denial', async () => {
   const urls = [];
   const client = createAgentEngineClient({
+    ...endpointOptions,
     configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
     fetchImpl: async (url, init) => {
       urls.push(String(url));
@@ -273,7 +292,7 @@ test('streamAction falls back when KOP returns an XML inner-account denial', asy
   const response = await client.streamAction('RunAgent', { AgentId: 'a1', SessionId: 's1', Stream: true });
   assert.equal(response.status, 200);
   assert.match(urls[0], /^https:\/\/aicp\.api\.ksyun\.com\//);
-  assert.match(urls[1], /^http:\/\/aicp\.inner\.api\.ksyun\.com\//);
+  assert.match(urls[1], /^http:\/\/kop\.test\//);
 });
 
 test('GetAgent uses the deployed framework when Basic omits it', async () => {

@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { createAgentEngineClient, createAgentEngineDeploymentClient } from '../src/server-client.mjs';
 
 const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' };
+const endpointOptions = { innerKopUrl: 'http://kop.test', innerIamUrl: 'http://iam.test' };
 const configuration = { resolve: async () => ({ values }) };
 const ok = data => new Response(JSON.stringify({ Code: 0, RequestId: 'server-request', Data: data }));
 // These tests exercise the control-plane transport. Identity-specific behavior
 // is covered separately through the same real deployment client.
 function deploymentClient(options) {
-  return createAgentEngineDeploymentClient({ ...options, fetchImpl: async (url, init) => {
+  return createAgentEngineDeploymentClient({ ...endpointOptions, ...options, fetchImpl: async (url, init) => {
     if (new URL(url).hostname.startsWith('iam.')) return Response.json(new URLSearchParams(init.body).get('Action') === 'GetUser'
       ? { GetUserResult: { User: { UserName: 'operator', UserId: 'verified-operator', Krn: 'krn:ksc:iam::123456789:user/operator' } } }
       : { ListAccessKeyResult: { AccessKeyMetadata: { member: [{ AccessKeyId: values.cloudAccessKey, UserName: 'operator', Status: 'Active' }] } } });
@@ -36,7 +37,7 @@ test('deployment create preserves preproduction signing and one correlation id o
   const payload = { Name: 'Studio canary', DeploymentType: 'Container', Framework: 'harness', AutoPay: true };
   assert.equal((await client.createAgent(payload, { requestId })).data.AgentId, 'ar-created');
   assert.equal(requests.length, 2);
-  assert.match(requests[1].url, /^http:\/\/aicp\.inner\.api\.ksyun\.com\//);
+  assert.match(requests[1].url, /^http:\/\/kop\.test\//);
   for (const { init } of requests) {
     assert.equal(init.headers['X-KSC-CUSTOM-SOURCE'], 'pre');
     assert.equal(init.headers['X-Ksc-Request-Id'], requestId);
@@ -96,15 +97,15 @@ test('explicit official inner endpoint is signed; lookalikes and other remote HT
   let calls = 0;
   const fetchImpl = async (url, init) => {
     calls++;
-    assert.equal(new URL(url).origin, 'http://aicp.inner.api.ksyun.com');
+    assert.equal(new URL(url).origin, endpointOptions.innerKopUrl);
     assert.match(init.headers.Authorization, /cn-beijing-6\/aicp\/aws4_request/);
     assert.equal(init.headers['X-KSC-CUSTOM-SOURCE'], 'pre');
     return ok({ Bucket: 'fixtures', ObjectKey: 'uploads/bundle.zip' });
   };
-  for (const cloudServerUrl of ['http://aicp.inner.api.ksyun.com', 'http://aicp.inner.api.ksyun.com.attacker.invalid', 'http://aicp.inner.api.ksyun.com:8080', 'http://example.invalid']) {
-    const client = createAgentEngineDeploymentClient({ configuration: { resolve: async () => ({ values: { ...values, cloudServerUrl } }) }, fetchImpl });
+  for (const cloudServerUrl of [endpointOptions.innerKopUrl, `${endpointOptions.innerKopUrl}.attacker.invalid`, `${endpointOptions.innerKopUrl}:8080`, 'http://example.invalid']) {
+    const client = createAgentEngineDeploymentClient({ ...endpointOptions, configuration: { resolve: async () => ({ values: { ...values, cloudServerUrl } }) }, fetchImpl });
     const result = client.getUploadUrl('bundle.zip');
-    if (cloudServerUrl === 'http://aicp.inner.api.ksyun.com') await result;
+    if (cloudServerUrl === endpointOptions.innerKopUrl) await result;
     else await assert.rejects(result, { code: 'SERVER_URL_INVALID' });
   }
   assert.equal(calls, 1);

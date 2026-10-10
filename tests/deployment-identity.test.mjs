@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createAgentEngineDeploymentClient } from '../src/server-client.mjs';
 
 const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AK-operator', cloudSecretKey: 'SK-operator' };
+const endpointOptions = { innerKopUrl: 'http://kop.test', innerIamUrl: 'http://iam.test' };
 const configuration = { resolve: async () => ({ values: { ...values } }) };
 const json = data => new Response(JSON.stringify(data));
 
@@ -19,7 +20,7 @@ function iamResponse(action) {
 test('deployment creation sends the IAM-verified operator in signed KOP headers', async () => {
   const calls = [];
   let sent;
-  const client = createAgentEngineDeploymentClient({ configuration, fetchImpl: async (url, init) => {
+  const client = createAgentEngineDeploymentClient({ ...endpointOptions, configuration, fetchImpl: async (url, init) => {
     const host = new URL(url).hostname;
     if (host.startsWith('iam.')) {
       const form = new URLSearchParams(init.body);
@@ -41,7 +42,7 @@ test('deployment creation sends the IAM-verified operator in signed KOP headers'
 
 test('an IAM failure prevents creation instead of silently dropping the operator', async () => {
   let creates = 0;
-  const client = createAgentEngineDeploymentClient({ configuration, fetchImpl: async (url) => {
+  const client = createAgentEngineDeploymentClient({ ...endpointOptions, configuration, fetchImpl: async (url) => {
     if (new URL(url).hostname.startsWith('iam.')) return new Response(JSON.stringify({ Error: { Code: 'AccessDenied', Message: 'private account details' } }), { status: 403 });
     creates++; return json({ Code: 0, Data: { AgentId: 'ar-should-not-exist' } });
   } });
@@ -54,7 +55,7 @@ test('an IAM failure prevents creation instead of silently dropping the operator
 
 test('update and delete carry the same verified identity; read-only diagnostics do not depend on IAM', async () => {
   const mutations = [], reads = []; let iamCalls = 0;
-  const client = createAgentEngineDeploymentClient({ configuration, fetchImpl: async (url, init) => {
+  const client = createAgentEngineDeploymentClient({ ...endpointOptions, configuration, fetchImpl: async (url, init) => {
     if (new URL(url).hostname.startsWith('iam.')) { iamCalls++; return iamResponse(new URLSearchParams(init.body).get('Action')); }
     const body = JSON.parse(init.body);
     if (['UpdateAgent', 'DeleteAgent'].includes(body.Action)) mutations.push(init);
@@ -75,7 +76,7 @@ test('update and delete carry the same verified identity; read-only diagnostics 
 
 test('preflight diagnoses a main account but transport blocks its creation', async () => {
   let sent;
-  const client = createAgentEngineDeploymentClient({ configuration: { resolve: async () => ({ values: { ...values, cloudAccountId: 'unverified-owner' } }) }, fetchImpl: async (url, init) => {
+  const client = createAgentEngineDeploymentClient({ ...endpointOptions, configuration: { resolve: async () => ({ values: { ...values, cloudAccountId: 'unverified-owner' } }) }, fetchImpl: async (url, init) => {
     if (new URL(url).hostname.startsWith('iam.')) return json({ ListAccessKeyResult: { AccessKeyMetadata: { member: [
       { AccessKeyId: values.cloudAccessKey, UserName: '', Status: 'Active' },
     ] } } });
@@ -91,7 +92,7 @@ test('preflight diagnoses a main account but transport blocks its creation', asy
 
 test('a mismatched configured account prevents deployment mutations', async () => {
   let mutations = 0;
-  const client = createAgentEngineDeploymentClient({ configuration: { resolve: async () => ({ values: { ...values, cloudAccountId: '987654321' } }) }, fetchImpl: async (url, init) => {
+  const client = createAgentEngineDeploymentClient({ ...endpointOptions, configuration: { resolve: async () => ({ values: { ...values, cloudAccountId: '987654321' } }) }, fetchImpl: async (url, init) => {
     if (new URL(url).hostname.startsWith('iam.')) return iamResponse(new URLSearchParams(init.body).get('Action'));
     mutations++; return json({ Code: 0, Data: {} });
   } });
@@ -104,7 +105,7 @@ test('a mismatched configured account prevents deployment mutations', async () =
 test('public-to-inner KOP fallback preserves the verified operator and correlation id', async () => {
   const requests = []; let iamCalls = 0;
   const requestId = 'ac8722e3-e512-4d2d-8176-614368294cdd';
-  const client = createAgentEngineDeploymentClient({ configuration, fetchImpl: async (url, init) => {
+  const client = createAgentEngineDeploymentClient({ ...endpointOptions, configuration, fetchImpl: async (url, init) => {
     if (new URL(url).hostname.startsWith('iam.')) { iamCalls++; return iamResponse(new URLSearchParams(init.body).get('Action')); }
     requests.push({ url, init });
     if (requests.length === 1) return new Response('<Message>The inner account can only access through intranet</Message>', { status: 403 });
@@ -113,7 +114,7 @@ test('public-to-inner KOP fallback preserves the verified operator and correlati
   await client.createAgent({ Name: 'inner-identity' }, { requestId });
   assert.equal(iamCalls, 2);
   assert.equal(requests.length, 2);
-  assert.equal(new URL(requests[1].url).origin, 'http://aicp.inner.api.ksyun.com');
+  assert.equal(new URL(requests[1].url).origin, endpointOptions.innerKopUrl);
   for (const { init } of requests) {
     assert.equal(init.headers['X-Ksc-User-uuid'], 'verified-subaccount');
     assert.equal(init.headers['X-Ksc-Account-Id'], '123456789');

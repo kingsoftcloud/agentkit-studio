@@ -2,8 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import aws4 from 'aws4';
 import { createCloudIdentityResolver } from './cloud-identity.mjs';
+import { createCloudEndpointPolicy } from './cloud-endpoints.mjs';
 
-const KOP_HOSTS = new Set(['aicp.api.ksyun.com', 'aicp.inner.api.ksyun.com', 'aicp.internal.api.ksyun.com']);
 const API_VERSION = '2024-06-12';
 
 export class AgentEngineError extends Error {
@@ -179,8 +179,13 @@ export function createAgentEngineDeploymentClient(options) {
 }
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
-function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '' }, allowedActions) {
-  const deploymentIdentity = allowedActions.has('CreateAgentProduct') ? createCloudIdentityResolver({ fetchImpl, timeoutMs }) : null;
+function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '', innerKopUrl = '', innerIamUrl = '' }, allowedActions) {
+  const endpoints = createCloudEndpointPolicy({ innerKopUrl, innerIamUrl });
+  const deploymentIdentity = allowedActions.has('CreateAgentProduct') ? createCloudIdentityResolver({ fetchImpl, timeoutMs, endpointPolicy: endpoints }) : null;
+  const resolveBase = (values, fallback = endpoints.publicKop) => {
+    try { return new URL(values.cloudServerUrl || serverUrl || fallback); }
+    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+  };
   async function inspectIdentity(options) {
     if (!deploymentIdentity) throw new AgentEngineError('ACTION_NOT_ALLOWED', '操作人核验仅用于部署客户端');
     const { values } = await configuration.resolve();
@@ -189,8 +194,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
   async function listLocalAgents({ page = 1, pageSize = 20, query = '' } = {}, options = {}) {
     const { values } = await configuration.resolve();
     let base;
-    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
-    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+    base = resolveBase(values);
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || !sessionToken) {
       throw new AgentEngineError('SERVER_ACTION_FAILED', '本地 Agent 列表接口不可用', { status: 404, action: 'ListAgents' });
     }
@@ -239,8 +243,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
   async function getLocalAgent(agentId, options = {}) {
     const { values } = await configuration.resolve();
     let base;
-    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
-    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+    base = resolveBase(values);
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || !sessionToken) {
       throw new AgentEngineError('SERVER_ACTION_FAILED', '本地 Agent 详情接口不可用', { status: 404, action: 'GetAgent' });
     }
@@ -271,19 +274,18 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw new AgentEngineError('INVALID_REQUEST_ID', '请求 ID 必须是 UUID');
     const { values } = await configuration.resolve();
     let base;
-    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
-    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+    base = resolveBase(values);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
     // The official inner AICP endpoint is HTTP, also used by the explicit
     // inner-account fallback below. An explicitly configured inner endpoint
     // must have the same contract; arbitrary remote HTTP origins stay denied.
-    const officialInner = base.hostname === 'aicp.inner.api.ksyun.com' && !base.port;
+    const officialInner = endpoints.isInnerKop(base);
     if (base.username || base.password || base.search || base.hash || base.pathname !== '/' ||
       (base.protocol !== 'https:' && !(base.protocol === 'http:' && (loopback || officialInner)))) {
       throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；HTTP 仅限本机或官方 AICP 内网入口');
     }
     const requestAgainst = async (requestBase, allowInnerFallback = true) => {
-      const kop = KOP_HOSTS.has(requestBase.hostname);
+      const kop = endpoints.isKop(requestBase);
       // `pre-online` is a logical environment, not a signing region: KOP and
       // AWS4 require a real region (cn-beijing-6) plus the X-KSC-CUSTOM-SOURCE
       // marker. Signing with the literal value makes KOP reject the request.
@@ -356,7 +358,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
       // a fresh cloud Session can be admitted before its first RunAgent.
       const xmlMessage = responseText.match(/<Message>([^<]{0,400})<\/Message>/i)?.[1] || '';
       const upstreamMessage = String(envelope?.Error?.Message || envelope?.Message || xmlMessage).toLowerCase();
-      if (allowInnerFallback && requestBase.hostname === 'aicp.api.ksyun.com' && response.status === 403 && upstreamMessage.includes('inner account')) {
+      if (allowInnerFallback && endpoints.isPublicKop(requestBase) && endpoints.innerKop && response.status === 403 && upstreamMessage.includes('inner account')) {
         // Some account keys are restricted to the intranet AICP endpoint. This
         // is endpoint selection, not a retry of a mutating action: reuse the
         // same request id only at the transport layer and never fallback on
@@ -364,7 +366,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
         // The intranet AICP endpoint serves plain HTTP on the inner network
         // (matching the legacy SDK client); HTTPS there presents a certificate
         // for another SAN and fails with ERR_TLS_CERT_ALTNAME_INVALID.
-        return requestAgainst(new URL('http://aicp.inner.api.ksyun.com'), false);
+        return requestAgainst(endpoints.innerKop, false);
       }
       if (!envelope) throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server 未返回有效 JSON', { status: response.status, action: name });
       const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk'].includes(name);
@@ -395,9 +397,8 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
     if (!SKILL_SERVICE_ACTIONS.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     const { values } = await configuration.resolve();
     let base;
-    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
-    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
-    if (!KOP_HOSTS.has(base.hostname)) throw new AgentEngineError('SKILL_SERVICE_UNAVAILABLE', 'Skill Service 需要 AICP 云端凭证');
+    base = resolveBase(values);
+    if (!endpoints.isKop(base)) throw new AgentEngineError('SKILL_SERVICE_UNAVAILABLE', 'Skill Service 需要 AICP 云端凭证');
     const controlRegion = values.cloudRegion?.toLowerCase() === 'pre-online' ? 'cn-beijing-6' : (values.cloudRegion || 'cn-beijing-6');
     const query = new URLSearchParams({ Action: name, Version: apiVersion });
     for (const [key, value] of Object.entries(params || {})) {
@@ -430,8 +431,8 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
       try { envelope = await response.json(); }
       catch { throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Skill Service 未返回有效 JSON', { status: response.status, action: name }); }
       const message = String(envelope?.Error?.Message || envelope?.Message || '').toLowerCase();
-      if (requestBase.hostname === 'aicp.api.ksyun.com' && response.status === 403 && message.includes('inner account')) {
-        return requestAgainst(new URL('http://aicp.inner.api.ksyun.com'));
+      if (endpoints.isPublicKop(requestBase) && endpoints.innerKop && response.status === 403 && message.includes('inner account')) {
+        return requestAgainst(endpoints.innerKop);
       }
       if (!response.ok || !envelope || ![0, 200].includes(Number(envelope.Code)) || envelope.Code == null) {
         const status = !response.ok ? response.status : Number(envelope?.Code) || 502;
@@ -450,16 +451,15 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
     if (!SERVER_ACTIONS.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     const { values } = await configuration.resolve();
     let base;
-    try { base = new URL(values.cloudServerUrl || serverUrl || 'https://aicp.api.ksyun.com'); }
-    catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
+    base = resolveBase(values);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
     if (base.username || base.password || base.search || base.hash || base.pathname !== '/' ||
-      (base.protocol !== 'https:' && !(base.protocol === 'http:' && loopback))) {
+      (base.protocol !== 'https:' && !(base.protocol === 'http:' && (loopback || endpoints.isInnerKop(base))))) {
       throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；仅本机开发允许 HTTP');
     }
     const body = JSON.stringify(payload);
     const requestBase = overrideBase || base;
-    const kop = KOP_HOSTS.has(requestBase.hostname);
+    const kop = endpoints.isKop(requestBase);
     const controlRegion = values.cloudRegion?.toLowerCase() === 'pre-online' ? 'cn-beijing-6' : (values.cloudRegion || 'cn-beijing-6');
     const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'X-Ksc-Request-Id': randomUUID(), 'X-Ksc-Region': controlRegion, 'X-Ksc-Source': 'agentkit-studio' };
     if (values.cloudAccountId) headers['X-Ksc-Account-Id'] = values.cloudAccountId;
@@ -499,8 +499,8 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
       // response body to the renderer.
       const xmlMessage = text.match(/<Message>([^<]{0,400})<\/Message>/i)?.[1] || '';
       const upstreamMessage = String(envelope?.Error?.Message || envelope?.Message || xmlMessage).toLowerCase();
-      if (requestBase.hostname === 'aicp.api.ksyun.com' && response.status === 403 && upstreamMessage.includes('inner account')) {
-        return streamAction(name, payload, { signal }, new URL('http://aicp.inner.api.ksyun.com'));
+      if (endpoints.isPublicKop(requestBase) && endpoints.innerKop && response.status === 403 && upstreamMessage.includes('inner account')) {
+        return streamAction(name, payload, { signal }, endpoints.innerKop);
       }
       throw new AgentEngineError('SERVER_ACTION_FAILED', `${name} 请求失败（${response.status}）`, { status: response.status, requestId: String(envelope?.RequestId || ''), action: name });
     }

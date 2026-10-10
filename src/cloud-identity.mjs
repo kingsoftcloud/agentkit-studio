@@ -1,10 +1,8 @@
 /** Node-owned IAM identity checks. Never accept a renderer-supplied operator UUID. */
 import { createHash } from 'node:crypto';
 import aws4 from 'aws4';
+import { createCloudEndpointPolicy } from './cloud-endpoints.mjs';
 
-const KOP_HOSTS = new Set(['aicp.api.ksyun.com', 'aicp.inner.api.ksyun.com', 'aicp.internal.api.ksyun.com']);
-const PUBLIC_IAM = 'https://iam.api.ksyun.com';
-const INNER_IAM = 'http://iam.inner.api.ksyun.com';
 const MAX_BYTES = 1024 * 1024;
 const fail = (code = 'CLOUD_IDENTITY_UNVERIFIED', message = '无法核验当前云端凭证的操作人，请检查 IAM 查询权限与连接后重试；尚未发送部署请求') => {
   throw Object.assign(new Error(message), { code });
@@ -53,7 +51,8 @@ function subaccount(response, expectedName) {
   return { kind: 'subaccount', accountId: match[1], userUuid: user.UserId, userName: expectedName };
 }
 
-export function createCloudIdentityResolver({ fetchImpl = fetch, timeoutMs = 15000, now = Date.now } = {}) {
+export function createCloudIdentityResolver({ fetchImpl = fetch, timeoutMs = 15000, now = Date.now, innerKopUrl = '', innerIamUrl = '', endpointPolicy } = {}) {
+  const endpoints = endpointPolicy || createCloudEndpointPolicy({ innerKopUrl, innerIamUrl });
   // Cache verified results only, keyed by the entire credential tuple. Rotation of
   // the SK or STS token must not reuse an identity verified with old credentials.
   const cache = new Map();
@@ -75,15 +74,17 @@ export function createCloudIdentityResolver({ fetchImpl = fetch, timeoutMs = 150
     const errorCode = payload?.Error?.Code || raw.match(/<Code>([^<]{1,100})<\/Code>/)?.[1];
     const innerOnly = errorCode === 'InnerAccountCanOnlyAccessThroughIntranet'
       || /(?:inner account can only access through intranet|InnerAccountCanOnlyAccessThroughIntranet)/i.test(raw);
-    if (origin === PUBLIC_IAM && response.status === 403 && innerOnly) return request(INNER_IAM, action, params, credentials, signal);
+    if (endpoints.isPublicIam(origin) && response.status === 403 && innerOnly && endpoints.innerIam) {
+      return request(endpoints.innerIam, action, params, credentials, signal);
+    }
     if (!response.ok || !payload || payload.Error) fail();
     return { payload, origin };
   }
   async function resolve(values, { signal, forceRefresh = false } = {}) {
     let base;
-    try { base = new URL(values.cloudServerUrl || 'https://aicp.api.ksyun.com'); } catch { fail('SERVER_URL_INVALID', '控制面地址无效'); }
-    if (!KOP_HOSTS.has(base.hostname) || base.port || base.username || base.password || base.pathname !== '/' || base.search || base.hash
-      || (base.protocol !== 'https:' && !(base.protocol === 'http:' && base.hostname === 'aicp.inner.api.ksyun.com'))) {
+    try { base = new URL(values.cloudServerUrl || endpoints.publicKop); } catch { fail('SERVER_URL_INVALID', '控制面地址无效'); }
+    if (!endpoints.isAllowedControlPlane(base)
+      || (base.protocol !== 'https:' && !endpoints.isInnerKop(base))) {
       fail('CLOUD_IDENTITY_TARGET_UNSUPPORTED', 'IAM 操作人核验仅用于官方 KOP 控制面');
     }
     const { cloudAccessKey, cloudSecretKey, cloudSessionToken = '' } = values;
@@ -91,7 +92,8 @@ export function createCloudIdentityResolver({ fetchImpl = fetch, timeoutMs = 150
       fail('CLOUD_CREDENTIALS_MISSING', '请在模型与凭证中配置有效的云端 AK/SK');
     }
     const credentials = { cloudAccessKey, cloudSecretKey, cloudSessionToken };
-    const origin = base.hostname === 'aicp.api.ksyun.com' ? PUBLIC_IAM : INNER_IAM;
+    const origin = endpoints.isPublicKop(base) ? endpoints.publicIam : endpoints.innerIam;
+    if (!origin) fail('CLOUD_IDENTITY_TARGET_UNSUPPORTED', '内网 KOP 需要由受信任运行时注入 IAM 地址');
     const cacheKey = createHash('sha256').update(JSON.stringify([origin, cloudAccessKey, cloudSecretKey, cloudSessionToken])).digest('hex');
     const cached = cache.get(cacheKey);
     let identity;

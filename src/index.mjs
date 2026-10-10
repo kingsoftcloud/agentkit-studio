@@ -22,6 +22,12 @@ export const inject = ['connection', 'webServer', 'credentials'];
 
 const CONTROL_CHANNEL = '/agentkit';
 const runtimeEnv = typeof process === 'object' && process?.env ? process.env : {};
+// Internal KOP/IAM origins belong to the trusted deployment environment. They
+// are never persisted in user configuration or sent to the browser client.
+const cloudEndpointOptions = {
+  innerKopUrl: runtimeEnv.AGENTENGINE_INNER_KOP_URL || '',
+  innerIamUrl: runtimeEnv.AGENTENGINE_INNER_IAM_URL || '',
+};
 
 /**
  * The Studio browser half runs in DSH's sandboxed srcdoc frame. A direct
@@ -118,6 +124,7 @@ async function registerControlPlane(ctx) {
         configuration,
         sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '',
         serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
+        ...cloudEndpointOptions,
       })));
   const resourceAdaptersPromise = Promise.all([
     skillDiscoveryPromise,
@@ -271,11 +278,11 @@ async function registerControlPlane(ctx) {
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
   let deploymentsPromise;
   const deploymentClientPromise = Promise.all([import('./server-client.mjs'), configurationPromise])
-    .then(([{ createAgentEngineDeploymentClient }, configuration]) => createAgentEngineDeploymentClient({ configuration }));
+    .then(([{ createAgentEngineDeploymentClient }, configuration]) => createAgentEngineDeploymentClient({ configuration, ...cloudEndpointOptions }));
   const deployments = () => deploymentsPromise ||= Promise.all([import('./studio-deployments.mjs'), import('./server-client.mjs'), configurationPromise, studioBuildPromise, resourceAdaptersPromise])
     .then(([{ createStudioDeployments }, { createAgentEngineDeploymentClient }, configuration, studio, adapters]) => createStudioDeployments({
       storeDir: join(studioStoreDir, 'deployments'), ...studio, portableBundles, models, adapters, credentials, configuration, env: runtimeEnv,
-      client: createAgentEngineDeploymentClient({ configuration }),
+      client: createAgentEngineDeploymentClient({ configuration, ...cloudEndpointOptions }),
     }));
   const cloudSchedulesPromise = import('./cloud-schedules.mjs').then(({ createCloudSchedules }) => createCloudSchedules({ agents: async () => (await deployments()).agents, client: () => deploymentClientPromise, deliveryTargets: async agentId => (await studioChannelsPromise).deliveryTargets(agentId) }));
   const syncModelCredential = models.sync;
