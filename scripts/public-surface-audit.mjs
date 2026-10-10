@@ -65,13 +65,20 @@ export async function auditFiles(files, read = readFile) {
     const pathHits = auditPath(file);
     hits.push(...pathHits);
     if (pathHits.length) continue;
-    hits.push(...auditText(file, await read(file)));
+    const source = await read(file);
+    if (source == null) continue;
+    hits.push(...auditText(file, source));
   }
   return hits;
 }
 
 async function readRegularFile(file) {
-  const info = await lstat(file);
+  let info;
+  try { info = await lstat(file); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
   if (!info.isFile()) throw new Error('non-regular-file');
   return readFile(file);
 }

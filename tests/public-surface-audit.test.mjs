@@ -14,6 +14,11 @@ test('public surface audit rejects internal paths before reading their contents'
   assert.deepEqual(reads, []);
 });
 
+test('public surface audit allows a tracked file deleted from the working tree', async () => {
+  const hits = await auditFiles(['tests/removed.test.mjs'], async () => null);
+  assert.deepEqual(hits, []);
+});
+
 test('public surface audit scans every tracked text file for high-confidence private material', () => {
   assert.deepEqual(auditPath('src/credentials.mjs'), []);
   const token = ['ghp_', '123456789012345678901234567890'].join('');
