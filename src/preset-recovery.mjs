@@ -17,7 +17,32 @@ export async function restoreLocalPresets({store,build,admission,warn=console.wa
     for (const revision of await store.listRevisions(id)) rows.set(`${id}:r${revision.metadata.revision}`,revision);
   }
   for (const record of rows.values()) {
-    try { await admission.ensure(record.metadata.id,{agent:record}); }
+    try { await admission.ensure(record.metadata.id,{agent:record,allowUnavailableResources:true}); }
     catch(error) { warn(`[agentkit-studio] preset restore skipped (${record.metadata.id}:r${record.metadata.revision}):`,error?.message || error); }
   }
+}
+
+/** Await local recovery on either registry arrival order; cloud recovery stays independent. */
+export function createStartupReconciler({ store, build, deployments, getAdmission, warn = console.warn }) {
+  let pending;
+  return {
+    run() {
+      const admission = getAdmission();
+      if (!admission?.registry) return Promise.resolve();
+      if (pending) return pending;
+      pending = (async () => {
+        try {
+          await restoreLocalPresets({ store: await store, build: (await build).build, admission, warn });
+        } catch (error) { warn('[agentkit-studio] local revision recovery failed:', error?.code || 'RECOVERY_FAILED'); }
+        void deployments().then(async service => {
+          const catalog = await service.agents.recover();
+          for (const agent of catalog.items || []) {
+            try { await admission.ensure(agent.metadata.id, { agent }); }
+            catch (error) { warn('[agentkit-studio] cloud preset restore skipped:', error?.code || 'RECOVERY_FAILED'); }
+          }
+        }).catch(error => warn('[agentkit-studio] cloud preset recovery unavailable:', error?.code || 'RECOVERY_FAILED'));
+      })().finally(() => { pending = undefined; });
+      return pending;
+    },
+  };
 }

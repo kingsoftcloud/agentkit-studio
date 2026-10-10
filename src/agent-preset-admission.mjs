@@ -152,10 +152,18 @@ export class DshPresetAdmission {
   }
 
   setRegistry(registry) {
+    // A Host scope teardown runs dispose(), which latches this instance and
+    // unregisters every preset from the old registry. When the scope is
+    // re-created (live patch reload, plugin reactivation) the same admission
+    // receives the fresh registry: the stale latch must reset or every later
+    // ensure() would refuse to admit presets into the new registry. The
+    // registration cache is already empty after dispose(), so no stale
+    // unregister handle can leak into the new registry.
     this.registry = registry;
+    if (registry) this.disposed = false;
   }
 
-  async ensure(agentId, { agent: suppliedAgent } = {}) {
+  async ensure(agentId, { agent: suppliedAgent, allowUnavailableResources = false } = {}) {
     if (!this.registry || typeof this.registry.register !== 'function') {
       const error = new Error('DSH agent preset registry 不可用');
       error.code = 'DSH_PRESET_REGISTRY_UNAVAILABLE';
@@ -187,13 +195,14 @@ export class DshPresetAdmission {
     }
     if (this.disposed) throw Object.assign(new Error('Agent preset admission is disposed'), { code: 'DSH_PRESET_REGISTRY_UNAVAILABLE' });
     const previous = this.registrations.get(eligibility.presetId);
-    if (previous?.presetId === eligibility.presetId) return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: true };
+    if (previous && (!previous.resourcesUnavailable || allowUnavailableResources)) return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: true };
     const pending = this.pending.get(eligibility.presetId);
     if (pending) {
       await pending;
+      if (!allowUnavailableResources && this.registrations.get(eligibility.presetId)?.resourcesUnavailable) return this.ensure(agentId, { agent });
       return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: true };
     }
-    const registration = this.register(agent, eligibility, buildId);
+    const registration = this.register(agent, eligibility, buildId, { allowUnavailableResources });
     this.pending.set(eligibility.presetId, registration);
     try {
       await registration;
@@ -201,11 +210,12 @@ export class DshPresetAdmission {
     } finally { this.pending.delete(eligibility.presetId); }
   }
 
-  async register(agent, eligibility, buildId) {
+  async register(agent, eligibility, buildId, { allowUnavailableResources = false } = {}) {
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
     const plugins = [];
+    let resourcesUnavailable = false;
     if (prefix) plugins.push({
       id: 'persona',
       name: '@deepseek-ai/dsh-persona',
@@ -220,10 +230,21 @@ export class DshPresetAdmission {
       // Cloud tools/resources are executed by the frozen runtime;
       // asking the local DSH registry to materialize them would incorrectly
       // turn a valid cloud Agent into a local binding failure.
+      const recoverResources = async (load) => {
+        try { return await load(); }
+        catch (error) {
+          if (!allowUnavailableResources) throw error;
+          resourcesUnavailable = true;
+          console.warn('[agentkit-studio] preset resource snapshot unavailable during recovery:', eligibility.presetId, error?.code || 'RESOURCE_UNAVAILABLE');
+          return [];
+        }
+      };
       const toolContracts = eligibility.local && typeof this.getToolContracts === 'function'
-        ? await this.getToolContracts(agent)
+        ? await recoverResources(() => this.getToolContracts(agent))
         : [];
-      const skillDefinitions = eligibility.local && typeof this.getSkillDefinitions === 'function' ? await this.getSkillDefinitions(agent) : [];
+      const skillDefinitions = eligibility.local && typeof this.getSkillDefinitions === 'function'
+        ? await recoverResources(() => this.getSkillDefinitions(agent))
+        : [];
       if (skillDefinitions.length) {
         plugins.push({ id: 'bound-skill-loader', name: '@deepseek-ai/dsh-tool-skill' });
         plugins.push({ id: 'bound-skill-shell', name: process.platform === 'win32' ? '@deepseek-ai/dsh-tool-pwsh' : '@deepseek-ai/dsh-tool-bash' });
@@ -235,6 +256,7 @@ export class DshPresetAdmission {
           agentId: eligibility.agentId,
           runtime: eligibility.runtime,
           local: eligibility.local,
+          ...(resourcesUnavailable ? { resourcesUnavailable: true } : {}),
           ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
           ...(!eligibility.local ? { cloudVersionId: agent.deployment?.versionId || 'initial' } : {}),
           ...(buildId ? { buildId } : {}),
@@ -243,6 +265,13 @@ export class DshPresetAdmission {
           ...(skillDefinitions.length ? { skillDefinitions } : {}),
         },
       });
+    }
+    // Revalidate a recovered placeholder before explicit admission; only retire
+    // it after all resource probes succeed, so a failed retry preserves history.
+    const previous = this.registrations.get(eligibility.presetId);
+    if (previous?.resourcesUnavailable && !resourcesUnavailable) {
+      await previous.unregister?.();
+      this.registrations.delete(eligibility.presetId);
     }
     const unregister = await this.registry.register({
       id: eligibility.presetId,
@@ -255,7 +284,7 @@ export class DshPresetAdmission {
     });
     // A newer revision must not remove a preset still referenced by an older
     // native Session. Dispose all registrations with the Host scope instead.
-    this.registrations.set(eligibility.presetId, { presetId: eligibility.presetId, unregister });
+    this.registrations.set(eligibility.presetId, { presetId: eligibility.presetId, unregister, resourcesUnavailable });
   }
 
   async dispose() {

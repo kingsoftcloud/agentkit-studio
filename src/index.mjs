@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { registerAuthoringTools } from './authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from './agent-preset-admission.mjs';
+import { createStartupReconciler } from './preset-recovery.mjs';
 
 export const name = 'agentkit-studio';
 export const inject = ['connection', 'webServer', 'credentials'];
@@ -297,41 +298,26 @@ async function registerControlPlane(ctx) {
   } catch (error) {
     console.warn('[agentkit-studio] model credential sync skipped:', error?.message || error);
   }
-  let presetRegistry;
-  let presetAdmission;
+  let presetRegistry, presetAdmission;
   // DSH restores a Session's selected preset before the browser can issue a
-  // fresh agents/ensure-preset RPC. Dynamic Studio presets therefore need a
-  // small startup reconciliation pass; otherwise a restart leaves persisted
-  // sessions pointing at an unregistered agentkit-studio-agent-* preset and
-  // the native page reports "Unknown agent preset" before the first prompt.
-  const restorePersistedPresets = async () => {
-    if (!presetAdmission) return;
-    try {
-      const {restoreLocalPresets} = await import('./preset-recovery.mjs');
-      await restoreLocalPresets({store:await agentStorePromise,build:(await studioBuildPromise).build,admission:presetAdmission});
-    } catch(error) { console.warn('[agentkit-studio] local revision recovery failed:',error?.message || error); }
-    // Cloud catalog failures do not delay local Session recovery.
-    void deployments().then(async service => {
-      const catalog = await service.agents.recover();
-      for (const agent of catalog.items || []) {
-        try { await presetAdmission.ensure(agent.metadata.id,{agent}); }
-        catch(error) { console.warn('[agentkit-studio] cloud preset restore skipped:',error?.message || error); }
-      }
-    }).catch(error=>console.warn('[agentkit-studio] cloud preset recovery unavailable:',error?.message || error));
-  };
+  // fresh agents/ensure-preset RPC, and honors session.create calls carrying
+  // an inherited agentPreset. Startup reconciliation therefore re-registers
+  // every dynamic agentkit-studio-agent-* preset; apply() waits for it below.
+  const reconciler = createStartupReconciler({
+    store: agentStorePromise, build: studioBuildPromise, deployments,
+    getAdmission: () => presetAdmission,
+  });
   // The registry is an optional DSH service. Older profiles can still load
   // the Studio catalog and UI, but an Agent binding must return a typed
   // unavailable error instead of silently selecting the default DSH loop.
-  ctx.inject(['agentPresets'], presetCtx => {
+  ctx.inject(['agentPresets'], async presetCtx => {
     presetRegistry = presetCtx.agentPresets;
-    if (presetAdmission) {
-      presetAdmission.setRegistry(presetRegistry);
-      void restorePersistedPresets();
-    }
+    presetAdmission?.setRegistry(presetRegistry);
     presetCtx.effect(() => async () => {
       await presetAdmission?.dispose();
       presetRegistry = undefined;
     }, 'agentkit-studio: dynamic preset cleanup');
+    await reconciler.run();
   });
   presetAdmission = new DshPresetAdmission({
     getAgent: async agentId => (await deployments()).agents.get(agentId),
@@ -459,7 +445,7 @@ async function registerControlPlane(ctx) {
   });
   if (presetRegistry) {
     presetAdmission.setRegistry(presetRegistry);
-    await restorePersistedPresets();
+    await reconciler.run();
   }
   const { startFrozenBuildRuntime } = await import('./frozen-build-runtime.mjs');
   const startRuntime = async () => startFrozenBuildRuntime({ ctx, env: runtimeEnv, modelService: models, build: (await studioBuildPromise).build,

@@ -303,6 +303,7 @@ export function apply(ctx, config = {}) {
   // Studio provider at the scoped request boundary so the root adapter can
   // recover this Agent's runtime and Tool adapter by session id.
   ctx.on(AGENT_REQUEST_EVENT, async (payload, next) => {
+    if (config.resourcesUnavailable) throw Object.assign(new Error('此会话的 Agent 资源恢复失败。请检查资源配置后重新选择 Agent 或重新打开应用。'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
     const resolved = await next();
     const sessionId = String(payload?.agent?.id || '').trim();
     if (sessionId) bindDshAgentRoute(sessionId, {

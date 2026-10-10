@@ -156,6 +156,37 @@ test('the bridge preset forwards AgentEngine builtin Tool contracts for native r
   assert.deepEqual(registered[0].plugins[0].config.toolContracts, [{ resourceId: 'component_status', name: 'component_status', executor: 'builtin', parameters: { type: 'object', properties: {} } }]);
 });
 
+test('recovery keeps the preset registered when bound resources are temporarily unavailable', async () => {
+  const registered = [];
+  const revision = agent({
+    metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 2, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: { mcpServers: [{ resourceId: 'mcp:old' }], skills: ['skill:old'] } },
+  });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return () => {}; } },
+    getAgent: async () => revision,
+    getToolContracts: async () => { throw new Error('old MCP resource is unavailable'); },
+    getSkillDefinitions: async () => { throw new Error('old Skill Space is unavailable'); },
+  });
+  await admission.ensure('demo/agent', { allowUnavailableResources: true });
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0].plugins[0].name, '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin');
+  assert.equal(registered[0].plugins[0].config.agentId, 'demo/agent');
+  const config = registered[0].plugins[0].config;
+  assert.equal(config.resourcesUnavailable, true);
+  let request;
+  applyDshRuntimePlugin({ tools: {}, on: (_event, callback) => { request = callback; } }, config);
+  await assert.rejects(() => request({ agent: { id: 'restored' } }, () => assert.fail('must not run without bound resources')),
+    { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+  // A strict admission on the SAME instance must not reuse the placeholder.
+  await assert.rejects(() => admission.ensure('demo/agent'), /old MCP resource is unavailable/);
+  admission.getToolContracts = async () => [];
+  admission.getSkillDefinitions = async () => [];
+  await admission.ensure('demo/agent');
+  assert.equal(registered.length, 2);
+  assert.equal(registered[1].plugins[0].config.resourcesUnavailable, undefined);
+});
+
 test('the DSH runtime plugin exposes only bound registry tools to Studio', async () => {
   let listener;
   let forwarded;
