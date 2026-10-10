@@ -39,6 +39,14 @@ export const SENSITIVE_TEXT_PATTERNS = [
   { name: 'private-classification-marker', pattern: new RegExp(PRIVATE_MARKERS.join('|'), 'i') },
 ];
 
+// These are official service endpoints, not private infrastructure names.
+// They are intentionally reachable only from the internal network, but their
+// hostnames are part of the public client contract and may be committed.
+export const APPROVED_INTERNAL_SERVICE_HOSTS = new Set([
+  'aicp.inner.api.ksyun.com',
+  'iam.inner.api.ksyun.com',
+]);
+
 export function auditPath(file) {
   return FORBIDDEN_PATHS
     .filter(pattern => pattern.test(file))
@@ -51,7 +59,19 @@ export function auditText(file, source) {
     ? source.subarray(2).toString('utf16le') : source.toString('utf8');
   const hits = [];
   for (const { name, pattern } of SENSITIVE_TEXT_PATTERNS) {
-    const match = pattern.exec(text);
+    let match = pattern.exec(text);
+    if (name === 'internal-service-host' && match) {
+      // Inspect every internal-host match so an approved endpoint does not
+      // hide an unknown internal endpoint later in the same file.
+      const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+      match = null;
+      for (const candidate of text.matchAll(globalPattern)) {
+        if (!APPROVED_INTERNAL_SERVICE_HOSTS.has(candidate[0].toLowerCase())) {
+          match = candidate;
+          break;
+        }
+      }
+    }
     if (!match) continue;
     const line = text.slice(0, match.index).split('\n').length;
     hits.push({ file, kind: name, line });

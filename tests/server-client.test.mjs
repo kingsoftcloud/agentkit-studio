@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCloudAgentUpdate, createAgentEngineClient, AgentEngineError } from '../src/server-client.mjs';
+import { createCloudEndpointPolicy } from '../src/cloud-endpoints.mjs';
 
 function configuration(values) { return { resolve: async () => ({ values, sources: {} }) }; }
 const endpointOptions = { innerKopUrl: 'http://kop.test', innerIamUrl: 'http://iam.test' };
@@ -67,17 +68,18 @@ test('KOP falls back to the intranet endpoint for inner-only accounts', async ()
   assert.match(urls[1], /^http:\/\/kop\.test\//);
 });
 
-test('inner-account denial stays failed closed when no runtime endpoint is injected', async () => {
-  let calls = 0;
+test('inner-account denial uses the official default KOP fallback without runtime configuration', async () => {
+  const urls = [];
+  const defaults = createCloudEndpointPolicy();
   const client = createAgentEngineClient({
     configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
-    fetchImpl: async () => {
-      calls++;
+    fetchImpl: async url => {
+      urls.push(new URL(url).origin);
       return new Response(JSON.stringify({ Error: { Message: 'The inner account can only access through intranet' } }), { status: 403 });
     },
   });
   await assert.rejects(() => client.listAgents(), { code: 'SERVER_ACTION_FAILED' });
-  assert.equal(calls, 1);
+  assert.deepEqual(urls, [defaults.publicKop.origin, defaults.innerKop.origin]);
 });
 
 test('runtime endpoint injection rejects malformed origins and the public origin before any request', () => {

@@ -26,8 +26,11 @@ test('public surface audit scans every tracked text file for high-confidence pri
   assert.equal(auditText('src/example.mjs', buffer('const endpoint = "https://example.com";')).length, 0);
   const privateEndpoint = ['http://10.10.', '2.4:8080'].join('');
   assert.equal(auditText('src/example.mjs', buffer(`const endpoint = "${privateEndpoint}";`)).length, 1);
-  const internalEndpoint = ['http://aicp.', ['inner.', 'api.ksyun.com'].join('')].join('');
-  assert.equal(auditText('src/example.mjs', buffer(`const endpoint = "${internalEndpoint}";`)).length, 1);
+  const approvedInternalEndpoint = ['http://aicp.', ['inner.', 'api.ksyun.com'].join('')].join('');
+  assert.equal(auditText('src/example.mjs', buffer(`const endpoint = "${approvedInternalEndpoint}";`)).length, 0);
+  const unknownInternalEndpoint = ['http://unknown.', ['inner.', 'api.ksyun.com'].join('')].join('');
+  assert.equal(auditText('src/example.mjs', buffer(`const endpoint = "${unknownInternalEndpoint}";`)).length, 1);
+  assert.equal(auditText('src/example.mjs', buffer(`const endpoints = ["${approvedInternalEndpoint}", "${unknownInternalEndpoint}"];`)).length, 1);
   assert.equal(auditText('src/example.mjs', buffer('const fixture = "Authorization: Bearer private-test-token";')).length, 0);
 });
 

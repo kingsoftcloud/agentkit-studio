@@ -1,13 +1,17 @@
 /**
  * Runtime-owned cloud endpoint policy.
  *
- * The public control plane is part of the product contract. Intranet KOP and
- * IAM origins are deliberately supplied by the trusted Host runtime instead
- * of being committed as public-source defaults. Every use still has to match
- * the exact injected origin before cloud credentials are signed onto it.
+ * The public control plane is part of the product contract. The standard
+ * intranet KOP and IAM origins are public service addresses (they are only
+ * reachable from the internal network), so they are safe defaults here. A
+ * trusted Host runtime may override them for a private deployment variant.
+ * Every use still has to match the exact approved origin before cloud
+ * credentials are signed onto it.
  */
 const PUBLIC_KOP = new URL('https://aicp.api.ksyun.com');
 const PUBLIC_IAM = new URL('https://iam.api.ksyun.com');
+const DEFAULT_INNER_KOP = new URL('http://aicp.inner.api.ksyun.com');
+const DEFAULT_INNER_IAM = new URL('http://iam.inner.api.ksyun.com');
 
 function cleanOrigin(value, label) {
   if (!value) return null;
@@ -29,8 +33,11 @@ function isCleanOrigin(url) {
 }
 
 export function createCloudEndpointPolicy({ innerKopUrl = '', innerIamUrl = '' } = {}) {
-  const innerKop = cleanOrigin(innerKopUrl, 'inner KOP URL');
-  const innerIam = cleanOrigin(innerIamUrl, 'inner IAM URL');
+  // Empty values are treated the same as an omitted runtime override. This
+  // keeps the normal installation zero-configuration while still allowing a
+  // trusted deployment to select another exact origin.
+  const innerKop = cleanOrigin(innerKopUrl || DEFAULT_INNER_KOP, 'inner KOP URL');
+  const innerIam = cleanOrigin(innerIamUrl || DEFAULT_INNER_IAM, 'inner IAM URL');
   // A fallback must select another origin; accepting the public origin here
   // would turn an inner-account denial into an unbounded retry loop.
   if (sameOrigin(innerKop, PUBLIC_KOP) || sameOrigin(innerIam, PUBLIC_IAM)) {

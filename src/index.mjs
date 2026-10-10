@@ -22,8 +22,9 @@ export const inject = ['connection', 'webServer', 'credentials'];
 
 const CONTROL_CHANNEL = '/agentkit';
 const runtimeEnv = typeof process === 'object' && process?.env ? process.env : {};
-// Internal KOP/IAM origins belong to the trusted deployment environment. They
-// are never persisted in user configuration or sent to the browser client.
+// Standard internal KOP/IAM origins come from the endpoint policy defaults;
+// these environment values are optional overrides for private deployments.
+// Overrides are never persisted in user configuration or sent to the browser.
 const cloudEndpointOptions = {
   innerKopUrl: runtimeEnv.AGENTENGINE_INNER_KOP_URL || '',
   innerIamUrl: runtimeEnv.AGENTENGINE_INNER_IAM_URL || '',
