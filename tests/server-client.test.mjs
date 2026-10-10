@@ -41,7 +41,6 @@ test('KOP calls fail closed when cloud credentials are missing', async () => {
 
 test('KOP calls copy the AWS4 Authorization header into fetch', async () => {
   const client = createAgentEngineClient({
-    ...endpointOptions,
     configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
     fetchImpl: async (_url, init) => {
       assert.match(init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
@@ -81,6 +80,59 @@ test('inner-account denial stays failed closed when no runtime endpoint is injec
   assert.equal(calls, 1);
 });
 
+test('runtime endpoint injection rejects malformed origins and the public origin before any request', () => {
+  const credentialOrigin = new URL('http://kop.test');
+  credentialOrigin.username = 'fixture-user';
+  credentialOrigin.password = 'fixture-password';
+  for (const value of [credentialOrigin.href, 'http://kop.test:8080', 'http://kop.test/path',
+    'http://kop.test?key=value', 'http://kop.test#fragment', 'ftp://kop.test', 'not a URL']) {
+    for (const field of ['innerKopUrl', 'innerIamUrl']) {
+      assert.throws(() => createAgentEngineClient({ configuration: configuration({}), [field]: value }));
+    }
+  }
+  assert.throws(() => createAgentEngineClient({ configuration: configuration({}), innerKopUrl: 'https://aicp.api.ksyun.com' }));
+  assert.throws(() => createAgentEngineClient({ configuration: configuration({}), innerIamUrl: 'https://iam.api.ksyun.com' }));
+});
+
+test('Skill GET falls back to the injected KOP once and does not retry its denial', async () => {
+  for (const rejectInner of [false, true]) {
+    const origins = [];
+    const client = createAgentEngineClient({ ...endpointOptions,
+      configuration: configuration({ cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+      fetchImpl: async (url, init) => {
+        origins.push(new URL(url).origin);
+        assert.equal(init.method, 'GET');
+        assert.match(init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
+        if (origins.length === 1 || rejectInner) return Response.json({ Error: { Message: 'The inner account can only access through intranet' } }, { status: 403 });
+        return Response.json({ Code: 0, Data: { Skills: [] } });
+      },
+    });
+    const result = client.skillAction('ListSkillsBySpaceId', { SpaceId: 'space-test' });
+    if (rejectInner) await assert.rejects(result, { code: 'SKILL_SERVICE_FAILED' });
+    else assert.deepEqual((await result).data, { Skills: [] });
+    assert.deepEqual(origins, ['https://aicp.api.ksyun.com', endpointOptions.innerKopUrl]);
+  }
+});
+
+test('streamAction signs directly configured runtime KOP and rejects an HTTP lookalike', async () => {
+  let calls = 0;
+  for (const cloudServerUrl of [endpointOptions.innerKopUrl, `${endpointOptions.innerKopUrl}.attacker.invalid`]) {
+    const client = createAgentEngineClient({ ...endpointOptions,
+      configuration: configuration({ cloudServerUrl, cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
+      fetchImpl: async (url, init) => {
+        calls++;
+        assert.equal(new URL(url).origin, endpointOptions.innerKopUrl);
+        assert.match(init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
+        return new Response('data: {}\n\n', { headers: { 'content-type': 'text/event-stream' } });
+      },
+    });
+    const result = client.streamAction('RunAgent', { Stream: true });
+    if (cloudServerUrl === endpointOptions.innerKopUrl) assert.equal((await result).status, 200);
+    else await assert.rejects(result, { code: 'SERVER_URL_INVALID' });
+  }
+  assert.equal(calls, 1);
+});
+
 test('regular KOP Actions fall back when inner-account denial is XML', async () => {
   const urls = [];
   const client = createAgentEngineClient({
@@ -101,7 +153,6 @@ test('regular KOP Actions fall back when inner-account denial is XML', async () 
 test('pre-online region signs with the real control region and keeps the pre source marker', async () => {
   const headersSeen = [];
   const client = createAgentEngineClient({
-    ...endpointOptions,
     configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }),
     fetchImpl: async (_url, init) => {
       headersSeen.push(init.headers);

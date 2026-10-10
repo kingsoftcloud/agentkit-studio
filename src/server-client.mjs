@@ -193,8 +193,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
   }
   async function listLocalAgents({ page = 1, pageSize = 20, query = '' } = {}, options = {}) {
     const { values } = await configuration.resolve();
-    let base;
-    base = resolveBase(values);
+    const base = resolveBase(values);
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || !sessionToken) {
       throw new AgentEngineError('SERVER_ACTION_FAILED', '本地 Agent 列表接口不可用', { status: 404, action: 'ListAgents' });
     }
@@ -242,8 +241,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
 
   async function getLocalAgent(agentId, options = {}) {
     const { values } = await configuration.resolve();
-    let base;
-    base = resolveBase(values);
+    const base = resolveBase(values);
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || !sessionToken) {
       throw new AgentEngineError('SERVER_ACTION_FAILED', '本地 Agent 详情接口不可用', { status: 404, action: 'GetAgent' });
     }
@@ -273,8 +271,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
     if (!allowedActions.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw new AgentEngineError('INVALID_REQUEST_ID', '请求 ID 必须是 UUID');
     const { values } = await configuration.resolve();
-    let base;
-    base = resolveBase(values);
+    const base = resolveBase(values);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
     // The official inner AICP endpoint is HTTP, also used by the explicit
     // inner-account fallback below. An explicitly configured inner endpoint
@@ -396,8 +393,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
   async function skillAction(name, params = {}, { signal, apiVersion = API_VERSION } = {}) {
     if (!SKILL_SERVICE_ACTIONS.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     const { values } = await configuration.resolve();
-    let base;
-    base = resolveBase(values);
+    const base = resolveBase(values);
     if (!endpoints.isKop(base)) throw new AgentEngineError('SKILL_SERVICE_UNAVAILABLE', 'Skill Service 需要 AICP 云端凭证');
     const controlRegion = values.cloudRegion?.toLowerCase() === 'pre-online' ? 'cn-beijing-6' : (values.cloudRegion || 'cn-beijing-6');
     const query = new URLSearchParams({ Action: name, Version: apiVersion });
@@ -450,12 +446,11 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
   async function streamAction(name, payload = {}, { signal } = {}, overrideBase = null) {
     if (!SERVER_ACTIONS.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     const { values } = await configuration.resolve();
-    let base;
-    base = resolveBase(values);
+    const base = resolveBase(values);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
     if (base.username || base.password || base.search || base.hash || base.pathname !== '/' ||
       (base.protocol !== 'https:' && !(base.protocol === 'http:' && (loopback || endpoints.isInnerKop(base))))) {
-      throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；仅本机开发允许 HTTP');
+      throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；HTTP 仅限本机或运行时配置的内网入口');
     }
     const body = JSON.stringify(payload);
     const requestBase = overrideBase || base;

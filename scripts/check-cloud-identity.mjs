@@ -13,7 +13,10 @@ try {
     const credentialSources = { accessKey: resolved.sources.cloudAccessKey || 'missing', secretKey: resolved.sources.cloudSecretKey || 'missing' };
     const accessKeyFingerprint = resolved.values.cloudAccessKey ? createHash('sha256').update(resolved.values.cloudAccessKey).digest('hex').slice(0, 16) : null;
     console.log(JSON.stringify({ scope: 'configuration-provenance', credentialSources, accessKeyFingerprint }));
-    const client = createAgentEngineDeploymentClient({ configuration });
+    const client = createAgentEngineDeploymentClient({ configuration,
+      innerKopUrl: process.env.AGENTENGINE_INNER_KOP_URL || '',
+      innerIamUrl: process.env.AGENTENGINE_INNER_IAM_URL || '',
+    });
     const identity = await client.inspectIdentity({ forceRefresh: true });
     const accepted = !values['require-subaccount'] || identity.kind === 'subaccount';
     console.log(JSON.stringify({ scope: 'iam-identity-only', verified: true, ...identity,

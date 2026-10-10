@@ -153,3 +153,34 @@ test('identity probes reject custom targets before sending any cloud credentials
   }
   assert.equal(calls, 0);
 });
+
+test('injected IAM policy rejects lookalikes and ignores endpoint fields from user configuration', async () => {
+  const hosts = [];
+  const resolver = createCloudIdentityResolver({ innerKopUrl: INNER_KOP_URL, innerIamUrl: INNER_IAM_URL,
+    fetchImpl: async url => {
+      hosts.push(new URL(url).origin);
+      return json(listing([{ AccessKeyId: 'test-ak', UserName: '', Status: 'Active' }]));
+    },
+  });
+  for (const cloudServerUrl of [`${INNER_KOP_URL}.attacker.invalid`, `${INNER_KOP_URL}:8080`,
+    `${INNER_KOP_URL}/path`, 'http://untrusted.test', 'https://kop.test']) {
+    await assert.rejects(resolver.resolve({ ...values, cloudServerUrl,
+      innerKopUrl: cloudServerUrl, innerIamUrl: 'http://untrusted.test' }), { code: 'CLOUD_IDENTITY_TARGET_UNSUPPORTED' });
+  }
+  assert.equal(hosts.length, 0);
+  await resolver.resolve({ ...values, cloudServerUrl: INNER_KOP_URL, innerIamUrl: 'http://untrusted.test' });
+  assert.deepEqual(hosts, [INNER_IAM_URL]);
+});
+
+test('IAM inner-account denial is not retried without a runtime IAM endpoint', async () => {
+  let calls = 0;
+  const resolver = createCloudIdentityResolver({ fetchImpl: async () => {
+    calls++;
+    return new Response('<Error><Code>InnerAccountCanOnlyAccessThroughIntranet</Code></Error>', { status: 403 });
+  } });
+  await assert.rejects(resolver.resolve(values), { code: 'CLOUD_IDENTITY_UNVERIFIED' });
+  assert.equal(calls, 1);
+  const direct = createCloudIdentityResolver({ innerKopUrl: INNER_KOP_URL, fetchImpl: async () => { calls++; } });
+  await assert.rejects(direct.resolve({ ...values, cloudServerUrl: INNER_KOP_URL }), { code: 'CLOUD_IDENTITY_TARGET_UNSUPPORTED' });
+  assert.equal(calls, 1);
+});

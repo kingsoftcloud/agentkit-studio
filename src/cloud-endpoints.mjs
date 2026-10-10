@@ -31,6 +31,11 @@ function isCleanOrigin(url) {
 export function createCloudEndpointPolicy({ innerKopUrl = '', innerIamUrl = '' } = {}) {
   const innerKop = cleanOrigin(innerKopUrl, 'inner KOP URL');
   const innerIam = cleanOrigin(innerIamUrl, 'inner IAM URL');
+  // A fallback must select another origin; accepting the public origin here
+  // would turn an inner-account denial into an unbounded retry loop.
+  if (sameOrigin(innerKop, PUBLIC_KOP) || sameOrigin(innerIam, PUBLIC_IAM)) {
+    throw new Error('inner endpoints must differ from their public origins');
+  }
   const isPublicKop = url => isCleanOrigin(url) && sameOrigin(url, PUBLIC_KOP);
   const isInnerKop = url => isCleanOrigin(url) && sameOrigin(url, innerKop);
   const isKop = url => isPublicKop(url) || isInnerKop(url);
