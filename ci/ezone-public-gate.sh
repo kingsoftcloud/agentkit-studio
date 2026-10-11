@@ -80,9 +80,18 @@ if [[ "$node_ok" != true ]]; then
     mkdir -p "$tool_dir/node" "$tool_dir/node-libs" "$tool_dir/bin"
     tar -xJf "$node_archive" -C "$tool_dir/node" --strip-components=1
     tar -xzf "$node_libs_archive" -C "$tool_dir/node-libs"
+    if ! command -v patchelf >/dev/null 2>&1; then
+      if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache patchelf
+      else
+        echo 'Ezone CI requires patchelf to run the pinned Node.js binary on Alpine 3.11' >&2
+        exit 2
+      fi
+    fi
+    patchelf --set-interpreter "$tool_dir/node-libs/ld-musl-x86_64.so.1" --set-rpath "$tool_dir/node-libs" "$tool_dir/node/bin/node"
     cat > "$tool_dir/bin/node" <<EOF
 #!/usr/bin/env sh
-exec "$tool_dir/node-libs/ld-musl-x86_64.so.1" --library-path "$tool_dir/node-libs" "$tool_dir/node/bin/node" "\$@"
+exec "$tool_dir/node/bin/node" "\$@"
 EOF
     chmod 700 "$tool_dir/bin/node"
     export PATH="$tool_dir/bin:$PATH"
