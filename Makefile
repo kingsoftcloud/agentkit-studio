@@ -217,7 +217,7 @@ desktop-package-mac-arm64: desktop-package-preflight
 # Local artifact uses the official runtime; no release feed or upload record.
 desktop-package-mac-arm64-unsigned: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	@rg -q 'invocation.unsigned && target.platform' "$(DSH_ROOT)/apps/desktop/scripts/package-target.ts" || (echo "DSH local macOS package patch 未应用；请应用 009-local-macos-package.patch" >&2; exit 2)
+	@grep -Eq 'invocation.unsigned && target.platform' "$(DSH_ROOT)/apps/desktop/scripts/package-target.ts" || (echo "DSH local macOS package patch 未应用；请应用 009-local-macos-package.patch" >&2; exit 2)
 	$(DESKTOP_ENV) $(DESKTOP_PACKAGE) --target mac-arm64 --unsigned
 
 desktop-package-mac-arm64-dir: desktop-package-preflight

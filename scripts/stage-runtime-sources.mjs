@@ -1,5 +1,5 @@
 /** Export only committed Studio and pinned, patched DSH sources for Linux builders. */
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify, parseArgs } from 'node:util';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -10,6 +10,16 @@ import { withDesktopCheckout } from './desktop-checkout.mjs';
 const execute = promisify(execFile);
 const git = async (cwd, args) => (await execute('git', args, { cwd, encoding: 'utf8' })).stdout.trim();
 const identity = async path => { const bytes = await readFile(path); return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }; };
+function archivePatchedTree(checkout, tree, parent, timestamp, output) {
+  const synthetic = execFileSync('git', ['commit-tree', tree, '-p', parent], {
+    cwd: checkout,
+    encoding: 'utf8',
+    input: 'AgentKit runtime source snapshot\n',
+    env: { ...process.env, GIT_AUTHOR_NAME: 'AgentKit runtime', GIT_AUTHOR_EMAIL: 'agentkit-runtime@example.invalid',
+      GIT_COMMITTER_NAME: 'AgentKit runtime', GIT_COMMITTER_EMAIL: 'agentkit-runtime@example.invalid', GIT_AUTHOR_DATE: timestamp, GIT_COMMITTER_DATE: timestamp },
+  }).trim();
+  return git(checkout, ['-c', 'tar.umask=0022', 'archive', '--format=tar', `--output=${output}`, synthetic]);
+}
 
 export async function stageRuntimeSources({ studio, source, output, commit, dshVersion }) {
   studio = resolve(studio); output = resolve(output);
@@ -34,7 +44,7 @@ export async function stageRuntimeSources({ studio, source, output, commit, dshV
       // Archiving a tree defaults to the current clock. Use the pinned commit's
       // time and explicit file modes so another machine can reproduce the lock.
       const timestamp = await git(checkout, ['show', '-s', '--format=%cI', commit]);
-      await git(checkout, ['-c', 'tar.umask=0022', 'archive', '--format=tar', `--mtime=${timestamp}`, `--output=${join(output, 'dsh-source.tar')}`, dshTree]);
+      await archivePatchedTree(checkout, dshTree, commit, timestamp, join(output, 'dsh-source.tar'));
     });
     const manifest = { format: 'agentkit.runtime-sources/v1', studio: { commit: studioCommit, version: studioPackage.version },
       dsh: { commit, version: dshVersion, patchedTree: dshTree },
