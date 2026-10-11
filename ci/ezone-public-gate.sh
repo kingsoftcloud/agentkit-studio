@@ -118,7 +118,7 @@ EOF
   fi
 fi
 if [[ ! -d node_modules ]]; then
-  pnpm install --frozen-lockfile
+  pnpm install --frozen-lockfile --store-dir "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/agentkit-pnpm-store"
 fi
 make public-gate
 
