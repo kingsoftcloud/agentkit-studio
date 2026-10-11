@@ -117,6 +117,9 @@ EOF
     exit 2
   fi
 fi
+if [[ ! -d node_modules ]]; then
+  pnpm install --frozen-lockfile
+fi
 make public-gate
 
 if [[ "${RUN_REF_PARITY:-0}" == "1" ]]; then
