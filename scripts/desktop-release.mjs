@@ -112,8 +112,10 @@ async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expect
   if (feed?.version !== expectedVersion) throw new Error(`feed version ${String(feed?.version)} does not equal ${expectedVersion}`)
   if (expectedPreviousVersion !== undefined && feed.version === expectedPreviousVersion) throw new Error('feed did not advance to the expected release')
   const file = feed.files?.[0]
-  const zipUrl = new URL(file?.url ?? '', feedRoot).toString()
-  if (!zipUrl.startsWith(feedRoot) || basename(zipUrl) !== `deepseek-harness-${expectedVersion}-mac-arm64.zip`) throw new Error('feed ZIP URL escapes the Studio target prefix')
+  const zipParsed = new URL(file?.url ?? '', feedRoot)
+  const zipUrl = zipParsed.toString()
+  if (zipParsed.origin !== feedOrigin || !zipParsed.pathname.startsWith('/dsh-desk/bin/mac-arm64/')
+    || basename(zipParsed.pathname) !== `deepseek-harness-${expectedVersion}-mac-arm64.zip`) throw new Error('feed ZIP URL escapes the Studio binary target prefix')
   const head = await fetch(zipUrl, { method: 'HEAD', redirect: 'error', cache: 'no-store' })
   if (!head.ok) throw new Error(`feed ZIP HEAD failed: ${head.status}`)
   const size = Number(head.headers.get('content-length'))

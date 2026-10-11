@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -16,7 +16,7 @@ test('desktop feed verifier checks public bytes and HTTP ranges', async t => {
   const zipName = `deepseek-harness-${version}-mac-arm64.zip`
   const bytes = Buffer.from('signed zip bytes used by the feed verifier\n')
   const sha512 = createHash('sha512').update(bytes).digest('base64')
-  const feed = Buffer.from(`version: ${version}\npath: ${zipName}\nsha512: ${sha512}\nfiles:\n  - url: ${zipName}\n    size: ${bytes.length}\n    sha512: ${sha512}\n`)
+  let feed = Buffer.from(`version: ${version}\npath: https://127.0.0.1/binary/${zipName}\nsha512: ${sha512}\nfiles:\n  - url: http://127.0.0.1:PORT/dsh-desk/bin/mac-arm64/${zipName}\n    size: ${bytes.length}\n    sha512: ${sha512}\n`)
   const server = createServer((request, response) => {
     const path = request.url ?? ''
     const isFeed = path.endsWith('/preview-mac.yml')
@@ -31,6 +31,7 @@ test('desktop feed verifier checks public bytes and HTTP ranges', async t => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   const origin = `http://127.0.0.1:${address.port}`
+  feed = Buffer.from(feed.toString('utf8').replaceAll('PORT', String(address.port)))
   const output = await mkdtemp(join(tmpdir(), 'studio-feed-'))
   t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(output, { recursive: true, force: true }) })
   const result = await run(process.execPath, ['scripts/desktop-release.mjs', 'verify-feed', '--origin', origin, '--allow-loopback', '--channel', 'preview', '--version', version, '--output', output], { cwd: root })
