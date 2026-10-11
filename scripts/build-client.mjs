@@ -6,6 +6,7 @@ import { transform } from 'esbuild';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fragments = [
   '01-loader-and-primitives.js',
+  '02-credential-onboarding.js',
   '02-overview-and-selector.js',
   '02-native-authoring.js',
   '02-codex-tool-nodes.js',

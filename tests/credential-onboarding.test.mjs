@@ -1,0 +1,114 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+const overview = await readFile(new URL('../src/client-fragments/02-overview-and-selector.js', import.meta.url), 'utf8');
+const onboarding = await readFile(new URL('../src/client-fragments/02-credential-onboarding.js', import.meta.url), 'utf8');
+
+function onboardingHarness({ statuses, localStorage = {} } = {}) {
+  const states = [];
+  let cursor = 0;
+  let dirty = true;
+  let effects = [];
+  const listeners = new Map();
+  const dispatched = [];
+  const window = {
+    localStorage,
+    addEventListener: (name, fn) => { const set = listeners.get(name) || new Set(); set.add(fn); listeners.set(name, set); },
+    removeEventListener: (name, fn) => listeners.get(name)?.delete(fn),
+    dispatchEvent: event => { dispatched.push(event.type); for (const fn of listeners.get(event.type) || []) fn(event); return true; },
+  };
+  const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(value => value !== null && value !== undefined && value !== false) });
+  const useState = initial => {
+    const index = cursor++;
+    if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial;
+    return [states[index], next => { const value = typeof next === 'function' ? next(states[index]) : next; if (!Object.is(value, states[index])) { states[index] = value; dirty = true; } }];
+  };
+  const useRef = initial => useState(() => ({ current: initial }))[0];
+  const useEffect = (effect, deps) => {
+    const index = cursor++, previous = states[index];
+    if (!previous || !deps || deps.some((value, i) => !Object.is(value, previous.deps?.[i]))) {
+      states[index] = { deps, cleanup: previous?.cleanup };
+      effects.push(() => { states[index].cleanup?.(); states[index].cleanup = effect(); });
+    }
+  };
+  let statusIndex = 0;
+  const hostRemote = { modelCredentialStatus: async () => statuses[Math.min(statusIndex++, statuses.length - 1)] };
+  class CustomEvent { constructor(type) { this.type = type; } }
+  const Component = new Function('h', 'useState', 'useEffect', 'useRef', 'hostRemote', 'window', 'CustomEvent', 'Modal', 'buttonStyle', 'BRAND', `${onboarding}; return CredentialOnboarding;`)(h, useState, useEffect, useRef, hostRemote, window, CustomEvent, 'Modal', () => ({ type: 'button' }), { danger: 'red', ink: 'black', inkMuted: 'gray', surface: 'white', primaryFill: 'teal' });
+  let tree;
+  const render = () => { cursor = 0; dirty = false; tree = Component(); for (const effect of effects.splice(0)) effect(); return tree; };
+  const settle = async () => { render(); for (let i = 0; i < 20; i += 1) { await Promise.resolve(); if (dirty) render(); } return tree; };
+  const modal = () => tree?.type === 'Modal' ? tree : null;
+  const footerButtons = () => (modal()?.props.footer?.children || []).filter(node => node?.type === 'button');
+  return { settle, modal, footerButtons, window, dispatched, get statusCalls() { return statusIndex; }, render };
+}
+const settings = await readFile(new URL('../src/client-fragments/08-settings-and-entry.js', import.meta.url), 'utf8');
+const hostEntry = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
+
+test('first Studio overview checks the redacted Host credential status and offers one guided action', () => {
+  assert.match(overview, /modelCredentialStatus\(\)/);
+  assert.match(overview, /!credential\.configured/);
+  assert.match(overview, /先配置一个模型凭证/);
+  assert.match(overview, /agentkit-studio:open-settings/);
+  assert.doesNotMatch(overview, /localStorage\.setItem\([^\n]*apiKey/i);
+});
+
+test('credential guide opens the official DSH settings surface', () => {
+  assert.match(settings, /agentkit-studio:open-settings/);
+  assert.match(settings, /openSettings\?\.\(\)/);
+});
+
+test('credential guide is a global shell overlay with retry and deferred entry', () => {
+  assert.match(settings, /shell\.overlay/);
+  assert.match(onboarding, /agentkit-studio:credential-onboarding/);
+  assert.match(onboarding, /稍后设置/);
+  assert.match(onboarding, /重试/);
+  assert.match(settings, /重新打开凭证引导/);
+  assert.doesNotMatch(onboarding, /localStorage\.setItem\([^\n]*apiKey/i);
+});
+
+test('credential filesystem inspection stays in the Host-only dynamic graph', () => {
+  assert.doesNotMatch(hostEntry, /^import .*model-credential-sync/m);
+  assert.match(hostEntry, /await import\('\.\/model-credential-sync\.mjs'\)/);
+});
+
+test('first missing credential opens the guide, configured readiness stays quiet, and saved readiness closes it', async () => {
+  const missing = onboardingHarness({ statuses: [{ configured: false, source: 'missing' }, { configured: true, source: 'env' }] });
+  await missing.settle();
+  assert.ok(missing.modal(), 'first missing status should open the guide');
+  missing.window.dispatchEvent({ type: 'agentkit-studio:model-credential-changed' });
+  await missing.settle();
+  assert.equal(missing.modal(), null, 'a save/recheck with a configured credential closes the guide');
+
+  const ready = onboardingHarness({ statuses: [{ configured: true, source: 'dsh' }] });
+  await ready.settle();
+  assert.equal(ready.modal(), null, 'an existing DSH credential must not show onboarding');
+});
+
+test('guide actions dispatch Settings, support retry/reopen, and tolerate private-mode storage', async () => {
+  const storage = { getItem() { throw new Error('SecurityError'); }, setItem() { throw new Error('SecurityError'); } };
+  const ui = onboardingHarness({ statuses: [{ configured: false, source: 'missing' }, { configured: false, source: 'missing' }], localStorage: storage });
+  await ui.settle();
+  const buttons = ui.footerButtons();
+  assert.deepEqual(buttons.map(button => button.children.join('')), ['稍后设置', '跳过本次', '重新检查', '去配置模型凭证']);
+  buttons[3].props.onClick();
+  await ui.settle();
+  assert.equal(ui.modal(), null, 'configure action closes the guide before opening Settings');
+  assert.ok(ui.dispatched.includes('agentkit-studio:open-settings'));
+  ui.window.dispatchEvent({ type: 'agentkit-studio:credential-onboarding' });
+  await ui.settle();
+  assert.ok(ui.modal(), 'explicit reopen works even when localStorage is unavailable');
+  ui.footerButtons()[0].props.onClick();
+  await ui.settle();
+  assert.equal(ui.modal(), null, 'later action is non-blocking');
+});
+
+test('a Host reconnect rechecks readiness instead of treating transport failure as missing', async () => {
+  const ui = onboardingHarness({ statuses: [Promise.reject(new Error('offline')), { configured: false, source: 'missing' }] });
+  await ui.settle();
+  assert.equal(ui.modal(), null, 'transport error must not trigger a missing-credential dialog');
+  ui.window.dispatchEvent({ type: 'agentkit-studio:credential-recheck' });
+  await ui.settle();
+  assert.ok(ui.modal(), 'reconnect recheck can then show the actual missing state');
+});

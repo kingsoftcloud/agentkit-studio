@@ -11,6 +11,7 @@ import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { dshModelFailure } from '../model-failure.mjs';
 import { createCodexToolRecorder } from './codex-tool-events.mjs';
+import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 
 const ROUTE = 'agentkit-studio';
 let activeAdapter;
@@ -84,13 +85,21 @@ export async function executeDshResourceTool(input = {}) {
 export function streamDshRuntime(options, { agentId, runtime, local, buildId, agentRevision, cloudVersionId, toolAdapter, nativeTools } = {}) {
   const id = String(agentId || '').trim();
   if (!id || !activeAdapter) throw new Error('AgentKit Studio runtime bridge is unavailable');
+  const runtimeType = assertStudioRuntimeType(runtime || 'harness');
+  const sessionId = String(options.sessionId || '').trim();
+  const runId = String(options.runId || options.turnId || '').trim();
+  // DSH's GenerateOptions may omit runId for ordinary turns; enforce the
+  // frozen identity whenever the caller supplies a concrete run identity.
+  if (runId) {
+    assertStudioRunBinding({ agentId: id, buildId, revision: agentRevision, sessionId, runId }, { agentId: id, sessionId });
+  }
   const mode = local === true ? 'local' : 'cloud';
   return activeAdapter.stream({
     ...options,
     studioSelectedModel: options.model,
     ...(options.provider === CODEX_PROVIDER ? { studioCodexModel: options.model } : {}),
     model: `${mode}:${id}`,
-    studioRuntime: runtime,
+    studioRuntime: runtimeType,
     ...(buildId ? { buildId } : {}),
     ...(agentRevision ? {agentRevision} : {}),
     ...(cloudVersionId ? { cloudVersionId } : {}),

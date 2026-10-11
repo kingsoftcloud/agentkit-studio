@@ -16,11 +16,18 @@
         h(SettingsRow, { label: 'Studio Host', value: host.status === 'ready' ? '已连接' : host.status === 'loading' ? '检查中' : '连接失败', detail: host.status === 'ready' ? '已成功读取 Host 配置' : host.error || '正在读取 Host 配置', tone: 'signal' }),
         h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '产品功能与运行适配层版本' }),
         h(SettingsRow, { label: 'DSH 宿主兼容版本', value: DSH_VERSION, detail: '固定的宿主基线，不代表 Studio 产品版本' })),
-      h('div', { style: { marginTop: '16px', padding: '14px 16px', borderRadius: '12px', color: BRAND.inkMuted, background: BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } }, '工作区、会话、模型和凭证的通用设置继续由系统设置页承载；Studio 只扩展自己的执行目标、Host 能力和产品选项。'));
+      h('div', { style: { marginTop: '16px', padding: '14px 16px', borderRadius: '12px', color: BRAND.inkMuted, background: BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } },
+        h('div', null, '工作区、会话、模型和凭证的通用设置继续由系统设置页承载；Studio 只扩展自己的执行目标、Host 能力和产品选项。'),
+        h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-onboarding')), style: { marginTop: '10px', border: '1px solid ' + BRAND.border, borderRadius: '8px', padding: '6px 10px', color: BRAND.accentStrong, background: BRAND.surface, fontSize: '11px', fontWeight: 700 } }, '重新打开凭证引导')));
     }
 
     function StudioSettingsLauncher({ wide, settingsOpen, settingsShortcut, openSettings, t }) {
       const label = t('trigger');
+      useEffect(() => {
+        const open = () => openSettings?.();
+        window.addEventListener('agentkit-studio:open-settings', open);
+        return () => window.removeEventListener('agentkit-studio:open-settings', open);
+      }, [openSettings]);
       return h(Tooltip, { disabled: settingsOpen, label, shortcutKeys: settingsShortcut?.keys },
         h('button', {
           type: 'button', className: 'agentkit-settings-launcher', 'data-wide': wide,
@@ -31,7 +38,14 @@
 
     function apply(ctx) {
       ctx.uiConversation.events.register(codexToolDefinition);
+      // DSH owns the shell and modal layer. This product guide is a small
+      // overlay contribution, so it remains available on the first screen
+      // regardless of which Studio panel is currently selected.
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay', id: 'agentkit-studio-credential-onboarding', order: 100,
+      }, CredentialOnboarding));
       activeConnection = { rpc: ctx.connection.rpc };
+      ctx.on('connection/reset', () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck')));
       // DSH owns the single global plugin center. Studio contributes Codex as
       // an official plugin item through the public plugin-manager slot, so the
       // existing Codex catalog stays available without a second DSH market.

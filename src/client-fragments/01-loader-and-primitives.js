@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
   factory: require => {
     const React = require('react');
     const { createElement: h, useEffect, useRef, useState } = React;
-    const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip } = require('@deepseek-ai/dsh-client-ui-primitives');
+    const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal } = require('@deepseek-ai/dsh-client-ui-primitives');
     const STUDIO_VERSION = '0.0.1';
     const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.2');
     const CONVERSATION_AGENT_KEY = 'agentkit-studio:conversation-agent';
@@ -210,6 +210,16 @@ window.__ModuleLoader__.load({
         }
         return result.value || { configured: false, source: 'missing' };
       }
+      async function modelCredentialStatus() {
+        if (!connection?.rpc?.call) throw Object.assign(new Error('Studio Host 尚未连接，请稍后重试'), { code: 'HOST_CONNECTION_MISSING' });
+        const result = await connection.rpc.call('/agentkit', 'server/action', { action: 'models/credential-status', payload: {} });
+        if (!result?.ok) {
+          const error = new Error(result?.error?.message || 'Studio 模型凭证状态不可用');
+          error.code = result?.error?.code || 'MODEL_CREDENTIAL_STATUS_FAILED';
+          throw error;
+        }
+        return result.value || { configured: false, source: 'missing' };
+      }
       async function studioCall(action, payload = {}) {
         const result = await connection.rpc.call('/agentkit', 'server/action', { action, payload });
         if (!result?.ok) throw Object.assign(new Error(result?.error?.message || 'Studio 请求失败'), { code: result?.error?.code });
@@ -303,6 +313,7 @@ window.__ModuleLoader__.load({
           : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/conversation-surface?sessionId=' + encodeURIComponent(sessionId)),
         ensureDshPreset,
         syncModelCredential,
+        modelCredentialStatus,
         // Direct Server mode has no legacy Studio REST host. Keep local Agent
         // authoring on the authenticated control-plane bridge so the create
         // wizard does not render a form that can only fail with

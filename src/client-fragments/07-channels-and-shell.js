@@ -600,6 +600,7 @@
           await hostRemote.updateSettings({ modelProfiles: profiles });
           await dshModel.applyProfiles({ profiles, keys });
           setForm(current => ({ ...current, profiles: current.profiles.map(profile => ({ ...profile, apiKey: '' })), cloudAccessKey: '', cloudSecretKey: '' }));
+          window.dispatchEvent(new CustomEvent('agentkit-studio:model-credential-changed'));
           setMessage('已保存多个模型配置；标记为“默认”的模型用于新会话，Agent 可在创建或编辑时多选模型绑定。');
           await load();
         } catch (reason) { setError(reason?.message || '保存模型与凭证失败'); } finally { setSaving(false); }

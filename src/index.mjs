@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { registerAuthoringTools } from './authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from './agent-preset-admission.mjs';
 import { createStartupReconciler } from './preset-recovery.mjs';
+import * as AgentKitHarnessPlugin from '../packages/agentkit-harness/src/index.mjs';
 
 export const name = 'agentkit-studio';
 export const inject = ['connection', 'webServer', 'credentials'];
@@ -276,6 +277,7 @@ async function registerControlPlane(ctx) {
   // apply context used by the DSH loader.
   const credentials = credentialsService;
   const models = await import('./model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
+  const { describeGlobalModelCredential } = await import('./model-credential-sync.mjs');
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
   let deploymentsPromise;
@@ -467,7 +469,7 @@ async function registerControlPlane(ctx) {
     const frozenRuntime = await startRuntime();
     if (frozenRuntime) ctx.effect(() => () => frozenRuntime.close(), 'agentkit-studio: frozen Build runtime');
   }
-  const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-inspect', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'builds/export-portable', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/agent-update', 'channels/action', 'server/action']);
+  const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/credential-status', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-inspect', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'builds/export-portable', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/agent-update', 'channels/action', 'server/action']);
   for (const action of ['prepare', 'create', 'prepareUpdate', 'applyUpdate', 'list', 'get', 'refresh', 'repairAccess', 'reconcile', 'logs', 'remove']) allowed.add(`deployments/${action}`);
   const dispatch = async (endpoint, payload, signal) => {
     if (!allowed.has(endpoint)) {
@@ -480,6 +482,7 @@ async function registerControlPlane(ctx) {
         return { ok: true, value };
       }
       if (endpoint === 'models/sync-credential') return { ok: true, value: await syncModelCredential() };
+      if (endpoint === 'models/credential-status') return { ok: true, value: await describeGlobalModelCredential({ configuration: await configurationPromise, credentials: credentialsService }) };
       if (endpoint === 'models/create') return { ok: true, value: await models.create(payload) };
       if (endpoint === 'settings/get') return { ok: true, value: await models.settings() };
       if (endpoint === 'settings/update') return { ok: true, value: await models.save(payload) };
@@ -792,6 +795,7 @@ async function registerControlPlane(ctx) {
         if (action === 'settings/update') return { ok: true, value: await models.save(body) };
         if (action === 'models/catalog') return { ok: true, value: await models.catalog(String(body.profileId || '')) };
         if (action === 'models/sync-credential') return { ok: true, value: await syncModelCredential() };
+        if (action === 'models/credential-status') return { ok: true, value: await describeGlobalModelCredential({ configuration: await configurationPromise, credentials: credentialsService }) };
         if (action === 'GetAgent') {
           const value = await serverClient.getAgent(String(body.AgentId || body.agentId || ''));
           return { ok: true, value };
@@ -936,6 +940,11 @@ async function registerControlPlane(ctx) {
 }
 
 export async function apply(ctx) {
+  // Harness is a separately publishable DSH plugin, even when bundled with
+  // Studio. The DSH host owns its Agent/Session services and its teardown.
+  ctx.inject(['agents', 'sessions', 'llm'], harnessCtx => {
+    harnessCtx.plugin(AgentKitHarnessPlugin);
+  });
   await registerControlPlane(ctx);
   ctx.on('webserver/index-inject', table => table.push({
     kind: 'global',

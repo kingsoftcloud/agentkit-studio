@@ -76,7 +76,35 @@ export async function packageDesktop(options) {
   });
 }
 
+/**
+ * Prepare the same isolated, patched source snapshot used by packaging and
+ * verify the desktop hooks there. The live DSH checkout intentionally stays
+ * at the pinned clean commit; plugin and unsigned-package hooks arrive only
+ * through the versioned patch series in the isolated checkout.
+ */
+export async function verifyDesktopPackageInputs(options) {
+  return withDesktopCheckout(options, async checkout => {
+    const required = [
+      ['apps/desktop/scripts/prepare-package-set.ts', 'DSH_DESKTOP_PLUGIN_INPUTS'],
+      ['apps/desktop/src/project-manager.ts', 'DSH_DESKTOP_PLUGIN_BUNDLES'],
+      ['apps/desktop/scripts/package-target.ts', 'invocation.unsigned && target.platform'],
+    ];
+    for (const [relative, marker] of required) {
+      const path = join(checkout, relative);
+      let contents;
+      try { contents = await readFile(path, 'utf8'); }
+      catch { throw new Error(`desktop preflight: patched checkout is missing ${relative}`); }
+      if (!contents.includes(marker)) throw new Error(`desktop preflight: patched checkout is missing ${marker}`);
+    }
+    return { checkout, required: required.map(([relative]) => relative) };
+  });
+}
+
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
-  const {values}=parseArgs({options:Object.fromEntries(['source','output','patches','commit','target','studio-version','dsh-version'].map(key=>[key,{type:'string'}]).concat([['unsigned',{type:'boolean'}],['directory',{type:'boolean'}]]))});
-  await packageDesktop({...values,studioVersion:values['studio-version'],dshVersion:values['dsh-version']});
+  const {values}=parseArgs({options:Object.fromEntries(['source','output','patches','commit','target','studio-version','dsh-version'].map(key=>[key,{type:'string'}]).concat([['unsigned',{type:'boolean'}],['directory',{type:'boolean'}],['preflight',{type:'boolean'}]]))});
+  const options = {...values,studioVersion:values['studio-version'],dshVersion:values['dsh-version']};
+  if (values.preflight) {
+    const result = await verifyDesktopPackageInputs(options);
+    console.log(`Desktop package preflight passed in isolated checkout: ${result.checkout}`);
+  } else await packageDesktop(options);
 }

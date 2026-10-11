@@ -57,7 +57,7 @@ doctor:
 cloud-identity:
 	node scripts/check-cloud-identity.mjs
 
-.PHONY: check test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-harness verify-desktop-update verify-desktop-differential verify-desktop-artifact verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package desktop-package-mac-arm64-unsigned ci clean
@@ -166,6 +166,24 @@ verify-dsh:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
 	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-dsh
 
+verify-harness:
+	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
+	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是 $(DSH_VERSION) 基线 $(DSH_COMMIT)" >&2; exit 2)
+	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-harness
+
+verify-desktop-update:
+	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
+	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是 $(DSH_VERSION) 基线 $(DSH_COMMIT)" >&2; exit 2)
+	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-desktop-update
+
+verify-desktop-differential:
+	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
+	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-desktop-differential
+
+verify-desktop-artifact:
+	@test -n "$(DESKTOP_ARTIFACT_DIR)" || (echo "DESKTOP_ARTIFACT_DIR 必须指向 DMG/ZIP/blockmap 输出目录" >&2; exit 2)
+	AGENTKIT_DESKTOP_ARTIFACT_DIR="$(DESKTOP_ARTIFACT_DIR)" pnpm verify-desktop-artifact
+
 verify-dsh-sdk:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
 	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-dsh-sdk
@@ -202,10 +220,7 @@ desktop-start:
 
 desktop-package-preflight: pack
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	@test -f "$(DSH_ROOT)/apps/desktop/scripts/prepare-package-set.ts" \
-		&& grep -q "DSH_DESKTOP_PLUGIN_INPUTS" "$(DSH_ROOT)/apps/desktop/scripts/prepare-package-set.ts" \
-		&& grep -q "DSH_DESKTOP_PLUGIN_BUNDLES" "$(DSH_ROOT)/apps/desktop/src/project-manager.ts" \
-		|| (echo "DSH rc.2 desktop plugin package-set patch 未应用；先执行 make patch-apply DSH_ROOT=..." >&2; exit 2)
+	@$(DESKTOP_PACKAGE) --preflight
 	@test -f "$(PLUGIN_TARBALL)" || (echo "插件包不存在：$(PLUGIN_TARBALL)" >&2; exit 2)
 	@mkdir -p "$(STUDIO_DESKTOP_INPUT)"
 	@cp "$(PLUGIN_TARBALL)" "$(STUDIO_DESKTOP_INPUT)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz"
@@ -217,7 +232,6 @@ desktop-package-mac-arm64: desktop-package-preflight
 # Local artifact uses the official runtime; no release feed or upload record.
 desktop-package-mac-arm64-unsigned: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
-	@grep -Eq 'invocation.unsigned && target.platform' "$(DSH_ROOT)/apps/desktop/scripts/package-target.ts" || (echo "DSH local macOS package patch 未应用；请应用 009-local-macos-package.patch" >&2; exit 2)
 	$(DESKTOP_ENV) $(DESKTOP_PACKAGE) --target mac-arm64 --unsigned
 
 desktop-package-mac-arm64-dir: desktop-package-preflight

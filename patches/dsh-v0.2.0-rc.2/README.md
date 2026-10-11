@@ -48,3 +48,5 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `016-informational-session-events.patch` | 为 Session.append 的非模型事件开放现有 ignorable 标记，修复下游插件展示记录在磁盘重开时被拒绝的问题；禁止消息事件使用，保留默认 required 和官方静态事件清单，附带单测与双语说明 | 上游公开可写入纯展示事件 ignorable 标记的等价接口 |
 | `017-ungrouped-new-session.patch` | 接通“未分组”加号，并在工作区名称旁提供取消叉号；显式空工作区不再回退到当前或最近目录，取消目录沿用草稿迁移，复用导航取消与错误提示 | 上游支持从未分组创建无工作区会话及取消所选目录 |
 | `018-preserve-agent-on-workspace-clear.patch` | 取消空白会话的目录时，通过公开 create preset、model selection 与 permission command 保留 Agent 和模型；Workspace-scoped 自定义访问模式回落到新会话默认命名模式，恢复成功后才迁移草稿，切换或失败不抢占页面 | 上游公开等价的无工作区会话配置继承合同 |
+| `019-studio-product-update-feed.patch` | 把 Desktop 更新源、Stable/Preview 通道和 metadata 文件名变成显式产品输入；生产构建不再回退到 DeepSeek 下载源，Studio 使用自己的 App ID/更新源，仍保留 Nightly 仅用于旧测试夹具兼容 | 上游提供产品 App ID、更新源和 Stable/Preview 配置接口，并且可由产品包直接传入 |
+| `020-studio-signed-product-name.patch` | 让正式签名、公证和签名后 smoke 沿用产品 bundle 名称，而不是硬编码查找 `DeepSeek Harness.app`；默认 DSH 品牌保持不变 | 上游签名和公证路径统一使用 `DSH_DESKTOP_PRODUCT_NAME` |

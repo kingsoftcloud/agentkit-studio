@@ -1,6 +1,7 @@
     function OverviewPage({ onNavigate }) {
       const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
       const [connection, setConnection] = useState({ status: 'loading', agents: 0, runtimes: 0, error: '' });
+      const [credential, setCredential] = useState({ status: 'loading', configured: true });
       const load = async () => {
         setConnection(current => ({ ...current, status: 'loading', error: '' }));
         try {
@@ -22,6 +23,15 @@
         }
       };
       useEffect(() => { load(); }, []);
+      useEffect(() => {
+        let active = true;
+        hostRemote.modelCredentialStatus().then(result => {
+          if (active) setCredential({ status: 'ready', configured: result?.configured === true, source: result?.source || 'unknown' });
+        }).catch(error => {
+          if (active) setCredential({ status: 'error', configured: true, error: error?.message || '凭证状态暂不可用' });
+        });
+        return () => { active = false; };
+      }, []);
       const hostReady = connection.status === 'ready';
       const serverReady = hostReady && (!directServerMode || connection.cloudConnected);
       const readiness = serverReady ? 4 : 3;
@@ -61,7 +71,10 @@
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '20px', background: BRAND.surface } },
           h(SectionHeading, { eyebrow: 'System', title: '工作区状态', detail: '所有状态都来自唯一的 Host 与会话来源。' }),
           h('div', { style: { display: 'grid', gap: '10px' } }, statusRows)));
-      return h('div', null, hero, metrics, cards);
+      const credentialGuide = credential.status === 'ready' && !credential.configured ? h('section', {
+        role: 'status', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '18px', padding: '15px 18px', border: '1px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.surface },
+      }, h('div', null, h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '14px' } }, '先配置一个模型凭证'), h('span', { style: { display: 'block', marginTop: '5px', color: BRAND.inkMuted, fontSize: '12px' } }, '首次使用前完成 API Key 配置，Agent 对话和 DSH Native 模型目录才能正常工作。')), h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:open-settings')), style: buttonStyle() }, '去配置模型凭证')) : null;
+      return h('div', null, credentialGuide, hero, metrics, cards);
     }
 
     function AgentCard({ agent, onResources }) {

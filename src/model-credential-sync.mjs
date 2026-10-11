@@ -1,3 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 /**
  * Copy the Studio model key from the Host-owned global configuration into the
  * DSH credential service. The value never leaves this module or appears in a
@@ -31,4 +35,38 @@ export async function syncGlobalModelCredential({ configuration, credentials, re
   return results.length === 1 && results[0].name === reference
     ? summary
     : { ...summary, profiles: results.map(({ name, ...item }) => ({ name, ...item })) };
+}
+
+/**
+ * Return a redacted readiness fact for the first global model credential.
+ * This intentionally checks both Studio's global configuration and the DSH
+ * credential provider: an environment/profile credential must not be treated
+ * as missing merely because Studio has not copied it yet.
+ */
+export async function describeGlobalModelCredential({ configuration, credentials, reference = 'AGENTKIT_MODEL_API_KEY', env = process.env, codexHome } = {}) {
+  if (!configuration || typeof configuration.resolve !== 'function') throw new TypeError('configuration.resolve is required');
+  if (!credentials || typeof credentials.describe !== 'function') throw new TypeError('credentials.describe is required');
+  const resolved = await configuration.resolve();
+  const values = resolved?.values || {};
+  const profiles = Array.isArray(values.modelProfiles) ? values.modelProfiles : [];
+  const names = [...new Set([
+    ...profiles.map(profile => String(profile?.credentialName || '').trim()),
+    reference, 'OPENAI_API_KEY', 'MODEL_AGENT_API_KEY', 'DEEPSEEK_API_KEY',
+  ].filter(Boolean))];
+  const configuredByHost = Boolean(String(values.modelApiKey || '').trim() || profiles.some(profile => String(profile?.apiKey || '').trim()));
+  const hostSource = values.modelApiKey ? resolved?.sources?.modelApiKey : profiles.find(profile => profile?.apiKey)?.credentialName;
+  for (const name of names) {
+    const info = await credentials.describe(name).catch(() => null);
+    if (info?.configured === true) return { configured: true, source: info.source || 'dsh', credential: name };
+  }
+  // Codex's native App Server auth is file-backed rather than an API-key
+  // reference. Report only a non-empty JSON object; never return its contents.
+  const nativeCodexHome = String(codexHome || env.CODEX_HOME || join(homedir(), '.codex'));
+  try {
+    const auth = JSON.parse(await readFile(join(nativeCodexHome, 'auth.json'), 'utf8'));
+    if (auth && typeof auth === 'object' && Object.keys(auth).length) return { configured: true, source: 'codex-auth' };
+  } catch { /* no native Codex credential is a valid unconfigured state */ }
+  return configuredByHost
+    ? { configured: true, source: hostSource || resolved?.sources?.modelApiKey || 'host' }
+    : { configured: false, source: resolved?.sources?.modelApiKey || 'missing' };
 }
