@@ -25,9 +25,10 @@ Gitleaks job adds entropy-aware secret detection. The internal CI entrypoint is
 GitHub Actions downloads and verifies the pinned Gitleaks `8.30.1` binary
 through [`ci/install-gitleaks.sh`](../ci/install-gitleaks.sh). Ezone workers
 use that version from the worker image, `GITLEAKS_BIN`, or the checked-in
-Linux archive under `.ci-tools/`; their entrypoint does not depend on external
-GitHub release downloads and installs Node/pnpm from the configured Alpine
-mirror when needed. It fails closed when the scanner or runtime is unavailable.
+Linux archive under `.ci-tools/`. The same archive keeps Node `22.19.0` and
+pnpm `10.33.2` available on the minimal Alpine worker, so the entrypoint does
+not depend on external GitHub or npm downloads; it fails closed when a pinned
+tool is unavailable or its checksum is wrong.
 
 Parity is read-only and compares the exact commit IDs of the two protected
 refs:
