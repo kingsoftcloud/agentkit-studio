@@ -42,7 +42,7 @@ AGENTKIT_DESKTOP_DMG=/path/to/AgentKit-Studio.dmg \\
 - `STUDIO_APPLE_APP_PASSWORD`
 - `STUDIO_APPLE_TEAM_ID`
 
-签名任务模板位于旧仓库的 `.github/workflows/release-agentkit-studio.yml`，只允许 `workflow_dispatch`，要求输入新版 Studio 固定 commit、DSH 固定 commit、`stable/preview` channel 和 HTTPS update origin。它会临时创建 keychain，生成 DSH `.env.macos`，调用本仓库的 `make desktop-package-mac-arm64`，验证签名/公证后的 DMG、ZIP、ZIP blockmap 和 channel metadata，最后只上传 Actions artifact 并清理证书、keychain 和配置。
+签名任务模板位于旧仓库的 `.github/workflows/release-agentkit-studio.yml`，只允许 `workflow_dispatch`，要求输入新版 Studio 固定 commit、DSH 固定 commit、`stable/preview` channel 和 HTTPS update origin。它会临时创建 keychain，生成 DSH `.env.macos`，调用本仓库的 `make desktop-package-mac-arm64`，验证签名/公证后的 DMG、ZIP、ZIP blockmap 和 channel metadata；默认只上传 Actions artifact，显式开启 `publish_feed` 时再发布 feed，最后清理证书、keychain 和配置。
 
 因为新版 Studio 仓库是私有仓库，旧仓库的 `GITHUB_TOKEN` 不能默认跨仓库读取它。工作流还需要在 `studio-signing` Environment 增加一个只读 `AGENTKIT_STUDIO_SOURCE_TOKEN`；这个 Token 只用于 checkout 指定 commit，不参与签名或发布。
 
