@@ -58,6 +58,7 @@ fi
 tool_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/agentkit-tools"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 node_archive="$repo_root/.ci-tools/node-v22.19.0/node.tar.xz"
+node_libs_archive="$repo_root/.ci-tools/node-v22.19.0/node-libs.tar.gz"
 pnpm_archive="$repo_root/.ci-tools/pnpm-v10.33.2/pnpm.tgz"
 node_ok=false
 if command -v node >/dev/null 2>&1; then
@@ -71,9 +72,20 @@ if [[ "$node_ok" != true ]]; then
       echo 'Checked-in Node.js archive checksum mismatch' >&2
       exit 1
     }
-    mkdir -p "$tool_dir/node"
+    node_libs_sha="$(sha256_file "$node_libs_archive")"
+    [[ "$node_libs_sha" == '127c4a3eab99ab5c48bea474f12d08c80c3590a63892d130e1c02f272b13cb02' ]] || {
+      echo 'Checked-in Node.js runtime libraries checksum mismatch' >&2
+      exit 1
+    }
+    mkdir -p "$tool_dir/node" "$tool_dir/node-libs" "$tool_dir/bin"
     tar -xJf "$node_archive" -C "$tool_dir/node" --strip-components=1
-    export PATH="$tool_dir/node/bin:$PATH"
+    tar -xzf "$node_libs_archive" -C "$tool_dir/node-libs"
+    cat > "$tool_dir/bin/node" <<EOF
+#!/usr/bin/env sh
+exec "$tool_dir/node-libs/ld-musl-x86_64.so.1" --library-path "$tool_dir/node-libs" "$tool_dir/node/bin/node" "\$@"
+EOF
+    chmod 700 "$tool_dir/bin/node"
+    export PATH="$tool_dir/bin:$PATH"
   elif command -v apk >/dev/null 2>&1; then
     apk add --no-cache nodejs-current npm
   else
@@ -94,7 +106,7 @@ if [[ "$pnpm_ok" != true ]]; then
     tar -xzf "$pnpm_archive" -C "$tool_dir/pnpm" --strip-components=1
     cat > "$tool_dir/bin/pnpm" <<EOF
 #!/usr/bin/env sh
-exec "$tool_dir/node/bin/node" "$tool_dir/pnpm/bin/pnpm.cjs" "\$@"
+    exec "$tool_dir/bin/node" "$tool_dir/pnpm/bin/pnpm.cjs" "\$@"
 EOF
     chmod 700 "$tool_dir/bin/pnpm"
     export PATH="$tool_dir/bin:$PATH"
