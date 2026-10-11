@@ -9,7 +9,7 @@ const patchRoot = resolve(process.env.AGENTKIT_DESKTOP_UPDATE_PATCHES || join(st
 const read = path => readFile(path, 'utf8');
 
 async function verify(checkout) {
-  const [desktopPackage, builderConfig, coordinator, updateSchedule, tsdownConfig, packageMac, macUpdateConfig, autoUpdateEnvironment, releaseEnvironment, packageTarget, makefile] = await Promise.all([
+  const [desktopPackage, builderConfig, coordinator, updateSchedule, tsdownConfig, packageMac, macUpdateConfig, autoUpdateEnvironment, releaseEnvironment, packageTarget, makefile, releaseTool, installTool] = await Promise.all([
     read(join(checkout, 'apps/desktop/package.json')),
     read(join(checkout, 'apps/desktop/scripts/electron-builder-config.mjs')),
     read(join(checkout, 'apps/desktop/src/update-coordinator.ts')),
@@ -21,6 +21,8 @@ async function verify(checkout) {
     read(join(checkout, 'apps/desktop/scripts/desktop-release-environment.mjs')),
     read(join(checkout, 'apps/desktop/scripts/package-target.ts')),
     read(join(studioRoot, 'Makefile')),
+    read(join(studioRoot, 'scripts/desktop-release.mjs')),
+    read(join(studioRoot, 'scripts/verify-desktop-installed-update.mjs')),
   ]);
   const packageJson = JSON.parse(desktopPackage);
   if (!packageJson.dependencies?.['electron-updater']) throw new Error('DSH Desktop updater dependency is missing');
@@ -39,6 +41,8 @@ async function verify(checkout) {
     ['macOS update config', macUpdateConfig, ['app-update.yml', 'writeMacOSAppUpdateConfig', 'channel(provider.channel)']],
     ['desktop package', packageTarget, ['writeReleaseRecord']],
     ['Studio package preflight', makefile, ['desktop-package-preflight', 'DSH_DESKTOP_PLUGIN_INPUTS']],
+    ['Studio release publisher', releaseTool, ['desktop-upload-plan.ts', 'desktop-upload-run.ts', 'Range', 'publish']],
+    ['Studio installed update qualification', installTool, ['hdiutil', 'codesign', 'spctl', 'real Electron', 'DSH_HOME']],
   ]) {
     for (const pattern of patterns) if (!source.includes(pattern)) throw new Error(`${label} is missing ${pattern}`);
   }

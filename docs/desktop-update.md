@@ -46,4 +46,32 @@ AGENTKIT_DESKTOP_DMG=/path/to/AgentKit-Studio.dmg \\
 
 因为新版 Studio 仓库是私有仓库，旧仓库的 `GITHUB_TOKEN` 不能默认跨仓库读取它。工作流还需要在 `studio-signing` Environment 增加一个只读 `AGENTKIT_STUDIO_SOURCE_TOKEN`；这个 Token 只用于 checkout 指定 commit，不参与签名或发布。
 
-旧仓库的 workflow 不自动发布更新源。正式发布还需要单独配置 Studio 更新源的上传凭证，并按“不可变 DMG/ZIP/blockmap 先上传、channel metadata 后发布”的顺序完成。旧 Studio 的 App ID 是 `com.kingsoftcloud.agentkit.studio`，新版是 `com.kingsoftcloud.agentkit-studio`，两者不能直接当作同一安装实例做差分升级。
+旧仓库的 workflow 默认只生成签名候选；只有显式传入 `publish_feed=true` 才会发布更新源。正式发布还需要单独配置 Studio 更新源的上传凭证，并按“不可变 DMG/ZIP/blockmap 先上传、channel metadata 后发布”的顺序完成。旧 Studio 的 App ID 是 `com.kingsoftcloud.agentkit.studio`，新版是 `com.kingsoftcloud.agentkit-studio`，两者不能直接当作同一安装实例做差分升级。
+
+## P1-1 真实发布与安装验收
+
+签名工作流通过 `publish_feed=true` 才会写线上 COS。上传实现调用冻结 DSH checkout 中的官方 `desktop-upload-plan.ts` 和 `desktop-upload-run.ts`：先校验并上传 DMG、ZIP、ZIP blockmap，再写 `stable-mac.yml` 或 `preview-mac.yml`。发布 job 完成后立即用公开 HTTPS origin 做 HEAD、全量 SHA-512 和 `Range: bytes=0-0` 检查，并把 JSON 证据作为 Actions artifact 保存。工作流使用以下 Environment Secret 名称，值不进入仓库：
+
+- `STUDIO_DOWNLOAD_PROD_COS_BUCKET`
+- `STUDIO_DOWNLOAD_PROD_COS_SECRET_ID`
+- `STUDIO_DOWNLOAD_PROD_COS_SECRET_KEY`
+
+候选 artifact 必须同时包含 `mac-arm64-release.json`；这个记录把 feed 版本、目标、origin 和 DSH commit 绑定起来，缺失时发布会停止。发布前可填写 `expected_previous_version`，脚本会先读取当前 feed，版本不匹配就不写远端对象。
+
+本地或 CI 的公开 feed 检查：
+
+```sh
+node scripts/desktop-release.mjs verify-feed \
+  --origin https://<studio-update-origin> --channel preview \
+  --version 0.2.0-rc.2.20261012.1 --output .artifacts/desktop-release
+```
+
+真正的 macOS 安装验收会挂载签名 DMG、执行 `codesign` 和 `spctl`、复制到一个临时可写的 `.app`、启动真实 Electron 主进程，然后通过系统菜单执行“检查更新”、下载并重启安装。脚本还检查 `DSH_HOME` marker 在替换后仍存在，并将启动目录、旧版本、新版本、feed、journal 和数据保留结果写入 `installed-update.json`：
+
+```sh
+node scripts/verify-desktop-installed-update.mjs \
+  --dmg /path/to/baseline.dmg --origin https://<studio-update-origin> \
+  --channel preview --version 0.2.0-rc.2.20261012.1
+```
+
+回滚使用前向版本：把回滚代码重新打成更高的 `DSH_DESKTOP_BUILD_VERSION`，指向同一 App ID 和 feed，然后重复发布和安装验收。这样遵守官方 updater 的 `allowDowngrade=false` 和 `semver.gt` 安全约束，同时真实覆盖“新版本 → 回滚代码版本”的安装、重启和数据保留。任何 origin、feed metadata、ZIP range、签名、公证、版本替换或 marker 检查失败，都不能生成验收通过证据。

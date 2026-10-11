@@ -49,6 +49,9 @@
     "verify-desktop-update": "node scripts/verify-desktop-update-inputs.mjs",
     "verify-desktop-differential": "node scripts/verify-desktop-differential.mjs",
     "verify-desktop-artifact": "node scripts/verify-desktop-artifact.mjs",
+    "verify-desktop-feed": "node scripts/desktop-release.mjs verify-feed",
+    "publish-desktop-feed": "node scripts/desktop-release.mjs publish",
+    "verify-desktop-installed-update": "node scripts/verify-desktop-installed-update.mjs",
     "verify-dsh-sdk": "node scripts/verify-dsh-sdk-node-store.mjs",
     "verify-dsh-plugin-market": "node scripts/verify-dsh-plugin-market.mjs"
   },
