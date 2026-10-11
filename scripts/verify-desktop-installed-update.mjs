@@ -128,6 +128,7 @@ async function main() {
   await run('/usr/bin/ditto', [mounted, install])
   await run('/usr/bin/hdiutil', ['detach', mount, '-force'])
   const before = await appVersion(install)
+  if (before.version === targetVersion) throw new Error(`baseline app is already ${targetVersion}; qualification requires a strictly newer feed version`)
   const executable = join(install, 'Contents/MacOS', await plist(join(install, 'Contents/Info.plist'), 'CFBundleExecutable'))
   const child = spawn(executable, ['--user-data-dir', userData], { env: { ...process.env, DSH_HOME: harnessHome, DSH_DESKTOP_UPDATE_JOURNAL_DIR: journals }, stdio: 'ignore', detached: true })
   child.unref()
