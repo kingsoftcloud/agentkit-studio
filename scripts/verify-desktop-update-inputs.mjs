@@ -42,7 +42,7 @@ async function verify(checkout) {
     ['desktop package', packageTarget, ['writeReleaseRecord']],
     ['Studio package preflight', makefile, ['desktop-package-preflight', 'DSH_DESKTOP_PLUGIN_INPUTS']],
     ['Studio release publisher', releaseTool, ['desktop-upload-plan.ts', 'desktop-upload-run.ts', 'Range', 'publish']],
-    ['Studio installed update qualification', installTool, ['hdiutil', 'codesign', 'spctl', 'real Electron', 'DSH_HOME']],
+    ['Studio installed update qualification', installTool, ['hdiutil', 'codesign', 'spctl', 'real Electron', 'DSH_HOME', 'install-confirmed']],
   ]) {
     for (const pattern of patterns) if (!source.includes(pattern)) throw new Error(`${label} is missing ${pattern}`);
   }

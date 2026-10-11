@@ -1,6 +1,6 @@
 /** Exercise a signed macOS app through the real Electron updater and retain evidence. */
 import { execFile, spawn } from 'node:child_process'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -137,8 +137,21 @@ async function main() {
     const marker = await readFile(join(harnessHome, 'p1-1-marker.txt'), 'utf8')
     if (marker !== 'retained across update\n') throw new Error('DSH_HOME marker was not retained')
     if (values['expected-commit'] !== undefined && after.commit !== values['expected-commit']) throw new Error(`updated app commit ${after.commit ?? 'unknown'} does not match expected rollback commit`)
+    const journalEvidence = join(evidenceRoot, 'journals')
+    await cp(journals, journalEvidence, { recursive: true, force: true })
+    const journalFiles = (await readdir(journalEvidence)).filter(name => name.endsWith('.jsonl'))
+    const journalEvents = new Set()
+    for (const name of journalFiles) {
+      for (const line of (await readFile(join(journalEvidence, name), 'utf8')).split('\n').filter(Boolean)) {
+        const event = JSON.parse(line).event
+        if (typeof event === 'string') journalEvents.add(event)
+      }
+    }
+    for (const event of ['started', 'check-requested', 'download-requested', 'install-confirmed']) {
+      if (!journalEvents.has(event)) throw new Error(`update journal is missing ${event}`)
+    }
     const report = { schemaVersion: 1, accepted: true, realElectron: true, appId, appName, before, after,
-      targetVersion, origin: feedOrigin, channel: selectedChannel, dataRetained: true, journals, installedApp: install,
+      targetVersion, origin: feedOrigin, channel: selectedChannel, dataRetained: true, journalEvents: [...journalEvents].sort(), journals: journalEvidence, installedApp: install,
       completedAt: new Date().toISOString() }
     await writeFile(join(evidenceRoot, 'installed-update.json'), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 })
     console.log(`installed update accepted: ${join(evidenceRoot, 'installed-update.json')}`)
