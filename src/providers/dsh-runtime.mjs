@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { nativeCodexUsage } from './codex-usage.mjs';
 /**
  * DSH LLM adapter for Studio-owned Agent revisions.
@@ -26,12 +27,19 @@ const agentRoutes = new Map();
 export function bindDshAgentRoute(sessionId, binding = {}) {
   const id = String(sessionId || '').trim();
   if (!id) return () => {};
+  const runtime = String(binding.runtime || 'harness').trim();
+  const local = binding.local === true;
+  const buildId = String(binding.buildId || '').trim();
+  const revision = Number(binding.agentRevision);
+  if (local && runtime !== 'codex' && buildId && (!Number.isInteger(revision) || revision < 1)) {
+    throw Object.assign(new Error('冻结 DSH Build 路由必须绑定正整数 Agent revision'), { code: 'RUN_IDENTITY_INVALID' });
+  }
   const route = {
     agentId: String(binding.agentId || '').trim(),
     agent: binding.agent,
-    runtime: String(binding.runtime || 'harness').trim(),
-    local: binding.local === true,
-    buildId: String(binding.buildId || '').trim(),
+    runtime,
+    local,
+    buildId,
     agentRevision: binding.agentRevision,
     cloudVersionId: binding.cloudVersionId,
     toolAdapter: binding.toolAdapter,
@@ -87,15 +95,17 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
   if (!id || !activeAdapter) throw new Error('AgentKit Studio runtime bridge is unavailable');
   const runtimeType = assertStudioRuntimeType(runtime || 'harness');
   const sessionId = String(options.sessionId || '').trim();
-  const runId = String(options.runId || options.turnId || '').trim();
-  // DSH's GenerateOptions may omit runId for ordinary turns; enforce the
-  // frozen identity whenever the caller supplies a concrete run identity.
-  if (runId) {
+  const frozenDshBuild = local === true && runtimeType !== 'codex' && Boolean(String(buildId || '').trim());
+  const runId = String(options.runId || options.turnId || options.requestId || (frozenDshBuild ? `run_${randomUUID()}` : '')).trim();
+  if (frozenDshBuild) {
+    assertStudioRunBinding({ agentId: id, buildId, revision: agentRevision, sessionId, runId }, { agentId: id, sessionId });
+  } else if (runId) {
     assertStudioRunBinding({ agentId: id, buildId, revision: agentRevision, sessionId, runId }, { agentId: id, sessionId });
   }
   const mode = local === true ? 'local' : 'cloud';
   return activeAdapter.stream({
     ...options,
+    ...(runId ? { runId } : {}),
     studioSelectedModel: options.model,
     ...(options.provider === CODEX_PROVIDER ? { studioCodexModel: options.model } : {}),
     model: `${mode}:${id}`,

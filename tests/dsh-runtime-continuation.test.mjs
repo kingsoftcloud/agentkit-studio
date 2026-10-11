@@ -12,7 +12,7 @@ async function selectPreset(runtime, sessionId, buildId) {
   applyDshRuntimePlugin({
     tools: { schemas: () => [], execute: async () => ({}) },
     on: (name, callback) => { listeners.set(name, callback); return () => {}; },
-  }, { agentId: 'frozen-agent', runtime, local: true, buildId });
+  }, { agentId: 'frozen-agent', runtime, local: true, buildId, ...(runtime === 'codex' ? {} : { agentRevision: 1 }) });
   await listeners.get('agent/request')({ agent: { id: sessionId } }, async () => prompt);
 }
 
@@ -30,9 +30,20 @@ test('Host transport routes only the selected Session, never another preset or t
   assert.equal(calls[0].buildId, undefined);
   assert.equal((await read({ ...prompt, sessionId: 'older-build-session' }))[0].text, 'bound');
   assert.equal(calls[1].buildId, 'build_11111111111111111111');
+  assert.match(calls[1].runId, /^run_[0-9a-f-]{36}$/);
   assert.equal((await read(prompt))[0].text, 'native');
   assert.equal((await read({ ...prompt, sessionId: 'unbound-session' }))[0].text, 'native');
   assert.equal(calls.length, 2);
+});
+
+test('frozen DSH routes reject a missing Agent revision before they can run', async t => {
+  t.after(() => unbindDshAgentRoutes('missing-revision-agent'));
+  const listeners = new Map();
+  applyDshRuntimePlugin({
+    tools: { schemas: () => [], execute: async () => ({}) },
+    on: (name, callback) => { listeners.set(name, callback); return () => {}; },
+  }, { agentId: 'missing-revision-agent', runtime: 'harness', local: true, buildId: 'build_33333333333333333333' });
+  await assert.rejects(() => listeners.get('agent/request')({ agent: { id: 'missing-revision-session' } }, async () => prompt), { code: 'RUN_IDENTITY_INVALID' });
 });
 
 test('frozen Build selection survives the scoped request to root Harness transport', async t => {
