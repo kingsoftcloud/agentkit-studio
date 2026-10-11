@@ -22,9 +22,11 @@ patch format, package contents, and `git diff --check`. The repository's
 Gitleaks job adds entropy-aware secret detection. The internal CI entrypoint is
 [`ci/ezone-public-gate.sh`](../ci/ezone-public-gate.sh); set
 `RUN_REF_PARITY=1` only for the post-merge parity job.
-Both runners use the pinned Gitleaks `8.30.1` binary through
-[`ci/install-gitleaks.sh`](../ci/install-gitleaks.sh); the entrypoint fails
-closed when the scanner cannot be installed or verified.
+GitHub Actions downloads and verifies the pinned Gitleaks `8.30.1` binary
+through [`ci/install-gitleaks.sh`](../ci/install-gitleaks.sh). Ezone workers
+must provide that version in the worker image or through `GITLEAKS_BIN`, since
+their entrypoint does not depend on external GitHub release downloads; it
+fails closed when the scanner is unavailable.
 
 Parity is read-only and compares the exact commit IDs of the two protected
 refs:

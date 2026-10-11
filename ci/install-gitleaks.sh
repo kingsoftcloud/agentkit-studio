@@ -18,13 +18,20 @@ esac
 mkdir -p "$dest"
 curl --fail --silent --show-error --location --max-time 120 \
   "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/$asset" -o "$dest/$asset"
-node --input-type=module - "$dest/$asset" "$digest" <<'NODE'
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-if (createHash('sha256').update(readFileSync(process.argv[2])).digest('hex') !== process.argv[3]) {
-  console.error('Gitleaks archive checksum mismatch'); process.exit(1);
-}
-NODE
+if command -v sha256sum >/dev/null 2>&1; then
+  actual="$(sha256sum "$dest/$asset" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  actual="$(shasum -a 256 "$dest/$asset" | awk '{print $1}')"
+elif command -v openssl >/dev/null 2>&1; then
+  actual="$(openssl dgst -sha256 "$dest/$asset" | awk '{print $NF}')"
+else
+  echo 'A SHA-256 tool (sha256sum, shasum, or openssl) is required' >&2
+  exit 2
+fi
+if [[ "$actual" != "$digest" ]]; then
+  echo 'Gitleaks archive checksum mismatch' >&2
+  exit 1
+fi
 tar -xzf "$dest/$asset" -C "$dest" gitleaks
 chmod 700 "$dest/gitleaks"
 "$dest/gitleaks" version
