@@ -1,6 +1,6 @@
 {
   "id": "agentkit-studio",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "requiredHostApi": "dsh-native/0.2.0-rc.2",
   "requiredDsh": "0.2.0-rc.2",
   "capabilities": [

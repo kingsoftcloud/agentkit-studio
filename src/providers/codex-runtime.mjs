@@ -125,7 +125,7 @@ function dynamicToolContent(value) {
 }
 
 /**
- * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number }} options
+ * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number, idleTimeoutMs?: number, startupTimeoutMs?: number }} options
  */
 export function createCodexRuntime(options = {}) {
   const baseEnv = { ...(options.inheritEnv === false ? {} : process.env), ...(options.env || {}) };
@@ -136,7 +136,11 @@ export function createCodexRuntime(options = {}) {
   const model = String(options.model || baseEnv.AGENTKIT_CODEX_MODEL || '').trim() || undefined;
   const approvalPolicy = String(options.approvalPolicy || baseEnv.AGENTKIT_CODEX_APPROVAL_POLICY || 'never');
   const sandbox = String(options.sandbox || baseEnv.AGENTKIT_CODEX_SANDBOX || '').trim() || undefined;
-  const timeoutMs = Math.max(10_000, Number(options.timeoutMs) || 180_000);
+  // A healthy agent may need many model/tool rounds. Only explicit caller
+  // budgets impose a total deadline; stalled transports still time out.
+  const timeoutMs = Math.max(0, Number(options.timeoutMs ?? baseEnv.AGENTKIT_CODEX_TIMEOUT_MS) || 0);
+  const idleTimeoutMs = Math.max(10_000, Number(options.idleTimeoutMs ?? baseEnv.AGENTKIT_CODEX_IDLE_TIMEOUT_MS) || 600_000);
+  const startupTimeoutMs = Math.max(10_000, Number(options.startupTimeoutMs) || 60_000);
 
   const runtime = {
     executable,
@@ -184,6 +188,9 @@ export function createCodexRuntime(options = {}) {
       let closed = false;
       let disposed = false;
       let timer;
+      let budgetTimer;
+      let started = false;
+      const toolController = new AbortController();
       const countUsage = createCodexUsageCounter();
       const phases = new Map();
       const deltaItems = new Set();
@@ -192,9 +199,19 @@ export function createCodexRuntime(options = {}) {
         if (closed) return;
         closed = true;
         clearTimeout(timer);
+        clearTimeout(budgetTimer);
+        toolController.abort(error);
         for (const resolver of pending.values()) resolver.reject(error || new CodexRuntimeError('CODEX_TRANSPORT_CLOSED', 'Codex 请求已关闭'));
         pending.clear();
         queue.close(error);
+      };
+      const activity = () => {
+        if (closed) return;
+        clearTimeout(timer);
+        timer = setTimeout(() => finish(new CodexRuntimeError(
+          started ? 'CODEX_IDLE_TIMEOUT' : 'CODEX_STARTUP_TIMEOUT',
+          started ? 'Codex 长时间没有返回进度，运行已停止；可以重试当前任务。' : 'Codex App Server 启动超时',
+        )), started ? idleTimeoutMs : startupTimeoutMs);
       };
       const onData = chunk => {
         buffer += Buffer.from(chunk).toString('utf8');
@@ -245,12 +262,14 @@ export function createCodexRuntime(options = {}) {
             callId: String(params.callId || ''),
             threadId: String(params.threadId || threadId),
             turnId: String(params.turnId || turnId),
-            signal,
+            signal: toolController.signal,
           });
           result = { contentItems: dynamicToolContent(output), success: true };
         } catch (error) {
           result = { contentItems: [{ type: 'inputText', text: String(error?.message || error).slice(0, 2000) }], success: false };
         }
+        if (closed) return;
+        activity();
         try {
           queue.push({
             method: 'agentkit/tool/status',
@@ -266,6 +285,9 @@ export function createCodexRuntime(options = {}) {
         } catch (error) { finish(asError(error)); }
       };
       const handleMessage = message => {
+        if (closed) return;
+        if ((!message.params?.threadId || message.params.threadId === threadId)
+          && (!message.params?.turnId || message.params.turnId === turnId)) activity();
         // Server-initiated requests have a method and an id. Handle those
         // before matching response ids because both sides use integer ids.
         if (message.method && message.id !== undefined) {
@@ -307,7 +329,8 @@ export function createCodexRuntime(options = {}) {
       child.stdin.on?.('error', onError);
       child.on?.('error', onError);
       child.on?.('exit', onExit);
-      timer = setTimeout(() => finish(new CodexRuntimeError('CODEX_TIMEOUT', 'Codex App Server 运行超时')), timeoutMs);
+      activity();
+      if (timeoutMs > 0) budgetTimer = setTimeout(() => finish(new CodexRuntimeError('CODEX_TIMEOUT', 'Codex App Server 运行超时')), timeoutMs);
       const abort = () => {
         if (turnId && threadId) {
           try { writeJson(child.stdin, { jsonrpc: '2.0', id: ++requestId, method: 'turn/interrupt', params: { threadId, turnId } }); } catch {}
@@ -341,6 +364,8 @@ export function createCodexRuntime(options = {}) {
         threadId = idOf(await request('thread/start', threadParams), 'thread id');
         const turn = await request('turn/start', { threadId, input: [{ type: 'text', text: promptFor({ input: prompt, messages }), text_elements: [] }] });
         turnId = idOf(turn, 'turn id');
+        started = true;
+        activity();
 
         for await (const message of queue) {
           const method = String(message.method || '');

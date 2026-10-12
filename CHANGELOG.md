@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.2
+
+- Preserve multimodal model capabilities advertised by nested `/v1/models` metadata.
+- Keep long-running Codex turns alive while progress continues, with idle and explicit total budgets.
+- Keep the in-app browser registration active and ship the independent Harness plugin verification path.
+
 ## 0.0.1
 
 - Initial AgentKit Studio plugin package for the public DSH host.
