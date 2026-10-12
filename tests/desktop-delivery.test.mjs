@@ -7,9 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 const run = promisify(execFile);
 const root = fileURLToPath(new URL('..', import.meta.url));
+const studioVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const currentImage = 'new official pipeline image';
 
 async function fixture(t, result = 'success') {
@@ -44,13 +46,13 @@ async function fixture(t, result = 'success') {
   // Stub only the expensive official build; exercise the real Make recipe and export.
   await writeFile(join(bin, 'pnpm'), `#!/usr/bin/env node\nimport { mkdirSync, writeFileSync } from 'node:fs';\nimport { dirname } from 'node:path';\nif (process.argv.includes('pack')) { writeFileSync(process.env.STUDIO_PACK_TARBALL, 'plugin fixture'); process.exit(0); }\nif (process.argv.includes('install')) process.exit(0);\nif (process.env.STUDIO_TEST_RESULT === 'fail') process.exit(1);\nconst source = process.cwd() + '/apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/deepseek-harness-0.2.0-rc.2-mac-arm64-unsigned.dmg';\nif (process.env.STUDIO_TEST_RESULT === 'success' || process.env.STUDIO_TEST_RESULT === 'empty') { mkdirSync(dirname(source), { recursive: true }); writeFileSync(source, process.env.STUDIO_TEST_RESULT === 'empty' ? '' : ${JSON.stringify(currentImage)}); }\n`, { mode: 0o755 });
   await writeFile(join(bin, 'uname'), '#!/bin/sh\necho Darwin\n', { mode: 0o755 });
-  const artifact = join(output, 'AgentKit-Studio-0.0.1-mac-arm64-local.dmg');
+  const artifact = join(output, `AgentKit-Studio-${studioVersion}-mac-arm64-local.dmg`);
   await writeFile(artifact, 'old image');
   const execute = (nextResult = result, target = 'desktop-package-mac-arm64-unsigned') => run('make', [target, '-o', 'desktop-package-preflight', `DSH_ROOT=${dsh}`, `PACK_DIR=${output}`, `PATCH_ROOT=${patches}`, `DSH_COMMIT=${commit}`, `DESKTOP_PLUGIN_INPUTS=${patches}`], {
     cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUDIO_TEST_SOURCE: source, STUDIO_TEST_RESULT: nextResult },
   });
   const preflight = () => run('make', ['desktop-package-preflight', `DSH_ROOT=${dsh}`, `PACK_DIR=${output}`, `PATCH_ROOT=${patches}`, `DSH_COMMIT=${commit}`, `DESKTOP_PLUGIN_INPUTS=${patches}`], {
-    cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUDIO_PACK_TARBALL: join(output, 'kingsoftcloud-agentkit-studio-0.0.1.tgz') },
+    cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUDIO_PACK_TARBALL: join(output, `kingsoftcloud-agentkit-studio-${studioVersion}.tgz`) },
   });
   return { artifact, output, execute, preflight, dsh, commit };
 }
@@ -73,7 +75,7 @@ test('successful official packaging replaces the Studio delivery image and recor
   await execute();
   assert.equal(await readFile(artifact, 'utf8'), currentImage, 'successful Make target must not leave the old Studio DMG');
   const digest = createHash('sha256').update(currentImage).digest('hex');
-  assert.equal(await readFile(`${artifact}.sha256`, 'utf8'), `${digest}  AgentKit-Studio-0.0.1-mac-arm64-local.dmg\n`);
+  assert.equal(await readFile(`${artifact}.sha256`, 'utf8'), `${digest}  AgentKit-Studio-${studioVersion}-mac-arm64-local.dmg\n`);
   const record = JSON.parse(await readFile(`${artifact}.json`, 'utf8'));
   assert.equal(record.sha256, digest);
   assert.equal(record.bytes, Buffer.byteLength(currentImage));
