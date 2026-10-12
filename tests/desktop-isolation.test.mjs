@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, access, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { prepareDesktopCheckout, withDesktopCheckout } from '../scripts/desktop-checkout.mjs';
@@ -73,6 +73,25 @@ test('release settings preserve secrets and resolve only credential file referen
   assert.equal(projected.CSC_LINK,join(sourceDirectory,'keys/distribution.p12'));
   assert.equal(projected.APPLE_API_KEY,join(sourceDirectory,'keys/key.p8'));
   assert.equal(projected.CSC_KEY_PASSWORD,parseEnv(contents).CSC_KEY_PASSWORD);
+});
+
+test('CI build version reaches the official package CLI instead of being lost in its environment', async t => {
+  const input=await fixture(t);
+  const bin=join(input.root,'bin'); await mkdir(bin);
+  const calls=join(input.root,'calls.jsonl');
+  const fake=join(bin,'pnpm');
+  await writeFile(fake,`#!${process.execPath}\nimport('node:fs').then(fs=>fs.appendFileSync(process.env.PACKAGE_CALLS,JSON.stringify(process.argv.slice(2))+'\\n'));\n`);
+  await chmod(fake,0o755);
+  await mkdir(join(input.source,'apps/desktop'),{recursive:true});
+  await writeFile(join(input.source,'apps/desktop/.env.macos'),'DSH_DESKTOP_APP_ID=com.example.studio\n');
+  const {promisify}=await import('node:util'); const {execFile}=await import('node:child_process');
+  await promisify(execFile)(process.execPath,['scripts/package-desktop.mjs',
+    '--source',input.source,'--output',input.output,'--patches',input.patches,'--commit',input.commit,
+    '--target','mac-arm64','--dsh-version','0.2.0-rc.2','--studio-version','0.0.1'],{
+    env:{...process.env,PATH:`${bin}:${process.env.PATH}`,PACKAGE_CALLS:calls,DSH_DESKTOP_PLUGIN_INPUTS:'',DSH_DESKTOP_BUILD_VERSION:'0.2.0-rc.2.20261012.0'},
+  });
+  const recorded=(await readFile(calls,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(recorded[1],['--dir','apps/desktop','run','package','mac-arm64','--build-version','0.2.0-rc.2.20261012.0']);
 });
 
 test('plugin inputs are frozen before a second pack replaces the shared version file', async t => {

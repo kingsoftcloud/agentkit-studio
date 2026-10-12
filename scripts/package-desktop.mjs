@@ -36,6 +36,7 @@ function run(command,args,cwd,env) {
 
 export async function packageDesktop(options) {
   const {target,unsigned=false,directory=false,source,output,studioVersion,dshVersion}=options;
+  const buildVersion=options.buildVersion ?? process.env.DSH_DESKTOP_BUILD_VERSION;
   if (!['mac-arm64','mac-x64'].includes(target)) throw new Error('desktop packaging: unsupported target');
   if (unsigned && (target!=='mac-arm64'||directory)) throw new Error('desktop packaging: local unsigned export requires a mac-arm64 image');
   const environment={...process.env};
@@ -46,7 +47,7 @@ export async function packageDesktop(options) {
     let copiedSettings=false;
     const inputs=await snapshotDesktopPluginInputs(environment.DSH_DESKTOP_PLUGIN_INPUTS,dirname(checkout));
     environment.DSH_DESKTOP_PLUGIN_INPUTS=inputs.value;
-    const image=join(checkout,`apps/desktop/.desktop-build/targets/${target}/unsigned-artifacts/deepseek-harness-${dshVersion}-${target}-unsigned.dmg`);
+    const image=join(checkout,`apps/desktop/.desktop-build/targets/${target}/unsigned-artifacts/deepseek-harness-${buildVersion ?? dshVersion}-${target}-unsigned.dmg`);
     try {
       // Signed builds retain the official file-owned configuration and relative credential semantics.
       // No profile, authentication directory or arbitrary ignored file enters the source snapshot.
@@ -58,7 +59,10 @@ export async function packageDesktop(options) {
         copiedSettings=true;
       }
       await run('pnpm',['install','--frozen-lockfile'],checkout,environment);
-      const args=['--dir','apps/desktop','run','package',target,...unsigned?['--unsigned']:[],...directory?['--dir']:[]];
+      // The official entrypoint owns the child environment and overwrites its
+      // build-version variable. Its CLI argument is the authoritative input.
+      const args=['--dir','apps/desktop','run','package',target,...unsigned?['--unsigned']:[],...directory?['--dir']:[],
+        ...buildVersion===undefined?[]:['--build-version',buildVersion]];
       if(unsigned) await rm(image,{force:true});
       await run('pnpm',args,checkout,environment);
       if(unsigned) {
@@ -101,8 +105,8 @@ export async function verifyDesktopPackageInputs(options) {
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
-  const {values}=parseArgs({options:Object.fromEntries(['source','output','patches','commit','target','studio-version','dsh-version'].map(key=>[key,{type:'string'}]).concat([['unsigned',{type:'boolean'}],['directory',{type:'boolean'}],['preflight',{type:'boolean'}]]))});
-  const options = {...values,studioVersion:values['studio-version'],dshVersion:values['dsh-version']};
+  const {values}=parseArgs({options:Object.fromEntries(['source','output','patches','commit','target','studio-version','dsh-version','build-version'].map(key=>[key,{type:'string'}]).concat([['unsigned',{type:'boolean'}],['directory',{type:'boolean'}],['preflight',{type:'boolean'}]]))});
+  const options = {...values,studioVersion:values['studio-version'],dshVersion:values['dsh-version'],buildVersion:values['build-version']};
   if (values.preflight) {
     const result = await verifyDesktopPackageInputs(options);
     console.log(`Desktop package preflight passed in isolated checkout: ${result.checkout}`);
