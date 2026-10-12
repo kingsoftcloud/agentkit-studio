@@ -13,6 +13,11 @@ test('Studio mounts the official plugin navigation provider required by optional
   assert.doesNotMatch(patch, /- id: ui-plugin-manager\s*\n\s*disabled: true/);
 });
 
+test('Studio keeps the official Sidebar Browser active for in-app HTTP(S) links', async () => {
+  const patch = await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8');
+  assert.match(patch, /- id: ui-sidebar-browser[\s\S]*?\n\s*disabled: false/);
+});
+
 test('Studio conversation surface does not ship the legacy DSH hero copy', () => {
   assert.doesNotMatch(clientSource, /探索未至之境|预览版/);
 });

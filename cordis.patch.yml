@@ -11,6 +11,11 @@
   name: "@deepseek-ai/dsh-client-ui-settings-general"
   config:
     welcomeNoticeVersion: 2026-08-13.1
+- id: ui-sidebar-browser
+  # Chat's default link destination is the official Sidebar Browser. Keep that
+  # browser entry active in Studio so the configured In-App Sidebar choice does
+  # not fall through to window.open/shell.openExternal in the Desktop shell.
+  disabled: false
 - id: ui-brand-official
   # Studio supplies the sidebar brand through the public brand slots.
   disabled: true
