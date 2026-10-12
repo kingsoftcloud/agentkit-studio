@@ -1,11 +1,31 @@
     function StudioSettingsSection() {
       const [host, setHost] = useState({ status: 'loading', error: '' });
+      const [desktopUpdate, setDesktopUpdate] = useState({ phase: 'idle' });
+      const desktopUpdates = typeof window === 'undefined' ? undefined : window.dshDesktop?.updates;
       useEffect(() => {
         let active = true;
         hostRemote.settings().then(() => { if (active) setHost({ status: 'ready', error: '' }); })
           .catch(error => { if (active) setHost({ status: 'error', error: error?.message || 'Studio Host 不可达' }); });
         return () => { active = false; };
       }, []);
+      useEffect(() => {
+        const bridge = desktopUpdates;
+        if (!bridge) return undefined;
+        let active = true;
+        bridge.status().then(state => { if (active && state) setDesktopUpdate(state); }).catch(() => undefined);
+        const unsubscribe = bridge.subscribe(state => { if (active && state) setDesktopUpdate(state); });
+        return () => { active = false; unsubscribe?.(); };
+      }, [desktopUpdates]);
+      const checkDesktopUpdate = () => {
+        const bridge = desktopUpdates;
+        if (!bridge || desktopUpdate.phase === 'checking' || desktopUpdate.phase === 'downloading' || desktopUpdate.phase === 'verifying' || desktopUpdate.phase === 'installing') return;
+        setDesktopUpdate(current => ({ ...current, phase: 'checking' }));
+        void bridge.open().catch(error => setDesktopUpdate({ phase: 'error', failure: 'check', message: error?.message || '检查更新失败' }));
+      };
+      const updateButtonLabel = desktopUpdate.phase === 'checking' ? '检查中…'
+        : desktopUpdate.phase === 'available' ? `发现 ${desktopUpdate.version || '新版本'}`
+          : desktopUpdate.phase === 'ready' ? `安装 ${desktopUpdate.version || '新版本'}`
+            : desktopUpdate.phase === 'error' ? '重试检查更新' : '检查更新';
       return h('div', {
         style: { color: BRAND.ink, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
       },
@@ -15,7 +35,12 @@
         h(SettingsRow, { label: '默认执行目标', value: 'Local Host', detail: '创建 Agent 和运行会话时使用的默认目标', tone: 'signal' }),
         h(SettingsRow, { label: 'Studio Host', value: host.status === 'ready' ? '已连接' : host.status === 'loading' ? '检查中' : '连接失败', detail: host.status === 'ready' ? '已成功读取 Host 配置' : host.error || '正在读取 Host 配置', tone: 'signal' }),
         h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '产品功能与运行适配层版本' }),
-        h(SettingsRow, { label: 'DSH 宿主兼容版本', value: DSH_VERSION, detail: '固定的宿主基线，不代表 Studio 产品版本' })),
+        h(SettingsRow, { label: 'DSH 宿主兼容版本', value: DSH_VERSION, detail: '固定的宿主基线，不代表 Studio 产品版本' }),
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '14px 0' } },
+          h('div', null,
+            h('div', { style: { fontSize: '12px', fontWeight: 700 } }, '桌面更新'),
+            h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px' } }, desktopUpdate.phase === 'error' ? '更新检查失败，可重试。' : desktopUpdate.version ? `当前更新状态：${desktopUpdate.version}` : '使用 Studio 的正式更新源检查新版本。')),
+          h('button', { type: 'button', onClick: checkDesktopUpdate, disabled: !desktopUpdates || ['checking', 'downloading', 'verifying', 'installing'].includes(desktopUpdate.phase), style: { border: '1px solid ' + BRAND.border, borderRadius: '8px', padding: '7px 11px', color: BRAND.accentStrong, background: BRAND.surface, fontSize: '11px', fontWeight: 700, cursor: 'pointer' } }, updateButtonLabel))),
       h('div', { style: { marginTop: '16px', padding: '14px 16px', borderRadius: '12px', color: BRAND.inkMuted, background: BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } },
         h('div', null, '工作区、会话、模型和凭证的通用设置继续由系统设置页承载；Studio 只扩展自己的执行目标、Host 能力和产品选项。'),
         h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-onboarding')), style: { marginTop: '10px', border: '1px solid ' + BRAND.border, borderRadius: '8px', padding: '6px 10px', color: BRAND.accentStrong, background: BRAND.surface, fontSize: '11px', fontWeight: 700 } }, '重新打开凭证引导')));

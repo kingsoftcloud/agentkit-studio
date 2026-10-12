@@ -66,6 +66,14 @@ test('credential guide is a DSH settings onboarding step with retry and deferred
   assert.match(settings, /重新打开凭证引导/);
   assert.match(settings, /settings\.onboarding/);
   assert.doesNotMatch(onboarding, /localStorage/);
+  assert.match(onboarding, /agentkitCredentialOnboardingIn/);
+  assert.match(onboarding, /prefers-reduced-motion/);
+});
+
+test('Studio settings exposes the DSH desktop update action', () => {
+  assert.match(settings, /dshDesktop\?\.updates/);
+  assert.match(settings, /检查更新/);
+  assert.match(settings, /bridge\.open\(\)/);
 });
 
 test('credential filesystem inspection stays in the Host-only dynamic graph', () => {
