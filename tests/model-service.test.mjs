@@ -34,7 +34,7 @@ test('model service resolves independent provider credentials and catalog capabi
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
       return { ok: true, async json() { return { data: [
-        { id: 'vision', input_modalities: ['text', 'image'] },
+        { id: 'vision', architecture: { input_modalities: ['文字', '图片', '视频', '文件'] } },
         { id: 'text', input_modalities: ['text'] },
       ] }; } };
     },

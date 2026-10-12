@@ -3,7 +3,12 @@ import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { createHash } from 'node:crypto';
 
 export function modelInput(model = {}) {
-  const values = model.input_modalities || model.inputModalities || model.input || [];
+  // KSPMAS/OpenAI-compatible gateways expose capabilities under
+  // `architecture.input_modalities`; older gateways put the same field at the
+  // top level. Accept both shapes so a multimodal model is not downgraded to
+  // text-only when its profile is synchronized into DSH.
+  const architecture = model.architecture && typeof model.architecture === 'object' ? model.architecture : {};
+  const values = model.input_modalities || model.inputModalities || architecture.input_modalities || architecture.inputModalities || model.input || [];
   return ['text', ...(Array.isArray(values) && values.some(value => ['image', '图片', '图像'].includes(value)) ? ['image'] : [])];
 }
 

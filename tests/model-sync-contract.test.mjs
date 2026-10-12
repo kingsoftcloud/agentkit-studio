@@ -22,3 +22,10 @@ test('Studio Host model defaults synchronize before the settings modal is opened
   assert.match(clientSource, /hostRemote\.syncModelCredential\(\)/);
   assert.match(clientSource, /models\/sync-credential/);
 });
+
+test('model settings hydrate gateway modality metadata and repair the DSH route', () => {
+  assert.match(clientSource, /hydrateModelInputs\s*=\s*async profiles/);
+  assert.match(clientSource, /hostRemote\.modelCatalog\(profile\.id\)/);
+  assert.match(clientSource, /input:\s*model\.input/);
+  assert.match(clientSource, /dshModel\.applyProfiles\(\{ profiles: discoveredProfiles/);
+});

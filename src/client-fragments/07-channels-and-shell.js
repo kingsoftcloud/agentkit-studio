@@ -542,6 +542,18 @@
       const [error, setError] = useState('');
       const [saving, setSaving] = useState(false);
 
+      const hydrateModelInputs = async profiles => Promise.all(profiles.map(async profile => {
+        try {
+          const catalog = await hostRemote.modelCatalog(profile.id);
+          const model = catalog.items.find(item => item.id === profile.modelName);
+          return model ? { ...profile, input: model.input || ['text'] } : profile;
+        } catch {
+          // A provider without a readable catalog must retain the user's
+          // explicit checkbox choice until its endpoint becomes available.
+          return profile;
+        }
+      }));
+
       const load = async () => {
         setStatus('loading'); setError('');
         try {
@@ -550,14 +562,21 @@
           const loaded = (Array.isArray(settings?.modelProfiles) && settings.modelProfiles.length ? settings.modelProfiles : [legacy]);
           const hasDefault = loaded.some(profile => profile.default === true);
           const profiles = loaded.map((profile, index) => ({ ...legacy, ...profile, id: modelProfileId(profile, index), credentialName: modelCredentialName(profile, index), default: hasDefault ? profile.default === true : index === 0, apiKey: '' }));
+          const discoveredProfiles = await hydrateModelInputs(profiles);
+          if (discoveredProfiles.some((profile, index) => JSON.stringify(profile.input || ['text']) !== JSON.stringify(profiles[index].input || ['text']))) {
+            // Repair profiles saved before nested architecture.input_modalities
+            // was recognized, and immediately refresh DSH's provider route.
+            await hostRemote.updateSettings({ modelProfiles: discoveredProfiles }).catch(() => {});
+            await dshModel.applyProfiles({ profiles: discoveredProfiles, keys: {} }).catch(() => {});
+          }
           const credentialStatuses = await Promise.all(profiles.map(async profile => [profile.credentialName, await dshModel.credentialStatus(profile.credentialName).catch(() => ({ configured: false }))]));
           const statusMap = Object.fromEntries(credentialStatuses);
           setModelStatus(statusMap);
           setCloudStatus({ configured: Boolean(settings?.cloudAccountConfigured), source: settings?.configurationSources?.cloudAccessKey || 'missing' });
           const dshProfile = (dshDocument?.namespaces || []).find(item => item.ns === DSH_MODEL_SETTINGS_NS)?.value?.providers;
           const firstDsh = dshProfile ? Object.values(dshProfile)[0] : null;
-          setDshStatus({ configured: Boolean(firstDsh?.models?.length), model: firstDsh?.models?.[0]?.id || '', credentialConfigured: Boolean(statusMap[profiles[0].credentialName]?.configured) });
-          setForm(current => ({ ...current, profiles, cloudAccountId: settings?.cloudAccountId || '', cloudRegion: settings?.cloudRegion || '', cloudServerUrl: settings?.cloudServerUrl || '', cloudBucket: settings?.cloudBucket || '' }));
+          setDshStatus({ configured: Boolean(firstDsh?.models?.length), model: firstDsh?.models?.[0]?.id || '', credentialConfigured: Boolean(statusMap[discoveredProfiles[0].credentialName]?.configured) });
+          setForm(current => ({ ...current, profiles: discoveredProfiles, cloudAccountId: settings?.cloudAccountId || '', cloudRegion: settings?.cloudRegion || '', cloudServerUrl: settings?.cloudServerUrl || '', cloudBucket: settings?.cloudBucket || '' }));
           setStatus('ready');
         } catch (reason) { setStatus('error'); setError(reason?.message || 'Host 尚未连接'); }
       };
