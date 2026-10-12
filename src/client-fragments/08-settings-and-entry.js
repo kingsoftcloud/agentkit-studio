@@ -1,6 +1,7 @@
     function StudioSettingsSection() {
       const [host, setHost] = useState({ status: 'loading', error: '' });
       const [desktopUpdate, setDesktopUpdate] = useState({ phase: 'idle' });
+      const updateLifetime = useRef({ active: false, revision: 0, opening: false });
       const desktopUpdates = typeof window === 'undefined' ? undefined : window.dshDesktop?.updates;
       useEffect(() => {
         let active = true;
@@ -11,16 +12,33 @@
       useEffect(() => {
         const bridge = desktopUpdates;
         if (!bridge) return undefined;
-        let active = true;
-        bridge.status().then(state => { if (active && state) setDesktopUpdate(state); }).catch(() => undefined);
-        const unsubscribe = bridge.subscribe(state => { if (active && state) setDesktopUpdate(state); });
-        return () => { active = false; unsubscribe?.(); };
+        const lifetime = updateLifetime.current;
+        lifetime.active = true;
+        const revision = lifetime.revision;
+        const unsubscribe = bridge.subscribe(state => {
+          lifetime.revision += 1;
+          if (lifetime.active && state) setDesktopUpdate(state);
+        });
+        bridge.status().then(state => {
+          if (lifetime.active && revision === lifetime.revision && state) setDesktopUpdate(state);
+        }).catch(() => undefined);
+        return () => { lifetime.active = false; lifetime.revision += 1; unsubscribe?.(); };
       }, [desktopUpdates]);
-      const checkDesktopUpdate = () => {
+      const checkDesktopUpdate = async () => {
         const bridge = desktopUpdates;
-        if (!bridge || desktopUpdate.phase === 'checking' || desktopUpdate.phase === 'downloading' || desktopUpdate.phase === 'verifying' || desktopUpdate.phase === 'installing') return;
+        const lifetime = updateLifetime.current;
+        if (!bridge || lifetime.opening || ['checking', 'downloading', 'verifying', 'installing'].includes(desktopUpdate.phase)) return;
+        lifetime.opening = true;
+        lifetime.revision += 1;
         setDesktopUpdate(current => ({ ...current, phase: 'checking' }));
-        void bridge.open().catch(error => setDesktopUpdate({ phase: 'error', failure: 'check', message: error?.message || '检查更新失败' }));
+        try {
+          await bridge.open();
+          const revision = lifetime.revision;
+          const state = await bridge.status();
+          if (lifetime.active && revision === lifetime.revision && state) setDesktopUpdate(state);
+        } catch {
+          if (lifetime.active) setDesktopUpdate({ phase: 'error', failure: 'check' });
+        } finally { lifetime.opening = false; }
       };
       const updateButtonLabel = desktopUpdate.phase === 'checking' ? '检查中…'
         : desktopUpdate.phase === 'available' ? `发现 ${desktopUpdate.version || '新版本'}`
@@ -39,7 +57,7 @@
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '14px 0' } },
           h('div', null,
             h('div', { style: { fontSize: '12px', fontWeight: 700 } }, '桌面更新'),
-            h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px' } }, desktopUpdate.phase === 'error' ? '更新检查失败，可重试。' : desktopUpdate.version ? `当前更新状态：${desktopUpdate.version}` : '使用 Studio 的正式更新源检查新版本。')),
+            h('div', { role: 'status', style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px' } }, !desktopUpdates ? '请在 AgentKit Studio 桌面应用中检查更新。' : desktopUpdate.phase === 'error' ? '更新检查失败，可重试。' : desktopUpdate.version ? `目标版本：${desktopUpdate.version}` : '使用 Studio 的更新源检查新版本。')),
           h('button', { type: 'button', onClick: checkDesktopUpdate, disabled: !desktopUpdates || ['checking', 'downloading', 'verifying', 'installing'].includes(desktopUpdate.phase), style: { border: '1px solid ' + BRAND.border, borderRadius: '8px', padding: '7px 11px', color: BRAND.accentStrong, background: BRAND.surface, fontSize: '11px', fontWeight: 700, cursor: 'pointer' } }, updateButtonLabel))),
       h('div', { style: { marginTop: '16px', padding: '14px 16px', borderRadius: '12px', color: BRAND.inkMuted, background: BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } },
         h('div', null, '工作区、会话、模型和凭证的通用设置继续由系统设置页承载；Studio 只扩展自己的执行目标、Host 能力和产品选项。'),

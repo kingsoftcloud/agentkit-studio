@@ -1,9 +1,9 @@
 /** Exercise a signed macOS app through the real Electron updater and retain evidence. */
 import { execFile, spawn } from 'node:child_process'
-import { cp, mkdir, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { parseArgs } from 'node:util'
@@ -80,7 +80,7 @@ async function main() {
   const mount = join(root, 'mount')
   const install = values.app ? resolve(values.app) : join(root, 'AgentKit Studio.app')
   const userData = join(root, 'user-data')
-  const harnessHome = values['data-home'] ? resolve(values['data-home']) : values.app ? join(homedir(), '.dsh') : join(root, 'dsh-home')
+  const harnessHome = values['data-home'] ? resolve(values['data-home']) : join(root, 'dsh-home')
   const journals = join(evidenceRoot, 'journals')
   await mkdir(userData, { recursive: true }); await mkdir(harnessHome, { recursive: true }); await mkdir(journals, { recursive: true })
   const markerPath = join(harnessHome, `p1-1-marker-${process.pid}.txt`)
@@ -92,7 +92,7 @@ async function main() {
   const appId = await plist(join(mounted, 'Contents/Info.plist'), 'CFBundleIdentifier')
   if (appId !== 'com.kingsoftcloud.agentkit-studio') throw new Error(`unexpected App ID ${appId}`)
   await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', mounted])
-  await run('/usr/bin/spctl', ['--assess', '--type', 'execute', '--verbose=4', mounted])
+  await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=4', mounted])
   if (!values.app) {
     await run('/usr/bin/ditto', [mounted, install])
     await run('/usr/bin/hdiutil', ['detach', mount, '-force'])
@@ -122,7 +122,7 @@ async function main() {
     }
     if (!restarted) throw new Error('updated version did not restart and reach workspace-ready')
     await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', install])
-    await run('/usr/bin/spctl', ['--assess', '--type', 'execute', '--verbose=4', install])
+    await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=4', install])
     const marker = await readFile(markerPath, 'utf8')
     if (marker !== 'retained across update\n') throw new Error('DSH_HOME marker was not retained')
     if (values['expected-commit'] !== undefined && after.commit !== values['expected-commit']) throw new Error(`updated app commit ${after.commit ?? 'unknown'} does not match expected rollback commit`)

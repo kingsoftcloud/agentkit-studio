@@ -12,6 +12,8 @@ DSH_DESKTOP_UPDATE_CHANNEL=preview
 
 macOS 包含 DMG、ZIP 和 ZIP blockmap。DMG 用于安装，Electron updater 通过 ZIP 及 blockmap 做增量下载；下载完成后仍由用户确认重启安装。首次检查、定时检查、下载进度、签名校验和 `quitAndInstall` 都由官方 updater coordinator 完成。
 
+在「设置 → AgentKit Studio → 桌面更新」点击「检查更新」可手动刷新更新源；发现更新后，下载和重启仍需在官方更新窗口确认。凭证引导中的三步配置演示可暂停或播放，并遵守系统的减少动态效果设置。
+
 提交前检查源码合同：
 
 ```sh
@@ -45,6 +47,28 @@ AGENTKIT_DESKTOP_DMG=/path/to/AgentKit-Studio.dmg \\
 签名任务模板位于旧仓库的 `.github/workflows/release-agentkit-studio.yml`，只允许 `workflow_dispatch`，要求输入新版 Studio 固定 commit、DSH 固定 commit、`stable/preview` channel 和 HTTPS update origin。它会临时创建 keychain，生成 DSH `.env.macos`，调用本仓库的 `make desktop-package-mac-arm64`，验证签名/公证后的 DMG、ZIP、ZIP blockmap 和 channel metadata；默认只上传 Actions artifact，显式开启 `publish_feed` 时再发布 feed，最后清理证书、keychain 和配置。
 
 因为新版 Studio 仓库是私有仓库，旧仓库的 `GITHUB_TOKEN` 不能默认跨仓库读取它。工作流还需要在 `studio-signing` Environment 增加一个只读 `AGENTKIT_STUDIO_SOURCE_TOKEN`；这个 Token 只用于 checkout 指定 commit，不参与签名或发布。
+
+从 Studio 仓库运行签名构建（`STUDIO_UPDATE_ORIGIN` 设为实际 HTTPS 更新源，版本号必须递增）：
+
+```sh
+studio_commit=$(git rev-parse HEAD)
+git push upstream HEAD:refs/heads/codex/agentkit-studio-p1-1
+gh workflow run release-agentkit-studio.yml --repo kingsoftcloud/ksadk-python --ref main \
+  -f studio_ref="$studio_commit" -f studio_checkout_ref=codex/agentkit-studio-p1-1 \
+  -f dsh_ref=dsh-v0.2.0-rc.2 -f dsh_commit=639ed015397290b3745d163aafe02ffee4aa3f84 \
+  -f channel=preview -f update_origin="$STUDIO_UPDATE_ORIGIN" \
+  -f build_version=0.2.0-rc.2.20261012.3 \
+  -f publish_feed=false -f qualify_installed_update=false
+```
+
+这条命令生成签名、公证候选；构建成功后用 `gh run download <run-id> --repo kingsoftcloud/ksadk-python --dir .artifacts/signed-desktop` 下载到本地。
+
+已在本机配置 DSH `.env.macos` 与 Apple 签名凭证时，可直接运行：
+
+```sh
+DSH_DESKTOP_BUILD_VERSION=0.2.0-rc.2.20261012.3 \
+  make desktop-package-mac-arm64 DSH_ROOT=/path/to/deepseek-harness PACK_DIR=.artifacts/signed-desktop
+```
 
 旧仓库的 workflow 默认只生成签名候选；只有显式传入 `publish_feed=true` 才会发布更新源。正式发布还需要单独配置 Studio 更新源的上传凭证，并按“不可变 DMG/ZIP/blockmap 先上传、channel metadata 后发布”的顺序完成。旧 Studio 的 App ID 是 `com.kingsoftcloud.agentkit.studio`，新版是 `com.kingsoftcloud.agentkit-studio`，两者不能直接当作同一安装实例做差分升级。
 

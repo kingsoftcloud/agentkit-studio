@@ -50,3 +50,4 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `018-preserve-agent-on-workspace-clear.patch` | 取消空白会话的目录时，通过公开 create preset、model selection 与 permission command 保留 Agent 和模型；Workspace-scoped 自定义访问模式回落到新会话默认命名模式，恢复成功后才迁移草稿，切换或失败不抢占页面 | 上游公开等价的无工作区会话配置继承合同 |
 | `019-studio-product-update-feed.patch` | 把 Desktop 更新源、Stable/Preview 通道和 metadata 文件名变成显式产品输入；生产构建不再回退到 DeepSeek 下载源，Studio 使用自己的 App ID/更新源，仍保留 Nightly 仅用于旧测试夹具兼容 | 上游提供产品 App ID、更新源和 Stable/Preview 配置接口，并且可由产品包直接传入 |
 | `020-studio-signed-product-name.patch` | 让正式签名、公证和签名后 smoke 沿用产品 bundle 名称，而不是硬编码查找 `DeepSeek Harness.app`；默认 DSH 品牌保持不变 | 上游签名和公证路径统一使用 `DSH_DESKTOP_PRODUCT_NAME` |
+| `021-product-manual-update-check.patch` | 产品页调用官方 `updates.open()` 时强制重新检查 feed，并记录手动检查 journal；下载与安装仍由官方确认界面控制 | 上游产品更新入口提供强制刷新检查 |

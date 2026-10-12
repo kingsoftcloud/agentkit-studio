@@ -20,8 +20,18 @@
           color: var(--dsw-static-neutral-00, #fff); background: ${BRAND.primaryFill};
           animation: agentkitCredentialOnboardingPulse 1.8s ease-in-out 240ms 2 both;
         }
+        @keyframes agentkitCredentialGuideStep {
+          0%, 28% { opacity: 1; background: ${BRAND.accentSoft}; border-color: ${BRAND.accentStrong}; }
+          34%, 100% { opacity: .65; background: transparent; border-color: ${BRAND.border}; }
+        }
+        .agentkit-credential-guide { margin-top: 16px; padding: 14px; border: 1px solid ${BRAND.border}; border-radius: 12px; }
+        .agentkit-credential-guide ol { display: grid; gap: 8px; padding: 0; margin: 10px 0; list-style: none; }
+        .agentkit-credential-guide li { padding: 10px 12px; border: 1px solid ${BRAND.border}; border-radius: 8px; animation: agentkitCredentialGuideStep 9s linear infinite; }
+        .agentkit-credential-guide li:nth-child(2) { animation-delay: -6s; }
+        .agentkit-credential-guide li:nth-child(3) { animation-delay: -3s; }
+        .agentkit-credential-guide[data-paused=true] li { animation-play-state: paused; }
         @media (prefers-reduced-motion: reduce) {
-          .agentkit-credential-onboarding-content, .agentkit-credential-onboarding-mark { animation: none; }
+          .agentkit-credential-onboarding-content, .agentkit-credential-onboarding-mark, .agentkit-credential-guide li { animation: none; opacity: 1; }
         }
       `;
       document.head?.appendChild(style);
@@ -31,6 +41,7 @@
     function CredentialOnboarding({ explicit = false, complete = () => {}, openSection = () => {} } = {}) {
       const [state, setState] = useState({ status: 'loading', configured: false });
       const [open, setOpen] = useState(false);
+      const [demoPaused, setDemoPaused] = useState(false);
       const lifetime = useRef({ active: true, generation: 0, dismissed: false, completed: false });
       const check = async ({ manual = false } = {}) => {
         const generation = ++lifetime.current.generation;
@@ -90,5 +101,14 @@
       }, h('div', { className: 'agentkit-credential-onboarding-content' },
         h('div', { className: 'agentkit-credential-onboarding-mark', 'aria-hidden': 'true' }, '✦'),
         state.status === 'error' ? h('p', { role: 'alert', style: { color: BRAND.danger } }, state.error) :
-          h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, loading ? '正在读取本机 Host 的凭证状态…' : state.configured ? '已检测到可用凭证；可直接开始对话，也可以进入设置更换模型。' : '当前未检测到模型凭证；保存配置后会自动重新检查。')));
+          h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, loading ? '正在读取本机 Host 的凭证状态…' : state.configured ? '已检测到可用凭证；可直接开始对话，也可以进入设置更换模型。' : '当前未检测到模型凭证；保存配置后会自动重新检查。'),
+        h('section', { className: 'agentkit-credential-guide', 'data-paused': String(demoPaused), 'aria-label': '模型配置操作演示' },
+          h('strong', { style: { fontSize: '12px' } }, '三步开始对话'),
+          h('ol', { style: { color: BRAND.ink, fontSize: '12px', lineHeight: 1.5 } },
+            h('li', null, '1. 打开「模型与凭证」，选择模型提供商。'),
+            h('li', null, '2. 填写 API Key，确认模型和服务地址。'),
+            h('li', null, '3. 保存配置，回到「新建会话」开始对话。')),
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', color: BRAND.inkMuted, fontSize: '11px' } },
+            h('span', null, '步骤会依次高亮；演示不会修改你的配置。'),
+            h('button', { type: 'button', onClick: () => setDemoPaused(value => !value), 'aria-pressed': demoPaused, style: buttonStyle() }, demoPaused ? '播放演示' : '暂停演示')))));
     }

@@ -128,6 +128,20 @@ test('explicit onboarding shows a retryable Host error', async () => {
   assert.ok(ui.footerButtons().some(button => button.children.includes('重试')));
 });
 
+test('configuration guide includes a playable three-step demonstration', async () => {
+  const ui = onboardingHarness({ statuses: [{ configured: false }] });
+  await ui.settle();
+  const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
+  let nodes = walk(ui.modal());
+  assert.equal(nodes.filter(node => node.type === 'li').length, 3);
+  const pause = nodes.find(node => node.type === 'button' && node.children.includes('暂停演示'));
+  pause.props.onClick();
+  await ui.settle();
+  nodes = walk(ui.modal());
+  assert.equal(nodes.find(node => node.props.className === 'agentkit-credential-guide').props['data-paused'], 'true');
+  assert.ok(nodes.some(node => node.children.includes('播放演示')));
+});
+
 test('a Host reconnect rechecks readiness instead of treating transport failure as missing', async () => {
   const ui = onboardingHarness({ statuses: [Promise.reject(new Error('offline')), { configured: false, source: 'missing' }] });
   await ui.settle();
