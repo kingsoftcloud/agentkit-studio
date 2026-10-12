@@ -21,13 +21,18 @@
         h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-onboarding')), style: { marginTop: '10px', border: '1px solid ' + BRAND.border, borderRadius: '8px', padding: '6px 10px', color: BRAND.accentStrong, background: BRAND.surface, fontSize: '11px', fontWeight: 700 } }, '重新打开凭证引导')));
     }
 
-    function StudioSettingsLauncher({ wide, settingsOpen, settingsShortcut, openSettings, t }) {
+    function StudioSettingsLauncher({ wide, settingsOpen, settingsShortcut, openSettings, openOnboarding, t }) {
       const label = t('trigger');
       useEffect(() => {
         const open = () => openSettings?.();
+        const guide = () => openOnboarding?.('agentkit-studio-credential');
         window.addEventListener('agentkit-studio:open-settings', open);
-        return () => window.removeEventListener('agentkit-studio:open-settings', open);
-      }, [openSettings]);
+        window.addEventListener('agentkit-studio:credential-onboarding', guide);
+        return () => {
+          window.removeEventListener('agentkit-studio:open-settings', open);
+          window.removeEventListener('agentkit-studio:credential-onboarding', guide);
+        };
+      }, [openSettings, openOnboarding]);
       return h(Tooltip, { disabled: settingsOpen, label, shortcutKeys: settingsShortcut?.keys },
         h('button', {
           type: 'button', className: 'agentkit-settings-launcher', 'data-wide': wide,
@@ -38,11 +43,11 @@
 
     function apply(ctx) {
       ctx.uiConversation.events.register(codexToolDefinition);
-      // DSH owns the shell and modal layer. This product guide is a small
-      // overlay contribution, so it remains available on the first screen
-      // regardless of which Studio panel is currently selected.
-      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-        name: 'shell.overlay', id: 'agentkit-studio-credential-onboarding', order: 100,
+      // Settings owns first-run coordination. Registering here makes the
+      // guide visible in the real DSH onboarding path and gives the shell a
+      // stable entry it can reopen after the user chose “later”.
+      ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
+        name: 'settings.onboarding', id: 'agentkit-studio-credential', order: 20,
       }, CredentialOnboarding));
       activeConnection = { rpc: ctx.connection.rpc };
       ctx.on('connection/reset', () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck')));

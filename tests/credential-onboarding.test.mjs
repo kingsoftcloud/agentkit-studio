@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 const overview = await readFile(new URL('../src/client-fragments/02-overview-and-selector.js', import.meta.url), 'utf8');
 const onboarding = await readFile(new URL('../src/client-fragments/02-credential-onboarding.js', import.meta.url), 'utf8');
 
-function onboardingHarness({ statuses, localStorage = {} } = {}) {
+function onboardingHarness({ statuses, localStorage = {}, props = {} } = {}) {
   const states = [];
   let cursor = 0;
   let dirty = true;
@@ -37,7 +37,7 @@ function onboardingHarness({ statuses, localStorage = {} } = {}) {
   class CustomEvent { constructor(type) { this.type = type; } }
   const Component = new Function('h', 'useState', 'useEffect', 'useRef', 'hostRemote', 'window', 'CustomEvent', 'Modal', 'buttonStyle', 'BRAND', `${onboarding}; return CredentialOnboarding;`)(h, useState, useEffect, useRef, hostRemote, window, CustomEvent, 'Modal', () => ({ type: 'button' }), { danger: 'red', ink: 'black', inkMuted: 'gray', surface: 'white', primaryFill: 'teal' });
   let tree;
-  const render = () => { cursor = 0; dirty = false; tree = Component(); for (const effect of effects.splice(0)) effect(); return tree; };
+  const render = () => { cursor = 0; dirty = false; tree = Component(props); for (const effect of effects.splice(0)) effect(); return tree; };
   const settle = async () => { render(); for (let i = 0; i < 20; i += 1) { await Promise.resolve(); if (dirty) render(); } return tree; };
   const modal = () => tree?.type === 'Modal' ? tree : null;
   const footerButtons = () => (modal()?.props.footer?.children || []).filter(node => node?.type === 'button');
@@ -59,13 +59,13 @@ test('credential guide opens the official DSH settings surface', () => {
   assert.match(settings, /openSettings\?\.\(\)/);
 });
 
-test('credential guide is a global shell overlay with retry and deferred entry', () => {
-  assert.match(settings, /shell\.overlay/);
-  assert.match(onboarding, /agentkit-studio:credential-onboarding/);
+test('credential guide is a DSH settings onboarding step with retry and deferred entry', () => {
+  assert.match(settings, /openOnboarding\?\.\('agentkit-studio-credential'\)/);
   assert.match(onboarding, /稍后设置/);
   assert.match(onboarding, /重试/);
   assert.match(settings, /重新打开凭证引导/);
-  assert.doesNotMatch(onboarding, /localStorage\.setItem\([^\n]*apiKey/i);
+  assert.match(settings, /settings\.onboarding/);
+  assert.doesNotMatch(onboarding, /localStorage/);
 });
 
 test('credential filesystem inspection stays in the Host-only dynamic graph', () => {
@@ -86,22 +86,38 @@ test('first missing credential opens the guide, configured readiness stays quiet
   assert.equal(ready.modal(), null, 'an existing DSH credential must not show onboarding');
 });
 
-test('guide actions dispatch Settings, support retry/reopen, and tolerate private-mode storage', async () => {
-  const storage = { getItem() { throw new Error('SecurityError'); }, setItem() { throw new Error('SecurityError'); } };
-  const ui = onboardingHarness({ statuses: [{ configured: false, source: 'missing' }, { configured: false, source: 'missing' }], localStorage: storage });
+test('the DSH onboarding coordinator owns completion and model settings navigation', () => {
+  assert.match(onboarding, /complete\(\)/);
+  assert.match(onboarding, /openSection\('agentkit-models'\)/);
+  assert.match(settings, /id: 'agentkit-studio-credential'/);
+});
+
+test('coordinator navigation completes the guide and explicit reopening works when configured', async () => {
+  const actions = [];
+  const props = { explicit: true, complete: () => actions.push('complete'), openSection: id => actions.push(id) };
+  const ui = onboardingHarness({ statuses: [{ configured: false }], props });
   await ui.settle();
-  const buttons = ui.footerButtons();
-  assert.deepEqual(buttons.map(button => button.children.join('')), ['稍后设置', '跳过本次', '重新检查', '去配置模型凭证']);
-  buttons[3].props.onClick();
+  assert.ok(ui.modal());
+  ui.footerButtons()[3].props.onClick();
   await ui.settle();
-  assert.equal(ui.modal(), null, 'configure action closes the guide before opening Settings');
-  assert.ok(ui.dispatched.includes('agentkit-studio:open-settings'));
-  ui.window.dispatchEvent({ type: 'agentkit-studio:credential-onboarding' });
+  assert.equal(ui.modal(), null);
+  assert.deepEqual(actions, ['complete', 'agentkit-models']);
+
+  // DSH unmounts completed steps. The launcher requests a new mounted step.
+  const reopened = onboardingHarness({ statuses: [{ configured: true }], props });
+  await reopened.settle();
+  assert.equal(reopened.modal().props.title, '模型凭证已就绪');
+  reopened.footerButtons()[0].props.onClick();
+  await reopened.settle();
+  assert.equal(reopened.modal(), null);
+  assert.equal(actions.filter(action => action === 'complete').length, 2);
+});
+
+test('explicit onboarding shows a retryable Host error', async () => {
+  const ui = onboardingHarness({ statuses: [Promise.reject(new Error('offline'))], props: { explicit: true } });
   await ui.settle();
-  assert.ok(ui.modal(), 'explicit reopen works even when localStorage is unavailable');
-  ui.footerButtons()[0].props.onClick();
-  await ui.settle();
-  assert.equal(ui.modal(), null, 'later action is non-blocking');
+  assert.ok(ui.modal());
+  assert.ok(ui.footerButtons().some(button => button.children.includes('重试')));
 });
 
 test('a Host reconnect rechecks readiness instead of treating transport failure as missing', async () => {
