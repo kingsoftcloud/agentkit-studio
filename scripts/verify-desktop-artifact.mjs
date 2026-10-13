@@ -11,8 +11,12 @@ if (!artifactDir || artifactDir === resolve('.')) {
 const entries = readdir(artifactDir);
 const names = await entries;
 const dmg = names.find(name => name.endsWith('.dmg'));
-const zip = names.find(name => name.endsWith('.zip') && !name.endsWith('.blockmap'));
-const blockmap = names.find(name => name.endsWith('.zip.blockmap'));
+// GitHub's transport archive can coexist with the actual updater ZIP.
+// A native ZIP must have its corresponding blockmap; reject ambiguous release sets.
+const pairs = names.filter(name => name.endsWith('.zip.blockmap') && names.includes(name.slice(0, -9)));
+if (pairs.length !== 1) throw new Error('desktop artifact requires exactly one ZIP/blockmap pair');
+const blockmap = pairs[0];
+const zip = blockmap.slice(0, -9);
 const dmgPath = resolve(process.env.AGENTKIT_DESKTOP_DMG || (dmg ? join(artifactDir, dmg) : ''));
 for (const [kind, name, path] of [['DMG', dmg || process.env.AGENTKIT_DESKTOP_DMG, dmgPath], ['ZIP', zip, zip && join(artifactDir, zip)], ['ZIP.blockmap', blockmap, blockmap && join(artifactDir, blockmap)]]) {
   if (!name || !path || !existsSync(path)) throw new Error(`desktop artifact is missing ${kind}`);
