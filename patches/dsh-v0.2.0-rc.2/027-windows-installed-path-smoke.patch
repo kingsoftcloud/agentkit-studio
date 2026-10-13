@@ -28,18 +28,32 @@ index 6b196ed2d9..36d254da38 100644
 +}
 +if (windows) await withWindowsSmokeApplication(application, smokeApplication)
 +else await smokeApplication(application)
+diff --git a/apps/desktop/scripts/windows-smoke-application.d.mts b/apps/desktop/scripts/windows-smoke-application.d.mts
+new file mode 100644
+index 0000000000..4f09beefdd
+--- /dev/null
++++ b/apps/desktop/scripts/windows-smoke-application.d.mts
+@@ -0,0 +1,2 @@
++/** Run the same assembled Windows app at an install-sized path and clean its private copy. */
++export function withWindowsSmokeApplication<T>(application: string, action: (directory: string) => Promise<T>): Promise<T>
 diff --git a/apps/desktop/scripts/windows-smoke-application.mjs b/apps/desktop/scripts/windows-smoke-application.mjs
 new file mode 100644
-index 0000000000..fd30dece59
+index 0000000000..d1ebf68010
 --- /dev/null
 +++ b/apps/desktop/scripts/windows-smoke-application.mjs
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,24 @@
 +/** Exercise the signed Windows app at an install-sized path, away from deep build directories. */
 +import { cp, mkdtemp, rm } from 'node:fs/promises'
 +import { tmpdir } from 'node:os'
 +import { join } from 'node:path'
 +
-+/** Preserve the complete assembled app; archive integrity and signatures are checked by the caller. */
++/**
++ * Preserve the complete assembled app; archive integrity and signatures are checked by the caller.
++ * @template T
++ * @param {string} application Assembled Windows app directory.
++ * @param {(directory: string) => Promise<T>} action Actual signed-runtime acceptance.
++ * @returns {Promise<T>} Acceptance result after teardown.
++ */
 +export async function withWindowsSmokeApplication(application, action) {
 +  const root = await mkdtemp(join(tmpdir(), 'dsh-app-'))
 +  try {
