@@ -1,0 +1,44 @@
+# Protected branch and forge parity contract
+
+GitHub `main` carries the reviewed public Studio source. After source and
+installed-package qualification, its exact commit is fast-forwarded to the
+existing internal `public-clean` branch. Both references retain the reviewed
+development ancestry so synchronization can use normal pushes. Neither job
+performs a force push.
+
+The production mirror is `kingsoftcloud/agentkit-studio`, represented locally
+by `upstream/main`. `AgentArcLab/agentkit-studio` (`github/main`) is a
+development fork and is not the production parity target. The parity workflow
+runs only in the production mirror repository.
+
+Both forges run the same repository-owned gate:
+
+```sh
+make public-gate
+```
+
+The gate checks tracked paths and text, portability, source and product tests,
+patch format, package contents, and `git diff --check`. The repository's
+Gitleaks job adds entropy-aware secret detection. The internal CI entrypoint is
+[`ci/ezone-public-gate.sh`](../ci/ezone-public-gate.sh); set
+`RUN_REF_PARITY=1` only for the post-merge parity job.
+GitHub Actions downloads and verifies the pinned Gitleaks `8.30.1` binary
+through [`ci/install-gitleaks.sh`](../ci/install-gitleaks.sh). Ezone workers
+use that version from the worker image, `GITLEAKS_BIN`, or worker-provided
+Linux archives in the ignored `.ci-tools/` cache. These archives keep Node `22.19.0` and
+pnpm `10.33.2` available on the minimal Alpine worker, so the entrypoint does
+not depend on external GitHub or npm downloads; it fails closed when a pinned
+tool is unavailable or its checksum is wrong.
+
+Parity is read-only and compares the exact commit IDs of the two release
+refs:
+
+```sh
+make ref-parity \
+  PARITY_LEFT_REMOTE=ezone PARITY_LEFT_REF=refs/heads/public-clean \
+  PARITY_RIGHT_REMOTE=upstream PARITY_RIGHT_REF=refs/heads/main
+```
+
+If the refs diverge, synchronization stops. A one-time baseline reset may be
+needed before enabling this contract when the two histories are already
+different; that operation is outside this gate and requires a separate review.

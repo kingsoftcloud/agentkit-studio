@@ -1,0 +1,36 @@
+name: Forge Ref Parity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    if: github.repository == 'kingsoftcloud/agentkit-studio'
+    name: configured mirror == GitHub main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure internal forge read access
+        env:
+          EZONE_REMOTE_URL: ${{ secrets.EZONE_REMOTE_URL }}
+          EZONE_SSH_PRIVATE_KEY: ${{ secrets.EZONE_SSH_PRIVATE_KEY }}
+          EZONE_KNOWN_HOSTS: ${{ secrets.EZONE_KNOWN_HOSTS }}
+        run: |
+          test -n "$EZONE_REMOTE_URL" || { echo '::error::EZONE_REMOTE_URL is not configured'; exit 1; }
+          test -n "$EZONE_SSH_PRIVATE_KEY" || { echo '::error::EZONE_SSH_PRIVATE_KEY is not configured'; exit 1; }
+          test -n "$EZONE_KNOWN_HOSTS" || { echo '::error::EZONE_KNOWN_HOSTS is not configured'; exit 1; }
+          install -d -m 700 "$RUNNER_TEMP/ezone-ssh"
+          printf '%s\n' "$EZONE_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/ezone-ssh/id_ed25519"
+          printf '%s\n' "$EZONE_KNOWN_HOSTS" > "$RUNNER_TEMP/ezone-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/ezone-ssh/id_ed25519" "$RUNNER_TEMP/ezone-ssh/known_hosts"
+          git remote add ezone "$EZONE_REMOTE_URL"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/ezone-ssh/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/ezone-ssh/known_hosts" \
+            node scripts/check-ref-parity.mjs \
+              --left-remote ezone --left-ref refs/heads/public-clean \
+              --right-remote origin --right-ref refs/heads/main

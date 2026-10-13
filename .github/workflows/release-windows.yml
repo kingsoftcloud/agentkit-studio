@@ -38,6 +38,9 @@ jobs:
     environment: studio-signing
     timeout-minutes: 90
     steps:
+      - name: Preserve canonical source line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.studio_checkout_ref }}
@@ -67,6 +70,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11.7.0
+          package_json_file: dsh-source/package.json
       - name: Prepare short isolated build root
         shell: pwsh
         run: |

@@ -1,0 +1,51 @@
+diff --git a/packages/client/ui-workspace/src/client/index.ts b/packages/client/ui-workspace/src/client/index.ts
+index 2ecaf7e264..a865b1ca64 100644
+--- a/packages/client/ui-workspace/src/client/index.ts
++++ b/packages/client/ui-workspace/src/client/index.ts
+@@ -55,6 +55,9 @@ import { WorkspacePicker } from './WorkspacePicker.tsx'
+ import { en, zh, type WorkspaceKey } from './locales.ts'
+
+ export type { UiWorkspace } from './navigation.ts'
++// Studio patch 007: re-export the session filter registry so plugins can
++// narrow the sidebar session list by Agent binding.
++export { registerSessionFilter, type SessionFilter } from './tree.ts'
+ export type {
+   DirectoryFlowOwnerProps, DirectoryFlowSlotName, DirectoryPickingHooks, DirectoryPickingInjected,
+   MenuOpenState, RowToast, SessionRenameTarget, SessionRowOwnerProps, UseMenuOpenState, WorkspaceBrowserInjected,
+diff --git a/packages/client/ui-workspace/src/client/tree.ts b/packages/client/ui-workspace/src/client/tree.ts
+index eb67d0ebe3..af25d80c93 100644
+--- a/packages/client/ui-workspace/src/client/tree.ts
++++ b/packages/client/ui-workspace/src/client/tree.ts
+@@ -229,6 +229,23 @@ export function pinCurrentBlank(
+  */
+ export type ArchivedFilter = 'default' | 'show' | 'only'
+
++// Studio patch 007: allow plugins to filter the sidebar session list by
++// arbitrary predicates (e.g. "only sessions bound to Agent X"). The registry
++// is a module-level Set so WorkspaceBrowser does not need a new slot plumbing
++// path; plugins call register/clear from their client half.
++export type SessionFilter = (session: SessionSummary) => boolean
++const sessionFilters = new Set<SessionFilter>()
++export function registerSessionFilter(filter: SessionFilter): () => void {
++  sessionFilters.add(filter)
++  return () => { sessionFilters.delete(filter) }
++}
++function passesFilters(session: SessionSummary): boolean {
++  for (const filter of sessionFilters) {
++    if (!filter(session)) return false
++  }
++  return true
++}
++
+ /**
+  * Ordinary sessions are visible; among blank sessions, only the current one
+  * is visible. Subagent children use their parent header catalog; archived
+@@ -243,6 +260,8 @@ function sessionVisible(
+ ): boolean {
+   if (session.origin === 'subagent') return false
+   if (session.blank && session.id !== current) return false
++  // Studio patch 007: apply plugin-registered session filters (e.g. Agent binding).
++  if (!passesFilters(session)) return false
+   switch (archivedFilter) {
+     case 'default':
+       return !archived.has(session.id)

@@ -1,0 +1,308 @@
+diff --git a/packages/client/ui-workspace/src/client/tree.ts b/packages/client/ui-workspace/src/client/tree.ts
+--- a/packages/client/ui-workspace/src/client/tree.ts
++++ b/packages/client/ui-workspace/src/client/tree.ts
+@@ -229,12 +229,15 @@
+  */
+ export type ArchivedFilter = 'default' | 'show' | 'only'
+
+-// Studio patch 007: allow plugins to filter the sidebar session list by
+-// arbitrary predicates (e.g. "only sessions bound to Agent X"). The registry
+-// is a module-level Set so WorkspaceBrowser does not need a new slot plumbing
+-// path; plugins call register/clear from their client half.
++/** Keep a Session row only when every registered predicate accepts its summary. */
+ export type SessionFilter = (session: SessionSummary) => boolean
+ const sessionFilters = new Set<SessionFilter>()
++/**
++ * Filter subsequent list and search derivations without changing stored membership.
++ * Register each predicate identity once; callers refresh their view after registration or disposal.
++ * @param filter - Predicate applied alongside the built-in visibility rules.
++ * @returns Idempotent disposer that removes this predicate.
++ */
+ export function registerSessionFilter(filter: SessionFilter): () => void {
+   sessionFilters.add(filter)
+   return () => { sessionFilters.delete(filter) }
+diff --git a/packages/client/ui-workspace/README.md b/packages/client/ui-workspace/README.md
+--- a/packages/client/ui-workspace/README.md
++++ b/packages/client/ui-workspace/README.md
+@@ -166,6 +166,8 @@
+
+ A dynamically loaded browser half follows the same component contract; which modules it can reach depends on its lane. A Module Loader package (`factory(require)`, as in the real Loader/Web fixture) gets `@deepseek-ai/dsh-client-ui-primitives` as an implicit baseline external: resolve `MenuItemButton` through the loader's `require`, do not list the primitive as a runtime dependency or bundle another copy, and declare a development dependency only when source compilation needs its types. A `cordis-client-runner` closure (the audience of the generated Client Slot catalog) cannot import anything: it renders its own `role="menuitem"` `<button>` with `React.createElement`, styles it through `styles.insert`, and dismisses the menu through the same `useMenuOpenState` hook, as the catalog's example shows.
+
++Client plugins can register Session predicates for subsequent list and search derivations. All registered predicates must accept a row; stored membership and display order remain unchanged. The owner refreshes its view after registration or disposal and releases the predicate when its effect ends. See [the filter registration](src/client/tree.ts) for the lifetime API.
++
+ ### View state
+
+ Once the Workspace baseline is ready, browser-persisted expansion and Session-order records retain only current Workspace ids plus Ungrouped and the flat-list account. `WorkspaceView.sessionIds` supplies real-Workspace membership, not Session display order. View actions receive complete account orders, never filtered rows. A new member without a Session summary waits for that summary, while a saved position survives a temporarily missing summary. Archive visibility is applied only when deriving rows. Pin and drag writes save complete orders; ordinary derivation does not write them. The selected blank Session remains an explicit position write, including during Workspace reconnection, when other saved members are retained until the baseline establishes membership. Ordering remains mounted while the sidebar is a rail or search replaces its body. Last updated derives from current summaries without reading saved positions; equal timestamps use Session ids as a stable tie-break.
+@@ -225,4 +227,4 @@
+
+ </details>
+
+-**Runtime invariant:** No companion is published. This is a pure-consumer plugin that registers presentational components into two host-declared slots and registers its locale dictionaries; its inject face consists of stateless RPC wrappers plus a create-and-open call. It emits no Cordis events and owns no cross-plugin mutable state.
++**Runtime invariant:** No companion is published. This is a pure-consumer plugin that registers presentational components into two host-declared slots and registers its locale dictionaries; its inject face consists of stateless RPC wrappers plus a create-and-open call. It emits no Cordis events; its local filter registrations have no independently observed relation to assert.
+diff --git a/packages/client/ui-workspace/README.zh.md b/packages/client/ui-workspace/README.zh.md
+--- a/packages/client/ui-workspace/README.zh.md
++++ b/packages/client/ui-workspace/README.zh.md
+@@ -166,6 +166,8 @@
+
+ 动态加载的 browser half 采用同一套组件协议，能拿到哪些模块取决于它走哪条 lane。Module Loader 包（`factory(require)`，即真实 Loader/Web fixture 那种）把 `@deepseek-ai/dsh-client-ui-primitives` 当作隐式 baseline external：通过 loader 的 `require` 解析 `MenuItemButton`，不要把 primitive 列为运行时依赖或打包另一份副本，仅在源码编译需要其类型时声明开发依赖。`cordis-client-runner` 闭包（生成的 Client Slot catalog 面向的读者）无法 import 任何东西：它用 `React.createElement` 渲染自己的 `role="menuitem"` `<button>`，样式经 `styles.insert` 注入，并通过同一个 `useMenuOpenState` hook 关闭菜单，catalog 里的示例就是这个写法。
+
++客户端插件可以为后续列表和搜索派生注册 Session 条件。所有已注册条件都接受时才显示该行；已存储的成员关系与显示顺序不变。注册方在注册或释放条件后刷新自己的视图，并在 effect 结束时释放条件。生命周期 API 见[筛选条件注册](src/client/tree.ts)。
++
+ ### 视图状态
+
+ Workspace 基线就绪后，浏览器持久化的展开状态和 Session 顺序记录只保留当前 Workspace id、Ungrouped 和单列表记账。`WorkspaceView.sessionIds` 提供真实 Workspace 的成员关系，而不提供 Session 显示顺序。视图操作接收完整记账顺序，而不是筛选后的行。尚无 Session 摘要的新成员会等待摘要，已保存的位置则在摘要暂时缺失时保留。归档显隐仅在派生行时应用。置顶和拖拽写入完整顺序，普通派生不执行写入。当前选中的空白 Session 仍是一次显式位置写入；Workspace 重连时同样如此，此时保留其他已保存成员，直到基线确定成员关系。侧边栏收成窄栏或搜索替代列表主体时，排序仍保持挂载。最近更新从当前摘要派生，不读取已保存位置；时间相同时按 Session id 稳定排序。
+@@ -225,4 +227,4 @@
+
+ </details>
+
+-**运行时不变式：** 不发布伴生入口。这是一个纯消费方插件，只向两个由宿主声明的 slot 注册展示组件，并注册自身的 locale dictionaries；inject face 由无状态 RPC 包装层和一次 create-and-open 调用组成；本插件不发出 Cordis 事件，也不持有跨插件可变状态。
++**运行时不变式：** 不发布伴生入口。这是一个纯消费方插件，只向两个由宿主声明的 slot 注册展示组件，并注册自身的 locale dictionaries；inject face 由无状态 RPC 包装层和一次 create-and-open 调用组成；本插件不发出 Cordis 事件；本地筛选条件注册没有可独立观测并断言的关系。
+diff --git a/packages/client/ui-workspace/README.i18n.yaml b/packages/client/ui-workspace/README.i18n.yaml
+--- a/packages/client/ui-workspace/README.i18n.yaml
++++ b/packages/client/ui-workspace/README.i18n.yaml
+@@ -48,8 +48,8 @@
+   en: 36934671b80b11ae
+   zh: 8e0aea6162e35e77
+ /deepseek-ai-dsh-client-ui-workspace/understand-the-implementation/session-row-actions/dynamic-client-package:
+-  en: ad4a333892f2fe92
+-  zh: 3a670fd401f4d7a7
++  en: b9def4b8c51da292
++  zh: 0b580187e8e18506
+ /deepseek-ai-dsh-client-ui-workspace/understand-the-implementation/view-state:
+   en: 83031e7505fc228a
+   zh: 03e17c9428fe29fd
+@@ -69,5 +69,5 @@
+   en: 00d7b1ddda7390f5
+   zh: 1e5a1055d1be4d1d
+ /deepseek-ai-dsh-client-ui-workspace/known-limitations-and-deferred-work/dev-note:
+-  en: 585813ff2c68c20c
+-  zh: 18b43c0d64fa8a72
++  en: ed56390a81a74e82
++  zh: 76ca0e245d52f18c
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -3766,6 +3766,14 @@
+     parameters: [{ name: 'payload', description: '.error - persistence, setup, or publication failure.' }],
+   },
+   {
++    name: 'agent-preset/catalog-changed',
++    mode: 'emit',
++    signature: '\'agent-preset/catalog-changed\'(): void',
++    summary: 'A declaration finished activation or was removed; roster consumers re-read.',
++    description: 'A declaration finished activation or was removed; roster consumers re-read.',
++    parameters: [],
++  },
++  {
+     name: 'agent-preset/selected',
+     mode: 'emit',
+     signature: '\'agent-preset/selected\'(sessionId: SessionId, agentPreset: string): void',
+@@ -6843,7 +6851,7 @@
+   },
+   {
+     name: 'SessionSelectModelRequest',
+-    declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n}',
++    declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n    readonly saveDefault?: boolean;\n}',
+   },
+   {
+     name: 'SessionSelectModelValue',
+diff --git a/docs/event-producer-consumer.md b/docs/event-producer-consumer.md
+--- a/docs/event-producer-consumer.md
++++ b/docs/event-producer-consumer.md
+@@ -9,7 +9,8 @@
+ | Event | Mode | Declared in | Dispatchers | Listeners |
+ | --- | --- | --- | --- | --- |
+ | `agent-loop/config-start-failed` | `emit` | [`packages/core/agent-loop/src/index.ts:238`](../packages/core/agent-loop/src/index.ts) | [`agent-loop`](../packages/core/agent-loop) (`events.dispatch`) | - |
+-| `agent-preset/selected` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:69`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
++| `agent-preset/catalog-changed` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:66`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
++| `agent-preset/selected` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:74`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
+ | `agent/assistant-stream` | `emit` | [`packages/core/agent/src/runtime-types.ts:363`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`headless`](../packages/bundle/headless), `session-controller` |
+ | `agent/created` | `serial` | [`packages/core/agent/src/runtime-types.ts:261`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`serial`) | `agent-team`, `browser-use-runtime`, [`file-reference-local`](../packages/context/file-reference-local), [`goal`](../packages/goal/goal), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex), [`loader-smoke`](../packages/test-support/loader-smoke), [`schedule`](../packages/schedule/schedule), `session-controller`, `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
+ | `agent/disposed` | `emit` | [`packages/core/agent/src/runtime-types.ts:270`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`events.dispatch`) | [`agent-loop`](../packages/core/agent-loop), [`file-reference-local`](../packages/context/file-reference-local), [`goal-round-driver`](../packages/goal/goal-round-driver), [`schedule`](../packages/schedule/schedule), `session-controller`, [`subagent`](../packages/subagent/subagent), `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
+@@ -22,11 +23,11 @@
+ | `agent/request-error` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:353`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`compaction-basic`](../packages/compaction/compaction-basic), [`compaction-image-offload`](../packages/compaction/compaction-image-offload), [`llm-retry`](../packages/llm/llm-retry) |
+ | `agent/status` | `emit` | [`packages/core/agent/src/runtime-types.ts:280`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`agent`](../packages/core/agent), `agent-team`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), `server`, `session-controller` |
+ | `agent/turn-stopping` | `serial` | [`packages/core/agent/src/runtime-types.ts:381`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`serial`) | [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex), [`workspace-changes`](../packages/deliverables/workspace-changes) |
+-| `api-session/activity` | `emit` | [`packages/api/session-controller/src/types.ts:611`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+-| `api-session/added` | `emit` | [`packages/api/session-controller/src/types.ts:591`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+-| `api-session/error` | `emit` | [`packages/api/session-controller/src/types.ts:618`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+-| `api-session/removed` | `emit` | [`packages/api/session-controller/src/types.ts:597`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+-| `api-session/status` | `emit` | [`packages/api/session-controller/src/types.ts:604`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/activity` | `emit` | [`packages/api/session-controller/src/types.ts:613`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/added` | `emit` | [`packages/api/session-controller/src/types.ts:593`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/error` | `emit` | [`packages/api/session-controller/src/types.ts:620`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/removed` | `emit` | [`packages/api/session-controller/src/types.ts:599`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/status` | `emit` | [`packages/api/session-controller/src/types.ts:606`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+ | `app-boot/config-reload` | `emit` | [`packages/boot/app-boot/src/index.ts:52`](../packages/boot/app-boot/src/index.ts) | [`app-boot`](../packages/boot/app-boot) (`emit`) | [`settings`](../packages/settings/settings) |
+ | `approval/request` | `waterfall` | [`packages/interaction/user-approval/src/types.ts:87`](../packages/interaction/user-approval/src/types.ts) | [`user-approval`](../packages/interaction/user-approval) (`waterfall`) | [`acp`](../packages/acp/acp), `remotes` |
+ | `authorization/settled` | `emit` | [`packages/credentials/authorization/src/index.ts:57`](../packages/credentials/authorization/src/index.ts) | [`authorization`](../packages/credentials/authorization) (`events.dispatch`) | [`authorization`](../packages/credentials/authorization) |
+diff --git a/docs/event-producer-consumer.zh.md b/docs/event-producer-consumer.zh.md
+--- a/docs/event-producer-consumer.zh.md
++++ b/docs/event-producer-consumer.zh.md
+@@ -11,7 +11,8 @@
+ | Event | Mode | Declared in | Dispatchers | Listeners |
+ | --- | --- | --- | --- | --- |
+ | `agent-loop/config-start-failed` | `emit` | [`packages/core/agent-loop/src/index.ts:238`](../packages/core/agent-loop/src/index.ts) | [`agent-loop`](../packages/core/agent-loop) (`events.dispatch`) | - |
+-| `agent-preset/selected` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:69`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
++| `agent-preset/catalog-changed` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:66`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
++| `agent-preset/selected` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:74`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
+ | `agent/assistant-stream` | `emit` | [`packages/core/agent/src/runtime-types.ts:363`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`headless`](../packages/bundle/headless), `session-controller` |
+ | `agent/created` | `serial` | [`packages/core/agent/src/runtime-types.ts:261`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`serial`) | `agent-team`, `browser-use-runtime`, [`file-reference-local`](../packages/context/file-reference-local), [`goal`](../packages/goal/goal), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex), [`loader-smoke`](../packages/test-support/loader-smoke), [`schedule`](../packages/schedule/schedule), `session-controller`, `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
+ | `agent/disposed` | `emit` | [`packages/core/agent/src/runtime-types.ts:270`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`events.dispatch`) | [`agent-loop`](../packages/core/agent-loop), [`file-reference-local`](../packages/context/file-reference-local), [`goal-round-driver`](../packages/goal/goal-round-driver), [`schedule`](../packages/schedule/schedule), `session-controller`, [`subagent`](../packages/subagent/subagent), `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
+@@ -24,11 +25,11 @@
+ | `agent/request-error` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:353`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`compaction-basic`](../packages/compaction/compaction-basic), [`compaction-image-offload`](../packages/compaction/compaction-image-offload), [`llm-retry`](../packages/llm/llm-retry) |
+ | `agent/status` | `emit` | [`packages/core/agent/src/runtime-types.ts:280`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`agent`](../packages/core/agent), `agent-team`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), `server`, `session-controller` |
+ | `agent/turn-stopping` | `serial` | [`packages/core/agent/src/runtime-types.ts:381`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`serial`) | [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex), [`workspace-changes`](../packages/deliverables/workspace-changes) |
+-| `api-session/activity` | `emit` | [`packages/api/session-controller/src/types.ts:611`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+-| `api-session/added` | `emit` | [`packages/api/session-controller/src/types.ts:591`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+-| `api-session/error` | `emit` | [`packages/api/session-controller/src/types.ts:618`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+-| `api-session/removed` | `emit` | [`packages/api/session-controller/src/types.ts:597`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+-| `api-session/status` | `emit` | [`packages/api/session-controller/src/types.ts:604`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/activity` | `emit` | [`packages/api/session-controller/src/types.ts:613`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/added` | `emit` | [`packages/api/session-controller/src/types.ts:593`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/error` | `emit` | [`packages/api/session-controller/src/types.ts:620`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/removed` | `emit` | [`packages/api/session-controller/src/types.ts:599`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
++| `api-session/status` | `emit` | [`packages/api/session-controller/src/types.ts:606`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+ | `app-boot/config-reload` | `emit` | [`packages/boot/app-boot/src/index.ts:52`](../packages/boot/app-boot/src/index.ts) | [`app-boot`](../packages/boot/app-boot) (`emit`) | [`settings`](../packages/settings/settings) |
+ | `approval/request` | `waterfall` | [`packages/interaction/user-approval/src/types.ts:87`](../packages/interaction/user-approval/src/types.ts) | [`user-approval`](../packages/interaction/user-approval) (`waterfall`) | [`acp`](../packages/acp/acp), `remotes` |
+ | `authorization/settled` | `emit` | [`packages/credentials/authorization/src/index.ts:57`](../packages/credentials/authorization/src/index.ts) | [`authorization`](../packages/credentials/authorization) (`events.dispatch`) | [`authorization`](../packages/credentials/authorization) |
+diff --git a/docs/subsystems/core.md b/docs/subsystems/core.md
+--- a/docs/subsystems/core.md
++++ b/docs/subsystems/core.md
+@@ -1084,6 +1084,22 @@
+
+ ### `agent-preset/*` events
+
++<a id="agent-presetcatalog-changed--emit"></a>
++
++#### `agent-preset/catalog-changed` — emit
++
++A declaration finished activation or was removed; roster consumers re-read.
++
++```ts cordis-catalog
++/**
++ * A declaration finished activation or was removed; roster consumers re-read.
++ * @mode emit
++ */
++'agent-preset/catalog-changed'(): void
++```
++
++Source: [`packages/preset/agent-preset-registry/src/types.ts`](../../packages/preset/agent-preset-registry/src/types.ts)
++
+ <a id="agent-presetselected--emit"></a>
+
+ #### `agent-preset/selected` — emit
+diff --git a/docs/subsystems/core.zh.md b/docs/subsystems/core.zh.md
+--- a/docs/subsystems/core.zh.md
++++ b/docs/subsystems/core.zh.md
+@@ -1094,6 +1094,22 @@
+
+ ### `agent-preset/*` events
+
++<a id="agent-presetcatalog-changed--emit"></a>
++
++#### `agent-preset/catalog-changed` — emit
++
++A declaration finished activation or was removed; roster consumers re-read.
++
++```ts cordis-catalog
++/**
++ * A declaration finished activation or was removed; roster consumers re-read.
++ * @mode emit
++ */
++'agent-preset/catalog-changed'(): void
++```
++
++Source: [`packages/preset/agent-preset-registry/src/types.ts`](../../packages/preset/agent-preset-registry/src/types.ts)
++
+ <a id="agent-presetselected--emit"></a>
+
+ #### `agent-preset/selected` — emit
+diff --git a/docs/persistence-catalog.md b/docs/persistence-catalog.md
+--- a/docs/persistence-catalog.md
++++ b/docs/persistence-catalog.md
+@@ -5335,7 +5335,7 @@
+
+ SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
+
+-Sources: [`packages/api/session-controller/src/types.ts:398`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
++Sources: [`packages/api/session-controller/src/types.ts:400`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
+
+ `string`
+
+@@ -7268,7 +7268,7 @@
+
+ SHA-256: `6a4f72e2e179e17b922f2a9392c0e1c8f8c707f32494372454850a3eb184a6e7`
+
+-Sources: [`packages/api/session-controller/src/types.ts:403`](../packages/api/session-controller/src/types.ts)
++Sources: [`packages/api/session-controller/src/types.ts:405`](../packages/api/session-controller/src/types.ts)
+
+ | Property | Presence | Type |
+ |---|---|---|
+diff --git a/docs/persistence-catalog.zh.md b/docs/persistence-catalog.zh.md
+--- a/docs/persistence-catalog.zh.md
++++ b/docs/persistence-catalog.zh.md
+@@ -5337,7 +5337,7 @@
+
+ SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
+
+-来源：[`packages/api/session-controller/src/types.ts:398`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
++来源：[`packages/api/session-controller/src/types.ts:400`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
+
+ `string`
+
+@@ -7270,7 +7270,7 @@
+
+ SHA-256: `6a4f72e2e179e17b922f2a9392c0e1c8f8c707f32494372454850a3eb184a6e7`
+
+-来源：[`packages/api/session-controller/src/types.ts:403`](../packages/api/session-controller/src/types.ts)
++来源：[`packages/api/session-controller/src/types.ts:405`](../packages/api/session-controller/src/types.ts)
+
+ | 属性 | 存在性 | 类型 |
+ |---|---|---|
+diff --git a/docs/persistence-catalog.i18n.yaml b/docs/persistence-catalog.i18n.yaml
+--- a/docs/persistence-catalog.i18n.yaml
++++ b/docs/persistence-catalog.i18n.yaml
+@@ -1284,8 +1284,8 @@
+   en: 38211d71372021e4
+   zh: c0305af81a67e285
+ /session-persistence-event-catalog/resolved-persistence-types/string:
+-  en: 052f9ce1988e44f2
+-  zh: 5adaad6c9bca43e2
++  en: cbdab8059aa4598a
++  zh: 56b3f9c525583bf6
+ /session-persistence-event-catalog/resolved-persistence-types/string~2:
+   en: 0089620bf4638263
+   zh: 1922bef1713094bb
+@@ -1761,8 +1761,8 @@
+   en: 77a2e15c8413b18c
+   zh: 91d39eed9dfd96d1
+ /session-persistence-event-catalog/resolved-persistence-types/kind-user:
+-  en: aacb77f1cead58ba
+-  zh: e6ce9dac4bdd07b7
++  en: 9ae8ad6c39e546f0
++  zh: 491f0bdbb8f8ea24
+ /session-persistence-event-catalog/resolved-persistence-types/kind-user-approval:
+   en: a52d2dfbaf844127
+   zh: 4c5306ca40f20873
+diff --git a/docs/persistence-schema.json b/docs/persistence-schema.json
+--- a/docs/persistence-schema.json
++++ b/docs/persistence-schema.json
+@@ -22937,7 +22937,7 @@
+         "packages/workflow/workflow/src/types.ts#WorkflowRunId"
+       ],
+       "sources": [
+-        "packages/api/session-controller/src/types.ts:398",
++        "packages/api/session-controller/src/types.ts:400",
+         "packages/attachment/attachment/src/brand.ts:6",
+         "packages/compaction/compaction/src/brand.ts:4",
+         "packages/core/session/src/types.ts:20",
+@@ -23380,7 +23380,7 @@
+       "digest": "6a4f72e2e179e17b922f2a9392c0e1c8f8c707f32494372454850a3eb184a6e7",
+       "names": [],
+       "sources": [
+-        "packages/api/session-controller/src/types.ts:403"
++        "packages/api/session-controller/src/types.ts:405"
+       ]
+     },
+     {

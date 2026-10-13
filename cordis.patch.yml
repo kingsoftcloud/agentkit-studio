@@ -1,0 +1,52 @@
+# AgentKit Studio domain layer over the official DSH base/web bundles.
+- id: ui-settings-models
+  # Studio owns model, credential and first-run copy. Disabling this whole
+  # DSH feature removes both the DeepSeek model page and its welcome notice;
+  # the Studio settings sections below use the Host API instead.
+  disabled: true
+- id: ui-settings-general
+  # The DSH onboarding acknowledgement is not part of AgentKit Studio. Seed
+  # the current official copy as acknowledged so a fresh profile never shows
+  # the DeepSeek-only welcome modal.
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-08-13.1
+- id: ui-sidebar-browser
+  # Chat's default link destination is the official Sidebar Browser. Keep that
+  # browser entry active in Studio so the configured In-App Sidebar choice does
+  # not fall through to window.open/shell.openExternal in the Desktop shell.
+  disabled: false
+- id: ui-brand-official
+  # Studio supplies the sidebar brand through the public brand slots.
+  disabled: true
+- id: time-context
+  # Studio 自动化页和 Host Scheduler 依赖官方时间上下文服务。
+  disabled: false
+- id: schedule
+  # Enable the official durable Schedule service; Studio owns the product UI.
+  disabled: false
+- id: ui-schedule
+  # Studio owns the product automation page. Keep the durable schedule
+  # service above enabled, but do not mount DSH's global panel: its late
+  # sidebar registration races the Studio panel catalog during boot.
+  disabled: true
+- id: ui-agent-preset
+  # Keep the official remote/client seam mounted. Studio replaces its chip
+  # through the public slot below, while the underlying Remote remains the
+  # real session composition API (there is no second agent state machine).
+  disabled: false
+- insert:
+    # The official registry is the only public DSH seam that can recompose a
+    # blank session. Studio's selector uses this service for real Agent
+    # admission; it must not merely persist a display-only Agent id.
+    - id: agent-preset-registry
+      name: '@deepseek-ai/dsh-agent-preset-registry'
+      config:
+        default: standard
+- id: ui-model-selection
+  # Keep the official composer model seat and model directory. Studio owns
+  # the configuration surface, while DSH still owns session model selection.
+  disabled: false
+- insert:
+    - id: agentkit-studio
+      name: '@kingsoftcloud/agentkit-studio'

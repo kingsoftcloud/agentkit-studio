@@ -96,7 +96,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.studio_checkout_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - name: Qualify exact public source snapshot
+        shell: bash
+        env:
+          STUDIO_SHA: ${{ inputs.studio_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$STUDIO_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$STUDIO_SHA" HEAD
+          git checkout --detach "$STUDIO_SHA"
+          pnpm install --frozen-lockfile
+          bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
+          GITLEAKS_BIN="$RUNNER_TEMP/gitleaks/gitleaks" make public-gate
   macos-arm64:
+    needs: [source-gate]
     if: ${{ inputs.candidate_run_id == '' }}
     runs-on: macos-14
     environment: studio-signing
@@ -128,6 +156,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11.7.0
+          package_json_file: dsh-source/package.json
 
       - name: Verify immutable source inputs
         shell: bash
@@ -337,6 +366,7 @@ jobs:
           }
           NODE
           codesign --verify --deep --strict --verbose=2 "$app"
+          node scripts/verify-desktop-module-graph.mjs "$app"
           node scripts/verify-codex-signing.mjs "$app" "$artifacts/mac-arm64-release.json"
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=4 "$app"
@@ -397,8 +427,8 @@ jobs:
           [ -z "$keychain_path" ] || security delete-keychain "$keychain_path"
 
   publish-mac-arm64:
-    if: ${{ always() && inputs.publish_feed && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) }}
-    needs: macos-arm64
+    if: ${{ always() && inputs.publish_feed && needs.source-gate.result == 'success' && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) }}
+    needs: [source-gate, macos-arm64]
     runs-on: ubuntu-latest
     environment: studio-signing
     timeout-minutes: 60
@@ -436,6 +466,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11.7.0
+          package_json_file: dsh-source/package.json
       - name: Publish via Studio KS3 uploader and verify public feed
         working-directory: studio
         env:
@@ -465,6 +496,10 @@ jobs:
           pnpm install --frozen-lockfile
           node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64" || r.commit !== process.env.EXPECTED_DSH_COMMIT || r.publicUrl !== process.env.EXPECTED_UPDATE_ORIGIN + "/dsh-desk/feeds/mac-arm64/") throw Error("Signed candidate identity mismatch")'
           node scripts/verify-codex-signing.mjs --record-only "$GITHUB_WORKSPACE/candidate/mac-arm64-release.json"
+          zip="$(find "$GITHUB_WORKSPACE/candidate" -maxdepth 1 -name '*.zip' -type f -print -quit)"
+          test -n "$zip"
+          unzip -p "$zip" 'AgentKit Studio.app/Contents/Resources/app.asar' > "$RUNNER_TEMP/studio-candidate.asar"
+          node scripts/verify-desktop-module-graph.mjs "$RUNNER_TEMP/studio-candidate.asar"
           if [[ -n "$SIGNED_RUN_ID" ]]; then
             test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .status)" = completed
             test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .path)" = .github/workflows/release-desktop.yml
