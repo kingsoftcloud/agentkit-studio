@@ -29,3 +29,7 @@ Windows feed 和 KS3 公开发布须另通过在线下载及真实更新验收�
 ## 无签名诊断
 
 设置 `diagnostic_only=true` 可先跑同一 Windows 打包与 Host 检查，跳过 Certum 登录、签名和安装器验收；该运行只保留隔离构建的诊断记录，不发布 feed，不能当作正式 Windows 发布验收。默认值为 `false`，正式流程继续要求签名、安装和实际 App UI 通过。
+
+## 复用签名候选
+
+`candidate_run_id` 可复用已经通过签名、打包和实际安装检查的运行。`studio_ref` 和 `build_version` 必须与原运行相同；流程从原始日志验证固定源码身份，并校验 GitHub artifact 的 SHA-256 与字节数。`release_tools_ref` 单独固定验收工具提交，不能把新版工具标成已经签名的应用源码。复用仍需重新检查安装器、实际安装、已安装 App 签名以及真实界面；失败的界面检查不会被改写为成功。
