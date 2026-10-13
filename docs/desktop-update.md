@@ -12,7 +12,7 @@ Desktop 沿用 DSH 官方 Electron updater 的检查、下载、校验和重启�
 
 ```dotenv
 DSH_DESKTOP_APP_ID=com.kingsoftcloud.agentkit-studio
-DSH_DESKTOP_UPDATE_ORIGIN=https://ksadk.ks3-cn-beijing.ksyuncs.com
+DSH_DESKTOP_UPDATE_ORIGIN=https://agentkit.ks3-cn-beijing.ksyuncs.com
 DSH_DESKTOP_UPDATE_CHANNEL=preview
 ```
 
@@ -126,7 +126,13 @@ node scripts/verify-desktop-installed-update.mjs \
 
 回滚使用前向版本：把回滚代码重新打成更高的 `DSH_DESKTOP_BUILD_VERSION`，指向同一 App ID 和 feed，然后重复发布和安装验收。这样遵守官方 updater 的 `allowDowngrade=false` 和 `semver.gt` 安全约束，同时真实覆盖“新版本 → 回滚代码版本”的安装、重启和数据保留。任何 origin、feed metadata、ZIP range、签名、公证、版本替换或 marker 检查失败，都不能生成验收通过证据。
 
-## 2026-10-13 真实验收记录
+## 新 Bucket 发布与迁移
+
+后续仅向 `https://agentkit.ks3-cn-beijing.ksyuncs.com` 发布。DMG、ZIP 和 blockmap 位于 `studio/<version>/`，正式 feed 位于 `studio/feeds/mac-arm64/`；同一 Bucket 内保留原生 updater 使用的 `dsh-desk/feeds/mac-arm64/` 路径。发布 workflow 的 `compatibility_origin` 默认留空，不再向旧 Bucket 写兼容 feed。
+
+仍内置旧 Bucket 的安装需要手动安装一次新签名 DMG。新安装随后通过 AgentKit Bucket 检查和下载更新；不会靠改写旧 App 的签名资源切换来源。全量更新采用 `--update-mode full`，普通发布采用 `--update-mode incremental`。
+
+## 2026-10-13 历史验收记录（旧 Bucket 已停止更新）
 
 本次使用 Preview 通道、Apple Silicon 安装包，以及 `https://ksadk.ks3-cn-beijing.ksyuncs.com` 公网源。签名候选在 [Studio Actions 38345364168](https://github.com/kingsoftcloud/agentkit-studio/actions/runs/38345364168) 生成；应用源码为 `bfd04a57f2f1896fec5669964dd52fad2e7d0528`，后续发布工具和文档提交没有改变这份签名文件。
 
@@ -143,4 +149,4 @@ node scripts/verify-desktop-installed-update.mjs \
 
 最终 [CI 38350039590](https://github.com/kingsoftcloud/agentkit-studio/actions/runs/38350039590) 通过 KS3 发布及 GitHub Release 创建、附件上传；签名 job 复用前述已通过的候选，真实安装验收使用上表本机证据。不存在把跳过的安装 job 当作已通过的情况。
 
-最新签名 DMG：[公网下载](https://ksadk.ks3-cn-beijing.ksyuncs.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.2.0-rc.2.20261013.10-mac-arm64.dmg)，[Studio Release](https://github.com/kingsoftcloud/agentkit-studio/releases/tag/desktop-0.2.0-rc.2.20261013.10) 的 5 个附件摘要与签名候选一致。DMG SHA-256 为 `b279b2460b048cd92be04b8ee6177e29df71a938e28c805091c31243e1e7a1a8`。本地保留 `.artifacts/AgentKit-Studio-0.2.0-rc.2.20261013.10-signed-notarized.dmg`，`latest-signed-agentkit-studio.dmg` 指向同一版本。
+历史 `.10` DMG：[原验收下载](https://ksadk.ks3-cn-beijing.ksyuncs.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.2.0-rc.2.20261013.10-mac-arm64.dmg)，[对应 Studio Release](https://github.com/kingsoftcloud/agentkit-studio/releases/tag/desktop-0.2.0-rc.2.20261013.10) 的 5 个附件摘要与签名候选一致。DMG SHA-256 为 `b279b2460b048cd92be04b8ee6177e29df71a938e28c805091c31243e1e7a1a8`。本地历史证据保留 `.artifacts/AgentKit-Studio-0.2.0-rc.2.20261013.10-signed-notarized.dmg`。新候选仍须通过真实 App 验收后才能更新最新下载记录。
