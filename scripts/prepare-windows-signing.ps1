@@ -4,7 +4,8 @@ $thumb = ($env:CERTUM_THUMBPRINT -replace '[\s:]','').ToUpperInvariant()
 if ($thumb -notmatch '^[0-9A-F]{40}$') { throw 'CERTUM_THUMBPRINT must identify one signing certificate' }
 $cert = Get-Item "Cert:\CurrentUser\My\$thumb"
 if (-not $cert.HasPrivateKey -or $cert.NotBefore -gt (Get-Date) -or $cert.NotAfter -le (Get-Date)) { throw 'Certum signing certificate is unavailable or expired' }
-if ('1.3.6.1.5.5.7.3.3' -notin @($cert.EnhancedKeyUsageList | ForEach-Object {$_.ObjectId.Value})) { throw 'Certificate must have Code Signing usage' }
+$usage = @($cert.Extensions | Where-Object {$_.Oid.Value -eq '2.5.29.37'} | ForEach-Object {$_.EnhancedKeyUsages} | ForEach-Object {$_.Value})
+if ('1.3.6.1.5.5.7.3.3' -notin $usage) { throw 'Certificate must have Code Signing usage' }
 $uri = [Uri]$UpdateOrigin
 if ($uri.Scheme -ne 'https' -or $uri.UserInfo -or $uri.AbsolutePath -ne '/' -or $uri.Query -or $uri.Fragment) { throw 'Update origin must be an HTTPS origin' }
 $tool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
