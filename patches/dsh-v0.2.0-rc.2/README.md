@@ -52,3 +52,6 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `020-studio-signed-product-name.patch` | 让正式签名、公证和签名后 smoke 沿用产品 bundle 名称，而不是硬编码查找 `DeepSeek Harness.app`；默认 DSH 品牌保持不变 | 上游签名和公证路径统一使用 `DSH_DESKTOP_PRODUCT_NAME` |
 | `021-product-manual-update-check.patch` | 产品页调用官方 `updates.open()` 时强制重新检查 feed，并记录手动检查 journal；下载与安装仍由官方确认界面控制 | 上游产品更新入口提供强制刷新检查 |
 | `022-ks3-single-range-updates.patch` | 签名前封装官方 Generic Provider 的 `useMultipleRangeRequest: false`；KS3 公网多段 Range 返回 416，使用官方单段 Range 下载器完成差分，并在打包校验中拒绝默认多段配置 | 上游产品更新配置允许显式关闭多段 Range |
+| `023-codex-code-mode-signing.patch` | 为 Codex 的 Code Mode 执行助手保留官方 `allow-jit` 和 `allow-unsigned-executable-memory` 权限；只匹配 Codex macOS 平台包中的该助手，不扩大其他运行时文件权限 | 上游运行时签名识别 Codex Code Mode 助手，并验证其所需权限 |
+
+`023` 的权限来自 [Codex 0.159.2 官方签名配置](https://github.com/openai/codex/blob/rust-v0.159.2/.github/scripts/macos-signing/codex-code-mode-host.entitlements.plist)。真实安装包的助手被通用签名规则重签后没有这两项权限；同一版本官方原包以及仅修复助手签名的本地副本都可实际创建并校验文件。正式产物还须通过 `node scripts/verify-codex-signing.mjs <App路径>`，并在实际安装后重跑文件执行验收。

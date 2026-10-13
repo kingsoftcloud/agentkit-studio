@@ -2,6 +2,7 @@
 
 ## 0.0.2
 
+- Preserve the official macOS Code Mode host entitlements required for actual Codex tool execution.
 - Preserve image-only and mixed image input for bound local Agents through DSH attachment storage, Harness model requests and native Codex image inputs.
 - Preserve multimodal model capabilities advertised by nested `/v1/models` metadata.
 - Keep long-running Codex turns alive while progress continues, with idle and explicit total budgets.
