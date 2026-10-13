@@ -131,7 +131,7 @@ jobs:
           CERTUM_THUMBPRINT: ${{ secrets.CERTUM_THUMBPRINT }}
           BUILD_VERSION: ${{ inputs.build_version }}
         run: |
-          $candidates = @(Get-ChildItem "$env:RUNNER_TEMP/studio-build/desktop-checkouts/*/source/apps/desktop/.desktop-build/targets/win-x64/artifacts" -Directory)
+          $candidates = @(Get-Item "$env:RUNNER_TEMP/studio-build/desktop-checkouts/*/source/apps/desktop/.desktop-build/targets/win-x64/artifacts")
           if ($candidates.Count -ne 1) { throw 'Expected exactly one signed output directory' }
           $artifacts = $candidates[0].FullName
           ./scripts/verify-windows-install.ps1 -Artifacts $artifacts -Version $env:BUILD_VERSION -Evidence .artifacts/windows-proof
