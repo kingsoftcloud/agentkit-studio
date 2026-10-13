@@ -8,7 +8,7 @@ DSH_DESKTOP_UPDATE_ORIGIN=https://updates.example.com
 DSH_DESKTOP_UPDATE_CHANNEL=preview
 ```
 
-`DSH_DESKTOP_UPDATE_CHANNEL` 只用于产品发布的 `stable` 或 `preview` lane。未指定时，DSH 旧测试夹具仍使用 `nightly`，生产配置必须显式填写 Stable 或 Preview。更新源必须是 HTTPS origin；更新凭据和 COS 配置不进入仓库。
+`DSH_DESKTOP_UPDATE_CHANNEL` 只用于产品发布的 `stable` 或 `preview` lane。未指定时，DSH 旧测试夹具仍使用 `nightly`，生产配置必须显式填写 Stable 或 Preview。更新源必须是 HTTPS origin；更新凭据和 KS3 配置不进入仓库。
 
 macOS 包含 DMG、ZIP 和 ZIP blockmap。DMG 用于安装，Electron updater 通过 ZIP 及 blockmap 做增量下载；下载完成后仍由用户确认重启安装。首次检查、定时检查、下载进度、签名校验和 `quitAndInstall` 都由官方 updater coordinator 完成。
 
@@ -70,15 +70,17 @@ DSH_DESKTOP_BUILD_VERSION=0.2.0-rc.2.20261012.3 \
   make desktop-package-mac-arm64 DSH_ROOT=/path/to/deepseek-harness PACK_DIR=.artifacts/signed-desktop
 ```
 
-旧仓库的 workflow 默认只生成签名候选；只有显式传入 `publish_feed=true` 才会发布更新源。正式发布还需要单独配置 Studio 更新源的上传凭证，并按“不可变 DMG/ZIP/blockmap 先上传、channel metadata 后发布”的顺序完成。旧 Studio 的 App ID 是 `com.kingsoftcloud.agentkit.studio`，新版是 `com.kingsoftcloud.agentkit-studio`，两者不能直接当作同一安装实例做差分升级。
+旧仓库的 workflow 默认只生成签名候选；只有显式传入 `publish_feed=true` 才会发布更新源。正式发布还需要单独配置 Studio 更新源的 KS3 上传凭证，并按“不可变 DMG/ZIP/blockmap 先上传、channel metadata 后发布”的顺序完成。旧 Studio 的 App ID 是 `com.kingsoftcloud.agentkit.studio`，新版是 `com.kingsoftcloud.agentkit-studio`，两者不能直接当作同一安装实例做差分升级。
 
 ## P1-1 真实发布与安装验收
 
-签名工作流通过 `publish_feed=true` 才会写线上 COS。上传实现调用冻结 DSH checkout 中的官方 `desktop-upload-plan.ts` 和 `desktop-upload-run.ts`：先校验并上传 DMG、ZIP、ZIP blockmap，再写 `stable-mac.yml` 或 `preview-mac.yml`。发布 job 完成后立即用公开 HTTPS origin 做 HEAD、全量 SHA-512 和 `Range: bytes=0-0` 检查，并把 JSON 证据作为 Actions artifact 保存。工作流使用以下 Environment Secret 名称，值不进入仓库：
+签名工作流通过 `publish_feed=true` 才会写线上 KS3。Studio 发布器使用 KS3 KSS 签名和 AK/SK 流式上传：先校验并上传 DMG、ZIP、ZIP blockmap，再写 `mac-arm64-release.json` 和 `stable-mac.yml` 或 `preview-mac.yml`。发布 job 完成后立即用公开 HTTPS origin 做 HEAD、全量 SHA-512 和 `Range: bytes=0-0` 检查，并把 JSON 证据作为 Actions artifact 保存。工作流使用以下 Environment Secret 名称，值不进入仓库：
 
-- `STUDIO_DOWNLOAD_PROD_COS_BUCKET`
-- `STUDIO_DOWNLOAD_PROD_COS_SECRET_ID`
-- `STUDIO_DOWNLOAD_PROD_COS_SECRET_KEY`
+- `STUDIO_DOWNLOAD_PROD_KS3_BUCKET`（如果 origin 使用 `<bucket>.ks3-*.ksyuncs.com`，可省略）
+- `STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY`
+- `STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY`
+
+兼容读取 `KS3_BUCKET`、`KS3_ACCESS_KEY`、`KS3_SECRET_KEY` 和 `KSYUN_ACCESS_KEY`、`KSYUN_SECRET_KEY`。这些值是金山云 KS3 凭证，不是腾讯云 COS 凭证。
 
 候选 artifact 必须同时包含 `mac-arm64-release.json`；这个记录把 feed 版本、目标、origin 和 DSH commit 绑定起来，缺失时发布会停止。发布前可填写 `expected_previous_version`，脚本会先读取当前 feed，版本不匹配就不写远端对象。
 

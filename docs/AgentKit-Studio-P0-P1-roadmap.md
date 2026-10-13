@@ -27,4 +27,4 @@
 - `pnpm test`：589 passed、0 failed、1 skipped；`pnpm verify-harness`：真实 DSH probe、卸载、npm pack、type probe 均通过。
 - 差分验证使用官方 `GenericDifferentialDownloader` 和 blockmap v2：目标 2,097,272 bytes，实际下载 131,192 bytes，复用 1,966,080 bytes，损坏传输会拒绝。
 - P1-1 的发布与验收入口已落地：`scripts/desktop-release.mjs` 复用官方 DSH upload plan/run，按 binary-first、metadata-last 发布并验证公开 feed 的完整字节和 HTTP Range；`scripts/verify-desktop-installed-update.mjs` 会挂载签名 DMG、启动真实 Electron、执行更新菜单、等待替换重启并检查数据保留。
-- 当前仍未宣称 P1-1 完成：线上 origin、COS bucket/凭证和一组“旧版本 → 新版本 → 前向回滚版本”的签名产物尚未在本机具备，因此还没有真实 feed、安装后升级或回滚 JSON 证据。工作流会在这些输入缺失时停止，不把本地 loopback 或 unsigned 结果当作通过。
+- 当前仍未宣称 P1-1 完成：线上 origin、KS3 bucket/AKSK 和一组“旧版本 → 新版本 → 前向回滚版本”的签名产物尚未在本机具备，因此还没有真实 feed、安装后升级或回滚 JSON 证据。工作流会在这些输入缺失时停止，不把本地 loopback 或 unsigned 结果当作通过。

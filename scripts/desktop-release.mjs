@@ -1,22 +1,13 @@
-/** Publish and qualify one signed AgentKit Studio macOS release.
- * The publish command delegates writes to the pinned DSH desktop-upload-plan.ts
- * and desktop-upload-run.ts through the official upload:mac:arm64 entrypoint.
- */
+/** Publish and qualify one signed AgentKit Studio macOS release to KS3. */
 import { createHash } from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { createReadStream } from 'node:fs'
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { promisify } from 'node:util'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import YAML from 'yaml'
-import { withDesktopCheckout } from './desktop-checkout.mjs'
+import { resolveKs3ReleaseCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs'
 
-const run = promisify(execFile)
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
-const DSH_DEFAULT = resolve(STUDIO_ROOT, '../../deepseek-harness')
-const DSH_COMMIT_DEFAULT = '639ed015397290b3745d163aafe02ffee4aa3f84'
-const DSH_VERSION_DEFAULT = '0.2.0-rc.2'
 const TARGET = 'mac-arm64'
 const CHANNELS = new Set(['stable', 'preview'])
 
@@ -138,39 +129,33 @@ async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expect
   return evidence
 }
 
-async function publish({ candidate, dshRoot, patches, dshCommit, dshVersion, feedOrigin, selectedChannel, expectedPreviousVersion }) {
-  const bucket = required(process.env.DOWNLOAD_PROD_COS_BUCKET, 'DOWNLOAD_PROD_COS_BUCKET')
-  const secretId = required(process.env.DOWNLOAD_PROD_COS_SECRET_ID, 'DOWNLOAD_PROD_COS_SECRET_ID')
-  const secretKey = required(process.env.DOWNLOAD_PROD_COS_SECRET_KEY, 'DOWNLOAD_PROD_COS_SECRET_KEY')
+async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviousVersion }) {
+  const credentials = resolveKs3ReleaseCredentials(process.env, feedOrigin)
   const previous = expectedPreviousVersion === undefined ? undefined
     : await verifyFeed({ feedOrigin, selectedChannel, expectedVersion: expectedPreviousVersion, output: join(candidate.root, '.prepublish'), allowLoopback: false })
   const output = join(candidate.root, '.desktop-release')
-  await withDesktopCheckout({ source: dshRoot, output, patches, commit: dshCommit }, async checkout => {
-    const artifacts = join(checkout, 'apps/desktop/.desktop-build/targets/mac-arm64/artifacts')
-    await mkdir(artifacts, { recursive: true })
-    for (const name of [`${candidate.expectedBase}.dmg`, `${candidate.expectedBase}.zip`, `${candidate.expectedBase}.zip.blockmap`, `${selectedChannel}-mac.yml`, 'mac-arm64-release.json']) {
-      await cp(join(candidate.root, name), join(artifacts, name))
-    }
-    const dotenv = join(checkout, 'apps/desktop/.env.macos')
-    const contents = [
-      'DSH_DESKTOP_AUTO_UPDATE_ENV=production', `DSH_DESKTOP_UPDATE_ORIGIN=${feedOrigin}`,
-      `DSH_DESKTOP_UPDATE_CHANNEL=${selectedChannel}`, 'DSH_DESKTOP_APP_ID=com.kingsoftcloud.agentkit-studio',
-      `DOWNLOAD_PROD_COS_BUCKET=${bucket}`, `DOWNLOAD_PROD_COS_SECRET_ID=${secretId}`, `DOWNLOAD_PROD_COS_SECRET_KEY=${secretKey}`,
-    ].join('\n') + '\n'
-    await writeFile(dotenv, contents, { mode: 0o600, flag: 'wx' })
-    try {
-      await run('pnpm', ['install', '--frozen-lockfile'], { cwd: checkout, maxBuffer: 16 * 1024 * 1024 })
-      await run('pnpm', ['--dir', 'apps/desktop', 'run', 'upload:mac:arm64'], { cwd: checkout, maxBuffer: 16 * 1024 * 1024 })
-    } finally { await rm(dotenv, { force: true }) }
-  })
+  const uploadRoot = `dsh-desk/bin/${TARGET}`
+  const feedRoot = `dsh-desk/feeds/${TARGET}`
+  const uploads = [
+    [`${candidate.expectedBase}.dmg`, `${uploadRoot}/${candidate.expectedBase}.dmg`, 'application/x-apple-diskimage'],
+    [`${candidate.expectedBase}.zip`, `${uploadRoot}/${candidate.expectedBase}.zip`, 'application/zip'],
+    [`${candidate.expectedBase}.zip.blockmap`, `${uploadRoot}/${candidate.expectedBase}.zip.blockmap`, 'application/octet-stream'],
+    ['mac-arm64-release.json', `${feedRoot}/mac-arm64-release.json`, 'application/json'],
+    [`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml'],
+  ]
+  const uploaded = []
+  for (const [filename, objectKey, contentType] of uploads) {
+    uploaded.push(await uploadKs3ReleaseArtifact({ ...credentials, origin: feedOrigin, objectKey,
+      path: join(candidate.root, filename), contentType }))
+  }
   const evidence = await verifyFeed({ feedOrigin, selectedChannel, expectedVersion: candidate.metadata.version,
     expectedPreviousVersion, output: join(candidate.root, '.desktop-release'), allowLoopback: false })
-  return { ...evidence, previous: previous?.version, release: candidate.release }
+  return { ...evidence, previous: previous?.version, release: candidate.release, storage: 'ks3', uploaded }
 }
 
 function usage() {
   console.error('usage: desktop-release.mjs verify-feed --origin <https-origin> --channel <stable|preview> --version <version> [--output dir] [--allow-loopback]\n'
-    + '       desktop-release.mjs publish --candidate dir --origin <https-origin> --channel <stable|preview> [--expected-previous-version version] [--dsh-root dir] [--patches dir] [--dsh-commit sha] [--dsh-version version]')
+    + '       desktop-release.mjs publish --candidate dir --origin <https-origin> --channel <stable|preview> [--expected-previous-version version]')
 }
 
 const { positionals, values } = parseArgs({ allowPositionals: true, options: {
@@ -189,9 +174,7 @@ else {
       await verifyFeed({ feedOrigin, selectedChannel, expectedVersion, output: values.output ?? join(STUDIO_ROOT, '.artifacts', 'desktop-release'), allowLoopback: values['allow-loopback'] === true })
     } else {
       const candidate = await readCandidate(values.candidate, selectedChannel)
-      const result = await publish({ candidate, dshRoot: resolve(values['dsh-root'] ?? DSH_DEFAULT), patches: resolve(values.patches ?? join(STUDIO_ROOT, 'patches/dsh-v0.2.0-rc.2')),
-        dshCommit: values['dsh-commit'] ?? DSH_COMMIT_DEFAULT, dshVersion: values['dsh-version'] ?? DSH_VERSION_DEFAULT, feedOrigin, selectedChannel,
-        expectedPreviousVersion: values['expected-previous-version'] })
+      const result = await publish({ candidate, feedOrigin, selectedChannel, expectedPreviousVersion: values['expected-previous-version'] })
       console.log(JSON.stringify(result, null, 2))
     }
   } catch (error) {
