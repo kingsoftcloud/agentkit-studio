@@ -7,8 +7,8 @@ const escapeXml = value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;'
 const decodeXml = value => value.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&amp;', '&');
 
 export async function uploadKs3Multipart({ url, bucket, accessKey, secretKey, objectKey, path, size, contentType,
-  fetchImpl = fetch, now = () => new Date(), onProgress = () => {}, partSize = 16 * 1024 * 1024,
-  concurrency = 4, timeoutMs = 180_000 }) {
+  fetchImpl = fetch, now = () => new Date(), onProgress = () => {}, partSize = 5 * 1024 * 1024,
+  concurrency = 4, timeoutMs = 300_000 }) {
   if (!Number.isSafeInteger(partSize) || partSize < MIN_PART || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
     throw new Error('invalid KS3 multipart limits');
   }
