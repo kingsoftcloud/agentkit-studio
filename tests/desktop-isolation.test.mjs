@@ -64,6 +64,14 @@ test('wrong baseline and invalid patch cannot reach a build', async t => {
   assert.equal(await readFile(join(input.source,'client.js'),'utf8'),'patched source\n');
 });
 
+test('isolated packaging ignores a Windows-style global CRLF checkout setting', async t => {
+  const input=await fixture(t);
+  const configuration=join(input.root,'windows-gitconfig');await writeFile(configuration,'[core]\n  autocrlf = true\n');
+  const {promisify}=await import('node:util'); const {execFile}=await import('node:child_process');
+  const code=`import {prepareDesktopCheckout} from './scripts/desktop-checkout.mjs';import fs from 'node:fs/promises';const root=await prepareDesktopCheckout(${JSON.stringify(input)});if(await fs.readFile(root+'/client.js','utf8')!=='patched source\\n')throw Error('Unexpected CRLF translation');`;
+  await promisify(execFile)(process.execPath,['--input-type=module','-e',code],{env:{...process.env,GIT_CONFIG_GLOBAL:configuration}});
+});
+
 test('release settings preserve secrets and resolve only credential file references', async () => {
   const {relocateReleaseSettings}=await import('../scripts/package-desktop.mjs');
   const {parseEnv}=await import('node:util');
