@@ -79,7 +79,7 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ inputs.studio_checkout_ref }}
           path: studio
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Checkout pinned DSH
         uses: actions/checkout@v4
@@ -117,6 +117,8 @@ jobs:
             echo "studio_checkout_ref must be a branch or tag name" >&2
             exit 1
           }
+          git -C studio merge-base --is-ancestor "$STUDIO_REF_VALUE" HEAD
+          git -C studio checkout --detach "$STUDIO_REF_VALUE"
           test "$(git -C studio rev-parse HEAD)" = "$STUDIO_REF_VALUE"
           [[ "$UPDATE_ORIGIN_VALUE" =~ ^https://[^/[:space:]]+$ ]] || {
             echo "update_origin must be an HTTPS origin with a host" >&2
@@ -379,7 +381,7 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ inputs.studio_checkout_ref }}
           path: studio
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Checkout pinned DSH
         uses: actions/checkout@v4
         with:
@@ -409,6 +411,8 @@ jobs:
           EXPECTED_PREVIOUS: ${{ inputs.expected_previous_version }}
         run: |
           set -euo pipefail
+          git merge-base --is-ancestor "$STUDIO_REF_VALUE" HEAD
+          git checkout --detach "$STUDIO_REF_VALUE"
           test "$(git rev-parse HEAD)" = "$STUDIO_REF_VALUE"
           pnpm install --frozen-lockfile
           args=(publish --candidate "$GITHUB_WORKSPACE/candidate" --origin '${{ inputs.update_origin }}'
@@ -437,7 +441,7 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ inputs.studio_checkout_ref }}
           path: studio
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Download signed baseline DMG
         working-directory: studio
         env:
@@ -452,6 +456,8 @@ jobs:
         env:
           STUDIO_REF_VALUE: ${{ inputs.studio_ref }}
         run: |
+          git merge-base --is-ancestor "$STUDIO_REF_VALUE" HEAD
+          git checkout --detach "$STUDIO_REF_VALUE"
           test "$(git rev-parse HEAD)" = "$STUDIO_REF_VALUE"
           npm install --ignore-scripts
           node scripts/verify-desktop-installed-update.mjs \
