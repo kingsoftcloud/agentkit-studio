@@ -2,6 +2,8 @@
 
 ## 0.0.2
 
+- Open HTTP(S) pages from Agent tools in the official DSH Browser, with a live session-scoped UI acknowledgement.
+- Publish versioned Studio artifacts in KS3 with compatibility feeds and an explicit full-download mode.
 - Preserve image-only and mixed image input for bound local Agents through DSH attachment storage, Harness model requests and native Codex image inputs.
 - Preserve multimodal model capabilities advertised by nested `/v1/models` metadata.
 - Keep long-running Codex turns alive while progress continues, with idle and explicit total budgets.

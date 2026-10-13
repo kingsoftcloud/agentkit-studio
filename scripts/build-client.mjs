@@ -10,6 +10,7 @@ const fragments = [
   '02-credential-onboarding.js',
   '02-overview-and-selector.js',
   '02-native-authoring.js',
+  '02-studio-browser.js',
   '02-codex-tool-nodes.js',
   '03-agents-and-authoring.js',
   '04-create-edit-and-resources.js',
