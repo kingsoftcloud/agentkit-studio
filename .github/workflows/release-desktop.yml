@@ -53,7 +53,7 @@ on:
       compatibility_origin:
         description: "Old installed-app origin receiving a compatibility feed; empty disables it"
         required: false
-        default: https://ksadk.ks3-cn-beijing.ksyuncs.com
+        default: ""
         type: string
       build_version:
         description: "Semver build version; use a higher test suffix for update and rollback qualification"
