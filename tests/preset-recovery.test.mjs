@@ -65,3 +65,19 @@ for (const earlyRegistry of [true, false]) test(`startup waits for local restora
   await Promise.all([first, second]);
   assert.deepEqual(admitted, [row.metadata.id]);
 });
+
+test('a replacement registry recovers while the retiring registry is still settling', async () => {
+  let release;
+  const oldGate = new Promise(resolve => { release = resolve; });
+  const row = { metadata: { id: 'ar-local-0123456789abcdef', revision: 1 } };
+  const admitted = [];
+  const reconciler = createStartupReconciler({
+    store: Promise.resolve({ list: async () => [row], captureRevision: async () => {}, listRevisions: async () => [row] }),
+    build: Promise.resolve({ build: { list: async () => [] } }), deployments: () => new Promise(() => {}),
+  });
+  const old = reconciler.run({ registry: {}, ensure: () => oldGate });
+  await reconciler.run({ registry: {}, ensure: async id => { admitted.push(id); } });
+  assert.deepEqual(admitted, [row.metadata.id]);
+  release();
+  await old;
+});

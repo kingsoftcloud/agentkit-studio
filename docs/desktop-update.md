@@ -118,6 +118,8 @@ node scripts/desktop-release.mjs verify-feed \
 
 真正的 macOS 验收会挂载签名 DMG，或用 `--app` 指定已有安装，执行 `codesign` 和 `spctl` 并启动真实 Electron。操作者通过可见的官方更新界面检查、下载和重启；脚本本身不会模拟 UI 点击。它等待安装版本替换及新进程 `workspace-ready`。macOS LaunchServices 重启不继承环境变量时，使用 CUA 保存实际工作区的 AX 状态和截图到验收目录的 `successor-ui.json`；脚本独立检查原进程退出、新安装进程启动、截图时间和 Host 已连接状态，不自行启动新进程。随后检查 `DSH_HOME` marker 和 `--retain-file` 指定的真实会话、配置文件原始字节，保存 journal 和实际差分下载日志。`--require-differential` 会拒绝整包回退。
 
+验收默认使用隔离的 Electron 数据目录。连续升级、回滚时，显式传入同一组 `--app`、`--data-home` 和 `--user-data-dir`，并通过 `--retain-file` 指定真实持久化文件；脚本以单个 `--user-data-dir=<path>` 参数启动，避免误连已运行的个人 App。
+
 ```sh
 node scripts/verify-desktop-installed-update.mjs \
   --dmg /path/to/baseline.dmg --origin https://<studio-update-origin> \

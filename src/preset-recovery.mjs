@@ -24,13 +24,12 @@ export async function restoreLocalPresets({store,build,admission,warn=console.wa
 
 /** Await local recovery on either registry arrival order; cloud recovery stays independent. */
 export function createStartupReconciler({ store, build, deployments, getAdmission, warn = console.warn }) {
-  let pending;
+  const pending = new WeakMap();
   return {
-    run() {
-      const admission = getAdmission();
+    run(admission = getAdmission()) {
       if (!admission?.registry) return Promise.resolve();
-      if (pending) return pending;
-      pending = (async () => {
+      if (pending.has(admission)) return pending.get(admission);
+      const recovery = (async () => {
         try {
           await restoreLocalPresets({ store: await store, build: (await build).build, admission, warn });
         } catch (error) { warn('[agentkit-studio] local revision recovery failed:', error?.code || 'RECOVERY_FAILED'); }
@@ -41,8 +40,9 @@ export function createStartupReconciler({ store, build, deployments, getAdmissio
             catch (error) { warn('[agentkit-studio] cloud preset restore skipped:', error?.code || 'RECOVERY_FAILED'); }
           }
         }).catch(error => warn('[agentkit-studio] cloud preset recovery unavailable:', error?.code || 'RECOVERY_FAILED'));
-      })().finally(() => { pending = undefined; });
-      return pending;
+      })().finally(() => { pending.delete(admission); });
+      pending.set(admission, recovery);
+      return recovery;
     },
   };
 }
