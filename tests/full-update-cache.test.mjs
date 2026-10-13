@@ -4,15 +4,16 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { transform } from 'esbuild';
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'studio-full-cache-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const patch = await readFile(new URL('../patches/dsh-v0.2.0-rc.2/029-full-update-blockmap-cache.patch', import.meta.url), 'utf8');
-  const body = patch.split('+++ b/apps/desktop/src/mac-full-update-cache.mjs\n')[1].split('\ndiff --git')[0];
+  const body = patch.split('+++ b/apps/desktop/src/mac-full-update-cache.ts\n')[1].split('\ndiff --git')[0];
   const source = body.split('\n').filter(line => line.startsWith('+')).map(line => line.slice(1)).join('\n');
   const module = join(root, 'actual-patched-cache.mjs');
-  await writeFile(module, source);
+  await writeFile(module, (await transform(source, { loader: 'ts', format: 'esm', target: 'node24' })).code);
   const { discardFullUpdateBlockmaps } = await import(pathToFileURL(module));
   const cache = join(root, 'studio-updater'), pending = join(cache, 'pending');
   await mkdir(pending, { recursive: true });

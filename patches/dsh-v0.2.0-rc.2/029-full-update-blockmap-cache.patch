@@ -1,12 +1,12 @@
 diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
-index ee5e28a3b4..ce2e05ec46 100644
+index ee5e28a3b4..c5cb3e0c5f 100644
 --- a/apps/desktop/src/update-coordinator.ts
 +++ b/apps/desktop/src/update-coordinator.ts
 @@ -8,6 +8,7 @@ import { gt, valid } from 'semver'
  import type { DesktopUpdateState } from './ipc.ts'
  import { DesktopUpdateHttpExecutor } from './update-http-executor.ts'
  import { DesktopUpdatePreparationError } from './update-error.ts'
-+import { discardFullUpdateBlockmaps } from './mac-full-update-cache.mjs'
++import { discardFullUpdateBlockmaps } from './mac-full-update-cache.ts'
  
  const { autoUpdater } = electronUpdater
  
@@ -18,47 +18,37 @@ index ee5e28a3b4..ce2e05ec46 100644
      this.downloaded = true
    }
  
-diff --git a/apps/desktop/src/mac-full-update-cache.d.mts b/apps/desktop/src/mac-full-update-cache.d.mts
+diff --git a/apps/desktop/src/mac-full-update-cache.ts b/apps/desktop/src/mac-full-update-cache.ts
 new file mode 100644
-index 0000000000..70b01e3f04
+index 0000000000..b3f3a4fc77
 --- /dev/null
-+++ b/apps/desktop/src/mac-full-update-cache.d.mts
-@@ -0,0 +1,2 @@
-+/** The native downloaded event is validated before any owned cache path is touched. */
-+export function discardFullUpdateBlockmaps(event: unknown, options?: { platform?: string }): boolean;
-diff --git a/apps/desktop/src/mac-full-update-cache.mjs b/apps/desktop/src/mac-full-update-cache.mjs
-new file mode 100644
-index 0000000000..dcb2a7b78c
---- /dev/null
-+++ b/apps/desktop/src/mac-full-update-cache.mjs
-@@ -0,0 +1,30 @@
++++ b/apps/desktop/src/mac-full-update-cache.ts
+@@ -0,0 +1,28 @@
 +/** Keep the official updater cache consistent after an explicitly full Studio release. */
-+import { rmSync } from 'node:fs';
-+import { basename, dirname, isAbsolute, join } from 'node:path';
++import { rmSync } from 'node:fs'
++import { basename, dirname, isAbsolute, join } from 'node:path'
 +
 +/**
-+ * A full feed intentionally has no blockmap at its ZIP URL. The native updater
-+ * still replaces update.zip, while its old cached current.blockmap survives.
-+ * Remove only those two stale index files after the real download event so the
-+ * next native differential download fetches the versioned published blockmap.
-+ * ZIPs, signatures, download validation and installation remain native-owned.
-+ * @param {unknown} event Native update-downloaded event, including feed metadata.
-+ * @param {{platform?: string}} options Platform override for filesystem tests.
-+ * @returns {boolean} Whether the full-release cache cleanup was requested.
++ * Remove only stale indexes after the real native full-download event. The
++ * next native differential download fetches its versioned published blockmap.
++ * ZIPs, signatures, validation and installation remain native-owned.
++ * @param event Native downloaded event, including feed metadata.
++ * @param options Platform override for filesystem tests.
++ * @returns Whether the full-release cache cleanup was requested.
 + */
-+export function discardFullUpdateBlockmaps(event, { platform = process.platform } = {}) {
-+  if (platform !== 'darwin' || !event || typeof event !== 'object'
-+    || event.agentkitUpdateMode !== 'full') return false;
-+  const file = event.downloadedFile;
++export function discardFullUpdateBlockmaps(event: unknown, { platform = process.platform }: { platform?: string } = {}): boolean {
++  if (platform !== 'darwin' || !event || typeof event !== 'object' || Array.isArray(event)) return false
++  const info = event as Record<string, unknown>
++  if (info.agentkitUpdateMode !== 'full') return false
++  const file = info.downloadedFile
 +  if (typeof file !== 'string' || !isAbsolute(file) || !file.endsWith('.zip')
 +    || basename(dirname(file)) !== 'pending'
 +    || !basename(dirname(dirname(file))).endsWith('-updater')) {
-+    throw new Error('Full-update cache cleanup requires a native updater download path');
++    throw new Error('Full-update cache cleanup requires a native updater download path')
 +  }
-+  const pending = dirname(file), cache = dirname(pending);
-+  // AppUpdater copies pending/current.blockmap after dispatching this event.
-+  // Clear both indexes synchronously before its copy check; keep the ZIP intact.
-+  rmSync(join(cache, 'current.blockmap'), { force: true });
-+  rmSync(join(pending, 'current.blockmap'), { force: true });
-+  return true;
++  const pending = dirname(file), cache = dirname(pending)
++  // AppUpdater copies the pending map after dispatch; clear both before its check.
++  rmSync(join(cache, 'current.blockmap'), { force: true })
++  rmSync(join(pending, 'current.blockmap'), { force: true })
++  return true
 +}
