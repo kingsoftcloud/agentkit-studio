@@ -4,6 +4,8 @@
 
 发布默认选择 `release_layout=studio`、`storage_origin=https://agentkit.ks3-cn-beijing.ksyuncs.com`、`update_mode=incremental`。需要推送全量更新时，使用递增的新版本号并设置 `update_mode=full`：签名 ZIP 发布在该版本的 `full/` 子目录，该路径不发布 blockmap，官方 updater 会回退到完整 ZIP 下载，仍核对签名和 SHA-512。普通目录中保留该版本的 blockmap，使下次增量发布可以复用这次完整下载的 ZIP 缓存。无需清理用户会话、配置或重装。
 
+`029-full-update-blockmap-cache.patch` 处理真实全量切换中发现的缓存问题：官方 updater 已替换 ZIP，但旧 `current.blockmap` 仍可能留在缓存。收到包含 `agentkitUpdateMode: full` 的原生下载完成事件后，清理该下载路径所属缓存中的两份旧索引；不修改 ZIP，不替代下载、SHA-512、签名或安装流程。下一次增量下载由原生 updater 读取对应版本的公网 blockmap。源码测试不代表旧签名包已经包含该修复，必须在新签名安装版中完成全量后增量的真实验证。
+
 无需整体公开 Bucket，发布程序只给具体版本对象设置 `public-read`。匿名访问未创建的对象可能返回 403，发布器先用签名 HEAD 确认 404 才创建；已存在且不可公开读取的对象或内容不同的不可变文件会停止发布。
 
 绑定本地 Agent 的图片输入修复：入口允许纯图片，模型传输通过 DSH `attachments.readImageRequest` 读取已入库的附件，保留混合内容及工具续跑历史。Codex 使用原生 `turn/start` 图片项。未构建的本地 Agent 可在其已绑定网关目录中通过原生模型选择器切换模型；切换其他网关或目录之外的模型仍会拒绝，冻结 Build 继续限定已绑定模型。`node --test tests/dsh-runtime-images.test.mjs tests/local-runtime.test.mjs tests/codex-runtime.test.mjs` 覆盖这些路径；签名安装版还需分别验证绑定“财务分析师”的纯图片、文字加图片和重启后继续对话。此前 `.20261013.10` 的 UI 验收只执行了未绑定普通会话的文字加图片、以及绑定 Agent 的创建操作，没有覆盖这个错误路径。新版安装源码摘要同时覆盖独立 Harness 包的 `src`，避免只核对 Studio 外层文件。
