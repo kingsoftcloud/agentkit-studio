@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import asar from '@electron/asar'
 import { createHash } from 'node:crypto'
 import { parseArgs } from 'node:util'
+import { observeInstalledSuccessor } from './installed-update-successor.mjs'
 
 const run = promisify(execFile)
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
@@ -72,6 +73,7 @@ async function main() {
     dmg: { type: 'string' }, origin: { type: 'string' }, channel: { type: 'string' }, version: { type: 'string' },
     'expected-commit': { type: 'string' }, evidence: { type: 'string' }, timeout: { type: 'string' },
     'expected-studio-sha256': { type: 'string' }, 'retain-file': { type: 'string', multiple: true },
+    'successor-observation': { type: 'string' },
   } })
   const dmg = values.app ? undefined : required(values.dmg, '--dmg')
   const feedOrigin = required(values.origin, '--origin')
@@ -118,15 +120,19 @@ async function main() {
   child.unref()
   try {
     const after = await waitForVersion(install, targetVersion, timeoutMs)
+    const installedAt = Date.now()
     const restartDeadline = Date.now() + 90_000
     let restarted = false
+    let successorReadiness
     while (Date.now() < restartDeadline) {
       const entries = (await readdir(journals)).filter(name => name.endsWith('.jsonl'))
       for (const name of entries) {
         const events = (await readFile(join(journals, name), 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
         if (events.some(event => event.version === targetVersion && event.event === 'workspace-ready')) restarted = true
       }
-      if (restarted) break
+      if (restarted) { successorReadiness = { kind: 'successor-workspace-journal' }; break }
+      successorReadiness = await observeInstalledSuccessor({ file: values['successor-observation'] || join(evidenceRoot, 'successor-ui.json'), install, originalPid: child.pid, installedAt })
+      if (successorReadiness) { restarted = true; break }
       await new Promise(done => setTimeout(done, 1000))
     }
     if (!restarted) throw new Error('updated version did not restart and reach workspace-ready')
@@ -159,7 +165,7 @@ async function main() {
       if (!journalEvents.has(event)) throw new Error(`update journal is missing ${event}`)
     }
     const report = { schemaVersion: 1, accepted: true, realElectron: true, appId, appName, before, after,
-      restarted: true, signatureVerifiedAfter: true, differential, transfers, logPath,
+      restarted: true, successorReadiness, signatureVerifiedAfter: true, differential, transfers, logPath,
       retainedFiles,
       targetVersion, origin: feedOrigin, channel: selectedChannel, dataRetained: true, journalEvents: [...journalEvents].sort(), journals: journalEvidence, installedApp: install,
       completedAt: new Date().toISOString() }
