@@ -457,7 +457,6 @@ jobs:
           path: candidate/.desktop-release/**
           include-hidden-files: true
           if-no-files-found: error
-          if-no-files-found: ignore
           retention-days: 30
 
   qualify-installed-update:
