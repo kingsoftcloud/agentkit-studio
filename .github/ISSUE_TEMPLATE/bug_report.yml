@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible Studio problem
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: Do not include API keys, credentials, personal profiles or production logs.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions and platform
+      description: Installed App build, Studio plugin, DSH baseline and operating system.
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options: [DSH Native, AgentKit Harness, Codex, Not runtime-specific]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include expected and actual behavior, and a minimal input.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Screenshots or a short error message. Remove secrets and personal data.

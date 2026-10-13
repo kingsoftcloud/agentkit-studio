@@ -6,7 +6,7 @@
 
 ## 签名配置
 
-`studio-signing` Environment 使用 `CERTUM_ACCOUNT`（空时用 `CERTUM_EMAIL`）、`CERTUM_TOTP_SECRET`、`CERTUM_THUMBPRINT`。TOTP 配置支持完整 `otpauth://` URI；仅有 Base32 seed 时按 SimplySign 的 SHA256、6 位、30 秒格式生成。账号已设置不同参数时应使用完整 URI。旧 `CERTUM_OTP` 是静态验证码，迁移保留但流水线不使用。
+`studio-signing` Environment 使用 `CERTUM_ACCOUNT`（空时用 `CERTUM_EMAIL`）、`CERTUM_TOTP_SECRET`、`CERTUM_THUMBPRINT`。TOTP 配置支持完整 `otpauth://` URI；仅有 Base32 seed 时按 SimplySign 的 SHA256、6 位、30 秒格式生成。账号已设置不同参数时应使用完整 URI。静态一次性验证码不用于自动发布。
 
 SimplySign 登录后，DSH 通过 Windows 证书存储中的指定叶证书签名。私钥留在 Certum；源码、npm 包和 release artifact 不包含登录凭证、seed 或私钥。云签名安装 action 固定到审阅过的提交，关闭认证截图。
 
@@ -25,3 +25,11 @@ Windows 运行时检查先把完整签名 App 复制到构建拥有的短路径�
 Windows feed 和 KS3 公开发布须另通过在线下载及真实更新验收；仅生成安装器不能算 Windows 增量升级已通过。
 
 本地 Windows 可配置 DSH checkout 的 `apps/desktop/.env.windows`，然后在 Git Bash 执行 `make desktop-package-win-x64`。`.env.windows` 是忽略文件，构建结束后孤立源码中的临时副本会删除。无签名测试包使用 `desktop-package-win-x64-unsigned`，文件名带 `unsigned`，不发布正式 feed。
+
+## 无签名诊断
+
+设置 `diagnostic_only=true` 可先跑同一 Windows 打包与 Host 检查，跳过 Certum 登录、签名和安装器验收；该运行只保留隔离构建的诊断记录，不发布 feed，不能当作正式 Windows 发布验收。默认值为 `false`，正式流程继续要求签名、安装和实际 App UI 通过。
+
+## 复用签名候选
+
+`candidate_run_id` 可复用已经通过签名、打包和实际安装检查的运行。`studio_ref` 和 `build_version` 必须与原运行相同；流程从原始日志验证固定源码身份，并校验 GitHub artifact 的 SHA-256 与字节数。`release_tools_ref` 单独固定验收工具提交，不能把新版工具标成已经签名的应用源码。复用仍需重新检查安装器、实际安装、已安装 App 签名以及真实界面；失败的界面检查不会被改写为成功。

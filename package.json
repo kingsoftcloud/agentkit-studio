@@ -31,6 +31,7 @@
     "studio.plugin.json",
     "CHANGELOG.md",
     "docs",
+    "examples",
     "tests",
     "scripts",
     "patches",

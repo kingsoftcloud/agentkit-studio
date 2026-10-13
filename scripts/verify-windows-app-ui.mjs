@@ -1,7 +1,7 @@
 /** Launch the actually installed Windows app and verify rendered onboarding and build identity. */
 import { _electron as electron, expect } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import asar from '@electron/asar';
 import { verifyDesktopModuleGraph } from './desktop-module-graph.mjs';
@@ -11,7 +11,7 @@ const executablePath=process.env.STUDIO_INSTALLED_APP;
 const expectedVersion=process.env.BUILD_VERSION;
 if (!executablePath || !expectedVersion) throw new Error('Installed app and build version are required');
 const archive=join(dirname(executablePath),'resources/app.asar');
-const moduleGraph=await verifyDesktopModuleGraph(path=>asar.extractFile(archive,path).toString('utf8'));
+const moduleGraph=await verifyDesktopModuleGraph(path=>asar.extractFile(archive,normalize(path)).toString('utf8'));
 const evidence=resolve('.artifacts/windows-proof');
 const root=join(tmpdir(),'studio-installed-ui-'+Date.now());
 await mkdir(evidence,{recursive:true}); await mkdir(root,{recursive:true});
@@ -28,7 +28,8 @@ try {
   const onboardingVisible=true;
   await page.screenshot({path:join(evidence,'windows-installed-ui.png'),fullPage:true});
   await page.getByRole('button',{name:'跳过本次',exact:true}).click();
-  await expect(page.getByRole('button',{name:/^(新建会话|New session|New chat)$/})).toBeVisible({timeout:120000});
+  // Windows exposes both the brand row and the separate new-session button.
+  await expect(page.getByRole('button',{name:/^(新会话|新建会话|New session|New chat)$/}).first()).toBeVisible({timeout:120000});
   await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
   await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
   await expect(page.getByText(expectedVersion,{exact:true})).toBeVisible({timeout:30000});

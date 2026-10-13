@@ -26,7 +26,7 @@ Browser or Host changes also require the corresponding real DSH verification. Us
 
 ## Public release rules
 
-- Keep public source, tests, and documentation free of credentials, private endpoints, customer data, local paths, and internal deployment evidence.
+- Keep source, tests and public guides free of credentials, customer data, personal paths, team plans and private deployment evidence. Service endpoint configuration follows the documented Host contract.
 - Do not commit `.env` files, profiles, private keys, temporary URLs, generated caches, or `.artifacts` output.
 - Do not claim a cloud, native Host, or desktop result from a fixture or a source-only test.
 - Package and workflow changes require `make release-check` and a clean `git diff --check`.

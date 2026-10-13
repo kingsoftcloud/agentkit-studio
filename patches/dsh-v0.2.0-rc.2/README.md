@@ -55,4 +55,13 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `023-codex-code-mode-signing.patch` | 为 Codex 的 Code Mode 执行助手保留官方 `allow-jit` 和 `allow-unsigned-executable-memory` 权限；只匹配 Codex macOS 平台包中的该助手，不扩大其他运行时文件权限 | 上游运行时签名识别 Codex Code Mode 助手，并验证其所需权限 |
 | `024-desktop-build-version.patch` | 用 Electron `app.getVersion()` 向 Host 注入实际桌面构建版本，Studio 设置页不再误用固定的 `DSH_CLIENT_VERSION` 宿主基线 | 上游向产品插件提供实际桌面 App 版本；设置页、Info.plist 和 updater 当前版本一致 |
 
+
+| `025-windows-certificate-store-signing.patch` | 支持经验证的 Windows 证书存储签名，保留时间戳和发行者检查 | 上游支持等价证书存储签名输入 |
+| `026-preset-composition-reuse.patch` | 从官方预设注册表取得独立组合快照，复用已验证的原生工具和 PTC 指引 | 上游提供经注册表校验的组合快照 API |
+| `027-windows-installed-path-smoke.patch` | 在完整 App 的短安装路径执行签名、模块与 Office 检查 | 上游打包检查使用实际安装长度的目录 |
+| `028-smoke-plugin-readiness.patch` | 等待异步注入的插件路由，仍要求真实 HTTP 200 和指定正文 | 上游 smoke 等待插件实际可用 |
+| `029-full-update-blockmap-cache.patch` | 全量更新完成后清除与新 ZIP 不匹配的旧 blockmap 索引 | 上游全量下载同时正确更新或失效缓存索引 |
+| `030-plugin-smoke-diagnostics.patch` | 隔离打包失败记录插件导入、执行、共享 Context、依赖服务和脱敏诊断 | 上游提供等价的打包失败诊断 |
+| `031-canonical-windows-smoke-paths.patch` | 测试安装和 profile 使用统一真实路径，避免 Windows 短路径别名造成重复模块身份 | 上游在启动打包检查前统一安装与 profile 路径 |
+
 `023` 的权限来自 [Codex 0.159.2 官方签名配置](https://github.com/openai/codex/blob/rust-v0.159.2/.github/scripts/macos-signing/codex-code-mode-host.entitlements.plist)。真实安装包的助手被通用签名规则重签后没有这两项权限；同一版本官方原包以及仅修复助手签名的本地副本都可实际创建并校验文件。正式产物还须通过 `node scripts/verify-codex-signing.mjs <App路径>`，并在实际安装后重跑文件执行验收。

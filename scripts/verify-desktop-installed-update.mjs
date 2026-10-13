@@ -140,7 +140,7 @@ async function main() {
   try {
     const after = await waitForVersion(install, targetVersion, timeoutMs)
     const installedAt = Date.now()
-    const restartDeadline = Date.now() + 90_000
+    const restartDeadline = Date.now() + 180_000
     let restarted = false
     let successorReadiness
     while (Date.now() < restartDeadline) {
@@ -154,7 +154,7 @@ async function main() {
       if (successorReadiness) { restarted = true; break }
       await new Promise(done => setTimeout(done, 1000))
     }
-    if (!restarted) throw new Error('updated version did not restart and reach workspace-ready')
+    if (!restarted || retainedSessionTitles.length && !successorReadiness) throw new Error('updated version did not restart and reach workspace-ready with retained sessions')
     await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', install])
     await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=4', install])
     const marker = await readFile(markerPath, 'utf8')

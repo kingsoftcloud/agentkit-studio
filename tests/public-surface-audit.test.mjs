@@ -15,11 +15,12 @@ test('public surface audit rejects credential paths before reading their content
   assert.deepEqual(reads, []);
 });
 
-test('approved engineering instructions still cannot hide a real credential', () => {
+test('contributor instructions reject private markers and credentials', () => {
   assert.deepEqual(auditPath('AGENTS.md'), []);
   assert.deepEqual(auditPath('docs/contracts/runtime.md'), []);
   const marker = ['INTERNAL', '-ONLY'].join('');
-  assert.deepEqual(auditText('AGENTS.md', buffer(marker)), []);
+  assert.ok(auditText('AGENTS.md', buffer(marker)).some(hit=>hit.kind==='private-classification-marker'));
+  assert.deepEqual(auditText('AGENTS.md', buffer(marker), {historical:true}), []);
   const token = ['ghp_', '123456789012345678901234567890'].join('');
   assert.ok(auditText('AGENTS.md', buffer(marker+'\n'+token)).some(hit=>hit.kind==='github-token'));
   const fixture = ['https://user:', 'secret@example.com/'].join('');

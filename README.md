@@ -15,6 +15,13 @@ The Studio plugin is designed to run with the pinned DSH host version declared i
 
 Cloud features require a compatible AgentEngine control plane and credentials configured in the Host. A local test or a visible catalog entry does not prove access to a cloud resource.
 
+## Install and use
+
+Start with the [desktop and development guide](docs/getting-started.md), or browse
+[GitHub Releases](https://github.com/kingsoftcloud/agentkit-studio/releases).
+The [documentation index](docs/README.md) covers runtimes, plugin development,
+signing and updates.
+
 ## Development setup
 
 Requirements:
@@ -60,6 +67,9 @@ The verification command does not approve dependency build scripts automatically
 
 - `src/` — Studio Host and browser implementation
 - `src/client-fragments/` — browser UI fragments assembled into `dist/client.js`
+- `packages/agentkit-harness/` — independently packaged DSH runtime plugin
+- `examples/` — minimal public configuration examples
+- `docs/` — usage, architecture and release guides
 - `patches/` — versioned compatibility patches for the pinned DSH release
 - `scripts/` — build, package, portability, and Host verification tools
 - `tests/` — unit, contract, packaging, and product-surface tests

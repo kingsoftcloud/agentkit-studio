@@ -24,7 +24,7 @@ const expected = [
   'packages/agentkit-harness/src/contract.mjs', 'packages/agentkit-harness/src/dsh-adapter.mjs',
   'packages/agentkit-harness/src/index.d.ts',
   'scripts/build-client.mjs', 'docs/brand/visual-system.md',
-  'docs/AgentKit-Studio-P0-P1-roadmap.md',
+  'docs/README.md', 'docs/architecture.md', 'docs/getting-started.md',
   'patches/dsh-v0.2.0-rc.2/README.md',
 ];
 const missing = expected.filter(path => !files.has(path));
