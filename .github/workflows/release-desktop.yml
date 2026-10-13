@@ -337,6 +337,7 @@ jobs:
           }
           NODE
           codesign --verify --deep --strict --verbose=2 "$app"
+          node scripts/verify-codex-signing.mjs "$app" "$artifacts/mac-arm64-release.json"
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=4 "$app"
           printf 'artifacts=%s\ndmg=%s\nzip=%s\nblockmap=%s\nmetadata=%s\n' "$artifacts" "$dmg" "$zip" "$blockmap" "$metadata" >> "$GITHUB_STEP_SUMMARY"
@@ -463,6 +464,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$TOOLS_REF_VALUE"
           pnpm install --frozen-lockfile
           node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64" || r.commit !== process.env.EXPECTED_DSH_COMMIT || r.publicUrl !== process.env.EXPECTED_UPDATE_ORIGIN + "/dsh-desk/feeds/mac-arm64/") throw Error("Signed candidate identity mismatch")'
+          node scripts/verify-codex-signing.mjs --record-only "$GITHUB_WORKSPACE/candidate/mac-arm64-release.json"
           if [[ -n "$SIGNED_RUN_ID" ]]; then
             test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .status)" = completed
             test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .path)" = .github/workflows/release-desktop.yml
