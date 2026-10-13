@@ -28,7 +28,8 @@ try {
   const onboardingVisible=true;
   await page.screenshot({path:join(evidence,'windows-installed-ui.png'),fullPage:true});
   await page.getByRole('button',{name:'跳过本次',exact:true}).click();
-  await expect(page.getByRole('button',{name:/^(新建会话|New session|New chat)$/})).toBeVisible({timeout:120000});
+  // Windows exposes both the brand row and the separate new-session button.
+  await expect(page.getByRole('button',{name:/^(新会话|新建会话|New session|New chat)$/}).first()).toBeVisible({timeout:120000});
   await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
   await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
   await expect(page.getByText(expectedVersion,{exact:true})).toBeVisible({timeout:30000});
