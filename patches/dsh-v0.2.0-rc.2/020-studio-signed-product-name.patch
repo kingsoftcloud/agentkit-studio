@@ -27,15 +27,20 @@ index b4371c444e..4382fb5c89 100644
        () => notarizeMacOS({ appPath, ...resolveMacOSNotarizationEnvironment(environment) }), undefined, undefined, proxyEvent)
    } else {
 diff --git a/apps/desktop/scripts/smoke-packaged-runtime.ts b/apps/desktop/scripts/smoke-packaged-runtime.ts
-index 1e08061b4f..88fbf8fa12 100644
+index 1e08061b4f..6b196ed2d9 100644
 --- a/apps/desktop/scripts/smoke-packaged-runtime.ts
 +++ b/apps/desktop/scripts/smoke-packaged-runtime.ts
-@@ -12,7 +12,7 @@ const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default:
+@@ -12,11 +12,11 @@ const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default:
  const target = resolveDesktopBuildTarget()
  const windows = target === 'win-x64'
  const artifacts = values.unsigned ? paths.unsignedArtifacts : paths.artifacts
 -const productName = values.unsigned && !windows ? process.env.DSH_CLIENT_TITLE || 'DeepSeek Harness' : 'DeepSeek Harness'
-+const productName = !windows ? process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || process.env.DSH_CLIENT_TITLE?.trim() || 'DeepSeek Harness' : 'DeepSeek Harness'
++const productName = process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || process.env.DSH_CLIENT_TITLE?.trim() || 'DeepSeek Harness'
  const application = windows ? join(artifacts, 'win-unpacked')
    : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', `${productName}.app`, 'Contents')
  const resources = join(application, windows ? 'resources' : 'Resources')
+-const executable = windows ? join(application, 'DeepSeek Harness.exe') : join(application, 'MacOS', productName)
++const executable = windows ? join(application, `${productName}.exe`) : join(application, 'MacOS', productName)
+ const descriptor = await verifyDesktopRuntime(paths.dsh, readDesktopRuntime(paths.dsh).release.version,
+   resolveDesktopPackageTarget(target))
+ if (windows && !values.unsigned) await verifyWindowsCode(application)
