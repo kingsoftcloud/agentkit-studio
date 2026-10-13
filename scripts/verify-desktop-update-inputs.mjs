@@ -35,6 +35,7 @@ async function verify(checkout) {
   if (!/production[\s\S]*(?:DESKTOP_APP_ID_ENV|DSH_DESKTOP_APP_ID)[\s\S]*com\.kingsoftcloud\.agentkit-studio/.test(releaseEnvironment)) throw new Error('Studio desktop App ID input is missing');
   if (!/channel\s*:\s*update\.channel/.test(builderConfig)) throw new Error('electron-builder does not publish the selected Studio channel');
   if (!/stable.*preview|preview.*stable/s.test(macUpdateConfig)) throw new Error('macOS updater does not expose Stable/Preview channels');
+  if (!/useMultipleRangeRequest\s*:\s*false/.test(macUpdateConfig)) throw new Error('KS3 single byte ranges are not sealed in the macOS updater config');
   for (const [label, source, patterns] of [
     ['coordinator', coordinator, ['checkForUpdates', 'downloadUpdate', 'quitAndInstall', 'autoDownload = false']],
     ['mac package', packageMac, ['.zip.blockmap']],
@@ -50,6 +51,7 @@ async function verify(checkout) {
     dsh: checkout,
     updater: 'electron-updater',
     differentialPackage: true,
+    useMultipleRangeRequest: false,
     artifacts: ['DMG', 'ZIP', 'ZIP.blockmap', 'stable-mac.yml|preview-mac.yml'],
     productIdentity: 'com.kingsoftcloud.agentkit-studio (release input; local unsigned default is isolated)',
     channels: ['stable', 'preview'],

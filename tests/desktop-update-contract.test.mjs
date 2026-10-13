@@ -22,7 +22,7 @@ async function fixture(t, fallback = false) {
     'apps/desktop/src/update-schedule.ts': 'intervalMs setTimeout check()',
     'apps/desktop/tsdown.config.ts': 'DSH_DESKTOP_UPDATE_CHANNEL',
     'apps/desktop/scripts/package-macos.ts': '.zip.blockmap',
-    'apps/desktop/scripts/macos-app-update-config.mjs': `app-update.yml writeMacOSAppUpdateConfig const CHANNELS = new Set(['stable', 'preview']); channel(provider.channel)`,
+    'apps/desktop/scripts/macos-app-update-config.mjs': `app-update.yml writeMacOSAppUpdateConfig const CHANNELS = new Set(['stable', 'preview']); channel(provider.channel); useMultipleRangeRequest: false`,
     'apps/desktop/scripts/desktop-auto-update-environment.mjs': `DSH_DESKTOP_UPDATE_ORIGIN DSH_DESKTOP_UPDATE_CHANNEL production must explicitly be stable or preview ${fallback ? 'https://download.deepseek.com' : ''}`,
     'apps/desktop/scripts/desktop-release-environment.mjs': 'production DSH_DESKTOP_APP_ID com.kingsoftcloud.agentkit-studio',
     'apps/desktop/scripts/package-target.ts': 'writeReleaseRecord com.kingsoftcloud.agentkit-studio',
