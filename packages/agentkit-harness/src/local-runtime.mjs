@@ -363,6 +363,16 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         const ids = [...new Set([modelId, ...bindingIds(record.spec?.bindings, 'modelProfileIds')].filter(Boolean))];
         const profiles = await Promise.all((ids.length ? ids : ['']).map(id => (modelService.profileForAgent || modelService.profile)(id)));
         const matches = profiles.filter(item => dshModelRoute(item) === selection.provider && item.modelName === selection.model);
+        // Draft presets use DSH's native picker, which exposes the bound
+        // gateway catalog. Honor its model choice on that same credential
+        // route; immutable Builds still admit only their frozen model names.
+        if (!matches.length && nativeTools && !parsed.buildId && typeof modelService.catalog === 'function') {
+          for (const [index, candidate] of profiles.entries()) {
+            if (dshModelRoute(candidate) !== selection.provider) continue;
+            const catalog = await modelService.catalog(ids[index] || '');
+            if (catalog.items?.some(item => item.id === selection.model)) matches.push({ ...candidate, modelName: selection.model });
+          }
+        }
         if (matches.length !== 1) throw new LocalRuntimeError('BOUND_MODEL_SELECTION_UNAVAILABLE', '所选模型不在此 Agent 的绑定模型中，请重新选择');
         profile = matches[0];
       } else profile = await (modelService.profileForAgent || modelService.profile)(modelId);

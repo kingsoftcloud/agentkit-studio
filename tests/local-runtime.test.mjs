@@ -20,6 +20,31 @@ function responseSink() {
   return { headersSent: false, writableEnded: false, chunks: [], writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, write(chunk) { this.chunks.push(String(chunk)); }, end(chunk = '') { if (chunk) this.chunks.push(String(chunk)); this.writableEnded = true; } };
 }
 
+test('a local draft follows a catalog model selected on its bound gateway; frozen builds and other gateways remain restricted', async () => {
+  const requests = [];
+  const record = { metadata: { local: true }, spec: { bindings: { modelProfileId: 'legacy-text-model' } } };
+  const profile = { id: 'default', modelName: 'legacy-text-model', baseUrl: 'https://model.test/v1', apiKey: 'test' };
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ getRevision: async () => record }), buildStore: { resolve: async () => record },
+    modelService: { profile: async () => profile, catalog: async () => ({ items: [{ id: 'vision-model', input: ['text', 'image'] }] }) },
+    fetchImpl: async (_url, init) => { requests.push(JSON.parse(init.body)); return new Response('data: {"choices":[{"delta":{"content":"image answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); },
+  });
+  const payload = { agentId: 'draft', agentRevision: 1, nativeTools: true, input: '',
+    content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } }],
+    modelSelection: { provider: 'agentkit-studio-default', model: 'vision-model' } };
+  const accepted = responseSink(); await handler(Readable.from([JSON.stringify(payload)]), accepted);
+  assert.equal(accepted.status, 200); assert.equal(requests[0].model, 'vision-model');
+  for (const deniedPayload of [
+    { ...payload, buildId: 'build_11111111111111111111' },
+    { ...payload, modelSelection: { provider: 'unbound-provider', model: 'vision-model' } },
+    { ...payload, modelSelection: { provider: 'agentkit-studio-default', model: 'not-in-catalog' } },
+  ]) {
+    const denied = responseSink(); await handler(Readable.from([JSON.stringify(deniedPayload)]), denied);
+    assert.equal(denied.status, 409);
+  }
+  assert.equal(requests.length, 1);
+});
+
 test('native model selection reaches the actual frozen gateway and rejects an unbound route', async () => {
   const profiles = [
     { id: 'first', provider: 'openai-compatible', modelName: 'model-a', baseUrl: 'http://first.test/v1', apiKey: 'key-a' },
