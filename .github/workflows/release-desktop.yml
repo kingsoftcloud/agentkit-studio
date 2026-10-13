@@ -535,7 +535,10 @@ jobs:
           test "$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)" = "$STUDIO_SHA"
           printf 'Signed and notarized AgentKit Studio desktop build.\n\nStudio source: %s\nPublic binaries: %s/dsh-desk/bin/mac-arm64/\nThe DMG, ZIP and blockmap are the same files used by the KS3 updater.\n' "$STUDIO_SHA" "$UPDATE_ORIGIN" > "$RUNNER_TEMP/release-notes.md"
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$STUDIO_SHA" --title "AgentKit Studio $BUILD_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease --draft
+            # The tag's exact source SHA was verified above. Supplying the
+            # off-main commit again as target_commitish unnecessarily requires
+            # Workflows write when its workflow files differ from main.
+            gh release create "$tag" --verify-tag --title "AgentKit Studio $BUILD_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease --draft
           fi
           for file in candidate/*.dmg candidate/*.zip candidate/*.blockmap candidate/mac-arm64-release.json candidate/*-mac.yml; do
             name="$(basename "$file")"
