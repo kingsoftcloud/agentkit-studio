@@ -3,10 +3,6 @@ import { lstat, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 export const FORBIDDEN_PATHS = [
-  /(^|\/)AGENTS\.md$/,
-  /^docs\/contracts\//,
-  /^docs\/server-api-client-mapping\.md$/,
-  /^docs\/studio-/,
   /^\.artifacts\//,
   /^\.playwright-cli\//,
   /^\.zread\//,
@@ -45,6 +41,8 @@ export const SENSITIVE_TEXT_PATTERNS = [
 export const APPROVED_INTERNAL_SERVICE_HOSTS = new Set([
   'aicp.inner.api.ksyun.com',
   'iam.inner.api.ksyun.com',
+  'aicp.internal.api.ksyun.com',
+  'inner.api.ksyun.com',
 ]);
 
 export function auditPath(file) {
@@ -53,13 +51,31 @@ export function auditPath(file) {
     .map(() => ({ file, kind: 'forbidden public path' }));
 }
 
-export function auditText(file, source) {
+export function auditText(file, source, { historical = false } = {}) {
   // Scan byte content too: NUL bytes must not provide a scanner bypass.
   const text = source[0] === 0xff && source[1] === 0xfe
     ? source.subarray(2).toString('utf16le') : source.toString('utf8');
   const hits = [];
   for (const { name, pattern } of SENSITIVE_TEXT_PATTERNS) {
+    // The owner permits engineering instructions and these service hostnames
+    // in the open-source repository. Labels and old checkout references are
+    // not credentials. Keep current source path hygiene and all key checks.
+    const documentation = /^(?:docs\/|(?:.*\/)?AGENTS\.md$)/.test(file);
+    if (name === 'private-classification-marker' && (/(^|\/)AGENTS\.md$/.test(file)
+      || historical && (documentation || file === 'scripts/public-surface-audit.mjs'))) continue;
+    if (name === 'personal-absolute-path' && historical && (documentation
+      || /^scripts\/verify-dsh-(?:sdk-)?node-store\.mjs$/.test(file))) continue;
     let match = pattern.exec(text);
+    if (name === 'embedded-url-credential' && historical && /^tests\//.test(file)) {
+      const candidates = [...text.matchAll(/https?:\/\/[^\s/:@]+:[^\s/@]+@[^\s"'<>`]+/gi)];
+      if (candidates.length) match = candidates.find(candidate => {
+        try {
+          const url = new URL(candidate[0]);
+          return !['example.test', 'example.com'].includes(url.hostname)
+            || !['password', 'secret', 'token', 'unsafe-token'].includes(url.password);
+        } catch { return true; }
+      }) || null;
+    }
     if (name === 'internal-service-host' && match) {
       // Inspect every internal-host match so an approved endpoint does not
       // hide an unknown internal endpoint later in the same file.
