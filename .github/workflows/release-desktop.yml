@@ -493,4 +493,13 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --target "$STUDIO_SHA" --title "AgentKit Studio $BUILD_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
           fi
-          gh release upload "$tag" candidate/*.dmg candidate/*.zip candidate/*.blockmap candidate/mac-arm64-release.json candidate/*-mac.yml
+          for file in candidate/*.dmg candidate/*.zip candidate/*.blockmap candidate/mac-arm64-release.json candidate/*-mac.yml; do
+            name="$(basename "$file")"
+            digest="sha256:$(sha256sum "$file" | cut -d ' ' -f 1)"
+            existing="$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq '.assets[] | {name,digest}' | jq -r --arg name "$name" 'select(.name == $name) | .digest')"
+            if [[ -n "$existing" ]]; then
+              test "$existing" = "$digest"
+            else
+              gh release upload "$tag" "$file"
+            fi
+          done
