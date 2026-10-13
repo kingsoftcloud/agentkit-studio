@@ -85,7 +85,6 @@
     }
 
     function apply(ctx) {
-      ctx.inject(['sidebarRight', 'sidebarRightTabs'], scope => installStudioBrowser(scope));
       ctx.uiConversation.events.register(codexToolDefinition);
       // Settings owns first-run coordination. Registering here makes the
       // guide visible in the real DSH onboarding path and gives the shell a

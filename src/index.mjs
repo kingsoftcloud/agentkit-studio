@@ -15,7 +15,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { registerAuthoringTools } from './authoring-tools.mjs';
-import { registerStudioBrowser } from './studio-browser.mjs';
 import { AGENTKIT_STUDIO_MARK_SVG } from './brand.js';
 import { DshPresetAdmission, dshModelSelection } from './agent-preset-admission.mjs';
 import { createStartupReconciler } from './preset-recovery.mjs';
@@ -943,7 +942,6 @@ async function registerControlPlane(ctx) {
 }
 
 export async function apply(ctx) {
-  registerStudioBrowser(ctx);
   // Harness is a separately publishable DSH plugin, even when bundled with
   // Studio. The DSH host owns its Agent/Session services and its teardown.
   ctx.inject(['agents', 'sessions', 'llm'], harnessCtx => {
