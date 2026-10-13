@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const defaults = {
   leftRemote: process.env.PARITY_LEFT_REMOTE || 'origin',
-  leftRef: process.env.PARITY_LEFT_REF || 'refs/heads/master',
+  leftRef: process.env.PARITY_LEFT_REF || 'refs/heads/public-clean',
   rightRemote: process.env.PARITY_RIGHT_REMOTE || 'upstream',
   rightRef: process.env.PARITY_RIGHT_REF || 'refs/heads/main',
 };

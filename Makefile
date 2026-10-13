@@ -27,7 +27,7 @@ DESKTOP_ENV = DSH_CLIENT_TITLE='AgentKit Studio' DSH_DESKTOP_PRODUCT_ICON="$(DES
 PLUGIN_VERSION := $(shell node -p "require('./package.json').version")
 PLUGIN_TARBALL ?= $(abspath $(PACK_DIR)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz)
 PARITY_LEFT_REMOTE ?= origin
-PARITY_LEFT_REF ?= refs/heads/opensource-main
+PARITY_LEFT_REF ?= refs/heads/public-clean
 PARITY_RIGHT_REMOTE ?= upstream
 PARITY_RIGHT_REF ?= refs/heads/main
 

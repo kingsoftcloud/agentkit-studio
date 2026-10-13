@@ -1,10 +1,10 @@
 # Protected branch and forge parity contract
 
-The internal forge `master` and GitHub `main` are protected refs. The internal
-forge is the canonical merge authority; GitHub accepts external pull requests
-as intake only. The approved change is imported into the internal merge request before it
-becomes a canonical commit. A synchronization job then fast-forwards GitHub
-to that exact commit. Neither job performs a force push.
+GitHub `main` carries the reviewed public Studio source. After source and
+installed-package qualification, its exact commit is fast-forwarded to the
+existing internal `public-clean` branch. Both references retain the reviewed
+development ancestry so synchronization can use normal pushes. Neither job
+performs a force push.
 
 The production mirror is `kingsoftcloud/agentkit-studio`, represented locally
 by `upstream/main`. `AgentArcLab/agentkit-studio` (`github/main`) is a
@@ -30,12 +30,12 @@ pnpm `10.33.2` available on the minimal Alpine worker, so the entrypoint does
 not depend on external GitHub or npm downloads; it fails closed when a pinned
 tool is unavailable or its checksum is wrong.
 
-Parity is read-only and compares the exact commit IDs of the two protected
+Parity is read-only and compares the exact commit IDs of the two release
 refs:
 
 ```sh
 make ref-parity \
-  PARITY_LEFT_REMOTE=ezone PARITY_LEFT_REF=refs/heads/opensource-main \
+  PARITY_LEFT_REMOTE=ezone PARITY_LEFT_REF=refs/heads/public-clean \
   PARITY_RIGHT_REMOTE=upstream PARITY_RIGHT_REF=refs/heads/main
 ```
 
