@@ -11,6 +11,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { bindDshAgentRoute, executeDshResourceTool, unbindDshAgentRoutes } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
+import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
 
 // Keep the builtin executor in the Studio host. The Python toolset remains
 // the source of truth for AgentEngine tool semantics (workspace confinement,
@@ -294,7 +295,9 @@ export function apply(ctx, config = {}) {
   }
   registerBuiltinTools(ctx, config.toolContracts, config);
   registerMcpTools(ctx, config.toolContracts, config);
-  const toolAdapter = createToolAdapter(ctx, config.toolBindings);
+  const boundToolAdapter = createToolAdapter(ctx, config.toolBindings);
+  const toolAdapter = config.runtime === 'codex'
+    ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) } : boundToolAdapter;
   // Every local Harness request is one DSH-managed model step, including
   // text-only Agents. Resource count must not switch loop/retry ownership.
   const nativeTools = config.local === true && config.runtime !== 'codex';

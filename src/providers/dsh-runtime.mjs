@@ -657,6 +657,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           input,
           content,
           history,
+          ...(nativeTools ? { systemPrompt: (Array.isArray(options.messages) ? options.messages : []).filter(message => message?.role === 'system').map(textOf).filter(Boolean).join('\n\n') } : {}),
           ...(options.provider ? { modelSelection: { provider: options.provider, model: options.studioSelectedModel || options.model } } : {}),
           nativeTools,
           tools: Array.isArray(options.tools) ? options.tools : [],

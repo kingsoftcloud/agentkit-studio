@@ -439,10 +439,11 @@ test('the native bridge forwards DSH ToolSchema and nativeTools to the local han
     model: 'local:demo/agent',
     sessionId: 'session-native-tools',
     studioNativeTools: true,
-    messages: [{ role: 'user', content: '搜索' }],
+    messages: [{ role: 'system', content: 'Official DSH tool-mode and present instructions.' }, { role: 'user', content: '搜索' }],
     tools: [{ name: 'metaso_web_search', description: '网页搜索', parameters: { type: 'object', properties: {} } }],
   })) {}
   assert.equal(payload.nativeTools, true);
+  assert.equal(payload.systemPrompt, 'Official DSH tool-mode and present instructions.');
   assert.deepEqual(payload.tools, [{ name: 'metaso_web_search', description: '网页搜索', parameters: { type: 'object', properties: {} } }]);
 });
 

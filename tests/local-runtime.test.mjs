@@ -20,6 +20,26 @@ function responseSink() {
   return { headersSent: false, writableEnded: false, chunks: [], writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, write(chunk) { this.chunks.push(String(chunk)); }, end(chunk = '') { if (chunk) this.chunks.push(String(chunk)); this.writableEnded = true; } };
 }
 
+test('native Harness retains DSH tool-mode and deliverable guidance in the assembled system prompt', async () => {
+  let messages;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: { instructions: { system: 'archived persona' } } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'test' }) },
+    fetchImpl: async (_url, init) => {
+      messages = JSON.parse(init.body).messages;
+      return new Response('data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  const assembled = 'Official DSH persona. Only run_code is directly callable. Use tools.present to deliver existing files.';
+  const history = [{ role: 'user', content: 'earlier turn' }];
+  for (let i = 0; i < 12; i++) history.push({ role: 'assistant', content: null, tool_calls: [{ id: `call-${i}`, type: 'function', function: { name: 'run_code', arguments: '{}' } }] }, { role: 'tool', tool_call_id: `call-${i}`, content: i === 0 ? 'x'.repeat(17000) : 'result' });
+  await handler(Readable.from([JSON.stringify({ agentId: 'test', input: 'deliver', nativeTools: true, systemPrompt: assembled, history })]), responseSink());
+  assert.equal(messages[0].content, assembled);
+  assert.equal(messages[1].content, 'earlier turn');
+  assert.equal(messages[3].content.length, 17000);
+  assert.equal(messages.length, history.length + 2);
+});
+
 test('a local draft follows a catalog model selected on its bound gateway; frozen builds and other gateways remain restricted', async () => {
   const requests = [];
   const record = { metadata: { local: true }, spec: { bindings: { modelProfileId: 'legacy-text-model' } } };

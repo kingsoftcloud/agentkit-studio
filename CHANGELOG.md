@@ -4,6 +4,7 @@
 
 - Display the installed desktop build separately from the Studio plugin and pinned DSH versions.
 - Pass the official DSH Session workspace to each Codex child and thread instead of writing in the system temporary directory.
+- Preserve native DSH tool-mode and file-delivery guidance for Harness steps; expose the official present tool to Codex through scoped native/PTC dispatch.
 - Bound model stream silence instead of terminating active local Harness/DSH replies after three minutes.
 - Preserve the official macOS Code Mode host entitlements required for actual Codex tool execution.
 - Preserve image-only and mixed image input for bound local Agents through DSH attachment storage, Harness model requests and native Codex image inputs.

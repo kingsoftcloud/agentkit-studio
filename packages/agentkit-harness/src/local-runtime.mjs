@@ -426,10 +426,10 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       .filter(item => ['user', 'assistant', 'tool'].includes(item?.role)
         && (item.role === 'assistant' || validContent(item.content))
         && (item.role !== 'tool' || String(item.tool_call_id || '').trim()))
-      .slice(-20)
+      .slice(nativeTools ? 0 : -20)
       .map(item => ({
         role: item.role,
-        content: typeof item.content === 'string' ? item.content.slice(0, 16000) : Array.isArray(item.content) ? item.content : null,
+        content: typeof item.content === 'string' ? (nativeTools ? item.content : item.content.slice(0, 16000)) : Array.isArray(item.content) ? item.content : null,
         ...(Array.isArray(item.tool_calls) ? { tool_calls: item.tool_calls } : {}),
         ...(item.tool_call_id ? { tool_call_id: String(item.tool_call_id) } : {}),
       })) : [];
@@ -439,7 +439,8 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     // messages and breaks the assistant/tool pairing on the next round.
     const lastInput = [...history].reverse().find(item => item.role === 'user');
     const hasCurrentInput = lastInput && JSON.stringify(lastInput.content) === JSON.stringify(content);
-    const messages = [{ role: 'system', content: [systemPrompt || 'You are a helpful assistant.', resourceContext ? `Relevant resources:\n${resourceContext}` : ''].filter(Boolean).join('\n\n') }, ...history, ...(hasCurrentInput ? [] : [{ role: 'user', content }])];
+    const assembledSystemPrompt = nativeTools && typeof parsed.systemPrompt === 'string' && parsed.systemPrompt.trim() ? parsed.systemPrompt : systemPrompt;
+    const messages = [{ role: 'system', content: [assembledSystemPrompt || 'You are a helpful assistant.', resourceContext ? `Relevant resources:\n${resourceContext}` : ''].filter(Boolean).join('\n\n') }, ...history, ...(hasCurrentInput ? [] : [{ role: 'user', content }])];
     response.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
