@@ -44,7 +44,11 @@ on:
         default: false
         type: boolean
       candidate_run_id:
-        description: "Reuse signed artifacts from a successful Studio build run; empty builds a new candidate"
+        description: "Reuse artifacts from a completed run with successful signing; empty builds a new candidate"
+        required: false
+        type: string
+      release_tools_ref:
+        description: "Optional immutable release-tools SHA; defaults to studio_ref, does not change signed sources"
         required: false
         type: string
       expected_previous_version:
@@ -372,7 +376,7 @@ jobs:
   publish-mac-arm64:
     if: ${{ always() && inputs.publish_feed && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) }}
     needs: macos-arm64
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     environment: studio-signing
     timeout-minutes: 60
     concurrency:
@@ -413,7 +417,10 @@ jobs:
         working-directory: studio
         env:
           STUDIO_REF_VALUE: ${{ inputs.studio_ref }}
+          TOOLS_REF_VALUE: ${{ inputs.release_tools_ref || inputs.studio_ref }}
           EXPECTED_BUILD_VERSION: ${{ inputs.build_version }}
+          EXPECTED_DSH_COMMIT: ${{ inputs.dsh_commit }}
+          EXPECTED_UPDATE_ORIGIN: ${{ inputs.update_origin }}
           SIGNED_RUN_ID: ${{ inputs.candidate_run_id }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -423,15 +430,19 @@ jobs:
           EXPECTED_PREVIOUS: ${{ inputs.expected_previous_version }}
         run: |
           set -euo pipefail
+          [[ "$TOOLS_REF_VALUE" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "$STUDIO_REF_VALUE" HEAD
-          git checkout --detach "$STUDIO_REF_VALUE"
-          test "$(git rev-parse HEAD)" = "$STUDIO_REF_VALUE"
+          git merge-base --is-ancestor "$TOOLS_REF_VALUE" HEAD
+          git checkout --detach "$TOOLS_REF_VALUE"
+          test "$(git rev-parse HEAD)" = "$TOOLS_REF_VALUE"
           pnpm install --frozen-lockfile
-          node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64") throw Error("Signed candidate identity mismatch")'
+          node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64" || r.commit !== process.env.EXPECTED_DSH_COMMIT || r.publicUrl !== process.env.EXPECTED_UPDATE_ORIGIN + "/dsh-desk/feeds/mac-arm64/") throw Error("Signed candidate identity mismatch")'
           if [[ -n "$SIGNED_RUN_ID" ]]; then
-            test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .conclusion)" = success
+            test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .status)" = completed
             test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .path)" = .github/workflows/release-desktop.yml
+            test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID/jobs" --jq '.jobs[] | select(.name == "macos-arm64") | .conclusion')" = success
           fi
+          (cd "$GITHUB_WORKSPACE/candidate" && shasum -a 256 -c SHA256SUMS)
           args=(publish --candidate "$GITHUB_WORKSPACE/candidate" --origin '${{ inputs.update_origin }}'
             --channel '${{ inputs.channel }}')
           if [[ -n "$EXPECTED_PREVIOUS" ]]; then args+=(--expected-previous-version "$EXPECTED_PREVIOUS"); fi

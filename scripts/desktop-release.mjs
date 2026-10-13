@@ -149,8 +149,10 @@ async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviou
   ]
   const uploaded = []
   for (const [filename, objectKey, contentType] of uploads) {
+    console.log(`uploading ${objectKey}`)
     uploaded.push(await uploadKs3ReleaseArtifact({ ...credentials, origin: feedOrigin, objectKey,
-      path: filename === `${selectedChannel}-mac.yml` ? publishedFeed : join(candidate.root, filename), contentType }))
+      path: filename === `${selectedChannel}-mac.yml` ? publishedFeed : join(candidate.root, filename), contentType,
+      onProgress: progress => console.log(`uploaded ${progress.objectKey}: ${progress.completedParts}/${progress.totalParts} parts (${progress.completedBytes}/${progress.size} bytes)`) }))
   }
   const evidence = await verifyFeed({ feedOrigin, selectedChannel, expectedVersion: candidate.metadata.version,
     expectedPreviousVersion, output: join(candidate.root, '.desktop-release'), allowLoopback: false })

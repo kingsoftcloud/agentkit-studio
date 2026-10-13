@@ -2,6 +2,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { uploadKs3Multipart } from './ks3-release-multipart.mjs';
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const BUCKET_FROM_ORIGIN = /^([a-z0-9][a-z0-9-]{1,61}[a-z0-9])\.ks3-[a-z0-9-]+\.ksyuncs\.com$/u;
@@ -62,11 +63,16 @@ export function resolveKs3ReleaseCredentials(environment, origin) {
 
 /** Upload one release object exactly once; callers reconcile any ambiguous failure before retrying. */
 export async function uploadKs3ReleaseArtifact({ origin, bucket, accessKey, secretKey, objectKey, path, contentType,
-  fetchImpl = fetch, now = () => new Date(), timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  fetchImpl = fetch, now = () => new Date(), timeoutMs = DEFAULT_TIMEOUT_MS, onProgress = () => {} }) {
   const url = releaseUrl(origin, objectKey);
   const details = await stat(path);
   if (!details.isFile() || details.size <= 0) throw new Error(`KS3 release artifact is not a non-empty file: ${path}`);
   const digest = await fileDigest(path);
+  if (digest.size >= 32 * 1024 * 1024) {
+    const multipart = await uploadKs3Multipart({ url, bucket, accessKey, secretKey, objectKey, path,
+      size: digest.size, contentType: required(contentType, 'KS3 release content type'), fetchImpl, now, onProgress });
+    return { objectKey, bytes: digest.size, md5: digest.md5, ...multipart };
+  }
   const headers = {
     Date: now().toUTCString(),
     'Content-Length': String(digest.size),
