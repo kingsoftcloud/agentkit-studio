@@ -709,7 +709,7 @@ window.__ModuleLoader__.load({
     }
 
     function StudioWordmark() {
-      return h('span', { style: { color: BRAND.ink } }, 'AgentKit ', h('span', { style: { color: '#1858d6' } }, 'Studio'));
+      return h('span', { style: { color: BRAND.ink } }, 'AgentKit ', h('span', { style: { color: 'light-dark(#1858d6, #78a4ff)' } }, 'Studio'));
     }
 
     function NavGlyph({ glyph, active }) {
