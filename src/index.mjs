@@ -273,6 +273,10 @@ async function registerControlPlane(ctx) {
     await reconciler.run();
   });
   presetAdmission = new DshPresetAdmission({
+    getBasePlugins: async () => {
+      if (typeof presetRegistry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
+      return presetRegistry.pluginsFor('standard');
+    },
     getAgent: async agentId => (await deployments()).agents.get(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
     getModelSelection: async agent => {

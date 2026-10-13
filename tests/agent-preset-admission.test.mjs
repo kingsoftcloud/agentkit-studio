@@ -92,6 +92,26 @@ test('the active DSH model route and official persona row make a real native pre
   assert.equal(registered[0].plugins[0].config.includeRuntimeContext, false);
 });
 
+test('local runtime presets reuse the official composition including delivery tools', async () => {
+  for (const runtime of ['harness','codex','dsh-native']) {
+    const registered=[];
+    const revision=agent({spec:{runtime:{type:runtime},instructions:{system:'Studio persona'},bindings:{}}});
+    const base=[{id:'persona',name:'@deepseek-ai/dsh-persona',config:{suffix:'Workspace {{cwd}}'}},
+      {id:'present',name:'@deepseek-ai/dsh-tool-present'},
+      {id:'tool-fs',name:'@deepseek-ai/dsh-tool-fs'}];
+    const admission=new DshPresetAdmission({getAgent:async()=>revision,getBasePlugins:async()=>base.map(row=>structuredClone(row)),
+      registry:{async register(definition){registered.push(definition);return async()=>{};}}});
+    await admission.ensure('demo/agent');
+    const rows=registered[0].plugins;
+    assert.equal(rows.filter(row=>row.name==='@deepseek-ai/dsh-persona').length,1);
+    assert.equal(rows.find(row=>row.id==='persona').config.suffix,'Workspace {{cwd}}');
+    assert.equal(rows.find(row=>row.id==='persona').config.prefix,'Studio persona');
+    assert.ok(rows.some(row=>row.name==='@deepseek-ai/dsh-tool-present'));
+    assert.ok(rows.some(row=>row.name==='@deepseek-ai/dsh-tool-fs'));
+    assert.equal(base[0].config.prefix,undefined,'official base must remain unchanged');
+  }
+});
+
 test('a single Agent model resolves to the Studio-published DSH session route', () => {
   const revision = agent({ spec: { runtime: { type: 'harness' }, bindings: { modelProfileIds: ['deepseek-v4-flash'] } } });
   assert.deepEqual(dshModelSelection(revision, { values: { modelProfiles: [{ id: 'ksyun:deepseek-v4-flash', provider: 'ksyun', modelName: 'deepseek-v4-flash', enabled: true }] } }), {

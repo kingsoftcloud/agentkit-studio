@@ -1,0 +1,56 @@
+diff --git a/packages/preset/agent-preset-registry/src/index.ts b/packages/preset/agent-preset-registry/src/index.ts
+index d6ea71cd47..bc5291a6b4 100644
+--- a/packages/preset/agent-preset-registry/src/index.ts
++++ b/packages/preset/agent-preset-registry/src/index.ts
+@@ -1,5 +1,6 @@
+ /** Declarative Agent capability sets, activation and session binding. */
+ import { Context } from '@deepseek-ai/cordis'
++import { clone } from '@deepseek-ai/cosmokit'
+ import z from '@deepseek-ai/schemastery'
+ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+ import { bindScopeParent, createScope, scopeOf, type Scope, type ScopeKey, type ScopeParentBinding } from '@deepseek-ai/dsh-scope'
+@@ -188,6 +189,20 @@ export class AgentPresetRegistry extends TypertRemoteService {
+     return { id: wanted, ...(broken === undefined ? {} : { broken }) }
+   }
+
++  /** Snapshot a usable preset's declared rows for a derived local composition.
++   * The registry owns validation and preserves Loader expressions and group isolation.
++   * @param id Existing base preset identity.
++   * @returns Independent rows; editing them cannot change the registered base.
++   */
++  async pluginsFor(id: string): Promise<PresetDefinition['plugins']> {
++    const record = this.definitions.get(id)
++    if (record === undefined) throw new RemoteError('agent-preset/not-found', `Unknown agent preset: ${id}`,
++      { agentPreset: id, available: [...this.definitions.keys()] })
++    const broken = await this.diagnostic(record)
++    if (broken !== undefined) throw new RemoteError('agent-preset/invalid', broken, { agentPreset: id, reason: broken })
++    return clone(record.config.plugins) as PresetDefinition['plugins']
++  }
++
+   /** Read one declaration's child plugin list as YAML, for viewing only.
+    * @param agentPreset Preset identity.
+    * @returns The declared composition beside its published metadata.
+diff --git a/packages/preset/agent-preset-registry/tests/registry.spec.ts b/packages/preset/agent-preset-registry/tests/registry.spec.ts
+index 814989a43d..1fa74cc445 100644
+--- a/packages/preset/agent-preset-registry/tests/registry.spec.ts
++++ b/packages/preset/agent-preset-registry/tests/registry.spec.ts
+@@ -14,6 +14,19 @@ afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.di
+ async function setup() { const ctx = await harness(); contexts.push(ctx); return ctx }
+
+ describe('declarative preset revisions', () => {
++  it('snapshots an official preset composition for a derived local Agent', async () => {
++    const ctx = await setup()
++    await declare(ctx, contribution('standard'))
++    const rows = await ctx.agentPresets.pluginsFor('standard')
++    rows[0]!.config = { tool: 'derived' }
++    await declare(ctx, { id: 'derived', plugins: rows })
++    const original = await agentOn(ctx, 'original', 'standard')
++    const derived = await agentOn(ctx, 'derived', 'derived')
++    expect(ctx.tools.schemas(original).map(row => row.name)).toEqual(['standard'])
++    expect(ctx.tools.schemas(derived).map(row => row.name)).toEqual(['derived'])
++    await expect(ctx.agentPresets.pluginsFor('missing')).rejects.toThrow('Unknown agent preset')
++  })
++
+   it('eagerly scopes tool and prompt registrations and shares one revision across Agents', async () => {
+     const ctx = await setup()
+     await declare(ctx, contribution('standard'))

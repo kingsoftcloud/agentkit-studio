@@ -139,12 +139,13 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, registry } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry } = {}) {
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
     this.getModelSelection = getModelSelection;
     this.getToolContracts = getToolContracts;
     this.getSkillDefinitions = getSkillDefinitions;
+    this.getBasePlugins = getBasePlugins;
     this.registry = registry;
     this.registrations = new Map();
     this.pending = new Map();
@@ -214,9 +215,11 @@ export class DshPresetAdmission {
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
-    const plugins = [];
+    const plugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins() : [];
     let resourcesUnavailable = false;
-    if (prefix) plugins.push({
+    if (prefix) {
+      const persona = plugins.find(row => row.id === 'persona');
+      const row = {
       id: 'persona',
       name: '@deepseek-ai/dsh-persona',
       // Agent selection is independent from DSH's optional filesystem
@@ -224,8 +227,11 @@ export class DshPresetAdmission {
       // resources, so inheriting the host's runtime context would silently
       // attach the current workspace and make a blank Agent session appear
       // workspace-bound in the native conversation UI.
-      config: { prefix, includeRuntimeContext: false },
-    });
+      config: { ...persona?.config, prefix, includeRuntimeContext: false },
+      };
+      if (persona) Object.assign(persona, row);
+      else plugins.push(row);
+    }
     if (eligibility.mode === 'studio-bridge') {
       // Cloud tools/resources are executed by the frozen runtime;
       // asking the local DSH registry to materialize them would incorrectly
@@ -246,8 +252,9 @@ export class DshPresetAdmission {
         ? await recoverResources(() => this.getSkillDefinitions(agent))
         : [];
       if (skillDefinitions.length) {
-        plugins.push({ id: 'bound-skill-loader', name: '@deepseek-ai/dsh-tool-skill' });
-        plugins.push({ id: 'bound-skill-shell', name: process.platform === 'win32' ? '@deepseek-ai/dsh-tool-pwsh' : '@deepseek-ai/dsh-tool-bash' });
+        const shell = process.platform === 'win32' ? '@deepseek-ai/dsh-tool-pwsh' : '@deepseek-ai/dsh-tool-bash';
+        if (!plugins.some(row => row.name === '@deepseek-ai/dsh-tool-skill')) plugins.push({ id: 'bound-skill-loader', name: '@deepseek-ai/dsh-tool-skill' });
+        if (!plugins.some(row => row.name === shell)) plugins.push({ id: 'bound-skill-shell', name: shell });
       }
       plugins.push({
         id: 'studio-runtime',
