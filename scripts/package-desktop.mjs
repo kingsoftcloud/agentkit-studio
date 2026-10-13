@@ -1,6 +1,7 @@
 /** Run the official DSH package entry from a pinned, isolated source snapshot. */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { pathToFileURL } from 'node:url';
@@ -37,6 +38,14 @@ function run(command,args,cwd,env) {
 /** Windows cannot spawn a .cmd shim directly. Use the package manager's actual CLI. */
 export function packageManagerInvocation(platform, environment, script = environment.npm_execpath) {
   if (platform !== 'win32') return { command: 'pnpm', args: [] };
+  if (!script && environment.PNPM_HOME) {
+    const packageRoot=resolve(environment.PNPM_HOME,'..','pnpm');
+    try {
+      const manifest=JSON.parse(readFileSync(join(packageRoot,'package.json'),'utf8'));
+      const bin=typeof manifest.bin==='string'?manifest.bin:manifest.bin?.pnpm;
+      if (manifest.name==='pnpm' && /^bin\/[A-Za-z0-9._-]+\.(?:c?js|mjs)$/.test(bin || '')) script=resolve(packageRoot,bin);
+    } catch { /* Fall through to the explicit, actionable CLI error. */ }
+  }
   if (!script || !isAbsolute(script) || !/\.(?:c?js|mjs|exe)$/i.test(script)) {
     throw new Error('Windows packaging: run with pnpm exec node, or supply --pnpm-script with the absolute pnpm CLI path');
   }
