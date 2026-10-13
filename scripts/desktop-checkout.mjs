@@ -44,7 +44,7 @@ async function prepare(input) {
   const staging = await mkdtemp(join(directory,'preparing-'));
   try {
     const destination = join(staging,'source');
-    await git(directory,['clone','--shared','--no-checkout','--',sourceRoot,destination]);
+    await git(directory,['clone','--shared','--no-checkout','--config','core.autocrlf=false','--',sourceRoot,destination]);
     await git(destination,['checkout','--detach',commit]);
     for (const entry of series) {
       const patch = join(staging,entry.name);

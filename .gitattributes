@@ -1,0 +1,2 @@
+# Unified diffs must preserve their exact bytes, including any source CR characters.
+*.patch -text
