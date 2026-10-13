@@ -82,6 +82,7 @@ secret-scan:
 # admission or racing client rebuilds against the audit.
 public-gate:
 	$(MAKE) public-surface-audit
+	node scripts/public-history-audit.mjs
 	$(MAKE) secret-scan
 	$(MAKE) check
 	$(MAKE) patch-format-check
