@@ -2,6 +2,8 @@
 
 ## 0.0.2
 
+- Align Studio settings, model credentials and Agent forms with native DSH typography, spacing and dark-mode colors.
+- Keep optional overview configuration checks collapsed until opened; preserve the separate first-use credential guide.
 - Add Windows NSIS packaging, certificate-store signing and installed App qualification.
 - Clear stale macOS blockmap indexes after full releases before subsequent differential updates.
 - Organize public usage, architecture and development guides; keep team plans and private evidence outside the source tree.

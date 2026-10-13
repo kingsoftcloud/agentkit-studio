@@ -36,7 +36,9 @@
         [data-studio-agent-form] label { font-size: 13px !important; font-weight: 400 !important; }
         [data-studio-agent-form] :is(input,select,textarea) { font-size: 14px !important; }
         [data-studio-agent-form] h3 { font-size: 16px !important; font-weight: 500; }
-        .agentkit-start-checks { margin: 20px 0; padding: 18px 20px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-bg-layer-3); }
+        .agentkit-check-toggle { display: flex; justify-content: flex-end; margin-top: 12px; }
+        .agentkit-check-toggle button { font-size: 12px; padding: 5px 10px !important; }
+        .agentkit-start-checks { margin: 12px 0; padding: 18px 20px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-bg-layer-3); }
         .agentkit-check-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-top: .5px solid var(--dsw-alias-border-l2); }
         .agentkit-check-row > div:first-child { min-width: 0; }
         .agentkit-check-label { font-size: 14px; line-height: 22px; }

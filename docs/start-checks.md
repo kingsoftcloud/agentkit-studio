@@ -1,6 +1,8 @@
 # Start checks
 
-Overview → Start checks reads the current Host configuration, model credential status and runtime catalog. Use **Check again** after reconnecting a Host. Saving model credentials also refreshes this section.
+Overview → Start checks is a compact entry below the introduction, collapsed by default. Open it to read the current Host configuration, model credential status and runtime catalog; close it to return the space to the overview. It does not run on page entry or reopen itself after credential changes. Use **Check again** after reconnecting a Host. Saving model credentials refreshes the checks only while the panel is open.
+
+This optional check is separate from first-use onboarding. Missing model credentials still trigger the existing credential guide; a configured workspace does not keep an expanded checklist on the home page.
 
 - **Confirmed** means the configuration read succeeded. It does not certify a model call or tool execution.
 - **Missing configuration** means the Host explicitly reported a missing credential or an empty runtime catalog. The model action opens the existing credential guide.

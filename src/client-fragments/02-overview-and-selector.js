@@ -55,7 +55,7 @@
       const credentialGuide = credential.status === 'ready' && !credential.configured ? h('section', {
         role: 'status', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '18px', padding: '15px 18px', border: '1px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.surface },
       }, h('div', null, h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '14px' } }, '先配置一个模型凭证'), h('span', { style: { display: 'block', marginTop: '5px', color: BRAND.inkMuted, fontSize: '12px' } }, '首次使用前完成 API Key 配置，Agent 对话和 DSH Native 模型目录才能正常工作。')), h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:open-settings')), style: buttonStyle() }, '去配置模型凭证')) : null;
-      return h('div', null, credentialGuide, h(StartChecks), hero, metrics, cards);
+      return h('div', null, credentialGuide, hero, h(StartChecks), metrics, cards);
     }
 
     function AgentCard({ agent, onResources }) {

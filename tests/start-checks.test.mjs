@@ -46,12 +46,27 @@ function ui(remote) {
   const Component = new Function('h','useState','useRef','useEffect','hostRemote','window','buttonStyle','ALLOWED_RUNTIME_TYPES','RUNTIME_LABELS', `${source}; return StartChecks;`)(h, useState, useRef, useEffect, remote, window, () => ({}), types, labels);
   const render = () => { cursor = 0; dirty = false; tree = Component(); effects.splice(0).forEach(callback => cleanups.push(callback())); };
   const settle = async () => { if (dirty) render(); for (let i = 0; i < 40; i++) { await Promise.resolve(); if (dirty) render(); } };
-  return { settle, state: () => states[0], change: () => listeners.get('agentkit-studio:model-credential-changed')(), dispose: () => cleanups.forEach(callback => callback?.()), listeners };
+  return { settle, state: () => states[0], tree: () => tree, toggle: () => tree.children[0].children[0].props.onClick(), change: () => listeners.get('agentkit-studio:model-credential-changed')(), dispose: () => cleanups.forEach(callback => callback?.()), listeners };
 }
+test('checks stay collapsed and make no requests until explicitly opened', async () => {
+  let calls = 0;
+  const view = ui({ ...good, settings: async () => { calls++; return {}; } });
+  await view.settle(); view.change(); await view.settle();
+  assert.equal(calls, 0);
+  assert.equal(view.tree().children[0].children[0].props['aria-expanded'], false);
+  assert.equal(view.tree().children[1], null);
+  view.toggle(); await view.settle();
+  assert.equal(calls, 1);
+  assert.equal(view.tree().children[1].type, 'section');
+  view.toggle(); await view.settle(); view.change(); await view.settle();
+  assert.equal(view.tree().children[1], null);
+  assert.equal(calls, 1);
+  view.dispose();
+});
 test('credential changes refresh checks and late previous reads cannot overwrite them', async () => {
   const first = Promise.withResolvers(); let calls = 0, credentialCalls = 0;
   const view = ui({ ...good, settings: () => ++calls === 1 ? first.promise : Promise.resolve({}), modelCredentialStatus: async () => ({ configured: ++credentialCalls === 1 }) });
-  await view.settle(); view.change(); await view.settle();
+  await view.settle(); view.toggle(); await view.settle(); view.change(); await view.settle();
   assert.equal(view.state().rows[1].status, 'missing');
   first.resolve({}); await view.settle();
   assert.equal(view.state().rows[1].status, 'missing');
@@ -59,7 +74,7 @@ test('credential changes refresh checks and late previous reads cannot overwrite
 });
 test('unmount ignores an in-flight result and removes refresh listeners', async () => {
   const host = Promise.withResolvers(); const view = ui({ ...good, settings: () => host.promise });
-  await view.settle(); view.dispose(); host.resolve({}); await view.settle();
+  await view.settle(); view.toggle(); await view.settle(); view.dispose(); host.resolve({}); await view.settle();
   assert.equal(view.state().phase, 'checking');
   assert.equal(view.listeners.size, 0);
 });
