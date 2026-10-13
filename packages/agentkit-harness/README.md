@@ -2,8 +2,12 @@
 
 AgentKit Harness 是一个 **DSH 插件**。它复用 DSH 的 `AgentRegistry`、`SessionStore`、Session persistence、AgentLoop 和 `agent/assistant-stream`，只提供 Studio 侧的薄服务外观。公共 Harness 合同没有第二套 Session 状态机、事件 envelope 或文件存储。
 
+当前包可从源码独立打包并安装到 DSH profile。npm registry 发布需要对应 scope 权限；打包成功不等于 registry 已发布。
+
 ```sh
-pnpm add @kingsoftcloud/agentkit-harness
+pnpm pack:harness
+# 在目标 DSH profile 的 npm 项目中安装生成的 tgz：
+pnpm add /path/to/kingsoftcloud-agentkit-harness-0.0.1.tgz
 ```
 
 宿主需要先加载 DSH 的 Agent、Session、LLM 和 AgentLoop 插件，再加载本包：
