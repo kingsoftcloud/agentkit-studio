@@ -9,6 +9,7 @@ import asar from '@electron/asar'
 import { createHash } from 'node:crypto'
 import { parseArgs } from 'node:util'
 import { observeInstalledSuccessor } from './installed-update-successor.mjs'
+import { installedStudioFingerprint } from './installed-studio-fingerprint.mjs'
 
 const run = promisify(execFile)
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
@@ -35,15 +36,10 @@ async function appVersion(app) {
   asar.uncacheAll()
   const manifest = JSON.parse(asar.extractFile(archive, 'package.json').toString('utf8'))
   const plugin = asar.extractFile(archive, 'dsh/node_modules/@kingsoftcloud/agentkit-studio/src/index.mjs')
-  const productPrefix = '/dsh/node_modules/@kingsoftcloud/agentkit-studio/';
-  const productHash = createHash('sha256');
-  for (const name of asar.listPackage(archive).filter(name => name.startsWith(productPrefix)
-    && /^(src\/.*\.(?:mjs|js)|packages\/agentkit-harness\/src\/.*\.mjs|dist\/client\.js|studio\.plugin\.json)$/.test(name.slice(productPrefix.length))).sort()) {
-    productHash.update(name.slice(productPrefix.length)).update('\0').update(asar.extractFile(archive, name.slice(1)));
-  }
+  const fingerprint = installedStudioFingerprint(archive);
   const version = await plist(join(app, 'Contents/Info.plist'), 'CFBundleShortVersionString')
   if (version !== manifest.version) throw new Error('bundle and archived package versions differ')
-  return { version, commit: manifest.dshBuildCommit, studioEntrySha256: createHash('sha256').update(plugin).digest('hex'), studioSourceSha256: productHash.digest('hex') }
+  return { version, commit: manifest.dshBuildCommit, studioEntrySha256: createHash('sha256').update(plugin).digest('hex'), ...fingerprint }
 }
 
 async function mountDmg(dmg, directory) {
@@ -80,6 +76,7 @@ async function main() {
     dmg: { type: 'string' }, origin: { type: 'string' }, channel: { type: 'string' }, version: { type: 'string' },
     'expected-commit': { type: 'string' }, evidence: { type: 'string' }, timeout: { type: 'string' },
     'expected-studio-sha256': { type: 'string' }, 'retain-file': { type: 'string', multiple: true },
+    'expected-studio-package-sha256': { type: 'string' },
     layout: { type: 'string' }, 'storage-origin': { type: 'string' }, 'require-full': { type: 'boolean' }, 'updater-cache': { type: 'string' },
     'successor-observation': { type: 'string' }, 'user-data-dir': { type: 'string' },
   } })
@@ -157,6 +154,7 @@ async function main() {
     if (marker !== 'retained across update\n') throw new Error('DSH_HOME marker was not retained')
     if (values['expected-commit'] !== undefined && after.commit !== values['expected-commit']) throw new Error(`updated app commit ${after.commit ?? 'unknown'} does not match expected rollback commit`)
     if (values['expected-studio-sha256'] && after.studioSourceSha256 !== values['expected-studio-sha256']) throw new Error('installed Studio sources do not match the signed target')
+    if (values['expected-studio-package-sha256'] && after.studioPackageSha256 !== values['expected-studio-package-sha256']) throw new Error('installed Studio package does not match the signed target')
     const retainedFiles = [];
     for (const original of retention) {
       const current = await readFile(original.path);

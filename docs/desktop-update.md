@@ -120,6 +120,8 @@ node scripts/desktop-release.mjs verify-feed \
 
 验收默认使用隔离的 Electron 数据目录。连续升级、回滚时，显式传入同一组 `--app`、`--data-home` 和 `--user-data-dir`，并通过 `--retain-file` 指定真实持久化文件；脚本以单个 `--user-data-dir=<path>` 参数启动，避免误连已运行的个人 App。
 
+报告分别记录 Runtime 源码摘要 `studioSourceSha256` 和完整 Studio npm 包摘要 `studioPackageSha256`。只改变发布脚本或文档时，Runtime 摘要可以相同；回滚仍须用 `--expected-studio-package-sha256` 核对实际安装的完整包恢复为指定验收版本，不能仅凭版本号判定。
+
 ```sh
 node scripts/verify-desktop-installed-update.mjs \
   --dmg /path/to/baseline.dmg --origin https://<studio-update-origin> \
@@ -151,4 +153,4 @@ node scripts/verify-desktop-installed-update.mjs \
 
 最终 [CI 38350039590](https://github.com/kingsoftcloud/agentkit-studio/actions/runs/38350039590) 通过 KS3 发布及 GitHub Release 创建、附件上传；签名 job 复用前述已通过的候选，真实安装验收使用上表本机证据。不存在把跳过的安装 job 当作已通过的情况。
 
-历史 `.10` DMG：[原验收下载](https://ksadk.ks3-cn-beijing.ksyuncs.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.2.0-rc.2.20261013.10-mac-arm64.dmg)，[对应 Studio Release](https://github.com/kingsoftcloud/agentkit-studio/releases/tag/desktop-0.2.0-rc.2.20261013.10) 的 5 个附件摘要与签名候选一致。DMG SHA-256 为 `b279b2460b048cd92be04b8ee6177e29df71a938e28c805091c31243e1e7a1a8`。本地历史证据保留 `.artifacts/AgentKit-Studio-0.2.0-rc.2.20261013.10-signed-notarized.dmg`。新候选仍须通过真实 App 验收后才能更新最新下载记录。
+历史 `.10` DMG：[原验收下载](https://ksadk.ks3-cn-beijing.ksyuncs.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.2.0-rc.2.20261013.10-mac-arm64.dmg)，[对应 Studio Release](https://github.com/kingsoftcloud/agentkit-studio/releases/tag/desktop-0.2.0-rc.2.20261013.10) 的 5 个附件摘要与签名候选一致。DMG SHA-256 为 `b279b2460b048cd92be04b8ee6177e29df71a938e28c805091c31243e1e7a1a8`。本地保留摘要、截图和验收日志，旧二进制已按要求清理，需要时可从 Release 重新下载。新候选仍须通过真实 App 验收后才能更新最新下载记录。
