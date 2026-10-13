@@ -2,6 +2,10 @@
 
 ## 0.0.2
 
+- Add Windows NSIS packaging, certificate-store signing and installed App qualification.
+- Clear stale macOS blockmap indexes after full releases before subsequent differential updates.
+- Organize public usage, architecture and development guides; keep team plans and private evidence outside the source tree.
+
 - Display the installed desktop build separately from the Studio plugin and pinned DSH versions.
 - Pass the official DSH Session workspace to each Codex child and thread instead of writing in the system temporary directory.
 - Preserve native DSH tool-mode and file-delivery guidance for Harness steps; expose the official present tool to Codex through scoped native/PTC dispatch.

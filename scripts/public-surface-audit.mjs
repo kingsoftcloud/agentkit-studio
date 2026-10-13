@@ -57,12 +57,12 @@ export function auditText(file, source, { historical = false } = {}) {
     ? source.subarray(2).toString('utf16le') : source.toString('utf8');
   const hits = [];
   for (const { name, pattern } of SENSITIVE_TEXT_PATTERNS) {
-    // The owner permits engineering instructions and these service hostnames
-    // in the open-source repository. Labels and old checkout references are
-    // not credentials. Keep current source path hygiene and all key checks.
+    // Historical engineering references were reviewed separately; credentials
+    // remain forbidden in every revision. Current files must not carry private
+    // classification markers, including contributor instructions.
     const documentation = /^(?:docs\/|(?:.*\/)?AGENTS\.md$)/.test(file);
-    if (name === 'private-classification-marker' && (/(^|\/)AGENTS\.md$/.test(file)
-      || historical && (documentation || file === 'scripts/public-surface-audit.mjs'))) continue;
+    if (name === 'private-classification-marker' && historical
+      && (documentation || file === 'scripts/public-surface-audit.mjs')) continue;
     if (name === 'personal-absolute-path' && historical && (documentation
       || /^scripts\/verify-dsh-(?:sdk-)?node-store\.mjs$/.test(file))) continue;
     let match = pattern.exec(text);
