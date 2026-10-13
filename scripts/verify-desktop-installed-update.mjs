@@ -1,5 +1,6 @@
 /** Exercise a signed macOS app through the real Electron updater and retain evidence. */
 import { execFile, spawn } from 'node:child_process'
+import { createReadStream } from 'node:fs'
 import { mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
@@ -11,6 +12,12 @@ import { observeInstalledSuccessor } from './installed-update-successor.mjs'
 
 const run = promisify(execFile)
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
+
+async function cacheDigest(path) {
+  const hash = createHash('sha512'); let size = 0
+  for await (const bytes of createReadStream(path)) { hash.update(bytes); size += bytes.length }
+  return { size, sha512: hash.digest('base64') }
+}
 
 function required(value, name) {
   const text = typeof value === 'string' ? value.trim() : ''
@@ -73,6 +80,7 @@ async function main() {
     dmg: { type: 'string' }, origin: { type: 'string' }, channel: { type: 'string' }, version: { type: 'string' },
     'expected-commit': { type: 'string' }, evidence: { type: 'string' }, timeout: { type: 'string' },
     'expected-studio-sha256': { type: 'string' }, 'retain-file': { type: 'string', multiple: true },
+    layout: { type: 'string' }, 'storage-origin': { type: 'string' }, 'require-full': { type: 'boolean' }, 'updater-cache': { type: 'string' },
     'successor-observation': { type: 'string' },
   } })
   const dmg = values.app ? undefined : required(values.dmg, '--dmg')
@@ -92,8 +100,12 @@ async function main() {
   await mkdir(userData, { recursive: true }); await mkdir(harnessHome, { recursive: true }); await mkdir(journals, { recursive: true })
   const markerPath = join(harnessHome, `p1-1-marker-${process.pid}.txt`)
   await writeFile(markerPath, 'retained across update\n', { mode: 0o600 })
-  await run(process.execPath, [join(STUDIO_ROOT, 'scripts/desktop-release.mjs'), 'verify-feed', '--origin', feedOrigin,
-    '--channel', selectedChannel, '--version', targetVersion, '--output', evidenceRoot])
+  const feedArgs = [join(STUDIO_ROOT, 'scripts/desktop-release.mjs'), 'verify-feed', '--origin', feedOrigin,
+    '--channel', selectedChannel, '--version', targetVersion, '--output', evidenceRoot]
+  if (values.layout) feedArgs.push('--layout', values.layout)
+  if (values['storage-origin']) feedArgs.push('--storage-origin', values['storage-origin'])
+  await run(process.execPath, feedArgs)
+  const cacheBefore = values['updater-cache'] ? await cacheDigest(values['updater-cache']) : undefined
   const mounted = values.app ? install : await mountDmg(dmg, mount)
   const appName = await plist(join(mounted, 'Contents/Info.plist'), 'CFBundleName')
   const appId = await plist(join(mounted, 'Contents/Info.plist'), 'CFBundleIdentifier')
@@ -153,6 +165,15 @@ async function main() {
     const transfers = [...logText.matchAll(/Full: ([\d,.]+) KB, To download: ([\d,.]+) KB \(([^)]+)\)/g)].map(match => ({ fullKB: Number(match[1].replaceAll(',', '')), downloadedKB: Number(match[2].replaceAll(',', '')), percent: match[3] }))
     const differential = transfers.some(item => item.downloadedKB < item.fullKB) && !/Cannot download differentially|falling back to full download/.test(logText)
     if (values['require-differential'] && !differential) throw new Error('no successful differential download in real updater log')
+    const fullDownload = !differential && /Cannot download differentially|falling back to full download/.test(logText)
+    if (values['require-full'] && !fullDownload) throw new Error('real updater did not perform the full-download fallback')
+    let verifiedCache
+    if (values['updater-cache']) {
+      const cacheAfter = await cacheDigest(values['updater-cache'])
+      const feed = JSON.parse(await readFile(join(evidenceRoot, `feed-${selectedChannel}-${targetVersion}.json`), 'utf8'))
+      if (cacheAfter.size !== feed.zipBytes || cacheAfter.sha512 !== feed.zipSha512 || cacheBefore.sha512 === cacheAfter.sha512) throw new Error('updater cache does not contain the newly downloaded signed ZIP')
+      verifiedCache = { before: cacheBefore, after: cacheAfter, targetVerified: true }
+    }
     const journalFiles = (await readdir(journalEvidence)).filter(name => name.endsWith('.jsonl'))
     const journalEvents = new Set()
     for (const name of journalFiles) {
@@ -165,7 +186,7 @@ async function main() {
       if (!journalEvents.has(event)) throw new Error(`update journal is missing ${event}`)
     }
     const report = { schemaVersion: 1, accepted: true, realElectron: true, appId, appName, before, after,
-      restarted: true, successorReadiness, signatureVerifiedAfter: true, differential, transfers, logPath,
+      restarted: true, successorReadiness, signatureVerifiedAfter: true, differential, fullDownload, verifiedCache, transfers, logPath,
       retainedFiles,
       targetVersion, origin: feedOrigin, channel: selectedChannel, dataRetained: true, journalEvents: [...journalEvents].sort(), journals: journalEvidence, installedApp: install,
       completedAt: new Date().toISOString() }

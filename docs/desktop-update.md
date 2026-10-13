@@ -1,5 +1,11 @@
 # AgentKit Studio Desktop 更新
 
+新的下载目录为 `https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/<版本号>/`，其中 DMG、ZIP 和 blockmap 使用固定的 `AgentKit-Studio-mac-arm64` 文件名。更新索引放在 `studio/feeds/mac-arm64/`；同时保留 DSH 原生 `dsh-desk/feeds/mac-arm64/` 索引入口。旧 `ksadk` Bucket 只维护过渡索引，指向新 Bucket 的同一份签名文件，不再复制新版本的安装包。
+
+发布默认选择 `release_layout=studio`、`storage_origin=https://agentkit.ks3-cn-beijing.ksyuncs.com`、`update_mode=incremental`。需要推送全量更新时，使用递增的新版本号并设置 `update_mode=full`：签名 ZIP 发布在该版本的 `full/` 子目录，该路径不发布 blockmap，官方 updater 会回退到完整 ZIP 下载，仍核对签名和 SHA-512。普通目录中保留该版本的 blockmap，使下次增量发布可以复用这次完整下载的 ZIP 缓存。无需清理用户会话、配置或重装。
+
+无需整体公开 Bucket，发布程序只给具体版本对象设置 `public-read`。匿名访问未创建的对象可能返回 403，发布器先用签名 HEAD 确认 404 才创建；已存在且不可公开读取的对象或内容不同的不可变文件会停止发布。
+
 绑定本地 Agent 的图片输入修复：入口允许纯图片，模型传输通过 DSH `attachments.readImageRequest` 读取已入库的附件，保留混合内容及工具续跑历史。Codex 使用原生 `turn/start` 图片项。未构建的本地 Agent 可在其已绑定网关目录中通过原生模型选择器切换模型；切换其他网关或目录之外的模型仍会拒绝，冻结 Build 继续限定已绑定模型。`node --test tests/dsh-runtime-images.test.mjs tests/local-runtime.test.mjs tests/codex-runtime.test.mjs` 覆盖这些路径；签名安装版还需分别验证绑定“财务分析师”的纯图片、文字加图片和重启后继续对话。此前 `.20261013.10` 的 UI 验收只执行了未绑定普通会话的文字加图片、以及绑定 Agent 的创建操作，没有覆盖这个错误路径。新版安装源码摘要同时覆盖独立 Harness 包的 `src`，避免只核对 Studio 外层文件。
 
 Desktop 沿用 DSH 官方 Electron updater 的检查、下载、校验和重启流程。Studio 只提供自己的产品输入，不能使用 DSH 默认产品源：

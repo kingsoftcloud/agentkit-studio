@@ -11,6 +11,23 @@ test('KS3 release credentials accept Studio aliases and derive the bucket from t
     'https://ksadk.ks3-cn-beijing.ksyuncs.com'), { bucket: 'ksadk', accessKey: 'ak', secretKey: 'sk' });
 });
 
+test('a private Bucket requires an authenticated missing-key response before creating a public versioned artifact', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-private-bucket-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'signed.zip'); await writeFile(path, 'signed');
+  const methods = [];
+  await uploadKs3ReleaseArtifact({ origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', bucket: 'agentkit', accessKey: 'ak', secretKey: 'sk',
+    objectKey: 'studio/1.0.0/AgentKit-Studio-mac-arm64.zip', path, contentType: 'application/zip',
+    fetchImpl: async (_url, init) => {
+      methods.push(init.method);
+      if (init.method === 'GET') return new Response('', { status: 403 });
+      if (init.method === 'HEAD') { assert.match(init.headers.Authorization, /^KSS ak:/); return new Response(null, { status: 404 }); }
+      assert.equal(init.headers['x-kss-acl'], 'public-read'); for await (const _chunk of init.body) {} return new Response('');
+    },
+  });
+  assert.deepEqual(methods, ['GET', 'HEAD', 'PUT']);
+});
+
 test('KS3 release upload uses KSS signing and streams the artifact once', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'studio-ks3-release-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

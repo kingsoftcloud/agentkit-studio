@@ -27,7 +27,8 @@ function releaseUrl(origin, objectKey) {
   if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/' || base.search || base.hash) {
     throw new Error('KS3 release origin must be an HTTPS origin without a path or credentials');
   }
-  if (!/^dsh-desk\/(?:bin|feeds)\/[a-z0-9-]+\/[a-z0-9._-]+$/u.test(objectKey)) {
+  if (!/^dsh-desk\/(?:bin|feeds)\/[a-z0-9-]+\/[a-z0-9._-]+$/u.test(objectKey)
+    && !/^studio\/(?:feeds\/mac-arm64\/(?:preview-mac\.yml|stable-mac\.yml|mac-arm64-release\.json)|[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?\/(?:full\/)?AgentKit-Studio-mac-arm64\.(?:dmg|zip|zip\.blockmap))$/u.test(objectKey)) {
     throw new Error(`invalid KS3 release object key: ${objectKey}`);
   }
   return new URL(objectKey, base);
@@ -45,9 +46,25 @@ async function fileDigest(path) {
   return { size, md5: md5.digest('base64'), sha512: sha512.digest('base64') };
 }
 
-async function reconcileBinary(url, digest, fetchImpl, timeoutMs) {
+async function reconcileBinary(url, digest, fetchImpl, timeoutMs, { bucket, accessKey, secretKey, now }) {
   const response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   if (response.status === 404) { await response.body?.cancel(); return false; }
+  if (response.status === 403) {
+    await response.body?.cancel();
+    // A private bucket conceals missing keys from anonymous readers. Only a
+    // signed 404 authorizes creation; never mistake a denied existing object
+    // for a missing immutable release.
+    const signedHeaders = method => {
+      const Date = now().toUTCString();
+      const signature = createHmac('sha1', secretKey).update(`${method}\n\n\n${Date}\n/${bucket}${url.pathname}`).digest('base64');
+      return { Date, Authorization: `KSS ${accessKey}:${signature}` };
+    };
+    const head = await fetchImpl(url, { method: 'HEAD', headers: signedHeaders('HEAD'), redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+    await head.body?.cancel();
+    if (head.status === 404) return false;
+    if (!head.ok) throw new Error(`KS3 authenticated reconciliation failed: ${head.status}`);
+    throw new Error('Existing immutable release object is not publicly readable; review its object ACL before publishing');
+  }
   if (!response.ok || !response.body) {
     await response.body?.cancel();
     throw new Error(`KS3 release reconciliation failed: ${response.status}`);
@@ -86,7 +103,7 @@ export async function uploadKs3ReleaseArtifact({ origin, bucket, accessKey, secr
   const details = await stat(path);
   if (!details.isFile() || details.size <= 0) throw new Error(`KS3 release artifact is not a non-empty file: ${path}`);
   const digest = await fileDigest(path);
-  if (objectKey.startsWith('dsh-desk/bin/') && await reconcileBinary(url, digest, fetchImpl, timeoutMs)) {
+  if ((objectKey.startsWith('dsh-desk/bin/') || /^studio\/[0-9]/.test(objectKey)) && await reconcileBinary(url, digest, fetchImpl, timeoutMs, { bucket, accessKey, secretKey, now })) {
     return { objectKey, bytes: digest.size, md5: digest.md5, sha512: digest.sha512, alreadyPresent: true };
   }
   if (digest.size >= 32 * 1024 * 1024) {

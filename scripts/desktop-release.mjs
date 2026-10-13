@@ -6,7 +6,7 @@ import { basename, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import YAML from 'yaml'
 import { resolveKs3ReleaseCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs'
-import { publishedDesktopMetadata } from '../src/desktop-release-metadata.mjs'
+import { publishedDesktopMetadata, studioDesktopPublication } from '../src/desktop-release-metadata.mjs'
 
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
 const TARGET = 'mac-arm64'
@@ -96,7 +96,7 @@ async function digestResponse(response) {
   return { size, sha512: hash.digest('base64') }
 }
 
-async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expectedPreviousVersion, output, allowLoopback }) {
+async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expectedPreviousVersion, output, allowLoopback, layout = 'legacy', storageOrigin = feedOrigin }) {
   const feedRoot = targetPrefix(feedOrigin)
   const feedUrl = `${feedRoot}${selectedChannel}-mac.yml`
   const { response, bytes } = await fetchBytes(feedUrl)
@@ -106,8 +106,10 @@ async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expect
   const file = feed.files?.[0]
   const zipParsed = new URL(file?.url ?? '', feedRoot)
   const zipUrl = zipParsed.toString()
-  if (zipParsed.origin !== feedOrigin || !zipParsed.pathname.startsWith('/dsh-desk/bin/mac-arm64/')
-    || basename(zipParsed.pathname) !== `deepseek-harness-${expectedVersion}-mac-arm64.zip`) throw new Error('feed ZIP URL escapes the Studio binary target prefix')
+  const expectedPath = layout === 'studio'
+    ? `/studio/${expectedVersion}/${feed.agentkitUpdateMode === 'full' ? 'full/' : ''}AgentKit-Studio-${TARGET}.zip`
+    : `/dsh-desk/bin/${TARGET}/deepseek-harness-${expectedVersion}-${TARGET}.zip`
+  if (zipParsed.origin !== storageOrigin || zipParsed.pathname !== expectedPath || zipParsed.search || zipParsed.hash) throw new Error('feed ZIP URL escapes the Studio binary target prefix')
   const head = await fetch(zipUrl, { method: 'HEAD', redirect: 'error', cache: 'no-store' })
   if (!head.ok) throw new Error(`feed ZIP HEAD failed: ${head.status}`)
   const size = Number(head.headers.get('content-length'))
@@ -119,10 +121,16 @@ async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expect
   const downloaded = await fetch(zipUrl, { redirect: 'error', cache: 'no-store' })
   const actual = await digestResponse(downloaded)
   if (actual.size !== file.size || actual.sha512 !== file.sha512) throw new Error('public feed ZIP bytes do not match metadata')
-  const evidence = { schemaVersion: 1, verifiedAt: new Date().toISOString(), origin: feedOrigin, feedUrl, channel: selectedChannel,
+  let fullBlockmapStatus
+  if (layout === 'studio' && feed.agentkitUpdateMode === 'full') {
+    const blockmap = await fetch(`${zipUrl}.blockmap`, { method: 'HEAD', redirect: 'error', cache: 'no-store' })
+    fullBlockmapStatus = blockmap.status
+    if (![403, 404].includes(blockmap.status)) throw new Error('full-only ZIP unexpectedly provides a blockmap')
+  }
+  const evidence = { schemaVersion: 1, verifiedAt: new Date().toISOString(), origin: feedOrigin, storageOrigin, layout, updateMode: feed.agentkitUpdateMode || 'incremental', feedUrl, channel: selectedChannel,
     version: feed.version, zipUrl, feedBytes: bytes.length, zipBytes: actual.size, zipSha512: actual.sha512,
     range: { status: range.status, contentRange: range.headers.get('content-range'), bytes: rangeBytes.length },
-    publicUrl: feedRoot, allowLoopback }
+    publicUrl: feedRoot, allowLoopback, ...(fullBlockmapStatus ? { fullBlockmapStatus } : {}) }
   await mkdir(resolve(output), { recursive: true })
   const path = join(resolve(output), `feed-${selectedChannel}-${expectedVersion}.json`)
   await writeFile(path, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600, flag: 'w' })
@@ -130,31 +138,37 @@ async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expect
   return evidence
 }
 
-async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviousVersion }) {
-  const credentials = resolveKs3ReleaseCredentials(process.env, feedOrigin)
+async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviousVersion, layout, storageOrigin, mode, compatibilityOrigin }) {
+  const credentialsFor = selectedOrigin => resolveKs3ReleaseCredentials({ ...process.env,
+    STUDIO_DOWNLOAD_PROD_KS3_BUCKET: undefined, DOWNLOAD_PROD_KS3_BUCKET: undefined, KS3_BUCKET: undefined }, selectedOrigin)
   const previous = expectedPreviousVersion === undefined ? undefined
-    : await verifyFeed({ feedOrigin, selectedChannel, expectedVersion: expectedPreviousVersion, output: join(candidate.root, '.prepublish'), allowLoopback: false })
+    : await verifyFeed({ feedOrigin, storageOrigin, layout, selectedChannel, expectedVersion: expectedPreviousVersion, output: join(candidate.root, '.prepublish'), allowLoopback: false })
   const output = join(candidate.root, '.desktop-release')
   await mkdir(output, { recursive: true })
   const publishedFeed = join(output, `${selectedChannel}-mac.yml`)
-  await writeFile(publishedFeed, YAML.stringify(publishedDesktopMetadata(candidate.metadata, candidate.metadata.version)), { mode: 0o600 })
+  const plan = layout === 'studio' ? studioDesktopPublication(candidate.metadata, { origin: storageOrigin, channel: selectedChannel, mode }) : undefined
+  await writeFile(publishedFeed, YAML.stringify(plan?.metadata || publishedDesktopMetadata(candidate.metadata, candidate.metadata.version)), { mode: 0o600 })
   const uploadRoot = `dsh-desk/bin/${TARGET}`
   const feedRoot = `dsh-desk/feeds/${TARGET}`
   const uploads = [
-    [`${candidate.expectedBase}.dmg`, `${uploadRoot}/${candidate.expectedBase}.dmg`, 'application/x-apple-diskimage'],
-    [`${candidate.expectedBase}.zip`, `${uploadRoot}/${candidate.expectedBase}.zip`, 'application/zip'],
-    [`${candidate.expectedBase}.zip.blockmap`, `${uploadRoot}/${candidate.expectedBase}.zip.blockmap`, 'application/octet-stream'],
-    ['mac-arm64-release.json', `${feedRoot}/mac-arm64-release.json`, 'application/json'],
-    [`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml'],
+    [`${candidate.expectedBase}.dmg`, plan?.assets.dmg || `${uploadRoot}/${candidate.expectedBase}.dmg`, 'application/x-apple-diskimage', storageOrigin],
+    [`${candidate.expectedBase}.zip`, plan?.assets.zip || `${uploadRoot}/${candidate.expectedBase}.zip`, 'application/zip', storageOrigin],
+    [`${candidate.expectedBase}.zip.blockmap`, plan?.assets.blockmap || `${uploadRoot}/${candidate.expectedBase}.zip.blockmap`, 'application/octet-stream', storageOrigin],
+    ['mac-arm64-release.json', plan?.releaseKey || `${feedRoot}/mac-arm64-release.json`, 'application/json', storageOrigin],
+    ...(plan ? [[`${selectedChannel}-mac.yml`, plan.feedKey, 'application/yaml', storageOrigin],
+      ...(storageOrigin !== feedOrigin ? [[`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml', storageOrigin]] : [])] : []),
+    [`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml', feedOrigin],
+    ...(compatibilityOrigin && compatibilityOrigin !== feedOrigin && compatibilityOrigin !== storageOrigin
+      ? [[`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml', compatibilityOrigin]] : []),
   ]
   const uploaded = []
-  for (const [filename, objectKey, contentType] of uploads) {
+  for (const [filename, objectKey, contentType, uploadOrigin] of uploads) {
     console.log(`uploading ${objectKey}`)
-    uploaded.push(await uploadKs3ReleaseArtifact({ ...credentials, origin: feedOrigin, objectKey,
+    uploaded.push({ origin: uploadOrigin, ...await uploadKs3ReleaseArtifact({ ...credentialsFor(uploadOrigin), origin: uploadOrigin, objectKey,
       path: filename === `${selectedChannel}-mac.yml` ? publishedFeed : join(candidate.root, filename), contentType,
-      onProgress: progress => console.log(`uploaded ${progress.objectKey}: ${progress.completedParts}/${progress.totalParts} parts (${progress.completedBytes}/${progress.size} bytes)`) }))
+      onProgress: progress => console.log(`uploaded ${progress.objectKey}: ${progress.completedParts}/${progress.totalParts} parts (${progress.completedBytes}/${progress.size} bytes)`) }) })
   }
-  const evidence = await verifyFeed({ feedOrigin, selectedChannel, expectedVersion: candidate.metadata.version,
+  const evidence = await verifyFeed({ feedOrigin, storageOrigin, layout, selectedChannel, expectedVersion: candidate.metadata.version,
     expectedPreviousVersion, output: join(candidate.root, '.desktop-release'), allowLoopback: false })
   const report = { ...evidence, previous: previous?.version, release: candidate.release, storage: 'ks3', uploaded }
   await writeFile(join(output, 'publication.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 })
@@ -170,6 +184,8 @@ const { positionals, values } = parseArgs({ allowPositionals: true, options: {
   origin: { type: 'string' }, channel: { type: 'string' }, version: { type: 'string' }, candidate: { type: 'string' }, output: { type: 'string' },
   'allow-loopback': { type: 'boolean' }, 'expected-previous-version': { type: 'string' }, 'dsh-root': { type: 'string' }, patches: { type: 'string' },
   'dsh-commit': { type: 'string' }, 'dsh-version': { type: 'string' },
+  'storage-origin': { type: 'string' }, layout: { type: 'string' }, 'update-mode': { type: 'string' },
+  'compatibility-origin': { type: 'string' },
 } })
 const command = positionals[0]
 if (!['verify-feed', 'publish'].includes(command)) { usage(); process.exitCode = 2 }
@@ -177,12 +193,17 @@ else {
   try {
     const feedOrigin = origin(values.origin, values['allow-loopback'] === true)
     const selectedChannel = channel(values.channel)
+    const layout = values.layout || 'legacy', mode = values['update-mode'] || 'incremental'
+    if (!['legacy', 'studio'].includes(layout) || !['incremental', 'full'].includes(mode) || layout === 'legacy' && mode !== 'incremental') throw new Error('unsupported publication layout or update mode')
+    const storageOrigin = values['storage-origin'] ? origin(values['storage-origin'], values['allow-loopback'] === true) : feedOrigin
+    if (layout === 'legacy' && storageOrigin !== feedOrigin) throw new Error('separate storage origin requires the Studio layout')
+    const compatibilityOrigin = values['compatibility-origin'] ? origin(values['compatibility-origin']) : undefined
     if (command === 'verify-feed') {
       const expectedVersion = required(values.version, '--version')
-      await verifyFeed({ feedOrigin, selectedChannel, expectedVersion, output: values.output ?? join(STUDIO_ROOT, '.artifacts', 'desktop-release'), allowLoopback: values['allow-loopback'] === true })
+      await verifyFeed({ feedOrigin, storageOrigin, layout, selectedChannel, expectedVersion, output: values.output ?? join(STUDIO_ROOT, '.artifacts', 'desktop-release'), allowLoopback: values['allow-loopback'] === true })
     } else {
       const candidate = await readCandidate(values.candidate, selectedChannel)
-      const result = await publish({ candidate, feedOrigin, selectedChannel, expectedPreviousVersion: values['expected-previous-version'] })
+      const result = await publish({ candidate, feedOrigin, storageOrigin, layout, mode, compatibilityOrigin, selectedChannel, expectedPreviousVersion: values['expected-previous-version'] })
       console.log(JSON.stringify(result, null, 2))
     }
   } catch (error) {
