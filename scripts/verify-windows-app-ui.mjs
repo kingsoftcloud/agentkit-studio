@@ -1,13 +1,17 @@
 /** Launch the actually installed Windows app and verify rendered onboarding and build identity. */
 import { _electron as electron, expect } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import asar from '@electron/asar';
+import { verifyDesktopModuleGraph } from './desktop-module-graph.mjs';
 
 if (process.platform !== 'win32') throw new Error('Windows app UI acceptance requires Windows');
 const executablePath=process.env.STUDIO_INSTALLED_APP;
 const expectedVersion=process.env.BUILD_VERSION;
 if (!executablePath || !expectedVersion) throw new Error('Installed app and build version are required');
+const archive=join(dirname(executablePath),'resources/app.asar');
+const moduleGraph=await verifyDesktopModuleGraph(path=>asar.extractFile(archive,path).toString('utf8'));
 const evidence=resolve('.artifacts/windows-proof');
 const root=join(tmpdir(),'studio-installed-ui-'+Date.now());
 await mkdir(evidence,{recursive:true}); await mkdir(root,{recursive:true});
@@ -19,7 +23,6 @@ try {
   // Read app.getVersion from the installed Electron process, independently of feed metadata.
   const version=await app.evaluate(({app:electronApp})=>electronApp.getVersion());
   if (version!==expectedVersion) throw new Error('Installed Electron version differs from release input');
-  const body=await page.locator('body').innerText();
   const guide=page.locator('.agentkit-credential-onboarding-content');
   await expect(guide).toBeVisible({timeout:120000});
   const onboardingVisible=true;
@@ -30,7 +33,7 @@ try {
   await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
   await expect(page.getByText(expectedVersion,{exact:true})).toBeVisible({timeout:30000});
   await page.screenshot({path:join(evidence,'windows-version-settings.png'),fullPage:true});
-  await writeFile(join(evidence,'windows-installed-ui.json'),JSON.stringify({version,actualInstalledApp:true,windowTitle:await page.title(),onboardingVisible},null,2));
+  await writeFile(join(evidence,'windows-installed-ui.json'),JSON.stringify({version,actualInstalledApp:true,windowTitle:await page.title(),onboardingVisible,moduleGraph},null,2));
   const receiptPath=join(evidence,'windows-install.json');
   const receipt=JSON.parse(await readFile(receiptPath,'utf8'));
   await writeFile(receiptPath,JSON.stringify({...receipt,version,uiVerified:true,onboardingVisible},null,2));

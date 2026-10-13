@@ -16,6 +16,8 @@ DSH 仍负责签名串行化、失败停止、时间戳、签名缓存、运行�
 
 流水线必须通过：真实签名探针；DSH Windows 打包与内置运行时检查；安装器 Authenticode 指定证书和时间戳检查；在新目录实际运行 NSIS 安装；已安装 App 的签名、真实启动和 Electron 版本检查。证据保存在 `windows-proof`，安装器保存在 `windows-release`。
 
+打包后的 Host 模块检查会解析 `app.asar` 内的真实依赖，拒绝 npm 文件清单遗漏的共享构建文件。官方运行时启动检查按产品名称查找 `AgentKit Studio.exe`，不依赖上游固定可执行文件名。
+
 签名、安装或实际启动任一失败，流水线失败，停止发布。失败产物不会冒充签名发行包。本机 macOS 源码测试不能替代 Windows Runner 的安装验收。
 
 Windows feed 和 KS3 公开发布须另通过在线下载及真实更新验收；仅生成安装器不能算 Windows 增量升级已通过。
