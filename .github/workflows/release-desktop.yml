@@ -455,7 +455,8 @@ jobs:
         with:
           name: agentkit-studio-${{ inputs.studio_ref }}-${{ inputs.channel }}-publication
           path: candidate/.desktop-release/**
-          if-no-files-found: ignore
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 30
 
   qualify-installed-update:
