@@ -528,8 +528,9 @@ jobs:
           tag="desktop-$BUILD_VERSION"
           printf 'Signed and notarized AgentKit Studio desktop build.\n\nStudio source: %s\nPublic binaries: %s/dsh-desk/bin/mac-arm64/\nThe DMG, ZIP and blockmap are the same files used by the KS3 updater.\n' "$STUDIO_SHA" "$UPDATE_ORIGIN" > "$RUNNER_TEMP/release-notes.md"
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$STUDIO_SHA" --title "AgentKit Studio $BUILD_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
+            gh release create "$tag" --target "$STUDIO_SHA" --title "AgentKit Studio $BUILD_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease --draft
           fi
+          test "$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)" = "$STUDIO_SHA"
           for file in candidate/*.dmg candidate/*.zip candidate/*.blockmap candidate/mac-arm64-release.json candidate/*-mac.yml; do
             name="$(basename "$file")"
             digest="sha256:$(sha256sum "$file" | cut -d ' ' -f 1)"
@@ -540,3 +541,4 @@ jobs:
               gh release upload "$tag" "$file"
             fi
           done
+          gh release edit "$tag" --draft=false --prerelease
