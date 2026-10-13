@@ -37,3 +37,22 @@ test('KS3 release upload uses KSS signing and streams the artifact once', async 
   assert.equal(request.init.headers['x-kss-acl'], 'public-read');
   assert.equal(request.init.duplex, 'half');
 });
+
+for (const same of [true, false]) test(`immutable binary reconciliation ${same ? 'reuses identical bytes' : 'rejects a different object'}`, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-ks3-existing-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'artifact.zip');
+  await writeFile(path, 'signed artifact');
+  const methods = [];
+  const operation = uploadKs3ReleaseArtifact({
+    origin: 'https://ksadk.ks3-cn-beijing.ksyuncs.com', bucket: 'ksadk', accessKey: 'ak', secretKey: 'sk',
+    objectKey: 'dsh-desk/bin/mac-arm64/artifact.zip', path, contentType: 'application/zip',
+    fetchImpl: async (url, init) => {
+      methods.push(init.method);
+      return new Response(same ? 'signed artifact' : 'wrong artifact');
+    },
+  });
+  if (same) assert.equal((await operation).alreadyPresent, true);
+  else await assert.rejects(operation, /immutable release binary already exists with different bytes/u);
+  assert.deepEqual(methods, ['GET']);
+});

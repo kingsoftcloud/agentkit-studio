@@ -35,12 +35,30 @@ function releaseUrl(origin, objectKey) {
 
 async function fileDigest(path) {
   const md5 = createHash('md5');
+  const sha512 = createHash('sha512');
   let size = 0;
   for await (const bytes of createReadStream(path)) {
     md5.update(bytes);
+    sha512.update(bytes);
     size += bytes.length;
   }
-  return { size, md5: md5.digest('base64') };
+  return { size, md5: md5.digest('base64'), sha512: sha512.digest('base64') };
+}
+
+async function reconcileBinary(url, digest, fetchImpl, timeoutMs) {
+  const response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+  if (response.status === 404) { await response.body?.cancel(); return false; }
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    throw new Error(`KS3 release reconciliation failed: ${response.status}`);
+  }
+  const hash = createHash('sha512');
+  let size = 0;
+  for await (const chunk of response.body) { hash.update(chunk); size += chunk.length; }
+  if (size !== digest.size || hash.digest('base64') !== digest.sha512) {
+    throw new Error(`KS3 immutable release binary already exists with different bytes: ${url.pathname}`);
+  }
+  return true;
 }
 
 /** Resolve KS3 credentials without ever logging their values. */
@@ -68,6 +86,9 @@ export async function uploadKs3ReleaseArtifact({ origin, bucket, accessKey, secr
   const details = await stat(path);
   if (!details.isFile() || details.size <= 0) throw new Error(`KS3 release artifact is not a non-empty file: ${path}`);
   const digest = await fileDigest(path);
+  if (objectKey.startsWith('dsh-desk/bin/') && await reconcileBinary(url, digest, fetchImpl, timeoutMs)) {
+    return { objectKey, bytes: digest.size, md5: digest.md5, sha512: digest.sha512, alreadyPresent: true };
+  }
   if (digest.size >= 32 * 1024 * 1024) {
     const multipart = await uploadKs3Multipart({ url, bucket, accessKey, secretKey, objectKey, path,
       size: digest.size, contentType: required(contentType, 'KS3 release content type'), fetchImpl, now, onProgress });
