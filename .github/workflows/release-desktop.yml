@@ -443,6 +443,8 @@ jobs:
             test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID/jobs" --jq '.jobs[] | select(.name == "macos-arm64") | .conclusion')" = success
           fi
           (cd "$GITHUB_WORKSPACE/candidate" && shasum -a 256 -c SHA256SUMS)
+          node scripts/verify-ks3-multipart.mjs --origin '${{ inputs.update_origin }}' \
+            --output "$GITHUB_WORKSPACE/candidate/.desktop-release/ks3-multipart-probe.json"
           args=(publish --candidate "$GITHUB_WORKSPACE/candidate" --origin '${{ inputs.update_origin }}'
             --channel '${{ inputs.channel }}')
           if [[ -n "$EXPECTED_PREVIOUS" ]]; then args+=(--expected-previous-version "$EXPECTED_PREVIOUS"); fi
