@@ -1,0 +1,162 @@
+name: Release AgentKit Studio Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      studio_ref:
+        description: Immutable Studio source commit
+        type: string
+        required: true
+      studio_checkout_ref:
+        description: Branch containing the immutable source commit
+        type: string
+        default: main
+        required: true
+      build_version:
+        description: Desktop semantic version
+        type: string
+        required: true
+      channel:
+        type: choice
+        default: preview
+        options: [stable, preview]
+      update_origin:
+        type: string
+        default: https://agentkit.ks3-cn-beijing.ksyuncs.com
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio-windows-signing
+  cancel-in-progress: false
+
+jobs:
+  windows-x64:
+    runs-on: windows-2025
+    environment: studio-signing
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.studio_checkout_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable Studio source
+        shell: pwsh
+        env:
+          STUDIO_SHA: ${{ inputs.studio_ref }}
+          VERSION: ${{ inputs.build_version }}
+        run: |
+          if ($env:STUDIO_SHA -notmatch '^[0-9a-f]{40}$') { throw 'studio_ref must be a full commit SHA' }
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') { throw 'Invalid desktop build version' }
+          git merge-base --is-ancestor $env:STUDIO_SHA HEAD
+          if ($LASTEXITCODE) { throw 'Source commit is outside the selected branch' }
+          git checkout --detach $env:STUDIO_SHA
+          if ($LASTEXITCODE -or (git rev-parse HEAD) -ne $env:STUDIO_SHA) { throw 'Studio checkout mismatch' }
+      - uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: dsh-v0.2.0-rc.2
+          path: dsh-source
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - name: Prepare short isolated build root
+        shell: pwsh
+        run: |
+          if ((git -C dsh-source rev-parse HEAD) -ne '639ed015397290b3745d163aafe02ffee4aa3f84') { throw 'DSH baseline mismatch' }
+          git config --system core.longpaths true
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE) { throw 'Studio dependency installation failed' }
+          pnpm pack --pack-destination .artifacts
+          if ($LASTEXITCODE) { throw 'Studio plugin pack failed' }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $inputRoot = Join-Path $env:RUNNER_TEMP 'studio-plugin-input'
+          New-Item -ItemType Directory -Force $inputRoot | Out-Null
+          Copy-Item ".artifacts/kingsoftcloud-agentkit-studio-$version.tgz" $inputRoot
+          "DSH_DESKTOP_PLUGIN_INPUTS=$inputRoot" | Out-File $env:GITHUB_ENV -Append
+          "STUDIO_PACKAGE_VERSION=$version" | Out-File $env:GITHUB_ENV -Append
+      - name: Prepare fresh Certum authentication URI
+        id: certum
+        shell: pwsh
+        env:
+          CERTUM_ACCOUNT: ${{ secrets.CERTUM_ACCOUNT }}
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_TOTP_SECRET: ${{ secrets.CERTUM_TOTP_SECRET }}
+        run: |
+          $account = if ($env:CERTUM_ACCOUNT) {$env:CERTUM_ACCOUNT} else {$env:CERTUM_EMAIL}
+          if (-not $account -or -not $env:CERTUM_TOTP_SECRET) { throw 'Certum account and TOTP configuration are required' }
+          $seed = $env:CERTUM_TOTP_SECRET.Trim()
+          if ($seed.StartsWith('otpauth://')) { $uri = $seed }
+          elseif ($seed -match '^[A-Za-z2-7]+=*$') { $uri = "otpauth://totp/SimplySign?secret=$seed&algorithm=SHA256&digits=6&period=30" }
+          else { throw 'CERTUM_TOTP_SECRET must be a Base32 seed or complete otpauth URI' }
+          Write-Output "::add-mask::$uri"
+          Write-Output "::add-mask::$account"
+          "uri=$uri" | Out-File $env:GITHUB_OUTPUT -Append
+          "account=$account" | Out-File $env:GITHUB_OUTPUT -Append
+      - name: Authenticate Certum cloud certificate
+        uses: dismine/windows-app-signing-setup-action@89ae3b032d4bc7a5b98d1a42a34e61ecb6faad64
+        with:
+          certum-username: ${{ steps.certum.outputs.account }}
+          certum-otp-uri: ${{ steps.certum.outputs.uri }}
+          certum-key-id: ${{ secrets.CERTUM_THUMBPRINT }}
+          capture-diagnostics: 'false'
+      - name: Configure verified certificate-store signing
+        shell: pwsh
+        env:
+          CERTUM_THUMBPRINT: ${{ secrets.CERTUM_THUMBPRINT }}
+          UPDATE_ORIGIN: ${{ inputs.update_origin }}
+          CHANNEL: ${{ inputs.channel }}
+        run: ./scripts/prepare-windows-signing.ps1 -DshRoot "$PWD/dsh-source" -UpdateOrigin $env:UPDATE_ORIGIN -Channel $env:CHANNEL
+      - name: Package the official DSH Windows target
+        shell: pwsh
+        env:
+          BUILD_VERSION: ${{ inputs.build_version }}
+          DSH_CLIENT_TITLE: AgentKit Studio
+          DSH_DESKTOP_PLUGIN_ROOTS: '@kingsoftcloud/agentkit-studio'
+          DSH_DESKTOP_PLUGIN_BUNDLES: '@kingsoftcloud/agentkit-studio'
+        run: |
+          $env:DSH_DESKTOP_PRODUCT_ICON = "$PWD/assets/agentkit-studio-macos.png"
+          pnpm exec node scripts/package-desktop.mjs --source "$PWD/dsh-source" --output "$env:RUNNER_TEMP/studio-build" --patches "$PWD/patches/dsh-v0.2.0-rc.2" --commit 639ed015397290b3745d163aafe02ffee4aa3f84 --target win-x64 --dsh-version 0.2.0-rc.2 --studio-version $env:STUDIO_PACKAGE_VERSION --build-version $env:BUILD_VERSION
+          if ($LASTEXITCODE) { throw 'Signed Windows packaging failed' }
+      - name: Verify timestamped installer and actual installation
+        shell: pwsh
+        env:
+          CERTUM_THUMBPRINT: ${{ secrets.CERTUM_THUMBPRINT }}
+          BUILD_VERSION: ${{ inputs.build_version }}
+        run: |
+          $candidates = @(Get-Item "$env:RUNNER_TEMP/studio-build/desktop-checkouts/*/source/apps/desktop/.desktop-build/targets/win-x64/artifacts")
+          if ($candidates.Count -ne 1) { throw 'Expected exactly one signed output directory' }
+          $artifacts = $candidates[0].FullName
+          ./scripts/verify-windows-install.ps1 -Artifacts $artifacts -Version $env:BUILD_VERSION -Evidence .artifacts/windows-proof
+          New-Item -ItemType Directory -Force .artifacts/windows-release | Out-Null
+          Copy-Item "$artifacts/*" .artifacts/windows-release -Recurse
+      - name: Verify the actually installed Windows App UI
+        shell: pwsh
+        env:
+          BUILD_VERSION: ${{ inputs.build_version }}
+        run: |
+          node scripts/verify-windows-app-ui.mjs
+          if ($LASTEXITCODE) { throw 'Installed Windows App UI acceptance failed' }
+      - name: Retain signed installer and acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentkit-studio-${{ inputs.build_version }}-win-x64
+          path: |
+            .artifacts/windows-release/
+            .artifacts/windows-proof/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove local signing settings
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item dsh-source/apps/desktop/.env.windows -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:RUNNER_TEMP/studio-code-signing.cer" -Force -ErrorAction SilentlyContinue
