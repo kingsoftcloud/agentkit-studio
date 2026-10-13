@@ -12,6 +12,7 @@ import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { dshModelFailure } from '../model-failure.mjs';
 import { createCodexToolRecorder } from './codex-tool-events.mjs';
+import { gatewayHistory } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 
 const ROUTE = 'agentkit-studio';
@@ -132,32 +133,6 @@ function textOf(message) {
   if (!Array.isArray(content)) return '';
   return content.filter(part => part?.type === 'text' || part?.kind === 'text')
     .map(part => String(part.text || part.value || '')).join('');
-}
-
-function historyOf(messages) {
-  const history = [];
-  for (const message of (Array.isArray(messages) ? messages : [])) {
-    if (isUserInput(message)) {
-      const content = textOf(message);
-      if (content) history.push({ role: 'user', content });
-      continue;
-    }
-    if (message?.role === 'assistant') {
-      const calls = Array.isArray(message.content)
-        ? message.content.filter(block => block?.type === 'tool-call').map(block => ({
-          id: String(block.id || ''), type: 'function', function: { name: String(block.name || ''), arguments: String(block.arguments || '{}') },
-        })).filter(call => call.id && call.function.name)
-        : [];
-      const content = textOf(message);
-      if (content || calls.length) history.push({ role: 'assistant', content: content || null, ...(calls.length ? { tool_calls: calls } : {}) });
-      continue;
-    }
-    if (message?.role === 'tool') {
-      const content = textOf(message);
-      if (message.toolCallId && content) history.push({ role: 'tool', tool_call_id: String(message.toolCallId), content });
-    }
-  }
-  return history;
 }
 
 function isUserInput(message) {
@@ -553,7 +528,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, observability, AdapterBase } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, observability, attachments, AdapterBase } = {}) {
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -576,8 +551,12 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       const toolAgent = routed?.agent || options.agent;
       const user = lastUser(options.messages);
       const input = textOf(user).trim();
-      if (!agentId || !input) throw new Error('AgentKit Studio runtime requires an AgentId and user input');
+      const hasImage = Array.isArray(user?.content) && user.content.some(block => block?.type === 'image' && block.offloaded !== true);
+      if (!agentId) throw Object.assign(new Error('请先绑定 Agent，再发送消息'), { code: 'STUDIO_AGENT_REQUIRED' });
+      if (!input && !hasImage) throw Object.assign(new Error('请输入文字或添加图片后发送'), { code: 'STUDIO_INPUT_REQUIRED' });
       if (mode === 'local') {
+        const history = await gatewayHistory(options.messages, { attachments, signal: options.signal });
+        const content = [...history].reverse().find(message => message.role === 'user')?.content || input;
         if (runtime === 'codex') {
           const selection = { provider: options.provider, model: options.studioSelectedModel || options.studioCodexModel || options.model };
           const selected = options.provider && options.provider !== CODEX_PROVIDER
@@ -623,6 +602,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               sessionId: String(options.sessionId || ''),
               input,
               messages: Array.isArray(options.messages) ? options.messages : [],
+              imageInputs: history.flatMap(message => Array.isArray(message.content) ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : []),
               signal: options.signal,
               systemPrompt: resources.systemPrompt || '',
               dynamicTools: resources.dynamicTools || [],
@@ -670,7 +650,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           sessionId: String(options.sessionId || ''),
           userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
           input,
-          history: historyOf(options.messages),
+          content,
+          history,
           ...(options.provider ? { modelSelection: { provider: options.provider, model: options.studioSelectedModel || options.model } } : {}),
           nativeTools,
           tools: Array.isArray(options.tools) ? options.tools : [],
@@ -685,6 +666,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         }
         return;
       }
+      if (hasImage) throw Object.assign(new Error('当前云端 Agent 镜像尚不支持图片输入，请使用本地 Agent'), { code: 'CLOUD_IMAGE_INPUT_UNAVAILABLE' });
       if (cloudRuntime) {
         yield* cloudRuntime({ ...options, agentId, cloudVersionId: routed?.cloudVersionId || options.cloudVersionId, userMessage: user, input, session: toolAgent?.session });
         return;

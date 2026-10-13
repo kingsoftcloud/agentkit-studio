@@ -236,6 +236,7 @@ async function registerControlPlane(ctx) {
   const { createDeploymentConversation } = await import('./deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({
     AdapterBase: LlmAdapter,
+    attachments: () => ctx.get('attachments'),
     cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise }),
     localHandler: localRuntimeHandler,
     codexRuntime,

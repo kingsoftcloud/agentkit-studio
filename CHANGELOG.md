@@ -2,6 +2,7 @@
 
 ## 0.0.2
 
+- Preserve image-only and mixed image input for bound local Agents through DSH attachment storage, Harness model requests and native Codex image inputs.
 - Preserve multimodal model capabilities advertised by nested `/v1/models` metadata.
 - Keep long-running Codex turns alive while progress continues, with idle and explicit total budgets.
 - Keep the in-app browser registration active and ship the independent Harness plugin verification path.

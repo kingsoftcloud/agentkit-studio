@@ -145,10 +145,10 @@ export function createCodexRuntime(options = {}) {
   const runtime = {
     executable,
     cwd,
-    async *stream({ input, messages = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider } = {}) {
+    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider } = {}) {
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
       const prompt = String(input || '').trim();
-      if (!prompt) throw new CodexRuntimeError('CODEX_INPUT_INVALID', 'Codex 输入不能为空');
+      if (!prompt && !imageInputs.length) throw new CodexRuntimeError('CODEX_INPUT_INVALID', 'Codex 输入不能为空');
       if (signal?.aborted) throw asError(signal.reason, 'Codex 请求已取消');
 
       // Use Codex's public custom-provider contract. Credentials belong only
@@ -362,7 +362,11 @@ export function createCodexRuntime(options = {}) {
           ...(Array.isArray(dynamicTools) && dynamicTools.length ? { dynamicTools } : {}),
         };
         threadId = idOf(await request('thread/start', threadParams), 'thread id');
-        const turn = await request('turn/start', { threadId, input: [{ type: 'text', text: promptFor({ input: prompt, messages }), text_elements: [] }] });
+        const context = promptFor({ input: prompt, messages });
+        const turn = await request('turn/start', { threadId, input: [
+          ...(context ? [{ type: 'text', text: context, text_elements: [] }] : []),
+          ...imageInputs.map(url => ({ type: 'image', url })),
+        ] });
         turnId = idOf(turn, 'turn id');
         started = true;
         activity();

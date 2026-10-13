@@ -322,12 +322,16 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
   return async function handle(request, response, { signal, toolAdapter, agent } = {}) {
     let body = '';
     for await (const chunk of request) body += chunk;
-    if (body.length > 1024 * 1024) { response.writeHead(413); response.end('request too large'); return; }
+    if (Buffer.byteLength(body) > 32 * 1024 * 1024) { response.writeHead(413); response.end('request too large'); return; }
     let parsed;
     try { parsed = JSON.parse(body || '{}'); } catch { response.writeHead(400); response.end('bad json'); return; }
     const agentId = String(parsed.agentId || '');
     const input = String(parsed.input || '').trim();
-    if (!agentId || !input) { response.writeHead(400); response.end('agentId and input required'); return; }
+    const validContent = content => typeof content === 'string' ? Boolean(content.trim()) : Array.isArray(content) && content.length > 0
+      && content.every(part => (part?.type === 'text' && typeof part.text === 'string') || (part?.type === 'image_url' && typeof part.image_url?.url === 'string' && part.image_url.url.length > 0))
+      && content.some(part => part.type === 'image_url' || part.text.trim());
+    const content = parsed.content ?? input;
+    if (!agentId || !validContent(content)) { response.writeHead(400); response.end('agentId and input required'); return; }
     if (signal?.aborted) throw runtimeCancelledError();
 
     let record;
@@ -405,12 +409,12 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     }
     const history = Array.isArray(parsed.history) ? parsed.history
       .filter(item => ['user', 'assistant', 'tool'].includes(item?.role)
-        && (item.role === 'assistant' || typeof item.content === 'string')
+        && (item.role === 'assistant' || validContent(item.content))
         && (item.role !== 'tool' || String(item.tool_call_id || '').trim()))
       .slice(-20)
       .map(item => ({
         role: item.role,
-        content: typeof item.content === 'string' ? item.content.slice(0, 16000) : null,
+        content: typeof item.content === 'string' ? item.content.slice(0, 16000) : Array.isArray(item.content) ? item.content : null,
         ...(Array.isArray(item.tool_calls) ? { tool_calls: item.tool_calls } : {}),
         ...(item.tool_call_id ? { tool_call_id: String(item.tool_call_id) } : {}),
       })) : [];
@@ -418,8 +422,9 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     // the explicit runtime input. Keep one canonical user turn in the model
     // request; duplicating it makes tool continuations start with two user
     // messages and breaks the assistant/tool pairing on the next round.
-    const hasCurrentInput = [...history].reverse().some(item => item.role === 'user' && item.content === input);
-    const messages = [{ role: 'system', content: [systemPrompt || 'You are a helpful assistant.', resourceContext ? `Relevant resources:\n${resourceContext}` : ''].filter(Boolean).join('\n\n') }, ...history, ...(hasCurrentInput ? [] : [{ role: 'user', content: input }])];
+    const lastInput = [...history].reverse().find(item => item.role === 'user');
+    const hasCurrentInput = lastInput && JSON.stringify(lastInput.content) === JSON.stringify(content);
+    const messages = [{ role: 'system', content: [systemPrompt || 'You are a helpful assistant.', resourceContext ? `Relevant resources:\n${resourceContext}` : ''].filter(Boolean).join('\n\n') }, ...history, ...(hasCurrentInput ? [] : [{ role: 'user', content }])];
     response.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',

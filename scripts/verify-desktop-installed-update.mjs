@@ -31,7 +31,7 @@ async function appVersion(app) {
   const productPrefix = '/dsh/node_modules/@kingsoftcloud/agentkit-studio/';
   const productHash = createHash('sha256');
   for (const name of asar.listPackage(archive).filter(name => name.startsWith(productPrefix)
-    && /^(src\/.*\.(?:mjs|js)|dist\/client\.js|studio\.plugin\.json)$/.test(name.slice(productPrefix.length))).sort()) {
+    && /^(src\/.*\.(?:mjs|js)|packages\/agentkit-harness\/src\/.*\.mjs|dist\/client\.js|studio\.plugin\.json)$/.test(name.slice(productPrefix.length))).sort()) {
     productHash.update(name.slice(productPrefix.length)).update('\0').update(asar.extractFile(archive, name.slice(1)));
   }
   const version = await plist(join(app, 'Contents/Info.plist'), 'CFBundleShortVersionString')

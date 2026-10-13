@@ -47,6 +47,21 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   ]);
 });
 
+test('Codex image-only input reaches turn/start as native image input without invented text', async () => {
+  let turnInput;
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn(), write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => {
+      const request = JSON.parse(String(data));
+      if (request.method === 'turn/start') turnInput = request.params.input;
+      return write(data, ...args);
+    };
+    return child;
+  } });
+  for await (const _chunk of runtime.stream({ input: '', imageInputs: ['data:image/png;base64,AQID'] })) {}
+  assert.deepEqual(turnInput, [{ type: 'image', url: 'data:image/png;base64,AQID' }]);
+});
+
 test('native plugin MCP calls reach the Studio event stream, including failures', async () => {
   const runtime = createCodexRuntime({ spawnImpl: () => {
     const child = fakeSpawn(), write = child.stdout.write.bind(child.stdout);
