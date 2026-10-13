@@ -29,4 +29,5 @@
 - P1-1 Preview 发布与安装验收已完成。`release-desktop.yml` 使用 Studio 自己的 Apple/KS3 Environment，签名候选可复用发布；真实 KS3 三块上传、公网摘要、删除验证和隐藏证据归档均通过。[最终发布 CI](https://github.com/kingsoftcloud/agentkit-studio/actions/runs/38350039590) 成功，[Studio Release](https://github.com/kingsoftcloud/agentkit-studio/releases/tag/desktop-0.2.0-rc.2.20261013.10) 的 5 个附件摘要与签名候选全部一致。
 - KS3 多段 Range 返回 416，`022-ks3-single-range-updates.patch` 改用官方单段 Range 差分。真实 `.5 → .6` 前向回滚和 `.6 → .10` 恢复最新版都通过：每次只下载完整 ZIP 的 13%，由更新程序自动重启，签名校验通过，原有配置、Agent revision、压缩会话文件字节均保留。
 - 新图标已验证包含在签名 DMG 和安装后的原生“关于”窗口；旧 Deepseek 会话真实发送图片成功。模型设置自动读取网关能力，保存、重新读取、关闭后再打开都保留图片状态，浅色和深色主题已检查。凭证引导已在真实安装版打开并完成暂停/播放与配置跳转；本机已有凭证，“全新缺凭证”场景目前以自动化测试为证据。
-- P1-2 的 npm registry 发布、P1-3 的下一 DSH 版本兼容矩阵仍未完成。P1-3 还需统一旧插件版本展示与包版本；实际桌面安装版本以原生“关于”窗口为准。当前线上验收使用 Preview 通道，尚未发布 Stable 版本。
+- P1-2 的 npm registry 发布、P1-3 的下一 DSH 版本兼容矩阵仍未完成。设置页已改为通过 DSH 的 `DSH_CLIENT_VERSION` 读取实际桌面构建版本，并单列包内 Studio 插件版本；该修复仍需在新签名包中打开设置页验收。当前线上验收使用 Preview 通道，尚未发布 Stable 版本。
+- 2026-10-13 新反馈：`dsh-native + glm-5.3-flash` 的长回复被固定 180 秒预算连续中断六次。已将本地模型请求改为按数据接收重置空闲超时，持续输出、静默中止和用户取消测试通过；真实长回复、Codex 文件执行、版本展示和新 Bucket 更新链仍需在同一最终签名版本验收后发布。

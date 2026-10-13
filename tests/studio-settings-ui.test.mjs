@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const fragment = await readFile(new URL('../src/client-fragments/08-settings-and-entry.js', import.meta.url), 'utf8');
+const loaderSource = await readFile(new URL('../src/client-fragments/01-loader-and-primitives.js', import.meta.url), 'utf8');
 const source = fragment.slice(0, fragment.indexOf('    function apply(ctx)'));
-function settingsHarness(remote, updates) {
+function settingsHarness(remote, updates, versions = {}) {
   const states = [], effects = [], cleanups = [];
   let cursor = 0, dirty = true, tree;
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat() });
@@ -18,12 +19,30 @@ function settingsHarness(remote, updates) {
     if (!(index in states)) { states[index] = true; effects.push(callback); }
   };
   const window = { dshDesktop: updates ? { protocolVersion: 1, updates } : undefined };
-  const Component = new Function('h','useState','useEffect','useRef','window','hostRemote','BRAND','SectionHeading','SettingsRow','STUDIO_VERSION','DSH_VERSION',source+'; return StudioSettingsSection;')(h, useState, useEffect, useRef, window, remote, {}, 'heading', 'row', '0.0.1', '0.2.0-rc.2');
+  const loader = loaderSource.slice(loaderSource.indexOf('    const STUDIO_VERSION'), loaderSource.indexOf('    const CONVERSATION_AGENT_KEY'));
+  const Component = new Function('h','useState','useEffect','useRef','window','hostRemote','BRAND','SectionHeading','SettingsRow', loader + source+'; return StudioSettingsSection;')(h, useState, useEffect, useRef, { ...window, __AGENTKIT_STUDIO__: versions }, remote, {}, 'heading', 'row');
   const render = () => { cursor = 0; dirty = false; tree = Component(); for (const callback of effects.splice(0)) cleanups.push(callback()); };
   const settle = async () => { render(); for (let i = 0; i < 12; i++) { await Promise.resolve(); if (dirty) render(); } return tree; };
   const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
   return { settle, text: () => JSON.stringify(tree), updateButton: () => walk(tree).find(node => node.type === 'button' && node.props.onClick?.name === 'checkDesktopUpdate'), dispose: () => cleanups.forEach(cleanup => cleanup?.()) };
 }
+test('settings show installed desktop identity separately from the plugin and available update', async () => {
+  const ui = settingsHarness({ settings: async () => ({}) }, {
+    status: async () => ({ phase: 'available', version: '0.2.0-rc.2.20261013.17' }), subscribe: () => () => {},
+  }, { version: '0.2.0-rc.2.20261013.16', pluginVersion: '0.0.2', dshVersion: '0.2.0-rc.2' });
+  await ui.settle();
+  assert.match(ui.text(), /0\.2\.0-rc\.2\.20261013\.16/);
+  assert.match(ui.text(), /Studio 插件版本/);
+  assert.match(ui.text(), /0\.0\.2/);
+  assert.match(ui.text(), /发现 0\.2\.0-rc\.2\.20261013\.17/);
+  assert.doesNotMatch(ui.text(), /0\.0\.1/);
+});
+test('web settings without desktop identity do not guess a desktop build number', async () => {
+  const ui = settingsHarness({ settings: async () => ({}) }, undefined, { version: null, pluginVersion: '0.0.2' });
+  await ui.settle();
+  assert.match(ui.text(), /Web 模式/);
+  assert.doesNotMatch(ui.text(), /0\.0\.1/);
+});
 async function renderSettings(remote) {
   const ui = settingsHarness(remote);
   await ui.settle();

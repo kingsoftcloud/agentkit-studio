@@ -413,6 +413,50 @@ test('local runtime aborts the model stream and records a canceled trace', async
   assert.doesNotMatch(response.chunks.join(''), /run\.failed/);
 });
 
+test('transport activity extends the idle deadline, including SSE keepalives', async () => {
+  const response = responseSink();
+  let ended = false;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: {} }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'test' }) },
+    modelIdleTimeoutMs: 100,
+    fetchImpl: async (_url, { signal }) => new Response(new ReadableStream({
+      start(controller) {
+        const interval = setInterval(() => controller.enqueue(new TextEncoder().encode(': keepalive\n\n')), 30);
+        const finish = setTimeout(() => {
+          clearInterval(interval); ended = true;
+          controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"long answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+          controller.close();
+        }, 240);
+        signal.addEventListener('abort', () => { clearInterval(interval); clearTimeout(finish); controller.error(signal.reason); }, { once: true });
+      },
+    })),
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'test', input: 'long turn' })]), response);
+  assert.equal(ended, true);
+  assert.match(response.chunks.join(''), /long answer/);
+  assert.doesNotMatch(response.chunks.join(''), /MODEL_TIMEOUT/);
+});
+
+test('a stalled response aborts upstream and reports a model timeout', async () => {
+  const response = responseSink();
+  let upstreamAborted = false;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: {} }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'test' }) },
+    modelIdleTimeoutMs: 30,
+    fetchImpl: async (_url, { signal }) => new Response(new ReadableStream({
+      start(controller) {
+        const active = setTimeout(() => controller.close(), 2000);
+        signal.addEventListener('abort', () => { upstreamAborted = true; clearTimeout(active); controller.error(signal.reason); }, { once: true });
+      },
+    })),
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'test', input: 'stalled turn' })]), response);
+  assert.equal(upstreamAborted, true);
+  assert.match(response.chunks.join(''), /MODEL_TIMEOUT/);
+});
+
 test('an explicitly disabled memory binding does not recall or write cloud data', async () => {
   const binding = { config: { binding: { resource: { kind: 'memory-instance', id: 'memory-off' } } } };
   const knowledge = { config: { binding: { resource: { kind: 'knowledge-base', id: 'kb' } } } };

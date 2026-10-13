@@ -1,8 +1,9 @@
 /** Incremental UTF-8 SSE parser shared by model transports. */
-export async function* readSse(body, { onDone } = {}) {
+export async function* readSse(body, { onDone, onChunk } = {}) {
   const decoder = new TextDecoder();
   let buffer = '';
   for await (const bytes of body) {
+    if (bytes.length) onChunk?.();
     buffer += decoder.decode(bytes, { stream: true });
     let match;
     while ((match = /\r?\n\r?\n/.exec(buffer))) {

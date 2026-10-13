@@ -13,6 +13,7 @@ import { formatSkillContext } from './skill-context.mjs';
 import { chatCompletionUsage } from './chat-usage.mjs';
 import { checkedResource } from './resource-checks.mjs';
 import { dshModelRoute } from './model-route.mjs';
+import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -241,7 +242,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
-function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profile;
+function createGatewayModel({ profile, fetchImpl = fetch, signal, modelIdleTimeoutMs }) {
   if (!profile?.baseUrl || !profile?.apiKey) throw new LocalRuntimeError('MODEL_PROFILE_INVALID', '模型配置缺少 baseUrl 或 API Key');
   return {
     async *stream({ messages, tools = [] }) {
@@ -249,7 +250,9 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
       // The explicit route signal comes from the response lifecycle. Do not
       // substitute the IncomingMessage signal here: its body is already
       // consumed before the model request starts.
-      const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000);
+      const deadline = createModelIdleDeadline({ signal, timeoutMs: modelIdleTimeoutMs });
+      const requestSignal = deadline.signal;
+      try {
       let response;
       try { response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -265,12 +268,13 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
         throw new LocalRuntimeError('MODEL_STREAM_FAILED', `模型流请求失败（${response.status}）`, modelFailureDetails({ status: response.status, headers: response.headers, error: detail?.error }));
       }
       if (!response.body) throw new LocalRuntimeError('MODEL_EMPTY_RESPONSE', '模型未返回响应内容');
+      deadline.touch();
       const toolCalls = new Map();
       let finishReason = '';
       let hasContent = false;
       let usage;
       try {
-        for await (const parsed of readSse(response.body)) {
+        for await (const parsed of readSse(response.body, { onChunk: deadline.touch })) {
         if (signal?.aborted) throw runtimeCancelledError();
         if (parsed?.error) {
           throw new LocalRuntimeError('MODEL_STREAM_FAILED', '模型流返回错误', modelFailureDetails({ error: parsed.error, headers: response.headers }));
@@ -308,6 +312,7 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal }) { void profi
         yield { type: 'tool_calls', calls: [...toolCalls.values()] };
       }
       else if (!hasContent) throw new LocalRuntimeError('MODEL_EMPTY_RESPONSE', '模型未返回响应内容');
+      } finally { deadline.dispose(); }
     },
   };
 }
@@ -317,7 +322,7 @@ function envelope(runId, sessionId, item) {
   return `data: ${JSON.stringify({ conversationItem: item, runId })}\n\n`;
 }
 
-export function createLocalConversationHandler({ agentStore, buildStore, modelService, resourceAdapter, observability, fetchImpl = fetch } = {}) {
+export function createLocalConversationHandler({ agentStore, buildStore, modelService, resourceAdapter, observability, fetchImpl = fetch, modelIdleTimeoutMs = 180000 } = {}) {
 
   return async function handle(request, response, { signal, toolAdapter, agent } = {}) {
     let body = '';
@@ -445,7 +450,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     send({ kind: 'assistant_text', lifecycle: 'running', payload: { text: '' } });
 
     try {
-      const model = createGatewayModel({ profile, fetchImpl, signal });
+      const model = createGatewayModel({ profile, fetchImpl, signal, modelIdleTimeoutMs });
       // The harness owns the canonical loop; this local provider drives the
       // configured model while resource calls remain explicit Host actions.
       let text = '';

@@ -948,14 +948,12 @@ export async function apply(ctx) {
     harnessCtx.plugin(AgentKitHarnessPlugin);
   });
   await registerControlPlane(ctx);
+  const versions = await import('./studio-version.mjs').then(({ studioVersions }) => studioVersions(runtimeEnv));
   ctx.on('webserver/index-inject', table => table.push({
     kind: 'global',
     name: '__AGENTKIT_STUDIO__',
     value: {
-      version: '0.0.1',
-      // Allow an isolated release-candidate process to report its own DSH
-      // version without rebuilding the plugin artifact.
-      dshVersion: runtimeEnv.AGENTKIT_STUDIO_DSH_VERSION || '0.2.0-rc.2',
+      ...versions,
       hostUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
       controlPlane: 'agentengine-server',
       // The Studio Host owns this short-lived local session token. It is not

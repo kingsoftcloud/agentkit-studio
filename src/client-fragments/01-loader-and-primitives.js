@@ -13,7 +13,8 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const { createElement: h, useEffect, useRef, useState } = React;
     const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal } = require('@deepseek-ai/dsh-client-ui-primitives');
-    const STUDIO_VERSION = '0.0.1';
+    const STUDIO_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).version || 'Web 模式');
+    const STUDIO_PLUGIN_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).pluginVersion || '未提供');
     const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.2');
     const CONVERSATION_AGENT_KEY = 'agentkit-studio:conversation-agent';
     // DSH Native is the official DSH SDK-backed loop. Resource-bearing and
