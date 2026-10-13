@@ -20,7 +20,7 @@ function settingsHarness(remote, updates, versions = {}) {
   };
   const window = { dshDesktop: updates ? { protocolVersion: 1, updates } : undefined };
   const loader = loaderSource.slice(loaderSource.indexOf('    const STUDIO_VERSION'), loaderSource.indexOf('    const CONVERSATION_AGENT_KEY'));
-  const Component = new Function('h','useState','useEffect','useRef','window','hostRemote','BRAND','SectionHeading','SettingsRow', loader + source+'; return StudioSettingsSection;')(h, useState, useEffect, useRef, { ...window, __AGENTKIT_STUDIO__: versions }, remote, {}, 'heading', 'row');
+  const Component = new Function('h','useState','useEffect','useRef','window','hostRemote','BRAND','SectionHeading','SettingsRow','buttonStyle', loader + source+'; return StudioSettingsSection;')(h, useState, useEffect, useRef, { ...window, __AGENTKIT_STUDIO__: versions }, remote, {}, 'heading', 'row', () => ({}));
   const render = () => { cursor = 0; dirty = false; tree = Component(); for (const callback of effects.splice(0)) cleanups.push(callback()); };
   const settle = async () => { render(); for (let i = 0; i < 12; i++) { await Promise.resolve(); if (dirty) render(); } return tree; };
   const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];

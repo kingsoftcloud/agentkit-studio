@@ -45,24 +45,26 @@
           : desktopUpdate.phase === 'ready' ? `安装 ${desktopUpdate.version || '新版本'}`
             : desktopUpdate.phase === 'error' ? '重试检查更新' : '检查更新';
       return h('div', {
-        style: { color: BRAND.ink, fontFamily: 'inherit' },
+        'data-studio-settings': true, style: { color: BRAND.ink, fontFamily: 'inherit' },
       },
-      h(SectionHeading, { eyebrow: 'AgentKit Studio', title: 'Studio 设置', detail: '查看当前产品与 Host 状态。模型和凭证在「模型与凭证」中配置，资源绑定在 Agent 编辑页完成。' }),
-      h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '0 18px', background: BRAND.surface } },
+      h('div', { className: 'agentkit-form-heading' }, h('div', null, h('h3', null, 'AgentKit Studio'), h('p', null, '管理本机运行和桌面更新。'))),
+      h('section', { 'data-studio-settings-group': true }, h('h3', null, '本机运行'),
         h(SettingsRow, { label: '会话绑定策略', value: '可选 Agent', detail: '不选择 Agent 时直接使用 DSH 原生会话；选择后在新会话创建时固定主 Agent', tone: 'accent' }),
         h(SettingsRow, { label: '默认执行目标', value: 'Local Host', detail: '创建 Agent 和运行会话时使用的默认目标', tone: 'signal' }),
         h(SettingsRow, { label: 'Studio Host', value: host.status === 'ready' ? '已连接' : host.status === 'loading' ? '检查中' : '连接失败', detail: host.status === 'ready' ? '已成功读取 Host 配置' : host.error || '正在读取 Host 配置', tone: 'signal' }),
+      ),
+      h('section', { 'data-studio-settings-group': true }, h('h3', null, '版本与更新'),
         h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '当前安装的桌面应用版本' }),
         h(SettingsRow, { label: 'Studio 插件版本', value: STUDIO_PLUGIN_VERSION, detail: '产品功能与运行适配层版本' }),
         h(SettingsRow, { label: 'DSH 宿主兼容版本', value: DSH_VERSION, detail: '固定的宿主基线，不代表 Studio 产品版本' }),
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '14px 0' } },
+        h('div', { 'data-studio-settings-row': true },
           h('div', null,
-            h('div', { style: { fontSize: '12px', fontWeight: 700 } }, '桌面更新'),
-            h('div', { role: 'status', style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px' } }, !desktopUpdates ? '请在 AgentKit Studio 桌面应用中检查更新。' : desktopUpdate.phase === 'error' ? '更新检查失败，可重试。' : desktopUpdate.version ? `目标版本：${desktopUpdate.version}` : '使用 Studio 的更新源检查新版本。')),
-          h('button', { type: 'button', onClick: checkDesktopUpdate, disabled: !desktopUpdates || ['checking', 'downloading', 'verifying', 'installing'].includes(desktopUpdate.phase), style: { border: '1px solid ' + BRAND.border, borderRadius: '8px', padding: '7px 11px', color: BRAND.accentStrong, background: BRAND.surface, fontSize: '11px', fontWeight: 700, cursor: 'pointer' } }, updateButtonLabel))),
-      h('div', { style: { marginTop: '16px', padding: '14px 16px', borderRadius: '12px', color: BRAND.inkMuted, background: BRAND.canvas, fontSize: '12px', lineHeight: 1.55 } },
-        h('div', null, '工作区、会话、模型和凭证的通用设置继续由系统设置页承载；Studio 只扩展自己的执行目标、Host 能力和产品选项。'),
-        h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-onboarding')), style: { marginTop: '10px', border: '1px solid ' + BRAND.border, borderRadius: '8px', padding: '6px 10px', color: BRAND.accentStrong, background: BRAND.surface, fontSize: '11px', fontWeight: 700 } }, '重新打开凭证引导')));
+            h('div', { className: 'agentkit-check-label' }, '桌面更新'),
+            h('div', { role: 'status', className: 'agentkit-form-note' }, !desktopUpdates ? '请在 AgentKit Studio 桌面应用中检查更新。' : desktopUpdate.phase === 'error' ? '更新检查失败，可重试。' : desktopUpdate.version ? `目标版本：${desktopUpdate.version}` : '使用 Studio 的更新源检查新版本。')),
+          h('button', { type: 'button', onClick: checkDesktopUpdate, disabled: !desktopUpdates || ['checking', 'downloading', 'verifying', 'installing'].includes(desktopUpdate.phase), style: buttonStyle() }, updateButtonLabel))),
+      h('div', { className: 'agentkit-guide-entry' },
+        h('p', { className: 'agentkit-form-note' }, '模型配置在「模型与凭证」中。首次使用可打开配置引导。'),
+        h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-onboarding')), style: { ...buttonStyle(), marginTop: '12px' } }, '重新打开凭证引导')));
     }
 
     function StudioSettingsLauncher({ wide, settingsOpen, settingsShortcut, openSettings, openOnboarding, t }) {
@@ -151,6 +153,7 @@
       ctx.effect(() => adoptProductDocumentTitle(), 'agentkit-studio: document title');
       ctx.effect(() => adoptProductDocumentBrand(), 'agentkit-studio: document favicon');
       ctx.effect(() => installResponsiveStyles(), 'agentkit-studio: responsive layout');
+      ctx.effect(() => installStudioFormStyles(), 'agentkit-studio: native forms');
       // The public launcher owns only the entry button. DSH retains settings
       // state, shortcuts and the original modal, including Studio's sections.
       ctx.slots.inject('settings.launcher', () => ctx.slots.register(
