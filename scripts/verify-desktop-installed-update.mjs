@@ -4,7 +4,7 @@ import { mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createRequire } from 'node:module'
+import asar from '@electron/asar'
 import { createHash } from 'node:crypto'
 import { parseArgs } from 'node:util'
 
@@ -22,16 +22,20 @@ async function plist(path, key) {
 }
 
 async function appVersion(app) {
-  const desktop = createRequire(join(resolve(process.env.AGENTKIT_DSH_ROOT || join(STUDIO_ROOT, '../../deepseek-harness')), 'apps/desktop/package.json'))
-  const asar = createRequire(desktop.resolve('app-builder-lib'))('@electron/asar')
   const archive = join(app, 'Contents/Resources/app.asar')
   // Squirrel replaces this archive in place; do not reuse asar's cached header.
   asar.uncacheAll()
   const manifest = JSON.parse(asar.extractFile(archive, 'package.json').toString('utf8'))
   const plugin = asar.extractFile(archive, 'dsh/node_modules/@kingsoftcloud/agentkit-studio/src/index.mjs')
+  const productPrefix = '/dsh/node_modules/@kingsoftcloud/agentkit-studio/';
+  const productHash = createHash('sha256');
+  for (const name of asar.listPackage(archive).filter(name => name.startsWith(productPrefix)
+    && /^(src\/.*\.(?:mjs|js)|dist\/client\.js|studio\.plugin\.json)$/.test(name.slice(productPrefix.length))).sort()) {
+    productHash.update(name.slice(productPrefix.length)).update('\0').update(asar.extractFile(archive, name.slice(1)));
+  }
   const version = await plist(join(app, 'Contents/Info.plist'), 'CFBundleShortVersionString')
   if (version !== manifest.version) throw new Error('bundle and archived package versions differ')
-  return { version, commit: manifest.dshBuildCommit, studioEntrySha256: createHash('sha256').update(plugin).digest('hex') }
+  return { version, commit: manifest.dshBuildCommit, studioEntrySha256: createHash('sha256').update(plugin).digest('hex'), studioSourceSha256: productHash.digest('hex') }
 }
 
 async function mountDmg(dmg, directory) {
@@ -67,6 +71,7 @@ async function main() {
     app: { type: 'string' }, 'data-home': { type: 'string' }, 'require-differential': { type: 'boolean' },
     dmg: { type: 'string' }, origin: { type: 'string' }, channel: { type: 'string' }, version: { type: 'string' },
     'expected-commit': { type: 'string' }, evidence: { type: 'string' }, timeout: { type: 'string' },
+    'expected-studio-sha256': { type: 'string' }, 'retain-file': { type: 'string', multiple: true },
   } })
   const dmg = values.app ? undefined : required(values.dmg, '--dmg')
   const feedOrigin = required(values.origin, '--origin')
@@ -98,6 +103,10 @@ async function main() {
     await run('/usr/bin/hdiutil', ['detach', mount, '-force'])
   }
   const before = await appVersion(install)
+  const retention = await Promise.all((values['retain-file'] || []).map(async path => {
+    const bytes = await readFile(resolve(path));
+    return { path: resolve(path), bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
+  }));
   if (before.version === targetVersion) throw new Error(`baseline app is already ${targetVersion}; qualification requires a strictly newer feed version`)
   const executable = join(install, 'Contents/MacOS', await plist(join(install, 'Contents/Info.plist'), 'CFBundleExecutable'))
   const logPath = join(evidenceRoot, 'electron.log')
@@ -126,6 +135,13 @@ async function main() {
     const marker = await readFile(markerPath, 'utf8')
     if (marker !== 'retained across update\n') throw new Error('DSH_HOME marker was not retained')
     if (values['expected-commit'] !== undefined && after.commit !== values['expected-commit']) throw new Error(`updated app commit ${after.commit ?? 'unknown'} does not match expected rollback commit`)
+    if (values['expected-studio-sha256'] && after.studioSourceSha256 !== values['expected-studio-sha256']) throw new Error('installed Studio sources do not match the signed target')
+    const retainedFiles = [];
+    for (const original of retention) {
+      const current = await readFile(original.path);
+      if (!current.subarray(0, original.bytes.length).equals(original.bytes)) throw new Error(`persisted data changed or disappeared: ${original.path}`);
+      retainedFiles.push({ path: original.path, bytesBefore: original.bytes.length, bytesAfter: current.length, sha256Before: original.sha256, originalBytesRetained: true });
+    }
     const journalEvidence = join(evidenceRoot, 'journals')
     const logText = await readFile(logPath, 'utf8')
     const transfers = [...logText.matchAll(/Full: ([\d,.]+) KB, To download: ([\d,.]+) KB \(([^)]+)\)/g)].map(match => ({ fullKB: Number(match[1].replaceAll(',', '')), downloadedKB: Number(match[2].replaceAll(',', '')), percent: match[3] }))
@@ -144,6 +160,7 @@ async function main() {
     }
     const report = { schemaVersion: 1, accepted: true, realElectron: true, appId, appName, before, after,
       restarted: true, signatureVerifiedAfter: true, differential, transfers, logPath,
+      retainedFiles,
       targetVersion, origin: feedOrigin, channel: selectedChannel, dataRetained: true, journalEvents: [...journalEvents].sort(), journals: journalEvidence, installedApp: install,
       completedAt: new Date().toISOString() }
     await writeFile(join(evidenceRoot, 'installed-update.json'), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 })

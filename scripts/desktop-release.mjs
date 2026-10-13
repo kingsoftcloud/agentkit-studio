@@ -6,6 +6,7 @@ import { basename, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import YAML from 'yaml'
 import { resolveKs3ReleaseCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs'
+import { publishedDesktopMetadata } from '../src/desktop-release-metadata.mjs'
 
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
 const TARGET = 'mac-arm64'
@@ -134,6 +135,9 @@ async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviou
   const previous = expectedPreviousVersion === undefined ? undefined
     : await verifyFeed({ feedOrigin, selectedChannel, expectedVersion: expectedPreviousVersion, output: join(candidate.root, '.prepublish'), allowLoopback: false })
   const output = join(candidate.root, '.desktop-release')
+  await mkdir(output, { recursive: true })
+  const publishedFeed = join(output, `${selectedChannel}-mac.yml`)
+  await writeFile(publishedFeed, YAML.stringify(publishedDesktopMetadata(candidate.metadata, candidate.metadata.version)), { mode: 0o600 })
   const uploadRoot = `dsh-desk/bin/${TARGET}`
   const feedRoot = `dsh-desk/feeds/${TARGET}`
   const uploads = [
@@ -146,11 +150,13 @@ async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviou
   const uploaded = []
   for (const [filename, objectKey, contentType] of uploads) {
     uploaded.push(await uploadKs3ReleaseArtifact({ ...credentials, origin: feedOrigin, objectKey,
-      path: join(candidate.root, filename), contentType }))
+      path: filename === `${selectedChannel}-mac.yml` ? publishedFeed : join(candidate.root, filename), contentType }))
   }
   const evidence = await verifyFeed({ feedOrigin, selectedChannel, expectedVersion: candidate.metadata.version,
     expectedPreviousVersion, output: join(candidate.root, '.desktop-release'), allowLoopback: false })
-  return { ...evidence, previous: previous?.version, release: candidate.release, storage: 'ks3', uploaded }
+  const report = { ...evidence, previous: previous?.version, release: candidate.release, storage: 'ks3', uploaded }
+  await writeFile(join(output, 'publication.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 })
+  return report
 }
 
 function usage() {
