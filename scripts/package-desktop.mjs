@@ -1,7 +1,7 @@
 /** Run the official DSH package entry from a pinned, isolated source snapshot. */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -34,16 +34,28 @@ function run(command,args,cwd,env) {
   });
 }
 
+/** Windows cannot spawn a .cmd shim directly. Use the package manager's actual CLI. */
+export function packageManagerInvocation(platform, environment, script = environment.npm_execpath) {
+  if (platform !== 'win32') return { command: 'pnpm', args: [] };
+  if (!script || !isAbsolute(script) || !/\.(?:c?js|mjs|exe)$/i.test(script)) {
+    throw new Error('Windows packaging: run with pnpm exec node, or supply --pnpm-script with the absolute pnpm CLI path');
+  }
+  return /\.exe$/i.test(script) ? { command: script, args: [] } : { command: process.execPath, args: [script] };
+}
+
 export async function packageDesktop(options) {
   const {target,unsigned=false,directory=false,source,output,studioVersion,dshVersion}=options;
   const buildVersion=options.buildVersion ?? process.env.DSH_DESKTOP_BUILD_VERSION;
-  if (!['mac-arm64','mac-x64'].includes(target)) throw new Error('desktop packaging: unsupported target');
-  if (unsigned && (target!=='mac-arm64'||directory)) throw new Error('desktop packaging: local unsigned export requires a mac-arm64 image');
+  if (!['mac-arm64','mac-x64','win-x64'].includes(target)) throw new Error('desktop packaging: unsupported target');
+  if (unsigned && target !== 'win-x64' && (target!=='mac-arm64'||directory)) throw new Error('desktop packaging: local unsigned export requires a mac-arm64 image');
   const environment={...process.env};
+  const manager = packageManagerInvocation(process.platform, environment, options.pnpmScript);
+  const invoke = (args, cwd) => run(manager.command, [...manager.args, ...args], cwd, environment);
   return withDesktopCheckout(options,async checkout=>{
     const manifest=JSON.parse(await readFile(join(checkout,'package.json'),'utf8'));
     if(manifest.version!==dshVersion) throw new Error('desktop packaging: DSH version does not match source snapshot');
-    const settingsPath=join(checkout,'apps/desktop/.env.macos');
+    const settingsName=target==='win-x64'?'.env.windows':'.env.macos';
+    const settingsPath=join(checkout,'apps/desktop',settingsName);
     let copiedSettings=false;
     const inputs=await snapshotDesktopPluginInputs(environment.DSH_DESKTOP_PLUGIN_INPUTS,dirname(checkout));
     environment.DSH_DESKTOP_PLUGIN_INPUTS=inputs.value;
@@ -51,26 +63,26 @@ export async function packageDesktop(options) {
     try {
       // Signed builds retain the official file-owned configuration and relative credential semantics.
       // No profile, authentication directory or arbitrary ignored file enters the source snapshot.
-      if(!unsigned) {
+      if(!unsigned || target==='win-x64') {
         const sourceDirectory=join(resolve(source),'apps/desktop');
-        const settings=relocateReleaseSettings(await readFile(join(sourceDirectory,'.env.macos'),'utf8'),sourceDirectory);
+        const settings=relocateReleaseSettings(await readFile(join(sourceDirectory,settingsName),'utf8'),sourceDirectory);
         await mkdir(join(checkout,'apps/desktop'),{recursive:true});
         await writeFile(settingsPath,settings,{mode:0o600,flag:'wx'});
         copiedSettings=true;
       }
-      await run('pnpm',['install','--frozen-lockfile'],checkout,environment);
+      await invoke(['install','--frozen-lockfile'],checkout);
       // The official entrypoint owns the child environment and overwrites its
       // build-version variable. Its CLI argument is the authoritative input.
       const args=['--dir','apps/desktop','run','package',target,...unsigned?['--unsigned']:[],...directory?['--dir']:[],
         ...buildVersion===undefined?[]:['--build-version',buildVersion]];
-      if(unsigned) await rm(image,{force:true});
-      await run('pnpm',args,checkout,environment);
-      if(unsigned) {
+      if(unsigned && target!=='win-x64') await rm(image,{force:true});
+      await invoke(args,checkout);
+      if(unsigned && target!=='win-x64') {
         const result=await exportLocalDmg({source:image,output,studioVersion,dshVersion});
         console.log(`Studio unsigned DMG: ${result.path}\nSHA256: ${result.sha256}\nBytes: ${result.bytes}`);
         return result;
       }
-      const artifacts=join(checkout,`apps/desktop/.desktop-build/targets/${target}/artifacts`);
+      const artifacts=join(checkout,`apps/desktop/.desktop-build/targets/${target}/${unsigned?'unsigned-artifacts':'artifacts'}`);
       console.log(`Official desktop artifacts: ${artifacts}`);
       return {artifacts};
     } finally {
@@ -105,8 +117,8 @@ export async function verifyDesktopPackageInputs(options) {
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
-  const {values}=parseArgs({options:Object.fromEntries(['source','output','patches','commit','target','studio-version','dsh-version','build-version'].map(key=>[key,{type:'string'}]).concat([['unsigned',{type:'boolean'}],['directory',{type:'boolean'}],['preflight',{type:'boolean'}]]))});
-  const options = {...values,studioVersion:values['studio-version'],dshVersion:values['dsh-version'],buildVersion:values['build-version']};
+  const {values}=parseArgs({options:Object.fromEntries(['source','output','patches','commit','target','studio-version','dsh-version','build-version','pnpm-script'].map(key=>[key,{type:'string'}]).concat([['unsigned',{type:'boolean'}],['directory',{type:'boolean'}],['preflight',{type:'boolean'}]]))});
+  const options = {...values,studioVersion:values['studio-version'],dshVersion:values['dsh-version'],buildVersion:values['build-version'],pnpmScript:values['pnpm-script']};
   if (values.preflight) {
     const result = await verifyDesktopPackageInputs(options);
     console.log(`Desktop package preflight passed in isolated checkout: ${result.checkout}`);

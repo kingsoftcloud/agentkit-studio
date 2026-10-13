@@ -62,6 +62,8 @@ cloud-identity:
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package desktop-package-mac-arm64-unsigned ci clean
 
+.PHONY: desktop-package-win-x64 desktop-package-win-x64-unsigned
+
 check:
 	pnpm check
 
@@ -245,6 +247,13 @@ desktop-package-mac-x64: desktop-package-preflight
 desktop-package-mac-x64-dir: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)
 	$(DESKTOP_ENV) $(DESKTOP_PACKAGE) --target mac-x64 --directory
+
+# Use Git Bash on Windows; the wrapper invokes the actual pnpm CLI without a CMD shell.
+desktop-package-win-x64: desktop-package-preflight
+	$(DESKTOP_ENV) pnpm exec $(DESKTOP_PACKAGE) --target win-x64
+
+desktop-package-win-x64-unsigned: desktop-package-preflight
+	$(DESKTOP_ENV) pnpm exec $(DESKTOP_PACKAGE) --target win-x64 --unsigned
 
 desktop-check-package:
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS package checks must run on macOS" >&2; exit 2)

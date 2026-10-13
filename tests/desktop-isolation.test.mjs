@@ -94,6 +94,34 @@ test('CI build version reaches the official package CLI instead of being lost in
   assert.deepEqual(recorded[1],['--dir','apps/desktop','run','package','mac-arm64','--build-version','0.2.0-rc.2.20261012.0']);
 });
 
+test('Windows target reads its own settings and delegates NSIS packaging to DSH', async t => {
+  const input=await fixture(t);
+  const bin=join(input.root,'bin'); await mkdir(bin);
+  const calls=join(input.root,'windows-calls.jsonl');
+  await writeFile(join(bin,'pnpm'),`#!${process.execPath}\nimport('node:fs').then(fs=>fs.appendFileSync(process.env.PACKAGE_CALLS,JSON.stringify({args:process.argv.slice(2),settings:fs.readFileSync('apps/desktop/.env.windows','utf8')})+'\\n'));\n`,{mode:0o755});
+  await mkdir(join(input.source,'apps/desktop'),{recursive:true});
+  await writeFile(join(input.source,'apps/desktop/.env.windows'),'DSH_DESKTOP_WINDOWS_SIGNING_MODE=certificate-store\n');
+  const {promisify}=await import('node:util'); const {execFile}=await import('node:child_process');
+  await promisify(execFile)(process.execPath,['scripts/package-desktop.mjs',
+    '--source',input.source,'--output',input.output,'--patches',input.patches,'--commit',input.commit,
+    '--target','win-x64','--dsh-version','0.2.0-rc.2','--studio-version','0.0.2','--build-version','0.2.0-rc.2.20261013.20'],{
+    env:{...process.env,PATH:`${bin}:${process.env.PATH}`,PACKAGE_CALLS:calls,DSH_DESKTOP_PLUGIN_INPUTS:''},
+  });
+  const recorded=(await readFile(calls,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(recorded[1].args,['--dir','apps/desktop','run','package','win-x64','--build-version','0.2.0-rc.2.20261013.20']);
+  assert.match(recorded[1].settings,/SIGNING_MODE='certificate-store'/);
+  const checkout=await prepareDesktopCheckout(input);
+  await assert.rejects(access(join(checkout,'apps/desktop/.env.windows')),'release identity must be removed after packaging');
+});
+
+test('Windows package manager runs the real CLI without shell expansion', async () => {
+  const {packageManagerInvocation}=await import('../scripts/package-desktop.mjs');
+  const script=join(tmpdir(),'pnpm tool/bin/pnpm.cjs');
+  assert.deepEqual(packageManagerInvocation('win32',{npm_execpath:script}),{command:process.execPath,args:[script]});
+  assert.throws(()=>packageManagerInvocation('win32',{}),/pnpm exec node/);
+  assert.throws(()=>packageManagerInvocation('win32',{npm_execpath:'pnpm.cmd'}),/absolute/);
+});
+
 test('plugin inputs are frozen before a second pack replaces the shared version file', async t => {
   const input=await fixture(t);
   const {snapshotDesktopPluginInputs}=await import('../scripts/desktop-plugin-inputs.mjs');
