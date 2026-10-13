@@ -1,6 +1,6 @@
 /** Reuse signed Windows bytes only after checking their original build and transport digest. */
 import { execFile } from 'node:child_process';
-import { promisify, parseArgs } from 'node:util';
+import { promisify, parseArgs, stripVTControlCharacters } from 'node:util';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -19,7 +19,9 @@ const job=jobs.jobs.find(value=>value.name==='windows-x64');
 for(const name of ['Verify immutable Studio source','Package the official DSH Windows target','Verify timestamped installer and actual installation']) {
  if(job?.steps.find(step=>step.name===name)?.conclusion!=='success')throw Error(`Original candidate has not passed ${name}`);
 }
-const logs=(await execute('gh',['api',`repos/${repository}/actions/jobs/${job.id}/logs`],{maxBuffer:32*1024*1024})).stdout;
+let logs;
+try { logs=stripVTControlCharacters((await execute('gh',['api','--allow-escape-sequences',`repos/${repository}/actions/jobs/${job.id}/logs`],{maxBuffer:32*1024*1024})).stdout); }
+catch { throw Error('Original candidate job logs could not be read safely'); }
 const sources=[...new Set([...logs.matchAll(/\bSTUDIO_SHA:\s*([0-9a-f]{40})\b/g)].map(value=>value[1]))];
 const versions=[...new Set([...logs.matchAll(/\bBUILD_VERSION:\s*([0-9A-Za-z.-]+)/g)].map(value=>value[1]))];
 if(sources.length!==1||sources[0]!==source||versions.length!==1||versions[0]!==version)throw Error('Candidate source or version differs from the original immutable build');
