@@ -20,8 +20,16 @@ try {
   const version=await app.evaluate(({app:electronApp})=>electronApp.getVersion());
   if (version!==expectedVersion) throw new Error('Installed Electron version differs from release input');
   const body=await page.locator('body').innerText();
-  const onboardingVisible=/凭证引导|配置模型|模型与凭证|Model.*credential|Set up.*model/i.test(body);
+  const guide=page.locator('.agentkit-credential-onboarding-content');
+  await expect(guide).toBeVisible({timeout:120000});
+  const onboardingVisible=true;
   await page.screenshot({path:join(evidence,'windows-installed-ui.png'),fullPage:true});
+  await page.getByRole('button',{name:'跳过本次',exact:true}).click();
+  await expect(page.getByRole('button',{name:/^(新建会话|New session|New chat)$/})).toBeVisible({timeout:120000});
+  await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
+  await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
+  await expect(page.getByText(expectedVersion,{exact:true})).toBeVisible({timeout:30000});
+  await page.screenshot({path:join(evidence,'windows-version-settings.png'),fullPage:true});
   await writeFile(join(evidence,'windows-installed-ui.json'),JSON.stringify({version,actualInstalledApp:true,windowTitle:await page.title(),onboardingVisible},null,2));
   const receiptPath=join(evidence,'windows-install.json');
   const receipt=JSON.parse(await readFile(receiptPath,'utf8'));

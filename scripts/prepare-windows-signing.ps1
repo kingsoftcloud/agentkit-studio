@@ -15,6 +15,7 @@ Export-Certificate -Cert $cert -FilePath $publicCertificate -Type CERT | Out-Nul
 $settings = @{
   DSH_DESKTOP_APP_ID = 'com.kingsoftcloud.agentkit-studio'
   DSH_DESKTOP_AUTO_UPDATE_ENV = 'production'
+  DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN = $uri.GetLeftPart([UriPartial]::Authority)
   DSH_DESKTOP_UPDATE_ORIGIN = $uri.GetLeftPart([UriPartial]::Authority)
   DSH_DESKTOP_UPDATE_CHANNEL = $Channel
   DSH_DESKTOP_WINDOWS_SIGNING_MODE = 'certificate-store'
