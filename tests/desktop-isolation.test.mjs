@@ -122,6 +122,14 @@ test('Windows package manager runs the real CLI without shell expansion', async 
   assert.throws(()=>packageManagerInvocation('win32',{npm_execpath:'pnpm.cmd'}),/absolute/);
 });
 
+test('Windows action-setup installation resolves pnpm even when exec omits npm_execpath', async t => {
+  const root=await mkdtemp(join(tmpdir(),'studio-win-pnpm-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const packageRoot=join(root,'node_modules/pnpm');await mkdir(packageRoot,{recursive:true});
+  await writeFile(join(packageRoot,'package.json'),JSON.stringify({name:'pnpm',bin:{pnpm:'bin/pnpm.mjs'}}));
+  const {packageManagerInvocation}=await import('../scripts/package-desktop.mjs');
+  assert.deepEqual(packageManagerInvocation('win32',{PNPM_HOME:join(root,'node_modules/.bin')}),{command:process.execPath,args:[join(packageRoot,'bin/pnpm.mjs')]});
+});
+
 test('plugin inputs are frozen before a second pack replaces the shared version file', async t => {
   const input=await fixture(t);
   const {snapshotDesktopPluginInputs}=await import('../scripts/desktop-plugin-inputs.mjs');
