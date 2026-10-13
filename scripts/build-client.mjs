@@ -8,6 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fragments = [
   '01-loader-and-primitives.js',
   '02-credential-onboarding.js',
+  '02-start-checks.js',
   '02-overview-and-selector.js',
   '02-native-authoring.js',
   '02-codex-tool-nodes.js',
@@ -18,6 +19,7 @@ const fragments = [
   '06-schedule-delivery.js',
   '06-automation-and-operations.js',
   '07-channels-and-shell.js',
+  '07-form-styles.js',
   '08-settings-and-entry.js',
 ];
 const sources = await Promise.all(fragments.map(name => readFile(resolve(root, 'src/client-fragments', name), 'utf8')));

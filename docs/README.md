@@ -11,3 +11,5 @@
 - [Public release checks](public-release-boundary.md) and [repository mirrors](branch-sync.md).
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for validation and pull requests.
+
+- [Start checks](start-checks.md): read-only configuration checks and the meaning of confirmed, missing and unknown.
