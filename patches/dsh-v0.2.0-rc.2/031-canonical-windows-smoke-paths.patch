@@ -1,0 +1,43 @@
+diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
+index 1ad5e6fabf..790c7bae2e 100644
+--- a/apps/desktop/scripts/smoke-runtime.ts
++++ b/apps/desktop/scripts/smoke-runtime.ts
+@@ -1,6 +1,6 @@
+ /** Boot the materialized target runtime without access to a user's Harness profile. */
+ 
+-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ import { execFile } from 'node:child_process'
+@@ -23,7 +23,7 @@ import type { DesktopRuntimeDescriptor } from '../src/runtime-tree.ts'
+ export async function smokeDesktopRuntime(
+   root: string, node: string, runtime: DesktopRuntimeDescriptor, environment: NodeJS.ProcessEnv, resourcesRuntime: string,
+ ): Promise<void> {
+-  const home = mkdtempSync(join(tmpdir(), 'dsh-desktop-smoke-'))
++  const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-desktop-smoke-')))
+   const profile = join(home, 'profiles', 'desktop')
+   const host = new DesktopHostProcess(node, root, profile, undefined, { ...environment, DSH_HOME: home },
+     undefined, join(resourcesRuntime, 'primary-runtime'),
+diff --git a/apps/desktop/scripts/windows-smoke-application.mjs b/apps/desktop/scripts/windows-smoke-application.mjs
+index d1ebf68010..4ff174022f 100644
+--- a/apps/desktop/scripts/windows-smoke-application.mjs
++++ b/apps/desktop/scripts/windows-smoke-application.mjs
+@@ -1,5 +1,5 @@
+ /** Exercise the signed Windows app at an install-sized path, away from deep build directories. */
+-import { cp, mkdtemp, rm } from 'node:fs/promises'
++import { cp, mkdtemp, realpath, rm } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ 
+@@ -11,7 +11,9 @@ import { join } from 'node:path'
+  * @returns {Promise<T>} Acceptance result after teardown.
+  */
+ export async function withWindowsSmokeApplication(application, action) {
+-  const root = await mkdtemp(join(tmpdir(), 'dsh-app-'))
++  // Windows TEMP can use an 8.3 alias while runtime peer resolution uses its long path.
++  // Pass one canonical installation path to Electron so module identities remain shared.
++  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-app-')))
+   try {
+     const installed = join(root, 'app')
+     // LibreOffice's native directory enumeration still observes MAX_PATH.
