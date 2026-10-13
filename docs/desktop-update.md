@@ -1,6 +1,6 @@
 # AgentKit Studio Desktop 更新
 
-新的下载目录为 `https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/<版本号>/`，其中 DMG、ZIP 和 blockmap 使用固定的 `AgentKit-Studio-mac-arm64` 文件名。更新索引放在 `studio/feeds/mac-arm64/`；同时保留 DSH 原生 `dsh-desk/feeds/mac-arm64/` 索引入口。旧 `ksadk` Bucket 只维护过渡索引，指向新 Bucket 的同一份签名文件，不再复制新版本的安装包。
+新的下载目录为 `https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/<版本号>/`，其中 DMG、ZIP 和 blockmap 使用固定的 `AgentKit-Studio-mac-arm64` 文件名。更新索引放在 `studio/feeds/mac-arm64/`；同时保留同一 Bucket 下 DSH 原生 `dsh-desk/feeds/mac-arm64/` 索引入口。不再发布旧 `ksadk` Bucket 的过渡索引。内置旧源的安装版需要手动安装一次新版 DMG。
 
 发布默认选择 `release_layout=studio`、`storage_origin=https://agentkit.ks3-cn-beijing.ksyuncs.com`、`update_mode=incremental`。需要推送全量更新时，使用递增的新版本号并设置 `update_mode=full`：签名 ZIP 发布在该版本的 `full/` 子目录，该路径不发布 blockmap，官方 updater 会回退到完整 ZIP 下载，仍核对签名和 SHA-512。普通目录中保留该版本的 blockmap，使下次增量发布可以复用这次完整下载的 ZIP 缓存。无需清理用户会话、配置或重装。
 
@@ -19,6 +19,10 @@ DSH_DESKTOP_UPDATE_CHANNEL=preview
 `DSH_DESKTOP_UPDATE_CHANNEL` 只用于产品发布的 `stable` 或 `preview` lane。未指定时，DSH 旧测试夹具仍使用 `nightly`，生产配置必须显式填写 Stable 或 Preview。更新源必须是 HTTPS origin；更新凭据和 KS3 配置不进入仓库。
 
 macOS 包含 DMG、ZIP 和 ZIP blockmap。DMG 用于安装，Electron updater 通过 ZIP 及 blockmap 做增量下载；下载完成后仍由用户确认重启安装。首次检查、定时检查、下载进度、签名校验和 `quitAndInstall` 都由官方 updater coordinator 完成。
+
+真实 macOS 重启验收使用 `verify-desktop-installed-update.mjs --native-profile`，沿用正常安装的 Electron 和 DSH 数据目录。Squirrel/LaunchServices 不继承临时的 `DSH_HOME` 和 `--user-data-dir`；自定义隔离目录只能用于启动、工具和界面验证，不能凭原文件仍在就认定重启保留通过。通过 `--retain-session-title` 指定专用验收会话，必须在实际自动重启后的会话栏看到它，同时核对会话文件、应用签名和完整 Studio 包摘要。Host 状态页和会话页分别保存真实 AX 与截图，不重新手动启动后继进程。
+
+2026-10-13 Mac `.23`（源码 `b8ee6be7910d0a9f6fc48bb963d41e4430d5c5f4`）已通过签名、公证、本地 Gatekeeper 和真实 Codex 文件交付验收：SVG/PNG 落盘、会话交付卡片、内嵌 PNG 和右侧预览均已确认。该版已发布到新 Bucket，当前 feed 使用 `full` 模式；[下载签名 DMG](https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/0.2.0-rc.2.20261013.23/AgentKit-Studio-mac-arm64.dmg)。`.22` 的真实更新提示及全量下载已确认；增量下载、正常目录的数据保留及前向回滚仍需独立的安装验收结果。
 
 KS3 的多段 Range 会返回 416。`022-ks3-single-range-updates.patch` 在签名前把官方 Generic Provider 的 `useMultipleRangeRequest: false` 写入 `app-update.yml`，改用官方单段 Range 差分下载。首次通过 DMG 安装且没有旧 ZIP 缓存时，官方 updater 可能先下载整包；完成一次更新后会保留 ZIP，供后续差分使用。
 

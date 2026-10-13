@@ -4,7 +4,7 @@ import { createReadStream } from 'node:fs'
 import { mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import asar from '@electron/asar'
 import { createHash } from 'node:crypto'
 import { parseArgs } from 'node:util'
@@ -79,6 +79,7 @@ async function main() {
     'expected-studio-package-sha256': { type: 'string' },
     layout: { type: 'string' }, 'storage-origin': { type: 'string' }, 'require-full': { type: 'boolean' }, 'updater-cache': { type: 'string' },
     'successor-observation': { type: 'string' }, 'user-data-dir': { type: 'string' },
+    'native-profile': { type: 'boolean' }, 'retain-session-title': { type: 'string', multiple: true },
   } })
   const dmg = values.app ? undefined : required(values.dmg, '--dmg')
   const feedOrigin = required(values.origin, '--origin')
@@ -91,8 +92,14 @@ async function main() {
   const root = await (await import('node:fs/promises')).mkdtemp(join(tmpdir(), 'agentkit-studio-installed-'))
   const mount = join(root, 'mount')
   const install = values.app ? resolve(values.app) : join(root, 'AgentKit Studio.app')
-  const userData = values['user-data-dir'] ? resolve(values['user-data-dir']) : join(root, 'user-data')
-  const harnessHome = values['data-home'] ? resolve(values['data-home']) : join(root, 'dsh-home')
+  // Squirrel/LaunchServices restarts without command-line flags or inherited env.
+  // Qualification of a real distribution must use the same native directories on both sides.
+  if (values['native-profile'] && (values['user-data-dir'] || values['data-home'])) throw new Error('--native-profile cannot be combined with custom data directories')
+  const userData = values['native-profile'] ? join(homedir(), 'Library/Application Support/@deepseek-ai/dsh-desktop')
+    : values['user-data-dir'] ? resolve(values['user-data-dir']) : join(root, 'user-data')
+  const harnessHome = values['native-profile'] ? join(homedir(), '.dsh')
+    : values['data-home'] ? resolve(values['data-home']) : join(root, 'dsh-home')
+  const retainedSessionTitles = values['retain-session-title'] || []
   const journals = join(evidenceRoot, 'journals')
   await mkdir(userData, { recursive: true }); await mkdir(harnessHome, { recursive: true }); await mkdir(journals, { recursive: true })
   const markerPath = join(harnessHome, `p1-1-marker-${process.pid}.txt`)
@@ -125,7 +132,7 @@ async function main() {
   // Electron's early single-instance setup requires this option as one argument.
   // Use an isolated profile for existing bundles too, unless an explicit retained
   // profile was supplied for consecutive update and rollback qualification.
-  const args = [`--user-data-dir=${userData}`]
+  const args = values['native-profile'] ? [] : [`--user-data-dir=${userData}`]
   const child = spawn(executable, args, { env: { ...process.env, DSH_HOME: harnessHome, DSH_DESKTOP_UPDATE_JOURNAL_DIR: journals }, stdio: ['ignore', log.fd, log.fd], detached: true })
   await writeFile(join(evidenceRoot, 'run.json'), JSON.stringify({ root, install, userData, harnessHome, pid: child.pid, before, targetVersion, markerPath, journals, logPath }, null, 2))
   console.log(`Real app launched at ${install}; use its visible update controls to download and restart. Evidence: ${evidenceRoot}`)
@@ -142,8 +149,8 @@ async function main() {
         const events = (await readFile(join(journals, name), 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
         if (events.some(event => event.version === targetVersion && event.event === 'workspace-ready')) restarted = true
       }
-      if (restarted) { successorReadiness = { kind: 'successor-workspace-journal' }; break }
-      successorReadiness = await observeInstalledSuccessor({ file: values['successor-observation'] || join(evidenceRoot, 'successor-ui.json'), install, originalPid: child.pid, installedAt })
+      if (restarted && !retainedSessionTitles.length) { successorReadiness = { kind: 'successor-workspace-journal' }; break }
+      successorReadiness = await observeInstalledSuccessor({ file: values['successor-observation'] || join(evidenceRoot, 'successor-ui.json'), install, originalPid: child.pid, installedAt, retainedSessionTitles })
       if (successorReadiness) { restarted = true; break }
       await new Promise(done => setTimeout(done, 1000))
     }
@@ -188,7 +195,7 @@ async function main() {
     }
     const report = { schemaVersion: 1, accepted: true, realElectron: true, appId, appName, before, after,
       restarted: true, successorReadiness, signatureVerifiedAfter: true, differential, fullDownload, verifiedCache, transfers, logPath,
-      retainedFiles,
+      retainedFiles, retainedSessionTitles,
       targetVersion, origin: feedOrigin, channel: selectedChannel, dataRetained: true, journalEvents: [...journalEvents].sort(), journals: journalEvidence, installedApp: install,
       completedAt: new Date().toISOString() }
     await writeFile(join(evidenceRoot, 'installed-update.json'), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 })
