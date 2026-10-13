@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
+import { createZip } from '../src/zip.mjs';
 
 test('artifact verification examines the native ZIP when an Actions transport ZIP coexists', async t => {
   const root = await mkdtemp(join(tmpdir(), 'studio-artifact-selection-'));
@@ -14,7 +15,7 @@ test('artifact verification examines the native ZIP when an Actions transport ZI
   await writeFile(join(root, app, 'app.asar'), 'archive membership fixture');
   await writeFile(join(root, 'actions-artifact.zip'), 'transport container, not a native App ZIP');
   await writeFile(join(root, 'studio.dmg'), 'DMG path fixture');
-  execFileSync('zip', ['-qr', 'studio.zip', 'AgentKit Studio.app'], {cwd:root});
+  await writeFile(join(root, 'studio.zip'), createZip([{name:app+'/app.asar',data:Buffer.from('archive membership fixture')}]));
   await writeFile(join(root, 'studio.zip.blockmap'), gzipSync(JSON.stringify({version:'2',files:[{name:'fixture'}]})));
   const command = resolve('scripts/verify-desktop-artifact.mjs');
   const result = JSON.parse(execFileSync(process.execPath, [command, root], {encoding:'utf8'}));
