@@ -6,21 +6,34 @@ const identity = tool => [tool.type, tool.namespace || '', tool.name || ''];
 const alias = tool => `studio_${createHash('sha256').update(JSON.stringify(identity(tool))).digest('hex').slice(0, 32)}`;
 
 export function prepareCodexProxyRequest(input) {
-  const request = structuredClone(input), specs = new Map(), tools = [];
-  const register = tool => { const name = alias(tool); specs.set(name, tool); return name; };
+  const request = structuredClone(input), specs = new Map(), declared = new Map(), tools = [];
+  const register = (tool, declaration = false) => {
+    const name = alias(tool); specs.set(name, tool);
+    if (declaration) declared.set(name, tool);
+    return name;
+  };
+  const resolve = name => {
+    if (specs.has(name)) return specs.get(name);
+    // Compatible models sometimes use the native name from Codex's instructions
+    // instead of the gateway alias. Accept only one explicitly declared identity;
+    // equal names in different namespaces must remain ambiguous.
+    const matches = [...declared.values()].filter(tool => tool.name === name
+      || (tool.namespace && `${tool.namespace}.${tool.name}` === name));
+    return matches.length === 1 ? matches[0] : undefined;
+  };
   const add = (tool, namespace) => {
     if (tool.type === 'namespace') {
       for (const child of tool.tools || tool.children || []) add(child, tool.name);
     } else if (tool.type === 'function' || tool.type === 'custom') {
       const spec = { ...tool, ...(namespace ? { namespace } : {}) };
-      const name = register(spec);
+      const name = register(spec, true);
       const description = `Tool: ${[spec.namespace, spec.name].filter(Boolean).join('.')}\n${tool.description || ''}`;
       tools.push(tool.type === 'custom' ? { type: 'function', name,
         description: `${description}\nPass the original tool input verbatim in the input string. ${tool.format ? JSON.stringify(tool.format) : ''}`,
         parameters: { type: 'object', properties: { input: { type: 'string' } }, required: ['input'], additionalProperties: false },
       } : { ...tool, name, description });
     } else if (tool.type === 'tool_search') {
-      const name = register({ type: 'tool_search', name: 'tool_search' });
+      const name = register({ type: 'tool_search', name: 'tool_search' }, true);
       tools.push({ type: 'function', name, description: 'Find available tools and load their definitions.', parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer' } }, required: ['query'] } });
     } else tools.push(tool); // The shared converter explicitly rejects unsupported server tools.
   };
@@ -40,11 +53,11 @@ export function prepareCodexProxyRequest(input) {
   }
   return {
     request,
-    has: name => specs.has(name),
-    isCustom: name => specs.get(name)?.type === 'custom',
+    has: name => Boolean(resolve(name)),
+    isCustom: name => resolve(name)?.type === 'custom',
     restore(item, partial = false) {
       if (item.type !== 'function_call') return item;
-      const spec = specs.get(item.name);
+      const spec = resolve(item.name);
       if (!spec) throw fail('模型返回了未声明的工具，无法还原 Codex 工具调用。');
       if (spec.type === 'custom') {
         let input = '';

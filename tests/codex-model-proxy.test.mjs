@@ -7,6 +7,35 @@ import { responsesToChat, chatToResponses, createResponsesStreamTransformer } fr
 const events = wire => wire.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
 const profile = { baseUrl: 'https://chat.example/v1', apiKey: 'upstream-secret', modelName: 'bound-model' };
 
+test('streaming native tool names resolve only to uniquely declared Codex tools', () => {
+  const context = prepareCodexProxyRequest({ tools: [
+    { type: 'namespace', name: 'functions', tools: [{ type: 'function', name: 'exec_command' }] },
+    { type: 'function', name: 'dsh_present' },
+  ] });
+  const stream = createResponsesStreamTransformer({ toolContext: context });
+  const wire = stream.handle({ choices: [{ delta: { tool_calls: [
+    { index: 0, id: 'cmd', function: { name: 'exec_command', arguments: '{"cmd":"pwd"}' } },
+    { index: 1, id: 'present', function: { name: 'dsh_present', arguments: '{"files":[]}' } },
+  ] }, finish_reason: 'tool_calls' }] }) + stream.finish();
+  const completed = events(wire).find(event => event.type === 'response.completed').response;
+  assert.equal(completed.output[0].name, 'exec_command');
+  assert.equal(completed.output[0].namespace, 'functions');
+  assert.equal(completed.output[1].name, 'dsh_present');
+  assert.throws(() => context.restore({ type: 'function_call', name: 'undeclared', arguments: '{}' }), { code: 'CODEX_TOOL_CONVERSION_FAILED' });
+});
+
+test('canonical tool names cannot select an ambiguous namespace or gain permission from history', () => {
+  const context = prepareCodexProxyRequest({ tools: [
+    { type: 'namespace', name: 'files', tools: [{ type: 'function', name: 'lookup' }] },
+    { type: 'namespace', name: 'web', tools: [{ type: 'function', name: 'lookup' }] },
+  ], input: [{ type: 'function_call', name: 'old_tool', call_id: 'old', arguments: '{}' }] });
+  assert.throws(() => context.restore({ type: 'function_call', name: 'lookup', arguments: '{}' }), { code: 'CODEX_TOOL_CONVERSION_FAILED' });
+  assert.throws(() => context.restore({ type: 'function_call', name: 'old_tool', arguments: '{}' }), { code: 'CODEX_TOOL_CONVERSION_FAILED' });
+  const restored = context.restore({ type: 'function_call', name: 'files.lookup', arguments: '{}' });
+  assert.equal(restored.namespace, 'files');
+  assert.equal(restored.name, 'lookup');
+});
+
 test('Codex proxy preserves namespace, custom tool input, reasoning and multi-round tool history', () => {
   const definitions = [{ type: 'namespace', name: 'files', tools: [{ type: 'function', name: 'lookup', parameters: { type: 'object' } }] },
     { type: 'custom', name: 'apply_patch', format: { type: 'text' } }];
