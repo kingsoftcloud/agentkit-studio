@@ -74,7 +74,7 @@ test('missing or canceled DSH image reads fail before a model call; offloaded im
 test('a bound Codex image-only turn receives image bytes while empty turns keep a typed error', async t => {
   const agentId = 'codex-image-agent', sessionId = 'codex-image-session';
   t.after(() => unbindDshAgentRoutes(agentId));
-  bindDshAgentRoute(sessionId, { agentId, runtime: 'codex', local: true });
+  bindDshAgentRoute(sessionId, { agentId, runtime: 'codex', local: true, agent: { session: { header: { cwd: '/tmp/dsh-session-workspace' } } } });
   let call;
   const adapter = createDshRuntimeAdapter({
     attachments: { readImageRequest: async () => ({ data: Uint8Array.of(1, 2, 3), mediaType: 'image/png' }) },
@@ -82,5 +82,13 @@ test('a bound Codex image-only turn receives image bytes while empty turns keep 
   });
   for await (const _chunk of adapter.stream({ sessionId, messages: [{ role: 'user', content: [image] }] })) {}
   assert.equal(call.input, ''); assert.deepEqual(call.imageInputs, [wireImage.image_url.url]);
+  assert.equal(call.cwd, '/tmp/dsh-session-workspace');
   await assert.rejects(async () => { for await (const _chunk of adapter.stream({ sessionId, messages: [{ role: 'user', content: [] }] })) {} }, { code: 'STUDIO_INPUT_REQUIRED' });
+});
+
+test('Codex cannot silently substitute a temporary directory for a DSH session without cwd', async () => {
+  const adapter = createDshRuntimeAdapter({ codexRuntime: { async *stream() { assert.fail('native child must not start'); } } });
+  await assert.rejects(async () => {
+    for await (const _ of adapter.stream({ model: 'local:codex-agent', studioRuntime: 'codex', agent: { session: { header: {} } }, messages: [{ role: 'user', content: 'write file' }] })) {}
+  }, { code: 'CODEX_WORKSPACE_UNAVAILABLE' });
 });

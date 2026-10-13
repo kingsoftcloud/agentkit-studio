@@ -47,6 +47,26 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   ]);
 });
 
+test('Codex child and thread use each DSH session workspace without leaking it to another turn', async () => {
+  const spawned = [], threads = [];
+  const runtime = createCodexRuntime({ cwd: '/tmp/default-workspace', spawnImpl: (_exe, _args, options) => {
+    spawned.push(options.cwd);
+    const child = fakeSpawn(), write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => {
+      const request = JSON.parse(String(data));
+      if (request.method === 'thread/start') threads.push(request.params.cwd);
+      return write(data, ...args);
+    };
+    return child;
+  } });
+  for (const cwd of ['/tmp/workspace-a', '/tmp/workspace-b']) {
+    for await (const _chunk of runtime.stream({ input: 'write in this workspace', cwd })) {}
+  }
+  assert.deepEqual(spawned, ['/tmp/workspace-a', '/tmp/workspace-b']);
+  assert.deepEqual(threads, spawned);
+  await assert.rejects(async () => { for await (const _ of runtime.stream({ input: 'invalid', cwd: '../relative' })) {} }, { code: 'CODEX_WORKSPACE_INVALID' });
+});
+
 test('Codex image-only input reaches turn/start as native image input without invented text', async () => {
   let turnInput;
   const runtime = createCodexRuntime({ spawnImpl: () => {

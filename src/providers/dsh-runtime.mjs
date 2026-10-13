@@ -558,6 +558,10 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         const history = await gatewayHistory(options.messages, { attachments, signal: options.signal });
         const content = [...history].reverse().find(message => message.role === 'user')?.content || input;
         if (runtime === 'codex') {
+          // DSH persists the selected workspace on the official Session header;
+          // its Codex subagent uses this same seam. Keep it scoped to this turn.
+          const cwd = toolAgent?.session?.header?.cwd;
+          if (toolAgent && !cwd) throw Object.assign(new Error('DSH 会话未提供 Codex 工作目录，请重新选择工作区'), { code: 'CODEX_WORKSPACE_UNAVAILABLE' });
           const selection = { provider: options.provider, model: options.studioSelectedModel || options.studioCodexModel || options.model };
           const selected = options.provider && options.provider !== CODEX_PROVIDER
             ? await (typeof resolveCodexModel === 'function' ? resolveCodexModel(selection) : Promise.reject(Object.assign(new Error('此模型提供商未配置 Codex 接口，请在模型设置中检查配置。'), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' })))
@@ -598,6 +602,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           try {
             yield* codexFrames(codexRuntime, {
               agentId,
+              ...(cwd ? { cwd } : {}),
               ...selected,
               sessionId: String(options.sessionId || ''),
               input,

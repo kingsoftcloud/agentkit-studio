@@ -10,6 +10,7 @@
 import { resolveCodexCommand } from './codex-command.mjs';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { isAbsolute } from 'node:path';
 import { createCodexUsageCounter } from './codex-usage.mjs';
 import { createCodexModelProxy } from './codex-model-proxy.mjs';
 import { codexItemToolChunk, createCodexCommandFallback } from './codex-tool-events.mjs';
@@ -145,7 +146,9 @@ export function createCodexRuntime(options = {}) {
   const runtime = {
     executable,
     cwd,
-    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider } = {}) {
+    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, cwd: requestedCwd } = {}) {
+      const cwd = String(requestedCwd ?? runtime.cwd);
+      if (!isAbsolute(cwd)) throw new CodexRuntimeError('CODEX_WORKSPACE_INVALID', 'Codex 工作目录必须是绝对路径');
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
       const prompt = String(input || '').trim();
       if (!prompt && !imageInputs.length) throw new CodexRuntimeError('CODEX_INPUT_INVALID', 'Codex 输入不能为空');

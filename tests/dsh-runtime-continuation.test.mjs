@@ -13,7 +13,7 @@ async function selectPreset(runtime, sessionId, buildId) {
     tools: { schemas: () => [], execute: async () => ({}) },
     on: (name, callback) => { listeners.set(name, callback); return () => {}; },
   }, { agentId: 'frozen-agent', runtime, local: true, buildId, ...(runtime === 'codex' ? {} : { agentRevision: 1 }) });
-  await listeners.get('agent/request')({ agent: { id: sessionId } }, async () => prompt);
+  await listeners.get('agent/request')({ agent: { id: sessionId, session: { header: { cwd: '/tmp/frozen-session-workspace' } } } }, async () => prompt);
 }
 
 test('Host transport routes only the selected Session, never another preset or title generation', async t => {
