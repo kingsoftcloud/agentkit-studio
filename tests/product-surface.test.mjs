@@ -299,9 +299,9 @@ test('host-facing settings use product-neutral Studio Host wording', () => {
 test('Studio owns the browser favicon and uses line icons for product panels', () => {
   assert.match(clientSource, /adoptProductDocumentBrand/);
   assert.match(clientSource, /agentkit-studio: document favicon/);
-  assert.match(clientSource, /const STUDIO_MARK_COLOR = '#0aa6a6'/);
-  assert.match(clientSource, /fill: STUDIO_MARK_COLOR/);
-  assert.match(clientSource, /stroke: STUDIO_MARK_COLOR/);
+  assert.match(clientSource, /const STUDIO_MARK_BODY = '__AGENTKIT_STUDIO_MARK_BODY__'/);
+  assert.match(clientSource, /dangerouslySetInnerHTML: \{ __html: STUDIO_MARK_BODY \}/);
+  assert.match(clientSource, /encodeURIComponent\(STUDIO_MARK_SVG\)/);
   assert.match(clientSource, /studio-overview/);
   assert.match(clientSource, /studio-resources/);
   assert.match(clientSource, /const knowledgeBaseCount = platformCount/);

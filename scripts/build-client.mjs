@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transform } from 'esbuild';
+import { AGENTKIT_STUDIO_MARK_BODY, AGENTKIT_STUDIO_MARK_SVG } from '../src/brand.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fragments = [
@@ -20,7 +21,9 @@ const fragments = [
   '08-settings-and-entry.js',
 ];
 const sources = await Promise.all(fragments.map(name => readFile(resolve(root, 'src/client-fragments', name), 'utf8')));
-const source = sources.join('\n');
+const source = sources.join('\n')
+  .replaceAll("'__AGENTKIT_STUDIO_MARK_BODY__'", JSON.stringify(AGENTKIT_STUDIO_MARK_BODY))
+  .replaceAll("'__AGENTKIT_STUDIO_MARK_SVG__'", JSON.stringify(AGENTKIT_STUDIO_MARK_SVG));
 if (!source.includes("window.__ModuleLoader__.load({")) throw new Error('client bundle lost the DSH ModuleLoader registration');
 if (!source.includes("id: '@kingsoftcloud/agentkit-studio'")) throw new Error('client bundle lost the Studio module id');
 // DSH loads the packed browser entry as one script. Keep that artifact small

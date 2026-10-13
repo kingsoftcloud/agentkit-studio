@@ -622,7 +622,8 @@ window.__ModuleLoader__.load({
         const card = document.createElement('div');
         card.setAttribute('role', 'dialog');
         card.setAttribute('aria-modal', 'true');
-        card.style.cssText = 'width:min(420px,calc(100vw - 48px));border:1px solid var(--dsw-alias-border-l3,#d4d4d4);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff);padding:20px;box-shadow:0 18px 50px rgba(10,14,18,0.28);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+        card.setAttribute('data-studio-controls', 'true');
+        card.style.cssText = 'width:min(420px,calc(100vw - 48px));border:1px solid var(--dsw-alias-border-l3,#d4d4d4);border-radius:var(--dsw-radius-lg,16px);background:var(--dsw-alias-bg-layer-1,#fff);padding:20px;box-shadow:0 18px 50px rgba(10,14,18,0.28);font-family:inherit';
         const title = document.createElement('strong');
         title.textContent = options.title || '确认操作';
         title.style.cssText = 'display:block;color:var(--dsw-alias-label-primary,#0d0d0d);font-size:15px';
@@ -630,7 +631,7 @@ window.__ModuleLoader__.load({
         if (options.detail) {
           const detail = document.createElement('p');
           detail.textContent = options.detail;
-          detail.style.cssText = 'color:var(--dsw-alias-label-secondary,#676767);font-size:12px;line-height:1.6;margin:10px 0 0;white-space:pre-wrap';
+          detail.style.cssText = 'color:var(--dsw-alias-label-secondary,#676767);font-size:14px;line-height:1.6;margin:10px 0 0;white-space:pre-wrap';
           card.append(detail);
         }
         const actions = document.createElement('div');
@@ -638,13 +639,13 @@ window.__ModuleLoader__.load({
         const cancel = document.createElement('button');
         cancel.type = 'button';
         cancel.textContent = options.cancelLabel || '取消';
-        cancel.style.cssText = 'font:inherit;cursor:pointer;padding:6px 12px;border-radius:9px;border:1px solid var(--dsw-alias-border-l3,#d4d4d4);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#0d0d0d)';
+        cancel.style.cssText = 'font:inherit;cursor:pointer;height:36px;padding:0 14px;border-radius:var(--dsw-radius-md,12px);border:.5px solid var(--dsw-alias-border-l3,#d4d4d4);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#0d0d0d)';
         const confirm = document.createElement('button');
         confirm.type = 'button';
         confirm.textContent = options.confirmLabel || '确定';
         confirm.autofocus = true;
         const danger = options.danger !== false;
-        confirm.style.cssText = 'font:inherit;cursor:pointer;padding:6px 12px;border-radius:9px;border:1px solid transparent;color:var(--dsw-static-neutral-00,#fff);background:' + (danger ? 'var(--dsw-alias-state-danger-primary,#c2402a)' : 'var(--dsw-alias-brand-primary,#0aa6a6)');
+        confirm.style.cssText = 'font:inherit;cursor:pointer;height:36px;padding:0 14px;border-radius:var(--dsw-radius-md,12px);border:.5px solid transparent;color:' + (danger ? 'var(--dsw-static-neutral-00,#fff)' : 'var(--dsw-alias-label-primary-foreground,#fff)') + ';background:' + (danger ? 'var(--dsw-alias-state-danger-primary,#c2402a)' : 'var(--dsw-alias-button-primary-fill,#0b0b0d)');
         const settle = value => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(value); };
         const onKey = event => { if (event.key === 'Escape') settle(false); if (event.key === 'Enter') settle(true); };
         cancel.addEventListener('click', () => settle(false));
@@ -668,13 +669,11 @@ window.__ModuleLoader__.load({
       canvas: 'var(--dsw-alias-bg-layer-2, #f4f5f6)',
       surface: 'var(--dsw-alias-bg-layer-1, #ffffff)',
       border: 'var(--dsw-alias-border-l3, #d4d4d4)',
-      controlBorder: 'color-mix(in srgb, var(--dsw-alias-label-primary, #0d0d0d) 24%, var(--dsw-alias-bg-layer-1, #ffffff))',
+      controlBorder: 'var(--dsw-alias-border-l4, #d4d4d4)',
       accent: 'var(--dsw-alias-brand-primary, #0d0d0d)',
       accentStrong: 'var(--dsw-alias-label-primary, #000000)',
-      // DSH's primary button token intentionally flips to white in dark mode.
-      // Studio buttons always pair a dark fill with white text so the product
-      // controls remain legible in both themes.
-      primaryFill: '#0b0b0d',
+      primaryFill: 'var(--dsw-alias-button-primary-fill, #0b0b0d)',
+      primaryText: 'var(--dsw-alias-label-primary-foreground, #ffffff)',
       accentSoft: 'var(--dsw-alias-interactive-bg-hover, #f0f0f0)',
       signal: 'var(--dsw-alias-state-warn-primary, #946200)',
       danger: 'var(--dsw-alias-state-error-primary, #b42318)',
@@ -695,33 +694,22 @@ window.__ModuleLoader__.load({
       { id: 'studio-operations', page: 'operations', label: '运行中心', note: '构建、部署与观测', glyph: '↗' },
     ];
 
-    // The product mark must not inherit DSH's `--dsw-alias-brand-primary`.
-    // That token is intentionally black in the neutral Studio console and
-    // made the AgentKit A look like the host mark in the sidebar.  Keep the
-    // approved AgentKit teal fixed across light/dark themes and the favicon.
-    const STUDIO_MARK_COLOR = '#0aa6a6';
+    // Fixed product artwork; controls continue to use the host theme tokens.
+    const STUDIO_MARK_BODY = '__AGENTKIT_STUDIO_MARK_BODY__';
+    const STUDIO_MARK_SVG = '__AGENTKIT_STUDIO_MARK_SVG__';
 
     function StudioMark({ size = 28, title = 'AgentKit Studio' }) {
       return h('svg', {
-        width: size,
-        height: size,
-        viewBox: '0 0 64 64',
-        role: title ? 'img' : 'presentation',
-        'aria-label': title || undefined,
+        width: size, height: size, viewBox: '0 0 64 64',
+        role: title ? 'img' : 'presentation', 'aria-label': title || undefined,
         'aria-hidden': title ? undefined : 'true',
         style: { display: 'block', flex: '0 0 auto' },
-      },
-      title ? h('title', null, title) : null,
-      // The mark is shared by the sidebar, conversation hero and favicon. Use
-      // the Studio teal for the A itself so the product stays recognisable in
-      // both DSH light and dark themes; the surrounding ring is deliberately
-      // unfilled, matching the original Studio chrome instead of the DSH
-      // whale/black-square mark.
-      h('path', {
-        d: 'M32 6 7 54h11l5-10h18l5 10h11L32 6Zm0 18 5 10H27l5-10Z',
-        fill: STUDIO_MARK_COLOR,
-      }),
-      h('circle', { cx: '32', cy: '32', r: '29', fill: 'none', stroke: STUDIO_MARK_COLOR, strokeWidth: '2', opacity: '0.78' }));
+        dangerouslySetInnerHTML: { __html: STUDIO_MARK_BODY },
+      });
+    }
+
+    function StudioWordmark() {
+      return h('span', { style: { color: BRAND.ink } }, 'AgentKit ', h('span', { style: { color: '#1858d6' } }, 'Studio'));
     }
 
     function NavGlyph({ glyph, active }) {

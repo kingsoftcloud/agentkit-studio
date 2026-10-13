@@ -133,7 +133,7 @@
           h('p', { style: { fontSize: '12px', color: BRAND.inkMuted } }, `运行时 ${preview.runtime} · 镜像 ${preview.image.version} · ${preview.resourceCounts.models} 个模型 / ${preview.resourceCounts.mcps} 个 MCP / ${preview.resourceCounts.skills} 个 Skill / ${preview.resourceCounts.remote} 个云端资源`),
           h('p', { style: { fontSize: '12px', color: BRAND.inkMuted } }, preview.identity.kind === 'subaccount' ? `操作人：${preview.identity.userName}` : '操作人：主账号'),
           h('ul', { style: { fontSize: '12px', lineHeight: 1.7, color: BRAND.inkMuted, paddingLeft: '18px' } }, preview.warnings.map((warning, index) => h('li', { key: index }, warning))),
-          h('button', { type: 'button', disabled: busy, onClick: deploy, style: { ...buttonStyle(), background: BRAND.primaryFill, color: '#fff' } }, preview.deploymentId ? preview.rollbackVersionId ? '确认回滚当前实例' : '确认升级当前实例' : '确认创建云端实例'),
+          h('button', { type: 'button', disabled: busy, onClick: deploy, style: { ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText } }, preview.deploymentId ? preview.rollbackVersionId ? '确认回滚当前实例' : '确认升级当前实例' : '确认创建云端实例'),
           h('button', { type: 'button', disabled: busy, onClick: () => setPreview(null), style: { ...buttonStyle(), marginLeft: '8px' } }, '取消')) : null,
         notice ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, notice) : null,
         error ? h('p', { role: 'alert', style: { fontSize: '12px', color: BRAND.danger } }, error) : null),

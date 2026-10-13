@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { registerAuthoringTools } from './authoring-tools.mjs';
+import { AGENTKIT_STUDIO_MARK_SVG } from './brand.js';
 import { DshPresetAdmission, dshModelSelection } from './agent-preset-admission.mjs';
 import { createStartupReconciler } from './preset-recovery.mjs';
 import * as AgentKitHarnessPlugin from '../packages/agentkit-harness/src/index.mjs';
@@ -969,7 +970,7 @@ export async function apply(ctx) {
     kind: 'script',
     placement: 'head',
     text: `(() => {
-      const href = 'data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="#f7ffff" stroke="#0aa6a6" stroke-width="2"/><path d="M32 6 7 54h11l5-10h18l5 10h11L32 6Zm0 18 5 10H27l5-10Z" fill="#0aa6a6"/></svg>')}'
+      const href = 'data:image/svg+xml,${encodeURIComponent(AGENTKIT_STUDIO_MARK_SVG)}'
       const apply = () => {
         document.querySelectorAll('link[rel~="icon"]:not([data-agentkit-studio-favicon])').forEach(link => link.remove())
         let link = document.querySelector('link[data-agentkit-studio-favicon]')

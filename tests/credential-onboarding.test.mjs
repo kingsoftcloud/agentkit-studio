@@ -35,7 +35,7 @@ function onboardingHarness({ statuses, localStorage = {}, props = {} } = {}) {
   let statusIndex = 0;
   const hostRemote = { modelCredentialStatus: async () => statuses[Math.min(statusIndex++, statuses.length - 1)] };
   class CustomEvent { constructor(type) { this.type = type; } }
-  const Component = new Function('h', 'useState', 'useEffect', 'useRef', 'hostRemote', 'window', 'CustomEvent', 'Modal', 'buttonStyle', 'BRAND', `${onboarding}; return CredentialOnboarding;`)(h, useState, useEffect, useRef, hostRemote, window, CustomEvent, 'Modal', () => ({ type: 'button' }), { danger: 'red', ink: 'black', inkMuted: 'gray', surface: 'white', primaryFill: 'teal' });
+  const Component = new Function('h', 'useState', 'useEffect', 'useRef', 'hostRemote', 'window', 'CustomEvent', 'Modal', 'buttonStyle', 'BRAND', 'StudioMark', `${onboarding}; return CredentialOnboarding;`)(h, useState, useEffect, useRef, hostRemote, window, CustomEvent, 'Modal', () => ({ type: 'button' }), { danger: 'red', ink: 'black', inkMuted: 'gray', surface: 'white', primaryFill: 'teal' }, 'StudioMark');
   let tree;
   const render = () => { cursor = 0; dirty = false; tree = Component(props); for (const effect of effects.splice(0)) effect(); return tree; };
   const settle = async () => { render(); for (let i = 0; i < 20; i += 1) { await Promise.resolve(); if (dirty) render(); } return tree; };

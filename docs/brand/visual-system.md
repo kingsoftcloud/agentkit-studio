@@ -1,70 +1,13 @@
-# AgentKit Studio visual system
+# AgentKit Studio 视觉约定
 
-## Direction
+使用 Nexus 图标：蓝色圆角方形、白色三节点和中心环、顶部青色节点。产品名称仍为 AgentKit Studio；应用 ID 和用户数据目录沿用现有值。
 
-AgentKit Studio uses an **industrial-cloud** direction: a calm enterprise canvas, a
-deep ink foundation, and one sharp teal signal for active execution. The visual language
-should feel like an operations console for building and running agents, not a generic chat
-application.
+`src/brand.js` 是图标的唯一矢量来源。侧栏、对话首页、引导、favicon 和插件图标使用相同几何；`scripts/build-brand.mjs --macos` 生成 1024px PNG，由 DSH 打包器生成 macOS App 图标。重新生成 PNG 需要 rsvg-convert。
 
-The DSH runtime supplies the conversation primitives and Studio owns its product navigation,
-panels, cards, badges, and domain artwork. Product styles stay scoped to the Studio surface
-so the conversation primitives and product pages remain visually consistent.
+产品图标固定使用蓝色 `#1858d6` 和青色 `#78dfec`，在浅色、深色主题中保持一致。字标的 Studio 使用蓝色，其余文字跟随 DSH 主题。
 
-## Logo
+页面继承 DSH 字体和主题变量。按钮使用 DSH 的 primary fill / foreground 配对，深色模式随原生控件切换；普通按钮 36px、输入框 32px、正文 14px。边框、圆角、hover、focus 和 disabled 状态遵循 DSH 控件。
 
-The mark is an original geometric `A` built from a continuous roof/terminal silhouette. The
-inner cut-out is the execution signal: a small open path that reads as both an agent and a
-compiled unit. It is used as a 16–24px navigation mark and as a 48–64px panel identity mark.
+模型设置以分段表单呈现，减少嵌套卡片。输入能力来自模型目录，显示文字、图片或明确的未知状态，不保留手动勾选项。高级连接协议默认收起。
 
-The distributable Web/Desktop build sets `DSH_CLIENT_TITLE=AgentKit Studio` so the browser or
-window title follows the same product identity as the visible sidebar brand row. The checked-in
-DSH development dist may still show its fallback title until that release build is produced.
-
-```text
-      /\
-     /  \
-    /_()_\
-   /      \
-```
-
-The canonical path is exported from `src/brand.js`, and the first app-icon candidate is kept at
-`assets/agentkit-studio-mark.svg`. Do not use the Kingsoft Cloud corporate logo as a substitute;
-product branding and corporate marks have separate approval paths.
-
-## Palette
-
-| Token | Value | Use |
-| --- | --- | --- |
-| Ink | `#0b1220` | headings, active dark surfaces |
-| Ink muted | `#526174` | secondary text |
-| Canvas | `#f6f9fc` | Studio page background |
-| Surface | `#ffffff` | cards and forms |
-| Border | `#dbe5ef` | low-contrast structure |
-| Accent | `#0aa6a6` | active state, links, primary action |
-| Accent strong | `#087f86` | hover/pressed accent |
-| Accent soft | `#dff7f4` | selected and informational surfaces |
-| Signal | `#f0ad4e` | queued/waiting state |
-| Danger | `#c44747` | failed/cancelled state |
-
-The palette follows a 70/20/10 balance: canvas/surfaces dominate, ink establishes hierarchy,
-and teal is reserved for action and live state. Status colors are semantic and never replace
-the text label.
-
-## Component rules
-
-- Use the official DSH conversation, tool, Goal, and Dock components without restyling them.
-- Studio domain cards use 10–12px radii, 1px borders, and one accent edge or badge rather than
-  large gradients or glass effects.
-- The global Studio panel may use a faint diagonal grid or signal line as atmosphere; keep it
-  behind content and respect reduced motion.
-- Every status has text, a color, and an accessible label. A color alone never communicates
-  health, capability, or deployment state.
-- The Studio mark must remain legible at 16px, in light and dark DSH themes.
-
-## Accessibility and host compatibility
-
-- Keep body and control contrast at WCAG AA or better.
-- Inherit DSH's font stack and density for controls and conversation surfaces.
-- Scope custom CSS/inline variables below `[data-agentkit-studio]` or component roots.
-- Support `prefers-reduced-motion` and do not animate live Session events in the domain page.
+样式只作用于 Studio 页面、设置和引导的组件根节点。DSH 原生对话、Dock、插件中心和全局设置继续由宿主负责。

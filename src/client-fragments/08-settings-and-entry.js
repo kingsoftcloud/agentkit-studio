@@ -45,7 +45,7 @@
           : desktopUpdate.phase === 'ready' ? `安装 ${desktopUpdate.version || '新版本'}`
             : desktopUpdate.phase === 'error' ? '重试检查更新' : '检查更新';
       return h('div', {
-        style: { color: BRAND.ink, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
+        style: { color: BRAND.ink, fontFamily: 'inherit' },
       },
       h(SectionHeading, { eyebrow: 'AgentKit Studio', title: 'Studio 设置', detail: '查看当前产品与 Host 状态。模型和凭证在「模型与凭证」中配置，资源绑定在 Agent 编辑页完成。' }),
       h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '0 18px', background: BRAND.surface } },
@@ -170,7 +170,7 @@
       ));
       ctx.slots.inject('sidebar.brand.name', () => ctx.slots.register(
         { name: 'sidebar.brand.name' },
-        () => h('span', { style: { color: BRAND.ink, fontSize: '13px', fontWeight: 800, letterSpacing: '-0.02em' } }, 'AgentKit Studio'),
+        () => h('span', { style: { color: BRAND.ink, fontSize: '13px', fontWeight: 600, letterSpacing: '-0.02em' } }, h(StudioWordmark)),
       ));
       ctx.slots.inject('conversation.hero.brand.mark', () => ctx.slots.register(
         { name: 'conversation.hero.brand.mark' },
@@ -178,7 +178,7 @@
       ));
       ctx.slots.inject('conversation.hero.brand.name', () => ctx.slots.register(
         { name: 'conversation.hero.brand.name' },
-        () => h('span', null, 'AgentKit Studio'),
+        () => h(StudioWordmark),
       ));
       // Use the official session-maybe hero slot so the selector receives the
       // current sessionId/useSessions hooks. This keeps the binding scoped to

@@ -16,8 +16,8 @@
         }
         .agentkit-credential-onboarding-mark {
           display: inline-flex; align-items: center; justify-content: center;
-          width: 30px; height: 30px; margin-bottom: 10px; border-radius: 10px;
-          color: var(--dsw-static-neutral-00, #fff); background: ${BRAND.primaryFill};
+          width: 32px; height: 32px; margin-bottom: 10px; border-radius: 8px;
+          background: transparent;
           animation: agentkitCredentialOnboardingPulse 1.8s ease-in-out 240ms 2 both;
         }
         @keyframes agentkitCredentialGuideStep {
@@ -90,16 +90,16 @@
         openSection('agentkit-models');
       };
       const loading = state.status === 'loading';
-      const actions = h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' } },
+      const actions = h('div', { 'data-studio-controls': true, style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' } },
         h('button', { type: 'button', onClick: () => close(), style: buttonStyle() }, '稍后设置'),
         h('button', { type: 'button', onClick: () => close('skipped'), style: buttonStyle() }, '跳过本次'),
         h('button', { type: 'button', disabled: loading, onClick: () => check({ manual: true }), style: buttonStyle() }, state.status === 'error' ? '重试' : '重新检查'),
-        h('button', { type: 'button', disabled: loading, 'data-modal-autofocus': true, onClick: configure, style: { ...buttonStyle(), color: 'var(--dsw-static-neutral-00, #fff)', background: BRAND.primaryFill } }, loading ? '检查中…' : '去配置模型凭证'));
+        h('button', { type: 'button', disabled: loading, 'data-modal-autofocus': true, onClick: configure, style: { ...buttonStyle(), color: BRAND.primaryText, background: BRAND.primaryFill } }, loading ? '检查中…' : '去配置模型凭证'));
       return h(Modal, {
         open, onClose: () => close(), title: state.configured ? '模型凭证已就绪' : '先完成模型凭证设置', closeLabel: '稍后设置',
         description: '配置一个模型 API Key，即可开始本机 Agent 对话。云端凭证可在需要部署时再设置。', footer: actions,
       }, h('div', { className: 'agentkit-credential-onboarding-content' },
-        h('div', { className: 'agentkit-credential-onboarding-mark', 'aria-hidden': 'true' }, '✦'),
+        h('div', { className: 'agentkit-credential-onboarding-mark', 'aria-hidden': 'true' }, h(StudioMark, { size: 32, title: '' })),
         state.status === 'error' ? h('p', { role: 'alert', style: { color: BRAND.danger } }, state.error) :
           h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, loading ? '正在读取本机 Host 的凭证状态…' : state.configured ? '已检测到可用凭证；可直接开始对话，也可以进入设置更换模型。' : '当前未检测到模型凭证；保存配置后会自动重新检查。'),
         h('section', { className: 'agentkit-credential-guide', 'data-paused': String(demoPaused), 'aria-label': '模型配置操作演示' },
