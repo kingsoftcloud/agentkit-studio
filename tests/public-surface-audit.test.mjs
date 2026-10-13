@@ -4,14 +4,28 @@ import { auditFiles, auditPath, auditText } from '../scripts/public-surface-audi
 
 const buffer = value => Buffer.from(value, 'utf8');
 
-test('public surface audit rejects internal paths before reading their contents', async () => {
+test('public surface audit rejects credential paths before reading their contents', async () => {
   const reads = [];
-  const hits = await auditFiles(['docs/contracts/internal.md'], async file => {
+  const hits = await auditFiles(['profiles/credentials.json'], async file => {
     reads.push(file);
     return buffer('safe');
   });
-  assert.deepEqual(hits, [{ file: 'docs/contracts/internal.md', kind: 'forbidden public path' }]);
+  assert.ok(hits.every(hit=>hit.file==='profiles/credentials.json'&&hit.kind==='forbidden public path'));
+  assert.ok(hits.length>0);
   assert.deepEqual(reads, []);
+});
+
+test('approved engineering instructions still cannot hide a real credential', () => {
+  assert.deepEqual(auditPath('AGENTS.md'), []);
+  assert.deepEqual(auditPath('docs/contracts/runtime.md'), []);
+  const marker = ['INTERNAL', '-ONLY'].join('');
+  assert.deepEqual(auditText('AGENTS.md', buffer(marker)), []);
+  const token = ['ghp_', '123456789012345678901234567890'].join('');
+  assert.ok(auditText('AGENTS.md', buffer(marker+'\n'+token)).some(hit=>hit.kind==='github-token'));
+  const fixture = ['https://user:', 'secret@example.com/'].join('');
+  const production = ['https://user:', 'real-credential@production.test/'].join('');
+  assert.equal(auditText('tests/example.test.mjs', buffer(fixture), {historical:true}).length, 0);
+  assert.ok(auditText('tests/example.test.mjs', buffer(production), {historical:true}).length>0);
 });
 
 test('public surface audit allows a tracked file deleted from the working tree', async () => {
