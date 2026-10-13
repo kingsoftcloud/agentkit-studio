@@ -1,0 +1,76 @@
+/** Keep official release rebuilds away from the source checkout serving the development UI. */
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { join, relative, isAbsolute, sep } from 'node:path';
+
+const execute = promisify(execFile);
+const digest = value => createHash('sha256').update(value).digest('hex');
+const git = async (cwd, args) => (await execute('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })).stdout.trim();
+
+async function identify({ source, output, patches, commit }) {
+  const sourceRoot = await realpath(source);
+  if (!/^[0-9a-f]{40}$/.test(commit || '') || await git(sourceRoot,['rev-parse','HEAD']) !== commit) throw new Error('desktop checkout: source baseline does not match the pinned commit');
+  await mkdir(output,{recursive:true,mode:0o700});
+  const outputRoot = await realpath(output);
+  const nested = relative(sourceRoot,outputRoot);
+  if (!nested || (!nested.startsWith(`..${sep}`) && nested !== '..' && !isAbsolute(nested))) throw new Error('desktop checkout: output must be outside the live source checkout');
+  const patchRoot = await realpath(patches);
+  const names = (await readdir(patchRoot)).filter(name=>name.endsWith('.patch')).sort();
+  if (!names.length) throw new Error('desktop checkout: empty patch series');
+  // Read once: applying the bytes used for the identity avoids an edit racing the snapshot.
+  const series = await Promise.all(names.map(async name=>({name,bytes:await readFile(join(patchRoot,name))})));
+  const hash = createHash('sha256').update(commit);
+  for (const entry of series) hash.update(entry.name).update('\0').update(entry.bytes);
+  const directory = join(outputRoot,'desktop-checkouts',hash.digest('hex').slice(0,24));
+  return {sourceRoot,commit,series,directory,checkout:join(directory,'source')};
+}
+
+async function sourceDigest(checkout) {
+  if (await git(checkout,['ls-files','--others','--exclude-standard'])) throw new Error('desktop checkout: cached source was modified; preserve edits and remove the cache explicitly');
+  return digest(await git(checkout,['diff','HEAD','--binary']));
+}
+
+async function prepare(input) {
+  const {directory,checkout,sourceRoot,commit,series} = input;
+  let record;
+  try { record = JSON.parse(await readFile(join(directory,'snapshot.json'),'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw new Error('desktop checkout: invalid cache record'); }
+  if (record) {
+    if (await git(checkout,['rev-parse','HEAD']) !== commit || await sourceDigest(checkout) !== record.digest) throw new Error('desktop checkout: cached source was modified; preserve edits and remove the cache explicitly');
+    return checkout;
+  }
+  const staging = await mkdtemp(join(directory,'preparing-'));
+  try {
+    const destination = join(staging,'source');
+    await git(directory,['clone','--shared','--no-checkout','--',sourceRoot,destination]);
+    await git(destination,['checkout','--detach',commit]);
+    for (const entry of series) {
+      const patch = join(staging,entry.name);
+      await writeFile(patch,entry.bytes,{mode:0o600});
+      await git(destination,['apply','--index',patch]);
+    }
+    const fingerprint = await sourceDigest(destination);
+    await rename(destination,checkout);
+    await writeFile(join(directory,'snapshot.json'),JSON.stringify({commit,digest:fingerprint}),{mode:0o600,flag:'wx'});
+    return checkout;
+  } finally { await rm(staging,{recursive:true,force:true}); }
+}
+
+/** Serialize preparation and packaging; never reset a checkout or share its node_modules. */
+export async function withDesktopCheckout(options, action) {
+  const input = await identify(options);
+  await mkdir(input.directory,{recursive:true,mode:0o700});
+  const lock = join(input.directory,'active.lock');
+  try { await mkdir(lock); }
+  catch(error) { if(error.code==='EEXIST') throw new Error(`desktop checkout: already in use; inspect ${lock} before retrying`); throw error; }
+  try {
+    await writeFile(join(lock,'owner.json'),JSON.stringify({pid:process.pid,startedAt:new Date().toISOString()}),{mode:0o600});
+    return await action(await prepare(input));
+  } finally { await rm(lock,{recursive:true,force:true}); }
+}
+
+export async function prepareDesktopCheckout(options) {
+  return withDesktopCheckout(options, async checkout=>checkout);
+}

@@ -1,0 +1,250 @@
+diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
+index a94f46eade..6c0dabf5ff 100644
+--- a/apps/desktop/scripts/desktop-package-environment.mjs
++++ b/apps/desktop/scripts/desktop-package-environment.mjs
+@@ -14,7 +14,7 @@ import { resolveWindowsPackageSettings } from './windows-package-settings.mjs'
+
+ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
+ const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|UPDATE_ORIGIN|UPDATE_CHANNEL|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
+-const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY)$/u
++const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:SIGNING_MODE|CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY)$/u
+ const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
+ const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
+ const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
+@@ -86,7 +86,8 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+   if (!options.prepareOnly) resolveDesktopAutoUpdateConfig(environment, target.platform, target.arch)
+   if (target.platform === 'win32') {
+     if (!options.prepareOnly) createWindowsTokenSigner({
+-      certificateFile: environment.DSH_DESKTOP_WINDOWS_CER_FILE,
++      mode: environment.DSH_DESKTOP_WINDOWS_SIGNING_MODE,
++        certificateFile: environment.DSH_DESKTOP_WINDOWS_CER_FILE,
+       signTool: environment.DSH_DESKTOP_WINDOWS_SIGNTOOL,
+       tokenPin: environment.DSH_DESKTOP_WINDOWS_TOKEN_PIN,
+       keyContainer: environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER,
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index 4e6c752b6b..63f2b79656 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -73,6 +73,7 @@ export function createElectronBuilderConfig(
+     `**/node_modules/@deepseek-ai/libreoffice-kit-${resolvedPlatform}-${resolvedArch}/**/*`]
+   const windowsSigner = packagesWindows && !unsigned
+     ? createWindowsTokenSigner({
++        mode: env.DSH_DESKTOP_WINDOWS_SIGNING_MODE,
+         certificateFile: env.DSH_DESKTOP_WINDOWS_CER_FILE,
+         signTool: env.DSH_DESKTOP_WINDOWS_SIGNTOOL,
+         tokenPin: env.DSH_DESKTOP_WINDOWS_TOKEN_PIN,
+@@ -222,7 +223,7 @@ export function createElectronBuilderConfig(
+       )
+     },
+     win: {
+-      icon: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)),
++      icon: productIcon || fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)),
+       forceCodeSigning: !unsigned,
+       signtoolOptions: {
+         sign: windowsSigner,
+diff --git a/apps/desktop/scripts/installed-update-packaging.ts b/apps/desktop/scripts/installed-update-packaging.ts
+index f0660e6f96..b59a349288 100644
+--- a/apps/desktop/scripts/installed-update-packaging.ts
++++ b/apps/desktop/scripts/installed-update-packaging.ts
+@@ -13,7 +13,7 @@ import { planInstalledUpdateDistribution } from './installed-update-distribution
+
+ const APP_ROOT = resolve(import.meta.dirname, '..')
+ const REPOSITORY = resolve(APP_ROOT, '../..')
+-const SIGNING_FIELDS = new Set(['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL',
++const SIGNING_FIELDS = new Set(['DSH_DESKTOP_WINDOWS_SIGNING_MODE', 'DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL',
+   'DSH_DESKTOP_WINDOWS_KEY_CONTAINER', 'DSH_DESKTOP_WINDOWS_TOKEN_PIN'])
+
+ /** Public refusal without credential values or contents of the incident record. */
+diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
+index 4382fb5c89..d8ca4dce96 100644
+--- a/apps/desktop/scripts/package-target.ts
++++ b/apps/desktop/scripts/package-target.ts
+@@ -29,6 +29,7 @@ const APP_ROOT = resolve(import.meta.dirname, '..')
+ const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
+ const WINDOWS_SIGNING_ENV_PREFIX = 'DSH_DESKTOP_WINDOWS_'
+ const WINDOWS_SIGNING_ENV_NAMES = [
++  'DSH_DESKTOP_WINDOWS_SIGNING_MODE',
+   'DSH_DESKTOP_WINDOWS_CER_FILE',
+   'DSH_DESKTOP_WINDOWS_KEY_CONTAINER',
+   'DSH_DESKTOP_WINDOWS_SIGNTOOL',
+diff --git a/apps/desktop/scripts/sign-primary-runtime.ts b/apps/desktop/scripts/sign-primary-runtime.ts
+index d9a9b36c25..2864d76a54 100644
+--- a/apps/desktop/scripts/sign-primary-runtime.ts
++++ b/apps/desktop/scripts/sign-primary-runtime.ts
+@@ -58,7 +58,7 @@ async function main(): Promise<void> {
+   try {
+     await withWindowsSigningStage({ stage: process.argv.includes('--dsh') ? 'dsh-runtime' : 'primary-runtime', record }, async () => {
+       const paths = resolveDesktopTargetBuildPaths()
+-      const sign = createWindowsTokenSigner({ certificateFile, signTool: process.env.DSH_DESKTOP_WINDOWS_SIGNTOOL,
++      const sign = createWindowsTokenSigner({ mode: process.env.DSH_DESKTOP_WINDOWS_SIGNING_MODE, certificateFile, signTool: process.env.DSH_DESKTOP_WINDOWS_SIGNTOOL,
+         keyContainer: process.env.DSH_DESKTOP_WINDOWS_KEY_CONTAINER, tokenPin: process.env.DSH_DESKTOP_WINDOWS_TOKEN_PIN })
+       const identity = await signatureCacheIdentity([
+         await realpath(certificateFile), await realpath(process.env.DSH_DESKTOP_WINDOWS_SIGNTOOL!),
+diff --git a/apps/desktop/scripts/windows-sign.cmd b/apps/desktop/scripts/windows-sign.cmd
+index 8afed8833e..5e6fb6793e 100644
+--- a/apps/desktop/scripts/windows-sign.cmd
++++ b/apps/desktop/scripts/windows-sign.cmd
+@@ -1,5 +1,7 @@
+ @echo off
+ setlocal DisableDelayedExpansion
++set "signingMode=%DSH_DESKTOP_WINDOWS_SIGNING_MODE%"
++set "thumbprint=%DSH_DESKTOP_WINDOWS_SIGN_THUMBPRINT%"
+ set "signTool=%DSH_DESKTOP_WINDOWS_SIGNTOOL%"
+ set "certificateFile=%DSH_DESKTOP_WINDOWS_CER_FILE%"
+ set "tokenPin=%DSH_DESKTOP_WINDOWS_TOKEN_PIN%"
+@@ -7,11 +9,18 @@ set "keyContainer=%DSH_DESKTOP_WINDOWS_KEY_CONTAINER%"
+ set "targetFile=%DSH_DESKTOP_WINDOWS_SIGN_TARGET%"
+ set "appendSignature="
+ if "%DSH_DESKTOP_WINDOWS_SIGN_APPEND%"=="1" set "appendSignature=/as"
++set "DSH_DESKTOP_WINDOWS_SIGNING_MODE="
++set "DSH_DESKTOP_WINDOWS_SIGN_THUMBPRINT="
+ set "DSH_DESKTOP_WINDOWS_SIGNTOOL="
+ set "DSH_DESKTOP_WINDOWS_CER_FILE="
+ set "DSH_DESKTOP_WINDOWS_TOKEN_PIN="
+ set "DSH_DESKTOP_WINDOWS_KEY_CONTAINER="
+ set "DSH_DESKTOP_WINDOWS_SIGN_TARGET="
+ set "DSH_DESKTOP_WINDOWS_SIGN_APPEND="
++if "%signingMode%"=="certificate-store" goto certificateStore
+ set "signTool=" & set "certificateFile=" & set "tokenPin=" & set "keyContainer=" & set "targetFile=" & set "appendSignature=" & "%signTool%" sign /v /fd sha256 /f "%certificateFile%" /kc "[{{%tokenPin%}}]=%keyContainer%" /csp "eToken Base Cryptographic Provider" %appendSignature% "%targetFile%"
+ exit /b %errorlevel%
++
++:certificateStore
++set "signTool=" & set "thumbprint=" & set "signingMode=" & set "certificateFile=" & set "tokenPin=" & set "keyContainer=" & set "targetFile=" & set "appendSignature=" & "%signTool%" sign /v /fd sha256 /sha1 "%thumbprint%" /s My %appendSignature% "%targetFile%"
++exit /b %errorlevel%
+diff --git a/apps/desktop/scripts/windows-sign.d.mts b/apps/desktop/scripts/windows-sign.d.mts
+index c49c6f6993..a92185f6df 100644
+--- a/apps/desktop/scripts/windows-sign.d.mts
++++ b/apps/desktop/scripts/windows-sign.d.mts
+@@ -10,8 +10,10 @@ export function buildWindowsSigningEnvironment(environment: NodeJS.ProcessEnv, i
+   signTool: string
+   path: string
+   isNest: boolean
+-  tokenPin: string
+-  keyContainer: string
++  mode?: 'token' | 'certificate-store'
++  thumbprint?: string
++  tokenPin?: string
++  keyContainer?: string
+ }): NodeJS.ProcessEnv
+
+ /**
+@@ -28,6 +30,7 @@ export function resolveWindowsUpdatePublisher(certificateFile: string | undefine
+  * @returns The signing hook.
+  */
+ export function createWindowsTokenSigner(options: {
++  mode?: string | undefined
+   certificateFile?: string | undefined
+   signTool?: string | undefined
+   tokenPin?: string | undefined
+diff --git a/apps/desktop/scripts/windows-sign.mjs b/apps/desktop/scripts/windows-sign.mjs
+index 3ebd199615..855fda479d 100644
+--- a/apps/desktop/scripts/windows-sign.mjs
++++ b/apps/desktop/scripts/windows-sign.mjs
+@@ -142,7 +142,7 @@ export function createRedactedWindowsSigningError(error, path, secrets) {
+  * Build the minimal CMD environment for one Electron artifact.
+  *
+  * @param {NodeJS.ProcessEnv} environment Parent environment.
+- * @param {{ certificateFile: string, signTool: string, path: string, isNest: boolean, tokenPin: string, keyContainer: string }} input Validated signing identity and task.
++ * @param {{ certificateFile: string, signTool: string, path: string, isNest: boolean, mode?: string, thumbprint?: string, tokenPin?: string, keyContainer?: string }} input Validated signing identity and task.
+  * @returns {NodeJS.ProcessEnv} Scrubbed environment plus fields consumed and cleared by the signing CMD.
+  */
+ export function buildWindowsSigningEnvironment(environment, input) {
+@@ -150,8 +150,13 @@ export function buildWindowsSigningEnvironment(environment, input) {
+     ...scrubWindowsSigningEnvironment(environment),
+     DSH_DESKTOP_WINDOWS_SIGNTOOL: input.signTool,
+     DSH_DESKTOP_WINDOWS_CER_FILE: input.certificateFile,
+-    DSH_DESKTOP_WINDOWS_TOKEN_PIN: input.tokenPin,
+-    DSH_DESKTOP_WINDOWS_KEY_CONTAINER: input.keyContainer,
++    ...(input.mode === 'certificate-store' ? {
++      DSH_DESKTOP_WINDOWS_SIGNING_MODE: 'certificate-store',
++      DSH_DESKTOP_WINDOWS_SIGN_THUMBPRINT: input.thumbprint,
++    } : {
++      DSH_DESKTOP_WINDOWS_TOKEN_PIN: input.tokenPin,
++      DSH_DESKTOP_WINDOWS_KEY_CONTAINER: input.keyContainer,
++    }),
+     DSH_DESKTOP_WINDOWS_SIGN_TARGET: input.path,
+     DSH_DESKTOP_WINDOWS_SIGN_APPEND: input.isNest ? '1' : '',
+   }
+@@ -160,13 +165,15 @@ export function buildWindowsSigningEnvironment(environment, input) {
+ /**
+  * Serialize SafeNet signing and stop all queued tasks after the first failure.
+  *
+- * @param {{ certificateFile?: string, signTool?: string, tokenPin?: string, keyContainer?: string, commandInterpreter?: string, runDirectory?: string, stateDirectory?: string, preserveSignature?: (path: string) => Promise<boolean> }} options Release identity, supervised run, verified-copy preservation, and test-only isolated interlock directory.
++ * @param {{ certificateFile?: string, signTool?: string, mode?: string, tokenPin?: string, keyContainer?: string, commandInterpreter?: string, runDirectory?: string, stateDirectory?: string, preserveSignature?: (path: string) => Promise<boolean> }} options Release identity, supervised run, verified-copy preservation, and test-only isolated interlock directory.
+  * @returns {(configuration: { path: string, hash: string, isNest: boolean }) => Promise<void>} The signing hook.
+  */
+ export function createWindowsTokenSigner(options) {
+   const { path: certificateFile, certificate } = resolveCertificateFile(options.certificateFile)
+   const signTool = resolveSignTool(options.signTool)
+-  const { keyContainer, tokenPin } = resolveTokenIdentity(options)
++  const mode = options.mode ?? 'token'
++  if (mode !== 'token' && mode !== 'certificate-store') throw new Error('Windows signing mode must be token or certificate-store')
++  const { keyContainer, tokenPin } = mode === 'token' ? resolveTokenIdentity(options) : {}
+   const commandInterpreter = options.commandInterpreter
+     ?? process.env.ComSpec
+     ?? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe')
+@@ -178,7 +185,7 @@ export function createWindowsTokenSigner(options) {
+       }
+       if (configuration.isNest) throw new Error('Windows release signing does not support appended signatures')
+       if (await options.preserveSignature?.(configuration.path)) return
+-      const secrets = [tokenPin]
++      const secrets = tokenPin === undefined ? [] : [tokenPin]
+       const runDirectory = options.runDirectory ?? process.env.DSH_DESKTOP_PACKAGING_RUN_DIR
+       if (!runDirectory) throw new Error('Windows hardware signing requires a supervised packaging run')
+       const { inspectWindowsRuntimeSignature: inspect } = await import('./windows-runtime-signature.mjs')
+@@ -209,6 +216,8 @@ export function createWindowsTokenSigner(options) {
+                   signTool,
+                   path,
+                   isNest: false,
++                  mode,
++                  thumbprint,
+                   tokenPin,
+                   keyContainer,
+                 }),
+diff --git a/apps/desktop/scripts/windows-signing-preflight.ts b/apps/desktop/scripts/windows-signing-preflight.ts
+index 6076e4cd4e..7281144b4b 100644
+--- a/apps/desktop/scripts/windows-signing-preflight.ts
++++ b/apps/desktop/scripts/windows-signing-preflight.ts
+@@ -36,7 +36,8 @@ export async function preflightWindowsSigning(options: SigningPreflightOptions):
+   const { environment, runDirectory } = options
+   const record = (event: object): void => { recordPackagingEvent(runDirectory, event) }
+   const signer = createWindowsTokenSigner({
+-    certificateFile: environment.DSH_DESKTOP_WINDOWS_CER_FILE,
++    mode: environment.DSH_DESKTOP_WINDOWS_SIGNING_MODE,
++        certificateFile: environment.DSH_DESKTOP_WINDOWS_CER_FILE,
+     signTool: environment.DSH_DESKTOP_WINDOWS_SIGNTOOL,
+     keyContainer: environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER,
+     tokenPin: environment.DSH_DESKTOP_WINDOWS_TOKEN_PIN,
+diff --git a/apps/desktop/tests/windows-sign.spec.ts b/apps/desktop/tests/windows-sign.spec.ts
+index e5d5a7cd3f..6f31983fed 100644
+--- a/apps/desktop/tests/windows-sign.spec.ts
++++ b/apps/desktop/tests/windows-sign.spec.ts
+@@ -48,6 +48,28 @@ const CERTIFICATE_FILE = 'C:\\release\\server.cer'
+ const SIGN_SCRIPT = resolve(import.meta.dirname, '../scripts/windows-sign.cmd')
+
+ describe('Windows token signing', () => {
++  it('selects an authenticated certificate store without hardware PIN credentials', async () => {
++    const root = await mkdtemp(join(tmpdir(), 'dsh-store-signing-'))
++    try {
++      const certificateFile = join(root, 'server.cer')
++      const signTool = join(root, 'signtool.exe')
++      await writeFile(certificateFile, 'code-signing-certificate-fixture')
++      await writeFile(signTool, 'fixture')
++      expect(() => createWindowsTokenSigner({ certificateFile, signTool, mode: 'certificate-store' })).not.toThrow()
++      expect(() => createWindowsTokenSigner({ certificateFile, signTool, mode: 'invalid' as 'certificate-store' })).toThrow('signing mode')
++      expect(() => createWindowsTokenSigner({ certificateFile, signTool })).toThrow('KEY_CONTAINER')
++      const env = buildWindowsSigningEnvironment({ CERTUM_TOTP_SECRET: 'private-fixture', DSH_DESKTOP_WINDOWS_TOKEN_PIN: 'inherited' }, {
++        certificateFile, signTool, path: join(root, 'app.exe'), isNest: false,
++        mode: 'certificate-store', thumbprint: 'A'.repeat(40),
++      })
++      expect(env.CERTUM_TOTP_SECRET).toBeUndefined()
++      expect(env.DSH_DESKTOP_WINDOWS_TOKEN_PIN).toBeUndefined()
++      expect(env.DSH_DESKTOP_WINDOWS_KEY_CONTAINER).toBeUndefined()
++      expect(env.DSH_DESKTOP_WINDOWS_SIGNING_MODE).toBe('certificate-store')
++      expect(env.DSH_DESKTOP_WINDOWS_SIGN_THUMBPRINT).toBe('A'.repeat(40))
++    } finally { await rm(root, { recursive: true, force: true }) }
++  })
++
+   it.each(['invalid-primary', 'timestamp-exhausted', 'timestamp-recovered', 'normalization-corrupt'] as const)(
+     'keeps hardware protection separate from %s', async (mode) => {
+       const root = await mkdtemp(join(tmpdir(), 'dsh-sign-completion-'))

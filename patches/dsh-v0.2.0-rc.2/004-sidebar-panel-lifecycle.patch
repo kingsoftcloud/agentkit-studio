@@ -1,0 +1,50 @@
+diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+index fed580320c..38818b08d9 100644
+--- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
++++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+@@ -64,6 +64,7 @@ function PanelRow({ id, label, wide, usePanelInfo, selectPanel, renderSlot }: Pa
+         type="button"
+         className={clsx(css.panelRow, active && css.panelActive)}
+         aria-label={label}
++        data-panel-id={id}
+         aria-current={active ? 'page' : undefined}
+         onClick={() => { selectPanel(id) }}
+       >
+@@ -98,6 +99,28 @@ export function SidebarRoot({
+   renderSlot,
+ }: SidebarRootComponentProps) {
+   const panels = usePanels(snapshot => snapshot)
++  const panelList = useRef<HTMLElement | null>(null)
++  // Panel catalog entries can arrive while the shell is booting (for
++  // example, a plugin registers a global panel after the workspace UI). The
++  // host may reconcile row props before React replaces the delegated click
++  // closure. Route from the actual DOM data attribute in capture phase so the
++  // visible row always selects its own panel; the row handler remains as the
++  // normal fallback for non-catalog callers.
++  useEffect(() => {
++    const root = panelList.current
++    if (root === null) return
++    const onClick = (event: MouseEvent): void => {
++      const target = event.target as { closest?: (selector: string) => HTMLElement | null } | null
++      const button = target?.closest?.('[data-panel-id]') ?? null
++      if (button === null || !root.contains(button)) return
++      const id = button.dataset.panelId as SidebarPanelMetadata['id'] | undefined
++      if (id === undefined || id.length === 0) return
++      event.stopPropagation()
++      selectPanel(id)
++    }
++    root.addEventListener('click', onClick, true)
++    return () => { root.removeEventListener('click', onClick, true) }
++  }, [panels.length, selectPanel])
+   const shortcut = useShortcuts(rows => rows.find(row => row.id === 'sidebar.left.toggle'))
+   const newShortcut = useShortcuts(rows => rows.find(row => row.id === 'session.new'))
+   const toggleLabel = collapsed ? t('toggle.open') : t('toggle.collapse')
+@@ -279,7 +302,7 @@ export function SidebarRoot({
+       </Tooltip>
+
+       {panels.length > 0 && (
+-        <nav className={css.panelList} aria-label={t('panels.label')}>
++        <nav ref={panelList} className={css.panelList} aria-label={t('panels.label')}>
+           {panels.map(({ id, label }) => (
+             <PanelRow
+               key={id}

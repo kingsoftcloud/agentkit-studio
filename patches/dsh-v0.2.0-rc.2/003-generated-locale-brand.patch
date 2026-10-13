@@ -1,0 +1,25 @@
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -74,8 +74,9 @@
+   'settings.enter.description': '智能体运行时 Enter 键和发送按钮的行为；Cmd/Ctrl+Enter 使用另一行为',
+   'settings.enter.queue': '排队发送',
+   'settings.enter.steer': '插话发送',
+-  'hero.headline': '探索未至之境',
+-  'hero.preview': '预览版',
++  // AgentKit owns the fallback brand in its DSH profile.
++  'hero.headline': 'AgentKit Studio',
++  'hero.preview': '',
+   'hero.chooseWorkspace': '选择工作区',
+   'session.hierarchy': '会话层级',
+   'todo.title': '任务',
+@@ -444,8 +445,8 @@
+   'settings.enter.description': 'What Enter and the Send button do while the agent is running; Cmd/Ctrl+Enter uses the other behavior',
+   'settings.enter.queue': 'Queue',
+   'settings.enter.steer': 'Steer',
+-  'hero.headline': 'Into the Unknown',
+-  'hero.preview': 'Preview',
++  'hero.headline': 'AgentKit Studio',
++  'hero.preview': '',
+   'hero.chooseWorkspace': 'Choose workspace',
+   'session.hierarchy': 'Session hierarchy',
+   'todo.title': 'To-dos',

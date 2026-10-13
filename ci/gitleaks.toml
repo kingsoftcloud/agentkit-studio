@@ -1,0 +1,6 @@
+title = "AgentKit Studio secret gate"
+
+[extend]
+useDefault = true
+
+# No file, rule, fingerprint or historical-secret exemptions.

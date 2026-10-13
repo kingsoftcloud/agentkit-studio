@@ -1,0 +1,44 @@
+diff --git a/packages/api/session-controller/src/commands.ts b/packages/api/session-controller/src/commands.ts
+index 7e900b92ae..eb5a9e6ce1 100644
+--- a/packages/api/session-controller/src/commands.ts
++++ b/packages/api/session-controller/src/commands.ts
+@@ -168,7 +168,7 @@ export class SessionCommandController {
+             : { reasoningEffort: resolved.reasoningEffort }),
+         }
+         this.agents.selectForNextRequest(agent, selected)
+-        void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
++        if (request.saveDefault !== false) void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
+           this.ctx.logger.warn(
+             `session-controller: model selection changed for the Session but the default was not saved: ${String(error)}`,
+           )
+diff --git a/packages/api/session-controller/src/types.ts b/packages/api/session-controller/src/types.ts
+index a8f0d7e450..17d1065a48 100644
+--- a/packages/api/session-controller/src/types.ts
++++ b/packages/api/session-controller/src/types.ts
+@@ -298,6 +298,8 @@ export interface SessionCreateValue {
+ /** Session model-selection request. */
+ export interface SessionSelectModelRequest extends ModelSelection {
+   readonly sessionId: SessionId
++  /** False for Agent bindings and automation; ordinary picker changes save the default. */
++  readonly saveDefault?: boolean
+ }
+
+ /** Accepted model selection after Host resolution. */
+diff --git a/packages/api/session-controller/tests/session-models.host.spec.ts b/packages/api/session-controller/tests/session-models.host.spec.ts
+index e852460e93..9055eef963 100644
+--- a/packages/api/session-controller/tests/session-models.host.spec.ts
++++ b/packages/api/session-controller/tests/session-models.host.spec.ts
+@@ -669,6 +669,13 @@ describe('Web session model selection', () => {
+       { provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max' },
+     ])
+
++    // Agent-bound selections apply to the Session without replacing the user's default.
++    expectValue(await remote.selectModel(request({
++      sessionId, provider: 'deepseek-official', model: 'deepseek-chat', saveDefault: false,
++    })))
++    expect(currentSelection(ctx, sessionId)).toEqual({ provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high' })
++    expect(saved).toHaveLength(1)
++
+     // A refused selection never becomes anyone's default.
+     await remote.selectModel(request({ sessionId, provider: 'missing', model: 'model' }))
+     expect(saved).toHaveLength(1)

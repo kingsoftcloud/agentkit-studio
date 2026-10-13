@@ -1,0 +1,9 @@
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -796,4 +796,4 @@
+   ipcMain.handle(DESKTOP_IPC.updatesOpen, async (event) => {
+     assertProductSender(event)
+-    await openUpdatePrompt()
++    await openUpdatePrompt(true)
+   })
