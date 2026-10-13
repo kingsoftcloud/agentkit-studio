@@ -81,7 +81,7 @@ async function main() {
     'expected-commit': { type: 'string' }, evidence: { type: 'string' }, timeout: { type: 'string' },
     'expected-studio-sha256': { type: 'string' }, 'retain-file': { type: 'string', multiple: true },
     layout: { type: 'string' }, 'storage-origin': { type: 'string' }, 'require-full': { type: 'boolean' }, 'updater-cache': { type: 'string' },
-    'successor-observation': { type: 'string' },
+    'successor-observation': { type: 'string' }, 'user-data-dir': { type: 'string' },
   } })
   const dmg = values.app ? undefined : required(values.dmg, '--dmg')
   const feedOrigin = required(values.origin, '--origin')
@@ -94,7 +94,7 @@ async function main() {
   const root = await (await import('node:fs/promises')).mkdtemp(join(tmpdir(), 'agentkit-studio-installed-'))
   const mount = join(root, 'mount')
   const install = values.app ? resolve(values.app) : join(root, 'AgentKit Studio.app')
-  const userData = join(root, 'user-data')
+  const userData = values['user-data-dir'] ? resolve(values['user-data-dir']) : join(root, 'user-data')
   const harnessHome = values['data-home'] ? resolve(values['data-home']) : join(root, 'dsh-home')
   const journals = join(evidenceRoot, 'journals')
   await mkdir(userData, { recursive: true }); await mkdir(harnessHome, { recursive: true }); await mkdir(journals, { recursive: true })
@@ -125,9 +125,12 @@ async function main() {
   const executable = join(install, 'Contents/MacOS', await plist(join(install, 'Contents/Info.plist'), 'CFBundleExecutable'))
   const logPath = join(evidenceRoot, 'electron.log')
   const log = await open(logPath, 'a', 0o600)
-  const args = values.app ? [] : ['--user-data-dir', userData]
+  // Electron's early single-instance setup requires this option as one argument.
+  // Use an isolated profile for existing bundles too, unless an explicit retained
+  // profile was supplied for consecutive update and rollback qualification.
+  const args = [`--user-data-dir=${userData}`]
   const child = spawn(executable, args, { env: { ...process.env, DSH_HOME: harnessHome, DSH_DESKTOP_UPDATE_JOURNAL_DIR: journals }, stdio: ['ignore', log.fd, log.fd], detached: true })
-  await writeFile(join(evidenceRoot, 'run.json'), JSON.stringify({ root, install, pid: child.pid, before, targetVersion, markerPath, journals, logPath }, null, 2))
+  await writeFile(join(evidenceRoot, 'run.json'), JSON.stringify({ root, install, userData, harnessHome, pid: child.pid, before, targetVersion, markerPath, journals, logPath }, null, 2))
   console.log(`Real app launched at ${install}; use its visible update controls to download and restart. Evidence: ${evidenceRoot}`)
   child.unref()
   try {

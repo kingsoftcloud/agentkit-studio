@@ -18,6 +18,7 @@ import { registerAuthoringTools } from './authoring-tools.mjs';
 import { AGENTKIT_STUDIO_MARK_SVG } from './brand.js';
 import { DshPresetAdmission, dshModelSelection } from './agent-preset-admission.mjs';
 import { createStartupReconciler } from './preset-recovery.mjs';
+import { bindPresetRegistry } from './preset-registry-binding.mjs';
 import * as AgentKitHarnessPlugin from '../packages/agentkit-harness/src/index.mjs';
 
 export const name = 'agentkit-studio';
@@ -251,7 +252,7 @@ async function registerControlPlane(ctx) {
   } catch (error) {
     console.warn('[agentkit-studio] model credential sync skipped:', error?.message || error);
   }
-  let presetRegistry, presetAdmission;
+  let presetAdmission;
   // DSH restores a Session's selected preset before the browser can issue a
   // fresh agents/ensure-preset RPC, and honors session.create calls carrying
   // an inherited agentPreset. Startup reconciliation therefore re-registers
@@ -260,22 +261,11 @@ async function registerControlPlane(ctx) {
     store: agentStorePromise, build: studioBuildPromise, deployments,
     getAdmission: () => presetAdmission,
   });
-  // The registry is an optional DSH service. Older profiles can still load
-  // the Studio catalog and UI, but an Agent binding must return a typed
-  // unavailable error instead of silently selecting the default DSH loop.
-  ctx.inject(['agentPresets'], async presetCtx => {
-    presetRegistry = presetCtx.agentPresets;
-    presetAdmission?.setRegistry(presetRegistry);
-    presetCtx.effect(() => async () => {
-      await presetAdmission?.dispose();
-      presetRegistry = undefined;
-    }, 'agentkit-studio: dynamic preset cleanup');
-    await reconciler.run();
-  });
-  presetAdmission = new DshPresetAdmission({
+  const createPresetAdmission = registry => new DshPresetAdmission({
+    registry,
     getBasePlugins: async () => {
-      if (typeof presetRegistry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
-      return presetRegistry.pluginsFor('standard');
+      if (typeof registry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
+      return registry.pluginsFor('standard');
     },
     getAgent: async agentId => (await deployments()).agents.get(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
@@ -400,10 +390,14 @@ async function registerControlPlane(ctx) {
       return [...builtinContracts, ...mcpContracts];
     },
   });
-  if (presetRegistry) {
-    presetAdmission.setRegistry(presetRegistry);
-    await reconciler.run();
-  }
+  presetAdmission = createPresetAdmission();
+  // Cordis unloads and reruns this scope when the registry changes. An old
+  // scope must dispose its own admission, never whichever admission is current
+  // after an asynchronous reload. Catalog-only profiles retain typed failures.
+  bindPresetRegistry(ctx, { createAdmission: createPresetAdmission,
+    publishAdmission: admission => { presetAdmission = admission; },
+    reconcile: admission => reconciler.run(admission),
+  });
   const { startFrozenBuildRuntime } = await import('./frozen-build-runtime.mjs');
   const startRuntime = async () => startFrozenBuildRuntime({ ctx, env: runtimeEnv, modelService: models, build: (await studioBuildPromise).build,
     admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) });
