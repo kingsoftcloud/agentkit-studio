@@ -36,7 +36,7 @@ export function createResourcePages({ ui, hostRemote, actions, window = globalTh
       ['knowledge-base', '知识库'], ['memory-instance', '记忆库'],
     ];
     const label = resourceKinds.find(item => item[0] === resourceKind)?.[1] || '资源';
-  
+
     const load = async (kind = resourceKind, cursor = null, resetPaging = true, preserveMessage = false) => {
       const seq = ++requestSeq.current;
       setStatus('loading'); setError(''); if (!preserveMessage) setMessage('');
@@ -179,7 +179,7 @@ export function createResourcePages({ ui, hostRemote, actions, window = globalTh
       skillPreview ? h(SkillPreviewDialog, { title: skillPreview.title, preview: skillPreview.files, file: skillPreviewFile, onClose: () => { setSkillPreview(null); setSkillPreviewFile(null); }, onSelect: loadSkillFile }) : null,
       resourcePreview ? h(ResourceDialog, { title: resourcePreview.displayName || resourcePreview.name || resourcePreview.resourceId, detail: '只读查看 Host 资源声明。Agent 绑定关系不会在资源库页面修改。', onClose: () => setResourcePreview(null) }, h('pre', { style: { margin: 0, maxHeight: '520px', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: BRAND.ink, background: BRAND.canvas, border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '12px', fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(resourcePreview, null, 2))) : null);
   }
-  
+
   function RuntimeResourcesPage() {
     const [status, setStatus] = useState('loading');
     const [resources, setResources] = useState([]);
@@ -218,13 +218,13 @@ export function createResourcePages({ ui, hostRemote, actions, window = globalTh
         }))
       ) : null);
   }
-  
+
   function UnsupportedStudioPage({ title, detail }) {
     return h('div', null,
       h(ContentIntro, { detail, action: h(Pill, { tone: 'signal' }, 'Host API 未接入') }),
       h(EmptyState, { icon: '·', title: title + '暂未接入', detail: '这个入口保留在产品信息架构中，但当前版本不会用假数据模拟。接入对应 Host 合同后再开放操作。' }));
   }
-  
+
   function ResourceWorkspace() {
     const [tab, setTab] = useState(() => {
       try {

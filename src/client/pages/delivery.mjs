@@ -9,7 +9,7 @@ export function createDeliveryPages({ ui, hostRemote, actions, window = globalTh
       h('span', { 'aria-hidden': true, style: { display: 'grid', placeItems: 'center', width: '26px', height: '26px', borderRadius: '50%', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', fontWeight: 700 } }, number),
       h('div', { style: { flex: 1, minWidth: '180px' } }, h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '15px' } }, title), detail ? h('p', { style: { margin: '4px 0 0', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.5 } }, detail) : null), action);
   }
-  
+
   function CloudDeploymentPanel({ agentId, selectedBuild, onBusyChange }) {
     const [preview, setPreview] = useState(null);
     const [requestKey, setRequestKey] = useState('');
@@ -172,7 +172,7 @@ export function createDeliveryPages({ ui, hostRemote, actions, window = globalTh
         h('span', null, `${visibleRecords.length} 条 · ${currentPage} / ${pageCount}`), h('button', { type: 'button', disabled: currentPage <= 1, onClick: () => setPage(currentPage - 1), style: buttonStyle() }, '上一页'), h('button', { type: 'button', disabled: currentPage >= pageCount, onClick: () => setPage(currentPage + 1), style: buttonStyle() }, '下一页')) : null,
       log ? h('div', { style: { marginTop: '12px' } }, h('strong', null, `${log.name} · 运行日志`), h('button', { type: 'button', onClick: () => setLog(null), style: buttonStyle() }, '关闭'), h('pre', { style: { padding: '12px', background: BRAND.canvas, maxHeight: '300px', overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: '11px' } }, log.lines.join('\n') || '暂无日志')) : null));
   }
-  
+
   function DeliveryPage() {
     const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
     const [agents, setAgents] = useState([]);
@@ -190,7 +190,7 @@ export function createDeliveryPages({ ui, hostRemote, actions, window = globalTh
     const [agentLoading, setAgentLoading] = useState(false);
     const [deploymentBusy, setDeploymentBusy] = useState(false);
     const agentRequest = useRef(0);
-  
+
     const load = async (preferredAgent = selectedAgent) => {
       const request = ++agentRequest.current;
       setStatus('loading');
@@ -230,7 +230,7 @@ export function createDeliveryPages({ ui, hostRemote, actions, window = globalTh
       }
     };
     useEffect(() => { void load(); return () => { agentRequest.current++; }; }, []);
-  
+
     const currentAgent = agents.find(item => (item?.metadata?.id || item?.id) === selectedAgent);
     const builds = [...(Array.isArray(currentAgent?.builds) ? currentAgent.builds : [])].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const readyBuilds = builds.filter(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');

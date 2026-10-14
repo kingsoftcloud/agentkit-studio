@@ -9,7 +9,7 @@ export function createOperationalComponents({ ui }) {
     const tone = ['SUCCEEDED', 'SUCCESS', 'PASSED', 'COMPLETED', 'READY', 'CONNECTED', 'ENABLED', 'ONLINE'].includes(status) ? 'accent' : ['FAILED', 'ERROR', 'CANCELLED', 'REJECTED', 'OFFLINE'].includes(status) ? 'signal' : 'neutral';
     return h(Pill, { tone }, status.toLowerCase());
   }
-  
+
   function OperationalTable({ columns, rows, empty = '暂无数据', onRowClick }) {
     const header = h('thead', null,
       h('tr', { style: { position: 'sticky', top: 0, zIndex: 1, textAlign: 'left', color: BRAND.inkMuted, background: BRAND.canvas } },
@@ -20,7 +20,7 @@ export function createOperationalComponents({ ui }) {
     return h('div', { style: { overflow: 'auto', maxHeight: 'min(58vh, 560px)', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface } },
       h('table', { style: { width: '100%', minWidth: Math.max(680, columns.length * 140) + 'px', borderCollapse: 'collapse', fontSize: '12px' } }, header, h('tbody', null, body)));
   }
-  
+
   function OperationalPager({ page, pageSize, total, onChange }) {
     const pageCount = Math.max(1, Math.ceil(total / pageSize));
     return h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '10px', padding: '4px 0', color: BRAND.inkMuted, fontSize: '11px' } },
@@ -29,13 +29,13 @@ export function createOperationalComponents({ ui }) {
         h('button', { type: 'button', 'aria-label': '运行中心上一页', disabled: page <= 0, onClick: () => onChange(Math.max(0, page - 1)), style: pagerButtonStyle(page <= 0) }, '上一页'),
         h('button', { type: 'button', 'aria-label': '运行中心下一页', disabled: page >= pageCount - 1, onClick: () => onChange(Math.min(pageCount - 1, page + 1)), style: pagerButtonStyle(page >= pageCount - 1) }, '下一页')));
   }
-  
+
   function OperationalToolbar({ children, onRefresh, busy }) {
     return h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, children),
       h('button', { type: 'button', onClick: onRefresh, disabled: busy, style: { ...buttonStyle(), background: BRAND.surface } }, busy ? '读取中…' : '刷新'));
   }
-  
+
   function OperationalBars({ buckets = [] }) {
     const values = Array.isArray(buckets) ? buckets.slice(-24) : [];
     if (!values.length) return null;

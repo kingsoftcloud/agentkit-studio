@@ -21,7 +21,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
     const [raw, setRaw] = useState(null);
     const [detailLoading, setDetailLoading] = useState(false);
     const pageSize = 12;
-  
+
     const load = async () => {
       setStatus('loading');
       setError('');
@@ -43,14 +43,14 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
       setStatus('ready');
       if (result.some(item => item.status === 'rejected')) setError('部分观测数据暂不可用。');
     };
-  
+
     useEffect(() => { void load(); }, [range]);
     useEffect(() => {
       if (status !== 'ready' || !traces.some(trace => ['RUNNING', 'PENDING', 'QUEUED'].includes(String(trace?.status || '').toUpperCase()))) return undefined;
       const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 5000);
       return () => window.clearInterval(timer);
     }, [status, traces]);
-  
+
     const filtered = traces.filter(trace => {
       const haystack = [operationalId(trace), trace?.runId, trace?.sessionId, trace?.agentId, trace?.status, trace?.name, trace?.agentName]
         .join(' ')
@@ -61,7 +61,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
       return statusMatch && (agentFilter === 'all' || traceAgentId === agentFilter) && (!query.trim() || haystack.includes(query.trim().toLowerCase()));
     });
     const rows = filtered.slice(page * pageSize, (page + 1) * pageSize);
-  
+
     const openTrace = async trace => {
       const id = operationalId(trace);
       setSelected(trace);
@@ -79,7 +79,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
         setDetailLoading(false);
       }
     };
-  
+
     const loadRaw = async () => {
       if (!selected) return;
       try {
@@ -98,14 +98,14 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
         const link = document.createElement('a'); link.href = url; link.download = payload?.filename || `${sessionId}-session.json`; link.click(); URL.revokeObjectURL(url);
       } catch (reason) { setError(reason?.message || '会话日志导出失败'); }
     };
-  
+
     const summary = [
       ['运行次数', overview?.total ?? overview?.totalRuns ?? traces.length, range === '7d' ? '近 7 天' : '近 24 小时'],
       ['完成率', overview?.successRate == null ? '—' : `${Math.round(Number(overview.successRate) * 100)}%`, '已完成运行'],
       ['平均耗时', overview?.avgDurationMs == null ? '—' : `${Math.round(Number(overview.avgDurationMs))} ms`, 'Runtime 上报'],
       ['Token 用量', overview?.totalTokens ?? overview?.tokens ?? '—', '输入与输出合计'],
     ];
-  
+
     const requestMetrics = (selected?.events || []).filter(event => event.event_type === 'model.request').map(event => event.payload);
     const requestDetail = h('div', { style: { display: 'grid', gap: '10px', maxHeight: '36vh', overflow: 'auto' } },
       h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, '字符数反映请求体大小，不等于 Token 用量；这里只保存统计，不保存提示词正文。'),
@@ -144,7 +144,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
                       h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${span?.spanId || span?.id || '—'} · ${span?.durationMs ?? '—'} ms`)),
                     operationalStatus(span?.status || 'completed'),
                   )));
-  
+
     const traceDetail = selected
       ? h(ResourceDialog, { title: `Trace 详情 · ${operationalId(selected)}`, detail: `${operationalDate(selected.startedAt || selected.createdAt)} · ${String(selected.status || 'unknown').toLowerCase()}`, wide: true, onClose: () => setSelected(null) },
           h('div', { style: { display: 'grid', gap: '10px' } },
@@ -155,7 +155,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
                   h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'attributes', label: '属性' }, { id: 'events', label: '事件' }, { id: 'resource', label: '资源' }, { id: 'trajectory', label: '轨迹' }, { id: 'requests', label: `模型请求${requestMetrics.length ? ' ' + requestMetrics.length : ''}` }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
                   detailContent)))
       : null;
-  
+
     const columns = [
       { id: 'trace', label: 'Trace', cell: row => h('div', null, h('strong', null, row?.name || operationalId(row)), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, operationalId(row))) },
       { id: 'location', label: '执行位置', cell: row => row.executionLocation === 'cloud' ? '云端 · 本机留存凭据' : '本地' },
@@ -165,7 +165,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
       { id: 'tokens', label: 'Tokens', cell: row => row?.totalTokens ?? row?.usage?.totalTokens ?? '—' },
       { id: 'startedAt', label: '开始时间', cell: row => operationalDate(row?.startedAt || row?.startTime || row?.createdAt) },
     ];
-  
+
     return h('div', null,
       h(OperationalPageHeading, { title: '观测', detail: '按时间、Agent、Run 和 Session 查看 Trace，打开详情查看 Span、事件、用量和原始 OTLP。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Trace Store 已连接' : '读取中') }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取观测数据', detail: '读取聚合指标和 Trace 列表。' }) : null,

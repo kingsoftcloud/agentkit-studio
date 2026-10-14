@@ -30,7 +30,7 @@ export function createEvaluationPage({ ui, hostRemote, window = globalThis.windo
     const [evalsetUploading, setEvalsetUploading] = useState(false);
     const [runFilter, setRunFilter] = useState('all');
     const pageSize = 12;
-  
+
     const load = async () => {
       setStatus('loading'); setError('');
       const result = await Promise.allSettled([
@@ -139,7 +139,7 @@ export function createEvaluationPage({ ui, hostRemote, window = globalThis.windo
           detailTab === 'cases' ? h(OperationalTable, { columns: [{ id: 'name', label: '用例', cell: row => h('strong', null, operationalLabel(row, operationalId(row))) }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || row?.result) }, { id: 'duration', label: '耗时', cell: row => row?.durationMs == null ? '—' : `${row.durationMs} ms` }, { id: 'error', label: '错误', cell: row => row?.error || row?.message || '—' }], rows: operationalCollection(selected.cases || selected.caseResults || selected.results), empty: '运行详情未返回用例结果。' }) : null,
           detailTab === 'assertions' ? h(OperationalTable, { columns: [{ id: 'name', label: '断言', cell: row => h('strong', null, operationalLabel(row, row?.path || '—')) }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || (row?.passed ? 'passed' : 'failed')) }, { id: 'message', label: '说明', cell: row => row?.message || row?.detail || '—' }], rows: operationalCollection(selected.assertions || selected.evaluatorResults), empty: '运行详情未返回断言结果。' }) : null,
           detailTab === 'trace' ? h('pre', { style: { margin: '12px 0 0', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.55 } }, JSON.stringify(selected.trace || selected.trajectory || selected.events || [], null, 2)) : null))) : null;
-  
+
     return h('div', null,
       h(OperationalPageHeading, { title: '评测', detail: '评测集、目标、运行记录和详情都来自 Host；页面负责筛选、分页和结果投影。', action: h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中'), h('button', { type: 'button', onClick: () => setCreateOpen(value => !value), style: { ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText, borderColor: 'transparent' } }, '新建评测')) }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取评测数据', detail: '读取评测目标、评测集和运行记录。' }) : null,

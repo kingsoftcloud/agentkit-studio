@@ -16,7 +16,7 @@ export function createNavigation({ ui }) {
       style: { minHeight: '32px', border: 0, borderBottom: '2px solid ' + (value === item.id ? BRAND.accentStrong : 'transparent'), borderRadius: 0, padding: '0 16px', color: value === item.id ? BRAND.accentStrong : BRAND.inkMuted, background: 'transparent', fontSize: '12px', fontWeight: value === item.id ? 800 : 650, cursor: 'pointer' },
     }, item.label)));
   }
-  
+
   function StudioPageTabs({ items, value, onChange, ariaLabel }) {
     return h('nav', {
       'aria-label': ariaLabel || '页面标签',

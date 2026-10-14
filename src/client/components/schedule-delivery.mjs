@@ -32,7 +32,7 @@ export function createScheduleDelivery({ ui, hostRemote }) {
         catalog.error ? h('span', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, catalog.error) : null,
         !catalog.loading && !catalog.error && !catalog.items.length && supported ? h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, '暂无可投递的 WPS 或飞书会话。') : null) : null);
   }
-  
+
   function ScheduleDeliveryResult({ item }) {
     const labels = { waiting_result: '等待执行结果', pending: '待投递', queued: '待发送', sending: '发送中',
       retrying: '等待重试', delivered: '已送达', failed: '投递失败', unknown: '送达结果待确认', not_sent: '未投递' };
