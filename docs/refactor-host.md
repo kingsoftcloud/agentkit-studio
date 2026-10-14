@@ -1,6 +1,6 @@
 # Host 拆分：实施与验收
 
-阶段 4 正在实施。4A 服务组装已经拆出，4B 领域路由与 4C 共享合同尚未完成；本记录不把入口变短当作完整阶段验收。
+阶段 4 正在实施。4A 服务组装已经拆出，4B 已迁移首批 13/77 个操作，其余领域路由及 4C 共享合同尚未完成；本记录不把入口变短当作完整阶段验收。
 
 ## 4A 改动范围
 
@@ -32,6 +32,18 @@
 
 本地证据保存在忽略的 `.artifacts/refactor/stage-4/`：`services-release-check.log`、`services-isolation-check.log`、`services-lifecycle-20.json`、`services-web-23.json`、`services-electron-23.json`、`services-transport-parity.json` 和 `services-client-admission.json`。验收 UI 只操作独立 Profile 中带唯一标记的合成数据，不发送新模型消息或进行云端部署修改。Electron 为开发宿主，不能作为安装更新和 Windows 原生安装证据。
 
+## 4B 首批路由
+
+`routes/resources.mjs` 处理资源目录和 MCP 的 6 个操作，`routes/credentials.mjs` 处理凭证写入，`routes/builds.mjs` 处理 Build 与 operation 的 6 个操作。保留原参数、返回 envelope、错误码、资源删除范围和 Build 身份。异步调用在原分派错误边界内等待，异常继续转换成原 RPC 失败 envelope。
+
+四个对应测试文件改为直接导入实际路由工厂，不再读取并截取业务源码或使用 `new Function`。77 个允许操作的集合与迁移前相同，没有增加或删除端点。
+
+本地源码及发行输入检查为 716 项通过，0 失败、0 跳过。真实 Web 和 Electron 开发宿主各通过既有 23 项流程，以及凭证名称无效、凭证值为空、MCP 更新不存在、MCP 删除 ID 无效、Build 下载 ID 无效这 5 项失败合同，共 28 项。负例验证 HTTP 状态、RPC ID、错误码和凭证值不回显，没有执行凭证写入或资源删除。
+
+失败记录保留。第一次创建流程缺少两个可选模型，检查确认隔离目录的模型配置缺失；补入现有模型配置后继续验收，没有复制云端凭证。另一个失败是新增负例把空 ID 的 MCP 更新预期写成了 `MCP_ID_INVALID`；真实存储的迁移前后对照均为 `MCP_NOT_FOUND`，因此修正测试预期，保留产品合同。产品页面验证增加模型目录前置检查，失败报告保留已完成的页面结果。
+
+本批机器记录位于同一证据目录：`routes-first-release-check.log`、`routes-first-operation-parity.json`、`routes-mcp-error-parity.json`、`routes-failure-code-{red,green}.json`、`routes-first-web-final-28.json`、`routes-first-electron-28.json` 和 `routes-first-lifecycle-20.json`。之前的失败报告不覆盖。
+
 ## 仍需完成
 
-4B 将 77 个现有操作按领域迁移，直接导入路由行为测试，替换当前少量截取源码的测试。4C 统一 Node 和产品浏览器客户端的操作定义、参数、错误及取消合同，并验证四种启动状态、重启恢复、冻结 Build、工具续接与包加载。阶段 4 完整验收后再进入补丁收敛与宿主升级演练，最终交付可开源源码主分支。
+4B 继续迁移剩余 64 个操作和传输注册，替换其余截取源码的行为测试。4C 统一 Node 和产品浏览器客户端的操作定义、参数、错误及取消合同，并验证四种启动状态、重启恢复、冻结 Build、工具续接与包加载。阶段 4 完整验收后再进入补丁收敛与宿主升级演练，最终交付可开源源码主分支。

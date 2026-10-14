@@ -9,6 +9,9 @@ import { createStartupReconciler } from '../preset-recovery.mjs';
 import { bindPresetRegistry } from '../preset-registry-binding.mjs';
 import { mountRuntimeBridge } from './runtime-bridge.mjs';
 import { createStudioServices } from './services/index.mjs';
+import { createResourceRoutes } from './routes/resources.mjs';
+import { createCredentialRoute } from './routes/credentials.mjs';
+import { createBuildRoutes } from './routes/builds.mjs';
 
 const CONTROL_CHANNEL = '/agentkit';
 
@@ -310,6 +313,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env } = {
     const frozenRuntime = await startRuntime();
     if (frozenRuntime) ctx.effect(() => () => frozenRuntime.close(), 'agentkit-studio: frozen Build runtime');
   }
+  const resourceRoutes = createResourceRoutes({ models, serverClientPromise, localMcpStorePromise, skillDiscoveryPromise, mcpProbePromise });
+  const credentialRoute = createCredentialRoute({ credentialsService });
+  const buildRoutes = createBuildRoutes({ studioBuildPromise, agentStorePromise, serverClientPromise, portableBundles });
   const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/credential-status', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-inspect', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'builds/export-portable', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/agent-update', 'channels/action', 'server/action']);
   for (const action of ['prepare', 'create', 'prepareUpdate', 'applyUpdate', 'list', 'get', 'refresh', 'repairAccess', 'reconcile', 'logs', 'remove']) allowed.add(`deployments/${action}`);
   const dispatch = async (endpoint, payload, signal) => {
@@ -332,59 +338,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env } = {
       if (endpoint === 'models/catalog') return { ok: true, value: await models.catalog(String(payload?.profileId || '')) };
       if (endpoint === 'models/codex') return { ok: true, value: await listCodexAgentModels({ models, catalog: codexModels }) };
       const serverClient = await serverClientPromise;
-      if (endpoint === 'resources/list') {
-        const kind = String(payload?.kind || '').trim();
-        if (!kind || ['model', 'skill', 'mcp', 'knowledge-base', 'memory-instance'].includes(kind)) {
-          const { listStudioResources, listStudioRuntimeResources } = await import('../resource-catalog.mjs');
-          return { ok: true, value: await (kind ? listStudioResources : listStudioRuntimeResources)({ query: payload, models, serverClient, signal,
-            localMcpStore: await localMcpStorePromise, skillDiscovery: await skillDiscoveryPromise, mcpProbes: await mcpProbePromise }) };
-        }
-        if (kind === 'tool') {
-          const value = await serverClient.listCatalogResources({ kind: 'tool', query: payload?.query, limit: payload?.limit, cursor: payload?.cursor, source: payload?.source, status: payload?.status }, { signal });
-          return { ok: true, value };
-        }
-        const resourceKind = kind;
-        const value = await serverClient.listResource(resourceKind, { Page: 1, PageSize: Math.min(Number(payload?.limit || 100), 100) }, { signal });
-        return { ok: true, value };
-      }
-      if (endpoint === 'credentials/put') {
-        const name = String(payload?.name || '').trim();
-        const value = String(payload?.value || '');
-        if (!/^[A-Za-z_][A-Za-z0-9_./:-]{0,127}$/.test(name)) return { ok: false, error: { code: 'CREDENTIAL_NAME_INVALID', message: '凭证名称无效', details: {} } };
-        if (!value) return { ok: false, error: { code: 'CREDENTIAL_VALUE_MISSING', message: '凭证值不能为空', details: {} } };
-        try {
-          await credentialsService.set(name, value);
-        } catch (error) {
-          // Process-injected credentials are intentionally read-only in DSH.
-          // The browser may still submit the same name when the value was
-          // supplied through the Host environment; acknowledge that existing
-          // effective credential without persisting or echoing its value.
-          const current = typeof credentialsService.describe === 'function'
-            ? await credentialsService.describe(name).catch(() => null)
-            : null;
-          const effective = current?.configured && current.source === 'env' ? await credentialsService.resolve(name).catch(() => null) : null;
-          if (effective?.value !== value) throw error;
-          return { ok: true, value: { name, configured: true, source: 'env', persistence: 'process-environment' } };
-        }
-        return { ok: true, value: { name, configured: true, persistence: 'managed-store' } };
-      }
-      if (endpoint === 'mcp/create') {
-        const localStore = await localMcpStorePromise;
-        return { ok: true, value: await localStore.create(payload || {}) };
-      }
-      if (endpoint === 'mcp/update') {
-        const localStore = await localMcpStorePromise;
-        const resourceId = String(payload?.resourceId || '').trim();
-        return { ok: true, value: await localStore.update(resourceId, payload || {}) };
-      }
-      if (endpoint === 'mcp/probe') {
-        const resourceId = String(payload?.resourceId || '').trim();
-        return { ok: true, value: await (await mcpProbePromise).probe(resourceId) };
-      }
-      if (endpoint === 'mcp/delete' || endpoint === 'resources/delete') {
-        const { deleteStudioMcp } = await import('../resource-lifecycle.mjs');
-        return { ok: true, value: await deleteStudioMcp(payload, { localStore: await localMcpStorePromise, serverClient: await serverClientPromise }) };
-      }
+      if (endpoint.startsWith('resources/') || endpoint.startsWith('mcp/')) return await resourceRoutes(endpoint, payload, signal);
+      if (endpoint === 'credentials/put') return await credentialRoute(payload);
+      if (endpoint.startsWith('builds/') || endpoint.startsWith('operations/')) return await buildRoutes(endpoint, payload, signal);
       // Agent catalog reads are now owned by the Studio Node host and call the
       // existing AgentEngine Action API directly. The DSH connection only
       // authenticates the browser-to-host hop; it is not a KsADK dependency.
@@ -530,37 +486,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env } = {
           if (endpoint === 'plugins/codex-list' || endpoint === 'plugins/codex-inspect') return { ok: true, value: await import('../studio-codex-plugins.mjs').then(({ createStudioCodexPlugins }) => createStudioCodexPlugins({})).then(codex => endpoint === 'plugins/codex-inspect' ? codex.inspectCodex(payload?.pluginId) : codex.listCodex()) };
         } catch (error) {
           return { ok: false, error: { code: error?.code || 'PLUGIN_ECOSYSTEM_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
-        }
-      }
-      if (endpoint === 'builds/create' || endpoint === 'builds/list' || endpoint === 'builds/download' || endpoint === 'builds/export-portable' || endpoint === 'operations/list' || endpoint === 'operations/cancel') {
-        const studio = await studioBuildPromise;
-        try {
-          if (endpoint === 'builds/create') {
-            const { submitAgentBuild } = await import('../build-operation.mjs');
-            return { ok: true, value: await submitAgentBuild({ payload, localStore: await agentStorePromise, serverClient, ...studio, signal }) };
-          }
-          if (endpoint === 'builds/list') {
-            const agentId = String(payload?.agentId || '').trim();
-            if (!agentId) return { ok: true, value: { items: [] } };
-            return { ok: true, value: { items: await studio.build.list(agentId) } };
-          }
-          if (endpoint === 'builds/export-portable') {
-            try { return { ok: true, value: await portableBundles.prepare(String(payload?.agentId || ''), String(payload?.buildId || '')) }; }
-            catch (error) { return { ok: false, error: { code: error?.code || 'PORTABLE_EXPORT_FAILED', message: error?.code?.startsWith('PORTABLE_') ? error.message : '运行包导出失败，请检查绑定的资源是否可读取', details: {} } }; }
-          }
-          if (endpoint === 'builds/download') return { ok: true, value: await studio.build.download(String(payload?.agentId || ''), String(payload?.buildId || '')) };
-          if (endpoint === 'operations/list') {
-            const items = await studio.operations.list({ resourceId: String(payload?.resourceId || '') || undefined, kind: String(payload?.kind || '') || undefined });
-            return { ok: true, value: { items } };
-          }
-          const operation = await studio.operations.cancel(String(payload?.operationId || ''));
-          return { ok: true, value: operation };
-        } catch (error) {
-          return { ok: false, error: {
-            code: error?.code || 'STUDIO_OPERATION_FAILED',
-            message: error instanceof Error ? error.message : String(error),
-            details: error?.details || {},
-          } };
         }
       }
       if (endpoint === 'sessions/export-log') {

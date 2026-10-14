@@ -13,6 +13,10 @@ export async function verifyStudioClientPages(page) {
     return result.value;
   }, { method, payload });
   try {
+    phase = 'model-catalog-preflight';
+    const catalog = await rpc('resources/list', { kind: 'model' });
+    assert.ok(catalog.items?.length >= 2, 'the isolated acceptance profile needs two available models before the binding-edit flow');
+    phase = 'create';
     const suffix = Date.now().toString(36);
     const name = `UI_REFACTOR_AGENT_${suffix}`;
     await page.getByText('Agents', { exact: true }).click();
