@@ -195,6 +195,8 @@ RPC 继续通过 DSH Connection 认证，HTTP 下载和 SSE 保持对应传输�
 
 本地验收证据存于忽略的 `.artifacts/refactor/<stage>/`。报告记录 Studio commit、DSH commit、patch digest 或 patched tree、插件包指纹、场景、预期、实际结果和证据类别。证据类别区分源码测试、真实 Host 加受控 provider、真实 provider、安装桌面和真实云端。报告不含凭证值或用户会话正文。
 
+源码交付以 GitHub `kingsoftcloud/agentkit-studio` 的 `main` 为主分支。完成各阶段后整理 README、开发和贡献说明、许可证、补丁来源及适用验收结果，重新运行公开面、当前快照和可达历史的凭证扫描、构建与包完整性检查。以最终待合并提交运行真实 DSH 回归，再通过正常分支合并流程更新 `main`；同步镜像后核对精确提交，不改写已有分支历史。源码主分支交付与安装包、更新 feed 的发行分别验收。
+
 ## 维护性如何衡量
 
 | 指标 | 阶段目标 | 记录方式 |

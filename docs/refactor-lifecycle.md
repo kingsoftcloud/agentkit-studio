@@ -1,6 +1,6 @@
 # AgentKit Studio 生命周期重构实施与验收
 
-阶段 1 已实现并通过适用的本地验收：Host 作用域内的 RuntimeBridge、注册释放、旧 scope 竞争保护、资源适配器关闭、Codex 子进程退出兜底和跨轮工具上下文恢复。完整 Studio 插件在同一个真实 DSH Profile 中连续装卸 20 次；真实配置模型的多轮、工具及取消检查通过，Electron 开发宿主的原生入口和 Host RPC 通过。[阶段 2](refactor-sidebar.md) 正在实施，阶段 3 至 5 尚未实施。桌面安装更新、Windows 原生运行和真实云端尚未验证。
+阶段 1 已实现并通过适用的本地验收：Host 作用域内的 RuntimeBridge、注册释放、旧 scope 竞争保护、资源适配器关闭、Codex 子进程退出兜底和跨轮工具上下文恢复。完整 Studio 插件在同一个真实 DSH Profile 中连续装卸 20 次；真实配置模型的多轮、工具及取消检查通过，Electron 开发宿主的原生入口和 Host RPC 通过。[阶段 2](refactor-sidebar.md) 的代码移除及本地专项验收已完成，[阶段 3](refactor-client.md) 正在实施，阶段 4、5 尚未实施。桌面安装更新、Windows 原生运行和真实云端尚未验证。
 
 ## 实施基线
 
