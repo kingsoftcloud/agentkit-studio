@@ -76,7 +76,7 @@ try {
  const installed=JSON.parse(asar.extractFile(join(dirname(executablePath),'resources','app.asar'),'package.json'));
  if(installed.version!==targetVersion) throw new Error('Installed bytes are not the feed target');
  if(await readFile(join(home,'upgrade-retention-marker.txt'),'utf8')!=='retained across native Windows update\n') throw new Error('Shared DSH data was not retained');
- await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-updated-app.ps1',import.meta.url)),'-AppPath',executablePath,'-Evidence',evidence,'-RetainedText','Windows upgrade'],{timeout:240000});
+ await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-updated-app.ps1',import.meta.url)),'-AppPath',executablePath,'-Evidence',evidence,'-RetainedText','Windows upgrade'],{env:environment,timeout:240000});
  const differential=updaterLog.match(/Full:\s*([0-9,.]+)\s*KB,\s*To download:\s*([0-9,.]+)\s*KB\s*\(([0-9.]+)%\)/);
  const downloadEvidence=differential ? {kind:'native-differential',fullKilobytes:Number(differential[1].replaceAll(',','')),downloadKilobytes:Number(differential[2].replaceAll(',','')),ratioPercent:Number(differential[3])} : {kind:'not-established'};
  await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
