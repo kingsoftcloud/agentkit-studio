@@ -17,3 +17,5 @@
 缺少模型凭证时自动显示，已配置用户不弹出，设置页可手动重开。使用 DSH Modal 的焦点、Escape、主题和 Settings onboarding 完成机制。Studio 产品 profile 关闭 `ui-settings-account`，避免它的独立全屏欢迎和充值流程叠在 Studio 引导上。
 
 Studio 设置与原生偏好设置使用相同的 14px 标签、12px 说明和 16px 行间距。版本号作为普通值展示，不使用状态徽章。手动配置 Agent 使用轻量步骤导航与单一表单分区，窄窗口转为纵向布局。开始前检查只显示已读取的配置事实，不用固定评分表示运行时就绪。
+
+Windows 托盘图标独立于应用图标。`scripts/build-brand.mjs --windows-tray` 从同一个 Nexus SVG 逐尺寸生成16、20、24、32、40、48、64px的 ICO，提交 `assets/agentkit-studio-tray.ico` 供 CI 使用。打包通过 `DSH_DESKTOP_PRODUCT_TRAY_ICON` 传入，不使用 DSH 鲸鱼资源。安装验收比较实际资源、由 Electron 原生解码并保留任务栏截图。

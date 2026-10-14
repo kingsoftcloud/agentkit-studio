@@ -24,6 +24,14 @@ test('Studio keeps the official Sidebar Browser active for in-app HTTP(S) links'
   assert.match(patch, /- id: ui-sidebar-browser[\s\S]*?\n\s*disabled: false/);
 });
 
+test('resource library has one Skill tab with a source filter', () => {
+  const page = clientSource.slice(clientSource.indexOf('function ResourcesPage'), clientSource.indexOf('function CodexPluginMarketItem'));
+  const tabs = page.slice(page.indexOf('const resourceKinds'),page.indexOf('const label'));
+  assert.match(tabs,/\['skill', 'Skill'\]/);
+  assert.doesNotMatch(tabs,/Skill Center/);
+  assert.match(page,/'aria-label': 'Skill 来源'/);
+});
+
 test('Studio conversation surface does not ship the legacy DSH hero copy', () => {
   assert.doesNotMatch(clientSource, /探索未至之境|预览版/);
 });

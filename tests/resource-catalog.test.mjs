@@ -68,3 +68,16 @@ test('runtime overview explicitly reports truncated categories rather than claim
   assert.deepEqual(value.counts[0], { kind: 'model', total: 201, shown: 200 });
   assert.equal(value.warnings[0].code, 'RESOURCE_OVERVIEW_TRUNCATED');
 });
+
+test('Skill source filters apply before pagination and isolate local from cloud reads', async () => {
+  let cloudReads=0, localReads=0;
+  const options={skillDiscovery:{listInstalled:async()=>{localReads++;return{items:[{resourceId:'local-one',source:'local-import'},{resourceId:'local-two',source:'local-import'}]};}},serverClient:{listResource:async()=>{cloudReads++;return{items:[{resourceId:'cloud-one'},{resourceId:'cloud-two'}],total:2};}}};
+  const local=await listStudioResources({...options,query:{kind:'skill',source:'local',limit:1}});
+  assert.equal(local.total,2);assert.equal(local.items[0].resourceId,'local-one');assert.equal(cloudReads,0);
+  const next=await listStudioResources({...options,query:{kind:'skill',source:'local',limit:1,cursor:local.nextCursor}});
+  assert.equal(next.items[0].resourceId,'local-two');
+  assert.throws(()=>paginateResources([],{kind:'skill',source:'cloud',cursor:local.nextCursor}),{code:'INVALID_RESOURCE_CURSOR'});
+  const before=localReads;
+  const cloud=await listStudioResources({...options,query:{kind:'skill',source:'cloud',limit:1}});
+  assert.equal(cloud.total,2);assert.equal(cloud.items[0].source,'agentengine-server');assert.equal(localReads,before);
+});

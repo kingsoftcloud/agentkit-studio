@@ -14,3 +14,18 @@ test('brand contract is scoped and has a legible canonical mark', () => {
   assert.equal(AGENTKIT_STUDIO_BRAND.colors.accent, '#1858d6');
   assert.equal(AGENTKIT_STUDIO_BRAND.colors.surface, '#ffffff');
 });
+
+test('Windows tray contains independently sized valid PNG frames for native scaling', () => {
+  const ico=readFileSync(new URL('../assets/agentkit-studio-tray.ico',import.meta.url));
+  assert.equal(ico.readUInt16LE(2),1);
+  assert.equal(ico.readUInt16LE(4),7);
+  const sizes=[16,20,24,32,40,48,64];
+  sizes.forEach((size,index)=>{
+    const entry=6+16*index,offset=ico.readUInt32LE(entry+12),length=ico.readUInt32LE(entry+8);
+    assert.equal(ico[entry],size);assert.equal(ico[entry+1],size);
+    assert.ok(offset+length<=ico.length);
+    const png=ico.subarray(offset,offset+length);
+    assert.equal(png.subarray(1,4).toString(),'PNG');
+    assert.equal(png.readUInt32BE(16),size);assert.equal(png.readUInt32BE(20),size);
+  });
+});

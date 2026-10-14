@@ -18,6 +18,8 @@ const executablePath=process.env.STUDIO_INSTALLED_APP;
 const expectedVersion=process.env.BUILD_VERSION;
 if (!executablePath || !expectedVersion) throw new Error('Installed app and build version are required');
 const archive=join(dirname(executablePath),'resources/app.asar');
+const trayBytes=await readFile(join(dirname(executablePath),'resources/tray.ico'));
+if(!trayBytes.equals(await readFile(new URL('../assets/agentkit-studio-tray.ico',import.meta.url)))) throw new Error('Installed tray icon differs from the Nexus product resource');
 const updateProvider=YAML.parse(await readFile(join(dirname(executablePath),'resources/app-update.yml'),'utf8'));
 if(updateProvider.useMultipleRangeRequest!==false || updateProvider.url!=='https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/win-x64/') throw new Error('Installed Windows update provider must use canonical Studio single-range feed');
 const moduleGraph=await verifyDesktopModuleGraph(path=>asar.extractFile(archive,normalize(path)).toString('utf8'));
@@ -32,6 +34,8 @@ try {
   // Read app.getVersion from the installed Electron process, independently of feed metadata.
   const version=await app.evaluate(({app:electronApp})=>electronApp.getVersion());
   if (version!==expectedVersion) throw new Error('Installed Electron version differs from release input');
+  const trayImage=await app.evaluate(({nativeImage})=>nativeImage.createFromPath(process.resourcesPath+'/tray.ico').getSize());
+  if(trayImage.width<16 || trayImage.height<16) throw new Error('Native Windows tray image could not be decoded');
   const onboardingProof=await verifyStudioOnboarding(page,join(evidence,'windows-onboarding-model.png'));
   const onboardingVisible=true;
   await page.screenshot({path:join(evidence,'windows-installed-ui.png'),fullPage:true});
@@ -41,7 +45,8 @@ try {
   await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
   await expect(page.getByText(expectedVersion,{exact:true})).toBeVisible({timeout:30000});
   await page.screenshot({path:join(evidence,'windows-version-settings.png'),fullPage:true});
-  await writeFile(join(evidence,'windows-installed-ui.json'),JSON.stringify({version,actualInstalledApp:true,windowTitle:await page.title(),onboardingVisible,...onboardingProof,studioGuideNavigatesToModelSettings:true,singleRangeConfigured:true,moduleGraph},null,2));
+  await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-tray.ps1',import.meta.url)),'-Evidence',evidence],{timeout:60000});
+  await writeFile(join(evidence,'windows-installed-ui.json'),JSON.stringify({version,actualInstalledApp:true,windowTitle:await page.title(),onboardingVisible,...onboardingProof,studioGuideNavigatesToModelSettings:true,singleRangeConfigured:true,trayResourceMatchesNexus:true,nativeTrayDecoded:true,moduleGraph},null,2));
   const receiptPath=join(evidence,'windows-install.json');
   const receipt=JSON.parse(await readFile(receiptPath,'utf8'));
   await writeFile(receiptPath,JSON.stringify({...receipt,version,uiVerified:true,onboardingVisible},null,2));
