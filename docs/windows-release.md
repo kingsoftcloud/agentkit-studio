@@ -22,7 +22,9 @@ Windows 运行时检查先把完整签名 App 复制到构建拥有的短路径�
 
 签名、安装或实际启动任一失败，流水线失败，停止发布。失败产物不会冒充签名发行包。本机 macOS 源码测试不能替代 Windows Runner 的安装验收。
 
-Windows feed 和 KS3 公开发布须另通过在线下载及真实更新验收；仅生成安装器不能算 Windows 增量升级已通过。
+签名、实际安装和 App 启动验收通过后，可发布独立安装器下载。KS3 版本目录使用 `studio/<version>/AgentKit-Studio-win-x64.exe` 和同名 `.exe.blockmap`，复用现有 KS3 上传器的公开读取和不可覆盖校验；还需核对公网文件的大小、哈希与 Range 下载。GitHub Release 可在同一个桌面版本中同时提供 Mac 和 Windows 包。
+
+Windows 更新 feed 需要另做实际升级验收。发布安装器和 blockmap 不代表 Windows 自动更新已通过，不能据此切换更新 feed。
 
 本地 Windows 可配置 DSH checkout 的 `apps/desktop/.env.windows`，然后在 Git Bash 执行 `make desktop-package-win-x64`。`.env.windows` 是忽略文件，构建结束后孤立源码中的临时副本会删除。无签名测试包使用 `desktop-package-win-x64-unsigned`，文件名带 `unsigned`，不发布正式 feed。
 
