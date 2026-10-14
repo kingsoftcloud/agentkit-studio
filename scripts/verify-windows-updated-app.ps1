@@ -11,6 +11,10 @@ public static class UpdatedStudioWindow {
  [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left,Top,Right,Bottom; }
  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h,out Rect r);
  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
+ [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
+ [DllImport("user32.dll")] static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
+ public static void Click(IntPtr h,double x,double y) {SetForegroundWindow(h);SetCursorPos((int)x,(int)y);mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);}
  public static void Capture(IntPtr h,string path) { Rect r; if(!GetWindowRect(h,out r)) throw new Exception("No updated window bounds"); using(var b=new Bitmap(r.Right-r.Left,r.Bottom-r.Top)) { using(var g=Graphics.FromImage(b)) { var dc=g.GetHdc(); try { if(!PrintWindow(h,dc,2)) throw new Exception("Updated window capture failed"); } finally { g.ReleaseHdc(dc); } } b.Save(path,System.Drawing.Imaging.ImageFormat.Png); } }
 }
 '@
@@ -34,9 +38,25 @@ do {
 if(-not $app -or -not $navigation) {throw 'Automatically restarted installed App did not render Studio navigation'}
 if($env:STUDIO_UPDATE_BASELINE_PID -and $app.Id -eq [int]$env:STUDIO_UPDATE_BASELINE_PID) {throw 'Updated App did not create a new process'}
 if($RetainedText -and -not ($names | Where-Object {$_ -like "*$RetainedText*"})) {throw 'Retained conversation was not visible in the automatically restarted App'}
+if($RetainedText) {
+ $row=$elements | Where-Object { $_.Current.Name -like "$RetainedText*" -and -not $_.Current.IsOffscreen } | Select-Object -First 1
+ if(-not $row) {throw 'Retained conversation row could not be opened'}
+ $bounds=$row.Current.BoundingRectangle
+ [UpdatedStudioWindow]::Click($app.MainWindowHandle,$bounds.X+$bounds.Width/2,$bounds.Y+$bounds.Height/2)
+ $contentDeadline=(Get-Date).AddSeconds(60)
+ do {
+  $elements=$element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+  $names=@($elements | ForEach-Object {$_.Current.Name})
+  $userRetained=[bool]($names | Where-Object {$_ -eq 'Windows upgrade marker: retain this conversation after restarting.'})
+  $replyRetained=[bool]($names | Where-Object {$_ -eq 'Windows upgrade marker saved.'})
+  if($userRetained -and $replyRetained) {break}
+  Start-Sleep -Milliseconds 500
+ } while((Get-Date) -lt $contentDeadline)
+ if(-not $userRetained -or -not $replyRetained) {throw 'Original user message and assistant reply were not retained after native restart'}
+}
 $signature=Get-AuthenticodeSignature $AppPath
 if($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {throw 'Updated executable signature is invalid'}
 [UpdatedStudioWindow]::Capture($app.MainWindowHandle,(Join-Path $Evidence 'windows-updated-app.png'))
-[ordered]@{actualAutoRestartedApp=$true;pid=$app.Id;path=$app.Path;studioNavigationVerified=$true;retainedTextVerified=([bool]$RetainedText);signatureValid=$true;timestamped=$true} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-updated-app.json')
+[ordered]@{actualAutoRestartedApp=$true;pid=$app.Id;path=$app.Path;studioNavigationVerified=$true;retainedTextVerified=([bool]$RetainedText);originalUserMessageRetained=([bool]$userRetained);originalAssistantReplyRetained=([bool]$replyRetained);signatureValid=$true;timestamped=$true} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-updated-app.json')
 & taskkill.exe /PID $app.Id /T /F | Out-Null
 if ($LASTEXITCODE) {throw 'Updated App process-tree cleanup failed'}
