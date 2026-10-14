@@ -20,7 +20,7 @@ const moduleGraph=await verifyDesktopModuleGraph(path=>asar.extractFile(archive,
 const evidence=resolve('.artifacts/windows-proof');
 const root=join(tmpdir(),'studio-installed-ui-'+Date.now());
 await mkdir(evidence,{recursive:true}); await mkdir(root,{recursive:true});
-const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=> !/(?:SECRET|TOKEN|PASSWORD|CERTUM|ACCESS_KEY)/i.test(name)));
+const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=> !/(?:SECRET|TOKEN|PASSWORD|CERTUM|ACCESS_KEY|PSMODULEPATH)/i.test(name)));
 const app=await electron.launch({executablePath,args:['--user-data-dir='+join(root,'electron')],env:{...environment,DSH_HOME:join(root,'dsh'),AGENTKIT_HOME:join(root,'agentkit'),DSH_TELEMETRY_DISABLED:'1'},timeout:120000});
 try {
   const page=await app.firstWindow({timeout:120000});

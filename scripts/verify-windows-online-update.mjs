@@ -14,7 +14,7 @@ const { values } = parseArgs({ options: Object.fromEntries(['baseline', 'version
 const executablePath = resolve(values.baseline), targetVersion=values.version;
 const evidence = resolve(values.output), root=join(evidence,'private-state'), home=join(root,'shared-dsh'), journals=join(evidence,'journals');
 await mkdir(home,{recursive:true}); await mkdir(journals,{recursive:true});
-const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=>!/(KEY|SECRET|TOKEN|PASSWORD|CERTUM)/i.test(name)));
+const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=>!/(KEY|SECRET|TOKEN|PASSWORD|CERTUM|PSMODULEPATH)/i.test(name)));
 Object.assign(environment,{DSH_HOME:home,AGENTKIT_HOME:join(root,'agentkit'),DSH_TELEMETRY_DISABLED:'1',DSH_DESKTOP_UPDATE_JOURNAL_DIR:journals});
 const server=createServer((request,response)=>{
  request.resume();
