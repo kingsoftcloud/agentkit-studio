@@ -27,6 +27,8 @@ export async function publishWindowsRelease({ candidate, evidence, origin, chann
   const installerUI = JSON.parse(await readFile(join(proofRoot, 'windows-installer-ui.json'), 'utf8'));
   if (install.version !== metadata.version || ui.version !== metadata.version || !install.installerSigned || !install.timestamped
     || !install.appSigned || !install.installed || !install.uiVerified || !ui.actualInstalledApp || !ui.moduleGraph?.verified
+    || !ui.officialWelcomeAbsent || !ui.officialRechargeAbsent || !ui.studioGuideNavigatesToModelSettings || !ui.singleRangeConfigured
+    || !ui.trayResourceMatchesNexus || !ui.nativeTrayDecoded
     || !realOfficial.realOfficialInstaller || !realOfficial.bothProcessesAlive || !realOfficial.legacyProfilePreserved || !realOfficial.studioNavigationVerified
     || !coexistence.studioPluginActivated || !coexistence.foreignProcessAlive || !coexistence.legacyProfilePreserved
     || !installerUI.installerBrandVerified || !installerUI.visibleInstallation || !installerUI.finishLaunchVerified || !installerUI.studioNavigationVerified) {

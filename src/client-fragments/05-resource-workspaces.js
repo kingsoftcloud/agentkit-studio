@@ -14,6 +14,7 @@
 
     function ResourcesPage() {
       const [resourceKind, setResourceKind] = useState('model');
+      const [sourceFilter, setSourceFilter] = useState('all');
       const [resources, setResources] = useState([]);
       const [platformCatalog, setPlatformCatalog] = useState(null);
       const [page, setPage] = useState(0);
@@ -40,7 +41,7 @@
       const requestSeq = useRef(0);
       const resourceKinds = [
         ['model', '模型'], ['mcp', 'MCP'], ['skill', 'Skill'],
-        ['knowledge-base', '知识库'], ['memory-instance', '记忆库'], ['skill-space', 'Skill Center'],
+        ['knowledge-base', '知识库'], ['memory-instance', '记忆库'],
       ];
       const label = resourceKinds.find(item => item[0] === resourceKind)?.[1] || '资源';
 
@@ -51,7 +52,7 @@
         try {
           const result = platformKinds.includes(kind)
             ? await hostRemote.platformResources(kind)
-            : await hostRemote.resources({ kind, limit: pageSize, cursor, query: submittedQuery.trim() });
+            : await hostRemote.resources({ kind, limit: pageSize, cursor, query: submittedQuery.trim(), source: kind === 'skill' ? sourceFilter : 'all' });
           if (seq !== requestSeq.current) return;
           if (platformKinds.includes(kind)) {
             setPlatformCatalog(result || { items: [] }); setResources([]); setNextCursor(null); setTotal(Number(result?.total) || (result?.items || []).length || 0);
@@ -71,7 +72,7 @@
         const timer = setTimeout(() => setSubmittedQuery(query), 250);
         return () => clearTimeout(timer);
       }, [query]);
-      useEffect(() => { void load(resourceKind, null, true); }, [resourceKind, pageSize, submittedQuery]);
+      useEffect(() => { void load(resourceKind, null, true); }, [resourceKind, pageSize, submittedQuery, sourceFilter]);
       const reloadCatalog = (preserveMessage = false) => load(resourceKind, null, true, preserveMessage === true);
       const openMcpCreate = () => { setMcpEditing(null); setMcpDialogOpen(true); };
       const openMcpEdit = resource => { setMcpEditing(resource); setMcpDialogOpen(true); };
@@ -171,6 +172,7 @@
           !isPlatform ? h('section', { style: { display: 'grid', gap: '10px' } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
               h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: `搜索${label}`, 'aria-label': '搜索资源', style: { ...inputStyle(), marginTop: 0, maxWidth: '460px', flex: '1 1 280px' } }),
+              resourceKind === 'skill' ? h('select', { value: sourceFilter, 'aria-label': 'Skill 来源', onChange: event => setSourceFilter(event.target.value), style: {...inputStyle(), width: '140px', marginTop:0} }, h('option',{value:'all'},'全部来源'),h('option',{value:'local'},'本地'),h('option',{value:'cloud'},'云端')) : null,
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, `${total || resources.length} 项 · 第 ${page + 1}/${pageCount} 页`), h('select', { value: String(pageSize), onChange: event => setPageSize(Number(event.target.value)), 'aria-label': '每页显示数量', style: { ...inputStyle(), width: '112px', marginTop: 0, padding: '0 7px' } }, h('option', { value: '10' }, '每页 10 条'), h('option', { value: '20' }, '每页 20 条'), h('option', { value: '50' }, '每页 50 条')))),
             table || h(EmptyState, { icon: '◈', title: `暂无${label}`, detail: '可以从右上角添加、发现或刷新资源。' }),
         h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', color: BRAND.inkMuted, fontSize: '11px', paddingTop: '4px' } }, h('span', null, `当前页 ${resources.length} 项`), h('div', { style: { display: 'flex', gap: '6px', flexShrink: 0 } }, h('button', { type: 'button', 'aria-label': '资源上一页', disabled: page <= 0 || status === 'loading', onClick: () => void previousPage(), style: pagerButtonStyle(page <= 0 || status === 'loading') }, '上一页'), h('button', { type: 'button', 'aria-label': '资源下一页', disabled: !nextCursor || status === 'loading', onClick: () => void nextPage(), style: pagerButtonStyle(!nextCursor || status === 'loading') }, '下一页')))

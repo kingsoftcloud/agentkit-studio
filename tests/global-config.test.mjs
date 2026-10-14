@@ -5,6 +5,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
 
+test('Host persists completed base URLs consistently for scalar and profile settings', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-endpoint-'));
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home } });
+  await config.update({ modelProvider: 'custom', modelBaseUrl: 'gateway.test/v1/chat/completions',
+    modelProfiles: [{id:'gateway',provider:'custom',modelName:'model',baseUrl:'gateway.test/v1/responses'}] });
+  const described = await config.describe();
+  assert.equal(described.modelBaseUrl, 'https://gateway.test/v1');
+  assert.equal(described.modelProfiles[0].baseUrl, 'https://gateway.test/v1');
+});
+
 test('global config resolves model and cloud values without exposing secret values in describe', async () => {
   const home = await mkdtemp(join(tmpdir(), 'agentkit-global-'));
   await writeFile(join(home, 'config.yaml'), 'model:\n  model: my-model\n  api_key: secret-model\ncloud:\n  KSYUN_REGION: cn-test-1\n  KSYUN_ACCOUNT_ID: acct\n');

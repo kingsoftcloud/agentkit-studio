@@ -1,0 +1,138 @@
+diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
+index d2296df1f5..11a40e04cf 100644
+--- a/apps/desktop/electron-builder.config.d.mts
++++ b/apps/desktop/electron-builder.config.d.mts
+@@ -59,7 +59,7 @@ export interface DesktopElectronBuilderConfig {
+   readonly afterPack: (context: AfterPackContext) => Promise<void>
+   readonly afterSign: (context: AfterPackContext) => Promise<void>
+   readonly artifactBuildCompleted: (artifact: { readonly file: string }) => Promise<void> | undefined
+-  readonly publish: readonly [{ readonly provider: 'generic', readonly url: string }] | null
++  readonly publish: readonly [{ readonly provider: 'generic', readonly url: string, readonly useMultipleRangeRequest?: false }] | null
+ }
+ 
+ /**
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index 20a99f8c6a..4af74c1b39 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -250,6 +250,9 @@ export function createElectronBuilderConfig(
+       differentialPackage: true,
+     },
+     detectUpdateChannel: false,
+-    publish: update === undefined ? null : [{ provider: 'generic', url: update.publicUrl, channel: update.channel }],
++    publish: update === undefined ? null : [{ provider: 'generic', url: update.publicUrl, channel: update.channel,
++      // KS3 supports individual byte ranges, but rejects multipart ranges with 416.
++      ...(packagesWindows && productName === 'AgentKit Studio' ? { useMultipleRangeRequest: false } : {}),
++    }],
+   }
+ }
+diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
+index fc19021fa6..58f730b716 100644
+--- a/apps/desktop/src/ipc.ts
++++ b/apps/desktop/src/ipc.ts
+@@ -43,6 +43,9 @@ export interface DesktopUpdateState {
+   /** Main-owned diagnostics without subprocess output or credentials; hidden until expanded. */
+   readonly technicalDetails?: string
+   readonly percent?: number
++  /** Actual updater download bytes; differential progress excludes bytes copied from the old installer. */
++  readonly transferredBytes?: number
++  readonly totalDownloadBytes?: number
+   readonly failedOperation?: 'check' | 'download' | 'install'
+   /** Main-owned preparation cause; UI wording is selected by the active locale. */
+   readonly preparationFailure?: DesktopUpdatePreparationFailureKind
+diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
+index c5cb3e0c5f..0ed4cd0745 100644
+--- a/apps/desktop/src/update-coordinator.ts
++++ b/apps/desktop/src/update-coordinator.ts
+@@ -25,7 +25,10 @@ export class DesktopUpdateCoordinator {
+   private readonly onProgress = (progress: ProgressInfo): void => {
+     if (this.downloadOperation === undefined || this.downloaded) return
+     const percent = Math.min(100, Math.max(0, progress.percent))
+-    this.setState({ phase: percent >= 100 ? 'verifying' : 'downloading', ...this.target(), percent })
++    this.setState({ phase: percent >= 100 ? 'verifying' : 'downloading', ...this.target(), percent,
++      ...(Number.isSafeInteger(progress.transferred) && progress.transferred >= 0 ? { transferredBytes: progress.transferred } : {}),
++      ...(Number.isSafeInteger(progress.total) && progress.total > 0 ? { totalDownloadBytes: progress.total } : {}),
++    })
+   }
+ 
+   private readonly onDownloaded = (info: UpdateInfo): void => {
+diff --git a/apps/desktop/src/update-journal.ts b/apps/desktop/src/update-journal.ts
+index bb6a179d6f..b6a9c6548e 100644
+--- a/apps/desktop/src/update-journal.ts
++++ b/apps/desktop/src/update-journal.ts
+@@ -22,6 +22,11 @@ export function desktopUpdateJournalState(state: DesktopUpdateState): object {
+     phase: state.phase,
+     ...(state.version !== undefined ? { targetVersion: state.version } : {}),
+     ...(state.phase === 'downloading' && state.percent !== undefined ? { percent: Math.floor(state.percent) } : {}),
++    ...(['downloading', 'verifying'].includes(state.phase) && state.transferredBytes !== undefined
++      && Number.isSafeInteger(state.transferredBytes) && state.transferredBytes >= 0 ? { transferredBytes: state.transferredBytes } : {}),
++    ...(['downloading', 'verifying'].includes(state.phase) && state.totalDownloadBytes !== undefined
++      && Number.isSafeInteger(state.totalDownloadBytes) && state.totalDownloadBytes > 0
++      ? { totalDownloadBytes: state.totalDownloadBytes } : {}),
+     ...(state.phase === 'error' ? {
+       failedOperation: state.failedOperation,
+       errorCode: ERROR_CODES.find(code => state.message?.includes(code)) ?? 'UNCLASSIFIED',
+diff --git a/apps/desktop/tests/update-coordinator.spec.ts b/apps/desktop/tests/update-coordinator.spec.ts
+index 7b4040b34e..abebfb4e98 100644
+--- a/apps/desktop/tests/update-coordinator.spec.ts
++++ b/apps/desktop/tests/update-coordinator.spec.ts
+@@ -73,6 +73,18 @@ function fixture() {
+ }
+ 
+ describe('desktop update coordinator', () => {
++  it('retains actual download bytes independently of the full installer size', async () => {
++    const f = fixture()
++    f.downloadUpdate.mockImplementationOnce(async () => {
++      f.events.emit('download-progress', { percent: 100, transferred: 1048576, total: 1048576 })
++      f.events.emit('update-downloaded', { version: '1.1.0-rc.2' })
++      return ['verified-package']
++    })
++    await f.coordinator.check()
++    await f.coordinator.download('1.1.0-rc.2')
++    expect(f.states).toContainEqual({ phase: 'verifying', version: '1.1.0-rc.2', percent: 100,
++      transferredBytes: 1048576, totalDownloadBytes: 1048576 })
++  })
+   it('keeps safe preparation diagnostics separate and clears them on an explicit retry', async () => {
+     const f = fixture()
+     await f.coordinator.check()
+diff --git a/apps/desktop/tests/update-journal.spec.ts b/apps/desktop/tests/update-journal.spec.ts
+index e6344c333f..be9a06dc48 100644
+--- a/apps/desktop/tests/update-journal.spec.ts
++++ b/apps/desktop/tests/update-journal.spec.ts
+@@ -5,6 +5,12 @@ import { describe, expect, it } from 'vitest'
+ import { DesktopUpdateJournal, desktopUpdateJournalState } from '../src/update-journal.ts'
+ 
+ describe('desktop qualification update journal', () => {
++  it('keeps completed download byte counters for differential qualification', () => {
++    expect(desktopUpdateJournalState({ phase: 'verifying', version: '1.2.3', percent: 100,
++      transferredBytes: 1024, totalDownloadBytes: 1024 })).toEqual({ phase: 'verifying', targetVersion: '1.2.3',
++      transferredBytes: 1024, totalDownloadBytes: 1024 })
++    expect(desktopUpdateJournalState({ phase: 'verifying', transferredBytes: NaN, totalDownloadBytes: -1 })).toEqual({ phase: 'verifying' })
++  })
+   it('keeps both versions in separate files in the shared evidence directory', async () => {
+     const directory = await mkdtemp(join(tmpdir(), 'dsh-update-journal-'))
+     try {
+diff --git a/apps/desktop/tests/windows-asar-unpack.spec.ts b/apps/desktop/tests/windows-asar-unpack.spec.ts
+index 2fe4b3aaf2..ff988d6e48 100644
+--- a/apps/desktop/tests/windows-asar-unpack.spec.ts
++++ b/apps/desktop/tests/windows-asar-unpack.spec.ts
+@@ -54,6 +54,19 @@ function unsignedWindowsConfig(appId: string, source: string) {
+   }, 'win32', 'x64', source)
+ }
+ 
++it('uses single byte ranges for the Studio KS3 Windows update provider', () => {
++  const config = createElectronBuilderConfig({
++    DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio',
++    DSH_CLIENT_TITLE: 'AgentKit Studio',
++    DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
++    DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://policy.example.com',
++    DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN: 'https://policy.example.com',
++    DSH_DESKTOP_UPDATE_ORIGIN: 'https://agentkit.ks3-cn-beijing.ksyuncs.com',
++    DSH_DESKTOP_UPDATE_CHANNEL: 'preview',
++  }, 'win32', 'x64')
++  expect(config.publish?.[0]).toMatchObject({ useMultipleRangeRequest: false })
++})
++
+ async function fixture(external: boolean) {
+   const root = await mkdtemp(join(tmpdir(), 'windows-asar-'))
+   roots.push(root)

@@ -18,6 +18,10 @@ public static class StudioInstallerWindow {
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
   [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hwnd, IntPtr dc, uint flags);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
+  [DllImport("user32.dll")] static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
+  public static void Click(IntPtr h,double x,double y) { SetForegroundWindow(h); SetCursorPos((int)x,(int)y); mouse_event(2,0,0,0,UIntPtr.Zero); mouse_event(4,0,0,0,UIntPtr.Zero); }
   [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
   public static IntPtr Window(int pid) {
     IntPtr found=IntPtr.Zero;
@@ -83,6 +87,15 @@ try {
     $started = Get-Process -Name 'AgentKit Studio' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $appPath -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if ($started) {
       $element = [System.Windows.Automation.AutomationElement]::FromHandle($started.MainWindowHandle)
+      $laterCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '稍后设置')
+      $later = $element.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $laterCondition)
+      if ($later -and -not $later.Current.IsOffscreen) {
+        [StudioInstallerWindow]::Capture($started.MainWindowHandle, (Join-Path $Evidence 'windows-finish-studio-onboarding.png'), $false)
+        $bounds=$later.Current.BoundingRectangle
+        [StudioInstallerWindow]::Click($started.MainWindowHandle,$bounds.X+$bounds.Width/2,$bounds.Y+$bounds.Height/2)
+        Start-Sleep -Milliseconds 300
+        continue
+      }
       $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Agents')
       $navigation = $element.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
       if ($navigation) { break }

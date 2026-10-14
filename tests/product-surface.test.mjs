@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { parse } from 'yaml';
+
+test('Studio disables the independent DSH account welcome and recharge flow', async () => {
+  const entries = parse(await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8'));
+  assert.equal(entries.find(entry => entry.id === 'ui-settings-account')?.disabled, true);
+});
 
 const fragmentDir = resolve(import.meta.dirname, '../src/client-fragments');
 const clientSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
@@ -16,6 +22,14 @@ test('Studio mounts the official plugin navigation provider required by optional
 test('Studio keeps the official Sidebar Browser active for in-app HTTP(S) links', async () => {
   const patch = await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8');
   assert.match(patch, /- id: ui-sidebar-browser[\s\S]*?\n\s*disabled: false/);
+});
+
+test('resource library has one Skill tab with a source filter', () => {
+  const page = clientSource.slice(clientSource.indexOf('function ResourcesPage'), clientSource.indexOf('function CodexPluginMarketItem'));
+  const tabs = page.slice(page.indexOf('const resourceKinds'),page.indexOf('const label'));
+  assert.match(tabs,/\['skill', 'Skill'\]/);
+  assert.doesNotMatch(tabs,/Skill Center/);
+  assert.match(page,/'aria-label': 'Skill 来源'/);
 });
 
 test('Studio conversation surface does not ship the legacy DSH hero copy', () => {

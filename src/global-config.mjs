@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parse, stringify } from 'yaml';
+import { normalizeModelEndpoint } from './model-endpoint.mjs';
 
 const FIELDS = {
   modelProvider: ['MODEL_PROVIDER'], modelName: ['OPENAI_MODEL_NAME', 'DEEPSEEK_MODEL_NAME'],
@@ -135,6 +136,13 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
     if (!record(patch) || Object.keys(patch).some(key => !Object.hasOwn(FIELDS, key))) {
       return Promise.reject(new ConfigurationError('存在不支持的配置字段'));
     }
+    try {
+      patch = { ...patch,
+        ...(typeof patch.modelBaseUrl === 'string' ? { modelBaseUrl: normalizeModelEndpoint(patch.modelBaseUrl, patch.modelProvider) } : {}),
+        ...(Array.isArray(patch.modelProfiles) ? { modelProfiles: patch.modelProfiles.map(profile => record(profile)
+          ? { ...profile, baseUrl: profile.baseUrl ? normalizeModelEndpoint(profile.baseUrl, profile.provider) : '' } : profile) } : {}),
+      };
+    } catch (error) { return Promise.reject(error); }
     for (const [key, value] of Object.entries(patch)) {
       if (key === 'modelProfiles') {
         if (!Array.isArray(value) || value.some(profile => !record(profile) || !scalar(profile.modelName) || !scalar(profile.provider))) return Promise.reject(new ConfigurationError('模型目录格式无效'));

@@ -12,6 +12,17 @@ window.__ModuleLoader__.load({
   factory: require => {
     const React = require('react');
     const { createElement: h, useEffect, useRef, useState } = React;
+    const normalizeModelEndpoint = __AGENTKIT_MODEL_ENDPOINT_NORMALIZER__;
+
+    /** Show only the value just typed; stored credentials are never read back. */
+    function SecretInput({ label = 'API Key', value = '', style = {}, ...props }) {
+      const [visible, setVisible] = useState(false);
+      useEffect(() => { if (!value) setVisible(false); }, [value]);
+      return h('span', { style: { position: 'relative', display: 'block' } },
+        h('input', { ...props, 'aria-label': label, value, type: visible ? 'text' : 'password', autoComplete: 'new-password', style: { ...style, paddingRight: '42px' } }),
+        h('button', { type: 'button', disabled: !value, 'aria-label': (visible ? '隐藏 ' : '显示 ') + label, 'aria-pressed': visible, onClick: () => setVisible(current => !current), style: { position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', width: '30px', height: '30px', display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #676767)', cursor: value ? 'pointer' : 'default' } },
+          h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': true }, h('path', { d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z' }), h('circle', { cx: 12, cy: 12, r: 3 }), visible ? h('path', { d: 'm3 3 18 18' }) : null)));
+    }
     const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal } = require('@deepseek-ai/dsh-client-ui-primitives');
     const STUDIO_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).version || 'Web 模式');
     const STUDIO_PLUGIN_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).pluginVersion || '未提供');
