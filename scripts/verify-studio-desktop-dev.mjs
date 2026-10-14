@@ -1,0 +1,56 @@
+/** Native Electron development Host smoke check, using isolated test profiles. */
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+const require = createRequire(import.meta.url);
+const { _electron } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
+if (!process.env.AGENTKIT_DSH_ROOT || !process.env.STUDIO_VERIFY_ELECTRON || !process.env.STUDIO_VERIFY_PRIMARY_RUNTIME || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated source, homes, Electron executable and prepared primary runtime');
+const source = resolve(process.env.AGENTKIT_DSH_ROOT);
+const output = resolve(process.argv[2] || '.artifacts/refactor/stage-1/studio-desktop-dev.json');
+await mkdir(dirname(output), { recursive: true });
+const scratch = await mkdtemp(join(tmpdir(), 'studio-refactor-electron-'));
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(KEY|SECRET|TOKEN|PASSWORD|CERTUM|APPLE|CSC_)/i.test(key)));
+Object.assign(env, { DSH_DESKTOP_PRIMARY_RUNTIME_DIR: process.env.STUDIO_VERIFY_PRIMARY_RUNTIME,
+  DSH_TELEMETRY_DISABLED: '1', DSH_DESKTOP_OPEN_DEVTOOLS: '0', DSH_DESKTOP_PRODUCT_NAME: 'AgentKit Studio' });
+const app = await _electron.launch({ executablePath: process.env.STUDIO_VERIFY_ELECTRON,
+  args: [`--user-data-dir=${join(scratch, 'user-data')}`, join(source, 'apps/desktop')], cwd: source, env, timeout: 60000 });
+const errors = [];
+try {
+  let page;
+  const deadline = Date.now() + 60000;
+  while (!page && Date.now() < deadline) {
+    for (const candidate of app.windows()) {
+      if (!candidate.isClosed() && await candidate.locator('.studio-agent-trigger').isVisible().catch(() => false)) { page = candidate; break; }
+    }
+    if (!page) await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  assert.ok(page, 'real Desktop main window must show the Studio Agent selector');
+  page.on('pageerror', error => errors.push(String(error.name || 'RendererError')));
+  const responses = await page.evaluate(async () => {
+    const results = [];
+    for (const method of ['models/credential-status', 'settings/get']) {
+      const response = await fetch('/agentkit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method, payload: {}, rpcId: method }) });
+      const message = await response.json();
+      results.push({ method, status: response.status, ok: message.result?.ok === true, code: message.result?.error?.code });
+    }
+    return results;
+  });
+  assert.ok(responses.every(result => result.status === 200 && result.ok), 'real Desktop renderer RPC must reach its own Host');
+  assert.equal(errors.length, 0);
+  const runtime = await app.evaluate(({ app }) => ({ electron: process.versions.electron, node: process.versions.node, appVersion: app.getVersion(), isPackaged: app.isPackaged }));
+  assert.equal(runtime.isPackaged, false);
+  await page.screenshot({ path: output.replace(/\.json$/, '.png'), fullPage: true });
+  const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', fullStudioPlugin: true, developmentOnly: true,
+    runtime, nativeAgentSelectorVisible: true, rendererRpc: responses, rendererErrors: errors.length, passed: true };
+  await writeFile(output, JSON.stringify(report, null, 2) + '\n');
+  console.log(JSON.stringify(report));
+} catch (error) {
+  const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', passed: false,
+    message: String(error.message).split(/\n/)[0].slice(0, 200), rendererErrors: errors };
+  await writeFile(output, JSON.stringify(report, null, 2) + '\n');
+  for (const [index, page] of app.windows().entries()) await page.screenshot({ path: output.replace(/\.json$/, `-failure-${index}.png`), fullPage: true }).catch(() => {});
+  console.log(JSON.stringify(report));
+  process.exitCode = 1;
+} finally { await app.close(); }

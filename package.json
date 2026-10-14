@@ -48,6 +48,8 @@
     "verify-dsh": "node scripts/verify-dsh-node-store.mjs",
     "verify-dsh-lifecycle": "node scripts/verify-dsh-lifecycle.mjs",
     "verify-dsh-live-runtime": "node scripts/verify-dsh-live-runtime.mjs",
+    "verify-studio-plugin-lifecycle": "node scripts/verify-studio-plugin-lifecycle.mjs",
+    "verify-studio-desktop-dev": "node scripts/verify-studio-desktop-dev.mjs",
     "verify-harness": "node scripts/verify-agentkit-harness-plugin.mjs",
     "verify-desktop-update": "node scripts/verify-desktop-update-inputs.mjs",
     "verify-desktop-differential": "node scripts/verify-desktop-differential.mjs",

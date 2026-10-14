@@ -179,6 +179,15 @@ verify-dsh-live-runtime:
 	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是固定基线" >&2; exit 2)
 	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-dsh-live-runtime
 
+.PHONY: verify-studio-plugin-lifecycle verify-studio-desktop-dev
+verify-studio-plugin-lifecycle:
+	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是固定基线" >&2; exit 2)
+	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-studio-plugin-lifecycle
+
+verify-studio-desktop-dev:
+	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是固定基线" >&2; exit 2)
+	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-studio-desktop-dev
+
 verify-harness:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
 	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是 $(DSH_VERSION) 基线 $(DSH_COMMIT)" >&2; exit 2)
