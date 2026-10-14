@@ -40,11 +40,11 @@ try {
  const before=await app.evaluate(({app})=>app.getVersion());
  if(before===targetVersion) throw new Error('Updater baseline is already the target version');
  const guide=page.locator('.agentkit-credential-onboarding-content');
- if(await guide.isVisible()) await page.getByRole('button',{name:'跳过本次',exact:true}).click();
+ await expect(guide).toBeVisible({timeout:120000});
+ await guide.getByRole('button',{name:'去配置模型凭证',exact:true}).click();
+ await expect(guide).toBeHidden({timeout:30000});
  // Configure through the installed product's settings. A Studio config file
  // alone does not register the native DSH provider/model preference namespace.
- await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
- await page.getByRole('button',{name:'模型与凭证',exact:true}).click();
  const models=page.locator('[data-studio-model-settings]');
  await expect(models.getByRole('button',{name:'保存配置',exact:true})).toBeEnabled({timeout:90000});
  await models.getByLabel('提供商',{exact:true}).first().selectOption('custom');
