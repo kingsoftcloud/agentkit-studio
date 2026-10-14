@@ -27,6 +27,9 @@ try {
   await page.locator('.agentkit-onboarding-actions').getByRole('button',{name:'开始对话',exact:true}).click();
   await writeFile(join(evidence,'macos-onboarding.json'),JSON.stringify({version,actualSignedApp:true,...proof,configuredReopenVerified:true},null,2));
 } catch(error) {
+  for(const [index,page] of app.windows().entries()) {
+    await page.screenshot({path:join(evidence,`macos-onboarding-failure-${index}.png`),fullPage:true}).catch(()=>{});
+  }
   await writeFile(join(evidence,'macos-onboarding-failure.json'),JSON.stringify({message:error.message},null,2));
   throw error;
 } finally {await app.close();}

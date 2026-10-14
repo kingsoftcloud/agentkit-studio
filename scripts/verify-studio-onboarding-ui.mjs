@@ -19,7 +19,10 @@ export async function verifyStudioOnboarding(page, screenshotPath) {
     await guide.getByRole('button',{name:'开始设置',exact:true}).click();
     const model=guide.locator('[data-onboarding-mode=model]');
     await expect(model).toBeVisible();
-    await model.getByRole('combobox',{name:/^提供商/}).selectOption('custom');
+    await expect(model.getByRole('button',{name:'保存并继续',exact:true})).toBeEnabled({timeout:90000});
+    const provider=model.getByRole('combobox',{name:/^提供商/});
+    await provider.selectOption('custom');
+    await expect(provider).toHaveValue('custom');
     await model.getByLabel('模型名称',{exact:true}).fill('onboarding-proof');
     const base=`http://127.0.0.1:${server.address().port}/v1`;
     const endpoint=model.getByLabel('API 地址',{exact:true});
