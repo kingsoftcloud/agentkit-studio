@@ -26,6 +26,7 @@ export async function verifyOfficialDshCoexistence(executablePath, environment, 
   const officialMetadata = JSON.parse(asar.extractFile(join(destination, 'resources', 'app.asar'), 'package.json'));
   const sharedHome = join(root, 'real-official-shared-dsh');
   const shared = { ...environment, DSH_HOME: sharedHome, AGENTKIT_HOME: join(root, 'real-official-agentkit'), DEEPSEEK_API_KEY: 'qualification-local-only', DSH_TELEMETRY_DISABLED: '1' };
+  console.log('Official signed installer installed; launching its normal desktop entry.');
   const official = spawn(officialPath, [], { env: shared, stdio: 'ignore' });
   const nativeProbe = fileURLToPath(new URL('./verify-windows-official-window.ps1', import.meta.url));
   const probe = async (close = false) => promisify(execFile)('powershell.exe', ['-NoProfile','-File',nativeProbe,'-AppPath',officialPath,'-Evidence',evidence,...(close ? ['-Close'] : [])], { env: shared, timeout: 180000 });
@@ -36,8 +37,12 @@ export async function verifyOfficialDshCoexistence(executablePath, environment, 
     await expect.poll(() => readFile(legacyPath,'utf8').then(() => true, () => false), { timeout: 120000 }).toBe(true);
     const before = await readFile(legacyPath, 'utf8');
     const officialBefore = JSON.parse(await readFile(join(evidence, 'windows-official-process.json'), 'utf8'));
+    console.log('Real official DSH window is alive; launching Studio beside it.');
+    const studioHash = createHash('sha256').update(await readFile(executablePath)).digest('hex');
+    await writeFile(join(evidence, 'windows-before-real-coexistence.json'), JSON.stringify({ officialBefore, studioExecutablePresent: true, studioExecutableSha256: studioHash, executablePath }, null, 2));
     studio = await electron.launch({ executablePath, env: shared, timeout: 120000 });
     const page = await studio.firstWindow({ timeout: 120000 });
+    console.log('Studio process connected; waiting for its product navigation.');
     await expect(page.getByRole('button', { name: 'Agents', exact: true })).toBeVisible({ timeout: 120000 });
     await expect(page.getByRole('button', { name: '总览', exact: true })).toBeVisible();
     if (await readFile(legacyPath, 'utf8') !== before) throw new Error('Studio changed the running official DSH profile');

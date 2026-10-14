@@ -93,6 +93,6 @@ try {
   [StudioInstallerWindow]::Capture($started.MainWindowHandle, (Join-Path $Evidence 'windows-installer-launched-app.png'), $false)
   [ordered]@{installerBrandVerified=$true;visibleInstallation=$true;finishLaunchVerified=$true;studioNavigationVerified=$true;installedPath=$appPath;pid=$started.Id} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-installer-ui.json')
 } finally {
-  if ($started -and -not $started.HasExited) { Stop-Process -Id $started.Id -Force }
+  if ($started -and -not $started.HasExited) { & taskkill.exe /PID $started.Id /T /F | Out-Null }
   if (-not $install.HasExited) { Stop-Process -Id $install.Id -Force }
 }
