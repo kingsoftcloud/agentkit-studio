@@ -19,4 +19,5 @@ if ($appSignature.Status -ne 'Valid' -or $appSignature.SignerCertificate.Thumbpr
 $public = [ordered]@{version=$Version;installer=$installer.Name;installerSha256=(Get-FileHash $installer.FullName -Algorithm SHA256).Hash;installerSigned=$true;timestamped=$true;installed=$true;appSigned=$true;appSha256=(Get-FileHash $app -Algorithm SHA256).Hash;installedPath=$app;uiVerified=$false}
 $public | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-install.json')
 "STUDIO_INSTALLED_APP=$app" | Out-File $env:GITHUB_ENV -Append
+"STUDIO_SIGNED_INSTALLER=$($installer.FullName)" | Out-File $env:GITHUB_ENV -Append
 Write-Host 'Actual NSIS installation and installed Authenticode signature verified; UI acceptance follows.'

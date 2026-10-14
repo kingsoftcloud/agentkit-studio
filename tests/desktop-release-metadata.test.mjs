@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { publishedDesktopMetadata, studioDesktopPublication } from '../src/desktop-release-metadata.mjs';
+import { publishedDesktopMetadata, studioDesktopPublication, studioWindowsPublication } from '../src/desktop-release-metadata.mjs';
 
 test('generated ZIP links resolve to public binary objects without changing signed byte metadata', () => {
   const version = '0.2.0-rc.2.20261013.2';
@@ -29,4 +29,17 @@ test('Studio version directories preserve signed bytes and the official old bloc
 
 test('publication refuses metadata for a different signed version', () => {
   assert.throws(() => publishedDesktopMetadata({ version: '1.0.0', files: [{ url: 'wrong.zip' }] }, '1.0.1'), /signed ZIP/);
+});
+
+test('Windows feed preserves signed installer metadata and gives the installed legacy client a bridge', () => {
+  const version = '0.2.0-rc.2.20261014.8', sha512 = Buffer.alloc(64, 42).toString('base64');
+  const metadata = { version, path: `deepseek-harness-${version}-win-x64.exe`, sha512,
+    files: [{ url: `deepseek-harness-${version}-win-x64.exe`, size: 400000000, sha512 }] };
+  const plan = studioWindowsPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com' });
+  assert.equal(plan.feedKey, 'studio/feeds/win-x64/preview.yml');
+  assert.equal(plan.bridgeFeedKey, 'dsh-desk/feeds/win-x64/preview.yml');
+  assert.equal(plan.metadata.files[0].sha512, sha512);
+  assert.equal(plan.metadata.files[0].size, metadata.files[0].size);
+  assert.equal(plan.metadata.files[0].url, `https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/${version}/AgentKit-Studio-win-x64.exe`);
+  assert.throws(() => studioWindowsPublication({ ...metadata, version: '1.0.0' }, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com' }), /signed installer/);
 });

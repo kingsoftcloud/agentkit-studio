@@ -24,3 +24,20 @@ export function studioDesktopPublication(metadata, { origin, channel = 'preview'
   return { assets, feedKey: `studio/feeds/${target}/${channel}-mac.yml`, releaseKey: `studio/feeds/${target}/mac-arm64-release.json`,
     metadata: { ...metadata, path: url, files: [{ ...metadata.files[0], url }], agentkitUpdateMode: mode } };
 }
+
+/** Windows NSIS keeps its signed EXE and blockmap bytes while publishing an absolute URL. */
+export function studioWindowsPublication(metadata, { origin, channel = 'preview' } = {}) {
+  const base = new URL(origin);
+  if (base.protocol !== 'https:' || base.pathname !== '/' || base.username || base.password || base.search || base.hash
+    || !['stable', 'preview'].includes(channel)) throw new Error('Invalid Windows Studio publication');
+  const version = metadata.version;
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?$/.test(version)
+    || metadata.files?.length !== 1 || metadata.files[0].url !== `deepseek-harness-${version}-win-x64.exe`
+    || metadata.sha512 !== metadata.files[0].sha512 || !/^[A-Za-z0-9+/]{86}==$/.test(metadata.sha512)
+    || !Number.isSafeInteger(metadata.files[0].size) || metadata.files[0].size <= 0) throw new Error('Windows metadata does not identify its signed installer');
+  const exe = `studio/${version}/AgentKit-Studio-win-x64.exe`;
+  const url = new URL(exe, base).href;
+  return { assets: { exe, blockmap: `${exe}.blockmap` }, feedKey: `studio/feeds/win-x64/${channel}.yml`,
+    bridgeFeedKey: `dsh-desk/feeds/win-x64/${channel}.yml`, releaseKey: 'studio/feeds/win-x64/win-x64-release.json',
+    metadata: { ...metadata, path: url, files: [{ ...metadata.files[0], url }] } };
+}

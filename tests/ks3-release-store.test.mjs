@@ -92,7 +92,7 @@ for (const suffix of ['exe', 'exe.blockmap']) test(`versioned Windows ${suffix} 
 });
 
 test('Windows artifact support does not admit arbitrary version files or feeds', async () => {
-  for (const objectKey of ['studio/1.0.0/windows-proof.json', 'studio/1.0.0/.env.windows', 'studio/1.0.0/other.exe', 'studio/1.0.0/AgentKit-Studio-win-x64.exe/../../secret', 'studio/feeds/win-x64/preview.yml']) {
+  for (const objectKey of ['studio/1.0.0/windows-proof.json', 'studio/1.0.0/.env.windows', 'studio/1.0.0/other.exe', 'studio/1.0.0/AgentKit-Studio-win-x64.exe/../../secret', 'studio/feeds/win-x64/arbitrary.yml']) {
     await assert.rejects(uploadKs3ReleaseArtifact({ origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', bucket: 'agentkit', accessKey: 'ak', secretKey: 'sk',
       objectKey, path: '/unused', contentType: 'application/octet-stream', fetchImpl: async () => { throw Error('Must not request denied paths'); } }), /invalid KS3 release object key/);
   }

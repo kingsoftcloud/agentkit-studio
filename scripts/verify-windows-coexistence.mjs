@@ -53,5 +53,9 @@ app.whenReady().then(() => {
     try { await readFile(marker); throw new Error('Studio launch was forwarded to official DSH'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     await page.screenshot({ path: join(evidence, 'windows-dsh-coexistence.png'), fullPage: true });
     await writeFile(join(evidence, 'windows-dsh-coexistence.json'), JSON.stringify({ fixture: 'real Electron with official DSH package identity and occupied port 19387', identity, foreignIdentity, studioPluginActivated: true, legacyProfilePreserved: true, foreignProcessAlive: true }, null, 2));
+  } catch (error) {
+    const forwarded = await readFile(marker, 'utf8').then(() => true, () => false);
+    await writeFile(join(evidence, 'windows-dsh-coexistence-failure.json'), JSON.stringify({ message: error.message, launchForwardedToForeignDsh: forwarded }, null, 2));
+    throw error;
   } finally { if (studio) await studio.close(); await foreign.close(); }
 }

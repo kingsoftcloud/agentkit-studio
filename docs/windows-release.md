@@ -24,7 +24,7 @@ Windows 运行时检查先把完整签名 App 复制到构建拥有的短路径�
 
 签名、实际安装和 App 启动验收通过后，可发布独立安装器下载。KS3 版本目录使用 `studio/<version>/AgentKit-Studio-win-x64.exe` 和同名 `.exe.blockmap`，复用现有 KS3 上传器的公开读取和不可覆盖校验；还需核对公网文件的大小、哈希与 Range 下载。GitHub Release 可在同一个桌面版本中同时提供 Mac 和 Windows 包。
 
-Windows 更新 feed 需要另做实际升级验收。发布安装器和 blockmap 不代表 Windows 自动更新已通过，不能据此切换更新 feed。
+Windows feed 位于 `studio/feeds/win-x64/<channel>.yml`，安装器和 blockmap 位于 `studio/<version>/`。已经安装的 `.20261014.7` 查询旧的同 Bucket 路径 `dsh-desk/feeds/win-x64/preview.yml`，发布时为这一版本提供相同内容的迁移入口。迁移不使用旧 Bucket。发布安装器和 blockmap 不代表自动更新已经通过；还需在 Windows 运行线上检查、下载、安装重启和会话数据保留验收。
 
 本地 Windows 可配置 DSH checkout 的 `apps/desktop/.env.windows`，然后在 Git Bash 执行 `make desktop-package-win-x64`。`.env.windows` 是忽略文件，构建结束后孤立源码中的临时副本会删除。无签名测试包使用 `desktop-package-win-x64-unsigned`，文件名带 `unsigned`，不发布正式 feed。
 
@@ -35,3 +35,9 @@ Windows 更新 feed 需要另做实际升级验收。发布安装器和 blockmap
 ## 复用签名候选
 
 `candidate_run_id` 可复用已经通过签名、打包和实际安装检查的运行。`studio_ref` 和 `build_version` 必须与原运行相同；流程从原始日志验证固定源码身份，并校验 GitHub artifact 的 SHA-256 与字节数。`release_tools_ref` 单独固定验收工具提交，不能把新版工具标成已经签名的应用源码。复用仍需重新检查安装器、实际安装、已安装 App 签名以及真实界面；失败的界面检查不会被改写为成功。
+
+## Windows 产品身份与安装界面
+
+Windows 安装包的 Electron 名称为 `agentkit-studio-desktop`，与官方 DSH 的单实例锁和 Electron 设置目录分开。Studio 使用 `.dsh/profiles/desktop-agentkit-studio` 管理插件，并由系统分配本地 Host 端口；DSH 会话、凭证和工作区数据仍保留在原共享目录中。macOS 已发布版本的设置位置保持原样。
+
+安装器的欢迎页、完成页、深色和高 DPI 图片由 Nexus 图标与 AgentKit Studio 字标生成。实际界面验收同时覆盖：原生安装页面的产品图标、点击完成后立即启动的进程路径及 Studio 导航；另用真实 Electron 进程模拟官方 DSH 身份，并占用其默认端口，验证 Studio 可以并行启动且保留原生 DSH 配置。此模拟明确记录为身份/端口冲突回归，不能代替任意官方 DSH 版本的全量兼容测试。
