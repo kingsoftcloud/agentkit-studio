@@ -32,6 +32,7 @@ do {
  Start-Sleep -Milliseconds 500
 } while((Get-Date) -lt $deadline)
 if(-not $app -or -not $navigation) {throw 'Automatically restarted installed App did not render Studio navigation'}
+if($env:STUDIO_UPDATE_BASELINE_PID -and $app.Id -eq [int]$env:STUDIO_UPDATE_BASELINE_PID) {throw 'Updated App did not create a new process'}
 if($RetainedText -and -not ($names | Where-Object {$_ -like "*$RetainedText*"})) {throw 'Retained conversation was not visible in the automatically restarted App'}
 $signature=Get-AuthenticodeSignature $AppPath
 if($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {throw 'Updated executable signature is invalid'}

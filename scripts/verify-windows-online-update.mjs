@@ -4,20 +4,22 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { parseArgs, promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import asar from '@electron/asar';
 
 if (process.platform !== 'win32') throw new Error('Native Windows updater qualification requires Windows');
+if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_OS !== 'Windows') throw new Error('Native default-profile update qualification requires a disposable Windows Actions Runner');
 const { values } = parseArgs({ options: Object.fromEntries(['baseline', 'version', 'output'].map(key=>[key,{type:'string'}])) });
 const executablePath = resolve(values.baseline), targetVersion=values.version;
-// Keep profiles outside the source checkout: ancestor node_modules must not
-// shadow the signed application's runtime during profile bundle resolution.
-const evidence = resolve(values.output), root=join(tmpdir(),'studio-update-'+Date.now()), home=join(root,'shared-dsh'), journals=join(evidence,'journals');
+// NSIS can relaunch through Explorer, which does not inherit test overrides.
+// Exercise the real user directories in this disposable Runner.
+const evidence = resolve(values.output), home=join(homedir(),'.dsh'), journals=join(evidence,'journals');
 await mkdir(home,{recursive:true}); await mkdir(journals,{recursive:true});
 const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=>!/(KEY|SECRET|TOKEN|PASSWORD|CERTUM|PSMODULEPATH)/i.test(name)));
-Object.assign(environment,{DSH_HOME:home,AGENTKIT_HOME:join(root,'agentkit'),DSH_TELEMETRY_DISABLED:'1',DSH_DESKTOP_UPDATE_JOURNAL_DIR:journals});
+delete environment.DSH_HOME; delete environment.AGENTKIT_HOME;
+Object.assign(environment,{DSH_TELEMETRY_DISABLED:'1',DSH_DESKTOP_UPDATE_JOURNAL_DIR:journals});
 const server=createServer((request,response)=>{
  request.resume();
  if(request.url==='/v1/models') {response.setHeader('Content-Type','application/json');response.end(JSON.stringify({object:'list',data:[{id:'upgrade-proof',object:'model'}]}));return;}
@@ -27,8 +29,9 @@ const server=createServer((request,response)=>{
 });
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
 await writeFile(join(home,'upgrade-retention-marker.txt'),'retained across native Windows update\n');
-const app=await electron.launch({executablePath,cwd:dirname(executablePath),args:['--user-data-dir='+join(root,'baseline-electron')],env:environment,timeout:120000});
+const app=await electron.launch({executablePath,cwd:dirname(executablePath),env:environment,timeout:120000});
 const baselinePid=app.process().pid;
+environment.STUDIO_UPDATE_BASELINE_PID=String(baselinePid);
 let updaterLog='';
 for(const stream of [app.process().stdout,app.process().stderr]) stream?.on('data',bytes=>{updaterLog=(updaterLog+bytes.toString()).slice(-1024*1024);});
 let confirming=false, successor=false, page;
@@ -92,20 +95,16 @@ try {
   await new Promise(done=>setTimeout(done,500));
  }
  if(!confirming) throw new Error('Native signed update was not downloaded and confirmed');
- const restartDeadline=Date.now()+240000;
- let events=[];
- while(Date.now()<restartDeadline) {
-  events=(await Promise.all((await readdir(journals)).filter(n=>n.endsWith('.jsonl')).map(async n=>(await readFile(join(journals,n),'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse)))).flat();
-  if(events.some(e=>e.version===targetVersion && e.pid!==baselinePid && e.event==='workspace-ready')) {successor=true;break;}
-  await new Promise(done=>setTimeout(done,1000));
- }
- if(!successor) throw new Error('Updated app did not automatically restart and reach workspace-ready');
+ // Observe a new native window without launching it or requiring an inherited
+ // diagnostic environment variable. The helper also verifies rendered data.
+ await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-updated-app.ps1',import.meta.url)),'-AppPath',executablePath,'-Evidence',evidence,'-RetainedText','Windows upgrade'],{env:environment,timeout:240000});
+ successor=true;
  const installed=JSON.parse(asar.extractFile(join(dirname(executablePath),'resources','app.asar'),'package.json'));
  if(installed.version!==targetVersion) throw new Error('Installed bytes are not the feed target');
  if(await readFile(join(home,'upgrade-retention-marker.txt'),'utf8')!=='retained across native Windows update\n') throw new Error('Shared DSH data was not retained');
- await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-updated-app.ps1',import.meta.url)),'-AppPath',executablePath,'-Evidence',evidence,'-RetainedText','Windows upgrade'],{env:environment,timeout:240000});
  const differential=updaterLog.match(/Full:\s*([0-9,.]+)\s*KB,\s*To download:\s*([0-9,.]+)\s*KB\s*\(([0-9.]+)%\)/);
- const downloadEvidence=differential ? {kind:'native-differential',fullKilobytes:Number(differential[1].replaceAll(',','')),downloadKilobytes:Number(differential[2].replaceAll(',','')),ratioPercent:Number(differential[3])} : {kind:'not-established'};
+ const fallback=/Cannot download differentially|fallback to full download/i.test(updaterLog);
+ const downloadEvidence=fallback ? {kind:'full-fallback'} : differential ? {kind:'native-differential',fullKilobytes:Number(differential[1].replaceAll(',','')),downloadKilobytes:Number(differential[2].replaceAll(',','')),ratioPercent:Number(differential[3])} : {kind:'not-established'};
  await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
 } catch(error) {
  await page?.screenshot({path:join(evidence,'windows-update-failure.png'),fullPage:true}).catch(()=>{});
@@ -116,5 +115,5 @@ try {
  throw error;
 } finally {
  if(!confirming) await app.close().catch(()=>{});
- await new Promise(done=>server.close(done));
+ server.closeAllConnections(); await new Promise(done=>server.close(done));
 }
