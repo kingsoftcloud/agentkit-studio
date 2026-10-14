@@ -177,7 +177,11 @@ export class DshPresetAdmission {
     }
     const agent = suppliedAgent || await this.getAgent(String(agentId || '').trim());
     const activeModel = typeof this.getActiveModel === 'function' ? await this.getActiveModel() : undefined;
-    const modelSelection = typeof this.getModelSelection === 'function' ? await this.getModelSelection(agent) : undefined;
+    // Persisted Sessions already own their model-selection projection. Restoring
+    // a definition must not serialize the registry behind an external model
+    // catalog or credential lookup. Explicit new-session admission still checks
+    // the requested model, including when it reuses a restored definition.
+    const modelSelection = !allowUnavailableResources && typeof this.getModelSelection === 'function' ? await this.getModelSelection(agent) : undefined;
     const eligibility = dshPresetEligibility(agent, { activeModel });
     if (!eligibility.ok) {
       const error = new Error(eligibility.message);

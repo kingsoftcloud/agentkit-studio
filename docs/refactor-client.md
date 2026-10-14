@@ -2,6 +2,8 @@
 
 阶段 3 的页面迁移、ES Module 构建切换和每次 `apply(ctx)` 的作用域组合已实现，`src/client-fragments/` 已删除。完整真实 Web 和 Electron 开发宿主流程均已通过。阶段整体仍为部分完成：当前 gzip 增长 6.85%，超过 5% 预算，[包体专项评审](refactor-client-budget.md)尚待确认。以下 3A、3B 数据保留对应批次的历史结果，当前结果见 3C。
 
+重新安装复核发现启动恢复会等待新会话的模型目录校验，导致部分动态 preset 暂时缺失。现已修复：历史 Session 使用其持久化模型投影，恢复定义时不请求新会话模型目录；显式准入仍执行原模型校验。新增暂停目录查询的回归用例先失败后通过，真实 Web 和 Electron 各 23 项流程及完整插件 20 次加载卸载通过。原失败记录保留，没有修改旧会话日志。
+
 ## 3A 范围
 
 - `remote/host-client.mjs` 保留现有 RPC/REST/SSE 选择、认证、错误 envelope 和请求取消合同；通过参数注入浏览器环境。删除重复但内容相同的 `putCredential` 定义，保留其最终行为。
@@ -51,16 +53,17 @@ Agent 列表、模板、密钥显示和桌面设置行为测试已改为直接�
 | 项目 | 当前本地结果 |
 | --- | --- |
 | 模块图 | 61 个输入，无循环、Node、Host/provider、第二份 React及业务全局变量；一个 ModuleLoader 注册 |
-| 源码及发行输入门禁 | 711 项通过，0 失败、0 跳过；公开面、历史和快照凭证扫描、包完整性检查通过 |
-| 真实 Web 与 Electron 开发宿主 | 同一安装 bundle 各通过侧栏 12 项、原生草稿 1 项及完整页面 9 项，共 22 项；无未捕获渲染错误 |
+| 源码及发行输入门禁 | 712 项通过，0 失败、0 跳过；公开面、历史和快照凭证扫描、包完整性检查通过 |
+| 真实 Web 与 Electron 开发宿主 | 同一安装 bundle 各通过侧栏及历史重开 13 项、原生草稿 1 项及完整页面 9 项，共 23 项；无未捕获渲染错误 |
+| 完整插件生命周期复核 | 同一真实 DSH Host 加载卸载完整 Studio 20 次，所属路由、监听器、异步资源回到基线，重复卸载无异常 |
 | Codex 工具卡片 | 真实固定 DSH loop 与 Chat assembler 的 6 种受控结果通过，磁盘重开和下一轮上下文保留，工具没有重复执行；此项未调用真实模型 |
 | gzip 专项门禁 | 87,440 → 93,430 bytes，增长 6.85%；超过 91,812 bytes 上限，未通过 |
 
-机器结果保存在忽略的 `.artifacts/refactor/stage-3/`：`optimized-full-web-5.json`、`optimized-full-electron.json`、`optimized-release-check-clean.log`、`optimized-deterministic.json`、`optimized-module-graph.json`。Codex 受控工具卡片结果保留在 `codex-cards-modules.log`。模块与大小专项使用 `node scripts/verify-client-modules.mjs <baseline.json> <report.json>`；基线记录阶段 3 开始前的源码 commit、bundle SHA 和 gzip 大小。大小失败不由已有 `release-check` 的成功抵消。
+机器结果保存在忽略的 `.artifacts/refactor/stage-3/`：`recovery-fix-full-web-23.json`、`recovery-fix-full-electron-23.json`、`recovery-fix-lifecycle-20.json`、`recovery-fix-release-check.log`、`optimized-deterministic.json`、`optimized-module-graph.json`。Codex 受控工具卡片结果保留在 `codex-cards-modules.log`。模块与大小专项使用 `node scripts/verify-client-modules.mjs <baseline.json> <report.json>`；基线记录阶段 3 开始前的源码 commit、bundle SHA 和 gzip 大小。大小失败不由已有 `release-check` 的成功抵消。
 
 完整页面验证通过产品 UI 创建唯一合成 Agent，编辑 Prompt、默认模型及模型白名单，再进入官方原生会话并切换模型。资源页验证类型切换、本地来源和搜索空状态；Build 通过真实本地 Host 创建，核对冻结的 Revision 并查看部署页面。自动化验证空执行时间的错误、创建、编辑、暂停、启用及删除，用一周间隔避免验收中触发模型执行，并核对实际存储结果。设置重开两次，凭证引导显示已配置状态，密钥输入保持空白，没有写入凭证。没有发送模型消息或创建云端部署。
 
-失败记录保留。原生新会话测试先观察持久化历史已恢复，再触发工作区导航；自动化测试用最近的语义容器定位任务，避免匹配包含同名任务的外层区域，并兼容含选项或 textarea 内容的原生 label。每次失败都会按本次唯一任务名称和目标 Agent 核对、清理合成任务；此前的一个遗留合成任务已通过实际 Host 删除，记录在 `owned-task-cleanup.json`。
+失败记录保留。原生新会话测试先观察持久化历史已恢复，再触发工作区导航；历史重开验证 DSH 原生会话的 ID 和原有合成消息，并等待归档恢复的可见状态；搜索使用当前完整标题，避免 marquee 的可见片段和重开后的标题刷新。自动化测试用最近的语义容器定位任务，避免匹配包含同名任务的外层区域，并兼容含选项或 textarea 内容的原生 label。每次失败都会按本次唯一任务名称和目标 Agent 核对、清理合成任务；此前的一个遗留合成任务已通过实际 Host 删除，记录在 `owned-task-cleanup.json`。
 
 ## 仍需完成
 
