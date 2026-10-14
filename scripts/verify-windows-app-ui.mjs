@@ -5,6 +5,7 @@ import { dirname, join, normalize, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import asar from '@electron/asar';
 import { verifyDesktopModuleGraph } from './desktop-module-graph.mjs';
+import { verifyWindowsCoexistence } from './verify-windows-coexistence.mjs';
 
 if (process.platform !== 'win32') throw new Error('Windows app UI acceptance requires Windows');
 const executablePath=process.env.STUDIO_INSTALLED_APP;
@@ -40,3 +41,5 @@ try {
   await writeFile(receiptPath,JSON.stringify({...receipt,version,uiVerified:true,onboardingVisible},null,2));
   console.log('Actually installed Windows App rendered and reported the expected build version.');
 } finally {await app.close();}
+
+await verifyWindowsCoexistence(executablePath, { ...environment, DSH_HOME: join(root, 'shared-dsh'), AGENTKIT_HOME: join(root, 'shared-agentkit'), DSH_TELEMETRY_DISABLED: '1' }, root, evidence);
