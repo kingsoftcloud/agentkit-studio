@@ -50,12 +50,12 @@ Agent 列表、模板、密钥显示和桌面设置行为测试已改为直接�
 | 项目 | 当前本地结果 |
 | --- | --- |
 | 模块图 | 57 个输入，无循环、Node、Host/provider、第二份 React及业务全局变量；一个 ModuleLoader 注册 |
-| 源码及发行输入门禁 | 711 项通过，0 失败、0 跳过；公开面、历史和快照凭证扫描、445 文件的包完整性检查通过 |
+| 源码及发行输入门禁 | 711 项通过，0 失败、0 跳过；公开面、历史和快照凭证扫描、446 文件的包完整性检查通过 |
 | 真实 Web 与 Electron 开发宿主 | 当前安装 bundle 各通过侧栏 12 项、原生草稿 1 项、Agent 与设置 4 项；无未捕获渲染错误 |
 | Codex 工具卡片 | 真实固定 DSH loop 与 Chat assembler 的 6 种受控结果通过，磁盘重开和下一轮上下文保留，工具没有重复执行；此项未调用真实模型 |
 | gzip 专项门禁 | 87,440 → 94,268 bytes，增长 7.81%；超过 91,812 bytes 上限，未通过 |
 
-机器结果保存在忽略的 `.artifacts/refactor/stage-3/`：`client-modules-web.json`、`client-modules-electron.json`、`release-check-3c-final.log`、`codex-cards-modules.log` 和 `module-admission-3c.json`。模块与大小专项使用 `node scripts/verify-client-modules.mjs <baseline.json> <report.json>`；基线记录阶段 3 开始前的源码 commit、bundle SHA 和 gzip 大小。大小失败不由已有 `release-check` 的成功抵消。
+机器结果保存在忽略的 `.artifacts/refactor/stage-3/`：`client-modules-web.json`、`client-modules-electron.json`、`release-check-3c-committed.log`、`codex-cards-modules.log` 和 `module-admission-3c.json`。模块与大小专项使用 `node scripts/verify-client-modules.mjs <baseline.json> <report.json>`；基线记录阶段 3 开始前的源码 commit、bundle SHA 和 gzip 大小。大小失败不由已有 `release-check` 的成功抵消。
 
 ## 仍需完成
 
