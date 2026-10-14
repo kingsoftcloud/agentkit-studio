@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 test('an offline empty local Agent catalog keeps first creation available', async () => {
-  const source = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
+  const source = await readFile(new URL('../src/host/bootstrap.mjs', import.meta.url), 'utf8');
   const branch = source.slice(source.indexOf("      if (endpoint === 'agents/list')"), source.indexOf("      if (endpoint === 'agents/ensure-preset')"));
   const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
   const run = new AsyncFunction('endpoint', 'payload', 'serverClient', 'agentStorePromise', 'agentCatalogPromise', 'signal', branch);

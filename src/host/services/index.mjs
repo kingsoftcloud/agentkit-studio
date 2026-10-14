@@ -1,0 +1,23 @@
+import { createPlatformServices } from './platform.mjs';
+import { createBuildServices } from './builds.mjs';
+import { createAgentServices } from './agents.mjs';
+import { createResourceServices } from './resources.mjs';
+import { createAutomationServices } from './automation.mjs';
+import { createDeploymentServices } from './deployments.mjs';
+import { createAuthoringServices } from './authoring.mjs';
+
+/** Compose one Host's domains. Late dependencies are explicit callbacks,
+ * not module globals; no domain registers an RPC/HTTP transport here.
+ */
+export function createStudioServices(ctx, options) {
+  const platform = createPlatformServices(ctx, options);
+  const builds = createBuildServices(options);
+  let deployments;
+  const getDeployments = () => deployments();
+  const agents = createAgentServices({ ...options, ...builds, deployments: getDeployments });
+  const resources = createResourceServices(ctx, { ...options, ...platform });
+  ({ deployments } = createDeploymentServices({ ...options, ...platform, ...builds, ...resources }));
+  const automation = createAutomationServices(ctx, { ...options, ...platform, ...builds, ...agents, deployments });
+  const authoring = createAuthoringServices(ctx, { ...platform, ...agents, ...resources });
+  return { ...platform, ...builds, ...agents, ...resources, ...automation, ...authoring, deployments };
+}

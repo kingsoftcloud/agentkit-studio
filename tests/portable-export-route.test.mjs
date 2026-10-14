@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/host/bootstrap.mjs', import.meta.url), 'utf8');
 const start = source.indexOf("          if (endpoint === 'builds/export-portable') {");
 const body = source.slice(start, source.indexOf("          if (endpoint === 'builds/download')", start));
 const route = portableBundles => new Function('portableBundles', `return async payload => { const endpoint = 'builds/export-portable'; ${body} };`)(portableBundles);

@@ -23,7 +23,7 @@ test('download returns the verified frozen ZIP and rejects tampering', async () 
 });
 
 test('shipped Host dispatch exposes the build download operation', async () => {
-  const source = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
+  const source = await readFile(new URL('../src/host/bootstrap.mjs', import.meta.url), 'utf8');
   const branch = source.slice(source.indexOf("      if (endpoint === 'builds/create'"), source.indexOf("      if (endpoint.startsWith('schedules/')"));
   const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
   const run = new AsyncFunction('endpoint', 'payload', 'studioBuildPromise', branch);
