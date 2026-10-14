@@ -130,7 +130,7 @@ test('platform resource picker does not refetch on every render', async () => {
 
 test('native bridge intercepts the DSH stream without rewriting the visible model route', async () => {
   const pluginSource = await readFile(resolve(import.meta.dirname, '../src/providers/dsh-runtime-plugin.mjs'), 'utf8');
-  const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
+  const hostSource = await readFile(resolve(import.meta.dirname, '../src/host/bootstrap.mjs'), 'utf8');
   assert.match(hostSource, /ctx\.on\('llm\/stream', routeDshRuntime\)/);
   assert.doesNotMatch(pluginSource, /ctx\.on\('llm\/stream'/);
   assert.doesNotMatch(pluginSource, /provider:\s*'agentkit-studio'/);
@@ -138,7 +138,7 @@ test('native bridge intercepts the DSH stream without rewriting the visible mode
 });
 
 test('model-only local Agent admission can use the native DSH session UI', async () => {
-  const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
+  const hostSource = await readFile(resolve(import.meta.dirname, '../src/host/bootstrap.mjs'), 'utf8');
   const admissionSource = await readFile(resolve(import.meta.dirname, '../src/agent-preset-admission.mjs'), 'utf8');
   assert.match(clientSource, /studioRemote\.agentPresets\.select\(sessionId, admission\.presetId\)/);
   assert.match(hostSource, /localStore\.get\(agentId\)/);
@@ -148,7 +148,7 @@ test('model-only local Agent admission can use the native DSH session UI', async
 });
 
 test('cloud Agent execution remains available through the control-plane bridge', async () => {
-  const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
+  const hostSource = await readFile(resolve(import.meta.dirname, '../src/host/bootstrap.mjs'), 'utf8');
   assert.match(hostSource, /CreateSession/);
   assert.match(hostSource, /RunAgent/);
   assert.match(hostSource, /createDshRuntimeAdapter/);
@@ -156,7 +156,7 @@ test('cloud Agent execution remains available through the control-plane bridge',
 });
 
 test('directServer Agent authoring persists through the Host bridge', async () => {
-  const hostSource = await readFile(resolve(import.meta.dirname, '../src/index.mjs'), 'utf8');
+  const hostSource = await readFile(resolve(import.meta.dirname, '../src/host/bootstrap.mjs'), 'utf8');
   assert.match(clientSource, /studioBridgeOperation\('agents\/create-local', payload\)/);
   assert.match(clientSource, /studioBridgeOperation\('agents\/update-cloud'/);
   assert.match(clientSource, /cloudEditing/);

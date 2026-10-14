@@ -49,7 +49,7 @@ function onboardingHarness({ statuses, localStorage = {}, props = {} } = {}) {
   return { settle, modal, footerButtons, window, dispatched, get statusCalls() { return statusIndex; }, render };
 }
 const settings = (await readFile(new URL('../src/client/dsh/mount.mjs', import.meta.url), 'utf8')) + (await readFile(new URL('../src/client/pages/studio-settings.mjs', import.meta.url), 'utf8')) + (await readFile(new URL('../src/client/components/settings-launcher.mjs', import.meta.url), 'utf8'));
-const hostEntry = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
+const hostEntry = await readFile(new URL('../src/host/bootstrap.mjs', import.meta.url), 'utf8');
 
 test('first Studio overview checks the redacted Host credential status and offers one guided action', () => {
   assert.match(overview, /modelCredentialStatus\(\)/);
@@ -83,7 +83,7 @@ test('Studio settings exposes the DSH desktop update action', () => {
 
 test('credential filesystem inspection stays in the Host-only dynamic graph', () => {
   assert.doesNotMatch(hostEntry, /^import .*model-credential-sync/m);
-  assert.match(hostEntry, /await import\('\.\/model-credential-sync\.mjs'\)/);
+  assert.match(hostEntry, /await import\('\.\.\/model-credential-sync\.mjs'\)/);
 });
 
 test('first missing credential opens the guide, configured readiness stays quiet, and saved readiness closes it', async () => {
