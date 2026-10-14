@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import asar from '@electron/asar';
 import { verifyDesktopModuleGraph } from './desktop-module-graph.mjs';
 import { verifyWindowsCoexistence } from './verify-windows-coexistence.mjs';
+import { verifyOfficialDshCoexistence } from './verify-windows-official-dsh.mjs';
 
 if (process.platform !== 'win32') throw new Error('Windows app UI acceptance requires Windows');
 const executablePath=process.env.STUDIO_INSTALLED_APP;
@@ -48,3 +49,5 @@ try {
 await verifyWindowsCoexistence(executablePath, { ...environment, DSH_HOME: join(root, 'shared-dsh'), AGENTKIT_HOME: join(root, 'shared-agentkit'), DSH_TELEMETRY_DISABLED: '1' }, root, evidence);
 
 await promisify(execFile)('powershell.exe', ['-NoProfile', '-File', fileURLToPath(new URL('./verify-windows-installer-ui.ps1', import.meta.url)), '-Installer', process.env.STUDIO_SIGNED_INSTALLER, '-Evidence', evidence], { timeout: 900000, maxBuffer: 1024 * 1024 });
+
+await verifyOfficialDshCoexistence(executablePath, environment, root, evidence);
