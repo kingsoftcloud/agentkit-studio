@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { parseArgs, promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import asar from '@electron/asar';
@@ -11,7 +12,9 @@ import asar from '@electron/asar';
 if (process.platform !== 'win32') throw new Error('Native Windows updater qualification requires Windows');
 const { values } = parseArgs({ options: Object.fromEntries(['baseline', 'version', 'output'].map(key=>[key,{type:'string'}])) });
 const executablePath = resolve(values.baseline), targetVersion=values.version;
-const evidence = resolve(values.output), root=join(evidence,'private-state'), home=join(root,'shared-dsh'), journals=join(evidence,'journals');
+// Keep profiles outside the source checkout: ancestor node_modules must not
+// shadow the signed application's runtime during profile bundle resolution.
+const evidence = resolve(values.output), root=join(tmpdir(),'studio-update-'+Date.now()), home=join(root,'shared-dsh'), journals=join(evidence,'journals');
 await mkdir(home,{recursive:true}); await mkdir(journals,{recursive:true});
 const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=>!/(KEY|SECRET|TOKEN|PASSWORD|CERTUM|PSMODULEPATH)/i.test(name)));
 Object.assign(environment,{DSH_HOME:home,AGENTKIT_HOME:join(root,'agentkit'),DSH_TELEMETRY_DISABLED:'1',DSH_DESKTOP_UPDATE_JOURNAL_DIR:journals});
