@@ -1,18 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
+import { readClientSource } from './helpers/client-source.mjs';
 
 test('Studio disables the independent DSH account welcome and recharge flow', async () => {
   const entries = parse(await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8'));
   assert.equal(entries.find(entry => entry.id === 'ui-settings-account')?.disabled, true);
 });
 
-const fragmentDir = resolve(import.meta.dirname, '../src/client-fragments');
-const fragmentSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
-const migratedPaths = ['remote/host-client.mjs', 'state/conversation-agent.mjs', 'state/native-authoring.mjs', 'dsh/native-authoring.mjs', 'theme.mjs', 'components/primitives.mjs', 'components/form-styles.mjs', 'components/resource-dialog.mjs', 'state/product-versions.mjs', 'pages/studio-settings.mjs', 'pages/agents.mjs', 'pages/platform-resource-picker.mjs', 'pages/agent-form.mjs', 'pages/agent-edit.mjs'];
-const clientSource = fragmentSource + '\n' + (await Promise.all(migratedPaths.map(path => readFile(new URL('../src/client/' + path, import.meta.url), 'utf8')))).join('\n');
+const clientSource = await readClientSource();
 
 test('Studio mounts the official plugin navigation provider required by optional DSH UI bundles', async () => {
   const packageJson = JSON.parse(await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8'));
@@ -26,8 +24,8 @@ test('Studio keeps the official Sidebar Browser active for in-app HTTP(S) links'
   assert.match(patch, /- id: ui-sidebar-browser[\s\S]*?\n\s*disabled: false/);
 });
 
-test('resource library has one Skill tab with a source filter', () => {
-  const page = clientSource.slice(clientSource.indexOf('function ResourcesPage'), clientSource.indexOf('function CodexPluginMarketItem'));
+test('resource library has one Skill tab with a source filter', async () => {
+  const page = await readFile(new URL('../src/client/pages/resources.mjs', import.meta.url), 'utf8');
   const tabs = page.slice(page.indexOf('const resourceKinds'),page.indexOf('const label'));
   assert.match(tabs,/\['skill', 'Skill'\]/);
   assert.doesNotMatch(tabs,/Skill Center/);
@@ -46,7 +44,7 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /typeof selectedPreset === 'object' && selectedPreset\.ok === false/);
   assert.match(clientSource, /conversation\.hero\.agentPreset/);
   assert.match(clientSource, /会话已开始，Agent 已锁定/);
-  assert.match(clientSource, /__AGENTKIT_STUDIO_BIND_AGENT__/);
+  assert.match(clientSource, /actions\.bindAgent/);
   assert.match(clientSource, /绑定到新会话/);
   assert.match(clientSource, /uiWorkspace\.openSession\(sessionId\)/);
   assert.match(clientSource, /h\(Menu, /);
@@ -77,7 +75,7 @@ test('model settings keep multiple providers and profiles independently configur
 test('bound Agents use the official DSH native conversation surface', () => {
   assert.doesNotMatch(clientSource, /function BoundAgentConversationPage/);
   assert.doesNotMatch(clientSource, /onOpenConversation/);
-  assert.match(clientSource, /__AGENTKIT_STUDIO_BIND_AGENT__/);
+  assert.match(clientSource, /actions\.registerBinding/);
   assert.match(clientSource, /sessions\.create\(\{\}\)/);
   assert.match(clientSource, /agentPresets\?\.select\?\./);
   assert.match(clientSource, /uiWorkspace\.openSession\(sessionId\)/);
@@ -118,14 +116,14 @@ test('Delivery surface uses a Host-owned deployment preflight and explicit billa
   assert.match(clientSource, /previewId: preview\.previewId/);
 });
 
-test('resource-bound Agents use the same native DSH preset bridge as model-only Agents', () => {
-  const selector = clientSource.slice(clientSource.indexOf('function AgentContextSelector'), clientSource.indexOf('function StudioSubnav'));
+test('resource-bound Agents use the same native DSH preset bridge as model-only Agents', async () => {
+  const selector = await readFile(new URL('../src/client/dsh/agent-selector.mjs', import.meta.url), 'utf8');
   assert.match(selector, /resourceBound\(selectedRecord\)/);
   assert.match(selector, /已绑定原生会话适配器/);
 });
 
-test('platform resource picker does not refetch on every render', () => {
-  const picker = clientSource.slice(clientSource.indexOf('function PlatformResourcePicker'), clientSource.indexOf('function AgentCreatePage'));
+test('platform resource picker does not refetch on every render', async () => {
+  const picker = await readFile(new URL('../src/client/pages/platform-resource-picker.mjs', import.meta.url), 'utf8');
   assert.match(picker, /agentkit-studio:local-agent-changed/);
   assert.doesNotMatch(picker, /window\.removeEventListener\('agentkit-studio:local-agent-changed', changed\);\s*\}, \[load\]\)/);
 });

@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { scheduleDeliveryTargets } from '../src/cloud-schedule-targets.mjs';
-
-const source = await readFile(new URL('../src/client-fragments/06-schedule-delivery.js', import.meta.url), 'utf8');
+import { createScheduleDelivery } from '../src/client/components/schedule-delivery.mjs';
 const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item != null && item !== false) });
 const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
 const content = node => typeof node === 'string' ? node : node?.children?.map(content).join('') || '';
@@ -25,7 +23,7 @@ test('picker never selects a recipient automatically; disabled delivery preserve
   let cursor = 0;
   const useState = initial => { const index = cursor++; states[index] ??= initial; return [states[index], next => { states[index] = next; }]; };
   const host = { scheduleDeliveryTargets: async () => ({ items: [{ channelConfigId: 'c', bindingId: 'b', label: 'Test chat' }] }) };
-  const Picker = new Function('h', 'useState', 'useEffect', 'hostRemote', 'BRAND', 'React', 'inputStyle', source + '; return ScheduleDeliveryPicker;')(h, useState, effect => effects.push(effect), host, {}, { Fragment: 'fragment' }, () => ({}));
+  const { ScheduleDeliveryPicker: Picker } = createScheduleDelivery({ ui: { React: { createElement: h, useState, useEffect: effect => effects.push(effect), Fragment: 'fragment' }, BRAND: {}, inputStyle: () => ({}) }, hostRemote: host });
   const render = props => { cursor = 0; return Picker({ agentId: 'a', mode: 'record', target: null, supported: true, onChange: (...args) => changes.push(args), ...props }); };
   let tree = render({ supported: false });
   assert.equal(walk(tree).filter(node => node.type === 'input')[1].props.disabled, true);
@@ -40,7 +38,7 @@ test('picker never selects a recipient automatically; disabled delivery preserve
 });
 
 test('result view shows delivery uncertainty without hiding the completed result', () => {
-  const Result = new Function('h', 'Pill', 'BRAND', source + '; return ScheduleDeliveryResult;')(h, 'Pill', {});
+  const { ScheduleDeliveryResult: Result } = createScheduleDelivery({ ui: { React: { createElement: h }, Pill: 'Pill', BRAND: {} } });
   const tree = Result({ item: { deliveryState: 'unknown', resultText: 'saved report' } });
   assert.match(content(tree), /送达结果待确认/);
   assert.match(content(tree), /不会自动重复发送/);

@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-
-const fragment = await readFile(new URL('../src/client-fragments/04-create-edit-and-resources.js', import.meta.url), 'utf8');
-const source = fragment.slice(fragment.indexOf('function McpResourceDialog'), fragment.indexOf('function formatResourceSize'));
+import { createResourceDialogs } from '../src/client/components/resource-dialogs.mjs';
 
 test('failed MCP probe retry updates the saved resource instead of creating duplicates', async () => {
   const state = [], calls = [], saved = [];
@@ -20,7 +17,7 @@ test('failed MCP probe retry updates the saved resource instead of creating dupl
     probeMcpResource: async id => { calls.push(['probe', id]); throw new Error('Endpoint 连接失败'); },
   };
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
-  const Dialog = new Function('useState', 'h', 'hostRemote', 'BRAND', 'buttonStyle', 'inputStyle', 'ResourceDialog', `${source}; return McpResourceDialog;`)(useState, h, host, {}, () => ({}), () => ({}), 'dialog');
+  const { McpResourceDialog: Dialog } = createResourceDialogs({ ui: { React: { createElement: h, useState }, BRAND: {}, buttonStyle: () => ({}), inputStyle: () => ({}), ResourceDialog: 'dialog' }, hostRemote: host });
   const render = () => { cursor = 0; return Dialog({ onCreated: () => { refreshed += 1; }, onClose: () => { closed += 1; } }); };
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
   const field = placeholder => walk(render()).find(node => node.type === 'input' && node.props.placeholder === placeholder);
@@ -49,7 +46,7 @@ test('MCP dialog imports streamable-http mcpServers JSON without retaining inlin
   };
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
   const host = { createMcpResource: async () => ({ resourceId: 'mcp-json' }), probeMcpResource: async () => ({ toolCount: 1 }) };
-  const Dialog = new Function('useState', 'h', 'hostRemote', 'BRAND', 'buttonStyle', 'inputStyle', 'ResourceDialog', `${source}; return McpResourceDialog;`)(useState, h, host, {}, () => ({}), () => ({}), 'dialog');
+  const { McpResourceDialog: Dialog } = createResourceDialogs({ ui: { React: { createElement: h, useState }, BRAND: {}, buttonStyle: () => ({}), inputStyle: () => ({}), ResourceDialog: 'dialog' }, hostRemote: host });
   const render = () => { cursor = 0; return Dialog({ onClose() {} }); };
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
   const json = JSON.stringify({ mcpServers: { 'metaso-inner': { type: 'streamable-http', name: '金山云星流_秘塔AI搜索-inner', description: 'search', url: '[https://metaso-inner.example/mcp](https://metaso-inner.example/mcp)', headers: { Authorization: 'Bearer ${ksc_aipro_API_KEY}' } } } });

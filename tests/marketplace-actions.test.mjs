@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const fragment = await readFile(new URL('../src/client-fragments/05-resource-workspaces.js', import.meta.url), 'utf8');
-const operations = await readFile(new URL('../src/client-fragments/06-automation-and-operations.js', import.meta.url), 'utf8');
+const fragment = await readFile(new URL('../src/client/pages/resources.mjs', import.meta.url), 'utf8');
+const operations = await readFile(new URL('../src/client/pages/operations.mjs', import.meta.url), 'utf8');
 
 test('the legacy Studio double marketplace is no longer a visible page', () => {
   assert.doesNotMatch(fragment, /function MarketplacePage/);

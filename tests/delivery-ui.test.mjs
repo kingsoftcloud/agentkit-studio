@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFile } from 'node:fs/promises';
-
-const cloudSource = await readFile(new URL('../src/client-fragments/05-cloud-deployments.js', import.meta.url), 'utf8');
-const workspace = await readFile(new URL('../src/client-fragments/05-resource-workspaces.js', import.meta.url), 'utf8');
-const source = cloudSource + workspace.slice(workspace.indexOf('    function DeliveryPage()'));
+import { createDeliveryPages } from '../src/client/pages/delivery.mjs';
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 const preview = request => ({ ...request, agentName: 'Selected Agent', revision: 1, environment: 'pre-online', region: 'test-region',
   runtime: 'harness', image: { version: 'test' }, resourceCounts: { models: 1, mcps: 0, skills: 0, remote: 0 }, identity: { kind: 'subaccount', userName: 'operator' }, warnings: [] });
@@ -31,8 +27,10 @@ function harness(name = 'CloudDeploymentPanel', initialProps = { agentId: 'a', s
     createDeployment: async (...args) => { calls.push(['create', ...args]); return { id: 'created', agentId: 'a', state: 'CREATING' }; },
     agents: async () => ({ items: [] }), operations: async () => ({ items: [] }), agent: async () => ({ builds: [] }) };
   const names = ['Pill', 'StudioPageTabs', 'SectionHeading', 'EmptyState'];
-  const Component = new Function('useState', 'useEffect', 'useRef', 'h', 'hostRemote', 'BRAND', 'React', 'buttonStyle', 'inputStyle', 'window', 'setInterval', 'clearInterval', 'RUNTIME_LABELS', ...names, `${source}; return ${name};`)
-    (useState, useEffect, useRef, h, api, {}, { Fragment: 'fragment' }, () => ({}), () => ({}), { __AGENTKIT_STUDIO__: { controlPlane: 'agentengine-server' } }, () => 1, () => {}, {}, ...names);
+  const Component = createDeliveryPages({
+    ui: { React: { createElement: h, useState, useEffect, useRef, Fragment: 'fragment' }, BRAND: {}, RUNTIME_LABELS: {}, buttonStyle: () => ({}), inputStyle: () => ({}), ...Object.fromEntries(names.map(name => [name, name])) },
+    hostRemote: api, actions: { confirm: async () => true }, window: { __AGENTKIT_STUDIO__: { controlPlane: 'agentengine-server' } }, setInterval: () => 1, clearInterval: () => {},
+  })[name];
   const render = () => { cursor = 0; dirty = false; tree = Component(props); for (const effect of effects.splice(0)) effect(); };
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk), ...walk(node.props.action)] : [];
   const nodes = () => { if (dirty) render(); return walk(tree); };

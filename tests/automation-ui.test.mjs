@@ -1,21 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
-
-const fragment = await readFile(new URL('../src/client-fragments/06-automation-and-operations.js', import.meta.url), 'utf8');
-const source = fragment.slice(0, fragment.indexOf('    function OperationsWorkspace('));
+import { createAutomationPage } from '../src/client/pages/automation.mjs';
 test('editing a scheduled instant preserves its local wall clock time', () => {
-  const helper = source.slice(source.indexOf('    function localDateTimeValue'), source.indexOf('    function scheduleLabel'));
-  const value = execFileSync(process.execPath, ['-e', `${helper}; process.stdout.write(localDateTimeValue('2026-10-07T05:00:00.000Z'));`], {env:{...process.env,TZ:'Asia/Shanghai'},encoding:'utf8'});
+  const moduleUrl = new URL('../src/client/state/automation-data.mjs', import.meta.url).href;
+  const value = execFileSync(process.execPath, ['--input-type=module', '-e', `import { localDateTimeValue } from ${JSON.stringify(moduleUrl)}; process.stdout.write(localDateTimeValue('2026-10-07T05:00:00.000Z'));`], {env:{...process.env,TZ:'Asia/Shanghai'},encoding:'utf8'});
   assert.equal(value,'2026-10-07T13:00');
 });
 test('a blank one-time schedule is refused instead of silently selecting one hour later', async () => {
-  const body = source.slice(source.indexOf('      const save = async () =>'), source.indexOf('      const startEdit ='));
-  const errors = [];
-  const save = new Function('form','setError',`${body}; return save;`)({agentId:'agent-a',displayName:'Test',prompt:'Test',kind:'once',at:''},message=>errors.push(message));
-  await save();
-  assert.deepEqual(errors,['请选择未来的执行时间。']);
+  const ui = harness(); await ui.ready();
+  let submitted = 0; ui.api.createSchedule = async () => { submitted++; };
+  ui.buttons('新建自动化')[0].props.onClick(); await ui.settle();
+  const field = label => ui.nodes().find(node => node.type === 'label' && node.children[0] === label)?.children.find(node => node && typeof node === 'object');
+  field('任务名称').props.onChange({ target: { value: 'Test' } });
+  ui.nodes().find(node => node.type === 'textarea').props.onChange({ target: { value: 'Test' } });
+  field('触发方式').props.onChange({ target: { value: 'once' } }); await ui.settle();
+  assert.equal(field('执行时间').props.value, '');
+  ui.nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }); await ui.settle();
+  assert.equal(submitted, 0);
+  assert.ok(ui.nodes().some(node => node.props.role === 'alert' && ui.text(node) === '请选择未来的执行时间。'));
 });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const task = id => ({ taskId: id, displayName: `Task ${id}`, enabled: true, revision: 1,
@@ -47,7 +50,9 @@ function harness() {
   };
   const window = { setInterval: callback => { intervals.add(callback); return callback; }, clearInterval: callback => intervals.delete(callback) };
   const names = ['StudioSubnav', 'ResourcesPage', 'CodexPluginMarketItem', 'RuntimeResourcesPage', 'OperationalPageHeading', 'Pill', 'EmptyState', 'ResourceDialog', 'StudioPageTabs', 'OperationalPager', 'ScheduleDeliveryPicker', 'ScheduleDeliveryResult'];
-  const Page = new Function('useState', 'useEffect', 'useRef', 'h', 'hostRemote', 'BRAND', 'React', 'buttonStyle', 'inputStyle', 'window', 'document', ...names, `${source}; return AutomationPage;`)(useState, useEffect, useRef, h, api, {}, { Fragment: 'fragment' }, () => ({}), () => ({}), window, { hidden: false }, ...names);
+  const { AutomationPage: Page } = createAutomationPage({
+    ui: { React: { createElement: h, useState, useEffect, useRef, Fragment: 'fragment' }, BRAND: {}, buttonStyle: () => ({}), inputStyle: () => ({}), ...Object.fromEntries(names.map(name => [name, name])) }, hostRemote: api, actions: { confirm: async () => true }, window, document: { hidden: false },
+  });
   const render = () => { cursor = 0; dirty = false; tree = Page({}); for (const effect of effects.splice(0)) effect(); return tree; };
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk), ...walk(node.props.action)] : [];
   const nodes = () => { if (dirty) render(); return walk(tree); };

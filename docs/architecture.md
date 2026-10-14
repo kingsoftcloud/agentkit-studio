@@ -9,7 +9,7 @@ Studio adds Agent editing, resource bindings, product settings and release wirin
 | Path | Responsibility |
 | --- | --- |
 | `src/` | Studio Host services, API adapters and product plugin |
-| `src/client-fragments/` | UI extensions assembled into the client bundle |
+| `src/client/` | Browser modules, per-apply composition and DSH UI extensions |
 | `src/providers/` | DSH Native, AgentKit Harness and Codex runtime integration |
 | `packages/agentkit-harness/` | Independently packed DSH runtime plugin |
 | `patches/` | Reviewed changes against the pinned public DSH host |

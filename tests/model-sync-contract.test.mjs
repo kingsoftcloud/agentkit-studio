@@ -1,13 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdir, readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
-
-const fragmentDir = fileURLToPath(new URL('../src/client-fragments/', import.meta.url));
-const fragmentSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
-const migratedPaths = ['remote/host-client.mjs', 'state/conversation-agent.mjs', 'state/native-authoring.mjs', 'dsh/native-authoring.mjs', 'theme.mjs', 'components/primitives.mjs', 'components/form-styles.mjs', 'components/resource-dialog.mjs', 'state/product-versions.mjs', 'pages/studio-settings.mjs', 'pages/agents.mjs', 'pages/platform-resource-picker.mjs', 'pages/agent-form.mjs', 'pages/agent-edit.mjs'];
-const clientSource = fragmentSource + '\n' + (await Promise.all(migratedPaths.map(path => readFile(new URL('../src/client/' + path, import.meta.url), 'utf8')))).join('\n');
+import { readClientSource } from './helpers/client-source.mjs';
+const clientSource = await readClientSource();
 
 test('model save synchronizes the DSH default model namespace', () => {
   assert.match(clientSource, /DSH_DEFAULT_MODEL_SETTINGS_NS\s*=\s*'agent-default-model'/);

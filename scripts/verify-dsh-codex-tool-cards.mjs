@@ -95,14 +95,14 @@ for (const { toolName, outcome } of cases) {
 const temp = await mkdtemp(join(tmpdir(), 'studio-codex-cards-'));
 const fixture = join(temp, 'events.json');
 await writeFile(fixture, JSON.stringify(histories));
-const fragment = fileURLToPath(new URL('../src/client-fragments/02-codex-tool-nodes.js', import.meta.url));
+const definitionModule = fileURLToPath(new URL('../src/client/dsh/codex-tool.mjs', import.meta.url));
 const probe = join(root, 'scripts', `.studio-codex-cards-${process.pid}.spec.ts`);
 await writeFile(probe, `
 import { readFileSync } from 'node:fs'
 import { expect, it } from 'vitest'
 import { ConversationNodeAssembler } from '../packages/client/ui-conversation/src/client/index.ts'
 import { chatViewDefinition } from '../packages/client/ui-chat/src/client/conversation-nodes/chat-snapshot-builder.ts'
-const definition = new Function(readFileSync(${JSON.stringify(fragment)}, 'utf8') + '; return codexToolDefinition')()
+import { codexToolDefinition as definition } from ${JSON.stringify(definitionModule)}
 const histories = JSON.parse(readFileSync(${JSON.stringify(fixture)}, 'utf8'))
 it('uses the official Chat tool payload live, after JSON replay, and with a result-only window', () => {
   for (const { outcome, toolArgs, events } of histories) {

@@ -1,11 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalizeModelEndpoint} from '../src/model-endpoint.mjs';
-import { readFile } from 'node:fs/promises';
 import { createModelService } from '../src/model-service.mjs';
-
-const fragment = await readFile(new URL('../src/client-fragments/07-channels-and-shell.js', import.meta.url), 'utf8');
-const source = fragment.slice(fragment.indexOf('    const MODEL_CREDENTIAL_NAMES'));
+import { createModelSettingsSection } from '../src/client/pages/model-settings.mjs';
 
 function ui(metadata, input) {
   const values = { modelProfiles: [{ id: 'configured', provider: 'custom', modelName: 'vision', baseUrl: 'https://gateway.test/v1', credentialName: 'KEY', enabled: true, default: true, input }] };
@@ -26,9 +22,10 @@ function ui(metadata, input) {
   const useEffect = callback => { const index = cursor++; if (!(index in states)) { states[index] = true; effects.push(callback); } };
   const host = { settings: service.settings, updateSettings: service.save, modelCatalog: service.catalog, syncModelCredential: service.sync };
   const dshModel = { describe: async () => ({ namespaces: [] }), credentialStatus: async () => ({ configured: true }), applyProfiles: async payload => { applied = payload; } };
-  const Component = new Function('h', 'useState', 'useEffect', 'hostRemote', 'BRAND', 'Pill', 'inputStyle', 'buttonStyle', 'window', 'CustomEvent', 'SecretInput', 'normalizeModelEndpoint', source + ';return ModelSettingsSection;')(
-    h, useState, useEffect, host, {}, 'pill', () => ({}), () => ({}), { dispatchEvent() {} }, class {}, 'SecretInput', normalizeModelEndpoint,
-  );
+  const { ModelSettingsSection: Component } = createModelSettingsSection({
+    ui: { React: { createElement: h, useState, useEffect }, BRAND: {}, Pill: 'pill', inputStyle: () => ({}), buttonStyle: () => ({}), SecretInput: 'SecretInput' },
+    hostRemote: host, window: { dispatchEvent() {} }, CustomEvent: class {},
+  });
   const render = () => { cursor = 0; dirty = false; tree = Component({ dshModel }); for (const callback of effects.splice(0)) callback(); };
   const settle = async () => { render(); for (let i = 0; i < 120; i++) { await Promise.resolve(); if (dirty) render(); } };
   const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];

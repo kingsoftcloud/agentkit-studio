@@ -66,7 +66,7 @@ The verification command does not approve dependency build scripts automatically
 ## Repository layout
 
 - `src/` — Studio Host and browser implementation
-- `src/client-fragments/` — browser UI fragments assembled into `dist/client.js`
+- `src/client/` — browser ES Modules with scoped state and page composition, bundled into `dist/client.js`
 - `packages/agentkit-harness/` — independently packaged DSH runtime plugin
 - `examples/` — minimal public configuration examples
 - `docs/` — usage, architecture and release guides

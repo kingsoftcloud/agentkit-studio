@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { runInNewContext } from 'node:vm';
 import { createCodexToolRecorder, CODEX_TOOL_EVENT, createCodexCommandFallback } from '../src/providers/codex-tool-events.mjs';
-
-const definition = runInNewContext(`${await readFile(new URL('../src/client-fragments/02-codex-tool-nodes.js', import.meta.url), 'utf8')}\ncodexToolDefinition`);
+import { codexToolDefinition as definition } from '../src/client/dsh/codex-tool.mjs';
 function recorder() {
   const events = [];
   const instance = createCodexToolRecorder({ append(type, data, opts) { events.push({ type, data: structuredClone(data), ...opts, seq: events.length, time: 10 + events.length }); } });

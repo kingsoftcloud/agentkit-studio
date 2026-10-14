@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-
-const fragment = await readFile(new URL('../src/client-fragments/07-channels-and-shell.js', import.meta.url), 'utf8');
-const source = fragment.slice(0, fragment.indexOf('    function OperationalPage('));
+import { createChannelsPage } from '../src/client/pages/channels.mjs';
 function harness() {
   const state = [], calls = [];
   let cursor = 0, fail = false;
@@ -25,7 +22,10 @@ function harness() {
     },
   };
   const names = ['OperationalPageHeading', 'Pill', 'EmptyState', 'Metric', 'OperationalToolbar', 'ResourceDialog', 'StudioPageTabs', 'OperationalTable', 'OperationalPager'];
-  const Page = new Function('useState', 'useEffect', 'h', 'hostRemote', 'BRAND', 'React', 'buttonStyle', 'inputStyle', 'operationalCollection', 'operationalId', 'operationalStatus', 'operationalDate', ...names, `${source}; return ChannelsPage;`)(useState, () => {}, h, host, {}, { Fragment: 'fragment' }, () => ({}), () => ({}), data => data.Items || [], row => row.Id, value => value, value => value, ...names);
+  const { ChannelsPage: Page } = createChannelsPage({
+    ui: { React: { createElement: h, useState, useEffect: () => {}, Fragment: 'fragment' }, BRAND: {}, buttonStyle: () => ({}), inputStyle: () => ({}), operationalStatus: value => value, ...Object.fromEntries(names.map(name => [name, name])) },
+    hostRemote: host, actions: { confirm: async () => true },
+  });
   const render = () => { cursor = 0; return Page(); };
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
   const nodes = () => walk(render());

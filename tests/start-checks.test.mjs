@@ -1,11 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-
-const source = await readFile(new URL('../src/client-fragments/02-start-checks.js', import.meta.url), 'utf8');
-const types = ['dsh-native', 'harness', 'codex'];
-const labels = { 'dsh-native': 'DSH Native', harness: 'AgentKit Harness', codex: 'Codex' };
-const readChecks = new Function('ALLOWED_RUNTIME_TYPES', 'RUNTIME_LABELS', `${source}; return readStartChecks;`)(types, labels);
+import { readStartChecks as readChecks } from '../src/client/state/start-checks.mjs';
+import { createStartChecks } from '../src/client/pages/start-checks.mjs';
 const good = { settings: async () => ({ profile: 'default' }), modelCredentialStatus: async () => ({ configured: true }), runtimes: async () => ({ items: [{ runtimeType: 'dsh-native' }] }) };
 
 test('checks expose only redacted configuration facts, not execution readiness', async () => {
@@ -43,7 +39,7 @@ function ui(remote) {
   const useRef = value => useState({ current: value })[0];
   const useEffect = callback => { const i = cursor++; if (!(i in states)) { states[i] = true; effects.push(callback); } };
   const window = { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name), dispatchEvent() {} };
-  const Component = new Function('h','useState','useRef','useEffect','hostRemote','window','buttonStyle','ALLOWED_RUNTIME_TYPES','RUNTIME_LABELS', `${source}; return StartChecks;`)(h, useState, useRef, useEffect, remote, window, () => ({}), types, labels);
+  const { StartChecks: Component } = createStartChecks({ ui: { React: { createElement: h, useState, useRef, useEffect }, buttonStyle: () => ({}) }, hostRemote: remote, window });
   const render = () => { cursor = 0; dirty = false; tree = Component(); effects.splice(0).forEach(callback => cleanups.push(callback())); };
   const settle = async () => { if (dirty) render(); for (let i = 0; i < 40; i++) { await Promise.resolve(); if (dirty) render(); } };
   return { settle, state: () => states[0], tree: () => tree, toggle: () => tree.children[0].children[0].props.onClick(), change: () => listeners.get('agentkit-studio:model-credential-changed')(), dispose: () => cleanups.forEach(callback => callback?.()), listeners };

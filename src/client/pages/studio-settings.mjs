@@ -1,4 +1,5 @@
-export function createStudioSettingsSection({ React, hostRemote, BRAND, SettingsRow, buttonStyle, versions, window = globalThis.window }) {
+export function createStudioSettingsSection({ ui, hostRemote, versions, window = globalThis.window }) {
+  const { React, BRAND, SettingsRow, buttonStyle } = ui;
   const { createElement: h, useEffect, useState, useRef } = React;
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = versions;
   function StudioSettingsSection() {
