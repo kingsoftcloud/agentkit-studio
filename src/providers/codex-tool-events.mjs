@@ -65,7 +65,7 @@ export function codexItemToolChunk(item, phase) {
   };
 }
 
-/** Presentation facts only: never append model-facing tool messages or dispatch tools. */
+/** Informational facts: presentation and read-only context, never executable DSH tool messages. */
 export function createCodexToolRecorder(session, { label = 'Codex', code = 'CODEX' } = {}) {
   if (typeof session?.append !== 'function') return null;
   const runId = randomUUID();

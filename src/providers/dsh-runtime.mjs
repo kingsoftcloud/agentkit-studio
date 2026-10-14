@@ -12,6 +12,7 @@ import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { dshModelFailure } from '../model-failure.mjs';
 import { createCodexToolRecorder } from './codex-tool-events.mjs';
+import { codexToolHistory } from './codex-history.mjs';
 import { gatewayHistory } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
@@ -590,6 +591,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               sessionId: String(options.sessionId || ''),
               input,
               messages: Array.isArray(options.messages) ? options.messages : [],
+              toolHistory: codexToolHistory(toolAgent?.session),
               imageInputs: history.flatMap(message => Array.isArray(message.content) ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : []),
               signal: options.signal,
               systemPrompt: resources.systemPrompt || '',

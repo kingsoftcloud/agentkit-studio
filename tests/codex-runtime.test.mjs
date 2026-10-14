@@ -47,6 +47,25 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   ]);
 });
 
+test('App Server receives persisted tool observations without dispatching an old call', async () => {
+  let text, executions = 0;
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn(), write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => {
+      const request = JSON.parse(String(data));
+      if (request.method === 'turn/start') text = request.params.input[0].text;
+      return write(data, ...args);
+    };
+    return child;
+  } });
+  for await (const _ of runtime.stream({ input: 'recall the previous lookup', messages: [{ role: 'assistant', content: 'DONE' }],
+    toolHistory: [{ turn: 1, name: 'lookup', phase: 'completed', content: [{ type: 'text', text: 'HIDDEN_TOOL_VALUE' }] }],
+    toolHandler: async () => { executions++; },
+  })) {}
+  assert.match(text, /HIDDEN_TOOL_VALUE/);
+  assert.equal(executions, 0);
+});
+
 test('retiring a completed App Server also stops a child that ignores graceful termination', async t => {
   const child = fakeSpawn();
   const kill = child.kill;

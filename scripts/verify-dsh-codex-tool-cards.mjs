@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { bindDshAgentRoute, createDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
 import { CODEX_PROVIDER } from '../src/providers/codex-models.mjs';
+import { codexToolHistory } from '../src/providers/codex-history.mjs';
 
 const root = resolve(process.env.AGENTKIT_DSH_ROOT || fileURLToPath(new URL('../../../deepseek-harness', import.meta.url)));
 const require = createRequire(join(root, 'packages/core/agent-loop/package.json'));
@@ -27,8 +28,15 @@ for (const { toolName, outcome } of cases) {
   for (const name of ['session-projection', 'system-prompt', 'tools', 'agent', 'agent-loop']) await ctx.plugin((await load(`@deepseek-ai/dsh-${name}`)).default, name === 'agent-loop' ? { agents: [] } : undefined);
   let executions = 0, streamed = 0;
   ctx.tools.register(defineContentToolFixture({ name: 'lookup', description: 'Must never dispatch from DSH', parameters: {}, execute: async () => { executions++; return [{ type: 'text', text: 'incorrect execution' }]; } }));
-  const adapter = createDshRuntimeAdapter({ AdapterBase: LlmAdapter, codexRuntime: { async *stream() {
+  const adapter = createDshRuntimeAdapter({ AdapterBase: LlmAdapter, codexRuntime: { async *stream({ toolHistory }) {
     streamed++;
+    if (streamed > 1) {
+      assert.equal(toolHistory.length, 1);
+      if (outcome === 'canceled') assert.equal(toolHistory[0].error.code, 'CODEX_TOOL_OUTCOME_UNKNOWN');
+      else assert.equal(toolHistory[0].content[0].text, 'result-canary');
+      yield { type: 'text', text: 'Recalled the recorded observation' };
+      return;
+    }
     yield { type: 'tool', phase: 'started', name: toolName, id: 'same-provider-id', arguments: toolArgs };
     if (outcome === 'canceled') throw Object.assign(new Error('canceled'), { code: 'CODEX_CANCELED' });
     yield { type: 'tool', phase: outcome, name: toolName, id: 'same-provider-id', arguments: toolArgs, result: { content: [{ type: 'text', text: 'result-canary' }] }, ...(outcome === 'failed' ? { error: { message: 'upstream-rejected' } } : {}) };
@@ -52,6 +60,7 @@ for (const { toolName, outcome } of cases) {
     const seed = JSON.parse(JSON.stringify(events));
     const restored = ctx.sessions.create(SessionId(`restored-${outcome}`), { seed });
     assert.deepEqual(restored.deriveMessages(), derived);
+    assert.deepEqual(codexToolHistory(restored), codexToolHistory(agent.session));
     const disk = await mkdtemp(join(tmpdir(), 'studio-codex-persistence-'));
     try {
       const writerContext = new Context();
@@ -64,11 +73,22 @@ for (const { toolName, outcome } of cases) {
       try {
         await readerContext.plugin(JsonlPersistence, { root: disk, compression: 'zstd' });
         const reader = await readerContext.sessionPersistence.open(agent.id, 'read');
-        try { assert.deepEqual((await reader.read()).events, events); } finally { await reader.close(); }
+        try {
+          const reopened = (await reader.read()).events;
+          assert.deepEqual(reopened, events);
+          const replay = ctx.sessions.create(SessionId(`disk-replayed-${outcome}`), { seed: reopened });
+          assert.deepEqual(codexToolHistory(replay), codexToolHistory(agent.session));
+        } finally { await reader.close(); }
       } finally { await readerContext.fiber.dispose(); }
     } finally { await rm(disk, { recursive: true, force: true }); }
     histories.push({ outcome, toolArgs, events: seed });
-    console.log(JSON.stringify({ outcome, toolName, recorded: tools.length, dshExecutions: executions, restored: true, diskReopened: true }));
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Recall the previous tool result without executing it again' }], source: { kind: 'user' } }));
+    await agent.whenIdle();
+    assert.equal(streamed, 2);
+    assert.equal(executions, 0);
+    assert.equal(agent.session.snapshotEvents().filter(event => event.type === 'agentkit/codex-tool').length, 2);
+    assert.equal(agent.session.snapshotEvents().findLast(event => event.type === 'turn/end').data.reason.kind, 'completed');
+    console.log(JSON.stringify({ outcome, toolName, recorded: tools.length, dshExecutions: executions, restored: true, diskReopened: true, nextTurnContext: true }));
   } finally { disposeRoute(); disposeAdapter(); await ctx.fiber.dispose(); }
 }
 
