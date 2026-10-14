@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build, transform } from 'esbuild';
+import { CLIENT_PRIVATE_PROPERTIES } from './client-private-properties.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Source dependencies are ES Modules. DSH receives one browser script and
@@ -10,6 +11,8 @@ const result = await build({
   absWorkingDir: root, entryPoints: ['src/client.js'],
   bundle: true, format: 'iife', platform: 'browser', target: 'es2022',
   minify: true, legalComments: 'none', write: false, metafile: true,
+  mangleProps: new RegExp('^(' + CLIENT_PRIVATE_PROPERTIES.join('|') + ')$'),
+  mangleCache: {},
   plugins: [{
     name: 'studio-css-text',
     setup(builder) {
@@ -35,3 +38,4 @@ await mkdir(resolve(root, 'dist'), { recursive: true });
 await writeFile(resolve(root, 'dist/client.js'), output);
 await mkdir(resolve(root, '.artifacts/client'), { recursive: true });
 await writeFile(resolve(root, '.artifacts/client/metafile.json'), JSON.stringify(result.metafile, null, 2) + '\n');
+await writeFile(resolve(root, '.artifacts/client/private-properties.json'), JSON.stringify(result.mangleCache || {}, null, 2) + '\n');

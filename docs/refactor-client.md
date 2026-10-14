@@ -1,6 +1,6 @@
 # 前端模块化：实施与验收
 
-阶段 3 的页面迁移、ES Module 构建切换和每次 `apply(ctx)` 的作用域组合已实现，`src/client-fragments/` 已删除。完整真实 Web 和 Electron 开发宿主流程均已通过。阶段整体仍为部分完成：当前 gzip 增长 6.85%，超过 5% 预算，[包体专项评审](refactor-client-budget.md)尚待确认。以下 3A、3B 数据保留对应批次的历史结果，当前结果见 3C。
+阶段 3 已通过本地验收：页面迁移、ES Module 构建切换和每次 `apply(ctx)` 的作用域组合已实现，`src/client-fragments/` 已删除。完整真实 Web 和 Electron 开发宿主流程均已通过，gzip 增长 4.992%，符合原定 5% 预算。[包体优化记录](refactor-client-budget.md)保留此前失败及最终结果，不调整预算。以下 3A、3B 数据保留对应批次的历史结果，当前结果见 3C。
 
 重新安装复核发现启动恢复会等待新会话的模型目录校验，导致部分动态 preset 暂时缺失。现已修复：历史 Session 使用其持久化模型投影，恢复定义时不请求新会话模型目录；显式准入仍执行原模型校验。新增暂停目录查询的回归用例先失败后通过，真实 Web 和 Electron 各 23 项流程及完整插件 20 次加载卸载通过。原失败记录保留，没有修改旧会话日志。
 
@@ -49,17 +49,19 @@ Agent 列表、模板、密钥显示和桌面设置行为测试已改为直接�
 - 确认弹窗随所属实例关闭，取消待确认操作。样式和图标由文档资源租约管理，重叠挂载和替换 bundle 共用资源，最后释放才清理；不存储连接或业务状态。
 - 新增 8 项作用域与异步行为检查，保留已有测试。前端行为测试直接导入模块；Host 路由中剩余的源码截取测试留待阶段 4 随路由迁移处理。
 - 组件工厂通过参数直接声明依赖，单组件工厂直接返回组件。三组静态样式保持单一 CSS 模块来源，由 esbuild 压缩后注入所属文档；源模块也能由行为测试直接导入。
+- `remote/product-client.mjs` 提供产品当前使用的客户端。`host-client.mjs` 兼容入口通过同一个实现组合 `compatibility-methods.mjs`，保留旧接口和共享的会话交换、CSRF、REST/SSE 取消语义；兼容模块不进入产品浏览器依赖图。
+- 构建仅压缩 `client-private-properties.mjs` 明确列出的内部展示和作用域属性。DSH、React、DOM、RPC 与存储字段保持原名；增加内部属性前须检查所有外部边界。模块验收记录实际映射并拒绝非清单或受保护名称的改写。
 
 | 项目 | 当前本地结果 |
 | --- | --- |
 | 模块图 | 61 个输入，无循环、Node、Host/provider、第二份 React及业务全局变量；一个 ModuleLoader 注册 |
-| 源码及发行输入门禁 | 712 项通过，0 失败、0 跳过；公开面、历史和快照凭证扫描、包完整性检查通过 |
+| 源码及发行输入门禁 | 715 项通过，0 失败、0 跳过；公开面、历史和快照凭证扫描、包完整性检查通过 |
 | 真实 Web 与 Electron 开发宿主 | 同一安装 bundle 各通过侧栏及历史重开 13 项、原生草稿 1 项及完整页面 9 项，共 23 项；无未捕获渲染错误 |
 | 完整插件生命周期复核 | 同一真实 DSH Host 加载卸载完整 Studio 20 次，所属路由、监听器、异步资源回到基线，重复卸载无异常 |
 | Codex 工具卡片 | 真实固定 DSH loop 与 Chat assembler 的 6 种受控结果通过，磁盘重开和下一轮上下文保留，工具没有重复执行；此项未调用真实模型 |
-| gzip 专项门禁 | 87,440 → 93,430 bytes，增长 6.85%；超过 91,812 bytes 上限，未通过 |
+| gzip 专项门禁 | 87,440 → 91,805 bytes，增长 4.992%；低于 91,812 bytes 上限，通过 |
 
-机器结果保存在忽略的 `.artifacts/refactor/stage-3/`：`recovery-fix-full-web-23.json`、`recovery-fix-full-electron-23.json`、`recovery-fix-lifecycle-20.json`、`recovery-fix-release-check.log`、`optimized-deterministic.json`、`optimized-module-graph.json`。Codex 受控工具卡片结果保留在 `codex-cards-modules.log`。模块与大小专项使用 `node scripts/verify-client-modules.mjs <baseline.json> <report.json>`；基线记录阶段 3 开始前的源码 commit、bundle SHA 和 gzip 大小。大小失败不由已有 `release-check` 的成功抵消。
+机器结果保存在忽略的 `.artifacts/refactor/stage-3/`：`private-capsules-web.json`、`private-capsules-electron.json`、`recovery-fix-lifecycle-20.json`、`private-capsules-release-check.log`、`private-capsules-deterministic.json`、`private-capsules-admission-final.json`。Host 业务源码与生命周期复核时相同。Codex 受控工具卡片结果保留在 `codex-cards-modules.log`。模块与大小专项使用 `node scripts/verify-client-modules.mjs <baseline.json> <report.json>`；基线记录阶段 3 开始前的源码 commit、bundle SHA 和 gzip 大小。大小失败不由已有 `release-check` 的成功抵消。
 
 完整页面验证通过产品 UI 创建唯一合成 Agent，编辑 Prompt、默认模型及模型白名单，再进入官方原生会话并切换模型。资源页验证类型切换、本地来源和搜索空状态；Build 通过真实本地 Host 创建，核对冻结的 Revision 并查看部署页面。自动化验证空执行时间的错误、创建、编辑、暂停、启用及删除，用一周间隔避免验收中触发模型执行，并核对实际存储结果。设置重开两次，凭证引导显示已配置状态，密钥输入保持空白，没有写入凭证。没有发送模型消息或创建云端部署。
 
@@ -67,4 +69,4 @@ Agent 列表、模板、密钥显示和桌面设置行为测试已改为直接�
 
 ## 仍需完成
 
-先把 gzip 收敛到 5% 预算，或完成方案允许的独立预算调整评审，再进入阶段 4 的 Host 服务、路由和共享合同拆分。阶段 5 的补丁治理、升级演练和最终开源源码主分支交付仍待实施。当前不能宣称阶段 3 整体完成。上述 Electron 结果属于开发宿主，不代表安装更新或 Windows 原生安装验收；查看部署页面也不代表真实云端部署成功。
+进入阶段 4 的 Host 服务、路由和共享合同拆分。阶段 5 的补丁治理、升级演练和最终开源源码主分支交付仍待实施。客户端体积距上限仅余 7 bytes，后续改动继续执行同一门禁。上述 Electron 结果属于开发宿主，不代表安装更新或 Windows 原生安装验收；查看部署页面也不代表真实云端部署成功。
