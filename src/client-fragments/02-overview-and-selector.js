@@ -247,7 +247,7 @@
           portal: true, compact: true, listClassName: 'studio-agent-picker',
           onClose: () => setOpen(false),
           anchor: h('button', {
-            type: 'button', className: 'studio-agent-trigger', 'aria-label': '选择当前会话智能体',
+            type: 'button', className: 'studio-agent-trigger', 'data-studio-session-id': sessionId, 'aria-label': '选择当前会话智能体',
             'aria-haspopup': 'menu', 'aria-expanded': open, disabled: busy || started,
             title: started ? '会话已开始，Agent 已锁定' : name,
             onClick: () => { setSearch(''); setOpen(current => !current); },

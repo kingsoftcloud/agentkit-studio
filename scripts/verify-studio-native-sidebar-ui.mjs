@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 export async function verifyStudioNativeSidebar(page, seed) {
   let phase = 'initial-history';
+  const progress = [];
   try {
   const rows = seed.sessions;
   const historyRow = row => page.locator(`[data-row-key="session:${row.sessionId}"]`);
@@ -23,18 +24,25 @@ export async function verifyStudioNativeSidebar(page, seed) {
   await visible();
   const nativeTitles = [];
   for (const row of rows) nativeTitles.push(await historyRow(row).locator(':scope > span').nth(1).innerText());
-  const checks = [{ name: 'persisted-history-flat', passed: true }];
+  const menuSemantics = [];
+  const checks = progress;
+  checks.push({ name: 'persisted-history-flat', passed: true, menuSemantics });
   const choose = async name => {
     const trigger = page.getByRole('button', { name: '选择当前会话智能体', exact: true });
-    // The selected native menu item also exposes its checkmark as "已选择".
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const item = page.getByRole('menuitem', { name: new RegExp(`^${escaped}(?: 已选择)?$`) });
+    // The checkmark's accessible name differs across browser versions. The
+    // exact visible Agent label is an independent child of the native item.
+    const item = page.getByRole('menuitem').filter({ has: page.getByText(name, { exact: true }) });
     const deadline = Date.now() + 15000;
     while (!await item.isVisible() && Date.now() < deadline) {
       if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
       await item.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
     }
-    await item.click().catch(error => { throw new Error(`select ${name}: ${error.message.split('\n')[0]}`); });
+    if (await item.isVisible()) menuSemantics.push({ requestedLabel: name, nativeAccessibility: await item.ariaSnapshot() });
+    await item.click().catch(error => {
+      const failure = new Error(`select ${name}: ${error.message.split('\n')[0]}`);
+      failure.clickTrace = error.message.split('\n').filter(line => /waiting for|locator resolved|element is|element was|detached|intercepts pointer|retrying click|scrolling into/.test(line)).map(line => line.trim()).slice(-24);
+      throw failure;
+    });
     await item.waitFor({ state: 'hidden', timeout: 10000 });
     await trigger.waitFor({ state: 'visible', timeout: 30000 });
     await page.waitForFunction(() => {
@@ -53,10 +61,16 @@ export async function verifyStudioNativeSidebar(page, seed) {
     checks.push({ name: `select-${row.label}-keeps-all-history`, passed: true, visibilityMs });
     if (row === rows[0]) {
       phase = 'workspace-clear';
+      const priorSession = await page.locator('.studio-agent-trigger').getAttribute('data-studio-session-id');
+      assert.ok(priorSession, 'the selector must identify its actual native Session');
       const clearWorkspace = page.getByRole('button', { name: '取消工作区', exact: true });
       assert.equal(await clearWorkspace.isVisible(), true, 'the initial native blank must have its default Workspace');
       await clearWorkspace.click();
       await clearWorkspace.waitFor({ state: 'hidden', timeout: 10000 });
+      await page.waitForFunction(previous => {
+        const sessionId = document.querySelector('.studio-agent-trigger')?.getAttribute('data-studio-session-id');
+        return Boolean(sessionId && sessionId !== previous);
+      }, priorSession, { timeout: 15000 });
       await page.locator('.studio-agent-trigger').filter({ hasText: row.agentName }).waitFor({ state: 'visible', timeout: 30000 });
       await visible('workspace-cleared');
       checks.push({ name: 'native-workspace-clear-preserves-agent-and-history', passed: true });
@@ -70,7 +84,10 @@ export async function verifyStudioNativeSidebar(page, seed) {
 
   phase = 'cache-reopen';
   await page.evaluate(entries => {
-    localStorage.clear();
+    // Only Studio's display cache belongs to this assertion. Clearing DSH's
+    // own view preferences would also reset its native archive/group rules.
+    const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index));
+    for (const key of keys) if (key?.startsWith('agentkit-studio:conversation-agent')) localStorage.removeItem(key);
     for (const row of entries) localStorage.setItem(`agentkit-studio:conversation-agent:${row.sessionId}`, JSON.stringify({ agentId: 'FORGED_AGENT_ID', updatedAt: 1 }));
   }, rows);
   await page.reload();
@@ -167,6 +184,9 @@ export async function verifyStudioNativeSidebar(page, seed) {
   }
   return checks;
   } catch (error) {
-    throw new Error(`${phase}: ${String(error.message).split('\n')[0]}`);
+    const failure = new Error(`${phase}: ${String(error.message).split('\n')[0]}`);
+    failure.sidebarProgress = progress;
+    failure.clickTrace = error.clickTrace;
+    throw failure;
   }
 }

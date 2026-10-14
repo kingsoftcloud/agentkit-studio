@@ -43,7 +43,7 @@ function onboardingHarness({ statuses, localStorage = {}, props = {} } = {}) {
   const footerButtons = () => (modal()?.props.footer?.children || []).filter(node => node?.type === 'button');
   return { settle, modal, footerButtons, window, dispatched, get statusCalls() { return statusIndex; }, render };
 }
-const settings = await readFile(new URL('../src/client-fragments/08-settings-and-entry.js', import.meta.url), 'utf8');
+const settings = (await readFile(new URL('../src/client-fragments/08-settings-and-entry.js', import.meta.url), 'utf8')) + (await readFile(new URL('../src/client/pages/studio-settings.mjs', import.meta.url), 'utf8'));
 const hostEntry = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
 
 test('first Studio overview checks the redacted Host credential status and offers one guided action', () => {

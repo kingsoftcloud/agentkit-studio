@@ -15,32 +15,11 @@ window.__ModuleLoader__.load({
     const normalizeModelEndpoint = __AGENTKIT_MODEL_ENDPOINT_NORMALIZER__;
 
     /** Show only the value just typed; stored credentials are never read back. */
-    function SecretInput({ label = 'API Key', value = '', style = {}, ...props }) {
-      const [visible, setVisible] = useState(false);
-      useEffect(() => { if (!value) setVisible(false); }, [value]);
-      return h('span', { style: { position: 'relative', display: 'block' } },
-        h('input', { ...props, 'aria-label': label, value, type: visible ? 'text' : 'password', autoComplete: 'new-password', style: { ...style, paddingRight: '42px' } }),
-        h('button', { type: 'button', disabled: !value, 'aria-label': (visible ? '隐藏 ' : '显示 ') + label, 'aria-pressed': visible, onClick: () => setVisible(current => !current), style: { position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', width: '30px', height: '30px', display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #676767)', cursor: value ? 'pointer' : 'default' } },
-          h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': true }, h('path', { d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z' }), h('circle', { cx: 12, cy: 12, r: 3 }), visible ? h('path', { d: 'm3 3 18 18' }) : null)));
-    }
+    const { SecretInput, StudioMark, StudioWordmark, NavGlyph, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction } = createStudioPrimitives({ React });
+    const { inputStyle, buttonStyle, pagerButtonStyle } = createFormStyles(BRAND);
+    const ResourceDialog = createResourceDialog({ React, buttonStyle });
     const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal } = require('@deepseek-ai/dsh-client-ui-primitives');
-    const STUDIO_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).version || 'Web 模式');
-    const STUDIO_PLUGIN_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).pluginVersion || '未提供');
-    const DSH_VERSION = String((window.__AGENTKIT_STUDIO__ || {}).dshVersion || '0.2.0-rc.2');
-    // DSH Native is the official DSH SDK-backed loop. Resource-bearing and
-    // non-DSH revisions use the preset-scoped Studio provider bridge, while
-    // the DSH loop and native conversation renderer remain authoritative.
-    const ALLOWED_RUNTIME_TYPES = ['dsh-native', 'harness', 'codex'];
-    const RUNTIME_LABELS = {
-      'dsh-native': 'DSH Native Harness',
-      harness: 'AgentKit Harness',
-      codex: 'Codex Agent',
-    };
-
-    // The Host URL is injected by the Host half for packaged builds. A
-    // loopback default keeps the local Web spike usable without requiring a
-    // global CLI or a second browser application. Credentials never enter
-    // this renderer; the Host owns session exchange and secret storage.
+    const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = readProductVersions(window.__AGENTKIT_STUDIO__);
     // Temporary fragment composition; these owners are explicitly disposed by apply.
     const connectionOwner = createConnectionOwner();
     const hostRemote = createHostRemote(connectionOwner.connection);
@@ -95,24 +74,6 @@ window.__ModuleLoader__.load({
     }
     window.__AGENTKIT_CONFIRM__ = confirmDialog;
 
-    const BRAND = {
-      // Use the established Studio neutral console tokens. The AgentKit mark,
-      // layout and product surfaces remain owned by this application.
-      ink: 'var(--dsw-alias-label-primary, #0d0d0d)',
-      inkMuted: 'var(--dsw-alias-label-secondary, #676767)',
-      canvas: 'var(--dsw-alias-bg-layer-2, #f4f5f6)',
-      surface: 'var(--dsw-alias-bg-layer-1, #ffffff)',
-      border: 'var(--dsw-alias-border-l3, #d4d4d4)',
-      controlBorder: 'var(--dsw-alias-border-l4, #d4d4d4)',
-      accent: 'var(--dsw-alias-brand-primary, #0d0d0d)',
-      accentStrong: 'var(--dsw-alias-label-primary, #000000)',
-      primaryFill: 'var(--dsw-alias-button-primary-fill, #0b0b0d)',
-      primaryText: 'var(--dsw-alias-label-primary-foreground, #ffffff)',
-      accentSoft: 'var(--dsw-alias-interactive-bg-hover, #f0f0f0)',
-      signal: 'var(--dsw-alias-state-warn-primary, #946200)',
-      danger: 'var(--dsw-alias-state-error-primary, #b42318)',
-    };
-
     // These rows are mounted directly below DSH's New Session control. There
     // is no parent "AgentKit Studio" tab; DSH owns the workspace/session list
     // immediately below this product navigation.
@@ -121,143 +82,15 @@ window.__ModuleLoader__.load({
     // runs, builds and their evidence live. The detailed domains are exposed
     // as secondary tabs inside these workspaces instead of nine competing
     // sidebar rows.
-    const PANELS = [
-      { id: 'studio-overview', page: 'overview', label: '总览', note: '工作区状态', glyph: '⌂' },
-      { id: 'studio-agents', page: 'agents', label: 'Agents', note: '创建与版本', glyph: '✦' },
-      { id: 'studio-resources', page: 'resource-hub', label: '资源库', note: '模型、工具与运行资源', glyph: '◈' },
-      { id: 'studio-operations', page: 'operations', label: '运行中心', note: '构建、部署与观测', glyph: '↗' },
-    ];
 
     // Fixed product artwork; controls continue to use the host theme tokens.
-    const STUDIO_MARK_BODY = '__AGENTKIT_STUDIO_MARK_BODY__';
     const STUDIO_MARK_SVG = '__AGENTKIT_STUDIO_MARK_SVG__';
-
-    function StudioMark({ size = 28, title = 'AgentKit Studio' }) {
-      return h('svg', {
-        width: size, height: size, viewBox: '0 0 64 64',
-        role: title ? 'img' : 'presentation', 'aria-label': title || undefined,
-        'aria-hidden': title ? undefined : 'true',
-        style: { display: 'block', flex: '0 0 auto' },
-        dangerouslySetInnerHTML: { __html: STUDIO_MARK_BODY },
-      });
-    }
-
-    function StudioWordmark() {
-      return h('span', { style: { color: BRAND.ink } }, 'AgentKit ', h('span', { style: { color: 'light-dark(#1858d6, #78a4ff)' } }, 'Studio'));
-    }
-
-    function NavGlyph({ glyph, active }) {
-      return h('span', {
-        'aria-hidden': 'true',
-        style: {
-          display: 'grid',
-          placeItems: 'center',
-          width: '24px',
-          height: '24px',
-          borderRadius: '7px',
-          color: active ? BRAND.accentStrong : BRAND.inkMuted,
-          background: active ? BRAND.accentSoft : 'transparent',
-          fontSize: '15px',
-          fontWeight: 700,
-        },
-      }, glyph || '·');
-    }
-
-    function Pill({ children, tone = 'neutral' }) {
-      const styles = {
-        neutral: { color: BRAND.inkMuted, background: 'var(--dsw-alias-bg-layer-2, #edf2f7)' },
-        accent: { color: BRAND.accentStrong, background: BRAND.accentSoft },
-        signal: { color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', background: 'var(--dsw-alias-state-warn-tertiary, #fff3da)' },
-      }[tone];
-      return h('span', {
-        style: {
-          display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '5px 9px',
-          borderRadius: '999px', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap', ...styles,
-        },
-      }, children);
-    }
-
-    function SectionHeading({ eyebrow, title, detail, action }) {
-      return h('div', { 'data-studio-heading': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '20px', marginBottom: '18px' } },
-        h('div', null,
-          eyebrow ? h('div', { style: { color: BRAND.accentStrong, fontSize: '11px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '7px' } }, eyebrow) : null,
-          h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '22px', letterSpacing: '-0.02em' } }, title),
-          detail ? h('p', { style: { color: BRAND.inkMuted, margin: '7px 0 0', lineHeight: 1.55, fontSize: '13px' } }, detail) : null),
-        action || null);
-    }
 
     // Operational pages use the compact document-header rhythm: one
     // compact title row, a short description and the actions at the same
     // baseline.  The application already owns the global page title, so repeating
     // the all-caps eyebrow here only consumed vertical space and made the
     // Channels/Automation/Evaluation pages look like nested mock screens.
-    function OperationalPageHeading({ title, detail, action }) {
-      return h('div', {
-        'data-studio-heading': 'true',
-        style: {
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          gap: '16px', flexWrap: 'wrap', marginBottom: '14px', paddingBottom: '12px',
-          borderBottom: '1px solid ' + BRAND.border,
-        },
-      },
-      h('div', { style: { minWidth: 0 } },
-        h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '19px', letterSpacing: '-0.02em' } }, title),
-        detail ? h('p', { style: { color: BRAND.inkMuted, margin: '5px 0 0', lineHeight: 1.45, fontSize: '12px', maxWidth: '760px' } }, detail) : null),
-      action || null);
-    }
-
-    function OperationalPanel({ title, detail, action, children }) {
-      return h('section', {
-        style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', overflow: 'hidden', background: BRAND.surface },
-      },
-      (title || action) ? h('div', {
-        style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '11px 14px', borderBottom: '1px solid ' + BRAND.border },
-      }, h('div', null,
-        title ? h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, title) : null,
-        detail ? h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '3px' } }, detail) : null), action || null) : null,
-      children);
-    }
 
     // The Studio application already owns the page title. Inner workspaces use this
     // compact context row so a panel never renders the same title twice.
-    function ContentIntro({ detail, action }) {
-      return h('div', {
-        'data-studio-content-intro': 'true',
-        style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '16px' },
-      }, h('p', { style: { color: BRAND.inkMuted, margin: 0, lineHeight: 1.55, fontSize: '12px' } }, detail), action || null);
-    }
-
-    function Metric({ label, value, detail, tone = 'neutral' }) {
-      return h('article', {
-        style: {
-          border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px',
-          background: BRAND.surface, minHeight: '106px', boxShadow: '0 8px 24px rgba(11,18,32,0.04)',
-        },
-      },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' } },
-        h('span', { style: { color: BRAND.inkMuted, fontSize: '12px', fontWeight: 700 } }, label),
-        tone === 'signal' ? h(Pill, { tone: 'signal' }, '待接入') : null),
-      h('div', { style: { color: BRAND.ink, fontSize: '24px', fontWeight: 750, marginTop: '14px', letterSpacing: '-0.03em' } }, value),
-      h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginTop: '4px' } }, detail));
-    }
-
-    function EmptyState({ icon, title, detail, action }) {
-      return h('div', {
-        style: {
-          minHeight: '220px', display: 'grid', placeItems: 'center', textAlign: 'center', padding: '28px',
-          border: '1px dashed ' + BRAND.border, borderRadius: '16px', background: 'var(--dsw-alias-bg-layer-1, rgba(255,255,255,0.66))',
-        },
-      },
-      h('div', null,
-        h('div', { style: { margin: '0 auto 14px', display: 'grid', placeItems: 'center', width: '44px', height: '44px', borderRadius: '13px', color: BRAND.accentStrong, background: BRAND.accentSoft, fontSize: '22px', fontWeight: 800 } }, icon),
-        h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '16px' } }, title),
-        h('p', { style: { maxWidth: '420px', color: BRAND.inkMuted, lineHeight: 1.6, margin: '8px auto 16px', fontSize: '13px' } }, detail),
-        action || null));
-    }
-
-    function DisabledAction({ children }) {
-      return h('button', {
-        type: 'button', disabled: true,
-        style: { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '8px 12px', color: 'var(--dsw-alias-label-tertiary, #8290a1)', background: 'var(--dsw-alias-bg-layer-2, #f4f7fa)', fontSize: '12px', fontWeight: 700, cursor: 'not-allowed' },
-      }, children);
-    }

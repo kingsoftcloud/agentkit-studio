@@ -1,17 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-
-const fragment = await readFile(new URL('../src/client-fragments/03-agents-and-authoring.js', import.meta.url), 'utf8');
-const source = fragment.slice(fragment.indexOf('function AgentsPage'), fragment.indexOf('const PLATFORM_RESOURCE_META'));
+import { createAgentPages } from '../src/client/pages/agents.mjs';
 const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
 function render(agents, query = '', props = {}, changes = []) {
   const states = [agents, 'ready', '', [], query, 'all', 1, 20, agents.length];
   let cursor = 0;
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
-  const Page = new Function('useState', 'useEffect', 'useRef', 'h', 'React', 'window', 'BRAND', 'hostRemote', 'inputStyle', 'buttonStyle', 'pagerButtonStyle', 'StudioSubnav', 'RuntimeCatalogPage', 'EmptyState', 'Pill', 'RUNTIME_LABELS', `${source}; return AgentsPage;`)(
-    () => { const index = cursor++; return [states[index], value => changes.push([index, value])]; }, () => {}, () => ({ current: 0 }), h, { Fragment: 'fragment' }, {}, {}, {}, () => ({}), () => ({}), () => ({}), 'nav', 'runtime', 'empty', 'pill', {},
-  );
+  const { AgentsPage: Page } = createAgentPages({ React: { Fragment: 'fragment', createElement: h, useState: () => { const index = cursor++; return [states[index], value => changes.push([index, value])]; }, useEffect() {}, useRef: () => ({ current: 0 }) }, window: {}, BRAND: {}, hostRemote: {}, inputStyle: () => ({}), buttonStyle: () => ({}), pagerButtonStyle: () => ({}), StudioSubnav: 'nav', RuntimeCatalogPage: 'runtime', EmptyState: 'empty', Pill: 'pill', RUNTIME_LABELS: {}, DEPLOYMENT_LABELS: {}, actions: {} });
   return walk(Page(props));
 }
 

@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-const fragment = await readFile(new URL('../src/client-fragments/08-settings-and-entry.js', import.meta.url), 'utf8');
-const loaderSource = await readFile(new URL('../src/client-fragments/01-loader-and-primitives.js', import.meta.url), 'utf8');
-const source = fragment.slice(0, fragment.indexOf('    function apply(ctx)'));
+import { createStudioSettingsSection } from '../src/client/pages/studio-settings.mjs';
+import { readProductVersions } from '../src/client/state/product-versions.mjs';
 function settingsHarness(remote, updates, versions = {}) {
   const states = [], effects = [], cleanups = [];
   let cursor = 0, dirty = true, tree;
@@ -19,8 +17,7 @@ function settingsHarness(remote, updates, versions = {}) {
     if (!(index in states)) { states[index] = true; effects.push(callback); }
   };
   const window = { dshDesktop: updates ? { protocolVersion: 1, updates } : undefined };
-  const loader = loaderSource.slice(loaderSource.indexOf('    const STUDIO_VERSION'), loaderSource.indexOf('    const ALLOWED_RUNTIME_TYPES'));
-  const Component = new Function('h','useState','useEffect','useRef','window','hostRemote','BRAND','SectionHeading','SettingsRow','buttonStyle', loader + source+'; return StudioSettingsSection;')(h, useState, useEffect, useRef, { ...window, __AGENTKIT_STUDIO__: versions }, remote, {}, 'heading', 'row', () => ({}));
+  const Component = createStudioSettingsSection({ React: { createElement: h, useState, useEffect, useRef }, window, hostRemote: remote, BRAND: {}, SettingsRow: 'row', buttonStyle: () => ({}), versions: readProductVersions(versions) });
   const render = () => { cursor = 0; dirty = false; tree = Component(); for (const callback of effects.splice(0)) cleanups.push(callback()); };
   const settle = async () => { render(); for (let i = 0; i < 12; i++) { await Promise.resolve(); if (dirty) render(); } return tree; };
   const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
