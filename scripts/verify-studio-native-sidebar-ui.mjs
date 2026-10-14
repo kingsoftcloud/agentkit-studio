@@ -36,11 +36,36 @@ export async function verifyStudioNativeSidebar(page, seed) {
   await mode('单列表');
   for (const row of rows) await historyRow(row).waitFor({ state: 'visible', timeout: 30000 });
   await visible();
-  const nativeTitles = [];
-  for (const row of rows) nativeTitles.push(await historyRow(row).locator(':scope > span').nth(1).innerText());
   const menuSemantics = [];
   const checks = progress;
   checks.push({ name: 'persisted-history-flat', passed: true, menuSemantics });
+  phase = 'persisted-session-reopen';
+  // Native archived rows deliberately cannot open. Restore this synthetic
+  // fixture if an earlier interrupted verification archived it.
+  if (await historyRow(rows[0]).getAttribute('aria-description')) {
+    await historyRow(rows[0]).hover();
+    await historyRow(rows[0]).getByRole('button', { name: /^会话.*的操作$/ }).click();
+    await page.getByRole('menuitem', { name: '取消归档', exact: true }).click();
+    await page.waitForFunction(id => !document.querySelector(`[data-row-key="session:${id}"]`)?.getAttribute('aria-description'), rows[0].sessionId, { timeout: 10000 });
+  }
+  await historyRow(rows[0]).locator(':scope > span').nth(1).click();
+  // Studio's selector is a blank-session hero slot. Started Sessions expose
+  // their identity on DSH's native conversation content instead.
+  const restored = page.locator(`[data-conversation-session="${rows[0].sessionId}"]`);
+  await restored.waitFor({ state: 'visible', timeout: 30000 });
+  await restored.getByText(`Reply SIDEBAR_ALPHA_CONTEXT_OK_${rows[0].agentId.slice(-6)} only.`, { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+  checks.push({ name: 'persisted-agent-session-reopens-after-host-restart', passed: true, sentToModel: false });
+  // Return to a genuine Workspace blank for the selection and clearing cases.
+  await mode('按工作区');
+  await workspace.hover();
+  await workspace.getByRole('button', { name: '在“默认工作区”中新建会话', exact: true }).click();
+  await page.waitForFunction(id => {
+    const current = document.querySelector('.studio-agent-trigger')?.getAttribute('data-studio-session-id');
+    return Boolean(current && current !== id);
+  }, rows[0].sessionId, { timeout: 30000 });
+  await page.getByRole('button', { name: '取消工作区', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+  await mode('单列表');
+  await visible('restored-workspace-blank');
   const choose = async name => {
     const trigger = page.getByRole('button', { name: '选择当前会话智能体', exact: true });
     // The checkmark's accessible name differs across browser versions. The
@@ -112,6 +137,10 @@ export async function verifyStudioNativeSidebar(page, seed) {
   checks.push({ name: 'cleared-and-forged-cache-reopen', passed: true });
 
   phase = 'search';
+  // A reopened native Session can refresh its title, and the marquee exposes
+  // only the visible substring through innerText. Read the current full title.
+  const nativeTitles = [];
+  for (const row of rows) nativeTitles.push((await historyRow(row).locator(':scope > span').nth(1).textContent()).trim());
   await page.getByRole('button', { name: '搜索会话', exact: true }).click();
   const search = page.getByPlaceholder('搜索会话名称', { exact: true });
   await search.fill('SIDEBAR_');

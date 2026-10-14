@@ -43,6 +43,35 @@ test('startup restores the exact historical preset even when its resources canno
   await admission.dispose();
 });
 
+test('historical preset recovery does not wait for new-session model admission', async () => {
+  const records = ['1111111111111111', '2222222222222222'].map(id => ({
+    metadata: { id: `ar-local-${id}`, revision: 1, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: { modelProfileId: 'directory-model' } },
+  }));
+  const presets = new Map();
+  let release;
+  const validation = new Promise(resolve => { release = resolve; });
+  const selection = { provider: 'configured-route', model: 'directory-model' };
+  const admission = new DshPresetAdmission({ getAgent: async id => records.find(row => row.metadata.id === id),
+    getModelSelection: async () => { await validation; return selection; },
+    registry: { register: async preset => { presets.set(preset.id, preset); return () => presets.delete(preset.id); } },
+  });
+  const recovery = restoreLocalPresets({
+    store: { list: async () => records, captureRevision: async () => {}, listRevisions: async id => records.filter(row => row.metadata.id === id) },
+    build: { list: async () => [] }, admission,
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const recoveredWhileValidationPending = records.every(row => presets.has(dshPresetId(row.metadata.id, 1)));
+  release();
+  await recovery;
+  try {
+    assert.equal(recoveredWhileValidationPending, true, 'restoring persisted definitions must not require an external model directory for a new Session');
+    const result = await admission.ensure(records[0].metadata.id);
+    assert.deepEqual(result.modelSelection, selection, 'explicit admission must still resolve the requested model even after restoration');
+    assert.equal(result.reused, true);
+  } finally { await admission.dispose(); }
+});
+
 for (const earlyRegistry of [true, false]) test(`startup waits for local restoration with registry arriving ${earlyRegistry ? 'before' : 'after'} admission`, async () => {
   let admission, release;
   const admitted = [];

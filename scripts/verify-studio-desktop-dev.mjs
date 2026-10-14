@@ -27,6 +27,8 @@ Object.assign(env, { DSH_DESKTOP_PRIMARY_RUNTIME_DIR: process.env.STUDIO_VERIFY_
 const app = await _electron.launch({ executablePath: process.env.STUDIO_VERIFY_ELECTRON,
   args: [`--user-data-dir=${join(scratch, 'user-data')}`, join(source, 'apps/desktop')], cwd: source, env, timeout: 60000 });
 const errors = [];
+const sessionWarnings = [];
+const warningJobs = [];
 let sidebarChecks, stateChecks, pageChecks;
 try {
   let page;
@@ -39,6 +41,15 @@ try {
   }
   assert.ok(page, 'real Desktop main window must show the Studio Agent selector');
   page.on('pageerror', error => errors.push(String(error.name || 'RendererError')));
+  page.on('console', message => {
+    if (message.type() !== 'warning' || !/session.*failed/.test(message.text())) return;
+    const job = Promise.all(message.args().map(arg => arg.evaluate(value => ({
+      name: value?.name,
+      code: value?.rpcError?.code,
+      detailKeys: value?.rpcError?.details ? Object.keys(value.rpcError.details) : undefined,
+    })).catch(() => ({})))).then(values => sessionWarnings.push(values));
+    warningJobs.push(job);
+  });
   const responses = await page.evaluate(async () => {
     const results = [];
     for (const method of ['models/credential-status', 'settings/get']) {
@@ -64,8 +75,9 @@ try {
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report));
 } catch (error) {
+  await Promise.all(warningJobs);
   const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', passed: false,
-    message: String(error.message).split(/\n/)[0].slice(0, 200), rendererErrors: errors, sidebarChecks, stateChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
+    message: String(error.message).split(/\n/)[0].slice(0, 200), rendererErrors: errors, sessionWarnings, sidebarChecks, stateChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
   for (const [index, page] of app.windows().entries()) await page.screenshot({ path: output.replace(/\.json$/, `-failure-${index}.png`), fullPage: true }).catch(() => {});
   console.log(JSON.stringify(report));
