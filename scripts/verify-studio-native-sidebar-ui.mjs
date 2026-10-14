@@ -18,10 +18,16 @@ export async function verifyStudioNativeSidebar(page, seed) {
     await page.getByText(name, { exact: true }).click();
   };
   await page.locator('.studio-agent-trigger').waitFor({ state: 'visible', timeout: 60000 });
-  // A restored native hero may have no retained Session. Start through DSH
-  // before testing an Agent binding; the visible hero alone is insufficient.
-  await page.getByRole('button', { name: '新建会话', exact: true }).filter({ has: page.getByText('新会话', { exact: true }) }).click();
+  // startSession() without a current/recent Workspace deliberately opens the
+  // home view without retaining a Session. The clear-Workspace assertion below
+  // needs a real Workspace blank, so use its native, explicitly scoped action.
+  await mode('按工作区');
+  const workspace = page.getByRole('treeitem').filter({ has: page.getByText('默认工作区', { exact: true }) });
+  await workspace.waitFor({ state: 'visible', timeout: 30000 });
+  await workspace.hover();
+  await workspace.getByRole('button', { name: '在“默认工作区”中新建会话', exact: true }).click();
   await page.waitForFunction(() => Boolean(document.querySelector('.studio-agent-trigger')?.getAttribute('data-studio-session-id')), null, { timeout: 30000 });
+  await page.getByRole('button', { name: '取消工作区', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
   await mode('单列表');
   await mode('全部对话（显示已归档）');
   for (const row of rows) await historyRow(row).waitFor({ state: 'visible', timeout: 30000 });
@@ -190,7 +196,7 @@ export async function verifyStudioNativeSidebar(page, seed) {
   } catch (error) {
     const failure = new Error(`${phase}: ${String(error.message).split('\n')[0]}`);
     failure.sidebarProgress = progress;
-    failure.clickTrace = error.clickTrace;
+    failure.clickTrace = error.clickTrace || String(error.message).split('\n').filter(line => /waiting for|locator resolved|element is|element was|detached|intercepts pointer|retrying click|scrolling into/.test(line)).map(line => line.trim()).slice(-24);
     throw failure;
   }
 }

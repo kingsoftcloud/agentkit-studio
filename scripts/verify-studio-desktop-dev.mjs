@@ -27,6 +27,7 @@ Object.assign(env, { DSH_DESKTOP_PRIMARY_RUNTIME_DIR: process.env.STUDIO_VERIFY_
 const app = await _electron.launch({ executablePath: process.env.STUDIO_VERIFY_ELECTRON,
   args: [`--user-data-dir=${join(scratch, 'user-data')}`, join(source, 'apps/desktop')], cwd: source, env, timeout: 60000 });
 const errors = [];
+let sidebarChecks, stateChecks, pageChecks;
 try {
   let page;
   const deadline = Date.now() + 60000;
@@ -51,11 +52,11 @@ try {
   assert.equal(errors.length, 0);
   const runtime = await app.evaluate(({ app }) => ({ electron: process.versions.electron, node: process.versions.node, appVersion: app.getVersion(), isPackaged: app.isPackaged }));
   assert.equal(runtime.isPackaged, false);
-  const sidebarChecks = process.env.STUDIO_VERIFY_NATIVE_SIDEBAR === '1'
+  sidebarChecks = process.env.STUDIO_VERIFY_NATIVE_SIDEBAR === '1'
     ? await verifyStudioNativeSidebar(page, JSON.parse(await readFile('.artifacts/refactor/stage-2/sidebar-seed.json', 'utf8')))
     : undefined;
-  const stateChecks = process.env.STUDIO_VERIFY_CLIENT_STATE === '1' ? await verifyStudioClientState(page) : undefined;
-  const pageChecks = process.env.STUDIO_VERIFY_CLIENT_PAGES === '1' ? await verifyStudioClientPages(page) : undefined;
+  stateChecks = process.env.STUDIO_VERIFY_CLIENT_STATE === '1' ? await verifyStudioClientState(page) : undefined;
+  pageChecks = process.env.STUDIO_VERIFY_CLIENT_PAGES === '1' ? await verifyStudioClientPages(page) : undefined;
   assert.equal(errors.length, 0, 'the complete native UI flow must have no uncaught renderer errors');
   await page.screenshot({ path: output.replace(/\.json$/, '.png'), fullPage: true });
   const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', fullStudioPlugin: true, developmentOnly: true,
@@ -64,7 +65,7 @@ try {
   console.log(JSON.stringify(report));
 } catch (error) {
   const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', passed: false,
-    message: String(error.message).split(/\n/)[0].slice(0, 200), rendererErrors: errors, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
+    message: String(error.message).split(/\n/)[0].slice(0, 200), rendererErrors: errors, sidebarChecks, stateChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
   for (const [index, page] of app.windows().entries()) await page.screenshot({ path: output.replace(/\.json$/, `-failure-${index}.png`), fullPage: true }).catch(() => {});
   console.log(JSON.stringify(report));

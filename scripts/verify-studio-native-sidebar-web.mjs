@@ -19,7 +19,7 @@ assert.equal(seed.passed, true);
 const output = resolve(process.argv[2] || '.artifacts/refactor/stage-2/native-sidebar-web.json');
 const child = spawn(process.execPath, [join(source, 'apps/cli/lib/bin.js'), '--profile', profile, '--host', '127.0.0.1', '--no-open', '--port', '0'], { cwd: source, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
 const stopped = new Promise(resolve => child.once('exit', resolve));
-let buffer = '', browser, page;
+let buffer = '', browser, page, checks, stateChecks, pageChecks;
 const rendererErrors = [];
 const launch = new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('Web Host startup timeout')), 60000);
@@ -37,16 +37,16 @@ try {
   page = await browser.newPage();
   page.on('pageerror', error => rendererErrors.push(String(error.name || 'RendererError')));
   await page.goto(await launch);
-  const checks = await verifyStudioNativeSidebar(page, seed);
-  const stateChecks = process.env.STUDIO_VERIFY_CLIENT_STATE === '1' ? await verifyStudioClientState(page) : undefined;
-  const pageChecks = process.env.STUDIO_VERIFY_CLIENT_PAGES === '1' ? await verifyStudioClientPages(page) : undefined;
+  checks = await verifyStudioNativeSidebar(page, seed);
+  stateChecks = process.env.STUDIO_VERIFY_CLIENT_STATE === '1' ? await verifyStudioClientState(page) : undefined;
+  pageChecks = process.env.STUDIO_VERIFY_CLIENT_PAGES === '1' ? await verifyStudioClientPages(page) : undefined;
   assert.equal(rendererErrors.length, 0, 'the real renderer must complete without uncaught errors');
   await page.screenshot({ path: output.replace(/\.json$/, '.png'), fullPage: true });
   const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', checks, rendererErrors: rendererErrors.length, ...(stateChecks ? { stateChecks } : {}), ...(pageChecks ? { pageChecks } : {}), passed: true };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n'); console.log(JSON.stringify(report));
 } catch (error) {
   await page?.screenshot({ path: output.replace(/\.json$/, '-failure.png'), fullPage: true }).catch(() => {});
-  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', passed: false, message: String(error.message).split(/\n/)[0].slice(0, 200), sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
+  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', passed: false, message: String(error.message).split(/\n/)[0].slice(0, 200), checks, stateChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n'); console.log(JSON.stringify(report)); process.exitCode = 1;
 } finally {
   await browser?.close(); buffer = '';

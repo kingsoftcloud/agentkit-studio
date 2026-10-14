@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 /** Synthetic Agent only, exercised through the actual installed product UI. */
 export async function verifyStudioClientPages(page) {
   let phase = 'create';
+  const checks = [];
   try {
     const suffix = Date.now().toString(36);
     const name = `UI_REFACTOR_AGENT_${suffix}`;
@@ -14,7 +15,11 @@ export async function verifyStudioClientPages(page) {
     await page.getByPlaceholder('描述 Agent 的身份、边界和回答方式', { exact: true }).fill('Synthetic UI refactoring verification.');
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     const model = page.getByLabel('默认模型');
-    await model.locator('option[value]:not([value=""])').first().waitFor({ state: 'attached', timeout: 20000 });
+    // Runtime changes keep the previous options while the new catalog loads.
+    // Wait for the required alternatives and the displayed loading state to
+    // settle before reading the actual Host resource identities.
+    await model.locator('option[value]:not([value=""])').nth(1).waitFor({ state: 'attached', timeout: 20000 });
+    await model.locator('option[value=""]').filter({ hasText: '请选择模型' }).waitFor({ state: 'attached', timeout: 20000 });
     const modelIds = await model.locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
     assert.ok(modelIds.length >= 2, 'the real catalog must offer two models to verify a binding edit');
     await model.selectOption(modelIds[0]);
@@ -30,7 +35,7 @@ export async function verifyStudioClientPages(page) {
     }, name);
     assert.equal(local.length, 1); assert.equal(local[0].name, name);
     assert.match(local[0].id, /^ar-local-[0-9a-f]{16}$/);
-    const checks = [{ name: 'create-agent-via-migrated-form', passed: true }];
+    checks.push({ name: 'create-agent-via-migrated-form', passed: true });
 
     phase = 'edit-bindings';
     await row.getByRole('button', { name: '编辑 Agent', exact: true }).click();
@@ -68,5 +73,9 @@ export async function verifyStudioClientPages(page) {
     }
     checks.push({ name: 'migrated-settings-reopen-host-ready', passed: true, cycles: 2 });
     return checks;
-  } catch (error) { throw new Error(`${phase}: ${String(error.message).split('\n')[0]}`); }
+  } catch (error) {
+    const failure = new Error(`${phase}: ${String(error.message).split('\n')[0]}`);
+    failure.pageProgress = checks;
+    throw failure;
+  }
 }
