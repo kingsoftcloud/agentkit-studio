@@ -28,7 +28,7 @@ function releaseUrl(origin, objectKey) {
     throw new Error('KS3 release origin must be an HTTPS origin without a path or credentials');
   }
   if (!/^dsh-desk\/(?:bin|feeds)\/[a-z0-9-]+\/[a-z0-9._-]+$/u.test(objectKey)
-    && !/^studio\/(?:feeds\/mac-arm64\/(?:preview-mac\.yml|stable-mac\.yml|mac-arm64-release\.json)|[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?\/(?:full\/)?AgentKit-Studio-mac-arm64\.(?:dmg|zip|zip\.blockmap))$/u.test(objectKey)) {
+    && !/^studio\/(?:feeds\/mac-arm64\/(?:preview-mac\.yml|stable-mac\.yml|mac-arm64-release\.json)|[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?\/(?:(?:full\/)?AgentKit-Studio-mac-arm64\.(?:dmg|zip|zip\.blockmap)|AgentKit-Studio-win-x64\.exe(?:\.blockmap)?))$/u.test(objectKey)) {
     throw new Error(`invalid KS3 release object key: ${objectKey}`);
   }
   return new URL(objectKey, base);

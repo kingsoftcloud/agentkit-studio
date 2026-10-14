@@ -73,3 +73,27 @@ for (const same of [true, false]) test(`immutable binary reconciliation ${same ?
   else await assert.rejects(operation, /immutable release binary already exists with different bytes/u);
   assert.deepEqual(methods, ['GET']);
 });
+
+for (const suffix of ['exe', 'exe.blockmap']) test(`versioned Windows ${suffix} uses the shared public immutable upload`, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-windows-release-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'candidate'); await writeFile(path, 'signed Windows artifact');
+  const key = `studio/0.2.0-rc.2.20261014.7/AgentKit-Studio-win-x64.${suffix}`;
+  const methods = [];
+  const result = await uploadKs3ReleaseArtifact({ origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', bucket: 'agentkit', accessKey: 'ak', secretKey: 'sk',
+    objectKey: key, path, contentType: 'application/octet-stream', fetchImpl: async (url, init) => {
+      assert.equal(String(url), `https://agentkit.ks3-cn-beijing.ksyuncs.com/${key}`); methods.push(init.method);
+      if (init.method === 'GET') return new Response('', { status: 404 });
+      assert.equal(init.headers['x-kss-acl'], 'public-read'); for await (const _chunk of init.body) {} return new Response('');
+    } });
+  assert.equal(result.objectKey, key); assert.deepEqual(methods, ['GET', 'PUT']);
+  await assert.rejects(uploadKs3ReleaseArtifact({ origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', bucket: 'agentkit', accessKey: 'ak', secretKey: 'sk',
+    objectKey: key, path, contentType: 'application/octet-stream', fetchImpl: async () => new Response('different signed artifact') }), /immutable release binary/);
+});
+
+test('Windows artifact support does not admit arbitrary version files or feeds', async () => {
+  for (const objectKey of ['studio/1.0.0/windows-proof.json', 'studio/1.0.0/.env.windows', 'studio/1.0.0/other.exe', 'studio/1.0.0/AgentKit-Studio-win-x64.exe/../../secret', 'studio/feeds/win-x64/preview.yml']) {
+    await assert.rejects(uploadKs3ReleaseArtifact({ origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', bucket: 'agentkit', accessKey: 'ak', secretKey: 'sk',
+      objectKey, path: '/unused', contentType: 'application/octet-stream', fetchImpl: async () => { throw Error('Must not request denied paths'); } }), /invalid KS3 release object key/);
+  }
+});
