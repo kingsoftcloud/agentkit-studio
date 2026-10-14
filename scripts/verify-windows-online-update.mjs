@@ -26,14 +26,16 @@ const server=createServer((request,response)=>{
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
 await createGlobalConfiguration({env:environment,home:root,inheritLegacy:false}).update({modelProfiles:[{id:'upgrade-proof',provider:'openai-compatible',modelName:'upgrade-proof',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,credentialName:'AGENTKIT_MODEL_API_KEY',enabled:true,default:true}],modelApiKey:'qualification-local-only'});
 await writeFile(join(home,'upgrade-retention-marker.txt'),'retained across native Windows update\n');
-const app=await electron.launch({executablePath,args:['--user-data-dir='+join(root,'baseline-electron')],env:environment,timeout:120000});
+const app=await electron.launch({executablePath,cwd:dirname(executablePath),args:['--user-data-dir='+join(root,'baseline-electron')],env:environment,timeout:120000});
 const baselinePid=app.process().pid;
 let updaterLog='';
 for(const stream of [app.process().stdout,app.process().stderr]) stream?.on('data',bytes=>{updaterLog=(updaterLog+bytes.toString()).slice(-1024*1024);});
 let confirming=false, successor=false, page;
 try {
  page=await app.firstWindow({timeout:120000});
+ page.on('pageerror',error=>console.log('Isolated baseline renderer error: '+error.message));
  await expect(page.locator('body')).toContainText('AgentKit Studio',{timeout:120000});
+ await expect(page.getByRole('button',{name:'Agents',exact:true})).toBeVisible({timeout:30000});
  const before=await app.evaluate(({app})=>app.getVersion());
  if(before===targetVersion) throw new Error('Updater baseline is already the target version');
  const guide=page.locator('.agentkit-credential-onboarding-content');
@@ -85,6 +87,10 @@ try {
  await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
 } catch(error) {
  await page?.screenshot({path:join(evidence,'windows-update-failure.png'),fullPage:true}).catch(()=>{});
+ // This clean Runner uses only the local fixture credential. Preserve startup
+ // diagnostics without retaining its configuration file or request headers.
+ const diagnostics=updaterLog.split('\n').filter(line=>/error|warn|plugin|agentkit|profile/i.test(line)).slice(-60).map(line=>line.replaceAll('qualification-local-only','[fixture credential]'));
+ await writeFile(join(evidence,'windows-update-failure.json'),JSON.stringify({message:error.message,diagnostics},null,2));
  throw error;
 } finally {
  if(!confirming) await app.close().catch(()=>{});
