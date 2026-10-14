@@ -1,6 +1,7 @@
-export function createAgentPages({ ui, window = globalThis.window, hostRemote, actions }) {
-  const { React, BRAND, inputStyle, buttonStyle, pagerButtonStyle, StudioSubnav, RuntimeCatalogPage, EmptyState, Pill, RUNTIME_LABELS, DEPLOYMENT_LABELS, AgentCreatePage, AgentEditPage } = ui;
-  const { createElement: h, useState, useEffect, useRef } = React;
+export function createAgentPages({
+  ui: { React: { createElement: h, useState, useEffect, useRef, Fragment }, BRAND, inputStyle, buttonStyle, pagerButtonStyle, StudioSubnav, RuntimeCatalogPage, EmptyState, Pill, RUNTIME_LABELS, DEPLOYMENT_LABELS, AgentCreatePage, AgentEditPage },
+  window = globalThis.window, hostRemote, actions
+}) {
   function AgentWorkspace({ onNavigate }) {
     const [view, setView] = useState('list');
     const [tab, setTab] = useState('local');
@@ -137,7 +138,7 @@ export function createAgentPages({ ui, window = globalThis.window, hostRemote, a
     return h('div', null,
       h(StudioSubnav, { value: tab, onChange: value => { if (value === tab) return; setPage(1); setQuery(''); setStatusFilter('all'); setAgents([]); setTotal(0); setStatus('loading'); onTabChange(value); }, items: [{ id: 'local', label: '本地 Agent' }, { id: 'cloud', label: '云端 Agent' }, { id: 'runtime', label: '运行目标' }] }),
       tab === 'runtime' ? h(RuntimeCatalogPage, { onNavigate }) : null,
-      tab === 'runtime' ? null : h(React.Fragment, null,
+      tab === 'runtime' ? null : h(Fragment, null,
       h('section', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap', border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '18px', background: BRAND.surface, marginBottom: '18px' } },
         h('div', null,
           h('div', { style: { color: BRAND.ink, fontSize: '15px', fontWeight: 800 } }, '描述需求，创建 Agent'),

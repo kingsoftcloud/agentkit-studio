@@ -1,8 +1,8 @@
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createDomainPage({ ui }) {
-  const { React, DisabledAction, EmptyState, Pill, SectionHeading, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h } = React;
+export function createDomainPage({
+  ui: { React: { createElement: h }, DisabledAction, EmptyState, Pill, SectionHeading, BRAND = DEFAULT_BRAND },
+}) {
   function DomainPage({ page }) {
     const content = {
       agents: ['Agent', '创建、配置和版本化可运行的 Agent。', '✦', 'Agent Catalog 与 Revision 接通后，这里会成为 Agent 的工作台。'],
@@ -14,5 +14,5 @@ export function createDomainPage({ ui }) {
       h(SectionHeading, { eyebrow: 'Studio domain', title: content[0], detail: content[1], action: h(Pill, { tone: 'signal' }, 'Host 待接入') }),
       h(EmptyState, { icon: content[2], title: content[0] + '正在准备', detail: content[3], action: h(DisabledAction, null, '等待 Host 能力') }));
   }
-  return { DomainPage };
+  return DomainPage;
 }

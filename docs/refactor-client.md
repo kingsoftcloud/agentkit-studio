@@ -1,6 +1,6 @@
 # 前端模块化：实施与验收
 
-阶段 3 的页面迁移、ES Module 构建切换和每次 `apply(ctx)` 的作用域组合已实现，`src/client-fragments/` 已删除。阶段整体仍为部分完成：当前 gzip 增长 7.81%，超过 5% 预算；资源、Build、部署、自动化和凭证引导的完整真实宿主流程还需扩展验证。以下 3A、3B 数据保留对应批次的历史结果，当前结果见 3C。
+阶段 3 的页面迁移、ES Module 构建切换和每次 `apply(ctx)` 的作用域组合已实现，`src/client-fragments/` 已删除。完整真实 Web 和 Electron 开发宿主流程均已通过。阶段整体仍为部分完成：当前 gzip 增长 6.85%，超过 5% 预算，[包体专项评审](refactor-client-budget.md)尚待确认。以下 3A、3B 数据保留对应批次的历史结果，当前结果见 3C。
 
 ## 3A 范围
 
@@ -46,17 +46,22 @@ Agent 列表、模板、密钥显示和桌面设置行为测试已改为直接�
 - `state/actions.mjs` 和 `dsh/session-entry.mjs` 取代两个业务全局函数。旧注册清理不会覆盖新注册，卸载后晚到的准入、模型目录和导航不得继续发布；模型同步保留原设置和凭证写入合同。
 - 确认弹窗随所属实例关闭，取消待确认操作。样式和图标由文档资源租约管理，重叠挂载和替换 bundle 共用资源，最后释放才清理；不存储连接或业务状态。
 - 新增 8 项作用域与异步行为检查，保留已有测试。前端行为测试直接导入模块；Host 路由中剩余的源码截取测试留待阶段 4 随路由迁移处理。
+- 组件工厂通过参数直接声明依赖，单组件工厂直接返回组件。三组静态样式保持单一 CSS 模块来源，由 esbuild 压缩后注入所属文档；源模块也能由行为测试直接导入。
 
 | 项目 | 当前本地结果 |
 | --- | --- |
-| 模块图 | 57 个输入，无循环、Node、Host/provider、第二份 React及业务全局变量；一个 ModuleLoader 注册 |
-| 源码及发行输入门禁 | 711 项通过，0 失败、0 跳过；公开面、历史和快照凭证扫描、446 文件的包完整性检查通过 |
-| 真实 Web 与 Electron 开发宿主 | 当前安装 bundle 各通过侧栏 12 项、原生草稿 1 项、Agent 与设置 4 项；无未捕获渲染错误 |
+| 模块图 | 61 个输入，无循环、Node、Host/provider、第二份 React及业务全局变量；一个 ModuleLoader 注册 |
+| 源码及发行输入门禁 | 711 项通过，0 失败、0 跳过；公开面、历史和快照凭证扫描、包完整性检查通过 |
+| 真实 Web 与 Electron 开发宿主 | 同一安装 bundle 各通过侧栏 12 项、原生草稿 1 项及完整页面 9 项，共 22 项；无未捕获渲染错误 |
 | Codex 工具卡片 | 真实固定 DSH loop 与 Chat assembler 的 6 种受控结果通过，磁盘重开和下一轮上下文保留，工具没有重复执行；此项未调用真实模型 |
-| gzip 专项门禁 | 87,440 → 94,268 bytes，增长 7.81%；超过 91,812 bytes 上限，未通过 |
+| gzip 专项门禁 | 87,440 → 93,430 bytes，增长 6.85%；超过 91,812 bytes 上限，未通过 |
 
-机器结果保存在忽略的 `.artifacts/refactor/stage-3/`：`client-modules-web.json`、`client-modules-electron.json`、`release-check-3c-committed.log`、`codex-cards-modules.log` 和 `module-admission-3c.json`。模块与大小专项使用 `node scripts/verify-client-modules.mjs <baseline.json> <report.json>`；基线记录阶段 3 开始前的源码 commit、bundle SHA 和 gzip 大小。大小失败不由已有 `release-check` 的成功抵消。
+机器结果保存在忽略的 `.artifacts/refactor/stage-3/`：`optimized-full-web-5.json`、`optimized-full-electron.json`、`optimized-release-check-clean.log`、`optimized-deterministic.json`、`optimized-module-graph.json`。Codex 受控工具卡片结果保留在 `codex-cards-modules.log`。模块与大小专项使用 `node scripts/verify-client-modules.mjs <baseline.json> <report.json>`；基线记录阶段 3 开始前的源码 commit、bundle SHA 和 gzip 大小。大小失败不由已有 `release-check` 的成功抵消。
+
+完整页面验证通过产品 UI 创建唯一合成 Agent，编辑 Prompt、默认模型及模型白名单，再进入官方原生会话并切换模型。资源页验证类型切换、本地来源和搜索空状态；Build 通过真实本地 Host 创建，核对冻结的 Revision 并查看部署页面。自动化验证空执行时间的错误、创建、编辑、暂停、启用及删除，用一周间隔避免验收中触发模型执行，并核对实际存储结果。设置重开两次，凭证引导显示已配置状态，密钥输入保持空白，没有写入凭证。没有发送模型消息或创建云端部署。
+
+失败记录保留。原生新会话测试先观察持久化历史已恢复，再触发工作区导航；自动化测试用最近的语义容器定位任务，避免匹配包含同名任务的外层区域，并兼容含选项或 textarea 内容的原生 label。每次失败都会按本次唯一任务名称和目标 Agent 核对、清理合成任务；此前的一个遗留合成任务已通过实际 Host 删除，记录在 `owned-task-cleanup.json`。
 
 ## 仍需完成
 
-先把 gzip 收敛到 5% 预算，并补齐资源绑定、模型切换、Build、部署查看、自动化 CRUD 与凭证引导的完整真实 Web／Electron 流程，再进入阶段 4 的 Host 服务、路由和共享合同拆分。阶段 5 的补丁治理、升级演练和最终开源源码主分支交付仍待实施。当前不能宣称阶段 3 整体完成。
+先把 gzip 收敛到 5% 预算，或完成方案允许的独立预算调整评审，再进入阶段 4 的 Host 服务、路由和共享合同拆分。阶段 5 的补丁治理、升级演练和最终开源源码主分支交付仍待实施。当前不能宣称阶段 3 整体完成。上述 Electron 结果属于开发宿主，不代表安装更新或 Windows 原生安装验收；查看部署页面也不代表真实云端部署成功。

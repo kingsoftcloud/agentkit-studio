@@ -1,9 +1,10 @@
 import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
 import { BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
 
-export function createAgentSelector({ ui, hostRemote, readConversationAgent, writeConversationAgent }) {
-  const { React, IconChevronDownOutlineRegular, Input, Menu, MenuItemButton, NativeAuthoringButton, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createAgentSelector({
+  ui: { React: { createElement: h, useEffect, useState }, IconChevronDownOutlineRegular, Input, Menu, MenuItemButton, NativeAuthoringButton, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
+  hostRemote, readConversationAgent, writeConversationAgent
+}) {
   function AgentContextSelector({ sessionId, useSessions, studioRemote, modelDirectories, inputActions } = {}) {
     const [agents, setAgents] = useState([]);
     const [selected, setSelected] = useState(() => readConversationAgent(sessionId));
@@ -166,5 +167,5 @@ export function createAgentSelector({ ui, hostRemote, readConversationAgent, wri
       notice && !notice.startsWith('已') ? h('span', { role: 'status', style: { maxWidth: '320px', color: BRAND.inkMuted, fontSize: '11px' } }, notice) : null,
       h(NativeAuthoringButton, { inputActions }));
   }
-  return { AgentContextSelector };
+  return AgentContextSelector;
 }

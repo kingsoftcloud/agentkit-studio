@@ -46,7 +46,7 @@ try {
   await writeFile(output, JSON.stringify(report, null, 2) + '\n'); console.log(JSON.stringify(report));
 } catch (error) {
   await page?.screenshot({ path: output.replace(/\.json$/, '-failure.png'), fullPage: true }).catch(() => {});
-  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', passed: false, message: String(error.message).split(/\n/)[0].slice(0, 200), checks, stateChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
+  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', passed: false, rendererErrors, message: String(error.message).split(/\n/)[0].slice(0, 200), checks, stateChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n'); console.log(JSON.stringify(report)); process.exitCode = 1;
 } finally {
   await browser?.close(); buffer = '';

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { createCredentialOnboarding } from '../src/client/pages/credential-onboarding.mjs';
+import onboardingStyles from '../src/client/styles/credential-onboarding.css.mjs';
 
 const overview = await readFile(new URL('../src/client/pages/overview.mjs', import.meta.url), 'utf8');
 const onboarding = await readFile(new URL('../src/client/pages/credential-onboarding.mjs', import.meta.url), 'utf8');
@@ -70,8 +71,8 @@ test('credential guide is a DSH settings onboarding step with retry and deferred
   assert.match(settings, /重新打开凭证引导/);
   assert.match(settings, /settings\.onboarding/);
   assert.doesNotMatch(onboarding, /localStorage/);
-  assert.match(onboarding, /agentkitCredentialOnboardingIn/);
-  assert.match(onboarding, /prefers-reduced-motion/);
+  assert.match(onboardingStyles, /agentkitCredentialOnboardingIn/);
+  assert.match(onboardingStyles, /prefers-reduced-motion/);
 });
 
 test('Studio settings exposes the DSH desktop update action', () => {

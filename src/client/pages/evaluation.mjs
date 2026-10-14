@@ -1,9 +1,10 @@
 import { operationalCollection, operationalDate, operationalId, operationalLabel } from '../state/operational-data.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createEvaluationPage({ ui, hostRemote, window = globalThis.window, document = globalThis.document }) {
-  const { React, EmptyState, Metric, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, Pill, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createEvaluationPage({
+  ui: { React: { createElement: h, useEffect, useState, Fragment }, EmptyState, Metric, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, Pill, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND },
+  hostRemote, window = globalThis.window, document = globalThis.document
+}) {
   function EvaluationPage() {
     const [status, setStatus] = useState('loading');
     const [error, setError] = useState('');
@@ -130,7 +131,7 @@ export function createEvaluationPage({ ui, hostRemote, window = globalThis.windo
     const selectedRunSummary = selected?.summary || selected?.report?.summary || {};
     const selectedDetail = selected ? h(ResourceDialog, { title: `评测详情 · ${operationalId(selected)}`, detail: `${operationalDate(selected.createdAt)} · ${String(selected.status || 'unknown').toLowerCase()}`, wide: true, onClose: () => setSelected(null) },
       h('div', { style: { padding: '2px 0', maxHeight: 'min(64vh, 620px)', overflow: 'auto' } },
-        detailLoading ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取运行详情…') : h(React.Fragment, null,
+        detailLoading ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取运行详情…') : h(Fragment, null,
           h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' } }, operationalStatus(selected.status), h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, operationalDate(selected.createdAt))),
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px', marginBottom: '12px' } },
             [['总用例', selectedRunSummary.totalCases ?? selected?.cases?.length ?? '—'], ['通过', selectedRunSummary.passedCases ?? '—'], ['失败', selectedRunSummary.failedCases ?? '—'], ['耗时', selected?.durationMs == null ? '—' : `${selected.durationMs} ms`]].map(([label, value]) => h('div', { key: label, style: { padding: '10px 11px', borderRadius: '9px', background: BRAND.canvas, border: '1px solid ' + BRAND.border } }, h('div', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, label), h('strong', { style: { display: 'block', color: BRAND.ink, marginTop: '4px', fontSize: '15px' } }, String(value))))),
@@ -144,7 +145,7 @@ export function createEvaluationPage({ ui, hostRemote, window = globalThis.windo
       h(OperationalPageHeading, { title: '评测', detail: '评测集、目标、运行记录和详情都来自 Host；页面负责筛选、分页和结果投影。', action: h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : '读取中'), h('button', { type: 'button', onClick: () => setCreateOpen(value => !value), style: { ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText, borderColor: 'transparent' } }, '新建评测')) }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取评测数据', detail: '读取评测目标、评测集和运行记录。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '评测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
-      status === 'ready' ? h(React.Fragment, null,
+      status === 'ready' ? h(Fragment, null,
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
         createOpen ? h(ResourceDialog, { title: '新建评测', detail: '选择 EvalSet、目标和评估器，提交后由 Host 在后台执行。', onClose: () => { if (!creating) setCreateOpen(false); } }, h('form', { onSubmit: startCreate, style: { display: 'grid', gap: '14px' } },
           h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(180px, .8fr)', gap: '12px' } },
@@ -161,15 +162,15 @@ export function createEvaluationPage({ ui, hostRemote, window = globalThis.windo
             h('div', { style: { display: 'flex', gap: '10px 18px', flexWrap: 'wrap' } }, evaluatorOptions.map(([id, label]) => h('label', { key: id, style: { display: 'inline-flex', alignItems: 'center', gap: '6px', color: BRAND.ink, fontSize: '12px' } }, h('input', { type: 'checkbox', checked: evaluators.includes(id), onChange: event => setEvaluators(current => event.target.checked ? [...new Set([...current, id])] : current.filter(item => item !== id)) }), label)))),
           h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: () => setCreateOpen(false), disabled: creating, style: { ...buttonStyle(), background: BRAND.surface } }, '取消'), h('button', { type: 'submit', disabled: creating || !evaluators.length, style: { ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText, borderColor: 'transparent' } }, creating ? '提交中…' : '开始评测')))) : null,
         h(StudioPageTabs, { value: tab, onChange: next => { setTab(next); setPage(0); if (next === 'sets') setEvalsetPage(0); if (next === 'targets') setTargetPage(0); }, items: [{ id: 'runs', label: '运行记录' }, { id: 'sets', label: `评测集 ${evalsets.length}` }, { id: 'targets', label: `评测目标 ${targets.length}` }], ariaLabel: '评测视图' }),
-        tab === 'runs' ? h(React.Fragment, null,
+        tab === 'runs' ? h(Fragment, null,
           h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' }, h('input', { value: filter, onChange: event => { setFilter(event.target.value); setPage(0); }, placeholder: '搜索任务、目标或状态', 'aria-label': '搜索评测运行', style: { ...inputStyle(), maxWidth: '280px' } }), h('select', { value: runFilter, onChange: event => { setRunFilter(event.target.value); setPage(0); }, 'aria-label': '评测状态筛选', style: { ...inputStyle(), width: '120px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'active' }, '进行中'), h('option', { value: 'passed' }, '已通过'), h('option', { value: 'attention' }, '需关注')), h(Pill, { tone: 'neutral' }, `${filteredRuns.length} 条运行`)),
           h(OperationalTable, { columns: runColumns, rows, empty: '还没有评测运行，点击“新建评测”提交一个真实任务。', onRowClick: openRun }),
           h(OperationalPager, { page, pageSize, total: filteredRuns.length, onChange: setPage }),
           message ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null) : null,
-        tab === 'sets' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'name', label: '评测集', cell: row => h('strong', null, operationalLabel(row)) }, { id: 'source', label: '来源', cell: row => row?.sourceFormat || row?.source || 'Host' }, { id: 'cases', label: '用例数', cell: row => row?.caseCount ?? row?.cases?.length ?? '—' }, { id: 'updatedAt', label: '更新时间', cell: row => operationalDate(row?.updatedAt || row?.createdAt) }], rows: visibleEvalsets, empty: '暂无已导入评测集。' }), h(OperationalPager, { page: evalsetPage, pageSize, total: evalsets.length, onChange: setEvalsetPage })) : null,
-        tab === 'targets' ? h(React.Fragment, null, h(OperationalTable, { columns: [{ id: 'name', label: '目标', cell: row => h('strong', null, operationalLabel(row, operationalId(row))) }, { id: 'kind', label: '类型', cell: row => row?.kind || row?.runtime || row?.type || 'Build' }, { id: 'agentId', label: 'Agent', cell: row => row?.agentId || row?.agent?.id || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || 'ready') }], rows: visibleTargets, empty: '暂无可评测目标，请先完成 Agent Build。' }), h(OperationalPager, { page: targetPage, pageSize, total: targets.length, onChange: setTargetPage })) : null,
+        tab === 'sets' ? h(Fragment, null, h(OperationalTable, { columns: [{ id: 'name', label: '评测集', cell: row => h('strong', null, operationalLabel(row)) }, { id: 'source', label: '来源', cell: row => row?.sourceFormat || row?.source || 'Host' }, { id: 'cases', label: '用例数', cell: row => row?.caseCount ?? row?.cases?.length ?? '—' }, { id: 'updatedAt', label: '更新时间', cell: row => operationalDate(row?.updatedAt || row?.createdAt) }], rows: visibleEvalsets, empty: '暂无已导入评测集。' }), h(OperationalPager, { page: evalsetPage, pageSize, total: evalsets.length, onChange: setEvalsetPage })) : null,
+        tab === 'targets' ? h(Fragment, null, h(OperationalTable, { columns: [{ id: 'name', label: '目标', cell: row => h('strong', null, operationalLabel(row, operationalId(row))) }, { id: 'kind', label: '类型', cell: row => row?.kind || row?.runtime || row?.type || 'Build' }, { id: 'agentId', label: 'Agent', cell: row => row?.agentId || row?.agent?.id || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || 'ready') }], rows: visibleTargets, empty: '暂无可评测目标，请先完成 Agent Build。' }), h(OperationalPager, { page: targetPage, pageSize, total: targets.length, onChange: setTargetPage })) : null,
         error ? h('div', { role: 'alert', style: { color: BRAND.danger, marginTop: '10px', fontSize: '12px' } }, error) : null,
         selectedDetail) : null);
   }
-  return { EvaluationPage };
+  return EvaluationPage;
 }

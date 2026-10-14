@@ -1,8 +1,9 @@
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createCodexPluginPages({ ui, hostRemote }) {
-  const { React, Pill, buttonStyle, EmptyState, ResourceDialog, inputStyle, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createCodexPluginPages({
+  ui: { React: { createElement: h, useEffect, useState, Fragment }, Pill, buttonStyle, EmptyState, ResourceDialog, inputStyle, BRAND = DEFAULT_BRAND },
+  hostRemote
+}) {
   function CodexPluginCapabilities({ pluginId }) {
     const [state, setState] = useState({ loading: true });
     const [revision, setRevision] = useState(0);
@@ -121,7 +122,7 @@ export function createCodexPluginPages({ ui, hostRemote }) {
       message ? h('p', { role: 'status', style: { margin: 0, color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
       authApps.length ? h('p', { role: 'status', style: { margin: 0, color: BRAND.inkMuted, fontSize: '12px' } }, '以下连接器仍需授权：', authApps.map(app => h('span', { key: app.id, style: { marginLeft: '10px' } }, app.installUrl ? h('a', { href: app.installUrl, target: '_blank', rel: 'noopener noreferrer' }, app.name) : app.name))) : null,
       busyId ? h('p', { role: 'status', style: { margin: 0, color: BRAND.inkMuted, fontSize: '12px' } }, '正在应用 Codex 插件变更，请稍候…') : null,
-      selected ? detail : h(React.Fragment, null,
+      selected ? detail : h(Fragment, null,
         h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
           h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索 Codex 插件', 'aria-label': '搜索 Codex 插件', style: { ...inputStyle(), marginTop: 0, flex: '1 1 260px' } }),
           h('button', { type: 'button', onClick: openInstall, disabled: Boolean(busyId), style: buttonStyle() }, '添加 Codex 插件'),

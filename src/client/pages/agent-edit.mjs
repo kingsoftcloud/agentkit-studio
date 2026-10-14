@@ -1,6 +1,7 @@
-export function createAgentEdit({ ui, hostRemote }) {
-  const { React, AgentCreatePage, EmptyState, buttonStyle } = ui;
-  const { createElement: h, useState, useEffect } = React;
+export function createAgentEdit({
+  ui: { React: { createElement: h, useState, useEffect }, AgentCreatePage, EmptyState, buttonStyle },
+  hostRemote
+}) {
   function AgentEditPage({ agentId, onBack, onSaved }) {
     const [agent, setAgent] = useState(null);
     const [error, setError] = useState('');

@@ -1,8 +1,9 @@
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createScheduleDelivery({ ui, hostRemote }) {
-  const { React, inputStyle, Pill, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createScheduleDelivery({
+  ui: { React: { createElement: h, useEffect, useState, Fragment }, inputStyle, Pill, BRAND = DEFAULT_BRAND },
+  hostRemote
+}) {
   function ScheduleDeliveryPicker({ agentId, mode, target, supported, onChange }) {
     const [catalog, setCatalog] = useState({ loading: false, items: [], error: '' });
     useEffect(() => {
@@ -22,7 +23,7 @@ export function createScheduleDelivery({ ui, hostRemote }) {
         h('label', null, h('input', { type: 'radio', name: 'schedule-delivery', checked: mode !== 'channel', onChange: () => onChange('record', null) }), ' 仅保存执行记录'),
         h('label', null, h('input', { type: 'radio', name: 'schedule-delivery', checked: mode === 'channel', disabled: !supported && mode !== 'channel', onChange: () => onChange('channel', null) }), ' 发送到渠道会话')),
       !supported ? h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, '云端渠道投递尚未就绪，执行结果仍可保存在记录中。') : null,
-      mode === 'channel' ? h(React.Fragment, null,
+      mode === 'channel' ? h(Fragment, null,
         h('select', { 'aria-label': '收件会话', value: selected, disabled: catalog.loading || !supported,
           onChange: event => { const item = catalog.items.find(value => key(value) === event.target.value); onChange('channel', item ? { channelConfigId: item.channelConfigId, bindingId: item.bindingId } : null); }, style: inputStyle() },
           h('option', { value: '' }, catalog.loading ? '正在读取渠道会话…' : '选择收件会话'),

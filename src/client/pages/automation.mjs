@@ -1,9 +1,10 @@
 import { localDateTimeValue, scheduleLabel, scheduleNeedsRefresh } from '../state/automation-data.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createAutomationPage({ ui, hostRemote, actions, window = globalThis.window, document = globalThis.document }) {
-  const { React, EmptyState, OperationalPageHeading, OperationalPager, Pill, ResourceDialog, ScheduleDeliveryPicker, ScheduleDeliveryResult, StudioPageTabs, buttonStyle, inputStyle, BRAND = DEFAULT_BRAND } = ui;
-  const { useEffect, useState, createElement: h, useRef } = React;
+export function createAutomationPage({
+  ui: { React: { useEffect, useState, createElement: h, useRef, Fragment }, EmptyState, OperationalPageHeading, OperationalPager, Pill, ResourceDialog, ScheduleDeliveryPicker, ScheduleDeliveryResult, StudioPageTabs, buttonStyle, inputStyle, BRAND = DEFAULT_BRAND },
+  hostRemote, actions, window = globalThis.window, document = globalThis.document
+}) {
   function useAutomationOccurrences(task, refreshKey) {
     const key = task ? `${task.target?.agentId}/${task.taskId}` : '';
     const [result, setResult] = useState({ key: '', status: 'idle', items: [], error: '' });
@@ -308,7 +309,7 @@ export function createAutomationPage({ ui, hostRemote, actions, window = globalT
       h(StudioPageTabs, { value: scope, onChange: setScope, items: [{ id: 'local', label: '本地' }, { id: 'cloud', label: '云端部署' }], ariaLabel: '自动化执行位置' }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取自动化', detail: '读取计划、可用 Agent 和调度器状态。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '自动化不可用', detail: readError, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
-      status === 'ready' ? h(React.Fragment, null,
+      status === 'ready' ? h(Fragment, null,
         editorOpen ? h(ResourceDialog, { title: editingTask ? '编辑自动化' : '新建自动化', detail: scope === 'cloud' ? '选择已部署的 Agent 和触发规则，由云端调度执行。' : '选择本地 Agent 和触发规则。', onClose: () => { if (!saving) setEditorOpen(false); } }, h('form', { onSubmit: event => { event.preventDefault(); void save(); }, style: { display: 'grid', gap: '14px' } },
           h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' } },
             h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '绑定 Agent', h('select', { value: form.agentId, disabled: Boolean(editingTask), onChange: event => setForm(previous => ({ ...previous, agentId: event.target.value, deliveryMode: 'record', deliveryTarget: null })), style: inputStyle() }, (editingTask ? agents : createAgents).map(item => h('option', { key: agentId(item), value: agentId(item) }, `${agentName(item)} · ${agentId(item)}`)))),

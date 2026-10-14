@@ -2,9 +2,10 @@ import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, DSH_
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 
-export function createModelSettingsSection({ ui, hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent }) {
-  const { React, Pill, SecretInput, buttonStyle, inputStyle, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createModelSettingsSection({
+  ui: { React: { createElement: h, useEffect, useState }, Pill, SecretInput, buttonStyle, inputStyle, BRAND = DEFAULT_BRAND },
+  hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent
+}) {
   function ModelSettingsSection({ dshModel, mode = 'all', onSaved }) {
     const [form, setForm] = useState({
       profiles: [{ id: 'default', provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: DEFAULT_KSYUN_MODEL, credentialName: DSH_MODEL_CREDENTIAL, apiKey: '', enabled: true, default: true }],
@@ -123,5 +124,5 @@ export function createModelSettingsSection({ ui, hostRemote, window = globalThis
         mode !== 'model' && h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' } }, h('div', null, h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '14px' } }, '云端凭证'), h('p', { style: { margin: '3px 0 0', color: BRAND.inkMuted, fontSize: '11px' } }, '用于构建、部署和资源访问')), h(Pill, { tone: cloudStatus.configured ? 'accent' : 'signal' }, cloudStatus.configured ? '已配置' : '未配置')), h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } }, field('Access Key', 'cloudAccessKey', cloudStatus.configured ? '已配置，留空保持不变' : '云端 Access Key', 'password'), field('Secret Key', 'cloudSecretKey', cloudStatus.configured ? '已配置，留空保持不变' : '云端 Secret Key', 'password')), h('details', { style: { marginTop: '10px', color: BRAND.inkMuted, fontSize: '11px' } }, h('summary', { style: { cursor: 'pointer', color: BRAND.ink, fontWeight: 700 } }, '高级云端设置'), h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', marginTop: '8px' } }, field('Account ID', 'cloudAccountId', '可选'), field('区域', 'cloudRegion', '例如：cn-beijing-6'), field('控制面地址', 'cloudServerUrl', '例如：https://agentengine.example.com'), field('对象存储桶', 'cloudBucket', '可选'))), h('div', { style: { marginTop: '9px', color: BRAND.inkMuted, fontSize: '10px' } }, '当前来源：', sourceLabel(cloudStatus.source))),
         h('div', { 'data-studio-form-footer': true, style: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '9px', flexWrap: 'wrap' } }, message ? h('span', { role: 'status', style: { color: BRAND.accentStrong, fontSize: '11px', marginRight: 'auto' } }, message) : null, error ? h('span', { role: 'alert', style: { color: BRAND.danger, fontSize: '11px', marginRight: 'auto' } }, error) : null, h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新读取'), h('button', { type: 'submit', disabled: saving || status !== 'ready', style: { ...buttonStyle(), color: BRAND.primaryText, background: saving || status !== 'ready' ? 'var(--dsw-alias-label-tertiary, #aab7c4)' : BRAND.primaryFill, borderColor: 'transparent' } }, saving ? '保存中…' : mode === 'model' ? '保存并继续' : mode === 'cloud' ? '保存并完成' : '保存配置'))));
   }
-  return { ModelSettingsSection };
+  return ModelSettingsSection;
 }

@@ -1,9 +1,10 @@
 import { resourceStatusPresentation } from '../state/resource-status.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createResourcePages({ ui, hostRemote, actions, window = globalThis.window }) {
-  const { React, ContentIntro, EmptyState, McpResourceDialog, McpToolsDialog, ModelResourceDialog, Pill, ResourceDialog, SkillDiscoveryDialog, SkillPreviewDialog, StudioPageTabs, buttonStyle, inputStyle, pagerButtonStyle, StudioSubnav, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h, useEffect, useRef, useState } = React;
+export function createResourcePages({
+  ui: { React: { createElement: h, useEffect, useRef, useState, Fragment }, ContentIntro, EmptyState, McpResourceDialog, McpToolsDialog, ModelResourceDialog, Pill, ResourceDialog, SkillDiscoveryDialog, SkillPreviewDialog, StudioPageTabs, buttonStyle, inputStyle, pagerButtonStyle, StudioSubnav, BRAND = DEFAULT_BRAND },
+  hostRemote, actions, window = globalThis.window
+}) {
   function ResourcesPage() {
     const [resourceKind, setResourceKind] = useState('model');
     const [sourceFilter, setSourceFilter] = useState('all');
@@ -160,7 +161,7 @@ export function createResourcePages({ ui, hostRemote, actions, window = globalTh
       ['skill', 'skill-space', 'mcp'].includes(resourceKind) ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, resourceKind === 'mcp' ? '探测通过表示连接和工具列表读取成功；工具是否能完成任务，需要在绑定的 Agent 中实际调用验证。移除配置只影响本机，删除云端 MCP 会清理云端资源。' : '本地已导入：文件已保存到本机。云端目录可见：绑定后由 Host 下载加载 Skill Space。两种状态都不代表脚本依赖或 Agent 实际执行已验证。') : null,
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取资源目录', detail: '读取 Host 的资源清单和云端平台目录。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '资源目录不可用', detail: error, action: h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '重新读取') }) : null,
-      status === 'ready' ? h(React.Fragment, null,
+      status === 'ready' ? h(Fragment, null,
         !isPlatform ? h('section', { style: { display: 'grid', gap: '10px' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
             h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: `搜索${label}`, 'aria-label': '搜索资源', style: { ...inputStyle(), marginTop: 0, maxWidth: '460px', flex: '1 1 280px' } }),
@@ -204,7 +205,7 @@ export function createResourcePages({ ui, hostRemote, actions, window = globalTh
       h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '此处展示资源清单，不表示云端已部署或 Agent 已执行验证。DSH 会话动态加载的工具请在原生会话轨迹中查看。'),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取运行资源', detail: '读取本地配置和各类云端资源目录。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '运行资源不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
-      status === 'ready' ? h(React.Fragment, null,
+      status === 'ready' ? h(Fragment, null,
         warnings.length ? h('div', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6, marginBottom: '14px' } }, warnings.map((warning, index) => h('div', { key: index }, `${groups.find(([kind]) => kind === warning.kind)?.[1] || warning.kind}：${warning.message}`))) : null,
         h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索运行资源', 'aria-label': '搜索运行资源', style: { ...inputStyle(), margin: '0 0 14px', maxWidth: '460px' } }),
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' } }, groups.map(([kind, label]) => {

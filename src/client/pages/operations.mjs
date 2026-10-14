@@ -1,6 +1,6 @@
-export function createOperationsWorkspace({ ui }) {
-  const { React, ChannelsPage, EvaluationPage, ObservabilityPage, AutomationPage, DeliveryPage, StudioSubnav } = ui;
-  const { createElement: h, useState } = React;
+export function createOperationsWorkspace({
+  ui: { React: { createElement: h, useState }, ChannelsPage, EvaluationPage, ObservabilityPage, AutomationPage, DeliveryPage, StudioSubnav },
+}) {
   function OperationalPage({ page }) {
     if (page === 'evaluation') return h(EvaluationPage);
     if (page === 'observability') return h(ObservabilityPage);

@@ -1,9 +1,10 @@
 import { buildSkillFileTree, formatResourceSize } from '../state/skill-files.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createResourceDialogs({ ui, hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent }) {
-  const { React, ResourceDialog, buttonStyle, inputStyle, Pill, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h, useState } = React;
+export function createResourceDialogs({
+  ui: { React: { createElement: h, useState }, ResourceDialog, buttonStyle, inputStyle, Pill, BRAND = DEFAULT_BRAND },
+  hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent
+}) {
   function McpResourceDialog({ resource, onClose, onCreated }) {
     const [savedResourceId, setSavedResourceId] = useState(resource?.resourceId || '');
     const editing = Boolean(savedResourceId);

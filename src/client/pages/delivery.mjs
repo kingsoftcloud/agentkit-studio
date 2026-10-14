@@ -1,9 +1,10 @@
 import { DEPLOYMENT_ATTENTION_STATES, DEPLOYMENT_LABELS, DEPLOYMENT_POLL_STATES, deliveryDate } from '../state/deployment.mjs';
 import { BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
 
-export function createDeliveryPages({ ui, hostRemote, actions, window = globalThis.window, document = globalThis.document, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
-  const { React, Pill, StudioPageTabs, buttonStyle, inputStyle, EmptyState, SectionHeading, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS } = ui;
-  const { createElement: h, useEffect, useRef, useState } = React;
+export function createDeliveryPages({
+  ui: { React: { createElement: h, useEffect, useRef, useState, Fragment }, Pill, StudioPageTabs, buttonStyle, inputStyle, EmptyState, SectionHeading, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
+  hostRemote, actions, window = globalThis.window, document = globalThis.document, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
+}) {
   function DeliveryStep({ number, title, detail, action }) {
     return h('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' } },
       h('span', { 'aria-hidden': true, style: { display: 'grid', placeItems: 'center', width: '26px', height: '26px', borderRadius: '50%', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', fontWeight: 700 } }, number),
@@ -109,16 +110,16 @@ export function createDeliveryPages({ ui, hostRemote, actions, window = globalTh
     };
     const section = { marginTop: '14px', padding: '18px', border: '1px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.surface };
     const label = { display: 'grid', gap: '6px', fontSize: '12px', color: BRAND.inkMuted };
-    return h(React.Fragment, null,
+    return h(Fragment, null,
       h('section', { style: section, 'aria-label': '云端部署' },
       h(DeliveryStep, { number: '3', title: '检查并部署', detail: '选择更新已有实例或创建新实例，使用上方选中的冻结版本。' }),
       h('label', { style: { ...label, marginBottom: '14px' } }, '部署目标', h('select', { 'aria-label': '部署目标', value: deploymentTarget, disabled: busy, onChange: event => setTarget(event.target.value), style: inputStyle() },
         existing.map(record => h('option', { key: record.id, value: record.id }, `更新 ${record.agentName} · 版本 ${record.revision} · ${record.cloudAgentId}`)), h('option', { value: 'new' }, '创建新的云端实例'))),
-      targetRecord ? h(React.Fragment, null,
+      targetRecord ? h(Fragment, null,
         h('p', { style: { fontSize: '12px', color: BRAND.inkMuted } }, '更新保留实例 ID、规格和存储。检查后确认冻结版本与镜像，新版本需开启新会话。'),
         h('label', { style: { ...label, display: 'flex', alignItems: 'center', marginBottom: '12px' } }, h('input', { type: 'checkbox', 'aria-label': '使用推荐运行镜像', checked: useRecommendedImage, disabled: busy, onChange: event => setUseRecommendedImage(event.target.checked) }), '使用当前推荐的运行镜像', h('span', null, `当前 ${targetRecord.imageVersion || '—'}`))) : null,
       h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', alignItems: 'end' } },
-        !targetRecord ? h(React.Fragment, null,
+        !targetRecord ? h(Fragment, null,
         h('label', { style: label }, '实例规格', h('select', { 'aria-label': '实例规格', value: spec, disabled: busy, onChange: event => setSpec(event.target.value), style: inputStyle() },
           h('optgroup', { label: '通用 · CPU / 内存 1:2' }, [1, 2, 4, 8, 16].map(value => h('option', { key: value, value: `${value}:2` }, `${value} 核 · ${value * 2} GB`))),
           h('optgroup', { label: '更多内存' }, [4, 8].flatMap(memoryRatio => [1, 2, 4, 8, 16].map(value => h('option', { key: `${value}:${memoryRatio}`, value: `${value}:${memoryRatio}` }, `${value} 核 · ${value * memoryRatio} GB`))))),
@@ -151,7 +152,7 @@ export function createDeliveryPages({ ui, hostRemote, actions, window = globalTh
         record.failure ? h('p', { style: { fontSize: '12px', color: BRAND.danger } }, `${record.failure.code} · ${record.failure.message}`) : null,
         h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
           h('button', { type: 'button', 'aria-expanded': Boolean(details[record.id]), onClick: () => setDetails(previous => ({ ...previous, [record.id]: !previous[record.id] })), style: buttonStyle() }, details[record.id] ? '收起详情' : '详情'),
-        record.state !== 'DELETED' ? h(React.Fragment, null,
+        record.state !== 'DELETED' ? h(Fragment, null,
           h('button', { type: 'button', disabled: busy, onClick: () => action(record, record.cloudAgentId ? 'refresh' : 'reconcile'), style: buttonStyle() }, record.cloudAgentId ? '刷新状态' : '核对创建结果'),
           ['READY', 'AVAILABLE_UPDATING'].includes(record.state) ? h('button', { type: 'button', disabled: busy, onClick: () => actions.bindAgent?.(record.cloudAgentId), style: buttonStyle() }, '开始对话') : null,
           record.state === 'READY' && record.agentId === agentId ? h('button', { type: 'button', disabled: busy || !selectedBuild || (!useRecommendedImage && selectedBuild === record.buildId), onClick: () => inspectUpdate(record), style: buttonStyle() }, '升级到所选版本') : null,
@@ -345,7 +346,7 @@ export function createDeliveryPages({ ui, hostRemote, actions, window = globalTh
       h(SectionHeading, { title: '构建与部署', detail: '选择 Agent 和版本，检查配置后发布到云端。' }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '交付状态不可用', detail: error, action: h('button', { type: 'button', onClick: () => load(), style: buttonStyle() }, '重新读取') }) : null,
-      status === 'ready' ? h(React.Fragment, null,
+      status === 'ready' ? h(Fragment, null,
         h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '18px', background: BRAND.surface } },
           h(DeliveryStep, { number: '1', title: '选择 Agent', detail: '仅展示本地创建的 Agent。' }),
           h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } },

@@ -1,9 +1,10 @@
 import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
 import { operationalDate } from '../state/operational-data.mjs';
 
-export function createCloudSessionStatus({ ui, hostRemote, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
-  const { React, ResourceDialog, buttonStyle } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createCloudSessionStatus({
+  ui: { React: { createElement: h, useEffect, useState, Fragment }, ResourceDialog, buttonStyle },
+  hostRemote, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
+}) {
   function CloudSessionStatus({ sessionId, useSessions }) {
     const session = useSessions(state => state?.byId?.[sessionId]);
     const presetId = session?.projectionValues?.agentPreset;
@@ -47,9 +48,9 @@ export function createCloudSessionStatus({ ui, hostRemote, setInterval = globalT
         const resource = plugins.find(item => item.config?.binding?.resource?.kind === kind)?.config.binding.resource;
         return [label, resource?.id || resource?.resourceId || '未绑定'];
       })];
-    return h(React.Fragment, null, h('button', { type: 'button', onClick: () => setOpen(true), title: agent.metadata.id, style: { ...buttonStyle(), fontSize: '11px', padding: '4px 8px' } }, '云端 · ' + (deployment.environment === 'pre-online' ? '预发' : deployment.environment)),
+    return h(Fragment, null, h('button', { type: 'button', onClick: () => setOpen(true), title: agent.metadata.id, style: { ...buttonStyle(), fontSize: '11px', padding: '4px 8px' } }, '云端 · ' + (deployment.environment === 'pre-online' ? '预发' : deployment.environment)),
       open ? h(ResourceDialog, { title: '云端 Agent 与执行凭据', detail: '绑定清单来自云端冻结版本；每轮响应身份由 Host 核验。', onClose: () => setOpen(false), wide: true },
-        h('dl', { style: { display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '10px 18px', overflowWrap: 'anywhere' } }, pairs.map(([key, value]) => h(React.Fragment, { key }, h('dt', null, key), h('dd', { style: { margin: 0 } }, value)))),
+        h('dl', { style: { display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '10px 18px', overflowWrap: 'anywhere' } }, pairs.map(([key, value]) => h(Fragment, { key }, h('dt', null, key), h('dd', { style: { margin: 0 } }, value)))),
         receipt ? h('div', null, h('h4', null, '最近一轮 · 云端响应已核验'), h('p', null, `${receipt.status} · ${receipt.provenance.model} · ${operationalDate(receipt.completedAt)}`),
           h('p', { style: { overflowWrap: 'anywhere', fontSize: '12px' } }, `本轮版本：r${receipt.provenance.revision || '—'} · ${receipt.provenance.buildId}`),
           receipt.provenance.resourceBindings ? h('p', { style: { fontSize: '12px', overflowWrap: 'anywhere' } }, '本轮绑定：',
@@ -60,5 +61,5 @@ export function createCloudSessionStatus({ ui, hostRemote, setInterval = globalT
           : h('p', null, '此会话尚无云端响应凭据。完成一轮云端对话后可核对，历史版本不会补造凭据。'),
         error ? h('p', { role: 'alert' }, error) : null) : null);
   }
-  return { CloudSessionStatus };
+  return CloudSessionStatus;
 }

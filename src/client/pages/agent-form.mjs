@@ -1,6 +1,7 @@
-export function createAgentForm({ ui, hostRemote }) {
-  const { React, BRAND, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, buttonStyle, inputStyle, SectionHeading, PlatformResourcePicker, Pill } = ui;
-  const { createElement: h, useState, useEffect } = React;
+export function createAgentForm({
+  ui: { React: { createElement: h, useState, useEffect, Fragment }, BRAND, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, buttonStyle, inputStyle, SectionHeading, PlatformResourcePicker, Pill },
+  hostRemote
+}) {
   function AgentCreatePage({ initialAgent = null, onBack, onCreated }) {
     const editing = Boolean(initialAgent);
     const cloudEditing = editing && initialAgent?.source === 'agentengine-server';
@@ -146,7 +147,7 @@ export function createAgentForm({ ui, hostRemote }) {
         h('span', null, h('strong', { style: { display: 'block', fontSize: '12px' } }, resource.displayName || resource.name || id), h('span', { style: { display: 'block', marginTop: '2px', color: BRAND.inkMuted, fontSize: '10px' } }, resource.description || resource.version || id)));
     })) : h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', padding: '6px 0' } }, catalogStatus === 'loading' ? '正在读取目录…' : '暂无可用资源'));
 
-    const stepContent = step === 0 ? h(React.Fragment, null,
+    const stepContent = step === 0 ? h(Fragment, null,
       templateCards,
       h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: '14px' } },
         h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Agent ID', h('input', { value: form.id, disabled: editing, onChange: e => update('id', e.target.value), placeholder: 'local-agent', style: inputStyle() })),
@@ -155,7 +156,7 @@ export function createAgentForm({ ui, hostRemote }) {
         h('label', { style: { gridColumn: '1 / -1', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '运行时', h('select', { value: form.runtime, disabled: editing, onChange: e => update('runtime', e.target.value), style: inputStyle() }, runtimeOptions.map(item => h('option', { key: item.runtimeType, value: item.runtimeType }, item.displayName)))),
       ),
       h('label', { style: { display: 'block', marginTop: '14px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '角色与系统 Prompt', h('textarea', { value: form.prompt, disabled: cloudEditing, onChange: e => update('prompt', e.target.value), placeholder: cloudEditing ? '云端 Agent 的 Prompt 由 AgentEngine Server 管理' : '描述 Agent 的身份、边界和回答方式', rows: 5, style: { ...inputStyle(), height: 'auto', padding: '10px', resize: 'vertical', opacity: cloudEditing ? 0.65 : 1 } })),
-    ) : step === 1 ? h(React.Fragment, null,
+    ) : step === 1 ? h(Fragment, null,
       cloudEditing ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '11px 12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55 } }, '当前是云端 Agent。模型、MCP、本地 Skill 和 Tool 由 AgentEngine Runtime 自身管理；本页只保存知识库、记忆库和 Skill Center 这三类云端 ComponentConfig。') : null,
       !cloudEditing ? h('div', { style: { marginBottom: '14px', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55 } }, '模型、MCP、Skill 支持多选；知识库和记忆库各选一个。保存后形成新的 Agent 配置版本。') : null,
       !cloudEditing && form.runtime === 'codex' ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, '可选 Codex 账户模型或已配置的网关模型；网关模型使用对应提供商的凭证和 API 设置。导出运行包时只支持网关模型。') : null,
@@ -172,7 +173,7 @@ export function createAgentForm({ ui, hostRemote }) {
       !cloudEditing ? capabilityPicker('mcp', 'MCP Servers', selectedMcp, setSelectedMcp) : null,
       !cloudEditing ? capabilityPicker('skill', 'Skills', selectedSkills, setSelectedSkills) : null,
       h(PlatformResourcePicker, { value: platformBindings, onChange: setPlatformBindings, onMemory: value => setMemoryEnabled(value) }),
-    ) : step === 2 ? h(React.Fragment, null,
+    ) : step === 2 ? h(Fragment, null,
       h('h3', { style: { margin: '0 0 6px', color: BRAND.ink, fontSize: '16px' } }, '运行目标与策略'),
       h('p', { style: { margin: '0 0 16px', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55 } }, '运行目标会写入 Agent Revision。DSH Native 使用本地原生循环，AgentKit Harness 和 Codex 由各自运行端执行。'),
       h('div', { style: { display: 'grid', gap: '8px' } }, runtimeOptions.map(item => h('button', { key: item.runtimeType, type: 'button', onClick: () => update('runtime', item.runtimeType), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', border: '1px solid ' + (form.runtime === item.runtimeType ? BRAND.accentStrong : BRAND.border), borderRadius: '10px', padding: '14px', background: form.runtime === item.runtimeType ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' } }, h('span', null, h('strong', { style: { display: 'block', fontSize: '13px' } }, item.displayName), h('span', { style: { display: 'block', marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px' } }, item.runtimeType)), form.runtime === item.runtimeType ? h(Pill, { tone: 'accent' }, '已选择') : null))),
@@ -180,7 +181,7 @@ export function createAgentForm({ ui, hostRemote }) {
         h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '权限策略', h('select', { value: policy, onChange: event => setPolicy(event.target.value), style: inputStyle() }, h('option', { value: 'strict' }, '严格权限'), h('option', { value: 'loose' }, '宽松权限'), h('option', { value: 'custom' }, '自定义权限'))),
         h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '23px', color: BRAND.ink, fontSize: '12px', fontWeight: 700 } }, h('input', { type: 'checkbox', checked: memoryEnabled, onChange: event => setMemoryEnabled(event.target.checked) }), '启用跨会话记忆')),
       h('div', { style: { marginTop: '18px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '运行目标属于 Agent Revision；权限策略和记忆开关会随本次创建一起保存。'),
-    ) : h(React.Fragment, null,
+    ) : h(Fragment, null,
       h('h3', { style: { margin: '0 0 14px', color: BRAND.ink, fontSize: '16px' } }, '检查并创建'),
       h('div', { style: { display: 'grid', borderTop: '1px solid ' + BRAND.border } }, [['Agent ID', form.id.trim().toLowerCase()], ['名称', form.name.trim()], ['运行目标', runtimeLabel], ['默认模型', catalog.model.find(item => item.resourceId === selectedModel)?.displayName || selectedModel || '未选择'], ['模型白名单', `${selectedModels.length || (selectedModel ? 1 : 0)} 个`], ['能力', `${selectedTools.length} Tool · ${selectedMcp.length} MCP · ${selectedSkills.length} Skill`], ['平台资源', `${platformBindings.length} 项（知识库 / 记忆库 / Skill Center）`], ['记忆', memoryEnabled ? '已启用' : '未启用'], ['模板', templates.find(item => item[0] === form.template)?.[1]]].map(([label, value]) => h('div', { key: label, style: { display: 'flex', justifyContent: 'space-between', gap: '20px', padding: '12px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: '12px' } }, h('span', { style: { color: BRAND.inkMuted } }, label), h('strong', { style: { color: BRAND.ink, textAlign: 'right' } }, value)))),
       h('div', { style: { marginTop: '16px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, editing ? (cloudEditing ? '保存后调用 AgentEngine UpdateAgent；云端已有会话继续使用旧快照，新运行使用更新后的组件绑定。' : `保存后创建新的配置版本；当前版本为 r${initialAgent.metadata.revision}。已有会话和构建不会被自动切换。`) : '创建后保存 Prompt、模型和资源绑定，随后可构建并开始对话。'),

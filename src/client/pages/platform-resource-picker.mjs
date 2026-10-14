@@ -1,6 +1,7 @@
-export function createPlatformResourcePicker({ ui, window = globalThis.window, hostRemote }) {
-  const { React, BRAND, buttonStyle, inputStyle } = ui;
-  const { createElement: h, useState, useEffect } = React;
+export function createPlatformResourcePicker({
+  ui: { React: { createElement: h, useState, useEffect }, BRAND, buttonStyle, inputStyle },
+  window = globalThis.window, hostRemote
+}) {
   const PLATFORM_RESOURCE_META = [
     { kind: 'knowledge-base', label: '知识库', description: '绑定云端知识库，Agent 通过只读检索使用。' },
     { kind: 'memory-instance', label: '记忆库', description: '绑定长期记忆实例，用于跨会话召回与写入。' },
