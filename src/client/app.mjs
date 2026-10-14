@@ -1,6 +1,6 @@
 import { createStudioPrimitives } from "./components/primitives.mjs";
 import { BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS } from "./theme.mjs";
-import { createHostRemote } from "./remote/host-client.mjs";
+import { createProductClient } from "./remote/product-client.mjs";
 import { createConfirmation } from "./components/confirmation.mjs";
 import { createCredentialOnboarding } from "./pages/credential-onboarding.mjs";
 import { createStartChecks } from "./pages/start-checks.mjs";
@@ -53,7 +53,7 @@ export function createStudioApp({ React, primitives }, { window = globalThis.win
   const ui = { React, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal };
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = readProductVersions(window.__AGENTKIT_STUDIO__);
   const connectionOwner = createConnectionOwner();
-  const hostRemote = createHostRemote(connectionOwner.connection, { window });
+  const hostRemote = createProductClient(connectionOwner.connection, { window });
   const { readConversationAgent, writeConversationAgent } = createConversationAgentState({ events: window, storage: () => window.localStorage, createEvent: (type, detail) => new CustomEvent(type, { detail }) });
 
   const confirmation = createConfirmation({ document });
