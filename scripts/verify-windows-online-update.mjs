@@ -41,7 +41,7 @@ try {
  if(before===targetVersion) throw new Error('Updater baseline is already the target version');
  const guide=page.locator('.agentkit-credential-onboarding-content');
  await expect(guide).toBeVisible({timeout:120000});
- await guide.getByRole('button',{name:'去配置模型凭证',exact:true}).click();
+ await page.getByRole('button',{name:'去配置模型凭证',exact:true}).click();
  await expect(guide).toBeHidden({timeout:30000});
  // Configure through the installed product's settings. A Studio config file
  // alone does not register the native DSH provider/model preference namespace.
