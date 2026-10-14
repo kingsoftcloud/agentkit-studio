@@ -1,0 +1,122 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Context } from '@deepseek-ai/cordis';
+import { createRuntimeBridge, mountRuntimeBridge, ownAsyncResource, resolveRuntimeBridge } from '../src/host/runtime-bridge.mjs';
+import { apply as applyPreset } from '../src/providers/dsh-runtime-plugin.mjs';
+import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
+
+const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
+
+test('older registration and route cleanup cannot withdraw their replacements', async () => {
+  const bridge = createRuntimeBridge();
+  const old = bridge.setAdapter({ async *stream() { yield 'old'; } });
+  const next = bridge.setAdapter({ async *stream() { yield 'new'; } });
+  const oldScope = bridge.createRouteScope(), newScope = bridge.createRouteScope();
+  const oldRoute = bridge.bindRoute('same', { agentId: 'old' }, oldScope);
+  const newRoute = bridge.bindRoute('same', { agentId: 'new' }, newScope);
+  bridge.bindRoute('same', { agentId: 'late-old' }, oldScope)();
+  old(); oldRoute(); old();
+  assert.equal(bridge.getRoute('same').agentId, 'new');
+  assert.deepEqual(await Array.fromAsync(bridge.stream({})), ['new']);
+  next(); newRoute(); bridge.close(); bridge.close();
+  assert.deepEqual(bridge.diagnostics(), { closed: true, adapters: 0, executors: 0, routes: 0, requests: 0 });
+});
+
+test('Host teardown aborts a blocked stream and tool exactly once', async () => {
+  const bridge = createRuntimeBridge();
+  const ready = deferred();
+  let streamSignal, toolSignal;
+  bridge.setAdapter({ async *stream({ signal }) {
+    streamSignal = signal; ready.resolve();
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    yield 'must not escape retirement';
+  } });
+  bridge.setResourceToolExecutor(({ signal }) => {
+    toolSignal = signal;
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve('late'), { once: true }));
+  });
+  const iterator = bridge.stream({});
+  const stream = iterator.next();
+  const tool = bridge.executeResourceTool({});
+  const rejected = [assert.rejects(stream, { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' }), assert.rejects(tool, { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' })];
+  await ready.promise;
+  bridge.close();
+  await Promise.all(rejected);
+  assert.equal(streamSignal.aborted, true);
+  assert.equal(toolSignal.aborted, true);
+  assert.equal(bridge.diagnostics().requests, 0);
+  assert.throws(() => bridge.setAdapter({}), { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
+});
+
+test('two Cordis Hosts reject an ambiguous compatibility call and remain isolated', async () => {
+  const left = new Context(), right = new Context();
+  const a = mountRuntimeBridge(left), b = mountRuntimeBridge(right);
+  try {
+    a.bindRoute('same', { agentId: 'left' }); b.bindRoute('same', { agentId: 'right' });
+    assert.equal(resolveRuntimeBridge(left).getRoute('same').agentId, 'left');
+    assert.equal(resolveRuntimeBridge(right).getRoute('same').agentId, 'right');
+    assert.throws(() => resolveRuntimeBridge(), { code: 'STUDIO_RUNTIME_BRIDGE_AMBIGUOUS' });
+    assert.throws(() => resolveRuntimeBridge({ get: () => undefined }), { code: 'STUDIO_RUNTIME_BRIDGE_UNAVAILABLE' });
+    await left.fiber.dispose();
+    assert.equal(b.getRoute('same').agentId, 'right');
+  } finally { await left.fiber.dispose(); await right.fiber.dispose(); }
+});
+
+test('late initialization closes its result after the owning fiber retired', async () => {
+  const ctx = new Context();
+  const gate = deferred();
+  let pending, closed = 0;
+  const fiber = await ctx.plugin({ apply(child) { pending = ownAsyncResource(child, gate.promise, 'late resource'); } });
+  const rejected = assert.rejects(pending, { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
+  await fiber.dispose();
+  gate.resolve({ close() { closed++; } });
+  await rejected;
+  assert.equal(closed, 1);
+  await ctx.fiber.dispose();
+});
+
+test('resource adapter retirement aborts MCP initialization and prevents reconnection', async () => {
+  const ready = deferred();
+  let initializationSignal, connections = 0;
+  const adapters = createLocalResourceAdapters({ resourceStore: { get: async () => ({ endpointUrl: 'http://mcp.test' }) }, fetchImpl: async (_url, init) => {
+    if (JSON.parse(init.body || '{}').method !== 'initialize') return new Response(null, { status: 202 });
+    connections++; initializationSignal = init.signal; ready.resolve();
+    return await new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }));
+  } });
+  const pending = adapters.listMcpTools('mcp-local-proof');
+  const rejects = assert.rejects(pending);
+  await ready.promise;
+  await adapters.close(); await adapters.close();
+  await rejects;
+  assert.equal(initializationSignal.aborted, true);
+  await assert.rejects(adapters.listMcpTools('mcp-local-proof'), { code: 'RESOURCE_ADAPTER_CLOSED' });
+  assert.equal(connections, 1);
+});
+
+test('preset cleanup is owned by its exact Cordis scope, not the Agent id', async () => {
+  const ctx = new Context();
+  const bridge = mountRuntimeBridge(ctx);
+  ctx.provide('tools', { schemas: () => [] }); ctx.provide('skills', {});
+  const mount = async () => {
+    let request;
+    const fiber = await ctx.plugin({ inject: ['tools', 'skills', 'studioRuntimeBridge'], apply(child) {
+      const observed = new Proxy(child, { get(target, key) {
+        if (key === 'on') return (name, callback) => { if (name === 'agent/request') request = callback; return target.on(name, callback); };
+        return Reflect.get(target, key);
+      } });
+      applyPreset(observed, { agentId: 'same-agent', runtime: 'harness', local: true });
+    } });
+    // Deliver to the selected scope. DSH installs its Agent carrier filter;
+    // this unit test does not broadcast an Agent event across sibling scopes.
+    await request({ agent: { id: 'same-session' } }, async () => ({ model: 'fixture' }));
+    return fiber;
+  };
+  try {
+    const old = await mount(), fresh = await mount();
+    const route = bridge.getRoute('same-session');
+    await old.dispose();
+    assert.equal(bridge.getRoute('same-session'), route);
+    await fresh.dispose();
+    assert.equal(bridge.getRoute('same-session'), undefined);
+  } finally { await ctx.fiber.dispose(); }
+});

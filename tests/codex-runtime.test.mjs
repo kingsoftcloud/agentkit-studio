@@ -47,6 +47,20 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   ]);
 });
 
+test('retiring a completed App Server also stops a child that ignores graceful termination', async t => {
+  const child = fakeSpawn();
+  const kill = child.kill;
+  const exited = new Promise(resolve => child.once('exit', resolve));
+  child.kill = signal => signal === 'SIGTERM' ? true : kill();
+  t.after(() => kill());
+  const runtime = createCodexRuntime({ spawnImpl: () => child, cwd: '/tmp', shutdownTimeoutMs: 20 });
+  for await (const _chunk of runtime.stream({ input: 'finish this turn' })) {}
+  let timeout;
+  try {
+    await Promise.race([exited, new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('retired App Server child is still running')), 250); })]);
+  } finally { clearTimeout(timeout); }
+});
+
 test('Codex child and thread use each DSH session workspace without leaking it to another turn', async () => {
   const spawned = [], threads = [];
   const runtime = createCodexRuntime({ cwd: '/tmp/default-workspace', spawnImpl: (_exe, _args, options) => {

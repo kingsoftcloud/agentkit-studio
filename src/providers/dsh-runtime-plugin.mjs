@@ -5,12 +5,13 @@
  */
 
 export const name = 'agentkit-studio-dsh-runtime';
-export const inject = ['tools', 'skills'];
+export const inject = ['tools', 'skills', 'studioRuntimeBridge'];
 const AGENT_REQUEST_EVENT = ['agent', 'request'].join('/');
 import { spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bindDshAgentRoute, executeDshResourceTool, unbindDshAgentRoutes } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
+import { bindDshAgentRoute, executeDshResourceTool } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
+import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
 
 // Keep the builtin executor in the Studio host. The Python toolset remains
@@ -205,7 +206,7 @@ function registerBuiltinTools(ctx, contracts, config) {
   else install();
 }
 
-function registerMcpTools(ctx, contracts, config) {
+function registerMcpTools(ctx, contracts, config, bridge) {
   const values = (Array.isArray(contracts) ? contracts : [])
     .filter(contract => contract && contract.executor === 'mcp' && contract.enabled !== false && contract.name)
     .map(contract => ({
@@ -228,7 +229,7 @@ function registerMcpTools(ctx, contracts, config) {
         signal: exec?.signal,
         callId: exec?.callId,
         agent: exec?.agent,
-      })),
+      }, bridge)),
     }));
     return () => disposers.forEach(dispose => { try { dispose?.(); } catch {} });
   };
@@ -283,6 +284,15 @@ function createToolAdapter(ctx, bindings) {
 export function apply(ctx, config = {}) {
   const agentId = String(config.agentId || '').trim();
   if (!agentId) throw new Error('agentkit-studio-dsh-runtime: agentId is required');
+  const bridge = resolveRuntimeBridge(typeof ctx.get === 'function' ? ctx : undefined);
+  const routeScope = bridge.createRouteScope();
+  const routes = new Map();
+  let stopped = false;
+  if (typeof ctx.effect === 'function') ctx.effect(() => () => {
+    stopped = true;
+    for (const dispose of routes.values()) dispose();
+    routes.clear();
+  }, 'agentkit-studio: preset route lifetime');
   const skills = Array.isArray(config.skillDefinitions) ? config.skillDefinitions : [];
   if (skills.length) {
     if (typeof ctx.skills?.register !== 'function') throw new Error('DSH SkillRegistry 不可用');
@@ -294,7 +304,7 @@ export function apply(ctx, config = {}) {
     else install();
   }
   registerBuiltinTools(ctx, config.toolContracts, config);
-  registerMcpTools(ctx, config.toolContracts, config);
+  registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, config.toolBindings);
   const toolAdapter = config.runtime === 'codex'
     ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) } : boundToolAdapter;
@@ -308,18 +318,22 @@ export function apply(ctx, config = {}) {
   ctx.on(AGENT_REQUEST_EVENT, async (payload, next) => {
     if (config.resourcesUnavailable) throw Object.assign(new Error('此会话的 Agent 资源恢复失败。请检查资源配置后重新选择 Agent 或重新打开应用。'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
     const resolved = await next();
+    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     const sessionId = String(payload?.agent?.id || '').trim();
-    if (sessionId) bindDshAgentRoute(sessionId, {
-      agentId,
-      agent: payload?.agent,
-      runtime: config.runtime,
-      local: config.local === true,
-      buildId: config.buildId,
-      agentRevision: config.agentRevision,
-      cloudVersionId: config.cloudVersionId,
-      toolAdapter,
-      nativeTools,
-    });
+    if (sessionId) {
+      routes.get(sessionId)?.();
+      routes.set(sessionId, bindDshAgentRoute(sessionId, {
+        agentId,
+        agent: payload?.agent,
+        runtime: config.runtime,
+        local: config.local === true,
+        buildId: config.buildId,
+        agentRevision: config.agentRevision,
+        cloudVersionId: config.cloudVersionId,
+        toolAdapter,
+        nativeTools,
+      }, bridge, routeScope));
+    }
     // Keep the DSH-visible provider/model header unchanged. The preset-scoped
     // listener below owns the transport interception; exposing the Studio
     // provider here would make the native picker appear to switch models.
@@ -327,7 +341,6 @@ export function apply(ctx, config = {}) {
   });
   // llm/stream is a Host-wide event, not a preset-scoped Agent event.
   // The Host listener uses the route registered above for this Session only.
-  if (typeof ctx.effect === 'function') ctx.effect(() => () => unbindDshAgentRoutes(agentId), 'agentkit-studio: runtime route cleanup');
 }
 
 export default { name, inject, apply };

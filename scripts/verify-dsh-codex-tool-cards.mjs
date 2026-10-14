@@ -35,7 +35,7 @@ for (const { toolName, outcome } of cases) {
     yield { type: 'text', text: 'Final answer' };
   } } });
   const disposeAdapter = ctx.llm.registerAdapter([CODEX_PROVIDER], adapter);
-  const agent = await ctx.agentLoop.create(SessionId(`codex-cards-${outcome}`), { provider: CODEX_PROVIDER, model: 'fixture' });
+  const agent = await ctx.agentLoop.create(SessionId(`codex-cards-${outcome}`), { provider: CODEX_PROVIDER, model: 'fixture' }, { cwd: process.cwd() });
   const disposeRoute = bindDshAgentRoute(agent.id, { agentId: 'fixture', runtime: 'codex', local: true, agent });
   try {
     agent.followup(createUserMessage({ content: [{ type: 'text', text: '查询 P7' }], source: { kind: 'user' } }));

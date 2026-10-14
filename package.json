@@ -46,6 +46,8 @@
     "test": "node --test tests/*.test.mjs packages/agentkit-harness/test/*.test.mjs",
     "pack:harness": "pnpm --dir packages/agentkit-harness pack --pack-destination ../../.artifacts",
     "verify-dsh": "node scripts/verify-dsh-node-store.mjs",
+    "verify-dsh-lifecycle": "node scripts/verify-dsh-lifecycle.mjs",
+    "verify-dsh-live-runtime": "node scripts/verify-dsh-live-runtime.mjs",
     "verify-harness": "node scripts/verify-agentkit-harness-plugin.mjs",
     "verify-desktop-update": "node scripts/verify-desktop-update-inputs.mjs",
     "verify-desktop-differential": "node scripts/verify-desktop-differential.mjs",

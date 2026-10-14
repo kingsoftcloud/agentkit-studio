@@ -126,7 +126,7 @@ function dynamicToolContent(value) {
 }
 
 /**
- * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number, idleTimeoutMs?: number, startupTimeoutMs?: number }} options
+ * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number, idleTimeoutMs?: number, startupTimeoutMs?: number, shutdownTimeoutMs?: number }} options
  */
 export function createCodexRuntime(options = {}) {
   const baseEnv = { ...(options.inheritEnv === false ? {} : process.env), ...(options.env || {}) };
@@ -142,6 +142,7 @@ export function createCodexRuntime(options = {}) {
   const timeoutMs = Math.max(0, Number(options.timeoutMs ?? baseEnv.AGENTKIT_CODEX_TIMEOUT_MS) || 0);
   const idleTimeoutMs = Math.max(10_000, Number(options.idleTimeoutMs ?? baseEnv.AGENTKIT_CODEX_IDLE_TIMEOUT_MS) || 600_000);
   const startupTimeoutMs = Math.max(10_000, Number(options.startupTimeoutMs) || 60_000);
+  const shutdownTimeoutMs = Math.max(1, Number(options.shutdownTimeoutMs) || 5000);
 
   const runtime = {
     executable,
@@ -190,6 +191,8 @@ export function createCodexRuntime(options = {}) {
       let turnId = '';
       let closed = false;
       let disposed = false;
+      let exited = false;
+      let killTimer;
       let timer;
       let budgetTimer;
       let started = false;
@@ -238,7 +241,11 @@ export function createCodexRuntime(options = {}) {
           { cause: String(error?.message || error) },
         ));
       };
-      const onExit = (_code, _signal) => { if (!closed) finish(new CodexRuntimeError('CODEX_TRANSPORT_CLOSED', 'Codex App Server 提前退出')); };
+      const onExit = (_code, _signal) => {
+        exited = true;
+        clearTimeout(killTimer);
+        if (!closed) finish(new CodexRuntimeError('CODEX_TRANSPORT_CLOSED', 'Codex App Server 提前退出'));
+      };
       const handleDynamicToolCall = async message => {
         const params = object(message.params || {}, 'dynamic tool 参数');
         // The app-server owns the actual dynamic-tool lifecycle, but DSH still
@@ -348,6 +355,10 @@ export function createCodexRuntime(options = {}) {
         if (!closed) finish();
         try { child.stdin.end?.(); } catch {}
         try { child.kill?.('SIGTERM'); } catch {}
+        if (!exited) {
+          killTimer = setTimeout(() => { if (!exited) { try { child.kill?.('SIGKILL'); } catch {} } }, shutdownTimeoutMs);
+          killTimer.unref?.();
+        }
       };
       try {
         await request('initialize', { clientInfo: { name: 'agentkit-studio', version: '0.0.1' }, capabilities: { experimentalApi: true } });

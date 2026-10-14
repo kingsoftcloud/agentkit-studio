@@ -20,6 +20,7 @@ import { DshPresetAdmission, dshModelSelection } from './agent-preset-admission.
 import { createStartupReconciler } from './preset-recovery.mjs';
 import { bindPresetRegistry } from './preset-registry-binding.mjs';
 import * as AgentKitHarnessPlugin from '../packages/agentkit-harness/src/index.mjs';
+import { mountRuntimeBridge, ownAsyncResource } from './host/runtime-bridge.mjs';
 
 export const name = 'agentkit-studio';
 export const inject = ['connection', 'webServer', 'credentials'];
@@ -42,6 +43,7 @@ const cloudEndpointOptions = {
  * process is involved in this path.
  */
 async function registerControlPlane(ctx) {
+  const bridge = mountRuntimeBridge(ctx);
   // Keep Node-only configuration and HTTPS/KOP dependencies out of the
   // browser-facing plugin module graph. DSH loads this module for both the
   // Host and client faces; importing node:fs or aws4 at activation time makes
@@ -131,7 +133,7 @@ async function registerControlPlane(ctx) {
         serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
         ...cloudEndpointOptions,
       })));
-  const resourceAdaptersPromise = Promise.all([
+  const resourceAdaptersPromise = ownAsyncResource(ctx, Promise.all([
     skillDiscoveryPromise,
     serverClientPromise,
     localMcpStorePromise,
@@ -140,11 +142,11 @@ async function registerControlPlane(ctx) {
     const adapters = createLocalResourceAdapters({ serverClient, skillDiscovery, credentials: credentialsService, resourceStore: portableRuntime?.resourceStore || localMcpStore });
     if (portableRuntime) adapters.loadSkill = portableRuntime.loadSkill;
     return adapters;
-  });
+  }), 'agentkit-studio: resource adapter lifetime');
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the
   // assembled turn to the local Harness or AgentEngine cloud stream.
-  const { createDshRuntimeAdapter, setDshResourceToolExecutor, setDshRuntimeAdapter } = await import('./providers/dsh-runtime.mjs');
+  const { createDshRuntimeAdapter, routeDshRuntime: routeRuntime } = await import('./providers/dsh-runtime.mjs');
   const { LlmAdapter } = await import('@deepseek-ai/dsh-llm');
   // Codex is a native App Server runtime, not another gateway model. Keep its
   // optional child-process boundary lazy so Studio can still load on hosts
@@ -185,6 +187,7 @@ async function registerControlPlane(ctx) {
   const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('./deployment-agents.mjs');
   const { createDeploymentConversation } = await import('./deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({
+    bridge,
     AdapterBase: LlmAdapter,
     attachments: () => ctx.get('attachments'),
     cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise }),
@@ -195,22 +198,18 @@ async function registerControlPlane(ctx) {
     resourceAdapter: await resourceAdaptersPromise,
     observability: await studioObservabilityPromise,
   });
-  setDshRuntimeAdapter(dshRuntimeAdapter);
-  const { routeDshRuntime } = await import('./providers/dsh-runtime.mjs');
+  ctx.effect(() => bridge.setAdapter(dshRuntimeAdapter), 'agentkit-studio: runtime transport registration');
+  const routeDshRuntime = (options, next) => routeRuntime(options, next, bridge);
   ctx.on('llm/stream', routeDshRuntime);
-  setDshResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal } = {}) => {
+  ctx.effect(() => bridge.setResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal } = {}) => {
     const adapters = await resourceAdaptersPromise;
     if (typeof adapters?.callMcpTool !== 'function') {
       const error = new Error('AgentKit Studio MCP 资源适配器不可用');
       error.code = 'MCP_RESOURCE_ADAPTER_MISSING';
       throw error;
     }
-    // The MCP SDK transport owns its request lifecycle. Keep the signal in
-    // the bridge contract for future transports, but never expose credentials
-    // or adapter internals to DSH's public ToolRegistry.
-    void signal;
-    return adapters.callMcpTool(resourceId, name, args);
-  });
+    return adapters.callMcpTool(resourceId, name, args, { signal });
+  }), 'agentkit-studio: resource tool registration');
   ctx.inject(['llm'], llmCtx => {
     // registerAdapter already returns a disposer. Put the registration call
     // inside the owner effect so Cordis runs it on mount and calls its
@@ -421,10 +420,12 @@ async function registerControlPlane(ctx) {
   const allowed = new Set(['sessions/export-log', 'agents/list', 'agents/create-local', 'agents/update-cloud', 'agents/ensure-preset', 'agents/conversation-surface', 'models/sync-credential', 'models/credential-status', 'models/create', 'models/catalog', 'models/codex', 'resources/list', 'resources/delete', 'mcp/create', 'mcp/update', 'mcp/probe', 'mcp/delete', 'credentials/put', 'settings/get', 'settings/update', 'skills/discover', 'skills/preview-discovered', 'skills/commit-discovered', 'skills/list', 'skills/preview-installed', 'plugins/dsh-list', 'agents/local-get', 'agents/update-local', 'agents/local-delete', 'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable', 'plugins/dsh-disable', 'plugins/dsh-update', 'plugins/codex-list', 'plugins/codex-inspect', 'plugins/codex-install', 'plugins/codex-remove', 'builds/create', 'builds/list', 'builds/download', 'builds/export-portable', 'operations/list', 'operations/cancel', 'schedules/list', 'schedules/create', 'schedules/get', 'schedules/update', 'schedules/delete', 'schedules/run', 'schedules/occurrences', 'traces/overview', 'traces/list', 'traces/get', 'traces/otlp', 'evaluations/list', 'evaluations/create', 'evaluations/get', 'evaluations/targets', 'evaluations/evalsets', 'evaluations/import', 'channels/connection', 'channels/update', 'channels/agent-update', 'channels/action', 'server/action']);
   for (const action of ['prepare', 'create', 'prepareUpdate', 'applyUpdate', 'list', 'get', 'refresh', 'repairAccess', 'reconcile', 'logs', 'remove']) allowed.add(`deployments/${action}`);
   const dispatch = async (endpoint, payload, signal) => {
+    signal = AbortSignal.any([bridge.signal, signal].filter(Boolean));
     if (!allowed.has(endpoint)) {
       return { ok: false, error: { code: 'agentkit/not-found', message: 'Unknown AgentKit control endpoint', details: { endpoint } } };
     }
     try {
+      signal.throwIfAborted();
       if (endpoint.startsWith('deployments/')) {
         const service = await deployments(), action = endpoint.slice('deployments/'.length);
         const value = await service[action](['prepare', 'create', 'prepareUpdate', 'applyUpdate'].includes(action) ? payload : String(payload?.deploymentId || ''));
@@ -886,6 +887,7 @@ async function registerControlPlane(ctx) {
   registerAuthoringTools(ctx, { remoteFactory: authoringRemoteFactory });
   ctx.effect(async () => { const channels = await studioChannelsPromise; await channels?.ensureReady(); return () => channels?.dispose(); }, 'agentkit-studio: channels lifetime');
   ctx.effect(async () => { const scheduler = await studioSchedulerPromise; await scheduler?.ensureReady(); return () => scheduler?.dispose(); }, 'agentkit-studio: scheduler lifetime');
+  ctx.effect(() => () => bridge.close(), 'agentkit-studio: stop owned runtime requests');
 }
 
 export async function apply(ctx) {

@@ -14,18 +14,16 @@ import { dshModelFailure } from '../model-failure.mjs';
 import { createCodexToolRecorder } from './codex-tool-events.mjs';
 import { gatewayHistory } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
+import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 
 const ROUTE = 'agentkit-studio';
-let activeAdapter;
-let resourceToolExecutor;
-const agentRoutes = new Map();
 
 /**
  * Agent preset scopes dispatch `agent/request` before the root Agent loop
  * calls `llm.stream`. Keep the selected scope's transport context across that
  * boundary without exposing a Studio-specific model in the native picker.
  */
-export function bindDshAgentRoute(sessionId, binding = {}) {
+export function bindDshAgentRoute(sessionId, binding = {}, owner, scope) {
   const id = String(sessionId || '').trim();
   if (!id) return () => {};
   const runtime = String(binding.runtime || 'harness').trim();
@@ -46,17 +44,11 @@ export function bindDshAgentRoute(sessionId, binding = {}) {
     toolAdapter: binding.toolAdapter,
     nativeTools: binding.nativeTools === true,
   };
-  agentRoutes.set(id, route);
-  return () => {
-    if (agentRoutes.get(id) === route) agentRoutes.delete(id);
-  };
+  return resolveRuntimeBridge(owner).bindRoute(id, route, scope);
 }
 
-export function unbindDshAgentRoutes(agentId) {
-  const id = String(agentId || '').trim();
-  for (const [sessionId, route] of agentRoutes) {
-    if (route.agentId === id) agentRoutes.delete(sessionId);
-  }
+export function unbindDshAgentRoutes(agentId, owner) {
+  resolveRuntimeBridge(owner).unbindAgentRoutes(agentId);
 }
 
 /**
@@ -65,9 +57,8 @@ export function unbindDshAgentRoutes(agentId) {
  * provider/model (and the native model picker stays truthful) while only the
  * actual transport call is delegated to Studio.
  */
-export function setDshRuntimeAdapter(adapter) {
-  activeAdapter = adapter;
-  return () => { if (activeAdapter === adapter) activeAdapter = undefined; };
+export function setDshRuntimeAdapter(adapter, owner) {
+  return resolveRuntimeBridge(owner).setAdapter(adapter);
 }
 
 /**
@@ -75,25 +66,17 @@ export function setDshRuntimeAdapter(adapter) {
  * The registry lives in the DSH loop, while MCP credentials and transports
  * remain private to the Studio Host process.
  */
-export function setDshResourceToolExecutor(executor) {
-  resourceToolExecutor = typeof executor === 'function' ? executor : undefined;
-  return () => {
-    if (resourceToolExecutor === executor) resourceToolExecutor = undefined;
-  };
+export function setDshResourceToolExecutor(executor, owner) {
+  return resolveRuntimeBridge(owner).setResourceToolExecutor(executor);
 }
 
-export async function executeDshResourceTool(input = {}) {
-  if (typeof resourceToolExecutor !== 'function') {
-    const error = new Error('AgentKit Studio MCP Tool executor is unavailable');
-    error.code = 'MCP_TOOL_EXECUTOR_UNAVAILABLE';
-    throw error;
-  }
-  return resourceToolExecutor(input);
+export async function executeDshResourceTool(input = {}, owner) {
+  return resolveRuntimeBridge(owner).executeResourceTool(input);
 }
 
-export function streamDshRuntime(options, { agentId, runtime, local, buildId, agentRevision, cloudVersionId, toolAdapter, nativeTools } = {}) {
+export function streamDshRuntime(options, { agentId, runtime, local, buildId, agentRevision, cloudVersionId, toolAdapter, nativeTools } = {}, owner) {
   const id = String(agentId || '').trim();
-  if (!id || !activeAdapter) throw new Error('AgentKit Studio runtime bridge is unavailable');
+  if (!id) throw new Error('AgentKit Studio runtime bridge is unavailable');
   const runtimeType = assertStudioRuntimeType(runtime || 'harness');
   const sessionId = String(options.sessionId || '').trim();
   const frozenDshBuild = local === true && runtimeType !== 'codex' && Boolean(String(buildId || '').trim());
@@ -104,8 +87,8 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
     assertStudioRunBinding({ agentId: id, buildId, revision: agentRevision, sessionId, runId }, { agentId: id, sessionId });
   }
   const mode = local === true ? 'local' : 'cloud';
-  return activeAdapter.stream({
-    ...options,
+  return resolveRuntimeBridge(owner).stream(options, scoped => ({
+    ...scoped,
     ...(runId ? { runId } : {}),
     studioSelectedModel: options.model,
     ...(options.provider === CODEX_PROVIDER ? { studioCodexModel: options.model } : {}),
@@ -116,14 +99,14 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
     ...(cloudVersionId ? { cloudVersionId } : {}),
     ...(toolAdapter ? { studioToolAdapter: toolAdapter } : {}),
     ...(nativeTools ? { studioNativeTools: true } : {}),
-  });
+  }));
 }
 
 /** A single Host waterfall owns transport selection; unrelated LLM calls
  * (including titles) retain their original adapter and credentials. */
-export function routeDshRuntime(options, next) {
-  const route = agentRoutes.get(String(options?.sessionId || '').trim());
-  return route ? streamDshRuntime(options, route) : next();
+export function routeDshRuntime(options, next, owner) {
+  const route = resolveRuntimeBridge(owner).getRoute(options?.sessionId);
+  return route ? streamDshRuntime(options, route, owner) : next();
 }
 
 function textOf(message) {
@@ -528,7 +511,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, observability, attachments, AdapterBase } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, observability, attachments, AdapterBase, bridge } = {}) {
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -537,7 +520,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       return { model: metadata, stream: options => this.stream(options) };
     },
     async *stream(options = {}) {
-      const routed = agentRoutes.get(String(options.sessionId || '').trim());
+      const routed = resolveRuntimeBridge(bridge).getRoute(options.sessionId);
       if (options.provider === CODEX_PROVIDER && !routed && !options.studioRuntime) throw Object.assign(new Error('请先绑定 Codex Agent，再选择 Codex 模型。'), { code: 'CODEX_AGENT_REQUIRED' });
       const model = String(options.model || '');
       const separator = model.indexOf(':');
@@ -778,6 +761,10 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       }
     },
   };
+  if (bridge) {
+    const stream = adapter.stream;
+    adapter.stream = options => bridge.trackStream(options || {}, scoped => stream.call(adapter, scoped));
+  }
   if (!AdapterBase) return adapter;
   class StudioAdapter extends AdapterBase {}
   return Object.assign(new StudioAdapter(), adapter);
