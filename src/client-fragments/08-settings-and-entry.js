@@ -250,7 +250,6 @@
               console.warn('[agentkit-studio] Agent permission default unavailable:', error?.message || error);
             }
             writeConversationAgent(value, sessionId);
-            window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(value);
             navCtx.uiWorkspace.openSession(sessionId);
             ctx.layout.selectPanel(null);
           } catch (error) {
@@ -277,37 +276,6 @@
           return () => window.removeEventListener('agentkit-studio:open-authoring', openAuthoring);
         }, 'agentkit-studio:authoring-entry');
       });
-      // Studio patch 007: register a sidebar session filter so selecting an
-      // Agent in the hero selector narrows the DSH sidebar to sessions bound
-      // to that Agent. The filter reads a global variable (synced from the
-      // selector) so it stays reactive without a DSH re-derive trigger.
-      ctx.effect(() => {
-        let unregister = null;
-        try {
-          const mod = require('@deepseek-ai/dsh-client-ui-workspace');
-          if (mod && typeof mod.registerSessionFilter === 'function') {
-            // Expose a setter on the window so the selector can update the
-            // active Agent without re-registering the filter.
-            window.__AGENTKIT_STUDIO_SESSION_FILTER__ = { activeAgentId: '' };
-            window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__ = agentId => {
-              window.__AGENTKIT_STUDIO_SESSION_FILTER__.activeAgentId = String(agentId || '');
-            };
-            const filter = session => {
-              if (session.blank) return true;
-              const activeId = window.__AGENTKIT_STUDIO_SESSION_FILTER__?.activeAgentId || '';
-              if (!activeId) return true;
-              try {
-                const raw = window.localStorage.getItem(`${CONVERSATION_AGENT_KEY}:${session.id}`);
-                if (!raw) return false;
-                const value = JSON.parse(raw);
-                return String(value?.agentId || '') === activeId;
-              } catch { return true; }
-            };
-            unregister = mod.registerSessionFilter(filter);
-          }
-        } catch { /* ui-workspace not loaded or patch not applied; sidebar stays unfiltered */ }
-        return () => { if (unregister) unregister(); };
-      }, 'agentkit-studio:sidebar-session-filter');
       PANELS.forEach((panel, index) => {
         ctx.slots.inject('main', () => ctx.slots.register(
           { name: 'main', key: panel.id },

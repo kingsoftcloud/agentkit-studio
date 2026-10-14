@@ -417,3 +417,15 @@ index 209d13f497..9284de2a76 100644
          returns: 'completion; a superseded request may create a Session but does not open it.',
          throws: ['on failure; a refused creation is also shown through the Workspace notice unless a later navigation or disposal superseded the request.'],
        },
+diff --git a/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx b/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
+--- a/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
++++ b/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
+@@ -43,7 +43,7 @@ async function createRuntime(): Promise<SlotTestRuntime> {
+   // The rename flow never picks a directory; the namespace only has to be there
+   // for ui-workspace's inject to settle.
+   const directoryPicker = {}
+-  runtime.remote.provideNamespaces({ directoryPicker })
++  runtime.remote.provideNamespaces({ directoryPicker, session: { selectModel: vi.fn() }, commands: { execute: vi.fn() } })
+   const locale = new LocaleRuntime(runtime.ctx)
+   runtime.ctx.provide('locale', locale)
+   runtime.slots.installLocale(locale)

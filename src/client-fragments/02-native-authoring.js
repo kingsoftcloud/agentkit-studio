@@ -4,7 +4,6 @@
       pendingAuthoring = false;
       await uiWorkspace.openWorkspace(null, sessionId => {
         writeConversationAgent('', sessionId);
-        window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.('');
         pendingAuthoring = true;
       });
       if (pendingAuthoring) window.dispatchEvent(new CustomEvent('agentkit-studio:seed-authoring'));
