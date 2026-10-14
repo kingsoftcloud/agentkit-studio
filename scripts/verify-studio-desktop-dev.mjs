@@ -1,9 +1,10 @@
 /** Native Electron development Host smoke check, using isolated test profiles. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { verifyStudioNativeSidebar } from './verify-studio-native-sidebar-ui.mjs';
 const require = createRequire(import.meta.url);
 const { _electron } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.STUDIO_VERIFY_ELECTRON || !process.env.STUDIO_VERIFY_PRIMARY_RUNTIME || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated source, homes, Electron executable and prepared primary runtime');
@@ -41,9 +42,12 @@ try {
   assert.equal(errors.length, 0);
   const runtime = await app.evaluate(({ app }) => ({ electron: process.versions.electron, node: process.versions.node, appVersion: app.getVersion(), isPackaged: app.isPackaged }));
   assert.equal(runtime.isPackaged, false);
+  const sidebarChecks = process.env.STUDIO_VERIFY_NATIVE_SIDEBAR === '1'
+    ? await verifyStudioNativeSidebar(page, JSON.parse(await readFile('.artifacts/refactor/stage-2/sidebar-seed.json', 'utf8')))
+    : undefined;
   await page.screenshot({ path: output.replace(/\.json$/, '.png'), fullPage: true });
   const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', fullStudioPlugin: true, developmentOnly: true,
-    runtime, nativeAgentSelectorVisible: true, rendererRpc: responses, rendererErrors: errors.length, passed: true };
+    runtime, nativeAgentSelectorVisible: true, rendererRpc: responses, rendererErrors: errors.length, ...(sidebarChecks ? { sidebarChecks } : {}), passed: true };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report));
 } catch (error) {

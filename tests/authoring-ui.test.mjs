@@ -5,12 +5,12 @@ import { readFile } from 'node:fs/promises';
 const fragment = await readFile(new URL('../src/client-fragments/02-native-authoring.js', import.meta.url), 'utf8');
 const source = fragment.slice(0, fragment.indexOf('function NativeAuthoringButton'));
 function harness() {
-  const events = [], bindings = [], filters = [];
-  const window = { dispatchEvent: event => events.push(event.type), __AGENTKIT_STUDIO_SET_SESSION_FILTER__: value => filters.push(value) };
+  const events = [], bindings = [];
+  const window = { dispatchEvent: event => events.push(event.type) };
   const api = new Function('window', 'CustomEvent', 'writeConversationAgent', `${source}; return { openAgentAuthoring, seedAgentAuthoring, pending: () => pendingAuthoring };`)(
     window, class { constructor(type) { this.type = type; } }, (agent, session) => bindings.push({ agent, session }),
   );
-  return { ...api, events, bindings, filters };
+  return { ...api, events, bindings };
 }
 
 test('conversation creation opens a fresh ungrouped native session before seeding', async () => {
@@ -20,7 +20,6 @@ test('conversation creation opens a fresh ungrouped native session before seedin
     assert.deepEqual(ui.events, []);
     beforeOpen('new-native-session');
     assert.deepEqual(ui.bindings, [{ agent: '', session: 'new-native-session' }]);
-    assert.deepEqual(ui.filters, ['']);
     assert.deepEqual(ui.events, []);
   } });
   assert.equal(ui.pending(), true);
@@ -39,7 +38,6 @@ test('cancelled native navigation cannot seed or unbind the previous conversatio
   assert.equal(ui.pending(), false);
   assert.deepEqual(ui.events, []);
   assert.deepEqual(ui.bindings, []);
-  assert.deepEqual(ui.filters, []);
 });
 
 test('failed native navigation cannot seed the previous conversation', async () => {

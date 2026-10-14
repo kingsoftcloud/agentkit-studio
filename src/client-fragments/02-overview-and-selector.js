@@ -134,7 +134,6 @@
         let alive = true;
         const selectedAgent = readConversationAgent(sessionId);
         setSelected(selectedAgent);
-        window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(selectedAgent || '');
         setNotice('');
         setOpen(false);
         setLoading(true);
@@ -155,7 +154,6 @@
             const actualAgent = agentFromSessionPreset(presetId, items);
             setSelected(actualAgent);
             writeConversationAgent(actualAgent, sessionId);
-            window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__?.(actualAgent || '');
           }
         }).catch(error => { if (alive) setNotice(error?.message || 'Agent 目录暂不可读取'); }).finally(() => { if (alive) setLoading(false); });
         return () => { alive = false; };
@@ -165,9 +163,6 @@
         value = value || null;
         setOpen(false);
         setNotice('');
-        // Studio patch 007: sync the sidebar filter so the DSH session list
-        // narrows to sessions bound to the selected Agent.
-        if (window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__) window.__AGENTKIT_STUDIO_SET_SESSION_FILTER__(value || '');
         if (!value) {
           if (started || !sessionId || typeof studioRemote?.agentPresets?.select !== 'function') {
             setSelected(null);
