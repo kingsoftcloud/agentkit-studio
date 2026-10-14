@@ -50,4 +50,5 @@ await verifyWindowsCoexistence(executablePath, { ...environment, DSH_HOME: join(
 
 await promisify(execFile)('powershell.exe', ['-NoProfile', '-File', fileURLToPath(new URL('./verify-windows-installer-ui.ps1', import.meta.url)), '-Installer', process.env.STUDIO_SIGNED_INSTALLER, '-Evidence', evidence], { timeout: 900000, maxBuffer: 1024 * 1024 });
 
-await verifyOfficialDshCoexistence(executablePath, environment, root, evidence);
+const visibleInstall=JSON.parse(await readFile(join(evidence,'windows-installer-ui.json'),'utf8'));
+await verifyOfficialDshCoexistence(visibleInstall.installedPath, environment, root, evidence);
