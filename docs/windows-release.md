@@ -40,4 +40,10 @@ Windows feed 位于 `studio/feeds/win-x64/<channel>.yml`，安装器和 blockmap
 
 Windows 安装包的 Electron 名称为 `agentkit-studio-desktop`，与官方 DSH 的单实例锁和 Electron 设置目录分开。Studio 使用 `.dsh/profiles/desktop-agentkit-studio` 管理插件，并由系统分配本地 Host 端口；DSH 会话、凭证和工作区数据仍保留在原共享目录中。macOS 已发布版本的设置位置保持原样。
 
-安装器的欢迎页、完成页、深色和高 DPI 图片由 Nexus 图标与 AgentKit Studio 字标生成。实际界面验收同时覆盖：原生安装页面的产品图标、点击完成后立即启动的进程路径及 Studio 导航；另用真实 Electron 进程模拟官方 DSH 身份，并占用其默认端口，验证 Studio 可以并行启动且保留原生 DSH 配置。此模拟明确记录为身份/端口冲突回归，不能代替任意官方 DSH 版本的全量兼容测试。
+安装器的欢迎页、完成页、深色和高 DPI 图片由 Nexus 图标与 AgentKit Studio 字标生成。实际界面验收覆盖原生安装页面的产品图标、点击完成后立即启动的进程路径及 Studio 导航。身份/端口回归测试使用真实 Electron 进程模拟官方身份并占用默认端口；正式发布还要求下载并实际安装官方 DSH，验证两个 App 同时运行、Studio 导航正常且官方插件配置未改动。证据记录官方版本、安装器哈希和两个进程身份；这不代表任意官方版本的全量兼容测试。
+
+## 线上更新验收
+
+运行 `Qualify AgentKit Studio Windows online update`，分别指定验收工具提交、已签名基线运行及源码、基线版本和公网 feed 的目标版本。它实际安装基线，创建一条持久化会话，然后通过安装版原生更新入口从 KS3 下载并确认安装；必须观察到新进程自动重启、目标版本签名有效和原会话可见。模型回复使用隔离的本地测试服务，更新下载、安装器和 App 均为真实发行字节。
+
+`windows-online-update.json` 与原生界面截图记录结果。只有更新器输出完整包与差分下载的实际字节比例时才记录增量下载；全量或缺少下载比例的结果不能称为增量验收。此流程不验证 Windows 回滚。

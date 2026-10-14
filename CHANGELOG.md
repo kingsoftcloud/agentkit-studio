@@ -2,6 +2,10 @@
 
 ## 0.0.2
 
+- Give Windows Studio its own Electron identity, plugin profile and Host port so it can run beside official DSH Desktop.
+- Replace Windows installer welcome and finish artwork with Nexus and AgentKit Studio branding.
+- Publish signed Windows installers, blockmaps and channel metadata under the Studio KS3 directory; preserve a migration feed for already installed Windows builds.
+- Add native Windows online update qualification covering download, installation, automatic restart and retained conversations.
 - Align Studio settings, model credentials and Agent forms with native DSH typography, spacing and dark-mode colors.
 - Keep optional overview configuration checks collapsed until opened; preserve the separate first-use credential guide.
 - Add Windows NSIS packaging, certificate-store signing and installed App qualification.

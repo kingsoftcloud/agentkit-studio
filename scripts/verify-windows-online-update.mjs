@@ -30,15 +30,17 @@ const app=await electron.launch({executablePath,args:['--user-data-dir='+join(ro
 const baselinePid=app.process().pid;
 let updaterLog='';
 for(const stream of [app.process().stdout,app.process().stderr]) stream?.on('data',bytes=>{updaterLog=(updaterLog+bytes.toString()).slice(-1024*1024);});
-let confirming=false, successor=false;
+let confirming=false, successor=false, page;
 try {
- const page=await app.firstWindow({timeout:120000});
+ page=await app.firstWindow({timeout:120000});
  await expect(page.locator('body')).toContainText('AgentKit Studio',{timeout:120000});
  const before=await app.evaluate(({app})=>app.getVersion());
  if(before===targetVersion) throw new Error('Updater baseline is already the target version');
  const guide=page.locator('.agentkit-credential-onboarding-content');
  if(await guide.isVisible()) await page.getByRole('button',{name:'跳过本次',exact:true}).click();
- await page.getByRole('button',{name:/^(新会话|新建会话|New session|New chat)$/}).first().click();
+ // The global New session action opens an inert workspace picker. Create a
+ // retained Session using the default workspace's own new-session action.
+ await page.getByRole('button',{name:/New session in|中新建会话/}).first().click();
  const composer=page.locator('[contenteditable="true"]').first();
  await expect(composer).toBeVisible({timeout:30000});
  await composer.fill('Windows upgrade marker: retain this conversation after restarting.');
@@ -80,6 +82,9 @@ try {
  const differential=updaterLog.match(/Full:\s*([0-9,.]+)\s*KB,\s*To download:\s*([0-9,.]+)\s*KB\s*\(([0-9.]+)%\)/);
  const downloadEvidence=differential ? {kind:'native-differential',fullKilobytes:Number(differential[1].replaceAll(',','')),downloadKilobytes:Number(differential[2].replaceAll(',','')),ratioPercent:Number(differential[3])} : {kind:'not-established'};
  await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
+} catch(error) {
+ await page?.screenshot({path:join(evidence,'windows-update-failure.png'),fullPage:true}).catch(()=>{});
+ throw error;
 } finally {
  if(!confirming) await app.close().catch(()=>{});
  await new Promise(done=>server.close(done));
