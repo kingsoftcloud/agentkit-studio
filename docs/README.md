@@ -2,6 +2,8 @@
 
 - [Getting started](getting-started.md): installation, models and local development.
 - [Architecture](architecture.md): DSH ownership, runtime adapters and package boundaries.
+- [Refactoring plan](refactoring-plan.md): phased lifecycle, sidebar, frontend, Host and compatibility work with acceptance criteria.
+- [Lifecycle implementation](refactor-lifecycle.md): scope ownership changes, real DSH evidence and remaining acceptance work.
 - [Harness plugin](../packages/agentkit-harness/README.md): independent npm package and DSH integration.
 - [Desktop updates](desktop-update.md): signed macOS releases, feeds and full updates.
 - [Windows releases](windows-release.md): NSIS, Certum signing and installed App checks.

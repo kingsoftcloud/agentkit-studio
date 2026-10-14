@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLocalConversationHandler } from '../src/local-runtime.mjs';
 import { bindDshAgentRoute, createDshRuntimeAdapter, routeDshRuntime, setDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
 import { apply as applyRuntimePreset } from '../src/providers/dsh-runtime-plugin.mjs';
+import { mountRuntimeBridge } from '../src/host/runtime-bridge.mjs';
+import { dshModelRoute } from '../src/agent-preset-admission.mjs';
 
 const root = resolve(process.env.AGENTKIT_DSH_ROOT || fileURLToPath(new URL('../../../deepseek-harness', import.meta.url)));
 const require = createRequire(join(root, 'packages/llm/llm-retry/package.json'));
@@ -20,34 +22,38 @@ const failed = (status, code, headers) => Response.json({ error: { code } }, { s
 
 async function proof({ name, fetch, attempts: expectedAttempts, retries: expectedRetries, recovered = true, cancel = false, nativeTools = true, toolCalls = 0, policy }) {
   const ctx = new Context();
+  const bridge = mountRuntimeBridge(ctx);
   await ctx.plugin(LlmRuntime);
   await ctx.plugin(SessionStore);
   for (const name of ['session-projection', 'system-prompt', 'tools', 'agent']) await ctx.plugin((await load(`@deepseek-ai/dsh-${name}`)).default);
   await ctx.plugin(await load('@deepseek-ai/dsh-llm-retry'));
   await ctx.plugin((await load('@deepseek-ai/dsh-agent-loop')).default, { agents: [] });
   let attempts = 0, executions = 0;
+  const profile = { id: 'retry-proof', baseUrl: 'http://synthetic.invalid/v1', apiKey: 'test-only', modelName: 'fixture' };
+  const provider = dshModelRoute(profile);
   ctx.tools.register(defineContentToolFixture({ name: 'count', description: 'Count one tool execution', parameters: {}, execute: async () => { executions++; return [{ type: 'text', text: 'counted' }]; } }));
   const handler = createLocalConversationHandler({
     agentStore: async () => ({ get: async () => ({ spec: { bindings: {} } }) }),
-    modelService: { profile: async () => ({ baseUrl: 'http://synthetic.invalid/v1', apiKey: 'test-only', modelName: 'fixture' }) },
+    modelService: { profile: async () => profile },
     fetchImpl: async (_url, init) => fetch(++attempts, JSON.parse(init.body)),
   });
-  const adapter = createDshRuntimeAdapter({ AdapterBase: LlmAdapter, localHandler: async () => handler });
+  const adapter = createDshRuntimeAdapter({ AdapterBase: LlmAdapter, localHandler: async () => handler, bridge });
   if (policy) adapter.providerRetryPolicy = () => resolveRetryPolicy(policy, 'verification policy');
-  const disposeAdapter = ctx.llm.registerAdapter(['fixture'], adapter);
-  const disposeBridge = setDshRuntimeAdapter(adapter);
+  const disposeAdapter = ctx.llm.registerAdapter([provider], adapter);
+  const disposeBridge = setDshRuntimeAdapter(adapter, bridge);
   // Exercise the actual preset request hook, including an Agent with no tools.
   if (nativeTools) applyRuntimePreset(ctx, { agentId: 'retry-proof', runtime: 'harness', local: true });
-  const disposeRoute = nativeTools ? () => {} : bindDshAgentRoute(name, { agentId: 'retry-proof', runtime: 'harness', local: true, nativeTools: false });
-  ctx.on('llm/stream', routeDshRuntime);
+  const disposeRoute = nativeTools ? () => {} : bindDshAgentRoute(name, { agentId: 'retry-proof', runtime: 'harness', local: true, nativeTools: false }, bridge);
+  ctx.on('llm/stream', (options, next) => routeDshRuntime(options, next, bridge));
   try {
-    const agent = await ctx.agentLoop.create(SessionId(name), { provider: 'fixture', model: 'fixture' });
+    const agent = await ctx.agentLoop.create(SessionId(name), { provider, model: 'fixture' });
     if (cancel) ctx.on('session/event', (session, event) => { if (session === agent.session && event.type === 'llm/retry') agent.cancel({ kind: 'user' }); });
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'recover' }], source: { kind: 'user' } }));
     await agent.whenIdle();
     const events = agent.session.snapshotEvents();
     const retries = events.filter(event => event.type === 'llm/retry');
     const final = events.findLast(event => event.type === 'turn/end');
+    if (attempts !== expectedAttempts) console.error(JSON.stringify({ failure: final?.data.reason }));
     console.log(JSON.stringify({ name, attempts, retries: retries.length, toolExecutions: executions, end: final?.data.reason.kind }));
     assert.equal(attempts, expectedAttempts, name);
     assert.equal(retries.length, expectedRetries, name);

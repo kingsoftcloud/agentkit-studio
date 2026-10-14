@@ -114,7 +114,10 @@ function mcpFailure(error, resourceId, phase = 'connect', toolName = '') {
 
 export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = fetch, cacheDir = join(process.env.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio', 'cloud-skills') } = {}) {
   const mcpClients = new Map();
+  const connectingClients = new Set();
   const cloudSkillSpaces = new Map();
+  let closed = false;
+  const assertOpen = () => { if (closed) throw new LocalResourceError('RESOURCE_ADAPTER_CLOSED', '资源适配器已关闭'); };
 
   async function describeMcp(binding) {
     const key = resourceId(binding);
@@ -132,7 +135,9 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   }
 
   async function mcp(binding) {
+    assertOpen();
     const { resourceId: key, endpoint, headers } = await resolveMcpConnection(await describeMcp(binding), credentials);
+    assertOpen();
     // DSH credentials are mutable. Re-resolve them on every operation and
     // replace a cached client when the effective auth material changes. The
     // fingerprint is one-way and never leaves this process.
@@ -144,14 +149,20 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       mcpClients.delete(key);
     }
     const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' });
+    connectingClients.add(client);
     const transport = new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl });
     try {
       await client.connect(transport);
+      assertOpen();
     } catch (error) {
+      await Promise.resolve(client.close()).catch(() => {});
       await Promise.resolve(transport.close?.()).catch(() => {});
       throw mcpFailure(error, key);
-    }
+    } finally { connectingClients.delete(client); }
     const entry = { client, transport, fingerprint };
+    const displaced = mcpClients.get(key);
+    if (displaced && displaced !== entry) await displaced.client.close().catch(() => {});
+    if (closed) { await client.close().catch(() => {}); assertOpen(); }
     mcpClients.set(key, entry);
     return entry;
   }
@@ -167,12 +178,13 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     }
   }
 
-  async function callMcpTool(id, name, args = {}) {
+  async function callMcpTool(id, name, args = {}, { signal } = {}) {
+    signal?.throwIfAborted();
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
     const key = resourceId(id);
     const entry = await mcp(id);
     let result;
-    try { result = await entry.client.callTool({ name: String(name), arguments: args }); }
+    try { result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal }); }
     catch (error) {
       await Promise.resolve(entry.client.close?.()).catch(() => {});
       if (mcpClients.get(key) === entry) mcpClients.delete(key);
@@ -316,8 +328,12 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   }
 
   async function close() {
-    for (const { client } of mcpClients.values()) await client.close().catch(() => {});
+    closed = true;
+    const clients = new Set([...connectingClients, ...[...mcpClients.values()].map(entry => entry.client)]);
+    await Promise.allSettled([...clients].map(client => client.close()));
+    connectingClients.clear();
     mcpClients.clear();
+    cloudSkillSpaces.clear();
   }
 
   // Host-only descriptor; it can contain credentials. Never expose it through RPC.
