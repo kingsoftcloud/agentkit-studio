@@ -44,6 +44,8 @@ export async function verifyOfficialDshCoexistence(executablePath, environment, 
     const page = await studio.firstWindow({ timeout: 120000 });
     console.log('Studio process connected; waiting for its product navigation.');
     await expect(page.getByRole('button', { name: 'Agents', exact: true })).toBeVisible({ timeout: 120000 });
+    const later=page.locator('.agentkit-credential-onboarding-content').getByRole('button',{name:'稍后设置',exact:true});
+    if(await later.isVisible()) await later.click();
     await expect(page.getByRole('button', { name: '总览', exact: true })).toBeVisible();
     if (await readFile(legacyPath, 'utf8') !== before) throw new Error('Studio changed the running official DSH profile');
     await probe();

@@ -42,6 +42,8 @@ app.whenReady().then(() => {
     studio = await electron.launch({ executablePath, env: environment, timeout: 120000 });
     const page = await studio.firstWindow({ timeout: 120000 });
     await expect(page.getByRole('button', { name: '总览', exact: true })).toBeVisible({ timeout: 120000 });
+    const later=page.locator('.agentkit-credential-onboarding-content').getByRole('button',{name:'稍后设置',exact:true});
+    if(await later.isVisible()) await later.click();
     await expect(page.getByRole('button', { name: 'Agents', exact: true })).toBeVisible();
     const identity = await studio.evaluate(({ app }) => ({ name: app.name, version: app.getVersion(), userData: app.getPath('userData') }));
     const foreignIdentity = await foreign.evaluate(({ app }) => ({ name: app.name, userData: app.getPath('userData') }));

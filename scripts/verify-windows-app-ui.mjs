@@ -11,6 +11,7 @@ import YAML from 'yaml';
 import { verifyDesktopModuleGraph } from './desktop-module-graph.mjs';
 import { verifyWindowsCoexistence } from './verify-windows-coexistence.mjs';
 import { verifyOfficialDshCoexistence } from './verify-windows-official-dsh.mjs';
+import { verifyStudioOnboarding } from './verify-studio-onboarding-ui.mjs';
 
 if (process.platform !== 'win32') throw new Error('Windows app UI acceptance requires Windows');
 const executablePath=process.env.STUDIO_INSTALLED_APP;
@@ -31,27 +32,16 @@ try {
   // Read app.getVersion from the installed Electron process, independently of feed metadata.
   const version=await app.evaluate(({app:electronApp})=>electronApp.getVersion());
   if (version!==expectedVersion) throw new Error('Installed Electron version differs from release input');
-  const guide=page.locator('.agentkit-credential-onboarding-content');
-  await expect(guide).toBeVisible({timeout:120000});
-  await expect(page.locator('[data-desktop-onboarding]')).toHaveCount(0);
-  await expect(page.getByText('欢迎使用 DeepSeek Harness', {exact:true})).toHaveCount(0);
-  await expect(guide.getByRole('heading', {name:'让第一个 Agent 跑起来'})).toBeVisible();
-  await guide.getByRole('button', {name:'填写凭证',exact:true}).click();
-  await expect(guide.locator('[aria-current=step]')).toContainText('填写凭证');
+  const onboardingProof=await verifyStudioOnboarding(page,join(evidence,'windows-onboarding-model.png'));
   const onboardingVisible=true;
   await page.screenshot({path:join(evidence,'windows-installed-ui.png'),fullPage:true});
-  await guide.getByRole('button',{name:'开始设置',exact:true}).click();
-  await expect(guide).toBeHidden();
-  await expect(page.locator('[data-studio-model-settings]')).toBeVisible();
-  await expect(page.locator('[data-desktop-onboarding]')).toHaveCount(0);
-  await page.keyboard.press('Escape');
   // Windows exposes both the brand row and the separate new-session button.
   await expect(page.getByRole('button',{name:/^(新会话|新建会话|New session|New chat)$/}).first()).toBeVisible({timeout:120000});
   await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
   await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
   await expect(page.getByText(expectedVersion,{exact:true})).toBeVisible({timeout:30000});
   await page.screenshot({path:join(evidence,'windows-version-settings.png'),fullPage:true});
-  await writeFile(join(evidence,'windows-installed-ui.json'),JSON.stringify({version,actualInstalledApp:true,windowTitle:await page.title(),onboardingVisible,officialWelcomeAbsent:true,officialRechargeAbsent:true,studioGuideNavigatesToModelSettings:true,singleRangeConfigured:true,moduleGraph},null,2));
+  await writeFile(join(evidence,'windows-installed-ui.json'),JSON.stringify({version,actualInstalledApp:true,windowTitle:await page.title(),onboardingVisible,...onboardingProof,studioGuideNavigatesToModelSettings:true,singleRangeConfigured:true,moduleGraph},null,2));
   const receiptPath=join(evidence,'windows-install.json');
   const receipt=JSON.parse(await readFile(receiptPath,'utf8'));
   await writeFile(receiptPath,JSON.stringify({...receipt,version,uiVerified:true,onboardingVisible},null,2));

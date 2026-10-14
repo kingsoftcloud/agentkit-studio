@@ -3,6 +3,7 @@
 ## 0.0.2
 
 - Replace the credential guide with a native-themed welcome and interactive model setup preview; remove the independent DSH account welcome/recharge flow from Studio profiles.
+- Configure models directly in fullscreen onboarding, allow skipping cloud credentials, and share API-key visibility controls and endpoint completion with Settings.
 - Use single-range Windows differential downloads on KS3 and require completed native byte counters for differential qualification.
 - Give Windows Studio its own Electron identity, plugin profile and Host port so it can run beside official DSH Desktop.
 - Replace Windows installer welcome and finish artwork with Nexus and AgentKit Studio branding.

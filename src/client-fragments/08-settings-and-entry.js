@@ -94,7 +94,7 @@
       // stable entry it can reopen after the user chose “later”.
       ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
         name: 'settings.onboarding', id: 'agentkit-studio-credential', order: 20,
-      }, CredentialOnboarding));
+      }, props => h(CredentialOnboarding, { ...props, dshModel: createDshModelBridge(ctx) })));
       activeConnection = { rpc: ctx.connection.rpc };
       ctx.on('connection/reset', () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck')));
       // DSH owns the single global plugin center. Studio contributes Codex as

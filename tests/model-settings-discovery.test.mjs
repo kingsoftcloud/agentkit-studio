@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {normalizeModelEndpoint} from '../src/model-endpoint.mjs';
 import { readFile } from 'node:fs/promises';
 import { createModelService } from '../src/model-service.mjs';
 
@@ -25,8 +26,8 @@ function ui(metadata, input) {
   const useEffect = callback => { const index = cursor++; if (!(index in states)) { states[index] = true; effects.push(callback); } };
   const host = { settings: service.settings, updateSettings: service.save, modelCatalog: service.catalog, syncModelCredential: service.sync };
   const dshModel = { describe: async () => ({ namespaces: [] }), credentialStatus: async () => ({ configured: true }), applyProfiles: async payload => { applied = payload; } };
-  const Component = new Function('h', 'useState', 'useEffect', 'hostRemote', 'BRAND', 'Pill', 'inputStyle', 'buttonStyle', 'window', 'CustomEvent', source + ';return ModelSettingsSection;')(
-    h, useState, useEffect, host, {}, 'pill', () => ({}), () => ({}), { dispatchEvent() {} }, class {},
+  const Component = new Function('h', 'useState', 'useEffect', 'hostRemote', 'BRAND', 'Pill', 'inputStyle', 'buttonStyle', 'window', 'CustomEvent', 'SecretInput', 'normalizeModelEndpoint', source + ';return ModelSettingsSection;')(
+    h, useState, useEffect, host, {}, 'pill', () => ({}), () => ({}), { dispatchEvent() {} }, class {}, 'SecretInput', normalizeModelEndpoint,
   );
   const render = () => { cursor = 0; dirty = false; tree = Component({ dshModel }); for (const callback of effects.splice(0)) callback(); };
   const settle = async () => { render(); for (let i = 0; i < 120; i++) { await Promise.resolve(); if (dirty) render(); } };

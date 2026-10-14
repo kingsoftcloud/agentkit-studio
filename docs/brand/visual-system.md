@@ -12,6 +12,8 @@
 
 样式只作用于 Studio 页面、设置和引导的组件根节点。DSH 原生对话、Dock、插件中心和全局设置继续由宿主负责。
 
-配置引导参考 DSH `ui-settings-account` 的欢迎页：左右布局、28px 标题、留白和44px主按钮。Studio 自己的 Nexus 图标和模型配置预览替代官方账户插图；步骤可点击查看，不循环闪烁。缺少模型凭证时自动显示，已配置用户不弹出，设置页可手动重开。使用 DSH Modal 的焦点、Escape、主题和 Settings onboarding 完成机制。Studio 产品 profile 关闭 `ui-settings-account`，避免它的独立全屏欢迎和充值流程叠在 Studio 引导上。
+配置引导参考 DSH `ui-settings-account` 的全屏欢迎页：左右布局、28px 标题、留白和44px主按钮。Studio 自己的 Nexus 图标和模型配置预览替代官方账户插图。点“开始设置”后直接填写模型，保存后进入可跳过的云端凭证步骤；模型设置与常规配置页共用保存和 DSH 同步逻辑。API Key 使用眼睛按钮切换本次输入的可见性，保存清空后重新隐藏。Endpoint 补全协议、默认 `/v1`，去掉已知操作后缀并保留自定义网关前缀。
+
+缺少模型凭证时自动显示，已配置用户不弹出，设置页可手动重开。使用 DSH Modal 的焦点、Escape、主题和 Settings onboarding 完成机制。Studio 产品 profile 关闭 `ui-settings-account`，避免它的独立全屏欢迎和充值流程叠在 Studio 引导上。
 
 Studio 设置与原生偏好设置使用相同的 14px 标签、12px 说明和 16px 行间距。版本号作为普通值展示，不使用状态徽章。手动配置 Agent 使用轻量步骤导航与单一表单分区，窄窗口转为纵向布局。开始前检查只显示已读取的配置事实，不用固定评分表示运行时就绪。

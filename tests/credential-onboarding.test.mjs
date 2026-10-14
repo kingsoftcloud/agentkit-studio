@@ -35,7 +35,7 @@ function onboardingHarness({ statuses, localStorage = {}, props = {} } = {}) {
   let statusIndex = 0;
   const hostRemote = { modelCredentialStatus: async () => statuses[Math.min(statusIndex++, statuses.length - 1)] };
   class CustomEvent { constructor(type) { this.type = type; } }
-  const Component = new Function('h', 'useState', 'useEffect', 'useRef', 'hostRemote', 'window', 'CustomEvent', 'Modal', 'buttonStyle', 'BRAND', 'StudioMark', `${onboarding}; return CredentialOnboarding;`)(h, useState, useEffect, useRef, hostRemote, window, CustomEvent, 'Modal', () => ({ type: 'button' }), { danger: 'red', ink: 'black', inkMuted: 'gray', surface: 'white', primaryFill: 'teal' }, 'StudioMark');
+  const Component = new Function('h', 'useState', 'useEffect', 'useRef', 'hostRemote', 'window', 'CustomEvent', 'Modal', 'buttonStyle', 'BRAND', 'StudioMark', 'ModelSettingsSection', `${onboarding}; return CredentialOnboarding;`)(h, useState, useEffect, useRef, hostRemote, window, CustomEvent, 'Modal', () => ({ type: 'button' }), { danger: 'red', ink: 'black', inkMuted: 'gray', surface: 'white', primaryFill: 'teal' }, 'StudioMark', 'ModelSettingsSection');
   let tree;
   const render = () => { cursor = 0; dirty = false; tree = Component(props); for (const effect of effects.splice(0)) effect(); return tree; };
   const settle = async () => { render(); for (let i = 0; i < 20; i += 1) { await Promise.resolve(); if (dirty) render(); } return tree; };
@@ -100,7 +100,7 @@ test('the DSH onboarding coordinator owns completion and model settings navigati
   assert.match(settings, /id: 'agentkit-studio-credential'/);
 });
 
-test('coordinator navigation completes the guide and explicit reopening works when configured', async () => {
+test('fullscreen onboarding saves a model, permits skipping cloud credentials and can reopen', async () => {
   const actions = [];
   const props = { explicit: true, complete: () => actions.push('complete'), openSection: id => actions.push(id) };
   const ui = onboardingHarness({ statuses: [{ configured: false }], props });
@@ -108,8 +108,17 @@ test('coordinator navigation completes the guide and explicit reopening works wh
   assert.ok(ui.modal());
   ui.footerButtons().find(button => button.children.includes('开始设置')).props.onClick();
   await ui.settle();
+  const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
+  const model = walk(ui.modal()).find(node => node.type === 'ModelSettingsSection');
+  assert.equal(model.props.mode, 'model');
+  assert.deepEqual(actions, [], 'model setup must not prematurely complete onboarding');
+  model.props.onSaved();
+  await ui.settle();
+  assert.equal(walk(ui.modal()).find(node => node.type === 'ModelSettingsSection').props.mode, 'cloud');
+  ui.footerButtons().find(button => button.children.includes('跳过，开始对话')).props.onClick();
+  await ui.settle();
   assert.equal(ui.modal(), null);
-  assert.deepEqual(actions, ['complete', 'agentkit-models']);
+  assert.deepEqual(actions, ['complete']);
 
   // DSH unmounts completed steps. The launcher requests a new mounted step.
   const reopened = onboardingHarness({ statuses: [{ configured: true }], props });
