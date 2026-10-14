@@ -7,7 +7,6 @@ import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import asar from '@electron/asar';
-import { createGlobalConfiguration } from '../src/global-config.mjs';
 
 if (process.platform !== 'win32') throw new Error('Native Windows updater qualification requires Windows');
 const { values } = parseArgs({ options: Object.fromEntries(['baseline', 'version', 'output'].map(key=>[key,{type:'string'}])) });
@@ -24,7 +23,6 @@ const server=createServer((request,response)=>{
  response.end('data: [DONE]\n\n');
 });
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
-await createGlobalConfiguration({env:environment,home:root,inheritLegacy:false}).update({modelProfiles:[{id:'upgrade-proof',provider:'openai-compatible',modelName:'upgrade-proof',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,credentialName:'AGENTKIT_MODEL_API_KEY',enabled:true,default:true}],modelApiKey:'qualification-local-only'});
 await writeFile(join(home,'upgrade-retention-marker.txt'),'retained across native Windows update\n');
 const app=await electron.launch({executablePath,cwd:dirname(executablePath),args:['--user-data-dir='+join(root,'baseline-electron')],env:environment,timeout:120000});
 const baselinePid=app.process().pid;
@@ -40,6 +38,20 @@ try {
  if(before===targetVersion) throw new Error('Updater baseline is already the target version');
  const guide=page.locator('.agentkit-credential-onboarding-content');
  if(await guide.isVisible()) await page.getByRole('button',{name:'跳过本次',exact:true}).click();
+ // Configure through the installed product's settings. A Studio config file
+ // alone does not register the native DSH provider/model preference namespace.
+ await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
+ await page.getByRole('button',{name:'模型与凭证',exact:true}).click();
+ const models=page.locator('[data-studio-model-settings]');
+ await expect(models.getByRole('button',{name:'保存配置',exact:true})).toBeEnabled({timeout:90000});
+ await models.getByLabel('提供商',{exact:true}).first().selectOption('custom');
+ await models.getByLabel('模型名称',{exact:true}).first().fill('upgrade-proof');
+ await models.getByLabel('API 地址',{exact:true}).first().fill(`http://127.0.0.1:${server.address().port}/v1`);
+ await models.getByLabel(/^API Key/).first().fill('qualification-local-only');
+ await models.getByRole('button',{name:'保存配置',exact:true}).click();
+ await expect(models).toContainText('已保存多个模型配置',{timeout:90000});
+ await page.keyboard.press('Escape');
+ await expect(models).toBeHidden({timeout:30000});
  // The global New session action opens an inert workspace picker. Create a
  // retained Session using the default workspace's own new-session action.
  await page.getByRole('treeitem').filter({hasText:/Default workspace|默认工作区/}).first().hover();
