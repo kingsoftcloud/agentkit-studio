@@ -1,0 +1,86 @@
+/** Drive an installed baseline through the public feed, native download, installer and automatic restart. */
+import { _electron as electron, expect } from '@playwright/test';
+import { execFile } from 'node:child_process';
+import { createServer } from 'node:http';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { parseArgs, promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import asar from '@electron/asar';
+import { createGlobalConfiguration } from '../src/global-config.mjs';
+
+if (process.platform !== 'win32') throw new Error('Native Windows updater qualification requires Windows');
+const { values } = parseArgs({ options: Object.fromEntries(['baseline', 'version', 'output'].map(key=>[key,{type:'string'}])) });
+const executablePath = resolve(values.baseline), targetVersion=values.version;
+const evidence = resolve(values.output), root=join(evidence,'private-state'), home=join(root,'shared-dsh'), journals=join(evidence,'journals');
+await mkdir(home,{recursive:true}); await mkdir(journals,{recursive:true});
+const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=>!/(KEY|SECRET|TOKEN|PASSWORD|CERTUM)/i.test(name)));
+Object.assign(environment,{DSH_HOME:home,AGENTKIT_HOME:join(root,'agentkit'),DSH_TELEMETRY_DISABLED:'1',DSH_DESKTOP_UPDATE_JOURNAL_DIR:journals});
+const server=createServer((request,response)=>{
+ request.resume();
+ if(request.url==='/v1/models') {response.setHeader('Content-Type','application/json');response.end(JSON.stringify({object:'list',data:[{id:'upgrade-proof',object:'model'}]}));return;}
+ response.setHeader('Content-Type','text/event-stream');
+ for(const payload of [{id:'upgrade-proof',object:'chat.completion.chunk',model:'upgrade-proof',created:1,choices:[{index:0,delta:{role:'assistant',content:'Windows upgrade marker saved.'},finish_reason:null}]},{id:'upgrade-proof',object:'chat.completion.chunk',model:'upgrade-proof',created:1,choices:[{index:0,delta:{},finish_reason:'stop'}]}]) response.write('data: '+JSON.stringify(payload)+'\n\n');
+ response.end('data: [DONE]\n\n');
+});
+await new Promise(done=>server.listen(0,'127.0.0.1',done));
+await createGlobalConfiguration({env:environment,home:root,inheritLegacy:false}).update({modelProfiles:[{id:'upgrade-proof',provider:'openai-compatible',modelName:'upgrade-proof',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,credentialName:'AGENTKIT_MODEL_API_KEY',enabled:true,default:true}],modelApiKey:'qualification-local-only'});
+await writeFile(join(home,'upgrade-retention-marker.txt'),'retained across native Windows update\n');
+const app=await electron.launch({executablePath,args:['--user-data-dir='+join(root,'baseline-electron')],env:environment,timeout:120000});
+const baselinePid=app.process().pid;
+let updaterLog='';
+for(const stream of [app.process().stdout,app.process().stderr]) stream?.on('data',bytes=>{updaterLog=(updaterLog+bytes.toString()).slice(-1024*1024);});
+let confirming=false, successor=false;
+try {
+ const page=await app.firstWindow({timeout:120000});
+ await expect(page.locator('body')).toContainText('AgentKit Studio',{timeout:120000});
+ const before=await app.evaluate(({app})=>app.getVersion());
+ if(before===targetVersion) throw new Error('Updater baseline is already the target version');
+ const guide=page.locator('.agentkit-credential-onboarding-content');
+ if(await guide.isVisible()) await page.getByRole('button',{name:'跳过本次',exact:true}).click();
+ await page.getByRole('button',{name:/^(新会话|新建会话|New session|New chat)$/}).first().click();
+ const composer=page.locator('[contenteditable="true"]').first();
+ await expect(composer).toBeVisible({timeout:30000});
+ await composer.fill('Windows upgrade marker: retain this conversation after restarting.');
+ await composer.press('Enter');
+ await expect(page.locator('body')).toContainText('Windows upgrade marker saved.',{timeout:120000});
+ await page.screenshot({path:join(evidence,'windows-before-update.png'),fullPage:true});
+ await page.evaluate(()=>{void window.dshDesktop.updates.open();});
+ const deadline=Date.now()+900000;
+ while(Date.now()<deadline) {
+  for(const dialog of app.windows()) {
+   if(dialog.url()!=='dsh-app://shell/update-dialog.html') continue;
+   const view=await dialog.evaluate(()=>window.dshUpdateDialog.status()).catch(()=>null);
+   if(!view) continue;
+   const download=view.buttons.findIndex(name=>/Download update|下载更新/.test(name));
+   if(download>=0) {await dialog.screenshot({path:join(evidence,'windows-update-available.png')});await dialog.evaluate(index=>window.dshUpdateDialog.status().then(view=>window.dshUpdateDialog.respond(view.revision,index)),download);continue;}
+   if(view.message.includes(targetVersion) && /ready to install|准备就绪/.test(view.message)) {
+    confirming=true; await dialog.screenshot({path:join(evidence,'windows-update-ready.png')});
+    await dialog.evaluate(()=>window.dshUpdateDialog.status().then(view=>window.dshUpdateDialog.respond(view.revision,0))).catch(()=>{});
+    break;
+   }
+   if(/Could not|失败|Cannot find channel|404/.test(view.message)) throw new Error('Native updater displayed a failure');
+  }
+  if(confirming) break;
+  await new Promise(done=>setTimeout(done,500));
+ }
+ if(!confirming) throw new Error('Native signed update was not downloaded and confirmed');
+ const restartDeadline=Date.now()+240000;
+ let events=[];
+ while(Date.now()<restartDeadline) {
+  events=(await Promise.all((await readdir(journals)).filter(n=>n.endsWith('.jsonl')).map(async n=>(await readFile(join(journals,n),'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse)))).flat();
+  if(events.some(e=>e.version===targetVersion && e.pid!==baselinePid && e.event==='workspace-ready')) {successor=true;break;}
+  await new Promise(done=>setTimeout(done,1000));
+ }
+ if(!successor) throw new Error('Updated app did not automatically restart and reach workspace-ready');
+ const installed=JSON.parse(asar.extractFile(join(dirname(executablePath),'resources','app.asar'),'package.json'));
+ if(installed.version!==targetVersion) throw new Error('Installed bytes are not the feed target');
+ if(await readFile(join(home,'upgrade-retention-marker.txt'),'utf8')!=='retained across native Windows update\n') throw new Error('Shared DSH data was not retained');
+ await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-updated-app.ps1',import.meta.url)),'-AppPath',executablePath,'-Evidence',evidence,'-RetainedText','Windows upgrade'],{timeout:240000});
+ const differential=updaterLog.match(/Full:\s*([0-9,.]+)\s*KB,\s*To download:\s*([0-9,.]+)\s*KB\s*\(([0-9.]+)%\)/);
+ const downloadEvidence=differential ? {kind:'native-differential',fullKilobytes:Number(differential[1].replaceAll(',','')),downloadKilobytes:Number(differential[2].replaceAll(',','')),ratioPercent:Number(differential[3])} : {kind:'not-established'};
+ await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
+} finally {
+ if(!confirming) await app.close().catch(()=>{});
+ await new Promise(done=>server.close(done));
+}

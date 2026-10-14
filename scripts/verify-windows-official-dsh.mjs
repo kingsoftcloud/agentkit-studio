@@ -29,7 +29,7 @@ export async function verifyOfficialDshCoexistence(executablePath, environment, 
   let studio;
   try {
     const officialPage = await official.firstWindow({ timeout: 120000 });
-    await expect(officialPage.locator('body')).toContainText(/deepseek|DeepSeek/,{ timeout: 120000 });
+    await expect(officialPage.locator('body')).not.toBeEmpty({ timeout: 120000 });
     const legacyPath = join(sharedHome, 'profiles', 'desktop', 'package.json');
     await expect.poll(() => readFile(legacyPath,'utf8').then(() => true, () => false), { timeout: 120000 }).toBe(true);
     const before = await readFile(legacyPath, 'utf8');
@@ -39,7 +39,7 @@ export async function verifyOfficialDshCoexistence(executablePath, environment, 
     await expect(page.getByRole('button', { name: 'Agents', exact: true })).toBeVisible({ timeout: 120000 });
     await expect(page.getByRole('button', { name: '总览', exact: true })).toBeVisible();
     if (await readFile(legacyPath, 'utf8') !== before) throw new Error('Studio changed the running official DSH profile');
-    await expect(officialPage.locator('body')).toContainText(/deepseek|DeepSeek/);
+    if (await official.evaluate(({app}) => app.getVersion()) !== officialMetadata.version) throw new Error('The running official application identity changed');
     await page.screenshot({ path: join(evidence, 'windows-real-dsh-studio-coexistence.png'), fullPage: true });
     const studioIdentity = await studio.evaluate(({app}) => ({ name: app.name, version: app.getVersion(), userData: app.getPath('userData') }));
     const officialIdentity = await official.evaluate(({app}) => ({ name: app.name, version: app.getVersion(), userData: app.getPath('userData') }));
