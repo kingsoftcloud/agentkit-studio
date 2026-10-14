@@ -47,7 +47,7 @@ try {
  // alone does not register the native DSH provider/model preference namespace.
  const models=page.locator('[data-studio-model-settings]');
  await expect(models.getByRole('button',{name:'保存配置',exact:true})).toBeEnabled({timeout:90000});
- await models.getByLabel('提供商',{exact:true}).first().selectOption('custom');
+ await models.getByRole('combobox',{name:/^提供商/}).first().selectOption('custom');
  await models.getByLabel('模型名称',{exact:true}).first().fill('upgrade-proof');
  await models.getByLabel('API 地址',{exact:true}).first().fill(`http://127.0.0.1:${server.address().port}/v1`);
  await models.getByLabel(/^API Key/).first().fill('qualification-local-only');
