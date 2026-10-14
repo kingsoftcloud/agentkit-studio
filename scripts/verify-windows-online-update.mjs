@@ -65,7 +65,8 @@ try {
  await composer.press('Enter');
  await expect(page.locator('body')).toContainText('Windows upgrade marker saved.',{timeout:120000});
  await page.screenshot({path:join(evidence,'windows-before-update.png'),fullPage:true});
- await page.evaluate(()=>{void window.dshDesktop.updates.open();});
+ await page.evaluate(()=>{window.__studioUpdatePromptSettled=false;void window.dshDesktop.updates.open().finally(()=>{window.__studioUpdatePromptSettled=true;});});
+ let readyOpened=false;
  const deadline=Date.now()+900000;
  while(Date.now()<deadline) {
   for(const dialog of app.windows()) {
@@ -82,6 +83,12 @@ try {
    if(/Could not|失败|Cannot find channel|404/.test(view.message)) throw new Error('Native updater displayed a failure');
   }
   if(confirming) break;
+  // Download completion updates the button to Ready; the native UI requires
+  // another open action to display installation confirmation.
+  const native=await page.evaluate(async()=>({state:await window.dshDesktop.updates.status(),settled:window.__studioUpdatePromptSettled}));
+  if(native.state.phase==='ready' && native.settled && !readyOpened) {
+   readyOpened=true; await page.evaluate(()=>{void window.dshDesktop.updates.open();});
+  }
   await new Promise(done=>setTimeout(done,500));
  }
  if(!confirming) throw new Error('Native signed update was not downloaded and confirmed');
