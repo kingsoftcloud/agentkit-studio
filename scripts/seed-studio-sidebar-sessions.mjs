@@ -1,7 +1,7 @@
 /** Seed isolated, real DSH history using the installed Studio and configured model. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -24,6 +24,12 @@ const provider = dshModelRoute(settings.modelProfiles?.length ? profile : { ...p
 const scratch = await mkdtemp(join(tmpdir(), 'studio-native-sidebar-'));
 const output = resolve(process.argv[2] || '.artifacts/refactor/stage-2/sidebar-seed.json');
 const report = { evidence: 'full-studio-profile-real-dsh-persistence-and-configured-model', sessions: [], passed: false };
+const supplement = process.env.STUDIO_VERIFY_DELETED_HISTORY === '1';
+if (supplement) {
+  const previous = JSON.parse(await readFile(output, 'utf8'));
+  assert.equal(previous.passed, true);
+  report.sessions = previous.sessions;
+}
 let launch, running, browser, stage = 'profile-boot';
 const stdout = process.stdout.write.bind(process.stdout);
 process.stdout.write = (chunk, ...args) => {
@@ -58,7 +64,7 @@ try {
     if (!result?.ok) throw Object.assign(new Error('Studio operation refused'), { code: result?.error?.code });
     return result.value;
   };
-  for (const label of ['ALPHA', 'BETA']) {
+  for (const label of supplement ? ['DELETED'] : ['ALPHA', 'BETA']) {
     stage = `create-${label}`;
     const agentName = `SIDEBAR_${label}_AGENT_${basename(scratch).slice(-6)}`;
     const record = await call('agents/create-local', { name: agentName, runtimeType: 'harness', spec: { instructions: { system: 'Reply SIDEBAR_SEED_OK only. Do not use tools.' } } });
@@ -75,7 +81,9 @@ try {
     assert.equal(end?.data.reason.kind, 'completed', `seed turn ${label}: ${end?.data.reason.error?.code || end?.data.reason.kind}`);
     const title = `SIDEBAR_${label}_HISTORY_${agentId.slice(-6)}`;
     await running.ctx.sessionController.rename({ sessionId, title });
-    report.sessions.push({ label, agentId, agentName, sessionId, title, presetId: admission.presetId, completed: true });
+    const row = { label, agentId, agentName, sessionId, title, presetId: admission.presetId, completed: true };
+    if (supplement) report.deletedCandidate = row;
+    else report.sessions.push(row);
   }
   stage = 'durable-list';
   const list = await running.ctx.sessionController.list({}, AbortSignal.timeout(15000));
