@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const overview = await readFile(new URL('../src/client-fragments/02-overview-and-selector.js', import.meta.url), 'utf8');
-const onboarding = await readFile(new URL('../src/client-fragments/02-credential-onboarding.js', import.meta.url), 'utf8');
+import { createCredentialOnboarding } from '../src/client/pages/credential-onboarding.mjs';
+
+const overview = await readFile(new URL('../src/client/pages/overview.mjs', import.meta.url), 'utf8');
+const onboarding = await readFile(new URL('../src/client/pages/credential-onboarding.mjs', import.meta.url), 'utf8');
 
 function onboardingHarness({ statuses, localStorage = {}, props = {} } = {}) {
   const states = [];
@@ -35,7 +37,9 @@ function onboardingHarness({ statuses, localStorage = {}, props = {} } = {}) {
   let statusIndex = 0;
   const hostRemote = { modelCredentialStatus: async () => statuses[Math.min(statusIndex++, statuses.length - 1)] };
   class CustomEvent { constructor(type) { this.type = type; } }
-  const Component = new Function('h', 'useState', 'useEffect', 'useRef', 'hostRemote', 'window', 'CustomEvent', 'Modal', 'buttonStyle', 'BRAND', 'StudioMark', 'ModelSettingsSection', `${onboarding}; return CredentialOnboarding;`)(h, useState, useEffect, useRef, hostRemote, window, CustomEvent, 'Modal', () => ({ type: 'button' }), { danger: 'red', ink: 'black', inkMuted: 'gray', surface: 'white', primaryFill: 'teal' }, 'StudioMark', 'ModelSettingsSection');
+  const { CredentialOnboarding: Component } = createCredentialOnboarding({
+    ui: { React: { createElement: h, useState, useEffect, useRef }, Modal: 'Modal', buttonStyle: () => ({ type: 'button' }), BRAND: { danger: 'red', ink: 'black', inkMuted: 'gray', surface: 'white', primaryFill: 'teal' }, StudioMark: 'StudioMark', ModelSettingsSection: 'ModelSettingsSection' }, hostRemote, window, document: undefined,
+  });
   let tree;
   const render = () => { cursor = 0; dirty = false; tree = Component(props); for (const effect of effects.splice(0)) effect(); return tree; };
   const settle = async () => { render(); for (let i = 0; i < 20; i += 1) { await Promise.resolve(); if (dirty) render(); } return tree; };
@@ -43,7 +47,7 @@ function onboardingHarness({ statuses, localStorage = {}, props = {} } = {}) {
   const footerButtons = () => (modal()?.props.footer?.children || []).filter(node => node?.type === 'button');
   return { settle, modal, footerButtons, window, dispatched, get statusCalls() { return statusIndex; }, render };
 }
-const settings = (await readFile(new URL('../src/client-fragments/08-settings-and-entry.js', import.meta.url), 'utf8')) + (await readFile(new URL('../src/client/pages/studio-settings.mjs', import.meta.url), 'utf8'));
+const settings = (await readFile(new URL('../src/client/dsh/mount.mjs', import.meta.url), 'utf8')) + (await readFile(new URL('../src/client/pages/studio-settings.mjs', import.meta.url), 'utf8')) + (await readFile(new URL('../src/client/components/settings-launcher.mjs', import.meta.url), 'utf8'));
 const hostEntry = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
 
 test('first Studio overview checks the redacted Host credential status and offers one guided action', () => {

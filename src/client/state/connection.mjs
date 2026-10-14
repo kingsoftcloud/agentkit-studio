@@ -8,5 +8,6 @@ export function createConnectionOwner() {
       current = owner;
       return () => { if (current === owner) current = null; };
     },
+    dispose() { current = null; },
   };
 }

@@ -134,5 +134,5 @@ export function createStudioPrimitives({ React }) {
       style: { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '8px 12px', color: 'var(--dsw-alias-label-tertiary, #8290a1)', background: 'var(--dsw-alias-bg-layer-2, #f4f7fa)', fontSize: '12px', fontWeight: 700, cursor: 'not-allowed' },
     }, children);
   }
-  return { SecretInput, StudioMark, StudioWordmark, NavGlyph, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction };
+  return { SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction };
 }

@@ -1,0 +1,47 @@
+/** Architecture and size admission for the actual generated browser artifact. */
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const baselinePath = resolve(process.argv[2] || '.artifacts/refactor/stage-3/baseline.json');
+const output = resolve(process.argv[3] || '.artifacts/refactor/stage-3/module-admission.json');
+const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
+const graph = JSON.parse(await readFile(resolve(root, '.artifacts/client/metafile.json'), 'utf8'));
+const bundle = await readFile(resolve(root, 'dist/client.js'));
+const inputs = Object.keys(graph.inputs);
+const cycles = [], done = new Set(), active = [];
+function visit(name) {
+  const index = active.indexOf(name);
+  if (index >= 0) { cycles.push([...active.slice(index), name]); return; }
+  if (done.has(name)) return;
+  active.push(name);
+  for (const edge of graph.inputs[name]?.imports || []) if (!edge.external && graph.inputs[edge.path]) visit(edge.path);
+  active.pop(); done.add(name);
+}
+inputs.forEach(visit);
+const sources = await Promise.all(inputs.map(name => readFile(resolve(root, name), 'utf8')));
+const businessGlobals = sources.flatMap((source, index) => [...source.matchAll(/(?:window|globalThis)\.__AGENTKIT_[A-Z_]+/g)]
+  .filter(match => match[0] !== 'window.__AGENTKIT_STUDIO__' && match[0] !== 'globalThis.__AGENTKIT_STUDIO__')
+  .map(match => ({ input: inputs[index], name: match[0] })));
+const nodeInputs = inputs.filter(name => /node_modules|src\/(host|providers)\//.test(name));
+const registrations = sources.reduce((count, source) => count + [...source.matchAll(/window\.__ModuleLoader__\.load\(/g)].length, 0);
+const hostReactLoads = sources.reduce((count, source) => count + [...source.matchAll(/require\(['"]react['"]\)/g)].length, 0);
+const gzipBytes = gzipSync(bundle).length;
+const maximumGzipBytes = Math.floor(baseline.clientGzipBytes * 1.05);
+const report = {
+  evidence: 'generated-browser-module-graph-and-size',
+  baselineCommit: baseline.sourceCommit, clientSha256: createHash('sha256').update(bundle).digest('hex'),
+  moduleCount: inputs.length, cycles, nodeInputs, businessGlobals, registrations, hostReactLoads,
+  clientBytes: bundle.length, baselineGzipBytes: baseline.clientGzipBytes, gzipBytes, maximumGzipBytes,
+  growthPercent: (gzipBytes / baseline.clientGzipBytes - 1) * 100,
+  architecturePassed: !cycles.length && !nodeInputs.length && !businessGlobals.length && registrations === 1 && hostReactLoads === 1,
+  sizePassed: gzipBytes <= maximumGzipBytes,
+};
+report.passed = report.architecturePassed && report.sizePassed;
+await mkdir(dirname(output), { recursive: true });
+await writeFile(output, JSON.stringify(report, null, 2) + '\n');
+console.log(JSON.stringify(report));
+if (!report.passed) process.exitCode = 1;

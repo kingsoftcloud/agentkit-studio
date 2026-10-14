@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const fragment = await readFile(new URL('../src/client-fragments/05-resource-workspaces.js', import.meta.url), 'utf8');
-const source = fragment.slice(fragment.indexOf('function CodexPluginMarketItem'), fragment.indexOf('function UnsupportedStudioPage'));
+import { createCodexPluginPages } from '../src/client/pages/codex-plugins.mjs';
+const fragment = await readFile(new URL('../src/client/pages/resources.mjs', import.meta.url), 'utf8');
 
 function page(hostRemote) {
   const values = [], effects = [];
@@ -14,14 +14,16 @@ function page(hostRemote) {
     return [values[index], value => { values[index] = typeof value === 'function' ? value(values[index]) : value; }];
   };
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(value => value !== null && value !== undefined && value !== false) });
-  const Page = new Function('useState', 'useEffect', 'h', 'React', 'hostRemote', 'BRAND', 'buttonStyle', 'inputStyle', 'Pill', 'EmptyState', 'CodexPluginCapabilities', 'ResourceDialog', `${source}; return CodexPluginMarketItem;`)(useState, effect => { effects.push(effect); }, h, { Fragment: 'fragment' }, hostRemote, { ink: '#111', inkMuted: '#777', border: '#ddd', surface: '#fff', canvas: '#f4f4f4', accentStrong: '#111', primaryFill: '#111', danger: '#b00', signal: '#946200' }, () => ({}), () => ({}), 'pill', 'empty', 'codex-capabilities', 'dialog');
+  const { CodexPluginMarketItem: Page, CodexPluginCapabilities } = createCodexPluginPages({
+    ui: { React: { createElement: h, useState, useEffect: effect => effects.push(effect), Fragment: 'fragment' }, BRAND: { ink: '#111', inkMuted: '#777', border: '#ddd', surface: '#fff', canvas: '#f4f4f4', accentStrong: '#111', primaryFill: '#111', danger: '#b00', signal: '#946200' }, buttonStyle: () => ({}), inputStyle: () => ({}), Pill: 'pill', EmptyState: 'empty', ResourceDialog: 'dialog' }, hostRemote,
+  });
   const render = (view = 'page') => { cursor = 0; return Page({ view }); };
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
   const text = node => typeof node === 'string' ? node : node?.children?.map(text).join('') || '';
   const find = (type, label) => walk(render()).find(node => node.type === type && (node.props['aria-label'] === label || text(node) === label));
   const buttonContaining = label => walk(render()).find(node => node.type === 'button' && text(node).includes(label));
   const settle = async () => { for (let i = 0; i < 10; i += 1) await Promise.resolve(); };
-  return { render, find, buttonContaining, text, walk, effects, settle };
+  return { render, find, buttonContaining, text, walk, effects, settle, CodexPluginCapabilities };
 }
 
 test('Codex plugin center keeps the marketplace-qualified id and lifecycle actions', async () => {
@@ -42,13 +44,13 @@ test('Codex plugin center keeps the marketplace-qualified id and lifecycle actio
   assert.match(ui.text(ui.render()), /新会话生效/);
   assert.match(ui.text(ui.render()), /需要重新加载/);
   assert.equal(ui.find('a', 'App').props.href, 'https://example.com/auth');
-  assert.equal(ui.walk(ui.render()).find(node => node.type === 'codex-capabilities').props.pluginId, 'sample@market');
+  assert.equal(ui.walk(ui.render()).find(node => node.type === ui.CodexPluginCapabilities).props.pluginId, 'sample@market');
   assert.ok(ui.find('button', '卸载'));
   ui.find('button', '卸载').props.onClick();
   await ui.settle();
   assert.deepEqual(calls[1], ['uninstall', 'sample@market']);
   assert.ok(ui.find('button', '安装'));
-  assert.equal(ui.walk(ui.render()).find(node => node.type === 'codex-capabilities'), undefined);
+  assert.equal(ui.walk(ui.render()).find(node => node.type === ui.CodexPluginCapabilities), undefined);
 });
 
 test('Codex detail keeps operation failures visible without changing installed state', async () => {
@@ -95,7 +97,7 @@ test('Codex cached or restricted plugins remain discoverable with no lifecycle c
 });
 
 test('Codex plugin center does not render a second DSH market in the Studio resource workspace', async () => {
-  const operations = await readFile(new URL('../src/client-fragments/06-automation-and-operations.js', import.meta.url), 'utf8');
+  const operations = await readFile(new URL('../src/client/pages/resources.mjs', import.meta.url), 'utf8');
   assert.match(operations, /items: \[\{ id: 'models', label: '模型与工具' \}, \{ id: 'runtime-resources', label: '运行资源' \}\]/);
   assert.doesNotMatch(operations, /id: 'marketplace', label: '插件市场'/);
   assert.doesNotMatch(fragment, /function MarketplacePage/);

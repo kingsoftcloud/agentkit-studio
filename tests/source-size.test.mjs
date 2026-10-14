@@ -14,11 +14,10 @@ async function lineCount(path) {
 test('browser source modules stay below the 1000-line gate', async () => {
   const entry = resolve(root, 'src/client.js');
   assert.ok((await lineCount(entry)) <= 1000, 'src/client.js exceeds the source gate');
-  const names = (await readdir(resolve(root, 'src/client-fragments'))).filter(name => name.endsWith('.js')).sort();
-  assert.ok(names.length > 0, 'browser fragments are missing');
-  for (const name of names) {
-    assert.ok((await lineCount(resolve(root, 'src/client-fragments', name))) <= 1000, `${name} exceeds the source gate`);
-  }
+  const modules = await readdir(resolve(root, 'src/client'));
+  assert.ok(modules.includes('entry.mjs') && modules.includes('app.mjs'), 'browser module entry and scoped composition are missing');
+  const fragments = await readdir(resolve(root, 'src/client-fragments')).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
+  assert.deepEqual(fragments, [], 'business fragments must not return');
 });
 
 test('maintained JavaScript sources stay below the 1000-line gate', async () => {
@@ -38,11 +37,17 @@ test('maintained JavaScript sources stay below the 1000-line gate', async () => 
   }
 });
 
-test('packed browser entry is generated from the fragment build', async () => {
+test('packed browser entry is generated from the ES Module graph', async () => {
   const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
   assert.equal(packageJson.exports['./client'], './dist/client.js');
   const bundle = await readFile(resolve(root, 'dist/client.js'), 'utf8');
   assert.match(bundle, /window\.__ModuleLoader__\.load\(\{/);
   assert.match(bundle, /@kingsoftcloud\/agentkit-studio/);
   assert.ok(bundle.split(/\r?\n/).length <= 1000, 'packed client exceeds the artifact gate');
+  const build = await readFile(resolve(root, 'scripts/build-client.mjs'), 'utf8');
+  assert.doesNotMatch(build, /sources\.join|client-fragments|\.toString\(\)/);
+  const graph = JSON.parse(await readFile(resolve(root, '.artifacts/client/metafile.json'), 'utf8'));
+  assert.ok(Object.keys(graph.inputs).includes('src/client/entry.mjs'));
+  assert.ok(Object.keys(graph.inputs).includes('src/client/app.mjs'));
+  assert.ok(Object.keys(graph.inputs).every(name => !/node_modules|src\/(host|providers)\//.test(name)), 'Node, providers or an additional React entered the browser graph');
 });

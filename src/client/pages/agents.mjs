@@ -1,4 +1,5 @@
-export function createAgentPages({ React, window = globalThis.window, BRAND, hostRemote, inputStyle, buttonStyle, pagerButtonStyle, StudioSubnav, RuntimeCatalogPage, EmptyState, Pill, RUNTIME_LABELS, DEPLOYMENT_LABELS, AgentCreatePage, AgentEditPage, actions }) {
+export function createAgentPages({ ui, window = globalThis.window, hostRemote, actions }) {
+  const { React, BRAND, inputStyle, buttonStyle, pagerButtonStyle, StudioSubnav, RuntimeCatalogPage, EmptyState, Pill, RUNTIME_LABELS, DEPLOYMENT_LABELS, AgentCreatePage, AgentEditPage } = ui;
   const { createElement: h, useState, useEffect, useRef } = React;
   function AgentWorkspace({ onNavigate }) {
     const [view, setView] = useState('list');

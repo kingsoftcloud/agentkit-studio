@@ -1,4 +1,5 @@
-export function createAgentForm({ React, BRAND, hostRemote, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, buttonStyle, inputStyle, SectionHeading, PlatformResourcePicker, Pill }) {
+export function createAgentForm({ ui, hostRemote }) {
+  const { React, BRAND, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, buttonStyle, inputStyle, SectionHeading, PlatformResourcePicker, Pill } = ui;
   const { createElement: h, useState, useEffect } = React;
   function AgentCreatePage({ initialAgent = null, onBack, onCreated }) {
     const editing = Boolean(initialAgent);

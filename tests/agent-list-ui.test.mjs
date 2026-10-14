@@ -6,7 +6,7 @@ function render(agents, query = '', props = {}, changes = []) {
   const states = [agents, 'ready', '', [], query, 'all', 1, 20, agents.length];
   let cursor = 0;
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
-  const { AgentsPage: Page } = createAgentPages({ React: { Fragment: 'fragment', createElement: h, useState: () => { const index = cursor++; return [states[index], value => changes.push([index, value])]; }, useEffect() {}, useRef: () => ({ current: 0 }) }, window: {}, BRAND: {}, hostRemote: {}, inputStyle: () => ({}), buttonStyle: () => ({}), pagerButtonStyle: () => ({}), StudioSubnav: 'nav', RuntimeCatalogPage: 'runtime', EmptyState: 'empty', Pill: 'pill', RUNTIME_LABELS: {}, DEPLOYMENT_LABELS: {}, actions: {} });
+  const { AgentsPage: Page } = createAgentPages({ ui: { React: { Fragment: 'fragment', createElement: h, useState: () => { const index = cursor++; return [states[index], value => changes.push([index, value])]; }, useEffect() {}, useRef: () => ({ current: 0 }) }, BRAND: {}, inputStyle: () => ({}), buttonStyle: () => ({}), pagerButtonStyle: () => ({}), StudioSubnav: 'nav', RuntimeCatalogPage: 'runtime', EmptyState: 'empty', Pill: 'pill', RUNTIME_LABELS: {}, DEPLOYMENT_LABELS: {} }, window: {}, hostRemote: {}, actions: {} });
   return walk(Page(props));
 }
 

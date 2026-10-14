@@ -17,7 +17,7 @@ function settingsHarness(remote, updates, versions = {}) {
     if (!(index in states)) { states[index] = true; effects.push(callback); }
   };
   const window = { dshDesktop: updates ? { protocolVersion: 1, updates } : undefined };
-  const Component = createStudioSettingsSection({ React: { createElement: h, useState, useEffect, useRef }, window, hostRemote: remote, BRAND: {}, SettingsRow: 'row', buttonStyle: () => ({}), versions: readProductVersions(versions) });
+  const Component = createStudioSettingsSection({ ui: { React: { createElement: h, useState, useEffect, useRef }, BRAND: {}, SettingsRow: 'row', buttonStyle: () => ({}) }, window, hostRemote: remote, versions: readProductVersions(versions) });
   const render = () => { cursor = 0; dirty = false; tree = Component(); for (const callback of effects.splice(0)) cleanups.push(callback()); };
   const settle = async () => { render(); for (let i = 0; i < 12; i++) { await Promise.resolve(); if (dirty) render(); } return tree; };
   const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
