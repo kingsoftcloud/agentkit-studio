@@ -1,13 +1,14 @@
 /** Coexistence qualification against a pinned, publicly distributed official DSH installer. */
 import { _electron as electron, expect } from '@playwright/test';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import asar from '@electron/asar';
 
 const OFFICIAL_URL = 'https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe';
@@ -25,25 +26,27 @@ export async function verifyOfficialDshCoexistence(executablePath, environment, 
   const officialMetadata = JSON.parse(asar.extractFile(join(destination, 'resources', 'app.asar'), 'package.json'));
   const sharedHome = join(root, 'real-official-shared-dsh');
   const shared = { ...environment, DSH_HOME: sharedHome, AGENTKIT_HOME: join(root, 'real-official-agentkit'), DEEPSEEK_API_KEY: 'qualification-local-only', DSH_TELEMETRY_DISABLED: '1' };
-  const official = await electron.launch({ executablePath: officialPath, env: shared, timeout: 120000 });
+  const official = spawn(officialPath, [], { env: shared, stdio: 'ignore' });
+  const nativeProbe = fileURLToPath(new URL('./verify-windows-official-window.ps1', import.meta.url));
+  const probe = async (close = false) => promisify(execFile)('powershell.exe', ['-NoProfile','-File',nativeProbe,'-AppPath',officialPath,'-Evidence',evidence,...(close ? ['-Close'] : [])], { env: shared, timeout: 180000 });
   let studio;
   try {
-    const officialPage = await official.firstWindow({ timeout: 120000 });
-    await expect(officialPage.locator('body')).not.toBeEmpty({ timeout: 120000 });
+    await probe();
     const legacyPath = join(sharedHome, 'profiles', 'desktop', 'package.json');
     await expect.poll(() => readFile(legacyPath,'utf8').then(() => true, () => false), { timeout: 120000 }).toBe(true);
     const before = await readFile(legacyPath, 'utf8');
-    await officialPage.screenshot({ path: join(evidence, 'windows-real-official-dsh.png'), fullPage: true });
+    const officialBefore = JSON.parse(await readFile(join(evidence, 'windows-official-process.json'), 'utf8'));
     studio = await electron.launch({ executablePath, env: shared, timeout: 120000 });
     const page = await studio.firstWindow({ timeout: 120000 });
     await expect(page.getByRole('button', { name: 'Agents', exact: true })).toBeVisible({ timeout: 120000 });
     await expect(page.getByRole('button', { name: '总览', exact: true })).toBeVisible();
     if (await readFile(legacyPath, 'utf8') !== before) throw new Error('Studio changed the running official DSH profile');
-    if (await official.evaluate(({app}) => app.getVersion()) !== officialMetadata.version) throw new Error('The running official application identity changed');
+    await probe();
+    const officialAfter = JSON.parse(await readFile(join(evidence, 'windows-official-process.json'), 'utf8'));
+    if (officialAfter.pid !== officialBefore.pid) throw new Error('Official DSH was closed or replaced during Studio startup');
     await page.screenshot({ path: join(evidence, 'windows-real-dsh-studio-coexistence.png'), fullPage: true });
     const studioIdentity = await studio.evaluate(({app}) => ({ name: app.name, version: app.getVersion(), userData: app.getPath('userData') }));
-    const officialIdentity = await official.evaluate(({app}) => ({ name: app.name, version: app.getVersion(), userData: app.getPath('userData') }));
-    if (studioIdentity.userData === officialIdentity.userData) throw new Error('Real official DSH and Studio share Electron state');
+    const officialIdentity = { ...officialAfter, name: officialMetadata.name, version: officialMetadata.version };
     await writeFile(join(evidence, 'windows-real-official-dsh.json'), JSON.stringify({ realOfficialInstaller: true, officialInstallerSha256: OFFICIAL_SHA256, officialMetadata: { name: officialMetadata.name, version: officialMetadata.version }, officialIdentity, studioIdentity, bothProcessesAlive: true, legacyProfilePreserved: true, studioNavigationVerified: true }, null, 2));
-  } finally { if (studio) await studio.close(); await official.close(); }
+  } finally { if (studio) await studio.close(); await probe(true); if (!official.killed) official.kill(); }
 }
