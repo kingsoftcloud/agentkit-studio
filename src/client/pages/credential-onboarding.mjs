@@ -47,7 +47,7 @@ export function createCredentialOnboarding({ ui, hostRemote, window = globalThis
       return () => style.remove();
     });
   }
-  
+
   function CredentialOnboarding({ explicit = false, complete = () => {}, openSection = () => {}, dshModel } = {}) {
     const [state, setState] = useState({ status: 'loading', configured: false });
     const [open, setOpen] = useState(false);

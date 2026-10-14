@@ -28,7 +28,7 @@ export function createCodexPluginPages({ ui, hostRemote }) {
         !state.value.apps.length && !state.value.skills.length && !state.value.mcpServers.length ? h('p', null, '插件未声明连接器、Skill 或 MCP；其他能力由对应宿主加载。') : null,
       ) : null);
   }
-  
+
   function CodexPluginMarketItem({ view } = {}) {
     const [status, setStatus] = useState('idle');
     const [items, setItems] = useState([]);

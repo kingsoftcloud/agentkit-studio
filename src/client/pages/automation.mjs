@@ -20,7 +20,7 @@ export function createAutomationPage({ ui, hostRemote, actions, window = globalT
     }, [key, refreshKey]);
     return result.key === key ? result : { key, status: key ? 'loading' : 'idle', items: [], error: '' };
   }
-  
+
   function AutomationPage({ scheduleRemote }) {
     const [scope, setScope] = useState('local');
     const loadVersion = useRef(0);
@@ -54,7 +54,7 @@ export function createAutomationPage({ ui, hostRemote, actions, window = globalT
     const historyView = useAutomationOccurrences(tasks.find(task => task.taskId === historyTask), tasks);
     const detailView = useAutomationOccurrences(detailTask, tasks);
     const history = historyView.items, detailOccurrences = detailView.items;
-  
+
     const agentId = item => item?.metadata?.id || item?.id || '';
     const agentName = item => item?.metadata?.name || item?.name || agentId(item);
     const createAgents = scope === 'cloud' ? agents.filter(item => availability?.readyAgentIds?.includes(agentId(item))) : agents;
@@ -137,7 +137,7 @@ export function createAutomationPage({ ui, hostRemote, actions, window = globalT
       }).catch(() => { if (!cancelled) setHistoryStatus('error'); });
       return () => { cancelled = true; };
     }, [section, status, tasks]);
-  
+
     const save = async () => {
       if (!form.agentId || !form.displayName.trim() || !form.prompt.trim()) {
         setError('请选择 Agent，并填写任务名称和提示词。'); return;
@@ -302,7 +302,7 @@ export function createAutomationPage({ ui, hostRemote, actions, window = globalT
       h('div', { style: { marginTop: '12px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap' } }, detailTask?.command?.payload?.content || '—'),
       h('div', { style: { display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '13px' } }, h('button', { type: 'button', onClick: () => startEdit(detailTask), style: buttonStyle() }, '编辑'), h('button', { type: 'button', onClick: () => void toggle(detailTask), disabled: busyTask === detailTask.taskId, style: buttonStyle() }, detailTask.enabled === false ? '启用' : '暂停'), h('button', { type: 'button', onClick: () => void runNow(detailTask), disabled: busyTask === detailTask.taskId || detailTask.enabled === false, style: { ...buttonStyle(), color: BRAND.primaryText, background: BRAND.primaryFill, borderColor: 'transparent' } }, busyTask === detailTask.taskId ? '提交中…' : '立即运行'), h('button', { type: 'button', onClick: () => void remove(detailTask), disabled: busyTask === detailTask.taskId, style: { ...buttonStyle(), color: BRAND.danger } }, '删除')),
       h('div', { style: { marginTop: '14px', paddingTop: '12px', borderTop: '1px solid ' + BRAND.border } }, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, '最近执行'), detailOccurrences.length ? h('div', { style: { display: 'grid', gap: '6px', marginTop: '8px' } }, detailOccurrences.slice(0, 10).map(item => h('div', { key: item.occurrenceId || `${item.state}-${item.scheduledFor}`, style: { display: 'grid', gridTemplateColumns: '90px minmax(0,1fr) 170px', gap: '10px', alignItems: 'center', color: BRAND.inkMuted, fontSize: '11px' } }, h(Pill, { tone: ['succeeded', 'completed'].includes(String(item.state).toLowerCase()) ? 'accent' : ['failed', 'error', 'cancelled'].includes(String(item.state).toLowerCase()) ? 'signal' : 'neutral' }, item.state || 'unknown'), h('div', null, h('span', null, item.detail || item.errorCode || item.occurrenceId || '—'), h(ScheduleDeliveryResult, { item })), h('span', null, item.completedAt ? new Date(item.completedAt).toLocaleString() : item.startedAt ? new Date(item.startedAt).toLocaleString() : item.scheduledFor ? new Date(item.scheduledFor).toLocaleString() : '—')))) : occurrencePlaceholder(detailView))) : null;
-  
+
     return h('div', null,
       h(OperationalPageHeading, { title: '自动化', detail: scope === 'cloud' ? '云端按计划执行，关闭应用后仍然有效。每次执行使用触发时部署的版本。' : '本地按计划执行，需要保持此设备和应用运行。', action: h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, h(Pill, { tone: availability?.triggerActive ? 'accent' : 'neutral' }, availability?.triggerActive ? '调度运行中' : '调度待就绪'), h('button', { type: 'button', onClick: () => { setEditingTask(null); setForm(previous => ({ ...previous, deliveryMode: 'record', deliveryTarget: null, agentId: createAgents.some(item => agentId(item) === previous.agentId) ? previous.agentId : agentId(createAgents[0]) })); setEditorOpen(true); setMessage(''); }, disabled: status !== 'ready' || !createAgents.length, style: buttonStyle() }, '新建自动化'), h('button', { type: 'button', onClick: () => void load(), style: { ...buttonStyle(), background: BRAND.surface } }, '刷新')) }),
       h(StudioPageTabs, { value: scope, onChange: setScope, items: [{ id: 'local', label: '本地' }, { id: 'cloud', label: '云端部署' }], ariaLabel: '自动化执行位置' }),
@@ -328,7 +328,7 @@ export function createAutomationPage({ ui, hostRemote, actions, window = globalT
             h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', onClick: () => setSection('tasks'), style: { ...buttonStyle(), background: section === 'tasks' ? BRAND.accentSoft : BRAND.surface } }, `全部任务 ${tasks.length}`), h('button', { type: 'button', onClick: () => setSection('history'), style: { ...buttonStyle(), background: section === 'history' ? BRAND.accentSoft : BRAND.surface } }, '执行记录')),
             h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, h('input', { value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索任务或提示词', 'aria-label': '搜索自动化', style: { ...inputStyle(), width: '180px' } }), h('select', { value: agentFilter, onChange: event => setAgentFilter(event.target.value), 'aria-label': '按 Agent 筛选', style: { ...inputStyle(), width: '170px' } }, h('option', { value: '' }, '全部 Agent'), agents.map(item => h('option', { key: agentId(item), value: agentId(item) }, agentName(item)))), section === 'tasks' ? h('button', { type: 'button', onClick: () => setViewMode(viewMode === 'board' ? 'list' : 'board'), style: { ...buttonStyle(), background: BRAND.surface } }, viewMode === 'board' ? '列表视图' : '看板视图') : null)),
           section === 'tasks' ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, '从常用任务开始：'), h('button', { type: 'button', onClick: () => openTemplate('daily'), disabled: !createAgents.length, style: { ...buttonStyle(), background: BRAND.surface } }, '每日简报 · 工作日 10:00'), h('button', { type: 'button', onClick: () => openTemplate('interval'), disabled: !createAgents.length, style: { ...buttonStyle(), background: BRAND.surface } }, '定期巡检 · 每 30 分钟'), h('button', { type: 'button', onClick: () => openTemplate('weekly'), disabled: !createAgents.length, style: { ...buttonStyle(), background: BRAND.surface } }, '每周总结 · 周五 17:00')) : null),
-  
+
         scope === 'local' ? h('details', { style: { display: 'grid', gap: '10px', marginBottom: '14px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface } },
           h('summary', { style: { cursor: 'pointer', padding: '11px 14px', color: BRAND.ink, fontWeight: 750, fontSize: '12px' } }, `DSH 原生会话自动化 ${nativeTasks.length} · 展开查看`),
           h('div', { style: { display: 'grid', gap: '10px', padding: '0 14px 14px' } },

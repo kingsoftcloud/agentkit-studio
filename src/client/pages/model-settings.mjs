@@ -17,7 +17,7 @@ export function createModelSettingsSection({ ui, hostRemote, window = globalThis
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
-  
+
     const hydrateModelInputs = async profiles => Promise.all(profiles.map(async profile => {
       try {
         const catalog = await hostRemote.modelCatalog(profile.id);
@@ -28,7 +28,7 @@ export function createModelSettingsSection({ ui, hostRemote, window = globalThis
         return { ...profile, inputCapability: 'unavailable' };
       }
     }));
-  
+
     const load = async () => {
       setStatus('loading'); setError('');
       try {

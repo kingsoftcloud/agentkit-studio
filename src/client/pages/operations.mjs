@@ -7,7 +7,7 @@ export function createOperationsWorkspace({ ui }) {
     if (page === 'channels') return h(ChannelsPage);
     return null;
   }
-  
+
   function OperationsWorkspace({ scheduleRemote }) {
     const [tab, setTab] = useState('delivery');
     return h('div', null,

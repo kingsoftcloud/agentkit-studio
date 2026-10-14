@@ -24,7 +24,7 @@ export function createStudioShell({ ui, hostRemote }) {
     }, []);
     return h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : status === 'loading' ? '读取 Host' : 'Host 待接入');
   }
-  
+
   function StudioShell({ scheduleRemote, page = 'overview', onNavigate }) {
     const activeNav = PANELS.find(item => item.page === page) || PANELS[0];
     return h('div', {
@@ -40,7 +40,7 @@ export function createStudioShell({ ui, hostRemote }) {
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '9px' } }, h(Pill, { tone: 'neutral' }, 'Local'), h(HostStatusPill))),
       page === 'overview' ? h(OverviewPage, { onNavigate }) : page === 'agents' ? h(AgentWorkspace, { onNavigate }) : page === 'resource-hub' ? h(ResourceWorkspace) : page === 'operations' ? h(OperationsWorkspace, { scheduleRemote }) : h(DomainPage, { page })));
   }
-  
+
   function StudioPanelIcon({ size, active, glyph, panelId }) {
     const paths = {
       'studio-overview': h('path', { d: 'M5 11 12 5l7 6v7h-5v-5h-4v5H5v-7Z', fill: 'none', stroke: 'currentColor', strokeWidth: '1.7', strokeLinejoin: 'round' }),
@@ -54,7 +54,7 @@ export function createStudioShell({ ui, hostRemote }) {
       style: { display: 'inline-grid', placeItems: 'center', width: String(size) + 'px', height: String(size) + 'px', borderRadius: '5px', color: active ? BRAND.accentStrong : 'currentColor', background: active ? BRAND.accentSoft : 'transparent', fontSize: size >= 18 ? '16px' : '14px', fontWeight: 700 },
     }, h('svg', { width: Math.max(14, Number(size || 18) - 1), height: Math.max(14, Number(size || 18) - 1), viewBox: '0 0 24 24', fill: 'none' }, paths[panelId] || h('path', { d: 'M5 12h14', stroke: 'currentColor', strokeWidth: '1.7', strokeLinecap: 'round' })));
   }
-  
+
   function SettingsRow({ label, value, detail, tone = 'neutral' }) {
     return h('div', {
       'data-studio-settings-row': true,

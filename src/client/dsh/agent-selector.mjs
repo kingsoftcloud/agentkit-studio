@@ -30,7 +30,7 @@ export function createAgentSelector({ ui, hostRemote, readConversationAgent, wri
         console.warn('[agentkit-studio] Agent permission default unavailable:', error?.message || error);
       }
     };
-  
+
     useEffect(() => {
       let alive = true;
       const selectedAgent = readConversationAgent(sessionId);
@@ -59,7 +59,7 @@ export function createAgentSelector({ ui, hostRemote, readConversationAgent, wri
       }).catch(error => { if (alive) setNotice(error?.message || 'Agent 目录暂不可读取'); }).finally(() => { if (alive) setLoading(false); });
       return () => { alive = false; };
     }, [sessionId, presetId]);
-  
+
     const select = async value => {
       value = value || null;
       setOpen(false);
