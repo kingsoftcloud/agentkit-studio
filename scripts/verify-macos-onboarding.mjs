@@ -24,7 +24,7 @@ try {
   await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
   await page.getByRole('button',{name:'重新打开凭证引导',exact:true}).click();
   await expect(page.locator('.agentkit-credential-onboarding-content')).toContainText('可以开始对话了');
-  await page.getByRole('button',{name:'开始对话',exact:true}).click();
+  await page.locator('.agentkit-onboarding-actions').getByRole('button',{name:'开始对话',exact:true}).click();
   await writeFile(join(evidence,'macos-onboarding.json'),JSON.stringify({version,actualSignedApp:true,...proof,configuredReopenVerified:true},null,2));
 } catch(error) {
   await writeFile(join(evidence,'macos-onboarding-failure.json'),JSON.stringify({message:error.message},null,2));
