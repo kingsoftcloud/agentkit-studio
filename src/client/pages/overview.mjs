@@ -1,8 +1,9 @@
 import { ALLOWED_RUNTIME_TYPES as DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
 
-export function createOverviewPage({ ui, hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent }) {
-  const { React, EmptyState, Metric, Pill, SectionHeading, StartChecks, buttonStyle, ALLOWED_RUNTIME_TYPES = DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createOverviewPage({
+  ui: { React: { createElement: h, useEffect, useState }, EmptyState, Metric, Pill, SectionHeading, StartChecks, buttonStyle, ALLOWED_RUNTIME_TYPES = DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
+  hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent
+}) {
   function OverviewPage({ onNavigate }) {
     const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
     const [connection, setConnection] = useState({ status: 'loading', agents: 0, runtimes: 0, error: '' });
@@ -99,5 +100,5 @@ export function createOverviewPage({ ui, hostRemote, window = globalThis.window,
       h('div', { style: { color: 'var(--dsw-alias-label-tertiary, #8a97a8)', fontSize: '11px' } }, 'Revision ' + String(metadata.revision || 1)),
       onResources ? h('button', { type: 'button', onClick: () => onResources(metadata.id || agent?.id), style: { border: '1px solid ' + BRAND.border, borderRadius: '7px', padding: '5px 8px', color: BRAND.accentStrong, background: BRAND.surface, fontSize: '10px', fontWeight: 750 } }, '配置资源') : null));
   }
-  return { OverviewPage };
+  return OverviewPage;
 }

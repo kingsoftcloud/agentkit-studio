@@ -1,8 +1,9 @@
 import { BRAND as DEFAULT_BRAND, PANELS as DEFAULT_PANELS } from '../theme.mjs';
 
-export function createStudioShell({ ui, hostRemote }) {
-  const { React, Pill, AgentWorkspace, DomainPage, OperationsWorkspace, OverviewPage, ResourceWorkspace, BRAND = DEFAULT_BRAND, PANELS = DEFAULT_PANELS } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createStudioShell({
+  ui: { React: { createElement: h, useEffect, useState }, Pill, AgentWorkspace, DomainPage, OperationsWorkspace, OverviewPage, ResourceWorkspace, BRAND = DEFAULT_BRAND, PANELS = DEFAULT_PANELS },
+  hostRemote
+}) {
   function HostStatusPill() {
     const [status, setStatus] = useState('loading');
     useEffect(() => {

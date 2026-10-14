@@ -18,6 +18,11 @@ export async function verifyStudioNativeSidebar(page, seed) {
     await page.getByText(name, { exact: true }).click();
   };
   await page.locator('.studio-agent-trigger').waitFor({ state: 'visible', timeout: 60000 });
+  // A mounted selector can precede native Session/store restoration. Observe
+  // the retained history before issuing a new-workspace navigation action.
+  await mode('单列表');
+  await mode('全部对话（显示已归档）');
+  for (const row of rows) await historyRow(row).waitFor({ state: 'visible', timeout: 30000 });
   // startSession() without a current/recent Workspace deliberately opens the
   // home view without retaining a Session. The clear-Workspace assertion below
   // needs a real Workspace blank, so use its native, explicitly scoped action.
@@ -29,7 +34,6 @@ export async function verifyStudioNativeSidebar(page, seed) {
   await page.waitForFunction(() => Boolean(document.querySelector('.studio-agent-trigger')?.getAttribute('data-studio-session-id')), null, { timeout: 30000 });
   await page.getByRole('button', { name: '取消工作区', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
   await mode('单列表');
-  await mode('全部对话（显示已归档）');
   for (const row of rows) await historyRow(row).waitFor({ state: 'visible', timeout: 30000 });
   await visible();
   const nativeTitles = [];

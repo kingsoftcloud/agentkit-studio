@@ -1,9 +1,9 @@
 import { operationalId, operationalDate } from '../state/operational-data.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createOperationalComponents({ ui }) {
-  const { React, Pill, pagerButtonStyle, buttonStyle, OperationalPanel, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h } = React;
+export function createOperationalComponents({
+  ui: { React: { createElement: h }, Pill, pagerButtonStyle, buttonStyle, OperationalPanel, BRAND = DEFAULT_BRAND },
+}) {
   function operationalStatus(value) {
     const status = String(value || 'unknown').toUpperCase();
     const tone = ['SUCCEEDED', 'SUCCESS', 'PASSED', 'COMPLETED', 'READY', 'CONNECTED', 'ENABLED', 'ONLINE'].includes(status) ? 'accent' : ['FAILED', 'ERROR', 'CANCELLED', 'REJECTED', 'OFFLINE'].includes(status) ? 'signal' : 'neutral';

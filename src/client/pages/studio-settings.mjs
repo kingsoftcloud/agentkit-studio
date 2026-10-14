@@ -1,6 +1,7 @@
-export function createStudioSettingsSection({ ui, hostRemote, versions, window = globalThis.window }) {
-  const { React, BRAND, SettingsRow, buttonStyle } = ui;
-  const { createElement: h, useEffect, useState, useRef } = React;
+export function createStudioSettingsSection({
+  ui: { React: { createElement: h, useEffect, useState, useRef }, BRAND, SettingsRow, buttonStyle },
+  hostRemote, versions, window = globalThis.window
+}) {
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = versions;
   function StudioSettingsSection() {
     const [host, setHost] = useState({ status: 'loading', error: '' });

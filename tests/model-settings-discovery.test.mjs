@@ -22,7 +22,7 @@ function ui(metadata, input) {
   const useEffect = callback => { const index = cursor++; if (!(index in states)) { states[index] = true; effects.push(callback); } };
   const host = { settings: service.settings, updateSettings: service.save, modelCatalog: service.catalog, syncModelCredential: service.sync };
   const dshModel = { describe: async () => ({ namespaces: [] }), credentialStatus: async () => ({ configured: true }), applyProfiles: async payload => { applied = payload; } };
-  const { ModelSettingsSection: Component } = createModelSettingsSection({
+  const Component = createModelSettingsSection({
     ui: { React: { createElement: h, useState, useEffect }, BRAND: {}, Pill: 'pill', inputStyle: () => ({}), buttonStyle: () => ({}), SecretInput: 'SecretInput' },
     hostRemote: host, window: { dispatchEvent() {} }, CustomEvent: class {},
   });

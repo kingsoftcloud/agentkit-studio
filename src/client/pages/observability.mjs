@@ -1,9 +1,10 @@
 import { operationalCollection, operationalDate, operationalId, operationalLabel } from '../state/operational-data.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createObservabilityPage({ ui, hostRemote, window = globalThis.window, document = globalThis.document }) {
-  const { React, EmptyState, Metric, OperationalBars, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, Pill, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createObservabilityPage({
+  ui: { React: { createElement: h, useEffect, useState, Fragment }, EmptyState, Metric, OperationalBars, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, Pill, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND },
+  hostRemote, window = globalThis.window, document = globalThis.document
+}) {
   function ObservabilityPage() {
     const [status, setStatus] = useState('loading');
     const [error, setError] = useState('');
@@ -117,7 +118,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
           h('br'), `系统提示词 ${Number(item.instructionsChars || 0).toLocaleString()} 字符 · 对话内容 ${Number(item.conversationChars || 0).toLocaleString()} 字符`)))
         : h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '此记录没有请求体统计。当前仅新运行的 Codex Chat Completions 代理提供该统计；不代表请求大小为零。'));
     const detailContent = detailTab === 'requests' ? requestDetail : detailTab === 'raw'
-      ? h(React.Fragment, null,
+      ? h(Fragment, null,
           h('button', { type: 'button', onClick: loadRaw, style: buttonStyle() }, '读取 OTLP'),
           raw
             ? h('pre', { style: { maxHeight: '32vh', overflow: 'auto', whiteSpace: 'pre-wrap', color: BRAND.ink, fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(raw, null, 2))
@@ -151,7 +152,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
             h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'button', onClick: exportSession, style: { ...buttonStyle(), background: BRAND.surface } }, '导出 Session')),
             detailLoading
               ? h('p', { style: { color: BRAND.inkMuted } }, '正在读取 Span…')
-              : h(React.Fragment, null,
+              : h(Fragment, null,
                   h(StudioPageTabs, { value: detailTab, onChange: setDetailTab, items: [{ id: 'spans', label: `Spans ${selected?.spans?.length || 0}` }, { id: 'attributes', label: '属性' }, { id: 'events', label: '事件' }, { id: 'resource', label: '资源' }, { id: 'trajectory', label: '轨迹' }, { id: 'requests', label: `模型请求${requestMetrics.length ? ' ' + requestMetrics.length : ''}` }, { id: 'raw', label: '原始 OTLP' }], ariaLabel: 'Trace 详情视图' }),
                   detailContent)))
       : null;
@@ -170,7 +171,7 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
       h(OperationalPageHeading, { title: '观测', detail: '按时间、Agent、Run 和 Session 查看 Trace，打开详情查看 Span、事件、用量和原始 OTLP。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Trace Store 已连接' : '读取中') }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取观测数据', detail: '读取聚合指标和 Trace 列表。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '观测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
-      status === 'ready' ? h(React.Fragment, null,
+      status === 'ready' ? h(Fragment, null,
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
         overview?.buckets ? h(OperationalBars, { buckets: overview.buckets }) : null,
         overview?.cloud ? h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginBottom: '12px' } }, `云端统计 · 会话 ${overview.cloud.sessionCount ?? '—'} · Tokens ${overview.cloud.tokenCount ?? '—'} · 错误 ${overview.cloud.errorCount ?? '—'}`) : null,
@@ -186,5 +187,5 @@ export function createObservabilityPage({ ui, hostRemote, window = globalThis.wi
         traceDetail)
       : null);
   }
-  return { ObservabilityPage };
+  return ObservabilityPage;
 }

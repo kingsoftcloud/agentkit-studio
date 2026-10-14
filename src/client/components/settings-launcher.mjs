@@ -1,6 +1,7 @@
-export function createSettingsLauncher({ ui, window = globalThis.window }) {
-  const { React, IconSettingsOutlineMedium, Tooltip } = ui;
-  const { createElement: h, useEffect } = React;
+export function createSettingsLauncher({
+  ui: { React: { createElement: h, useEffect }, IconSettingsOutlineMedium, Tooltip },
+  window = globalThis.window
+}) {
   function StudioSettingsLauncher({ wide, settingsOpen, settingsShortcut, openSettings, openOnboarding, t }) {
     const label = t('trigger');
     useEffect(() => {
@@ -20,5 +21,5 @@ export function createSettingsLauncher({ ui, window = globalThis.window }) {
         'aria-haspopup': 'dialog', 'aria-expanded': settingsOpen, onClick: openSettings,
       }, h(IconSettingsOutlineMedium, { size: wide ? 16 : 18 }), wide && h('span', null, label)));
   }
-  return { StudioSettingsLauncher };
+  return StudioSettingsLauncher;
 }

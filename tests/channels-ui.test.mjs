@@ -22,7 +22,7 @@ function harness() {
     },
   };
   const names = ['OperationalPageHeading', 'Pill', 'EmptyState', 'Metric', 'OperationalToolbar', 'ResourceDialog', 'StudioPageTabs', 'OperationalTable', 'OperationalPager'];
-  const { ChannelsPage: Page } = createChannelsPage({
+  const Page = createChannelsPage({
     ui: { React: { createElement: h, useState, useEffect: () => {}, Fragment: 'fragment' }, BRAND: {}, buttonStyle: () => ({}), inputStyle: () => ({}), operationalStatus: value => value, ...Object.fromEntries(names.map(name => [name, name])) },
     hostRemote: host, actions: { confirm: async () => true },
   });

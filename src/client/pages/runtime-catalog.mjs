@@ -1,8 +1,9 @@
 import { ALLOWED_RUNTIME_TYPES as DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
 
-export function createRuntimeCatalogPage({ ui, hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent }) {
-  const { React, EmptyState, Pill, SectionHeading, buttonStyle, ALLOWED_RUNTIME_TYPES = DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS } = ui;
-  const { createElement: h, useEffect, useState } = React;
+export function createRuntimeCatalogPage({
+  ui: { React: { createElement: h, useEffect, useState }, EmptyState, Pill, SectionHeading, buttonStyle, ALLOWED_RUNTIME_TYPES = DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
+  hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent
+}) {
   function RuntimeCatalogPage({ onNavigate }) {
     const [status, setStatus] = useState('loading');
     const [items, setItems] = useState([]);
@@ -39,5 +40,5 @@ export function createRuntimeCatalogPage({ ui, hostRemote, window = globalThis.w
         codexUnavailable ? h('button', { type: 'button', onClick: () => { window.dispatchEvent(new CustomEvent('agentkit-studio:open-plugin-center')); }, style: { ...buttonStyle(), marginTop: '12px' } }, '打开插件中心') : null);
       })) : null);
   }
-  return { RuntimeCatalogPage };
+  return RuntimeCatalogPage;
 }

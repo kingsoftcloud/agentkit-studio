@@ -1,8 +1,8 @@
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
-export function createNavigation({ ui }) {
-  const { React, BRAND = DEFAULT_BRAND } = ui;
-  const { createElement: h } = React;
+export function createNavigation({
+  ui: { React: { createElement: h }, BRAND = DEFAULT_BRAND },
+}) {
   function StudioSubnav({ items, value, onChange }) {
     return h('nav', {
       'aria-label': 'Studio 二级导航',

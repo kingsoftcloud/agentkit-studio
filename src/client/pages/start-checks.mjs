@@ -1,8 +1,9 @@
 import { readStartChecks } from '../state/start-checks.mjs';
 
-export function createStartChecks({ ui, hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent }) {
-  const { React, buttonStyle } = ui;
-  const { createElement: h, useEffect, useRef, useState } = React;
+export function createStartChecks({
+  ui: { React: { createElement: h, useEffect, useRef, useState }, buttonStyle },
+  hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent
+}) {
   function StartChecks() {
     const [state, setState] = useState({ expanded: false, phase: 'idle', rows: [], checkedAt: '' });
     const lifetime = useRef({ active: true, expanded: false, revision: 0 });
@@ -43,5 +44,5 @@ export function createStartChecks({ ui, hostRemote, window = globalThis.window, 
             row.action === 'credentials' ? h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-onboarding')), style: buttonStyle() }, '配置模型') : null)))),
       h('p', { className: 'agentkit-form-note' }, '目录登记和凭证配置不代表工具执行或模型调用已通过验证。', state.checkedAt ? ` 检查于 ${state.checkedAt}` : '')) : null);
   }
-  return { StartChecks };
+  return StartChecks;
 }
