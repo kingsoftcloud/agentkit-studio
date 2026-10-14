@@ -88,6 +88,7 @@
     }
 
     function apply(ctx) {
+      ctx.effect(() => authoring.mount(), 'agentkit-studio:authoring-owner');
       ctx.uiConversation.events.register(codexToolDefinition);
       // Settings owns first-run coordination. Registering here makes the
       // guide visible in the real DSH onboarding path and gives the shell a
@@ -95,7 +96,7 @@
       ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
         name: 'settings.onboarding', id: 'agentkit-studio-credential', order: 20,
       }, props => h(CredentialOnboarding, { ...props, dshModel: createDshModelBridge(ctx) })));
-      activeConnection = { rpc: ctx.connection.rpc };
+      ctx.effect(() => connectionOwner.bind(ctx.connection), 'agentkit-studio:remote-connection');
       ctx.on('connection/reset', () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck')));
       // DSH owns the single global plugin center. Studio contributes Codex as
       // an official plugin item through the public plugin-manager slot, so the
@@ -268,7 +269,7 @@
             opening = true;
             try { await openAgentAuthoring(authoringCtx.uiWorkspace); }
             catch (error) {
-              pendingAuthoring = false;
+              authoring.cancel();
               window.__AGENTKIT_CONFIRM__?.({ title: '无法打开创建会话', detail: error?.message || '请稍后重试', confirmLabel: '知道了' });
             } finally { opening = false; }
           };

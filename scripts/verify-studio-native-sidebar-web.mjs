@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { verifyStudioNativeSidebar } from './verify-studio-native-sidebar-ui.mjs';
+import { verifyStudioClientState } from './verify-studio-client-state-ui.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated DSH source and homes');
@@ -34,8 +35,9 @@ try {
   page = await browser.newPage();
   await page.goto(await launch);
   const checks = await verifyStudioNativeSidebar(page, seed);
+  const stateChecks = process.env.STUDIO_VERIFY_CLIENT_STATE === '1' ? await verifyStudioClientState(page) : undefined;
   await page.screenshot({ path: output.replace(/\.json$/, '.png'), fullPage: true });
-  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', checks, passed: true };
+  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', checks, ...(stateChecks ? { stateChecks } : {}), passed: true };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n'); console.log(JSON.stringify(report));
 } catch (error) {
   await page?.screenshot({ path: output.replace(/\.json$/, '-failure.png'), fullPage: true }).catch(() => {});

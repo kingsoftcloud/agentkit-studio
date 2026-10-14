@@ -1,8 +1,6 @@
-/*
- * AgentKit Studio browser entrypoint.
- *
- * The DSH browser bundle is assembled from the ordered fragments in
- * `src/client-fragments/` by `scripts/build-client.mjs`. Keeping this entry
- * small makes the source-size gate meaningful while preserving one DSH
- * ModuleLoader registration in the packed artifact.
- */
+// Phase 3A imports the migrated owners. Page fragments are removed in 3C.
+import { createHostRemote } from './client/remote/host-client.mjs';
+import { createConnectionOwner } from './client/state/connection.mjs';
+import { createConversationAgentState, agentFromSessionPreset } from './client/state/conversation-agent.mjs';
+import { createNativeAuthoring } from './client/state/native-authoring.mjs';
+import { createNativeAuthoringButton } from './client/dsh/native-authoring.mjs';
