@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
-const source = await readFile(new URL('../src/host/bootstrap.mjs',import.meta.url),'utf8');
-const start = source.indexOf("      if (endpoint === 'credentials/put') {");
-const body = source.slice(start,source.indexOf("      if (endpoint === 'mcp/create')",start));
-const route = service => new Function('credentialsService',`return async payload => { const endpoint='credentials/put'; ${body} };`)(service);
+import { createCredentialRoute } from '../src/host/routes/credentials.mjs';
+const route = credentialsService => createCredentialRoute({ credentialsService });
 test('an environment credential is acknowledged only when the submitted value is identical',async()=>{
  const failure = Object.assign(new Error('environment credentials are read-only'),{code:'READ_ONLY'});
  const handler = route({set:async()=>{throw failure;},describe:async()=>({configured:true,source:'env'}),resolve:async()=>({value:'e2e-existing'})});

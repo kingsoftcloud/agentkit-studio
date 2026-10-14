@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { verifyStudioNativeSidebar } from './verify-studio-native-sidebar-ui.mjs';
 import { verifyStudioClientState } from './verify-studio-client-state-ui.mjs';
 import { verifyStudioClientPages } from './verify-studio-client-pages-ui.mjs';
+import { verifyStudioRouteFailures } from './verify-studio-route-failures-ui.mjs';
 const require = createRequire(import.meta.url);
 const { _electron } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.STUDIO_VERIFY_ELECTRON || !process.env.STUDIO_VERIFY_PRIMARY_RUNTIME || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated source, homes, Electron executable and prepared primary runtime');
@@ -29,7 +30,7 @@ const app = await _electron.launch({ executablePath: process.env.STUDIO_VERIFY_E
 const errors = [];
 const sessionWarnings = [];
 const warningJobs = [];
-let sidebarChecks, stateChecks, pageChecks;
+let sidebarChecks, stateChecks, pageChecks, routeFailureChecks;
 try {
   let page;
   const deadline = Date.now() + 60000;
@@ -68,16 +69,17 @@ try {
     : undefined;
   stateChecks = process.env.STUDIO_VERIFY_CLIENT_STATE === '1' ? await verifyStudioClientState(page) : undefined;
   pageChecks = process.env.STUDIO_VERIFY_CLIENT_PAGES === '1' ? await verifyStudioClientPages(page) : undefined;
+  routeFailureChecks = process.env.STUDIO_VERIFY_ROUTE_FAILURES === '1' ? await verifyStudioRouteFailures(page) : undefined;
   assert.equal(errors.length, 0, 'the complete native UI flow must have no uncaught renderer errors');
   await page.screenshot({ path: output.replace(/\.json$/, '.png'), fullPage: true });
   const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', fullStudioPlugin: true, developmentOnly: true,
-    runtime, clientSha256, nativeAgentSelectorVisible: true, rendererRpc: responses, rendererErrors: errors.length, ...(sidebarChecks ? { sidebarChecks } : {}), ...(stateChecks ? { stateChecks } : {}), ...(pageChecks ? { pageChecks } : {}), passed: true };
+    runtime, clientSha256, nativeAgentSelectorVisible: true, rendererRpc: responses, rendererErrors: errors.length, ...(sidebarChecks ? { sidebarChecks } : {}), ...(stateChecks ? { stateChecks } : {}), ...(pageChecks ? { pageChecks } : {}), ...(routeFailureChecks ? { routeFailureChecks } : {}), passed: true };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report));
 } catch (error) {
   await Promise.all(warningJobs);
   const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', passed: false,
-    message: String(error.message).split(/\n/)[0].slice(0, 200), rendererErrors: errors, sessionWarnings, sidebarChecks, stateChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
+    message: String(error.message).split(/\n/)[0].slice(0, 200), rendererErrors: errors, sessionWarnings, sidebarChecks, stateChecks, pageChecks, routeFailureChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
   for (const [index, page] of app.windows().entries()) await page.screenshot({ path: output.replace(/\.json$/, `-failure-${index}.png`), fullPage: true }).catch(() => {});
   console.log(JSON.stringify(report));

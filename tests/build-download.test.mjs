@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioBuild } from '../src/studio-build.mjs';
+import { createBuildRoutes } from '../src/host/routes/builds.mjs';
 import { readZipEntry } from '../src/zip.mjs';
 
 test('download returns the verified frozen ZIP and rejects tampering', async () => {
@@ -23,13 +24,10 @@ test('download returns the verified frozen ZIP and rejects tampering', async () 
 });
 
 test('shipped Host dispatch exposes the build download operation', async () => {
-  const source = await readFile(new URL('../src/host/bootstrap.mjs', import.meta.url), 'utf8');
-  const branch = source.slice(source.indexOf("      if (endpoint === 'builds/create'"), source.indexOf("      if (endpoint.startsWith('schedules/')"));
-  const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
-  const run = new AsyncFunction('endpoint', 'payload', 'studioBuildPromise', branch);
   const expected = { filename: 'bundle.zip', base64: 'UEs=' };
-  const result = await run('builds/download', { agentId: 'local-e2e', buildId: 'build_abc' }, Promise.resolve({ build: { download: async (agentId, buildId) => {
+  const run = createBuildRoutes({ studioBuildPromise: Promise.resolve({ build: { download: async (agentId, buildId) => {
     assert.equal(agentId, 'local-e2e'); assert.equal(buildId, 'build_abc'); return expected;
-  } } }));
+  } } }) });
+  const result = await run('builds/download', { agentId: 'local-e2e', buildId: 'build_abc' });
   assert.deepEqual(result, { ok: true, value: expected });
 });

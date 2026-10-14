@@ -7,11 +7,13 @@ import { dirname, join, resolve } from 'node:path';
 import { verifyStudioNativeSidebar } from './verify-studio-native-sidebar-ui.mjs';
 import { verifyStudioClientState } from './verify-studio-client-state-ui.mjs';
 import { verifyStudioClientPages } from './verify-studio-client-pages-ui.mjs';
+import { verifyStudioRouteFailures } from './verify-studio-route-failures-ui.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated DSH source and homes');
 const source = resolve(process.env.AGENTKIT_DSH_ROOT);
 const profile = process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor';
+const routeOnly = process.env.STUDIO_VERIFY_ROUTE_FAILURES_ONLY === '1';
 const installed = join(process.env.DSH_HOME, 'profiles', profile, 'node_modules/@kingsoftcloud/agentkit-studio');
 assert.ok((await readFile(join(installed, 'dist/client.js'))).equals(await readFile(new URL('../dist/client.js', import.meta.url))), 'installed browser bundle must match worktree');
 const seed = JSON.parse(await readFile('.artifacts/refactor/stage-2/sidebar-seed.json', 'utf8'));
@@ -19,7 +21,7 @@ assert.equal(seed.passed, true);
 const output = resolve(process.argv[2] || '.artifacts/refactor/stage-2/native-sidebar-web.json');
 const child = spawn(process.execPath, [join(source, 'apps/cli/lib/bin.js'), '--profile', profile, '--host', '127.0.0.1', '--no-open', '--port', '0'], { cwd: source, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
 const stopped = new Promise(resolve => child.once('exit', resolve));
-let buffer = '', browser, page, checks, stateChecks, pageChecks;
+let buffer = '', browser, page, checks, stateChecks, pageChecks, routeFailureChecks;
 const rendererErrors = [];
 const launch = new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('Web Host startup timeout')), 60000);
@@ -37,16 +39,18 @@ try {
   page = await browser.newPage();
   page.on('pageerror', error => rendererErrors.push(String(error.name || 'RendererError')));
   await page.goto(await launch);
-  checks = await verifyStudioNativeSidebar(page, seed);
+  if (routeOnly) await page.locator('.studio-agent-trigger').waitFor({ state: 'visible', timeout: 60000 });
+  checks = routeOnly ? undefined : await verifyStudioNativeSidebar(page, seed);
   stateChecks = process.env.STUDIO_VERIFY_CLIENT_STATE === '1' ? await verifyStudioClientState(page) : undefined;
   pageChecks = process.env.STUDIO_VERIFY_CLIENT_PAGES === '1' ? await verifyStudioClientPages(page) : undefined;
+  routeFailureChecks = process.env.STUDIO_VERIFY_ROUTE_FAILURES === '1' ? await verifyStudioRouteFailures(page) : undefined;
   assert.equal(rendererErrors.length, 0, 'the real renderer must complete without uncaught errors');
   await page.screenshot({ path: output.replace(/\.json$/, '.png'), fullPage: true });
-  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', checks, rendererErrors: rendererErrors.length, ...(stateChecks ? { stateChecks } : {}), ...(pageChecks ? { pageChecks } : {}), passed: true };
+  const report = { evidence: routeOnly ? 'real-dsh-web-installed-studio-negative-rpc' : 'real-dsh-web-installed-studio-native-sidebar', checks, rendererErrors: rendererErrors.length, ...(stateChecks ? { stateChecks } : {}), ...(pageChecks ? { pageChecks } : {}), ...(routeFailureChecks ? { routeFailureChecks } : {}), passed: true };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n'); console.log(JSON.stringify(report));
 } catch (error) {
   await page?.screenshot({ path: output.replace(/\.json$/, '-failure.png'), fullPage: true }).catch(() => {});
-  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', passed: false, rendererErrors, message: String(error.message).split(/\n/)[0].slice(0, 200), checks, stateChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
+  const report = { evidence: 'real-dsh-web-installed-studio-native-sidebar', passed: false, rendererErrors, message: String(error.message).split(/\n/)[0].slice(0, 200), checks, stateChecks, pageChecks, routeFailureChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n'); console.log(JSON.stringify(report)); process.exitCode = 1;
 } finally {
   await browser?.close(); buffer = '';
