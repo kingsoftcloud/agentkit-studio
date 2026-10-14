@@ -18,6 +18,10 @@ export async function verifyStudioNativeSidebar(page, seed) {
     await page.getByText(name, { exact: true }).click();
   };
   await page.locator('.studio-agent-trigger').waitFor({ state: 'visible', timeout: 60000 });
+  // A restored native hero may have no retained Session. Start through DSH
+  // before testing an Agent binding; the visible hero alone is insufficient.
+  await page.getByRole('button', { name: '新建会话', exact: true }).filter({ has: page.getByText('新会话', { exact: true }) }).click();
+  await page.waitForFunction(() => Boolean(document.querySelector('.studio-agent-trigger')?.getAttribute('data-studio-session-id')), null, { timeout: 30000 });
   await mode('单列表');
   await mode('全部对话（显示已归档）');
   for (const row of rows) await historyRow(row).waitFor({ state: 'visible', timeout: 30000 });
