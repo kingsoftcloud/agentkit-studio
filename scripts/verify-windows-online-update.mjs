@@ -8,11 +8,15 @@ import { homedir } from 'node:os';
 import { parseArgs, promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import asar from '@electron/asar';
+import { windowsDownloadEvidence } from '../src/windows-update-evidence.mjs';
 
 if (process.platform !== 'win32') throw new Error('Native Windows updater qualification requires Windows');
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_OS !== 'Windows') throw new Error('Native default-profile update qualification requires a disposable Windows Actions Runner');
-const { values } = parseArgs({ options: Object.fromEntries(['baseline', 'version', 'output'].map(key=>[key,{type:'string'}])) });
+const { values } = parseArgs({ options: { ...Object.fromEntries(['baseline', 'version', 'output'].map(key=>[key,{type:'string'}])), 'allow-full-fallback':{type:'boolean',default:false} } });
 const executablePath = resolve(values.baseline), targetVersion=values.version;
+const publicInstaller=await fetch(`https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/${encodeURIComponent(targetVersion)}/AgentKit-Studio-win-x64.exe`,{method:'HEAD',signal:AbortSignal.timeout(60000)});
+const fullBytes=Number(publicInstaller.headers.get('content-length'));
+if (!publicInstaller.ok || !Number.isSafeInteger(fullBytes) || fullBytes<=0) throw new Error('Public target installer size is unavailable');
 // NSIS can relaunch through Explorer, which does not inherit test overrides.
 // Exercise the real user directories in this disposable Runner.
 const evidence = resolve(values.output), home=join(homedir(),'.dsh'), journals=join(evidence,'journals');
@@ -44,7 +48,8 @@ try {
  if(before===targetVersion) throw new Error('Updater baseline is already the target version');
  const guide=page.locator('.agentkit-credential-onboarding-content');
  await expect(guide).toBeVisible({timeout:120000});
- await page.getByRole('button',{name:'去配置模型凭证',exact:true}).click();
+ await expect(page.locator('[data-desktop-onboarding]')).toHaveCount(0);
+ await guide.getByRole('button',{name:/^(开始设置|去配置模型凭证)$/}).click();
  await expect(guide).toBeHidden({timeout:30000});
  // Configure through the installed product's settings. A Studio config file
  // alone does not register the native DSH provider/model preference namespace.
@@ -102,10 +107,10 @@ try {
  const installed=JSON.parse(asar.extractFile(join(dirname(executablePath),'resources','app.asar'),'package.json'));
  if(installed.version!==targetVersion) throw new Error('Installed bytes are not the feed target');
  if(await readFile(join(home,'upgrade-retention-marker.txt'),'utf8')!=='retained across native Windows update\n') throw new Error('Shared DSH data was not retained');
- const differential=updaterLog.match(/Full:\s*([0-9,.]+)\s*KB,\s*To download:\s*([0-9,.]+)\s*KB\s*\(([0-9.]+)%\)/);
- const fallback=/Cannot download differentially|fallback to full download/i.test(updaterLog);
- const downloadEvidence=fallback ? {kind:'full-fallback'} : differential ? {kind:'native-differential',fullKilobytes:Number(differential[1].replaceAll(',','')),downloadKilobytes:Number(differential[2].replaceAll(',','')),ratioPercent:Number(differential[3])} : {kind:'not-established'};
+ const states=(await Promise.all((await readdir(journals)).filter(name=>name.endsWith('.jsonl')).map(async name=>(await readFile(join(journals,name),'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line))))).flat().filter(state=>state.pid===baselinePid);
+ const downloadEvidence=windowsDownloadEvidence({log:updaterLog,states,fullBytes});
  await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
+ if(!values['allow-full-fallback'] && downloadEvidence.kind!=='native-differential') throw new Error('Real differential qualification failed: '+downloadEvidence.kind);
 } catch(error) {
  await page?.screenshot({path:join(evidence,'windows-update-failure.png'),fullPage:true}).catch(()=>{});
  // This clean Runner uses only the local fixture credential. Preserve startup

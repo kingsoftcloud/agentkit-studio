@@ -63,5 +63,6 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `029-full-update-blockmap-cache.patch` | 全量更新完成后清除与新 ZIP 不匹配的旧 blockmap 索引 | 上游全量下载同时正确更新或失效缓存索引 |
 | `030-plugin-smoke-diagnostics.patch` | 隔离打包失败记录插件导入、执行、共享 Context、依赖服务和脱敏诊断 | 上游提供等价的打包失败诊断 |
 | `031-canonical-windows-smoke-paths.patch` | 测试安装和 profile 使用统一真实路径，避免 Windows 短路径别名造成重复模块身份 | 上游在启动打包检查前统一安装与 profile 路径 |
+| `033-windows-single-range-evidence.patch` | Windows Studio 的 Generic Provider 使用 KS3 单区间请求；保留原生下载实际字节数用于增量验收，差分计划日志不能单独证明通过 | 上游 Windows 产品配置支持单区间请求和实际下载字节记录 |
 
 `023` 的权限来自 [Codex 0.159.2 官方签名配置](https://github.com/openai/codex/blob/rust-v0.159.2/.github/scripts/macos-signing/codex-code-mode-host.entitlements.plist)。真实安装包的助手被通用签名规则重签后没有这两项权限；同一版本官方原包以及仅修复助手签名的本地副本都可实际创建并校验文件。正式产物还须通过 `node scripts/verify-codex-signing.mjs <App路径>`，并在实际安装后重跑文件执行验收。

@@ -2,6 +2,8 @@
 
 ## 0.0.2
 
+- Replace the credential guide with a native-themed welcome and interactive model setup preview; remove the independent DSH account welcome/recharge flow from Studio profiles.
+- Use single-range Windows differential downloads on KS3 and require completed native byte counters for differential qualification.
 - Give Windows Studio its own Electron identity, plugin profile and Host port so it can run beside official DSH Desktop.
 - Replace Windows installer welcome and finish artwork with Nexus and AgentKit Studio branding.
 - Publish signed Windows installers, blockmaps and channel metadata under the Studio KS3 directory; preserve a migration feed for already installed Windows builds.

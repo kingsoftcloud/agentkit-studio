@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { parse } from 'yaml';
+
+test('Studio disables the independent DSH account welcome and recharge flow', async () => {
+  const entries = parse(await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8'));
+  assert.equal(entries.find(entry => entry.id === 'ui-settings-account')?.disabled, true);
+});
 
 const fragmentDir = resolve(import.meta.dirname, '../src/client-fragments');
 const clientSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
