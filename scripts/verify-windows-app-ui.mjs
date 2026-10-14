@@ -1,10 +1,15 @@
 /** Launch the actually installed Windows app and verify rendered onboarding and build identity. */
 import { _electron as electron, expect } from '@playwright/test';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import asar from '@electron/asar';
 import { verifyDesktopModuleGraph } from './desktop-module-graph.mjs';
+import { verifyWindowsCoexistence } from './verify-windows-coexistence.mjs';
+import { verifyOfficialDshCoexistence } from './verify-windows-official-dsh.mjs';
 
 if (process.platform !== 'win32') throw new Error('Windows app UI acceptance requires Windows');
 const executablePath=process.env.STUDIO_INSTALLED_APP;
@@ -15,7 +20,7 @@ const moduleGraph=await verifyDesktopModuleGraph(path=>asar.extractFile(archive,
 const evidence=resolve('.artifacts/windows-proof');
 const root=join(tmpdir(),'studio-installed-ui-'+Date.now());
 await mkdir(evidence,{recursive:true}); await mkdir(root,{recursive:true});
-const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=> !/(?:SECRET|TOKEN|PASSWORD|CERTUM|ACCESS_KEY)/i.test(name)));
+const environment=Object.fromEntries(Object.entries(process.env).filter(([name])=> !/(?:SECRET|TOKEN|PASSWORD|CERTUM|ACCESS_KEY|PSMODULEPATH)/i.test(name)));
 const app=await electron.launch({executablePath,args:['--user-data-dir='+join(root,'electron')],env:{...environment,DSH_HOME:join(root,'dsh'),AGENTKIT_HOME:join(root,'agentkit'),DSH_TELEMETRY_DISABLED:'1'},timeout:120000});
 try {
   const page=await app.firstWindow({timeout:120000});
@@ -40,3 +45,10 @@ try {
   await writeFile(receiptPath,JSON.stringify({...receipt,version,uiVerified:true,onboardingVisible},null,2));
   console.log('Actually installed Windows App rendered and reported the expected build version.');
 } finally {await app.close();}
+
+await verifyWindowsCoexistence(executablePath, { ...environment, DSH_HOME: join(root, 'shared-dsh'), AGENTKIT_HOME: join(root, 'shared-agentkit'), DSH_TELEMETRY_DISABLED: '1' }, root, evidence);
+
+await promisify(execFile)('powershell.exe', ['-NoProfile', '-File', fileURLToPath(new URL('./verify-windows-installer-ui.ps1', import.meta.url)), '-Installer', process.env.STUDIO_SIGNED_INSTALLER, '-Evidence', evidence], { timeout: 900000, maxBuffer: 1024 * 1024 });
+
+const visibleInstall=JSON.parse(await readFile(join(evidence,'windows-installer-ui.json'),'utf8'));
+await verifyOfficialDshCoexistence(visibleInstall.installedPath, environment, root, evidence);
