@@ -57,6 +57,34 @@ if($RetainedText) {
 $signature=Get-AuthenticodeSignature $AppPath
 if($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {throw 'Updated executable signature is invalid'}
 [UpdatedStudioWindow]::Capture($app.MainWindowHandle,(Join-Path $Evidence 'windows-updated-app.png'))
-[ordered]@{actualAutoRestartedApp=$true;pid=$app.Id;path=$app.Path;studioNavigationVerified=$true;retainedTextVerified=([bool]$RetainedText);originalUserMessageRetained=([bool]$userRetained);originalAssistantReplyRetained=([bool]$replyRetained);signatureValid=$true;timestamped=$true} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-updated-app.json')
+# Exercise the updated client after the native restart, using the retained profile.
+$resourceCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'资源库')
+$resource=$element.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$resourceCondition)
+if(-not $resource -or $resource.Current.IsOffscreen) {throw 'Updated resource library navigation is unavailable'}
+$bounds=$resource.Current.BoundingRectangle
+[UpdatedStudioWindow]::Click($app.MainWindowHandle,$bounds.X+$bounds.Width/2,$bounds.Y+$bounds.Height/2)
+$resourceDeadline=(Get-Date).AddSeconds(60)
+do {
+ $skillCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'Skill')
+ $skill=$element.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$skillCondition)
+ if($skill -and -not $skill.Current.IsOffscreen) {break}
+ Start-Sleep -Milliseconds 500
+} while((Get-Date) -lt $resourceDeadline)
+if(-not $skill -or $skill.Current.IsOffscreen) {throw 'Updated Skill tab is unavailable'}
+$bounds=$skill.Current.BoundingRectangle
+[UpdatedStudioWindow]::Click($app.MainWindowHandle,$bounds.X+$bounds.Width/2,$bounds.Y+$bounds.Height/2)
+$sourceCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'Skill 来源')
+do {
+ $source=$element.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$sourceCondition)
+ if($source -and -not $source.Current.IsOffscreen) {break}
+ Start-Sleep -Milliseconds 500
+} while((Get-Date) -lt $resourceDeadline)
+if(-not $source -or $source.Current.IsOffscreen) {throw 'Updated Skill source filter is unavailable'}
+$centerCondition=[System.Windows.Automation.AndCondition]::new(
+ [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'Skill Center'),
+ [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button))
+if($element.FindAll([System.Windows.Automation.TreeScope]::Descendants,$centerCondition).Count -ne 0) {throw 'Duplicate Skill Center tab remains in the updated client'}
+[UpdatedStudioWindow]::Capture($app.MainWindowHandle,(Join-Path $Evidence 'windows-updated-resources.png'))
+[ordered]@{actualAutoRestartedApp=$true;pid=$app.Id;path=$app.Path;studioNavigationVerified=$true;retainedTextVerified=([bool]$RetainedText);originalUserMessageRetained=([bool]$userRetained);originalAssistantReplyRetained=([bool]$replyRetained);signatureValid=$true;timestamped=$true;updatedSkillSourceFilterVerified=$true;duplicateSkillCenterTabAbsent=$true} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-updated-app.json')
 & taskkill.exe /PID $app.Id /T /F | Out-Null
 if ($LASTEXITCODE) {throw 'Updated App process-tree cleanup failed'}

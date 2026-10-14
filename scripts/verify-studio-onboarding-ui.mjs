@@ -19,7 +19,7 @@ export async function verifyStudioOnboarding(page, screenshotPath) {
     await guide.getByRole('button',{name:'开始设置',exact:true}).click();
     const model=guide.locator('[data-onboarding-mode=model]');
     await expect(model).toBeVisible();
-    await model.getByLabel('提供商',{exact:true}).selectOption('custom');
+    await model.getByRole('combobox',{name:/^提供商/}).selectOption('custom');
     await model.getByLabel('模型名称',{exact:true}).fill('onboarding-proof');
     const base=`http://127.0.0.1:${server.address().port}/v1`;
     const endpoint=model.getByLabel('API 地址',{exact:true});
@@ -35,13 +35,22 @@ export async function verifyStudioOnboarding(page, screenshotPath) {
     await expect(key).toHaveAttribute('type','password');
     await page.screenshot({path:screenshotPath,fullPage:true});
     await model.getByRole('button',{name:'保存并继续',exact:true}).click();
-    await expect(guide.locator('[data-onboarding-mode=cloud]')).toBeVisible({timeout:90000});
+    const cloud=guide.locator('[data-onboarding-mode=cloud]');
+    await expect(cloud).toBeVisible({timeout:90000});
     await expect(guide.getByRole('heading',{name:'云端配置，可以跳过'})).toBeVisible();
+    await expect(cloud.getByLabel('Access Key',{exact:true})).toBeVisible();
+    await expect(cloud.getByLabel('Secret Key',{exact:true})).toBeVisible();
+    await cloud.getByText('高级云端设置',{exact:true}).click();
+    for(const label of ['Account ID','区域','控制面地址','对象存储桶']) {
+      await expect(cloud.getByLabel(label,{exact:true})).toBeVisible();
+    }
+    await page.screenshot({path:screenshotPath.replace(/\.png$/,'-cloud.png'),fullPage:true});
     await guide.getByRole('button',{name:'跳过，开始对话',exact:true}).click();
     await expect(guide).toBeHidden();
     await expect(page.locator('[data-desktop-onboarding]')).toHaveCount(0);
     if(!requests.includes('/v1/models')) throw new Error('Configured endpoint did not reach the actual model directory');
     return {officialWelcomeAbsent:true,officialRechargeAbsent:true,fullscreenModelSetupVerified:true,
-      apiKeyVisibilityVerified:true,endpointCompletionVerified:true,cloudSetupSkipped:true,modelDirectoryReached:true};
+      apiKeyVisibilityVerified:true,endpointCompletionVerified:true,cloudAdvancedSettingsVerified:true,
+      cloudSetupSkipped:true,modelDirectoryReached:true};
   } finally { server.closeAllConnections(); await new Promise(done=>server.close(done)); }
 }
