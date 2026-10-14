@@ -10,7 +10,9 @@ test('Studio disables the independent DSH account welcome and recharge flow', as
 });
 
 const fragmentDir = resolve(import.meta.dirname, '../src/client-fragments');
-const clientSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
+const fragmentSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
+const migratedPaths = ['remote/host-client.mjs', 'state/conversation-agent.mjs', 'state/native-authoring.mjs', 'dsh/native-authoring.mjs'];
+const clientSource = fragmentSource + '\n' + (await Promise.all(migratedPaths.map(path => readFile(new URL('../src/client/' + path, import.meta.url), 'utf8')))).join('\n');
 
 test('Studio mounts the official plugin navigation provider required by optional DSH UI bundles', async () => {
   const packageJson = JSON.parse(await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8'));
@@ -48,7 +50,7 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /绑定到新会话/);
   assert.match(clientSource, /uiWorkspace\.openSession\(sessionId\)/);
   assert.match(clientSource, /h\(Menu, /);
-  assert.match(clientSource, /conversationAgentStorageKey\(sessionId\)/);
+  assert.match(clientSource, /createConversationAgentState/);
 });
 
 test('Agent authoring reuses the native composer and starts a fresh session from Agents', () => {

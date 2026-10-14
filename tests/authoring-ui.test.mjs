@@ -1,15 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { createNativeAuthoring } from '../src/client/state/native-authoring.mjs';
+import { createNativeAuthoringButton } from '../src/client/dsh/native-authoring.mjs';
 
-const fragment = await readFile(new URL('../src/client-fragments/02-native-authoring.js', import.meta.url), 'utf8');
-const source = fragment.slice(0, fragment.indexOf('function NativeAuthoringButton'));
 function harness() {
   const events = [], bindings = [];
   const window = { dispatchEvent: event => events.push(event.type) };
-  const api = new Function('window', 'CustomEvent', 'writeConversationAgent', `${source}; return { openAgentAuthoring, seedAgentAuthoring, pending: () => pendingAuthoring };`)(
-    window, class { constructor(type) { this.type = type; } }, (agent, session) => bindings.push({ agent, session }),
-  );
+  const api = createNativeAuthoring({ events: window, createEvent: type => ({ type }), writeConversationAgent: (agent, session) => bindings.push({ agent, session }) });
   return { ...api, events, bindings };
 }
 
@@ -57,9 +54,8 @@ test('a busy native composer does not report a successful insertion', () => {
 test('the native hero authoring entry also requests a fresh session', () => {
   const events = [];
   const h = (type, props) => ({ type, props });
-  const Button = new Function('useEffect', 'h', 'window', 'CustomEvent', 'buttonStyle', `${fragment}; return NativeAuthoringButton;`)(
-    () => {}, h, { dispatchEvent: event => events.push(event.type) }, class { constructor(type) { this.type = type; } }, () => ({}),
-  );
+  const authoring = createNativeAuthoring({ events: { dispatchEvent: event => events.push(event.type) }, createEvent: type => ({ type }), writeConversationAgent() {} });
+  const Button = createNativeAuthoringButton({ React: { createElement: h, useEffect() {} }, authoring, buttonStyle: () => ({}) });
   const button = Button({ inputActions: {} });
   button.props.onClick();
   assert.deepEqual(events, ['agentkit-studio:open-authoring']);

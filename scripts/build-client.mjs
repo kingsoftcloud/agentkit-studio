@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { transform } from 'esbuild';
+import { build } from 'esbuild';
 import { AGENTKIT_STUDIO_MARK_BODY, AGENTKIT_STUDIO_MARK_SVG } from '../src/brand.js';
 import { normalizeModelEndpoint } from '../src/model-endpoint.mjs';
 
@@ -24,7 +24,7 @@ const fragments = [
   '08-settings-and-entry.js',
 ];
 const sources = await Promise.all(fragments.map(name => readFile(resolve(root, 'src/client-fragments', name), 'utf8')));
-const source = sources.join('\n')
+const source = (await readFile(resolve(root, 'src/client.js'), 'utf8')) + sources.join('\n')
   .replaceAll("'__AGENTKIT_STUDIO_MARK_BODY__'", JSON.stringify(AGENTKIT_STUDIO_MARK_BODY))
   .replaceAll("'__AGENTKIT_STUDIO_MARK_SVG__'", JSON.stringify(AGENTKIT_STUDIO_MARK_SVG))
   .replaceAll('__AGENTKIT_MODEL_ENDPOINT_NORMALIZER__', normalizeModelEndpoint.toString());
@@ -33,8 +33,14 @@ if (!source.includes("id: '@kingsoftcloud/agentkit-studio'")) throw new Error('c
 // DSH loads the packed browser entry as one script. Keep that artifact small
 // enough for the client-size gate while retaining readable, independently
 // testable source fragments in the repository.
-const { code: output } = await transform(source, {
-  loader: 'js', target: 'es2022', minify: true, legalComments: 'none',
+// Transitional 3A composition: migrated code follows real ES module imports.
+// The remaining page fragments are removed in 3C.
+const result = await build({
+  stdin: { contents: source, resolveDir: resolve(root, 'src'), sourcefile: 'client.js', loader: 'js' },
+  bundle: true, format: 'iife', platform: 'browser', target: 'es2022',
+  minify: true, legalComments: 'none', write: false, metafile: true,
 });
 await mkdir(resolve(root, 'dist'), { recursive: true });
-await writeFile(resolve(root, 'dist/client.js'), output);
+await writeFile(resolve(root, 'dist/client.js'), result.outputFiles[0].text);
+await mkdir(resolve(root, '.artifacts/client'), { recursive: true });
+await writeFile(resolve(root, '.artifacts/client/metafile.json'), JSON.stringify(result.metafile, null, 2) + '\n');
