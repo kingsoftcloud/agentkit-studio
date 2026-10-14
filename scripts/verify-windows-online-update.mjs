@@ -40,6 +40,7 @@ try {
  if(await guide.isVisible()) await page.getByRole('button',{name:'跳过本次',exact:true}).click();
  // The global New session action opens an inert workspace picker. Create a
  // retained Session using the default workspace's own new-session action.
+ await page.getByRole('treeitem').filter({hasText:/Default workspace|默认工作区/}).first().hover();
  await page.getByRole('button',{name:/New session in|中新建会话/}).first().click();
  const composer=page.locator('[contenteditable="true"]').first();
  await expect(composer).toBeVisible({timeout:30000});
