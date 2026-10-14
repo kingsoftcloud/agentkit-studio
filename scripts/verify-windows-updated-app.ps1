@@ -22,8 +22,9 @@ $deadline=(Get-Date).AddMinutes(3)
 $app=$null
 $names=@()
 do {
- $app=Get-Process -Name 'AgentKit Studio' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $AppPath -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+ $app=Get-Process -Name 'AgentKit Studio' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $AppPath -and $_.MainWindowHandle -ne 0 -and (-not $env:STUDIO_UPDATE_BASELINE_PID -or $_.Id -ne [int]$env:STUDIO_UPDATE_BASELINE_PID) } | Select-Object -First 1
  if($app) {
+  try {
   $element=[System.Windows.Automation.AutomationElement]::FromHandle($app.MainWindowHandle)
   $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'Agents')
   $navigation=$element.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
@@ -31,6 +32,12 @@ do {
    $elements=$element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
    $names=@($elements | ForEach-Object {$_.Current.Name})
    if(-not $RetainedText -or ($names | Where-Object {$_ -like "*$RetainedText*"})) {break}
+  }
+  } catch {
+   # NSIS may replace a transient startup HWND while the successor is opening.
+   # Reacquire the process/window within the deadline; never relaunch the App.
+   $navigation=$null
+   $names=@()
   }
  }
  Start-Sleep -Milliseconds 500
