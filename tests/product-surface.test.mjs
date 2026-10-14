@@ -11,7 +11,7 @@ test('Studio disables the independent DSH account welcome and recharge flow', as
 
 const fragmentDir = resolve(import.meta.dirname, '../src/client-fragments');
 const fragmentSource = (await Promise.all((await readdir(fragmentDir)).filter(name => name.endsWith('.js')).sort().map(name => readFile(resolve(fragmentDir, name), 'utf8')))).join('\n');
-const migratedPaths = ['remote/host-client.mjs', 'state/conversation-agent.mjs', 'state/native-authoring.mjs', 'dsh/native-authoring.mjs'];
+const migratedPaths = ['remote/host-client.mjs', 'state/conversation-agent.mjs', 'state/native-authoring.mjs', 'dsh/native-authoring.mjs', 'theme.mjs', 'components/primitives.mjs', 'components/form-styles.mjs', 'components/resource-dialog.mjs', 'state/product-versions.mjs', 'pages/studio-settings.mjs', 'pages/agents.mjs', 'pages/platform-resource-picker.mjs', 'pages/agent-form.mjs', 'pages/agent-edit.mjs'];
 const clientSource = fragmentSource + '\n' + (await Promise.all(migratedPaths.map(path => readFile(new URL('../src/client/' + path, import.meta.url), 'utf8')))).join('\n');
 
 test('Studio mounts the official plugin navigation provider required by optional DSH UI bundles', async () => {
@@ -315,7 +315,7 @@ test('host-facing settings use product-neutral Studio Host wording', () => {
 test('Studio owns the browser favicon and uses line icons for product panels', () => {
   assert.match(clientSource, /adoptProductDocumentBrand/);
   assert.match(clientSource, /agentkit-studio: document favicon/);
-  assert.match(clientSource, /const STUDIO_MARK_BODY = '__AGENTKIT_STUDIO_MARK_BODY__'/);
+  assert.match(clientSource, /AGENTKIT_STUDIO_MARK_BODY as STUDIO_MARK_BODY/);
   assert.match(clientSource, /dangerouslySetInnerHTML: \{ __html: STUDIO_MARK_BODY \}/);
   assert.match(clientSource, /encodeURIComponent\(STUDIO_MARK_SVG\)/);
   assert.match(clientSource, /studio-overview/);

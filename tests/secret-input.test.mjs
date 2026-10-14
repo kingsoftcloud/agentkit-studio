@@ -1,15 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
-const source=await readFile(new URL('../src/client-fragments/01-loader-and-primitives.js',import.meta.url),'utf8');
-const fragment=source.slice(source.indexOf('    function SecretInput('),source.indexOf('    const { IconSettings'));
+import { createStudioPrimitives } from '../src/client/components/primitives.mjs';
 test('eye toggles only typed input and resets visibility after save clears it',()=>{
   let visible=false, tree, value='typed-fixture';
   const effects=[];
   const h=(type,props,...children)=>({type,props,children});
   const useState=()=>[visible,next=>{visible=typeof next==='function'?next(visible):next;}];
   const useEffect=callback=>effects.push(callback);
-  const Component=new Function('h','useState','useEffect',fragment+';return SecretInput;')(h,useState,useEffect);
+  const { SecretInput: Component } = createStudioPrimitives({ React: { createElement: h, useState, useEffect } });
   const render=()=>{tree=Component({value,label:'API Key'});effects.splice(0).forEach(fn=>fn());return tree;};
   render();assert.equal(tree.children[0].props.type,'password');
   assert.equal(tree.children[1].props['aria-label'],'显示 API Key');
