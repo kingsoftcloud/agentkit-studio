@@ -34,7 +34,10 @@ const server=createServer((request,response)=>{
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
 await writeFile(join(home,'upgrade-retention-marker.txt'),'retained across native Windows update\n');
 const app=await electron.launch({executablePath,cwd:dirname(executablePath),env:environment,timeout:120000});
-const baselinePid=app.process().pid;
+// Windows may relaunch from the packaging/runtime bootstrap. Journal receipts
+// belong to the actual Electron main process, rather than the launcher handle.
+const launcherPid=app.process().pid;
+const baselinePid=await app.evaluate(()=>process.pid);
 environment.STUDIO_UPDATE_BASELINE_PID=String(baselinePid);
 let updaterLog='';
 for(const stream of [app.process().stdout,app.process().stderr]) stream?.on('data',bytes=>{updaterLog=(updaterLog+bytes.toString()).slice(-1024*1024);});
@@ -109,7 +112,7 @@ try {
  if(await readFile(join(home,'upgrade-retention-marker.txt'),'utf8')!=='retained across native Windows update\n') throw new Error('Shared DSH data was not retained');
  const states=(await Promise.all((await readdir(journals)).filter(name=>name.endsWith('.jsonl')).map(async name=>(await readFile(join(journals,name),'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line))))).flat().filter(state=>state.pid===baselinePid);
  const downloadEvidence=windowsDownloadEvidence({log:updaterLog,states,fullBytes});
- await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
+ await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,launcherPid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
  if(!values['allow-full-fallback'] && downloadEvidence.kind!=='native-differential') throw new Error('Real differential qualification failed: '+downloadEvidence.kind);
 } catch(error) {
  await page?.screenshot({path:join(evidence,'windows-update-failure.png'),fullPage:true}).catch(()=>{});
