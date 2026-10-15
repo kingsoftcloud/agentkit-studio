@@ -68,3 +68,21 @@ HTTP/SSE 注册和 Connection Fetch 下载位于独立模块；旧本地会话�
 ## 仍需完成
 
 4C 统一 Node 和产品浏览器客户端的操作定义、参数、错误及取消合同，并验证四种启动状态、重启恢复、冻结 Build、工具续接及适用平台的包加载。当前不能宣称阶段 4 全部完成。阶段 4 完整验收后再进入补丁收敛与宿主升级演练，最终交付可开源源码主分支。
+
+## 4C 首批合同与启动隔离
+
+操作清单、领域映射、JSON/envelope 边界、公共错误和取消合同集中于 `src/contracts/`。从清单派生客户端方法及操作 ID 类型，固定 TypeScript 6.0.3 的 checkJs 和正反类型探针进入 `pnpm check`。浏览器与 Node Connection 模式复用控制客户端；原 Node REST 模式保留，消费者及退出条件见 `refactor-contracts.md`。业务 DTO 的逐字段校验仍由领域实现负责。
+
+新增只读 `schedules/delivery-targets`：前端原先已调用，旧 Host 允许清单遗漏。它复用已有云端查询实现，不执行创建、更新或删除。原 77 项的 154 个固定提交对照不改录，新查询有独立测试。
+
+HTTP 控制请求也按响应连接及注册作用域取消；正常上传 EOF 不取消请求。新增 3 个测试先失败后通过，真实 DSH 官方 admission 上再验证浏览器断开及 scope 卸载。原 SSE 的作用域取消、Cookie 认证和来源限制继续通过。
+
+可选资源适配器初始化失败后，不再拒绝整个 Host 挂载。绑定资源的调用返回 `RESOURCE_SERVICE_UNAVAILABLE`；无资源的原生回合、设置和本地 Agent 仍可运行。真实 DSH 对安装包中的 Host composition 验证本地配置可用、仅模型可用、云端未配置、资源初始化失败四种状态，均完成受控原生回合及本地 Agent 创建、读取，卸载注册回到基线。失败证据保留：初版验证脚本未传工作目录，DSH 标准 persona 在组装提示词时拒绝缺少 `cwd`；补上测试工作目录后通过，产品无此项改动。
+
+Web 回归发现原验收脚本对分组渲染和默认六条分页的假设。修正后通过全部 28 项，未修改 DSH 的分组或分页行为。前端当前 gzip 为 92,071 字节，较原始 87,440 字节增长 5.296%，显式使用用户批准的 7% 预算，并记录原 5% 对照未通过；基线未重置。
+
+本批不宣称整个阶段 4 完成。冻结 Build 的真实 Host 执行、工具续接与适用平台包复核仍需完成，随后才进入阶段 5。
+
+该批最终检查为 903 项源码测试通过，0 失败、0 跳过；公开面、快照及可达历史扫描、509 文件的实际 Studio tarball 检查通过。Web 与 Electron 开发宿主各 28 项通过，渲染错误均为 0；完整安装插件在同一真实 Host 加载卸载 20 次后回到基线；独立 Harness tarball 的实际加载、类型、DSH loop、持久化和卸载通过。安装插件的全部 212 个生产模块、类型文件、manifest 及浏览器产物与工作树字节相同。
+
+机器证据位于忽略的 `.artifacts/refactor/stage-4/`：`contracts-final-release-check.log`、`contracts-web-pagination-28.json`、`contracts-electron-28.json`、`contracts-lifecycle-20.json`、`contracts-startup-states-final.json`、`contracts-real-dsh-http.json`、`contracts-packed-harness.log`、`contracts-full-installed-parity.json` 和 `contracts-approved-client-final.json`。连续构建的浏览器哈希相同。受控 provider、开发 Electron 与真实云端、原生安装更新的证据边界仍分别保留。

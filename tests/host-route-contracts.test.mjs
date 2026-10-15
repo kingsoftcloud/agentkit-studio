@@ -8,7 +8,8 @@ import { createHostRouteFixture, normalizeRouteValue, compactRouteCalls } from '
 
 const recording = JSON.parse(await readFile(new URL('./fixtures/host-route-contracts.json', import.meta.url), 'utf8'));
 assert.equal(recording.baselineCommit, 'c6f97fbf36351875967fbb2ce30dc0097a8ebf63');
-assert.deepEqual([...new Set(recording.cases.map(item => item.endpoint))].sort(), [...STUDIO_OPERATION_IDS].sort());
+const legacyIds = [...new Set(recording.cases.map(item => item.endpoint))].sort();
+assert.deepEqual(legacyIds, [...STUDIO_OPERATION_IDS].filter(id => id !== 'schedules/delivery-targets').sort());
 for (const item of recording.cases) {
   test(`${item.endpoint}: ${item.mode} retains fixed-ref envelope and adapter calls`, async () => {
     const fixture = createHostRouteFixture(item.mode);

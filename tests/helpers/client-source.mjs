@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 /** Static source constraints only. Behavior tests import the actual modules. */
 export async function readClientSource() {
   const root = resolve(import.meta.dirname, '../../src');
-  const files = [resolve(root, 'client.js')];
+  const files = [resolve(root, 'client.js'), resolve(root, 'remote/control-client.mjs'), resolve(root, 'remote/compatibility-methods.mjs')];
   async function collect(directory) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = resolve(directory, entry.name);

@@ -1,0 +1,8 @@
+{
+  "id": "user-approved-refactor-7-percent",
+  "baselineCommit": "fd654a22cdbd6e4dbdae9804a026097fbd279561",
+  "baselineGzipBytes": 87440,
+  "originalGrowthPercent": 5,
+  "maximumGrowthPercent": 7,
+  "approval": "User approved 7 percent for this refactoring stage while retaining the original baseline and proceeding to Host splitting."
+}

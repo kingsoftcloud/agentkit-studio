@@ -1,3 +1,4 @@
+import { createNativeHostRemote } from './remote/node-client.mjs';
 /**
  * Narrow browser-to-AgentKit Host transport used by the Studio product layer.
  *
@@ -28,9 +29,10 @@ function safeMessage(payload, status) {
 }
 
 /**
- * @param {{baseUrl?: string, fetchImpl?: typeof fetch, sessionToken?: string, csrfToken?: string}} options
+ * @param {{baseUrl?: string, fetchImpl?: typeof fetch, sessionToken?: string, csrfToken?: string, connection?: import('./contracts/wire.mjs').StudioConnection}} options
  */
 export function createStudioHostRemote(options = {}) {
+  if (options.connection !== undefined) return createNativeHostRemote(options, StudioHostError);
   const baseUrl = String(options.baseUrl || '').replace(/\/$/, '');
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw new TypeError('fetch is required for Studio Host Remote');
