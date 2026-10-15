@@ -86,3 +86,12 @@ Web 回归发现原验收脚本对分组渲染和默认六条分页的假设。�
 该批最终检查为 903 项源码测试通过，0 失败、0 跳过；公开面、快照及可达历史扫描、509 文件的实际 Studio tarball 检查通过。Web 与 Electron 开发宿主各 28 项通过，渲染错误均为 0；完整安装插件在同一真实 Host 加载卸载 20 次后回到基线；独立 Harness tarball 的实际加载、类型、DSH loop、持久化和卸载通过。安装插件的全部 212 个生产模块、类型文件、manifest 及浏览器产物与工作树字节相同。
 
 机器证据位于忽略的 `.artifacts/refactor/stage-4/`：`contracts-final-release-check.log`、`contracts-web-pagination-28.json`、`contracts-electron-28.json`、`contracts-lifecycle-20.json`、`contracts-startup-states-final.json`、`contracts-real-dsh-http.json`、`contracts-packed-harness.log`、`contracts-full-installed-parity.json` 和 `contracts-approved-client-final.json`。连续构建的浏览器哈希相同。受控 provider、开发 Electron 与真实云端、原生安装更新的证据边界仍分别保留。
+
+
+## 冻结 Build 的真实 Host 执行
+
+新增 `pnpm verify-studio-frozen-host`，加载实际安装包中的 Host bootstrap。Agent Revision 1 绑定受控 MCP 与 `model-a`，构建真实 archive 后将当前 Agent 更新到 Revision 2 和 `model-b`；旧 Build 的实际请求仍使用 Revision 1 的指令和 `model-a`。通过原生 ToolRegistry 执行一次 MCP 工具，工具结果进入 DSH 持久化历史，再由 DSH loop 续接模型。
+
+关闭整个真实 Host 并重新启动后，旧 Build preset 恢复，同一请求重放不产生模型调用；通过 previous_response_id 继续第二轮，保持 Session、Build 和模型绑定。拒绝把新 Agent 的 `model-b` 注入旧 Build。活跃流经取消接口和插件卸载两条路径终止，上游模型连接关闭，原生回合各恰好产生一个 aborted 终态。7 项集成检查通过，模型和 MCP 服务均为受控 provider。
+
+失败证据保留。首次验证未通过 DSH 公共 Settings 发布模型 provider，得到 session/model-unavailable；随后复用现有 portable-model-bridge，并等待官方 Loader 就绪。历史读取还补上 DSH 要求的 AbortSignal。两项都是验收脚本修正，没有修改产品模型选择、持久化或 Runtime 实现。新增 provider 使用唯一标记，结束时只撤销本次注册。最终报告为 `stage-4/frozen-real-host-final.json`。平台包复核仍待完成，暂不宣布整个阶段 4 完成。
