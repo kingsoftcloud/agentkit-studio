@@ -1,18 +1,16 @@
 /** Verify product profile migration through the assembled Desktop Host and its IPC lifecycle. */
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fingerprintPatchedSource } from './patched-source-fingerprint.mjs';
-import { appendFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { resolveProductInputs } from './product-config.mjs';
-import { createBuildOutputRedactor } from './build-output-redaction.mjs';
-import { finished } from 'node:stream/promises';
+import { withAssembledDesktopHost } from './assembled-desktop-host.mjs';
 
 const studio = fileURLToPath(new URL('../', import.meta.url));
 const { values } = parseArgs({ options: Object.fromEntries(['source', 'runtime', 'node', 'report'].map(name => [name, { type: 'string' }])) });
@@ -24,7 +22,6 @@ const products = resolveProductInputs().environment.DSH_DESKTOP_PLUGIN_BUNDLES.s
 const defaults = readRuntimeProfileBundles(runtime), base = defaults.filter(name => !products.includes(name));
 for (const product of products) assert.ok(packagedManifest.dsh?.profile?.bundles.includes(product), 'Product defaults must come from the actual assembled runtime');
 const hostEntry = join(runtime, 'node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js');
-const primaryRuntime = join(runtime, '../runtime/primary-runtime');
 const runtimeRequire = createRequire(join(runtime, 'node_modules/@deepseek-ai/dsh/package.json'));
 const runtimeBoot = await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href);
 assert.ok(existsSync(hostEntry)); assert.ok(existsSync(values.node));
@@ -67,69 +64,37 @@ export function apply(ctx){ctx.effect(()=>{const file=fileURLToPath(new URL('./a
   return join(module, 'active');
 }
 async function launch(caseRoot, active, marker) {
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/(KEY|SECRET|TOKEN|PASSWORD|CERTUM|APPLE|CSC_)/i.test(name)));
-  Object.assign(environment, { DSH_HOME: join(caseRoot, 'dsh'), AGENTKIT_HOME: join(caseRoot, 'agentkit'), ELECTRON_RUN_AS_NODE: '1', DSH_CLIENT_VERSION: packagedManifest.version });
   const profile = join(caseRoot, 'dsh/profiles/desktop-agentkit-studio');
-  const child = spawn(resolve(values.node), ['--expose-internals', hostEntry, runtime, profile, primaryRuntime],
-    { cwd: profile, env: environment, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
-  const diagnosticDirectory = join(dirname(output), 'profile-diagnostics'); await mkdir(diagnosticDirectory, { recursive: true });
-  const diagnosticPath = join(diagnosticDirectory, `${caseRoot.split('/').at(-1)}-${Date.now()}.log`);
-  const secrets = Object.entries(process.env).filter(([name, value]) => /(KEY|SECRET|TOKEN|PASSWORD|CERTUM|CSC_)/i.test(name) && value.length >= 4).map(([, value]) => value);
-  const diagnostics = [child.stdout, child.stderr].map(stream => {
-    const diagnostic = stream.pipe(createBuildOutputRedactor());
-    diagnostic.setEncoding('utf8');
-    diagnostic.on('data', text => { for (const secret of secrets) text = text.split(secret).join('[redacted]'); appendFileSync(diagnosticPath, text, { mode: 0o600 }); });
-    return finished(diagnostic, { cleanup: true });
-  });
-  const diagnosticDone = Promise.all(diagnostics);
-  (result.diagnosticFiles ??= []).push(diagnosticPath);
-  const stopped = new Promise(accept => child.once('close', (code, signal) => accept({ code, signal })));
-  let forced = false, acknowledged = false, context;
-  child.on('message', message => { if (message?.type === 'shutdown-complete') acknowledged = true; });
-  try {
-    const ready = new Promise((accept, reject) => {
-      const timer = setTimeout(() => reject(new Error('Assembled runtime did not become ready')), 60000);
-      child.on('message', message => {
-        if (message?.type === 'ready') { clearTimeout(timer); accept(message.url); }
-        if (message?.type === 'fatal') { clearTimeout(timer); reject(new Error('Assembled Desktop Host reported a fatal startup failure; see redacted diagnostics')); }
+  const diagnostics = join(dirname(output), 'profile-diagnostics', `${basename(caseRoot)}-${Date.now()}.log`);
+  (result.diagnosticFiles ??= []).push(diagnostics);
+  const check = await withAssembledDesktopHost({ runtime, node: values.node, profile, diagnostics, environment: {
+    DSH_HOME: join(caseRoot, 'dsh'), AGENTKIT_HOME: join(caseRoot, 'agentkit'), DSH_CLIENT_VERSION: packagedManifest.version,
+  } }, async ({ url }) => {
+    const context = await browser.newContext({ locale: 'en-US' });
+    try {
+      const page = await context.newPage(), rendererErrors = [];
+      page.on('pageerror', error => rendererErrors.push(error.name));
+      await page.goto(url);
+      await page.locator('[class*="frame"]').first().waitFor({ state: 'visible', timeout: 60000 });
+      const status = await page.evaluate(async () => {
+        const response = await fetch('/agentkit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'settings/get', payload: {}, rpcId: 'profile-proof' }) });
+        const type = response.headers.get('content-type');
+        if (response.status !== 200) return { status: response.status, type };
+        let message;
+        try { message = await response.json(); } catch { return { status: response.status, type, json: false }; }
+        return { status: response.status, type, json: true, ok: message.result?.ok === true };
       });
-      child.once('error', () => { clearTimeout(timer); reject(new Error('Assembled Desktop Host could not start')); });
-      child.once('close', () => { clearTimeout(timer); reject(new Error('Assembled Desktop Host stopped before ready')); });
-    });
-    const url = await ready;
-    context = await browser.newContext({ locale: 'en-US' });
-    const page = await context.newPage();
-    const rendererErrors = [];
-    page.on('pageerror', error => rendererErrors.push(error.name));
-    await page.goto(url);
-    await page.locator('[class*="frame"]').first().waitFor({ state: 'visible', timeout: 60000 });
-    const status = await page.evaluate(async () => {
-      const response = await fetch('/agentkit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'settings/get', payload: {}, rpcId: 'profile-proof' }) });
-      const type = response.headers.get('content-type');
-      if (response.status !== 200) return { status: response.status, type };
-      let message;
-      try { message = await response.json(); } catch { return { status: response.status, type, json: false }; }
-      return { status: response.status, type, json: true, ok: message.result?.ok === true };
-    });
-    (result.probes ??= []).push({ kind: caseRoot.split('/').at(-1), expectedActive: active, ...status });
-    assert.equal(status.status, active ? 200 : 405, 'The active Studio handles POST; the native SPA fallback rejects it with Method Not Allowed');
-    if (active) { assert.equal(status.ok, true); await page.locator('.studio-agent-trigger').waitFor({ state: 'attached', timeout: 60000 }); }
-    else assert.equal(await page.locator('.studio-agent-trigger').count(), 0);
-    if (marker) assert.equal(existsSync(marker), true, 'The existing user bundle must load in the real Host');
-    assert.deepEqual(rendererErrors, [], 'The assembled profile must render without page errors');
-    return { hostStatus: status.status, studioClientMounted: active, existingBundleActive: Boolean(marker), rendererErrors: rendererErrors.length };
-  } finally {
-    await context?.close();
-    if (child.connected) child.send({ type: 'shutdown' });
-    const timer = setTimeout(() => { forced = true; child.kill('SIGKILL'); }, 10000);
-    const exit = await stopped; clearTimeout(timer); await diagnosticDone;
-    assert.equal(forced, false, 'The real Host must stop without a forced kill');
-    assert.equal(exit.code, 0, 'The Desktop Host must exit successfully');
-    assert.equal(acknowledged, true, 'The Desktop Host must acknowledge completed shutdown');
-    const log = existsSync(diagnosticPath) ? await readFile(diagnosticPath, 'utf8') : '';
-    assert.doesNotMatch(log, /warning: \d+ entries did not activate/, 'Every enabled profile entry must activate');
-    if (marker) assert.equal(existsSync(marker), false, 'The existing bundle must dispose its owned resource');
-  }
+      (result.probes ??= []).push({ kind: basename(caseRoot), expectedActive: active, ...status });
+      assert.equal(status.status, active ? 200 : 405, 'Active Studio must handle POST; the inactive native fallback rejects it');
+      if (active) { assert.equal(status.ok, true); await page.locator('.studio-agent-trigger').waitFor({ state: 'attached', timeout: 60000 }); }
+      else assert.equal(await page.locator('.studio-agent-trigger').count(), 0);
+      if (marker) assert.equal(existsSync(marker), true, 'The existing user bundle must run in the real Host');
+      assert.deepEqual(rendererErrors, [], 'The assembled profile must render without page errors');
+      return { hostStatus: status.status, studioClientMounted: active, existingBundleActive: Boolean(marker), rendererErrors: rendererErrors.length };
+    } finally { await context.close(); }
+  });
+  if (marker) assert.equal(existsSync(marker), false, 'The existing bundle must dispose its owned resource');
+  return check;
 }
 try {
   const executablePath = process.env.STUDIO_VERIFY_CHROME || (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : undefined);
