@@ -11,14 +11,19 @@ import { snapshotDesktopPluginInputs } from './desktop-plugin-inputs.mjs';
 import { exportLocalDmg } from './export-local-dmg.mjs';
 import { checkPatchManifest } from './check-patch-manifest.mjs';
 import { assertPatchedSource } from './patched-source-fingerprint.mjs';
+import { resolveProductInputs } from './product-config.mjs';
 
 const credentialPaths = new Set(['DSH_DESKTOP_WINDOWS_CER_FILE','DSH_DESKTOP_WINDOWS_SIGNTOOL','APPLE_API_KEY','APPLE_KEYCHAIN','CSC_LINK']);
 
-/** Preserve dotenv values exactly while resolving file references against the original configuration. */
-export function relocateReleaseSettings(contents, sourceDirectory) {
-  let settings;
-  try { settings = parseEnv(contents.replace(/^\uFEFF/u,'')); }
+function parseReleaseSettings(contents) {
+  try { return parseEnv(contents.replace(/^\uFEFF/u,'')); }
   catch { throw new Error('desktop settings: invalid dotenv syntax'); }
+}
+
+/** Preserve dotenv values exactly while resolving file references against the original configuration. */
+export function relocateReleaseSettings(contents, sourceDirectory, publicSettings = {}) {
+  const settings = parseReleaseSettings(contents);
+  Object.assign(settings, publicSettings);
   for (const name of credentialPaths) if (settings[name]?.trim()) settings[name] = resolve(sourceDirectory,settings[name].trim());
   const result = Object.entries(settings).map(([name,value])=>{
     const quote = ["'",'`','"'].find(candidate=>!value.includes(candidate));
@@ -62,12 +67,14 @@ export function packageManagerEnvironment(environment) {
 }
 
 export async function packageDesktop(options) {
-  const {target,unsigned=false,directory=false,source,output,studioVersion,dshVersion}=options;
-  const buildVersion=options.buildVersion ?? process.env.DSH_DESKTOP_BUILD_VERSION;
+  const {target,unsigned=false,directory=false,source,output,dshVersion}=options;
+  const requestedBuildVersion=options.buildVersion ?? process.env.DSH_DESKTOP_BUILD_VERSION;
   if (!['mac-arm64','mac-x64','win-x64'].includes(target)) throw new Error('desktop packaging: unsupported target');
   if (unsigned && target !== 'win-x64' && (target!=='mac-arm64'||directory)) throw new Error('desktop packaging: local unsigned export requires a mac-arm64 image');
   const { manifest: patchManifest } = await checkPatchManifest(options.patches, { baseCommit: options.commit });
-  const environment=packageManagerEnvironment(process.env);
+  const product = resolveProductInputs({ target, dshVersion, buildVersion: requestedBuildVersion, pluginVersion: options.studioVersion });
+  const { pluginVersion: studioVersion, desktopVersion: buildVersion } = product;
+  const environment=packageManagerEnvironment({ ...product.environment, ...process.env });
   const manager = packageManagerInvocation(process.platform, environment, options.pnpmScript);
   const invoke = (args, cwd) => run(manager.command, [...manager.args, ...args], cwd, environment);
   return withDesktopCheckout(options,async checkout=>{
@@ -85,7 +92,14 @@ export async function packageDesktop(options) {
       // No profile, authentication directory or arbitrary ignored file enters the source snapshot.
       if(!unsigned || target==='win-x64') {
         const sourceDirectory=join(resolve(source),'apps/desktop');
-        const settings=relocateReleaseSettings(await readFile(join(sourceDirectory,settingsName),'utf8'),sourceDirectory);
+        const original = await readFile(join(sourceDirectory,settingsName),'utf8');
+        const releaseSettings = parseReleaseSettings(original);
+        const releaseProduct = resolveProductInputs({ target, dshVersion, buildVersion,
+          updateOrigin: releaseSettings.DSH_DESKTOP_UPDATE_ORIGIN,
+          updateChannel: releaseSettings.DSH_DESKTOP_UPDATE_CHANNEL,
+          updateEnvironment: releaseSettings.DSH_DESKTOP_AUTO_UPDATE_ENV,
+        });
+        const settings=relocateReleaseSettings(original,sourceDirectory,releaseProduct.settings);
         await mkdir(join(checkout,'apps/desktop'),{recursive:true});
         await writeFile(settingsPath,settings,{mode:0o600,flag:'wx'});
         copiedSettings=true;

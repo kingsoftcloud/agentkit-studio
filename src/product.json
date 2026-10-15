@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "brand": {
+    "name": "AgentKit Studio",
+    "shortName": "AgentKit"
+  },
+  "versionSources": {
+    "plugin": "package.json#version",
+    "desktop": "explicit-build-version-or-dsh-version"
+  },
+  "desktop": {
+    "appId": "com.kingsoftcloud.agentkit-studio",
+    "pluginRoots": ["@kingsoftcloud/agentkit-studio"],
+    "defaultBundles": ["@kingsoftcloud/agentkit-studio"],
+    "updates": {
+      "environment": "production",
+      "origin": "https://agentkit.ks3-cn-beijing.ksyuncs.com",
+      "channel": "preview"
+    },
+    "platforms": {
+      "mac-arm64": {"icon": "assets/agentkit-studio-macos.png", "trayIcon": "assets/agentkit-studio-tray.ico"},
+      "mac-x64": {"icon": "assets/agentkit-studio-macos.png", "trayIcon": "assets/agentkit-studio-tray.ico"},
+      "win-x64": {"icon": "assets/agentkit-studio-macos.png", "trayIcon": "assets/agentkit-studio-tray.ico"}
+    }
+  }
+}

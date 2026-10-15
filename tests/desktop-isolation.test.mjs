@@ -117,7 +117,7 @@ test('CI build version reaches the official package CLI instead of being lost in
   const {promisify}=await import('node:util'); const {execFile}=await import('node:child_process');
   await promisify(execFile)(process.execPath,['scripts/package-desktop.mjs',
     '--source',input.source,'--output',input.output,'--patches',input.patches,'--commit',input.commit,
-    '--target','mac-arm64','--dsh-version','0.2.0-rc.2','--studio-version','0.0.1'],{
+    '--target','mac-arm64','--dsh-version','0.2.0-rc.2','--studio-version','0.0.2'],{
     env:{...process.env,PATH:`${bin}:${process.env.PATH}`,PACKAGE_CALLS:calls,DSH_DESKTOP_PLUGIN_INPUTS:'',DSH_DESKTOP_BUILD_VERSION:'0.2.0-rc.2.20261012.0'},
   });
   const recorded=(await readFile(calls,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
@@ -140,6 +140,8 @@ test('Windows target reads its own settings and delegates NSIS packaging to DSH'
   const recorded=(await readFile(calls,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
   assert.deepEqual(recorded[1].args,['--dir','apps/desktop','run','package','win-x64','--build-version','0.2.0-rc.2.20261013.20']);
   assert.match(recorded[1].settings,/SIGNING_MODE='certificate-store'/);
+  assert.match(recorded[1].settings,/DSH_DESKTOP_APP_ID='com.kingsoftcloud.agentkit-studio'/);
+  assert.match(recorded[1].settings,/DSH_DESKTOP_UPDATE_CHANNEL='preview'/);
   const checkout=await prepareDesktopCheckout(input);
   await assert.rejects(access(join(checkout,'apps/desktop/.env.windows')),'release identity must be removed after packaging');
 });
