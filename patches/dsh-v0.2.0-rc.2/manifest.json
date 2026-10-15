@@ -1525,23 +1525,28 @@
       "file": "039-exclude-package-ci-metadata.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "940a4419a7b5ed72da8320bd46ca599e531a65f707ae54a2732d0f978deb8f77",
+      "sha256": "57a49a7de39d69ca95a65b18b566fa27e67a3c866c16defdc8edbc18c0316cb2",
       "dependsOn": [
         "034"
       ],
       "affectedFiles": [
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
         "apps/desktop/scripts/electron-builder-config.d.mts",
         "apps/desktop/scripts/electron-builder-config.mjs",
         "apps/desktop/scripts/installed-update-builder.ts",
+        "apps/desktop/scripts/runtime-file-policy.ts",
         "apps/desktop/tests/installed-update-builder.spec.ts",
-        "apps/desktop/tests/package-ci-metadata.spec.ts"
+        "apps/desktop/tests/package-ci-metadata.spec.ts",
+        "apps/desktop/tests/runtime-file-policy.spec.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop"
       ],
       "contracts": [
-        "Exclude Coveralls CI configuration from ordinary and installed-update qualification runtime copy rules and root dependency collection",
-        "Preserve executable modules, package manifests, licenses and runtime provider data; actual archive verification rejects forbidden CI metadata"
+        "Exclude Coveralls CI configuration before sealing the runtime inventory and from ordinary and installed-update qualification archive copy rules",
+        "Preserve executable modules, package manifests, licenses and runtime provider data; the complete prepared inventory must match the actual archive"
       ],
       "risk": "low",
       "maintainerRole": "Studio host integration maintainers",
@@ -1555,7 +1560,9 @@
           "apps/desktop/tests/package-ci-metadata.spec.ts",
           "apps/desktop/tests/installed-update-builder.spec.ts",
           "apps/desktop/tests/local-macos-package.spec.ts",
-          "apps/desktop/tests/core-package-set.spec.ts"
+          "apps/desktop/tests/core-package-set.spec.ts",
+          "apps/desktop/tests/runtime-file-policy.spec.ts",
+          "apps/desktop/tests/windows-asar-unpack.spec.ts"
         ],
         "integrations": [
           "source",
@@ -1565,10 +1572,10 @@
       }
     }
   ],
-  "patchedTree": "aec0f451a7d43b072d1136c93c63c3b11409f1fc",
-  "patchedSourceSha256": "5777d201b1f1cbc468b4cdf58e4da8be9761e08d9b131cc91c0ad15f4edf868c",
+  "patchedTree": "66c2e2eb0c48ec5eb248d02e97ba5e4481c1cb28",
+  "patchedSourceSha256": "fcc113ac388f9192cb70f19b652f0f6a22d9b7500787388f96ad735be9a03634",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "def1015cbd4aabb080240db78cccf271fc087483e21b48daed73497beb0131a5"
+    "sha256": "99983d661dbc2dd1367d89db7b0126ddaec31a1a235b0418a31e482a6dcea041"
   }
 }
