@@ -8,7 +8,14 @@ import { fingerprintPatchedSource } from './patched-source-fingerprint.mjs';
 
 const execute = promisify(execFile);
 const digest = value => createHash('sha256').update(value).digest('hex');
-const git = async (cwd, args) => (await execute('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })).stdout.trim();
+const git = async (cwd, args) => {
+  try { return (await execute('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })).stdout.trim(); }
+  catch (error) {
+    // Report the operation without leaking paths, remotes or arbitrary Git output.
+    error.desktopCheckout = { operation: args[0], reason: /filename too long/i.test(error.stderr || '') ? 'path-too-long' : 'git-command-failed' };
+    throw error;
+  }
+};
 
 async function identify({ source, output, patches, commit }) {
   const sourceRoot = await realpath(source);
@@ -58,7 +65,7 @@ async function prepare(input) {
   const staging = await mkdtemp(join(directory,'preparing-'));
   try {
     const destination = join(staging,'source');
-    await git(directory,['clone','--shared','--no-checkout','--config','core.autocrlf=false','--',sourceRoot,destination]);
+    await git(directory,['clone','--shared','--no-checkout','--config','core.autocrlf=false','--config','core.longpaths=true','--',sourceRoot,destination]);
     await git(destination,['checkout','--detach',commit]);
     for (const entry of series) {
       const patch = join(staging,entry.name);

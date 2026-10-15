@@ -54,13 +54,20 @@ export function packageManagerInvocation(platform, environment, script = environ
   return /\.exe$/i.test(script) ? { command: script, args: [] } : { command: process.execPath, args: [script] };
 }
 
+/** pnpm disables version switching in its children after switching for Studio.
+ * A separate DSH workspace must select its own pinned package manager again.
+ */
+export function packageManagerEnvironment(environment) {
+  return { ...environment, npm_config_manage_package_manager_versions: 'true', pnpm_config_pm_on_fail: 'download' };
+}
+
 export async function packageDesktop(options) {
   const {target,unsigned=false,directory=false,source,output,studioVersion,dshVersion}=options;
   const buildVersion=options.buildVersion ?? process.env.DSH_DESKTOP_BUILD_VERSION;
   if (!['mac-arm64','mac-x64','win-x64'].includes(target)) throw new Error('desktop packaging: unsupported target');
   if (unsigned && target !== 'win-x64' && (target!=='mac-arm64'||directory)) throw new Error('desktop packaging: local unsigned export requires a mac-arm64 image');
   const { manifest: patchManifest } = await checkPatchManifest(options.patches, { baseCommit: options.commit });
-  const environment={...process.env};
+  const environment=packageManagerEnvironment(process.env);
   const manager = packageManagerInvocation(process.platform, environment, options.pnpmScript);
   const invoke = (args, cwd) => run(manager.command, [...manager.args, ...args], cwd, environment);
   return withDesktopCheckout(options,async checkout=>{

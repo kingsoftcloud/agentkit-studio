@@ -33,6 +33,7 @@ test('official build writes cannot replace live web bundles or workspace depende
   const input = await fixture(t);
   const checkout = await prepareDesktopCheckout(input);
   assert.notEqual(checkout, input.source);
+  assert.equal(execFileSync('git', ['config', '--local', 'core.longpaths'], { cwd: checkout, encoding: 'utf8' }).trim(), 'true');
   assert.equal(await readFile(join(checkout,'client.js'),'utf8'),'patched source\n');
   await assert.rejects(access(join(checkout,'.env.local')));
   await assert.rejects(access(join(checkout,'node_modules/owner')));
@@ -157,6 +158,16 @@ test('Windows action-setup installation resolves pnpm even when exec omits npm_e
   await writeFile(join(packageRoot,'package.json'),JSON.stringify({name:'pnpm',bin:{pnpm:'bin/pnpm.mjs'}}));
   const {packageManagerInvocation}=await import('../scripts/package-desktop.mjs');
   assert.deepEqual(packageManagerInvocation('win32',{PNPM_HOME:join(root,'node_modules/.bin')}),{command:process.execPath,args:[join(packageRoot,'bin/pnpm.mjs')]});
+});
+
+test('DSH commands restore version selection after Studio selected a different pnpm', async t => {
+  const { packageManagerEnvironment } = await import('../scripts/package-desktop.mjs');
+  const inherited = { npm_config_manage_package_manager_versions: 'false', pnpm_config_pm_on_fail: 'ignore', STUDIO_TEST_INPUT: 'preserved' };
+  const { promisify } = await import('node:util'); const { execFile } = await import('node:child_process');
+  const script = `if (process.env.npm_config_manage_package_manager_versions !== 'true' || process.env.pnpm_config_pm_on_fail !== 'download' || process.env.STUDIO_TEST_INPUT !== 'preserved') process.exit(1)`;
+  await promisify(execFile)(process.execPath, ['-e', script], { env: packageManagerEnvironment(inherited) });
+  assert.equal(inherited.npm_config_manage_package_manager_versions, 'false');
+  assert.equal(inherited.pnpm_config_pm_on_fail, 'ignore');
 });
 
 test('plugin inputs are frozen before a second pack replaces the shared version file', async t => {

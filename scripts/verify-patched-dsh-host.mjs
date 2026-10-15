@@ -1,11 +1,11 @@
 /** Build and test the reviewed patch series in a locked, isolated DSH checkout. */
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { parseArgs } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 import { checkPatchManifest } from './check-patch-manifest.mjs';
 import { withDesktopCheckout } from './desktop-checkout.mjs';
-import { packageManagerInvocation } from './package-desktop.mjs';
+import { packageManagerEnvironment, packageManagerInvocation } from './package-desktop.mjs';
 import { assertPatchedSource } from './patched-source-fingerprint.mjs';
 
 const { values } = parseArgs({ options: Object.fromEntries(['source', 'output', 'patches', 'report'].map(name => [name, { type: 'string' }])) });
@@ -16,9 +16,10 @@ const { verified, ...identity } = inputs;
 const result = { evidence: 'isolated-patched-dsh-build-and-affected-host-tests', ...identity, manifestVerified: verified, passed: false };
 const started = Date.now();
 const manager = packageManagerInvocation(process.platform, process.env);
+const environment = { ...packageManagerEnvironment(process.env), DSH_HOME: join(output, 'dsh-home'), AGENTKIT_HOME: join(output, 'agentkit-home') };
 function run(args, cwd) {
   return new Promise((accept, reject) => {
-    const child = spawn(manager.command, [...manager.args, ...args], { cwd, stdio: 'inherit', env: { ...process.env, DSH_HOME: join(output, 'dsh-home'), AGENTKIT_HOME: join(output, 'agentkit-home') } });
+    const child = spawn(manager.command, [...manager.args, ...args], { cwd, stdio: 'inherit', env: environment });
     child.once('error', reject);
     child.once('exit', code => code === 0 ? accept() : reject(Object.assign(new Error('Patched DSH verification command failed'), { code: 'PATCHED_HOST_COMMAND_FAILED' })));
   });
@@ -27,6 +28,10 @@ try {
   await withDesktopCheckout({ source: resolve(values.source), output, patches: resolve(values.patches), commit: manifest.baseCommit }, async checkout => {
     result.checkout = checkout;
     result.sourceBeforeBuild = await assertPatchedSource(checkout, manifest);
+    const packageJson = JSON.parse(await readFile(join(checkout, 'package.json'), 'utf8'));
+    const version = (await promisify(execFile)(manager.command, [...manager.args, '--version'], { cwd: checkout, env: environment, encoding: 'utf8' })).stdout.trim();
+    result.packageManager = { expected: packageJson.packageManager, actual: `pnpm@${version}` };
+    if (result.packageManager.expected !== result.packageManager.actual) throw Object.assign(new Error('DSH package manager does not match its pinned version'), { code: 'PATCHED_HOST_PACKAGE_MANAGER_MISMATCH' });
     for (const file of inputs.hostTests) if (!(await stat(join(checkout, file))).isFile()) throw new Error('Missing registered host test');
     await run(['install', '--frozen-lockfile'], checkout);
     await run(['run', 'build:official'], checkout);
@@ -47,6 +52,7 @@ try {
   });
 } catch (error) {
   result.failure = { code: error.code || 'PATCHED_HOST_VERIFICATION_FAILED' };
+  if (error.desktopCheckout) result.failure.git = error.desktopCheckout;
   if (error.code === 'PATCHED_SOURCE_MISMATCH') result.failure.source = { expected: error.expected, actual: error.actual };
   process.exitCode = 1;
 } finally {

@@ -15,6 +15,12 @@ export async function fingerprintPatchedSource(checkout) {
     const privateIndex = join(temporary, 'index');
     await copyFile(index, privateIndex);
     const env = { ...process.env, GIT_INDEX_FILE: privateIndex };
+    // A copied index has a newer mtime: Git's racy-stat optimization can then
+    // mistake a same-size source edit for unchanged content. Recreate only its
+    // tracked entries, without cached filesystem stats, before reading bytes.
+    const indexedTree = (await invoke(['write-tree'], env)).toString().trim();
+    await rm(privateIndex);
+    await invoke(['read-tree', indexedTree], env);
     await invoke(['add', '--all', '--', '.'], env);
     const tree = (await invoke(['write-tree'], env)).toString().trim();
     const entries = await invoke(['ls-tree', '-r', '-z', '--full-tree', tree], env);
