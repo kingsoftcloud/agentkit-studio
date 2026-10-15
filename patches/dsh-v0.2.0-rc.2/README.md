@@ -67,7 +67,7 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `036-preset-composition-generated-api.patch` | 由生成器同步已有 pluginsFor 方法的双语 API 引用和 Host 检查目录 | 固定上游 API 目录包含该方法 |
 | `037-web-editor-snapshot-ready-state.patch` | 通过真实输入及删除建立空编辑器段落，再采集 Hero ARIA；保留日志和回放断言 | 上游场景建立等价稳定的编辑器初始状态 |
 | `038-prompt-request-fingerprint.patch` | 将请求指纹保存在首次接收的原生消息来源中，跨领取、取消和重启拒绝冲突重试；提供能力版本 | 固定上游基线提供等价的持久化指纹与冲突检查合同 |
-| `039-exclude-package-ci-metadata.patch` | 从普通桌面包和安装更新验证包中排除第三方 Coveralls CI 配置，保留运行代码、许可证及模型数据清单 | 固定上游打包规则和实际归档检查提供等价的排除行为 |
+| `039-exclude-package-ci-metadata.patch` | 在运行时清单封存前及普通桌面包、安装更新验证包的归档阶段排除第三方 Coveralls CI 配置，保留运行代码、许可证及模型数据清单 | 固定上游文件策略、打包规则和完整归档校验提供等价行为 |
 
 `023` 的权限来自 [Codex 0.159.2 官方签名配置](https://github.com/openai/codex/blob/rust-v0.159.2/.github/scripts/macos-signing/codex-code-mode-host.entitlements.plist)。真实安装包的助手被通用签名规则重签后没有这两项权限；同一版本官方原包以及仅修复助手签名的本地副本都可实际创建并校验文件。正式产物还须通过 `node scripts/verify-codex-signing.mjs <App路径>`，并在实际安装后重跑文件执行验收。
 

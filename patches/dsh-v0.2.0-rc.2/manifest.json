@@ -1525,7 +1525,7 @@
       "file": "039-exclude-package-ci-metadata.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "9814ac32e116cc3434a2ae556a3f06031db18f2b3648ff0ca2a5272e6c313df5",
+      "sha256": "1566a70eef9f6438b7c086d2f69fb80b2f38223ac61e9bcaa4049f1177051ec0",
       "dependsOn": [
         "034"
       ],
@@ -1539,8 +1539,11 @@
         "apps/desktop/scripts/installed-update-builder.ts",
         "apps/desktop/scripts/runtime-file-policy.ts",
         "apps/desktop/tests/installed-update-builder.spec.ts",
+        "apps/desktop/tests/installer-packaging.spec.ts",
+        "apps/desktop/tests/macos-signature.spec.ts",
         "apps/desktop/tests/package-ci-metadata.spec.ts",
-        "apps/desktop/tests/runtime-file-policy.spec.ts"
+        "apps/desktop/tests/runtime-file-policy.spec.ts",
+        "apps/desktop/tests/windows-update-publisher.spec.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop"
@@ -1558,12 +1561,21 @@
       "removeWhen": "The pinned upstream ordinary and qualification packagers exclude unused third-party Coveralls CI metadata with equivalent archive verification.",
       "verification": {
         "hostTests": [
-          "apps/desktop/tests/package-ci-metadata.spec.ts",
-          "apps/desktop/tests/installed-update-builder.spec.ts",
-          "apps/desktop/tests/local-macos-package.spec.ts",
           "apps/desktop/tests/core-package-set.spec.ts",
+          "apps/desktop/tests/installed-update-builder.spec.ts",
+          "apps/desktop/tests/installed-update-packaging.spec.ts",
+          "apps/desktop/tests/installer-packaging.spec.ts",
+          "apps/desktop/tests/local-macos-package.spec.ts",
+          "apps/desktop/tests/macos-signature.spec.ts",
+          "apps/desktop/tests/package-ci-metadata.spec.ts",
+          "apps/desktop/tests/package-macos.spec.ts",
+          "apps/desktop/tests/package-target-stages.spec.ts",
+          "apps/desktop/tests/package-target.spec.ts",
+          "apps/desktop/tests/packaged-runtime-verification.spec.ts",
+          "apps/desktop/tests/product-branding.spec.ts",
           "apps/desktop/tests/runtime-file-policy.spec.ts",
-          "apps/desktop/tests/windows-asar-unpack.spec.ts"
+          "apps/desktop/tests/windows-asar-unpack.spec.ts",
+          "apps/desktop/tests/windows-update-publisher.spec.ts"
         ],
         "integrations": [
           "source",
@@ -1573,10 +1585,10 @@
       }
     }
   ],
-  "patchedTree": "7844463e4419c989c1047f13d2a376dafc26dd7e",
-  "patchedSourceSha256": "cb8d8e66e45eccfb619c1c09e4d91b327ce28ae57efb0fb31672cb29929ba93a",
+  "patchedTree": "c98769e57794f4ef510cd7f94db1d589f487b643",
+  "patchedSourceSha256": "cb6d73783f674e55552eee651f8f0da8be094845b0d31332f27ab74d622662e4",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "80f1871711220091fbc4834041efd77e8e4be6420d8589efd44edac1300bc0d4"
+    "sha256": "7798a299da2c859370c4dc481f2f870dd5e900e21dbdb1e181b4e937954e2890"
   }
 }
