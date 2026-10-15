@@ -84,8 +84,8 @@
       "script": "scripts/verify-studio-frozen-host.mjs"
     },
     "persistence": {
-      "kind": "real-dsh-persistence",
-      "script": "scripts/verify-dsh-node-store.mjs"
+      "kind": "real-assembled-desktop-host-persistence-controlled-resource",
+      "script": "scripts/verify-studio-persistence.mjs"
     },
     "macos": {
       "kind": "unsigned-or-signed-package",
@@ -108,6 +108,10 @@
     "product-profiles": {
       "kind": "real-assembled-desktop-host",
       "script": "scripts/verify-studio-product-profiles.mjs"
+    },
+    "node-projection": {
+      "kind": "real-dsh-node-projection",
+      "script": "scripts/verify-dsh-node-store.mjs"
     }
   },
   "patches": [
