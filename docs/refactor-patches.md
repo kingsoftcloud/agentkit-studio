@@ -58,4 +58,4 @@ make patch-source-verify DSH_ROOT=../deepseek-harness
 
 `make public-gate` 中的 `patch-source-check` 无需 DSH checkout，核对描述文件、归档和导出文件摘要。`patch-source-verify` 用基线对象在独立临时 Git 仓库恢复归档，检查父提交和 trailer，逐项重新生成补丁并比较字节。桌面打包、预检、开发安装及补丁应用检查均执行完整校验；Linux/Windows 宿主 CI 也在构建前执行并记录结果。仅改补丁并重写清单摘要仍会被完整校验拒绝。归档文件丢失时需取得源码仓库，不能从运行时包推断维护来源。
 
-通用修复与会话持久化扩展分别评审；[持久化复核](refactor-persistence.md) 区分真实日志恢复和节点投影，并记录尚未接受的事件消费者。启动握手需表达基线、兼容版本和所需能力。候选升级只在独立 checkout 演练，记录需保留、已有等价实现、需重做的差异及耗时，失败不能自动切换生产基线或删除补丁。
+通用修复与会话持久化扩展分别评审；[持久化复核](refactor-persistence.md) 区分真实日志恢复和节点投影，并记录尚未接受的事件消费者。[宿主兼容检查](host-compatibility.md) 从运行中的 DSH API 读取基线版本，按 Studio 集成合同检查所属 Host 的必要能力；冻结运行时随原生依赖作用域启动、关闭及恢复。候选升级只在独立 checkout 演练，记录需保留、已有等价实现、需重做的差异及耗时，失败不能自动切换生产基线或删除补丁。

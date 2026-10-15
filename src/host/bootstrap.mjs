@@ -16,6 +16,7 @@ import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
+import { bindFrozenRuntime } from './frozen-runtime-lifecycle.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory } = {}) {
   const hostCompatibility = await loadHostCompatibility(ctx);
@@ -281,32 +282,25 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     reconcile: admission => reconciler.run(admission),
   });
   const { startFrozenBuildRuntime } = await import('../frozen-build-runtime.mjs');
-  const startRuntime = async () => {
-    try {
-      return await startFrozenBuildRuntime({ ctx, env: runtimeEnv, hostCompatibility, modelService: models, build: (await studioBuildPromise).build,
-        admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) });
-    } catch (error) {
-      if (error?.code !== 'STUDIO_HOST_INCOMPATIBLE') throw error;
-      console.warn('[agentkit-studio] frozen runtime unavailable:', error.message);
-      return null;
-    }
-  };
+  const bindRuntime = () => bindFrozenRuntime(ctx, {
+    start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, modelService: models, build: (await studioBuildPromise).build,
+      admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) }),
+    onUnavailable: error => console.warn('[agentkit-studio] frozen runtime unavailable:', error.message),
+  });
   if (portableRuntime) {
     // Settings writes reconcile the Loader. Awaiting them inside plugin apply
     // deadlocks that reconciliation; use the same public startup boundary as DSH Settings.
-    let stopped = false, runtime;
-    ctx.effect(() => () => { stopped = true; return runtime?.close(); }, 'agentkit-studio: portable runtime lifetime');
+    let stopped = false;
+    ctx.effect(() => () => { stopped = true; }, 'agentkit-studio: portable runtime startup');
     void ctx.root.loader.await().then(async () => {
       if (stopped) return;
       const { syncPortableModelProfiles } = await import('../portable-model-bridge.mjs');
       await syncPortableModelProfiles({ settings: ctx.get('settings'), profiles: portableRuntime.manifest.resources.profiles });
       if (stopped) return;
-      runtime = await startRuntime();
-      if (stopped) await runtime?.close();
+      await bindRuntime();
     }).catch(error => console.error('[agentkit-studio] portable runtime startup failed:', error?.code || 'PORTABLE_STARTUP_FAILED'));
   } else {
-    const frozenRuntime = await startRuntime();
-    if (frozenRuntime) ctx.effect(() => () => frozenRuntime.close(), 'agentkit-studio: frozen Build runtime');
+    await bindRuntime();
   }
   const routes = createStudioRoutes(ctx, {
     ...services, models, syncModelCredential, hostCompatibility,
