@@ -1,6 +1,6 @@
 # Host 拆分：实施与验收
 
-阶段 4 正在实施。4A 服务组装、4B 全部 77 个操作及传输注册、4C 共享合同与真实 Host 验证已通过本地验收，macOS 无签名包已通过运行时 smoke 和包内模块检查；Windows 包验证仍待完成。本记录不把入口变短当作完整阶段验收。
+阶段 4 已通过适用的本地和 CI 验收。4A 服务组装、4B 全部 77 个操作及传输注册、4C 共享合同与真实 Host 验证，以及 macOS、Windows 无签名包的运行时 smoke 和包内模块检查均已通过。本记录分别保留受控 provider、开发宿主与无签名包的证据边界。
 
 ## 4A 改动范围
 
@@ -65,9 +65,9 @@ HTTP/SSE 注册和 Connection Fetch 下载位于独立模块；旧本地会话�
 
 机器证据保存为 `routes-all-release-check.log`、`routes-all-real-dsh-http.json`、`routes-all-web-28.json`、`routes-all-electron-28.json`、`routes-all-lifecycle-20.json`、`routes-all-packed-harness.log` 和 `routes-lifetime-{red,green}.log`。固定提交录制保存在 `tests/fixtures/host-route-contracts.json`，测试直接调用当前路由模块，不在运行时执行旧源码。
 
-## 仍需完成
+## 阶段验收范围
 
-4C 的共享合同、四种启动状态、重启恢复、冻结 Build 和工具续接结果见下文。目前剩余 Windows 包验证，不能宣称阶段 4 全部完成。阶段 4 完整验收后再进入补丁收敛与宿主升级演练，最终交付可开源源码主分支。
+4C 的共享合同、四种启动状态、重启恢复、冻结 Build、工具续接及平台包结果见下文。阶段 4 的源码、真实 Host 与适用打包检查均已完成，接下来进入阶段 5 补丁收敛与宿主升级演练，最终交付可开源源码主分支。
 
 ## 4C 首批合同与启动隔离
 
@@ -110,9 +110,12 @@ node scripts/verify-desktop-module-graph.mjs "<AgentKit Studio.app 或 app.asar>
 | --- | ---: | --- |
 | mac-arm64 unsigned DMG | 501987772 | `d927bb8edc538c66a14ccd68bce5de75de575631e9b3c933d40e545bf5c7d0d8` |
 | mac-arm64 unsigned ZIP | 507037243 | `f73faedf8040aeda6b90c29f857f79dc665316a7ebc18167ab34529dd3072072` |
+| win-x64 unsigned EXE | 401201186 | `82edfabec4cb16976db73525feae11c28ec53587ba6f8651c54a74de3c6c5d01` |
 
 新增包内动态 Host import 的缺失文件回归检查后，全量源码及发行输入检查为 904 项通过，0 失败、0 跳过，实际 Studio tarball 共 510 文件。上述平台证据仅为本地无签名包，未进行签名、公证、原生安装更新或二进制发布。
 
-Windows 官方仓库诊断任务 `38663780184` 被 GitHub 账户付款或额度状态拒绝启动，实际执行步骤为 0；该结果不能记为 Windows 打包失败或通过。后续按用户选择复用此前公开仓库的标准 Windows CI 通道，固定源提交并仅执行无签名诊断。阶段 4 仍等待该平台结果。
+Windows 官方仓库诊断任务 `38663780184` 被 GitHub 账户付款或额度状态拒绝启动，实际执行步骤为 0；该结果不能记为 Windows 打包失败或通过。随后按用户选择，复用此前公开仓库的标准 Windows CI 通道。[任务 38665466735](https://github.com/kingsoftcloud/ksadk-python/actions/runs/38665466735) 固定 Studio `56213286759f4470ea5ac0cf3e3d2239cebea483`，源码门禁及 `windows-2025` 无签名打包均成功，Windows job 用时 21 分 43 秒。下载后的证据确认官方 packaged smoke 和实际 `app.asar` 的 9 个入口、143 个模块检查通过。该提交相对 macOS 输入只改变验证脚本、测试和本文档，生产代码字节保持一致。
 
-本批证据为 `stage-4/mac-package-acceptance.json`、`mac-studio-module-graph.json`、`mac-package-cached.redacted.log`、`archive-graph-release-check.log` 和 `windows-current-run.json`。首次将声明文件计入 Desktop parity 的报告也保留，按官方文件排除规则修正验收范围，没有修改产品包。
+公开 CI 的源码门禁再次通过 904 项测试，0 失败、0 跳过；Gitleaks 8.30.1 的快照及历史扫描、公开历史检查和 510 文件的 tarball 检查通过。临时公开 CI 分支只修改一个 workflow，使用已有源码读取凭证，上传诊断记录；Studio 仓库仍为 private。签名、公证、原生安装更新、云端行为及二进制发布不在本次无签名包证据中。
+
+本批证据为 `stage-4/mac-package-acceptance.json`、`mac-studio-module-graph.json`、`mac-package-cached.redacted.log`、`archive-graph-release-check.log`、`windows-current-run.json`、`windows-package-acceptance.json`、`public-windows-current-run.json`、`public-source-gate.log` 和 `acceptance-stage-4-final.json`。首次将声明文件计入 Desktop parity 的报告也保留，按官方文件排除规则修正验收范围，没有修改产品包。
