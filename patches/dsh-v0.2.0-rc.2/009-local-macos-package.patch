@@ -454,8 +454,9 @@ diff --git a/apps/desktop/tests/product-branding.spec.ts b/apps/desktop/tests/pr
 new file mode 100644
 --- /dev/null
 +++ b/apps/desktop/tests/product-branding.spec.ts
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,18 @@
 +import { expect, it } from 'vitest'
++import { fileURLToPath } from 'node:url'
 +import { createElectronBuilderConfig } from '../scripts/electron-builder-config.mjs'
 +
 +const env = { DSH_DESKTOP_APP_ID: 'com.example.studio.local', DSH_DESKTOP_TARGET_PLATFORM: 'darwin', DSH_DESKTOP_TARGET_ARCH: 'arm64', DSH_DESKTOP_UNSIGNED: '1' }
@@ -470,7 +471,7 @@ new file mode 100644
 +it('ordinary DSH builds keep the official icon and name', () => {
 +  const config = createElectronBuilderConfig(env, 'darwin', 'arm64')
 +  expect(config.productName).toBe('DeepSeek Harness')
-+  expect(config.mac.icon).toMatch(/resources\/icon-macos.png$/)
++  expect(config.mac.icon).toBe(fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)))
 +})
 diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
 index 4e978ec00f..41b1560083 100644

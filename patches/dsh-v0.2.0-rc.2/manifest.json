@@ -299,7 +299,7 @@
       "file": "009-local-macos-package.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "d26df08790cf20f195889e7a19af95d1d5a319d3450dc3ad404387fd29c0b66b",
+      "sha256": "a71c4f8e7c8307c38d0ebdf3e869ec5c3189a7782b719443ce765db1284c50fb",
       "dependsOn": [
         "006"
       ],
@@ -1261,7 +1261,7 @@
       "file": "032-windows-studio-product.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "91f9eed51556a57c8d95788f19c5eba6a515afd317c0b7dd5972e4bb04cdb0f9",
+      "sha256": "6b27d68c370e23abcdff26f5b0f5012d58482e4002373124433c8b583acf39de",
       "dependsOn": [
         "009",
         "019",
@@ -1392,6 +1392,6 @@
       }
     }
   ],
-  "patchedTree": "a775f65a1b7906e3ea0e40fd74e8a41255475b63",
-  "patchedSourceSha256": "24c624509b6d8971544f781eca61f5cff6704d999d909c9a80435052878c1eac"
+  "patchedTree": "b3cd7c3d267815584a4693caf1dfed6f22fc350e",
+  "patchedSourceSha256": "dabfa5fe3646fecd675f885626b1bc4f5a1675c3e1bd21266dc329281d1eacdf"
 }
