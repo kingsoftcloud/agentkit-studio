@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { withDesktopCheckout } from './desktop-checkout.mjs';
 import { snapshotDesktopPluginInputs } from './desktop-plugin-inputs.mjs';
 import { exportLocalDmg } from './export-local-dmg.mjs';
+import { checkPatchManifest } from './check-patch-manifest.mjs';
 
 const credentialPaths = new Set(['DSH_DESKTOP_WINDOWS_CER_FILE','DSH_DESKTOP_WINDOWS_SIGNTOOL','APPLE_API_KEY','APPLE_KEYCHAIN','CSC_LINK']);
 
@@ -57,6 +58,7 @@ export async function packageDesktop(options) {
   const buildVersion=options.buildVersion ?? process.env.DSH_DESKTOP_BUILD_VERSION;
   if (!['mac-arm64','mac-x64','win-x64'].includes(target)) throw new Error('desktop packaging: unsupported target');
   if (unsigned && target !== 'win-x64' && (target!=='mac-arm64'||directory)) throw new Error('desktop packaging: local unsigned export requires a mac-arm64 image');
+  await checkPatchManifest(options.patches, { baseCommit: options.commit });
   const environment={...process.env};
   const manager = packageManagerInvocation(process.platform, environment, options.pnpmScript);
   const invoke = (args, cwd) => run(manager.command, [...manager.args, ...args], cwd, environment);
@@ -108,6 +110,7 @@ export async function packageDesktop(options) {
  * through the versioned patch series in the isolated checkout.
  */
 export async function verifyDesktopPackageInputs(options) {
+  await checkPatchManifest(options.patches, { baseCommit: options.commit });
   return withDesktopCheckout(options, async checkout => {
     const required = [
       ['apps/desktop/scripts/prepare-package-set.ts', 'DSH_DESKTOP_PLUGIN_INPUTS'],

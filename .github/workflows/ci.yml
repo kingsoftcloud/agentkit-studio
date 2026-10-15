@@ -30,3 +30,39 @@ jobs:
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           echo "GITLEAKS_BIN=$RUNNER_TEMP/gitleaks/gitleaks" >> "$GITHUB_ENV"
       - run: make public-gate
+  patched-host:
+    name: patched-dsh-host
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2025]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: dsh-v0.2.0-rc.2
+          path: .ci-dsh
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          package_json_file: .ci-dsh/package.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches patches/dsh-v0.2.0-rc.2 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: patched-dsh-host-${{ matrix.os }}
+          path: |
+            .artifacts/patched-host-acceptance.json
+            .artifacts/patched-host/host-tests.json
+          if-no-files-found: error
+          retention-days: 7
