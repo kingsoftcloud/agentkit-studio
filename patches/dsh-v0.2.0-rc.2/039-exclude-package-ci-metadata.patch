@@ -40,21 +40,29 @@ index cb08b664cb3cb6389ab531deb8cb93850ed3fef8..875c6b375f6247707084bf04461620b1
  [Office 转换提供方](../../packages/document/office-to-pdf/README.zh.md)携带目标已声明的原生引擎；kit 未声明匹配原生目标时携带 WASM 引擎。准备阶段在打包前拒绝缺少目标引擎的情况。完整 Office 依赖（CLI、JavaScript 库和选定引擎的可执行文件、数据、许可证及 notices）解包到 `resources/app.asar.unpacked/dsh/node_modules/` 下。Desktop Host 将引擎清单解析到这些物理目录，并向加载的技能提供独立 Node 和解包后 CLI 的绝对路径。Node 位于 `resources/runtime/primary-runtime/dependencies/node/bin/`；CLI 位于解包后的 `@deepseek-ai/libreoffice-kit/lib/cli.js`。macOS 上的原生辅助程序获得 [LibreOffice UNO 桥](https://github.com/LibreOffice/core/blob/master/sysui/desktop/macosx/hardened_runtime.xcent.in)所需的 JIT entitlement。
  
 diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
-index 11a40e04cfb6cb63005123152311f51e47b9ae4d..66af3b9312455d0e731b51b3e177b1f358ce27db 100644
+index 11a40e04cfb6cb63005123152311f51e47b9ae4d..3021e9f84e66175afd444335159807374d9a0ab1 100644
 --- a/apps/desktop/electron-builder.config.d.mts
 +++ b/apps/desktop/electron-builder.config.d.mts
-@@ -14,8 +14,9 @@ export interface DesktopElectronBuilderConfig {
-     string,
-     string,
-     string,
+@@ -9,14 +9,11 @@ export interface DesktopElectronBuilderConfig {
+   readonly directories: {
+     readonly output: string
+   }
+-  readonly files: readonly [
+-    string,
+-    string,
+-    string,
+-    string,
 -    { readonly from: string, readonly to: 'dsh', readonly filter: readonly ['**/*'] },
 -    { readonly from: string, readonly to: 'dsh/node_modules', readonly filter: readonly ['**/*'] },
-+    { readonly from: string, readonly to: 'dsh', readonly filter: readonly string[] },
-+    { readonly from: string, readonly to: 'dsh/node_modules', readonly filter: readonly string[] },
-+    string,
-   ]
+-  ]
++  readonly files: readonly (string | {
++    readonly from: string
++    readonly to: 'dsh' | 'dsh/node_modules'
++    readonly filter: readonly string[]
++  })[]
    readonly extraMetadata: { readonly name?: string; readonly dshDesktopAppId: string }
    readonly asarUnpack: readonly string[]
+   readonly extraResources: readonly [
 diff --git a/apps/desktop/scripts/electron-builder-config.d.mts b/apps/desktop/scripts/electron-builder-config.d.mts
 index 655996a23487c15274a3ceab16302895df83f470..d9a56f198369187f060d555f7c0595ba80e886bd 100644
 --- a/apps/desktop/scripts/electron-builder-config.d.mts
@@ -171,6 +179,48 @@ index 089b04deef1467514ddc89c065397a0aca334bc9..67c4e680d5965b786b6f46e11d6f7344
          expect(config.win.forceCodeSigning).toBe(true)
          expect(config.win.signtoolOptions.publisherName).toBe('CN=Fixture,O=Fixture,C=CN')
          expect(typeof config.win.signtoolOptions.sign).toBe('function')
+diff --git a/apps/desktop/tests/installer-packaging.spec.ts b/apps/desktop/tests/installer-packaging.spec.ts
+index 15a4610d9867d77f80c95022dc7eee6d12105d7d..1497361d180a305f2f04df715de9714025e4a5e8 100644
+--- a/apps/desktop/tests/installer-packaging.spec.ts
++++ b/apps/desktop/tests/installer-packaging.spec.ts
+@@ -14,7 +14,7 @@ vi.mock('node:child_process', async (importOriginal) => {
+ describe('installer preparation preserves application dependencies', () => {
+   it.each(['win32', 'darwin'] as const)('rejects a missing production policy before signing on %s', async (platform) => {
+     const { createElectronBuilderConfig } = await import('../scripts/electron-builder-config.mjs')
+-    expect(() => createElectronBuilderConfig({ DSH_DESKTOP_APP_ID: 'com.example.installer',
++    expect(() => createElectronBuilderConfig({ DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio',
+       DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
+       DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://test.example.com',
+     }, platform, 'x64')).toThrow('DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN')
+@@ -88,8 +88,10 @@ describe('installer preparation preserves application dependencies', () => {
+     expect(referenced.size).toBeGreaterThan(0)
+     const { createElectronBuilderConfig } = await import('../scripts/electron-builder-config.mjs')
+     const config = createElectronBuilderConfig({
+-      DSH_DESKTOP_APP_ID: 'com.example.installer',
++      DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio',
+       DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
++      DSH_DESKTOP_UPDATE_CHANNEL: 'preview',
++      DSH_DESKTOP_UPDATE_ORIGIN: 'https://desktop-updates.example.com',
+       DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://harness-test.deepseek.com',
+       DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN: 'https://policy.example.com',
+       DSH_DESKTOP_MACOS_SIGNING_IDENTITY: 'Example Company (TEAMID1234)',
+diff --git a/apps/desktop/tests/macos-signature.spec.ts b/apps/desktop/tests/macos-signature.spec.ts
+index 86002a0bda3d2abf97399b718a71f327a5fa4add..fde7e98c4154ba3d6f56318aa625ee2dab7805f2 100644
+--- a/apps/desktop/tests/macos-signature.spec.ts
++++ b/apps/desktop/tests/macos-signature.spec.ts
+@@ -54,8 +54,10 @@ describe('desktop macOS release signature', () => {
+     expect(config.extraResources).toHaveLength(2)
+     expect(config.extraResources[0]?.to).toBe('runtime')
+     expect(portablePath(config.extraResources[0]?.from ?? '')).toContain('/.desktop-build/targets/mac-arm64/runtime')
+-    const [dshFiles, dshNodeModules] = config.files.slice(-2)
+-    if (!dshFiles || !dshNodeModules || typeof dshFiles === 'string' || typeof dshNodeModules === 'string') {
++    const fileMappings = config.files.filter(file => typeof file !== 'string')
++    const dshFiles = fileMappings.find(file => file.to === 'dsh')
++    const dshNodeModules = fileMappings.find(file => file.to === 'dsh/node_modules')
++    if (!dshFiles || !dshNodeModules) {
+       throw new Error('desktop DSH resources must use electron-builder file mappings')
+     }
+     expect(portablePath(dshFiles.from)).toContain('/.desktop-build/targets/mac-arm64/dsh')
 diff --git a/apps/desktop/tests/package-ci-metadata.spec.ts b/apps/desktop/tests/package-ci-metadata.spec.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..d45132a65c480b1babede13b1a70827053fc3afc
@@ -283,3 +333,25 @@ index 76f5c8d95e73cd6cc5b0ed682bc7e3690b1222ca..b29be6b22dfd8c6446e4152d1dd0e320
    expect(desktopRuntimeFileExclusion('outer/node_modules/@mixmark-io/domino/test/data.html', windows, 'win32-x64')).toBeDefined()
    expect(desktopRuntimeFileExclusion('outer\\node_modules\\node-pty\\prebuilds\\win32-arm64\\conpty.node', windows, 'win32-x64')).toBeDefined()
    expect(desktopRuntimeFileExclusion('outer/node_modules/unrelated/test/data.html', windows, 'win32-x64')).toBeUndefined()
+diff --git a/apps/desktop/tests/windows-update-publisher.spec.ts b/apps/desktop/tests/windows-update-publisher.spec.ts
+index a1af8d5416708f93bd530877aad00540fce7d991..a524ec982f3afba9014ab4701b17f69570986f8b 100644
+--- a/apps/desktop/tests/windows-update-publisher.spec.ts
++++ b/apps/desktop/tests/windows-update-publisher.spec.ts
+@@ -79,7 +79,7 @@ describe('Windows update publisher', () => {
+     const { createElectronBuilderConfig } = await import('../electron-builder.config.mjs')
+     await withCertificate({ CN: 'Publisher', O: 'Company', C: 'CN' }, async (file, signTool) => {
+       const config = createElectronBuilderConfig({
+-        DSH_DESKTOP_APP_ID: 'com.example.publisher-test',
++        DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio',
+         DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://policy.example.com',
+         DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN: 'https://policy.example.com',
+         ...(explicitTarget ? { DSH_DESKTOP_TARGET_PLATFORM: 'win32' } : {}),
+@@ -88,6 +88,8 @@ describe('Windows update publisher', () => {
+         DSH_DESKTOP_WINDOWS_KEY_CONTAINER: 'test-container',
+         DSH_DESKTOP_WINDOWS_TOKEN_PIN: 'test-pin',
+         DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
++        DSH_DESKTOP_UPDATE_CHANNEL: 'preview',
++        DSH_DESKTOP_UPDATE_ORIGIN: 'https://desktop-updates.example.com',
+       }, 'win32', 'x64')
+       expect(config.win.forceCodeSigning).toBe(true)
+       expect(config.artifactName).toBe('deepseek-harness-${version}-${os}-${arch}.${ext}')
