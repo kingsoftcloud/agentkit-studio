@@ -24,7 +24,7 @@ export async function verifyDesktopModuleGraph(readModule, entryPoints = DESKTOP
           let contents;
           try { contents = await readModule(args.path); }
           catch { throw new Error(`Packaged desktop module is missing: ${args.path}`); }
-          return { contents: String(contents), loader: 'js' };
+          return { contents: String(contents), loader: posix.extname(args.path) === '.json' ? 'json' : 'js' };
         });
       },
     }] });
