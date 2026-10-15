@@ -5,11 +5,12 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { bindFrozenRuntime } from '../src/host/frozen-runtime-lifecycle.mjs';
 
 if (!process.env.AGENTKIT_DSH_ROOT) throw new Error('Specify the built DSH checkout');
 const require = createRequire(join(resolve(process.env.AGENTKIT_DSH_ROOT), 'apps/cli/package.json'));
-const { Context } = await import(require.resolve('@deepseek-ai/cordis'));
+const { Context } = await import(pathToFileURL(require.resolve('@deepseek-ai/cordis')).href);
 const target = resolve(process.argv[2] || '.artifacts/refactor/stage-5/host-dependency-lifecycle.json');
 const report = { evidence: 'real-cordis-dependency-scopes-controlled-http-runtime', passed: false, checks: [],
   limits: ['The HTTP runtime and native service values are controlled lifecycle fixtures; full DSH startup is verified separately.'] };
