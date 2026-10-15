@@ -1,5 +1,5 @@
-/** Existing public operation IDs. Payload and client contracts follow in 4C. */
-export const STUDIO_OPERATION_IDS = Object.freeze([
+/** Canonical Studio operations shared by Host and both client environments. */
+export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {const} */ ([
   "sessions/export-log",
   "agents/list",
   "agents/create-local",
@@ -51,6 +51,7 @@ export const STUDIO_OPERATION_IDS = Object.freeze([
   "schedules/delete",
   "schedules/run",
   "schedules/occurrences",
+  "schedules/delivery-targets",
   "traces/overview",
   "traces/list",
   "traces/get",
@@ -77,4 +78,7 @@ export const STUDIO_OPERATION_IDS = Object.freeze([
   "deployments/reconcile",
   "deployments/logs",
   "deployments/remove"
-]);
+]));
+
+export const STUDIO_CONTROL_CHANNEL = '/agentkit';
+/** @typedef {(typeof STUDIO_OPERATION_IDS)[number]} StudioOperationId */

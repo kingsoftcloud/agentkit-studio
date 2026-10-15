@@ -10,6 +10,12 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const baselinePath = resolve(process.argv[2] || '.artifacts/refactor/stage-3/baseline.json');
 const output = resolve(process.argv[3] || '.artifacts/refactor/stage-3/module-admission.json');
 const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
+// The default remains 5%. A reviewed exception is explicit and cannot silently
+// replace either the baseline commit or its original compressed byte count.
+const budget = process.argv[4] ? JSON.parse(await readFile(resolve(process.argv[4]), 'utf8')) : null;
+if (budget && (budget.baselineCommit !== baseline.sourceCommit || budget.baselineGzipBytes !== baseline.clientGzipBytes
+  || !budget.approval || !Number.isFinite(budget.maximumGrowthPercent) || budget.maximumGrowthPercent < 0)) throw new Error('Invalid or mismatched client budget approval');
+const maximumGrowthPercent = budget?.maximumGrowthPercent ?? 5;
 const graph = JSON.parse(await readFile(resolve(root, '.artifacts/client/metafile.json'), 'utf8'));
 const bundle = await readFile(resolve(root, 'dist/client.js'));
 const privateProperties = JSON.parse(await readFile(resolve(root, '.artifacts/client/private-properties.json'), 'utf8'));
@@ -29,19 +35,22 @@ const businessGlobals = sources.flatMap((source, index) => [...source.matchAll(/
   .filter(match => match[0] !== 'window.__AGENTKIT_STUDIO__' && match[0] !== 'globalThis.__AGENTKIT_STUDIO__')
   .map(match => ({ input: inputs[index], name: match[0] })));
 const nodeInputs = inputs.filter(name => /node_modules|src\/(host|providers)\//.test(name));
-const compatibilityInputs = inputs.filter(name => /src\/client\/remote\/(host-client|compatibility-methods)\.mjs$/.test(name));
+const compatibilityInputs = inputs.filter(name => /src\/client\/remote\/(host-client|compatibility-methods)\.mjs$|src\/remote\/(compatibility-methods|node-client)\.mjs$/.test(name));
 const publicProperties = ['window', 'document', 'CustomEvent', 'MutationObserver', 'React', 'rpc', 'remote', 'slots', 'effect', 'createElement', 'style', 'className', 'sessionId', 'agentId', 'model', 'provider', 'ok', 'error', 'details'];
 const unexpectedRenames = Object.keys(privateProperties).filter(name => !CLIENT_PRIVATE_PROPERTIES.includes(name) || publicProperties.includes(name));
 const registrations = sources.reduce((count, source) => count + [...source.matchAll(/window\.__ModuleLoader__\.load\(/g)].length, 0);
 const hostReactLoads = sources.reduce((count, source) => count + [...source.matchAll(/require\(['"]react['"]\)/g)].length, 0);
 const gzipBytes = gzipSync(bundle).length;
-const maximumGzipBytes = Math.floor(baseline.clientGzipBytes * 1.05);
+const originalMaximumGzipBytes = Math.floor(baseline.clientGzipBytes * 1.05);
+const maximumGzipBytes = Math.floor(baseline.clientGzipBytes * (1 + maximumGrowthPercent / 100));
 const report = {
   evidence: 'generated-browser-module-graph-and-size',
   baselineCommit: baseline.sourceCommit, clientSha256: createHash('sha256').update(bundle).digest('hex'),
   moduleCount: inputs.length, cycles, nodeInputs, compatibilityInputs, businessGlobals, registrations, hostReactLoads,
   privatePropertyCount: Object.keys(privateProperties).length, unexpectedRenames,
   clientBytes: bundle.length, baselineGzipBytes: baseline.clientGzipBytes, gzipBytes, maximumGzipBytes,
+  maximumGrowthPercent, originalMaximumGzipBytes, originalSizePassed: gzipBytes <= originalMaximumGzipBytes,
+  budgetApproval: budget?.id || null,
   growthPercent: (gzipBytes / baseline.clientGzipBytes - 1) * 100,
   architecturePassed: !cycles.length && !nodeInputs.length && !compatibilityInputs.length && !unexpectedRenames.length && !businessGlobals.length && registrations === 1 && hostReactLoads === 1,
   sizePassed: gzipBytes <= maximumGzipBytes,

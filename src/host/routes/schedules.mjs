@@ -3,6 +3,9 @@ export function createScheduleRoutes({ ctx, agentStorePromise, cloudSchedulesPro
     return async (endpoint, payload, signal) => {
         try {
             if (endpoint.startsWith('schedules/')) {
+                if (endpoint === 'schedules/delivery-targets') {
+                    return { ok: true, value: await (await cloudSchedulesPromise).execute('delivery-targets', payload) };
+                }
                 if (payload?.scope === 'cloud' || (payload?.agentId && !await (await agentStorePromise).get(payload.agentId))) {
                     return { ok: true, value: await (await cloudSchedulesPromise).execute(endpoint.slice('schedules/'.length), payload) };
                 }

@@ -151,7 +151,22 @@ export async function verifyStudioNativeSidebar(page, seed) {
   await page.keyboard.press('Escape');
   phase = 'grouped';
   await mode('按工作区');
-  if (!await historyRow(rows[0]).isVisible()) await page.getByText('未分组', { exact: true }).click();
+  // Wait for the grouped tree itself. A flat row can still be visible during
+  // the mode transition, before a persisted collapsed group takes effect.
+  const ungrouped = page.getByRole('treeitem').filter({ has: page.getByText('未分组', { exact: true }) });
+  await ungrouped.waitFor({ state: 'visible', timeout: 10000 });
+  if (await ungrouped.getAttribute('aria-expanded') !== 'true') await ungrouped.getByText('未分组', { exact: true }).click();
+  // DSH initially shows six sessions per group. Other owned integration
+  // fixtures may be newer than the historical rows under test.
+  const overflowKey = (await ungrouped.getAttribute('data-row-key')).replace(/^workspace:/, 'overflow:');
+  const overflow = page.locator(`[data-row-key=${JSON.stringify(overflowKey)}]`);
+  for (let expansion = 0; expansion < 10; expansion++) {
+    if ((await Promise.all(rows.map(row => historyRow(row).isVisible()))).every(Boolean)) break;
+    await overflow.waitFor({ state: 'visible', timeout: 10000 });
+    const label = await overflow.textContent();
+    await overflow.click();
+    await page.waitForFunction(({ key, label }) => document.querySelector(`[data-row-key="${key}"]`)?.textContent !== label, { key: overflowKey, label }, { timeout: 10000 });
+  }
   await visible('grouped');
   checks.push({ name: 'native-grouped-history', passed: true });
 

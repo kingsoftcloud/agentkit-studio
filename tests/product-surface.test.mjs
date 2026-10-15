@@ -37,9 +37,9 @@ test('Studio conversation surface does not ship the legacy DSH hero copy', () =>
 });
 
 test('Agent context selector uses the DSH Connection catalog and official session admission seam', () => {
-  assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'agents\/list'/);
+  assert.match(clientSource, /callStudioOperation\(connection, 'agents\/list'/);
   assert.match(clientSource, /不使用 Agent/);
-  assert.match(clientSource, /connection\.rpc\.call\('\/agentkit', 'agents\/ensure-preset'/);
+  assert.match(clientSource, /callStudioOperation\(connection, 'agents\/ensure-preset'/);
   assert.match(clientSource, /agentPresets\.select\(sessionId, admission\.presetId\)/);
   assert.match(clientSource, /typeof selectedPreset === 'object' && selectedPreset\.ok === false/);
   assert.match(clientSource, /conversation\.hero\.agentPreset/);

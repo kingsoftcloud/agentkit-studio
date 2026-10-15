@@ -20,7 +20,7 @@ const { chromium } = require(require.resolve('playwright', { paths: [dirname(req
 const scratch = await mkdtemp(join(tmpdir(), 'studio-http-scope-'));
 const overlay = join(scratch, 'disable-studio.yml');
 await writeFile(overlay, '- id: agentkit-studio\n  disabled: true\n');
-const report = { evidence: 'real-built-dsh-connection-webserver-scope-with-controlled-upstream', installedSource, auth: [], streams: [], passed: false };
+const report = { evidence: 'real-built-dsh-connection-webserver-scope-with-controlled-upstream', installedSource, auth: [], streams: [], controls: [], passed: false };
 const stdout = process.stdout.write.bind(process.stdout);
 let launchUrl, buffer = '', running, browser, fiber, stage = 'startup';
 // The launch URL contains an ephemeral token; keep it only in this process.
@@ -96,6 +96,40 @@ try {
     assert.equal(running.ctx.webServer.prefixes.size, baseline);
     report.streams.push({ kind, upstreamCancelledOnScopeDispose: true, registrationsReturnedToBaseline: true, passed: true });
     fiber = undefined;
+  }
+  for (const reason of ['disconnect', 'scope-unload']) {
+    stage = `pending-control-${reason}`;
+    const { promise: started, resolve: start } = Promise.withResolvers();
+    const { promise: aborted, resolve: abort } = Promise.withResolvers();
+    fiber = await running.ctx.plugin({ name: `studio-control-cancel-${reason}`, inject: ['connection', 'webServer'],
+      apply: ctx => registerControlPlaneRoutes(ctx, { models: {}, serverClientPromise: Promise.resolve({}),
+        dispatch: async (_operation, _payload, signal) => {
+          assert.equal(signal.aborted, false, 'request EOF must not cancel the pending operation');
+          start();
+          await new Promise(resolve => signal.addEventListener('abort', () => { abort(); resolve(); }, { once: true }));
+          return { ok: false, error: { code: 'gateway/cancelled' } };
+        },
+      }),
+    });
+    assert.equal(fiber.state, 2);
+    const request = page.evaluate(async () => {
+      const controller = new AbortController();
+      window.__studioScopeAbort = controller;
+      try {
+        const response = await fetch('/agentkit', { method: 'POST', signal: controller.signal, body: JSON.stringify({ method: 'agents/list', rpcId: 'pending' }) });
+        return { status: response.status, code: (await response.json()).result?.error?.code };
+      } catch (error) { return { aborted: error.name === 'AbortError' }; }
+      finally { delete window.__studioScopeAbort; }
+    });
+    await deadline(started);
+    if (reason === 'disconnect') await page.evaluate(() => window.__studioScopeAbort.abort());
+    else await fiber.dispose();
+    await deadline(aborted);
+    const result = await deadline(request);
+    assert.ok(result.aborted || (result.status === 200 && result.code === 'gateway/cancelled'));
+    await fiber.dispose(); await fiber.dispose(); fiber = undefined;
+    assert.equal(running.ctx.webServer.prefixes.size, baseline);
+    report.controls.push({ reason, upstreamCancelled: true, requestEofDidNotCancel: true, registrationsReturnedToBaseline: true, passed: true });
   }
   report.passed = true;
 } catch (error) {

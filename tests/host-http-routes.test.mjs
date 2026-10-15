@@ -52,8 +52,29 @@ test('control RPC retains request identity, envelope and EOF cancellation semant
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await response.json(), { type: 'server-response', rpcId: '42', result: { ok: true, value: 'fixture' } });
-  assert.deepEqual(host.calls, [['agents/list', payload, undefined]]);
+  assert.deepEqual(host.calls[0].slice(0, 2), ['agents/list', payload]);
+  assert.ok(host.calls[0][2] instanceof AbortSignal);
+  assert.equal(host.calls[0][2].aborted, false, 'normal request EOF and response completion are not cancellation');
 });
+
+for (const reason of ['disconnect', 'scope-unload']) {
+  test(`pending control RPC cancels on ${reason} after request EOF`, { timeout: 5000 }, async t => {
+    const { promise: started, resolve: start } = Promise.withResolvers();
+    const { promise: aborted, resolve: abort } = Promise.withResolvers();
+    const host = await harness(t, { dispatch: async (_endpoint, _payload, signal) => {
+      start();
+      await new Promise(resolve => signal?.addEventListener('abort', () => { abort(true); resolve(); }, { once: true }));
+      return { ok: false, error: { code: 'gateway/cancelled' } };
+    } });
+    const request = httpRequest(host.base + '/agentkit', { method: 'POST' });
+    request.on('error', () => {});
+    request.end(JSON.stringify({ method: 'agents/list', rpcId: 'pending' }));
+    await started;
+    if (reason === 'disconnect') request.destroy(); else host.unload();
+    assert.equal(await Promise.race([aborted, new Promise(resolve => setTimeout(() => resolve(false), 100))]), true);
+    request.destroy();
+  });
+}
 
 test('control RPC rejects non-POST, malformed JSON and requests over one MiB', async t => {
   const host = await harness(t);

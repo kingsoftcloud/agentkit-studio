@@ -16,7 +16,7 @@ import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
 
-export async function mountStudioHost(ctx, { env: runtimeEnv = process.env } = {}) {
+export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory } = {}) {
   const cloudEndpointOptions = {
     innerKopUrl: runtimeEnv.AGENTENGINE_INNER_KOP_URL || '',
     innerIamUrl: runtimeEnv.AGENTENGINE_INNER_IAM_URL || '',
@@ -30,7 +30,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env } = {
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
   const services = createStudioServices(ctx, {
-    env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions,
+    env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions, configurationHome, resourceAdapterFactory,
     getAdmission: () => presetAdmission, getModels: () => models, getPortableBundles: () => portableBundles,
   });
   const {
@@ -297,7 +297,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env } = {
     if (frozenRuntime) ctx.effect(() => () => frozenRuntime.close(), 'agentkit-studio: frozen Build runtime');
   }
   const routes = createStudioRoutes(ctx, {
-    ...services, models, syncModelCredential, describeGlobalModelCredential,
+    ...services, models, syncModelCredential,
+    describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });

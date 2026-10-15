@@ -1,8 +1,8 @@
-import { STUDIO_OPERATION_IDS } from '../../contracts/operations.mjs';
+import { STUDIO_OPERATIONS } from '../../contracts/definitions.mjs';
 
 /** Preserve the existing unknown-operation, cancellation and error envelopes. */
 export function createControlPlaneDispatcher({ bridge, serverClientPromise, routes }) {
-  const allowed = new Set(STUDIO_OPERATION_IDS);
+  const allowed = new Set(Object.keys(STUDIO_OPERATIONS));
   const independent = new Set(['deployments', 'models', 'settings']);
   for (const endpoint of allowed) {
     if (typeof routes[endpoint.split('/')[0]] !== 'function') {
@@ -16,10 +16,14 @@ export function createControlPlaneDispatcher({ bridge, serverClientPromise, rout
     }
     try {
       signal.throwIfAborted();
+      const operation = STUDIO_OPERATIONS[endpoint];
+      operation.input(endpoint, payload);
       const domain = endpoint.split('/')[0];
       if (!independent.has(domain)) await serverClientPromise;
       signal.throwIfAborted();
-      return await routes[domain](endpoint, payload, signal);
+      const result = await routes[domain](endpoint, payload, signal);
+      operation.output(endpoint, result);
+      return result;
     } catch (error) {
       if (signal?.aborted) return { ok: false, error: { code: 'gateway/cancelled', message: 'AgentKit request cancelled', details: {} } };
       return { ok: false, error: { code: error?.code || 'agentkit/server-unavailable', message: error instanceof Error ? error.message : String(error), details: { status: error?.status || 0 } } };

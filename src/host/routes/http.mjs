@@ -26,6 +26,12 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, getLeg
           response.end('not found');
           return;
         }
+        const controller = new AbortController();
+        const signal = AbortSignal.any([lifetime.signal, controller.signal]);
+        // IncomingMessage EOF only completes the upload. The response remains
+        // owned until its consumer disconnects or the registration is disposed.
+        const disconnect = () => { if (!response.writableEnded) controller.abort(); };
+        response.on?.('close', disconnect);
         const chunks = [];
         let size = 0;
         try {
@@ -40,19 +46,20 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, getLeg
           }
           const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           const endpoint = String(message?.method || '');
-          // The node IncomingMessage is already at EOF after the JSON body is
-          // read; its abort signal may be marked closed even though the RPC
-          // caller is still waiting for the response.  The catalog request is
-          // bounded by the Host's own timeout and must not be cancelled here.
-          const result = await dispatch(endpoint, message?.payload, undefined);
+          signal.throwIfAborted();
+          const result = await dispatch(endpoint, message?.payload, signal);
+          if (response.destroyed) return;
           response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
           response.end(JSON.stringify({ type: 'server-response', rpcId: String(message?.rpcId || ''), result }));
         } catch (error) {
+          if (response.destroyed) return;
           response.writeHead(400, { 'content-type': 'application/json' });
           response.end(JSON.stringify({ type: 'server-response', rpcId: '', result: {
             ok: false,
             error: { code: 'agentkit/bad-request', message: error instanceof Error ? error.message : String(error), details: {} },
           } }));
+        } finally {
+          response.off?.('close', disconnect);
         }
       },
     });
