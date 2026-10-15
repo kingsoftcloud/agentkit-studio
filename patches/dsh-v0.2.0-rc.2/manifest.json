@@ -1454,12 +1454,185 @@
           "dsh-web"
         ]
       }
+    },
+    {
+      "id": "038",
+      "file": "038-prompt-request-fingerprint.patch",
+      "category": "session-contract",
+      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sha256": "a2dcbf0d7b9cf69382c44b9c18a473b120c753d4d14ba6f14c9d6eeb6119b4a7",
+      "dependsOn": [
+        "010",
+        "015",
+        "018",
+        "036"
+      ],
+      "affectedFiles": [
+        "docs/event-producer-consumer.md",
+        "docs/event-producer-consumer.zh.md",
+        "docs/persistence-catalog.i18n.yaml",
+        "docs/persistence-catalog.md",
+        "docs/persistence-catalog.zh.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.i18n.yaml",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.schema.json",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.zh.md",
+        "docs/persistence-schema.json",
+        "packages/api/session-controller/README.i18n.yaml",
+        "packages/api/session-controller/README.md",
+        "packages/api/session-controller/README.zh.md",
+        "packages/api/session-controller/src/commands.ts",
+        "packages/api/session-controller/src/index.ts",
+        "packages/api/session-controller/src/types.ts",
+        "packages/api/session-controller/tests/commands-upload-file.host.spec.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-tool-cordis",
+        "repository-docs"
+      ],
+      "contracts": [
+        "Persist an optional caller fingerprint with the first accepted native user-rpc source; retries must preserve its value including absence",
+        "Reject conflicting request identities before message admission, including concurrent attachment admission, claimed input, canceled queues and restored Sessions",
+        "Retain existing messages without rewriting and expose promptFingerprintVersion = 1 for consumers that require the contract"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local maintenance implementation; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream baseline provides equivalent durable request fingerprint and conflict semantics.",
+      "verification": {
+        "hostTests": [
+          "packages/api/session-controller/tests/commands-upload-file.host.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "frozen",
+          "persistence",
+          "lifecycle",
+          "web",
+          "electron",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "039",
+      "file": "039-exclude-package-ci-metadata.patch",
+      "category": "packaging",
+      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sha256": "1566a70eef9f6438b7c086d2f69fb80b2f38223ac61e9bcaa4049f1177051ec0",
+      "dependsOn": [
+        "034"
+      ],
+      "affectedFiles": [
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/electron-builder.config.d.mts",
+        "apps/desktop/scripts/electron-builder-config.d.mts",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/scripts/installed-update-builder.ts",
+        "apps/desktop/scripts/runtime-file-policy.ts",
+        "apps/desktop/tests/installed-update-builder.spec.ts",
+        "apps/desktop/tests/installer-packaging.spec.ts",
+        "apps/desktop/tests/macos-signature.spec.ts",
+        "apps/desktop/tests/package-ci-metadata.spec.ts",
+        "apps/desktop/tests/runtime-file-policy.spec.ts",
+        "apps/desktop/tests/windows-update-publisher.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Exclude Coveralls CI configuration before sealing the runtime inventory and from ordinary and installed-update qualification archive copy rules",
+        "Preserve executable modules, package manifests, licenses and runtime provider data; the complete prepared inventory must match the actual archive"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local packaging hygiene fix based on inspected release bytes; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream ordinary and qualification packagers exclude unused third-party Coveralls CI metadata with equivalent archive verification.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/core-package-set.spec.ts",
+          "apps/desktop/tests/installed-update-builder.spec.ts",
+          "apps/desktop/tests/installed-update-packaging.spec.ts",
+          "apps/desktop/tests/installer-packaging.spec.ts",
+          "apps/desktop/tests/local-macos-package.spec.ts",
+          "apps/desktop/tests/macos-signature.spec.ts",
+          "apps/desktop/tests/package-ci-metadata.spec.ts",
+          "apps/desktop/tests/package-macos.spec.ts",
+          "apps/desktop/tests/package-target-stages.spec.ts",
+          "apps/desktop/tests/package-target.spec.ts",
+          "apps/desktop/tests/packaged-runtime-verification.spec.ts",
+          "apps/desktop/tests/product-branding.spec.ts",
+          "apps/desktop/tests/runtime-file-policy.spec.ts",
+          "apps/desktop/tests/windows-asar-unpack.spec.ts",
+          "apps/desktop/tests/windows-update-publisher.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "040",
+      "file": "040-desktop-web-port-configuration.patch",
+      "category": "general-fix",
+      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sha256": "41960854532fa8a31875c3ba742efb1d53466de82b45a0a494d31a0bf2c4f095",
+      "dependsOn": [
+        "032",
+        "039"
+      ],
+      "affectedFiles": [
+        "apps/desktop-host/src/index.ts",
+        "apps/desktop-host/src/listen-port.ts",
+        "apps/desktop-host/tests/listen-port.spec.ts",
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop-host",
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Validate optional DSH_DESKTOP_WEB_PORT before Desktop profile startup; zero requests an OS-assigned port for isolated simultaneous instances",
+        "Preserve existing defaults and managed profile/user-data directories when the setting is absent; reject empty, malformed and out-of-range explicit values"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local Desktop deployment configuration; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream Desktop launch provides an equivalent validated web-port setting with the same default-profile behavior.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop-host/tests/listen-port.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
     }
   ],
-  "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
-  "patchedSourceSha256": "986f3d9708ec076105877ad8fd81dcc0160fcfbafe4df49de018cc25e0d3ca83",
+  "patchedTree": "c9b31228e16c56ee7c6c03561d79cbb2dd33682b",
+  "patchedSourceSha256": "a9804f0c0a5b2de5841ec8355194d23c38acf7f700b1537bb6afe6cf125c4232",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "b1f05e83c491113508f97610343e409448f6f41c125789e891848c3fbf30cf0e"
+    "sha256": "3521649926c785619cfff571e5f78c5f958bb3a41e05d3ecaac0daad66af762b"
   }
 }

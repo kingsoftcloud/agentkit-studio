@@ -42,3 +42,23 @@ test('native channel continuation keeps the existing preset/model and deduplicat
   assert.equal((await run(first)).output, 'first');
   assert.deepEqual({ admits, creates, modelChanges, prompts }, { admits: 1, creates: 1, modelChanges: 1, prompts: 2 });
 });
+
+test('legacy request lookup finds an inherited native header on an earlier history page', async () => {
+  const header = { type: 'request/header', data: { header: { config: { provider: 'fixture', model: 'old-model' } } } };
+  const events = [header, ...turn(1, 'first', 'first answer'), ...turn(2, 'second', 'second answer'),
+    { ...header, data: { header: { config: { provider: 'fixture', model: 'new-model' } } } }, ...turn(3, 'third', 'third answer')]
+    .map((event, seq) => ({ ...event, seq }));
+  const pages = [];
+  const controller = {
+    projections: async () => ({ asOfSeq: events.length - 1 }),
+    page: async ({ beforeSeq = events.length }) => {
+      pages.push(beforeSeq);
+      return { records: events.slice(Math.max(0, beforeSeq - 4), beforeSeq).map(event => ({ type: 'event', event })), hasMore: beforeSeq > 4 };
+    },
+  };
+  const result = await readNativeRequestEvents(controller, 'session', 'second', new AbortController().signal, { includeRequestHeader: true });
+  assert.equal(result[0].data.header.config.model, 'old-model');
+  assert.equal(result.find(event => event.type === 'assistant/message').data.message.content[0].text, 'second answer');
+  assert.equal(result.at(-1).data.turn, 2);
+  assert.ok(pages.length >= 3);
+});

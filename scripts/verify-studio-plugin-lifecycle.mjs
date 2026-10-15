@@ -57,12 +57,17 @@ try {
     assert.equal(bridge.diagnostics().adapters, 1);
     assert.equal(bridge.diagnostics().executors, 1);
     assert.ok(ctx.webServer.prefixes.has('/agentkit'), 'complete Studio HTTP control-plane must be mounted');
+    const boot = ctx.webServer.collectIndexInjections().filter(item => item.kind === 'global' && item.name === '__AGENTKIT_STUDIO__');
+    assert.equal(boot.length, 1, 'desktop index collection must receive one Studio bootstrap value');
+    assert.equal(boot[0].value.hostCompatibility.baseline.compatible, true);
+    assert.equal(boot[0].value.hostCompatibility.contract.compatible, true);
     await fiber.dispose(); await fiber.dispose();
     await settle();
     assert.deepEqual(bridge.diagnostics(), { closed: true, adapters: 0, executors: 0, routes: 0, requests: 0 });
     const actual = counts(ctx);
     assert.deepEqual(actual, baseline, `full Studio cycle ${index} leaked owned listeners, routes or timers`);
-    report.cycles.push({ cycle: index + 1, passed: true, resourcesReturnedToBaseline: true });
+    assert.equal(ctx.webServer.collectIndexInjections().some(item => item.name === '__AGENTKIT_STUDIO__'), false, 'unloaded Studio must not inject stale bootstrap state');
+    report.cycles.push({ cycle: index + 1, passed: true, resourcesReturnedToBaseline: true, desktopBootstrapCollectedAndRemoved: true });
   }
   report.passed = true;
   report.observedOwnedAsyncResources = observedResources;

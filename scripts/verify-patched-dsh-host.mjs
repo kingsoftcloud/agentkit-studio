@@ -3,6 +3,7 @@ import { execFile, spawn } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { checkPatchManifest } from './check-patch-manifest.mjs';
 import { withDesktopCheckout } from './desktop-checkout.mjs';
 import { packageManagerEnvironment, packageManagerInvocation } from './package-desktop.mjs';
@@ -37,6 +38,12 @@ try {
     await run(['install', '--frozen-lockfile'], checkout);
     await run(['run', 'build:official'], checkout);
     result.buildPassed = true;
+    const lifecycleReport = join(output, 'host-dependency-lifecycle.json');
+    await promisify(execFile)(process.execPath, [fileURLToPath(new URL('./verify-host-dependency-lifecycle.mjs', import.meta.url)), lifecycleReport], {
+      env: { ...environment, AGENTKIT_DSH_ROOT: checkout }, timeout: 30000,
+    });
+    result.dependencyLifecycle = JSON.parse(await readFile(lifecycleReport, 'utf8'));
+    if (!result.dependencyLifecycle.passed || result.dependencyLifecycle.checks.length !== 4) throw new Error('Host dependency lifecycle verification did not complete');
     const testReport = join(output, 'host-tests.json');
     try {
       await run(['exec', 'vitest', 'run', ...inputs.hostTests, '--reporter=default', '--reporter=json', `--outputFile=${testReport}`], checkout);

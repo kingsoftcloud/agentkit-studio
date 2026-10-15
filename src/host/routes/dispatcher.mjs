@@ -3,7 +3,7 @@ import { STUDIO_OPERATIONS } from '../../contracts/definitions.mjs';
 /** Preserve the existing unknown-operation, cancellation and error envelopes. */
 export function createControlPlaneDispatcher({ bridge, serverClientPromise, routes }) {
   const allowed = new Set(Object.keys(STUDIO_OPERATIONS));
-  const independent = new Set(['deployments', 'models', 'settings']);
+  const independent = new Set(['host', 'deployments', 'models', 'settings']);
   for (const endpoint of allowed) {
     if (typeof routes[endpoint.split('/')[0]] !== 'function') {
       throw Object.assign(new Error(`Missing Studio domain route: ${endpoint}`), { code: 'STUDIO_ROUTE_MISSING' });

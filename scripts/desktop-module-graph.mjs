@@ -9,6 +9,14 @@ export const DESKTOP_HOST_ENTRIES = ['dsh-agent-preset-registry', 'dsh-agent', '
 export const STUDIO_DESKTOP_ENTRIES = ['src/index.mjs', 'src/host-remote.mjs'].map(path =>
   `dsh/node_modules/@kingsoftcloud/agentkit-studio/${path}`);
 
+/** Validate names returned by the native ASAR reader before reporting package hygiene. */
+export function verifyDesktopArchiveEntries(paths) {
+  if (paths.some(path => /(?:^|[\\/])\.coveralls\.ya?ml$/i.test(path))) {
+    throw new Error('Desktop archive includes non-runtime Coveralls CI configuration');
+  }
+  return { nonRuntimeCiMetadataAbsent: true };
+}
+
 export async function verifyDesktopModuleGraph(readModule, entryPoints = DESKTOP_HOST_ENTRIES) {
   const result = await build({ entryPoints, bundle: true, write: false, metafile: true,
     platform: 'node', outdir: 'module-graph', logLevel: 'silent', plugins: [{

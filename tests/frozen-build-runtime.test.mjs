@@ -11,6 +11,7 @@ test('frozen runtime is opt-in', async () => {
 test('Responses selects each bound model on the native session and preserves its selection and resource evidence across replay', async t => {
   const history = new Map(), models = new Map(); let turns = 0;
   const controller = {
+    promptFingerprintVersion: 1,
     projections: async ({ sessionId }) => history.has(sessionId) ? { asOfSeq: history.get(sessionId).length - 1 } : null,
     create: async ({ sessionId }) => history.set(sessionId, []),
     selectModel: async ({ sessionId, model }) => models.set(sessionId, model),
@@ -18,12 +19,12 @@ test('Responses selects each bound model on the native session and preserves its
       assert.equal(options?.ignorable, true, 'extension facts require the public DSH cold-history marker');
       history.get(sessionId).push({ type, data, seq: history.get(sessionId).length });
     } } } }),
-    prompt: async ({ sessionId, requestId, content }) => {
+    prompt: async ({ sessionId, requestId, content, requestFingerprint }) => {
       const events = history.get(sessionId);
       if (events.some(item => item.type === 'user/message' && item.data.source.rpcId === requestId)) return;
       const turn = ++turns;
       for (const event of [
-        { type: 'turn/start', data: { turn } }, { type: 'user/message', data: { content, source: { rpcId: requestId } } },
+        { type: 'turn/start', data: { turn } }, { type: 'user/message', data: { content, source: { rpcId: requestId, requestFingerprint } } },
         { type: 'studio/resource-check', data: { kind: 'knowledge-base', resourceId: 'kb-test', action: 'search', status: 'succeeded', hitCount: 0 } },
         { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: models.get(sessionId) }] } } },
         { type: 'turn/end', data: { turn, reason: { kind: 'completed' } } },
@@ -58,17 +59,18 @@ test('frozen runtime preserves build admission, durable replay and request-input
   const history = new Map(), admissions = [], selected = [];
   let turns = 0;
   const controller = {
+    promptFingerprintVersion: 1,
     projections: async ({ sessionId }) => history.has(sessionId) ? { asOfSeq: history.get(sessionId).length - 1 } : null,
     create: async ({ sessionId, agentPreset }) => { assert.equal(agentPreset, 'frozen-preset'); history.set(sessionId, []); },
     selectModel: async model => { selected.push(model); },
     resolveAgent: async () => ({ agent: { whenIdle: async () => {}, cancel() {} } }),
-    prompt: async ({ sessionId, requestId, content }) => {
+    prompt: async ({ sessionId, requestId, content, requestFingerprint }) => {
       const events = history.get(sessionId);
       if (events.some(event => event.type === 'user/message' && event.data.source.rpcId === requestId)) return;
       const turn = ++turns;
       for (const event of [
         { type: 'turn/start', data: { turn } },
-        { type: 'user/message', data: { content, source: { rpcId: requestId } } },
+        { type: 'user/message', data: { content, source: { rpcId: requestId, requestFingerprint } } },
         { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `answer-${turn}` }] } } },
         { type: 'turn/end', data: { turn, reason: { kind: 'completed' } } },
       ]) events.push({ ...event, seq: events.length });
