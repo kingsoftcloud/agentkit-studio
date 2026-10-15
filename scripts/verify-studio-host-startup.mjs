@@ -49,11 +49,16 @@ try {
   const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
   assert.ok(cookie, 'official browser authentication cookie');
   const operations = [];
-  for (const method of ['models/credential-status', 'settings/get']) {
+  for (const method of ['host/compatibility', 'models/credential-status', 'settings/get']) {
     const response = await fetch(`${url.origin}/agentkit`, { method: 'POST', headers: { cookie, origin: url.origin, 'content-type': 'application/json' }, body: JSON.stringify({ method, payload: {}, rpcId: method }), signal: AbortSignal.timeout(30000) });
     assert.equal(response.status, 200, method);
     const message = await response.json();
     assert.equal(message.result?.ok, true, `${method}: ${message.result?.error?.code || 'missing result'}`);
+    if (method === 'host/compatibility') {
+      assert.equal(message.result.value.baseline.compatible, true, 'actual DSH baseline');
+      assert.equal(message.result.value.contract.compatible, true, 'Studio integration version');
+      assert.ok(Object.values(message.result.value.features).every(feature => feature.available), 'all required live Host capabilities');
+    }
     operations.push({ method, passed: true });
   }
   const report = { evidence: 'real-dsh-web-installed-studio-profile', fullStudioPlugin: true, studioSourceSha256: actual, matchesWorktree: true, officialCookieAuthentication: true, operations };

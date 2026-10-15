@@ -149,6 +149,12 @@ async function freePort() {
 }
 try {
   await boot(); await mount();
+  stage = 'host-compatibility';
+  const compatibility = await rpc('host/compatibility');
+  assert.deepEqual(compatibility.baseline, { required: '0.2.0-rc.2', actual: '0.2.0-rc.2', compatible: true });
+  assert.deepEqual(compatibility.contract, { required: 1, actual: 1, compatible: true });
+  assert.ok(Object.values(compatibility.features).every(feature => feature.available));
+  check('running-dsh-baseline-and-live-capabilities', { compatibility });
   stage = 'freeze-and-update-agent';
   const agent = await rpc('agents/create-local', { name: 'Frozen Host fixture', runtimeType: 'harness', spec: { instructions: { system: 'FROZEN_SYSTEM_A' }, bindings: { modelProfileId: profiles[0].id, modelProfileIds: profiles.map(item => item.id), mcpServers: [{ resourceId: 'mcp-frozen-fixture' }] } } });
   const agentId = agent.metadata.id;
@@ -170,7 +176,28 @@ try {
   await fiber.dispose(); fiber = undefined;
   const port = await freePort(), token = randomUUID() + randomUUID();
   const runtime = { AGENTKIT_RUNTIME_AGENT_ID: agentId, AGENTKIT_RUNTIME_BUILD_ID: buildId, AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: String(port) };
+  stage = 'missing-host-capability';
+  const controllerForCompatibility = running.ctx.get('sessionController');
+  const fingerprintDescriptor = Object.getOwnPropertyDescriptor(controllerForCompatibility, 'promptFingerprintVersion');
+  assert.ok(fingerprintDescriptor);
+  try {
+    Object.defineProperty(controllerForCompatibility, 'promptFingerprintVersion', { ...fingerprintDescriptor, value: undefined });
+    await mount({ ...runtime, AGENTKIT_STUDIO_DSH_VERSION: 'display-only-version' });
+    const missing = await rpc('host/compatibility');
+    assert.equal(missing.baseline.actual, '0.2.0-rc.2', 'display metadata must not establish Host identity');
+    assert.equal(missing.features['frozen-runtime'].available, false);
+    assert.equal(missing.features['agent-presets'].available, true);
+    assert.deepEqual(missing.features['frozen-runtime'].missingCapabilities, ['request-fingerprint']);
+    await rpc('settings/get');
+    assert.equal((await rpc('agents/local-get', { agentId })).metadata.id, agentId);
+    await assert.rejects(fetch(`http://127.0.0.1:${port}/v1/agentkit/runtime`, { signal: AbortSignal.timeout(2000) }));
+    check('missing-fingerprint-disables-runtime-with-management-available', { faultInjection: 'remove capability from the isolated real Session Controller', studioScopeActive: fiber.state === 2 });
+    await fiber.dispose(); fiber = undefined;
+  } finally {
+    Object.defineProperty(controllerForCompatibility, 'promptFingerprintVersion', fingerprintDescriptor);
+  }
   await mount(runtime);
+  assert.equal((await rpc('host/compatibility')).features['frozen-runtime'].available, true);
   const runtimeOrigin = `http://127.0.0.1:${port}`;
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   const post = body => fetch(runtimeOrigin + '/v1/responses', { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });

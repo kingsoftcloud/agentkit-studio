@@ -17,10 +17,11 @@ export function observeNativeRun(ctx, agent, onFrame) {
   return () => { for (const dispose of disposers) dispose(); };
 }
 
-export async function startFrozenBuildRuntime({ ctx, build, admit, modelService, env = process.env }) {
+export async function startFrozenBuildRuntime({ ctx, build, admit, modelService, hostCompatibility, env = process.env }) {
   const agentId = env.AGENTKIT_RUNTIME_AGENT_ID;
   const buildId = env.AGENTKIT_RUNTIME_BUILD_ID;
   if (!agentId && !buildId) return null;
+  hostCompatibility?.require('frozen-runtime');
   if (ctx.get('sessionController')?.promptFingerprintVersion !== 1) {
     throw Object.assign(new Error('冻结运行时需要支持请求指纹的 DSH 宿主'), { code: 'RUNTIME_HOST_CAPABILITY_UNAVAILABLE' });
   }
@@ -38,6 +39,7 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
   }
   const nativeRun = createNativeAutomationRunner({
     getService: name => ctx.get(name), reuseSession: true,
+    assertHostCompatible: () => hostCompatibility?.require('frozen-runtime'),
     loadReplay: request => loadFrozenRequestReplay(request, selections.get(request.model)),
     admit: async () => admit(agentId, await build.resolve(agentId, buildId)),
     ...(catalog.length ? { selectModel: async key => {

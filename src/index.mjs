@@ -26,12 +26,14 @@ export async function apply(ctx) {
   });
   const { mountStudioHost } = await import('./host/bootstrap.mjs');
   await mountStudioHost(ctx, { env: runtimeEnv });
+  const hostCompatibility = ctx.get('studioHostCompatibility');
   const versions = await import('./studio-version.mjs').then(({ studioVersions }) => studioVersions(runtimeEnv));
   ctx.on('webserver/index-inject', table => table.push({
     kind: 'global',
     name: '__AGENTKIT_STUDIO__',
     value: {
       ...versions,
+      hostCompatibility: hostCompatibility.inspect(),
       hostUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
       controlPlane: 'agentengine-server',
       // The Studio Host owns this short-lived local session token. It is not

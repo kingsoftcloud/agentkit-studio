@@ -15,8 +15,11 @@ import { registerControlPlaneRoutes } from './routes/http.mjs';
 import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
+import { loadHostCompatibility } from './compatibility.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory } = {}) {
+  const hostCompatibility = await loadHostCompatibility(ctx);
+  ctx.provide('studioHostCompatibility', hostCompatibility);
   const cloudEndpointOptions = {
     innerKopUrl: runtimeEnv.AGENTENGINE_INNER_KOP_URL || '',
     innerIamUrl: runtimeEnv.AGENTENGINE_INNER_IAM_URL || '',
@@ -30,7 +33,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
   const services = createStudioServices(ctx, {
-    env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions, configurationHome, resourceAdapterFactory,
+    env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
     getAdmission: () => presetAdmission, getModels: () => models, getPortableBundles: () => portableBundles,
   });
   const {
@@ -151,6 +154,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const createPresetAdmission = registry => new DshPresetAdmission({
     registry,
+    assertHostCompatible: () => hostCompatibility.require('agent-presets'),
     getBasePlugins: async () => {
       if (typeof registry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
       return registry.pluginsFor('standard');
@@ -277,8 +281,16 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     reconcile: admission => reconciler.run(admission),
   });
   const { startFrozenBuildRuntime } = await import('../frozen-build-runtime.mjs');
-  const startRuntime = async () => startFrozenBuildRuntime({ ctx, env: runtimeEnv, modelService: models, build: (await studioBuildPromise).build,
-    admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) });
+  const startRuntime = async () => {
+    try {
+      return await startFrozenBuildRuntime({ ctx, env: runtimeEnv, hostCompatibility, modelService: models, build: (await studioBuildPromise).build,
+        admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) });
+    } catch (error) {
+      if (error?.code !== 'STUDIO_HOST_INCOMPATIBLE') throw error;
+      console.warn('[agentkit-studio] frozen runtime unavailable:', error.message);
+      return null;
+    }
+  };
   if (portableRuntime) {
     // Settings writes reconcile the Loader. Awaiting them inside plugin apply
     // deadlocks that reconciliation; use the same public startup boundary as DSH Settings.
@@ -297,7 +309,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     if (frozenRuntime) ctx.effect(() => () => frozenRuntime.close(), 'agentkit-studio: frozen Build runtime');
   }
   const routes = createStudioRoutes(ctx, {
-    ...services, models, syncModelCredential,
+    ...services, models, syncModelCredential, hostCompatibility,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
   });
