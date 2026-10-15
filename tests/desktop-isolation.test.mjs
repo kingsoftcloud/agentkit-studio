@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, rm, access, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { writeReviewedPatchFixture } from './helpers/reviewed-patch-series.mjs';
 import { join } from 'node:path';
 import { prepareDesktopCheckout, withDesktopCheckout } from '../scripts/desktop-checkout.mjs';
 
@@ -20,6 +21,7 @@ async function fixture(t) {
   const commit = git(['rev-parse','HEAD']);
   await writeFile(join(source, 'client.js'), 'patched source\n');
   await writeFile(join(patches, '001-client.patch'), git(['diff']) + '\n');
+  await writeReviewedPatchFixture(patches, commit);
   await mkdir(join(source, 'dist')); await writeFile(join(source, 'dist/client.js'), 'live browser bundle');
   await mkdir(join(source, 'node_modules')); await writeFile(join(source, 'node_modules/owner'), 'live dependencies');
   await writeFile(join(source, '.env.local'), 'PRIVATE=must-not-copy');

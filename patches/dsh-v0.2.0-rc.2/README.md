@@ -2,6 +2,8 @@
 
 本目录保存 AgentKit Studio 对官方 DSH `v0.2.0-rc.2` 的**可审计、版本锁定的临时兼容补丁**。补丁不是 Studio 的运行时依赖，也不会被浏览器直接加载；它们只在官方 DSH 尚未提供等价公开扩展点时，供宿主构建或本地复现使用。
 
+机器清单见 [manifest.json](manifest.json)，维护流程见 [补丁治理说明](../../docs/refactor-patches.md)。`make patch-manifest-check` 检查文件、内容摘要、修改路径、基线和依赖顺序；正式桌面打包也先执行同一检查。未登记的补丁不能进入构建。
+
 ## 基线
 
 - DSH 版本：`0.2.0-rc.2`
@@ -49,7 +51,6 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `018-preserve-agent-on-workspace-clear.patch` | 取消空白会话的目录时，通过公开 create preset、model selection 与 permission command 保留 Agent 和模型；Workspace-scoped 自定义访问模式回落到新会话默认命名模式，恢复成功后才迁移草稿，切换或失败不抢占页面 | 上游公开等价的无工作区会话配置继承合同 |
 | `019-studio-product-update-feed.patch` | 把 Desktop 更新源、Stable/Preview 通道和 metadata 文件名变成显式产品输入；生产构建不再回退到 DeepSeek 下载源，Studio 使用自己的 App ID/更新源，仍保留 Nightly 仅用于旧测试夹具兼容 | 上游提供产品 App ID、更新源和 Stable/Preview 配置接口，并且可由产品包直接传入 |
 | `020-studio-signed-product-name.patch` | 让正式签名、公证和签名后 smoke 沿用产品 bundle 名称，而不是硬编码查找 `DeepSeek Harness.app`；默认 DSH 品牌保持不变 | 上游签名和公证路径统一使用 `DSH_DESKTOP_PRODUCT_NAME` |
-| `021-product-manual-update-check.patch` | 产品页调用官方 `updates.open()` 时强制重新检查 feed，并记录手动检查 journal；下载与安装仍由官方确认界面控制 | 上游产品更新入口提供强制刷新检查 |
 | `022-ks3-single-range-updates.patch` | 签名前封装官方 Generic Provider 的 `useMultipleRangeRequest: false`；KS3 公网多段 Range 返回 416，使用官方单段 Range 下载器完成差分，并在打包校验中拒绝默认多段配置 | 上游产品更新配置允许显式关闭多段 Range |
 | `023-codex-code-mode-signing.patch` | 为 Codex 的 Code Mode 执行助手保留官方 `allow-jit` 和 `allow-unsigned-executable-memory` 权限；只匹配 Codex macOS 平台包中的该助手，不扩大其他运行时文件权限 | 上游运行时签名识别 Codex Code Mode 助手，并验证其所需权限 |
 | `024-desktop-build-version.patch` | 用 Electron `app.getVersion()` 向 Host 注入实际桌面构建版本，Studio 设置页不再误用固定的 `DSH_CLIENT_VERSION` 宿主基线 | 上游向产品插件提供实际桌面 App 版本；设置页、Info.plist 和 updater 当前版本一致 |
@@ -62,9 +63,12 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `029-full-update-blockmap-cache.patch` | 全量更新完成后清除与新 ZIP 不匹配的旧 blockmap 索引 | 上游全量下载同时正确更新或失效缓存索引 |
 | `030-plugin-smoke-diagnostics.patch` | 隔离打包失败记录插件导入、执行、共享 Context、依赖服务和脱敏诊断 | 上游提供等价的打包失败诊断 |
 | `031-canonical-windows-smoke-paths.patch` | 测试安装和 profile 使用统一真实路径，避免 Windows 短路径别名造成重复模块身份 | 上游在启动打包检查前统一安装与 profile 路径 |
+| `032-windows-studio-product.patch` | Windows 产品 App ID、用户数据目录、NSIS 品牌与安装完成后启动输入，保留 DSH 默认产品路径 | 上游 Windows 产品配置提供等价 App ID、数据路径、安装品牌和完成后启动合同 |
 | `033-windows-single-range-evidence.patch` | Windows Studio 的 Generic Provider 使用 KS3 单区间请求；保留原生下载实际字节数用于增量验收，差分计划日志不能单独证明通过 | 上游 Windows 产品配置支持单区间请求和实际下载字节记录 |
 | `034-product-windows-tray.patch` | 托盘图标独立使用产品输入，Studio 不再复制官方鲸鱼 ICO；保留官方默认值 | 上游支持产品托盘资源输入 |
 
 `023` 的权限来自 [Codex 0.159.2 官方签名配置](https://github.com/openai/codex/blob/rust-v0.159.2/.github/scripts/macos-signing/codex-code-mode-host.entitlements.plist)。真实安装包的助手被通用签名规则重签后没有这两项权限；同一版本官方原包以及仅修复助手签名的本地副本都可实际创建并校验文件。正式产物还须通过 `node scripts/verify-codex-signing.mjs <App路径>`，并在实际安装后重跑文件执行验收。
 
-007 会话过滤补丁已移除。Studio 完全复用 DSH 的分组、平铺、搜索和归档列表，选择 Agent 仅决定当前会话执行绑定，不改变列表可见性。保留历史补丁编号，当前共 33 项。
+007 会话过滤补丁已移除。Studio 完全复用 DSH 的分组、平铺、搜索和归档列表，选择 Agent 仅决定当前会话执行绑定，不改变列表可见性。
+
+021 手动检查补丁已在阶段 5A 移除。官方实现已在空闲或检查失败时强制刷新，并按 available / ready 状态下载或安装；原补丁无条件强制检查会干扰后两种动作。恢复官方实现后，`main-startup.spec.ts` 的 114 项行为测试全部通过，6 个原失败场景恢复。平台安装更新仍另行验收。保留历史补丁编号，当前共 32 项。

@@ -85,6 +85,7 @@ public-gate:
 	$(MAKE) public-surface-audit
 	node scripts/public-history-audit.mjs
 	$(MAKE) secret-scan
+	$(MAKE) patch-manifest-check
 	$(MAKE) check
 	$(MAKE) patch-format-check
 	$(MAKE) pack
@@ -111,6 +112,14 @@ runtime-source-stage:
 
 patch-format-check:
 	node scripts/check-patch-format.mjs "$(PATCH_ROOT)"
+
+.PHONY: patch-manifest-check verify-patched-host
+patch-manifest-check:
+	node scripts/check-patch-manifest.mjs "$(PATCH_ROOT)" "$(DSH_COMMIT)"
+
+verify-patched-host:
+	node scripts/verify-patched-dsh-host.mjs --source "$(DSH_ROOT)" --patches "$(PATCH_ROOT)" \
+		--output "$(PACK_DIR)/patched-host" --report "$(PACK_DIR)/patched-host-acceptance.json"
 
 # Fetch the public DSH source only when a collaborator does not already have a
 # checkout. The source stays outside this repository; all later host targets
