@@ -40,7 +40,7 @@ setup:
 	pnpm install --frozen-lockfile
 	$(MAKE) dsh-bootstrap
 	node scripts/prepare-development.mjs "$(DSH_ROOT)" "$(PATCH_ROOT)" "$(DSH_COMMIT)"
-	cd "$(DSH_ROOT)" && pnpm run build:official
+	node scripts/build-product-host.mjs --source "$(DSH_ROOT)" --script build:official
 	$(MAKE) profile-install
 	$(MAKE) doctor
 
@@ -224,7 +224,7 @@ verify-dsh-sdk:
 # it verifies the pinned host checkout can produce the browser artifact.
 web-build:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	cd "$(DSH_ROOT)" && pnpm run build:web
+	node scripts/build-product-host.mjs --source "$(DSH_ROOT)" --script build:web
 
 # Browser development uses the official DSH web host. The profile must already
 # contain this plugin and any optional provider packages.
@@ -238,7 +238,7 @@ web-start: web-dev
 # remains a macOS-only release concern; this target is the local compile gate.
 desktop-build:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	cd "$(DSH_ROOT)" && pnpm run build:desktop
+	node scripts/build-product-host.mjs --source "$(DSH_ROOT)" --script build:desktop
 
 # Electron is an optional official host. These targets do not make the plugin
 # depend on Electron and do not package Python/KsADK into the app.

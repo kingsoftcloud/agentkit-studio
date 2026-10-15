@@ -1,5 +1,19 @@
+diff --git a/packages/preset/agent-preset-registry/package.json b/packages/preset/agent-preset-registry/package.json
+index 3a6155037df072b6f7fc16a5d6e6a653f6d30214..5662ec6ff7042120f02967cd9df3e7ee066287d2 100644
+--- a/packages/preset/agent-preset-registry/package.json
++++ b/packages/preset/agent-preset-registry/package.json
+@@ -42,8 +42,7 @@
+     "./package.json": "./package.json"
+   },
+   "files": [
+-    "lib/index.js",
+-    "lib/invariant.js",
++    "lib/*.js",
+     "lib/types/**/*.js",
+     "lib/types/**/*.d.ts",
+     "lib/typert.host.js",
 diff --git a/packages/preset/agent-preset-registry/src/index.ts b/packages/preset/agent-preset-registry/src/index.ts
-index d6ea71cd47..bc5291a6b4 100644
+index d6ea71cd47cb5bd1b422c7bd469d7d9879f10a86..a2d10614eb4882b8ae98fd8da940a2d1acf1cd7b 100644
 --- a/packages/preset/agent-preset-registry/src/index.ts
 +++ b/packages/preset/agent-preset-registry/src/index.ts
 @@ -1,5 +1,6 @@
@@ -12,7 +26,7 @@ index d6ea71cd47..bc5291a6b4 100644
 @@ -188,6 +189,20 @@ export class AgentPresetRegistry extends TypertRemoteService {
      return { id: wanted, ...(broken === undefined ? {} : { broken }) }
    }
-
+ 
 +  /** Snapshot a usable preset's declared rows for a derived local composition.
 +   * The registry owns validation and preserves Loader expressions and group isolation.
 +   * @param id Existing base preset identity.
@@ -24,31 +38,19 @@ index d6ea71cd47..bc5291a6b4 100644
 +      { agentPreset: id, available: [...this.definitions.keys()] })
 +    const broken = await this.diagnostic(record)
 +    if (broken !== undefined) throw new RemoteError('agent-preset/invalid', broken, { agentPreset: id, reason: broken })
-+    return clone(record.config.plugins) as PresetDefinition['plugins']
++    return clone(record.config.plugins)
 +  }
 +
    /** Read one declaration's child plugin list as YAML, for viewing only.
     * @param agentPreset Preset identity.
     * @returns The declared composition beside its published metadata.
-diff --git a/packages/preset/agent-preset-registry/package.json b/packages/preset/agent-preset-registry/package.json
---- a/packages/preset/agent-preset-registry/package.json
-+++ b/packages/preset/agent-preset-registry/package.json
-@@ -43,7 +43,6 @@
-   },
-   "files": [
--    "lib/index.js",
--    "lib/invariant.js",
-+    "lib/*.js",
-     "lib/types/**/*.js",
-     "lib/types/**/*.d.ts",
-     "lib/typert.host.js",
 diff --git a/packages/preset/agent-preset-registry/tests/registry.spec.ts b/packages/preset/agent-preset-registry/tests/registry.spec.ts
-index 814989a43d..1fa74cc445 100644
+index 814989a43de131cdbf97926c74aae18201db7b06..1fa74cc445526d7cbe97a01a1f7a6b5adfe13d58 100644
 --- a/packages/preset/agent-preset-registry/tests/registry.spec.ts
 +++ b/packages/preset/agent-preset-registry/tests/registry.spec.ts
 @@ -14,6 +14,19 @@ afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.di
  async function setup() { const ctx = await harness(); contexts.push(ctx); return ctx }
-
+ 
  describe('declarative preset revisions', () => {
 +  it('snapshots an official preset composition for a derived local Agent', async () => {
 +    const ctx = await setup()

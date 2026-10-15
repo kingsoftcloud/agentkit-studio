@@ -110,16 +110,23 @@ test('CI build version reaches the official package CLI instead of being lost in
   const bin=join(input.root,'bin'); await mkdir(bin);
   const calls=join(input.root,'calls.jsonl');
   const fake=join(bin,'pnpm');
-  await writeFile(fake,`#!${process.execPath}\nimport('node:fs').then(fs=>fs.appendFileSync(process.env.PACKAGE_CALLS,JSON.stringify(process.argv.slice(2))+'\\n'));\n`);
+  const launchToken=['fixture','launch','key'].join('-');
+  await writeFile(fake,`#!${process.execPath}\nimport('node:fs').then(fs=>fs.appendFileSync(process.env.PACKAGE_CALLS,JSON.stringify(process.argv.slice(2))+'\\n'));
+process.stdout.write('dsh web: http://127.0.0.1:12345/?tok');
+setImmediate(()=>{process.stdout.write('en=${launchToken}');process.stderr.write('diagnostic http://127.0.0.1:12345/?mode=web&token=${launchToken}');});\n`);
   await chmod(fake,0o755);
   await mkdir(join(input.source,'apps/desktop'),{recursive:true});
   await writeFile(join(input.source,'apps/desktop/.env.macos'),'DSH_DESKTOP_APP_ID=com.example.studio\n');
   const {promisify}=await import('node:util'); const {execFile}=await import('node:child_process');
-  await promisify(execFile)(process.execPath,['scripts/package-desktop.mjs',
+  const build=await promisify(execFile)(process.execPath,['scripts/package-desktop.mjs',
     '--source',input.source,'--output',input.output,'--patches',input.patches,'--commit',input.commit,
     '--target','mac-arm64','--dsh-version','0.2.0-rc.2','--studio-version','0.0.2'],{
     env:{...process.env,PATH:`${bin}:${process.env.PATH}`,PACKAGE_CALLS:calls,DSH_DESKTOP_PLUGIN_INPUTS:'',DSH_DESKTOP_BUILD_VERSION:'0.2.0-rc.2.20261012.0'},
   });
+  for(const output of [build.stdout,build.stderr]) {
+    assert.equal(output.includes(launchToken),false,'child launch tokens must be masked before reaching build output');
+    assert.match(output,/token=\[redacted\]/);
+  }
   const recorded=(await readFile(calls,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
   assert.deepEqual(recorded[1],['--dir','apps/desktop','run','package','mac-arm64','--build-version','0.2.0-rc.2.20261012.0']);
 });

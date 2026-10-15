@@ -1,0 +1,548 @@
+diff --git a/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.i18n.yaml b/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.i18n.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..94e6eab79bad0cbee60ceb64e7376d974e86652f
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.i18n.yaml
+@@ -0,0 +1,19 @@
++# Bilingual-pair consistency record for 2026-10-15-owned-product-presentation.md (docs/i18n/README.md): per heading
++# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
++# After editing either side, bring the other along and re-record with:
++#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.md
++/agent-note-owned-product-presentation:
++  en: 9759ca2d01e0a86d
++  zh: d5c9e36834e409ee
++/agent-note-owned-product-presentation/problem:
++  en: 1248101377ce03b0
++  zh: 8ee69d32f5631295
++/agent-note-owned-product-presentation/decision:
++  en: ffba25867b54b4ee
++  zh: 71c622f865a91309
++/agent-note-owned-product-presentation/alternatives-considered:
++  en: a1d058e2fa1b754c
++  zh: f85b14c915f802d3
++/agent-note-owned-product-presentation/consequences:
++  en: e08571f282f67c30
++  zh: d86eb0e3931a983a
+diff --git a/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.md b/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..0ec0bfe6939f32c696a7b8ce873d6d61255e533c
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.md
+@@ -0,0 +1,29 @@
++# Agent Note: Owned product presentation
++
++Status: implemented
++
++English | [中文](2026-10-15-owned-product-presentation.zh.md)
++
++## Problem
++
++Products need different presentation while the same Harness source retains its native defaults. Replacing feature dictionaries changes their owner and cannot reliably restore earlier copy when products unload in a different order. Runtime brand slots also arrive after the initial hero can render.
++
++## Decision
++
++The locale registry keeps native dictionary ownership and accepts separate partial copy contributions. Contributions are ordered per namespace, locale and key; each disposer removes only its own entries. Dictionary revisions refresh existing translation seats without changing language preference or Session data.
++
++Explicit product builds record public locale overrides and an initial hero mark URL. These inputs provide product presentation before runtime contributors activate. A runtime product plugin owns its additional contributions through Cordis effects. Unloading it reveals earlier runtime contributions and then the build or native defaults.
++
++## Alternatives considered
++
++**Patch native dictionaries and remove the native hero mark.** This changes unconfigured Harness behavior and makes product copy depend on feature source positions.
++
++**Mutate the registered dictionary or register a second dictionary owner.** Mutation bypasses revision notifications and reliable restoration; a second owner violates the single-owner dictionary API.
++
++**Use runtime slots alone.** Slots remain the runtime composition mechanism but do not supply presentation before their contributors activate.
++
++## Consequences
++
++Product-specific presentation is explicit build data or an owned runtime contribution. Products retain responsibility for their copy and assets. Locale fallback order, native dictionary ownership, durable preference, and Session content remain unchanged.
++
++The build record binds the public product inputs to its client artifacts. Registry disposal tests cover overlapping owners, late publication and fiber unload; hero tests cover native defaults and the explicit first-render fallback.
+diff --git a/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.zh.md b/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.zh.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..25ed64878f48bd82347af7a09bc4fc899264e9c1
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.zh.md
+@@ -0,0 +1,29 @@
++# Agent Note: Owned product presentation
++
++Status: implemented
++
++[English](2026-10-15-owned-product-presentation.md) | 中文
++
++## 问题
++
++产品需要不同的展示内容，同时保留同一份 Harness 源码的原生默认行为。替换功能字典会改变其归属，产品按不同顺序卸载时也无法可靠恢复此前文案。运行时品牌槽位的贡献还可能晚于 hero 的首次渲染。
++
++## 决策
++
++locale 注册表保留原生字典归属，并接受独立的部分文案贡献。贡献按命名空间、locale 和键排序，每个释放函数仅移除自身条目。字典修订会刷新已有翻译席位，不改变语言偏好或 Session 数据。
++
++显式产品构建记录公开的 locale 覆盖和初始 hero 标识 URL。这些输入在运行时贡献激活前提供产品展示内容。运行时产品插件通过 Cordis effect 持有额外贡献；卸载后依次恢复此前的运行时贡献、构建默认值或原生默认值。
++
++## 考虑过的替代方案
++
++**修改原生字典并移除原生 hero 标识。** 这会改变未配置产品输入时的 Harness 行为，并使产品文案依赖功能源码的位置。
++
++**修改已注册字典，或注册第二个字典所有者。** 直接修改绕过修订通知，无法可靠恢复；第二个所有者违反字典 API 的单一归属约束。
++
++**仅使用运行时槽位。** 槽位仍负责运行时组合，但无法在其贡献激活前提供展示内容。
++
++## 影响
++
++产品展示由显式构建数据或有归属的运行时贡献提供，产品继续负责自身文案和资源。locale 回退顺序、原生字典归属、持久语言偏好和 Session 内容保持不变。
++
++构建记录将公开产品输入与客户端产物绑定。注册表释放测试覆盖多个所有者、晚注册通知和 fiber 卸载；hero 测试覆盖原生默认值与显式首屏回退。
+diff --git a/apps/desktop/tests/client-product-environment.spec.ts b/apps/desktop/tests/client-product-environment.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..354869aa72e2d23590f9680a3d41dd32c925dcda
+--- /dev/null
++++ b/apps/desktop/tests/client-product-environment.spec.ts
+@@ -0,0 +1,43 @@
++import { expect, it } from 'vitest'
++import { fileURLToPath } from 'node:url'
++import {
++  officialClientBuildEnvironment,
++  repositoryClientBuildEnvironment,
++  resolveClientBuildEnvironment,
++} from '../../../scripts/client-build-environment.ts'
++
++const root = fileURLToPath(new URL('../../../', import.meta.url))
++it('keeps the official build defaults without optional product inputs', () => {
++  const environment = officialClientBuildEnvironment(root, { DSH_CLIENT_UNRELATED: 'not part of the official contract' })
++  expect(environment.DSH_CLIENT_TITLE).toBe('DeepSeek Harness')
++  expect(environment.DSH_CLIENT_UNRELATED).toBeUndefined()
++  expect(environment.DSH_CLIENT_LOCALE_OVERRIDES).toBeUndefined()
++  expect(environment.DSH_CLIENT_BRAND_MARK_URL).toBeUndefined()
++})
++
++it('records only the explicit public product copy and mark extensions', () => {
++  const environment = officialClientBuildEnvironment(root, {
++    DSH_CLIENT_LOCALE_OVERRIDES: '{"conversation":{"en":{"hero.headline":"Product"}}}',
++    DSH_CLIENT_BRAND_MARK_URL: 'data:image/svg+xml,fixture',
++    DSH_CLIENT_TITLE: 'Ignored inherited title',
++    PRIVATE_SIGNING_INPUT: 'not public',
++  })
++  expect(environment.DSH_CLIENT_TITLE).toBe('DeepSeek Harness')
++  expect(environment.DSH_CLIENT_LOCALE_OVERRIDES).toContain('"hero.headline":"Product"')
++  expect(environment.DSH_CLIENT_BRAND_MARK_URL).toBe('data:image/svg+xml,fixture')
++  expect(Object.hasOwn(environment, 'PRIVATE_SIGNING_INPUT')).toBe(false)
++})
++
++it('preserves the product inputs through the complete official build entry path', () => {
++  const input = {
++    DSH_CLIENT_LOCALE_OVERRIDES: '{"conversation":{"en":{"hero.headline":"Product"}}}',
++    DSH_CLIENT_BRAND_MARK_URL: 'data:image/svg+xml,fixture',
++    DSH_CLIENT_UNRELATED: 'not public in official builds',
++  }
++  const repository = repositoryClientBuildEnvironment(root, input)
++  const environment = resolveClientBuildEnvironment(repository, 'official')
++  expect(environment.DSH_CLIENT_LOCALE_OVERRIDES).toBe(input.DSH_CLIENT_LOCALE_OVERRIDES)
++  expect(environment.DSH_CLIENT_BRAND_MARK_URL).toBe(input.DSH_CLIENT_BRAND_MARK_URL)
++  expect(environment.DSH_CLIENT_UNRELATED).toBeUndefined()
++  expect(environment.DSH_CLIENT_TITLE).toBe('DeepSeek Harness')
++})
+diff --git a/packages/client/locale/README.i18n.yaml b/packages/client/locale/README.i18n.yaml
+index 61fd6069601e8ec314cad0ead2725a269eb4f306..f33c1151a1e7de39026a131735d7fae958c27d69 100644
+--- a/packages/client/locale/README.i18n.yaml
++++ b/packages/client/locale/README.i18n.yaml
+@@ -23,6 +23,9 @@
+ /deepseek-ai-dsh-client-locale/use-this-package/registering-a-dictionary:
+   en: 9b2fcfa8cae8dc4b
+   zh: 293012a4d364ef59
++/deepseek-ai-dsh-client-locale/use-this-package/product-copy-contributions:
++  en: 7edb550fe388bd45
++  zh: 3a877d73c93c1681
+ /deepseek-ai-dsh-client-locale/use-this-package/resolving-package-text:
+   en: 3b63e84fe0fdf8f4
+   zh: e97b5d1b92dff7ec
+diff --git a/packages/client/locale/README.md b/packages/client/locale/README.md
+index a21f61dd931204f990e6865419ac19476c957ff4..7b00dd16621c0fd90170fa54a9cfffcb16869660 100644
+--- a/packages/client/locale/README.md
++++ b/packages/client/locale/README.md
+@@ -37,6 +37,12 @@ Native shells may provide `__DSH_LOCALE__` with an asynchronous `read()` and an
+ 
+ Call `ctx.locale.register(ns, { zh, en })` with a namespace merged into `LocaleNamespaceMap`; the compiler checks every key against the namespace's typed key union and requires both shipped locales. Consumers translate through `ctx.locale.bind(ns)` or the framework-injected `t` seat. A dictionary registered after the UI is already mounted is picked up without a remount.
+ 
++### Product copy contributions
++
++Product plugins may contribute partial copy with `ctx.locale.override(ns, { en: { key: 'Copy' }, zh: { key: '文案' } })`. Own the returned disposer through `ctx.effect`. Later contributions take precedence for the same locale/key; disposing an owner reveals earlier contributions and then the native dictionary. Empty strings are valid, dictionary ownership and locale preference do not change, and mounted translation seats refresh on both contribution and removal.
++
++An explicit product build may supply public `DSH_CLIENT_LOCALE_OVERRIDES` JSON with namespace → locale → string templates. Without it, the official dictionaries are unchanged. The official build record includes this public input. `DSH_CLIENT_BRAND_MARK_URL` separately supplies the conversation hero's initial image fallback; without it, the native animated mark remains available. Runtime slot contributors still take precedence.
++
+ ### Resolving package text
+ 
+ Use `ctx.locale.resolveText(text)` for [`LocalizedText`](../../util/package-manifest/README.md), such as installed plugin titles and descriptions. Literal strings are returned unchanged. Translation maps use lowercase language ids, require an `en` fallback, and follow the active language's declared fallback chain. They do not consult or register namespace dictionaries.
+diff --git a/packages/client/locale/README.zh.md b/packages/client/locale/README.zh.md
+index c93b555f96e459ddad56faaf46d267cf319218ad..c925e011d659ead10993833563f3d48ee1708cb8 100644
+--- a/packages/client/locale/README.zh.md
++++ b/packages/client/locale/README.zh.md
+@@ -37,6 +37,12 @@ kind: "package-reference"
+ 
+ 用已合并进 `LocaleNamespaceMap` 的命名空间调用 `ctx.locale.register(ns, { zh, en })`；编译器会对照该命名空间的类型化键并集检查每个键，并要求两个内置 locale 齐全。消费方通过 `ctx.locale.bind(ns)` 或框架注入的 `t` 席位翻译。UI 已挂载后再注册的字典无需重新挂载即可生效。
+ 
++### 产品文案贡献
++
++产品插件可通过 `ctx.locale.override(ns, { en: { key: 'Copy' }, zh: { key: '文案' } })` 贡献部分文案，并通过 `ctx.effect` 持有返回的释放函数。同一 locale 和键以后注册的贡献优先；释放某个所有者后，恢复此前的贡献，最后回到原生字典。空字符串有效，字典归属和语言偏好保持不变，已挂载的翻译席位会在贡献注册和移除时刷新。
++
++显式产品构建可提供公开的 `DSH_CLIENT_LOCALE_OVERRIDES` JSON，按命名空间 → locale → 字符串模板组织。未提供时，官方字典保持不变。官方构建记录包含此公开输入。`DSH_CLIENT_BRAND_MARK_URL` 单独提供会话 hero 的初始图片回退；未提供时保留原生动画标识。运行时槽位贡献仍优先。
++
+ ### 解析包文本
+ 
+ 使用 `ctx.locale.resolveText(text)` 解析 [`LocalizedText`](../../util/package-manifest/README.zh.md)，例如已安装插件的标题与描述。字面字符串原样返回。翻译映射使用小写语言 id，必须提供 `en` 回退值，并沿当前语言声明的回退链查找。它们不查询或注册命名空间字典。
+diff --git a/packages/client/locale/src/client/index.ts b/packages/client/locale/src/client/index.ts
+index 744a5f54e65ad162f39d1d465014557282a40da2..b8d3bf328828d864513f60acc728bbdf771feb8d 100644
+--- a/packages/client/locale/src/client/index.ts
++++ b/packages/client/locale/src/client/index.ts
+@@ -50,6 +50,24 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+ /** Locale dictionary: flat key to template string ({name} placeholders). */
+ export type LocaleDict = Record<string, string>
+ 
++/** Parse the optional public build input before it reaches typed registry calls. */
++function parseBuildCopy(source: string): Record<string, Record<string, LocaleDict>> {
++  const record = (value: unknown): value is Record<string, unknown> =>
++    value !== null && typeof value === 'object' && !Array.isArray(value)
++  const value: unknown = JSON.parse(source)
++  if (!record(value)) throw new Error('Invalid product copy')
++  return Object.fromEntries(Object.entries(value).map(([namespace, dictionaries]) => {
++    if (!namespace || !record(dictionaries)) throw new Error('Invalid product copy')
++    return [namespace, Object.fromEntries(Object.entries(dictionaries).map(([locale, entries]) => {
++      if (!record(entries)) throw new Error('Invalid product copy')
++      return [locale, Object.fromEntries(Object.entries(entries).map(([key, template]) => {
++        if (typeof template !== 'string') throw new Error('Invalid product copy')
++        return [key, template]
++      }))]
++    }))]
++  }))
++}
++
+ /** Input accepted when a language-pack plugin adds a selectable language. */
+ export interface LanguageRegistration {
+   /** Stable BCP 47-style id stored as the locale preference. */
+@@ -164,6 +182,7 @@ function syncDocumentLanguage(snapshot: LocaleSnapshot): void {
+  */
+ export class LocaleRuntime {
+   private dicts = new Map<string, Map<string, LocaleDict>>()
++  private overrides = new Map<string, Map<string, LocaleDict[]>>()
+   private bound = new Map<string, Translate>()
+   private catalog = new Map<string, LocaleDefinition>()
+   private fallbackChains = new Map<string, readonly LocaleId[]>()
+@@ -191,6 +210,19 @@ export class LocaleRuntime {
+     this.provisional = resolveInitialLocale(locales, bootstrap?.languages)
+     this.preference = bootstrap?.preference ?? undefined
+     this.snapshot = Object.freeze({ active: this.resolveActive(), locales, revision: 0 })
++    const buildCopy = process.env.DSH_CLIENT_LOCALE_OVERRIDES
++    if (buildCopy !== undefined && buildCopy !== '') {
++      const disposers: (() => void)[] = []
++      try {
++        for (const [namespace, dictionaries] of Object.entries(parseBuildCopy(buildCopy))) {
++          disposers.push(this.override(namespace, dictionaries))
++        }
++      } catch {
++        for (const dispose of disposers.reverse()) dispose()
++        throw new Error('locale: invalid public build copy configuration')
++      }
++      ctx.effect(() => () => { for (const dispose of disposers.reverse()) dispose() }, 'locale: product build copy')
++    }
+     if (host !== undefined) {
+       ctx.effect(() => host.subscribe(() => { this.adopt(host) }), 'locale: settings scope adoption')
+       this.adopt(host)
+@@ -436,6 +468,46 @@ export class LocaleRuntime {
+     }
+   }
+ 
++  /**
++   * Contribute partial product copy without replacing dictionary ownership.
++   * Last contribution wins per locale/key; disposal reveals earlier copy.
++   * @param ns - namespace, which may register before or after this contribution.
++   * @param dicts - locale dictionaries; values must be string templates.
++   * @returns idempotent disposer removing only this contribution.
++   * @throws when locales are missing, malformed or duplicated after case folding.
++   */
++  override(ns: string, dicts: Record<string, LocaleDict>): () => void {
++    const pairs: [string, LocaleDict][] = []
++    const seen = new Set<string>()
++    for (const [locale, entries] of Object.entries(dicts)) {
++      const key = localeKey(locale)
++      if (!LOCALE_ID_PATTERN.test(locale) || seen.has(key)) throw new Error('locale: invalid copy contribution')
++      seen.add(key)
++      pairs.push([key, Object.freeze(Object.fromEntries(Object.entries(entries)))])
++    }
++    if (!pairs.length) throw new Error('locale: empty copy contribution')
++    let locales = this.overrides.get(ns)
++    if (!locales) { locales = new Map(); this.overrides.set(ns, locales) }
++    const installed = pairs.map(([locale, entries]) => {
++      const stack = locales.get(locale) ?? []
++      stack.push(entries)
++      locales.set(locale, stack)
++      return { locale, entries, stack }
++    })
++    this.publish(this.snapshot.active, false)
++    let active = true
++    return () => {
++      if (!active) return
++      active = false
++      for (const { locale, entries, stack } of installed) {
++        stack.splice(stack.indexOf(entries), 1)
++        if (!stack.length) locales.delete(locale)
++      }
++      if (!locales.size) this.overrides.delete(ns)
++      this.publish(this.snapshot.active, false)
++    }
++  }
++
+   /**
+    * Bind a declared namespace to a translate function typed to its
+    * dictionary key union (plus the shared common vocabulary) — the same key
+@@ -476,6 +548,10 @@ export class LocaleRuntime {
+   private lookup(ns: string, key: string, chain: readonly LocaleId[]): string | undefined {
+     const locales = this.dicts.get(ns)
+     for (const locale of chain) {
++      const stack = this.overrides.get(ns)?.get(localeKey(locale)) ?? []
++      let replacement: string | undefined
++      for (const entries of stack) if (Object.hasOwn(entries, key)) replacement = entries[key]
++      if (replacement !== undefined) return replacement
+       const value = locales?.get(localeKey(locale))?.[key]
+       if (value !== undefined) return value
+     }
+diff --git a/packages/client/locale/tests/product-copy.client.spec.ts b/packages/client/locale/tests/product-copy.client.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9671a5e63e456d29fdcbc81783809b35f5ddcac4
+--- /dev/null
++++ b/packages/client/locale/tests/product-copy.client.spec.ts
+@@ -0,0 +1,105 @@
++// @vitest-environment jsdom
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { Context } from '@deepseek-ai/cordis'
++import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
++
++const contexts: Context[] = []
++afterEach(async () => {
++  vi.unstubAllEnvs()
++  for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
++})
++
++function registry() {
++  const ctx = new Context()
++  contexts.push(ctx)
++  const locale = new LocaleRuntime(ctx)
++  locale.register('product', 'en', { title: 'Native', other: 'Original', duration: 'Native {duration}' })
++  locale.setLocale('en')
++  return { ctx, locale, t: locale.bind('product') }
++}
++
++describe('scoped product copy', () => {
++  it('keeps native dictionaries and supports partial layered owners and empty strings', () => {
++    const { locale, t } = registry()
++    const first = locale.override('product', { en: { title: 'First', duration: 'Thinking {duration}' } })
++    const second = locale.override('product', { en: { title: '' } })
++    expect(t('title')).toBe('')
++    expect(t('duration', { duration: '3s' })).toBe('Thinking 3s')
++    expect(t('other')).toBe('Original')
++    first()
++    expect(t('title')).toBe('')
++    expect(t('duration', { duration: '3s' })).toBe('Native 3s')
++    second()
++    expect(t('title')).toBe('Native')
++    locale.override('product', { en: { title: 'Third' } })
++    first(); second()
++    expect(t('title')).toBe('Third')
++    expect(() => locale.register('product', 'en', {})).toThrow('already has locale')
++  })
++
++  it('publishes late contributions and removal without changing locale preference', () => {
++    const { locale, t } = registry()
++    const seen: string[] = []
++    const off = locale.subscribe(() => { seen.push(t('title')) })
++    for (let index = 0; index < 20; index++) {
++      const dispose = locale.override('product', { en: { title: 'Product' } })
++      expect(t('title')).toBe('Product')
++      dispose(); dispose()
++      expect(t('title')).toBe('Native')
++    }
++    expect(seen).toHaveLength(40)
++    expect(locale.getLocale().active).toBe('en')
++    off()
++  })
++
++  it('copies caller dictionaries and respects locale fallback order', () => {
++    const { locale, t } = registry()
++    const copy = { en: { title: 'English product' } }
++    locale.override('product', copy)
++    copy.en.title = 'Caller mutation'
++    locale.register('product', 'zh', { title: '原生中文' })
++    locale.setLocale('zh')
++    expect(t('title')).toBe('原生中文')
++    locale.setLocale('en')
++    expect(t('title')).toBe('English product')
++    expect(t('title')).toBe('English product')
++  })
++
++  it('removes copy when its contributing plugin fiber is disposed', async () => {
++    const { ctx, locale, t } = registry()
++    const owner = ctx.plugin({ name: 'product-copy-owner', apply(child) {
++      child.effect(() => locale.override('product', { en: { title: 'Scoped product' } }))
++    } })
++    await vi.waitFor(() => { expect(t('title')).toBe('Scoped product') })
++    await owner.dispose()
++    expect(t('title')).toBe('Native')
++  })
++
++  it('loads only explicit build copy and restores it after a runtime owner unloads', () => {
++    vi.stubEnv('DSH_CLIENT_LOCALE_OVERRIDES', JSON.stringify({ product: { en: { title: 'Build product' } } }))
++    const { locale, t } = registry()
++    expect(t('title')).toBe('Build product')
++    const dispose = locale.override('product', { en: { title: 'Runtime product' } })
++    dispose()
++    expect(t('title')).toBe('Build product')
++  })
++
++  it.each(['{', 'null', '[]', '{"":{}}', '{"product":42}', '{"product":{"en":[]}}', '{"product":{"en":{"invalid":42}}}',
++    '{"first":{"en":{"title":"First"}},"second":{"bad tag":{"title":"Second"}}}'])('rejects invalid public build input %s', (input) => {
++    vi.stubEnv('DSH_CLIENT_LOCALE_OVERRIDES', input)
++    const ctx = new Context(); contexts.push(ctx)
++    expect(() => new LocaleRuntime(ctx)).toThrow('invalid public build copy')
++  })
++
++  it('rejects ambiguous locale identities before publishing and accepts late native dictionaries', () => {
++    const { locale } = registry(), revision = locale.getSnapshot().revision
++    expect(() => locale.override('product', { en: {}, EN: {} })).toThrow('invalid copy contribution')
++    expect(() => locale.override('product', {})).toThrow('empty copy contribution')
++    expect(locale.getSnapshot().revision).toBe(revision)
++    const dispose = locale.override('late', { en: { title: 'Late product' } })
++    locale.register('late', 'en', { title: 'Late native' })
++    expect(locale.bind('late')('title')).toBe('Late product')
++    dispose()
++    expect(locale.bind('late')('title')).toBe('Late native')
++  })
++})
+diff --git a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx b/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
+index bed3560fbaa10d656f6053e6122adc0427829a1b..eb008927530d3052181acd3064768b6ded2c66af 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
+@@ -146,6 +146,8 @@ function HeroFish({ hovering }: { hovering: boolean }) {
+  */
+ export function HeroShell({ t, renderSlot, children }: HeroShellProps) {
+   const [hovering, setHovering] = useState(false)
++  const productMark = process.env.DSH_CLIENT_BRAND_MARK_URL
++  const preview = t('hero.preview')
+   return (
+     <div className={css.root}>
+       <div className={css.stack}>
+@@ -161,13 +163,15 @@ export function HeroShell({ t, renderSlot, children }: HeroShellProps) {
+             onMouseLeave={() => { setHovering(false) }}
+           >
+             {renderSlot('conversation.hero.brand.mark', { size: 34, className: css.fish }, {
+-              fallback: <HeroFish hovering={hovering} />,
++              fallback: productMark
++                ? <img className={css.fish} width={34} src={productMark} alt="" aria-hidden="true" />
++                : <HeroFish hovering={hovering} />,
+             })}
+           </span>
+           <span className={css.titleGroup}>
+             {/* Own element: keeps the headline text addressable apart from the badge. */}
+             <span>{t('hero.headline')}</span>
+-            <span className={css.previewBadge}>{t('hero.preview')}</span>
++            {preview && <span className={css.previewBadge}>{preview}</span>}
+           </span>
+         </div>
+         <div className={css.body}>
+diff --git a/packages/client/ui-conversation/tests/product-brand.client.spec.tsx b/packages/client/ui-conversation/tests/product-brand.client.spec.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..b1195886898987b5dcfafe5f73b96b0ec36610e1
+--- /dev/null
++++ b/packages/client/ui-conversation/tests/product-brand.client.spec.tsx
+@@ -0,0 +1,57 @@
++// @vitest-environment jsdom
++import { afterEach, expect, it, vi } from 'vitest'
++import { cleanup, fireEvent, render } from '@testing-library/react'
++import { Context } from '@deepseek-ai/cordis'
++import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
++import { en } from '../src/client/locales.ts'
++import { HeroShell, type HeroShellProps } from '../src/client/skeleton/EmptyHero.tsx'
++
++const contexts: Context[] = []
++afterEach(async () => {
++  cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals()
++  for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
++})
++
++function mount() {
++  const ctx = new Context(); contexts.push(ctx)
++  const locale = new LocaleRuntime(ctx)
++  locale.register('conversation', 'en', en)
++  locale.setLocale('en')
++  const renderSlot = vi.fn<HeroShellProps['renderSlot']>((_key, _owner, options) => options?.fallback ?? null)
++  return render(<HeroShell t={locale.bind('conversation')} renderSlot={renderSlot} />)
++}
++
++it('keeps the native hero mark and copy without product configuration', () => {
++  const view = mount()
++  expect(view.getByText('Into the Unknown')).toBeTruthy()
++  expect(view.getByText('Preview')).toBeTruthy()
++  expect(view.container.querySelector('[class*="previewBadge"]')).not.toBeNull()
++  expect(view.container.querySelector('svg path')).not.toBeNull()
++  expect(view.container.querySelector('img')).toBeNull()
++})
++
++it('uses an explicit product mark and locale copy before a slot contributor arrives', () => {
++  const mark = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E'
++  vi.stubEnv('DSH_CLIENT_BRAND_MARK_URL', mark)
++  vi.stubEnv('DSH_CLIENT_LOCALE_OVERRIDES', JSON.stringify({ conversation: { en: { 'hero.headline': 'Configured product', 'hero.preview': '' } } }))
++  const view = mount()
++  expect(view.getByText('Configured product')).toBeTruthy()
++  expect(view.queryByText('Preview')).toBeNull()
++  expect(view.container.querySelector('[class*="previewBadge"]')).toBeNull()
++  expect(view.container.querySelector('img')?.getAttribute('src')).toBe(mark)
++  expect(view.container.querySelector('svg')).toBeNull()
++})
++
++it('retains the native hover animation and reduced-motion preference', () => {
++  let motion = true
++  vi.stubGlobal('matchMedia', () => ({ matches: motion }))
++  const view = mount()
++  const hitbox = view.container.querySelector('svg')!.parentElement!
++  fireEvent.mouseEnter(hitbox)
++  expect(view.container.querySelector('animate')).not.toBeNull()
++  fireEvent.mouseLeave(hitbox)
++  expect(view.container.querySelector('animate')).toBeNull()
++  motion = false
++  fireEvent.mouseEnter(hitbox)
++  expect(view.container.querySelector('animate')).toBeNull()
++})
+diff --git a/scripts/client-build-environment.ts b/scripts/client-build-environment.ts
+index 57f12ef13bd6a4ec077408e88a77b991857d5269..7b3d0f16977c8172f47799404b5c14e343744f58 100644
+--- a/scripts/client-build-environment.ts
++++ b/scripts/client-build-environment.ts
+@@ -142,11 +142,11 @@ export function officialClientBuildEnvironment(
+   root: string,
+   environment: NodeJS.ProcessEnv = process.env,
+ ): Readonly<Record<`DSH_CLIENT_${string}`, string>> {
+-  return {
++  return resolveClientBuildEnvironment({
++    ...environment,
+     DSH_CLIENT_COMMIT_HASH: repositoryCommitHash(root, environment),
+     DSH_CLIENT_VERSION: repositoryVersion(root),
+-    ...OFFICIAL_CLIENT_BUILD_ENVIRONMENT,
+-  }
++  }, 'official')
+ }
+ 
+ /** Digest of every client artifact produced by the complete root build. */
+@@ -198,10 +198,16 @@ export function resolveClientBuildEnvironment(
+     if (version === undefined) {
+       throw new Error(`${CLIENT_VERSION_VARIABLE} is required for the official client build profile`)
+     }
++    const product: Record<string, string> = {}
++    for (const name of ['DSH_CLIENT_LOCALE_OVERRIDES', 'DSH_CLIENT_BRAND_MARK_URL']) {
++      const value = environment[name]
++      if (value !== undefined) product[name] = value
++    }
+     return {
+       DSH_CLIENT_COMMIT_HASH: commitHash,
+       DSH_CLIENT_VERSION: version,
+       ...OFFICIAL_CLIENT_BUILD_ENVIRONMENT,
++      ...product,
+     }
+   }
+   throw new Error(`unknown client build profile ${JSON.stringify(profile)}; expected "official"`)

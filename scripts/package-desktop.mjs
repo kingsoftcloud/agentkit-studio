@@ -12,6 +12,8 @@ import { exportLocalDmg } from './export-local-dmg.mjs';
 import { checkPatchManifest } from './check-patch-manifest.mjs';
 import { assertPatchedSource } from './patched-source-fingerprint.mjs';
 import { resolveProductInputs } from './product-config.mjs';
+import { createBuildOutputRedactor } from './build-output-redaction.mjs';
+import { finished } from 'node:stream/promises';
 
 const credentialPaths = new Set(['DSH_DESKTOP_WINDOWS_CER_FILE','DSH_DESKTOP_WINDOWS_SIGNTOOL','APPLE_API_KEY','APPLE_KEYCHAIN','CSC_LINK']);
 
@@ -34,12 +36,16 @@ export function relocateReleaseSettings(contents, sourceDirectory, publicSetting
   return result;
 }
 
-function run(command,args,cwd,env) {
-  return new Promise((accept,reject)=>{
-    const child=spawn(command,args,{cwd,env,stdio:'inherit'});
+async function run(command,args,cwd,env) {
+  const child=spawn(command,args,{cwd,env,stdio:['inherit','pipe','pipe']});
+  const out=child.stdout.pipe(createBuildOutputRedactor()), err=child.stderr.pipe(createBuildOutputRedactor());
+  out.pipe(process.stdout,{end:false}); err.pipe(process.stderr,{end:false});
+  const closed=new Promise((accept,reject)=>{
     child.once('error',reject);
-    child.once('exit',(code,signal)=>code===0?accept():reject(new Error(`desktop packaging command failed (${code ?? signal})`)));
+    child.once('close',(code,signal)=>accept({code,signal}));
   });
+  const [status]=await Promise.all([closed,finished(out,{cleanup:true}),finished(err,{cleanup:true})]);
+  if(status.code!==0) throw new Error(`desktop packaging command failed (${status.code ?? status.signal})`);
 }
 
 /** Windows cannot spawn a .cmd shim directly. Use the package manager's actual CLI. */

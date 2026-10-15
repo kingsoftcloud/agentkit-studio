@@ -17,7 +17,7 @@ const invalid = error => error.code === 'PATCH_MANIFEST_INVALID';
 
 test('all shipped patches have exact content, paths, ordered dependencies and verification ownership', async () => {
   const { report } = await checkPatchManifest(fileURLToPath(directory));
-  assert.equal(report.patches, 32); assert.equal(report.paths, 138); assert.ok(report.hostTests.length > 0);
+  assert.equal(report.patches, 31); assert.equal(report.paths, 155); assert.ok(report.hostTests.length > 0);
 });
 
 test('unregistered patch files and modified content cannot enter a build', async () => {
@@ -37,15 +37,15 @@ test('mixed baselines and undeclared modified paths fail admission', async () =>
 
 test('cyclic and forward dependencies are rejected before application', async () => {
   const { manifest, files } = await inputs();
-  manifest.patches[0].dependsOn = ['003'];
+  manifest.patches[0].dependsOn = [manifest.patches[1].id];
   assert.throws(() => validatePatchManifest(manifest, files), /appears later/);
-  manifest.patches[1].dependsOn = ['001'];
+  manifest.patches[1].dependsOn = [manifest.patches[0].id];
   assert.throws(() => validatePatchManifest(manifest, files), /cyclic/);
 });
 
 test('shared modified files require explicit dependency ancestry', async () => {
   const { manifest, files } = await inputs();
-  manifest.patches.find(entry => entry.id === '003').dependsOn = [];
+  manifest.patches.find(entry => entry.id === '035').dependsOn = [];
   assert.throws(() => validatePatchManifest(manifest, files), /undeclared file-order/);
 });
 

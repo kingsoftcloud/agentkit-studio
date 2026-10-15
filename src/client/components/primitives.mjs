@@ -1,5 +1,5 @@
 import { BRAND } from '../theme.mjs';
-import { AGENTKIT_STUDIO_MARK_BODY as STUDIO_MARK_BODY } from '../../brand.js';
+import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND, AGENTKIT_STUDIO_MARK_BODY as STUDIO_MARK_BODY } from '../../brand.js';
 
 export function createStudioPrimitives({ React }) {
   const { createElement: h, useEffect, useState } = React;
@@ -12,7 +12,7 @@ export function createStudioPrimitives({ React }) {
         h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': true }, h('path', { d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z' }), h('circle', { cx: 12, cy: 12, r: 3 }), visible ? h('path', { d: 'm3 3 18 18' }) : null)));
   }
 
-  function StudioMark({ size = 28, title = 'AgentKit Studio' }) {
+  function StudioMark({ size = 28, title = PRODUCT_BRAND.name }) {
     return h('svg', {
       width: size, height: size, viewBox: '0 0 64 64',
       role: title ? 'img' : 'presentation', 'aria-label': title || undefined,
@@ -23,7 +23,10 @@ export function createStudioPrimitives({ React }) {
   }
 
   function StudioWordmark() {
-    return h('span', { style: { color: BRAND.ink } }, 'AgentKit ', h('span', { style: { color: 'light-dark(#1858d6, #78a4ff)' } }, 'Studio'));
+    const prefix = `${PRODUCT_BRAND.shortName} `;
+    return h('span', { style: { color: BRAND.ink } }, PRODUCT_BRAND.name.startsWith(prefix)
+      ? [prefix, h('span', { key: 'suffix', style: { color: 'light-dark(#1858d6, #78a4ff)' } }, PRODUCT_BRAND.name.slice(prefix.length))]
+      : PRODUCT_BRAND.name);
   }
 
   function NavGlyph({ glyph, active }) {

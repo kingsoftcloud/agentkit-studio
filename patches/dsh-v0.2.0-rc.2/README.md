@@ -32,11 +32,7 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 
 | 文件 | 作用 | 删除条件 |
 | --- | --- | --- |
-| `001-chat-thinking-copy.patch` | 将思考态文案改为产品中性的"正在思考中"（v0.2.0-rc.2 上游沿用 locale key 迁移为 `chat.deepDiving`/`chat.deepDivingFor`，补丁已按新基线重新生成） | 上游提供可配置文案或 Studio 公共 locale slot |
-| `002-generated-conversation-copy.patch` | 调整会话输入占位文案 | 上游提供可配置 placeholder |
-| `003-generated-locale-brand.patch` | 移除 DSH 默认 Hero 品牌文案 | 上游提供稳定品牌 slot 并覆盖所有 fallback locale |
 | `004-sidebar-panel-lifecycle.patch` | 修复动态面板注册后的侧栏选择 | 上游侧栏生命周期修复进入发布版本 |
-| `005-studio-fallback-brand.patch` | 宿主启动慢时不闪现 DSH Hero 品牌 | 上游 fallback 已提供产品级品牌扩展点 |
 | `006-desktop-plugin-package-set.patch` | 让官方 Desktop package-set 接受额外的 Studio tarball，并把 Studio bundle 写入内置 Profile | 上游支持外部产品 bundle 的 Desktop package-set/profile 配置 |
 | `008-agent-session-without-workspace.patch` | 允许已有 Agent 会话在未选择 Workspace 时直接使用原生 composer；Workspace 仍可作为 cwd/文件工具上下文 | 上游把 Workspace 从会话发送前置条件改为可选上下文 |
 | `009-local-macos-package.patch` | 显式 `--unsigned` macOS 本地测试包复用官方离线运行时流水线；根 manifest 保留产品 bundle，干净 Profile 使用该 bundle，启动器从根 manifest 解析插件；Studio 跳过仅适用于 DeepSeek 的 welcome。支持产品名称和 macOS 图标覆盖，保留普通 DSH 默认品牌；正式签名、公证与发布门禁保持启用 | 上游提供 macOS 本地验收包、产品首次配置和打包插件解析的等价合同 |
@@ -67,8 +63,14 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `033-windows-single-range-evidence.patch` | Windows Studio 的 Generic Provider 使用 KS3 单区间请求；保留原生下载实际字节数用于增量验收，差分计划日志不能单独证明通过 | 上游 Windows 产品配置支持单区间请求和实际下载字节记录 |
 | `034-product-windows-tray.patch` | 托盘图标独立使用产品输入，Studio 不再复制官方鲸鱼 ICO；保留官方默认值 | 上游支持产品托盘资源输入 |
 
+| `035-public-product-presentation.patch` | 通过可释放的 locale 覆盖和显式构建输入配置产品文案与图标，保留默认 DSH 行为 | 固定上游基线提供等价的产品文案与首次渲染接口 |
+| `036-preset-composition-generated-api.patch` | 由生成器同步已有 pluginsFor 方法的双语 API 引用和 Host 检查目录 | 固定上游 API 目录包含该方法 |
+| `037-web-editor-snapshot-ready-state.patch` | 通过真实输入及删除建立空编辑器段落，再采集 Hero ARIA；保留日志和回放断言 | 上游场景建立等价稳定的编辑器初始状态 |
+
 `023` 的权限来自 [Codex 0.159.2 官方签名配置](https://github.com/openai/codex/blob/rust-v0.159.2/.github/scripts/macos-signing/codex-code-mode-host.entitlements.plist)。真实安装包的助手被通用签名规则重签后没有这两项权限；同一版本官方原包以及仅修复助手签名的本地副本都可实际创建并校验文件。正式产物还须通过 `node scripts/verify-codex-signing.mjs <App路径>`，并在实际安装后重跑文件执行验收。
 
 007 会话过滤补丁已移除。Studio 完全复用 DSH 的分组、平铺、搜索和归档列表，选择 Agent 仅决定当前会话执行绑定，不改变列表可见性。
 
-021 手动检查补丁已在阶段 5A 移除。官方实现已在空闲或检查失败时强制刷新，并按 available / ready 状态下载或安装；原补丁无条件强制检查会干扰后两种动作。恢复官方实现后，`main-startup.spec.ts` 的 114 项行为测试全部通过，6 个原失败场景恢复。平台安装更新仍另行验收。保留历史补丁编号，当前共 32 项。
+021 手动检查补丁已在阶段 5A 移除。官方实现已在空闲或检查失败时强制刷新，并按 available / ready 状态下载或安装；原补丁无条件强制检查会干扰后两种动作。恢复官方实现后，`main-startup.spec.ts` 的 114 项行为测试全部通过，6 个原失败场景恢复。平台安装更新仍另行验收。保留历史补丁编号，当前共 31 项。
+
+001、002、003、005 在阶段 5B 移除，由 035 的产品接口承接；文案和图标值由 Studio 产品配置提供。默认 DSH 与配置后的 Studio 页面、打包 Desktop Host 的四类 Profile 均已完成本地验证。036 保留生成文档同步，037 保留独立的回放测试修复；这两项不与产品接口混成一个补丁。最终 Windows 和真实安装更新验收仍需独立完成。

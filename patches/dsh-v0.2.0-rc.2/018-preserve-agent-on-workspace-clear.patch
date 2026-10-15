@@ -1,5 +1,5 @@
 diff --git a/packages/api/session-controller/README.i18n.yaml b/packages/api/session-controller/README.i18n.yaml
-index 5878d2f71b..ed417461b0 100644
+index 5878d2f71b354cbd9a7e5639ef2953331050ba31..ed417461b0db9aefce31f3ee2c80000a1ba4694e 100644
 --- a/packages/api/session-controller/README.i18n.yaml
 +++ b/packages/api/session-controller/README.i18n.yaml
 @@ -15,8 +15,8 @@
@@ -14,33 +14,33 @@ index 5878d2f71b..ed417461b0 100644
    en: 41bdda1ac32df558
    zh: aa5d0e325924066b
 diff --git a/packages/api/session-controller/README.md b/packages/api/session-controller/README.md
-index be3f9a0bf5..df890cd071 100644
+index be3f9a0bf565ed5d5858370394f257425fd1ce8c..df890cd071de2b37ddf58e14b08724046d7de5bd 100644
 --- a/packages/api/session-controller/README.md
 +++ b/packages/api/session-controller/README.md
 @@ -35,7 +35,7 @@ Each endpoint states its activation policy. List reads only stored headers and p
-
+ 
  Client list rows and resident Sessions use the current `sessionListMetadata` projection to reject stale blank-session hints; recency is the later of the summary timestamp and the projected last user prompt. When SessionManager creates an instance before its list row arrives, it reconciles blankness with metadata already retained for that Session. An opened conversation is therefore not reused by New Session even when an older list response still marks it blank.
-
+ 
 -Explicit-id `session.create` adopts a live Session or resumes a persisted Session while retaining its writer lock. Writer contention returns `session/writer-held`; callers may try another blank without suppressing unrelated failures. `session.list` includes persisted blanks using cached metadata, without opening cold log bodies.
 +Explicit-id `session.create` adopts a live Session or resumes a persisted Session while retaining its writer lock. Writer contention returns `session/writer-held`; callers may try another blank without suppressing unrelated failures. `session.list` includes persisted blanks using cached metadata, without opening cold log bodies. The Client `sessions.create` facade also forwards the optional `agentPreset` identity to the Host; creating a workspace-free replacement can therefore preserve the source Agent composition.
-
+ 
  Client list refreshes retain unchanged row objects and reuse the items array when order and values match. Each row's `retainedBy` contains positive local reference-source counts; Host metadata refreshes cannot overwrite them. Cache membership checks use a per-refresh ID set, so reconciliation grows linearly with the current list and retained cache sizes. Host summary updates replace running and Agent availability; local create/fork responses only fill missing metadata on existing rows. Removed ordinary Sessions retain projection stores only when their catalogs contain children.
-
+ 
 diff --git a/packages/api/session-controller/README.zh.md b/packages/api/session-controller/README.zh.md
-index de40067e39..002ba550d6 100644
+index de40067e3973063bd9652944c2fa58d9b33d2c68..002ba550d66173c98c6461d043d23a1474f72251 100644
 --- a/packages/api/session-controller/README.zh.md
 +++ b/packages/api/session-controller/README.zh.md
 @@ -35,7 +35,7 @@ Client journal 在发布 follow 快照、live entry 或历史页之前验证当
-
+ 
  Client 列表行和驻留 Session 使用当前 `sessionListMetadata` 投影纠正过期的空白会话提示；最近活动时间取摘要时间戳与投影中最后一次用户提示词时间的较晚值。当 SessionManager 在列表行到达前创建实例时，会使用已保留的该 Session 元数据对账空白状态。因此，即使旧列表响应仍将已有对话标为空白，新会话操作也不会复用已经打开过的对话。
-
+ 
 -显式 ID 的 `session.create` 会收养活动 Session，或恢复持久化 Session 并持续持有其写锁。写锁争用返回 `session/writer-held`；调用方可以尝试其他空白会话，同时保留其他失败。`session.list` 根据缓存元数据列出持久化空白会话，不打开冷日志正文。
 +显式 ID 的 `session.create` 会收养活动 Session，或恢复持久化 Session 并持续持有其写锁。写锁争用返回 `session/writer-held`；调用方可以尝试其他空白会话，同时保留其他失败。`session.list` 根据缓存元数据列出持久化空白会话，不打开冷日志正文。 Client 的 `sessions.create` 也会把可选 `agentPreset` 身份传给 Host，因此创建无工作区的替代会话时可以保留原 Agent 组成。
-
+ 
  Client 列表刷新保留未变化的行对象，并在顺序和值均相同时复用条目数组。每行的 `retainedBy` 包含正数的本地引用来源计数，Host 元数据刷新不能覆盖它们。缓存成员检查使用每次刷新构建的 ID 集合，因此对账成本随当前列表和保留缓存的规模线性增长。 Host 摘要更新会替换运行状态与 Agent 可用性；本地 create/fork 响应只补充已有行缺失的元数据。普通 Session 被移除后，仅在目录仍有子项时保留其投影 store。
-
+ 
 diff --git a/packages/api/session-controller/src/client/contract/sessions.ts b/packages/api/session-controller/src/client/contract/sessions.ts
-index 076188c1e0..c0fba5b2d9 100644
+index 076188c1e0db70d81414692144d068d019aa0c2a..c0fba5b2d9525f2d65038a80e36f394adfd53017 100644
 --- a/packages/api/session-controller/src/client/contract/sessions.ts
 +++ b/packages/api/session-controller/src/client/contract/sessions.ts
 @@ -80,13 +80,14 @@ export interface ISessions {
@@ -60,7 +60,7 @@ index 076188c1e0..c0fba5b2d9 100644
    /**
     * Resolve an already discovered direct-parent address without opening it.
 diff --git a/packages/api/session-controller/src/client/sessions/manager.ts b/packages/api/session-controller/src/client/sessions/manager.ts
-index 50af09df13..47c8de54a2 100644
+index 50af09df13b83789e729bf101d5a7d6d929adb00..47c8de54a2615854ee80da0a131c10800341dcfe 100644
 --- a/packages/api/session-controller/src/client/sessions/manager.ts
 +++ b/packages/api/session-controller/src/client/sessions/manager.ts
 @@ -482,7 +482,7 @@ export class SessionManager {
@@ -88,7 +88,7 @@ index 50af09df13..47c8de54a2 100644
        ? { workspaceId: opts.workspaceId, ...shared }
        : { ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }), ...shared }
 diff --git a/packages/api/session-controller/src/client/sessions/service.ts b/packages/api/session-controller/src/client/sessions/service.ts
-index 8166b6f32d..494ced980e 100644
+index 8166b6f32d2781c94afbcbff6a114f09615af8b2..494ced980e2859ef1982a81ee7e4077bf623a7af 100644
 --- a/packages/api/session-controller/src/client/sessions/service.ts
 +++ b/packages/api/session-controller/src/client/sessions/service.ts
 @@ -424,11 +424,11 @@ export class ClientSessions implements ISessions {
@@ -106,7 +106,7 @@ index 8166b6f32d..494ced980e 100644
      if (!result.ok) throw new SessionCreateError(result.error, opts.sessionId)
      this.projectList()
 diff --git a/packages/api/session-controller/tests/sessions-service.client.spec.ts b/packages/api/session-controller/tests/sessions-service.client.spec.ts
-index e25339bc93..bca2e62981 100644
+index e25339bc93e5b4f25dab6c07cb866c7c41a36aa8..bca2e629817758d5807806a7ac75408820ea2213 100644
 --- a/packages/api/session-controller/tests/sessions-service.client.spec.ts
 +++ b/packages/api/session-controller/tests/sessions-service.client.spec.ts
 @@ -859,8 +859,8 @@ describe('create', () => {
@@ -121,7 +121,7 @@ index e25339bc93..bca2e62981 100644
      const failure = await b.svc.create({ sessionId: sid('candidate') }).catch((error: unknown) => error)
      expect(failure).toBeInstanceOf(SessionCreateError)
 diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/client/ui-conversation/src/client/apply.ts
-index 0fc9b2560c..5f38a6055c 100644
+index 0fc9b2560c5ee965747711953f90709d2904d61f..5f38a6055c832f1673aa1391d242fcdf49757a98 100644
 --- a/packages/client/ui-conversation/src/client/apply.ts
 +++ b/packages/client/ui-conversation/src/client/apply.ts
 @@ -113,6 +113,7 @@ interface WorkspaceNavigation {
@@ -131,7 +131,7 @@ index 0fc9b2560c..5f38a6055c 100644
 +    settingsFrom?: SessionId,
    ): Promise<void>
  }
-
+ 
 @@ -347,7 +348,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
              }
            }
@@ -140,9 +140,9 @@ index 0fc9b2560c..5f38a6055c 100644
 +      }, workspaceId === null ? sessionId : undefined),
      }),
    }, ConversationContent)
-
+ 
 diff --git a/packages/client/ui-workspace/README.i18n.yaml b/packages/client/ui-workspace/README.i18n.yaml
-index 83fc74171a..eb2b9514ea 100644
+index 8904d465d5f28d53bafc327f27ac373586acb7d5..56c3dba548ba11eef2e3325829a1631b19b316ec 100644
 --- a/packages/client/ui-workspace/README.i18n.yaml
 +++ b/packages/client/ui-workspace/README.i18n.yaml
 @@ -33,8 +33,8 @@
@@ -157,45 +157,45 @@ index 83fc74171a..eb2b9514ea 100644
    en: 21590da1f7488361
    zh: 95916475cced409e
 diff --git a/packages/client/ui-workspace/README.md b/packages/client/ui-workspace/README.md
-index 7175856e8e..7387e83857 100644
+index c48418e3c6bc325583c30219cbee2d0396f3b8ea..b72e825a4db0ffa5d7fe1cc560e84ec75b7d7d49 100644
 --- a/packages/client/ui-workspace/README.md
 +++ b/packages/client/ui-workspace/README.md
 @@ -71,7 +71,7 @@ Grouped and flat Session rows show a clock mark when the Session has active sche
-
+ 
  `ctx.uiWorkspace.openSession(target)` synchronously replaces the owned `mainView` reference and returns the main area to Conversation without waiting for `reference.ready`, so history loading renders inside the selected Session view. The target may be a known Session id or a durable direct-parent subagent address; an explicit address does not require a preloaded parent catalog. `openWorkspace(id, beforeOpen?)` opens its result only if no later navigation has superseded the request; New Session uses the same navigation and failure handling. `forkSession(id)` creates the child without navigating or superseding a pending navigation. The optional synchronous preparation callback runs after the target is retained and only for a current Workspace request, so superseded requests do not move composer drafts. Navigation or owner disposal suppresses the late UI commit, not the underlying Session creation. Startup restoration retains its main reference without changing the selected panel or cancelling a later navigation. Archiving the main Session releases its reference and clears the main selection. Selection failure leaves a global panel visible. Session rows read `usePanelInfo` to suppress their selected appearance while a global panel is active; search and directory-picker focus alone do not leave that panel.
-
+ 
 -The Ungrouped header’s **+** calls `startSession(null)` to create a fresh Session without a Workspace or inherited working directory. Omitting the argument retains the current-or-recent Workspace policy. The previous Session and its composer draft stay intact.
 +The Ungrouped header’s **+** calls `startSession(null)` to create a fresh Session without a Workspace or inherited working directory. Omitting the argument retains the current-or-recent Workspace policy. The previous Session and its composer draft stay intact. Passing `settingsFrom` to `openWorkspace(null, beforeOpen, settingsFrom)` preserves that blank Session's preset, selected model and named access mode before moving its draft. Any restoration failure or later navigation leaves the original draft and selection intact. Custom access policies must be changed to a named access mode first.
-
+ 
  Navigation and startup restoration obtain the selected Session's projections from its `follow`; neither issues a separate projection refresh for that Session or its parent.
-
+ 
 diff --git a/packages/client/ui-workspace/README.zh.md b/packages/client/ui-workspace/README.zh.md
-index 0aa2019122..6b42a12708 100644
+index 34d2058f90c97f3a7f56649d4c3cc183d220ebbc..f656f15aa97ff927467d45eaff0991ca1a3eec10 100644
 --- a/packages/client/ui-workspace/README.zh.md
 +++ b/packages/client/ui-workspace/README.zh.md
 @@ -71,7 +71,7 @@ Session 行渲染运行时的实时 `pendingInteraction` 分类：审批显示**
-
+ 
  `ctx.uiWorkspace.openSession(target)` 会同步替换其拥有的 `mainView` reference，并让主区域返回 Conversation，而不等待 `reference.ready`，因此历史加载会显示在已经选中的 Session 视图内。目标可以是已知 Session id，也可以是持久的直接父子 subagent 地址；显式地址不要求预先加载 parent catalog。`openWorkspace(id, beforeOpen?)` 仅在请求未被后续导航替代时打开结果；新会话采用相同的导航与失败处理。`forkSession(id)` 创建子会话，不导航，也不替代尚未完成的导航。可选的同步准备回调在目标被 retain 后执行，并且仅对仍有效的 Workspace 请求执行，因此过期请求不会搬移 composer 草稿。后续导航或 owner 释放会阻止晚到的 UI 提交，但不取消底层 Session 创建。启动恢复会 retain 主 reference，不改变已选面板，也不取消后续导航。归档主 Session 会释放其 reference 并清除主选择。选择失败时保留当前全局面板。Session 行读取 `usePanelInfo`，在全局面板活跃时不显示 Session 选中样式；仅把焦点移到搜索框或目录选择器不会离开该面板。
-
+ 
 -“未分组”标题的 **+** 调用 `startSession(null)`，创建不绑定工作区、不继承工作目录的新会话。省略参数时仍沿用当前或最近工作区。原会话及其输入草稿保持不变。
 +“未分组”标题的 **+** 调用 `startSession(null)`，创建不绑定工作区、不继承工作目录的新会话。省略参数时仍沿用当前或最近工作区。原会话及其输入草稿保持不变。 向 `openWorkspace(null, beforeOpen, settingsFrom)` 传入原空白会话，会先保留其 preset、所选模型及命名访问模式，再搬移草稿；恢复失败或后续导航不会搬走原草稿或抢占选择。自定义访问策略需要先选择一个命名访问模式。
-
+ 
  导航和启动恢复通过所选 Session 的 `follow` 获取投影，不会另行刷新该 Session 或其父会话的投影。
-
+ 
 diff --git a/packages/client/ui-workspace/src/client/index.ts b/packages/client/ui-workspace/src/client/index.ts
-index a865b1ca64..3f0963a5f4 100644
+index 2ecaf7e264b116d038188a3348607c9270540811..d6c94572a8d289f49a01fa639c2316f2eceba0aa 100644
 --- a/packages/client/ui-workspace/src/client/index.ts
 +++ b/packages/client/ui-workspace/src/client/index.ts
-@@ -97,7 +97,7 @@ const NS = 'workspace'
+@@ -94,7 +94,7 @@ const NS = 'workspace'
   * declaration through `slots.inject()` instead of assuming order.
   */
  export const inject = [
 -  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts',
 +  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.session', 'remote.commands', 'remote.directoryPicker', 'layout', 'shortcuts',
  ]
-
+ 
  /**
-@@ -120,6 +120,8 @@ export function apply(ctx: Context): void {
+@@ -117,6 +117,8 @@ export function apply(ctx: Context): void {
    const notify = (toast: RowToast): void => { rowToast.set({ ...toast, seq: ++toastSeq }) }
    const uiWorkspace = new UiWorkspaceService(
      ctx, ctx.remote.directoryPicker, workspaces, sessions, viewInstance.actions, notify,
@@ -205,7 +205,7 @@ index a865b1ca64..3f0963a5f4 100644
    ctx.slots.provideRoot({ hooks: { workspaces: workspaces.list } })
    ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-workspace: dictionaries')
 diff --git a/packages/client/ui-workspace/src/client/navigation.ts b/packages/client/ui-workspace/src/client/navigation.ts
-index 499aada431..c420cf905a 100644
+index 499aada431200738be5fe21557a7f98455775048..d2a248235c184f82e819167426bdd9d477af4a29 100644
 --- a/packages/client/ui-workspace/src/client/navigation.ts
 +++ b/packages/client/ui-workspace/src/client/navigation.ts
 @@ -37,11 +37,12 @@ export interface UiWorkspace {
@@ -231,18 +231,22 @@ index 499aada431..c420cf905a 100644
    ) {
      super(ctx, 'uiWorkspace')
      ctx.effect(() => {
-@@ -202,11 +205,37 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+@@ -202,18 +205,48 @@ class UiWorkspaceService extends Service implements UiWorkspace {
      this.replaceMain(target, this.lifetime.signal, 'reveal')
    }
-
+ 
 -  async openWorkspace(workspaceId: WorkspaceId | null, beforeOpen?: (sessionId: SessionId) => void): Promise<void> {
-+  async openWorkspace(workspaceId: WorkspaceId | null, beforeOpen?: (sessionId: SessionId) => void, settingsFrom?: SessionId): Promise<void> {
++  async openWorkspace(
++    workspaceId: WorkspaceId | null, beforeOpen?: (sessionId: SessionId) => void, settingsFrom?: SessionId,
++  ): Promise<void> {
      const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
++    // Cancellation can change while an awaited operation settles.
++    const cancelled = (): boolean => navigation.aborted
      let sessionId: SessionId
      try {
 -      sessionId = await (workspaceId === null ? this.sessions.create({}) : this.connectWorkspace(workspaceId))
 +      if (settingsFrom !== undefined) await this.sessions.refreshProjections(settingsFrom)
-+      if (navigation.aborted) return
++      if (cancelled()) return
 +      const source = settingsFrom === undefined ? undefined : this.sessions.list.getSnapshot().byId[settingsFrom]
 +      if (settingsFrom !== undefined && source?.blank !== true) throw new Error('Workspace changes require a blank source Session')
 +      if (settingsFrom !== undefined && workspaceId !== null) throw new Error('Inherited settings are only supported when clearing a Workspace')
@@ -256,12 +260,12 @@ index 499aada431..c420cf905a 100644
 +      sessionId = await (workspaceId === null
 +        ? this.sessions.create(typeof preset === 'string' ? { agentPreset: preset } : {})
 +        : this.connectWorkspace(workspaceId))
-+      if (navigation.aborted) return
++      if (cancelled()) return
 +      if (model !== undefined && model !== null) {
 +        const result = await this.selectModel({ sessionId, ...model, saveDefault: false })
 +        if (!result.ok) throw new Error(result.error.message)
 +      }
-+      if (navigation.aborted) return
++      if (cancelled()) return
 +      if (typeof permission === 'string' && permission !== 'custom') {
 +        const result = await this.executeCommand(sessionId, `/permission ${permission}`, [])
 +        if (!result.ok) throw new Error(result.error.message)
@@ -271,8 +275,17 @@ index 499aada431..c420cf905a 100644
      } catch (error: unknown) {
        // Reported here, not in connectWorkspace: startup restoration calls that
        // directly and stays console-only.
+-      if (!navigation.aborted) this.notify({ kind: 'createFailed', message: creationFailureMessage(error) })
++      if (!cancelled()) this.notify({ kind: 'createFailed', message: creationFailureMessage(error) })
+       throw error
+     }
+-    if (navigation.aborted) return
++    if (cancelled()) return
+     this.replaceMain(sessionId, navigation, 'reveal', beforeOpen)
+   }
+ 
 diff --git a/packages/client/ui-workspace/tests/apply.client.spec.ts b/packages/client/ui-workspace/tests/apply.client.spec.ts
-index 7d64d78aba..bc44afadbe 100644
+index 7d64d78abaaac5bc7aaa667cc1d76445abc3fe70..bc44afadbe9609209cab525bef14a43b612b6c0a 100644
 --- a/packages/client/ui-workspace/tests/apply.client.spec.ts
 +++ b/packages/client/ui-workspace/tests/apply.client.spec.ts
 @@ -123,7 +123,11 @@ async function bench() {
@@ -289,16 +302,16 @@ index 7d64d78aba..bc44afadbe 100644
    const locale = new LocaleRuntime(ctx)
    // These specs assert the shipped Chinese copy. There is no jsdom `window`
 @@ -184,7 +188,7 @@ describe('ui-workspace apply', () => {
-
+ 
    it('declares the services it drives', () => {
      expect(inject).toEqual([
 -      'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts',
 +      'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.session', 'remote.commands', 'remote.directoryPicker', 'layout', 'shortcuts',
      ])
    })
-
+ 
 diff --git a/packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx b/packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx
-index 041365805d..8a7783aa91 100644
+index 041365805d55726cb2f9334e9609a78fe5a1e756..8a7783aa91b1e84aa5b1ae2344c8b9519beee229 100644
 --- a/packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx
 +++ b/packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx
 @@ -35,7 +35,7 @@ async function bench() {
@@ -310,8 +323,21 @@ index 041365805d..8a7783aa91 100644
    const locale = new LocaleRuntime(runtime.ctx)
    runtime.ctx.provide('locale', locale)
    runtime.slots.installLocale(locale)
+diff --git a/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx b/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
+index 0187272d5390d8e5526fae3e23386d2885f26155..3ba4ef179eaf1dae083dbc121eb24336215973cf 100644
+--- a/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
++++ b/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
+@@ -43,7 +43,7 @@ async function createRuntime(): Promise<SlotTestRuntime> {
+   // The rename flow never picks a directory; the namespace only has to be there
+   // for ui-workspace's inject to settle.
+   const directoryPicker = {}
+-  runtime.remote.provideNamespaces({ directoryPicker })
++  runtime.remote.provideNamespaces({ directoryPicker, session: { selectModel: vi.fn() }, commands: { execute: vi.fn() } })
+   const locale = new LocaleRuntime(runtime.ctx)
+   runtime.ctx.provide('locale', locale)
+   runtime.slots.installLocale(locale)
 diff --git a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
-index acb80f9725..9eafa9d6ba 100644
+index acb80f972559422608abd3b964eede6970151a65..650ae7defae19e98585990b1441941a42cf3ffad 100644
 --- a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
 +++ b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
 @@ -290,6 +290,8 @@ function bench(options: BenchOptions = {}) {
@@ -333,12 +359,12 @@ index acb80f9725..9eafa9d6ba 100644
 -  return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify }
 +  return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify, selectModel, executeCommand }
  }
-
+ 
  describe('UiWorkspaceService', () => {
 @@ -692,6 +696,65 @@ describe('UiWorkspaceService', () => {
      expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
    })
-
+ 
 +  it('preserves the Agent preset, model and access mode when cancelling a Workspace', async () => {
 +    const current = summary('source', { blank: true, projectionValues: {
 +      agentPreset: 'studio-test-preset', modelSelection: { next: { provider: 'gateway', model: 'chosen', reasoningEffort: 'high' }, lastUsed: null },
@@ -402,7 +428,7 @@ index acb80f9725..9eafa9d6ba 100644
      const b = bench({ workspaces: workspaceState([workspace('a')]), sessions: sessionState() })
      await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
 diff --git a/packages/extensions/cordis-client-runner/src/client/api-catalog.ts b/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
-index 209d13f497..9284de2a76 100644
+index 209d13f4978b979aeb409073073f9ca35cd427e4..9284de2a769280f6ff3f31d196c2bf2cd1316db3 100644
 --- a/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
 +++ b/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
 @@ -341,9 +341,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
@@ -417,15 +443,3 @@ index 209d13f497..9284de2a76 100644
          returns: 'completion; a superseded request may create a Session but does not open it.',
          throws: ['on failure; a refused creation is also shown through the Workspace notice unless a later navigation or disposal superseded the request.'],
        },
-diff --git a/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx b/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
---- a/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
-+++ b/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
-@@ -43,7 +43,7 @@ async function createRuntime(): Promise<SlotTestRuntime> {
-   // The rename flow never picks a directory; the namespace only has to be there
-   // for ui-workspace's inject to settle.
-   const directoryPicker = {}
--  runtime.remote.provideNamespaces({ directoryPicker })
-+  runtime.remote.provideNamespaces({ directoryPicker, session: { selectModel: vi.fn() }, commands: { execute: vi.fn() } })
-   const locale = new LocaleRuntime(runtime.ctx)
-   runtime.ctx.provide('locale', locale)
-   runtime.slots.installLocale(locale)
