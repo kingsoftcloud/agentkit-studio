@@ -1,3 +1,44 @@
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index f9180fb7a3b629825b112c769728b431bbea3d79..3535f2e25b5ef55e953b0af1b900b80343d9ed26 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -45,8 +45,8 @@
+   en: f461b255133384cc
+   zh: 2b9db718f22fdd04
+ /deepseek-harness-desktop/package/runtime-file-selection:
+-  en: f0e345fd89868803
+-  zh: fd2c775ad23fa2f0
++  en: ed8eb0df0cca5517
++  zh: 121b0711991bc97c
+ /deepseek-harness-desktop/package/upload-updates:
+   en: 72073b2e72590067
+   zh: 63b1f9790395c37d
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index 5416f8cb42d4383e0383ea0510a431b93dc3aa60..a17642c908fc3f528b1a945e3ae4ba522fc24908 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -237,7 +237,7 @@ Each target owns its packed package inputs, prepared runtime, package set, dsh t
+ 
+ ### Runtime file selection
+ 
+-Desktop packs workspace packages locally and installs external dependencies through the target's bundled Node and pnpm. [Desktop's file policy](scripts/runtime-file-policy.ts) then filters the immutable `resources/app.asar/dsh/node_modules` copy before signing and integrity sealing. It omits TypeScript declarations, recognized JavaScript/CSS/TypeScript source maps, TypeScript build caches, Domino's test directory, selected native compiler outputs, and node-pty prebuilds for other platforms. It preserves runtime JavaScript, native modules and their DLL/EXE helpers, WASM, unknown assets, licenses, and notices. Dependency manifests pass through electron-builder's metadata cleanup before integrity sealing, so archiving preserves their recorded bytes. The policy does not alter npm tarballs, the bundled package manager, or user-installed plugin files.
++Desktop packs workspace packages locally and installs external dependencies through the target's bundled Node and pnpm. [Desktop's file policy](scripts/runtime-file-policy.ts) then filters the immutable `resources/app.asar/dsh/node_modules` copy before signing and integrity sealing. It omits TypeScript declarations, recognized JavaScript/CSS/TypeScript source maps, TypeScript build caches, Coveralls CI reporting configuration, Domino's test directory, selected native compiler outputs, and node-pty prebuilds for other platforms. It preserves runtime JavaScript, native modules and their DLL/EXE helpers, WASM, unknown assets, licenses, and notices. Dependency manifests pass through electron-builder's metadata cleanup before integrity sealing, so archiving preserves their recorded bytes. The policy does not alter npm tarballs, the bundled package manager, or user-installed plugin files.
+ 
+ The [Office conversion provider](../../packages/document/office-to-pdf/README.md) carries the target’s declared native engine, or WASM when the kit declares no matching native target. Preparation rejects a missing target engine before packaging. The complete Office dependencies, including CLI, JavaScript libraries, and the selected engine’s executables, data, licenses, and notices, are unpacked under `resources/app.asar.unpacked/dsh/node_modules/`. The Desktop Host resolves engine manifests to these physical directories and supplies loaded skills with absolute standalone Node and unpacked CLI paths. Node lives in `resources/runtime/primary-runtime/dependencies/node/bin/`; the CLI is the unpacked `@deepseek-ai/libreoffice-kit/lib/cli.js`. On macOS, the native helper receives the JIT entitlement required by [LibreOffice’s UNO bridge](https://github.com/LibreOffice/core/blob/master/sysui/desktop/macosx/hardened_runtime.xcent.in).
+ 
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index cb08b664cb3cb6389ab531deb8cb93850ed3fef8..875c6b375f6247707084bf04461620b1c2554f2c 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -239,7 +239,7 @@ macOS arm64 命令要求 Apple Silicon。macOS x64 命令可以在 Intel macOS 
+ 
+ ### 运行时文件筛选
+ 
+-Desktop 在本地打包工作区包，并通过目标捆绑的 Node 和 pnpm 安装外部依赖。[Desktop 文件策略](scripts/runtime-file-policy.ts)随后在签名和完整性封装前过滤不可变的 `resources/app.asar/dsh/node_modules` 副本。它排除 TypeScript 声明、已识别的 JavaScript/CSS/TypeScript source map、TypeScript 构建缓存、Domino 测试目录、选定的原生编译器输出和其他平台的 node-pty 预构建文件。它保留运行时 JavaScript、原生模块及其 DLL/EXE 辅助文件、WASM、未知资源、许可证和 notices。依赖清单在完整性封装前经过 electron-builder 的元数据清理，确保归档保持已记录的字节。该策略不修改 npm tarball、捆绑的包管理器或用户安装的插件文件。
++Desktop 在本地打包工作区包，并通过目标捆绑的 Node 和 pnpm 安装外部依赖。[Desktop 文件策略](scripts/runtime-file-policy.ts)随后在签名和完整性封装前过滤不可变的 `resources/app.asar/dsh/node_modules` 副本。它排除 TypeScript 声明、已识别的 JavaScript/CSS/TypeScript source map、TypeScript 构建缓存、Coveralls CI 上报配置、Domino 测试目录、选定的原生编译器输出和其他平台的 node-pty 预构建文件。它保留运行时 JavaScript、原生模块及其 DLL/EXE 辅助文件、WASM、未知资源、许可证和 notices。依赖清单在完整性封装前经过 electron-builder 的元数据清理，确保归档保持已记录的字节。该策略不修改 npm tarball、捆绑的包管理器或用户安装的插件文件。
+ 
+ [Office 转换提供方](../../packages/document/office-to-pdf/README.zh.md)携带目标已声明的原生引擎；kit 未声明匹配原生目标时携带 WASM 引擎。准备阶段在打包前拒绝缺少目标引擎的情况。完整 Office 依赖（CLI、JavaScript 库和选定引擎的可执行文件、数据、许可证及 notices）解包到 `resources/app.asar.unpacked/dsh/node_modules/` 下。Desktop Host 将引擎清单解析到这些物理目录，并向加载的技能提供独立 Node 和解包后 CLI 的绝对路径。Node 位于 `resources/runtime/primary-runtime/dependencies/node/bin/`；CLI 位于解包后的 `@deepseek-ai/libreoffice-kit/lib/cli.js`。macOS 上的原生辅助程序获得 [LibreOffice UNO 桥](https://github.com/LibreOffice/core/blob/master/sysui/desktop/macosx/hardened_runtime.xcent.in)所需的 JIT entitlement。
+ 
 diff --git a/apps/desktop/scripts/electron-builder-config.d.mts b/apps/desktop/scripts/electron-builder-config.d.mts
 index 655996a23487c15274a3ceab16302895df83f470..d9a56f198369187f060d555f7c0595ba80e886bd 100644
 --- a/apps/desktop/scripts/electron-builder-config.d.mts
@@ -57,6 +98,27 @@ index 2f0cbefe6c7c3ffcc5185bf3f4b54d9985b76736..eaa6c6e96db0966c095fc75820b39a6e
      ],
      publish: [{ provider: 'generic' as const, url: `${run.origin}/${run.feedKey.slice(0, -'nightly.yml'.length)}`, channel: 'nightly' }],
    }
+diff --git a/apps/desktop/scripts/runtime-file-policy.ts b/apps/desktop/scripts/runtime-file-policy.ts
+index 1bc16b2a1ca4f90910ffc5802ee4390d081c9ab7..f0baffa29bc1607047dfbe5cefc7ef73fd8301c3 100644
+--- a/apps/desktop/scripts/runtime-file-policy.ts
++++ b/apps/desktop/scripts/runtime-file-policy.ts
+@@ -1,7 +1,7 @@
+ /** Desktop-only omissions from already installed production npm packages. */
+ 
+ /**
+- * Identify build and diagnostic files omitted from the immutable Desktop runtime.
++ * Identify build, diagnostic and CI reporting files omitted before the Desktop runtime is sealed.
+  * Unrecognized assets and target runtime binaries are retained. Paths name the copied
+  * node_modules tree, including nested package containers.
+  * @param path - Path relative to the production node_modules directory.
+@@ -17,6 +17,7 @@ export function desktopRuntimeFileExclusion(
+     return 'package-manager metadata'
+   }
+   const file = parts.at(-1) ?? ''
++  if (/^\.coveralls\.ya?ml$/u.test(file)) return 'package CI configuration'
+   if (/\.(?:[cm]?[jt]s|css)\.map$/u.test(file)) return 'source map'
+   if (/\.d\.[cm]?ts$/u.test(file)) return 'TypeScript declaration'
+   if (/\.tsbuildinfo$/u.test(file)) return 'TypeScript build cache'
 diff --git a/apps/desktop/tests/installed-update-builder.spec.ts b/apps/desktop/tests/installed-update-builder.spec.ts
 index 089b04deef1467514ddc89c065397a0aca334bc9..67c4e680d5965b786b6f46e11d6f734432c2ed44 100644
 --- a/apps/desktop/tests/installed-update-builder.spec.ts
@@ -141,3 +203,67 @@ index 0000000000000000000000000000000000000000..024163aee1d8880d01581e7adbd637b2
 +    }
 +  } finally { await rm(root, { recursive: true, force: true }) }
 +})
+diff --git a/apps/desktop/tests/runtime-file-policy.spec.ts b/apps/desktop/tests/runtime-file-policy.spec.ts
+index 76f5c8d95e73cd6cc5b0ed682bc7e3690b1222ca..b29be6b22dfd8c6446e4152d1dd0e320f4350f46 100644
+--- a/apps/desktop/tests/runtime-file-policy.spec.ts
++++ b/apps/desktop/tests/runtime-file-policy.spec.ts
+@@ -1,18 +1,31 @@
+ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+-import { join, relative } from 'node:path'
++import { createRequire } from 'node:module'
++import type { WriteStream } from 'node:fs'
++import { dirname, join, relative } from 'node:path'
++import { finished } from 'node:stream/promises'
+ import { expect, it } from 'vitest'
+ import { desktopRuntimeFileExclusion } from '../scripts/runtime-file-policy.ts'
+ import { verifyDesktopRuntime, writeDesktopRuntime } from '../src/runtime-tree.ts'
+ import { runtimeFixture } from './runtime-fixture.ts'
++import { verifyRuntimeArchive } from '../scripts/verify-runtime-archive.ts'
++
++const require = createRequire(import.meta.url)
++const builderRequire = createRequire(require.resolve('app-builder-lib'))
++const { createPackageWithOptions } = builderRequire('@electron/asar') as {
++  createPackageWithOptions: (source: string, destination: string, options: object) => Promise<WriteStream>
++}
+ 
+ const windows = { platform: 'win32' as const, arch: 'x64' }
+ 
+ it('omits development artifacts while preserving executable modules, assets and license files', async () => {
+   const root = mkdtempSync(join(tmpdir(), 'desktop-file-policy-'))
+   const source = join(root, 'source')
+-  const output = join(root, 'output')
++  const output = join(root, 'archive-input', 'dsh')
+   const removed = [
++    '.coveralls.yml', '.coveralls.yaml',
++    'debug/.coveralls.yml', 'debug/.coveralls.yaml',
++    'compression/node_modules/debug/.coveralls.yml',
+     'example/index.d.ts', 'example/index.d.mts', 'example/index.d.cts',
+     'example/index.js.map', 'example/index.mjs.map', 'example/index.cjs.map',
+     'example/style.css.map', 'example/index.d.ts.map', 'example/index.d.mts.map',
+@@ -36,6 +49,7 @@ it('omits development artifacts while preserving executable modules, assets and
+     'example/source.ts', 'example/src/entry.ts', 'example/test/runtime-fixture.json',
+     'example/locale.json', 'example/data.map', 'example/module.wasm',
+     'example/package.json', 'example/LICENSE', 'example/NOTICE', 'example/README.md',
++    'example/.coveralls.yml.js', '@earendil-works/pi-ai/dist/providers/data/.manifest.json',
+     'example/native.lib', 'example/native.obj', 'example/symbols.pdb',
+     'fs-ext/build/Release/fs_ext.node', 'fs-ext/build/Release/runtime.dll',
+     'node-pty/prebuilds/win32-x64/conpty.node',
+@@ -65,6 +79,9 @@ it('omits development artifacts while preserving executable modules, assets and
+     for (const path of retained) expect(readFileSync(join(output, 'node_modules', path), 'utf8'), path).toBe(`payload:${path}`)
+     const sealed = writeDesktopRuntime(output, runtime.release, runtime.sharedPackages.map(entry => entry.name))
+     expect(await verifyDesktopRuntime(output, runtime.release.version)).toEqual(sealed)
++    const archive = join(root, 'app.asar')
++    await finished(await createPackageWithOptions(dirname(output), archive, {}))
++    await expect(verifyRuntimeArchive(archive, sealed)).resolves.toBeUndefined()
+     expect(readFileSync(join(modules, removed[0]!), 'utf8')).toBe(`payload:${removed[0]}`)
+   } finally {
+     rmSync(root, { recursive: true, force: true })
+@@ -72,6 +89,7 @@ it('omits development artifacts while preserving executable modules, assets and
+ })
+ 
+ it('applies package-specific rules inside scoped and nested dependency containers', () => {
++  expect(desktopRuntimeFileExclusion('outer\\node_modules\\debug\\.coveralls.yml', windows, 'win32-x64')).toBeDefined()
+   expect(desktopRuntimeFileExclusion('outer/node_modules/@mixmark-io/domino/test/data.html', windows, 'win32-x64')).toBeDefined()
+   expect(desktopRuntimeFileExclusion('outer\\node_modules\\node-pty\\prebuilds\\win32-arm64\\conpty.node', windows, 'win32-x64')).toBeDefined()
+   expect(desktopRuntimeFileExclusion('outer/node_modules/unrelated/test/data.html', windows, 'win32-x64')).toBeUndefined()

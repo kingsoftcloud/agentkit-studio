@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-  "headCommit": "556c95bf142266775f160198d99dc1dc4d179449",
+  "headCommit": "0c8dd00db4fe933b0524bfa23444af870a1a27db",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.0-rc.2",
-  "tree": "aec0f451a7d43b072d1136c93c63c3b11409f1fc",
-  "sourceSha256": "5777d201b1f1cbc468b4cdf58e4da8be9761e08d9b131cc91c0ad15f4edf868c",
+  "tree": "66c2e2eb0c48ec5eb248d02e97ba5e4481c1cb28",
+  "sourceSha256": "fcc113ac388f9192cb70f19b652f0f6a22d9b7500787388f96ad735be9a03634",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.0-rc.2/maintenance.bundle",
-    "sha256": "5750f28023f1a189bc7db224837e40f76fdd9d2d091cc292f10718b7e5215bdc"
+    "sha256": "a557fb90cbe248fa49f4495d6ada107bc5bd1c2c94e5039651b98a329c105aac"
   },
   "commits": [
     {
@@ -206,8 +206,8 @@
     {
       "id": "039",
       "file": "039-exclude-package-ci-metadata.patch",
-      "commit": "556c95bf142266775f160198d99dc1dc4d179449",
-      "sha256": "940a4419a7b5ed72da8320bd46ca599e531a65f707ae54a2732d0f978deb8f77"
+      "commit": "0c8dd00db4fe933b0524bfa23444af870a1a27db",
+      "sha256": "57a49a7de39d69ca95a65b18b566fa27e67a3c866c16defdc8edbc18c0316cb2"
     }
   ]
 }
