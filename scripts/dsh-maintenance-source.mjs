@@ -1,7 +1,7 @@
 /** Maintain DSH changes as commits; patches are deterministic build exports. */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,6 +88,12 @@ async function withBundleRepository(source, input, action) {
     const objects = await gitText(source, ['rev-parse', '--path-format=absolute', '--git-path', 'objects']);
     if (/[\r\n]/.test(objects)) fail('unsupported baseline object path');
     await writeFile(join(temporary, 'objects/info/alternates'), objects + '\n');
+    // Actions normally fetches one commit. The object pool alone does not
+    // describe its missing parents; preserve the read-only shallow boundary.
+    if (await gitText(source, ['rev-parse', '--is-shallow-repository']) === 'true') {
+      const shallow = await gitText(source, ['rev-parse', '--path-format=absolute', '--git-path', 'shallow']);
+      await copyFile(shallow, join(temporary, 'shallow'));
+    }
     await git(temporary, ['cat-file', '-e', `${input.manifest.baseCommit}^{commit}`]);
     await git(temporary, ['bundle', 'verify', input.bundle]);
     await git(temporary, ['fetch', '--quiet', '--no-tags', input.bundle, `${input.descriptor.branchRef}:${input.descriptor.branchRef}`]);
@@ -165,7 +171,7 @@ export async function importMaintenanceSource({ patches = defaultPatches, source
   const input = await inputs(patches);
   await mkdir(dirname(output), { recursive: true });
   await git(dirname(output), ['init', '--quiet', output]);
-  await git(output, ['fetch', '--quiet', '--no-tags', source, input.manifest.baseCommit]);
+  await git(output, ['fetch', '--quiet', '--no-tags', '--update-shallow', source, input.manifest.baseCommit]);
   await git(output, ['fetch', '--quiet', '--no-tags', input.bundle, input.descriptor.branchRef]);
   // -B is intentionally avoided: an existing branch in the clone must not be overwritten.
   await git(output, ['checkout', '--quiet', '-b', input.descriptor.branchRef.slice('refs/heads/'.length), input.descriptor.headCommit]);
