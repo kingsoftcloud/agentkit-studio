@@ -3,7 +3,7 @@ import { readNativeRequestEvents } from './native-request-history.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
 
-export function createNativeAutomationRunner({ getService, admit, observe, selectModel, loadReplay, timeoutMs = 300000, reuseSession = false } = {}) {
+export function createNativeAutomationRunner({ getService, admit, observe, selectModel, loadReplay, assertHostCompatible, timeoutMs = 300000, reuseSession = false } = {}) {
   const lanes = new Map();
   const service = name => {
     const value = getService?.(name);
@@ -63,7 +63,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
   });
   return request => {
     const previous = lanes.get(request.sessionId) || Promise.resolve();
-    const task = previous.catch(() => {}).then(() => run(request));
+    const task = previous.catch(() => {}).then(() => { assertHostCompatible?.(); return run(request); });
     lanes.set(request.sessionId, task);
     void task.finally(() => { if (lanes.get(request.sessionId) === task) lanes.delete(request.sessionId); }).catch(() => {});
     return task;

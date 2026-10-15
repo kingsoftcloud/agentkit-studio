@@ -1,5 +1,6 @@
 /** Canonical Studio operations shared by Host and both client environments. */
 export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {const} */ ([
+  "host/compatibility",
   "sessions/export-log",
   "agents/list",
   "agents/create-local",

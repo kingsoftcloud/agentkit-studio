@@ -13,16 +13,17 @@ function optionalService(promise, name) {
  */
 export function createAutomationServices(ctx, {
   storeDir, agentStorePromise, studioBuildPromise, listLocalBuildTargets,
-  deployments, deploymentClientPromise, getAdmission,
+  deployments, deploymentClientPromise, getAdmission, hostCompatibility,
 }) {
   const getService = name => ctx.get(name);
+  const assertHostCompatible = () => hostCompatibility?.require('automation');
   const runnerModule = import('../../native-automation-runner.mjs');
   const studioSchedulerPromise = optionalService(Promise.all([
     import('../../studio-scheduler.mjs'), runnerModule,
   ]).then(([{ createStudioScheduler }, { createNativeAutomationRunner }]) => createStudioScheduler({
     storeDir: join(storeDir, 'scheduler'),
     runner: createNativeAutomationRunner({
-      getService,
+      getService, assertHostCompatible,
       admit: async agentId => {
         const local = await (await agentStorePromise).get(agentId);
         if (!local) throw Object.assign(new Error('本地自动化目标不存在；云端计划请在云端自动化中创建'), { code: 'SCHEDULE_AGENT_NOT_LOCAL' });
@@ -48,7 +49,7 @@ export function createAutomationServices(ctx, {
       return target;
     },
     runner: async request => createNativeAutomationRunner({
-      getService,
+      getService, assertHostCompatible,
       admit: async (agentId, buildId) => {
         const local = await (await agentStorePromise).get(agentId);
         const frozen = await (await studioBuildPromise).build.resolve(agentId, buildId);
@@ -76,7 +77,7 @@ export function createAutomationServices(ctx, {
       return { agent, accountId: identity.accountId, userUuid: identity.userUuid };
     },
     runner: createNativeAutomationRunner({
-      getService, reuseSession: true,
+      getService, assertHostCompatible, reuseSession: true,
       admit: async agentId => {
         const local = await (await agentStorePromise).get(agentId);
         if (!local) throw Object.assign(new Error('渠道绑定的本地 Agent 不存在'), { code: 'CHANNEL_AGENT_UNAVAILABLE' });
