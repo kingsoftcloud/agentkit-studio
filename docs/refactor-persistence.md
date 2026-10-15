@@ -12,7 +12,7 @@ node scripts/verify-studio-persistence.mjs \
   --report <报告.json>
 ```
 
-命令使用独立临时 home，运行安装包中的 Desktop Host，经过真实 Loader、SessionStore 和 JSONL 后端。五个阶段分别为资源缺失时写入、停用 Studio 后读取、重新启用后读取、恢复资源并继续追加、再次停用后读取。每个阶段核验旧 v3 日志可读、未知必需事件被拒绝、模型消息哈希不变，以及 IPC 完整退出。
+命令使用独立临时 home，运行安装包中的 Desktop Host，经过真实 Loader、SessionStore 和 JSONL 后端。默认不覆盖后端的 Zstd 编码配置；`--compression none` 单独验证未压缩模式。五个阶段分别为资源缺失时写入、停用 Studio 后读取、重新启用后读取、恢复资源并继续追加、再次停用后读取。每个阶段核验旧 v3 日志可读、未知必需事件被拒绝、模型消息哈希不变，以及 IPC 完整退出。
 
 资源调用经过安装包内实际的 LocalResourceAdapters 与 checkedResource，Skill Service 则是受控的本机 HTTP 服务，先返回 404，再返回有效的空 Skill Space。前一次调用留下带 ignorable 标记的失败记录，恢复后追加成功记录。它证明资源错误不会破坏历史及后续恢复，不证明真实云端资源可用或模型推理成功。
 

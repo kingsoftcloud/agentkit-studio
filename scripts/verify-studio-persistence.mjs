@@ -4,14 +4,17 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { zstdCompressSync } from 'node:zlib';
 import { withAssembledDesktopHost } from './assembled-desktop-host.mjs';
 import { fingerprintPatchedSource } from './patched-source-fingerprint.mjs';
 
-const { values } = parseArgs({ options: Object.fromEntries(['source', 'runtime', 'node', 'report'].map(name => [name, { type: 'string' }])) });
+const { values } = parseArgs({ options: Object.fromEntries(['source', 'runtime', 'node', 'report', 'compression'].map(name => [name, { type: 'string' }])) });
 for (const name of ['source', 'runtime', 'node', 'report']) assert.ok(values[name], `Specify --${name}`);
+const compression = values.compression ?? 'zstd';
+assert.ok(['zstd', 'none'].includes(compression), 'Compression must be zstd or none');
 const source = resolve(values.source), runtime = resolve(values.runtime), output = resolve(values.report);
 const identity = await fingerprintPatchedSource(source);
 const { createPluginProfile, readRuntimeProfileBundles } = await import(pathToFileURL(join(source, 'apps/desktop/lib/types/project-manager.js')).href);
@@ -19,7 +22,7 @@ const manifest = JSON.parse(await readFile(join(runtime, 'package.json'), 'utf8'
 const home = await mkdtemp(join(tmpdir(), 'studio-persistence-proof-'));
 const dshHome = join(home, 'dsh'), profile = join(dshHome, 'profiles/desktop-agentkit-studio');
 const sessions = join(dshHome, 'sessions');
-const report = { evidence: 'assembled-desktop-host-real-session-persistence-and-installed-Studio-resource-adapter', source: identity, passed: false, phases: [], diagnosticFiles: [],
+const report = { evidence: 'assembled-desktop-host-real-session-persistence-and-installed-Studio-resource-adapter', compression, usesDefaultCompression: values.compression === undefined, source: identity, passed: false, phases: [], diagnosticFiles: [],
   limits: ['The Skill Service is a controlled loopback HTTP backend. The installed Studio resource adapter, resource event producer, Loader and JSONL persistence are real; no real cloud availability or model inference is claimed.',
     'The historical v3 log and unknown-required v4 log are independently authored fixtures created once, rather than rewritten existing logs.',
     'Uses the assembled Desktop Host, not the Electron application shell or installed update.'] };
@@ -46,7 +49,7 @@ async function logFiles() {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await visit(path);
-      else if (/^session(?:\.v\d+)?\.jsonl(?:\.zstd)?$/.test(entry.name)) files.set(relative(sessions, path), await readFile(path));
+      else if (/^session(?:\.v\d+)?\.jsonl(?:\.zstd)?$/.test(entry.name)) files.set(relative(sessions, path).split(sep).join('/'), await readFile(path));
     }
   }
   await visit(sessions); return files;
@@ -75,9 +78,13 @@ try {
     ['studio-legacy-proof', 3, rows],
     ['studio-required-proof', 4, [{ type: 'studio/future-required', seq: 0, time: 1, data: { version: 1 } }]],
   ]) {
-    const path = join(sessions, '_no-cwd', id, `session.v${version}.jsonl`);
+    const path = join(sessions, '_no-cwd', id, `session.v${version}.jsonl${compression === 'zstd' ? '.zstd' : ''}`);
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, [{ type: 'session', version, id, createdAt: 1, isSeeded: false, delegationDepth: 0 }, ...events].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const header = JSON.stringify({ type: 'session', version, id, createdAt: 1, isSeeded: false, delegationDepth: 0 }) + '\n';
+    const body = events.map(row => JSON.stringify(row)).join('\n') + '\n';
+    await writeFile(path, compression === 'zstd'
+      ? Buffer.concat([zstdCompressSync(Buffer.from(header)), zstdCompressSync(Buffer.from(body))])
+      : header + body);
   }
   let expected;
   for (const [label, phase, studioEnabled] of [
@@ -89,7 +96,8 @@ try {
     const before = await logFiles();
     const resultPath = join(home, `${label}.json`), input = join(home, 'input.json');
     await save(input, { phase, output: resultPath, studio: join(runtime, 'node_modules/@kingsoftcloud/agentkit-studio'), resourceId, resourceOrigin, expected });
-    await writeFile(join(profile, 'cordis.patch.yml'), `- id: session-persistence-jsonl\n  config:\n    root: ${JSON.stringify(sessions)}\n    compression: none\n- id: agentkit-studio\n  disabled: ${!studioEnabled}\n`);
+    const compressionSetting = values.compression === undefined ? '' : `    compression: ${compression}\n`;
+    await writeFile(join(profile, 'cordis.patch.yml'), `- id: session-persistence-jsonl\n  config:\n    root: ${JSON.stringify(sessions)}\n${compressionSetting}- id: agentkit-studio\n  disabled: ${!studioEnabled}\n`);
     const diagnostics = join(dirname(output), 'persistence-diagnostics', `${label}-${Date.now()}.log`);
     report.diagnosticFiles.push(diagnostics);
     let proof;
