@@ -1,6 +1,6 @@
 # Host 拆分：实施与验收
 
-阶段 4 正在实施。4A 服务组装已经拆出，4B 已迁移首批 13/77 个操作，其余领域路由及 4C 共享合同尚未完成；本记录不把入口变短当作完整阶段验收。
+阶段 4 正在实施。4A 服务组装和 4B 全部 77 个操作及传输注册已通过本地验收，4C 共享合同与客户端统一尚未完成；本记录不把入口变短当作完整阶段验收。
 
 ## 4A 改动范围
 
@@ -18,7 +18,7 @@
 | automation | 本地计划、评测、观测、渠道及云端计划适配器 |
 | authoring | 原生创作工具的进程内客户端 |
 
-`src/host/bootstrap.mjs` 目前仍组装模型、Runtime、preset 和恢复过程，并保留原 RPC/HTTP 注册及业务请求分支。路由的认证、envelope、限额、下载和流式取消没有在这一批切换。下一批迁移这些路由，避免入口与新路由同时注册。
+4A 交付时，`src/host/bootstrap.mjs` 组装模型、Runtime、preset 和恢复过程，并保留原 RPC/HTTP 注册及业务请求分支。随后 4B 将请求分支和传输注册迁入领域模块，入口与新模块没有同时注册同一路由。
 
 ## 4A 验证
 
@@ -44,6 +44,27 @@
 
 本批机器记录位于同一证据目录：`routes-first-release-check.log`、`routes-first-operation-parity.json`、`routes-mcp-error-parity.json`、`routes-failure-code-{red,green}.json`、`routes-first-web-final-28.json`、`routes-first-electron-28.json` 和 `routes-first-lifecycle-20.json`。之前的失败报告不覆盖。
 
+## 4B 全部路由与传输注册
+
+全部 77 个操作由 14 个领域处理器承接，公共分派层负责允许的操作集合、Host/请求取消信号及外层错误 envelope。`contracts/operations.mjs` 暂时集中操作 ID，完整参数、错误和客户端映射留待 4C。bootstrap 从 709 行降至 312 行，保留启动与作用域组装，不再包含 RPC 请求分支和 HTTP 注册代码。
+
+HTTP/SSE 注册和 Connection Fetch 下载位于独立模块；旧本地会话入口通过每次请求创建的领域服务取得 handler。插件及 Session 导出依赖按需加载，保持官方 DSH 归属。preset 模型选择作为可直接导入的服务函数验证，不再截取其源码执行。已有两处 Agent 表面架构断言仍检查所属模块的文本；它们不替代行为测试。
+
+| 验证 | 本地结果及范围 |
+| --- | --- |
+| 全量源码及发行输入 | 888 项通过，0 失败、0 跳过；公开面、快照和历史凭证扫描及 Studio tarball 检查通过 |
+| 固定提交行为对照 | 从 `c6f97fb` 录制 77 个操作各一组成功及后端失败结果，共 154 例；返回 envelope、参数归一化和适配器调用相同。使用受控适配器，不是 77 次真实云端操作 |
+| 真实 Node HTTP | 401/403、非 POST、坏 JSON、1 MiB 限额、RPC ID、输入 EOF、SSE 字节、断开取消、GET/HEAD 下载和作用域卸载等边界通过 |
+| 真实 DSH Host | 官方 Connection/WebServer 的缺 Cookie 401、跨来源 403、官方浏览器 Cookie 200 通过；在真实 Cordis scope 卸载时，本地与云端 SSE 的受控上游均取消，注册回到基线 |
+| 真实 Web / Electron | 同一实际安装插件各 28 项通过，渲染错误为 0；Electron 仍为开发宿主 |
+| 完整插件生命周期 | 同一真实 DSH Host 加载卸载 20 次，注册、监听器和所属异步资源回到基线 |
+| 独立 Harness tarball | 实际导出加载、类型检查、真实 DSH loop / 持久化与卸载通过，使用受控模型适配器 |
+| 浏览器产物 | 与 4A、首批 4B 字节相同，保持原始 5% 包体门禁 |
+
+补充测试发现并修复两类旧生命周期缺口：SSE 仅响应客户端断开，未绑定注册作用域；RPC 等待服务初始化后未重新检查 Host 是否已关闭。3 个回归场景先失败后通过。现在每个 HTTP 注册作用域拥有取消信号，晚到的本地 handler 和 RPC 不再在旧作用域启动后续调用；真实 DSH scope 的活跃流卸载也已验证。未改变已提交写操作的重试或回执语义。
+
+机器证据保存为 `routes-all-release-check.log`、`routes-all-real-dsh-http.json`、`routes-all-web-28.json`、`routes-all-electron-28.json`、`routes-all-lifecycle-20.json`、`routes-all-packed-harness.log` 和 `routes-lifetime-{red,green}.log`。固定提交录制保存在 `tests/fixtures/host-route-contracts.json`，测试直接调用当前路由模块，不在运行时执行旧源码。
+
 ## 仍需完成
 
-4B 继续迁移剩余 64 个操作和传输注册，替换其余截取源码的行为测试。4C 统一 Node 和产品浏览器客户端的操作定义、参数、错误及取消合同，并验证四种启动状态、重启恢复、冻结 Build、工具续接与包加载。阶段 4 完整验收后再进入补丁收敛与宿主升级演练，最终交付可开源源码主分支。
+4C 统一 Node 和产品浏览器客户端的操作定义、参数、错误及取消合同，并验证四种启动状态、重启恢复、冻结 Build、工具续接及适用平台的包加载。当前不能宣称阶段 4 全部完成。阶段 4 完整验收后再进入补丁收敛与宿主升级演练，最终交付可开源源码主分支。
