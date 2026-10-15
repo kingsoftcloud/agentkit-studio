@@ -127,7 +127,7 @@ export function createCodexRuntime(options = {}) {
   const runtime = {
     executable,
     cwd,
-    async *stream({ input, messages = [], toolHistory = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, cwd: requestedCwd } = {}) {
+    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, cwd: requestedCwd } = {}) {
       const cwd = String(requestedCwd ?? runtime.cwd);
       if (!isAbsolute(cwd)) throw new CodexRuntimeError('CODEX_WORKSPACE_INVALID', 'Codex 工作目录必须是绝对路径');
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
@@ -356,7 +356,7 @@ export function createCodexRuntime(options = {}) {
           ...(Array.isArray(dynamicTools) && dynamicTools.length ? { dynamicTools } : {}),
         };
         threadId = idOf(await request('thread/start', threadParams), 'thread id');
-        const context = codexConversationPrompt({ input: prompt, messages, toolHistory });
+        const context = codexConversationPrompt({ input: prompt, messages });
         const turn = await request('turn/start', { threadId, input: [
           ...(context ? [{ type: 'text', text: context, text_elements: [] }] : []),
           ...imageInputs.map(url => ({ type: 'image', url })),

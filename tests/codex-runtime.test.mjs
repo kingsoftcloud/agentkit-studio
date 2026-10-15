@@ -58,8 +58,7 @@ test('App Server receives persisted tool observations without dispatching an old
     };
     return child;
   } });
-  for await (const _ of runtime.stream({ input: 'recall the previous lookup', messages: [{ role: 'assistant', content: 'DONE' }],
-    toolHistory: [{ turn: 1, name: 'lookup', phase: 'completed', content: [{ type: 'text', text: 'HIDDEN_TOOL_VALUE' }] }],
+  for await (const _ of runtime.stream({ input: 'recall the previous lookup', messages: [{ role: 'assistant', content: 'DONE' }, { role: 'user', source: { kind: 'studio/codex-tool-observation' }, content: [{ type: 'text', text: 'HIDDEN_TOOL_VALUE' }] }],
     toolHandler: async () => { executions++; },
   })) {}
   assert.match(text, /HIDDEN_TOOL_VALUE/);

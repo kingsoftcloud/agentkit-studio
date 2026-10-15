@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { recordCodexObservation } from './codex-observation.mjs';
 
 export const CODEX_TOOL_EVENT = 'agentkit/codex-tool';
 
@@ -65,8 +66,8 @@ export function codexItemToolChunk(item, phase) {
   };
 }
 
-/** Informational facts: presentation and read-only context, never executable DSH tool messages. */
-export function createCodexToolRecorder(session, { label = 'Codex', code = 'CODEX' } = {}) {
+/** Native model observations and optional tool cards; neither dispatches DSH tools. */
+export function createCodexToolRecorder(session, { label = 'Codex', code = 'CODEX', recordModelContext = false } = {}) {
   if (typeof session?.append !== 'function') return null;
   const runId = randomUUID();
   const calls = new Map();
@@ -86,18 +87,21 @@ export function createCodexToolRecorder(session, { label = 'Codex', code = 'CODE
           ...(chunk.phase === 'failed' ? { error: { name: 'ToolError', code: chunk.error?.code === 'CODEX_TOOL_OUTCOME_UNKNOWN' ? `${code}_TOOL_OUTCOME_UNKNOWN` : `${code}_TOOL_FAILED`, reason: String(chunk.error?.message || `${label} 工具执行失败`) } } : {}),
         }),
       };
+      const observationSeq = recordModelContext ? recordCodexObservation(session, data, previous?.observationSeq) : undefined;
+      calls.set(key, { ...data, observationSeq, settled: chunk.phase !== 'started' });
       session.append(CODEX_TOOL_EVENT, data, { ignorable: true });
-      calls.set(key, { ...data, settled: chunk.phase !== 'started' });
       return true;
     },
     close() {
       for (const call of calls.values()) {
         if (call.settled) continue;
-        session.append(CODEX_TOOL_EVENT, {
+        const data = {
           callId: call.callId, name: call.name, arguments: call.arguments,
           phase: 'failed', content: [{ type: 'text', text: `运行已结束，未收到 ${label} 的工具完成结果；实际执行结果尚未确认。` }],
           error: { name: 'Interrupted', code: `${code}_TOOL_OUTCOME_UNKNOWN` },
-        }, { ignorable: true });
+        };
+        if (recordModelContext) call.observationSeq = recordCodexObservation(session, data, call.observationSeq);
+        session.append(CODEX_TOOL_EVENT, data, { ignorable: true });
         call.settled = true;
       }
     },
