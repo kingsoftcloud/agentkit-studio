@@ -2,6 +2,8 @@ import { codexToolDefinition } from './codex-tool.mjs';
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_DEFAULT_MODEL_SETTINGS_NS, DSH_MODEL_CREDENTIAL, modelCredentialName } from './model-bridge.mjs';
 import { createNativeSessionBinding } from './session-entry.mjs';
 import { registerPanelNavigation } from './panel-navigation.mjs';
+import { installProductCopy } from '../../product-copy.mjs';
+import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
@@ -10,6 +12,9 @@ export function mountStudio(ctx, app) {
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles } = documentEffects;
   const { openAgentAuthoring } = authoring;
   ctx.effect(() => () => app.dispose(), 'agentkit-studio:application-owner');
+  ctx.inject(['locale'], copyCtx => {
+    copyCtx.effect(() => installProductCopy(copyCtx.locale), 'agentkit-studio:product-copy');
+  });
 
   ctx.effect(() => authoring.mount(), 'agentkit-studio:authoring-owner');
   ctx.uiConversation.events.register(codexToolDefinition);
@@ -236,6 +241,6 @@ export function mountStudio(ctx, app) {
     name: 'settings.section', id: 'agentkit-models', order: 190, label: '模型与凭证',
   }, () => h(ModelSettingsSection, { dshModel })));
   ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: 'agentkit-studio', order: 200, label: 'AgentKit Studio',
+    name: 'settings.section', id: 'agentkit-studio', order: 200, label: PRODUCT_BRAND.name,
   }, StudioSettingsSection));
 }

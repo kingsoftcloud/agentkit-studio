@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "supportedPluginVersions": ["0.0.1", "0.0.2"],
+  "name": "AgentKit Studio",
+  "appId": "com.kingsoftcloud.agentkit-studio",
+  "updateEnvironment": "production",
+  "pluginRoots": ["@kingsoftcloud/agentkit-studio"],
+  "defaultBundles": ["@kingsoftcloud/agentkit-studio"],
+  "windowsIcon": "assets/agentkit-studio-macos.png",
+  "windowsTrayIcon": "assets/agentkit-studio-tray.ico"
+}

@@ -1,7 +1,7 @@
 import responsiveStyles from '../styles/responsive.css.mjs';
 import formsStyles from '../styles/forms.css.mjs';
 import { leaseDocumentResource } from './document-resource.mjs';
-import { AGENTKIT_STUDIO_MARK_SVG as STUDIO_MARK_SVG } from '../../brand.js';
+import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND, AGENTKIT_STUDIO_MARK_SVG as STUDIO_MARK_SVG } from '../../brand.js';
 
 export function createProductDocumentEffects({ window = globalThis.window, document = globalThis.document, MutationObserver = globalThis.MutationObserver }) {
   function productDocument() {
@@ -18,25 +18,30 @@ export function createProductDocumentEffects({ window = globalThis.window, docum
   function adoptProductDocumentTitle() {
     const ownerDocument = productDocument();
     if (!ownerDocument) return () => {};
+    return leaseDocumentResource(ownerDocument, 'agentkit-studio:title', () => {
+    let previous = String(ownerDocument.title || ''), projected;
     const project = () => {
       const current = String(ownerDocument.title || '').trim();
+      if (current === projected) return;
+      previous = current;
       const base = current.split(' — ')[0].trim();
       const isDshBuildTitle = base.startsWith('DSH') || base === 'DeepSeek Harness';
-      const next = base === 'AgentKit Studio'
-        ? 'AgentKit Studio'
+      const next = base === PRODUCT_BRAND.name
+        ? PRODUCT_BRAND.name
         : base && !isDshBuildTitle
-          ? `${base} — AgentKit Studio`
-          : 'AgentKit Studio';
+          ? `${base} — ${PRODUCT_BRAND.name}`
+          : PRODUCT_BRAND.name;
+      projected = next;
       // Writing even an unchanged title queues another MutationObserver
       // callback and can keep the browser on the plugin boot screen forever.
       if (ownerDocument.title !== next) ownerDocument.title = next;
     };
     project();
     const title = ownerDocument.querySelector('title');
-    if (!title || typeof MutationObserver === 'undefined') return () => {};
-    const observer = new MutationObserver(project);
-    observer.observe(title, { childList: true, characterData: true, subtree: true });
-    return () => observer.disconnect();
+    const observer = title && typeof MutationObserver !== 'undefined' ? new MutationObserver(project) : null;
+    observer?.observe(title, { childList: true, characterData: true, subtree: true });
+    return () => { observer?.disconnect(); if (ownerDocument.title === projected) ownerDocument.title = previous; };
+    });
   }
 
   function adoptProductDocumentBrand() {

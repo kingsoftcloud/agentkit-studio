@@ -19,7 +19,7 @@ assert.ok((await readFile(join(installed, 'dist/client.js'))).equals(await readF
 const seed = JSON.parse(await readFile('.artifacts/refactor/stage-2/sidebar-seed.json', 'utf8'));
 assert.equal(seed.passed, true);
 const output = resolve(process.argv[2] || '.artifacts/refactor/stage-2/native-sidebar-web.json');
-const child = spawn(process.execPath, [join(source, 'apps/cli/lib/bin.js'), '--profile', profile, '--host', '127.0.0.1', '--no-open', '--port', '0'], { cwd: source, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+const child = spawn(process.execPath, [join(source, 'apps/cli/lib/bin.js'), '--profile', profile, '--patch', join(source, 'apps/web/tests/pin-browse-picker.overlay.yml'), '--host', '127.0.0.1', '--no-open', '--port', '0'], { cwd: source, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
 const stopped = new Promise(resolve => child.once('exit', resolve));
 let buffer = '', browser, page, checks, stateChecks, pageChecks, routeFailureChecks;
 const rendererErrors = [];

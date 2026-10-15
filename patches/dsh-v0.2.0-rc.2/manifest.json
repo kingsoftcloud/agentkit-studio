@@ -20,6 +20,46 @@
         "failed": 0,
         "evidence": "docs/refactor-patches.md"
       }
+    },
+    {
+      "id": "001",
+      "reason": "Scoped locale contributions and explicit product build inputs replace direct source edits; native/configured DSH and assembled Desktop Host profile behavior were verified locally.",
+      "equivalence": {
+        "replacement": "035",
+        "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+        "evidence": "docs/product-configuration.md",
+        "remaining": "Final cross-platform and installed-update acceptance remains required."
+      }
+    },
+    {
+      "id": "002",
+      "reason": "Scoped locale contributions and explicit product build inputs replace direct source edits; native/configured DSH and assembled Desktop Host profile behavior were verified locally.",
+      "equivalence": {
+        "replacement": "035",
+        "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+        "evidence": "docs/product-configuration.md",
+        "remaining": "Final cross-platform and installed-update acceptance remains required."
+      }
+    },
+    {
+      "id": "003",
+      "reason": "Scoped locale contributions and explicit product build inputs replace direct source edits; native/configured DSH and assembled Desktop Host profile behavior were verified locally.",
+      "equivalence": {
+        "replacement": "035",
+        "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+        "evidence": "docs/product-configuration.md",
+        "remaining": "Final cross-platform and installed-update acceptance remains required."
+      }
+    },
+    {
+      "id": "005",
+      "reason": "Scoped locale contributions and explicit product build inputs replace direct source edits; native/configured DSH and assembled Desktop Host profile behavior were verified locally.",
+      "equivalence": {
+        "replacement": "035",
+        "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+        "evidence": "docs/product-configuration.md",
+        "remaining": "Final cross-platform and installed-update acceptance remains required."
+      }
     }
   ],
   "verificationProfiles": {
@@ -60,107 +100,17 @@
     "installed-update": {
       "kind": "real-installed-update",
       "script": "scripts/verify-windows-online-update.mjs"
+    },
+    "dsh-web": {
+      "kind": "real-dsh-keyless-web",
+      "target": "DSH_SNAPSHOT=replay pnpm run test:web"
+    },
+    "product-profiles": {
+      "kind": "real-assembled-desktop-host",
+      "script": "scripts/verify-studio-product-profiles.mjs"
     }
   },
   "patches": [
-    {
-      "id": "001",
-      "file": "001-chat-thinking-copy.patch",
-      "category": "product",
-      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "f8a5715d2dc038b529cdbd651a7e9e30f4ade7c899b6deb965f87db63338b99a",
-      "dependsOn": [],
-      "affectedFiles": [
-        "packages/client/ui-chat/src/client/locale.ts"
-      ],
-      "affectedPackages": [
-        "@deepseek-ai/dsh-client-ui-chat"
-      ],
-      "contracts": [
-        "将思考态文案改为产品中性的\"正在思考中\"（v0.2.0-rc.2 上游沿用 locale key 迁移为 `chat.deepDiving`/`chat.deepDivingFor`，补丁已按新基线重新生成）"
-      ],
-      "risk": "low",
-      "maintainerRole": "DSH compatibility maintainers",
-      "upstreamStatus": {
-        "state": "unverified",
-        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
-      },
-      "removeWhen": "上游提供可配置文案或 Studio 公共 locale slot",
-      "verification": {
-        "hostTests": [],
-        "integrations": [
-          "source",
-          "web",
-          "electron"
-        ]
-      }
-    },
-    {
-      "id": "002",
-      "file": "002-generated-conversation-copy.patch",
-      "category": "product",
-      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "0c66b931f3ab2f232c9aa501faf9cb3051a82ddbdc53cbd0e50edf9ee3cd6231",
-      "dependsOn": [],
-      "affectedFiles": [
-        "packages/client/ui-conversation/src/client/locales.ts"
-      ],
-      "affectedPackages": [
-        "@deepseek-ai/dsh-client-ui-conversation"
-      ],
-      "contracts": [
-        "调整会话输入占位文案"
-      ],
-      "risk": "low",
-      "maintainerRole": "DSH compatibility maintainers",
-      "upstreamStatus": {
-        "state": "unverified",
-        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
-      },
-      "removeWhen": "上游提供可配置 placeholder",
-      "verification": {
-        "hostTests": [],
-        "integrations": [
-          "source",
-          "web",
-          "electron"
-        ]
-      }
-    },
-    {
-      "id": "003",
-      "file": "003-generated-locale-brand.patch",
-      "category": "product",
-      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "8eca421b19fcc98655286d3ffca450fa99d9a46d6df1cf0b0a7edb19edf7ebfa",
-      "dependsOn": [
-        "002"
-      ],
-      "affectedFiles": [
-        "packages/client/ui-conversation/src/client/locales.ts"
-      ],
-      "affectedPackages": [
-        "@deepseek-ai/dsh-client-ui-conversation"
-      ],
-      "contracts": [
-        "移除 DSH 默认 Hero 品牌文案"
-      ],
-      "risk": "low",
-      "maintainerRole": "DSH compatibility maintainers",
-      "upstreamStatus": {
-        "state": "unverified",
-        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
-      },
-      "removeWhen": "上游提供稳定品牌 slot 并覆盖所有 fallback locale",
-      "verification": {
-        "hostTests": [],
-        "integrations": [
-          "source",
-          "web",
-          "electron"
-        ]
-      }
-    },
     {
       "id": "004",
       "file": "004-sidebar-panel-lifecycle.patch",
@@ -196,38 +146,6 @@
       }
     },
     {
-      "id": "005",
-      "file": "005-studio-fallback-brand.patch",
-      "category": "product",
-      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "ceab1433a26d8eb6e58f901a61a8a8e902588a7df02fee6edbec21f8ebafe97a",
-      "dependsOn": [],
-      "affectedFiles": [
-        "packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx"
-      ],
-      "affectedPackages": [
-        "@deepseek-ai/dsh-client-ui-conversation"
-      ],
-      "contracts": [
-        "宿主启动慢时不闪现 DSH Hero 品牌"
-      ],
-      "risk": "low",
-      "maintainerRole": "DSH compatibility maintainers",
-      "upstreamStatus": {
-        "state": "unverified",
-        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
-      },
-      "removeWhen": "上游 fallback 已提供产品级品牌扩展点",
-      "verification": {
-        "hostTests": [],
-        "integrations": [
-          "source",
-          "web",
-          "electron"
-        ]
-      }
-    },
-    {
       "id": "006",
       "file": "006-desktop-plugin-package-set.patch",
       "category": "packaging",
@@ -256,7 +174,8 @@
         "integrations": [
           "source",
           "macos",
-          "windows"
+          "windows",
+          "product-profiles"
         ]
       }
     },
@@ -305,6 +224,7 @@
       ],
       "affectedFiles": [
         "apps/desktop-host/src/index.ts",
+        "apps/desktop/electron-builder.config.d.mts",
         "apps/desktop/scripts/desktop-package-environment.mjs",
         "apps/desktop/scripts/electron-builder-config.mjs",
         "apps/desktop/scripts/package-target.ts",
@@ -313,15 +233,14 @@
         "apps/desktop/src/main.ts",
         "apps/desktop/src/project-manager.ts",
         "apps/desktop/src/welcome-api.ts",
+        "apps/desktop/tests/local-macos-package.spec.ts",
         "apps/desktop/tests/macos-signature.spec.ts",
         "apps/desktop/tests/main-startup.spec.ts",
         "apps/desktop/tests/package-target.spec.ts",
-        "apps/desktop/tests/project-manager.spec.ts",
-        "apps/desktop/tests/welcome-startup.spec.ts",
-        "apps/desktop/tests/local-macos-package.spec.ts",
-        "apps/desktop/tests/product-onboarding.spec.ts",
         "apps/desktop/tests/product-branding.spec.ts",
-        "apps/desktop/electron-builder.config.d.mts"
+        "apps/desktop/tests/product-onboarding.spec.ts",
+        "apps/desktop/tests/project-manager.spec.ts",
+        "apps/desktop/tests/welcome-startup.spec.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop",
@@ -351,7 +270,8 @@
         "integrations": [
           "source",
           "macos",
-          "windows"
+          "windows",
+          "product-profiles"
         ]
       }
     },
@@ -404,12 +324,12 @@
         "packages/client/ui-primitives/README.i18n.yaml",
         "packages/client/ui-primitives/README.md",
         "packages/client/ui-primitives/README.zh.md",
-        "packages/client/ui-primitives/src/markdown/parse.ts",
-        "packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx",
         "packages/client/ui-primitives/src/markdown/cjkAutolinks.ts",
-        "packages/client/ui-primitives/tests/markdown-cjk-links.client.spec.tsx",
+        "packages/client/ui-primitives/src/markdown/parse.ts",
         "packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.settled.txt",
-        "packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt"
+        "packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt",
+        "packages/client/ui-primitives/tests/markdown-cjk-links.client.spec.tsx",
+        "packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-client-ui-primitives"
@@ -499,11 +419,11 @@
         "009"
       ],
       "affectedFiles": [
-        "apps/desktop/src/project-manager.ts",
-        "apps/desktop/tests/project-manager.spec.ts",
+        "apps/desktop/README.i18n.yaml",
         "apps/desktop/README.md",
         "apps/desktop/README.zh.md",
-        "apps/desktop/README.i18n.yaml"
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/tests/project-manager.spec.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop"
@@ -525,7 +445,8 @@
         "integrations": [
           "source",
           "macos",
-          "windows"
+          "windows",
+          "product-profiles"
         ]
       }
     },
@@ -540,17 +461,17 @@
         "013"
       ],
       "affectedFiles": [
-        "apps/desktop/src/main.ts",
-        "apps/desktop/src/locale.ts",
-        "apps/desktop/tsdown.config.ts",
-        "apps/desktop/scripts/package-target.ts",
-        "apps/desktop/tests/package-target-stages.spec.ts",
-        "apps/desktop/tests/main-startup.spec.ts",
-        "apps/desktop/tests/locale.spec.ts",
-        "apps/desktop/tests/expected/product-brand-zh-CN.json",
+        "apps/desktop/README.i18n.yaml",
         "apps/desktop/README.md",
         "apps/desktop/README.zh.md",
-        "apps/desktop/README.i18n.yaml"
+        "apps/desktop/scripts/package-target.ts",
+        "apps/desktop/src/locale.ts",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/tests/expected/product-brand-zh-CN.json",
+        "apps/desktop/tests/locale.spec.ts",
+        "apps/desktop/tests/main-startup.spec.ts",
+        "apps/desktop/tests/package-target-stages.spec.ts",
+        "apps/desktop/tsdown.config.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop"
@@ -586,15 +507,15 @@
       "sha256": "8afa3391a33ca8abcb9e2b278c20ba718b46d5fdab7c39381b561ed1871fae60",
       "dependsOn": [],
       "affectedFiles": [
-        "packages/extensions/tool-cordis/src/api-catalog.ts",
         "docs/event-producer-consumer.md",
         "docs/event-producer-consumer.zh.md",
-        "docs/subsystems/core.md",
-        "docs/subsystems/core.zh.md",
+        "docs/persistence-catalog.i18n.yaml",
         "docs/persistence-catalog.md",
         "docs/persistence-catalog.zh.md",
-        "docs/persistence-catalog.i18n.yaml",
-        "docs/persistence-schema.json"
+        "docs/persistence-schema.json",
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-tool-cordis",
@@ -672,13 +593,12 @@
       "file": "017-ungrouped-new-session.patch",
       "category": "session-contract",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "d5365c2a4ffa907fbbbcdcbe8abfcfd4fa79b461f34da17752b89bbb90652f3e",
+      "sha256": "b0f002c9689cb8b3e47898a4b4ca0bddf312ff5888ef1ecdf337a9a037e81af0",
       "dependsOn": [
-        "003",
-        "005",
         "008"
       ],
       "affectedFiles": [
+        "apps/web/tests/expected/agent-preset-selection/hero.expected.md",
         "packages/client/ui-conversation/README.i18n.yaml",
         "packages/client/ui-conversation/README.md",
         "packages/client/ui-conversation/README.zh.md",
@@ -697,7 +617,12 @@
         "packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx",
         "packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx",
         "packages/client/ui-workspace/tests/workspaces-service.client.spec.ts",
-        "packages/extensions/cordis-client-runner/src/client/api-catalog.ts"
+        "packages/extensions/cordis-client-runner/src/client/api-catalog.ts",
+        "snapshots/web/fresh-round-trip/blank-reload.expected.md",
+        "snapshots/web/lifecycle-chrome/hero.expected.md",
+        "snapshots/web/lifecycle-chrome/plan-active-zh.expected.md",
+        "snapshots/web/lifecycle-chrome/plan-active.expected.md",
+        "snapshots/web/voice-input/ui.expected.md"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-client-ui-conversation",
@@ -722,11 +647,12 @@
           "packages/client/ui-workspace/tests/workspaces-service.client.spec.ts"
         ],
         "integrations": [
-          "source",
-          "web",
+          "dsh-web",
           "electron",
+          "frozen",
           "lifecycle",
-          "frozen"
+          "source",
+          "web"
         ]
       }
     },
@@ -735,7 +661,7 @@
       "file": "018-preserve-agent-on-workspace-clear.patch",
       "category": "session-contract",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "65a4adde1856a6a9b050b6b7d91b547c1fc7f56ae47bb06422a4043ce3fe7ad0",
+      "sha256": "a9c9aa289c5373b8f9669e0bfc06b91ccf4690e8138482f4c474b87d1a96c34f",
       "dependsOn": [
         "017"
       ],
@@ -755,9 +681,9 @@
         "packages/client/ui-workspace/src/client/navigation.ts",
         "packages/client/ui-workspace/tests/apply.client.spec.ts",
         "packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx",
+        "packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx",
         "packages/client/ui-workspace/tests/workspaces-service.client.spec.ts",
-        "packages/extensions/cordis-client-runner/src/client/api-catalog.ts",
-        "packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx"
+        "packages/extensions/cordis-client-runner/src/client/api-catalog.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-api-session-controller",
@@ -931,11 +857,11 @@
       "file": "023-codex-code-mode-signing.patch",
       "category": "signing",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "63eb3addad7987edfb1795051d4ea51e7e46d5c90d4c3b276c6720e063cacef8",
+      "sha256": "f0a6ca721da4920583e421ff6960b73d5b55b236baa5ea0d31d7780f2f648ff1",
       "dependsOn": [],
       "affectedFiles": [
-        "apps/desktop/scripts/macos-runtime.ts",
-        "apps/desktop/scripts/codex-code-mode-host-entitlements.plist"
+        "apps/desktop/scripts/codex-code-mode-host-entitlements.plist",
+        "apps/desktop/scripts/macos-runtime.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop"
@@ -965,7 +891,7 @@
       "file": "024-desktop-build-version.patch",
       "category": "product",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "282a1fd23fb3bbf72c4e388dbab3f3e5c8740f2c69adb635208c5f1ef2bb57f7",
+      "sha256": "9b78d84bd984c8dfb710b265ea57abf29ff235965dbc1d370c2f730d765d8856",
       "dependsOn": [
         "014"
       ],
@@ -999,7 +925,7 @@
       "file": "025-windows-certificate-store-signing.patch",
       "category": "signing",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "bf22f960b398c86e23744572dc44f06c31ed29e8e2ca37361f4af7cf3fdf2f27",
+      "sha256": "0dbe45d36444e2d15d995ba2a21db4a43a9775ecef792395f04baf8ca8e56d8e",
       "dependsOn": [
         "019",
         "020"
@@ -1046,13 +972,13 @@
       "file": "026-preset-composition-reuse.patch",
       "category": "session-contract",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "5bc3a143469823ee4db849e0edb3053a0ee438e51f644e930b6606e17e80dccf",
+      "sha256": "0a4d2f3c2bdeab5bff8f7d5221dfba475b2849ee32b63ac94da89f3cf1072f82",
       "dependsOn": [
         "012"
       ],
       "affectedFiles": [
-        "packages/preset/agent-preset-registry/src/index.ts",
         "packages/preset/agent-preset-registry/package.json",
+        "packages/preset/agent-preset-registry/src/index.ts",
         "packages/preset/agent-preset-registry/tests/registry.spec.ts"
       ],
       "affectedPackages": [
@@ -1159,8 +1085,8 @@
         "019"
       ],
       "affectedFiles": [
-        "apps/desktop/src/update-coordinator.ts",
-        "apps/desktop/src/mac-full-update-cache.ts"
+        "apps/desktop/src/mac-full-update-cache.ts",
+        "apps/desktop/src/update-coordinator.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop"
@@ -1390,8 +1316,142 @@
           "windows"
         ]
       }
+    },
+    {
+      "id": "035",
+      "file": "035-public-product-presentation.patch",
+      "category": "product",
+      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sha256": "daaa6892c79838054fd737859c174509232351c30bda06796741e55274864f7c",
+      "dependsOn": [
+        "017"
+      ],
+      "affectedFiles": [
+        ".agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.i18n.yaml",
+        ".agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.md",
+        ".agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.zh.md",
+        "apps/desktop/tests/client-product-environment.spec.ts",
+        "packages/client/locale/README.i18n.yaml",
+        "packages/client/locale/README.md",
+        "packages/client/locale/README.zh.md",
+        "packages/client/locale/src/client/index.ts",
+        "packages/client/locale/tests/product-copy.client.spec.ts",
+        "packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx",
+        "packages/client/ui-conversation/tests/product-brand.client.spec.tsx",
+        "scripts/client-build-environment.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-desktop",
+        "repository-build"
+      ],
+      "contracts": [
+        "Default DSH retains its native dictionaries and animated mark without product inputs",
+        "Owned partial locale overrides preserve fallback order and release only their contributions",
+        "Explicit public product build inputs are recorded and used for the first hero render"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local candidate only; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream baseline contains the equivalent product extension.",
+      "verification": {
+        "hostTests": [
+          "packages/client/locale/tests/locale.client.spec.ts",
+          "packages/client/locale/tests/product-copy.client.spec.ts",
+          "packages/client/ui-conversation/tests/product-brand.client.spec.tsx",
+          "packages/client/ui-conversation/tests/skeleton.client.spec.tsx",
+          "apps/desktop/tests/client-product-environment.spec.ts",
+          "scripts/client-build-environment.client.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron",
+          "lifecycle",
+          "dsh-web",
+          "product-profiles"
+        ]
+      }
+    },
+    {
+      "id": "036",
+      "file": "036-preset-composition-generated-api.patch",
+      "category": "generated-docs",
+      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sha256": "35a0fd3543a8bbbbad95b154018ccd029f3f87374d67732255b1e9afdce75b9e",
+      "dependsOn": [
+        "015",
+        "016",
+        "026"
+      ],
+      "affectedFiles": [
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent-preset-registry",
+        "@deepseek-ai/dsh-tool-cordis",
+        "repository-docs"
+      ],
+      "contracts": [
+        "Generated Host inspection catalog and bilingual core API reference expose the existing pluginsFor registry method"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local candidate only; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream API reference includes the composition method.",
+      "verification": {
+        "hostTests": [
+          "packages/preset/agent-preset-registry/tests/registry.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      }
+    },
+    {
+      "id": "037",
+      "file": "037-web-editor-snapshot-ready-state.patch",
+      "category": "general-fix",
+      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sha256": "d16b124a81fdd7138833596f8fe39ea6d456cc297f334d93caf6e9768f3947a2",
+      "dependsOn": [
+        "017"
+      ],
+      "affectedFiles": [
+        "apps/web/tests/lifecycle-chrome.e2e.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-app-web"
+      ],
+      "contracts": [
+        "Initialize one empty editor paragraph through real typing and deletion before capturing the hero ARIA snapshot",
+        "Preserve the existing recorded Session generations and replay-consumption assertions"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local candidate only; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream hero scenario establishes the same stable empty editor state.",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "dsh-web"
+        ]
+      }
     }
   ],
-  "patchedTree": "b3cd7c3d267815584a4693caf1dfed6f22fc350e",
-  "patchedSourceSha256": "dabfa5fe3646fecd675f885626b1bc4f5a1675c3e1bd21266dc329281d1eacdf"
+  "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+  "patchedSourceSha256": "986f3d9708ec076105877ad8fd81dcc0160fcfbafe4df49de018cc25e0d3ca83"
 }

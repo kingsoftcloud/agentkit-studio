@@ -40,6 +40,7 @@ test('product assets stay inside the source and bundle defaults remain unambiguo
   for (const change of [
     p => { p.desktop.platforms['win-x64'].icon = '../outside.png'; },
     p => { p.desktop.platforms['win-x64'].trayIcon = 'C:\\outside.ico'; },
+    p => { p.desktop.platforms['win-x64'].icon = 'assets/icon.png\ninjected_output=value'; },
     p => { p.desktop.defaultBundles.push(p.desktop.defaultBundles[0]); },
     p => { p.brand.name = 'Product\nInjected=true'; },
   ]) {

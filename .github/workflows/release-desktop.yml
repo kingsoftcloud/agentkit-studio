@@ -23,20 +23,19 @@ on:
         default: 639ed015397290b3745d163aafe02ffee4aa3f84
         type: string
       channel:
-        description: "Production update lane"
-        required: true
-        default: preview
-        type: choice
-        options: [stable, preview]
+        description: "Production update lane; empty uses product configuration"
+        required: false
+        default: ""
+        type: string
       update_origin:
         description: "HTTPS origin that will serve the Studio feed"
-        required: true
-        default: https://agentkit.ks3-cn-beijing.ksyuncs.com
+        required: false
+        default: ""
         type: string
       storage_origin:
         description: "KS3 origin for versioned Studio binaries"
-        required: true
-        default: https://agentkit.ks3-cn-beijing.ksyuncs.com
+        required: false
+        default: ""
         type: string
       release_layout:
         description: "Versioned studio/<version> storage or legacy DSH layout"
@@ -57,8 +56,8 @@ on:
         type: string
       build_version:
         description: "Semver build version; use a higher test suffix for update and rollback qualification"
-        required: true
-        default: 0.2.0-rc.2
+        required: false
+        default: ""
         type: string
       publish_feed:
         description: "Upload immutable binaries and publish channel metadata after signing"
@@ -99,6 +98,16 @@ jobs:
   source-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      name: ${{ steps.product.outputs.name }}
+      app_id: ${{ steps.product.outputs.app_id }}
+      channel: ${{ steps.product.outputs.channel }}
+      update_origin: ${{ steps.product.outputs.update_origin }}
+      storage_origin: ${{ steps.product.outputs.storage_origin }}
+      build_version: ${{ steps.product.outputs.build_version }}
+      update_environment: ${{ steps.product.outputs.update_environment }}
+      plugin_roots: ${{ steps.product.outputs.plugin_roots }}
+      plugin_bundles: ${{ steps.product.outputs.plugin_bundles }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,7 +132,25 @@ jobs:
           pnpm install --frozen-lockfile
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           GITLEAKS_BIN="$RUNNER_TEMP/gitleaks/gitleaks" make public-gate
+      - name: Checkout workflow-owned public product resolver
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .product-tools
+          persist-credentials: false
+      - name: Resolve public product inputs
+        id: product
+        env:
+          STUDIO_PRODUCT_BUILD_VERSION: ${{ inputs.build_version }}
+          STUDIO_PRODUCT_UPDATE_ORIGIN: ${{ inputs.update_origin }}
+          STUDIO_PRODUCT_STORAGE_ORIGIN: ${{ inputs.storage_origin }}
+          STUDIO_PRODUCT_CHANNEL: ${{ inputs.channel }}
+        run: node .product-tools/scripts/product-config.mjs github-outputs "$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
   macos-arm64:
+    env:
+      STUDIO_PRODUCT_NAME: ${{ needs.source-gate.outputs.name }}
+      STUDIO_PRODUCT_APP_ID: ${{ needs.source-gate.outputs.app_id }}
+      STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     needs: [source-gate]
     if: ${{ inputs.candidate_run_id == '' }}
     runs-on: macos-14
@@ -164,8 +191,8 @@ jobs:
           EXPECTED_DSH_COMMIT: ${{ inputs.dsh_commit }}
           STUDIO_REF_VALUE: ${{ inputs.studio_ref }}
           STUDIO_CHECKOUT_REF_VALUE: ${{ inputs.studio_checkout_ref }}
-          UPDATE_ORIGIN_VALUE: ${{ inputs.update_origin }}
-          BUILD_VERSION_VALUE: ${{ inputs.build_version }}
+          UPDATE_ORIGIN_VALUE: ${{ needs.source-gate.outputs.update_origin }}
+          BUILD_VERSION_VALUE: ${{ needs.source-gate.outputs.build_version }}
         run: |
           set -euo pipefail
           actual_dsh_commit="$(git -C dsh-source rev-parse HEAD)"
@@ -219,7 +246,7 @@ jobs:
         shell: bash
         env:
           BASELINE_DMG_URL: ${{ inputs.installed_dmg_url }}
-          BUILD_VERSION_VALUE: ${{ inputs.build_version }}
+          BUILD_VERSION_VALUE: ${{ needs.source-gate.outputs.build_version }}
         run: |
           set -euo pipefail
           node -e 'const u = new URL(process.env.BASELINE_DMG_URL); if (u.protocol !== "https:" || u.username || u.password || !u.pathname.endsWith(".dmg")) process.exit(1)' || {
@@ -239,8 +266,8 @@ jobs:
           APPLE_ID_VALUE: ${{ secrets.STUDIO_APPLE_ID }}
           APPLE_APP_PASSWORD_VALUE: ${{ secrets.STUDIO_APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID_VALUE: ${{ secrets.STUDIO_APPLE_TEAM_ID }}
-          UPDATE_ORIGIN_VALUE: ${{ inputs.update_origin }}
-          UPDATE_CHANNEL_VALUE: ${{ inputs.channel }}
+          UPDATE_ORIGIN_VALUE: ${{ needs.source-gate.outputs.update_origin }}
+          UPDATE_CHANNEL_VALUE: ${{ needs.source-gate.outputs.channel }}
         run: |
           set -euo pipefail
           test -n "$P12_BASE64" -a -n "$P12_PASSWORD" -a -n "$APPLE_ID_VALUE" -a -n "$APPLE_APP_PASSWORD_VALUE" -a -n "$APPLE_TEAM_ID_VALUE"
@@ -273,8 +300,8 @@ jobs:
           } >> "$GITHUB_ENV"
           {
             printf '%s\n' \
-              'DSH_DESKTOP_APP_ID=com.kingsoftcloud.agentkit-studio' \
-              'DSH_DESKTOP_AUTO_UPDATE_ENV=production' \
+              "DSH_DESKTOP_APP_ID=$STUDIO_PRODUCT_APP_ID" \
+              "DSH_DESKTOP_AUTO_UPDATE_ENV=$STUDIO_PRODUCT_UPDATE_ENV" \
               "DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=$UPDATE_ORIGIN_VALUE" \
               "DSH_DESKTOP_UPDATE_ORIGIN=$UPDATE_ORIGIN_VALUE" \
               "DSH_DESKTOP_UPDATE_CHANNEL=$UPDATE_CHANNEL_VALUE" \
@@ -295,12 +322,12 @@ jobs:
           DSH_ROOT: ${{ github.workspace }}/dsh-source
           DSH_COMMIT: ${{ inputs.dsh_commit }}
           DSH_VERSION: 0.2.0-rc.2
-          BUILD_VERSION: ${{ inputs.build_version }}
+          BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
           PACK_DIR: ${{ github.workspace }}/studio/.artifacts
-          EXPECTED_APP_ID: com.kingsoftcloud.agentkit-studio
-          EXPECTED_UPDATE_ORIGIN: ${{ inputs.update_origin }}
-          EXPECTED_UPDATE_CHANNEL: ${{ inputs.channel }}
-          EXPECTED_RELEASE_VERSION: ${{ inputs.build_version }}
+          EXPECTED_APP_ID: ${{ needs.source-gate.outputs.app_id }}
+          EXPECTED_UPDATE_ORIGIN: ${{ needs.source-gate.outputs.update_origin }}
+          EXPECTED_UPDATE_CHANNEL: ${{ needs.source-gate.outputs.channel }}
+          EXPECTED_RELEASE_VERSION: ${{ needs.source-gate.outputs.build_version }}
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
@@ -314,12 +341,12 @@ jobs:
           DSH_ROOT: ${{ github.workspace }}/dsh-source
           DSH_COMMIT: ${{ inputs.dsh_commit }}
           DSH_VERSION: 0.2.0-rc.2
-          BUILD_VERSION: ${{ inputs.build_version }}
+          BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
           PACK_DIR: ${{ github.workspace }}/studio/.artifacts
-          EXPECTED_APP_ID: com.kingsoftcloud.agentkit-studio
-          EXPECTED_UPDATE_ORIGIN: ${{ inputs.update_origin }}
-          EXPECTED_UPDATE_CHANNEL: ${{ inputs.channel }}
-          EXPECTED_RELEASE_VERSION: ${{ inputs.build_version }}
+          EXPECTED_APP_ID: ${{ needs.source-gate.outputs.app_id }}
+          EXPECTED_UPDATE_ORIGIN: ${{ needs.source-gate.outputs.update_origin }}
+          EXPECTED_UPDATE_CHANNEL: ${{ needs.source-gate.outputs.channel }}
+          EXPECTED_RELEASE_VERSION: ${{ needs.source-gate.outputs.build_version }}
         run: |
           set -euo pipefail
           artifacts="$(find "$PACK_DIR/desktop-checkouts" -type d -path '*/source/apps/desktop/.desktop-build/targets/mac-arm64/artifacts' -print -quit)"
@@ -327,7 +354,7 @@ jobs:
           dmg="$(find "$artifacts" -maxdepth 1 -name '*.dmg' -type f -print -quit)"
           zip="$(find "$artifacts" -maxdepth 1 -name '*.zip' -type f -print -quit)"
           blockmap="$(find "$artifacts" -maxdepth 1 -name '*.zip.blockmap' -type f -print -quit)"
-          metadata="$(find "$artifacts" -maxdepth 1 -name '${{ inputs.channel }}-mac.yml' -type f -print -quit)"
+          metadata="$(find "$artifacts" -maxdepth 1 -name '${{ needs.source-gate.outputs.channel }}-mac.yml' -type f -print -quit)"
           test -n "$dmg" -a -n "$zip" -a -n "$blockmap" -a -n "$metadata"
           unzip -tq "$zip"
           unpacked="$RUNNER_TEMP/agentkit-studio-unpacked"
@@ -377,15 +404,15 @@ jobs:
         shell: bash
         working-directory: studio
         env:
-          BUILD_VERSION: ${{ inputs.build_version }}
+          BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
         run: |
-          node scripts/verify-macos-onboarding.mjs --app "$RUNNER_TEMP/agentkit-studio-unpacked/AgentKit Studio.app" --version "$BUILD_VERSION" --output .artifacts/onboarding-proof
+          node scripts/verify-macos-onboarding.mjs --app "$RUNNER_TEMP/agentkit-studio-unpacked/${STUDIO_PRODUCT_NAME}.app" --version "$BUILD_VERSION" --output .artifacts/onboarding-proof
 
       - name: Retain native onboarding diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: studio-onboarding-${{ inputs.build_version }}-mac-arm64
+          name: studio-onboarding-${{ needs.source-gate.outputs.build_version }}-mac-arm64
           path: studio/.artifacts/onboarding-proof/
           if-no-files-found: warn
 
@@ -396,7 +423,7 @@ jobs:
         working-directory: studio
         env:
           PACK_DIR: ${{ github.workspace }}/studio/.artifacts
-          CHANNEL: ${{ inputs.channel }}
+          CHANNEL: ${{ needs.source-gate.outputs.channel }}
         run: |
           set -euo pipefail
           artifacts="$(find "$PACK_DIR/desktop-checkouts" -type d -path '*/source/apps/desktop/.desktop-build/targets/mac-arm64/artifacts' -print -quit)"
@@ -418,7 +445,7 @@ jobs:
         if: ${{ always() && steps.staged-candidate.conclusion == 'success' }}
         uses: actions/upload-artifact@v4
         with:
-          name: agentkit-studio-${{ inputs.studio_ref }}-${{ inputs.channel }}-mac-arm64
+          name: agentkit-studio-${{ inputs.studio_ref }}-${{ needs.source-gate.outputs.channel }}-mac-arm64
           path: release-candidate/*
           if-no-files-found: error
           compression-level: 0
@@ -447,13 +474,17 @@ jobs:
           [ -z "$keychain_path" ] || security delete-keychain "$keychain_path"
 
   publish-mac-arm64:
+    env:
+      STUDIO_PRODUCT_NAME: ${{ needs.source-gate.outputs.name }}
+      STUDIO_PRODUCT_APP_ID: ${{ needs.source-gate.outputs.app_id }}
+      STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     if: ${{ always() && inputs.publish_feed && needs.source-gate.result == 'success' && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) }}
     needs: [source-gate, macos-arm64]
     runs-on: ubuntu-latest
     environment: studio-signing
     timeout-minutes: 60
     concurrency:
-      group: studio-feed-mac-arm64-${{ inputs.channel }}
+      group: studio-feed-mac-arm64-${{ needs.source-gate.outputs.channel }}
       cancel-in-progress: false
     steps:
       - name: Checkout workflow repository
@@ -475,7 +506,7 @@ jobs:
       - name: Download signed candidate
         uses: actions/download-artifact@v4
         with:
-          name: agentkit-studio-${{ inputs.studio_ref }}-${{ inputs.channel }}-mac-arm64
+          name: agentkit-studio-${{ inputs.studio_ref }}-${{ needs.source-gate.outputs.channel }}-mac-arm64
           path: candidate
           github-token: ${{ github.token }}
           run-id: ${{ inputs.candidate_run_id || github.run_id }}
@@ -492,9 +523,9 @@ jobs:
         env:
           STUDIO_REF_VALUE: ${{ inputs.studio_ref }}
           TOOLS_REF_VALUE: ${{ inputs.release_tools_ref || inputs.studio_ref }}
-          EXPECTED_BUILD_VERSION: ${{ inputs.build_version }}
+          EXPECTED_BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
           EXPECTED_DSH_COMMIT: ${{ inputs.dsh_commit }}
-          EXPECTED_UPDATE_ORIGIN: ${{ inputs.update_origin }}
+          EXPECTED_UPDATE_ORIGIN: ${{ needs.source-gate.outputs.update_origin }}
           SIGNED_RUN_ID: ${{ inputs.candidate_run_id }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -502,7 +533,7 @@ jobs:
           STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY }}
           STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
           EXPECTED_PREVIOUS: ${{ inputs.expected_previous_version }}
-          STORAGE_ORIGIN: ${{ inputs.storage_origin || inputs.update_origin }}
+          STORAGE_ORIGIN: ${{ needs.source-gate.outputs.storage_origin }}
           RELEASE_LAYOUT: ${{ inputs.release_layout || 'legacy' }}
           UPDATE_MODE: ${{ inputs.update_mode || 'incremental' }}
           COMPATIBILITY_ORIGIN: ${{ inputs.compatibility_origin }}
@@ -518,7 +549,7 @@ jobs:
           node scripts/verify-codex-signing.mjs --record-only "$GITHUB_WORKSPACE/candidate/mac-arm64-release.json"
           zip="$(find "$GITHUB_WORKSPACE/candidate" -maxdepth 1 -name '*.zip' -type f -print -quit)"
           test -n "$zip"
-          unzip -p "$zip" 'AgentKit Studio.app/Contents/Resources/app.asar' > "$RUNNER_TEMP/studio-candidate.asar"
+          unzip -p "$zip" "${STUDIO_PRODUCT_NAME}.app/Contents/Resources/app.asar" > "$RUNNER_TEMP/studio-candidate.asar"
           node scripts/verify-desktop-module-graph.mjs "$RUNNER_TEMP/studio-candidate.asar"
           if [[ -n "$SIGNED_RUN_ID" ]]; then
             test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .status)" = completed
@@ -530,7 +561,7 @@ jobs:
             --output "$GITHUB_WORKSPACE/candidate/.desktop-release/ks3-multipart-probe.json"
           args=(publish --candidate "$GITHUB_WORKSPACE/candidate" --origin "$EXPECTED_UPDATE_ORIGIN"
             --storage-origin "$STORAGE_ORIGIN" --layout "$RELEASE_LAYOUT" --update-mode "$UPDATE_MODE"
-            --channel '${{ inputs.channel }}')
+            --channel '${{ needs.source-gate.outputs.channel }}')
           if [[ -n "$EXPECTED_PREVIOUS" ]]; then args+=(--expected-previous-version "$EXPECTED_PREVIOUS"); fi
           if [[ -n "$COMPATIBILITY_ORIGIN" ]]; then args+=(--compatibility-origin "$COMPATIBILITY_ORIGIN"); fi
           node scripts/desktop-release.mjs "${args[@]}"
@@ -538,15 +569,19 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: agentkit-studio-${{ inputs.studio_ref }}-${{ inputs.channel }}-publication
+          name: agentkit-studio-${{ inputs.studio_ref }}-${{ needs.source-gate.outputs.channel }}-publication
           path: candidate/.desktop-release/**
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
 
   qualify-installed-update:
+    env:
+      STUDIO_PRODUCT_NAME: ${{ needs.source-gate.outputs.name }}
+      STUDIO_PRODUCT_APP_ID: ${{ needs.source-gate.outputs.app_id }}
+      STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     if: ${{ always() && inputs.qualify_installed_update && needs.macos-arm64.result == 'success' && (needs.publish-mac-arm64.result == 'success' || needs.publish-mac-arm64.result == 'skipped') }}
-    needs: [macos-arm64, publish-mac-arm64]
+    needs: [source-gate, macos-arm64, publish-mac-arm64]
     runs-on: macos-14
     environment: studio-signing
     timeout-minutes: 30
@@ -572,7 +607,7 @@ jobs:
         env:
           STUDIO_REF_VALUE: ${{ inputs.studio_ref }}
           TOOLS_REF_VALUE: ${{ inputs.release_tools_ref || inputs.studio_ref }}
-          STORAGE_ORIGIN: ${{ inputs.storage_origin || inputs.update_origin }}
+          STORAGE_ORIGIN: ${{ needs.source-gate.outputs.storage_origin }}
           RELEASE_LAYOUT: ${{ inputs.release_layout || 'legacy' }}
         run: |
           set -euo pipefail
@@ -583,22 +618,26 @@ jobs:
           npm install --ignore-scripts
           node scripts/verify-desktop-installed-update.mjs \
             --dmg "$RUNNER_TEMP/baseline.dmg" \
-            --origin '${{ inputs.update_origin }}' \
-            --channel '${{ inputs.channel }}' \
-            --version '${{ inputs.build_version }}' \
+            --origin '${{ needs.source-gate.outputs.update_origin }}' \
+            --channel '${{ needs.source-gate.outputs.channel }}' \
+            --version '${{ needs.source-gate.outputs.build_version }}' \
             --layout "$RELEASE_LAYOUT" --storage-origin "$STORAGE_ORIGIN"
       - name: Upload installed-update evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: agentkit-studio-${{ inputs.studio_ref }}-${{ inputs.channel }}-installed-update
+          name: agentkit-studio-${{ inputs.studio_ref }}-${{ needs.source-gate.outputs.channel }}-installed-update
           path: studio/.artifacts/desktop-release/installed-*/**
           if-no-files-found: ignore
           retention-days: 30
 
   github-release:
+    env:
+      STUDIO_PRODUCT_NAME: ${{ needs.source-gate.outputs.name }}
+      STUDIO_PRODUCT_APP_ID: ${{ needs.source-gate.outputs.app_id }}
+      STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     if: ${{ always() && inputs.publish_feed && needs.publish-mac-arm64.result == 'success' }}
-    needs: [macos-arm64, publish-mac-arm64]
+    needs: [source-gate, macos-arm64, publish-mac-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -606,7 +645,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: agentkit-studio-${{ inputs.studio_ref }}-${{ inputs.channel }}-mac-arm64
+          name: agentkit-studio-${{ inputs.studio_ref }}-${{ needs.source-gate.outputs.channel }}-mac-arm64
           path: candidate
           github-token: ${{ github.token }}
           run-id: ${{ inputs.candidate_run_id || github.run_id }}
@@ -614,9 +653,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          BUILD_VERSION: ${{ inputs.build_version }}
+          BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
           STUDIO_SHA: ${{ inputs.studio_ref }}
-          UPDATE_ORIGIN: ${{ inputs.update_origin }}
+          UPDATE_ORIGIN: ${{ needs.source-gate.outputs.update_origin }}
         run: |
           set -euo pipefail
           tag="desktop-$BUILD_VERSION"
@@ -624,12 +663,12 @@ jobs:
             gh api "repos/$GH_REPO/git/refs" --method POST -f "ref=refs/tags/$tag" -f "sha=$STUDIO_SHA" >/dev/null
           fi
           test "$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)" = "$STUDIO_SHA"
-          printf 'Signed and notarized AgentKit Studio desktop build.\n\nStudio source: %s\nPublic binaries: %s/dsh-desk/bin/mac-arm64/\nThe DMG, ZIP and blockmap are the same files used by the KS3 updater.\n' "$STUDIO_SHA" "$UPDATE_ORIGIN" > "$RUNNER_TEMP/release-notes.md"
+          printf 'Signed and notarized %s desktop build.\n\nStudio source: %s\nPublic binaries: %s/dsh-desk/bin/mac-arm64/\nThe DMG, ZIP and blockmap are the same files used by the KS3 updater.\n' "$STUDIO_PRODUCT_NAME" "$STUDIO_SHA" "$UPDATE_ORIGIN" > "$RUNNER_TEMP/release-notes.md"
           if ! gh release view "$tag" >/dev/null 2>&1; then
             # The tag's exact source SHA was verified above. Supplying the
             # off-main commit again as target_commitish unnecessarily requires
             # Workflows write when its workflow files differ from main.
-            gh release create "$tag" --verify-tag --title "AgentKit Studio $BUILD_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease --draft
+            gh release create "$tag" --verify-tag --title "$STUDIO_PRODUCT_NAME $BUILD_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease --draft
           fi
           for file in candidate/*.dmg candidate/*.zip candidate/*.blockmap candidate/mac-arm64-release.json candidate/*-mac.yml; do
             name="$(basename "$file")"

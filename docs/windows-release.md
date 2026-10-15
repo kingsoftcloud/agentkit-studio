@@ -2,7 +2,7 @@
 
 新版 Studio 复用 DSH `win-x64` 目标，生成 NSIS `.exe` 安装器、`.exe.blockmap` 和频道 feed。Windows 包与 macOS 包使用同一 Studio 插件、Runtime 合同和 Nexus 图标。
 
-在 GitHub Actions 运行 `Release AgentKit Studio Windows`，传入完整 `studio_ref`、包含该提交的分支及 `build_version`。构建在 Windows x64 Runner 上执行，不需要开发者本地安装 Windows 工具链。
+在 GitHub Actions 运行 `Release AgentKit Studio Windows`，传入完整 `studio_ref` 和包含该提交的分支。版本、通道和更新源为空时读取该 App 源码的产品定义；正式更新仍应显式提供递增的 `build_version`。构建在 Windows x64 Runner 上执行，不需要开发者本地安装 Windows 工具链。
 
 ## 签名配置
 
@@ -33,6 +33,8 @@ Windows feed 位于 `studio/feeds/win-x64/<channel>.yml`，安装器和 blockmap
 设置 `diagnostic_only=true` 可先跑同一 Windows 打包与 Host 检查，跳过 Certum 登录、签名和安装器验收；该运行只保留隔离构建的诊断记录，不发布 feed，不能当作正式 Windows 发布验收。默认值为 `false`，正式流程继续要求签名、安装和实际 App UI 通过。
 
 ## 复用签名候选
+
+工作流提交中的产品解析工具读取已核验源码，`release_tools_ref` 继续单独选择验收工具。没有产品定义的历史 0.0.1/0.0.2 源码使用冻结的原有产品身份，并要求显式提供 build version、channel 和 update origin；更新工具不会改变已签名 App 的名称、App ID 或版本。
 
 `candidate_run_id` 可复用已经通过签名、打包和实际安装检查的运行。`studio_ref` 和 `build_version` 必须与原运行相同；流程从原始日志验证固定源码身份，并校验 GitHub artifact 的 SHA-256 与字节数。`release_tools_ref` 单独固定验收工具提交，不能把新版工具标成已经签名的应用源码。复用仍需重新检查安装器、实际安装、已安装 App 签名以及真实界面；失败的界面检查不会被改写为成功。
 

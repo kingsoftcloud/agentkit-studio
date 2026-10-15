@@ -1,12 +1,15 @@
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index f375f7efebb0b8a2606269d5ef1e87a625d3660f..3eaf5d7b3610c6f3dd4682f8a4ea4ed94cc640c2 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -442,7 +442,7 @@
+@@ -448,7 +448,9 @@ async function main(): Promise<void> {
    const backend = new DesktopBackendController((onFailure) => {
      const hostInspectPort = developmentHostInspectPort(development)
      const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
 -      hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion() }, onFailure,
-+      hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion(), AGENTKIT_STUDIO_DESKTOP_VERSION: app.getVersion() }, onFailure,
++      hostInspectPort, {
++        ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion(), AGENTKIT_STUDIO_DESKTOP_VERSION: app.getVersion(),
++      }, onFailure,
        primaryRuntime,
        resources, (next) => { platformView.setSession(next) })
      return {

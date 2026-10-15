@@ -1,5 +1,22 @@
-param([Parameter(Mandatory=$true)][string]$DshRoot, [Parameter(Mandatory=$true)][string]$UpdateOrigin, [ValidateSet('stable','preview')][string]$Channel = 'preview')
+param(
+  [Parameter(Mandatory=$true)][string]$DshRoot,
+  [Parameter(Mandatory=$true)][string]$UpdateOrigin,
+  [ValidateSet('stable','preview')][string]$Channel = 'preview',
+  [string]$AppId = '',
+  [string]$UpdateEnvironment = ''
+)
 $ErrorActionPreference = 'Stop'
+if (-not $AppId) {
+  $AppId = [string](& node (Join-Path $PSScriptRoot 'product-config.mjs') app-id)
+  if ($LASTEXITCODE) { throw 'Product App ID resolution failed' }
+  $AppId = $AppId.Trim()
+}
+if (-not $UpdateEnvironment) {
+  $UpdateEnvironment = [string](& node (Join-Path $PSScriptRoot 'product-config.mjs') update-env)
+  if ($LASTEXITCODE) { throw 'Product update environment resolution failed' }
+  $UpdateEnvironment = $UpdateEnvironment.Trim()
+}
+if ($AppId -notmatch '^[A-Za-z][\w-]*(\.[A-Za-z][\w-]*)+$' -or $UpdateEnvironment -notin @('production','test')) { throw 'Invalid public product identity' }
 $thumb = ($env:CERTUM_THUMBPRINT -replace '[\s:]','').ToUpperInvariant()
 if ($thumb -notmatch '^[0-9A-F]{40}$') { throw 'CERTUM_THUMBPRINT must identify one signing certificate' }
 $cert = Get-Item "Cert:\CurrentUser\My\$thumb"
@@ -13,8 +30,8 @@ if (-not $tool) { throw 'Microsoft Windows SDK SignTool is missing' }
 $publicCertificate = Join-Path $env:RUNNER_TEMP 'studio-code-signing.cer'
 Export-Certificate -Cert $cert -FilePath $publicCertificate -Type CERT | Out-Null
 $settings = @{
-  DSH_DESKTOP_APP_ID = 'com.kingsoftcloud.agentkit-studio'
-  DSH_DESKTOP_AUTO_UPDATE_ENV = 'production'
+  DSH_DESKTOP_APP_ID = $AppId
+  DSH_DESKTOP_AUTO_UPDATE_ENV = $UpdateEnvironment
   DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN = $uri.GetLeftPart([UriPartial]::Authority)
   DSH_DESKTOP_UPDATE_ORIGIN = $uri.GetLeftPart([UriPartial]::Authority)
   DSH_DESKTOP_UPDATE_CHANNEL = $Channel

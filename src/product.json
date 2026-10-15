@@ -8,6 +8,16 @@
     "plugin": "package.json#version",
     "desktop": "explicit-build-version-or-dsh-version"
   },
+  "copy": {
+    "chat": {
+      "zh": {"chat.deepDiving": "正在思考中", "chat.deepDivingFor": "正在思考中，用时 {duration} ···"},
+      "en": {"chat.deepDiving": "Thinking", "chat.deepDivingFor": "Thinking for {duration} ···"}
+    },
+    "conversation": {
+      "zh": {"placeholder.hero": "发消息或创建任务, / 调用指令, @ 文件或对话", "hero.headline": "{productName}", "hero.preview": ""},
+      "en": {"hero.headline": "{productName}", "hero.preview": ""}
+    }
+  },
   "desktop": {
     "appId": "com.kingsoftcloud.agentkit-studio",
     "pluginRoots": ["@kingsoftcloud/agentkit-studio"],
