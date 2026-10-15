@@ -4,6 +4,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import { checkBoundMaintenanceSource } from './dsh-maintenance-source.mjs';
 
 export async function prepareDevelopment({ source, patches, commit, checkOnly = false }) {
   const root = resolve(source), patchRoot = resolve(patches);
@@ -11,6 +12,7 @@ export async function prepareDevelopment({ source, patches, commit, checkOnly = 
   if (!/^[a-f0-9]{40}$/.test(commit) || git(['rev-parse', 'HEAD']) !== commit) throw Error('DSH checkout 与固定 commit 不符；请使用独立的 DSH_ROOT，不会重置现有源码');
   const names = (await readdir(patchRoot)).filter(name => name.endsWith('.patch')).sort();
   if (!names.length) throw Error('没有可应用的 DSH 补丁');
+  await checkBoundMaintenanceSource({ patches: patchRoot, source: root });
   const temporary = await mkdtemp(join(tmpdir(), 'studio-development-index-'));
   try {
     const env = { ...process.env, GIT_INDEX_FILE: join(temporary, 'index') };

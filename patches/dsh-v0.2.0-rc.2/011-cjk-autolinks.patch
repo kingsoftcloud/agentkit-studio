@@ -1,5 +1,5 @@
 diff --git a/packages/client/ui-primitives/README.i18n.yaml b/packages/client/ui-primitives/README.i18n.yaml
-index cff51aed21..c1e8843490 100644
+index cff51aed21a07b9fdd30ae7d91f8b07a789bbef7..c1e884349004510860f4ac40caa05a56428fb1b3 100644
 --- a/packages/client/ui-primitives/README.i18n.yaml
 +++ b/packages/client/ui-primitives/README.i18n.yaml
 @@ -24,8 +24,8 @@
@@ -14,80 +14,34 @@ index cff51aed21..c1e8843490 100644
    en: 4aef65dea11de083
    zh: abc22cd7c65cdf38
 diff --git a/packages/client/ui-primitives/README.md b/packages/client/ui-primitives/README.md
-index 2ccc2b61e8..06dccb3813 100644
+index 2ccc2b61e88c930f0d01002feae1ad9a888774e7..06dccb3813f622d8a809a84d6d16cfb99d15c802 100644
 --- a/packages/client/ui-primitives/README.md
 +++ b/packages/client/ui-primitives/README.md
 @@ -90,6 +90,8 @@ The catalog above lists what each export is for; this section covers the behavio
-
+ 
  ### Rendering agent output
-
+ 
 +Implicit HTTP(S) and `www` links stop before CJK prose punctuation, including full-width parentheses; adjacent emphasis delimiters close normally. Unicode path letters remain linkable. Explicit Markdown destinations and angle-bracket autolinks retain authored punctuation, as do percent-encoded URLs. Streaming and settled rendering use the same rule without rewriting source offsets.
 +
  The nearest `MarkdownDelegateProvider` supplies optional `openExternalLink` and `openFile` navigation callbacks. Nested providers replace the enclosing capabilities, and callback changes reach already-rendered links without rebuilding Markdown. Its `openFile` makes local Markdown links clickable after settlement. Absolute and workspace-relative paths support percent escapes and `#L24` / `#L24-L30` fragments; ranges open at their first line. Literal `?` and `#` in filenames must be percent-encoded. The tooltip uses the decoded path and supplies the accessible name when the label is empty. The callback receives the decoded path and optional line, while the renderer preserves the label and displays a file icon. Without a callback, local links remain text. URL schemes, queries, unsupported fragments, and malformed destinations never reach the file opener.
-
+ 
  `MarkdownText` renders untrusted GFM and TeX math, blocks unsafe links and images, and can turn resolved file mentions into explicit controls. A surrounding `MarkdownDelegateProvider` receives sanitized HTTP(S) URLs from ordinary clicks; modified clicks and links outside a provider retain native external-anchor behavior. When the owner passes a `pathImages` vocabulary, image destinations that are local media paths rewrite to displayable URLs on settled renders only (the same streaming gate as file mentions); without a vocabulary, local destinations remain inert alt text. Rewritten images accept HTTP(S), data, blob, and the Desktop `dsh-app://app/api/file` route; authored Desktop URLs remain inert. A load or decode failure replaces the image with its authored alt text, or the original destination when alt is empty; `fileImages` additionally supplies a localized failure prefix. Changing the image source permits a fresh load. While a reply streams, it freezes completed blocks, advances a top-level open fence by completed lines, and highlights that fence from saved Shiki grammar state. Completed token lines enter fixed-size React groups, so later chunks reconcile only the growing group; an unchanged fence retains that DOM when the final full parse resolves cross-document syntax. `TerminalBlock`, `ReadBlock`, `DiffBlock`, `SearchBlock`, and `WebBlock` render the matching tool-result intent with copy controls, overflow handling, and ANSI processing where applicable. `JsonTree` and `JsonBlock` inspect JSON values read-only, while `projectUserText` projects sent user text into inline plain runs and reference chips for the message bubble and queue rows. Reference labels inherit the consumer’s wrapping policy: long names wrap within a bubble, while queue previews retain their single-line layout. When supplied with `UserTextReferences`, file and skill references become keyboard-accessible preview buttons using the same hover and focus styling as prose file links; the first pointer click can open a preview, while subsequent clicks and existing text selections retain native selection handling. Keyboard activation opens previews even when text is selected.
 diff --git a/packages/client/ui-primitives/README.zh.md b/packages/client/ui-primitives/README.zh.md
-index 588fb26041..404a63c17a 100644
+index 588fb260414c86045b56ad56c24b6e3565b8f3cb..404a63c17a2e19cb6e531a47c6a7cf4adb87ab2e 100644
 --- a/packages/client/ui-primitives/README.zh.md
 +++ b/packages/client/ui-primitives/README.zh.md
 @@ -90,6 +90,8 @@ kind: "package-library"
-
+ 
  ### 渲染 agent 输出
-
+ 
 +隐式 HTTP(S) 和 `www` 链接在中文标点（包括全角括号）前结束，紧邻的强调标记正常闭合。路径中的 Unicode 字母仍属于链接。显式 Markdown 目标、尖括号自动链接及百分号编码网址保留原始标点。流式与落定渲染使用同一规则，不改写源文本偏移。
 +
  最近的 `MarkdownDelegateProvider` 提供可选的 `openExternalLink` 和 `openFile` 导航回调。嵌套 Provider 替换外层能力，回调变化无需重新构建 Markdown 即可到达已渲染链接。其 `openFile` 使本地 Markdown 链接在落定后可点击。绝对路径和工作区相对路径支持百分号转义以及 `#L24` / `#L24-L30` 片段；范围定位到起始行。文件名中的字面 `?` 和 `#` 必须百分号编码。悬停提示使用解码后的路径，并在标签为空时提供可访问名称。回调接收解码后的路径和可选行号，渲染器保留标签并显示文件图标。不传回调时，本地链接仍为文本。URL 协议、查询串、不支持的片段及格式错误的目标不会传给文件打开器。
-
+ 
  `MarkdownText` 渲染不可信的 GFM 与 TeX 公式、阻止不安全的链接与图片，并可把已解析的文件提及转换为显式控件。外层 `MarkdownDelegateProvider` 会接收普通点击产生的已净化 HTTP(S) URL；带修饰键的点击和 Provider 外的链接保留原生外部 anchor 行为。当 owner 传入 `pathImages` 词表时，本地媒体路径的图片目标只在落定渲染阶段重写为可展示 URL（与 file mentions 相同的流式门）；不传词表时本地目标保持惰性 alt 文本。重写后的图片支持 HTTP(S)、data、blob 及桌面端 `dsh-app://app/api/file` 路由；正文直接书写的桌面端 URL 仍保持惰性。加载或解码失败后，图片替换为作者的 alt 文本；alt 为空时显示原始目标路径；`fileImages` 还提供本地化的失败提示前缀。图片源变化后可重新加载。回复流式输出时，它冻结已完成的块、按已完成行推进顶层未闭合 fence，并从保存的 Shiki grammar state 为该 fence 增量高亮。已完成的 token 行进入固定大小的 React 分组，后续分片只 reconcile 正在增长的分组；最终全量解析解决跨文档语法时，未变化的 fence 会保留该 DOM。`TerminalBlock`、`ReadBlock`、`DiffBlock`、`SearchBlock` 与 `WebBlock` 把对应的工具结果意图渲染为带复制控件、溢出处理及适用时 ANSI 处理的卡片。`JsonTree` 与 `JsonBlock` 以只读方式检查 JSON 值；`projectUserText` 把已发送的用户文本投影为行内普通文本段与引用 chip，供消息气泡和排队行使用。引用名称继承调用方的换行规则：长名称在气泡内换行，排队预览保持单行布局。传入 `UserTextReferences` 时，文件和 skill 引用成为支持键盘操作的预览按钮，复用正文文件链接的悬停和聚焦样式；第一次指针点击可以打开预览，后续点击和已有选区保留原生选择行为。键盘激活在存在选区时仍可打开预览。
-diff --git a/packages/client/ui-primitives/src/markdown/parse.ts b/packages/client/ui-primitives/src/markdown/parse.ts
-index 46559c3f47..e9785278be 100644
---- a/packages/client/ui-primitives/src/markdown/parse.ts
-+++ b/packages/client/ui-primitives/src/markdown/parse.ts
-@@ -13,7 +13,7 @@ import { recoverLocalImages } from './local-image-syntax.ts'
- import { fromMarkdown } from 'mdast-util-from-markdown'
- import { gfmFromMarkdown } from 'mdast-util-gfm'
- import { mathFromMarkdown } from 'mdast-util-math'
--import { gfm } from 'micromark-extension-gfm'
-+import { cjkAutolinkGfm, separateCjkLinkProse } from './cjkAutolinks.ts'
- import { math } from 'micromark-extension-math'
- import { cjkFriendlyStrong } from './cjkFriendlyStrong.ts'
- import { mathCompatibility } from './mathCompatibility.ts'
-@@ -26,8 +26,8 @@ import { mathCompatibility } from './mathCompatibility.ts'
-  */
- export function parseGfm(text: string): Root {
-   return recoverLocalImages(fromMarkdown(text, {
--    extensions: [gfm(), cjkFriendlyStrong()],
--    mdastExtensions: [gfmFromMarkdown()],
-+    extensions: [cjkAutolinkGfm(), cjkFriendlyStrong()],
-+    mdastExtensions: [gfmFromMarkdown(), { transforms: [separateCjkLinkProse] }],
-   }), text)
- }
-
-@@ -39,7 +39,7 @@ export function parseGfm(text: string): Root {
-  */
- export function parseGfmWithMath(text: string): Root {
-   return recoverLocalImages(fromMarkdown(text, {
--    extensions: [gfm(), cjkFriendlyStrong(), mathCompatibility(), math()],
--    mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
-+    extensions: [cjkAutolinkGfm(), cjkFriendlyStrong(), mathCompatibility(), math()],
-+    mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown(), { transforms: [separateCjkLinkProse] }],
-   }), text)
- }
-diff --git a/packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx b/packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx
-index 62f7d9f85a..16acebd325 100644
---- a/packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx
-+++ b/packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx
-@@ -175,6 +175,7 @@ const CORPUS: Record<string, string> = {
-     '',
-     '[![linked badge](https://example.com/badge.png)](https://example.com/target) image-only anchors carry no leading glyph.',
-   ].join('\n'),
-+  'cjk-link-commentary': '**https://docs.ksyun.com/documents/45345**（标题「产品介绍」）\n\nhttps://docs.ksyun.com/documents/45545（通过官方文档了解更多）\n\n[原始目标](https://example.com/（路径）)',
-   'images': [
-     '![https image](https://example.com/secure.png "img title")',
-     '',
 diff --git a/packages/client/ui-primitives/src/markdown/cjkAutolinks.ts b/packages/client/ui-primitives/src/markdown/cjkAutolinks.ts
 new file mode 100644
-index 0000000000..9287e7319e
+index 0000000000000000000000000000000000000000..9287e7319ec2e1dec7fa7d17a9e7afedfc0064c0
 --- /dev/null
 +++ b/packages/client/ui-primitives/src/markdown/cjkAutolinks.ts
 @@ -0,0 +1,79 @@
@@ -170,9 +124,111 @@ index 0000000000..9287e7319e
 +  visit(root)
 +  return root
 +}
+diff --git a/packages/client/ui-primitives/src/markdown/parse.ts b/packages/client/ui-primitives/src/markdown/parse.ts
+index 46559c3f47f46edc5222f1fb0518e971a96fc480..e9785278be24b3c27d4391652f014b84f24200ae 100644
+--- a/packages/client/ui-primitives/src/markdown/parse.ts
++++ b/packages/client/ui-primitives/src/markdown/parse.ts
+@@ -13,7 +13,7 @@ import { recoverLocalImages } from './local-image-syntax.ts'
+ import { fromMarkdown } from 'mdast-util-from-markdown'
+ import { gfmFromMarkdown } from 'mdast-util-gfm'
+ import { mathFromMarkdown } from 'mdast-util-math'
+-import { gfm } from 'micromark-extension-gfm'
++import { cjkAutolinkGfm, separateCjkLinkProse } from './cjkAutolinks.ts'
+ import { math } from 'micromark-extension-math'
+ import { cjkFriendlyStrong } from './cjkFriendlyStrong.ts'
+ import { mathCompatibility } from './mathCompatibility.ts'
+@@ -26,8 +26,8 @@ import { mathCompatibility } from './mathCompatibility.ts'
+  */
+ export function parseGfm(text: string): Root {
+   return recoverLocalImages(fromMarkdown(text, {
+-    extensions: [gfm(), cjkFriendlyStrong()],
+-    mdastExtensions: [gfmFromMarkdown()],
++    extensions: [cjkAutolinkGfm(), cjkFriendlyStrong()],
++    mdastExtensions: [gfmFromMarkdown(), { transforms: [separateCjkLinkProse] }],
+   }), text)
+ }
+ 
+@@ -39,7 +39,7 @@ export function parseGfm(text: string): Root {
+  */
+ export function parseGfmWithMath(text: string): Root {
+   return recoverLocalImages(fromMarkdown(text, {
+-    extensions: [gfm(), cjkFriendlyStrong(), mathCompatibility(), math()],
+-    mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
++    extensions: [cjkAutolinkGfm(), cjkFriendlyStrong(), mathCompatibility(), math()],
++    mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown(), { transforms: [separateCjkLinkProse] }],
+   }), text)
+ }
+diff --git a/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.settled.txt b/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.settled.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ad589e3bc52cfbdfc1fb78ce1de2d0bf964463f
+--- /dev/null
++++ b/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.settled.txt
+@@ -0,0 +1,28 @@
++<div class="_markdown_404681">
++  <p>
++    <strong>
++      <a href="https://docs.ksyun.com/documents/45345" rel="noopener noreferrer" target="_blank">
++        <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
++          <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
++          <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
++          <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
++          <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
++        #text "https://docs.ksyun.com/documents/45345"
++    #text "（标题「产品介绍」）"
++  <p>
++    <a href="https://docs.ksyun.com/documents/45545" rel="noopener noreferrer" target="_blank">
++      <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
++        <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
++        <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
++        <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
++        <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
++      #text "https://docs.ksyun.com/documents/45545"
++    #text "（通过官方文档了解更多）"
++  <p>
++    <a href="https://example.com/%EF%BC%88%E8%B7%AF%E5%BE%84%EF%BC%89" rel="noopener noreferrer" target="_blank">
++      <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
++        <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
++        <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
++        <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
++        <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
++      #text "原始目标"
+diff --git a/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt b/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ad589e3bc52cfbdfc1fb78ce1de2d0bf964463f
+--- /dev/null
++++ b/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt
+@@ -0,0 +1,28 @@
++<div class="_markdown_404681">
++  <p>
++    <strong>
++      <a href="https://docs.ksyun.com/documents/45345" rel="noopener noreferrer" target="_blank">
++        <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
++          <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
++          <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
++          <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
++          <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
++        #text "https://docs.ksyun.com/documents/45345"
++    #text "（标题「产品介绍」）"
++  <p>
++    <a href="https://docs.ksyun.com/documents/45545" rel="noopener noreferrer" target="_blank">
++      <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
++        <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
++        <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
++        <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
++        <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
++      #text "https://docs.ksyun.com/documents/45545"
++    #text "（通过官方文档了解更多）"
++  <p>
++    <a href="https://example.com/%EF%BC%88%E8%B7%AF%E5%BE%84%EF%BC%89" rel="noopener noreferrer" target="_blank">
++      <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
++        <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
++        <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
++        <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
++        <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
++      #text "原始目标"
 diff --git a/packages/client/ui-primitives/tests/markdown-cjk-links.client.spec.tsx b/packages/client/ui-primitives/tests/markdown-cjk-links.client.spec.tsx
 new file mode 100644
-index 0000000000..cf2db3063a
+index 0000000000000000000000000000000000000000..cf2db3063ac71967e8d1c743d4ad6c6f530ddc75
 --- /dev/null
 +++ b/packages/client/ui-primitives/tests/markdown-cjk-links.client.spec.tsx
 @@ -0,0 +1,64 @@
@@ -240,71 +296,15 @@ index 0000000000..cf2db3063a
 +    })
 +  }
 +})
-diff --git a/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.settled.txt b/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.settled.txt
-new file mode 100644
-index 0000000000..9ad589e3bc
---- /dev/null
-+++ b/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.settled.txt
-@@ -0,0 +1,28 @@
-+<div class="_markdown_404681">
-+  <p>
-+    <strong>
-+      <a href="https://docs.ksyun.com/documents/45345" rel="noopener noreferrer" target="_blank">
-+        <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
-+          <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
-+          <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
-+          <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
-+          <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
-+        #text "https://docs.ksyun.com/documents/45345"
-+    #text "（标题「产品介绍」）"
-+  <p>
-+    <a href="https://docs.ksyun.com/documents/45545" rel="noopener noreferrer" target="_blank">
-+      <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
-+        <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
-+        <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
-+        <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
-+        <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
-+      #text "https://docs.ksyun.com/documents/45545"
-+    #text "（通过官方文档了解更多）"
-+  <p>
-+    <a href="https://example.com/%EF%BC%88%E8%B7%AF%E5%BE%84%EF%BC%89" rel="noopener noreferrer" target="_blank">
-+      <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
-+        <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
-+        <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
-+        <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
-+        <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
-+      #text "原始目标"
-diff --git a/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt b/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt
-new file mode 100644
-index 0000000000..9ad589e3bc
---- /dev/null
-+++ b/packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt
-@@ -0,0 +1,28 @@
-+<div class="_markdown_404681">
-+  <p>
-+    <strong>
-+      <a href="https://docs.ksyun.com/documents/45345" rel="noopener noreferrer" target="_blank">
-+        <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
-+          <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
-+          <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
-+          <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
-+          <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
-+        #text "https://docs.ksyun.com/documents/45345"
-+    #text "（标题「产品介绍」）"
-+  <p>
-+    <a href="https://docs.ksyun.com/documents/45545" rel="noopener noreferrer" target="_blank">
-+      <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
-+        <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
-+        <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
-+        <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
-+        <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
-+      #text "https://docs.ksyun.com/documents/45545"
-+    #text "（通过官方文档了解更多）"
-+  <p>
-+    <a href="https://example.com/%EF%BC%88%E8%B7%AF%E5%BE%84%EF%BC%89" rel="noopener noreferrer" target="_blank">
-+      <svg aria-hidden="true" class="_linkIcon_404681" fill="none" height="14" stroke-width="1.3" viewBox="0 0 16 16" width="14" xmlns="http://www.w3.org/2000/svg">
-+        <path d="M7.99986 14.0887C11.3626 14.0887 14.0886 11.3627 14.0886 7.99998C14.0886 4.63727 11.3626 1.91125 7.99986 1.91125C4.63715 1.91125 1.91113 4.63727 1.91113 7.99998C1.91113 11.3627 4.63715 14.0887 7.99986 14.0887Z" stroke="currentColor">
-+        <path d="M2.34619 8H13.6538" stroke-linecap="square" stroke="currentColor">
-+        <path d="M7.99976 14.0889C9.23509 14.0889 10.1743 11.3629 10.1743 8.00006C10.1743 4.63739 9.23509 1.91138 7.99976 1.91138" stroke="currentColor">
-+        <path d="M7.99973 14.0889C6.76445 14.0889 5.8252 11.3629 5.8252 8.00006C5.8252 4.63739 6.76445 1.91138 7.99973 1.91138" stroke="currentColor">
-+      #text "原始目标"
+diff --git a/packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx b/packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx
+index 62f7d9f85abd1e453bcd094656e9551f8dac5e90..16acebd32502ec9fb889424290d1321dc5016db9 100644
+--- a/packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx
++++ b/packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx
+@@ -175,6 +175,7 @@ const CORPUS: Record<string, string> = {
+     '',
+     '[![linked badge](https://example.com/badge.png)](https://example.com/target) image-only anchors carry no leading glyph.',
+   ].join('\n'),
++  'cjk-link-commentary': '**https://docs.ksyun.com/documents/45345**（标题「产品介绍」）\n\nhttps://docs.ksyun.com/documents/45545（通过官方文档了解更多）\n\n[原始目标](https://example.com/（路径）)',
+   'images': [
+     '![https image](https://example.com/secure.png "img title")',
+     '',

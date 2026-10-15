@@ -1,26 +1,6 @@
-diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
-index ee5e28a3b4..c5cb3e0c5f 100644
---- a/apps/desktop/src/update-coordinator.ts
-+++ b/apps/desktop/src/update-coordinator.ts
-@@ -8,6 +8,7 @@ import { gt, valid } from 'semver'
- import type { DesktopUpdateState } from './ipc.ts'
- import { DesktopUpdateHttpExecutor } from './update-http-executor.ts'
- import { DesktopUpdatePreparationError } from './update-error.ts'
-+import { discardFullUpdateBlockmaps } from './mac-full-update-cache.ts'
- 
- const { autoUpdater } = electronUpdater
- 
-@@ -29,6 +30,7 @@ export class DesktopUpdateCoordinator {
- 
-   private readonly onDownloaded = (info: UpdateInfo): void => {
-     if (this.downloadOperation === undefined || info.version !== this.candidate) return
-+    discardFullUpdateBlockmaps(info)
-     this.downloaded = true
-   }
- 
 diff --git a/apps/desktop/src/mac-full-update-cache.ts b/apps/desktop/src/mac-full-update-cache.ts
 new file mode 100644
-index 0000000000..b3f3a4fc77
+index 0000000000000000000000000000000000000000..b3f3a4fc7789762e9ef9b8ea4bc128c9d5209b41
 --- /dev/null
 +++ b/apps/desktop/src/mac-full-update-cache.ts
 @@ -0,0 +1,28 @@
@@ -52,3 +32,23 @@ index 0000000000..b3f3a4fc77
 +  rmSync(join(pending, 'current.blockmap'), { force: true })
 +  return true
 +}
+diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
+index ee5e28a3b41e9531549e8f9e73095f62d27b71f7..c5cb3e0c5ffd816b4fc608026f74685145ce55a5 100644
+--- a/apps/desktop/src/update-coordinator.ts
++++ b/apps/desktop/src/update-coordinator.ts
+@@ -8,6 +8,7 @@ import { gt, valid } from 'semver'
+ import type { DesktopUpdateState } from './ipc.ts'
+ import { DesktopUpdateHttpExecutor } from './update-http-executor.ts'
+ import { DesktopUpdatePreparationError } from './update-error.ts'
++import { discardFullUpdateBlockmaps } from './mac-full-update-cache.ts'
+ 
+ const { autoUpdater } = electronUpdater
+ 
+@@ -29,6 +30,7 @@ export class DesktopUpdateCoordinator {
+ 
+   private readonly onDownloaded = (info: UpdateInfo): void => {
+     if (this.downloadOperation === undefined || info.version !== this.candidate) return
++    discardFullUpdateBlockmaps(info)
+     this.downloaded = true
+   }
+ 

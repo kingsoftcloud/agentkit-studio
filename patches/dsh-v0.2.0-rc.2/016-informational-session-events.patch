@@ -1,5 +1,5 @@
 diff --git a/docs/subsystems/session.md b/docs/subsystems/session.md
-index 415201d159..7a2947795a 100644
+index 415201d15987b8369b2f5bfced3dc18dbc89d1b3..7a2947795ad2a05a26efb6daffc8d6f0cc71de3c 100644
 --- a/docs/subsystems/session.md
 +++ b/docs/subsystems/session.md
 @@ -590,6 +590,9 @@ declare class Session {
@@ -22,7 +22,7 @@ index 415201d159..7a2947795a 100644
    /**
     * The {@link EpochHeader} in force after the log's last header event — the
 diff --git a/docs/subsystems/session.zh.md b/docs/subsystems/session.zh.md
-index e52c08e819..5634eaded1 100644
+index e52c08e8199caddc6dd6761dddb0c3da82680aa1..5634eaded16717f61f550c9e5f9ccdd0b699cb49 100644
 --- a/docs/subsystems/session.zh.md
 +++ b/docs/subsystems/session.zh.md
 @@ -592,6 +592,9 @@ declare class Session {
@@ -45,7 +45,7 @@ index e52c08e819..5634eaded1 100644
    /**
     * The {@link EpochHeader} in force after the log's last header event — the
 diff --git a/packages/core/session/README.i18n.yaml b/packages/core/session/README.i18n.yaml
-index d2ab139d2c..fc535647a5 100644
+index d2ab139d2c1ee536c0235dd6a4322c1bb7a20931..fc535647a52bfbce4add3f94b03f835ec359f2f2 100644
 --- a/packages/core/session/README.i18n.yaml
 +++ b/packages/core/session/README.i18n.yaml
 @@ -21,8 +21,8 @@
@@ -60,33 +60,33 @@ index d2ab139d2c..fc535647a5 100644
    en: 2b29cfeac7a2baa8
    zh: b535b04dcbc29d3d
 diff --git a/packages/core/session/README.md b/packages/core/session/README.md
-index 4a73a20c95..e3dba8ddae 100644
+index 4a73a20c95d2ad05c4d5b432beedb7dd7bc14eda..e3dba8ddaec1fe6d05a8c5cd9fceede93802e51a 100644
 --- a/packages/core/session/README.md
 +++ b/packages/core/session/README.md
 @@ -49,6 +49,8 @@ session.deriveMessages()         // the derived model history
-
+ 
  Surface events (`system/message`, `developer/message`, `user/message`, `assistant/message`, `tool/result`) require `surfaceOp` in both typed events and append input. A replacement uses exactly `{ op: 'replace', startSeq, endSeq }`, with inclusive `SessionSeq` endpoints in current surface order. An Assistant message embeds its exact compact provider stream and forbids `sourceEventSeqs`. Known log-only events forbid both metadata fields and never produce a message.
-
+ 
 +Informational non-surface events may pass `{ ignorable: true }` to `session.append`. Use it only when omission cannot change model history or execution recovery. The marker survives persistence, allowing a reader without the producing plugin to retain the event without interpreting it; it is rejected for message-producing events.
 +
  `developer/message` stores tool-addition names and a `headerSeq` reference to an earlier `request/header`. The reference is required exactly when additions are present, and each name must identify exactly one complete schema in that header. Removals name the tool without a header reference. Historical headers remain available across restart, fork, and surface replacement; the current registry and latest header do not select an earlier addition's definition. `sourceEventSeqs` continues to describe derivation and replaced nodes.
-
+ 
  Plugins declare content-changing events with `@messageProjection` and register a pure definition through `ctx.sessions.registerMessageProjection()`. Session calls the definition before accepting an event and caches its immutable message updates. Missing definitions reject append and restore; unloading a used definition also blocks cached reads. Detached constructors and `foldSurface(events, projections)` require explicit definitions. Reconstructors pass the fold's `projectedMessages` to `deriveEventMessage()`; live instance methods apply the same projections automatically. [Plugin-owned message projections](../../../.agents/notes/implemented/architecture/2026-09-11-plugin-owned-message-projections.md) defines ownership and offline assembly.
 diff --git a/packages/core/session/README.zh.md b/packages/core/session/README.zh.md
-index 7fb334cfaa..be5956c292 100644
+index 7fb334cfaa8a3a5468bf8330f0dd5802d1e98dbc..be5956c292f4d00f3550e7870d0015a12b91e57a 100644
 --- a/packages/core/session/README.zh.md
 +++ b/packages/core/session/README.zh.md
 @@ -49,6 +49,8 @@ session.deriveMessages()         // the derived model history
-
+ 
  表层事件（`system/message`、`developer/message`、`user/message`、`assistant/message`、`tool/result`）在类型化事件与追加输入中都必须带有 `surfaceOp`。替换操作仅接受 `{ op: 'replace', startSeq, endSeq }`，端点为包含边界的 `SessionSeq`，按当前 surface 顺序解释。assistant 消息会嵌入精确、紧凑的提供方流，并禁止 `sourceEventSeqs`。已知仅日志事件禁止这两个元数据字段，且从不产生消息。
-
+ 
 +仅作信息展示的非 surface 事件可向 `session.append` 传入 `{ ignorable: true }`。只有省略该事件不影响模型历史或执行恢复时才能使用。标记随事件持久化，允许未安装生产插件的读取方保留事件而不解释它；产生消息的事件不能使用该标记。
 +
  `developer/message` 存储工具添加名称，以及指向更早 `request/header` 的 `headerSeq` 引用。仅在存在添加块时必须携带该引用，每个名称必须在所引用的请求头中恰好对应一个完整模式。移除块仅记录工具名称，不携带请求头引用。重启、fork 和 surface 替换保留历史请求头；较早添加的定义不由当前注册表或最新请求头决定。`sourceEventSeqs` 继续描述派生来源及被替换节点。
-
+ 
  插件用 `@messageProjection` 声明修改内容的事件，并通过 `ctx.sessions.registerMessageProjection()` 注册纯处理器。Session 在接受事件前调用处理器，并缓存其不可变消息更新。缺少处理器时拒绝追加和恢复，卸载已经使用的处理器后也会拒绝读取缓存。独立构造函数和 `foldSurface(events, projections)` 必须显式接收处理器。重建函数将折叠结果的 `projectedMessages` 传给 `deriveEventMessage()`，实时实例方法自动应用相同的投影。[插件拥有消息投影](../../../.agents/notes/implemented/architecture/2026-09-11-plugin-owned-message-projections.zh.md)说明职责划分和离线装配。
 diff --git a/packages/core/session/src/index.ts b/packages/core/session/src/index.ts
-index b0cfa0c19b..a0a8e1d0ee 100644
+index b0cfa0c19b6ad65404fcde055af8e318632ee705..a0a8e1d0eebaace23d62b56cf9e6bf565888a841 100644
 --- a/packages/core/session/src/index.ts
 +++ b/packages/core/session/src/index.ts
 @@ -701,6 +701,9 @@ export class Session {
@@ -118,12 +118,12 @@ index b0cfa0c19b..a0a8e1d0ee 100644
        ...surfaceOpts?.surfaceOp === undefined ? {} : { surfaceOp: surfaceOpts.surfaceOp },
      }
 diff --git a/packages/core/session/tests/session.spec.ts b/packages/core/session/tests/session.spec.ts
-index 5483c35464..89e0d08bba 100644
+index 5483c354644f4faaa8c8d073959b03355cc093a3..89e0d08bba93ae0636ac1b7f239905d01e19dfc8 100644
 --- a/packages/core/session/tests/session.spec.ts
 +++ b/packages/core/session/tests/session.spec.ts
 @@ -23,6 +23,17 @@ declare module '@deepseek-ai/dsh-llm' {
  }
-
+ 
  describe('Session', () => {
 +  it('persists explicit informational markers without changing model history', () => {
 +    const session = Session.create(SessionId('informational'))
@@ -140,7 +140,7 @@ index 5483c35464..89e0d08bba 100644
      const session = Session.create(SessionId('surface-view'))
      const surface = session.surface
 diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
-index e2a22da763..c1a203bfb2 100644
+index e2a22da763394f5eaec4b07824ff95e102f9cda6..c1a203bfb21d5853e30a148f9bc5523656d016f9 100644
 --- a/packages/extensions/tool-cordis/src/api-catalog.ts
 +++ b/packages/extensions/tool-cordis/src/api-catalog.ts
 @@ -6431,7 +6431,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [

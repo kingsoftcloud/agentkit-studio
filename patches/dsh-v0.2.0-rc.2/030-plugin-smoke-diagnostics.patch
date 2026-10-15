@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
-index 95b31ff664..1ad5e6fabf 100644
+index 95b31ff6640642ad30e639041a84be5ea67ad956..1ad5e6fabf20b5555ad23de2a23ce75db5758e0c 100644
 --- a/apps/desktop/scripts/smoke-runtime.ts
 +++ b/apps/desktop/scripts/smoke-runtime.ts
 @@ -31,6 +31,7 @@ export async function smokeDesktopRuntime(
@@ -63,7 +63,7 @@ index 95b31ff664..1ad5e6fabf 100644
        const converted = await fetch(new URL(`/desktop-smoke-office/${extension}`, ready.url), {
          headers: { cookie }, signal: AbortSignal.timeout(120_000),
 diff --git a/apps/desktop/src/host-process.ts b/apps/desktop/src/host-process.ts
-index 948a88e6b0..06cc4870cf 100644
+index 948a88e6b0e3a439a719aea46e3b77843e412abc..06cc4870cf6b0ddb9c9ea97d40f46c36516f6067 100644
 --- a/apps/desktop/src/host-process.ts
 +++ b/apps/desktop/src/host-process.ts
 @@ -145,6 +145,9 @@ export class DesktopHostProcess {

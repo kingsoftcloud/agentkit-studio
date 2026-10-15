@@ -87,6 +87,7 @@ public-gate:
 	node scripts/public-history-audit.mjs
 	$(MAKE) secret-scan
 	$(MAKE) patch-manifest-check
+	$(MAKE) patch-source-check
 	$(MAKE) check
 	$(MAKE) patch-format-check
 	$(MAKE) pack
@@ -117,6 +118,23 @@ patch-format-check:
 .PHONY: patch-manifest-check verify-patched-host
 patch-manifest-check:
 	node scripts/check-patch-manifest.mjs "$(PATCH_ROOT)" "$(DSH_COMMIT)"
+
+# The offline gate binds exports to the archived maintenance branch. The full
+# gate regenerates them with upstream baseline objects and checks ancestry.
+.PHONY: patch-source-check patch-source-verify patch-source-import patch-source-export
+patch-source-check:
+	node scripts/dsh-maintenance-source.mjs check --patches "$(PATCH_ROOT)"
+
+patch-source-verify:
+	node scripts/dsh-maintenance-source.mjs check --patches "$(PATCH_ROOT)" --source "$(DSH_ROOT)"
+
+patch-source-import:
+	@test -n "$(DSH_MAINTENANCE_ROOT)" || (echo 'Set DSH_MAINTENANCE_ROOT to a new checkout directory' >&2; exit 2)
+	node scripts/dsh-maintenance-source.mjs import --patches "$(PATCH_ROOT)" --source "$(DSH_ROOT)" --output "$(DSH_MAINTENANCE_ROOT)"
+
+patch-source-export:
+	@test -n "$(DSH_MAINTENANCE_ROOT)" || (echo 'Set DSH_MAINTENANCE_ROOT to the maintenance checkout' >&2; exit 2)
+	node scripts/dsh-maintenance-source.mjs export --patches "$(PATCH_ROOT)" --source "$(DSH_MAINTENANCE_ROOT)"
 
 verify-patched-host:
 	node scripts/verify-patched-dsh-host.mjs --source "$(DSH_ROOT)" --patches "$(PATCH_ROOT)" \

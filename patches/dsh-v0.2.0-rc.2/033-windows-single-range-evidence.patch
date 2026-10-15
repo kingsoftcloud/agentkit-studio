@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
-index d2296df1f5..11a40e04cf 100644
+index d2296df1f5903a0eb66e78f5da67a90b05fae0a0..11a40e04cfb6cb63005123152311f51e47b9ae4d 100644
 --- a/apps/desktop/electron-builder.config.d.mts
 +++ b/apps/desktop/electron-builder.config.d.mts
 @@ -59,7 +59,7 @@ export interface DesktopElectronBuilderConfig {
@@ -12,7 +12,7 @@ index d2296df1f5..11a40e04cf 100644
  
  /**
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index 20a99f8c6a..4af74c1b39 100644
+index 20a99f8c6a5887046c3d3d1bb2a77304ef788ba9..4af74c1b3971db77841cff00b7acf1464c2471c5 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -250,6 +250,9 @@ export function createElectronBuilderConfig(
@@ -27,7 +27,7 @@ index 20a99f8c6a..4af74c1b39 100644
    }
  }
 diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
-index fc19021fa6..58f730b716 100644
+index fc19021fa6047bf5ef2a1c5e65c510adda71ee08..58f730b71613aa94498ed723484776687c714d83 100644
 --- a/apps/desktop/src/ipc.ts
 +++ b/apps/desktop/src/ipc.ts
 @@ -43,6 +43,9 @@ export interface DesktopUpdateState {
@@ -41,7 +41,7 @@ index fc19021fa6..58f730b716 100644
    /** Main-owned preparation cause; UI wording is selected by the active locale. */
    readonly preparationFailure?: DesktopUpdatePreparationFailureKind
 diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
-index c5cb3e0c5f..0ed4cd0745 100644
+index c5cb3e0c5ffd816b4fc608026f74685145ce55a5..0ed4cd074509eddedfca4ecf113b2d569567fd81 100644
 --- a/apps/desktop/src/update-coordinator.ts
 +++ b/apps/desktop/src/update-coordinator.ts
 @@ -25,7 +25,10 @@ export class DesktopUpdateCoordinator {
@@ -57,7 +57,7 @@ index c5cb3e0c5f..0ed4cd0745 100644
  
    private readonly onDownloaded = (info: UpdateInfo): void => {
 diff --git a/apps/desktop/src/update-journal.ts b/apps/desktop/src/update-journal.ts
-index bb6a179d6f..b6a9c6548e 100644
+index bb6a179d6f6ce49b34b87fe76d25267e78716617..b6a9c6548e68521a749d88128b0c030325dd9a45 100644
 --- a/apps/desktop/src/update-journal.ts
 +++ b/apps/desktop/src/update-journal.ts
 @@ -22,6 +22,11 @@ export function desktopUpdateJournalState(state: DesktopUpdateState): object {
@@ -73,7 +73,7 @@ index bb6a179d6f..b6a9c6548e 100644
        failedOperation: state.failedOperation,
        errorCode: ERROR_CODES.find(code => state.message?.includes(code)) ?? 'UNCLASSIFIED',
 diff --git a/apps/desktop/tests/update-coordinator.spec.ts b/apps/desktop/tests/update-coordinator.spec.ts
-index 7b4040b34e..abebfb4e98 100644
+index 7b4040b34e3cf4df3ff5245110bc721dda067216..abebfb4e98e6aabb925f9a2c5af9b3d1090ccfd3 100644
 --- a/apps/desktop/tests/update-coordinator.spec.ts
 +++ b/apps/desktop/tests/update-coordinator.spec.ts
 @@ -73,6 +73,18 @@ function fixture() {
@@ -96,7 +96,7 @@ index 7b4040b34e..abebfb4e98 100644
      const f = fixture()
      await f.coordinator.check()
 diff --git a/apps/desktop/tests/update-journal.spec.ts b/apps/desktop/tests/update-journal.spec.ts
-index e6344c333f..be9a06dc48 100644
+index e6344c333ffb6e1593df425f55db725a09356b09..be9a06dc48e16bf07e10bdf454342e7b33ea0a0c 100644
 --- a/apps/desktop/tests/update-journal.spec.ts
 +++ b/apps/desktop/tests/update-journal.spec.ts
 @@ -5,6 +5,12 @@ import { describe, expect, it } from 'vitest'
@@ -113,7 +113,7 @@ index e6344c333f..be9a06dc48 100644
      const directory = await mkdtemp(join(tmpdir(), 'dsh-update-journal-'))
      try {
 diff --git a/apps/desktop/tests/windows-asar-unpack.spec.ts b/apps/desktop/tests/windows-asar-unpack.spec.ts
-index 2fe4b3aaf2..ff988d6e48 100644
+index 2fe4b3aaf20bbd2c6aaaddba3ae130a957a95d99..ff988d6e4895813bfbda04a1a7447052ab94d9f1 100644
 --- a/apps/desktop/tests/windows-asar-unpack.spec.ts
 +++ b/apps/desktop/tests/windows-asar-unpack.spec.ts
 @@ -54,6 +54,19 @@ function unsignedWindowsConfig(appId: string, source: string) {

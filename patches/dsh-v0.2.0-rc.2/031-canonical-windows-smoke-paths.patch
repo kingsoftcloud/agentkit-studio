@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
-index 1ad5e6fabf..790c7bae2e 100644
+index 1ad5e6fabf20b5555ad23de2a23ce75db5758e0c..790c7bae2e2d445413ae424ead6096822ed13c81 100644
 --- a/apps/desktop/scripts/smoke-runtime.ts
 +++ b/apps/desktop/scripts/smoke-runtime.ts
 @@ -1,6 +1,6 @@
@@ -20,7 +20,7 @@ index 1ad5e6fabf..790c7bae2e 100644
    const host = new DesktopHostProcess(node, root, profile, undefined, { ...environment, DSH_HOME: home },
      undefined, join(resourcesRuntime, 'primary-runtime'),
 diff --git a/apps/desktop/scripts/windows-smoke-application.mjs b/apps/desktop/scripts/windows-smoke-application.mjs
-index d1ebf68010..4ff174022f 100644
+index d1ebf68010b5a5981589a87123ae3bf73dd75a06..4ff174022f293f7088fc8115e7c19803d421a208 100644
 --- a/apps/desktop/scripts/windows-smoke-application.mjs
 +++ b/apps/desktop/scripts/windows-smoke-application.mjs
 @@ -1,5 +1,5 @@

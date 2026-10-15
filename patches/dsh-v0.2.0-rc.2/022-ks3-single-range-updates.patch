@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/macos-app-update-config.d.mts b/apps/desktop/scripts/macos-app-update-config.d.mts
-index 624ab0d341..3c2631ee8d 100644
+index 624ab0d34121fdc6cc02e90ae96020c97ef2e9c7..3c2631ee8d7c41f496e23c7e3648229ca9a8491c 100644
 --- a/apps/desktop/scripts/macos-app-update-config.d.mts
 +++ b/apps/desktop/scripts/macos-app-update-config.d.mts
 @@ -6,6 +6,7 @@ export interface MacOSAppUpdateFeed {
@@ -11,7 +11,7 @@ index 624ab0d341..3c2631ee8d 100644
    readonly channel: 'nightly'
    readonly updaterCacheDirName: string
 diff --git a/apps/desktop/scripts/macos-app-update-config.mjs b/apps/desktop/scripts/macos-app-update-config.mjs
-index a0389b9702..c4861e6252 100644
+index a0389b970245cf62cba142020559c637465cb913..c4861e6252e746dfe9956878e411dec7e00cbd19 100644
 --- a/apps/desktop/scripts/macos-app-update-config.mjs
 +++ b/apps/desktop/scripts/macos-app-update-config.mjs
 @@ -53,6 +53,8 @@ export function resolveMacOSAppUpdateFeed(publish) {
@@ -34,7 +34,7 @@ index a0389b9702..c4861e6252 100644
      throw new Error(`desktop macOS update config: ${path} does not match ${update.publicUrl}`)
    }
 diff --git a/apps/desktop/tests/macos-app-update-config.spec.ts b/apps/desktop/tests/macos-app-update-config.spec.ts
-index f3b3f95880..7835f79bc0 100644
+index f3b3f95880415597f8c33a4b1db76c80c3622f2b..7835f79bc029a9d4eac3df4231aca4dc0d667fb6 100644
 --- a/apps/desktop/tests/macos-app-update-config.spec.ts
 +++ b/apps/desktop/tests/macos-app-update-config.spec.ts
 @@ -39,6 +39,7 @@ describe('macOS packaged updater configuration', () => {

@@ -2,7 +2,7 @@
 
 本目录保存 AgentKit Studio 对官方 DSH `v0.2.0-rc.2` 的**可审计、版本锁定的临时兼容补丁**。补丁不是 Studio 的运行时依赖，也不会被浏览器直接加载；它们只在官方 DSH 尚未提供等价公开扩展点时，供宿主构建或本地复现使用。
 
-机器清单见 [manifest.json](manifest.json)，维护流程见 [补丁治理说明](../../docs/refactor-patches.md)。`make patch-manifest-check` 检查文件、内容摘要、修改路径、基线和依赖顺序；正式桌面打包也先执行同一检查。未登记的补丁不能进入构建。
+机器清单见 [manifest.json](manifest.json)，维护流程见 [补丁治理说明](../../docs/refactor-patches.md)。补丁由 [维护提交归档](../../host-source/dsh-v0.2.0-rc.2/README.md) 自动导出，修改宿主时应在该分支编辑源码并重新导出。`make patch-manifest-check` 检查文件、内容摘要、修改路径、基线和依赖顺序；`make patch-source-verify` 从归档重新生成并核对补丁，桌面构建前也执行完整校验。未登记或与维护提交不同步的补丁不能进入构建。
 
 ## 基线
 

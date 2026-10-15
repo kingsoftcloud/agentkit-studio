@@ -1,64 +1,69 @@
-diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
---- a/apps/desktop/src/main.ts
-+++ b/apps/desktop/src/main.ts
-@@ -82,8 +82,13 @@
- // set before ready so the first fatal report already resolves under it.
- app.setAppLogsPath()
-
-+function desktopProductName(): string {
-+  // The Desktop bundle seals this build value; Electron app.name may be a package id.
-+  return process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || 'DeepSeek Harness'
-+}
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index d307e04f81205f12baf2c236267211942b96fc31..f9180fb7a3b629825b112c769728b431bbea3d79 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -21,8 +21,8 @@
+   en: beecf076aa2f0796
+   zh: c9001ce0f22d2379
+ /deepseek-harness-desktop/installation-ownership:
+-  en: 48743e96494dcea5
+-  zh: ac17e7055e3a0c95
++  en: 4313fffda352fff3
++  zh: 851a8676773b2466
+ /deepseek-harness-desktop/installation-ownership/runtime-and-plugin-activation:
+   en: 9433f6e3231f516c
+   zh: dea29d4b932b00d0
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index 229c3ae406497b41320c4f95231fff4fd58bc1e5..5416f8cb42d4383e0383ea0510a431b93dc3aa60 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -108,6 +108,8 @@ Update copy preserves the complete version, including prerelease suffixes, witho
+ 
+ Electron chooses typed English or Chinese shell copy from its application locale and falls back to English. The macOS application bundle declares English and Simplified Chinese in `CFBundleLocalizations`, allowing macOS to match the initial application language to the user’s preferred languages. Saved Client UI language preferences still take precedence for the main interface. On Windows, the main document's language updates desktop menus, recovery and update prompts. The repository Client UI i18n gate checks desktop sources.
+ 
++Desktop packaging copies `DSH_CLIENT_TITLE` into the build-only `DSH_DESKTOP_PRODUCT_NAME` before the official client build resolves its own title, and seals the product name into the About panel and localized shell copy, including native menus and recovery prompts; it defaults to DeepSeek Harness. Electron may retain an internal package identifier in `app.name`, so shell copy does not use that value as the product brand. Branding does not change Electron's application name or user-data directory, and model-provider names remain unchanged.
 +
- function currentDesktopLocale(): ReturnType<typeof resolveDesktopLocale> {
--  return resolveDesktopLocale(windowsLanguage ?? app.getLocale())
-+  return resolveDesktopLocale(windowsLanguage ?? app.getLocale(), desktopProductName())
- }
- /** Quit without the task confirmation; the caller has already decided the application must stop. */
- function quitWithoutConfirmation(): void {
-@@ -351,7 +356,7 @@
-   let updateStopFailure: DesktopHostUncleanExitError | undefined
-   let updateState: DesktopUpdateState = { phase: 'idle' }
-   const systemLanguages = app.getPreferredSystemLanguages()
--  let locale = resolveDesktopStartupLocale(null, systemLanguages)
-+  let locale = resolveDesktopStartupLocale(null, systemLanguages, desktopProductName())
-   windowsLanguage = locale.id
-   let mandatoryPolicy: DesktopMandatoryUpdatePolicy | undefined
-   let mandatoryUI: DesktopMandatoryUpdateWindow | undefined
-@@ -758,7 +763,7 @@
-     const window = mainWindow
-     if (window === undefined || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
-       || typeof next !== 'string') return
--    const current = resolveDesktopStartupLocale(next, systemLanguages)
-+    const current = resolveDesktopStartupLocale(next, systemLanguages, desktopProductName())
-     if (current.id === locale.id) return
-     locale = current
-     platformView.notifyLocaleChanged()
-@@ -926,7 +931,7 @@
-   const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
-     : join(process.resourcesPath, 'icon.png')
-   app.setAboutPanelOptions({
--    applicationName: 'DeepSeek Harness',
-+    applicationName: desktopProductName(),
-     applicationVersion: app.getVersion(),
-     // The release has no separate build number; omit Electron's bundle version.
-     version: '',
-@@ -1199,7 +1204,7 @@
-     if (quitting || recovery.active) return
-     const state = await readWelcomeState()
-     if (isQuitting() || backend.state.phase !== 'ready') return
--    locale = resolveDesktopStartupLocale(state.localePreference, systemLanguages)
-+    locale = resolveDesktopStartupLocale(state.localePreference, systemLanguages, desktopProductName())
-     windowsLanguage = locale.id
-     refreshApplicationMenu()
-     if (!enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey }, productBundles)) {
+ Windows and macOS relay native fullscreen transitions and the state after each page load to the renderer, so overlays can adapt their caption clearance.
+ 
+ Windows uses a 40-DIP caption with native window controls and colors synchronized from the application palette. Localized Application and Edit entries beside the sidebar toggle open native popup menus. They mount only after the application frame publishes its shell overlay seat, and remain absent during startup loading. Application provides Check for Updates and Exit; Edit provides undo, redo, cut, copy, paste, delete, and select all by sending the corresponding keys to the focused editor, independently of custom shortcut bindings. Plugin management uses the main application's Plugins page. No separate native menu row appears on Alt. Other platforms retain their native menus. Editable fields retain keyboard commands and a context menu without shortcut labels; Chromium supplies command availability, and selected read-only text offers Copy.
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index 7dbc34a7d2bd3eecd15bb4681bd80fa67b851ce4..cb08b664cb3cb6389ab531deb8cb93850ed3fef8 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -110,6 +110,8 @@ Electron 拥有 `$DSH_HOME/profiles/desktop`。其 `dependencies` 包含 pnpm 
+ 
+ Electron 根据应用语言选择类型化的英文或中文 shell 文案，并回退到英文。macOS 应用包通过 `CFBundleLocalizations` 声明支持英语和简体中文，让 macOS 根据用户的首选语言匹配初始应用语言。主界面仍优先使用已保存的 Client UI 语言偏好。在 Windows 上，主文档的语言会更新桌面菜单、恢复与更新提示。仓库 Client UI i18n 检查覆盖桌面端源码。
+ 
++Desktop 打包在官方客户端构建解析自身标题前，将 `DSH_CLIENT_TITLE` 保存为仅用于构建的 `DSH_DESKTOP_PRODUCT_NAME`，再把产品名称固定到“关于”面板和本地化 shell 文案中，包括原生菜单与恢复提示；默认名称为 DeepSeek Harness。Electron 的 `app.name` 可能保留内部包标识，因此 shell 文案不把它当作产品品牌。品牌文案不改变 Electron 的应用名称或用户数据目录，模型提供方名称也保持原样。
++
+ Windows 和 macOS 会在原生全屏切换及每次页面加载后向渲染器同步全屏状态，让浮层调整顶栏避让距离。
+ 
+ Windows 使用 40 DIP 顶栏，保留原生窗口按钮，颜色随应用调色板同步。侧栏开关旁的本地化“应用”和“编辑”入口打开原生弹出菜单。仅当应用框架发布 shell overlay 席位后才挂载菜单，启动加载期间不显示。“应用”提供检查更新和退出；“编辑”向当前编辑器发送对应按键，提供撤销、重做、剪切、复制、粘贴、删除和全选，不受自定义快捷键绑定影响。插件管理使用主应用的“插件”页面。按 Alt 不会出现额外的原生菜单行。其他平台保留原生菜单。可编辑区域保留快捷键和不带快捷键标注的右键菜单；命令可用状态由 Chromium 提供，选中的只读文本提供“复制”命令。
+diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
+index 3746777b2a5e4b293cb4921b4e57a79bea50dbf4..b4371c444e8166bf2fff043296266a026d083604 100644
+--- a/apps/desktop/scripts/package-target.ts
++++ b/apps/desktop/scripts/package-target.ts
+@@ -408,7 +408,11 @@ export async function packageTarget(
+     rmSync(releaseRecordPath, { force: true })
+     rmSync(`${releaseRecordPath}.tmp`, { force: true })
+   }
+-  const buildEnv = withoutWindowsSigningEnvironment(withoutDesktopUploadCredentials(environment))
++  const buildEnv = {
++    ...withoutWindowsSigningEnvironment(withoutDesktopUploadCredentials(environment)),
++    // Official client builds own DSH_CLIENT_TITLE; preserve the shell product name separately.
++    DSH_DESKTOP_PRODUCT_NAME: environment.DSH_CLIENT_TITLE?.trim() || 'DeepSeek Harness',
++  }
+   const targetEnv: NodeJS.ProcessEnv = {
+     ...buildEnv,
+     DSH_DESKTOP_TARGET_PLATFORM: target.platform,
 diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index 5d9d4607c7d046006cb91d0ef41e5f7ba193b435..9ccdf331d4a9464b7d79e78c2572a93a9de8a02a 100644
 --- a/apps/desktop/src/locale.ts
 +++ b/apps/desktop/src/locale.ts
-@@ -345,27 +345,38 @@
+@@ -345,27 +345,38 @@ export interface DesktopLocale {
    readonly messages: DesktopMessages
  }
-
+ 
 -/** Resolve Electron's locale to one shipped Desktop dictionary. */
 -export function resolveDesktopLocale(locale: string): DesktopLocale {
 -  return locale.toLowerCase().startsWith('zh')
@@ -78,7 +83,7 @@ diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
 +    .map(([key, value]) => [key, value.replaceAll('DeepSeek Harness', () => productName)])) as DesktopMessages
 +  return { ...selected, messages }
  }
-
+ 
  /**
   * Choose a built-in dictionary from the shared preference, then ordered OS languages.
   * @param preference - explicit locale.preference, or null when no language was selected.
@@ -99,81 +104,108 @@ diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
 -  return resolveDesktopLocale('en')
 +  return resolveDesktopLocale('en', productName)
  }
-
+ 
  /** Replace named placeholders in one locale-owned message. */
-diff --git a/apps/desktop/tsdown.config.ts b/apps/desktop/tsdown.config.ts
---- a/apps/desktop/tsdown.config.ts
-+++ b/apps/desktop/tsdown.config.ts
-@@ -29,8 +29,11 @@
- const clientVersion = clientEnvironment.DSH_CLIENT_VERSION
- if (clientVersion === undefined) throw new Error('desktop build: the client environment carries no DSH_CLIENT_VERSION')
-
--/** Inline the one public build value the Node entry reads; every other variable stays a runtime lookup. */
--const clientVersionDefine = { 'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion) }
-+/** Seal public client identity into the Node entry; credentials remain runtime lookups. */
-+const clientBuildDefines = {
-+  'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion),
-+  'process.env.DSH_DESKTOP_PRODUCT_NAME': JSON.stringify(process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || 'DeepSeek Harness'),
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 74c2f2a8c734f90e79faa34716aba457ce0b4497..f375f7efebb0b8a2606269d5ef1e87a625d3660f 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -82,8 +82,13 @@ const rendererConsole = new RendererConsoleTail()
+ // set before ready so the first fatal report already resolves under it.
+ app.setAppLogsPath()
+ 
++function desktopProductName(): string {
++  // The Desktop bundle seals this build value; Electron app.name may be a package id.
++  return process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || 'DeepSeek Harness'
 +}
-
- export default defineConfig([
-   {
-@@ -49,7 +52,7 @@
-   {
-     entry: ['lib/types/main.js'],
-     plugins: [packagedImportsPlugin(mainProcessImports)],
--    define: clientVersionDefine,
-+    define: clientBuildDefines,
-     onSuccess: async () => {
-       await build({
-         configFile: false,
-diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
---- a/apps/desktop/scripts/package-target.ts
-+++ b/apps/desktop/scripts/package-target.ts
-@@ -408,7 +408,11 @@
-     rmSync(releaseRecordPath, { force: true })
-     rmSync(`${releaseRecordPath}.tmp`, { force: true })
-   }
--  const buildEnv = withoutWindowsSigningEnvironment(withoutDesktopUploadCredentials(environment))
-+  const buildEnv = {
-+    ...withoutWindowsSigningEnvironment(withoutDesktopUploadCredentials(environment)),
-+    // Official client builds own DSH_CLIENT_TITLE; preserve the shell product name separately.
-+    DSH_DESKTOP_PRODUCT_NAME: environment.DSH_CLIENT_TITLE?.trim() || 'DeepSeek Harness',
-+  }
-   const targetEnv: NodeJS.ProcessEnv = {
-     ...buildEnv,
-     DSH_DESKTOP_TARGET_PLATFORM: target.platform,
-diff --git a/apps/desktop/tests/package-target-stages.spec.ts b/apps/desktop/tests/package-target-stages.spec.ts
---- a/apps/desktop/tests/package-target-stages.spec.ts
-+++ b/apps/desktop/tests/package-target-stages.spec.ts
-@@ -1,5 +1,6 @@
- import { writeFileSync } from 'node:fs'
- import { afterEach, expect, it, vi } from 'vitest'
-+import { clientBuildProcessEnvironment, officialClientBuildEnvironment } from '../../../scripts/client-build-environment.ts'
- import { packageTarget, parseDesktopPackageInvocation } from '../scripts/package-target.ts'
- import { withMacOSNotarizationProxy } from '../scripts/macos-notarization-proxy.ts'
- import { packageMacOSArtifacts } from '../scripts/package-macos.ts'
-@@ -168,3 +169,16 @@
-     .rejects.toThrow('proxy restoration failed')
-   expect(writeFileSync).not.toHaveBeenCalled()
- })
 +
-+
-+it('preserves the product shell title through the official client build environment', async () => {
-+  const { run } = supervisor()
-+  await packageTarget(parseDesktopPackageInvocation(['mac-arm64', '--unsigned'], 'darwin', 'arm64'), {
-+    ...environment, DSH_CLIENT_TITLE: 'AgentKit Studio',
-+  }, run)
-+  const build = run.run.mock.calls.find(call => call[0] === 'run build:official')![3].env
-+  const official = officialClientBuildEnvironment(process.cwd(), build)
-+  const child = clientBuildProcessEnvironment(build, official)
-+  expect(child.DSH_CLIENT_TITLE).toBe('DeepSeek Harness')
-+  expect(child.DSH_DESKTOP_PRODUCT_NAME).toBe('AgentKit Studio')
-+})
+ function currentDesktopLocale(): ReturnType<typeof resolveDesktopLocale> {
+-  return resolveDesktopLocale(windowsLanguage ?? app.getLocale())
++  return resolveDesktopLocale(windowsLanguage ?? app.getLocale(), desktopProductName())
+ }
+ /** Quit without the task confirmation; the caller has already decided the application must stop. */
+ function quitWithoutConfirmation(): void {
+@@ -351,7 +356,7 @@ async function main(): Promise<void> {
+   let updateStopFailure: DesktopHostUncleanExitError | undefined
+   let updateState: DesktopUpdateState = { phase: 'idle' }
+   const systemLanguages = app.getPreferredSystemLanguages()
+-  let locale = resolveDesktopStartupLocale(null, systemLanguages)
++  let locale = resolveDesktopStartupLocale(null, systemLanguages, desktopProductName())
+   windowsLanguage = locale.id
+   let mandatoryPolicy: DesktopMandatoryUpdatePolicy | undefined
+   let mandatoryUI: DesktopMandatoryUpdateWindow | undefined
+@@ -758,7 +763,7 @@ async function main(): Promise<void> {
+     const window = mainWindow
+     if (window === undefined || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
+       || typeof next !== 'string') return
+-    const current = resolveDesktopStartupLocale(next, systemLanguages)
++    const current = resolveDesktopStartupLocale(next, systemLanguages, desktopProductName())
+     if (current.id === locale.id) return
+     locale = current
+     platformView.notifyLocaleChanged()
+@@ -926,7 +931,7 @@ async function main(): Promise<void> {
+   const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
+     : join(process.resourcesPath, 'icon.png')
+   app.setAboutPanelOptions({
+-    applicationName: 'DeepSeek Harness',
++    applicationName: desktopProductName(),
+     applicationVersion: app.getVersion(),
+     // The release has no separate build number; omit Electron's bundle version.
+     version: '',
+@@ -1199,7 +1204,7 @@ async function main(): Promise<void> {
+     if (quitting || recovery.active) return
+     const state = await readWelcomeState()
+     if (isQuitting() || backend.state.phase !== 'ready') return
+-    locale = resolveDesktopStartupLocale(state.localePreference, systemLanguages)
++    locale = resolveDesktopStartupLocale(state.localePreference, systemLanguages, desktopProductName())
+     windowsLanguage = locale.id
+     refreshApplicationMenu()
+     if (!enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey }, productBundles)) {
+diff --git a/apps/desktop/tests/expected/product-brand-zh-CN.json b/apps/desktop/tests/expected/product-brand-zh-CN.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..cc0ba526afa6657098173989d9c2c432415212b0
+--- /dev/null
++++ b/apps/desktop/tests/expected/product-brand-zh-CN.json
+@@ -0,0 +1,17 @@
++{
++  "commands": [
++    {
++      "role": "about",
++      "label": "关于 AgentKit Studio"
++    },
++    {
++      "role": "hide",
++      "label": "隐藏 AgentKit Studio"
++    },
++    {
++      "role": "quit",
++      "label": "退出 AgentKit Studio"
++    }
++  ],
++  "applicationName": "AgentKit Studio"
++}
+diff --git a/apps/desktop/tests/locale.spec.ts b/apps/desktop/tests/locale.spec.ts
+index 2bdd6673bdb49e95e890fd548ff5c08ee9d831da..52c7ea4ef6b85548342af8b0b5301c9c3d5ac4eb 100644
+--- a/apps/desktop/tests/locale.spec.ts
++++ b/apps/desktop/tests/locale.spec.ts
+@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
+ import { en, formatDesktopMessage, resolveDesktopLocale, resolveDesktopStartupLocale, zh } from '../src/locale.ts'
+ 
+ describe('desktop locale dictionaries', () => {
++  it('uses the installed product name for shell copy without changing provider terminology', () => {
++    expect(resolveDesktopLocale('zh-CN', 'AgentKit Studio').messages.aboutMenu).toBe('关于 AgentKit Studio')
++    expect(resolveDesktopStartupLocale(null, ['en-US'], 'AgentKit Studio').messages.quitTitle).toBe('Quit AgentKit Studio?')
++    expect(resolveDesktopLocale('en-US', 'AgentKit Studio').messages.welcomeKeyDescription).toBe(en.welcomeKeyDescription)
++    expect(en.aboutProduct).toBe('DeepSeek Harness')
++  })
+   it('ships the same key set in English and Chinese', () => {
+     expect(Object.keys(zh)).toEqual(Object.keys(en))
+     expect(resolveDesktopLocale('zh-Hans-CN').messages).toEqual(zh)
 diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index cec5ad45a52ba315c1e5ce7bb6abfe663f703fb3..8141d95da854ddf532e640ae631a33da8a26ece8 100644
 --- a/apps/desktop/tests/main-startup.spec.ts
 +++ b/apps/desktop/tests/main-startup.spec.ts
-@@ -152,7 +152,7 @@
+@@ -152,7 +152,7 @@ const harness = await vi.hoisted(async () => {
    }
    const app = Object.assign(new EventEmitter(), {
      isPackaged: true,
@@ -182,10 +214,10 @@ diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-s
      whenReady: () => Promise.resolve(),
      getLocale: (): string => 'en-US',
      getPreferredSystemLanguages: () => ['en-US'],
-@@ -495,6 +495,25 @@
+@@ -495,6 +495,25 @@ describe('desktop main startup', () => {
      expect(harness.windows[0]!.options).toMatchObject({ webPreferences: { devTools: true } })
    })
-
+ 
 +  it('uses the packaged product name in macOS About and application commands', async () => {
 +    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
 +    vi.spyOn(harness.app, 'getLocale').mockReturnValue('zh-CN')
@@ -208,7 +240,7 @@ diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-s
    it.each([
      ['darwin', true, 'en-US'],
      ['darwin', false, 'zh-CN'],
-@@ -879,7 +898,7 @@
+@@ -879,7 +898,7 @@ describe('desktop main startup', () => {
        .find(items => items.some(item => item.role === 'editMenu'))
      if (template === undefined) throw new Error('application menu missing')
      expect(template.map(describeItem)).toEqual(platform === 'darwin'
@@ -217,7 +249,7 @@ diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-s
        : ['Application', 'editMenu'])
      const application = template[0]!.submenu as MenuItemConstructorOptions[]
      expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
-@@ -894,6 +913,7 @@
+@@ -894,6 +913,7 @@ describe('desktop main startup', () => {
      vi.spyOn(harness.app, 'getPreferredSystemLanguages').mockReturnValue([locale])
      const originalName = harness.app.name
      harness.app.name = '@deepseek-ai/dsh-desktop'
@@ -225,7 +257,7 @@ diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-s
      try {
        await import('../src/main.ts')
        await harness.preparing.promise
-@@ -2021,7 +2041,7 @@
+@@ -2021,7 +2041,7 @@ describe('desktop main startup', () => {
      expect(report.error).toBeInstanceOf(Error)
      expect((report.error as Error).message).toContain('fatal uncaught exception: ENOENT')
      expect(report.rendererConsole).toEqual(['dsh-app://app/assets/entry.js:12 client-modules: bundle script plugins/??a/client.js&rev=1 failed to load'])
@@ -234,79 +266,58 @@ diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-s
      expect(report.time).toBeInstanceOf(Date)
      host.exited.resolve()
      await harness.quitCompleted.promise
-diff --git a/apps/desktop/tests/locale.spec.ts b/apps/desktop/tests/locale.spec.ts
---- a/apps/desktop/tests/locale.spec.ts
-+++ b/apps/desktop/tests/locale.spec.ts
-@@ -2,6 +2,12 @@
- import { en, formatDesktopMessage, resolveDesktopLocale, resolveDesktopStartupLocale, zh } from '../src/locale.ts'
-
- describe('desktop locale dictionaries', () => {
-+  it('uses the installed product name for shell copy without changing provider terminology', () => {
-+    expect(resolveDesktopLocale('zh-CN', 'AgentKit Studio').messages.aboutMenu).toBe('关于 AgentKit Studio')
-+    expect(resolveDesktopStartupLocale(null, ['en-US'], 'AgentKit Studio').messages.quitTitle).toBe('Quit AgentKit Studio?')
-+    expect(resolveDesktopLocale('en-US', 'AgentKit Studio').messages.welcomeKeyDescription).toBe(en.welcomeKeyDescription)
-+    expect(en.aboutProduct).toBe('DeepSeek Harness')
-+  })
-   it('ships the same key set in English and Chinese', () => {
-     expect(Object.keys(zh)).toEqual(Object.keys(en))
-     expect(resolveDesktopLocale('zh-Hans-CN').messages).toEqual(zh)
-diff --git a/apps/desktop/tests/expected/product-brand-zh-CN.json b/apps/desktop/tests/expected/product-brand-zh-CN.json
-new file mode 100644
---- /dev/null
-+++ b/apps/desktop/tests/expected/product-brand-zh-CN.json
-@@ -0,0 +1,17 @@
-+{
-+  "commands": [
-+    {
-+      "role": "about",
-+      "label": "关于 AgentKit Studio"
-+    },
-+    {
-+      "role": "hide",
-+      "label": "隐藏 AgentKit Studio"
-+    },
-+    {
-+      "role": "quit",
-+      "label": "退出 AgentKit Studio"
-+    }
-+  ],
-+  "applicationName": "AgentKit Studio"
+diff --git a/apps/desktop/tests/package-target-stages.spec.ts b/apps/desktop/tests/package-target-stages.spec.ts
+index 41e1ee8d4e1755149aa41427f4eff665a69e316b..d9936cd72b66aad519083a13b08e8e5106da6af3 100644
+--- a/apps/desktop/tests/package-target-stages.spec.ts
++++ b/apps/desktop/tests/package-target-stages.spec.ts
+@@ -1,5 +1,6 @@
+ import { writeFileSync } from 'node:fs'
+ import { afterEach, expect, it, vi } from 'vitest'
++import { clientBuildProcessEnvironment, officialClientBuildEnvironment } from '../../../scripts/client-build-environment.ts'
+ import { packageTarget, parseDesktopPackageInvocation } from '../scripts/package-target.ts'
+ import { withMacOSNotarizationProxy } from '../scripts/macos-notarization-proxy.ts'
+ import { packageMacOSArtifacts } from '../scripts/package-macos.ts'
+@@ -168,3 +169,16 @@ it('does not write a release completion record when Apple proxy cleanup fails',
+     .rejects.toThrow('proxy restoration failed')
+   expect(writeFileSync).not.toHaveBeenCalled()
+ })
++
++
++it('preserves the product shell title through the official client build environment', async () => {
++  const { run } = supervisor()
++  await packageTarget(parseDesktopPackageInvocation(['mac-arm64', '--unsigned'], 'darwin', 'arm64'), {
++    ...environment, DSH_CLIENT_TITLE: 'AgentKit Studio',
++  }, run)
++  const build = run.run.mock.calls.find(call => call[0] === 'run build:official')![3].env
++  const official = officialClientBuildEnvironment(process.cwd(), build)
++  const child = clientBuildProcessEnvironment(build, official)
++  expect(child.DSH_CLIENT_TITLE).toBe('DeepSeek Harness')
++  expect(child.DSH_DESKTOP_PRODUCT_NAME).toBe('AgentKit Studio')
++})
+diff --git a/apps/desktop/tsdown.config.ts b/apps/desktop/tsdown.config.ts
+index d8470bac7bdc9ee5fa23abc32c8886e9582da2b1..5c7d571d38040c298ec19dfc31bcfb892ab6e430 100644
+--- a/apps/desktop/tsdown.config.ts
++++ b/apps/desktop/tsdown.config.ts
+@@ -29,8 +29,11 @@ const clientEnvironment = resolveClientBuildEnvironment(process.env.DSH_CLIENT_V
+ const clientVersion = clientEnvironment.DSH_CLIENT_VERSION
+ if (clientVersion === undefined) throw new Error('desktop build: the client environment carries no DSH_CLIENT_VERSION')
+ 
+-/** Inline the one public build value the Node entry reads; every other variable stays a runtime lookup. */
+-const clientVersionDefine = { 'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion) }
++/** Seal public client identity into the Node entry; credentials remain runtime lookups. */
++const clientBuildDefines = {
++  'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion),
++  'process.env.DSH_DESKTOP_PRODUCT_NAME': JSON.stringify(process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || 'DeepSeek Harness'),
 +}
-diff --git a/apps/desktop/README.md b/apps/desktop/README.md
---- a/apps/desktop/README.md
-+++ b/apps/desktop/README.md
-@@ -107,6 +107,8 @@
- Update copy preserves the complete version, including prerelease suffixes, without adding v or V. When no update is available, the dialog title reports the result and the body shows the current version.
-
- Electron chooses typed English or Chinese shell copy from its application locale and falls back to English. The macOS application bundle declares English and Simplified Chinese in `CFBundleLocalizations`, allowing macOS to match the initial application language to the user’s preferred languages. Saved Client UI language preferences still take precedence for the main interface. On Windows, the main document's language updates desktop menus, recovery and update prompts. The repository Client UI i18n gate checks desktop sources.
-+
-+Desktop packaging copies `DSH_CLIENT_TITLE` into the build-only `DSH_DESKTOP_PRODUCT_NAME` before the official client build resolves its own title, and seals the product name into the About panel and localized shell copy, including native menus and recovery prompts; it defaults to DeepSeek Harness. Electron may retain an internal package identifier in `app.name`, so shell copy does not use that value as the product brand. Branding does not change Electron's application name or user-data directory, and model-provider names remain unchanged.
-
- Windows and macOS relay native fullscreen transitions and the state after each page load to the renderer, so overlays can adapt their caption clearance.
-
-diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
---- a/apps/desktop/README.zh.md
-+++ b/apps/desktop/README.zh.md
-@@ -109,6 +109,8 @@
- 升级文案完整展示版本号（包括预发布后缀），不额外添加 v 或 V。无可用更新时，弹窗标题显示检查结果，正文显示当前版本。
-
- Electron 根据应用语言选择类型化的英文或中文 shell 文案，并回退到英文。macOS 应用包通过 `CFBundleLocalizations` 声明支持英语和简体中文，让 macOS 根据用户的首选语言匹配初始应用语言。主界面仍优先使用已保存的 Client UI 语言偏好。在 Windows 上，主文档的语言会更新桌面菜单、恢复与更新提示。仓库 Client UI i18n 检查覆盖桌面端源码。
-+
-+Desktop 打包在官方客户端构建解析自身标题前，将 `DSH_CLIENT_TITLE` 保存为仅用于构建的 `DSH_DESKTOP_PRODUCT_NAME`，再把产品名称固定到“关于”面板和本地化 shell 文案中，包括原生菜单与恢复提示；默认名称为 DeepSeek Harness。Electron 的 `app.name` 可能保留内部包标识，因此 shell 文案不把它当作产品品牌。品牌文案不改变 Electron 的应用名称或用户数据目录，模型提供方名称也保持原样。
-
- Windows 和 macOS 会在原生全屏切换及每次页面加载后向渲染器同步全屏状态，让浮层调整顶栏避让距离。
-
-diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
---- a/apps/desktop/README.i18n.yaml
-+++ b/apps/desktop/README.i18n.yaml
-@@ -21,8 +21,8 @@
-   en: beecf076aa2f0796
-   zh: c9001ce0f22d2379
- /deepseek-harness-desktop/installation-ownership:
--  en: 48743e96494dcea5
--  zh: ac17e7055e3a0c95
-+  en: 4313fffda352fff3
-+  zh: 851a8676773b2466
- /deepseek-harness-desktop/installation-ownership/runtime-and-plugin-activation:
-   en: 9433f6e3231f516c
-   zh: dea29d4b932b00d0
+ 
+ export default defineConfig([
+   {
+@@ -49,7 +52,7 @@ export default defineConfig([
+   {
+     entry: ['lib/types/main.js'],
+     plugins: [packagedImportsPlugin(mainProcessImports)],
+-    define: clientVersionDefine,
++    define: clientBuildDefines,
+     onSuccess: async () => {
+       await build({
+         configFile: false,

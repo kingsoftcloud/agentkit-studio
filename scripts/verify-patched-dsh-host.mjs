@@ -25,7 +25,8 @@ function run(args, cwd) {
   });
 }
 try {
-  await withDesktopCheckout({ source: resolve(values.source), output, patches: resolve(values.patches), commit: manifest.baseCommit }, async checkout => {
+  await withDesktopCheckout({ source: resolve(values.source), output, patches: resolve(values.patches), commit: manifest.baseCommit }, async (checkout, admission) => {
+    result.maintenanceSource = admission.maintenanceSource;
     result.checkout = checkout;
     result.sourceBeforeBuild = await assertPatchedSource(checkout, manifest);
     const packageJson = JSON.parse(await readFile(join(checkout, 'package.json'), 'utf8'));

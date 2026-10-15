@@ -1,5 +1,5 @@
 diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
-index 4b2f1df4af..5edb5518b5 100644
+index 4b2f1df4afb3ddc8e05a2e3c118face016164dcd..5edb5518b515354dba9aa656e61a98fafbe901ab 100644
 --- a/apps/desktop-host/src/index.ts
 +++ b/apps/desktop-host/src/index.ts
 @@ -1,6 +1,6 @@
@@ -21,7 +21,7 @@ index 4b2f1df4af..5edb5518b5 100644
        packageManager: {
          command: process.execPath,
 diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
-index 41b1560083..d2296df1f5 100644
+index 41b1560083c4828933c0615becdf5ab9985a2235..d2296df1f5903a0eb66e78f5da67a90b05fae0a0 100644
 --- a/apps/desktop/electron-builder.config.d.mts
 +++ b/apps/desktop/electron-builder.config.d.mts
 @@ -17,7 +17,7 @@ export interface DesktopElectronBuilderConfig {
@@ -34,7 +34,7 @@ index 41b1560083..d2296df1f5 100644
    readonly extraResources: readonly [
      { readonly from: string, readonly to: 'runtime' },
 diff --git a/apps/desktop/installer/strings.nsh b/apps/desktop/installer/strings.nsh
-index 174ebfa28b..2795bc053b 100644
+index 174ebfa28bde204eede08c9bb18dfa8ad4062761..2795bc053bebd51fb8a7004d19b6eab9e56507c0 100644
 --- a/apps/desktop/installer/strings.nsh
 +++ b/apps/desktop/installer/strings.nsh
 @@ -19,20 +19,20 @@ LangString INSTALLER_BROWSE ${LANG_ENGLISH} "Browse"
@@ -65,7 +65,7 @@ index 174ebfa28b..2795bc053b 100644
  LangString INSTALLER_PATH_WRITABLE ${LANG_SIMPCHINESE} "无法写入此位置。请选择当前用户可写入的文件夹；安装程序不会申请管理员权限。"
  LangString INSTALLER_DISK_SPACE ${LANG_ENGLISH} "There is not enough free disk space. Choose another location."
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
-index bccffe5d24..f8a76b31b9 100644
+index bccffe5d245a79098d7ee6ff956a1dc82550a93e..f8a76b31b91301c13133bab60f591fc2a415131a 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
 @@ -162,7 +162,8 @@ export function resolveDesktopAutoUpdateConfig(env, platform, arch) {
@@ -79,7 +79,7 @@ index bccffe5d24..f8a76b31b9 100644
      const releaseId = requiredEnvironmentValue(env, 'DOWNLOAD_TEST_RELEASE_ID')
      if (!/^[a-f0-9]{32}$/u.test(releaseId)) {
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index 63f2b79656..20a99f8c6a 100644
+index 63f2b7965693c3b4d431467ac872915113fb3017..20a99f8c6a5887046c3d3d1bb2a77304ef788ba9 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -104,6 +104,7 @@ export function createElectronBuilderConfig(
@@ -101,7 +101,7 @@ index 63f2b79656..20a99f8c6a 100644
        })
        if (windowsSigner !== undefined) {
 diff --git a/apps/desktop/scripts/prepare-windows-installer.ps1 b/apps/desktop/scripts/prepare-windows-installer.ps1
-index 98e02cf9a6..e67f3fa623 100644
+index 98e02cf9a67d56c9df99deac9f9bf8f2a8d0ceff..e67f3fa62322f39b6aa4098efa46f76db31191f1 100644
 --- a/apps/desktop/scripts/prepare-windows-installer.ps1
 +++ b/apps/desktop/scripts/prepare-windows-installer.ps1
 @@ -1,6 +1,6 @@
@@ -144,7 +144,7 @@ index 98e02cf9a6..e67f3fa623 100644
              $bitmap.Save((Join-Path $output "$asset.bmp"), [Drawing.Imaging.ImageFormat]::Bmp)
          } finally { $bitmap.Dispose() }
 diff --git a/apps/desktop/src/paths.ts b/apps/desktop/src/paths.ts
-index cf03e38c36..dd8339f381 100644
+index cf03e38c3653773c307f128aca3aaced15caaa93..dd8339f38182972c368c0164e33698b2d8985907 100644
 --- a/apps/desktop/src/paths.ts
 +++ b/apps/desktop/src/paths.ts
 @@ -14,9 +14,12 @@ export interface DesktopPaths {
@@ -164,7 +164,7 @@ index cf03e38c36..dd8339f381 100644
    }
  }
 diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-index c1cb0354e8..20e714e449 100644
+index c1cb0354e81fb38fd6262aff4f34c3659d2fcdee..20e714e4493b163d8f3fcf0de5f44f0aee935c3b 100644
 --- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 +++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 @@ -142,3 +142,10 @@ describe('desktop auto-update environment', () => {
@@ -179,7 +179,7 @@ index c1cb0354e8..20e714e449 100644
 +    .toBe('https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/win-x64/')
 +})
 diff --git a/apps/desktop/tests/product-branding.spec.ts b/apps/desktop/tests/product-branding.spec.ts
-index 6b2c2c9e91..8caaffb9fe 100644
+index 6b2c2c9e91cc64895da58370752eb05f63e02a1d..8caaffb9fed1b31c524f8bd394600ba10de02feb 100644
 --- a/apps/desktop/tests/product-branding.spec.ts
 +++ b/apps/desktop/tests/product-branding.spec.ts
 @@ -16,3 +16,9 @@ it('ordinary DSH builds keep the official icon and name', () => {
@@ -194,7 +194,7 @@ index 6b2c2c9e91..8caaffb9fe 100644
 +})
 diff --git a/apps/desktop/tests/studio-paths.spec.ts b/apps/desktop/tests/studio-paths.spec.ts
 new file mode 100644
-index 0000000000..89a9a8e873
+index 0000000000000000000000000000000000000000..89a9a8e873e90f4b6d2ab51ab6c7171b44ab5ed0
 --- /dev/null
 +++ b/apps/desktop/tests/studio-paths.spec.ts
 @@ -0,0 +1,13 @@

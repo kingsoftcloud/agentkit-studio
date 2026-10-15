@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.d.mts b/apps/desktop/scripts/desktop-auto-update-environment.d.mts
-index 00ebf8c5c0..198b506dc1 100644
+index 00ebf8c5c0a23834ac8420ae351ba7f58383a171..198b506dc189968660e7ba29ad79360311623438 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.d.mts
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.d.mts
 @@ -1,5 +1,12 @@
@@ -12,7 +12,7 @@ index 00ebf8c5c0..198b506dc1 100644
 +export type DesktopAutoUpdateChannel = 'stable' | 'preview' | 'nightly'
 +
 +export function resolveDesktopAutoUpdateChannel(env: NodeJS.ProcessEnv): DesktopAutoUpdateChannel
-
+ 
  /** Supported Desktop update deployment. */
  export type DesktopAutoUpdateEnvironment = 'test' | 'production'
 @@ -10,6 +17,7 @@ export type DesktopAutoUpdateTarget = 'mac-arm64' | 'mac-x64' | 'win-x64'
@@ -29,14 +29,14 @@ index 00ebf8c5c0..198b506dc1 100644
    platform: NodeJS.Platform,
 +  updateChannel?: DesktopAutoUpdateChannel,
  ): string
-
+ 
  /**
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
-index 464d079b4d..bccffe5d24 100644
+index 464d079b4dd6aeea5265b731ac2f7b13909f1e4d..bccffe5d245a79098d7ee6ff956a1dc82550a93e 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
 @@ -4,6 +4,12 @@ import { valid } from 'semver'
-
+ 
  /** Environment variable that selects the Desktop update deployment. */
  export const DESKTOP_AUTO_UPDATE_ENV = 'DSH_DESKTOP_AUTO_UPDATE_ENV'
 +/** Environment variable that selects the Studio update feed origin. */
@@ -45,7 +45,7 @@ index 464d079b4d..bccffe5d24 100644
 +export const DESKTOP_UPDATE_CHANNEL_ENV = 'DSH_DESKTOP_UPDATE_CHANNEL'
 +
 +const UPDATE_CHANNELS = new Set(['stable', 'preview', 'nightly'])
-
+ 
  const UPDATE_ENVIRONMENTS = {
    test: {
 @@ -14,14 +20,31 @@ const UPDATE_ENVIRONMENTS = {
@@ -61,7 +61,7 @@ index 464d079b4d..bccffe5d24 100644
      secretKeyEnvName: 'DOWNLOAD_PROD_COS_SECRET_KEY',
    },
  }
-
+ 
 +/** Resolve the Studio release channel embedded in the updater metadata. */
 +export function resolveDesktopAutoUpdateChannel(env) {
 +  if (resolveDesktopAutoUpdateEnvironment(env) === 'production') {
@@ -80,7 +80,7 @@ index 464d079b4d..bccffe5d24 100644
 +}
 +
  const UPDATE_TARGETS = new Set(['mac-arm64', 'mac-x64', 'win-x64'])
-
+ 
  /**
 @@ -70,14 +93,15 @@ export function desktopBuildRecordFilename(target) {
   * @param {NodeJS.Platform} platform - Target platform.
@@ -98,7 +98,7 @@ index 464d079b4d..bccffe5d24 100644
 +  if (!UPDATE_CHANNELS.has(updateChannel)) throw new Error(`desktop auto-update: unsupported channel ${updateChannel}`)
 +  return `${updateChannel}${platform === 'darwin' ? '-mac' : ''}.yml`
  }
-
+ 
  /**
 @@ -129,6 +153,7 @@ function httpsOrigin(value, name) {
   */
@@ -117,12 +117,12 @@ index 464d079b4d..bccffe5d24 100644
      origin,
      keyPrefix,
 diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
-index 62f5384e4f..a94f46eade 100644
+index 62f5384e4f3a942ca01977f0558a324cb270b830..a94f46eade51c6d568003875a5fd121a0cfb45c3 100644
 --- a/apps/desktop/scripts/desktop-package-environment.mjs
 +++ b/apps/desktop/scripts/desktop-package-environment.mjs
 @@ -13,7 +13,7 @@ import { resolveWindowsSignatureCacheDirectory } from './windows-signature-cache
  import { resolveWindowsPackageSettings } from './windows-package-settings.mjs'
-
+ 
  const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 -const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
 +const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|UPDATE_ORIGIN|UPDATE_CHANNEL|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
@@ -130,7 +130,7 @@ index 62f5384e4f..a94f46eade 100644
  const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
  const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
 diff --git a/apps/desktop/scripts/desktop-release-environment.mjs b/apps/desktop/scripts/desktop-release-environment.mjs
-index 635a57a3c9..971698fb52 100644
+index 635a57a3c9cab8848eadb9fb302d26117d4fb475..971698fb529040c1edadb277d79571acce80c5a5 100644
 --- a/apps/desktop/scripts/desktop-release-environment.mjs
 +++ b/apps/desktop/scripts/desktop-release-environment.mjs
 @@ -65,6 +65,10 @@ export function resolveDesktopAppId(env) {
@@ -143,15 +143,15 @@ index 635a57a3c9..971698fb52 100644
 +  }
    return appId
  }
-
+ 
 diff --git a/apps/desktop/scripts/desktop-upload-plan.ts b/apps/desktop/scripts/desktop-upload-plan.ts
-index 439a4fa6e1..097ae50e6d 100644
+index 439a4fa6e131c749c92a96abe55c641392185373..097ae50e6d0d7457ea30bc5bd58e5f102888e705 100644
 --- a/apps/desktop/scripts/desktop-upload-plan.ts
 +++ b/apps/desktop/scripts/desktop-upload-plan.ts
 @@ -216,7 +216,7 @@ export async function createDesktopUploadPlan(
      throw new Error(`desktop upload: ${targetName} package completion record for ${buildVersion} does not match the ${update.environment} update destination`)
    }
-
+ 
 -  const metadataFilename = desktopUpdateMetadataFilename(buildVersion, target.platform)
 +  const metadataFilename = desktopUpdateMetadataFilename(buildVersion, target.platform, update.channel)
    const metadataPath = join(artifactsRoot, metadataFilename)
@@ -169,7 +169,7 @@ index 439a4fa6e1..097ae50e6d 100644
    }
    const latestFilename = `dsh-latest-${target.platform === 'darwin' ? 'macos' : 'windows'}-${target.arch}.${target.platform === 'darwin' ? 'dmg' : 'exe'}`
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index 79078df2e1..4e6c752b6b 100644
+index 79078df2e1c34fb629aa1da47998975eb8ad31a1..4e6c752b6bcc9a2976342835245e3dcbedbeacfb 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -247,6 +247,6 @@ export function createElectronBuilderConfig(
@@ -181,12 +181,12 @@ index 79078df2e1..4e6c752b6b 100644
    }
  }
 diff --git a/apps/desktop/scripts/macos-app-update-config.mjs b/apps/desktop/scripts/macos-app-update-config.mjs
-index 3b9e0019c6..a0389b9702 100644
+index 3b9e0019c64037ba6925c16fc8dc6de2a9753cf4..a0389b970245cf62cba142020559c637465cb913 100644
 --- a/apps/desktop/scripts/macos-app-update-config.mjs
 +++ b/apps/desktop/scripts/macos-app-update-config.mjs
 @@ -5,7 +5,14 @@ import { join } from 'node:path'
  import { dump, load } from 'js-yaml'
-
+ 
  const CONFIG_FILENAME = 'app-update.yml'
 -const CHANNEL = 'nightly'
 +const CHANNELS = new Set(['stable', 'preview', 'nightly'])
@@ -197,7 +197,7 @@ index 3b9e0019c6..a0389b9702 100644
 +  }
 +  return value
 +}
-
+ 
  function object(value, label) {
    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
 @@ -31,23 +38,23 @@ export function resolveMacOSAppUpdateFeed(publish) {
@@ -212,7 +212,7 @@ index 3b9e0019c6..a0389b9702 100644
 -  return { publicUrl: nonEmptyString(provider.url, 'publish provider URL') }
 +  return { publicUrl: nonEmptyString(provider.url, 'publish provider URL'), channel: channel(provider.channel) }
  }
-
+ 
  /**
   * Create the electron-updater configuration embedded before code signing.
   * @param {{ publicUrl: string }} update - Resolved update feed.
@@ -239,7 +239,7 @@ index 3b9e0019c6..a0389b9702 100644
    }
    const actualCacheDirName = nonEmptyString(config.updaterCacheDirName, `${CONFIG_FILENAME}.updaterCacheDirName`)
 diff --git a/apps/desktop/scripts/package-macos.ts b/apps/desktop/scripts/package-macos.ts
-index c1a2cb5c71..4ba0fd12ca 100644
+index c1a2cb5c71269079004045b6ba2a37ea45dcfef9..4ba0fd12ca8cff27d3c4f1e085cd6022cc66dc1a 100644
 --- a/apps/desktop/scripts/package-macos.ts
 +++ b/apps/desktop/scripts/package-macos.ts
 @@ -115,7 +115,7 @@ export async function packageMacOSArtifacts(
@@ -252,7 +252,7 @@ index c1a2cb5c71..4ba0fd12ca 100644
      for (const [output, filename] of artifacts) {
        const file = join(output, filename)
 diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
-index 8d6eb808e7..ee5e28a3b4 100644
+index 8d6eb808e732d2f4e66414350dcc849ed68c27c2..ee5e28a3b41e9531549e8f9e73095f62d27b71f7 100644
 --- a/apps/desktop/src/update-coordinator.ts
 +++ b/apps/desktop/src/update-coordinator.ts
 @@ -66,8 +66,11 @@ export class DesktopUpdateCoordinator {
@@ -270,7 +270,7 @@ index 8d6eb808e7..ee5e28a3b4 100644
      this.updater.allowDowngrade = false
      this.updater.on('download-progress', this.onProgress)
 diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-index c33a9384df..c1cb0354e8 100644
+index c33a9384df71ece8d878ad7aba6a802093a2827b..c1cb0354e81fb38fd6262aff4f34c3659d2fcdee 100644
 --- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 +++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 @@ -28,6 +28,7 @@ describe('desktop auto-update environment', () => {
@@ -290,7 +290,7 @@ index c33a9384df..c1cb0354e8 100644
        origin: 'https://desktop-updates.example.com',
        publicUrl: `https://desktop-updates.example.com/dsh-desk/${RELEASE_ID}/feeds/mac-arm64/`,
 @@ -60,16 +62,17 @@ describe('desktop auto-update environment', () => {
-
+ 
    it.each([undefined, RELEASE_ID, 'unused-test-value'])('keeps production paths independent of test release ID %s', (id) => {
      expect(resolveDesktopAutoUpdateConfig({
 -      DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
@@ -319,12 +319,12 @@ index c33a9384df..c1cb0354e8 100644
 +      DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DSH_DESKTOP_UPDATE_CHANNEL: 'stable',
 +    }, 'win32', 'x64')).toThrow(/DSH_DESKTOP_UPDATE_ORIGIN/u)
    })
-
+ 
    it('rejects a test download URL that is not an HTTPS origin', () => {
 @@ -111,10 +114,30 @@ describe('desktop auto-update environment', () => {
      expect(() => desktopBuildRecordFilename('linux-x64' as 'mac-arm64')).toThrow(/unsupported target/u)
    })
-
+ 
 +  it('requires an explicit Studio production origin and accepts Stable/Preview lanes', () => {
 +    expect(resolveDesktopAutoUpdateConfig({
 +      DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
@@ -355,11 +355,11 @@ index c33a9384df..c1cb0354e8 100644
      expect(() => desktopUpdateMetadataFilename('1.2.3', 'linux')).toThrow(/unsupported metadata platform/u)
    })
 diff --git a/apps/desktop/tests/desktop-upload-plan.spec.ts b/apps/desktop/tests/desktop-upload-plan.spec.ts
-index f1e2097075..a45b094fd9 100644
+index f1e2097075a385c08e8c22386146d6012e62d046..a45b094fd9a6564404c20e9611084c5e221b11b3 100644
 --- a/apps/desktop/tests/desktop-upload-plan.spec.ts
 +++ b/apps/desktop/tests/desktop-upload-plan.spec.ts
 @@ -50,9 +50,10 @@ async function fixture(
-
+ 
    const [os, arch] = target.split('-') as ['mac' | 'win', 'arm64' | 'x64']
    const base = `deepseek-harness-${version}-${os}-${arch}`
 +  const channel = environment === 'production' ? (version.includes('-') ? 'preview' : 'stable') : 'nightly'
@@ -428,7 +428,7 @@ index f1e2097075..a45b094fd9 100644
      })
    })
 diff --git a/apps/desktop/tests/expected/latest-installer-uploads.json b/apps/desktop/tests/expected/latest-installer-uploads.json
-index b4b6d90b4f..818d8210f0 100644
+index b4b6d90b4f5d093f3a6014d64eaebd414e6a4df2..818d8210f05a55e36c4f05f33df3db3680cb767f 100644
 --- a/apps/desktop/tests/expected/latest-installer-uploads.json
 +++ b/apps/desktop/tests/expected/latest-installer-uploads.json
 @@ -3,7 +3,7 @@
@@ -459,21 +459,21 @@ index b4b6d90b4f..818d8210f0 100644
      "key": "desktop/dsh-latest-windows-x64.exe",
      "contentType": "application/vnd.microsoft.portable-executable",
 diff --git a/apps/desktop/tests/macos-app-update-config.spec.ts b/apps/desktop/tests/macos-app-update-config.spec.ts
-index 72a003734a..f3b3f95880 100644
+index 72a003734a331d7a52414bd723a4128fb5d1640c..f3b3f95880415597f8c33a4b1db76c80c3622f2b 100644
 --- a/apps/desktop/tests/macos-app-update-config.spec.ts
 +++ b/apps/desktop/tests/macos-app-update-config.spec.ts
 @@ -10,7 +10,7 @@ import {
  } from '../scripts/macos-app-update-config.mjs'
-
+ 
  const roots: string[] = []
 -const update = { publicUrl: 'https://desktop-updates.example.com/dsh-desk/feeds/mac-arm64/' }
 +const update = { publicUrl: 'https://desktop-updates.example.com/dsh-desk/feeds/mac-arm64/', channel: 'preview' as const }
-
+ 
  async function fixture(): Promise<{ appPath: string; resourcesDir: string }> {
    const root = await mkdtemp(join(tmpdir(), 'desktop-macos-update-config-'))
 @@ -26,8 +26,8 @@ afterEach(async () => {
  })
-
+ 
  describe('macOS packaged updater configuration', () => {
 -  it('uses the final generic Nightly provider configured for the build', () => {
 -    expect(resolveMacOSAppUpdateFeed([{ provider: 'generic', url: update.publicUrl, channel: 'nightly' }]))
@@ -492,7 +492,7 @@ index 72a003734a..f3b3f95880 100644
      })
      await writeMacOSAppUpdateConfig(paths.resourcesDir, update, 'deepseek-harness-updater')
 @@ -49,8 +49,8 @@ describe('macOS packaged updater configuration', () => {
-
+ 
    it.each([
      ['missing', undefined],
 -    ['wrong feed', 'provider: generic\nurl: https://wrong.example.com/\nchannel: nightly\nupdaterCacheDirName: fixture\n'],
@@ -503,13 +503,13 @@ index 72a003734a..f3b3f95880 100644
      const paths = await fixture()
      if (contents !== undefined) await writeFile(join(paths.resourcesDir, 'app-update.yml'), contents)
 diff --git a/apps/desktop/tests/macos-signature.spec.ts b/apps/desktop/tests/macos-signature.spec.ts
-index 456b2e1d8e..86002a0bda 100644
+index 456b2e1d8ef301f7580b7319e08649092cfb954f..86002a0bda3d2abf97399b718a71f327a5fa4add 100644
 --- a/apps/desktop/tests/macos-signature.spec.ts
 +++ b/apps/desktop/tests/macos-signature.spec.ts
 @@ -198,6 +198,16 @@ describe('desktop macOS release signature', () => {
      })).toThrow(/10 uppercase/u)
    })
-
+ 
 +  it('requires Studio release identity while preserving local test identities', () => {
 +    expect(resolveDesktopAppId({ DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
 +      DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio' })).toBe('com.kingsoftcloud.agentkit-studio')
@@ -524,13 +524,13 @@ index 456b2e1d8e..86002a0bda 100644
      expect(resolveMacOSNotarizationEnvironment(RELEASE_ENVIRONMENT)).toEqual({
        appleApiKey: RELEASE_ENVIRONMENT.APPLE_API_KEY,
 diff --git a/apps/desktop/tests/update-coordinator.spec.ts b/apps/desktop/tests/update-coordinator.spec.ts
-index 790ad63fcf..7b4040b34e 100644
+index 790ad63fcfb427aac30b3ba5af740bbfa6caad5f..7b4040b34e3cf4df3ff5245110bc721dda067216 100644
 --- a/apps/desktop/tests/update-coordinator.spec.ts
 +++ b/apps/desktop/tests/update-coordinator.spec.ts
 @@ -150,6 +150,14 @@ describe('desktop update coordinator', () => {
      })
    })
-
+ 
 +  it('uses Stable metadata without allowing prerelease or downgrade', () => {
 +    vi.stubEnv('DSH_DESKTOP_UPDATE_CHANNEL', 'stable')
 +    try {
@@ -543,7 +543,7 @@ index 790ad63fcf..7b4040b34e 100644
      const f = fixture()
      const checked = Promise.withResolvers<{ isUpdateAvailable: boolean; updateInfo: { version: string } }>()
 diff --git a/apps/desktop/tsdown.config.ts b/apps/desktop/tsdown.config.ts
-index 5c7d571d38..5acd315861 100644
+index 5c7d571d38040c298ec19dfc31bcfb892ab6e430..5acd3158619b698ea19957435492998d5cc1dee2 100644
 --- a/apps/desktop/tsdown.config.ts
 +++ b/apps/desktop/tsdown.config.ts
 @@ -33,6 +33,9 @@ if (clientVersion === undefined) throw new Error('desktop build: the client envi
@@ -554,5 +554,5 @@ index 5c7d571d38..5acd315861 100644
 +  // installed app must not depend on the shell's ambient environment.
 +  'process.env.DSH_DESKTOP_UPDATE_CHANNEL': JSON.stringify(process.env.DSH_DESKTOP_UPDATE_CHANNEL?.trim() || 'nightly'),
  }
-
+ 
  export default defineConfig([
