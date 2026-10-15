@@ -1,0 +1,120 @@
+diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
+index 5edb5518b515354dba9aa656e61a98fafbe901ab..fcd4124251b1b95cf97e95d45873bc602d0c0463 100644
+--- a/apps/desktop-host/src/index.ts
++++ b/apps/desktop-host/src/index.ts
+@@ -1,6 +1,6 @@
+ /** Launch the Desktop profile through the Web application and report its URL to Electron. */
+ 
+-import { basename, delimiter, join } from 'node:path'
++import { delimiter, join } from 'node:path'
+ import { inspect } from 'node:util'
+ import { loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
+ import { runProfile } from '@deepseek-ai/dsh/profile-boot'
+@@ -14,6 +14,7 @@ import { installDesktopUpdateTaskControl } from './update-tasks.ts'
+ import { installDesktopQuitInspection } from './quit-inspection.ts'
+ import { installPlatformSessionPublisher } from './platform-session.ts'
+ import { installOfficeEngineResolution } from './office-engine.ts'
++import { resolveDesktopWebPort } from './listen-port.ts'
+ 
+ async function main(): Promise<void> {
+   const runtimeDir = process.argv[2] as string
+@@ -29,8 +30,7 @@ async function main(): Promise<void> {
+     profile: 'desktop',
+     resolvedProfile: { profile, installAnchor },
+     patchFiles: [],
+-    // The Studio profile must coexist with the official Desktop's fixed port.
+-    args: ['--no-open', '--port', basename(projectDir) === 'desktop-agentkit-studio' ? '0' : '19387'],
++    args: ['--no-open', '--port', String(resolveDesktopWebPort(projectDir))],
+     ...(process.argv[5] === undefined ? {} : {
+       packageManager: {
+         command: process.execPath,
+diff --git a/apps/desktop-host/src/listen-port.ts b/apps/desktop-host/src/listen-port.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..083163ec03efd94914d92fe8cce4446476e13896
+--- /dev/null
++++ b/apps/desktop-host/src/listen-port.ts
+@@ -0,0 +1,21 @@
++/** Resolve the Desktop web server port before profile startup. */
++
++import { basename } from 'node:path'
++
++/**
++ * Select the configured port or preserve the profile's existing default.
++ * @param projectDir - Managed Desktop profile directory.
++ * @param env - Process environment containing an optional DSH_DESKTOP_WEB_PORT.
++ * @returns An integer TCP port; zero requests an available port from the OS.
++ * @throws When the configured value is not a decimal integer from 0 through 65535.
++ */
++export function resolveDesktopWebPort(projectDir: string, env: NodeJS.ProcessEnv = process.env): number {
++  const configured = env.DSH_DESKTOP_WEB_PORT
++  if (configured === undefined) return basename(projectDir) === 'desktop-agentkit-studio' ? 0 : 19387
++  const value = configured.trim()
++  const port = Number(value)
++  if (!/^[0-9]+$/.test(value) || !Number.isInteger(port) || port > 65535) {
++    throw new Error('DSH_DESKTOP_WEB_PORT must be a decimal integer from 0 through 65535')
++  }
++  return port
++}
+diff --git a/apps/desktop-host/tests/listen-port.spec.ts b/apps/desktop-host/tests/listen-port.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..acf840e0246ce1b451e168f6d31a97ee6b4ab727
+--- /dev/null
++++ b/apps/desktop-host/tests/listen-port.spec.ts
+@@ -0,0 +1,16 @@
++import { join } from 'node:path'
++import { expect, it } from 'vitest'
++import { resolveDesktopWebPort } from '../src/listen-port.ts'
++
++it('preserves the existing profile defaults when no explicit port is configured', () => {
++  expect(resolveDesktopWebPort(join('profiles', 'desktop'), {})).toBe(19387)
++  expect(resolveDesktopWebPort(join('profiles', 'desktop-agentkit-studio'), {})).toBe(0)
++})
++
++it.each(['0', '1', '19387', '65535', ' 3210 '])('uses the explicitly configured listen port %s', (value) => {
++  expect(resolveDesktopWebPort(join('profiles', 'desktop'), { DSH_DESKTOP_WEB_PORT: value })).toBe(Number(value))
++})
++
++it.each(['', ' ', '-1', '65536', '1.5', 'NaN', '0x50', '1e3'])('rejects an invalid listen port before starting the profile: %j', (value) => {
++  expect(() => resolveDesktopWebPort(join('profiles', 'desktop'), { DSH_DESKTOP_WEB_PORT: value })).toThrow('DSH_DESKTOP_WEB_PORT')
++})
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index 3535f2e25b5ef55e953b0af1b900b80343d9ed26..a024f63230adf3e62901159d8a70339c91536e07 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -69,8 +69,8 @@
+   en: bc50fd8a4d96c227
+   zh: fb0a6ce80c31cda6
+ /deepseek-harness-desktop/low-level-development-overrides:
+-  en: 0b225f914142ef0b
+-  zh: 9ffd07768d37824e
++  en: 43c54f8b87d99049
++  zh: 0ca61556b0ef6ea8
+ /deepseek-harness-desktop/known-limitations:
+   en: 5b77213c86bbcfb6
+   zh: b34bf21773bb852b
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index a17642c908fc3f528b1a945e3ae4ba522fc24908..ffeb502ac12b14920710faa8f01dc58fcd0f487f 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -461,6 +461,8 @@ The downloaded bytes are inert, and the installation call is recorded rather tha
+ 
+ An unpackaged Electron process uses `.desktop-build/development/project` under its application directory as its development project. `DSH_DESKTOP_PNPM_ENTRY` and `DSH_DESKTOP_DSH_DIR` are optional overrides with application-path defaults. `DSH_DESKTOP_PRIMARY_RUNTIME_DIR` is required for every unpackaged launch: the development launchers (`dev:desktop`, `start:desktop`, and the workspace-update qualification runner) set it to the primary-runtime directory of the target they prepared, and a launch without it fails with the fatal startup dialog. The launcher must set it because the shell cannot derive that directory from `process.arch`: the build target fixes Windows to x64 while the host may be arm64. Packaged applications ignore these variables, resolve signed resources from `process.resourcesPath`, and use the managed Desktop profile.
+ 
++`DSH_DESKTOP_WEB_PORT` selects the local web server port for packaged and unpackaged Desktop launches. It accepts a decimal integer from `0` through `65535`; `0` lets the OS select an available port so isolated instances can run together. Invalid or empty values fail startup. When omitted, the port remains `19387`, except the existing `desktop-agentkit-studio` profile uses an available port. This setting does not change profile or user-data directories.
++
+ ## Known limitations
+ 
+ - Account sign-in is not connected; the Sign in button is disabled. Windows material rendering still requires platform QA.
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index 875c6b375f6247707084bf04461620b1c2554f2c..88044c4a050a3f13c9d324cc5d65ed5dfbadfd90 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -463,6 +463,8 @@ node apps/desktop/node_modules/pnpm/bin/pnpm.mjs --dir apps/desktop run test:upd
+ 
+ 未打包的 Electron 进程使用应用目录下的 `.desktop-build/development/project` 作为开发项目。`DSH_DESKTOP_PNPM_ENTRY` 和 `DSH_DESKTOP_DSH_DIR` 是带应用路径默认值的可选覆盖项。每次未打包启动都必须设置 `DSH_DESKTOP_PRIMARY_RUNTIME_DIR`：开发启动器（`dev:desktop`、`start:desktop` 及工作区更新验证运行器）会把它设置为自己已准备目标的 primary-runtime 目录；缺少该变量的启动会以致命启动对话框失败。启动器必须设置它，因为壳无法从 `process.arch` 推导该目录：构建目标将 Windows 固定为 x64，而宿主可能是 arm64。打包应用会忽略这些变量，从 `process.resourcesPath` 解析签名资源，并使用受管 Desktop profile。
+ 
++`DSH_DESKTOP_WEB_PORT` 为打包及未打包的 Desktop 启动选择本地 Web 服务端口。它接受 `0` 至 `65535` 的十进制整数；`0` 让操作系统分配可用端口，使隔离实例可以同时运行。无效值或空值会使启动失败。省略时端口仍为 `19387`，已有的 `desktop-agentkit-studio` Profile 则使用可用端口。此设置不改变 Profile 或用户数据目录。
++
+ ## 已知限制
+ 
+ - 账号登录尚未接入；登录按钮禁用。Windows 材质效果仍需平台验证。
