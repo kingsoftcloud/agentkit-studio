@@ -21,7 +21,7 @@ export function patchPaths(source) {
 export function validatePatchManifest(manifest, files, { baseCommit = manifest.baseCommit } = {}) {
   if (manifest.schemaVersion !== 1 || !/^[a-f0-9]{40}$/.test(manifest.baseCommit || '') || manifest.baseCommit !== baseCommit) reject('baseline mismatch');
   if (!text(manifest.upstream?.repository) || !text(manifest.upstream?.ref)) reject('missing upstream provenance');
-  if (!/^[a-f0-9]{64}$/.test(manifest.patchedDiffSha256 || '')) reject('missing patched source fingerprint');
+  if (!/^[a-f0-9]{40}$/.test(manifest.patchedTree || '') || !/^[a-f0-9]{64}$/.test(manifest.patchedSourceSha256 || '')) reject('missing patched source fingerprint');
   if (!Array.isArray(manifest.patches) || !manifest.patches.length) reject('empty series');
   const entries = manifest.patches, ids = new Map(), names = new Set();
   for (const entry of entries) {

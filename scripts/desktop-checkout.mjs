@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join, relative, isAbsolute, sep } from 'node:path';
+import { fingerprintPatchedSource } from './patched-source-fingerprint.mjs';
 
 const execute = promisify(execFile);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -29,7 +30,7 @@ async function identify({ source, output, patches, commit }) {
 
 async function sourceDigest(checkout) {
   if (await git(checkout,['ls-files','--others','--exclude-standard'])) throw new Error('desktop checkout: cached source was modified; preserve edits and remove the cache explicitly');
-  return digest(await git(checkout,['diff','HEAD','--binary']));
+  return fingerprintPatchedSource(checkout);
 }
 
 async function prepare(input) {
@@ -38,7 +39,20 @@ async function prepare(input) {
   try { record = JSON.parse(await readFile(join(directory,'snapshot.json'),'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw new Error('desktop checkout: invalid cache record'); }
   if (record) {
-    if (await git(checkout,['rev-parse','HEAD']) !== commit || await sourceDigest(checkout) !== record.digest) throw new Error('desktop checkout: cached source was modified; preserve edits and remove the cache explicitly');
+    if (await git(checkout,['rev-parse','HEAD']) !== commit) throw new Error('desktop checkout: cached source was modified; preserve edits and remove the cache explicitly');
+    if (record.schemaVersion !== 2) {
+      if (record.schemaVersion !== undefined || typeof record.digest !== 'string' || digest(await git(checkout,['diff','HEAD','--binary'])) !== record.digest) throw new Error('desktop checkout: legacy cache cannot be verified; preserve it and use a new output directory');
+    }
+    const fingerprint = await sourceDigest(checkout);
+    if (record.schemaVersion === 2) {
+      if (fingerprint.tree !== record.source?.tree || fingerprint.sha256 !== record.source?.sha256) throw new Error('desktop checkout: cached source was modified; preserve edits and remove the cache explicitly');
+    } else {
+      // Only migrate a legacy cache after its original guard still verifies it.
+      // A mismatch never resets the source or trusts a newly computed fingerprint.
+      const next = join(directory, 'snapshot.next.json');
+      await writeFile(next, JSON.stringify({ schemaVersion: 2, commit, source: fingerprint }), { mode: 0o600 });
+      await rename(next, join(directory, 'snapshot.json'));
+    }
     return checkout;
   }
   const staging = await mkdtemp(join(directory,'preparing-'));
@@ -53,7 +67,7 @@ async function prepare(input) {
     }
     const fingerprint = await sourceDigest(destination);
     await rename(destination,checkout);
-    await writeFile(join(directory,'snapshot.json'),JSON.stringify({commit,digest:fingerprint}),{mode:0o600,flag:'wx'});
+    await writeFile(join(directory,'snapshot.json'),JSON.stringify({schemaVersion:2,commit,source:fingerprint}),{mode:0o600,flag:'wx'});
     return checkout;
   } finally { await rm(staging,{recursive:true,force:true}); }
 }

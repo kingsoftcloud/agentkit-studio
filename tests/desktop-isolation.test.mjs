@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, rm, access, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { writeReviewedPatchFixture } from './helpers/reviewed-patch-series.mjs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import { prepareDesktopCheckout, withDesktopCheckout } from '../scripts/desktop-checkout.mjs';
 
 async function fixture(t) {
@@ -21,7 +22,7 @@ async function fixture(t) {
   const commit = git(['rev-parse','HEAD']);
   await writeFile(join(source, 'client.js'), 'patched source\n');
   await writeFile(join(patches, '001-client.patch'), git(['diff']) + '\n');
-  await writeReviewedPatchFixture(patches, commit);
+  await writeReviewedPatchFixture(patches, commit, source);
   await mkdir(join(source, 'dist')); await writeFile(join(source, 'dist/client.js'), 'live browser bundle');
   await mkdir(join(source, 'node_modules')); await writeFile(join(source, 'node_modules/owner'), 'live dependencies');
   await writeFile(join(source, '.env.local'), 'PRIVATE=must-not-copy');
@@ -56,6 +57,24 @@ test('dirty cached source and overlapping builds fail without resetting files', 
     await writeFile(join(directory,'client.js'),'local edit must survive\n');
   });
   await assert.rejects(prepareDesktopCheckout(input),/modified/);
+});
+
+test('verified build caches survive changes to Git diff presentation', async t => {
+  const input = await fixture(t), checkout = await prepareDesktopCheckout(input);
+  execFileSync('git', ['config', 'core.abbrev', '12'], { cwd: checkout });
+  execFileSync('git', ['config', 'diff.mnemonicPrefix', 'true'], { cwd: checkout });
+  assert.equal(await prepareDesktopCheckout(input), checkout);
+});
+
+test('legacy cache metadata migrates only after the original fingerprint verifies', async t => {
+  const input = await fixture(t), checkout = await prepareDesktopCheckout(input);
+  const diff = execFileSync('git', ['diff', 'HEAD', '--binary'], { cwd: checkout, encoding: 'utf8' }).trim();
+  const digest = createHash('sha256').update(diff).digest('hex'), record = join(dirname(checkout), 'snapshot.json');
+  await writeFile(record, JSON.stringify({ commit: input.commit, digest }));
+  assert.equal(await prepareDesktopCheckout(input), checkout);
+  assert.equal(JSON.parse(await readFile(record, 'utf8')).schemaVersion, 2);
+  await writeFile(record, JSON.stringify({ commit: input.commit, digest: '0'.repeat(64) }));
+  await assert.rejects(prepareDesktopCheckout(input), /legacy cache cannot be verified/);
 });
 
 test('wrong baseline and invalid patch cannot reach a build', async t => {
