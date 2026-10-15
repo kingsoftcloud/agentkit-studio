@@ -139,7 +139,8 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible } = {}) {
+    this.assertHostCompatible = assertHostCompatible;
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
     this.getModelSelection = getModelSelection;
@@ -165,6 +166,7 @@ export class DshPresetAdmission {
   }
 
   async ensure(agentId, { agent: suppliedAgent, allowUnavailableResources = false } = {}) {
+    this.assertHostCompatible?.();
     if (!this.registry || typeof this.registry.register !== 'function') {
       const error = new Error('DSH agent preset registry 不可用');
       error.code = 'DSH_PRESET_REGISTRY_UNAVAILABLE';

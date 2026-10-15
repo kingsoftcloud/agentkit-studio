@@ -66,5 +66,6 @@ jobs:
           path: |
             .artifacts/patched-host-acceptance.json
             .artifacts/patched-host/host-tests.json
+            .artifacts/patched-host/host-dependency-lifecycle.json
           if-no-files-found: error
           retention-days: 7

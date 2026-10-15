@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyDesktopModuleGraph, STUDIO_DESKTOP_ENTRIES } from '../scripts/desktop-module-graph.mjs';
+import { verifyDesktopArchiveEntries, verifyDesktopModuleGraph, STUDIO_DESKTOP_ENTRIES } from '../scripts/desktop-module-graph.mjs';
+
+test('the actual archive entry policy rejects Coveralls metadata on Unix and Windows', () => {
+  for (const path of ['/.coveralls.yml', '/dsh/node_modules/debug/.coveralls.yaml',
+    '\\dsh\\node_modules\\debug\\.coveralls.yml', '\\dsh\\node_modules\\outer\\node_modules\\debug\\.coveralls.yaml']) {
+    assert.throws(() => verifyDesktopArchiveEntries([path]), /non-runtime Coveralls CI configuration/);
+  }
+  assert.deepEqual(verifyDesktopArchiveEntries(['\\dsh\\node_modules\\debug\\index.js',
+    '/dsh/node_modules/debug/LICENSE', '/dsh/node_modules/provider/.manifest.json']), { nonRuntimeCiMetadataAbsent: true });
+});
 
 test('the packaged host gate rejects a shared build chunk omitted by the npm file list', async () => {
   const root = 'dsh/node_modules/@deepseek-ai/dsh-agent-preset-registry/lib/';

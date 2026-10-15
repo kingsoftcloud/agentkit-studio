@@ -244,10 +244,13 @@ jobs:
           if (Test-Path .artifacts/windows-candidate/provenance.json) { Copy-Item .artifacts/windows-candidate/provenance.json .artifacts/windows-proof/candidate-provenance.json }
       - name: Verify the actually installed Windows App UI
         if: ${{ ! inputs.diagnostic_only }}
+        timeout-minutes: 20
         shell: pwsh
         env:
           BUILD_VERSION: ${{ steps.product.outputs.build_version }}
         run: |
+          node .qualification-tools/scripts/verify-desktop-module-graph.mjs (Join-Path (Split-Path $env:STUDIO_INSTALLED_APP) 'resources/app.asar') --studio | Out-File .artifacts/windows-proof/studio-module-graph.json -Encoding utf8
+          if ($LASTEXITCODE) { throw 'Installed Studio archive verification failed' }
           node .qualification-tools/scripts/verify-windows-app-ui.mjs
           if ($LASTEXITCODE) { throw 'Installed Windows App UI acceptance failed' }
       - name: Collect credential-free packaging diagnostics
@@ -272,6 +275,7 @@ jobs:
             .artifacts/windows-release/
             .artifacts/windows-proof/
             .artifacts/windows-diagnostics/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
       - name: Remove local signing settings

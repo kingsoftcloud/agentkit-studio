@@ -22,6 +22,7 @@ export function createStudioRoutes(ctx, services) {
   const builds = createBuildRoutes(deps);
   const models = createModelRoutes(deps);
   return Object.freeze({
+    host: async () => ({ ok: true, value: services.hostCompatibility.inspect() }),
     resources, mcp: resources,
     credentials: (_endpoint, payload) => credentials(payload),
     builds, operations: builds,

@@ -48,15 +48,23 @@ try {
   assert.equal(login.status, 303, 'official launch-token exchange');
   const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
   assert.ok(cookie, 'official browser authentication cookie');
+  const index = await fetch(`${url.origin}/`, { headers: { cookie }, signal: AbortSignal.timeout(30000) });
+  assert.equal(index.status, 200, 'the authenticated page must render its index injections');
+  assert.match(await index.text(), /__AGENTKIT_STUDIO__/, 'the page must include the Studio bootstrap value');
   const operations = [];
-  for (const method of ['models/credential-status', 'settings/get']) {
+  for (const method of ['host/compatibility', 'models/credential-status', 'settings/get']) {
     const response = await fetch(`${url.origin}/agentkit`, { method: 'POST', headers: { cookie, origin: url.origin, 'content-type': 'application/json' }, body: JSON.stringify({ method, payload: {}, rpcId: method }), signal: AbortSignal.timeout(30000) });
     assert.equal(response.status, 200, method);
     const message = await response.json();
     assert.equal(message.result?.ok, true, `${method}: ${message.result?.error?.code || 'missing result'}`);
+    if (method === 'host/compatibility') {
+      assert.equal(message.result.value.baseline.compatible, true, 'actual DSH baseline');
+      assert.equal(message.result.value.contract.compatible, true, 'Studio integration version');
+      assert.ok(Object.values(message.result.value.features).every(feature => feature.available), 'all required live Host capabilities');
+    }
     operations.push({ method, passed: true });
   }
-  const report = { evidence: 'real-dsh-web-installed-studio-profile', fullStudioPlugin: true, studioSourceSha256: actual, matchesWorktree: true, officialCookieAuthentication: true, operations };
+  const report = { evidence: 'real-dsh-web-installed-studio-profile', fullStudioPlugin: true, studioSourceSha256: actual, matchesWorktree: true, officialCookieAuthentication: true, index: { status: index.status, studioBootstrap: true }, operations };
   const reportPath = resolve(values.report || '.artifacts/refactor/stage-1/studio-host-startup.json');
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(reportPath, JSON.stringify(report, null, 2) + '\n');
