@@ -1,47 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { codexToolHistory, codexConversationPrompt } from '../src/providers/codex-history.mjs';
+import { codexConversationPrompt } from '../src/providers/codex-history.mjs';
 
-const events = [
-  { seq: 0, type: 'turn/start', data: { turn: 1 } },
-  { seq: 1, type: 'agentkit/codex-tool', data: { callId: 'first:lookup', name: 'lookup', phase: 'started', arguments: '{}' } },
-  { seq: 2, type: 'agentkit/codex-tool', data: { callId: 'first:lookup', name: 'lookup', phase: 'completed', arguments: '{}', content: [{ type: 'text', text: 'HIDDEN_TOOL_VALUE' }] } },
-  { seq: 3, type: 'turn/end', data: { turn: 1 } },
-  { seq: 4, type: 'turn/start', data: { turn: 2 } },
-];
+const observation = { role: 'user', source: { kind: 'studio/codex-tool-observation', callId: 'lookup' }, content: [{ type: 'text', text: 'Recorded result: HIDDEN_TOOL_VALUE' }] };
 
-test('a reconstructed Codex turn can recall persisted observations absent from assistant text', () => {
-  const session = { snapshotEvents: () => structuredClone(events) };
-  const messages = [{ role: 'user', content: 'look up' }, { role: 'assistant', content: 'DONE' }, { role: 'user', content: 'recall the result' }];
-  const history = codexToolHistory(session);
-  const prompt = codexConversationPrompt({ input: 'recall the result', messages, toolHistory: history });
-  assert.match(prompt, /HIDDEN_TOOL_VALUE/);
+test('Codex receives native observations and the latest user task exactly once', () => {
+  const messages = [observation, { role: 'assistant', content: 'DONE' }, { role: 'user', content: 'recall the result' }];
+  const prompt = codexConversationPrompt({ input: 'recall the result', messages });
+  assert.match(prompt, /Recorded context: Recorded result: HIDDEN_TOOL_VALUE/);
   assert.equal(prompt.split('User: recall the result').length - 1, 1);
-  assert.deepEqual(codexToolHistory({ snapshotEvents: () => JSON.parse(JSON.stringify(events)) }), history, 'JSONL replay does not require native process state');
-  assert.equal(history.length, 1);
-  assert.equal(history[0].turn, 1);
-  assert.equal(history[0].phase, 'completed');
+  assert.equal(codexConversationPrompt({ input: 'recall the result', messages: JSON.parse(JSON.stringify(messages)) }), prompt);
 });
 
-test('missing, failed and unknown outcomes stay distinguishable; other session data stays out', () => {
-  const failure = { seq: 6, type: 'agentkit/codex-tool', data: { callId: 'second:run', name: 'codex/command', phase: 'failed', arguments: '{}', content: [], error: { code: 'CODEX_TOOL_OUTCOME_UNKNOWN' } } };
-  const history = codexToolHistory({ snapshotEvents: () => [...events, { seq: 5, type: 'private-event', data: { content: 'PRIVATE' } }, failure] });
-  assert.equal(history.length, 2);
-  assert.equal(history[1].error.code, 'CODEX_TOOL_OUTCOME_UNKNOWN');
-  assert.doesNotMatch(JSON.stringify(history), /PRIVATE|started/);
-  assert.deepEqual(codexToolHistory(null), []);
+test('discarded sidecar facts cannot re-enter the admitted model history', () => {
+  const prompt = codexConversationPrompt({ input: 'continue', messages: [{ role: 'user', content: 'replacement' }], toolHistory: [observation] });
+  assert.doesNotMatch(prompt, /HIDDEN_TOOL_VALUE/);
   assert.equal(codexConversationPrompt({ input: 'hello' }), 'hello');
 });
 
-test('history is bounded by complete recent turns and output budget without mutating DSH facts', () => {
-  const seed = Array.from({ length: 30 }, (_, n) => [
-    { seq: n * 2, type: 'turn/start', data: { turn: n + 1 } },
-    { seq: n * 2 + 1, type: 'agentkit/codex-tool', data: { callId: `${n}`, name: 'lookup', phase: 'completed', content: [{ type: 'text', text: 'x'.repeat(4000) }] } },
-  ]).flat();
-  const original = structuredClone(seed);
-  const history = codexToolHistory({ snapshotEvents: () => seed }, { maxTurns: 2, maxChars: 1000 });
-  assert.deepEqual(seed, original);
-  assert.ok(JSON.stringify(history).length < 2000);
-  assert.ok(history.every(item => item.turn >= 29));
-  assert.match(history.at(-1).content[0].text, /truncated/);
+test('DSH owns history compaction; the adapter does not silently trim its admitted messages', () => {
+  const messages = [observation, ...Array.from({length: 25}, (_, i) => ({ role: 'assistant', content: `message-${i}` }))];
+  const prompt = codexConversationPrompt({ input: 'continue', messages });
+  assert.match(prompt, /HIDDEN_TOOL_VALUE/);
+  assert.match(prompt, /message-0/);
+  assert.match(prompt, /message-24/);
+});
+
+test('context that happens to match the latest task is not mistaken for human input', () => {
+  const prompt = codexConversationPrompt({ input: 'same text', messages: [{ ...observation, content: 'same text' }] });
+  assert.match(prompt, /Recorded context: same text/);
+  assert.match(prompt, /User: same text/);
 });

@@ -45,4 +45,3 @@ export async function callStudioOperation(connection, operation, payload, signal
   validateOperationResponse(operation, result);
   return result;
 }
-

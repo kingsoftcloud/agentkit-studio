@@ -3,9 +3,16 @@ import assert from 'node:assert/strict';
 import { createCodexToolRecorder, CODEX_TOOL_EVENT, createCodexCommandFallback } from '../src/providers/codex-tool-events.mjs';
 import { codexToolDefinition as definition } from '../src/client/dsh/codex-tool.mjs';
 function recorder() {
-  const events = [];
-  const instance = createCodexToolRecorder({ append(type, data, opts) { events.push({ type, data: structuredClone(data), ...opts, seq: events.length, time: 10 + events.length }); } });
-  return { instance, events };
+  const allEvents = [], events = [], surface = { nodes: [] };
+  const instance = createCodexToolRecorder({ surface, append(type, data, opts) {
+    const event = { type, data: structuredClone(data), ...opts, seq: allEvents.length, time: 10 + allEvents.length };
+    allEvents.push(event);
+    if (type === CODEX_TOOL_EVENT) events.push(event);
+    else if (opts.surfaceOp === 'append') surface.nodes.push(event.seq);
+    else surface.nodes.splice(surface.nodes.indexOf(opts.surfaceOp.startSeq), 1, event.seq);
+    return event;
+  } }, { recordModelContext: true });
+  return { instance, events, allEvents, surface };
 }
 const started = { type: 'tool', id: 'call-1', name: 'plugin/search', phase: 'started', arguments: { query: 'test' } };
 
@@ -104,4 +111,31 @@ test('raw command calls without a returned result do not claim execution success
   const results = [...fallback.flush()];
   assert.deepEqual(results.map(result => result.phase), ['started', 'failed']);
   assert.equal(results[1].error.code, 'CODEX_TOOL_OUTCOME_UNKNOWN');
+});
+
+
+test('native model context starts unknown and settles once without executable tool messages', () => {
+  const { instance, allEvents, surface } = recorder();
+  instance.record(started);
+  const pending = allEvents[0];
+  assert.equal(pending.type, 'user/message');
+  assert.equal(pending.ignorable, undefined);
+  assert.match(pending.data.content[0].text, /"phase":"unknown"/);
+  instance.record({ ...started, phase: 'completed', result: { content: [{ type: 'text', text: 'complete-result' }] } });
+  instance.close();
+  const native = allEvents.filter(event => event.type === 'user/message');
+  assert.equal(native.length, 2);
+  assert.deepEqual(surface.nodes, [native[1].seq]);
+  assert.match(native[1].data.content[0].text, /complete-result/);
+  assert.equal(native[0].data.source.callId, native[1].data.source.callId);
+  assert.equal(allEvents.some(event => event.type === 'tool/call' || event.type === 'tool/result'), false);
+});
+
+test('model-facing truncation is recorded while the card retains its display content', () => {
+  const { instance, allEvents, events } = recorder();
+  instance.record({ ...started, phase: 'completed', result: { content: [{ type: 'text', text: 'x'.repeat(90_000) }] } });
+  const text = allEvents[0].data.content[0].text;
+  assert.match(text, /recorded context truncated/);
+  assert.ok(text.length < 64_000);
+  assert.equal(events[0].data.content[0].text.length, 90_000);
 });

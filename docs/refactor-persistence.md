@@ -27,9 +27,11 @@ node scripts/verify-studio-persistence.mjs \
 | 事件 | 生产和消费 | 复核状态 |
 | --- | --- | --- |
 | `studio/resource-check` | checkedResource 记录资源调用状态，运行结果和页面展示读取这些事实 | 已通过实际生产函数、磁盘重开、插件停用和资源恢复场景 |
-| `agentkit/codex-tool` | Codex 工具呈现补充；原生工具执行仍由 Codex 和 DSH 负责 | 需要继续核对历史统计与原生工具消息的关系，不能仅用 UI 测试接受 |
+| `agentkit/codex-tool` | 只提供工具卡；本地 Codex 的模型事实另以原生 `user/message` 保存 | 真实 DSH 循环的成功、失败、取消共 6 场景通过 Zstd 重开和下一轮验证；2 个旧日志场景验证补录幂等及替换后不恢复；最终安装包回归另行验收 |
 | `studio/runtime-model` | 自动运行写入请求模型，冻结运行时据此检查重试请求是否冲突 | 尚未完成：该消费者涉及执行恢复和幂等性，不能概括为纯展示事件 |
 
 `studio/runtime-model` 的处理需保留现有请求冲突检查及旧日志可读性，先建立跨重启、同 request ID 切换模型的行为用例，再确定权威请求信息的维护位置。不能通过删除检查或仅把事件改为必需事件来满足复核。
+
+Codex 请求使用 DSH 的有效模型消息。即使读取方不识别工具卡事件，原生观察仍可被恢复；替换掉原生观察后不会从工具卡重新生成。旧日志补录规则见[Codex 上下文边界](refactor-lifecycle.md#codex-上下文边界)。这些验证使用实际 DSH AgentLoop、Session、JSONL 和 Chat assembler，Codex 流由受控 provider 提供；它们不等同整个安装包的进程重启和升级验收。
 
 本页记录的是 5C 的持久化复核进度。维护来源、补丁同步、宿主能力握手、候选基线升级及最终安装更新仍分别验收。

@@ -12,6 +12,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { bindDshAgentRoute, executeDshResourceTool } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
+import { migrateLegacyCodexObservations } from './codex-observation.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
 
 // Keep the builtin executor in the Studio host. The Python toolset remains
@@ -319,6 +320,7 @@ export function apply(ctx, config = {}) {
     if (config.resourcesUnavailable) throw Object.assign(new Error('此会话的 Agent 资源恢复失败。请检查资源配置后重新选择 Agent 或重新打开应用。'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
     const resolved = await next();
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    if (config.runtime === 'codex' && config.local === true) migrateLegacyCodexObservations(payload?.agent?.session);
     const sessionId = String(payload?.agent?.id || '').trim();
     if (sessionId) {
       routes.get(sessionId)?.();
