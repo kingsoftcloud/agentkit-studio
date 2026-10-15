@@ -28,9 +28,9 @@ node scripts/verify-studio-persistence.mjs \
 | --- | --- | --- |
 | `studio/resource-check` | checkedResource 记录资源调用状态，运行结果和页面展示读取这些事实 | 已通过实际生产函数、磁盘重开、插件停用和资源恢复场景 |
 | `agentkit/codex-tool` | 只提供工具卡；本地 Codex 的模型事实另以原生 `user/message` 保存 | 真实 DSH 循环的成功、失败、取消共 6 场景通过 Zstd 重开和下一轮验证；2 个旧日志场景验证补录幂等及替换后不恢复；最终安装包回归另行验收 |
-| `studio/runtime-model` | 自动运行写入请求模型，冻结运行时据此检查重试请求是否冲突 | 尚未完成：该消费者涉及执行恢复和幂等性，不能概括为纯展示事件 |
+| `studio/runtime-model` | 旧版请求模型展示记录；新运行不再写入，重放不读取它 | 新请求通过原生已接收消息的指纹校验；旧请求通过原生 `request/header` 重建实际模型路由，缺少权威信息时拒绝模型相关重放 |
 
-`studio/runtime-model` 的处理需保留现有请求冲突检查及旧日志可读性，先建立跨重启、同 request ID 切换模型的行为用例，再确定权威请求信息的维护位置。不能通过删除检查或仅把事件改为必需事件来满足复核。
+冻结运行时将输入和模型键的 SHA-256 指纹交给支持 `promptFingerprintVersion = 1` 的原生 SessionController，由它在接收消息时保存到 `user-rpc` 来源。相同请求 ID 的重试必须保留相同指纹（包括缺失状态），冲突在接收前拒绝。原生 `agent/inbox/spliced` 的首次入队记录保留该身份，消息已被领取或从队列取消也不能复用 ID 接收另一个请求；取消后提交新任务使用新的 ID。同 Session 的重放检查在串行执行队列内先于模型选择、权限设置及写入。旧无指纹消息仍可读取；重放按首个模型输出之前生效的原生请求头校验路由，必要时跨页寻找继承的请求头。缺少权威路由信息返回 `RUNTIME_REQUEST_METADATA_UNAVAILABLE`，不能用可忽略事件补足。
 
 Codex 请求使用 DSH 的有效模型消息。即使读取方不识别工具卡事件，原生观察仍可被恢复；替换掉原生观察后不会从工具卡重新生成。旧日志补录规则见[Codex 上下文边界](refactor-lifecycle.md#codex-上下文边界)。这些验证使用实际 DSH AgentLoop、Session、JSONL 和 Chat assembler，Codex 流由受控 provider 提供；它们不等同整个安装包的进程重启和升级验收。
 

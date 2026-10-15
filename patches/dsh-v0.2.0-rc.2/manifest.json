@@ -1454,12 +1454,77 @@
           "dsh-web"
         ]
       }
+    },
+    {
+      "id": "038",
+      "file": "038-prompt-request-fingerprint.patch",
+      "category": "session-contract",
+      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sha256": "a2dcbf0d7b9cf69382c44b9c18a473b120c753d4d14ba6f14c9d6eeb6119b4a7",
+      "dependsOn": [
+        "010",
+        "015",
+        "018",
+        "036"
+      ],
+      "affectedFiles": [
+        "docs/event-producer-consumer.md",
+        "docs/event-producer-consumer.zh.md",
+        "docs/persistence-catalog.i18n.yaml",
+        "docs/persistence-catalog.md",
+        "docs/persistence-catalog.zh.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.i18n.yaml",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.schema.json",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.zh.md",
+        "docs/persistence-schema.json",
+        "packages/api/session-controller/README.i18n.yaml",
+        "packages/api/session-controller/README.md",
+        "packages/api/session-controller/README.zh.md",
+        "packages/api/session-controller/src/commands.ts",
+        "packages/api/session-controller/src/index.ts",
+        "packages/api/session-controller/src/types.ts",
+        "packages/api/session-controller/tests/commands-upload-file.host.spec.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-tool-cordis",
+        "repository-docs"
+      ],
+      "contracts": [
+        "Persist an optional caller fingerprint with the first accepted native user-rpc source; retries must preserve its value including absence",
+        "Reject conflicting request identities before message admission, including concurrent attachment admission, claimed input, canceled queues and restored Sessions",
+        "Retain existing messages without rewriting and expose promptFingerprintVersion = 1 for consumers that require the contract"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local maintenance implementation; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream baseline provides equivalent durable request fingerprint and conflict semantics.",
+      "verification": {
+        "hostTests": [
+          "packages/api/session-controller/tests/commands-upload-file.host.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "frozen",
+          "persistence",
+          "lifecycle",
+          "web",
+          "electron",
+          "macos",
+          "windows"
+        ]
+      }
     }
   ],
-  "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
-  "patchedSourceSha256": "986f3d9708ec076105877ad8fd81dcc0160fcfbafe4df49de018cc25e0d3ca83",
+  "patchedTree": "64d4e26ef05fb898250e3826f5bd91db5e8879f1",
+  "patchedSourceSha256": "4deefcc23457d77b6b51dfbff927b7956f94686071d5d829215e6c1bd35b6d9e",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "b1f05e83c491113508f97610343e409448f6f41c125789e891848c3fbf30cf0e"
+    "sha256": "f36aa8b5cbe8cc9f728935f447f2cfd6007f4473fb7d495ff4e4aa627dabfb4c"
   }
 }
