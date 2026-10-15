@@ -1,6 +1,6 @@
 # Host 拆分：实施与验收
 
-阶段 4 正在实施。4A 服务组装和 4B 全部 77 个操作及传输注册已通过本地验收，4C 共享合同与客户端统一尚未完成；本记录不把入口变短当作完整阶段验收。
+阶段 4 正在实施。4A 服务组装、4B 全部 77 个操作及传输注册、4C 共享合同与真实 Host 验证已通过本地验收，macOS 无签名包已通过运行时 smoke 和包内模块检查；Windows 包验证仍待完成。本记录不把入口变短当作完整阶段验收。
 
 ## 4A 改动范围
 
@@ -67,7 +67,7 @@ HTTP/SSE 注册和 Connection Fetch 下载位于独立模块；旧本地会话�
 
 ## 仍需完成
 
-4C 统一 Node 和产品浏览器客户端的操作定义、参数、错误及取消合同，并验证四种启动状态、重启恢复、冻结 Build、工具续接及适用平台的包加载。当前不能宣称阶段 4 全部完成。阶段 4 完整验收后再进入补丁收敛与宿主升级演练，最终交付可开源源码主分支。
+4C 的共享合同、四种启动状态、重启恢复、冻结 Build 和工具续接结果见下文。目前剩余 Windows 包验证，不能宣称阶段 4 全部完成。阶段 4 完整验收后再进入补丁收敛与宿主升级演练，最终交付可开源源码主分支。
 
 ## 4C 首批合同与启动隔离
 
@@ -81,7 +81,7 @@ HTTP 控制请求也按响应连接及注册作用域取消；正常上传 EOF �
 
 Web 回归发现原验收脚本对分组渲染和默认六条分页的假设。修正后通过全部 28 项，未修改 DSH 的分组或分页行为。前端当前 gzip 为 92,071 字节，较原始 87,440 字节增长 5.296%，显式使用用户批准的 7% 预算，并记录原 5% 对照未通过；基线未重置。
 
-本批不宣称整个阶段 4 完成。冻结 Build 的真实 Host 执行、工具续接与适用平台包复核仍需完成，随后才进入阶段 5。
+该批完成时，冻结 Build 的真实 Host 执行、工具续接与适用平台包复核尚待完成；后续结果分别记录如下，整个阶段 4 通过后才进入阶段 5。
 
 该批最终检查为 903 项源码测试通过，0 失败、0 跳过；公开面、快照及可达历史扫描、509 文件的实际 Studio tarball 检查通过。Web 与 Electron 开发宿主各 28 项通过，渲染错误均为 0；完整安装插件在同一真实 Host 加载卸载 20 次后回到基线；独立 Harness tarball 的实际加载、类型、DSH loop、持久化和卸载通过。安装插件的全部 212 个生产模块、类型文件、manifest 及浏览器产物与工作树字节相同。
 
@@ -94,4 +94,25 @@ Web 回归发现原验收脚本对分组渲染和默认六条分页的假设。�
 
 关闭整个真实 Host 并重新启动后，旧 Build preset 恢复，同一请求重放不产生模型调用；通过 previous_response_id 继续第二轮，保持 Session、Build 和模型绑定。拒绝把新 Agent 的 `model-b` 注入旧 Build。活跃流经取消接口和插件卸载两条路径终止，上游模型连接关闭，原生回合各恰好产生一个 aborted 终态。7 项集成检查通过，模型和 MCP 服务均为受控 provider。
 
-失败证据保留。首次验证未通过 DSH 公共 Settings 发布模型 provider，得到 session/model-unavailable；随后复用现有 portable-model-bridge，并等待官方 Loader 就绪。历史读取还补上 DSH 要求的 AbortSignal。两项都是验收脚本修正，没有修改产品模型选择、持久化或 Runtime 实现。新增 provider 使用唯一标记，结束时只撤销本次注册。最终报告为 `stage-4/frozen-real-host-final.json`。平台包复核仍待完成，暂不宣布整个阶段 4 完成。
+失败证据保留。首次验证未通过 DSH 公共 Settings 发布模型 provider，得到 session/model-unavailable；随后复用现有 portable-model-bridge，并等待官方 Loader 就绪。历史读取还补上 DSH 要求的 AbortSignal。两项都是验收脚本修正，没有修改产品模型选择、持久化或 Runtime 实现。新增 provider 使用唯一标记，结束时只撤销本次注册。最终报告为 `stage-4/frozen-real-host-final.json`。
+
+## 平台包复核
+
+固定 Studio `95174f83c465ae799f076d903ceec0fe9b415304` 和 DSH `639ed015397290b3745d163aafe02ffee4aa3f84`，在本次独立工作树内运行官方 mac-arm64 无签名打包入口，构建版本为 `0.2.0-rc.2.20261015.1`。官方构建、原生依赖、Office 文档转换、Skill CLI 发现、Electron builder 与最终 packaged runtime smoke 均以退出码 0 完成。
+
+实际 `app.asar` 中 208 个 Studio 运行时模块、manifest 及浏览器产物与工作树字节相同；DSH 官方 runtime file policy 排除的 4 个 TypeScript 声明文件单独记录。扩展包内模块检查支持 `--studio`，从 7 个 DSH 入口和 2 个 Studio 入口跟踪相对及动态 import，实际解析 143 个模块，未发现缺失文件。它检查归档内依赖完整性，不能代替 Host 行为验收。
+
+```sh
+node scripts/verify-desktop-module-graph.mjs "<AgentKit Studio.app 或 app.asar>" --studio
+```
+
+| 本地产物 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| mac-arm64 unsigned DMG | 501987772 | `d927bb8edc538c66a14ccd68bce5de75de575631e9b3c933d40e545bf5c7d0d8` |
+| mac-arm64 unsigned ZIP | 507037243 | `f73faedf8040aeda6b90c29f857f79dc665316a7ebc18167ab34529dd3072072` |
+
+新增包内动态 Host import 的缺失文件回归检查后，全量源码及发行输入检查为 904 项通过，0 失败、0 跳过，实际 Studio tarball 共 510 文件。上述平台证据仅为本地无签名包，未进行签名、公证、原生安装更新或二进制发布。
+
+Windows 官方仓库诊断任务 `38663780184` 被 GitHub 账户付款或额度状态拒绝启动，实际执行步骤为 0；该结果不能记为 Windows 打包失败或通过。后续按用户选择复用此前公开仓库的标准 Windows CI 通道，固定源提交并仅执行无签名诊断。阶段 4 仍等待该平台结果。
+
+本批证据为 `stage-4/mac-package-acceptance.json`、`mac-studio-module-graph.json`、`mac-package-cached.redacted.log`、`archive-graph-release-check.log` 和 `windows-current-run.json`。首次将声明文件计入 Desktop parity 的报告也保留，按官方文件排除规则修正验收范围，没有修改产品包。
