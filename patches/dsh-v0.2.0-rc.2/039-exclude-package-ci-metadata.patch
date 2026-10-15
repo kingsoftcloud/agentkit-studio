@@ -39,6 +39,22 @@ index cb08b664cb3cb6389ab531deb8cb93850ed3fef8..875c6b375f6247707084bf04461620b1
  
  [Office 转换提供方](../../packages/document/office-to-pdf/README.zh.md)携带目标已声明的原生引擎；kit 未声明匹配原生目标时携带 WASM 引擎。准备阶段在打包前拒绝缺少目标引擎的情况。完整 Office 依赖（CLI、JavaScript 库和选定引擎的可执行文件、数据、许可证及 notices）解包到 `resources/app.asar.unpacked/dsh/node_modules/` 下。Desktop Host 将引擎清单解析到这些物理目录，并向加载的技能提供独立 Node 和解包后 CLI 的绝对路径。Node 位于 `resources/runtime/primary-runtime/dependencies/node/bin/`；CLI 位于解包后的 `@deepseek-ai/libreoffice-kit/lib/cli.js`。macOS 上的原生辅助程序获得 [LibreOffice UNO 桥](https://github.com/LibreOffice/core/blob/master/sysui/desktop/macosx/hardened_runtime.xcent.in)所需的 JIT entitlement。
  
+diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
+index 11a40e04cfb6cb63005123152311f51e47b9ae4d..66af3b9312455d0e731b51b3e177b1f358ce27db 100644
+--- a/apps/desktop/electron-builder.config.d.mts
++++ b/apps/desktop/electron-builder.config.d.mts
+@@ -14,8 +14,9 @@ export interface DesktopElectronBuilderConfig {
+     string,
+     string,
+     string,
+-    { readonly from: string, readonly to: 'dsh', readonly filter: readonly ['**/*'] },
+-    { readonly from: string, readonly to: 'dsh/node_modules', readonly filter: readonly ['**/*'] },
++    { readonly from: string, readonly to: 'dsh', readonly filter: readonly string[] },
++    { readonly from: string, readonly to: 'dsh/node_modules', readonly filter: readonly string[] },
++    string,
+   ]
+   readonly extraMetadata: { readonly name?: string; readonly dshDesktopAppId: string }
+   readonly asarUnpack: readonly string[]
 diff --git a/apps/desktop/scripts/electron-builder-config.d.mts b/apps/desktop/scripts/electron-builder-config.d.mts
 index 655996a23487c15274a3ceab16302895df83f470..d9a56f198369187f060d555f7c0595ba80e886bd 100644
 --- a/apps/desktop/scripts/electron-builder-config.d.mts
@@ -157,7 +173,7 @@ index 089b04deef1467514ddc89c065397a0aca334bc9..67c4e680d5965b786b6f46e11d6f7344
          expect(typeof config.win.signtoolOptions.sign).toBe('function')
 diff --git a/apps/desktop/tests/package-ci-metadata.spec.ts b/apps/desktop/tests/package-ci-metadata.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..024163aee1d8880d01581e7adbd637b239bb38b4
+index 0000000000000000000000000000000000000000..d45132a65c480b1babede13b1a70827053fc3afc
 --- /dev/null
 +++ b/apps/desktop/tests/package-ci-metadata.spec.ts
 @@ -0,0 +1,42 @@
@@ -190,10 +206,10 @@ index 0000000000000000000000000000000000000000..024163aee1d8880d01581e7adbd637b2
 +      DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio.local',
 +      DSH_DESKTOP_TARGET_PLATFORM: 'darwin', DSH_DESKTOP_TARGET_ARCH: 'arm64', DSH_DESKTOP_UNSIGNED: '1',
 +    }, 'darwin', 'arm64', root)
-+    const copies = config.files.filter((file: unknown) => typeof file === 'object') as Array<{ from: string; to: string; filter: string[] }>
++    const copies = config.files.filter(file => typeof file !== 'string')
 +    expect(copies).toHaveLength(2)
 +    for (const copy of copies) {
-+      const matcher = new FileMatcher(copy.from, copy.to, pattern => pattern, copy.filter)
++      const matcher = new FileMatcher(copy.from, copy.to, pattern => pattern, [...copy.filter])
 +      const filter = matcher.createFilter()
 +      for (const [name, included] of expected) {
 +        if (copy.from !== root && !name.startsWith('node_modules/')) continue
