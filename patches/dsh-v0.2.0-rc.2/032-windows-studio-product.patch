@@ -179,12 +179,12 @@ index c1cb0354e8..20e714e449 100644
 +    .toBe('https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/win-x64/')
 +})
 diff --git a/apps/desktop/tests/product-branding.spec.ts b/apps/desktop/tests/product-branding.spec.ts
-index dcffe097a2..6a5250e8c1 100644
+index 6b2c2c9e91..8caaffb9fe 100644
 --- a/apps/desktop/tests/product-branding.spec.ts
 +++ b/apps/desktop/tests/product-branding.spec.ts
-@@ -15,3 +15,9 @@ it('ordinary DSH builds keep the official icon and name', () => {
+@@ -16,3 +16,9 @@ it('ordinary DSH builds keep the official icon and name', () => {
    expect(config.productName).toBe('DeepSeek Harness')
-   expect(config.mac.icon).toMatch(/resources\/icon-macos.png$/)
+   expect(config.mac.icon).toBe(fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)))
  })
 +
 +it('Windows Studio owns its Electron identity without migrating macOS state', () => {
