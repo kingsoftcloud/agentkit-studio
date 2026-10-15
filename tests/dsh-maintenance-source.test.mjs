@@ -21,6 +21,7 @@ async function fixture(t) {
   git(source, 'init', '--quiet');
   git(source, 'config', 'user.name', 'Fixture'); git(source, 'config', 'user.email', 'fixture@example.test');
   git(source, 'config', 'commit.gpgsign', 'false');
+  git(source, 'commit', '--allow-empty', '-qm', 'Fixture upstream ancestor');
   await writeFile(join(source, 'value.mjs'), 'export const value = 1;\n');
   await writeFile(join(source, 'old.mjs'), 'export const obsolete = true;\n');
   git(source, 'add', '.'); git(source, 'commit', '-qm', 'Fixture baseline');
@@ -94,6 +95,23 @@ test('patch edits remain rejected even when both exported hash inventories are r
   git(input.source, 'worktree', 'add', '--detach', baseline, manifest.baseCommit);
   await assert.rejects(withDesktopCheckout({ source: baseline, patches: input.patches,
     output: join(input.root, 'package-output'), commit: manifest.baseCommit }, () => assert.fail('build must not start')), /bundle commits differ/);
+});
+
+test('full source verification accepts the shallow upstream baseline used by Actions checkout', async t => {
+  const input = await fixture(t); await exportMaintenanceSource(input);
+  const shallow = join(input.root, 'shallow-baseline');
+  await mkdir(shallow); git(shallow, 'init', '--quiet');
+  git(shallow, 'fetch', '--quiet', '--depth=1', input.source, input.manifest.baseCommit);
+  git(shallow, 'checkout', '--quiet', '--detach', input.manifest.baseCommit);
+  assert.equal(git(shallow, 'rev-parse', '--is-shallow-repository'), 'true');
+  const result = await checkMaintenanceSource({ patches: input.patches, source: shallow });
+  assert.equal(result.scope, 'git-ancestry-and-regenerated-patches');
+  assert.equal(git(shallow, 'status', '--porcelain'), '');
+  assert.equal(git(shallow, 'rev-parse', 'HEAD'), input.manifest.baseCommit);
+  const output = join(input.root, 'imported-from-shallow');
+  await importMaintenanceSource({ patches: input.patches, source: shallow, output });
+  assert.equal(git(output, 'rev-parse', 'HEAD'), input.head);
+  assert.equal(git(output, 'status', '--porcelain'), '');
 });
 
 test('bundle corruption, mixed baseline and reordered commits fail admission', async t => {
