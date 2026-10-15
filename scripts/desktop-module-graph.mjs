@@ -6,6 +6,9 @@ export const DESKTOP_HOST_ENTRIES = ['dsh-agent-preset-registry', 'dsh-agent', '
   'dsh-tools', 'dsh-system-prompt', 'dsh-session', 'dsh-llm'].map(name =>
   `dsh/node_modules/@deepseek-ai/${name}/lib/index.js`);
 
+export const STUDIO_DESKTOP_ENTRIES = ['src/index.mjs', 'src/host-remote.mjs'].map(path =>
+  `dsh/node_modules/@kingsoftcloud/agentkit-studio/${path}`);
+
 export async function verifyDesktopModuleGraph(readModule, entryPoints = DESKTOP_HOST_ENTRIES) {
   const result = await build({ entryPoints, bundle: true, write: false, metafile: true,
     platform: 'node', outdir: 'module-graph', logLevel: 'silent', plugins: [{
