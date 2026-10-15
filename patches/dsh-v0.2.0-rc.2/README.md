@@ -66,11 +66,12 @@ make patch-apply DSH_ROOT="$DSH_ROOT" PATCH_ROOT="$PATCH_ROOT"
 | `035-public-product-presentation.patch` | 通过可释放的 locale 覆盖和显式构建输入配置产品文案与图标，保留默认 DSH 行为 | 固定上游基线提供等价的产品文案与首次渲染接口 |
 | `036-preset-composition-generated-api.patch` | 由生成器同步已有 pluginsFor 方法的双语 API 引用和 Host 检查目录 | 固定上游 API 目录包含该方法 |
 | `037-web-editor-snapshot-ready-state.patch` | 通过真实输入及删除建立空编辑器段落，再采集 Hero ARIA；保留日志和回放断言 | 上游场景建立等价稳定的编辑器初始状态 |
+| `038-prompt-request-fingerprint.patch` | 将请求指纹保存在首次接收的原生消息来源中，跨领取、取消和重启拒绝冲突重试；提供能力版本 | 固定上游基线提供等价的持久化指纹与冲突检查合同 |
 
 `023` 的权限来自 [Codex 0.159.2 官方签名配置](https://github.com/openai/codex/blob/rust-v0.159.2/.github/scripts/macos-signing/codex-code-mode-host.entitlements.plist)。真实安装包的助手被通用签名规则重签后没有这两项权限；同一版本官方原包以及仅修复助手签名的本地副本都可实际创建并校验文件。正式产物还须通过 `node scripts/verify-codex-signing.mjs <App路径>`，并在实际安装后重跑文件执行验收。
 
 007 会话过滤补丁已移除。Studio 完全复用 DSH 的分组、平铺、搜索和归档列表，选择 Agent 仅决定当前会话执行绑定，不改变列表可见性。
 
-021 手动检查补丁已在阶段 5A 移除。官方实现已在空闲或检查失败时强制刷新，并按 available / ready 状态下载或安装；原补丁无条件强制检查会干扰后两种动作。恢复官方实现后，`main-startup.spec.ts` 的 114 项行为测试全部通过，6 个原失败场景恢复。平台安装更新仍另行验收。保留历史补丁编号，当前共 31 项。
+021 手动检查补丁已在阶段 5A 移除。官方实现已在空闲或检查失败时强制刷新，并按 available / ready 状态下载或安装；原补丁无条件强制检查会干扰后两种动作。恢复官方实现后，`main-startup.spec.ts` 的 114 项行为测试全部通过，6 个原失败场景恢复。平台安装更新仍另行验收。保留历史补丁编号，当前共 32 项。
 
 001、002、003、005 在阶段 5B 移除，由 035 的产品接口承接；文案和图标值由 Studio 产品配置提供。默认 DSH 与配置后的 Studio 页面、打包 Desktop Host 的四类 Profile 均已完成本地验证。036 保留生成文档同步，037 保留独立的回放测试修复；这两项不与产品接口混成一个补丁。最终 Windows 和真实安装更新验收仍需独立完成。

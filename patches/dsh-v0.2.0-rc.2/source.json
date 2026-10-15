@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-  "headCommit": "17d085861c207c2151dfeecb2791563e2ee8fab8",
+  "headCommit": "181e77641a9695e4929c1be60d9ab3e7639070c1",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.0-rc.2",
-  "tree": "c2426c392335dde1ca31d5373fefef1940cb01db",
-  "sourceSha256": "986f3d9708ec076105877ad8fd81dcc0160fcfbafe4df49de018cc25e0d3ca83",
+  "tree": "64d4e26ef05fb898250e3826f5bd91db5e8879f1",
+  "sourceSha256": "4deefcc23457d77b6b51dfbff927b7956f94686071d5d829215e6c1bd35b6d9e",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.0-rc.2/maintenance.bundle",
-    "sha256": "85f3b616d2ba2a52abea8d6a0ff3400df0d1c09c87fcd2ac35a2cac6f4bdf7ef"
+    "sha256": "a422cf3d89c1f8eac28cec7c05e75de739b60ded7239529670f1793c9875d973"
   },
   "commits": [
     {
@@ -196,6 +196,12 @@
       "file": "037-web-editor-snapshot-ready-state.patch",
       "commit": "17d085861c207c2151dfeecb2791563e2ee8fab8",
       "sha256": "d16b124a81fdd7138833596f8fe39ea6d456cc297f334d93caf6e9768f3947a2"
+    },
+    {
+      "id": "038",
+      "file": "038-prompt-request-fingerprint.patch",
+      "commit": "181e77641a9695e4929c1be60d9ab3e7639070c1",
+      "sha256": "a2dcbf0d7b9cf69382c44b9c18a473b120c753d4d14ba6f14c9d6eeb6119b4a7"
     }
   ]
 }

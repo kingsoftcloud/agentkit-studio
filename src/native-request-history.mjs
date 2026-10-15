@@ -1,5 +1,5 @@
 /** Read the exact accepted request through public DSH history paging. */
-export async function readNativeRequestEvents(controller, sessionId, requestId, signal) {
+export async function readNativeRequestEvents(controller, sessionId, requestId, signal, { includeRequestHeader = false } = {}) {
   const projection = await controller.projections({ sessionId }, signal);
   const throughSeq = projection?.asOfSeq ?? -1;
   let beforeSeq, events = [];
@@ -15,7 +15,13 @@ export async function readNativeRequestEvents(controller, sessionId, requestId, 
         const turn = events[start].data.turn;
         const end = events.findIndex((event, index) => index > userIndex && event.type === 'turn/end' && event.data?.turn === turn);
         if (end < 0) throw Object.assign(new Error('渠道请求尚无完整运行终态'), { code: 'CHANNEL_TURN_INCOMPLETE' });
-        return [...events.slice(0, start).filter(event => event.type === 'studio/runtime-model' && event.data?.requestId === requestId), ...events.slice(start, end + 1)];
+        const request = events.slice(start, end + 1);
+        if (!includeRequestHeader || events[userIndex].data.source.requestFingerprint !== undefined) return request;
+        const firstOutput = request.findIndex(event => ['assistant/attempt', 'assistant/message'].includes(event.type));
+        if (request.slice(0, firstOutput < 0 ? request.length : firstOutput).some(event => event.type === 'request/header')) return request;
+        const header = events.slice(0, start).findLast(event => event.type === 'request/header');
+        if (header) return [header, ...request];
+        if (!page?.hasMore || !batch.length || (beforeSeq !== undefined && batch[0].seq >= beforeSeq)) return request;
       }
     }
     if (!page?.hasMore || !batch.length || (beforeSeq !== undefined && batch[0].seq >= beforeSeq)) break;
