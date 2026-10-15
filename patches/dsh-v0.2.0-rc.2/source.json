@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-  "headCommit": "09da3c0089471defe747b51e32f28c7b5dc1ad21",
+  "headCommit": "7295d0c2b4444dfc36ecaa99a9123d59444c6919",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.0-rc.2",
-  "tree": "c98769e57794f4ef510cd7f94db1d589f487b643",
-  "sourceSha256": "cb6d73783f674e55552eee651f8f0da8be094845b0d31332f27ab74d622662e4",
+  "tree": "c9b31228e16c56ee7c6c03561d79cbb2dd33682b",
+  "sourceSha256": "a9804f0c0a5b2de5841ec8355194d23c38acf7f700b1537bb6afe6cf125c4232",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.0-rc.2/maintenance.bundle",
-    "sha256": "fe8740df5619c19f80f3cbbc47dfb6e363ecd979bb14d9b452dd01572837a32a"
+    "sha256": "29805ff54cba1b97fc9bf3be7cf003326da81336e96eb02f60649257237585f1"
   },
   "commits": [
     {
@@ -208,6 +208,12 @@
       "file": "039-exclude-package-ci-metadata.patch",
       "commit": "09da3c0089471defe747b51e32f28c7b5dc1ad21",
       "sha256": "1566a70eef9f6438b7c086d2f69fb80b2f38223ac61e9bcaa4049f1177051ec0"
+    },
+    {
+      "id": "040",
+      "file": "040-desktop-web-port-configuration.patch",
+      "commit": "7295d0c2b4444dfc36ecaa99a9123d59444c6919",
+      "sha256": "41960854532fa8a31875c3ba742efb1d53466de82b45a0a494d31a0bf2c4f095"
     }
   ]
 }
