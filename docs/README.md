@@ -10,6 +10,7 @@
 - [Windows releases](windows-release.md): NSIS, Certum signing and installed App checks.
 - [Runtime endpoints](runtime-endpoint-injection.md): configurable cloud client routing.
 - [Compatibility patches](../patches/dsh-v0.2.0-rc.2/README.md): pinned upstream changes.
+- [Product configuration](product-configuration.md): shared brand and desktop inputs, version sources and migration status.
 - [Visual system](brand/visual-system.md): AgentKit Studio identity and UI conventions.
 - [Public release checks](public-release-boundary.md) and [repository mirrors](branch-sync.md).
 
