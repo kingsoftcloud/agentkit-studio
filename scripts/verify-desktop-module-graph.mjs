@@ -5,6 +5,9 @@ import { verifyDesktopModuleGraph, DESKTOP_HOST_ENTRIES, STUDIO_DESKTOP_ENTRIES 
 const input = resolve(process.argv[2] || '');
 if (input === resolve('.')) throw new Error('usage: verify-desktop-module-graph.mjs <app.asar|macOS app> [--studio]');
 const archive = input.endsWith('.app') ? join(input, 'Contents/Resources/app.asar') : input;
+if (asar.listPackage(archive).some(path => /(?:^|\/)\.coveralls\.ya?ml$/i.test(path))) {
+  throw new Error('Desktop archive includes non-runtime Coveralls CI configuration');
+}
 const entries = process.argv.includes('--studio') ? [...DESKTOP_HOST_ENTRIES, ...STUDIO_DESKTOP_ENTRIES] : DESKTOP_HOST_ENTRIES;
 const report = await verifyDesktopModuleGraph(path => asar.extractFile(archive, normalize(path)).toString('utf8'), entries);
-console.log(JSON.stringify({ archive, ...report }));
+console.log(JSON.stringify({ archive, ...report, nonRuntimeCiMetadataAbsent: true }));

@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-  "headCommit": "181e77641a9695e4929c1be60d9ab3e7639070c1",
+  "headCommit": "556c95bf142266775f160198d99dc1dc4d179449",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.0-rc.2",
-  "tree": "64d4e26ef05fb898250e3826f5bd91db5e8879f1",
-  "sourceSha256": "4deefcc23457d77b6b51dfbff927b7956f94686071d5d829215e6c1bd35b6d9e",
+  "tree": "aec0f451a7d43b072d1136c93c63c3b11409f1fc",
+  "sourceSha256": "5777d201b1f1cbc468b4cdf58e4da8be9761e08d9b131cc91c0ad15f4edf868c",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.0-rc.2/maintenance.bundle",
-    "sha256": "a422cf3d89c1f8eac28cec7c05e75de739b60ded7239529670f1793c9875d973"
+    "sha256": "5750f28023f1a189bc7db224837e40f76fdd9d2d091cc292f10718b7e5215bdc"
   },
   "commits": [
     {
@@ -202,6 +202,12 @@
       "file": "038-prompt-request-fingerprint.patch",
       "commit": "181e77641a9695e4929c1be60d9ab3e7639070c1",
       "sha256": "a2dcbf0d7b9cf69382c44b9c18a473b120c753d4d14ba6f14c9d6eeb6119b4a7"
+    },
+    {
+      "id": "039",
+      "file": "039-exclude-package-ci-metadata.patch",
+      "commit": "556c95bf142266775f160198d99dc1dc4d179449",
+      "sha256": "940a4419a7b5ed72da8320bd46ca599e531a65f707ae54a2732d0f978deb8f77"
     }
   ]
 }
