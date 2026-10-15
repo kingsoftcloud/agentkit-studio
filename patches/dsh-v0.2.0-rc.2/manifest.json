@@ -1519,12 +1519,56 @@
           "windows"
         ]
       }
+    },
+    {
+      "id": "039",
+      "file": "039-exclude-package-ci-metadata.patch",
+      "category": "packaging",
+      "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sha256": "940a4419a7b5ed72da8320bd46ca599e531a65f707ae54a2732d0f978deb8f77",
+      "dependsOn": [
+        "034"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/electron-builder-config.d.mts",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/scripts/installed-update-builder.ts",
+        "apps/desktop/tests/installed-update-builder.spec.ts",
+        "apps/desktop/tests/package-ci-metadata.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Exclude Coveralls CI configuration from ordinary and installed-update qualification runtime copy rules and root dependency collection",
+        "Preserve executable modules, package manifests, licenses and runtime provider data; actual archive verification rejects forbidden CI metadata"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local packaging hygiene fix based on inspected release bytes; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream ordinary and qualification packagers exclude unused third-party Coveralls CI metadata with equivalent archive verification.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/package-ci-metadata.spec.ts",
+          "apps/desktop/tests/installed-update-builder.spec.ts",
+          "apps/desktop/tests/local-macos-package.spec.ts",
+          "apps/desktop/tests/core-package-set.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
     }
   ],
-  "patchedTree": "64d4e26ef05fb898250e3826f5bd91db5e8879f1",
-  "patchedSourceSha256": "4deefcc23457d77b6b51dfbff927b7956f94686071d5d829215e6c1bd35b6d9e",
+  "patchedTree": "aec0f451a7d43b072d1136c93c63c3b11409f1fc",
+  "patchedSourceSha256": "5777d201b1f1cbc468b4cdf58e4da8be9761e08d9b131cc91c0ad15f4edf868c",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "f36aa8b5cbe8cc9f728935f447f2cfd6007f4473fb7d495ff4e4aa627dabfb4c"
+    "sha256": "def1015cbd4aabb080240db78cccf271fc087483e21b48daed73497beb0131a5"
   }
 }

@@ -1,0 +1,143 @@
+diff --git a/apps/desktop/scripts/electron-builder-config.d.mts b/apps/desktop/scripts/electron-builder-config.d.mts
+index 655996a23487c15274a3ceab16302895df83f470..d9a56f198369187f060d555f7c0595ba80e886bd 100644
+--- a/apps/desktop/scripts/electron-builder-config.d.mts
++++ b/apps/desktop/scripts/electron-builder-config.d.mts
+@@ -1,2 +1,3 @@
+ /** Import the factory without evaluating an ordinary release configuration. */
+ export { createElectronBuilderConfig } from '../electron-builder.config.mjs'
++export declare const DESKTOP_CI_METADATA_EXCLUSION: string
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index f30abe7a0b539d2bd0bef1439bf3762ba5d6aa13..c0df100678d89de07a51d586099d0695944a7ef5 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -34,6 +34,9 @@ import {
+   writeMacOSAppUpdateConfig,
+ } from './macos-app-update-config.mjs'
+ 
++// Package CI reporting tokens are not part of an installed runtime.
++export const DESKTOP_CI_METADATA_EXCLUSION = '!**/.coveralls.{yml,yaml}'
++
+ /**
+  * Create electron-builder configuration from one release environment.
+  * @param {NodeJS.ProcessEnv} env - Packaging environment.
+@@ -142,9 +145,10 @@ export function createElectronBuilderConfig(
+       'lib/preload-welcome.cjs',
+       'renderer/**/*',
+       'package.json',
+-      { from: buildPaths.dsh, to: 'dsh', filter: ['**/*'] },
++      { from: buildPaths.dsh, to: 'dsh', filter: ['**/*', DESKTOP_CI_METADATA_EXCLUSION] },
+       // electron-builder excludes a source directory's root node_modules.
+-      { from: join(buildPaths.dsh, 'node_modules'), to: 'dsh/node_modules', filter: ['**/*'] },
++      { from: join(buildPaths.dsh, 'node_modules'), to: 'dsh/node_modules', filter: ['**/*', DESKTOP_CI_METADATA_EXCLUSION] },
++      DESKTOP_CI_METADATA_EXCLUSION,
+     ],
+     asarUnpack: unpack,
+     extraResources: [
+diff --git a/apps/desktop/scripts/installed-update-builder.ts b/apps/desktop/scripts/installed-update-builder.ts
+index 2f0cbefe6c7c3ffcc5185bf3f4b54d9985b76736..eaa6c6e96db0966c095fc75820b39a6eb2981b0e 100644
+--- a/apps/desktop/scripts/installed-update-builder.ts
++++ b/apps/desktop/scripts/installed-update-builder.ts
+@@ -1,6 +1,6 @@
+ /** Select isolated qualification inputs without weakening the ordinary Windows installer or signing hooks. */
+ import { join } from 'node:path'
+-import { createElectronBuilderConfig } from './electron-builder-config.mjs'
++import { createElectronBuilderConfig, DESKTOP_CI_METADATA_EXCLUSION } from './electron-builder-config.mjs'
+ import { readInstalledUpdateRun } from './installed-update-qualification.ts'
+ import { verifyInstalledUpdateApplication } from './prepare-installed-update-application.ts'
+ import { verifyDesktopRuntime } from '../src/runtime-tree.ts'
+@@ -31,8 +31,9 @@ export async function createInstalledUpdateBuilderConfig(manifest: string, versi
+     files: [
+       { from: application, to: '.', filter: ['lib/*.js', 'lib/*.cjs', 'renderer/**/*', 'qualification-bootstrap.mjs', 'installed-update-identity.mjs'] },
+       'package.json',
+-      { from: dsh, to: 'dsh', filter: ['**/*'] },
+-      { from: join(dsh, 'node_modules'), to: 'dsh/node_modules', filter: ['**/*'] },
++      { from: dsh, to: 'dsh', filter: ['**/*', DESKTOP_CI_METADATA_EXCLUSION] },
++      { from: join(dsh, 'node_modules'), to: 'dsh/node_modules', filter: ['**/*', DESKTOP_CI_METADATA_EXCLUSION] },
++      DESKTOP_CI_METADATA_EXCLUSION,
+     ],
+     publish: [{ provider: 'generic' as const, url: `${run.origin}/${run.feedKey.slice(0, -'nightly.yml'.length)}`, channel: 'nightly' }],
+   }
+diff --git a/apps/desktop/tests/installed-update-builder.spec.ts b/apps/desktop/tests/installed-update-builder.spec.ts
+index 089b04deef1467514ddc89c065397a0aca334bc9..67c4e680d5965b786b6f46e11d6f734432c2ed44 100644
+--- a/apps/desktop/tests/installed-update-builder.spec.ts
++++ b/apps/desktop/tests/installed-update-builder.spec.ts
+@@ -1,4 +1,4 @@
+-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
++import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import { createRequire } from 'node:module'
+ import { join } from 'node:path'
+@@ -23,6 +23,7 @@ const environment = { DSH_DESKTOP_AUTO_UPDATE_ENV: 'test', DOWNLOAD_TEST_ORIGIN:
+   DSH_DESKTOP_MANDATORY_UPDATE_CONFIG: JSON.stringify({ allowedAuthOrigins: ['https://login.example.com'] }),
+   DOWNLOAD_TEST_COS_BUCKET: 'bj-toc-download-test-1320056602' }
+ const require = createRequire(import.meta.url)
++const { FileMatcher } = require('app-builder-lib/out/fileMatcher.js') as typeof import('app-builder-lib/out/fileMatcher.js')
+ const { validateConfiguration } = require('app-builder-lib/out/util/config/config.js') as {
+   validateConfiguration: (config: object, logger: { isEnabled: false }) => Promise<void>
+ }
+@@ -90,6 +91,17 @@ describe('installed-update application inputs and builder configuration', () =>
+         const dsh = join(manifest, '..', versions[index]!, 'dsh')
+         expect(config.files[2]).toMatchObject({ from: dsh, to: 'dsh' })
+         expect(config.files[3]).toMatchObject({ from: join(dsh, 'node_modules'), to: 'dsh/node_modules' })
++        const dependency = join(dsh, 'node_modules', 'fixture-ci')
++        await mkdir(dependency, { recursive: true })
++        for (const name of ['.coveralls.yml', '.coveralls.yaml']) {
++          const ciFile = join(dependency, name)
++          await writeFile(ciFile, 'synthetic fixture only\n')
++          for (const copy of config.files.slice(2, 4)) {
++            if (typeof copy !== 'object') throw new Error('Expected runtime copy rule')
++            const filter = new FileMatcher(copy.from, copy.to, pattern => pattern, copy.filter).createFilter()
++            expect(filter(ciFile, await stat(ciFile))).toBe(false)
++          }
++        }
+         expect(config.win.forceCodeSigning).toBe(true)
+         expect(config.win.signtoolOptions.publisherName).toBe('CN=Fixture,O=Fixture,C=CN')
+         expect(typeof config.win.signtoolOptions.sign).toBe('function')
+diff --git a/apps/desktop/tests/package-ci-metadata.spec.ts b/apps/desktop/tests/package-ci-metadata.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..024163aee1d8880d01581e7adbd637b239bb38b4
+--- /dev/null
++++ b/apps/desktop/tests/package-ci-metadata.spec.ts
+@@ -0,0 +1,42 @@
++import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { dirname, join } from 'node:path'
++import { createRequire } from 'node:module'
++import { expect, it } from 'vitest'
++import { createElectronBuilderConfig } from '../scripts/electron-builder-config.mjs'
++
++const require = createRequire(import.meta.url)
++const { FileMatcher } = require('app-builder-lib/out/fileMatcher.js') as typeof import('app-builder-lib/out/fileMatcher.js')
++
++it('excludes unused Coveralls configuration in both runtime copy rules while retaining runtime files', async () => {
++  const root = await mkdtemp(join(tmpdir(), 'dsh-package-ci-'))
++  const expected = new Map([
++    ['package.json', true], ['.coveralls.yml', false],
++    ['node_modules/debug/index.js', true], ['node_modules/debug/LICENSE', true],
++    ['node_modules/debug/package.json', true], ['node_modules/debug/.coveralls.yml', false],
++    ['node_modules/debug/.coveralls.yaml', false], ['node_modules/outer/node_modules/debug/.coveralls.yml', false],
++    ['node_modules/@earendil-works/pi-ai/dist/providers/data/.manifest.json', true],
++  ])
++  try {
++    for (const name of expected.keys()) {
++      const path = join(root, name)
++      await mkdir(dirname(path), { recursive: true })
++      await writeFile(path, 'synthetic fixture only\n')
++    }
++    const config = createElectronBuilderConfig({
++      DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio.local',
++      DSH_DESKTOP_TARGET_PLATFORM: 'darwin', DSH_DESKTOP_TARGET_ARCH: 'arm64', DSH_DESKTOP_UNSIGNED: '1',
++    }, 'darwin', 'arm64', root)
++    const copies = config.files.filter((file: unknown) => typeof file === 'object') as Array<{ from: string; to: string; filter: string[] }>
++    expect(copies).toHaveLength(2)
++    for (const copy of copies) {
++      const matcher = new FileMatcher(copy.from, copy.to, pattern => pattern, copy.filter)
++      const filter = matcher.createFilter()
++      for (const [name, included] of expected) {
++        if (copy.from !== root && !name.startsWith('node_modules/')) continue
++        const file = join(root, name)
++        expect(filter(file, await stat(file)), `${copy.to}: ${name}`).toBe(included)
++      }
++    }
++  } finally { await rm(root, { recursive: true, force: true }) }
++})
