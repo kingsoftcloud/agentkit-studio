@@ -41,7 +41,7 @@ async function fixture(t, result = 'success') {
   await writeFile(join(dsh, 'apps/desktop/src/project-manager.ts'), 'official project manager\nDSH_DESKTOP_PLUGIN_BUNDLES');
   git(['add','marker.txt', 'apps/desktop/scripts/package-target.ts', 'apps/desktop/scripts/prepare-package-set.ts', 'apps/desktop/src/project-manager.ts']);
   await writeFile(join(patches,'001-marker.patch'),git(['diff','--cached'])+'\n');
-  await writeReviewedPatchFixture(patches, commit);
+  await writeReviewedPatchFixture(patches, commit, dsh);
   // Keep the live checkout at the pinned clean commit. The patch is applied
   // only by desktop-checkout.mjs in the isolated packaging source.
   git(['restore', '--staged', '--worktree', '.']);
