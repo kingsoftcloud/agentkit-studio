@@ -20,7 +20,11 @@ test('contributor instructions reject private markers and credentials', () => {
   assert.deepEqual(auditPath('docs/contracts/runtime.md'), []);
   const marker = ['INTERNAL', '-ONLY'].join('');
   assert.ok(auditText('AGENTS.md', buffer(marker)).some(hit=>hit.kind==='private-classification-marker'));
-  assert.deepEqual(auditText('AGENTS.md', buffer(marker), {historical:true}), []);
+  assert.ok(auditText('AGENTS.md', buffer(marker), {historical:true}).some(hit=>hit.kind==='private-classification-marker'));
+  const personalPath = ['/Users', '/', 'historical-owner/workspace'].join('');
+  for (const file of ['docs/acceptance.md', 'scripts/verify-dsh-node-store.mjs']) {
+    assert.ok(auditText(file, buffer(personalPath), {historical:true}).some(hit=>hit.kind==='personal-absolute-path'));
+  }
   const token = ['ghp_', '123456789012345678901234567890'].join('');
   assert.ok(auditText('AGENTS.md', buffer(marker+'\n'+token)).some(hit=>hit.kind==='github-token'));
   const fixture = ['https://user:', 'secret@example.com/'].join('');

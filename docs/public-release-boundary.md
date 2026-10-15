@@ -9,6 +9,9 @@ source tests, compatibility patch format and npm package contents. Before changi
 repository visibility, also inspect every remote branch and tag with
 `node scripts/public-history-audit.mjs --all-refs` and scan all refs with Gitleaks.
 Removing a file from `main` does not remove earlier versions from Git history.
+Historical documents and contributor instructions receive the same private-material
+checks as current files. A passing credential scan alone does not establish that
+release plans, private deployment records or personal paths are safe to publish.
 
 The cloud client includes documented public service addresses and optional
 network-specific endpoints. Addresses are configuration, not authentication;
