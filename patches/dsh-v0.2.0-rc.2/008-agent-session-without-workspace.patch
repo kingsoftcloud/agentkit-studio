@@ -1,11 +1,11 @@
 diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
-index 15bfdd8732..1e5cbbb503 100644
+index 15bfdd8732f577df9d7f1a7f58274e8eae362000..1e5cbbb5036df3cf9ac16b4b7b1cfe0fd2ca2e03 100644
 --- a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
 +++ b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
 @@ -133,15 +133,15 @@ export function ConversationContent(props: ConversationContentProps) {
      </div>
    )
-
+ 
 -  // The placeholder chip ("Choose workspace") and the Workspace-trigger input travel
 -  // together: no workspace picked yet (cold start, no session at all), or a
 -  // blank session whose workspace vanished (deleted from the sidebar). The

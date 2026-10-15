@@ -1,5 +1,5 @@
 diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
-index fed580320c..38818b08d9 100644
+index 46c019305f2012f55c86f8e167824687c23b5b50..4d7f222a9037ffc094dea42ccc2fea03acb2228c 100644
 --- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
 +++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
 @@ -64,6 +64,7 @@ function PanelRow({ id, label, wide, usePanelInfo, selectPanel, renderSlot }: Pa
@@ -39,9 +39,9 @@ index fed580320c..38818b08d9 100644
    const shortcut = useShortcuts(rows => rows.find(row => row.id === 'sidebar.left.toggle'))
    const newShortcut = useShortcuts(rows => rows.find(row => row.id === 'session.new'))
    const toggleLabel = collapsed ? t('toggle.open') : t('toggle.collapse')
-@@ -279,7 +302,7 @@ export function SidebarRoot({
+@@ -277,7 +300,7 @@ export function SidebarRoot({
        </Tooltip>
-
+ 
        {panels.length > 0 && (
 -        <nav className={css.panelList} aria-label={t('panels.label')}>
 +        <nav ref={panelList} className={css.panelList} aria-label={t('panels.label')}>

@@ -247,11 +247,10 @@ index 744a5f54e65ad162f39d1d465014557282a40da2..b8d3bf328828d864513f60acc728bbdf
      if (host !== undefined) {
        ctx.effect(() => host.subscribe(() => { this.adopt(host) }), 'locale: settings scope adoption')
        this.adopt(host)
-@@ -436,6 +468,46 @@ export class LocaleRuntime {
-     }
+@@ -437,6 +469,46 @@ export class LocaleRuntime {
    }
  
-+  /**
+   /**
 +   * Contribute partial product copy without replacing dictionary ownership.
 +   * Last contribution wins per locale/key; disposal reveals earlier copy.
 +   * @param ns - namespace, which may register before or after this contribution.
@@ -291,9 +290,10 @@ index 744a5f54e65ad162f39d1d465014557282a40da2..b8d3bf328828d864513f60acc728bbdf
 +    }
 +  }
 +
-   /**
++  /**
     * Bind a declared namespace to a translate function typed to its
     * dictionary key union (plus the shared common vocabulary) — the same key
+    * domain the framework-injected `t` seat carries. The returned reference
 @@ -476,6 +548,10 @@ export class LocaleRuntime {
    private lookup(ns: string, key: string, chain: readonly LocaleId[]): string | undefined {
      const locales = this.dicts.get(ns)

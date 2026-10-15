@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/prepare-package-set.ts b/apps/desktop/scripts/prepare-package-set.ts
-index 7e7d62eea2..67581e026a 100644
+index 7e7d62eea289ae7f3beb7194a083e1aecae2a001..67581e026a57911810d9a654099c17d737bb66bc 100644
 --- a/apps/desktop/scripts/prepare-package-set.ts
 +++ b/apps/desktop/scripts/prepare-package-set.ts
 @@ -12,7 +12,7 @@ import {
@@ -12,7 +12,7 @@ index 7e7d62eea2..67581e026a 100644
  import * as yaml from 'js-yaml'
  import {
 @@ -29,6 +29,18 @@ import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
-
+ 
  const DSH_PACKAGE = '@deepseek-ai/dsh'
  const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const
 +
@@ -29,7 +29,7 @@ index 7e7d62eea2..67581e026a 100644
 +}
  const APP_ROOT = resolve(import.meta.dirname, '..')
  const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
-
+ 
 @@ -58,6 +70,7 @@ function dependencyNames(manifest: Readonly<Record<string, unknown>>, section: s
   */
  export function selectDesktopPackageClosure(
@@ -49,7 +49,7 @@ index 7e7d62eea2..67581e026a 100644
    }
 @@ -128,8 +141,12 @@ export function assertDesktopHostPackageFiles(files: readonly string[]): void {
  }
-
+ 
  /** Prepare a package set from release tarball directories. */
 -export function prepareDesktopPackageSet(inputs: readonly string[], output: string): void {
 -  const selected = selectDesktopPackageClosure(packedPackages(inputs))
@@ -78,9 +78,9 @@ index 7e7d62eea2..67581e026a 100644
 +  prepareDesktopPackageSet(inputs, output, [...ROOT_PACKAGES, ...configuredNames('DSH_DESKTOP_PLUGIN_ROOTS')])
    console.log(`desktop package set: prepared ${output}`)
  }
-
+ 
 diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
-index 270d87d6b2..5058ea05e5 100644
+index 270d87d6b25c90acc68ea3cbd3e31d3231ab9872..5058ea05e5f43b4ecc89efc5edad6e7b52769d62 100644
 --- a/apps/desktop/src/project-manager.ts
 +++ b/apps/desktop/src/project-manager.ts
 @@ -31,6 +31,12 @@ const DSH_PACKAGE = '@deepseek-ai/dsh'

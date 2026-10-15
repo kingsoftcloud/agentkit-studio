@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join, relative, isAbsolute, sep } from 'node:path';
 import { fingerprintPatchedSource } from './patched-source-fingerprint.mjs';
+import { checkBoundMaintenanceSource } from './dsh-maintenance-source.mjs';
 
 const execute = promisify(execFile);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -29,10 +30,12 @@ async function identify({ source, output, patches, commit }) {
   if (!names.length) throw new Error('desktop checkout: empty patch series');
   // Read once: applying the bytes used for the identity avoids an edit racing the snapshot.
   const series = await Promise.all(names.map(async name=>({name,bytes:await readFile(join(patchRoot,name))})));
+  const maintenanceSource = await checkBoundMaintenanceSource({ patches: patchRoot, source: sourceRoot,
+    files: new Map(series.map(({ name, bytes }) => [name, bytes])) });
   const hash = createHash('sha256').update(commit);
   for (const entry of series) hash.update(entry.name).update('\0').update(entry.bytes);
   const directory = join(outputRoot,'desktop-checkouts',hash.digest('hex').slice(0,24));
-  return {sourceRoot,commit,series,directory,checkout:join(directory,'source')};
+  return {sourceRoot,commit,series,directory,checkout:join(directory,'source'),maintenanceSource};
 }
 
 async function sourceDigest(checkout) {
@@ -88,7 +91,7 @@ export async function withDesktopCheckout(options, action) {
   catch(error) { if(error.code==='EEXIST') throw new Error(`desktop checkout: already in use; inspect ${lock} before retrying`); throw error; }
   try {
     await writeFile(join(lock,'owner.json'),JSON.stringify({pid:process.pid,startedAt:new Date().toISOString()}),{mode:0o600});
-    return await action(await prepare(input));
+    return await action(await prepare(input), { maintenanceSource: input.maintenanceSource });
   } finally { await rm(lock,{recursive:true,force:true}); }
 }
 

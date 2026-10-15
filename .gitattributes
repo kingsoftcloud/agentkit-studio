@@ -1,5 +1,7 @@
 # Unified diffs must preserve their exact bytes, including any source CR characters.
-*.patch -text whitespace=-blank-at-eol
+*.patch -text whitespace=-blank-at-eol,-blank-at-eof
+*.bundle -text -diff
 
 # A blank unified-diff context line contains one required prefix space.
-# Preserve that syntax; patch format/application checks validate the payload.
+# It can also be the final context line of a generated patch. Preserve that
+# syntax; patch format/application and maintenance source checks validate it.

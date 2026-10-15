@@ -24,6 +24,13 @@ make release-check
 
 Browser or Host changes also require the corresponding real DSH verification. Use an isolated `DSH_HOME`; do not place credentials, profiles, downloads, or runtime artifacts in the repository.
 
+Host patches are generated from the pinned maintenance branch archived in
+`host-source/`. Restore it with `make patch-source-import`, edit and test the
+maintenance commits, then run `make patch-source-export` and
+`make patch-source-verify`. See [the maintenance guide](docs/refactor-patches.md)
+for the checkout variables and metadata requirements. Direct patch edits fail the
+build's source synchronization gate.
+
 ## Public release rules
 
 - Keep source, tests and public guides free of credentials, customer data, personal paths, team plans and private deployment evidence. Service endpoint configuration follows the documented Host contract.

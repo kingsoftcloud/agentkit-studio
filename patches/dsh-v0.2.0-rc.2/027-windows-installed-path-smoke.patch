@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/smoke-packaged-runtime.ts b/apps/desktop/scripts/smoke-packaged-runtime.ts
-index 6b196ed2d9..36d254da38 100644
+index 6b196ed2d951c529e2a20a7bbc709e697e32b17f..36d254da389d8f219db66fdb38e0252aa2622fd4 100644
 --- a/apps/desktop/scripts/smoke-packaged-runtime.ts
 +++ b/apps/desktop/scripts/smoke-packaged-runtime.ts
 @@ -6,6 +6,7 @@ import { readDesktopRuntime, verifyDesktopRuntime } from '../src/runtime-tree.ts
@@ -30,7 +30,7 @@ index 6b196ed2d9..36d254da38 100644
 +else await smokeApplication(application)
 diff --git a/apps/desktop/scripts/windows-smoke-application.d.mts b/apps/desktop/scripts/windows-smoke-application.d.mts
 new file mode 100644
-index 0000000000..4f09beefdd
+index 0000000000000000000000000000000000000000..4f09beefdd5e2e325d2cc610add48c4ce3159763
 --- /dev/null
 +++ b/apps/desktop/scripts/windows-smoke-application.d.mts
 @@ -0,0 +1,2 @@
@@ -38,7 +38,7 @@ index 0000000000..4f09beefdd
 +export function withWindowsSmokeApplication<T>(application: string, action: (directory: string) => Promise<T>): Promise<T>
 diff --git a/apps/desktop/scripts/windows-smoke-application.mjs b/apps/desktop/scripts/windows-smoke-application.mjs
 new file mode 100644
-index 0000000000..d1ebf68010
+index 0000000000000000000000000000000000000000..d1ebf68010b5a5981589a87123ae3bf73dd75a06
 --- /dev/null
 +++ b/apps/desktop/scripts/windows-smoke-application.mjs
 @@ -0,0 +1,24 @@

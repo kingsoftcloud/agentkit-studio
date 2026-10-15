@@ -1,34 +1,8 @@
-diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
---- a/packages/extensions/tool-cordis/src/api-catalog.ts
-+++ b/packages/extensions/tool-cordis/src/api-catalog.ts
-@@ -3766,6 +3766,14 @@
-     parameters: [{ name: 'payload', description: '.error - persistence, setup, or publication failure.' }],
-   },
-   {
-+    name: 'agent-preset/catalog-changed',
-+    mode: 'emit',
-+    signature: '\'agent-preset/catalog-changed\'(): void',
-+    summary: 'A declaration finished activation or was removed; roster consumers re-read.',
-+    description: 'A declaration finished activation or was removed; roster consumers re-read.',
-+    parameters: [],
-+  },
-+  {
-     name: 'agent-preset/selected',
-     mode: 'emit',
-     signature: '\'agent-preset/selected\'(sessionId: SessionId, agentPreset: string): void',
-@@ -6843,7 +6851,7 @@
-   },
-   {
-     name: 'SessionSelectModelRequest',
--    declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n}',
-+    declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n    readonly saveDefault?: boolean;\n}',
-   },
-   {
-     name: 'SessionSelectModelValue',
 diff --git a/docs/event-producer-consumer.md b/docs/event-producer-consumer.md
+index c2b882cd95b03f004c93cc30a9794cadec5e1d9b..c187d61dfea4ed1a9fbb03f7cdb8ce85e3fcb4b8 100644
 --- a/docs/event-producer-consumer.md
 +++ b/docs/event-producer-consumer.md
-@@ -9,7 +9,8 @@
+@@ -9,7 +9,8 @@ This matrix shows which packages dispatch each harness-owned event and which pac
  | Event | Mode | Declared in | Dispatchers | Listeners |
  | --- | --- | --- | --- | --- |
  | `agent-loop/config-start-failed` | `emit` | [`packages/core/agent-loop/src/index.ts:238`](../packages/core/agent-loop/src/index.ts) | [`agent-loop`](../packages/core/agent-loop) (`events.dispatch`) | - |
@@ -38,7 +12,7 @@ diff --git a/docs/event-producer-consumer.md b/docs/event-producer-consumer.md
  | `agent/assistant-stream` | `emit` | [`packages/core/agent/src/runtime-types.ts:363`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`headless`](../packages/bundle/headless), `session-controller` |
  | `agent/created` | `serial` | [`packages/core/agent/src/runtime-types.ts:261`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`serial`) | `agent-team`, `browser-use-runtime`, [`file-reference-local`](../packages/context/file-reference-local), [`goal`](../packages/goal/goal), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex), [`loader-smoke`](../packages/test-support/loader-smoke), [`schedule`](../packages/schedule/schedule), `session-controller`, `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
  | `agent/disposed` | `emit` | [`packages/core/agent/src/runtime-types.ts:270`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`events.dispatch`) | [`agent-loop`](../packages/core/agent-loop), [`file-reference-local`](../packages/context/file-reference-local), [`goal-round-driver`](../packages/goal/goal-round-driver), [`schedule`](../packages/schedule/schedule), `session-controller`, [`subagent`](../packages/subagent/subagent), `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
-@@ -22,11 +23,11 @@
+@@ -22,11 +23,11 @@ This matrix shows which packages dispatch each harness-owned event and which pac
  | `agent/request-error` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:353`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`compaction-basic`](../packages/compaction/compaction-basic), [`compaction-image-offload`](../packages/compaction/compaction-image-offload), [`llm-retry`](../packages/llm/llm-retry) |
  | `agent/status` | `emit` | [`packages/core/agent/src/runtime-types.ts:280`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`agent`](../packages/core/agent), `agent-team`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), `server`, `session-controller` |
  | `agent/turn-stopping` | `serial` | [`packages/core/agent/src/runtime-types.ts:381`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`serial`) | [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex), [`workspace-changes`](../packages/deliverables/workspace-changes) |
@@ -56,6 +30,7 @@ diff --git a/docs/event-producer-consumer.md b/docs/event-producer-consumer.md
  | `approval/request` | `waterfall` | [`packages/interaction/user-approval/src/types.ts:87`](../packages/interaction/user-approval/src/types.ts) | [`user-approval`](../packages/interaction/user-approval) (`waterfall`) | [`acp`](../packages/acp/acp), `remotes` |
  | `authorization/settled` | `emit` | [`packages/credentials/authorization/src/index.ts:57`](../packages/credentials/authorization/src/index.ts) | [`authorization`](../packages/credentials/authorization) (`events.dispatch`) | [`authorization`](../packages/credentials/authorization) |
 diff --git a/docs/event-producer-consumer.zh.md b/docs/event-producer-consumer.zh.md
+index 97e2cb197b31d965f848895ae02be03afe42f2e4..de60abba8ba36a95810fe4df9faf22b8dce95de5 100644
 --- a/docs/event-producer-consumer.zh.md
 +++ b/docs/event-producer-consumer.zh.md
 @@ -11,7 +11,8 @@
@@ -85,101 +60,8 @@ diff --git a/docs/event-producer-consumer.zh.md b/docs/event-producer-consumer.z
  | `app-boot/config-reload` | `emit` | [`packages/boot/app-boot/src/index.ts:52`](../packages/boot/app-boot/src/index.ts) | [`app-boot`](../packages/boot/app-boot) (`emit`) | [`settings`](../packages/settings/settings) |
  | `approval/request` | `waterfall` | [`packages/interaction/user-approval/src/types.ts:87`](../packages/interaction/user-approval/src/types.ts) | [`user-approval`](../packages/interaction/user-approval) (`waterfall`) | [`acp`](../packages/acp/acp), `remotes` |
  | `authorization/settled` | `emit` | [`packages/credentials/authorization/src/index.ts:57`](../packages/credentials/authorization/src/index.ts) | [`authorization`](../packages/credentials/authorization) (`events.dispatch`) | [`authorization`](../packages/credentials/authorization) |
-diff --git a/docs/subsystems/core.md b/docs/subsystems/core.md
---- a/docs/subsystems/core.md
-+++ b/docs/subsystems/core.md
-@@ -1084,6 +1084,22 @@
-
- ### `agent-preset/*` events
-
-+<a id="agent-presetcatalog-changed--emit"></a>
-+
-+#### `agent-preset/catalog-changed` — emit
-+
-+A declaration finished activation or was removed; roster consumers re-read.
-+
-+```ts cordis-catalog
-+/**
-+ * A declaration finished activation or was removed; roster consumers re-read.
-+ * @mode emit
-+ */
-+'agent-preset/catalog-changed'(): void
-+```
-+
-+Source: [`packages/preset/agent-preset-registry/src/types.ts`](../../packages/preset/agent-preset-registry/src/types.ts)
-+
- <a id="agent-presetselected--emit"></a>
-
- #### `agent-preset/selected` — emit
-diff --git a/docs/subsystems/core.zh.md b/docs/subsystems/core.zh.md
---- a/docs/subsystems/core.zh.md
-+++ b/docs/subsystems/core.zh.md
-@@ -1094,6 +1094,22 @@
-
- ### `agent-preset/*` events
-
-+<a id="agent-presetcatalog-changed--emit"></a>
-+
-+#### `agent-preset/catalog-changed` — emit
-+
-+A declaration finished activation or was removed; roster consumers re-read.
-+
-+```ts cordis-catalog
-+/**
-+ * A declaration finished activation or was removed; roster consumers re-read.
-+ * @mode emit
-+ */
-+'agent-preset/catalog-changed'(): void
-+```
-+
-+Source: [`packages/preset/agent-preset-registry/src/types.ts`](../../packages/preset/agent-preset-registry/src/types.ts)
-+
- <a id="agent-presetselected--emit"></a>
-
- #### `agent-preset/selected` — emit
-diff --git a/docs/persistence-catalog.md b/docs/persistence-catalog.md
---- a/docs/persistence-catalog.md
-+++ b/docs/persistence-catalog.md
-@@ -5335,7 +5335,7 @@
-
- SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
-
--Sources: [`packages/api/session-controller/src/types.ts:398`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
-+Sources: [`packages/api/session-controller/src/types.ts:400`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
-
- `string`
-
-@@ -7268,7 +7268,7 @@
-
- SHA-256: `6a4f72e2e179e17b922f2a9392c0e1c8f8c707f32494372454850a3eb184a6e7`
-
--Sources: [`packages/api/session-controller/src/types.ts:403`](../packages/api/session-controller/src/types.ts)
-+Sources: [`packages/api/session-controller/src/types.ts:405`](../packages/api/session-controller/src/types.ts)
-
- | Property | Presence | Type |
- |---|---|---|
-diff --git a/docs/persistence-catalog.zh.md b/docs/persistence-catalog.zh.md
---- a/docs/persistence-catalog.zh.md
-+++ b/docs/persistence-catalog.zh.md
-@@ -5337,7 +5337,7 @@
-
- SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
-
--来源：[`packages/api/session-controller/src/types.ts:398`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
-+来源：[`packages/api/session-controller/src/types.ts:400`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
-
- `string`
-
-@@ -7270,7 +7270,7 @@
-
- SHA-256: `6a4f72e2e179e17b922f2a9392c0e1c8f8c707f32494372454850a3eb184a6e7`
-
--来源：[`packages/api/session-controller/src/types.ts:403`](../packages/api/session-controller/src/types.ts)
-+来源：[`packages/api/session-controller/src/types.ts:405`](../packages/api/session-controller/src/types.ts)
-
- | 属性 | 存在性 | 类型 |
- |---|---|---|
 diff --git a/docs/persistence-catalog.i18n.yaml b/docs/persistence-catalog.i18n.yaml
+index 555c6e52a78d21d208e103035894f7fd85f74368..44d18e932ef0c047a23ef629d84e940080ed70b6 100644
 --- a/docs/persistence-catalog.i18n.yaml
 +++ b/docs/persistence-catalog.i18n.yaml
 @@ -1284,8 +1284,8 @@
@@ -204,7 +86,52 @@ diff --git a/docs/persistence-catalog.i18n.yaml b/docs/persistence-catalog.i18n.
  /session-persistence-event-catalog/resolved-persistence-types/kind-user-approval:
    en: a52d2dfbaf844127
    zh: 4c5306ca40f20873
+diff --git a/docs/persistence-catalog.md b/docs/persistence-catalog.md
+index 1575e2104d3c8c1ae1c3b8ced0535415b32789f5..6c495b48e0042faf3ced0175182ae67e917c7ba2 100644
+--- a/docs/persistence-catalog.md
++++ b/docs/persistence-catalog.md
+@@ -5335,7 +5335,7 @@ Array of `number`.
+ 
+ SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
+ 
+-Sources: [`packages/api/session-controller/src/types.ts:398`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
++Sources: [`packages/api/session-controller/src/types.ts:400`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
+ 
+ `string`
+ 
+@@ -7268,7 +7268,7 @@ Sources: [`packages/core/tools/src/index.ts:34`](../packages/core/tools/src/inde
+ 
+ SHA-256: `6a4f72e2e179e17b922f2a9392c0e1c8f8c707f32494372454850a3eb184a6e7`
+ 
+-Sources: [`packages/api/session-controller/src/types.ts:403`](../packages/api/session-controller/src/types.ts)
++Sources: [`packages/api/session-controller/src/types.ts:405`](../packages/api/session-controller/src/types.ts)
+ 
+ | Property | Presence | Type |
+ |---|---|---|
+diff --git a/docs/persistence-catalog.zh.md b/docs/persistence-catalog.zh.md
+index 6bdbb929825c6300a9a2b33605d96b81510a5f1a..9613e3839606215e6ca3f283c6855b98326c4403 100644
+--- a/docs/persistence-catalog.zh.md
++++ b/docs/persistence-catalog.zh.md
+@@ -5337,7 +5337,7 @@ SHA-256: `5d03ba38734809bcbd2a55221bd938b3b3fc34b49bb686c6113e9e4931e3aa78`
+ 
+ SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
+ 
+-来源：[`packages/api/session-controller/src/types.ts:398`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
++来源：[`packages/api/session-controller/src/types.ts:400`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
+ 
+ `string`
+ 
+@@ -7270,7 +7270,7 @@ SHA-256: `8fcb0b44a575e998665c053643d1ab04c82f39253ebd190ac0c975b78e40b543`
+ 
+ SHA-256: `6a4f72e2e179e17b922f2a9392c0e1c8f8c707f32494372454850a3eb184a6e7`
+ 
+-来源：[`packages/api/session-controller/src/types.ts:403`](../packages/api/session-controller/src/types.ts)
++来源：[`packages/api/session-controller/src/types.ts:405`](../packages/api/session-controller/src/types.ts)
+ 
+ | 属性 | 存在性 | 类型 |
+ |---|---|---|
 diff --git a/docs/persistence-schema.json b/docs/persistence-schema.json
+index 45c1865af820cf0dc8937bf5dbef8f273633e6c9..7da0032a47babecb042a4cacc9e4b289108aea1b 100644
 --- a/docs/persistence-schema.json
 +++ b/docs/persistence-schema.json
 @@ -22937,7 +22937,7 @@
@@ -225,3 +152,85 @@ diff --git a/docs/persistence-schema.json b/docs/persistence-schema.json
        ]
      },
      {
+diff --git a/docs/subsystems/core.md b/docs/subsystems/core.md
+index 15c70ebca6a1469634ca75450c23097990e85037..17ab05c0e4d75712de07a8b356b2b504a4366aba 100644
+--- a/docs/subsystems/core.md
++++ b/docs/subsystems/core.md
+@@ -1084,6 +1084,22 @@ Source: [`packages/core/agent-loop/src/index.ts`](../../packages/core/agent-loop
+ 
+ ### `agent-preset/*` events
+ 
++<a id="agent-presetcatalog-changed--emit"></a>
++
++#### `agent-preset/catalog-changed` — emit
++
++A declaration finished activation or was removed; roster consumers re-read.
++
++```ts cordis-catalog
++/**
++ * A declaration finished activation or was removed; roster consumers re-read.
++ * @mode emit
++ */
++'agent-preset/catalog-changed'(): void
++```
++
++Source: [`packages/preset/agent-preset-registry/src/types.ts`](../../packages/preset/agent-preset-registry/src/types.ts)
++
+ <a id="agent-presetselected--emit"></a>
+ 
+ #### `agent-preset/selected` — emit
+diff --git a/docs/subsystems/core.zh.md b/docs/subsystems/core.zh.md
+index 03de9ddb7bb1eab82a60b6026c9864531f4bb1e1..61b923fb32d5073071d71232d22ce0a57d770d0e 100644
+--- a/docs/subsystems/core.zh.md
++++ b/docs/subsystems/core.zh.md
+@@ -1094,6 +1094,22 @@ Source: [`packages/core/agent-loop/src/index.ts`](../../packages/core/agent-loop
+ 
+ ### `agent-preset/*` events
+ 
++<a id="agent-presetcatalog-changed--emit"></a>
++
++#### `agent-preset/catalog-changed` — emit
++
++A declaration finished activation or was removed; roster consumers re-read.
++
++```ts cordis-catalog
++/**
++ * A declaration finished activation or was removed; roster consumers re-read.
++ * @mode emit
++ */
++'agent-preset/catalog-changed'(): void
++```
++
++Source: [`packages/preset/agent-preset-registry/src/types.ts`](../../packages/preset/agent-preset-registry/src/types.ts)
++
+ <a id="agent-presetselected--emit"></a>
+ 
+ #### `agent-preset/selected` — emit
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index a7043c75efcca854016a4e44cf980c82712dde39..e2a22da763394f5eaec4b07824ff95e102f9cda6 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -3766,6 +3766,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
+     parameters: [{ name: 'payload', description: '.error - persistence, setup, or publication failure.' }],
+   },
+   {
++    name: 'agent-preset/catalog-changed',
++    mode: 'emit',
++    signature: '\'agent-preset/catalog-changed\'(): void',
++    summary: 'A declaration finished activation or was removed; roster consumers re-read.',
++    description: 'A declaration finished activation or was removed; roster consumers re-read.',
++    parameters: [],
++  },
++  {
+     name: 'agent-preset/selected',
+     mode: 'emit',
+     signature: '\'agent-preset/selected\'(sessionId: SessionId, agentPreset: string): void',
+@@ -6843,7 +6851,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'SessionSelectModelRequest',
+-    declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n}',
++    declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n    readonly saveDefault?: boolean;\n}',
+   },
+   {
+     name: 'SessionSelectModelValue',

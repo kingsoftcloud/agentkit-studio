@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index 4af74c1b39..f30abe7a0b 100644
+index 4af74c1b3971db77841cff00b7acf1464c2471c5..f30abe7a0b539d2bd0bef1439bf3762ba5d6aa13 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -98,6 +98,7 @@ export function createElectronBuilderConfig(
@@ -20,7 +20,7 @@ index 4af74c1b39..f30abe7a0b 100644
      mac: {
        icon: productIcon || fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
 diff --git a/apps/desktop/tests/windows-asar-unpack.spec.ts b/apps/desktop/tests/windows-asar-unpack.spec.ts
-index ff988d6e48..58b5456a75 100644
+index ff988d6e4895813bfbda04a1a7447052ab94d9f1..58b5456a75cbe5ef888334af50fcdf0c1fd275fe 100644
 --- a/apps/desktop/tests/windows-asar-unpack.spec.ts
 +++ b/apps/desktop/tests/windows-asar-unpack.spec.ts
 @@ -67,6 +67,16 @@ it('uses single byte ranges for the Studio KS3 Windows update provider', () => {

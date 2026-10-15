@@ -120,7 +120,7 @@
       "file": "004-sidebar-panel-lifecycle.patch",
       "category": "lifecycle",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "8b1cbda1816700a19aad6638a6f9bdfbbd35bd361328422bc0709a96627043f7",
+      "sha256": "111e9a416df3721543ad74e7b10846c208c1ed729139b18016d4fe0572aac089",
       "dependsOn": [],
       "affectedFiles": [
         "packages/client/ui-sidebar/src/client/SidebarRoot.tsx"
@@ -154,7 +154,7 @@
       "file": "006-desktop-plugin-package-set.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "612b0fbefbb2a21fae0841eb3b5474ecf0ff0bba4524dec5cadd5631bc40a9a9",
+      "sha256": "fe78af7c47a573f169e790d269500493c8c640cfc4f7aa63e76a56eb60586394",
       "dependsOn": [],
       "affectedFiles": [
         "apps/desktop/scripts/prepare-package-set.ts",
@@ -188,7 +188,7 @@
       "file": "008-agent-session-without-workspace.patch",
       "category": "session-contract",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "9ffe9c57176312587cd91804905f828894c4726ffe814f1ae6b6c51111ef0782",
+      "sha256": "babc37d15195b8a4569bd824bd6cf2fd6304e9f102dccd3a5f7bdb4c6d217200",
       "dependsOn": [],
       "affectedFiles": [
         "packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx"
@@ -222,7 +222,7 @@
       "file": "009-local-macos-package.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "a71c4f8e7c8307c38d0ebdf3e869ec5c3189a7782b719443ce765db1284c50fb",
+      "sha256": "4a5b1a2da199ddb0620443fff2ba311d0e8ded749a42fb8ac6b37c141b15a338",
       "dependsOn": [
         "006"
       ],
@@ -284,7 +284,7 @@
       "file": "010-session-model-default.patch",
       "category": "session-contract",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "736f82a0b384bb810d5a0806e0cf4db239af4b799a26cdeaddbaf8254c92e4bb",
+      "sha256": "5af8c731ac356e90aae053cc8ea6b4f6e4e61c09d2727524006f00cf46ea7db2",
       "dependsOn": [],
       "affectedFiles": [
         "packages/api/session-controller/src/commands.ts",
@@ -322,7 +322,7 @@
       "file": "011-cjk-autolinks.patch",
       "category": "general-fix",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "9a8b54112b1406600a452853047e425dddb1d35e8b243a7aa0b9e6f7b016f90c",
+      "sha256": "5b6f397e38c0cbdaa3504a0330c7ba744e69b5b6e52e2a98021ed7e49a8a0239",
       "dependsOn": [],
       "affectedFiles": [
         "packages/client/ui-primitives/README.i18n.yaml",
@@ -365,7 +365,7 @@
       "file": "012-preset-roster-invalidation.patch",
       "category": "session-contract",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "1773639331ccabd55313c4a4d36178248890d9dc92481842c7d8306a6978183c",
+      "sha256": "7701f28e9c9717ad7f3f536b14511d712f0d7d17ba5e86169e60a228412c71a3",
       "dependsOn": [],
       "affectedFiles": [
         "packages/api/remotes/src/remote-events.ts",
@@ -418,7 +418,7 @@
       "file": "013-existing-product-profile.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "7a01d864283c0827753c31bf256393786b72d242b56e254b41f1a5f57ea7306a",
+      "sha256": "7415e9b5cc9bcff0adcd8bb31d74570166298bd6ba2484174793dc234217c9c7",
       "dependsOn": [
         "009"
       ],
@@ -459,7 +459,7 @@
       "file": "014-desktop-product-brand.patch",
       "category": "product",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "6c1a1c8cacabbad4d3f095c3579f71383762e74e342ef0b4624bcba70142dfdb",
+      "sha256": "dc44f5f5f7eb5b8aa1994dab3d3747e4a9c65e9d4a1753d27598ef3adb0d2882",
       "dependsOn": [
         "009",
         "013"
@@ -508,7 +508,7 @@
       "file": "015-compatibility-docs.patch",
       "category": "generated-docs",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "8afa3391a33ca8abcb9e2b278c20ba718b46d5fdab7c39381b561ed1871fae60",
+      "sha256": "44e2d068396aebe0f6be503276f25af98d534f8910263952c761bd94c0066b92",
       "dependsOn": [],
       "affectedFiles": [
         "docs/event-producer-consumer.md",
@@ -549,7 +549,7 @@
       "file": "016-informational-session-events.patch",
       "category": "session-contract",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "f31f60a314d22247fd5838164c189adf7cb629e0598393f4072eed1ed801ee52",
+      "sha256": "228e65d7c2304611c2ddcf4cf66182f1710ba7524ddaa25a23776d6814fe44d9",
       "dependsOn": [
         "015"
       ],
@@ -727,7 +727,7 @@
       "file": "019-studio-product-update-feed.patch",
       "category": "updater",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "e45bf975bc8262f8ceeb4bb4cc87d71b72eefa66ce593b39e98059e82f331f7a",
+      "sha256": "76a4f7f51e73f8828b26c8c4f3c9d7234de76bead45ce3bb9a272165d0889708",
       "dependsOn": [
         "009",
         "014"
@@ -784,7 +784,7 @@
       "file": "020-studio-signed-product-name.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "ca8a788ca9fe0faa1a45aa049e582ae7b03a5ce3d385fc82192944cc95c79ac7",
+      "sha256": "d225bed0e03e21edb3c4f317ea8218f56bae598697419d45d03685e1749e9f35",
       "dependsOn": [
         "009",
         "014",
@@ -822,7 +822,7 @@
       "file": "022-ks3-single-range-updates.patch",
       "category": "updater",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "5a310a01f0ecbdc71deb786371fdc134e9dccb7f4426f0dd5f51cd7dbc9736f6",
+      "sha256": "be3a50d5e25065a6405c7936f8620b66c8600b3e6899e85363ff3da5e45304bb",
       "dependsOn": [
         "019"
       ],
@@ -1016,7 +1016,7 @@
       "file": "027-windows-installed-path-smoke.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "41c6b358991b1dac6872faa703dd8824ac619b3201bffa15ebe3846db6c821b8",
+      "sha256": "6410688b4b925578b3e1ee568228978a0178e9cd782da21c91140daa7e6089f9",
       "dependsOn": [
         "020"
       ],
@@ -1052,7 +1052,7 @@
       "file": "028-smoke-plugin-readiness.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "ede78e56c4a034a59a6862ead20ccc4bb8bd7c229efb29af96e20c1c33691379",
+      "sha256": "0868921a2c09c0d6ee540e76c7b129b126cc6ce2adf4a95b4603f6df1f61d8c6",
       "dependsOn": [],
       "affectedFiles": [
         "apps/desktop/scripts/smoke-runtime.ts"
@@ -1084,7 +1084,7 @@
       "file": "029-full-update-blockmap-cache.patch",
       "category": "updater",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "679aa595999c5c09703c61c0efb283381e0e0f4f5a647269ce88ef379b10bad7",
+      "sha256": "083938cd11ccfc658a7da56cce81b94073540441dcf06b55bd280e53cc575697",
       "dependsOn": [
         "019"
       ],
@@ -1120,7 +1120,7 @@
       "file": "030-plugin-smoke-diagnostics.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "abc228a238fbf1dc58fbc895d5c7d6579a2f0bf73bcb0e930cd28ca85dc29f0a",
+      "sha256": "bdb18e39500669b8523b6c39d04ee4e3b2b164f0fa5039ec7d998baf53687c3b",
       "dependsOn": [
         "028"
       ],
@@ -1155,7 +1155,7 @@
       "file": "031-canonical-windows-smoke-paths.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "a6f77a056b0bd828390a889d5ae1699ddf2117d2e5def2b4724a6bd9dc113c51",
+      "sha256": "4e04effc914e106da17e3a1e8729ae38c4202c10c063c23f0f56e42dc2bc09d8",
       "dependsOn": [
         "027",
         "030"
@@ -1191,7 +1191,7 @@
       "file": "032-windows-studio-product.patch",
       "category": "packaging",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "6b27d68c370e23abcdff26f5b0f5012d58482e4002373124433c8b583acf39de",
+      "sha256": "827835cf46c674cfce3cf24a443fa2c575a7c5181f2e8fd6d9bc703d3e7a7680",
       "dependsOn": [
         "009",
         "019",
@@ -1241,7 +1241,7 @@
       "file": "033-windows-single-range-evidence.patch",
       "category": "updater",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "32344a8b45efcb0cd8ed31b69f3d0df828f88a9751cf4358b9ca1c42f21bd573",
+      "sha256": "12536d707fe81f41c3bb0a881eac636b608045a588cc4b19675e4a1cf9ea77c5",
       "dependsOn": [
         "019",
         "029",
@@ -1289,7 +1289,7 @@
       "file": "034-product-windows-tray.patch",
       "category": "product",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "8d92164e230eab2137b4f95e05c8cde8828b0c3cecf125bcc2f0080facbfec65",
+      "sha256": "33e642b130088fc028cb7f1423a6f131f645c99bb8436e501e26390f2d8ec105",
       "dependsOn": [
         "033"
       ],
@@ -1326,7 +1326,7 @@
       "file": "035-public-product-presentation.patch",
       "category": "product",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "daaa6892c79838054fd737859c174509232351c30bda06796741e55274864f7c",
+      "sha256": "95cef61f29727b3b3e4bfc117754570b4fb87a12c8dab99ec688fb2ae24ad531",
       "dependsOn": [
         "017"
       ],
@@ -1386,7 +1386,7 @@
       "file": "036-preset-composition-generated-api.patch",
       "category": "generated-docs",
       "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-      "sha256": "35a0fd3543a8bbbbad95b154018ccd029f3f87374d67732255b1e9afdce75b9e",
+      "sha256": "512d60395aea7b8ffb2b5aa97d885e43b3725df3180dd4459fbe69c56554e090",
       "dependsOn": [
         "015",
         "016",
@@ -1457,5 +1457,9 @@
     }
   ],
   "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
-  "patchedSourceSha256": "986f3d9708ec076105877ad8fd81dcc0160fcfbafe4df49de018cc25e0d3ca83"
+  "patchedSourceSha256": "986f3d9708ec076105877ad8fd81dcc0160fcfbafe4df49de018cc25e0d3ca83",
+  "maintenanceSource": {
+    "descriptor": "source.json",
+    "sha256": "b1f05e83c491113508f97610343e409448f6f41c125789e891848c3fbf30cf0e"
+  }
 }

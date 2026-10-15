@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
-index f15f10a928..95b31ff664 100644
+index f15f10a9280c8d49e29de19cfc6960cc6c05f294..95b31ff6640642ad30e639041a84be5ea67ad956 100644
 --- a/apps/desktop/scripts/smoke-runtime.ts
 +++ b/apps/desktop/scripts/smoke-runtime.ts
 @@ -109,8 +109,23 @@ export function apply(ctx) {

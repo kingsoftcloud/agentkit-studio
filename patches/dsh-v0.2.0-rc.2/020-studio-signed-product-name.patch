@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/package-macos.ts b/apps/desktop/scripts/package-macos.ts
-index 4ba0fd12ca..f66aed5c33 100644
+index 4ba0fd12ca8cff27d3c4f1e085cd6022cc66dc1a..f66aed5c334e5d5f07e9d0aad9128371255d7f68 100644
 --- a/apps/desktop/scripts/package-macos.ts
 +++ b/apps/desktop/scripts/package-macos.ts
 @@ -78,7 +78,8 @@ export async function packageMacOSArtifacts(
@@ -13,7 +13,7 @@ index 4ba0fd12ca..f66aed5c33 100644
    const zipApp = join(root, 'zip', basename(appPath))
    const dmgApp = join(root, 'dmg', basename(appPath))
 diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
-index b4371c444e..4382fb5c89 100644
+index b4371c444e8166bf2fff043296266a026d083604..4382fb5c898f5ab8f34a889187e45ffe3f06e769 100644
 --- a/apps/desktop/scripts/package-target.ts
 +++ b/apps/desktop/scripts/package-target.ts
 @@ -498,7 +498,8 @@ export async function packageTarget(
@@ -27,7 +27,7 @@ index b4371c444e..4382fb5c89 100644
        () => notarizeMacOS({ appPath, ...resolveMacOSNotarizationEnvironment(environment) }), undefined, undefined, proxyEvent)
    } else {
 diff --git a/apps/desktop/scripts/smoke-packaged-runtime.ts b/apps/desktop/scripts/smoke-packaged-runtime.ts
-index 1e08061b4f..6b196ed2d9 100644
+index 1e08061b4f22ed7c48a3617fcee16ca5f95d4b5b..6b196ed2d951c529e2a20a7bbc709e697e32b17f 100644
 --- a/apps/desktop/scripts/smoke-packaged-runtime.ts
 +++ b/apps/desktop/scripts/smoke-packaged-runtime.ts
 @@ -12,11 +12,11 @@ const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default:
