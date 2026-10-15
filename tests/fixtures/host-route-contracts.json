@@ -1,0 +1,3705 @@
+{
+  "baselineCommit": "c6f97fbf36351875967fbb2ce30dc0097a8ebf63",
+  "evidence": "fixed-ref-dispatch-recordings-with-controlled-service-adapters",
+  "cases": [
+    {
+      "endpoint": "sessions/export-log",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "content": "{\"type\":\"fixture\"}\n",
+          "filename": "dsh-session-session_fixture.jsonl",
+          "contentType": "application/x-ndjson"
+        }
+      },
+      "calls": [
+        [
+          "session.flush",
+          [
+            {
+              "sessionPersistence": {}
+            },
+            "session/fixture",
+            {
+              "aborted": false
+            }
+          ]
+        ],
+        [
+          "session.read",
+          [
+            {},
+            "session/fixture",
+            {
+              "aborted": false
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": [
+            {
+              "metadata": {
+                "id": "agent-fixture",
+                "name": "Fixture",
+                "revision": 3,
+                "local": true
+              },
+              "spec": {
+                "runtime": {
+                  "type": "harness"
+                },
+                "instructions": {
+                  "system": "fixture"
+                },
+                "bindings": {}
+              }
+            }
+          ],
+          "total": 1
+        }
+      },
+      "calls": [
+        [
+          "agentCatalog.list",
+          [
+            {
+              "$fixture": "payload"
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/create-local",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "metadata": {
+            "id": "agent-fixture",
+            "name": "Fixture",
+            "revision": 3,
+            "local": true
+          },
+          "spec": {
+            "runtime": {
+              "type": "harness"
+            },
+            "instructions": {
+              "system": "fixture"
+            },
+            "bindings": {}
+          },
+          "builds": []
+        }
+      },
+      "calls": [
+        [
+          "agents.create",
+          [
+            {
+              "name": "Fixture",
+              "runtimeType": "harness",
+              "description": "",
+              "spec": {
+                "runtime": {
+                  "type": "harness"
+                },
+                "instructions": {
+                  "system": "fixture"
+                },
+                "bindings": {}
+              },
+              "bindings": {}
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/update-cloud",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "metadata": {
+            "id": "agent-fixture",
+            "name": "Fixture",
+            "revision": 3,
+            "local": true
+          },
+          "spec": {
+            "runtime": {
+              "type": "harness"
+            },
+            "instructions": {
+              "system": "fixture"
+            },
+            "bindings": {}
+          }
+        }
+      },
+      "calls": [
+        [
+          "server.action",
+          [
+            "UpdateAgent",
+            {
+              "AgentId": "agent-fixture",
+              "Advanced": {
+                "ComponentConfig": {
+                  "KnowledgeBase": null,
+                  "Memory": null,
+                  "SkillWorkspace": null
+                }
+              },
+              "Name": "Fixture",
+              "Description": ""
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ],
+        [
+          "server.getAgent",
+          [
+            "agent-fixture",
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/ensure-preset",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "presetId": "fixture-preset"
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "build.resolve",
+          [
+            "agent-fixture",
+            "build_aaaaaaaaaaaaaaaaaaaa"
+          ]
+        ],
+        [
+          "admission.ensure",
+          [
+            "agent-fixture",
+            {
+              "agent": {
+                "metadata": {
+                  "id": "agent-fixture",
+                  "name": "Fixture",
+                  "revision": 3,
+                  "local": true
+                },
+                "spec": {
+                  "runtime": {
+                    "type": "harness"
+                  },
+                  "instructions": {
+                    "system": "fixture"
+                  },
+                  "bindings": {}
+                },
+                "id": "build_aaaaaaaaaaaaaaaaaaaa",
+                "agentId": "agent-fixture",
+                "revision": 3,
+                "status": "SUCCEEDED"
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/conversation-surface",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "agentId": "agent-fixture",
+          "sessionId": "session/fixture",
+          "transport": "agentengine-action",
+          "events": [],
+          "watermark": 7
+        }
+      },
+      "calls": [
+        [
+          "server.getAgent",
+          [
+            "agent-fixture",
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ],
+        [
+          "server.action",
+          [
+            "GetSession",
+            {
+              "SessionId": "session/fixture"
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ],
+        [
+          "server.action",
+          [
+            "ListSessionEvents",
+            {
+              "AgentId": "agent-fixture",
+              "SessionId": "session/fixture",
+              "Limit": 200
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/sync-credential",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "configured": true
+        }
+      },
+      "calls": [
+        [
+          "models.sync",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/credential-status",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "configured": true
+        }
+      },
+      "calls": [
+        [
+          "credentials.status",
+          [
+            {
+              "configuration": {},
+              "credentials": {
+                "set": "[function]",
+                "describe": "[function]",
+                "resolve": "[function]"
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/create",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "id": "fixture-model"
+        }
+      },
+      "calls": [
+        [
+          "models.create",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/catalog",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "defaultModel": "fixture-model",
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "models.catalog",
+          [
+            "fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/codex",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "models.codex",
+          [
+            {
+              "models": {
+                "sync": "[function]",
+                "settings": "[function]",
+                "save": "[function]",
+                "create": "[function]",
+                "catalog": "[function]"
+              },
+              "catalog": {}
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "resources/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": [],
+          "total": 0
+        }
+      },
+      "calls": [
+        [
+          "server.listCatalogResources",
+          [
+            {
+              "kind": "tool",
+              "query": "fixture",
+              "limit": 10,
+              "cursor": "[undefined]",
+              "source": "fixture-source",
+              "status": "[undefined]"
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "resources/delete",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "deleted": true
+        }
+      },
+      "calls": [
+        [
+          "mcp.get",
+          [
+            "mcp-local-fixture"
+          ]
+        ],
+        [
+          "mcp.remove",
+          [
+            "mcp-local-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "mcp/create",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "resourceId": "mcp-local-fixture"
+        }
+      },
+      "calls": [
+        [
+          "mcp.create",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "mcp/update",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "mcp.update",
+          [
+            "mcp-local-fixture",
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "mcp/probe",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "toolCount": 1
+        }
+      },
+      "calls": [
+        [
+          "mcp.probe",
+          [
+            "mcp-local-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "mcp/delete",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "deleted": true
+        }
+      },
+      "calls": [
+        [
+          "mcp.get",
+          [
+            "mcp-local-fixture"
+          ]
+        ],
+        [
+          "mcp.remove",
+          [
+            "mcp-local-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "credentials/put",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "name": "Fixture",
+          "configured": true,
+          "persistence": "managed-store"
+        }
+      },
+      "calls": [
+        [
+          "credentials.set",
+          [
+            "Fixture",
+            "fixture-value"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "settings/get",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "modelProfiles": []
+        }
+      },
+      "calls": [
+        [
+          "models.settings",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "settings/update",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "models.save",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/discover",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "skills.discover",
+          [
+            [
+              "fixture"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/preview-discovered",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "skills.previewDiscovered",
+          [
+            "inspection",
+            "candidate",
+            "README.md"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/commit-discovered",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "skills.commitDiscovered",
+          [
+            "inspection",
+            "candidate",
+            true
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "skills.listInstalled",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/preview-installed",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "skills.previewInstalled",
+          [
+            "mcp-local-fixture",
+            "README.md"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.listDsh",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/local-get",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "metadata": {
+            "id": "agent-fixture",
+            "name": "Fixture",
+            "revision": 3,
+            "local": true
+          },
+          "spec": {
+            "runtime": {
+              "type": "harness"
+            },
+            "instructions": {
+              "system": "fixture"
+            },
+            "bindings": {}
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/update-local",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "metadata": {
+            "id": "agent-fixture",
+            "name": "Fixture",
+            "revision": 3,
+            "local": true
+          },
+          "spec": {
+            "runtime": {
+              "type": "harness"
+            },
+            "instructions": {
+              "system": "fixture"
+            },
+            "bindings": {}
+          },
+          "builds": []
+        }
+      },
+      "calls": [
+        [
+          "agents.update",
+          [
+            "agent-fixture",
+            {
+              "name": "Fixture",
+              "description": "[undefined]",
+              "spec": {
+                "runtime": {
+                  "type": "harness"
+                },
+                "instructions": {
+                  "system": "fixture"
+                },
+                "bindings": {}
+              },
+              "bindings": {}
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/local-delete",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "agentId": "agent-fixture",
+          "deleted": true
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "agents.remove",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-install",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "dshPlugins.installDsh",
+          [
+            "fixture-source",
+            false
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-remove",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "dshPlugins.uninstallDsh",
+          [
+            "fixture-plugin"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-enable",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "dshPlugins.setDshEnabled",
+          [
+            "fixture-plugin",
+            true
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-disable",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "dshPlugins.setDshEnabled",
+          [
+            "fixture-plugin",
+            false
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-update",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "dshPlugins.updateDsh",
+          [
+            "fixture-plugin"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/codex-list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "codexPlugins.listCodex",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/codex-inspect",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "codexPlugins.inspectCodex",
+          [
+            "fixture-plugin"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/codex-install",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "codexPlugins.installCodex",
+          [
+            "fixture-plugin",
+            "fixture-market"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/codex-remove",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "codexPlugins.uninstallCodex",
+          [
+            "fixture-plugin",
+            "fixture-market"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "builds/create",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "operationId": "operation-fixture",
+          "status": "QUEUED",
+          "buildId": null
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "agents.getRevision",
+          [
+            "agent-fixture",
+            3
+          ]
+        ],
+        [
+          "operations.submit",
+          [
+            {
+              "kind": "build",
+              "resourceId": "agent-fixture",
+              "idempotencyKey": "build-build_266a84f284a05d529889",
+              "requestFingerprint": "build_266a84f284a05d529889",
+              "metadata": {
+                "agentName": "Fixture",
+                "revision": 3
+              },
+              "runner": "[function]"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "builds/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": [
+            {
+              "metadata": {
+                "id": "agent-fixture",
+                "name": "Fixture",
+                "revision": 3,
+                "local": true
+              },
+              "spec": {
+                "runtime": {
+                  "type": "harness"
+                },
+                "instructions": {
+                  "system": "fixture"
+                },
+                "bindings": {}
+              },
+              "id": "build_aaaaaaaaaaaaaaaaaaaa",
+              "agentId": "agent-fixture",
+              "revision": 3,
+              "status": "SUCCEEDED"
+            }
+          ]
+        }
+      },
+      "calls": [
+        [
+          "build.list",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "builds/download",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "filename": "fixture.zip",
+          "base64": "UEs="
+        }
+      },
+      "calls": [
+        [
+          "build.download",
+          [
+            "agent-fixture",
+            "build_aaaaaaaaaaaaaaaaaaaa"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "builds/export-portable",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "id": "portable-fixture"
+        }
+      },
+      "calls": [
+        [
+          "portable.prepare",
+          [
+            "agent-fixture",
+            "build_aaaaaaaaaaaaaaaaaaaa"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "operations/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "operations.list",
+          [
+            {
+              "resourceId": "mcp-local-fixture",
+              "kind": "tool"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "operations/cancel",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "operations.cancel",
+          [
+            "operation-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": [],
+          "nativeItems": [],
+          "availability": {
+            "triggerActive": true,
+            "runnerAvailable": true,
+            "nativeScheduleAvailable": true
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "scheduler.listSchedules",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "nativeSchedule.catalog",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/create",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "scheduler.createSchedule",
+          [
+            "agent-fixture",
+            {
+              "runtime": {
+                "type": "harness"
+              },
+              "instructions": {
+                "system": "fixture"
+              },
+              "bindings": {}
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/get",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "scheduler.getSchedule",
+          [
+            "task-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/update",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "scheduler.updateSchedule",
+          [
+            "task-fixture",
+            {
+              "prompt": "fixture",
+              "agentId": "agent-fixture"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/delete",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "scheduler.deleteSchedule",
+          [
+            "task-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/run",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "scheduler.runNow",
+          [
+            "task-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/occurrences",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ],
+        [
+          "scheduler.listOccurrences",
+          [
+            "task-fixture",
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "traces/overview",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "total": 1,
+          "cloud": {
+            "sessionCount": 1,
+            "tokenCount": 2,
+            "agentRuntimeCount": 3,
+            "errorCount": 0,
+            "errorRate": 0
+          }
+        }
+      },
+      "calls": [
+        [
+          "traces.overview",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ],
+        [
+          "server.getObservabilityOverview",
+          [
+            {
+              "range": "24h"
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "traces/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "traces.list",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "traces/get",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "traces.get",
+          [
+            "[undefined]"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "traces/otlp",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "traces.getOtlp",
+          [
+            "[undefined]"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "evaluations.listRuns",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/create",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "evaluations.createEvaluation",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/get",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "evaluations.getRun",
+          [
+            "run-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/targets",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "build.targets",
+          []
+        ],
+        [
+          "evaluations.listTargets",
+          [
+            {
+              "builds": [
+                {
+                  "metadata": {
+                    "id": "agent-fixture",
+                    "name": "Fixture",
+                    "revision": 3,
+                    "local": true
+                  },
+                  "spec": {
+                    "runtime": {
+                      "type": "harness"
+                    },
+                    "instructions": {
+                      "system": "fixture"
+                    },
+                    "bindings": {}
+                  },
+                  "id": "build_aaaaaaaaaaaaaaaaaaaa",
+                  "agentId": "agent-fixture",
+                  "revision": 3,
+                  "status": "SUCCEEDED"
+                }
+              ]
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/evalsets",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": []
+        }
+      },
+      "calls": [
+        [
+          "evaluations.listEvalsets",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/import",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "evaluations.importEvalset",
+          [
+            {
+              "content": "cases: []",
+              "fileName": "fixture.yaml"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "channels/connection",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "channels.getConnection",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "channels/update",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "channels.updateConnection",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "channels/agent-update",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "channels.updateAgentConnection",
+          [
+            "agent-fixture",
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "channels/action",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "channels.proxyAction",
+          [
+            "FixtureAction",
+            {
+              "fixture": true
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "server/action",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "Events": [],
+          "AfterSeqId": 7,
+          "Deleted": true
+        },
+        "requestId": "fixture-request"
+      },
+      "calls": [
+        [
+          "server.action",
+          [
+            "FixtureAction",
+            {
+              "fixture": true
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/prepare",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "prepare"
+        }
+      },
+      "calls": [
+        [
+          "deployments.prepare",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/create",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "create"
+        }
+      },
+      "calls": [
+        [
+          "deployments.create",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/prepareUpdate",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "prepareUpdate"
+        }
+      },
+      "calls": [
+        [
+          "deployments.prepareUpdate",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/applyUpdate",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "applyUpdate"
+        }
+      },
+      "calls": [
+        [
+          "deployments.applyUpdate",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/list",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "list"
+        }
+      },
+      "calls": [
+        [
+          "deployments.list",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/get",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "get"
+        }
+      },
+      "calls": [
+        [
+          "deployments.get",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/refresh",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "refresh"
+        }
+      },
+      "calls": [
+        [
+          "deployments.refresh",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/repairAccess",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "repairAccess"
+        }
+      },
+      "calls": [
+        [
+          "deployments.repairAccess",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/reconcile",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "reconcile"
+        }
+      },
+      "calls": [
+        [
+          "deployments.reconcile",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/logs",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "logs"
+        }
+      },
+      "calls": [
+        [
+          "deployments.logs",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/remove",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "result": "remove"
+        }
+      },
+      "calls": [
+        [
+          "deployments.remove",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "sessions/export-log",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "session.flush",
+          [
+            {
+              "sessionPersistence": {}
+            },
+            "session/fixture",
+            {
+              "aborted": false
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "agentCatalog.list",
+          [
+            {
+              "$fixture": "payload"
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/create-local",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.create",
+          [
+            {
+              "name": "Fixture",
+              "runtimeType": "harness",
+              "description": "",
+              "spec": {
+                "runtime": {
+                  "type": "harness"
+                },
+                "instructions": {
+                  "system": "fixture"
+                },
+                "bindings": {}
+              },
+              "bindings": {}
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/update-cloud",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "server.action",
+          [
+            "UpdateAgent",
+            {
+              "AgentId": "agent-fixture",
+              "Advanced": {
+                "ComponentConfig": {
+                  "KnowledgeBase": null,
+                  "Memory": null,
+                  "SkillWorkspace": null
+                }
+              },
+              "Name": "Fixture",
+              "Description": ""
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/ensure-preset",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/conversation-surface",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "server.getAgent",
+          [
+            "agent-fixture",
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/sync-credential",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "models.sync",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/credential-status",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "credentials.status",
+          [
+            {
+              "configuration": {},
+              "credentials": {
+                "set": "[function]",
+                "describe": "[function]",
+                "resolve": "[function]"
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/create",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "models.create",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/catalog",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "models.catalog",
+          [
+            "fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "models/codex",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "models.codex",
+          [
+            {
+              "models": {
+                "sync": "[function]",
+                "settings": "[function]",
+                "save": "[function]",
+                "create": "[function]",
+                "catalog": "[function]"
+              },
+              "catalog": {}
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "resources/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "server.listCatalogResources",
+          [
+            {
+              "kind": "tool",
+              "query": "fixture",
+              "limit": 10,
+              "cursor": "[undefined]",
+              "source": "fixture-source",
+              "status": "[undefined]"
+            },
+            {
+              "signal": {
+                "aborted": false
+              }
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "resources/delete",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "mcp.get",
+          [
+            "mcp-local-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "mcp/create",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "mcp.create",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "mcp/update",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "mcp.update",
+          [
+            "mcp-local-fixture",
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "mcp/probe",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "mcp.probe",
+          [
+            "mcp-local-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "mcp/delete",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "mcp.get",
+          [
+            "mcp-local-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "credentials/put",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "credentials.set",
+          [
+            "Fixture",
+            "fixture-value"
+          ]
+        ],
+        [
+          "credentials.describe",
+          [
+            "Fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "settings/get",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "models.settings",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "settings/update",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "models.save",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/discover",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "skills.discover",
+          [
+            [
+              "fixture"
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/preview-discovered",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "skills.previewDiscovered",
+          [
+            "inspection",
+            "candidate",
+            "README.md"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/commit-discovered",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "skills.commitDiscovered",
+          [
+            "inspection",
+            "candidate",
+            true
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "skills.listInstalled",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "skills/preview-installed",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "skills.previewInstalled",
+          [
+            "mcp-local-fixture",
+            "README.md"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.listDsh",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/local-get",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/update-local",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.update",
+          [
+            "agent-fixture",
+            {
+              "name": "Fixture",
+              "description": "[undefined]",
+              "spec": {
+                "runtime": {
+                  "type": "harness"
+                },
+                "instructions": {
+                  "system": "fixture"
+                },
+                "bindings": {}
+              },
+              "bindings": {}
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "agents/local-delete",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {}
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-install",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.installDsh",
+          [
+            "fixture-source",
+            false
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-remove",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.uninstallDsh",
+          [
+            "fixture-plugin"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-enable",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.setDshEnabled",
+          [
+            "fixture-plugin",
+            true
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-disable",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.setDshEnabled",
+          [
+            "fixture-plugin",
+            false
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-update",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.updateDsh",
+          [
+            "fixture-plugin"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/codex-list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "codexPlugins.listCodex",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/codex-inspect",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "codexPlugins.inspectCodex",
+          [
+            "fixture-plugin"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/codex-install",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "codexPlugins.installCodex",
+          [
+            "fixture-plugin",
+            "fixture-market"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/codex-remove",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "codexPlugins.uninstallCodex",
+          [
+            "fixture-plugin",
+            "fixture-market"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "builds/create",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "builds/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "build.list",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "builds/download",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "build.download",
+          [
+            "agent-fixture",
+            "build_aaaaaaaaaaaaaaaaaaaa"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "builds/export-portable",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "运行包导出失败，请检查绑定的资源是否可读取",
+          "details": {}
+        }
+      },
+      "calls": [
+        [
+          "portable.prepare",
+          [
+            "agent-fixture",
+            "build_aaaaaaaaaaaaaaaaaaaa"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "operations/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "operations.list",
+          [
+            {
+              "resourceId": "mcp-local-fixture",
+              "kind": "tool"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "operations/cancel",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "operations.cancel",
+          [
+            "operation-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/create",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/get",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/update",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/delete",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/run",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "schedules/occurrences",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "agents.get",
+          [
+            "agent-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "traces/overview",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "traces.overview",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "traces/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "traces.list",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "traces/get",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "traces.get",
+          [
+            "[undefined]"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "traces/otlp",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "traces.getOtlp",
+          [
+            "[undefined]"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "evaluations.listRuns",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/create",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "evaluations.createEvaluation",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/get",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "evaluations.getRun",
+          [
+            "run-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/targets",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "build.targets",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/evalsets",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "evaluations.listEvalsets",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "evaluations/import",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "evaluations.importEvalset",
+          [
+            {
+              "content": "cases: []",
+              "fileName": "fixture.yaml"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "channels/connection",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "channels.getConnection",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "channels/update",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "channels.updateConnection",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "channels/agent-update",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "channels.updateAgentConnection",
+          [
+            "agent-fixture",
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "channels/action",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "channels.proxyAction",
+          [
+            "FixtureAction",
+            {
+              "fixture": true
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "server/action",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "server.action",
+          [
+            "FixtureAction",
+            {
+              "fixture": true
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/prepare",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.prepare",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/create",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.create",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/prepareUpdate",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.prepareUpdate",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/applyUpdate",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.applyUpdate",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/list",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.list",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/get",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.get",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/refresh",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.refresh",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/repairAccess",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.repairAccess",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/reconcile",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.reconcile",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/logs",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.logs",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    },
+    {
+      "endpoint": "deployments/remove",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "status": 409
+          }
+        }
+      },
+      "calls": [
+        [
+          "deployments.remove",
+          [
+            "deployment-fixture"
+          ]
+        ]
+      ]
+    }
+  ],
+  "payload": {
+    "agentId": "agent-fixture",
+    "buildId": "build_aaaaaaaaaaaaaaaaaaaa",
+    "deploymentId": "deployment-fixture",
+    "sessionId": "session/fixture",
+    "resourceId": "mcp-local-fixture",
+    "taskId": "task-fixture",
+    "runId": "run-fixture",
+    "operationId": "operation-fixture",
+    "name": "Fixture",
+    "value": "fixture-value",
+    "runtimeType": "harness",
+    "spec": {
+      "runtime": {
+        "type": "harness"
+      },
+      "instructions": {
+        "system": "fixture"
+      },
+      "bindings": {}
+    },
+    "bindings": {},
+    "revision": 3,
+    "source": "fixture-source",
+    "pluginName": "fixture-plugin",
+    "pluginId": "fixture-plugin",
+    "marketplaceName": "fixture-market",
+    "fileName": "fixture.yaml",
+    "content": "cases: []",
+    "scanPaths": [
+      "fixture"
+    ],
+    "candidateId": "candidate",
+    "inspectionToken": "inspection",
+    "path": "README.md",
+    "overwrite": true,
+    "profileId": "fixture",
+    "limit": 10,
+    "query": "fixture",
+    "kind": "tool",
+    "action": "FixtureAction",
+    "payload": {
+      "fixture": true
+    },
+    "patch": {
+      "prompt": "fixture"
+    },
+    "scope": "local"
+  }
+}
