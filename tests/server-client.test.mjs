@@ -6,6 +6,15 @@ import { createCloudEndpointPolicy } from '../src/cloud-endpoints.mjs';
 function configuration(values) { return { resolve: async () => ({ values, sources: {} }) }; }
 const endpointOptions = { innerKopUrl: 'http://kop.test', innerIamUrl: 'http://iam.test' };
 
+test('template environment selection keeps ordinary resource calls on the configured environment',async()=>{
+ const requests=[],values={cloudAccessKey:'AKTEST',cloudSecretKey:'SKTEST',cloudRegion:'cn-beijing-6'};
+ const client=createAgentEngineClient({configuration:configuration(values),fetchImpl:async(url,init)=>{requests.push(init);return Response.json({Code:0,Data:{items:[]}});}});
+ await client.action('ListStudioTemplates',{}, {templateEnvironment:'pre-online'});
+ assert.equal(requests[0].headers['X-KSC-CUSTOM-SOURCE'],'pre');assert.equal(requests[0].headers['X-Ksc-Region'],'cn-beijing-6');
+ await client.action('ListMCPs',{});assert.equal(requests[1].headers['X-KSC-CUSTOM-SOURCE'],undefined);assert.equal(values.cloudRegion,'cn-beijing-6');
+ await assert.rejects(client.action('ListMCPs',{}, {templateEnvironment:'pre-online'}),{code:'INVALID_TEMPLATE_ENVIRONMENT'});
+});
+
 test('server client sends existing local Action API without requiring KsADK', async () => {
   let request;
   const client = createAgentEngineClient({

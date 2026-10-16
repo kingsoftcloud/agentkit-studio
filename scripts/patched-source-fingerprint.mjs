@@ -4,14 +4,15 @@ import { promisify } from 'node:util';
 import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const execute = promisify(execFile);
 export async function fingerprintPatchedSource(checkout) {
   const temporary = await mkdtemp(join(tmpdir(), 'studio-source-fingerprint-'));
   const invoke = async (args, env = process.env) => (await execute('git', args, { cwd: checkout, env, encoding: null, maxBuffer: 32 * 1024 * 1024 })).stdout;
   try {
-    const index = (await invoke(['rev-parse', '--path-format=absolute', '--git-path', 'index'])).toString().trim();
+    // Resolve relative paths ourselves: older build-worker Git lacks --path-format.
+    const index = resolve(checkout, (await invoke(['rev-parse', '--git-path', 'index'])).toString().trim());
     const privateIndex = join(temporary, 'index');
     await copyFile(index, privateIndex);
     const env = { ...process.env, GIT_INDEX_FILE: privateIndex };

@@ -156,3 +156,16 @@ test('merge commits are refused even when the patch inventory has the same numbe
   await writeFile(join(input.patches, 'manifest.json'), json(input.manifest));
   await assert.rejects(exportMaintenanceSource(input), /linear chain/);
 });
+
+
+test('maintenance verification resolves a linked baseline object directory', async t => {
+  const input = await fixture(t);
+  await exportMaintenanceSource(input);
+  const linked = join(input.root, 'linked baseline');
+  git(input.source, 'worktree', 'add', '--detach', linked, input.manifest.baseCommit);
+  t.after(() => { try { git(input.source, 'worktree', 'remove', '--force', linked); } catch {} });
+  const result = await checkMaintenanceSource({ patches: input.patches, source: linked });
+  assert.equal(result.scope, 'git-ancestry-and-regenerated-patches');
+  assert.equal(git(linked, 'rev-parse', 'HEAD'), input.manifest.baseCommit);
+  assert.equal(git(linked, 'status', '--porcelain'), '');
+});
