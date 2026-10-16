@@ -9,10 +9,12 @@ import { verifyStudioNativeSidebar } from './verify-studio-native-sidebar-ui.mjs
 import { verifyStudioClientState } from './verify-studio-client-state-ui.mjs';
 import { verifyStudioClientPages } from './verify-studio-client-pages-ui.mjs';
 import { verifyStudioRouteFailures } from './verify-studio-route-failures-ui.mjs';
+import { assertDesktopDevResources, closeVerificationClient } from './desktop-dev-resources.mjs';
 const require = createRequire(import.meta.url);
 const { _electron } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.STUDIO_VERIFY_ELECTRON || !process.env.STUDIO_VERIFY_PRIMARY_RUNTIME || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated source, homes, Electron executable and prepared primary runtime');
 const source = resolve(process.env.AGENTKIT_DSH_ROOT);
+await assertDesktopDevResources({ source, primaryRuntime: process.env.STUDIO_VERIFY_PRIMARY_RUNTIME });
 const installed = join(process.env.DSH_HOME, 'profiles', process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor', 'node_modules/@kingsoftcloud/agentkit-studio');
 const shared = join(source, 'apps/desktop/.desktop-build/development/project/node_modules/@kingsoftcloud/agentkit-studio');
 assert.equal(await realpath(shared), await realpath(installed), 'development shell must link the verified installed Studio');
@@ -81,7 +83,7 @@ try {
   const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', passed: false,
     message: String(error.message).split(/\n/)[0].slice(0, 200), rendererErrors: errors, sessionWarnings, sidebarChecks, stateChecks, pageChecks, routeFailureChecks, pageProgress: error.pageProgress, sidebarProgress: error.sidebarProgress, clickTrace: error.clickTrace };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
-  for (const [index, page] of app.windows().entries()) await page.screenshot({ path: output.replace(/\.json$/, `-failure-${index}.png`), fullPage: true }).catch(() => {});
+  for (const [index, page] of app.windows().entries()) await page.screenshot({ path: output.replace(/\.json$/, `-failure-${index}.png`), fullPage: true, timeout: 3000 }).catch(() => {});
   console.log(JSON.stringify(report));
   process.exitCode = 1;
-} finally { await app.close(); }
+} finally { await closeVerificationClient(app); }
