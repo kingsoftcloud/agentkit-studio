@@ -30,16 +30,16 @@ export function createStudioShell({
     const activeNav = PANELS.find(item => item.page === page) || PANELS[0];
     return h('div', {
       'data-agentkit-studio': 'product-application',
-      style: { height: '100%', minHeight: 0, minWidth: 0, overflow: 'auto', background: page === 'resource-hub' ? BRAND.surface : BRAND.canvas, color: BRAND.ink, fontFamily: 'inherit' },
+      style: { height: '100%', minHeight: 0, minWidth: 0, overflow: page === 'assistant' ? 'hidden' : 'auto', background: page === 'resource-hub' || page === 'assistant' ? BRAND.surface : BRAND.canvas, color: BRAND.ink, fontFamily: 'inherit' },
     },
-    h('main', { 'data-studio-shell-main': 'true', style: { minWidth: 0, minHeight: '100%', boxSizing: 'border-box', padding: '24px 28px 32px' } },
-      h('header', { 'data-studio-header': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', marginBottom: '24px' } },
+    h('main', { 'data-studio-shell-main': 'true', style: { minWidth: 0, minHeight: page === 'assistant' ? 0 : '100%', height: page === 'assistant' ? '100%' : undefined, boxSizing: 'border-box', padding: page === 'assistant' ? 0 : '24px 28px 32px' } },
+      page === 'assistant' ? null : h('header', { 'data-studio-header': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', marginBottom: '24px' } },
         h('div', null,
           h('div', { style: { color: BRAND.accentStrong, fontSize: '11px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' } }, 'AgentKit Studio'),
           h('h1', { style: { color: BRAND.ink, margin: '6px 0 5px', fontSize: '25px', letterSpacing: '-0.035em' } }, activeNav.label),
           h('p', { style: { color: BRAND.inkMuted, margin: 0, fontSize: '13px' } }, activeNav.note)),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '9px' } }, h(Pill, { tone: 'neutral' }, page === 'assistant' ? '云端' : 'Local'), h(HostStatusPill))),
-      page === 'assistant' ? h(AssistantPage) : page === 'overview' ? h(OverviewPage, { onNavigate }) : page === 'agents' ? h(AgentWorkspace, { onNavigate }) : page === 'resource-hub' ? h(ResourceWorkspace) : page === 'operations' ? h(OperationsWorkspace, { scheduleRemote }) : h(DomainPage, { page })));
+      page === 'assistant' ? h(AssistantPage, { onNavigate }) : page === 'overview' ? h(OverviewPage, { onNavigate }) : page === 'agents' ? h(AgentWorkspace, { onNavigate }) : page === 'resource-hub' ? h(ResourceWorkspace) : page === 'operations' ? h(OperationsWorkspace, { scheduleRemote }) : h(DomainPage, { page })));
   }
 
   function StudioPanelIcon({ size, active, glyph, panelId }) {

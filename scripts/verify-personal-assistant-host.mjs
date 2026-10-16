@@ -207,7 +207,8 @@ try {
     const native = process.env.STUDIO_VERIFY_NATIVE === '1';
     stage = native ? 'macos-ui' : 'web-ui';
     const { verifyPersonalAssistantUi } = await import('./verify-personal-assistant-ui.mjs');
-    report.ui = await verifyPersonalAssistantUi({ source, installed, api, profiles, screenshot: target.replace(/\.json$/, '.png'), port: await freePort() });
+    report.ui = await verifyPersonalAssistantUi({ source, installed, api: (operation, input = {}) => api(operation, { ...input, conversation: 'ui-acceptance' }), profiles, screenshot: target.replace(/\.json$/, '.png'), port: await freePort() });
+    report.limits[1] = 'Controlled model and ownership catalog; real cloud deployment and memory extraction require separate acceptance.';
     check(native ? 'real-electron-ui-reopens-after-local-host-exits' : 'real-web-ui-reopens-after-local-host-exits');
   }
   assert.equal(report.modelFailure, undefined);
