@@ -163,6 +163,19 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
   }
   async function refreshState(id) {
     let record = await owned(id);
+    if (!record.cloudAgentId && ['PREPARED', 'UPLOADING', 'UPLOADED', 'CREATING'].includes(record.state)) {
+      await operations.ready;
+      const jobs = await operations.list({ kind: 'deployment', resourceId: record.plan.agentId });
+      if (!jobs.some(job => job.metadata?.deploymentId === id && ['queued', 'running'].includes(job.status))) {
+        // Re-read after the operation check: its runner may just have finished.
+        record = await owned(id);
+        if (!record.cloudAgentId && ['PREPARED', 'UPLOADING', 'UPLOADED', 'CREATING'].includes(record.state)) {
+          const state = record.state === 'CREATING' ? 'CREATE_UNKNOWN' : record.state === 'UPLOADING' ? 'UPLOAD_UNKNOWN' : 'FAILED';
+          return publicRecord(await store.update(id, { state, failure: { code: 'DEPLOYMENT_CREATE_INTERRUPTED',
+            message: '本机创建流程已中断，请在运行中心核对云端结果；不会重复创建实例' } }));
+        }
+      }
+    }
     if (!record.cloudAgentId || record.state === 'DELETED') return publicRecord(record);
     try {
       const remote = await detail(record), basic = remote.Basic;

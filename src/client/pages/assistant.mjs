@@ -14,6 +14,8 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
     const [older, setOlder] = useState([]), [olderCursor, setOlderCursor] = useState(null), [olderHasMore, setOlderHasMore] = useState(null);
     const epoch = useRef(0), submitting = useRef(false), composer = useRef(null), history = useRef(null), followLatest = useRef(true);
     const [catalogReady, setCatalogReady] = useState(false);
+    const [setup, setSetup] = useState(null), [setupOptions, setSetupOptions] = useState(null);
+    const [setupMemory, setSetupMemory] = useState(''), [setupBusy, setSetupBusy] = useState(false);
     useEffect(() => {
       let alive = true;
       hostRemote.assistantCatalog().then(result => {
@@ -28,6 +30,36 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
       }).catch(reason => { if (alive) setError(reason.message); }).finally(() => { if (alive) setCatalogReady(true); });
       return () => { alive = false; };
     }, []);
+    useEffect(() => {
+      if (!catalogReady) return;
+      let stopped = false, timer, optionsLoaded = false, settled = false;
+      const refresh = async () => {
+        try {
+          const current = await hostRemote.assistantSetupStatus();
+          if (stopped) return;
+          setSetup(current);
+          if (current.ready) {
+            if (catalog.length) { settled = true; return; }
+            const result = await hostRemote.assistantCatalog();
+            if (stopped) return;
+            setCatalog(result.items || []);
+            if ((result.items || []).some(item => item.metadata.id === current.cloudAgentId)) {
+              save('agentkit.assistant.agent', current.cloudAgentId); setAgentId(current.cloudAgentId);
+            }
+          } else if (current.state === 'NOT_STARTED') {
+            if (catalog.length) { settled = true; return; }
+            if (!optionsLoaded) {
+              const available = await hostRemote.assistantSetupOptions();
+              if (!stopped) { setSetupOptions(available); setSetupMemory(previous => previous || (available.memories.length === 1 ? available.memories[0].id : '')); optionsLoaded = true; }
+            }
+          }
+          if (!stopped) setError('');
+        } catch (reason) { if (!stopped) setError(reason.message); }
+        finally { if (!stopped && !settled) timer = window.setTimeout(refresh, 5000); }
+      };
+      void refresh();
+      return () => { stopped = true; window.clearTimeout(timer); };
+    }, [catalogReady, catalog.length]);
     useEffect(() => {
       const version = ++epoch.current;
       let stopped = false, timer;
@@ -94,13 +126,41 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
     };
     const button = (label, onClick, disabled = false) => h('button', { type: 'button', onClick, disabled: busy || disabled, style: buttonStyle() }, label);
     const box = { border: `1px solid ${BRAND.border}`, borderRadius: '12px', padding: '16px', background: BRAND.surface };
-    const messages = [...new Map([...older, ...(view?.messages || [])].map(item => [item.id, item])).values()].sort((a, b) => a.seq - b.seq);
+    const messages = [...new Map([...older, ...(view?.messages || [])].map(item => [item.id, item])).values()]
+      .filter(item => item.requestId !== 'assistant-welcome-v1').sort((a, b) => a.seq - b.seq);
     const chosen = catalog.find(item => item.metadata.id === agentId);
     const running = view?.status === 'running';
     const choose = id => {
       try { save('agentkit.assistant.agent', id); } catch { setError('无法保存默认助理，重新打开时可能需要再次选择。'); }
       setAgentId(id); setPanel(null); followLatest.current = true;
     };
+    if (catalogReady && !catalog.length && !chosen) {
+      const preparing = setup && !['NOT_STARTED', 'ACTION_REQUIRED', 'FAILED', 'CREATE_UNKNOWN', 'UPLOAD_UNKNOWN', 'DELETED'].includes(setup.state);
+      const start = async () => {
+        if (setupBusy || !setupOptions) return;
+        setSetupBusy(true); setError('');
+        try { setSetup(await hostRemote.assistantSetupStart({ confirmed: true, optionsId: setupOptions.optionsId, memoryId: setupMemory })); }
+        catch (reason) { setError(reason.message); }
+        finally { setSetupBusy(false); }
+      };
+      return h('section', { 'data-studio-assistant-setup': true, style: { height: '100%', boxSizing: 'border-box', overflow: 'auto', display: 'grid', placeItems: 'center', background: BRAND.surface, padding: '32px' } },
+        h('style', null, '@keyframes assistant-setup-spin { to { transform: rotate(360deg); } } @media (prefers-reduced-motion: reduce) { [data-studio-assistant-spinner] { animation: none !important; } }'),
+        h('div', { style: { maxWidth: '440px', width: '100%', textAlign: 'center' } },
+          preparing || setupBusy ? h('div', { 'data-studio-assistant-spinner': true, 'aria-hidden': true, style: { width: '32px', height: '32px', border: `3px solid ${BRAND.border}`, borderTopColor: BRAND.primaryFill, borderRadius: '50%', margin: '0 auto 24px', animation: 'assistant-setup-spin 1s linear infinite' } }) : null,
+          h('h1', { style: { fontSize: '26px', fontWeight: 500, margin: '0 0 14px' } }, preparing || setupBusy ? '你的助理正在准备中' : '一个一直在的个人助理'),
+          h('p', { style: { color: BRAND.inkMuted, lineHeight: 1.8, margin: '0 0 24px' } }, preparing || setupBusy ? '准备好后，我们就在这里聊。你也可以先离开，回来会继续显示进度。' : '交代任务、安排提醒，慢慢记住你的偏好。关闭 Studio 后，助理仍能在云端继续工作。'),
+          preparing ? h('p', { role: 'status', style: { fontSize: '14px' } }, setup.message) : null,
+          setup?.failure ? h('p', { role: 'alert', style: { color: BRAND.danger, lineHeight: 1.7 } }, setup.message) : null,
+          error ? h('p', { role: 'alert', style: { color: BRAND.danger, lineHeight: 1.7 } }, error) : null,
+          setup?.state === 'NOT_STARTED' && setupOptions ? h('div', null,
+            setupOptions.memories.length > 1 ? h('label', { style: { display: 'block', textAlign: 'left', fontSize: '13px', marginBottom: '16px' } }, '把记忆保存在',
+              h('select', { 'aria-label': '助理记忆库', value: setupMemory, onChange: event => setSetupMemory(event.target.value), style: { ...inputStyle(), width: '100%', marginTop: '8px' } },
+                h('option', { value: '' }, '选择记忆库'), ...setupOptions.memories.map(item => h('option', { key: item.id, value: item.id }, item.name)))) : null,
+            h('button', { type: 'button', onClick: () => void start(), disabled: setupBusy || !setupMemory, style: { ...buttonStyle(), padding: '12px 24px', borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }, '开通个人助理'),
+            h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7, marginTop: '18px' } }, setupOptions.billingNotice),
+            h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, `使用 ${setupOptions.model.name} · ${setupOptions.memories.find(item => item.id === setupMemory)?.name || '选择一个记忆库'}`)) : null,
+          !preparing && (error || setup?.failure) ? button('查看运行中心', () => onNavigate?.('operations')) : null));
+    }
     return h('section', { 'data-studio-assistant': true, style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: BRAND.surface } },
       h('style', null, `[data-studio-assistant] .studio-assistant-composer:focus-within { outline: 1px solid ${BRAND.border}; outline-offset: 2px; } [data-studio-assistant] textarea[aria-label="发给助理"]::placeholder { color: ${BRAND.inkMuted}; opacity: 1; }`),
       h('header', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', gap: '12px' } },
@@ -133,7 +193,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
             h('div', { style: { display: 'flex', gap: '8px' } }, running ? button('停止', async () => { if (await actions.confirm({ title: '停止当前任务', detail: '停止助理正在处理的任务？', confirmLabel: '停止' })) void execute('cancel', {}, () => setNotice('已请求停止。')); }) : null,
               h('button', { type: 'submit', disabled: busy || !view || (!pending && !draft.trim()), style: { ...buttonStyle(), borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }, pending ? '重试上一条' : '发送')))),
         h('p', { role: 'status', style: { margin: '8px 0 0', minHeight: '16px', fontSize: '11px', color: BRAND.inkMuted, textAlign: 'center' } }, notice || (chosen ? '离开也没关系，回来可以接着聊。' : '')))),
-      h(Modal, { open: Boolean(panel), onClose: () => setPanel(null), title: panel === 'memory' ? '助理记忆' : panel === 'schedule' ? '计划任务' : '助理设置',
+      h(Modal, { open: Boolean(panel), onClose: () => setPanel(null), closeLabel: '关闭助理设置', title: panel === 'memory' ? '助理记忆' : panel === 'schedule' ? '计划任务' : '助理设置',
         footer: panel && panel !== 'settings' ? button('返回设置', () => setPanel('settings')) : undefined },
         error ? h('p', { role: 'alert', style: { color: BRAND.danger } }, error) : null,
         notice ? h('p', { role: 'status' }, notice) : null,
