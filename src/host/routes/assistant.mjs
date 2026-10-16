@@ -2,14 +2,20 @@
 import { createAssistantLifecycle } from '../../assistant-lifecycle.mjs';
 const operations = new Set(['snapshot', 'submit', 'cancel', 'identity-update', 'schedule-list', 'schedule-create', 'schedule-delete', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
-export function createAssistantRoutes({ deployments, assistantStoreDir, fetchImpl = fetch }) {
+export function createAssistantRoutes({ deployments, assistantStoreDir, assistantSetup, fetchImpl = fetch }) {
   const lifecycle = createAssistantLifecycle({ directory: assistantStoreDir, deployments, fetchImpl });
   return async (endpoint, payload = {}, signal) => {
     if (endpoint === 'assistant/close') return { ok: true, value: await lifecycle.close(payload) };
+    if (endpoint.startsWith('assistant/setup-')) {
+      const service = await assistantSetup();
+      const action = endpoint.slice('assistant/setup-'.length);
+      if (!['options', 'start', 'status'].includes(action)) throw fail('ASSISTANT_OPERATION_INVALID', '不支持的开通操作');
+      return { ok: true, value: await service[action](payload) };
+    }
     const { agents } = await deployments();
     if (endpoint === 'assistant/catalog') {
       const result = await agents.list();
-      return { ok: true, value: { items: result.items.filter(item => item.spec?.runtime?.type === 'dsh-native'), warnings: result.warnings || [] } };
+      return { ok: true, value: { items: result.items.filter(item => item.spec?.runtime?.type === 'dsh-native' && item.deployment?.available !== false), warnings: result.warnings || [] } };
     }
     if (!operations.has(payload.operation)) throw fail('ASSISTANT_OPERATION_INVALID', '不支持的助理操作');
     const { agent, endpoint: base, token, capabilities } = await agents.connect(payload.agentId);

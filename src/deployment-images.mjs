@@ -33,6 +33,7 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
   for (const item of raw.releases) {
     const image = typeof item?.image === 'string' && IMAGE.exec(item.image);
     if (!object(item) || !ID.test(item.id || '') || ids.has(item.id) || !image
+      || (item.capabilities !== undefined && (!Array.isArray(item.capabilities) || item.capabilities.some(value => !['personal-assistant/v1', 'personal-assistant-identity/v1', 'personal-assistant-delete/v1'].includes(value)) || new Set(item.capabilities).size !== item.capabilities.length))
       || (item.runtimeIdentity !== undefined && typeof item.runtimeIdentity !== 'boolean')
       || typeof item.enabled !== 'boolean' || !['preview', 'stable'].includes(item.channel)
       || !Array.isArray(item.runtimes) || !item.runtimes.length || new Set(item.runtimes).size !== item.runtimes.length
@@ -49,7 +50,7 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
     }
     if (!item.enabled || !item.runtimes.includes(runtime) || !supportedVersion(clientVersion, item.minimumStudioVersion)) continue;
     releases.push({ id: item.id, label: item.label, channel: item.channel, image: item.image, version: item.version,
-      runtimeIdentity: item.runtimeIdentity === true, digest: `sha256:${image[4]}`, registry: image[1], namespace: image[2], repository: image[3], port: item.port, platform: item.platform,
+      runtimeIdentity: item.runtimeIdentity === true, capabilities: [...(item.capabilities || [])], digest: `sha256:${image[4]}`, registry: image[1], namespace: image[2], repository: image[3], port: item.port, platform: item.platform,
       runtimes: [...item.runtimes], bundleFormat: item.bundleFormat, minimumStudioVersion: item.minimumStudioVersion,
       notices: [...item.notices] });
   }

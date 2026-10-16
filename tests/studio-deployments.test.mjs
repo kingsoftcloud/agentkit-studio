@@ -157,6 +157,26 @@ test('unknown account cannot fabricate a default bucket or create resources', as
   assert.equal(f.calls.length, 0);
 });
 
+test('interrupted provisioning exposes uncertainty instead of an endless spinner or another create', async t => {
+  for (const [state, expected] of [['PREPARED', 'FAILED'], ['UPLOADING', 'UPLOAD_UNKNOWN'], ['UPLOADED', 'FAILED'], ['CREATING', 'CREATE_UNKNOWN']]) {
+    const f = await fixture(t);
+    // Persist the intent with a queued operation, as if the host exited before
+    // the operation runner was able to start or finish its next write.
+    const queued = [];
+    const service = createStudioDeployments({ ...f.options, operations: { submit: async input => queued.push(input) } });
+    const record = await service.create(f.request);
+    const store = createDeploymentStore({ storeDir: join(f.root, 'deployments') });
+    await store.update(record.id, { state });
+    const restarted = createStudioDeployments({ ...f.options, operations: createOperationManager({ storeDir: join(f.root, 'operations') }) });
+    const result = await restarted.refresh(record.id);
+    assert.equal(result.state, expected);
+    assert.equal(result.failure.code, 'DEPLOYMENT_CREATE_INTERRUPTED');
+    await restarted.create(f.request);
+    await restarted.refresh(record.id);
+    assert.equal(f.calls.filter(([action]) => action === 'create' || action === 'upload').length, 0);
+  }
+});
+
 test('root credentials stop both preflight and a changed identity before upload or creation', async t => {
   const f = await fixture(t);
   f.options.client.inspectIdentity = async () => ({ kind: 'main-account' });

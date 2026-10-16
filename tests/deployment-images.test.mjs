@@ -15,6 +15,15 @@ function response(change = {}) {
     } } };
 }
 
+test('assistant capability is explicit, optional and strictly validated', () => {
+  assert.deepEqual(parseStudioImageCatalog(response(), { runtime: 'dsh-native' }).releases[0].capabilities, []);
+  const releases = [{ ...release, capabilities: ['personal-assistant/v1'] }];
+  assert.deepEqual(parseStudioImageCatalog(response({ releases }), { runtime: 'dsh-native' }).releases[0].capabilities, ['personal-assistant/v1']);
+  for (const capabilities of [null, true, 'personal-assistant/v1', ['unknown'], ['personal-assistant/v1', 'personal-assistant/v1'], [{}]]) {
+    assert.throws(() => parseStudioImageCatalog(response({ releases: [{ ...release, capabilities }] }), { runtime: 'dsh-native' }), { code: 'DEPLOYMENT_CATALOG_INVALID' });
+  }
+});
+
 test('catalog compatibility uses the installed Studio version instead of a stale default', async () => {
   const { pluginVersion } = await studioVersions();
   let requestedVersion;
