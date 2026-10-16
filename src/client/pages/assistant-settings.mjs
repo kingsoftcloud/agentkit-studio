@@ -70,6 +70,7 @@ export function createAssistantSettings({ ui, hostRemote, actions, window }) {
         window.localStorage.removeItem(key);
         window.localStorage.removeItem(`agentkit.assistant.pending.${agentId}`);
         setCatalog(items => items.filter(item => item.metadata.id !== agentId)); setAgentId(''); setView(null);
+        window.dispatchEvent(new window.CustomEvent('agentkit-studio:assistant-deleted', { detail: agentId }));
         window.dispatchEvent(new window.CustomEvent('agentkit-studio:assistant-changed', { detail: '' }));
         setNotice('个人助理已关闭，专属会话和记忆已删除。重新启用需要创建新的云端助理。');
       } catch (reason) { setError(reason.message || '关闭结果尚未确认，请保留当前部署并重试核对。'); }
