@@ -1,0 +1,12 @@
+{
+  "name": "@kingsoftcloud/agentkit-expert-catalog",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Self-owned expert templates for the existing Studio Agent workbench.",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22.19.0" },
+  "exports": { ".": "./src/index.mjs", "./catalog": "./src/catalog.mjs", "./client": "./src/client.mjs", "./seed": "./src/seed.mjs" },
+  "files": ["src", "README.md"],
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "peerDependencies": { "@deepseek-ai/cordis": "^4.0.4" }
+}

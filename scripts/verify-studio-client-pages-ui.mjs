@@ -19,7 +19,8 @@ export async function verifyStudioClientPages(page) {
     phase = 'create';
     const suffix = Date.now().toString(36);
     const name = `UI_REFACTOR_AGENT_${suffix}`;
-    await page.getByText('Agents', { exact: true }).click();
+    await page.getByText('智能体', { exact: true }).first().click();
+    await page.getByRole('button', { name: '我的智能体', exact: true }).click();
     await page.getByRole('button', { name: '手动配置', exact: true }).click();
     await page.getByLabel('Agent ID', { exact: true }).fill(`ui-refactor-${suffix}`);
     await page.getByLabel('名称', { exact: true }).fill(name);

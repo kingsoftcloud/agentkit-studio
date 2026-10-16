@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { once } from 'node:events';
-import { mkdir, writeFile, symlink, mkdtemp } from 'node:fs/promises';
+import { mkdir, writeFile, cp, mkdtemp } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { appendFileSync, constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { assertDesktopDevResources, closeVerificationClient } from './desktop-dev-resources.mjs';
 const require = createRequire(import.meta.url);
@@ -14,7 +15,10 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
   const home = await mkdtemp(join(tmpdir(), 'assistant-web-'));
   const profile = join(home, 'dsh/profiles/assistant-ui');
   await mkdir(join(profile, 'node_modules/@kingsoftcloud'), { recursive: true });
-  await symlink(installed, join(profile, 'node_modules/@kingsoftcloud/agentkit-studio'));
+  // Keep the complete installed dependency graph inside this Profile. DSH's
+  // fallback resolver deliberately excludes a package owned by another Profile.
+  const installedModules = dirname(dirname(installed));
+  await cp(installedModules, join(profile, 'node_modules'), { recursive: true, dereference: false, mode: constants.COPYFILE_FICLONE });
   await writeFile(join(profile, 'package.json'), JSON.stringify({ name: 'assistant-ui', private: true,
     dependencies: { '@kingsoftcloud/agentkit-studio': '0.0.2' },
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio'] } } }));
@@ -32,7 +36,8 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
       let output = '';
       const timer = setTimeout(() => reject(new Error('Web startup timeout')), 30000);
       child.stdout.on('data', chunk => { output = (output + chunk).slice(-10000); const match = output.match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+)/); if (match) { clearTimeout(timer); resolve(match[1]); } });
-      child.stderr.resume(); child.once('exit', () => { clearTimeout(timer); reject(new Error('Web Host exited')); });
+      child.stderr.on('data', chunk => { appendFileSync(screenshot.replace(/\.png$/, '-host.log'), String(chunk).replace(/([?&]token=)[A-Za-z0-9_-]+/g, '$1[redacted]'), { mode: 0o600 }); });
+      child.once('exit', code => { clearTimeout(timer); reject(new Error(`Web Host exited (${code}); see local Host diagnostic`)); });
     });
     return launch;
   };
@@ -61,7 +66,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
       assert.ok(page, 'native main window must load Studio');
     } else {
       url = await start();
-      browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+      browser = await chromium.launch({ executablePath: process.env.STUDIO_VERIFY_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
       context = await browser.newContext({ viewport: { width: 1280, height: 900 }, ...(state ? { storageState: state } : {}) });
       page = await context.newPage();
     }
@@ -107,8 +112,11 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await page.getByLabel('助理会话', { exact: true }).getByText('browser task survives Studio Host exit', { exact: true }).waitFor({ timeout: 15000 });
     assert.ok(await page.getByLabel('助理会话', { exact: true }).getByText('ASSISTANT_DONE', { exact: true }).count());
     await page.screenshot({ path: screenshot, fullPage: true });
+    const { verifyStudioCatalogUi } = await import('./verify-studio-catalog-ui.mjs');
+    const catalog = await verifyStudioCatalogUi(page);
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-catalog.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    return { passed: true, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
+    return { passed: true, catalog, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
       localHostRestarted: true, clientRestarted: true, nativeElectron: process.env.STUDIO_VERIFY_NATIVE === '1', cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
   } catch (error) { await page?.screenshot({ path: screenshot.replace(/\.png$/, '-failure.png'), fullPage: true, timeout: 3000 }).catch(() => {}); throw error; }
   finally { try { await closeVerificationClient(browser); } finally { await stop(); } }

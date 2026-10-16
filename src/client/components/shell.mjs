@@ -1,7 +1,7 @@
 import { BRAND as DEFAULT_BRAND, PANELS as DEFAULT_PANELS } from '../theme.mjs';
 
 export function createStudioShell({
-  ui: { React: { createElement: h, useEffect, useState }, Pill, AgentWorkspace, AssistantPage, DomainPage, OperationsWorkspace, OverviewPage, ResourceWorkspace, BRAND = DEFAULT_BRAND, PANELS = DEFAULT_PANELS },
+  ui: { React: { createElement: h, useEffect, useState }, Pill, AgentWorkspace, StudioAgentHub, AssistantPage, DomainPage, OperationsWorkspace, OverviewPage, ResourceWorkspace, BRAND = DEFAULT_BRAND, PANELS = DEFAULT_PANELS },
   hostRemote
 }) {
   function HostStatusPill() {
@@ -27,6 +27,7 @@ export function createStudioShell({
   }
 
   function StudioShell({ scheduleRemote, page = 'overview', onNavigate }) {
+    if (page === 'agents') return h(StudioAgentHub, { onNavigate });
     const activeNav = PANELS.find(item => item.page === page) || PANELS[0];
     return h('div', {
       'data-agentkit-studio': 'product-application',

@@ -1,5 +1,14 @@
 # Changelog
 
+## Desktop 0.2.0-rc.2.20261016.2 - 2026-10-16
+
+- Integrate the expert catalog, resource templates, MCP transports and local teams on official DSH Agent Teams. Keep templates, resource bindings and ordinary Agent editing in the existing revision model.
+- Add the cloud personal assistant conversation panel with durable acceptance, history recovery, reminders and explicit memory management.
+- Preserve scheduler inputs and team reports in model transport while excluding unrelated internal context.
+- Retain the scoped lifecycle, native unfiltered DSH sidebar, ES module frontend, split Host services and maintained compatibility source.
+- Cancel template background work with its owning Host and retain cleanup during MCP connection and credential rotation.
+- This Mac preview requires Apple Silicon. Windows and production cloud deployment are outside this release acceptance.
+
 ## 0.0.2
 
 - Replace the credential guide with a native-themed welcome and interactive model setup preview; remove the independent DSH account welcome/recharge flow from Studio profiles.

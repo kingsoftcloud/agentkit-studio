@@ -2,11 +2,14 @@ import { resourceStatusPresentation } from '../state/resource-status.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 export function createResourcePages({
-  ui: { React: { createElement: h, useEffect, useRef, useState, Fragment }, ContentIntro, EmptyState, McpResourceDialog, McpToolsDialog, ModelResourceDialog, Pill, ResourceDialog, SkillDiscoveryDialog, SkillPreviewDialog, StudioPageTabs, buttonStyle, inputStyle, pagerButtonStyle, StudioSubnav, BRAND = DEFAULT_BRAND },
+  ui,
   hostRemote, actions, window = globalThis.window
 }) {
+  const { React: { createElement: h, useEffect, useRef, useState, Fragment }, ContentIntro, EmptyState, McpResourceDialog, McpToolsDialog, ModelResourceDialog, Pill, ResourceDialog, SkillDiscoveryDialog, SkillPreviewDialog, StudioPageTabs, buttonStyle, inputStyle, pagerButtonStyle, StudioSubnav, BRAND = DEFAULT_BRAND } = ui;
   function ResourcesPage() {
-    const [resourceKind, setResourceKind] = useState('model');
+    const [resourceKind, setResourceKind] = useState(() => { try { const kind = window.localStorage.getItem('agentkit-studio:resource-kind'); window.localStorage.removeItem('agentkit-studio:resource-kind'); if (['skill', 'mcp'].includes(kind)) return kind; } catch {} return 'model'; });
+    const [libraryView, setLibraryView] = useState(() => { try { const value = window.localStorage.getItem('agentkit-studio:resource-library-view'); window.localStorage.removeItem('agentkit-studio:resource-library-view'); return value === 'catalog' ? 'catalog' : 'installed'; } catch { return 'installed'; } });
+    const [libraryRevision, setLibraryRevision] = useState(0);
     const [sourceFilter, setSourceFilter] = useState('all');
     const [resources, setResources] = useState([]);
     const [platformCatalog, setPlatformCatalog] = useState(null);
@@ -65,7 +68,7 @@ export function createResourcePages({
       const timer = setTimeout(() => setSubmittedQuery(query), 250);
       return () => clearTimeout(timer);
     }, [query]);
-    useEffect(() => { void load(resourceKind, null, true); }, [resourceKind, pageSize, submittedQuery, sourceFilter]);
+    useEffect(() => { if (libraryView !== 'catalog' || !['mcp','skill'].includes(resourceKind)) void load(resourceKind, null, true); }, [resourceKind, pageSize, submittedQuery, sourceFilter, libraryView]);
     const reloadCatalog = (preserveMessage = false) => load(resourceKind, null, true, preserveMessage === true);
     const openMcpCreate = () => { setMcpEditing(null); setMcpDialogOpen(true); };
     const openMcpEdit = resource => { setMcpEditing(resource); setMcpDialogOpen(true); };
@@ -139,7 +142,7 @@ export function createResourcePages({
                 localMcp ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '编辑凭证') : null,
                 resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => void probeMcp(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '重新探测') : null,
                 resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpPreview(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看工具') : null,
-                resourceKind === 'skill' && resource.source === 'local-import' ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看文件') : null,
+                resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看文件') : null,
                 canDelete ? h('button', { type: 'button', disabled: deleting, onClick: () => void remove(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px', color: BRAND.danger } }, localMcp ? '移除配置' : '删除云端 MCP') : null,
               )));
     });
@@ -156,12 +159,14 @@ export function createResourcePages({
         resourceKind === 'mcp' ? h('button', { type: 'button', onClick: openMcpCreate, style: buttonStyle() }, '添加 MCP') : null,
         resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => setSkillDialogOpen(true), style: buttonStyle() }, '扫描本地 Skill') : null,
         h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '刷新'),
-        h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : 'Host 待接入')) }),
-      h(StudioPageTabs, { ariaLabel: '资源类型', value: resourceKind, onChange: setResourceKind, items: resourceKinds.map(([id, value]) => ({ id, label: value })) }),
+        libraryView === 'catalog' && ['mcp', 'skill'].includes(resourceKind) ? null : h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : 'Host 待接入')) }),
+      h(StudioPageTabs, { ariaLabel: '资源类型', value: resourceKind, onChange: kind => { setResourceKind(kind); setLibraryView(['mcp','skill'].includes(kind) ? 'catalog' : 'installed'); }, items: resourceKinds.map(([id, value]) => ({ id, label: value })) }),
+      ['mcp','skill'].includes(resourceKind) ? h(StudioSubnav, { value: libraryView, onChange: setLibraryView, items: [{ id: 'catalog', label: '资源广场' }, { id: 'installed', label: '已安装 / 已连接' }] }) : null,
+      libraryView === 'catalog' && ['mcp','skill'].includes(resourceKind) ? h(ui.TemplateResourceLibrary, { key: resourceKind, kind: resourceKind, refreshKey: libraryRevision, onConfigureMcp: value => { setMcpEditing(value); setMcpDialogOpen(true); } }) : null,
       ['skill', 'skill-space', 'mcp'].includes(resourceKind) ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, resourceKind === 'mcp' ? '探测通过表示连接和工具列表读取成功；工具是否能完成任务，需要在绑定的 Agent 中实际调用验证。移除配置只影响本机，删除云端 MCP 会清理云端资源。' : '本地已导入：文件已保存到本机。云端目录可见：绑定后由 Host 下载加载 Skill Space。两种状态都不代表脚本依赖或 Agent 实际执行已验证。') : null,
-      status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取资源目录', detail: '读取 Host 的资源清单和云端平台目录。' }) : null,
-      status === 'error' ? h(EmptyState, { icon: '!', title: '资源目录不可用', detail: error, action: h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '重新读取') }) : null,
-      status === 'ready' ? h(Fragment, null,
+      libraryView !== 'catalog' && status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取资源目录', detail: '读取 Host 的资源清单和云端平台目录。' }) : null,
+      libraryView !== 'catalog' && status === 'error' ? h(EmptyState, { icon: '!', title: '资源目录不可用', detail: error, action: h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '重新读取') }) : null,
+      (libraryView !== 'catalog' || !['mcp','skill'].includes(resourceKind)) && status === 'ready' ? h(Fragment, null,
         !isPlatform ? h('section', { style: { display: 'grid', gap: '10px' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
             h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: `搜索${label}`, 'aria-label': '搜索资源', style: { ...inputStyle(), marginTop: 0, maxWidth: '460px', flex: '1 1 280px' } }),
@@ -174,7 +179,7 @@ export function createResourcePages({
         error ? h('div', { role: 'alert', style: { marginTop: '10px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
       ) : null,
       modelDialogOpen ? h(ModelResourceDialog, { onClose: () => setModelDialogOpen(false), onCreated: reloadCatalog }) : null,
-      mcpDialogOpen ? h(McpResourceDialog, { resource: mcpEditing, onClose: closeMcpDialog, onCreated: reloadCatalog }) : null,
+      mcpDialogOpen ? h(McpResourceDialog, { resource: mcpEditing, onClose: closeMcpDialog, onCreated: () => { setLibraryRevision(value => value + 1); if (libraryView !== 'catalog') void reloadCatalog(); } }) : null,
       mcpPreview ? h(McpToolsDialog, { resource: mcpPreview, onClose: () => setMcpPreview(null) }) : null,
       skillDialogOpen ? h(SkillDiscoveryDialog, { onClose: () => setSkillDialogOpen(false), onImported: reloadCatalog }) : null,
       skillPreview ? h(SkillPreviewDialog, { title: skillPreview.title, preview: skillPreview.files, file: skillPreviewFile, onClose: () => { setSkillPreview(null); setSkillPreviewFile(null); }, onSelect: loadSkillFile }) : null,

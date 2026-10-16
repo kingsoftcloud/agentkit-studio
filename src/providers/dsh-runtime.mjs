@@ -118,9 +118,14 @@ function textOf(message) {
     .map(part => String(part.text || part.value || '')).join('');
 }
 
-function lastUser(messages) {
-  return [...(Array.isArray(messages) ? messages : [])].reverse()
-    .find(isDshUserInput);
+function isUserInput(message, includeTeamMessages = false) {
+  return isDshUserInput(message) || (includeTeamMessages && message?.role === 'user' && message.source?.kind === 'team-message');
+}
+
+function lastUser(messages, includeTeamMessages = false) {
+  const reversed = [...(Array.isArray(messages) ? messages : [])].reverse();
+  return reversed.find(message => isUserInput(message, includeTeamMessages))
+    || (includeTeamMessages ? reversed.find(message => message?.role === 'user') : undefined);
 }
 
 function cloudCancelledError(reason) {
@@ -528,13 +533,13 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       const buildId = String(options.buildId || routed?.buildId || '').trim();
       const agentRevision = routed?.agentRevision || options.agentRevision;
       const toolAgent = routed?.agent || options.agent;
-      const user = lastUser(options.messages);
+      const user = lastUser(options.messages, nativeTools);
       const input = textOf(user).trim();
       const hasImage = Array.isArray(user?.content) && user.content.some(block => block?.type === 'image' && block.offloaded !== true);
       if (!agentId) throw Object.assign(new Error('请先绑定 Agent，再发送消息'), { code: 'STUDIO_AGENT_REQUIRED' });
       if (!input && !hasImage) throw Object.assign(new Error('请输入文字或添加图片后发送'), { code: 'STUDIO_INPUT_REQUIRED' });
       if (mode === 'local') {
-        const history = await gatewayHistory(options.messages, { attachments, signal: options.signal });
+        const history = await gatewayHistory(options.messages, { attachments, signal: options.signal, includeNotices: nativeTools });
         const content = [...history].reverse().find(message => message.role === 'user')?.content || input;
         if (runtime === 'codex') {
           // DSH persists the selected workspace on the official Session header;

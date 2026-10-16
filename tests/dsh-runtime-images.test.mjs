@@ -92,3 +92,17 @@ test('Codex cannot silently substitute a temporary directory for a DSH session w
     for await (const _ of adapter.stream({ model: 'local:codex-agent', studioRuntime: 'codex', agent: { session: { header: {} } }, messages: [{ role: 'user', content: 'write file' }] })) {}
   }, { code: 'CODEX_WORKSPACE_UNAVAILABLE' });
 });
+
+test('native resource-bearing Agents retain durable Team messages and notices in model history',async()=>{
+ const messages=[{role:'user',source:{kind:'user'},content:[{type:'text',text:'委派审查'}]},{role:'user',source:{kind:'team-message',senderName:'reviewer'},content:[{type:'text',text:'Team message report-id from reviewer:'},{type:'text',text:'实际报告：应将 a-b 改为 a+b。'}]},{role:'user',source:{kind:'subagent-result'},content:[{type:'text',text:'reviewer finished.'}]}];
+ const native=await gatewayHistory(messages,{includeNotices:true});assert.equal(native.length,3);assert.match(native[1].content,/实际报告/);assert.match(native[2].content,/finished/);
+ assert.equal((await gatewayHistory(messages)).length,1);
+});
+
+for(const runtime of ['dsh-native','harness'])test(`${runtime} peer-only continuation reaches the model transport with its report`,async t=>{
+ const id=`team-peer-${runtime}`;t.after(()=>unbindDshAgentRoutes(id));bindDshAgentRoute(id,{agentId:id,runtime,local:true,agentRevision:1,nativeTools:true});
+ const requests=[];const handler=createLocalConversationHandler({agentStore:async()=>({getRevision:async()=>({spec:{instructions:{system:'团队主理人'},bindings:{}}})}),modelService:{profile:async()=>({modelName:'test',baseUrl:'https://model.test/v1',apiKey:'test'})},fetchImpl:async(_url,init)=>{requests.push(JSON.parse(init.body));return new Response('data: {"choices":[{"delta":{"content":"已收报告"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');}});
+ const adapter=createDshRuntimeAdapter({localHandler:async()=>handler});
+ for await(const _ of adapter.stream({sessionId:id,model:`local:${id}`,messages:[{role:'user',source:{kind:'team-message',senderName:'reviewer'},content:[{type:'text',text:'TEAM-REPORT-CANARY: use a+b'}]}]})){}
+ assert.match(JSON.stringify(requests[0].messages),/TEAM-REPORT-CANARY/);
+});

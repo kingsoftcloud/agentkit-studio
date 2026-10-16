@@ -694,3 +694,86 @@ jobs:
             fi
           done
           gh release edit "$tag" --draft=false --prerelease
+
+  web-and-host:
+    name: Real Web and DSH Host
+    needs: [source-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - name: Checkout accepted Studio source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.studio_checkout_ref }}
+          path: studio
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin the immutable accepted source
+        env:
+          STUDIO_SHA: ${{ inputs.studio_ref }}
+        run: |
+          [[ "$STUDIO_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$STUDIO_SHA" HEAD
+          git checkout --detach "$STUDIO_SHA"
+      - name: Checkout pinned DSH
+        uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: dsh-v0.2.0-rc.2
+          path: .ci-dsh
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          package_json_file: .ci-dsh/package.json
+      - run: pnpm install --frozen-lockfile
+      - name: Build and verify the maintained Host
+        run: node scripts/verify-patched-dsh-host.mjs --source ../.ci-dsh --patches patches/dsh-v0.2.0-rc.2 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install accepted plugin in an isolated test profile
+        run: |
+          set -euo pipefail
+          host_source="$(node -p "require('./.artifacts/patched-host-acceptance.json').checkout")"
+          export DSH_HOME="$RUNNER_TEMP/studio-accepted-web-dsh"
+          export AGENTKIT_HOME="$RUNNER_TEMP/studio-accepted-web-agentkit"
+          make profile-install DSH_ROOT="$host_source" DSH_PROFILE=studio-refactor
+          node --input-type=module - <<'JS'
+          import {readFile,writeFile} from 'node:fs/promises';
+          import {join} from 'node:path';
+          const path=join(process.env.DSH_HOME,'profiles/studio-refactor/package.json');
+          const value=JSON.parse(await readFile(path,'utf8'));
+          value.dsh.profile.bundles.push('@deepseek-ai/dsh-experimental-schedule-bundle');
+          await writeFile(path,JSON.stringify(value,null,2)+'\n');
+          JS
+          printf 'AGENTKIT_DSH_ROOT=%s\nDSH_HOME=%s\nAGENTKIT_HOME=%s\n' "$host_source" "$DSH_HOME" "$AGENTKIT_HOME" >> "$GITHUB_ENV"
+          printf 'STUDIO_VERIFY_CHROME=%s\n' "$(node --input-type=module -e 'import {chromium} from "@playwright/test"; console.log(chromium.executablePath())')" >> "$GITHUB_ENV"
+      - name: Verify complete plugin lifecycle
+        run: node scripts/verify-studio-plugin-lifecycle.mjs .artifacts/public-web/lifecycle.json
+      - name: Verify frozen runtime
+        run: node scripts/verify-studio-frozen-host.mjs .artifacts/public-web/frozen-host.json
+      - name: Verify durable assistant and catalog in the browser
+        env:
+          STUDIO_VERIFY_UI: '1'
+        run: node scripts/verify-personal-assistant-host.mjs .artifacts/public-web/assistant.json
+      - name: Verify native sidebar and ordinary Agent workflows
+        run: node ci/verify-public-web.mjs
+      - name: Preserve Web and Host acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-web-host-${{ inputs.studio_ref }}
+          path: |
+            studio/.artifacts/patched-host-acceptance.json
+            studio/.artifacts/patched-host/host-tests.json
+            studio/.artifacts/patched-host/host-dependency-lifecycle.json
+            studio/.artifacts/public-web/
+            studio/.artifacts/refactor/stage-2/sidebar-seed.json
+          if-no-files-found: warn
+          retention-days: 14

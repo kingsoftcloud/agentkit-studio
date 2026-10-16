@@ -4,7 +4,7 @@ export function isDshUserInput(message) {
 }
 
 /** Resolve DSH's durable image receipts only at the model transport boundary. */
-export async function gatewayHistory(messages, { attachments, signal } = {}) {
+export async function gatewayHistory(messages, { attachments, signal, includeNotices = false } = {}) {
   const images = new Map();
   const contentOf = async message => {
     if (typeof message.content === 'string') return message.content;
@@ -37,7 +37,7 @@ export async function gatewayHistory(messages, { attachments, signal } = {}) {
   };
   const history = [];
   for (const message of Array.isArray(messages) ? messages : []) {
-    if (isDshUserInput(message)) {
+    if (isDshUserInput(message) || (includeNotices && message?.role === 'user' && ['team-message', 'subagent-result'].includes(message.source?.kind))) {
       const content = await contentOf(message);
       if (content?.length) history.push({ role: 'user', content });
     } else if (message?.role === 'assistant') {

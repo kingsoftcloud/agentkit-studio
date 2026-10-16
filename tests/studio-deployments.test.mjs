@@ -399,6 +399,40 @@ function serving(f, preview) {
   f.access.runtimeIdentity = { deploymentVersion: f.remote.Advanced.EnvironmentVariables.find(row => row.Key === 'AGENTKIT_DEPLOYMENT_VERSION')?.Value, format: 'agentkit.runtime-identity/v1', status: 'ready', agentId: preview.agentId, buildId: preview.buildId, bundleSha256: preview.bundleSha256 };
 }
 
+test('a running instance with a broken application can be repaired using a new frozen build', async t => {
+  const f = await fixture(t, { health: false });
+  const initial = await f.service.create(f.request); await f.settled();
+  await f.service.refresh(initial.id);
+  assert.equal((await f.service.refresh(initial.id)).state, 'STARTING');
+  const preview = await updatePreview(f, initial.id);
+  f.remote.Basic.ReadyReplicas = 0;
+  await assert.rejects(f.service.prepareUpdate({ deploymentId: initial.id, buildId: preview.buildId }), { code: 'DEPLOYMENT_UPDATE_UNAVAILABLE' });
+  f.remote.Basic.ReadyReplicas = 1;
+  await f.service.applyUpdate(preview); await f.settled();
+  // An accepted control-plane update alone cannot establish application readiness.
+  assert.equal((await f.service.refresh(initial.id)).state, 'UPDATING');
+  serving(f, preview);
+  const repaired = createStudioDeployments({ ...f.options, fetchImpl: (url, init) => String(url).endsWith('/health')
+    ? Promise.resolve(Response.json({ status: 'ready' })) : f.options.fetchImpl(url, init) });
+  const ready = await repaired.refresh(initial.id);
+  assert.equal(ready.state, 'READY');
+  assert.equal(ready.cloudAgentId, 'ar-cloud-test');
+  assert.equal(ready.buildId, preview.buildId);
+  assert.equal(f.calls.filter(([action]) => action === 'create').length, 1);
+});
+
+test('cloud TLS validation failures remain actionable without exposing transport errors', async t => {
+  const f = await fixture(t);
+  const initial = await f.service.create(f.request); await f.settled(); await f.service.refresh(initial.id);
+  const checked = createStudioDeployments({ ...f.options, fetchImpl: async () => {
+    throw Object.assign(new Error('private transport diagnostic'), { cause: { code: 'SELF_SIGNED_CERT_IN_CHAIN' } });
+  } });
+  const state = await checked.refresh(initial.id);
+  assert.equal(state.failure.code, 'DEPLOYMENT_TLS_UNTRUSTED');
+  assert.match(state.failure.message, /CA|证书/);
+  assert.doesNotMatch(JSON.stringify(state.failure), /private transport diagnostic/);
+});
+
 test('recommended image updates can preserve the same frozen Build and cloud instance', async t => {
   const f = await fixture(t);
   const initial = await f.service.create(f.request); await f.settled(); await f.service.refresh(initial.id);

@@ -123,7 +123,12 @@ function memoryBinding(bindings) {
 }
 
 function explicitMemoryIntent(input) {
-  return /(?:记住|别忘了|请记|remember(?:\s+that)?)/i.test(String(input || ''));
+  // Only a direct imperative opts into writing. A recall question such as
+  // “我之前要求记住的代号是什么” must not become another memory write.
+  const text = String(input || '');
+  return /(?:^|[。.!！;；\n:：])\s*(?:(?:请帮我|请|帮我|麻烦你?)\s*)?(?:记住|记下|别忘了)(?!了吗|什么|过)/.test(text)
+    || /(?:^|[。.!！;；\n:：])\s*(?:(?:请帮我|请|帮我|麻烦你?)\s*)?(?:明确\s*)?(?:保存|写入|存入)(?:这(?:一)?条(?:信息|内容|记录)?|以下(?:信息|内容)?)?\s*(?:到|进)?\s*(?:长期记忆(?:库)?|记忆库)\s*(?:[:：，,。.!！]|$)/.test(text)
+    || /(?:^|[。.!！;；\n:：])\s*(?:please\s+)?remember(?:\s+that)?\s+(?!what\b|when\b|how\b|whether\b|if\b)/i.test(text);
 }
 
 function memoryWriteEnabled(record, binding, input) {
@@ -409,7 +414,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         resourceAdapter,
         toolAdapter,
         userId: parsed.userId || 'studio-anonymous',
-        agentId,
+        agentId: record.metadata?.teamRole?.sourceAgentId || agentId,
         agent,
         resourceMode: nativeTools ? 'context-only' : parsed.resourceMode,
         onResource: check => noteTrace('resource.checked', check),
@@ -509,7 +514,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       send({ kind: 'assistant_text', lifecycle: 'completed', payload: { text } });
       if (preparedMemoryWrite && typeof resourceAdapter?.writeMemory === 'function') {
         try {
-          const result = await writeBoundMemory({ binding: preparedMemoryWrite, resourceAdapter, input, assistantText: text, userId: parsed.userId, sessionId: parsed.sessionId, agentId, agent, onResource: check => noteTrace('resource.checked', check) });
+          const result = await writeBoundMemory({ binding: preparedMemoryWrite, resourceAdapter, input, assistantText: text, userId: parsed.userId, sessionId: parsed.sessionId, agentId: record.metadata?.teamRole?.sourceAgentId || agentId, agent, onResource: check => noteTrace('resource.checked', check) });
           noteTrace('memory.write', { accepted: result?.accepted === true });
         } catch (error) {
           // Memory persistence is a post-response side effect. Keep the

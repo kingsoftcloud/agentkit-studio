@@ -1,3 +1,4 @@
+import { createTemplateRoutes } from './templates.mjs';
 import { createResourceRoutes } from './resources.mjs';
 import { createCredentialRoute } from './credentials.mjs';
 import { createBuildRoutes } from './builds.mjs';
@@ -22,7 +23,9 @@ export function createStudioRoutes(ctx, services) {
   const credentials = createCredentialRoute(deps);
   const builds = createBuildRoutes(deps);
   const models = createModelRoutes(deps);
+  const templates = createTemplateRoutes(deps);
   return Object.freeze({
+    templates, platform: templates, teams: templates, 'team-templates': templates, 'template-resources': templates, 'template-workflows': templates,
     assistant: createAssistantRoutes(deps),
     host: async () => ({ ok: true, value: services.hostCompatibility.inspect() }),
     resources, mcp: resources,

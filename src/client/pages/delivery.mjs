@@ -1,6 +1,7 @@
 import { DEPLOYMENT_ATTENTION_STATES, DEPLOYMENT_LABELS, DEPLOYMENT_POLL_STATES, deliveryDate } from '../state/deployment.mjs';
 import { BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
 
+const deploymentCanUpdate = record => ['READY', 'STARTING', 'ACTION_REQUIRED'].includes(record?.state);
 export function createDeliveryPages({
   ui: { React: { createElement: h, useEffect, useRef, useState, Fragment }, Pill, StudioPageTabs, buttonStyle, inputStyle, EmptyState, SectionHeading, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
   hostRemote, actions, window = globalThis.window, document = globalThis.document, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
@@ -68,7 +69,7 @@ export function createDeliveryPages({
     }, []);
     const inspect = async () => {
       if (!agentId || !selectedBuild || busy) return;
-      if (deploymentTarget !== 'new') { if (targetRecord?.state === 'READY') await inspectUpdate(targetRecord); return; }
+      if (deploymentTarget !== 'new') { if (deploymentCanUpdate(targetRecord)) await inspectUpdate(targetRecord); return; }
       setBusy(true); setError(''); setPreview(null); setNotice('正在检查冻结版本、资源凭证和部署位置…');
       try {
         const result = await hostRemote.prepareDeployment({ agentId, buildId: selectedBuild, resources });
@@ -126,7 +127,7 @@ export function createDeliveryPages({
           h('span', { style: { fontSize: '11px' } }, '默认 2 核 4 GB，可按需调整')),
         h('label', { style: label }, '对话存储', h('select', { 'aria-label': '对话存储', value: storageGiB, disabled: busy, onChange: event => setStorageGiB(Number(event.target.value)), style: inputStyle() }, [20, 50, 100, 200, 500, 0].map(value => h('option', { key: value, value }, value ? `持久化 ${value} GiB` : '临时存储'))),
           h('span', { style: { fontSize: '11px' } }, storageGiB ? '实例重建后保留会话历史' : '实例重建后不保留会话历史'))) : null,
-        h('div', { style: { alignSelf: 'center' } }, h('button', { type: 'button', disabled: busy || !recordsLoaded || !selectedBuild || (deploymentTarget !== 'new' && (!targetRecord || targetRecord.state !== 'READY' || (!useRecommendedImage && selectedBuild === targetRecord.buildId))), onClick: inspect, style: buttonStyle() }, busy ? '处理中…' : targetRecord ? '检查更新' : '检查部署'))),
+        h('div', { style: { alignSelf: 'center' } }, h('button', { type: 'button', disabled: busy || !recordsLoaded || !selectedBuild || (deploymentTarget !== 'new' && (!deploymentCanUpdate(targetRecord) || (!useRecommendedImage && selectedBuild === targetRecord.buildId))), onClick: inspect, style: buttonStyle() }, busy ? '处理中…' : targetRecord ? '检查更新' : '检查部署'))),
       !selectedBuild ? h('p', { style: { fontSize: '12px', color: BRAND.inkMuted } }, '请先构建或选择一个成功的版本。') : null,
       preview ? h('div', { style: { marginTop: '16px', padding: '16px', borderRadius: '10px', background: BRAND.canvas } },
         h('strong', { style: { color: BRAND.ink } }, `${preview.deploymentId ? preview.rollbackVersionId ? '确认回滚' : '确认升级' : '检查通过'} · ${preview.agentName} · 版本 ${preview.revision}`),
@@ -155,7 +156,7 @@ export function createDeliveryPages({
         record.state !== 'DELETED' ? h(Fragment, null,
           h('button', { type: 'button', disabled: busy, onClick: () => action(record, record.cloudAgentId ? 'refresh' : 'reconcile'), style: buttonStyle() }, record.cloudAgentId ? '刷新状态' : '核对创建结果'),
           ['READY', 'AVAILABLE_UPDATING'].includes(record.state) ? h('button', { type: 'button', disabled: busy, onClick: () => actions.bindAgent?.(record.cloudAgentId), style: buttonStyle() }, '开始对话') : null,
-          record.state === 'READY' && record.agentId === agentId ? h('button', { type: 'button', disabled: busy || !selectedBuild || (!useRecommendedImage && selectedBuild === record.buildId), onClick: () => inspectUpdate(record), style: buttonStyle() }, '升级到所选版本') : null,
+          deploymentCanUpdate(record) && record.agentId === agentId ? h('button', { type: 'button', disabled: busy || !selectedBuild || (!useRecommendedImage && selectedBuild === record.buildId), onClick: () => inspectUpdate(record), style: buttonStyle() }, record.state === 'READY' ? '升级到所选版本' : '用所选版本修复') : null,
           record.state === 'READY' && (record.versions || []).some(version => version.id !== record.versionId) ? h('div', { style: { display: 'flex', gap: '6px' } },
             h('select', { 'aria-label': '回滚版本 ' + record.agentName, value: rollback[record.id] || '', disabled: busy, style: inputStyle(), onChange: event => setRollback(previous => ({ ...previous, [record.id]: event.target.value })) },
               h('option', { value: '' }, '选择历史版本'), record.versions.filter(version => version.id !== record.versionId).map(version => h('option', { key: version.id, value: version.id }, `Revision ${version.revision} · ${version.imageVersion} · ${version.completedAt}`))),

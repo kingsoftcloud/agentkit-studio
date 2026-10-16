@@ -320,3 +320,9 @@ test('memory mutations require a successful receipt and lists cannot cross parti
   reply = { requestId: 'r', data: { Success: true } };
   assert.deepEqual(await adapters.updateMemory('m', 'u', 'memory', 'corrected'), { accepted: true });
 });
+
+test('long delegated memory queries respect the 512 Unicode character service limit',async()=>{
+ let query;const adapters=createLocalResourceAdapters({serverClient:{action:async(_name,payload)=>{query=payload.Query;return {data:[]};}}});
+ const input='团队任务😀'.repeat(300);await adapters.searchMemory('mem-1',input,'user-1');
+ assert.equal(Array.from(query).length,512);assert.equal(query,Array.from(input).slice(0,512).join(''));assert(input.length>query.length);
+});

@@ -1,5 +1,5 @@
 /** Domain construction only; state belongs to this Host scope. */
-export function createAuthoringServices(ctx, { serverClientPromise, agentStorePromise, configurationPromise, skillDiscoveryPromise }) {
+export function createAuthoringServices(ctx, { serverClientPromise, agentStorePromise, configurationPromise, skillDiscoveryPromise, getTemplateAuthoring }) {
     // Authoring tools + resource catalogs read cloud/resource data through this
     // in-process remote — the legacy 8789 local Studio Host no longer exists.
     const authoringRemoteFactory = signal => Promise.all([serverClientPromise, agentStorePromise]).then(([serverClient]) => ({
@@ -26,11 +26,7 @@ export function createAuthoringServices(ctx, { serverClientPromise, agentStorePr
             return { items: rows.map(row => ({ resourceId: String(row.mcp_id || row.Id || row.id || ''), name: String(row.display_name || row.Name || row.name || row.mcp_id || row.Id || row.id || '') })) };
         },
         quickAuthorAgent: async (payload) => {
-            const store = await agentStorePromise;
-            const record = await store.create({
-                name: payload?.name, runtimeType: payload?.runtimeType, description: payload?.description,
-                spec: payload?.spec, bindings: payload?.spec?.bindings || {},
-            });
+            const record = await getTemplateAuthoring().create({ ...payload, bindings: payload?.spec?.bindings || {} });
             return { metadata: record.metadata, spec: record.spec };
         },
     }));

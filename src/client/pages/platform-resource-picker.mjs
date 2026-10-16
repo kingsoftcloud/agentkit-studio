@@ -11,7 +11,6 @@ export function createPlatformResourcePicker({
   function PlatformResourcePicker({ value, onChange, onMemory }) {
     const [catalogs, setCatalogs] = useState({});
     const [status, setStatus] = useState('loading');
-    const [connecting, setConnecting] = useState(false);
     const [error, setError] = useState('');
     const load = async () => {
       setStatus('loading'); setError('');
@@ -53,17 +52,17 @@ export function createPlatformResourcePicker({
       onChange([...retained, { ecosystem: 'dsh', pluginRef: catalog.pluginRef, snapshotDigest: catalog.pluginSnapshotDigest, components: [catalog.componentId], enabled: true, config }]);
       if (kind === 'memory-instance') onMemory(true);
     };
-    const connect = async () => {
-      setConnecting(true); setError('');
-      try { await hostRemote.bootstrapPlatformResources(); await load(); }
-      catch (reason) { setError(reason?.message || '平台资源连接失败'); }
-      finally { setConnecting(false); }
+    const connect = () => {
+      window.dispatchEvent(new CustomEvent('agentkit-studio:open-settings'));
+      setError('配置云端凭证后，点击刷新资源。');
     };
     const hasConnection = Object.values(catalogs).some(catalog => Boolean(catalog?.connectionRef));
     return h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginTop: '10px' } },
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '6px' } },
         h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, '平台资源'), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '3px' } }, '创建时绑定知识库、记忆库和 Skill Center，引用会写入 Agent Revision。')),
-        h('button', { type: 'button', onClick: connect, disabled: connecting || hasConnection, style: buttonStyle() }, connecting ? '连接中…' : hasConnection ? '平台已连接' : '连接金山云')),
+        h('div', { style: { display: 'flex', gap: '6px', flexShrink: 0 } },
+          !hasConnection ? h('button', { type: 'button', onClick: connect, style: buttonStyle() }, '配置云端连接') : null,
+          h('button', { type: 'button', onClick: load, disabled: status === 'loading', style: buttonStyle() }, '刷新资源'))),
       status === 'loading' ? h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', padding: '8px 0' } }, '正在读取平台资源…') : null,
       h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', marginTop: '8px' } }, PLATFORM_RESOURCE_META.map(meta => {
         const catalog = catalogs[meta.kind];

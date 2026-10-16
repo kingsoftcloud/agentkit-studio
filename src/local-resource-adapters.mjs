@@ -2,6 +2,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { materializeCloudSkill, runtimeSkill } from './skill-files.mjs';
@@ -136,25 +138,34 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const key = resourceId(binding);
     if (!key) throw new LocalResourceError('MCP_ID_MISSING', 'MCP 资源 ID 不能为空');
     const config = binding && typeof binding === 'object' ? binding : {};
-    const detail = config.endpoint || config.endpointUrl || config.url
+    const detail = config.endpoint || config.endpointUrl || config.url || config.server?.endpointUrl || config.server?.command
       ? config
       : (await resourceStore?.get(key)) || (await serverClient.action('GetMCP', { Id: key })).data || {};
     const server = detail.server && typeof detail.server === 'object' ? detail.server : {};
     const endpoint = detail.mcp_endpoint || detail.private_mcp_endpoint || detail.endpointUrl || detail.url || server.endpointUrl || detail.endpoint;
-    if (!endpoint || !/^https?:\/\//i.test(endpoint)) throw new LocalResourceError('MCP_ENDPOINT_UNAVAILABLE', 'MCP 没有可用的 HTTP Endpoint', { resourceId: key });
-    return { resourceId: key, endpoint, headers: { ...(detail.headers || config.headers || {}) },
+    const transport = server.transport || detail.transport || 'http';
+    if (transport === 'stdio' && !server.command) throw new LocalResourceError('MCP_COMMAND_UNAVAILABLE', 'MCP 缺少启动命令', { resourceId: key });
+    if (transport !== 'stdio' && (!endpoint || !/^https?:\/\//i.test(endpoint))) throw new LocalResourceError('MCP_ENDPOINT_UNAVAILABLE', 'MCP 没有可用的 HTTP Endpoint', { resourceId: key });
+    return { resourceId: key, endpoint, transport, command: server.command, args: server.args || [], env: server.env || {}, headers: { ...(server.headers || detail.headers || config.headers || {}) },
       envRefs: { ...(server.envRefs || detail.envRefs || config.envRefs || {}) },
       credentialRef: detail.credentialRef || config.credentialRef, apiKey: detail.api_key || detail.apiKey };
   }
 
   async function mcp(binding) {
     assertOpen();
-    const { resourceId: key, endpoint, headers } = await resolveMcpConnection(await describeMcp(binding), credentials);
+    const detail = await describeMcp(binding), stdio = detail.transport === 'stdio';
+    const { resourceId: key, endpoint, headers } = stdio ? detail : await resolveMcpConnection(detail, credentials);
+    const environment = { ...getDefaultEnvironment(), ...detail.env };
+    if (stdio) for (const [name, reference] of Object.entries(detail.envRefs)) {
+      const value = await resolveCredential(credentials, reference);
+      if (!value) throw new LocalResourceError('MCP_CREDENTIAL_MISSING', `MCP 缺少 ${name} 凭证`, { resourceId: key, reference });
+      environment[name] = value;
+    }
     assertOpen();
     // DSH credentials are mutable. Re-resolve them on every operation and
     // replace a cached client when the effective auth material changes. The
     // fingerprint is one-way and never leaves this process.
-    const fingerprint = createHash('sha256').update(JSON.stringify({ endpoint, headers: Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)) })).digest('hex');
+    const fingerprint = createHash('sha256').update(JSON.stringify({ endpoint, transport: detail.transport, command: detail.command, args: detail.args, ...(stdio ? { environment } : { headers: Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)) }) })).digest('hex');
     const cached = mcpClients.get(key);
     if (cached?.fingerprint === fingerprint) return cached;
     if (cached) {
@@ -163,9 +174,12 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     }
     const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' });
     connectingClients.add(client);
-    const transport = new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl });
+    const transport = stdio ? new StdioClientTransport({ command: detail.command, args: detail.args, env: environment, stderr: 'pipe' })
+      : detail.transport === 'sse' ? new SSEClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl })
+        : new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl });
+    if (stdio) transport.stderr?.resume();
     try {
-      await client.connect(transport);
+      await client.connect(transport, { timeout: 20000 });
       assertOpen();
     } catch (error) {
       await Promise.resolve(client.close()).catch(() => {});
@@ -263,7 +277,8 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
         const manifest = value.files?.find(file => file.path === 'SKILL.md');
         if (!manifest) throw new LocalResourceError('SKILL_MANIFEST_MISSING', 'Skill 缺少 SKILL.md', { resourceId: key });
         const content = (await skillDiscovery.previewInstalled(key, 'SKILL.md')).content || '';
-        return { name: key, content, ...(skillDiscovery.store ? { definitions: [runtimeSkill({ name: local.name, content, path: join(skillDiscovery.store, local.name, 'SKILL.md') })] } : {}) };
+        const directory = skillDiscovery.resolveInstalled ? await skillDiscovery.resolveInstalled(key) : join(skillDiscovery.store, local.name);
+        return { name: key, content, ...(skillDiscovery.store ? { definitions: [runtimeSkill({ name: local.name, content, path: join(directory, 'SKILL.md') })] } : {}) };
       }
     }
     if (!looksLikeCloudSkillSpace(key)) {
@@ -299,7 +314,10 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const subjectId = memorySubjectId(collectionId, userId, agentId);
     const result = await serverClient.action('QueryMemorySdk', {
       MemoryCollectionId: collectionId, AgentUserId: subjectId,
-      Query: String(query || ''), Limit: 5, SceneId: '_sys_general',
+      // Memory API accepts at most 512 Unicode characters. A delegated task
+      // carries role guidance as well as the user task; bound only this
+      // retrieval query, never the durable task/message or memory write.
+      Query: Array.from(String(query || '').trim()).slice(0,512).join(''), Limit: 5, SceneId: '_sys_general',
     }, { apiVersion: '2025-11-14' });
     const rawData = result.data;
     let data = rawData;

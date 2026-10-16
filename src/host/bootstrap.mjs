@@ -33,9 +33,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { loadPortableRuntime, createPortableBundles } = await import('../portable-bundle.mjs');
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
+  let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
     env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
-    getAdmission: () => presetAdmission, getModels: () => models, getPortableBundles: () => portableBundles,
+    getTemplateAuthoring: () => templateServices?.templateAuthoring, getAdmission: () => presetAdmission, getModels: () => models, getPortableBundles: () => portableBundles,
   });
   const {
     studioBuildPromise, agentStorePromise, agentCatalogPromise, listLocalBuildTargets,
@@ -133,6 +134,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
+  templateServices = await (await import('./services/templates.mjs')).createTemplateServices(ctx, {
+    ...services, storeDir: studioStoreDir, env: runtimeEnv, models, listCodexAgentModels, codexModels, getTeamTemplates: () => teamTemplates,
+  });
   const syncModelCredential = models.sync;
   // The DSH loader awaits an async plugin apply. Do this before returning from
   // activation so the first prompt cannot race the global ~/.agentkit key
@@ -156,9 +160,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const createPresetAdmission = registry => new DshPresetAdmission({
     registry,
     assertHostCompatible: () => hostCompatibility.require('agent-presets'),
-    getBasePlugins: async () => {
+    getBasePlugins: async agent => {
       if (typeof registry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
-      return registry.pluginsFor('standard');
+      const plugins = await registry.pluginsFor('standard');
+      return agent.metadata?.teamRole ? (await import('../studio-team-composition.mjs')).teamBasePlugins(plugins) : plugins;
     },
     getAgent: async agentId => (await deployments()).agents.get(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
@@ -273,13 +278,16 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       return [...builtinContracts, ...mcpContracts];
     },
   });
+  const teamRuntime = (await import('../studio-team-runtime.mjs')).ensureStudioTeamRuntime(ctx);
+  const studioTeams = (await import('../studio-teams.mjs')).createStudioTeams({ ctx, runtimeReady: teamRuntime, directory: join(studioStoreDir,'teams'), agents: await agentStorePromise, getAdmission: () => presetAdmission });
+  teamTemplates = (await import('../team-template-summon.mjs')).createTeamTemplateSummon({ catalog: templateServices.templateCatalog, summon: templateServices.templateSummon, teams: studioTeams });
   presetAdmission = createPresetAdmission();
   // Cordis unloads and reruns this scope when the registry changes. An old
   // scope must dispose its own admission, never whichever admission is current
   // after an asynchronous reload. Catalog-only profiles retain typed failures.
   bindPresetRegistry(ctx, { createAdmission: createPresetAdmission,
     publishAdmission: admission => { presetAdmission = admission; },
-    reconcile: admission => reconciler.run(admission),
+    reconcile: async admission => { await reconciler.run(admission); await studioTeams.restore(admission); },
   });
   const { startFrozenBuildRuntime } = await import('../frozen-build-runtime.mjs');
   const bindRuntime = () => bindFrozenRuntime(ctx, {
@@ -303,7 +311,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     await bindRuntime();
   }
   const routes = createStudioRoutes(ctx, {
-    ...services, models, syncModelCredential, hostCompatibility,
+    ...services, ...templateServices, studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
   });

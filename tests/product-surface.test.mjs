@@ -165,7 +165,7 @@ test('directServer Agent authoring persists through the Host bridge', async () =
   assert.match(hostSource, /if \(endpoint === 'agents\/create-local'\)/);
   assert.match(hostSource, /if \(endpoint === 'agents\/update-cloud'\)/);
   assert.match(hostSource, /buildCloudAgentUpdate/);
-  assert.match(hostSource, /store\.create\(\{/);
+  assert.match(hostSource, /templateAuthoring\.create\(\{/);
 });
 
 test('Studio domains use the DSH left panel list and old Studio underline tabs', () => {
