@@ -61,7 +61,8 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
     }
   };
   const model = catalog.find(item => item.default)?.id || catalog[0]?.id || primary;
-  const assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources });
+  const retirement = await (await import('./assistant-retirement.mjs')).createAssistantRetirement({ ctx, env });
+  const assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement });
   return startBuildRuntimeHttp({ agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, validatePrevious, assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }

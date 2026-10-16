@@ -5,13 +5,15 @@ const fail = (code, message, status = 400) => Object.assign(new Error(message), 
 const text = parts => (parts || []).filter(part => part.type === 'text').map(part => part.text || '').join('');
 const validKey = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(value);
 
-export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources }) {
+export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement }) {
   if (frozen.spec?.runtime?.type !== 'dsh-native') return null;
   const controller = ctx.get('sessionController');
   const memoryBinding = frozen.spec?.bindings?.plugins?.find(item => item.config?.binding?.resource?.kind === 'memory-instance');
   const memoryId = memoryBinding?.config.binding.resource.id || memoryBinding?.config.binding.resource.resourceId;
   const memoryEnabled = Boolean(memoryId) && frozen.spec?.memory?.enabled !== false;
   const lanes = new Map();
+  let retiring = false;
+  const inFlight = new Set();
   const sessionFor = key => {
     if (!validKey(key)) throw fail('ASSISTANT_CONVERSATION_INVALID', '会话标识无效');
     return `assistant-${createHash('sha256').update(JSON.stringify([agentId, buildId, key])).digest('hex').slice(0, 40)}`;
@@ -23,6 +25,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     return result;
   };
   async function ensure(sessionId) {
+    if (retiring) throw fail('ASSISTANT_CLOSED', '助理正在关闭，不能继续使用', 410);
     if (!await controller.projections({ sessionId }, new AbortController().signal)) {
       const selected = await admit(agentId, frozen);
       await controller.create({ sessionId, agentPreset: selected.presetId });
@@ -38,7 +41,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
   }
   async function snapshot(sessionId, beforeSeq) {
     const projection = await controller.projections({ sessionId }, new AbortController().signal);
-    if (!projection) return { messages: [], status: 'idle', hasMore: false, memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')) };
+    if (!projection) return { messages: [], status: 'idle', hasMore: false, memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')), canClose: Boolean(retirement) };
     if (beforeSeq !== undefined && (!Number.isSafeInteger(beforeSeq) || beforeSeq < 0)) throw fail('ASSISTANT_CURSOR_INVALID', '历史游标无效');
     const page = await controller.page({ address: { kind: 'session', sessionId }, throughSeq: projection.asOfSeq,
       maxMessages: 200, ...(beforeSeq === undefined ? {} : { beforeSeq }) }, new AbortController().signal);
@@ -54,9 +57,31 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     const status = end?.type === 'turn/start' ? 'running' : end?.data?.reason?.kind === 'completed' ? 'completed'
       : end?.data?.reason?.kind === 'aborted' ? 'cancelled' : end ? 'failed' : 'idle';
     return { messages, status, hasMore: page.hasMore === true, beforeSeq: events[0]?.seq,
-      memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')) };
+      memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')), canClose: Boolean(retirement) };
   }
-  return async (operation, payload = {}) => {
+  const run = async (operation, payload = {}) => {
+    if (operation === 'close') {
+      if (!retirement) throw fail('ASSISTANT_DELETE_UNAVAILABLE', '此 Host 未提供专属数据删除能力', 409);
+      retiring = true;
+      await Promise.allSettled([...inFlight]);
+      return retirement(async () => {
+        let count = 0;
+        if (!memoryId) return { count };
+        const adapter = await resources(), options = { agentId };
+        const seen = new Set();
+        for (let page = 0; page < 1000; page++) {
+          const result = await adapter.listMemory(memoryId, 'studio-anonymous', options);
+          if (!result.items.length) { if (result.hasMore) throw fail('ASSISTANT_MEMORY_DELETE_UNCONFIRMED', '记忆列表不完整'); return { count }; }
+          for (const item of result.items) {
+            if (seen.has(item.id)) throw fail('ASSISTANT_MEMORY_DELETE_UNCONFIRMED', '记忆删除结果尚未生效');
+            if ((await adapter.deleteMemory(memoryId, 'studio-anonymous', item.id, options))?.accepted !== true) throw fail('ASSISTANT_MEMORY_DELETE_UNCONFIRMED', '记忆删除未获确认');
+            seen.add(item.id); count++;
+          }
+        }
+        throw fail('ASSISTANT_MEMORY_DELETE_UNCONFIRMED', '记忆较多，请重新核对关闭结果');
+      });
+    }
+    if (retiring) throw fail('ASSISTANT_CLOSED', '助理正在关闭，不能继续使用', 410);
     const sessionId = sessionFor(payload.conversation || 'personal');
     if (operation === 'snapshot') return snapshot(sessionId, payload.beforeSeq);
     if (operation === 'submit') {
@@ -105,4 +130,12 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     }
     throw fail('ASSISTANT_OPERATION_INVALID', '不支持的助理操作', 404);
   };
+  const api = (operation, payload) => {
+    const pending = run(operation, payload);
+    if (operation !== 'close') { inFlight.add(pending); void pending.finally(() => inFlight.delete(pending)).catch(() => {}); }
+    return pending;
+  };
+  api.deletionSupported = Boolean(retirement);
+  api.retiring = () => retiring;
+  return api;
 }

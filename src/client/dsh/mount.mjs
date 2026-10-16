@@ -7,7 +7,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
-  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudSessionStatus, CodexPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
+  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudSessionStatus, CodexPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection, AssistantSettingsSection } = ui;
   const { createElement: h } = React;
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles } = documentEffects;
   const { openAgentAuthoring } = authoring;
@@ -25,7 +25,7 @@ export function mountStudio(ctx, app) {
     name: 'settings.onboarding', id: 'agentkit-studio-credential', order: 20,
   }, props => h(CredentialOnboarding, { ...props, dshModel: createDshModelBridge(ctx) })));
   ctx.effect(() => connectionOwner.bind(ctx.connection), 'agentkit-studio:remote-connection');
-  ctx.on('connection/reset', () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck')));
+  ctx.on('connection/reset', () => { window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck')); window.dispatchEvent(new CustomEvent('agentkit-studio:connection-reset')); });
   // DSH owns the single global plugin center. Studio contributes Codex as
   // an official plugin item through the public plugin-manager slot, so the
   // existing Codex catalog stays available without a second DSH market.
@@ -247,6 +247,9 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'agentkit-models', order: 190, label: '模型与凭证',
   }, () => h(ModelSettingsSection, { dshModel })));
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'agentkit-assistant', order: 195, label: '个人助理',
+  }, AssistantSettingsSection));
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'agentkit-studio', order: 200, label: PRODUCT_BRAND.name,
   }, StudioSettingsSection));

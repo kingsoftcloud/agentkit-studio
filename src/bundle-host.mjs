@@ -46,6 +46,7 @@ export async function prepareBundleHost({ archive, state, installation, env = pr
 
   const parent = await directory(resolve(state));
   const root = versionedState ? await directory(join(await directory(join(parent, 'versions')), hash)) : parent;
+  if (await exists(join(root, '.assistant-closed.json'))) fail('BUNDLE_HOST_ASSISTANT_CLOSED', '此专属助理已关闭；重新启用需要创建新部署');
   const receiptPath = join(root, '.agentkit-runtime.json');
   const receipt = { format: 'agentkit.runtime-state/v1', bundleSha256: hash };
   if (!await exists(receiptPath)) {
