@@ -143,7 +143,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
           h('span', { style: { fontSize: '16px', fontWeight: 600 } }, '个人助理'), h(ComputerConnection, { assistantName: '个人助理' })),
         h('div', { style: { maxWidth: '440px', width: '100%', textAlign: 'center' } },
           preparing || setupBusy ? h('div', { 'data-studio-assistant-spinner': true, 'aria-hidden': true, style: { width: '32px', height: '32px', border: `3px solid ${BRAND.border}`, borderTopColor: BRAND.primaryFill, borderRadius: '50%', margin: '0 auto 24px', animation: 'assistant-setup-spin 1s linear infinite' } }) : null,
-          h('h1', { style: { fontSize: '26px', fontWeight: 500, margin: '0 0 14px' } }, preparing || setupBusy ? '你的助理正在准备中' : '一个一直在的个人助理'),
+          h('h1', { style: { fontSize: '26px', fontWeight: 500, margin: '0 0 14px' } }, preparing || setupBusy ? '你的助理正在准备中' : '7×24 的个人助理'),
           h('p', { style: { color: BRAND.inkMuted, lineHeight: 1.8, margin: '0 0 24px' } }, preparing || setupBusy ? '准备好后，我们就在这里聊。你也可以先离开，回来会继续显示进度。' : '交代任务、安排提醒，慢慢记住你的偏好。关闭 Studio 后，助理仍能在云端继续工作。'),
           preparing ? h('p', { role: 'status', style: { fontSize: '14px' } }, setup.message) : null,
           setup?.failure ? h('p', { role: 'alert', style: { color: BRAND.danger, lineHeight: 1.7 } }, setup.message) : null,
