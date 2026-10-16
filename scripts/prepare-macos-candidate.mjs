@@ -18,7 +18,14 @@ const job=(await api(`actions/runs/${run}/jobs`)).jobs.find(item=>item.name==='m
 for(const name of ['Verify immutable source inputs','Build, sign and notarize Studio','Verify signed and notarized artifacts']) {
   if(job?.steps.find(step=>step.name===name)?.conclusion!=='success') throw Error(`Original candidate has not passed ${name}`);
 }
-const logs=stripVTControlCharacters((await execute('gh',['api',`repos/${repository}/actions/jobs/${job.id}/logs`],{maxBuffer:32*1024*1024})).stdout);
+const logPath=`repos/${repository}/actions/jobs/${job.id}/logs`;
+let logResult;
+try { logResult=await execute('gh',['api','--allow-escape-sequences',logPath],{maxBuffer:32*1024*1024}); }
+catch(error) {
+  if(!String(error.stderr||'').includes('unknown flag: --allow-escape-sequences')) throw error;
+  logResult=await execute('gh',['api',logPath],{maxBuffer:32*1024*1024});
+}
+const logs=stripVTControlCharacters(logResult.stdout);
 const sources=[...new Set([...logs.matchAll(/\bSTUDIO_REF_VALUE:\s*([0-9a-f]{40})\b/g)].map(match=>match[1]))];
 const versions=[...new Set([...logs.matchAll(/\bBUILD_VERSION(?:_VALUE)?:\s*([0-9A-Za-z.-]+)/g)].map(match=>match[1]))];
 if(sources.length!==1||sources[0]!==source||versions.length!==1||versions[0]!==version) throw Error('Original signed source or version differs');
