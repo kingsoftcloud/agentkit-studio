@@ -42,3 +42,21 @@ test('source admission rejects modified, added and deleted source files', async 
   await rm(join(source, 'extra.mjs')); await rm(join(source, 'source.mjs'));
   await assert.rejects(assertPatchedSource(source, manifest), { code: 'PATCHED_SOURCE_MISMATCH' });
 });
+
+
+test('source fingerprints resolve linked worktree indexes without modifying either index', async t => {
+  const { source, git } = await fixture(t);
+  const linked = join(source, '..', 'linked source');
+  git('worktree', 'add', '--detach', linked, 'HEAD');
+  t.after(() => { try { git('worktree', 'remove', '--force', linked); } catch {} });
+  const mainIndex = git('ls-files', '--stage');
+  const linkedGit = (...args) => execFileSync('git', args, { cwd: linked, encoding: 'utf8' });
+  const linkedIndex = linkedGit('ls-files', '--stage');
+  const initial = await fingerprintPatchedSource(linked);
+  assert.deepEqual(initial, await fingerprintPatchedSource(source));
+  await writeFile(join(linked, 'source.mjs'), 'export const value = 9;\n');
+  assert.notDeepEqual(await fingerprintPatchedSource(linked), initial);
+  assert.deepEqual(await fingerprintPatchedSource(source), initial);
+  assert.equal(git('ls-files', '--stage'), mainIndex);
+  assert.equal(linkedGit('ls-files', '--stage'), linkedIndex);
+});
