@@ -15,6 +15,11 @@ test('parseFrontmatter reads simple scalar fields and ignores non-manifest text'
   assert.equal(metadata.version, '2.1.0');
   assert.deepEqual(parseFrontmatter('no frontmatter'), {});
 });
+test('bundled Skill metadata keeps multiline descriptions and YAML invocation flags', () => {
+  const metadata = parseFrontmatter('---\nname: bundled-skill\ndescription: |\n  First line\n  Second line\ndisable-model-invocation: true\n---\nBody');
+  assert.equal(metadata.description, 'First line\nSecond line\n');
+  assert.equal(metadata['disable-model-invocation'], true);
+});
 
 test('skillSlug normalizes names and rejects empty results', () => {
   assert.equal(skillSlug('My Cool Skill!'), 'my-cool-skill');

@@ -144,6 +144,7 @@ export function createAgentPages({
           h('div', { style: { color: BRAND.ink, fontSize: '15px', fontWeight: 800 } }, '描述需求，创建 Agent'),
           h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55, marginTop: '5px' } }, '通过多轮对话完善提示词和资源绑定，确认草稿后创建；也可以直接手动配置。')),
         h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+          h('button', { type: 'button', onClick: () => onNavigate('experts'), style: { ...buttonStyle(), height: '38px', padding: '0 14px' } }, '从专家模板创建'),
           h('button', { type: 'button', onClick: () => onCreate('conversation'), disabled: status !== 'ready', style: { ...buttonStyle(), height: '38px', padding: '0 14px', color: BRAND.primaryText, background: status !== 'ready' ? 'var(--dsw-alias-label-tertiary, #aab7c4)' : BRAND.primaryFill, borderColor: 'transparent' } }, '对话创建'),
           h('button', { type: 'button', onClick: () => onCreate('manual'), disabled: status !== 'ready', style: { ...buttonStyle(), height: '38px', padding: '0 14px' } }, '手动配置'))),
       created ? h('div', { role: 'status', style: { marginBottom: '14px', padding: '11px 13px', borderRadius: '10px', color: BRAND.accentStrong, background: BRAND.accentSoft, fontSize: '12px' } }, `${created.updated ? '已保存' : '已创建'} ${created.name || created.id}，Revision ${created.revision || 1}。可在编辑页调整绑定，在运行中心构建。`) : null,

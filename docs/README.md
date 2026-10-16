@@ -1,5 +1,8 @@
 # Documentation
 
+- [Expert catalog and local teams](expert-catalog.md): templates, resources and native team sessions.
+- [Personal assistant](personal-assistant.md): durable cloud conversations, reminders and memory.
+
 - [Getting started](getting-started.md): installation, models and local development.
 - [Architecture](architecture.md): DSH ownership, runtime adapters and package boundaries.
 - [Refactoring plan](refactoring-plan.md): phased lifecycle, sidebar, frontend, Host and compatibility work with acceptance criteria.

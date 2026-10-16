@@ -14,6 +14,10 @@ export class LocalMcpStoreError extends Error {
 
 function idOf(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
 function safeId(value) { return /^mcp-local-[a-f0-9]{16}$/.test(value); }
+function validatePublicConfiguration(server) {
+  for (const [name, value] of Object.entries(server.headers || {})) if (!/^(?:x-request-source|x-skill-version|x-.*-client|x-.*-surface|accept|content-type)$/i.test(name) || /\$\{/.test(String(value))) throw new LocalMcpStoreError('MCP_HEADER_REQUIRES_REFERENCE', `Header ${name} 请使用凭证引用配置`);
+  for (const name of Object.keys(server.env || {})) if (/TOKEN|SECRET|PASSWORD|API_KEY/i.test(name)) throw new LocalMcpStoreError('MCP_ENV_REQUIRES_REFERENCE', `环境变量 ${name} 请使用凭证引用配置`);
+}
 function normalize(record) {
   if (!record || typeof record !== 'object') return null;
   const resourceId = idOf(record);
@@ -37,6 +41,8 @@ function normalize(record) {
       ...(server.command ? { command: String(server.command) } : {}),
       ...(Array.isArray(server.args) ? { args: server.args.map(String) } : {}),
       ...(server.envRefs && typeof server.envRefs === 'object' ? { envRefs: { ...server.envRefs } } : {}),
+      ...(server.headers && typeof server.headers === 'object' ? { headers: { ...server.headers } } : {}),
+      ...(server.env && typeof server.env === 'object' ? { env: { ...server.env } } : {}),
     },
   };
 }
@@ -78,6 +84,7 @@ export function createLocalMcpStore({ storeDir } = {}) {
   }
   async function create(payload = {}) {
     const server = payload.server && typeof payload.server === 'object' ? payload.server : {};
+    validatePublicConfiguration(server);
     const name = String(server.name || payload.name || '').trim();
     const displayName = String(payload.displayName || payload.name || name).trim();
     const transport = String(server.transport || 'http').trim().toLowerCase();
@@ -89,6 +96,7 @@ export function createLocalMcpStore({ storeDir } = {}) {
     return save({
       resourceId, id: resourceId, name, displayName,
       description: String(payload.description || ''), version: String(server.version || payload.version || '1.0.0'),
+      ...(payload.catalogRef ? { catalogRef: payload.catalogRef } : {}),
       server: { ...server, name, transport, envRefs: server.envRefs && typeof server.envRefs === 'object' ? server.envRefs : {} },
       status: 'pending', contract: { discoveredTools: [] }, health: { status: 'pending', toolCount: 0, tools: [] },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -99,6 +107,7 @@ export function createLocalMcpStore({ storeDir } = {}) {
     const current = await get(id);
     if (!current) throw new LocalMcpStoreError('MCP_NOT_FOUND', '本地 MCP 资源不存在', { resourceId: id });
     const server = payload.server && typeof payload.server === 'object' ? payload.server : current.server;
+    validatePublicConfiguration(server);
     const name = String(server.name || payload.name || current.name || '').trim();
     const displayName = String(payload.displayName || payload.name || current.displayName || name).trim();
     const transport = String(server.transport || current.server?.transport || 'http').trim().toLowerCase();

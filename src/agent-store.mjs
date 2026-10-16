@@ -91,7 +91,7 @@ export function createAgentStore({ storeDir } = {}) {
     return revisions.filter(Boolean);
   }
 
-  async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {} }) {
+  async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {}, templateSource, creationKey, teamRole }) {
     await ensureDir();
     const agentId = `ar-local-${randomUUID().replace(/-/g, '').slice(0, 16)}`;
     const normalizedBindings = normalizeAgentBindings(spec.bindings ?? bindings);
@@ -104,6 +104,9 @@ export function createAgentStore({ storeDir } = {}) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         local: true,
+        ...(templateSource ? { templateSource: structuredClone(templateSource) } : {}),
+        ...(teamRole ? { teamRole: structuredClone(teamRole) } : {}),
+        ...(creationKey ? { creationKey: String(creationKey) } : {}),
       },
       spec: { ...spec, bindings: normalizedBindings, runtime: { type: runtimeType } },
       bindings: normalizedBindings,
@@ -121,7 +124,7 @@ export function createAgentStore({ storeDir } = {}) {
     await rename(from, to);
   }
 
-  async function list() {
+  async function list({ includeTeamRoles = false } = {}) {
     await ensureDir();
     let names;
     try { names = await readdir(root); } catch { return []; }
@@ -129,6 +132,7 @@ export function createAgentStore({ storeDir } = {}) {
     for (const name of names.filter(item => item.endsWith('.json')).sort()) {
       try {
         const record = normalizeRecord(JSON.parse(await readFile(join(root, name), 'utf8')));
+        if (record.metadata?.teamRole && !includeTeamRoles) continue;
         items.push({
           metadata: record.metadata,
           spec: record.spec || {},

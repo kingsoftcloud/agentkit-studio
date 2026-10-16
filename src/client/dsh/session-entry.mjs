@@ -34,6 +34,7 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
       layout.selectPanel(null);
     } catch (error) {
       if (!active()) return;
+      if (options.throwOnError) throw error;
       console.error('[agentkit-studio] native Agent binding failed:', error);
       void actions.confirm({ title: 'Agent 绑定失败', detail: error?.message || 'Agent 绑定失败', confirmLabel: '知道了' });
     }

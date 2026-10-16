@@ -141,6 +141,12 @@ export function mountStudio(ctx, app) {
   // the content area; the four product domains never become a second row
   // of tabs inside their own detail page.
   const navigateStudio = target => {
+    if (target === 'experts' || target === 'agents') {
+      const view = target === 'experts' ? 'catalog' : 'mine';
+      try { window.localStorage.setItem('agentkit-studio:agents-view', view); } catch {}
+      window.dispatchEvent(new CustomEvent('agentkit-studio:agent-view', { detail: view }));
+      target = 'agents';
+    }
     const next = PANELS.find(item => item.page === target || item.id === target);
     if (next) ctx.layout.selectPanel(next.id);
   };
@@ -152,7 +158,8 @@ export function mountStudio(ctx, app) {
   ctx.inject(['uiWorkspace', 'sessions', 'modelDirectories'], navCtx => {
     const binding = createNativeSessionBinding({ navCtx, remote: ctx.remote, layout: ctx.layout, hostRemote, writeConversationAgent, actions, isActive: () => !app.closed() });
     const release = actions.registerBinding(binding.bindAgent);
-    return () => { binding.dispose(); release(); };
+    const releaseSession = actions.registerSessionOpener(sessionId => { if (app.closed()) return; navCtx.uiWorkspace.openSession(sessionId); ctx.layout.selectPanel(null); });
+    return () => { binding.dispose(); release(); releaseSession(); };
   });
   ctx.inject(['uiWorkspace'], authoringCtx => {
     authoringCtx.effect(() => {

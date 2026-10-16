@@ -221,7 +221,7 @@ export class DshPresetAdmission {
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
-    const plugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins() : [];
+    const plugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins(agent) : [];
     let resourcesUnavailable = false;
     if (prefix) {
       const persona = plugins.find(row => row.id === 'persona');

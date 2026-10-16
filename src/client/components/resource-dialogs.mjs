@@ -2,7 +2,7 @@ import { buildSkillFileTree, formatResourceSize } from '../state/skill-files.mjs
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 export function createResourceDialogs({
-  ui: { React: { createElement: h, useState }, ResourceDialog, buttonStyle, inputStyle, Pill, BRAND = DEFAULT_BRAND },
+  ui: { React: { createElement: h, useState }, ResourceDialog, SecretInput, buttonStyle, inputStyle, Pill, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent
 }) {
   function McpResourceDialog({ resource, onClose, onCreated }) {
@@ -16,10 +16,11 @@ export function createResourceDialogs({
       displayName: String(resource?.displayName || resource?.name || ''), name: String(resource?.name || server.name || ''),
       description: String(resource?.description || ''), version: String(resource?.version || server.version || '1.0.0'),
       transport: String(server.transport || 'http'), endpointUrl: String(server.endpointUrl || ''), command: String(server.command || ''),
-      args: Array.isArray(server.args) ? server.args.join(' ') : '', apiKeyName: initialCredentialName, apiKeyValue: '',
+      args: Array.isArray(server.args) ? JSON.stringify(server.args) : '', apiKeyName: initialCredentialName, apiKeyValue: '',
       envRefs: Object.entries(existingEnvRefs).map(([key, value]) => `${key}=${value}`).join(', '),
     }));
     const [jsonDraft, setJsonDraft] = useState('');
+    const [credentialValues, setCredentialValues] = useState({});
     const [jsonError, setJsonError] = useState('');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
@@ -48,7 +49,7 @@ export function createResourceDialogs({
         displayName: String(descriptor.name || key), name: String(key),
         description: String(descriptor.description || ''), version: String(descriptor.version || '1.0.0'),
         transport, endpointUrl: transport === 'http' ? endpointUrl : '', command: String(descriptor.command || ''),
-        args: Array.isArray(descriptor.args) ? descriptor.args.join(' ') : '',
+        args: Array.isArray(descriptor.args) ? JSON.stringify(descriptor.args) : '',
         apiKeyName: credentialName, apiKeyValue: '', envRefs,
       }));
     };
@@ -63,13 +64,18 @@ export function createResourceDialogs({
       const envRefs = {};
       form.envRefs.split(',').map(item => item.trim()).filter(Boolean).forEach(item => { const [key, ref] = item.split('=').map(part => part.trim()); if (key && ref) envRefs[key] = ref; });
       const credentialName = form.apiKeyName.trim();
+      let args;
+      try { args = form.args.trim().startsWith('[') ? JSON.parse(form.args) : form.args.split(/\s+/).filter(Boolean); if (!Array.isArray(args) || args.some(value => typeof value !== 'string')) throw new Error(); }
+      catch { setError('命令参数请填写字符串 JSON 数组，例如 ["-y", "@acme/server"]'); return; }
       setSaving(true);
       try {
+        for (const [name, value] of Object.entries(credentialValues)) if (value.trim()) await hostRemote.putCredential(name, value.trim());
         if (credentialName && form.apiKeyValue.trim()) await hostRemote.putCredential(credentialName, form.apiKeyValue.trim());
         if (credentialName) envRefs[form.transport === 'stdio' ? credentialName : 'Authorization'] = `env://${credentialName}`;
         const payload = {
           displayName: form.displayName.trim(), description: form.description.trim(),
-          server: { name, version: form.version.trim() || '1.0.0', transport: form.transport, endpointUrl: form.endpointUrl.trim() || undefined, command: form.command.trim() || undefined, args: form.args.split(/\s+/).map(item => item.trim()).filter(Boolean), envRefs },
+          ...(resource?.catalogRef ? { catalogRef: resource.catalogRef } : {}),
+          server: { name, version: form.version.trim() || '1.0.0', transport: form.transport, endpointUrl: form.endpointUrl.trim() || undefined, command: form.command.trim() || undefined, args, envRefs, ...(server.headers ? { headers: server.headers } : {}), ...(server.env ? { env: server.env } : {}) },
         };
         const saved = editing ? await hostRemote.updateMcpResource(savedResourceId, payload) : await hostRemote.createMcpResource(payload);
         const id = saved.resourceId || savedResourceId;
@@ -88,6 +94,8 @@ export function createResourceDialogs({
     const field = (label, key, placeholder, type = 'text') => h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, label, h('input', { type, value: form[key], placeholder, onChange: event => setField(key, event.target.value), style: inputStyle() }));
     return h(ResourceDialog, { title: editing ? '编辑 MCP Server' : '添加 MCP Server', detail: '凭证只保存到 Host 凭证服务；修改后会重新探测工具契约。绑定关系请在 Agent 创建或编辑页维护。', onClose },
       h('form', { onSubmit: save, style: { display: 'grid', gap: '12px' } },
+        resource?.setupReasons?.length || resource?.authorizationRequired ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7 } }, [...(resource.setupReasons || []), ...(resource.authorizationRequired ? ['需要你在此服务重新授权；源应用的登录状态不会迁移。请使用服务提供的访问凭证。'] : [])].join('；')) : null,
+        ...(resource?.requiredCredentials || []).map(row => h('label', { key: row.name, style: { display: 'grid', gap: '5px', fontSize: '12px' } }, `${row.header} · ${row.name}${row.configured ? '（已有凭证，可留空）' : ''}`, h(SecretInput, { label: row.name, value: credentialValues[row.name] || '', onChange: event => setCredentialValues({ ...credentialValues, [row.name]: event.target.value }), placeholder: '仅保存到本机凭证服务', style: inputStyle() }))),
         h('section', { style: { display: 'grid', gap: '8px', padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '10px', background: BRAND.canvas } },
           h('div', { style: { color: BRAND.ink, fontWeight: 750, fontSize: '12px' } }, '从 JSON 识别 MCP'),
           h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '支持 mcpServers 配置；只读取名称、说明、Endpoint 和环境变量引用，不会把 JSON 中的密钥写入资源目录。'),

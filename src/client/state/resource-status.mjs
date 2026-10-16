@@ -1,7 +1,7 @@
 export function resourceStatusPresentation(resource, kind) {
   const status = String(resource.status || '').toLowerCase();
   if (resource.disabled) return { label: '不可用', detail: '资源已停用。', tone: 'signal' };
-  if (kind === 'skill' && resource.source === 'local-import' && status === 'ready') return { label: '本地已导入', detail: 'Skill 文件已导入本机；实际执行还取决于模型调用和脚本依赖。', tone: 'accent' };
+  if (kind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) && status === 'ready') return { label: '文件已安装', detail: '完整 Skill 文件已保存在本机；实际执行还取决于脚本依赖和当前授权。', tone: 'accent' };
   if ((kind === 'skill' || kind === 'skill-space') && status === 'available') return { label: '云端目录可见', detail: '云端 Skill Space 可在目录中读取；绑定后由 Host 下载加载，不代表所有 Skill 已执行验证。', tone: 'neutral' };
   if (kind === 'mcp') {
     if (resource.health?.errorCode || status === 'error') return { label: '探测失败', detail: resource.health?.errorCode || '请重新探测查看连接结果。', tone: 'signal' };

@@ -13,8 +13,9 @@ import { createDeploymentRollouts } from './deployment-rollouts.mjs';
 import { storageSize, deploymentStorage, admitDeploymentStorage, verifyDeploymentStorage } from './deployment-storage.mjs';
 
 const cloudId = value => /^ar-(?!local-)[A-Za-z0-9-]+$/.test(value || '');
-const failure = error => ({ code: /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.code || '') ? error.code : 'DEPLOYMENT_FAILED',
-  message: error?.code === 'DEPLOYMENT_STORAGE_MISMATCH' ? '云端存储与所选配置不符，暂不可对话；请核对实例配置' : '操作未完成，请查看部署状态并核对云端结果；不会自动重试云端写操作',
+const untrustedTls = error => [error, error?.cause, error?.cause?.cause].some(value => /^(?:CERT_|ERR_TLS_|UNABLE_TO_(?:GET|VERIFY)_|SELF_SIGNED_CERT|DEPTH_ZERO_SELF_SIGNED_CERT)/.test(value?.code || ''));
+const failure = error => ({ code: untrustedTls(error) ? 'DEPLOYMENT_TLS_UNTRUSTED' : /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.code || '') ? error.code : 'DEPLOYMENT_FAILED',
+  message: untrustedTls(error) ? '云端入口的 TLS 证书校验失败；请检查证书链，或为 Host 配置经核验的可信 CA 后刷新' : error?.code === 'DEPLOYMENT_STORAGE_MISMATCH' ? '云端存储与所选配置不符，暂不可对话；请核对实例配置' : '操作未完成，请查看部署状态并核对云端结果；不会自动重试云端写操作',
   ...(typeof error?.requestId === 'string' && /^[a-f0-9-]{36}$/.test(error.requestId) ? { requestId: error.requestId } : {}) });
 const credentialScope = values => sha256(JSON.stringify([values.cloudServerUrl || 'https://aicp.api.ksyun.com', values.cloudRegion || 'cn-beijing-6', values.cloudCustomSource || '', values.cloudAccessKey]));
 const shapeOf = input => {

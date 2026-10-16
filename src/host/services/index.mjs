@@ -18,6 +18,6 @@ export function createStudioServices(ctx, options) {
   const resources = createResourceServices(ctx, { ...options, ...platform });
   ({ deployments } = createDeploymentServices({ ...options, ...platform, ...builds, ...resources }));
   const automation = createAutomationServices(ctx, { ...options, ...platform, ...builds, ...agents, deployments });
-  const authoring = createAuthoringServices(ctx, { ...platform, ...agents, ...resources });
+  const authoring = createAuthoringServices(ctx, { ...platform, ...agents, ...resources, getTemplateAuthoring: () => options.getTemplateAuthoring() });
   return { ...platform, ...builds, ...agents, ...resources, ...automation, ...authoring, deployments };
 }

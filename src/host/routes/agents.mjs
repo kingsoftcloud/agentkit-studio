@@ -1,5 +1,5 @@
 /** agents operations; authentication and lifetime belong to the dispatcher. */
-export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise }) {
+export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise, templateAuthoring }) {
     return async (endpoint, payload, signal) => {
         const serverClient = await serverClientPromise;
         if (endpoint === 'agents/local-delete') {
@@ -19,7 +19,8 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
             const store = await agentStorePromise;
             try {
                 if (endpoint === 'agents/create-local') {
-                    const record = await store.create({
+                    const record = await templateAuthoring.create({
+                        templateSource: payload?.templateSource,
                         name: payload?.name,
                         runtimeType: payload?.runtimeType || payload?.spec?.runtime?.type || 'dsh-native',
                         description: payload?.description || payload?.spec?.description || '',

@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "notes": "Public Skill logos and explicitly matched product brands observed in WorkBuddy. Never use expert or team avatars.",
+  "logos": [
+    {
+      "key": "github",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/github.svg"
+    },
+    {
+      "key": "web-access",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/web-access.svg"
+    },
+    {
+      "key": "neodata-financial-search",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/neodata-financial-search.png"
+    },
+    {
+      "key": "qq-email",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/qq-email.png"
+    },
+    {
+      "key": "the-entrepreneurship-handbook",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/the-entrepreneurship-handbook.png"
+    },
+    {
+      "key": "12306",
+      "url": "https://codebuddy-platform-1258344699.cos.accelerate.myqcloud.com/public/skills/icons/12306.svg"
+    },
+    {
+      "key": "minimax-docx",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/minimax-docx.svg"
+    },
+    {
+      "key": "cnb-skill",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/cnb-skill.svg"
+    },
+    {
+      "key": "tapd-openapi",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/tapd-openapi.png"
+    },
+    {
+      "key": "cloudbase",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/cloudbase.svg"
+    },
+    {
+      "key": "lark-unified",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/lark-unified.svg"
+    },
+    {
+      "key": "imap-smtp-email",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/imap-smtp-email.svg"
+    },
+    {
+      "key": "lexiang-knowledge-base",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/lexiang-knowledge-base.png"
+    },
+    {
+      "key": "frontend-dev",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/frontend-dev.svg"
+    },
+    {
+      "key": "skills-security-check",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/skills-security-check.svg"
+    },
+    {
+      "key": "minimax-xlsx",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/minimax-xlsx.svg"
+    },
+    {
+      "key": "kdocs",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/kdocs.svg"
+    },
+    {
+      "key": "aihot",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/aihot.svg"
+    },
+    {
+      "key": "minimax-pdf",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/minimax-pdf.svg"
+    },
+    {
+      "key": "pptx-generator",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/pptx-generator.svg"
+    },
+    {
+      "key": "skill-scanner",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/skill-scanner.png"
+    },
+    {
+      "key": "westock-mcp",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/operation-platform/skill-icons/market-connector-icons/westock-mcp.svg",
+      "aliases": [
+        "westock",
+        "westock-data",
+        "westock-tool",
+        "westock-screener",
+        "westock-skill"
+      ]
+    },
+    {
+      "key": "ima-mcp",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/operation-platform/skill-icons/market-connector-icons/ima-mcp.png",
+      "aliases": [
+        "ima-skills",
+        "ima-mcp"
+      ]
+    },
+    {
+      "key": "tencent-docs",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/operation-platform/skill-icons/market-connector-icons/tencent-docs.png",
+      "aliases": [
+        "tencent-docs",
+        "tencent-docs-sheet-generation",
+        "tencent-docs-sheetagent"
+      ]
+    },
+    {
+      "key": "feishu",
+      "url": "https://openplatform-cdn.codebuddy.cn/public/operation-platform/skill-icons/market-connector-icons/feishu.svg",
+      "aliases": [
+        "lark-approval",
+        "lark-apps",
+        "lark-attendance",
+        "lark-base",
+        "lark-calendar",
+        "lark-contact",
+        "lark-doc",
+        "lark-drive",
+        "lark-event",
+        "lark-im",
+        "lark-mail",
+        "lark-markdown",
+        "lark-meeting",
+        "lark-minutes",
+        "lark-note",
+        "lark-okr",
+        "lark-openapi-explorer",
+        "lark-shared",
+        "lark-sheets",
+        "lark-skill-maker",
+        "lark-slides",
+        "lark-task",
+        "lark-vc",
+        "lark-vc-agent",
+        "lark-whiteboard",
+        "lark-wiki",
+        "lark-workflow-meeting-summary",
+        "lark-workflow-standup-report"
+      ]
+    }
+  ]
+}

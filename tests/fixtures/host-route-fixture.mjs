@@ -60,6 +60,7 @@ export function createHostRouteFixture(mode = 'success') {
   const nativeSchedule = { catalog: method('nativeSchedule.catalog', []) };
   const ctx = { get: name => name === 'schedule' ? nativeSchedule : undefined };
   const deps = {
+    templateAuthoring: { create: payload => { const {templateSource, ...ordinary} = payload; return agentStore.create(ordinary); } },
     agentStorePromise: Promise.resolve(agentStore), agentCatalogPromise: Promise.resolve({ list: method('agentCatalog.list', { items: [agent], total: 1 }) }),
     serverClientPromise: Promise.resolve(serverClient), configurationPromise: Promise.resolve({}), credentialsService,
     models, syncModelCredential: models.sync, describeGlobalModelCredential: method('credentials.status', { configured: true }),

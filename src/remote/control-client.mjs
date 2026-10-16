@@ -135,6 +135,16 @@ export function createProductClient(connection, { window = globalThis.window } =
         }
         throw Object.assign(new Error('Studio 本地任务需要已连接的 Studio Host'), { code: 'HOST_CONNECTION_MISSING' });
     }
+    async function runTemplateWorkflow(payload, onProgress = () => {}) {
+      let operation = await studioBridgeOperation('template-workflows/start', payload);
+      while (operation.status === 'running') {
+        onProgress({ ...operation.progress, requestId: operation.requestId, cancellable: operation.cancellable });
+        await new Promise(resolve => setTimeout(resolve, 180));
+        operation = await studioBridgeOperation('template-workflows/status', { requestId: operation.requestId });
+      }
+      if (operation.status !== 'succeeded') throw Object.assign(new Error(operation.error?.message || '模板操作被中断，可重新尝试'), { code: operation.error?.code || 'TEMPLATE_OPERATION_FAILED' });
+      return operation.result;
+    }
     async function ensureDshPreset(agentId, buildId = '') {
         if (!connection?.rpc?.call) {
             const error = new Error('DSH Agent preset 准入需要已连接的 Studio Host');
@@ -269,6 +279,22 @@ export function createProductClient(connection, { window = globalThis.window } =
         ensureDshPreset,
         syncModelCredential,
         modelCredentialStatus,
+        teams: (action, payload = {}) => studioBridgeOperation(`teams/${action}`, payload),
+        teamTemplates: (action, payload = {}) => studioBridgeOperation(`team-templates/${action}`, payload),
+        templates: () => studioBridgeOperation('templates/list', {}),
+        prepareTemplate: ref => studioBridgeOperation('templates/prepare', ref),
+        planTemplateSummon: payload => studioBridgeOperation('templates/summon-plan', payload),
+        summonTemplate: payload => studioBridgeOperation('templates/summon', payload),
+        runTemplateWorkflow,
+        cancelTemplateWorkflow: requestId => studioBridgeOperation('template-workflows/cancel', { requestId }),
+        templateDefinition: ref => studioBridgeOperation('template-workflows/detail', ref),
+        templateCache: () => studioBridgeOperation('template-workflows/cache', {}),
+        clearTemplateCache: () => studioBridgeOperation('template-workflows/clearCache', {}),
+        templateAvatar: ref => studioBridgeOperation('templates/avatar', ref),
+        templateResources: query => studioBridgeOperation('template-resources/list', query),
+        installTemplateResource: ref => studioBridgeOperation('template-resources/install', ref),
+        prepareTemplateResource: ref => studioBridgeOperation('template-resources/prepare', ref),
+        exportTemplate: (agentId, revision) => studioBridgeOperation('templates/export', { agentId, revision }),
         quickAuthorAgent: payload => directServer()
             ? studioBridgeOperation('agents/create-local', payload)
             : request('/api/v1/authoring/quick', { method: 'POST', body: JSON.stringify(payload) }),
@@ -393,18 +419,12 @@ export function createProductClient(connection, { window = globalThis.window } =
         previewDiscoveredSkill: (inspectionToken, candidateId, path = '') => skillBridgeCall('skills/preview-discovered', { inspectionToken, candidateId, path }),
         commitDiscoveredSkill: (inspectionToken, candidateId, overwrite = false) => skillBridgeCall('skills/commit-discovered', { inspectionToken, candidateId, overwrite }),
         previewInstalledSkill: (resourceId, path = '') => skillBridgeCall('skills/preview-installed', { resourceId, path }),
-        platformResources: kind => {
-            if (directServer()) {
-                const actions = { 'knowledge-base': 'ListKnowledgeBases', 'memory-instance': 'ListMemoryInstances', 'skill-space': 'ListSkillWorkspaces' };
-                const action = actions[kind];
-                if (action)
-                    return serverAction(action, {})
-                        .then(value => ({ ...value, connectionRef: 'agentengine-server', pluginRef: 'agentengine-server', componentId: kind, pluginSnapshotDigest: 'server-action-v1' }))
-                        .catch(() => request('/api/v1/platform-resources?kind=' + encodeURIComponent(kind)));
-            }
-            return request('/api/v1/platform-resources?kind=' + encodeURIComponent(kind));
-        },
-        bootstrapPlatformResources: () => request('/api/v1/resource-connections:bootstrap', { method: 'POST' }),
+        platformResources: kind => bridgeAvailable()
+            ? studioBridgeOperation('platform/resources', { kind })
+            : request('/api/v1/platform-resources?kind=' + encodeURIComponent(kind)),
+        bootstrapPlatformResources: () => bridgeAvailable()
+            ? Promise.reject(Object.assign(new Error('请在设置中配置云端凭证后刷新资源目录'), { code: 'CLOUD_CONFIGURATION_REQUIRED' }))
+            : request('/api/v1/resource-connections:bootstrap', { method: 'POST' }),
         schedules: (agentId, scope = 'local') => directServer() ? studioBridgeOperation('schedules/list', { agentId, scope }) : request(agentId ? '/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules' : '/api/v1/schedules'),
         scheduleDeliveryTargets: agentId => studioBridgeOperation('schedules/delivery-targets', { agentId, scope: 'cloud' }),
         scheduleOccurrences: (taskId, agentId) => directServer() ? studioBridgeOperation('schedules/occurrences', { taskId, agentId }) : request(agentId

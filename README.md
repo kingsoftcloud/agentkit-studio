@@ -38,6 +38,12 @@ make dev DSH_ROOT=../deepseek-harness
 
 Use `DSH_HOME` and `AGENTKIT_HOME` to isolate local profiles and Studio data. Do not copy another user's profile or credentials into the repository.
 
+## Experts and personal assistant
+
+The Agents panel includes an original expert catalog, resource templates and local teams built on official DSH Agent Teams. Existing Agents still use the same editor, frozen revisions and native conversations. See [expert catalog and local teams](docs/expert-catalog.md).
+
+The personal assistant panel connects to a compatible DSH Native cloud deployment. Conversation acceptance, history and reminders remain durable in the cloud runtime when the local client closes. A compatible deployment and the relevant configured resources are required; see [personal assistant](docs/personal-assistant.md).
+
 ## Checks
 
 ```sh

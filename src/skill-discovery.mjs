@@ -6,9 +6,10 @@
  * Studio store. Paths are only read, never executed.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rm, stat, writeFile, rename } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { parse as parseYaml } from 'yaml';
 
 const DEFAULT_SCAN_RELATIVES = ['skills', '.agents/skills', '.codex/skills', '.claude/skills'];
 const MAX_DEPTH = 4;
@@ -35,6 +36,10 @@ export function parseFrontmatter(source) {
   if (!text.startsWith('---')) return {};
   const end = text.indexOf('\n---', 3);
   if (end < 0) return {};
+  try {
+    const parsed = parseYaml(text.slice(3, end), { maxAliasCount: 0 });
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch { /* retain scalar recovery for malformed upstream headers */ }
   const metadata = {};
   for (const line of text.slice(3, end).split(/\r?\n/)) {
     const match = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(line.trim());
@@ -228,15 +233,17 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
         });
       } catch { /* unreadable skill directory is skipped, not fatal for the list */ }
     }
+    for (const { directory, ...item } of Object.values(await bundleRecords())) items.push(item);
     items.sort((a, b) => a.name.localeCompare(b.name));
     return { items, nextCursor: null, total: items.length, source: 'local-store' };
   }
 
   async function previewInstalled(resourceId, filePath = '') {
+    const bundled = (await bundleRecords())[String(resourceId)];
     const name = String(resourceId || '').replace(/^skill-/, '').replace(/-[0-9][0-9.]*$/, '');
-    const directory = join(store, name);
+    const directory = bundled?.directory || join(store, name);
     const resolvedStore = resolve(store);
-    if (!resolve(directory).startsWith(resolvedStore + sep)) throw new SkillDiscoveryError('SKILL_PREVIEW_PATH_INVALID', '路径越界', { resourceId });
+    if (!bundled && !resolve(directory).startsWith(resolvedStore + sep)) throw new SkillDiscoveryError('SKILL_PREVIEW_PATH_INVALID', '路径越界', { resourceId });
     if (!filePath) {
       const files = await listFiles(directory);
       return { files: files.map(file => ({ path: file.relative, size: file.size })) };
@@ -249,5 +256,26 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
     return { path: filePath, size: info.size, content: await readFile(target, 'utf8') };
   }
 
-  return { discover, previewDiscovered, commitDiscovered, listInstalled, previewInstalled, store };
+  async function bundleRecords() { try { return JSON.parse(await readFile(join(store, '.catalog-skills.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return {}; throw error; } }
+  let registration = Promise.resolve();
+  function registerBundleSkills(entries) {
+    const pending = registration.then(async () => {
+      const records = await bundleRecords();
+      for (const item of entries) {
+        if (!/^skill-catalog-[a-f0-9]{24}$/.test(item.resourceId) || !item.directory || !item.digest) throw new SkillDiscoveryError('SKILL_BUNDLE_INVALID', '目录 Skill 声明无效');
+        if (records[item.resourceId] && JSON.stringify(records[item.resourceId]) !== JSON.stringify(item)) throw new SkillDiscoveryError('SKILL_BUNDLE_CONFLICT', '目录 Skill 内容发生冲突');
+        records[item.resourceId] = item;
+      }
+      await mkdir(store, { recursive: true, mode: 0o700 });
+      const temporary = join(store, `.catalog-skills-${randomUUID()}.tmp`);
+      await writeFile(temporary, JSON.stringify(records), { mode: 0o600 });
+      await rename(temporary, join(store, '.catalog-skills.json'));
+      return entries.map(({ directory, ...item }) => item);
+    });
+    registration = pending.catch(() => {}); return pending;
+  }
+  async function resolveInstalled(resourceId) {
+    return (await bundleRecords())[String(resourceId)]?.directory || join(store, String(resourceId).replace(/^skill-/, '').replace(/-[0-9][0-9.]*$/, ''));
+  }
+  return { discover, previewDiscovered, commitDiscovered, listInstalled, previewInstalled, registerBundleSkills, resolveInstalled, store };
 }

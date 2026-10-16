@@ -364,6 +364,23 @@ test('local runtime keeps explicit-only memory off for ordinary turns', async ()
   assert.match(response.chunks.join(''), /普通回答/);
 });
 
+test('explicit-only memory distinguishes save commands from recall questions and negations', async () => {
+  const binding = { config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } };
+  const record = { spec: { memory: { enabled: true, write: { mode: 'explicit_only' } }, bindings: { plugins: [binding] } } };
+  const resourceAdapter = { searchMemory: async () => [] };
+  for (const [input, expected] of [
+    ['请记住验收标记', true], ['这是验收数据：请记住我的项目代号是 RIVER。', true],
+    ['记住我喜欢轻松口吻', true], ['Please remember that I prefer brief answers.', true],
+    ['请明确保存到长期记忆：本次测试代号是 FIR。', true], ['请保存这条信息到记忆库：喜欢简洁回答。', true],
+    ['请不要保存到长期记忆：测试内容。', false], ['保存到长期记忆了吗？', false], ['如何保存到长期记忆？', false],
+    ['我之前要求记住的代号是什么？', false], ['你记住了吗？', false], ['不要记住这次消息。', false],
+    ['请不要记住这次消息。', false], ['Do you remember my preference?', false], ['I remember that example.', false],
+  ]) {
+    const prepared = await prepareLocalResourceContext({ record, input, resourceAdapter, resourceMode: 'context-only' });
+    assert.equal(prepared.memoryWrite, expected, input);
+  }
+});
+
 test('local runtime keeps a text-only turn alive when MCP discovery is temporarily unavailable', async () => {
   const response = responseSink();
   let requestBody;

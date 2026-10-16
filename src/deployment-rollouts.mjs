@@ -29,7 +29,9 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
   }
   async function prepareTarget(input, exporting) {
     const record = await owned(String(input.deploymentId || '')), current = currentDeployment(record);
-    if (record.state !== 'READY' || pendingRollout(record)) throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '请等待当前部署就绪后再升级或回滚');
+    // A failed application cannot become READY until its frozen package is repaired.
+    // Still require the same owned, running cloud instance and no unresolved rollout.
+    if (!['READY', 'STARTING', 'ACTION_REQUIRED'].includes(record.state) || pendingRollout(record)) throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '请等待云端实例运行且当前更新已确认后再升级或回滚');
     const remote = await detail(record);
     if (remote.Basic.Status !== 'RUNNING' || !(remote.Basic.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '云端实例当前不允许更新');
     await identity(record);
