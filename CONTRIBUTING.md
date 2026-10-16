@@ -11,6 +11,11 @@ make setup DSH_ROOT=../deepseek-harness
 
 The DSH checkout must match the version and commit declared by the repository Makefile. Keep the checkout and all user data outside Git.
 
+Edit browser sources under `src/client/`; do not commit generated `dist/` files.
+For a source-linked plugin, run `pnpm build:client` before loading it in DSH.
+Normal checks, tests and packing run this build through their lifecycle hooks.
+The package allowlist deliberately includes `dist/` even though Git ignores it.
+
 ## Local validation
 
 Run the smallest relevant checks first, then the complete package gate for changes that affect the product surface or release package:
@@ -23,6 +28,11 @@ make release-check
 ```
 
 Browser or Host changes also require the corresponding real DSH verification. Use an isolated `DSH_HOME`; do not place credentials, profiles, downloads, or runtime artifacts in the repository.
+
+Native macOS qualification rebuilds the client from the exact signed source
+commit and its frozen lockfile in a disposable directory, then compares those
+bytes with the installed ASAR. The qualification tools may come from a newer
+commit; their own client bundle is never the expected signed artifact.
 
 Host patches are generated from the pinned maintenance branch archived in
 `host-source/`. Restore it with `make patch-source-import`, edit and test the

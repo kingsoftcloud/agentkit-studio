@@ -9,6 +9,7 @@ import { parseArgs } from 'node:util';
 const { values } = parseArgs({ options: Object.fromEntries(['source', 'home', 'agentkit-home', 'profile', 'port', 'report'].map(name => [name, { type: 'string' }])) });
 if (!values.source || !values.home || !values['agentkit-home']) throw new Error('Specify isolated source, DSH home and AgentKit home');
 const source = resolve(values.source);
+await import('./build-client.mjs');
 async function fingerprint(directory) {
   const names = ['dist/client.js', 'studio.plugin.json'];
   async function collect(relative) {

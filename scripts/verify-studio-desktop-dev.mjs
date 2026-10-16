@@ -14,8 +14,11 @@ const require = createRequire(import.meta.url);
 const { _electron } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.STUDIO_VERIFY_ELECTRON || !process.env.STUDIO_VERIFY_PRIMARY_RUNTIME || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated source, homes, Electron executable and prepared primary runtime');
 const source = resolve(process.env.AGENTKIT_DSH_ROOT);
+await import('./build-client.mjs');
 await assertDesktopDevResources({ source, primaryRuntime: process.env.STUDIO_VERIFY_PRIMARY_RUNTIME });
-const installed = join(process.env.DSH_HOME, 'profiles', process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor', 'node_modules/@kingsoftcloud/agentkit-studio');
+const installed = process.env.STUDIO_VERIFY_PLUGIN_ROOT
+  ? resolve(process.env.STUDIO_VERIFY_PLUGIN_ROOT)
+  : join(process.env.DSH_HOME, 'profiles', process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor', 'node_modules/@kingsoftcloud/agentkit-studio');
 const shared = join(source, 'apps/desktop/.desktop-build/development/project/node_modules/@kingsoftcloud/agentkit-studio');
 assert.equal(await realpath(shared), await realpath(installed), 'development shell must link the verified installed Studio');
 const clientBundle = await readFile(join(installed, 'dist/client.js'));
@@ -74,7 +77,7 @@ try {
   routeFailureChecks = process.env.STUDIO_VERIFY_ROUTE_FAILURES === '1' ? await verifyStudioRouteFailures(page) : undefined;
   assert.equal(errors.length, 0, 'the complete native UI flow must have no uncaught renderer errors');
   await page.screenshot({ path: output.replace(/\.json$/, '.png'), fullPage: true });
-  const report = { evidence: 'real-electron-development-shell-with-built-dsh-and-installed-studio', fullStudioPlugin: true, developmentOnly: true,
+  const report = { evidence: process.env.STUDIO_VERIFY_PLUGIN_ROOT ? 'real-electron-development-shell-with-source-linked-studio' : 'real-electron-development-shell-with-built-dsh-and-installed-studio', fullStudioPlugin: true, developmentOnly: true,
     runtime, clientSha256, nativeAgentSelectorVisible: true, rendererRpc: responses, rendererErrors: errors.length, ...(sidebarChecks ? { sidebarChecks } : {}), ...(stateChecks ? { stateChecks } : {}), ...(pageChecks ? { pageChecks } : {}), ...(routeFailureChecks ? { routeFailureChecks } : {}), passed: true };
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report));

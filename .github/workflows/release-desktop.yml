@@ -400,6 +400,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           node scripts/verify-desktop-module-graph.mjs "$app" --studio | tee .artifacts/desktop-module-graph.json
           node scripts/verify-codex-signing.mjs "$app" "$artifacts/mac-arm64-release.json"
+          node scripts/verify-desktop-client-source.mjs --source "$(git rev-parse HEAD)" --archive "$app/Contents/Resources/app.asar" --report .artifacts/client-source-proof.json
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=4 "$app"
           printf 'artifacts=%s\ndmg=%s\nzip=%s\nblockmap=%s\nmetadata=%s\n' "$artifacts" "$dmg" "$zip" "$blockmap" "$metadata" >> "$GITHUB_STEP_SUMMARY"
@@ -421,6 +422,7 @@ jobs:
           path: |
             studio/.artifacts/onboarding-proof/
             studio/.artifacts/desktop-module-graph.json
+            studio/.artifacts/client-source-proof.json
           include-hidden-files: true
           if-no-files-found: warn
 
