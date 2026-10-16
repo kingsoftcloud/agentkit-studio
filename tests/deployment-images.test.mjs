@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseStudioImageCatalog, selectStudioImage, createDeploymentImages, STUDIO_IMAGE_CONFIG_KEY } from '../src/deployment-images.mjs';
 import { createAgentEngineDeploymentClient } from '../src/server-client.mjs';
+import { studioVersions } from '../src/studio-version.mjs';
 
 const release = { id: '0.0.1-example', version: '0.0.1-example', label: 'Studio preview', channel: 'preview', enabled: true,
   image: `hub-vpc-cn-beijing-6.kce.ksyun.com/studio/runtime@sha256:${'a'.repeat(64)}`, port: 8080, platform: 'linux/amd64',
@@ -13,6 +14,15 @@ function response(change = {}) {
       releases: [{ ...release }], ...change,
     } } };
 }
+
+test('catalog compatibility uses the installed Studio version instead of a stale default', async () => {
+  const { pluginVersion } = await studioVersions();
+  let requestedVersion;
+  const images = createDeploymentImages({ configuration: { resolve: async () => ({ values: { cloudRegion: 'pre-online' } }) },
+    client: { getBootstrapConfig: async input => { requestedVersion = input.clientVersion; return { data: response({ releases: [{ ...release, minimumStudioVersion: pluginVersion }] }) }; } } });
+  assert.equal((await images.resolve('dsh-native')).image.id, release.id);
+  assert.equal(requestedVersion, pluginVersion);
+});
 
 test('Studio selects only its scoped digest-pinned release, independently of historical defaults', () => {
   for (const runtime of release.runtimes) {
