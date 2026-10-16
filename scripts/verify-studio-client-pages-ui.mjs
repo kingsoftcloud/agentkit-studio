@@ -97,6 +97,7 @@ export async function verifyStudioClientPages(page) {
     await page.getByRole('tablist', { name: '资源类型', exact: true }).getByRole('tab', { name: 'MCP', exact: true }).click();
     await page.getByRole('button', { name: '添加 MCP', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     await page.getByRole('tablist', { name: '资源类型', exact: true }).getByRole('tab', { name: 'Skill', exact: true }).click();
+    await page.getByRole('button', { name: '已安装 / 已连接', exact: true }).click();
     await page.getByLabel('Skill 来源', { exact: true }).selectOption('local');
     await page.getByLabel('搜索资源', { exact: true }).fill(`NO_RESOURCE_${suffix}`);
     await page.getByText('暂无Skill', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
