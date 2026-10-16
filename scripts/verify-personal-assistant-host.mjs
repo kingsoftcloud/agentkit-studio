@@ -193,13 +193,14 @@ try {
   const completed = await waitFor(value => value.status === 'completed');
   assert.match(completed.messages.at(-1).text, /^ASSISTANT_DONE/);
   check('client-process-exits-before-real-dsh-finishes', { nativeMessages: completed.messages.length });
-  assert.match(requests.at(-1).identity, /"assistantName":"小星"/);
-  assert.match(requests.at(-1).identity, /"ownerName":"小夏"/);
+  const firstRequest = requests.find(row => row.input === 'continue after client exit');
+  assert.match(firstRequest?.identity || '', /"assistantName":"小星"/);
+  assert.match(firstRequest?.identity || '', /"ownerName":"小夏"/);
   check('saved-assistant-and-owner-names-reach-real-model-system-prompt');
   stage = 'idempotent-submit';
-  const before = requests.length;
+  const before = requests.filter(row => row.input === 'continue after client exit').length;
   await api('submit', { requestId: 'first', text: 'continue after client exit' });
-  assert.equal(requests.length, before);
+  assert.equal(requests.filter(row => row.input === 'continue after client exit').length, before);
   check('retry-reuses-durable-native-request');
   stage = 'official-cloud-schedule';
   await api('identity-update', { assistantName: '小月', ownerName: '小夏' });
@@ -208,8 +209,9 @@ try {
   await waitFor(value => value.status === 'completed' && value.messages.length > completed.messages.length);
   const scheduled = (await api('schedule-list')).items;
   assert.equal(scheduled.length, 1); assert.equal(scheduled[0].status, 'inactive');
-  assert.match(requests.at(-1).input, /timer while client is closed/, 'the model must receive the scheduled task, not repeat the previous user input');
-  assert.match(requests.at(-1).identity, /"assistantName":"小月"/, 'renames reach already live agents and scheduled work');
+  const scheduledRequest = requests.findLast(row => row.input.includes('timer while client is closed'));
+  assert.ok(scheduledRequest, 'the model must receive the scheduled task, not repeat the previous user input');
+  assert.match(scheduledRequest.identity, /"assistantName":"小月"/, 'renames reach already live agents and scheduled work');
   check('official-schedule-delivers-without-client');
   stage = 'fresh-host-recovery';
   await fiber.dispose(); fiber = undefined;
@@ -220,9 +222,10 @@ try {
   assert.equal(recovered.status, 'completed'); assert.match(recovered.messages.at(-1).text, /^ASSISTANT_DONE/);
   await api('submit', { requestId: 'second', text: 'continue conversation' });
   await waitFor(value => value.status === 'completed' && value.messages.some(item => item.requestId === 'second'));
-  assert.equal(requests.at(-1).priorResponse, true);
-  assert.match(requests.at(-1).identity, /"assistantName":"小月"/);
-  assert.match(requests.at(-1).identity, /"ownerName":"小夏"/);
+  const continuedRequest = requests.findLast(row => row.input === 'continue conversation');
+  assert.equal(continuedRequest?.priorResponse, true);
+  assert.match(continuedRequest.identity, /"assistantName":"小月"/);
+  assert.match(continuedRequest.identity, /"ownerName":"小夏"/);
   check('identity-survives-fresh-host-and-native-scheduled-work');
   check('fresh-dsh-host-restores-history-and-model-context');
   if (process.env.STUDIO_VERIFY_UI === '1') {
@@ -234,13 +237,22 @@ try {
     check(native ? 'real-electron-ui-reopens-after-local-host-exits' : 'real-web-ui-reopens-after-local-host-exits');
   }
   stage = 'delete-dedicated-assistant';
+  // Listing cold sessions queues cache writes independently of Session.flush.
+  // Keep that actual native path hot at the destructive shutdown boundary.
+  await Promise.all(Array.from({ length: 12 }, () => api('snapshot', { conversation: 'ui-acceptance' })));
   const deletion = await api('close');
   assert.equal(deletion.deleted, true); assert.equal(deletion.historyDeleted, true); assert.equal(deletion.memoryDeleted, true);
+  assert.equal(Boolean(running.ctx.get('storageDomain').get('session_projcache')), false, 'native cache must be closed, not left able to recreate erased files');
   await assert.rejects(access(join(scratch, 'dsh')), { code: 'ENOENT' });
   await assert.rejects(access(home), { code: 'ENOENT' });
   await access(join(originalInstalled, 'src/index.mjs'));
   retired = true;
+  await fiber.dispose(); fiber = undefined;
+  await running.shutdown.shutdown(0); running = undefined;
+  await assert.rejects(access(join(scratch, 'dsh')), { code: 'ENOENT' });
+  await assert.rejects(access(home), { code: 'ENOENT' });
   check('real-dsh-history-and-dedicated-runtime-deleted-original-installation-preserved');
+  check('native-storage-closed-and-shutdown-cannot-recreate-deleted-data');
   assert.equal(report.modelFailure, undefined);
   checksComplete = true;
 } catch (error) {

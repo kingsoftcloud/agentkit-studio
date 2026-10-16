@@ -48,11 +48,13 @@ test('retirement erases only receipt-owned runtime files after native writers dr
     sessionController: { list: async () => ({ items: [{ sessionId: 'assistant' }] }), cancel: async () => calls.push('cancel') },
     schedule: { catalog: async () => [{ id: 'timer', sessionId: 'assistant' }], delete: async () => calls.push('timer') },
     agents: { list: () => [] }, sessions: { list: () => ['session'], flush: async () => { calls.push('flush'); return true; } },
+    storageDomain: { closeAll: async () => { await access(join(root, 'dsh/data')); calls.push('domains'); } },
+    sessionPersistence: { flush: async () => calls.push('persistence') },
   })[name] };
   const env = { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: hash, AGENTKIT_RUNTIME_AGENT_ID: 'agent', AGENTKIT_RUNTIME_BUILD_ID: 'build' };
   const retire = await createAssistantRetirement({ ctx, env }); assert.equal(typeof retire, 'function');
   const result = await retire(async () => { calls.push('memory'); return { count: 2 }; });
-  assert.deepEqual(calls, ['timer', 'cancel', 'flush', 'memory']); assert.equal(result.historyDeleted, true);
+  assert.deepEqual(calls, ['timer', 'cancel', 'flush', 'memory', 'domains', 'persistence']); assert.equal(result.historyDeleted, true);
   await assert.rejects(access(join(root, 'dsh')), { code: 'ENOENT' }); await assert.rejects(access(join(root, 'agentkit')), { code: 'ENOENT' });
   assert.equal(await readFile(join(root, 'shared/data'), 'utf8'), 'shared');
   assert.equal(JSON.parse(await readFile(join(root, '.assistant-closed.json'))).phase, 'closed');
