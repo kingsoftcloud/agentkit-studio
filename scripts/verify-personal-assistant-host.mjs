@@ -204,10 +204,11 @@ try {
   assert.equal(requests.at(-1).priorResponse, true);
   check('fresh-dsh-host-restores-history-and-model-context');
   if (process.env.STUDIO_VERIFY_UI === '1') {
-    stage = 'web-ui';
+    const native = process.env.STUDIO_VERIFY_NATIVE === '1';
+    stage = native ? 'macos-ui' : 'web-ui';
     const { verifyPersonalAssistantUi } = await import('./verify-personal-assistant-ui.mjs');
     report.ui = await verifyPersonalAssistantUi({ source, installed, api, profiles, screenshot: target.replace(/\.json$/, '.png'), port: await freePort() });
-    check('real-web-ui-reopens-after-local-host-exits');
+    check(native ? 'real-electron-ui-reopens-after-local-host-exits' : 'real-web-ui-reopens-after-local-host-exits');
   }
   assert.equal(report.modelFailure, undefined);
   checksComplete = true;

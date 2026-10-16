@@ -6,8 +6,9 @@ import { once } from 'node:events';
 import { mkdir, writeFile, symlink, mkdtemp } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { assertDesktopDevResources, closeVerificationClient } from './desktop-dev-resources.mjs';
 const require = createRequire(import.meta.url);
-const { chromium } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
+const { chromium, _electron } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 
 export async function verifyPersonalAssistantUi({ source, installed, api, profiles, screenshot, port }) {
   const home = await mkdtemp(join(tmpdir(), 'assistant-web-'));
@@ -41,10 +42,30 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     const timer = setTimeout(() => child.kill('SIGKILL'), 5000); await stopped; clearTimeout(timer); child = null;
   };
   const open = async state => {
-    const url = await start();
-    browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
-    context = await browser.newContext({ viewport: { width: 1280, height: 900 }, ...(state ? { storageState: state } : {}) });
-    page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
+    let url;
+    if (process.env.STUDIO_VERIFY_NATIVE === '1') {
+      await assertDesktopDevResources({ source, primaryRuntime: process.env.STUDIO_VERIFY_PRIMARY_RUNTIME });
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(KEY|SECRET|TOKEN|PASSWORD)/i.test(key)));
+      Object.assign(env, { DSH_HOME: join(home, 'dsh'), AGENTKIT_HOME: join(home, 'agentkit'),
+        DSH_DESKTOP_PRIMARY_RUNTIME_DIR: process.env.STUDIO_VERIFY_PRIMARY_RUNTIME, DSH_TELEMETRY_DISABLED: '1',
+        DSH_DESKTOP_OPEN_DEVTOOLS: '0', DSH_DESKTOP_PRODUCT_NAME: 'AgentKit Studio' });
+      browser = await _electron.launch({ executablePath: process.env.STUDIO_VERIFY_ELECTRON,
+        args: [`--user-data-dir=${join(home, 'electron-user-data')}`, join(source, 'apps/desktop')], cwd: source, env, timeout: 60000 });
+      context = browser.context();
+      const until = Date.now() + 30000;
+      page = undefined;
+      while (!page && Date.now() < until) {
+        for (const candidate of browser.windows()) if (!candidate.isClosed() && await candidate.getByText('个人助理', { exact: true }).first().isVisible().catch(() => false)) { page = candidate; break; }
+        if (!page) await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      assert.ok(page, 'native main window must load Studio');
+    } else {
+      url = await start();
+      browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+      context = await browser.newContext({ viewport: { width: 1280, height: 900 }, ...(state ? { storageState: state } : {}) });
+      page = await context.newPage();
+    }
+    page.on('pageerror', error => errors.push(error.message));
     await page.route('**/agentkit/**', async route => {
       const body = route.request().postDataJSON();
       if (!body?.method?.startsWith('assistant/')) return route.continue();
@@ -54,7 +75,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
         await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: true, value } } });
       } catch { await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: false, error: { code: 'TEST_RELAY_FAILED', message: '验收连接失败' } } } }); }
     });
-    await page.goto(url);
+    if (url) await page.goto(url); else await page.reload();
     await page.getByText('个人助理', { exact: true }).first().click({ timeout: 30000 });
     await page.getByLabel('云端助理', { exact: true }).selectOption('cloud-fixture');
     await page.getByRole('button', { name: '发送', exact: true }).waitFor();
@@ -65,7 +86,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await page.getByRole('button', { name: '发送', exact: true }).click();
     await page.getByRole('status').filter({ hasText: '云端已接收并保存' }).waitFor({ timeout: 15000 });
     const state = await context.storageState();
-    await browser.close(); browser = null; await stop();
+    await closeVerificationClient(browser); browser = null; await stop();
     let complete = false;
     for (let i = 0; i < 100; i++) { const snapshot = await api('snapshot'); if (snapshot.status === 'completed' && snapshot.messages.some(item => item.text === 'browser task survives Studio Host exit')) { complete = true; break; } await new Promise(resolve => setTimeout(resolve, 100)); }
     assert.equal(complete, true);
@@ -74,6 +95,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     assert.ok(await page.getByLabel('助理会话', { exact: true }).getByText('ASSISTANT_DONE', { exact: true }).count());
     await page.screenshot({ path: screenshot, fullPage: true });
     assert.deepEqual(errors, []);
-    return { passed: true, desktopHostRestarted: true, browserRestarted: true, cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
-  } finally { await browser?.close(); await stop(); }
+    return { passed: true, localHostRestarted: true, clientRestarted: true, nativeElectron: process.env.STUDIO_VERIFY_NATIVE === '1', cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
+  } catch (error) { await page?.screenshot({ path: screenshot.replace(/\.png$/, '-failure.png'), fullPage: true, timeout: 3000 }).catch(() => {}); throw error; }
+  finally { try { await closeVerificationClient(browser); } finally { await stop(); } }
 }

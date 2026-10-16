@@ -47,6 +47,10 @@ Studio 的「个人助理」侧栏连接一个专属的 DSH Native 云端部署�
 - `scripts/verify-personal-assistant-host.mjs`：真实构建的 DSH、受控模型、单独终止的客户端进程、官方定时器、磁盘历史恢复。
 - 设置 `STUDIO_VERIFY_UI=1` 追加真实 Web Host 与 Chrome 关闭、重开验证。该脚本使用受控云端目录，
   转发到真实 DSH 接口；它不替代 AgentEngine 预发部署与凭证链路的验收。
+- macOS 追加 `STUDIO_VERIFY_NATIVE=1` 和 `STUDIO_VERIFY_ELECTRON` 可执行文件路径。
+  先用隔离 DSH 的 `tsx` 运行 `scripts/prepare-studio-desktop-dev.mjs`，再把输出的 `primaryRuntime`
+  设为 `STUDIO_VERIFY_PRIMARY_RUNTIME`。准备脚本复用官方解释器、Office 资源下载与检查流程；
+  `project` 是插件目录，不能作为解释器资源目录。验收启动前检查资源，退出超时会终止自己的 Electron 子进程。
 - 最终交付还需预发镜像、真实模型与记忆集成、关闭实际 Studio 后继续执行与恢复的结果。
 
 验证使用独立的 `DSH_HOME`、`AGENTKIT_HOME` 和固定的 `AGENTKIT_DSH_ROOT`；报告与截图保存在
