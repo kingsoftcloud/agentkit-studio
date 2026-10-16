@@ -25,7 +25,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
       if (closing) throw fail('RUNTIME_STOPPING', 503);
       if (assistant?.retiring?.() && !['/v1/assistant/close', '/v1/agentkit/runtime'].includes(url.pathname)) throw fail('ASSISTANT_CLOSED', 410);
       if (req.method === 'GET' && url.pathname === '/v1/agentkit/runtime') {
-        json(res, 200, { format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId, bundleSha256, deploymentVersion, model, models, capabilities: ['bound-model-selection', 'resource-checks', ...(assistant ? ['personal-assistant/v1', ...(assistant.deletionSupported ? ['personal-assistant-delete/v1'] : [])] : [])] }); return;
+        json(res, 200, { format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId, bundleSha256, deploymentVersion, model, models, capabilities: ['bound-model-selection', 'resource-checks', ...(assistant ? ['personal-assistant/v1', ...(assistant.deletionSupported ? ['personal-assistant-delete/v1'] : []), ...(assistant.identitySupported ? ['personal-assistant-identity/v1'] : [])] : [])] }); return;
       }
       const assistantRoute = /^\/v1\/assistant\/([a-z-]+)$/.exec(url.pathname);
       if (req.method === 'POST' && assistantRoute && assistant) {

@@ -59,7 +59,8 @@ const modelServer = createServer(async (request, response) => {
     const body = JSON.parse(raw);
     const lastUser = body.messages.findLast(item => item.role === 'user');
     const input = typeof lastUser.content === 'string' ? lastUser.content : lastUser.content.map(part => part.text || '').join('');
-    requests.push({ model: body.model, input, priorResponse: JSON.stringify(body.messages).includes('ASSISTANT_DONE') });
+    requests.push({ model: body.model, input, priorResponse: JSON.stringify(body.messages).includes('ASSISTANT_DONE'),
+      identity: body.messages.filter(item => item.role === 'system').flatMap(item => (typeof item.content === 'string' ? item.content : JSON.stringify(item.content)).split('\n')).find(line => line.startsWith('{"assistantName":')) || '' });
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     response.write(frame({ choices: [{ delta: { content: 'ASSISTANT_' }, finish_reason: null }] }));
     await new Promise(resolve => setTimeout(resolve, 1500));
@@ -173,6 +174,9 @@ try {
     while (Date.now() < end) { const snapshot = await api('snapshot'); if (predicate(snapshot)) return snapshot; await new Promise(resolve => setTimeout(resolve, 100)); }
     throw new Error('Assistant result timed out');
   };
+  stage = 'persist-assistant-identity';
+  await api('identity-update', { assistantName: '小星', ownerName: '小夏' });
+  assert.deepEqual((await api('snapshot')).identity, { assistantName: '小星', ownerName: '小夏' });
   stage = 'client-process-exit';
   // A disposable client process exits after durable acceptance while the actual
   // DSH Host is still calling the delayed model. This is transport evidence;
@@ -189,28 +193,37 @@ try {
   const completed = await waitFor(value => value.status === 'completed');
   assert.match(completed.messages.at(-1).text, /^ASSISTANT_DONE/);
   check('client-process-exits-before-real-dsh-finishes', { nativeMessages: completed.messages.length });
+  assert.match(requests.at(-1).identity, /"assistantName":"小星"/);
+  assert.match(requests.at(-1).identity, /"ownerName":"小夏"/);
+  check('saved-assistant-and-owner-names-reach-real-model-system-prompt');
   stage = 'idempotent-submit';
   const before = requests.length;
   await api('submit', { requestId: 'first', text: 'continue after client exit' });
   assert.equal(requests.length, before);
   check('retry-reuses-durable-native-request');
   stage = 'official-cloud-schedule';
+  await api('identity-update', { assistantName: '小月', ownerName: '小夏' });
   assert.equal(completed.scheduleEnabled, true);
   await api('schedule-create', { spec: { title: 'offline reminder', prompt: 'timer while client is closed', after_seconds: 2 } });
   await waitFor(value => value.status === 'completed' && value.messages.length > completed.messages.length);
   const scheduled = (await api('schedule-list')).items;
   assert.equal(scheduled.length, 1); assert.equal(scheduled[0].status, 'inactive');
   assert.match(requests.at(-1).input, /timer while client is closed/, 'the model must receive the scheduled task, not repeat the previous user input');
+  assert.match(requests.at(-1).identity, /"assistantName":"小月"/, 'renames reach already live agents and scheduled work');
   check('official-schedule-delivers-without-client');
   stage = 'fresh-host-recovery';
   await fiber.dispose(); fiber = undefined;
   await running.shutdown.shutdown(0); running = undefined;
   await boot(); await mount(runtime);
   const recovered = await api('snapshot');
+  assert.deepEqual(recovered.identity, { assistantName: '小月', ownerName: '小夏' });
   assert.equal(recovered.status, 'completed'); assert.match(recovered.messages.at(-1).text, /^ASSISTANT_DONE/);
   await api('submit', { requestId: 'second', text: 'continue conversation' });
   await waitFor(value => value.status === 'completed' && value.messages.some(item => item.requestId === 'second'));
   assert.equal(requests.at(-1).priorResponse, true);
+  assert.match(requests.at(-1).identity, /"assistantName":"小月"/);
+  assert.match(requests.at(-1).identity, /"ownerName":"小夏"/);
+  check('identity-survives-fresh-host-and-native-scheduled-work');
   check('fresh-dsh-host-restores-history-and-model-context');
   if (process.env.STUDIO_VERIFY_UI === '1') {
     const native = process.env.STUDIO_VERIFY_NATIVE === '1';

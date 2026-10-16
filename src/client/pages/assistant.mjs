@@ -53,6 +53,11 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
       return () => window.removeEventListener('agentkit-studio:assistant-changed', changed);
     }, [catalog]);
     useEffect(() => {
+      const changed = event => { if (event.detail?.agentId === agentId) setView(previous => ({ ...previous, identity: event.detail.identity })); };
+      window.addEventListener('agentkit-studio:assistant-identity-changed', changed);
+      return () => window.removeEventListener('agentkit-studio:assistant-identity-changed', changed);
+    }, [agentId]);
+    useEffect(() => {
       if (followLatest.current && history.current) history.current.scrollTop = history.current.scrollHeight;
     }, [view?.messages?.length, pending?.requestId]);
     const execute = async (operation, input, onSuccess) => {
@@ -84,15 +89,16 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
     const box = { border: `1px solid ${BRAND.border}`, borderRadius: '12px', padding: '16px', background: BRAND.surface };
     const messages = [...new Map([...older, ...(view?.messages || [])].map(item => [item.id, item])).values()].sort((a, b) => a.seq - b.seq);
     const chosen = catalog.find(item => item.metadata.id === agentId);
+    const assistantName = view?.identity?.assistantName || chosen?.metadata.name || '个人助理';
     const running = view?.status === 'running';
     const openSettings = () => window.dispatchEvent(new window.CustomEvent('agentkit-studio:open-settings'));
     const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
     return h('section', { 'data-studio-assistant': true, style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: BRAND.surface } },
       h('style', null, `[data-studio-assistant] .studio-assistant-composer:focus-within { outline: 1px solid ${BRAND.border}; outline-offset: 2px; } [data-studio-assistant] textarea[aria-label="发给助理"]::placeholder { color: ${BRAND.inkMuted}; opacity: 1; }`),
       h('header', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', gap: '12px' } },
-        h('div', null, h('h1', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '个人助理'),
+        h('div', null, h('h1', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, assistantName),
           running ? h('span', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, '正在处理…') : null),
-        h(ComputerConnection, { assistantName: chosen?.metadata.name })),
+        h(ComputerConnection, { assistantName, deploymentName: chosen?.metadata.name })),
       h('div', { ref: history, 'aria-label': '助理会话', onScroll: event => { const node = event.currentTarget; followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100; },
         style: { flex: '1 1 0', minHeight: 0, overflow: 'auto', padding: '20px 24px' } },
         h('div', { style: { maxWidth: '760px', margin: '0 auto', minHeight: '100%', display: 'flex', flexDirection: 'column', gap: '24px', justifyContent: messages.length ? 'flex-start' : 'center' } },

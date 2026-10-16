@@ -7,6 +7,7 @@ import { frozenModels } from './frozen-models.mjs';
 import { RESOURCE_CHECK_EVENT } from './resource-checks.mjs';
 import { createHash } from 'node:crypto';
 import { createPersonalAssistantRuntime } from './personal-assistant-runtime.mjs';
+import { createAssistantIdentity } from './assistant-identity.mjs';
 
 const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, 'step/end', 'turn/end']);
 
@@ -62,7 +63,8 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
   };
   const model = catalog.find(item => item.default)?.id || catalog[0]?.id || primary;
   const retirement = await (await import('./assistant-retirement.mjs')).createAssistantRetirement({ ctx, env });
-  const assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement });
+  const identity = await createAssistantIdentity({ directory: env.AGENTKIT_HOME, defaultName: frozen.metadata?.name || '个人助理' });
+  const assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement, identity });
   return startBuildRuntimeHttp({ agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, validatePrevious, assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }

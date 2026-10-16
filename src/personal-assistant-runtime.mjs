@@ -5,9 +5,22 @@ const fail = (code, message, status = 400) => Object.assign(new Error(message), 
 const text = parts => (parts || []).filter(part => part.type === 'text').map(part => part.text || '').join('');
 const validKey = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(value);
 
-export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement }) {
+export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement, identity }) {
   if (frozen.spec?.runtime?.type !== 'dsh-native') return null;
   const controller = ctx.get('sessionController');
+  const identified = new WeakSet();
+  const installIdentity = agent => {
+    if (!identity || !agent.session.id.startsWith('assistant-') || identified.has(agent)) return;
+    const prompt = agent.ctx?.get('systemPrompt');
+    if (!prompt) throw fail('ASSISTANT_IDENTITY_UNAVAILABLE', '无法加载助理身份', 503);
+    agent.ctx.effect(() => prompt.section({ name: 'agentkit:assistant-identity', order: 10300, interpolate: false, text: identity.prompt }));
+    identified.add(agent);
+  };
+  if (identity) {
+    // Covers restored sessions and official timers before queued model work starts.
+    ctx.on('agent/created', ({ agent }) => { installIdentity(agent); });
+    for (const agent of ctx.get('agents').list()) installIdentity(agent);
+  }
   const memoryBinding = frozen.spec?.bindings?.plugins?.find(item => item.config?.binding?.resource?.kind === 'memory-instance');
   const memoryId = memoryBinding?.config.binding.resource.id || memoryBinding?.config.binding.resource.resourceId;
   const memoryEnabled = Boolean(memoryId) && frozen.spec?.memory?.enabled !== false;
@@ -33,6 +46,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     }
     const resolved = await controller.resolveAgent(sessionId);
     if (resolved.error) throw resolved.error;
+    installIdentity(resolved.agent);
     // Unattended tools retain confinement and cannot wait for a desktop approval.
     const permission = await ctx.get('commands').execute(resolved.agent, '/permission read-only', [], new AbortController().signal);
     if (!permission) throw fail('ASSISTANT_PERMISSION_UNAVAILABLE', '无法设置无人值守权限', 503);
@@ -41,7 +55,8 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
   }
   async function snapshot(sessionId, beforeSeq) {
     const projection = await controller.projections({ sessionId }, new AbortController().signal);
-    if (!projection) return { messages: [], status: 'idle', hasMore: false, memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')), canClose: Boolean(retirement) };
+    const profile = { identity: identity?.read() || null, canEditIdentity: Boolean(identity) };
+    if (!projection) return { messages: [], status: 'idle', hasMore: false, ...profile, memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')), canClose: Boolean(retirement) };
     if (beforeSeq !== undefined && (!Number.isSafeInteger(beforeSeq) || beforeSeq < 0)) throw fail('ASSISTANT_CURSOR_INVALID', '历史游标无效');
     const page = await controller.page({ address: { kind: 'session', sessionId }, throughSeq: projection.asOfSeq,
       maxMessages: 200, ...(beforeSeq === undefined ? {} : { beforeSeq }) }, new AbortController().signal);
@@ -57,7 +72,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     const status = end?.type === 'turn/start' ? 'running' : end?.data?.reason?.kind === 'completed' ? 'completed'
       : end?.data?.reason?.kind === 'aborted' ? 'cancelled' : end ? 'failed' : 'idle';
     return { messages, status, hasMore: page.hasMore === true, beforeSeq: events[0]?.seq,
-      memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')), canClose: Boolean(retirement) };
+      ...profile, memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')), canClose: Boolean(retirement) };
   }
   const run = async (operation, payload = {}) => {
     if (operation === 'close') {
@@ -82,6 +97,10 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
       });
     }
     if (retiring) throw fail('ASSISTANT_CLOSED', '助理正在关闭，不能继续使用', 410);
+    if (operation === 'identity-update') {
+      if (!identity) throw fail('ASSISTANT_IDENTITY_UNAVAILABLE', '请更新云端镜像以保存助理名字和称呼', 409);
+      return { identity: await identity.update(payload) };
+    }
     const sessionId = sessionFor(payload.conversation || 'personal');
     if (operation === 'snapshot') return snapshot(sessionId, payload.beforeSeq);
     if (operation === 'submit') {
@@ -136,6 +155,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     return pending;
   };
   api.deletionSupported = Boolean(retirement);
+  api.identitySupported = Boolean(identity);
   api.retiring = () => retiring;
   return api;
 }
