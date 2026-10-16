@@ -3,9 +3,10 @@ import { readFile, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { assertDesktopDevResources } from './desktop-dev-resources.mjs';
+import { assertDesktopDevHome, assertDesktopDevResources } from './desktop-dev-resources.mjs';
 const root = resolve(process.env.AGENTKIT_DSH_ROOT || '');
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.DSH_HOME || !process.env.STUDIO_VERIFY_ELECTRON) throw new Error('Specify isolated DSH root/home and real Electron executable');
+if (process.env.STUDIO_VERIFY_PLUGIN_ROOT) await assertDesktopDevHome({ source: root, studio: process.env.STUDIO_VERIFY_PLUGIN_ROOT, home: process.env.DSH_HOME });
 const load = path => import(pathToFileURL(join(root, path)).href);
 const { prepareDevelopmentProject } = await load('apps/desktop/scripts/development-project.ts');
 const { preparePrimaryRuntime } = await load('apps/desktop/scripts/prepare-primary-runtime.ts');
@@ -22,7 +23,9 @@ await preparePrimaryRuntime();
 const primaryRuntime = developmentRuntimeDirectory();
 await assertDesktopDevResources({ source: root, primaryRuntime });
 const profile = process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor';
-const installed = join(resolve(process.env.DSH_HOME), 'profiles', profile, 'node_modules/@kingsoftcloud/agentkit-studio');
+const installed = process.env.STUDIO_VERIFY_PLUGIN_ROOT
+  ? resolve(process.env.STUDIO_VERIFY_PLUGIN_ROOT)
+  : join(resolve(process.env.DSH_HOME), 'profiles', profile, 'node_modules/@kingsoftcloud/agentkit-studio');
 const studio = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'));
 const manifest = JSON.parse(await readFile(join(project, 'package.json'), 'utf8'));
 manifest.dependencies[studio.name] = studio.version;

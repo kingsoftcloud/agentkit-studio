@@ -44,10 +44,8 @@ setup:
 	$(MAKE) profile-install
 	$(MAKE) doctor
 
-# Repack after edits so the installed 0.0.1 cannot silently remain stale.
+# web-dev repacks and checks the installed plugin before starting the Host.
 dev:
-	$(MAKE) profile-install
-	$(MAKE) doctor
 	$(MAKE) web-dev
 
 doctor:
@@ -68,6 +66,10 @@ cloud-identity:
 
 check:
 	pnpm check
+
+.PHONY: client-build
+client-build:
+	pnpm run build:client
 
 test:
 	pnpm test
@@ -240,33 +242,35 @@ verify-dsh-sdk:
 
 # Build the official DSH web frontend. This does not copy DSH into this repo;
 # it verifies the pinned host checkout can produce the browser artifact.
-web-build:
+web-build: client-build
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
 	node scripts/build-product-host.mjs --source "$(DSH_ROOT)" --script build:web
 
-# Browser development uses the official DSH web host. The profile must already
-# contain this plugin and any optional provider packages.
-web-dev:
+# Install the freshly built plugin even when this entry point is used directly.
+# Optional provider packages remain owned by the selected profile.
+web-dev: profile-install
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-}" $(DSH_SOURCE_CLI) --profile "$(DSH_PROFILE)" --host "$(DSH_HOST)" --no-open --port "$(DSH_WEB_PORT)"
+	$(MAKE) doctor
+	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-$$HOME/.dsh}" $(DSH_SOURCE_CLI) --profile "$(DSH_PROFILE)" --host "$(DSH_HOST)" --no-open --port "$(DSH_WEB_PORT)"
 
 web-start: web-dev
 
 # Build the official Electron package inputs. Packaging a signed distributable
 # remains a macOS-only release concern; this target is the local compile gate.
-desktop-build:
+desktop-build: client-build
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
 	node scripts/build-product-host.mjs --source "$(DSH_ROOT)" --script build:desktop
 
 # Electron is an optional official host. These targets do not make the plugin
 # depend on Electron and do not package Python/KsADK into the app.
 desktop-dev:
-	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-}" pnpm run dev:desktop
+	$(MAKE) desktop-build
+	$(MAKE) desktop-start
 
-desktop-start:
+desktop-start: client-build
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	cd "$(DSH_ROOT)" && DSH_HOME="$${DSH_HOME:-}" pnpm run start:desktop
+	cd "$(DSH_ROOT)" && AGENTKIT_DSH_ROOT="$(DSH_ROOT)" DSH_HOME="$${DSH_HOME:-$$HOME/.dsh}" \
+		node --import tsx/esm "$(CURDIR)/scripts/start-studio-desktop-dev.mjs"
 
 desktop-package-preflight: pack
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)

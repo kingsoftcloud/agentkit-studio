@@ -74,13 +74,7 @@ jobs:
           spctl --assess --type execute --verbose=4 "$app"
           node scripts/verify-desktop-module-graph.mjs "$app"
           export APP_ASAR="$app/Contents/Resources/app.asar"
-          node --input-type=module <<'NODE'
-          import asar from '@electron/asar';
-          import {execFileSync} from 'node:child_process';
-          const expected=execFileSync('git',['show',process.env.CANDIDATE_SOURCE+':dist/client.js'],{maxBuffer:16*1024*1024});
-          const actual=asar.extractFile(process.env.APP_ASAR,'dsh/node_modules/@kingsoftcloud/agentkit-studio/dist/client.js');
-          if(!actual.equals(expected)) throw Error('Signed macOS client differs from its immutable source');
-          NODE
+          node scripts/verify-desktop-client-source.mjs --source "$CANDIDATE_SOURCE" --archive "$APP_ASAR" --report .artifacts/mac-candidate/client-source-proof.json
           node scripts/verify-macos-onboarding.mjs --app "$app" --version "$CANDIDATE_VERSION" --output .artifacts/onboarding-proof
       - name: Retain native configuration evidence
         if: always()
@@ -89,5 +83,6 @@ jobs:
           name: studio-onboarding-qualified-${{ inputs.candidate_version }}-mac-arm64
           path: |
             .artifacts/mac-candidate/provenance.json
+            .artifacts/mac-candidate/client-source-proof.json
             .artifacts/onboarding-proof/
           if-no-files-found: warn

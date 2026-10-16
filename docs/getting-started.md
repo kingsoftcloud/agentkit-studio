@@ -39,3 +39,17 @@ Host development on Windows uses WSL2.
 Run `make doctor DSH_ROOT=../deepseek-harness` to check tools, host revision, build
 outputs and the installed plugin. Credentials belong in Host settings; do not copy
 profiles or secrets into source files.
+
+The repository keeps browser sources, not generated `dist/` files. `make dev`,
+`make web-dev` and `make web-start` pack and reinstall the current client in
+`DSH_PROFILE` before launch. `make desktop-dev` and `make desktop-start` rebuild
+and link this source checkout into the disposable Electron development runtime; set
+`DSH_HOME` and `AGENTKIT_HOME` to disposable directories to isolate these runs.
+`desktop-start` reuses an already built DSH Host, while `desktop-dev` builds it.
+Electron continues to own its `desktop` profile. The development runtime resolves
+Studio from this checkout, outside DSH's isolation boundary for other profiles.
+Keep `DSH_HOME` outside both source checkouts (for example a temporary directory
+or a dedicated directory in your home); the launcher rejects nested profiles.
+For a plugin linked directly to this source tree, run `pnpm build:client` after
+editing sources. `pnpm pack` always rebuilds the client and includes it in the
+archive, so users of an installed package need no build tools.

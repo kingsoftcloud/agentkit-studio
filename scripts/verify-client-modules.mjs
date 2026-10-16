@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { CLIENT_PRIVATE_PROPERTIES } from './client-private-properties.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+await import('./build-client.mjs');
 const baselinePath = resolve(process.argv[2] || '.artifacts/refactor/stage-3/baseline.json');
 const output = resolve(process.argv[3] || '.artifacts/refactor/stage-3/module-admission.json');
 const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
