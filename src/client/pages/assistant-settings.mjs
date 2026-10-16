@@ -10,6 +10,9 @@ export function createAssistantSettings({ ui, hostRemote, actions, window }) {
     const [memories, setMemories] = useState([]), [tasks, setTasks] = useState([]);
     const [memoryText, setMemoryText] = useState(''), [editing, setEditing] = useState('');
     const [scheduleTitle, setScheduleTitle] = useState(''), [schedulePrompt, setSchedulePrompt] = useState(''), [scheduleSeconds, setScheduleSeconds] = useState('3600');
+    const [assistantName, setAssistantName] = useState(''), [ownerName, setOwnerName] = useState('');
+    const identityEdited = useRef(false);
+    useEffect(() => { identityEdited.current = false; setAssistantName(''); setOwnerName(''); }, [agentId]);
     const epoch = useRef(0), submitting = useRef(false), confirmation = useRef(null);
     const [question, setQuestion] = useState(null);
     const confirm = options => new Promise(resolve => {
@@ -37,6 +40,7 @@ export function createAssistantSettings({ ui, hostRemote, actions, window }) {
           const snapshot = await hostRemote.assistantExecute(agentId, 'snapshot');
           if (stopped || version !== epoch.current) return;
           setView(snapshot);
+          if (!identityEdited.current && snapshot.identity) { setAssistantName(snapshot.identity.assistantName); setOwnerName(snapshot.identity.ownerName); }
           if (panel === 'memory' && snapshot.memoryEnabled || panel === 'schedule' && snapshot.scheduleEnabled) {
             const result = await hostRemote.assistantExecute(agentId, `${panel}-list`);
             if (!stopped && version === epoch.current) (panel === 'memory' ? setMemories : setTasks)(result.items || []);
@@ -92,6 +96,15 @@ export function createAssistantSettings({ ui, hostRemote, actions, window }) {
             h('option', { value: '' }, '选择助理'), ...catalog.map(item => h('option', { key: item.metadata.id, value: item.metadata.id }, item.metadata.name)))),
         !catalog.length ? h('p', null, '还没有可连接的云端助理。', ' ', button('前往运行中心', () => { close(); window.dispatchEvent(new window.CustomEvent('agentkit-studio:navigate', { detail: 'operations' })); })) : null,
         h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.8 } }, '云端任务与历史保存在部署中。关闭本地 Studio 后，云端任务仍可继续；本机工具需要在本机会话中使用。'),
+        chosen && view?.canEditIdentity ? h('div', { style: { borderTop: '1px solid ' + BRAND.border, paddingTop: '16px', display: 'grid', gap: '14px' } },
+          ...[{ label: '助理名字', value: assistantName, set: setAssistantName }, { label: '如何称呼你', value: ownerName, set: setOwnerName }].map(field => h('label', { key: field.label, style: { display: 'grid', gridTemplateColumns: '1fr minmax(180px, 1fr)', alignItems: 'center', gap: '20px' } },
+            h('span', null, field.label), h('input', { 'aria-label': field.label, maxLength: 128, value: field.value, disabled: busy || closing, style: inputStyle(), onChange: event => { identityEdited.current = true; field.set(event.target.value); setNotice(''); } }))),
+          h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, '名字和称呼会长期保存，每次对话都会提供给助理。关闭并删除助理时一并清除。'),
+          h('div', null, button('保存名字和称呼', () => void execute('identity-update', { assistantName, ownerName }, result => {
+            setView(previous => ({ ...previous, identity: result.identity })); setAssistantName(result.identity.assistantName); setOwnerName(result.identity.ownerName); identityEdited.current = false;
+            setNotice('名字和称呼已保存，后续对话会使用新身份。');
+            window.dispatchEvent(new window.CustomEvent('agentkit-studio:assistant-identity-changed', { detail: { agentId, identity: result.identity } }));
+          }), !assistantName.trim()))) : chosen && view ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '更新云端助理后，可保存助理名字和对你的称呼。') : null,
         chosen ? h('div', { style: { borderTop: '1px solid ' + BRAND.border, marginTop: '24px', paddingTop: '20px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px' } },
             h('div', null, h('strong', { style: { fontSize: '13px' } }, '关闭个人助理'), h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7, margin: '6px 0' } }, '删除专属云端部署、会话和记忆，无法恢复。')),

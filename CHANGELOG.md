@@ -6,6 +6,7 @@
 - Add the cloud personal assistant conversation panel with durable acceptance, history recovery, reminders and explicit memory management.
 - Show real Host device connection details, open native local sessions, move assistant configuration into native Settings, and render assistant Markdown with the official DSH renderer.
 - Add confirmed assistant shutdown that erases dedicated runtime history and assistant memory before removing the owned cloud deployment. Shared resource collections remain available.
+- Persist assistant and owner names in native Settings, display the assistant name in conversation and device details, and supply the identity through native system prompts after restarts.
 - Preserve scheduler inputs and team reports in model transport while excluding unrelated internal context.
 - Retain the scoped lifecycle, native unfiltered DSH sidebar, ES module frontend, split Host services and maintained compatibility source.
 - Cancel template background work with its owning Host and retain cleanup during MCP connection and credential rotation.

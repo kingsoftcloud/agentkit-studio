@@ -1,6 +1,6 @@
 /** Only receipt-owned DSH deployments may be reached; tokens stay in Node. */
 import { createAssistantLifecycle } from '../../assistant-lifecycle.mjs';
-const operations = new Set(['snapshot', 'submit', 'cancel', 'schedule-list', 'schedule-create', 'schedule-delete', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
+const operations = new Set(['snapshot', 'submit', 'cancel', 'identity-update', 'schedule-list', 'schedule-create', 'schedule-delete', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
 export function createAssistantRoutes({ deployments, assistantStoreDir, fetchImpl = fetch }) {
   const lifecycle = createAssistantLifecycle({ directory: assistantStoreDir, deployments, fetchImpl });
@@ -15,6 +15,7 @@ export function createAssistantRoutes({ deployments, assistantStoreDir, fetchImp
     const { agent, endpoint: base, token, capabilities } = await agents.connect(payload.agentId);
     if (agent.spec?.runtime?.type !== 'dsh-native') throw fail('ASSISTANT_RUNTIME_INVALID', '个人助理需要 DSH Runtime');
     if (!capabilities.includes('personal-assistant/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '请更新云端 DSH 镜像以启用个人助理和后台会话恢复', 409);
+    if (payload.operation === 'identity-update' && !capabilities.includes('personal-assistant-identity/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '请更新云端 DSH 镜像以保存助理名字和称呼', 409);
     const response = await fetchImpl(`${base}/v1/assistant/${payload.operation}`, { method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, redirect: 'error',
       body: JSON.stringify(payload.input || {}), signal: AbortSignal.any([signal, AbortSignal.timeout(30000)].filter(Boolean)) });

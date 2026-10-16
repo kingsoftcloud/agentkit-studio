@@ -114,6 +114,10 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await settings.getByRole('button', { name: '个人助理', exact: true }).click();
     await page.locator('[data-studio-assistant-settings]').waitFor();
     await page.getByLabel('云端助理', { exact: true }).waitFor();
+    await page.getByLabel('助理名字', { exact: true }).fill('小星');
+    await page.getByLabel('如何称呼你', { exact: true }).fill('小夏');
+    await page.getByRole('button', { name: '保存名字和称呼', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: '名字和称呼已保存' }).waitFor();
     await page.getByRole('button', { name: '关闭并删除', exact: true }).waitFor();
     await page.getByRole('button', { name: '关闭并删除', exact: true }).click();
     const deletion = page.getByRole('dialog', { name: '关闭并删除个人助理', exact: true });
@@ -125,6 +129,10 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await page.getByLabel('任务名称', { exact: true }).waitFor();
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    await page.getByRole('heading', { name: '小星', exact: true }).waitFor();
+    await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
+    await page.getByRole('dialog', { name: '助理连接信息', exact: true }).getByText('小星', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
     assert.equal(await page.getByLabel('发给助理', { exact: true }).inputValue(), '保留这份草稿');
     await page.getByLabel('发给助理', { exact: true }).fill('browser task survives Studio Host exit');
     await page.getByLabel('发给助理', { exact: true }).press('Enter');
@@ -135,6 +143,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     for (let i = 0; i < 100; i++) { const snapshot = await api('snapshot'); if (snapshot.status === 'completed' && snapshot.messages.some(item => item.text === 'browser task survives Studio Host exit')) { complete = true; break; } await new Promise(resolve => setTimeout(resolve, 100)); }
     assert.equal(complete, true);
     await open(state);
+    await page.getByRole('heading', { name: '小星', exact: true }).waitFor();
     await page.getByLabel('助理会话', { exact: true }).getByText('browser task survives Studio Host exit', { exact: true }).waitFor({ timeout: 15000 });
     assert.ok(await page.getByLabel('助理会话', { exact: true }).getByText('ASSISTANT_DONE', { exact: true }).count());
     await page.getByRole('heading', { name: 'Markdown 验收', exact: true }).waitFor();
@@ -147,7 +156,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     const catalog = await verifyStudioCatalogUi(page);
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-catalog.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    return { passed: true, catalog, nativeSystemSettings: true, deletionConfirmationCancelled: true, localComputerCard: true, connectionRecovers: true, nativeMarkdown: true, unsafeMarkdownBlocked: true, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
+    return { passed: true, catalog, savedAssistantAndOwnerNames: true, renamedTitleAndDeviceCard: true, identitySurvivesClientRestart: true, nativeSystemSettings: true, deletionConfirmationCancelled: true, localComputerCard: true, connectionRecovers: true, nativeMarkdown: true, unsafeMarkdownBlocked: true, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
       localHostRestarted: true, clientRestarted: true, nativeElectron: process.env.STUDIO_VERIFY_NATIVE === '1', cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
   } catch (error) { await page?.screenshot({ path: screenshot.replace(/\.png$/, '-failure.png'), fullPage: true, timeout: 3000 }).catch(() => {}); throw error; }
   finally { try { await closeVerificationClient(browser); } finally { await stop(); } }

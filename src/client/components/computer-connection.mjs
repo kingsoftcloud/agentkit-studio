@@ -2,7 +2,7 @@ import { observeComputerConnection } from '../state/computer-connection.mjs';
 
 export function createComputerConnection({ ui, hostRemote, actions, window, document = window.document }) {
   const { React: { createElement: h, useState, useEffect, useRef }, BRAND, buttonStyle } = ui;
-  return function ComputerConnection({ assistantName }) {
+  return function ComputerConnection({ assistantName, deploymentName }) {
     const [open, setOpen] = useState(false), [state, setState] = useState({ status: 'checking' }), [opening, setOpening] = useState(false);
     const [failure, setFailure] = useState('');
     const root = useRef(null), trigger = useRef(null);
@@ -24,8 +24,8 @@ export function createComputerConnection({ ui, hostRemote, actions, window, docu
       h('button', { ref: trigger, type: 'button', 'aria-label': '助理连接信息', 'aria-haspopup': 'dialog', 'aria-expanded': open, onClick: () => setOpen(value => !value), style: { ...buttonStyle(), display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '18px', padding: '7px 12px' } },
         h('span', { 'aria-hidden': true, style: { width: '7px', height: '7px', borderRadius: '50%', background: connected ? BRAND.accentStrong : BRAND.inkMuted } }), label),
       open ? h('section', { role: 'dialog', 'aria-label': '助理连接信息', style: { position: 'absolute', right: 0, top: 'calc(100% + 10px)', width: 'min(340px, calc(100vw - 32px))', zIndex: 30, border: '1px solid ' + BRAND.border, borderRadius: '18px', boxShadow: '0 12px 40px #00000018', padding: '20px', background: BRAND.surface, color: BRAND.ink } },
-        h('div', { style: { fontWeight: 650, fontSize: '15px' } }, '个人助理'),
-        h('p', { style: note }, assistantName ? `云端助理 · ${assistantName}` : '尚未选择云端助理'),
+        h('div', { style: { fontWeight: 650, fontSize: '15px' } }, assistantName || '个人助理'),
+        h('p', { style: note }, deploymentName ? `云端助理 · ${deploymentName}` : '尚未选择云端助理'),
         h('div', { style: { borderTop: '1px solid ' + BRAND.border, marginTop: '16px', paddingTop: '14px' } },
           h('p', { style: { ...note, margin: '0 0 8px' } }, local ? '这台电脑' : 'Studio 运行设备'),
           h('strong', null, connected ? state.computer.name : '连接待确认'),
