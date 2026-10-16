@@ -267,11 +267,13 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
     return { ...normalizeAgent(payload.draft || payload.agent || payload), requestId: String(response.headers.get('x-request-id') || '') };
   }
 
-  async function action(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID() } = {}) {
+  async function action(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID(), templateEnvironment } = {}) {
     if (!/^[A-Z][A-Za-z0-9]+$/.test(name)) throw new AgentEngineError('INVALID_ACTION', '无效 Server Action');
     if (!allowedActions.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw new AgentEngineError('INVALID_REQUEST_ID', '请求 ID 必须是 UUID');
-    const { values } = await configuration.resolve();
+    const resolved = await configuration.resolve();
+    if (templateEnvironment !== undefined && (!['pre-online','online'].includes(templateEnvironment) || !['ListStudioTemplates','GetStudioTemplate','GetStudioTemplateDownload','GetStudioTemplateCatalogCapabilities'].includes(name))) throw new AgentEngineError('INVALID_TEMPLATE_ENVIRONMENT', '模板环境仅可用于模板读取接口');
+    const values = templateEnvironment ? {...resolved.values, cloudRegion:templateEnvironment==='online'?'cn-beijing-6':templateEnvironment, cloudCustomSource:templateEnvironment==='pre-online'?'pre':''} : resolved.values;
     const base = resolveBase(values);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
     // The official inner AICP endpoint is HTTP, also used by the explicit
