@@ -1,7 +1,7 @@
 import { BRAND as DEFAULT_BRAND, PANELS as DEFAULT_PANELS } from '../theme.mjs';
 
 export function createStudioShell({
-  ui: { React: { createElement: h, useEffect, useState }, Pill, AgentWorkspace, DomainPage, OperationsWorkspace, OverviewPage, ResourceWorkspace, BRAND = DEFAULT_BRAND, PANELS = DEFAULT_PANELS },
+  ui: { React: { createElement: h, useEffect, useState }, Pill, AgentWorkspace, AssistantPage, DomainPage, OperationsWorkspace, OverviewPage, ResourceWorkspace, BRAND = DEFAULT_BRAND, PANELS = DEFAULT_PANELS },
   hostRemote
 }) {
   function HostStatusPill() {
@@ -38,12 +38,13 @@ export function createStudioShell({
           h('div', { style: { color: BRAND.accentStrong, fontSize: '11px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' } }, 'AgentKit Studio'),
           h('h1', { style: { color: BRAND.ink, margin: '6px 0 5px', fontSize: '25px', letterSpacing: '-0.035em' } }, activeNav.label),
           h('p', { style: { color: BRAND.inkMuted, margin: 0, fontSize: '13px' } }, activeNav.note)),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '9px' } }, h(Pill, { tone: 'neutral' }, 'Local'), h(HostStatusPill))),
-      page === 'overview' ? h(OverviewPage, { onNavigate }) : page === 'agents' ? h(AgentWorkspace, { onNavigate }) : page === 'resource-hub' ? h(ResourceWorkspace) : page === 'operations' ? h(OperationsWorkspace, { scheduleRemote }) : h(DomainPage, { page })));
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '9px' } }, h(Pill, { tone: 'neutral' }, page === 'assistant' ? '云端' : 'Local'), h(HostStatusPill))),
+      page === 'assistant' ? h(AssistantPage) : page === 'overview' ? h(OverviewPage, { onNavigate }) : page === 'agents' ? h(AgentWorkspace, { onNavigate }) : page === 'resource-hub' ? h(ResourceWorkspace) : page === 'operations' ? h(OperationsWorkspace, { scheduleRemote }) : h(DomainPage, { page })));
   }
 
   function StudioPanelIcon({ size, active, glyph, panelId }) {
     const paths = {
+      'studio-assistant': h('path', { d: 'M12 3 15 9l6 3-6 3-3 6-3-6-6-3 6-3 3-6Z', fill: 'none', stroke: 'currentColor', strokeWidth: '1.6', strokeLinejoin: 'round' }),
       'studio-overview': h('path', { d: 'M5 11 12 5l7 6v7h-5v-5h-4v5H5v-7Z', fill: 'none', stroke: 'currentColor', strokeWidth: '1.7', strokeLinejoin: 'round' }),
       'studio-agents': h('path', { d: 'm12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Zm5.5 12.5.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z', fill: 'none', stroke: 'currentColor', strokeWidth: '1.5', strokeLinejoin: 'round' }),
       'studio-resources': h('path', { d: 'm12 3 8 8-8 8-8-8 8-8Zm0 5 3 3-3 3-3-3 3-3Z', fill: 'none', stroke: 'currentColor', strokeWidth: '1.6', strokeLinejoin: 'round' }),

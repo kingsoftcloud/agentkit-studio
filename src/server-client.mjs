@@ -15,7 +15,7 @@ export class AgentEngineError extends Error {
 const SERVER_ACTIONS = new Set([
   'ListAgents', 'GetAgent', 'UpdateAgent', 'CreateSession', 'ListKnowledgeBases', 'ListMemoryInstances', 'ListMCPs',
   'GetMCP', 'DeleteMCP', 'RetrieveKnowledge',
-  'QueryMemorySdk', 'CreateMemorySdk',
+  'QueryMemorySdk', 'CreateMemorySdk', 'ListMemories', 'UpdateMemory', 'DeleteMemory',
   'ListSkillWorkspaces', 'ListAgentModels', 'ListSessions', 'GetSession',
   'ListSessionMessages', 'ListSessionEvents', 'ListAgentSchedules', 'GetAgentSchedule',
   'ListAgentScheduleOccurrences', 'GetObservabilityOverview', 'ListAgentRuntimeStats',
@@ -366,7 +366,7 @@ function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, str
         return requestAgainst(endpoints.innerKop, false);
       }
       if (!envelope) throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server 未返回有效 JSON', { status: response.status, action: name });
-      const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk'].includes(name);
+      const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListMemories', 'UpdateMemory', 'DeleteMemory'].includes(name);
       const codeValid = envelope?.Code == null ? nativeResource : [0, 200].includes(Number(envelope.Code));
       if (!response.ok || !envelope || !codeValid || envelope.Error || envelope.ResponseMetadata?.Error) {
         if (kop && ['InvalidActionOrVesion', 'InvalidActionOrVersion'].includes(envelope?.Error?.Code)) {
