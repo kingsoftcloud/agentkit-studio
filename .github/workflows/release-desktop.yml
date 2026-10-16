@@ -64,6 +64,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_github_only:
+        description: "Promote an accepted signed candidate to GitHub Release without updating the feed"
+        required: true
+        default: false
+        type: boolean
       candidate_run_id:
         description: "Reuse artifacts from a completed run with successful signing; empty builds a new candidate"
         required: false
@@ -698,6 +703,7 @@ jobs:
           gh release edit "$tag" --draft=false --prerelease
 
   web-and-host:
+    if: ${{ !inputs.publish_github_only }}
     name: Real Web and DSH Host
     needs: [source-gate]
     runs-on: ubuntu-latest
@@ -779,3 +785,90 @@ jobs:
             studio/.artifacts/refactor/stage-2/sidebar-seed.json
           if-no-files-found: warn
           retention-days: 14
+
+  promote-github-candidate:
+    if: ${{ inputs.publish_github_only }}
+    needs: [source-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify acceptance and download original signed bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+          STUDIO_SHA: ${{ inputs.studio_ref }}
+          BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
+          PUBLISH_FEED: ${{ inputs.publish_feed }}
+        run: |
+          set -euo pipefail
+          test "$PUBLISH_FEED" = false
+          [[ "$CANDIDATE_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$CANDIDATE_RUN" > "$RUNNER_TEMP/accepted-run.json"
+          jq -e --arg sha "$STUDIO_SHA" '.head_sha == $sha and .status == "completed" and .conclusion == "success" and .event == "workflow_dispatch"' "$RUNNER_TEMP/accepted-run.json"
+          gh api "repos/$GH_REPO/actions/runs/$CANDIDATE_RUN/jobs?per_page=100" > "$RUNNER_TEMP/accepted-jobs.json"
+          jq -e '.jobs as $jobs | ["source-gate", "macos-arm64", "Real Web and DSH Host"] | all(. as $name | any($jobs[]; .name == $name and .conclusion == "success"))' "$RUNNER_TEMP/accepted-jobs.json"
+          node scripts/prepare-macos-candidate.mjs --repository "$GH_REPO" --run "$CANDIDATE_RUN" --source "$STUDIO_SHA" --version "$BUILD_VERSION" --output "$RUNNER_TEMP/signed-origin"
+          mkdir candidate release-assets
+          unzip -q "$RUNNER_TEMP/signed-origin/candidate.zip" -d candidate
+          (cd candidate && sha256sum -c SHA256SUMS)
+          cp candidate/*.dmg candidate/*.zip release-assets/
+          cp "$RUNNER_TEMP/signed-origin/provenance.json" release-assets/
+          (cd release-assets && sha256sum *.dmg *.zip provenance.json > SHA256SUMS)
+      - name: Publish only verified GitHub assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          STUDIO_SHA: ${{ inputs.studio_ref }}
+          BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+        run: |
+          set -euo pipefail
+          tag="desktop-$BUILD_VERSION"
+          test "$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)" = "$STUDIO_SHA"
+          git show "$STUDIO_SHA:CHANGELOG.md" > "$RUNNER_TEMP/source-changelog.md"
+          node --input-type=module <<'JS'
+          import {readFile,writeFile} from 'node:fs/promises';
+          const text=await readFile(process.env.RUNNER_TEMP+'/source-changelog.md','utf8');
+          const marker='## Desktop '+process.env.BUILD_VERSION, start=text.indexOf(marker);
+          if(start<0) throw Error('Accepted source changelog is missing');
+          const body=text.slice(start).split(/\n## /)[0];
+          await writeFile(process.env.RUNNER_TEMP+'/github-release-notes.md',body+'\n\nSource: `'+process.env.STUDIO_SHA+'`\n\nAcceptance: https://github.com/'+process.env.GH_REPO+'/actions/runs/'+process.env.CANDIDATE_RUN+'\n\nSigned and notarized macOS ARM64 candidate; native UI and rebuilt-client byte identity passed. Real Web/DSH acceptance passed using controlled model and ownership services. Production cloud deployment and Windows were not qualified. Identity/deletion features require a compatible cloud runtime. Cloud-to-local delegation is not implemented. This publication does not update the automatic-update feed.\n');
+          JS
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --verify-tag --title "AgentKit Studio $BUILD_VERSION" --notes-file "$RUNNER_TEMP/github-release-notes.md" --prerelease --draft
+          fi
+          release_id="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --slurp | jq -r --arg tag "$tag" 'add | map(select(.tag_name == $tag))[0].id')"
+          test "$release_id" != null
+          for file in release-assets/*; do
+            name="$(basename "$file")"
+            digest="sha256:$(sha256sum "$file" | cut -d ' ' -f 1)"
+            existing="$(gh api "repos/$GH_REPO/releases/$release_id" | jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest')"
+            if test -n "$existing"; then
+              test "$existing" = "$digest"
+            else
+              gh release upload "$tag" "$file"
+            fi
+            test "$(gh api "repos/$GH_REPO/releases/$release_id" | jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest')" = "$digest"
+          done
+          gh release edit "$tag" --draft=false --prerelease
+      - name: Preserve publication receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-release-receipt-${{ inputs.studio_ref }}
+          path: |
+            release-assets/provenance.json
+            release-assets/SHA256SUMS
+          if-no-files-found: warn
