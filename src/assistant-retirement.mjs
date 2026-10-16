@@ -14,6 +14,8 @@ export async function createAssistantRetirement({ ctx, env }) {
     const info = await lstat(join(root, name));
     if (!info.isDirectory() || info.isSymbolicLink()) return null;
   }
+  const domains = ctx.get('storageDomain');
+  if (typeof domains?.closeAll !== 'function') return null;
   const marker = join(root, '.assistant-closed.json');
   let result, pending;
   const persist = async value => { await writeFile(marker + '.next', JSON.stringify(value) + '\n', { mode: 0o600 }); await rename(marker + '.next', marker); };
@@ -37,6 +39,11 @@ export async function createAssistantRetirement({ ctx, env }) {
         if (!await ctx.get('sessions').flush(session)) throw fail('ASSISTANT_DELETE_UNCONFIRMED', '会话停止结果尚未确认');
       }
       const memory = await clearMemory();
+      // Session.flush owns the event log, not write-behind projection caches.
+      // Close the dedicated Host's native domains: reject new cache writes and
+      // await every queued durable write before touching their directories.
+      await domains.closeAll();
+      await ctx.get('sessionPersistence')?.flush();
       // Revalidate immediately before deletion; no caller can supply a path.
       for (const name of ['agentkit', 'dsh']) {
         const path = join(root, name), info = await lstat(path).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
