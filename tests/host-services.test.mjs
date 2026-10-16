@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioServices } from '../src/host/services/index.mjs';
+import { createPlatformServices } from '../src/host/services/platform.mjs';
 
 function context() {
   const credentials = { label: Symbol('host-credentials') };
@@ -15,6 +16,41 @@ function context() {
     close: async () => { for (const release of releases.reverse()) await release?.(); },
   };
 }
+
+test('fresh cloud Host uses AICP without requiring a saved Server URL', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'studio-cloud-default-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    requests.push({ url: new URL(url), headers: init.headers });
+    return Response.json({ Code: 0, Data: { Agents: [], Total: 0 } });
+  });
+  const services = createPlatformServices(context(), {
+    env: { AGENTKIT_HOME: home, KSYUN_REGION: 'pre-online', KSYUN_ACCESS_KEY: 'AKTEST', KSYUN_SECRET_KEY: 'SKTEST' },
+    configurationHome: home, portableRuntime: {}, cloudEndpointOptions: {},
+  });
+  await (await services.serverClientPromise).action('ListAgents', { Page: 1, PageSize: 20 });
+  assert.equal(requests[0].url.origin, 'https://aicp.api.ksyun.com');
+  assert.equal(requests[0].headers['X-KSC-CUSTOM-SOURCE'], 'pre');
+  assert.match(requests[0].headers.Authorization, /^AWS4-HMAC-SHA256 /);
+});
+
+test('Host keeps an explicitly configured local development bridge', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'studio-explicit-bridge-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    requests.push({ url: new URL(url), headers: init.headers });
+    return Response.json({ Code: 0, Data: { Agents: [], Total: 0 } });
+  });
+  const services = createPlatformServices(context(), {
+    env: { AGENTKIT_HOME: home, AGENTKIT_STUDIO_HOST_URL: 'http://127.0.0.1:31999', AGENTKIT_STUDIO_HOST_SESSION_TOKEN: 'fixture-session' },
+    configurationHome: home, portableRuntime: {}, cloudEndpointOptions: {},
+  });
+  await (await services.serverClientPromise).action('ListAgents', { Page: 1, PageSize: 20 });
+  assert.equal(requests[0].url.origin, 'http://127.0.0.1:31999');
+  assert.equal(requests[0].headers['X-AgentKit-Session'], 'fixture-session');
+});
 
 test('composed Host domains keep configuration, agents and resource stores isolated', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'studio-service-graph-'));

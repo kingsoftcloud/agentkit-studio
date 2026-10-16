@@ -5,7 +5,7 @@ export function createPlatformServices(ctx, { env: runtimeEnv, portableRuntime, 
     const serverClientPromise = configurationPromise.then(configuration => import('../../server-client.mjs').then(({ createAgentEngineClient }) => createAgentEngineClient({
         configuration,
         sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '',
-        serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || 'http://127.0.0.1:8789',
+        serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || '',
         ...cloudEndpointOptions,
     })));
     const deploymentClientPromise = Promise.all([import('../../server-client.mjs'), configurationPromise])
