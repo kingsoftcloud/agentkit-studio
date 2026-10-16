@@ -17,6 +17,7 @@ export function createTemplateWorkflows({ directory, summon, summonTeam, prepare
     if(existing){if(existing.fingerprint!==fingerprint)throw new Error('不能更改进行中操作的资源');if(existing.state.status==='running'||existing.state.status==='succeeded')return view(existing);}
     let persisted;try{persisted=JSON.parse(await readFile(file(id)));}catch{}
     if(persisted?.fingerprint&&persisted.fingerprint!==fingerprint)throw new Error('模板操作与此前请求不一致');
+    if (persisted?.status === 'succeeded') { const { fingerprint: _fingerprint, ...completed } = persisted; return structuredClone(completed); }
     const job={fingerprint,controller:new AbortController(),state:{requestId:id,status:'running',progress:{phase:'checking',label:'正在读取模板与依赖'},cancellable:true}};jobs.set(id,job);
     let queue=Promise.resolve();
     const persist=()=>{const snapshot=JSON.stringify({...job.state,fingerprint});queue=queue.then(async()=>{await mkdir(directory,{recursive:true,mode:0o700});const temp=file(id)+'.next';await writeFile(temp,snapshot,{mode:0o600});await rename(temp,file(id));}).catch(()=>{});return queue;};
