@@ -13,7 +13,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     if (!identity || !agent.session.id.startsWith('assistant-') || identified.has(agent)) return;
     const prompt = agent.ctx?.get('systemPrompt');
     if (!prompt) throw fail('ASSISTANT_IDENTITY_UNAVAILABLE', '无法加载助理身份', 503);
-    agent.ctx.effect(() => prompt.section({ name: 'agentkit:assistant-identity', order: 10300, interpolate: false, text: identity.prompt }));
+    ctx.effect(() => agent.ctx.effect(() => prompt.section({ name: 'agentkit:assistant-identity', order: 10300, interpolate: false, text: identity.prompt })), 'agentkit-assistant:identity');
     identified.add(agent);
   };
   if (identity) {
