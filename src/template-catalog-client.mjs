@@ -3,13 +3,13 @@ import { createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 export const canonicalJson = value => JSON.stringify(value, (_, row) => row && typeof row === 'object' && !Array.isArray(row) ? Object.fromEntries(Object.keys(row).sort().map(key => [key, row[key]])) : row);
 export const templateDigest = value => `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`;
 export const localCatalogKey = secret => Buffer.from(hkdfSync('sha256', secret, 'agentkit-studio', 'studio-template-catalog/loopback/v1', 32)).toString('hex');
-export function createTemplateCatalogClient({ origin, configuration, serverClient, fetchImpl = fetch, timeoutMs = 30000 }) {
+export function createTemplateCatalogClient({ origin, configuration, serverClient, environment, fetchImpl = fetch, timeoutMs = 30000 }) {
   if (origin) {
     const url = new URL(origin);
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password || url.pathname !== '/' || url.search || url.hash || !['http:', 'https:'].includes(url.protocol)) throw new Error('本地模板 Server 需要有效的回环地址');
   }
   return { async action(action, payload = {}, { signal } = {}) {
-    if (!origin) return (await (await serverClient()).action(action, payload, { signal })).data;
+    if (!origin) return (await (await serverClient()).action(action, payload, { signal, ...(environment?{templateEnvironment:environment}:{}) })).data;
     const { values } = await (await configuration()).resolve();
     if (!values.cloudSecretKey) throw Object.assign(new Error('本地模板 Server 需要当前云端凭据派生的专用认证'), { code: 'TEMPLATE_SERVER_CREDENTIAL_MISSING' });
     const body = JSON.stringify(payload), path = `/agentengine/api/v1/${action}`, timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString('hex');
