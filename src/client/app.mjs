@@ -40,6 +40,7 @@ import { createConversationAgentState } from "./state/conversation-agent.mjs";
 import { createNativeAuthoring } from "./state/native-authoring.mjs";
 import { readProductVersions } from "./state/product-versions.mjs";
 import { createStudioActions } from "./state/actions.mjs";
+import { createAssistantPage } from './pages/assistant.mjs';
 
 /** Build one presentation graph and one set of owners for each apply(ctx). */
 export function createStudioApp({ React, primitives }, { window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent, MutationObserver = globalThis.MutationObserver } = {}) {
@@ -91,6 +92,7 @@ export function createStudioApp({ React, primitives }, { window = globalThis.win
   ui.ModelSettingsSection = createModelSettingsSection({ ui, hostRemote, window, CustomEvent });
   Object.assign(ui, createCredentialOnboarding({ ui, hostRemote, window, document }));
   Object.assign(ui, createAgentPages({ ui, hostRemote, actions, window }));
+  ui.AssistantPage = createAssistantPage({ ui, hostRemote, actions, window });
   Object.assign(ui, createStudioShell({ ui, hostRemote }));
   ui.StudioSettingsLauncher = createSettingsLauncher({ ui, window });
   ui.StudioSettingsSection = createStudioSettingsSection({ ui, hostRemote, window, versions: { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } });

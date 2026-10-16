@@ -8,7 +8,7 @@ const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
 
-export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, validatePrevious, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
+export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, validatePrevious, assistant, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
   if (!agentId || !/^build_[0-9a-f]{20}$/.test(buildId || '') || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const tokenHash = hash(token);
   const responses = createRuntimeResponsesContract({ agentId, buildId, token, model, models });
@@ -24,7 +24,16 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
       if (req.headers.origin || !bearer || !timingSafeEqual(hash(bearer[1]), tokenHash)) throw fail('RUNTIME_UNAUTHORIZED', 401);
       if (closing) throw fail('RUNTIME_STOPPING', 503);
       if (req.method === 'GET' && url.pathname === '/v1/agentkit/runtime') {
-        json(res, 200, { format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId, bundleSha256, deploymentVersion, model, models, capabilities: ['bound-model-selection', 'resource-checks'] }); return;
+        json(res, 200, { format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId, bundleSha256, deploymentVersion, model, models, capabilities: ['bound-model-selection', 'resource-checks', ...(assistant ? ['personal-assistant/v1'] : [])] }); return;
+      }
+      const assistantRoute = /^\/v1\/assistant\/([a-z-]+)$/.exec(url.pathname);
+      if (req.method === 'POST' && assistantRoute && assistant) {
+        if (!String(req.headers['content-type'] || '').startsWith('application/json')) throw fail('RUNTIME_JSON_REQUIRED', 415);
+        let body = ''; for await (const chunk of req) { body += chunk; if (Buffer.byteLength(body) > 256 * 1024) throw fail('RUNTIME_INPUT_TOO_LARGE', 413); }
+        let payload; try { payload = JSON.parse(body); } catch { throw fail('RUNTIME_INVALID_JSON'); }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw fail('RUNTIME_INPUT_INVALID');
+        const result = await assistant(assistantRoute[1], payload);
+        json(res, assistantRoute[1] === 'submit' ? 202 : 200, result); return;
       }
       const cancel = /^\/runs\/(run_[0-9a-f]{32})\/cancel$/.exec(url.pathname);
       const cancelResponse = /^\/v1\/responses\/([^/]+)\/cancel$/.exec(url.pathname);

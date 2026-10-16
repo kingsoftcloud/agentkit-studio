@@ -1,3 +1,8 @@
+/** User tasks include reminders delivered by the official cloud scheduler. */
+export function isDshUserInput(message) {
+  return message?.role === 'user' && (!message.source || ['user', 'schedule'].includes(message.source.kind));
+}
+
 /** Resolve DSH's durable image receipts only at the model transport boundary. */
 export async function gatewayHistory(messages, { attachments, signal } = {}) {
   const images = new Map();
@@ -32,7 +37,7 @@ export async function gatewayHistory(messages, { attachments, signal } = {}) {
   };
   const history = [];
   for (const message of Array.isArray(messages) ? messages : []) {
-    if (message?.role === 'user' && (!message.source || message.source.kind === 'user')) {
+    if (isDshUserInput(message)) {
       const content = await contentOf(message);
       if (content?.length) history.push({ role: 'user', content });
     } else if (message?.role === 'assistant') {

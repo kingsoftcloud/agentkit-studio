@@ -6,6 +6,7 @@ import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { frozenModels } from './frozen-models.mjs';
 import { RESOURCE_CHECK_EVENT } from './resource-checks.mjs';
 import { createHash } from 'node:crypto';
+import { createPersonalAssistantRuntime } from './personal-assistant-runtime.mjs';
 
 const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, 'step/end', 'turn/end']);
 
@@ -17,7 +18,7 @@ export function observeNativeRun(ctx, agent, onFrame) {
   return () => { for (const dispose of disposers) dispose(); };
 }
 
-export async function startFrozenBuildRuntime({ ctx, build, admit, modelService, hostCompatibility, env = process.env }) {
+export async function startFrozenBuildRuntime({ ctx, build, admit, modelService, hostCompatibility, resources, env = process.env }) {
   const agentId = env.AGENTKIT_RUNTIME_AGENT_ID;
   const buildId = env.AGENTKIT_RUNTIME_BUILD_ID;
   if (!agentId && !buildId) return null;
@@ -60,7 +61,8 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
     }
   };
   const model = catalog.find(item => item.default)?.id || catalog[0]?.id || primary;
-  return startBuildRuntimeHttp({ agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, validatePrevious, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
+  const assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources });
+  return startBuildRuntimeHttp({ agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, validatePrevious, assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 

@@ -18,6 +18,7 @@ export const BRAND = {
 
 export const PANELS = [
   { id: 'studio-overview', page: 'overview', label: '总览', note: '工作区状态', glyph: '⌂' },
+  { id: 'studio-assistant', page: 'assistant', label: '个人助理', note: '云端持续运行，记忆随你积累', glyph: '✧' },
   { id: 'studio-agents', page: 'agents', label: 'Agents', note: '创建与版本', glyph: '✦' },
   { id: 'studio-resources', page: 'resource-hub', label: '资源库', note: '模型、工具与运行资源', glyph: '◈' },
   { id: 'studio-operations', page: 'operations', label: '运行中心', note: '构建、部署与观测', glyph: '↗' },
