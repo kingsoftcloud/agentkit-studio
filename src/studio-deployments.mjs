@@ -52,12 +52,16 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     const runtime = frozen.spec.runtime.type, { catalog, image } = await images.resolve(runtime, input.releaseId);
     const identity = await client.inspectIdentity(), { values } = await configuration.resolve();
     if (identity.kind !== 'subaccount') throw portableError('CLOUD_SUBACCOUNT_REQUIRED', '部署需要已核验的子账号 AK/SK，请在设置中更新云端凭证；不会使用主账号创建资源');
-    if (!values.cloudBucket) throw portableError('KS3_BUCKET_REQUIRED', '请先在设置中配置用于私有运行包的 KS3 Bucket');
+    // Match AgentEngine's account-scoped storage rule, using IAM-verified
+    // ownership and the catalog's physical region (never the pre-online alias).
+    const bucket = values.cloudBucket || (/^[0-9]{1,20}$/.test(identity.accountId || '')
+      ? `agentengine-${identity.accountId}-${catalog.region}` : '');
+    if (!bucket) throw portableError('KS3_BUCKET_REQUIRED', '无法确定账号默认存储桶，请核验云端身份或在高级设置中指定 KS3 Bucket');
     const resources = shapeOf(input.resources);
     admitDeploymentStorage(resources, catalog, runtime);
     const resolved = await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env });
     // Validate storage and environment before the user commits to a billable create.
-    const source = planKs3BundleUpload(zip, { endpoint: ks3BundleEndpoint(catalog.region), bucket: values.cloudBucket, uploadId: randomUUID() });
+    const source = planKs3BundleUpload(zip, { endpoint: ks3BundleEndpoint(catalog.region), bucket, uploadId: randomUUID() });
     createContainerDeploymentEnvironment({ zip, expectedSha256: source.sha256, runtimeToken: randomBytes(32).toString('hex'), credentials: resolved, bundleSource: source });
     const plan = { agentId, agentName: frozen.metadata.name || agentId, buildId, bundleId, bundleSha256: sha256(zip),
       revision: frozen.metadata.revision, runtime, image, catalogRevision: catalog.revision, region: catalog.region, environment: catalog.environment,
