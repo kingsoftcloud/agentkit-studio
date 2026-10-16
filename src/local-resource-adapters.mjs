@@ -23,6 +23,19 @@ function memorySubjectId(collectionId, userId, agentId = '') {
   return `mp1-${createHash('sha256').update(encoded).digest('hex').slice(0, 60)}`;
 }
 
+function memoryReply(reply, requireReceipt = false) {
+  let data = reply?.data;
+  if (typeof data === 'string') { try { data = JSON.parse(data); } catch { data = null; } }
+  const code = data?.Code ?? data?.ResponseMetadata?.Error?.Code;
+  const requestId = reply?.requestId || data?.RequestId || data?.ResponseMetadata?.RequestId;
+  if (!data || typeof data !== 'object' || Array.isArray(data) || data.Success === false || data.Error
+    || data.ResponseMetadata?.Error || (code != null && ![0, 200, '0', '200'].includes(code))
+    || (requireReceipt && !requestId)) {
+    throw new LocalResourceError('MEMORY_RESPONSE_UNKNOWN', '记忆服务未确认结果，请刷新核对');
+  }
+  return { data, requestId };
+}
+
 function memorySessionId(sessionId) {
   const raw = String(sessionId || '').trim();
   return raw ? createHash('sha256').update(`memory-session/v1|${raw}`).digest('hex') : '';
@@ -324,7 +337,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       ...(flush === true ? { Flush: true } : {}),
     };
     const result = await serverClient.action('CreateMemorySdk', payload, { apiVersion: '2025-11-14' });
-    return { accepted: true, data: result.data || {} };
+    return { accepted: true, data: memoryReply(result, true).data };
   }
 
   async function close() {
@@ -336,6 +349,28 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     cloudSkillSpaces.clear();
   }
 
+  async function memoryAction(action, id, userId, payload, { agentId = '' } = {}) {
+    if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用');
+    const reply = await serverClient.action(action, { MemoryCollectionId: resourceId(id),
+      AgentUserId: memorySubjectId(resourceId(id), userId, agentId), ...payload }, { apiVersion: '2025-11-14' });
+    return memoryReply(reply, action !== 'ListMemories');
+  }
+  async function listMemory(id, userId, options) {
+    const { data } = await memoryAction('ListMemories', id, userId, { Page: 1, PageSize: 100 }, options);
+    if (!Array.isArray(data.MemoryList)) throw new LocalResourceError('MEMORY_RESPONSE_UNKNOWN', '记忆列表格式无法识别');
+    const subjectId = memorySubjectId(resourceId(id), userId, options?.agentId);
+    if (data.MemoryList.some(item => item.AgentUserId && item.AgentUserId !== subjectId)) throw new LocalResourceError('MEMORY_PARTITION_MISMATCH', '记忆归属无法核对');
+    return { items: data.MemoryList.filter(item => typeof item.MemoryId === 'string' && typeof item.Memory === 'string')
+      .map(item => ({ id: item.MemoryId, text: item.Memory })), hasMore: Number(data.Total || data.TotalCount || 0) > data.MemoryList.length };
+  }
+  async function mutateMemory(action, id, userId, memoryId, content, options) {
+    const { data, requestId } = await memoryAction(action, id, userId, { MemoryId: memoryId, ...(content === undefined ? {} : { Content: content }) }, options);
+    if (!requestId && !data.RequestId && !data.ResponseMetadata?.RequestId) throw new LocalResourceError('MEMORY_RESPONSE_UNKNOWN', '记忆修改结果尚未确认，请刷新核对');
+    return { accepted: true };
+  }
+
   // Host-only descriptor; it can contain credentials. Never expose it through RPC.
-  return { describeMcp, listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, close };
+  return { describeMcp, listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, listMemory,
+    deleteMemory: (id, userId, memoryId, options) => mutateMemory('DeleteMemory', id, userId, memoryId, undefined, options),
+    updateMemory: (id, userId, memoryId, content, options) => mutateMemory('UpdateMemory', id, userId, memoryId, content, options), close };
 }

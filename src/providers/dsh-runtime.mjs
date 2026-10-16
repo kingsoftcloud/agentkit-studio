@@ -12,7 +12,7 @@ import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { dshModelFailure } from '../model-failure.mjs';
 import { createCodexToolRecorder } from './codex-tool-events.mjs';
-import { gatewayHistory } from './dsh-messages.mjs';
+import { gatewayHistory, isDshUserInput } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 
@@ -118,13 +118,9 @@ function textOf(message) {
     .map(part => String(part.text || part.value || '')).join('');
 }
 
-function isUserInput(message) {
-  return message?.role === 'user' && (!message.source || message.source.kind === 'user');
-}
-
 function lastUser(messages) {
   return [...(Array.isArray(messages) ? messages : [])].reverse()
-    .find(isUserInput);
+    .find(isDshUserInput);
 }
 
 function cloudCancelledError(reason) {

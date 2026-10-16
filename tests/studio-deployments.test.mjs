@@ -133,6 +133,30 @@ test('three runtimes create from a frozen Build, synchronize the platform token,
   }
 });
 
+test('unset bucket uses verified account and physical region, retaining an isolated private bundle prefix', async t => {
+  const f = await fixture(t, { runtime: 'dsh-native' });
+  f.values.cloudBucket = '';
+  f.options.client.inspectIdentity = async () => ({ kind: 'subaccount', accountId: '1234567890', userUuid: 'actor', userName: 'operator' });
+  const preview = await f.service.prepare(f.input);
+  const record = await f.service.create({ ...f.request, previewId: preview.previewId, bundleId: preview.bundleId });
+  await f.settled();
+  const source = f.calls.find(([action]) => action === 'upload')[1];
+  assert.equal(source.bucket, 'agentengine-1234567890-cn-beijing-6');
+  assert.match(source.objectKey, /^studio-bundles\/v1\//);
+  assert.equal(f.values.cloudBucket, '', 'default resolution must not alter saved settings');
+  assert.equal((await f.service.refresh(record.id)).state, 'READY');
+});
+
+test('unknown account cannot fabricate a default bucket or create resources', async t => {
+  const f = await fixture(t);
+  f.values.cloudBucket = '';
+  for (const accountId of [null, '', 'unverified', '123/other']) {
+    f.options.client.inspectIdentity = async () => ({ kind: 'subaccount', accountId, userUuid: 'actor' });
+    await assert.rejects(() => f.service.prepare(f.input), { code: 'KS3_BUCKET_REQUIRED' });
+  }
+  assert.equal(f.calls.length, 0);
+});
+
 test('root credentials stop both preflight and a changed identity before upload or creation', async t => {
   const f = await fixture(t);
   f.options.client.inspectIdentity = async () => ({ kind: 'main-account' });

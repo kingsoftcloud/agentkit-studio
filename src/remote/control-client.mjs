@@ -202,6 +202,8 @@ export function createProductClient(connection, { window = globalThis.window } =
         return bridgeByEndpoint[endpoint](payload);
     }
     return {
+        assistantCatalog: () => studioBridgeOperation('assistant/catalog', {}),
+        assistantExecute: (agentId, operation, input = {}) => studioBridgeOperation('assistant/execute', { agentId, operation, input }),
         get baseUrl() { return baseUrl; },
         health: () => directServer() ? Promise.resolve({ status: 'ok', source: 'agentengine-server', controlPlane: true }) : request('/api/v1/system/health'),
         bootstrap: () => directServer() ? Promise.resolve({ workspaceReady: true, source: 'agentengine-server' }) : request('/api/v1/system/bootstrap'),

@@ -68,6 +68,8 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "channels/agent-update",
   "channels/action",
   "server/action",
+  "assistant/catalog",
+  "assistant/execute",
   "deployments/prepare",
   "deployments/create",
   "deployments/prepareUpdate",

@@ -1,6 +1,7 @@
 /** Resolve Studio's own immutable image releases from the existing Server metadata API. */
 import { createHash } from 'node:crypto';
 import { containerStorageCapability } from './deployment-storage.mjs';
+import { studioVersions } from './studio-version.mjs';
 
 export const STUDIO_IMAGE_CONFIG_KEY = 'studio.runtime.images.v1';
 const FORMAT = 'agentkit.runtime-images/v1';
@@ -66,11 +67,12 @@ export function selectStudioImage(catalog, releaseId) {
   return structuredClone(selected);
 }
 
-export function createDeploymentImages({ client, configuration, clientVersion = '0.0.1' }) {
+export function createDeploymentImages({ client, configuration, clientVersion }) {
   async function list(runtime, options = {}) {
+    const version = clientVersion ?? (await studioVersions()).pluginVersion;
     const { values } = await configuration.resolve();
-    const response = await client.getBootstrapConfig({ region: values.cloudRegion || 'cn-beijing-6', runtime, clientVersion }, options);
-    return parseStudioImageCatalog(response.data, { runtime, clientVersion });
+    const response = await client.getBootstrapConfig({ region: values.cloudRegion || 'cn-beijing-6', runtime, clientVersion: version }, options);
+    return parseStudioImageCatalog(response.data, { runtime, clientVersion: version });
   }
   async function resolve(runtime, releaseId, options) {
     const catalog = await list(runtime, options);

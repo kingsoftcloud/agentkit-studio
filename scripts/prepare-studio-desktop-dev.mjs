@@ -3,17 +3,24 @@ import { readFile, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { assertDesktopDevResources } from './desktop-dev-resources.mjs';
 const root = resolve(process.env.AGENTKIT_DSH_ROOT || '');
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.DSH_HOME || !process.env.STUDIO_VERIFY_ELECTRON) throw new Error('Specify isolated DSH root/home and real Electron executable');
 const load = path => import(pathToFileURL(join(root, path)).href);
 const { prepareDevelopmentProject } = await load('apps/desktop/scripts/development-project.ts');
+const { preparePrimaryRuntime } = await load('apps/desktop/scripts/prepare-primary-runtime.ts');
+const { developmentRuntimeDirectory, resolveDesktopBuildTarget } = await load('apps/desktop/scripts/desktop-build-paths.mjs');
 const { DESKTOP_HOST_PROTOCOL_VERSION } = await load('apps/desktop/src/host-protocol.ts');
 const pkg = JSON.parse(await readFile(join(root, 'apps/desktop/package.json'), 'utf8'));
 const manager = JSON.parse(await readFile(join(root, 'apps/desktop/node_modules/pnpm/package.json'), 'utf8'));
 const nodeVersion = execFileSync(process.env.STUDIO_VERIFY_ELECTRON, ['-p', 'process.versions.node'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8' }).trim();
 const project = join(root, 'apps/desktop/.desktop-build/development/project');
 prepareDevelopmentProject({ projectDir: project, cliDir: join(root, 'apps/cli'), hostDir: join(root, 'apps/desktop-host'), dependencyDir: join(root, 'node_modules/.pnpm/node_modules'),
-  release: { schemaVersion: 1, version: pkg.version, hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION, nodeVersion, pnpmVersion: manager.version }, target: 'mac-arm64' });
+  release: { schemaVersion: 1, version: pkg.version, hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION, nodeVersion, pnpmVersion: manager.version }, target: resolveDesktopBuildTarget() });
+// Match the official dev launcher: the plugin project is not the Office/interpreter payload.
+await preparePrimaryRuntime();
+const primaryRuntime = developmentRuntimeDirectory();
+await assertDesktopDevResources({ source: root, primaryRuntime });
 const profile = process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor';
 const installed = join(resolve(process.env.DSH_HOME), 'profiles', profile, 'node_modules/@kingsoftcloud/agentkit-studio');
 const studio = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'));
@@ -27,4 +34,4 @@ await writeFile(join(project, 'desktop-runtime.json'), JSON.stringify(descriptor
 const link = join(project, 'node_modules', studio.name);
 await mkdir(dirname(link), { recursive: true });
 await symlink(installed, link);
-console.log(JSON.stringify({ project, studioVersion: studio.version, hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION, nodeVersion, developmentOnly: true }));
+console.log(JSON.stringify({ project, primaryRuntime, studioVersion: studio.version, hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION, nodeVersion, developmentOnly: true }));
