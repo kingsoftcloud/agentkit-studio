@@ -85,13 +85,13 @@ async function withBundleRepository(source, input, action) {
   try {
     await git(temporary, ['init', '--bare', '--quiet']);
     // Borrow only the baseline's object database, never its worktree, refs or index.
-    const objects = await gitText(source, ['rev-parse', '--path-format=absolute', '--git-path', 'objects']);
+    const objects = resolve(source, await gitText(source, ['rev-parse', '--git-path', 'objects']));
     if (/[\r\n]/.test(objects)) fail('unsupported baseline object path');
     await writeFile(join(temporary, 'objects/info/alternates'), objects + '\n');
     // Actions normally fetches one commit. The object pool alone does not
     // describe its missing parents; preserve the read-only shallow boundary.
     if (await gitText(source, ['rev-parse', '--is-shallow-repository']) === 'true') {
-      const shallow = await gitText(source, ['rev-parse', '--path-format=absolute', '--git-path', 'shallow']);
+      const shallow = resolve(source, await gitText(source, ['rev-parse', '--git-path', 'shallow']));
       await copyFile(shallow, join(temporary, 'shallow'));
     }
     await git(temporary, ['cat-file', '-e', `${input.manifest.baseCommit}^{commit}`]);
