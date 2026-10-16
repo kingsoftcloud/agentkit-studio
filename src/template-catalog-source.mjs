@@ -6,20 +6,29 @@ import { createExpertCatalog } from '../packages/expert-catalog/src/catalog.mjs'
 import { loadExpertCatalog } from '../packages/expert-catalog/src/release.mjs';
 import { createTemplateCatalogClient, templateDigest } from './template-catalog-client.mjs';
 import { createTemplatePackageCache } from './template-package-cache.mjs';
+import { createPublicTemplateCatalogClient } from './public-template-catalog.mjs';
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
-export async function createTemplateCatalogSource({ studioStoreDir, env = process.env, configuration, serverClient }) {
+export async function createTemplateCatalogSource({ studioStoreDir, env = process.env, configuration, serverClient, fetchImpl=fetch }) {
   let settings;
   try { settings = JSON.parse(await readFile(join(studioStoreDir,'template-source.json'),'utf8')); } catch(error) { if (error.code !== 'ENOENT') throw error; }
   const origin = env.AGENTKIT_TEMPLATE_SERVER_URL || settings?.origin;
-  if (!origin && !settings?.cloud) return loadExpertCatalog(env.AGENTKIT_TEMPLATE_CATALOG_FILE || join(studioStoreDir,'template-catalog','catalog.json'), { optional:!env.AGENTKIT_TEMPLATE_CATALOG_FILE, personalLocal:true });
-  const fallback = createExpertCatalog(), client = createTemplateCatalogClient({ origin, configuration, serverClient });
+  if (!origin && (env.AGENTKIT_TEMPLATE_CATALOG_FILE || settings?.source==='local')) return loadExpertCatalog(env.AGENTKIT_TEMPLATE_CATALOG_FILE || join(studioStoreDir,'template-catalog','catalog.json'), { optional:!env.AGENTKIT_TEMPLATE_CATALOG_FILE, personalLocal:true });
+  const environment=env.AGENTKIT_TEMPLATE_ENVIRONMENT||settings?.environment||'pre-online';
+  const fallback = createExpertCatalog(), direct = createTemplateCatalogClient({ origin, environment, configuration, serverClient, fetchImpl }), mirror=createPublicTemplateCatalogClient({environment,fetchImpl});
+  let retryServerAt=0;
+  const client={async action(name,payload={},options={}){
+    if(origin)return direct.action(name,payload,options);
+    const {values}=await(await configuration()).resolve();
+    if(values.cloudAccessKey&&values.cloudSecretKey&&Date.now()>=retryServerAt){try{return await direct.action(name,payload,options);}catch(error){if(options.signal?.aborted)throw error;retryServerAt=Date.now()+60000;}}
+    return mirror.action(name,payload,options);
+  }};
   let active;
   async function state() {
     const { values } = await (await configuration()).resolve();
-    const identity = createHash('sha256').update(values.cloudAccessKey || 'unconfigured').digest('hex');
+    const identity = createHash('sha256').update(JSON.stringify([origin||'public-ks3',environment,values.cloudAccessKey || 'anonymous'])).digest('hex');
     if (active?.identity === identity) return active;
     const root = join(studioStoreDir,'template-cache',identity), records = new Map(), index = new Map();
-    active = { identity, root, records, index, packages:createTemplatePackageCache({directory:join(root,'downloads'),client}) };
+    active = { identity, root, records, index, packages:createTemplatePackageCache({directory:join(root,'downloads'),client,fetchImpl}) };
     return active;
   }
   const key = ref => `${ref.id}:${ref.digest || ''}`;
