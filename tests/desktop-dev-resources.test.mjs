@@ -1,11 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { assertDesktopDevResources, closeVerificationClient } from '../scripts/desktop-dev-resources.mjs';
+import { assertDesktopDevHome, assertDesktopDevResources, closeVerificationClient } from '../scripts/desktop-dev-resources.mjs';
+
+test('desktop source links reject nested profiles, including paths through directory aliases', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'studio-desktop-home-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'dsh'), studio = join(root, 'studio');
+  await mkdir(source); await mkdir(studio);
+  await assertDesktopDevHome({ source, studio, home: join(root, 'user-home/dsh') });
+  for (const base of [source, studio]) await assert.rejects(assertDesktopDevHome({ source, studio, home: join(base, 'new-home') }), /outside/);
+  const alias = join(root, 'alias');
+  await symlink(studio, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(assertDesktopDevHome({ source, studio, home: join(alias, 'new-home') }), /outside/);
+});
 
 test('missing Office payload fails before Electron can display a fatal startup dialog', async t => {
   const source = await mkdtemp(join(tmpdir(), 'studio-desktop-resources-'));

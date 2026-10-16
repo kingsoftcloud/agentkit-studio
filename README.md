@@ -38,6 +38,11 @@ make dev DSH_ROOT=../deepseek-harness
 
 Use `DSH_HOME` and `AGENTKIT_HOME` to isolate local profiles and Studio data. Do not copy another user's profile or credentials into the repository.
 
+`dist/` is generated locally and is not tracked in Git. `make dev` (or
+`make web-dev`) rebuilds and installs the plugin before launch. Desktop build and
+launch targets also build the client first. `pnpm check`, `pnpm test` and
+`pnpm pack` rebuild it automatically; packaged plugins still include `dist/client.js`.
+
 ## Experts and personal assistant
 
 The Agents panel includes an original expert catalog, resource templates and local teams built on official DSH Agent Teams. Existing Agents still use the same editor, frozen revisions and native conversations. See [expert catalog and local teams](docs/expert-catalog.md).

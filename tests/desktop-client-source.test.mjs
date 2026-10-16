@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import asar from '@electron/asar';
+import { verifyDesktopClientSource } from '../scripts/verify-desktop-client-source.mjs';
+
+test('desktop qualification rebuilds the requested commit and rejects stale or substituted bundles', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'studio-client-proof-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = join(root, 'repository'); await mkdir(repository);
+  const git = args => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', ...args], { cwd: repository, encoding: 'utf8' }).trim();
+  git(['init', '-q']); git(['config', 'user.name', 'Fixture']); git(['config', 'user.email', 'fixture@example.invalid']);
+  await writeFile(join(repository, 'package.json'), JSON.stringify({ name: 'client-proof-fixture', private: true,
+    packageManager: 'pnpm@10.33.2', scripts: { 'build:client': 'node build.mjs' } }));
+  await writeFile(join(repository, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\nimporters:\n  .: {}\n");
+  await writeFile(join(repository, 'build.mjs'), "import{mkdirSync,readFileSync,writeFileSync}from'node:fs';mkdirSync('dist',{recursive:true});writeFileSync('dist/client.js',readFileSync('client-source.js'));\n");
+  await writeFile(join(repository, 'client-source.js'), 'signed source\n');
+  await mkdir(join(repository, 'dist')); await writeFile(join(repository, 'dist/client.js'), 'stale committed bundle\n');
+  git(['add', '.']); git(['commit', '-qm', 'signed source']); const signed = git(['rev-parse', 'HEAD']);
+  await writeFile(join(repository, '.gitignore'), '/dist/\n'); git(['rm', '--cached', 'dist/client.js']);
+  await writeFile(join(repository, 'client-source.js'), 'new source without committed dist\n');
+  git(['add', '.']); git(['commit', '-qm', 'new source']); const current = git(['rev-parse', 'HEAD']);
+  const input = join(root, 'app'), bundle = join(input, 'dsh/node_modules/@kingsoftcloud/agentkit-studio/dist');
+  await mkdir(bundle, { recursive: true });
+  const archive = join(root, 'app.asar'), report = join(root, 'proof.json');
+  const verify = source => verifyDesktopClientSource({ repository, source, archive, report });
+  const pack = async contents => { await writeFile(join(bundle, 'client.js'), contents); await asar.createPackage(input, archive); };
+  await pack('signed source\n');
+  assert.equal((await verify(signed)).passed, true, 'qualification tools can be newer than signed source');
+  await assert.rejects(verify(current), /differs from/);
+  assert.equal(JSON.parse(await readFile(report)).passed, false);
+  await pack('new source without committed dist\n');
+  assert.equal((await verify(current)).passed, true, 'source archive needs no dist entry');
+  await pack('stale committed bundle\n');
+  await assert.rejects(verify(signed), /differs from/, 'old committed dist cannot bypass the rebuild');
+  await assert.rejects(verify('HEAD'), /immutable/);
+  assert.equal(await readFile(join(repository, 'dist/client.js'), 'utf8'), 'stale committed bundle\n', 'caller files are untouched');
+});

@@ -1,7 +1,26 @@
 /** Preflight disposable Desktop resources before starting a native window. */
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+
+async function canonicalPath(path) {
+  try { return await realpath(path); }
+  catch (error) {
+    if (error.code !== 'ENOENT' || dirname(path) === path) throw error;
+    return join(await canonicalPath(dirname(path)), basename(path));
+  }
+}
+
+/** DSH package-resolution scopes must not contain their own profile directory. */
+export async function assertDesktopDevHome({ source, studio, home }) {
+  const actualHome = await canonicalPath(resolve(home));
+  for (const root of [source, studio]) {
+    const path = relative(await canonicalPath(resolve(root)), actualHome);
+    if (!path || (!path.startsWith('..' + (process.platform === 'win32' ? '\\' : '/')) && path !== '..' && !isAbsolute(path))) {
+      throw new Error('Set DSH_HOME outside the Studio and DSH source checkouts; nested profiles prevent development plugins from loading');
+    }
+  }
+}
 
 export async function assertDesktopDevResources({ source, primaryRuntime }) {
   if (!source || !primaryRuntime || !isAbsolute(source) || !isAbsolute(primaryRuntime)) {
