@@ -1,8 +1,11 @@
 /** Only receipt-owned DSH deployments may be reached; tokens stay in Node. */
+import { createAssistantLifecycle } from '../../assistant-lifecycle.mjs';
 const operations = new Set(['snapshot', 'submit', 'cancel', 'schedule-list', 'schedule-create', 'schedule-delete', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
-export function createAssistantRoutes({ deployments, fetchImpl = fetch }) {
+export function createAssistantRoutes({ deployments, assistantStoreDir, fetchImpl = fetch }) {
+  const lifecycle = createAssistantLifecycle({ directory: assistantStoreDir, deployments, fetchImpl });
   return async (endpoint, payload = {}, signal) => {
+    if (endpoint === 'assistant/close') return { ok: true, value: await lifecycle.close(payload) };
     const { agents } = await deployments();
     if (endpoint === 'assistant/catalog') {
       const result = await agents.list();

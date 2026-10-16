@@ -107,3 +107,11 @@ test('versioned state isolates immutable bundles and preserves prior history on 
   assert.equal(await readFile(history, 'utf8'), 'original-history');
   assert.equal(restored.env.AGENTKIT_BUNDLE_SHA256, restored.identity.sha256);
 });
+
+
+test('a deleted assistant cannot be resurrected from its old runtime directory', async t => {
+  const f = await fixture(t);
+  await prepareBundleHost(f);
+  await writeFile(join(f.state, '.assistant-closed.json'), JSON.stringify({ phase: 'closed' }));
+  await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_ASSISTANT_CLOSED' });
+});

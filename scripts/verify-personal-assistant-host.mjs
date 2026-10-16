@@ -7,8 +7,9 @@ import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, readFile, readdir, writeFile } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { mkdir, mkdtemp, realpath, readFile, readdir, writeFile, cp, access } from 'node:fs/promises';
+import { writeFileSync, constants } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -18,7 +19,14 @@ if (!source || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Er
 const target = resolve(process.argv[2] || '.artifacts/refactor/stage-4/assistant-real-host.json');
 await mkdir(dirname(target), { recursive: true });
 const profile = process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor';
-const installed = await realpath(join(process.env.DSH_HOME, 'profiles', profile, 'node_modules/@kingsoftcloud/agentkit-studio'));
+const originalInstalled = await realpath(join(process.env.DSH_HOME, 'profiles', profile, 'node_modules/@kingsoftcloud/agentkit-studio'));
+const scratch = await realpath(await mkdtemp(join(tmpdir(), 'studio-frozen-host-')));
+const home = join(scratch, 'agentkit');
+const isolatedProfile = join(scratch, 'dsh/profiles', profile);
+await mkdir(isolatedProfile, { recursive: true });
+await cp(join(process.env.DSH_HOME, 'profiles', profile), isolatedProfile, { recursive: true, dereference: false, mode: constants.COPYFILE_FICLONE });
+process.env.DSH_HOME = join(scratch, 'dsh');
+const installed = join(isolatedProfile, 'node_modules/@kingsoftcloud/agentkit-studio');
 const loadStudio = path => import(pathToFileURL(join(installed, 'src', path)));
 const { mountStudioHost } = await loadStudio('host/bootstrap.mjs');
 const { resolveRuntimeBridge } = await loadStudio('host/runtime-bridge.mjs');
@@ -29,8 +37,6 @@ const { dshModelRoute } = await loadStudio('agent-preset-admission.mjs');
 const require = createRequire(join(source, 'apps/cli/package.json'));
 const { loadLayeredEnv } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')));
 const { runProfile } = await import(pathToFileURL(join(source, 'apps/cli/lib/profile-boot.js')));
-const scratch = await mkdtemp(join(tmpdir(), 'studio-frozen-host-'));
-const home = join(scratch, 'agentkit');
 await mkdir(home);
 const overlay = join(scratch, 'disable-studio.yml');
 await writeFile(overlay, '- id: agentkit-studio\n  disabled: true\n');
@@ -57,7 +63,7 @@ const modelServer = createServer(async (request, response) => {
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     response.write(frame({ choices: [{ delta: { content: 'ASSISTANT_' }, finish_reason: null }] }));
     await new Promise(resolve => setTimeout(resolve, 1500));
-    response.write(frame({ choices: [{ delta: { content: 'DONE' }, finish_reason: 'stop' }] }));
+    response.write(frame({ choices: [{ delta: { content: "DONE\n\n## Markdown 验收\n\n- 原生列表\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 已渲染 |\n\n```js\nconsole.log(\"studio\");\n```\n\n[文档](https://example.com)\n\n[拒绝危险链接](javascript:alert(1))\n\n<img src=x onerror=\"globalThis.__studioMarkdownUnsafe=true\">" }, finish_reason: 'stop' }] }));
     response.end('data: [DONE]\n\n');
   } catch (error) {
     report.modelFailure = { name: error.name, code: error.code || 'MODEL_FIXTURE_ASSERTION' };
@@ -72,7 +78,7 @@ await writeFile(join(home, 'config.yaml'), JSON.stringify({
   modelProfiles: profiles,
   modelProfileKeys: { STUDIO_FROZEN_FIXTURE_KEY: 'synthetic-frozen-fixture' },
 }), { mode: 0o600 });
-const env = { AGENTKIT_HOME: home, CODEX_HOME: join(home, 'codex') };
+const env = { AGENTKIT_HOME: home, DSH_HOME: process.env.DSH_HOME, CODEX_HOME: join(home, 'codex') };
 const resourceAdapterFactory = async () => ({
   listMcpTools: async () => [{ name: 'refactor_probe', description: 'Controlled frozen Host probe', inputSchema: { type: 'object', properties: {} } }],
   callMcpTool: async () => { toolCalls++; return { value: 'FROZEN_TOOL_OK' }; },
@@ -80,7 +86,7 @@ const resourceAdapterFactory = async () => ({
 });
 const stdout = process.stdout.write.bind(process.stdout);
 let clientChild;
-let launchUrl, output = '', running, fiber, cookie, origin, stage = 'startup', checksComplete = false;
+let launchUrl, output = '', running, fiber, cookie, origin, stage = 'startup', checksComplete = false, retired = false;
 const recordIncompleteExit = code => {
   report.failure ??= { stage, code: 'VERIFY_PROCESS_EXITED_BEFORE_COMPLETION', processCode: code };
   report.passed = false;
@@ -153,7 +159,9 @@ try {
   assert.ok(buildId);
   await fiber.dispose(); fiber = undefined;
   const port = await freePort(), token = randomUUID() + randomUUID();
-  const runtime = { AGENTKIT_RUNTIME_AGENT_ID: agentId, AGENTKIT_RUNTIME_BUILD_ID: buildId, AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: String(port) };
+  const receiptHash = createHash('sha256').update('controlled-retirement-fixture').digest('hex');
+  await writeFile(join(scratch, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: receiptHash }));
+  const runtime = { AGENTKIT_BUNDLE_SHA256: receiptHash, AGENTKIT_RUNTIME_AGENT_ID: agentId, AGENTKIT_RUNTIME_BUILD_ID: buildId, AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: String(port) };
   await mount(runtime);
   const base = `http://127.0.0.1:${port}`, headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   const api = async (op, payload = {}) => {
@@ -179,7 +187,7 @@ try {
   assert.notEqual((await api('snapshot')).status, 'completed');
   const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
   const completed = await waitFor(value => value.status === 'completed');
-  assert.equal(completed.messages.at(-1).text, 'ASSISTANT_DONE');
+  assert.match(completed.messages.at(-1).text, /^ASSISTANT_DONE/);
   check('client-process-exits-before-real-dsh-finishes', { nativeMessages: completed.messages.length });
   stage = 'idempotent-submit';
   const before = requests.length;
@@ -199,7 +207,7 @@ try {
   await running.shutdown.shutdown(0); running = undefined;
   await boot(); await mount(runtime);
   const recovered = await api('snapshot');
-  assert.equal(recovered.status, 'completed'); assert.equal(recovered.messages.at(-1).text, 'ASSISTANT_DONE');
+  assert.equal(recovered.status, 'completed'); assert.match(recovered.messages.at(-1).text, /^ASSISTANT_DONE/);
   await api('submit', { requestId: 'second', text: 'continue conversation' });
   await waitFor(value => value.status === 'completed' && value.messages.some(item => item.requestId === 'second'));
   assert.equal(requests.at(-1).priorResponse, true);
@@ -212,6 +220,14 @@ try {
     report.limits[1] = 'Controlled model and ownership catalog; real cloud deployment and memory extraction require separate acceptance.';
     check(native ? 'real-electron-ui-reopens-after-local-host-exits' : 'real-web-ui-reopens-after-local-host-exits');
   }
+  stage = 'delete-dedicated-assistant';
+  const deletion = await api('close');
+  assert.equal(deletion.deleted, true); assert.equal(deletion.historyDeleted, true); assert.equal(deletion.memoryDeleted, true);
+  await assert.rejects(access(join(scratch, 'dsh')), { code: 'ENOENT' });
+  await assert.rejects(access(home), { code: 'ENOENT' });
+  await access(join(originalInstalled, 'src/index.mjs'));
+  retired = true;
+  check('real-dsh-history-and-dedicated-runtime-deleted-original-installation-preserved');
   assert.equal(report.modelFailure, undefined);
   checksComplete = true;
 } catch (error) {
@@ -222,7 +238,7 @@ try {
   clientChild?.kill('SIGKILL');
   stage = 'final-host-cleanup';
   await fiber?.dispose();
-  if (running) {
+  if (running && !retired) {
     const settings = running.ctx.get('settings');
     const namespace = settings.describe({ redactSecrets: true }).find(item => item.ns === 'llm-pi-ai');
     const owned = profiles.map(profile => dshModelRoute(profile)).filter(route => Object.hasOwn(namespace?.value?.providers || {}, route));

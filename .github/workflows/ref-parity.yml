@@ -32,5 +32,5 @@ jobs:
           git remote add ezone "$EZONE_REMOTE_URL"
           GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/ezone-ssh/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/ezone-ssh/known_hosts" \
             node scripts/check-ref-parity.mjs \
-              --left-remote ezone --left-ref refs/heads/public-clean \
+              --left-remote ezone --left-ref refs/heads/master \
               --right-remote origin --right-ref refs/heads/main

@@ -311,7 +311,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     await bindRuntime();
   }
   const routes = createStudioRoutes(ctx, {
-    ...services, ...templateServices, studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility,
+    ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
   });

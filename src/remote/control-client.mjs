@@ -121,9 +121,9 @@ export function createProductClient(connection, { window = globalThis.window } =
     // Local studio operations (builds/tasks) run inside the plugin Node
     // host; this helper reaches them over the authenticated bridge with a
     // local-Host REST fallback for packaged hosts.
-    async function studioBridgeOperation(endpoint, payload) {
+    async function studioBridgeOperation(endpoint, payload, signal) {
         if (connection?.rpc?.call) {
-            const result = await callStudioOperation(connection, endpoint, payload);
+            const result = await callStudioOperation(connection, endpoint, payload, signal);
             if (!result?.ok) {
                 const error = new Error(result?.error?.message || 'Studio 本地任务请求失败');
                 error.code = result?.error?.code || 'STUDIO_OPERATION_FAILED';
@@ -192,9 +192,9 @@ export function createProductClient(connection, { window = globalThis.window } =
     // same authenticated bridge; the legacy Studio Host REST routes are
     // kept for a local-Host deployment only. Declared in factory scope so
     // every hostRemote method can reach it.
-    async function skillBridgeCall(endpoint, payload = {}) {
+    async function skillBridgeCall(endpoint, payload = {}, signal) {
         if (connection?.rpc?.call) {
-            const result = await callStudioOperation(connection, endpoint, payload);
+            const result = await callStudioOperation(connection, endpoint, payload, signal);
             if (!result?.ok) {
                 const error = new Error(result?.error?.message || '本地 Skill 操作失败');
                 error.code = result?.error?.code || 'SKILL_DISCOVERY_FAILED';
@@ -212,6 +212,8 @@ export function createProductClient(connection, { window = globalThis.window } =
         return bridgeByEndpoint[endpoint](payload);
     }
     return {
+        computerConnection: signal => studioBridgeOperation('host/computer', {}, signal),
+        closeAssistant: payload => studioBridgeOperation('assistant/close', payload),
         assistantCatalog: () => studioBridgeOperation('assistant/catalog', {}),
         assistantExecute: (agentId, operation, input = {}) => studioBridgeOperation('assistant/execute', { agentId, operation, input }),
         get baseUrl() { return baseUrl; },

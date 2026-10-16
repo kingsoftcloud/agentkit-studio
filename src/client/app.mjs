@@ -40,6 +40,8 @@ import { createConversationAgentState } from "./state/conversation-agent.mjs";
 import { createNativeAuthoring } from "./state/native-authoring.mjs";
 import { readProductVersions } from "./state/product-versions.mjs";
 import { createStudioActions } from "./state/actions.mjs";
+import { createComputerConnection } from './components/computer-connection.mjs';
+import { createAssistantSettings } from './pages/assistant-settings.mjs';
 import { createAssistantPage } from './pages/assistant.mjs';
 
 import { createExpertPages } from './pages/expert-catalog.mjs';
@@ -55,8 +57,8 @@ export function createStudioApp({ React, primitives }, { window = globalThis.win
   const { SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction } = createStudioPrimitives({ React });
   const { inputStyle, buttonStyle, pagerButtonStyle } = createFormStyles(BRAND);
   const ResourceDialog = createResourceDialog({ React, buttonStyle });
-  const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal } = primitives;
-  const ui = { React, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal };
+  const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText } = primitives;
+  const ui = { React, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText };
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = readProductVersions(window.__AGENTKIT_STUDIO__);
   const connectionOwner = createConnectionOwner();
   const hostRemote = createProductClient(connectionOwner.connection, { window });
@@ -97,6 +99,8 @@ export function createStudioApp({ React, primitives }, { window = globalThis.win
   ui.ModelSettingsSection = createModelSettingsSection({ ui, hostRemote, window, CustomEvent });
   Object.assign(ui, createCredentialOnboarding({ ui, hostRemote, window, document }));
   Object.assign(ui, createAgentPages({ ui, hostRemote, actions, window }));
+  ui.ComputerConnection = createComputerConnection({ ui, hostRemote, actions, window, document });
+  ui.AssistantSettingsSection = createAssistantSettings({ ui, hostRemote, actions, window });
   ui.AssistantPage = createAssistantPage({ ui, hostRemote, actions, window });
   Object.assign(ui, createExpertPages({ ui, hostRemote, actions, window, CustomEvent }));
   Object.assign(ui, createTemplateSquare({ ui, hostRemote, window, CustomEvent }));

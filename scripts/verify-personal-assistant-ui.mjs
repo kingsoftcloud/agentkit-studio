@@ -75,7 +75,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
       const body = route.request().postDataJSON();
       if (!body?.method?.startsWith('assistant/')) return route.continue();
       try {
-        const value = body.method === 'assistant/catalog' ? { items: [{ metadata: { id: 'cloud-fixture', name: '云端助理验收' }, spec: { runtime: { type: 'dsh-native' } } }] }
+        const value = body.method === 'assistant/catalog' ? { items: [{ metadata: { id: 'cloud-fixture', name: '云端助理验收' }, deployment: { id: 'fixture-deployment', versionId: 'fixture-version' }, spec: { runtime: { type: 'dsh-native' } } }] }
           : await api(body.payload.operation, body.payload.input);
         await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: true, value } } });
       } catch { await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: false, error: { code: 'TEST_RELAY_FAILED', message: '验收连接失败' } } } }); }
@@ -92,11 +92,37 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await open();
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-welcome.png'), fullPage: true });
     await page.getByLabel('发给助理', { exact: true }).fill('保留这份草稿');
-    await page.getByRole('button', { name: '助理设置', exact: true }).click();
-    await page.getByRole('dialog', { name: '助理设置', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: '助理设置', exact: true }).count(), 0);
+    await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
+    const connectionCard = page.getByRole('dialog', { name: '助理连接信息', exact: true });
+    await connectionCard.getByRole('status').filter({ hasText: '本机已连接' }).waitFor();
+    await connectionCard.getByText('云端助理尚未接入本机执行。', { exact: false }).waitFor();
+    const offline = async route => {
+      if (route.request().postDataJSON()?.method !== 'host/computer') return route.fallback();
+      const body = route.request().postDataJSON();
+      await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: false, error: { code: 'HOST_UNAVAILABLE', message: 'controlled disconnect' } } } });
+    };
+    await page.route('**/agentkit/**', offline);
+    await page.evaluate(() => window.dispatchEvent(new Event('agentkit-studio:connection-reset')));
+    await page.getByRole('button', { name: '助理连接信息', exact: true }).filter({hasText:'本机连接已断开'}).waitFor();
+    await page.unroute('**/agentkit/**', offline);
+    await page.evaluate(() => window.dispatchEvent(new Event('agentkit-studio:connection-reset')));
+    await connectionCard.getByRole('status').filter({ hasText: '本机已连接' }).waitFor();
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-connection.png'), fullPage: true });
+    await connectionCard.getByRole('button', { name: '在系统设置中管理助理', exact: true }).click();
+    const settings = page.getByRole('dialog');
+    await settings.getByRole('button', { name: '个人助理', exact: true }).click();
+    await page.locator('[data-studio-assistant-settings]').waitFor();
+    await page.getByLabel('云端助理', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '关闭并删除', exact: true }).waitFor();
+    await page.getByRole('button', { name: '关闭并删除', exact: true }).click();
+    const deletion = page.getByRole('dialog', { name: '关闭并删除个人助理', exact: true });
+    await deletion.getByText('共享知识库和记忆库实例会保留。', { exact: false }).waitFor();
+    await deletion.getByRole('button', { name: '取消', exact: true }).click();
+    await deletion.waitFor({ state: 'hidden' });
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-settings.png'), fullPage: true });
-    await page.getByRole('button', { name: '查看计划任务', exact: true }).click();
-    await page.getByRole('dialog', { name: '计划任务', exact: true }).waitFor();
+    await page.locator('[data-studio-assistant-settings]').getByRole('button', { name: '计划任务', exact: true }).click();
+    await page.getByLabel('任务名称', { exact: true }).waitFor();
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
     assert.equal(await page.getByLabel('发给助理', { exact: true }).inputValue(), '保留这份草稿');
@@ -111,12 +137,17 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await open(state);
     await page.getByLabel('助理会话', { exact: true }).getByText('browser task survives Studio Host exit', { exact: true }).waitFor({ timeout: 15000 });
     assert.ok(await page.getByLabel('助理会话', { exact: true }).getByText('ASSISTANT_DONE', { exact: true }).count());
+    await page.getByRole('heading', { name: 'Markdown 验收', exact: true }).waitFor();
+    await page.getByRole('cell', { name: '已渲染', exact: true }).waitFor();
+    await page.locator('pre code').filter({ hasText: 'console.log("studio");' }).waitFor();
+    assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
+    assert.equal(await page.evaluate(() => globalThis.__studioMarkdownUnsafe === true), false);
     await page.screenshot({ path: screenshot, fullPage: true });
     const { verifyStudioCatalogUi } = await import('./verify-studio-catalog-ui.mjs');
     const catalog = await verifyStudioCatalogUi(page);
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-catalog.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    return { passed: true, catalog, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
+    return { passed: true, catalog, nativeSystemSettings: true, deletionConfirmationCancelled: true, localComputerCard: true, connectionRecovers: true, nativeMarkdown: true, unsafeMarkdownBlocked: true, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
       localHostRestarted: true, clientRestarted: true, nativeElectron: process.env.STUDIO_VERIFY_NATIVE === '1', cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
   } catch (error) { await page?.screenshot({ path: screenshot.replace(/\.png$/, '-failure.png'), fullPage: true, timeout: 3000 }).catch(() => {}); throw error; }
   finally { try { await closeVerificationClient(browser); } finally { await stop(); } }
