@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated DSH source and homes');
 const source = resolve(process.env.AGENTKIT_DSH_ROOT);
+await import('./build-client.mjs');
 const profile = process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor';
 const routeOnly = process.env.STUDIO_VERIFY_ROUTE_FAILURES_ONLY === '1';
 const installed = join(process.env.DSH_HOME, 'profiles', profile, 'node_modules/@kingsoftcloud/agentkit-studio');
