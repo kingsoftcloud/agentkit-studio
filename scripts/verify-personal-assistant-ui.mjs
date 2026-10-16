@@ -77,14 +77,27 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     });
     if (url) await page.goto(url); else await page.reload();
     await page.getByText('个人助理', { exact: true }).first().click({ timeout: 30000 });
-    await page.getByLabel('云端助理', { exact: true }).selectOption('cloud-fixture');
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('agentkit.assistant.agent')) === 'cloud-fixture');
+    assert.equal(await page.getByRole('tablist', { name: '助理功能' }).count(), 0, 'conversation opens without configuration tabs');
+    assert.equal(await page.getByLabel('云端助理', { exact: true }).isVisible(), false, 'connection selector belongs in secondary settings');
+    await page.getByLabel('发给助理', { exact: true }).waitFor();
     await page.getByRole('button', { name: '发送', exact: true }).waitFor();
   };
   try {
     await open();
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-welcome.png'), fullPage: true });
+    await page.getByLabel('发给助理', { exact: true }).fill('保留这份草稿');
+    await page.getByRole('button', { name: '助理设置', exact: true }).click();
+    await page.getByRole('dialog', { name: '助理设置', exact: true }).waitFor();
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-settings.png'), fullPage: true });
+    await page.getByRole('button', { name: '查看计划任务', exact: true }).click();
+    await page.getByRole('dialog', { name: '计划任务', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    assert.equal(await page.getByLabel('发给助理', { exact: true }).inputValue(), '保留这份草稿');
     await page.getByLabel('发给助理', { exact: true }).fill('browser task survives Studio Host exit');
-    await page.getByRole('button', { name: '发送', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: '云端已接收并保存' }).waitFor({ timeout: 15000 });
+    await page.getByLabel('发给助理', { exact: true }).press('Enter');
+    await page.getByRole('status').filter({ hasText: '已收到。' }).waitFor({ timeout: 15000 });
     const state = await context.storageState();
     await closeVerificationClient(browser); browser = null; await stop();
     let complete = false;
@@ -95,7 +108,8 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     assert.ok(await page.getByLabel('助理会话', { exact: true }).getByText('ASSISTANT_DONE', { exact: true }).count());
     await page.screenshot({ path: screenshot, fullPage: true });
     assert.deepEqual(errors, []);
-    return { passed: true, localHostRestarted: true, clientRestarted: true, nativeElectron: process.env.STUDIO_VERIFY_NATIVE === '1', cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
+    return { passed: true, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
+      localHostRestarted: true, clientRestarted: true, nativeElectron: process.env.STUDIO_VERIFY_NATIVE === '1', cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
   } catch (error) { await page?.screenshot({ path: screenshot.replace(/\.png$/, '-failure.png'), fullPage: true, timeout: 3000 }).catch(() => {}); throw error; }
   finally { try { await closeVerificationClient(browser); } finally { await stop(); } }
 }
