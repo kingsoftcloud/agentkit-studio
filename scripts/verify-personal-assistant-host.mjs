@@ -192,6 +192,7 @@ try {
   await waitFor(value => value.status === 'completed' && value.messages.length > completed.messages.length);
   const scheduled = (await api('schedule-list')).items;
   assert.equal(scheduled.length, 1); assert.equal(scheduled[0].status, 'inactive');
+  assert.match(requests.at(-1).input, /timer while client is closed/, 'the model must receive the scheduled task, not repeat the previous user input');
   check('official-schedule-delivers-without-client');
   stage = 'fresh-host-recovery';
   await fiber.dispose(); fiber = undefined;
