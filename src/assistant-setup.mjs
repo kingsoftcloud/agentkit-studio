@@ -166,7 +166,11 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     if (input.confirmed !== true) throw portableError('ASSISTANT_CONFIRM_REQUIRED', '请确认资源规格和计费提示后开通');
     const key = await scope();
     const previous = await status();
-    if (!['NOT_STARTED', 'DELETED'].includes(previous.state)) { kick(key); return publicState(await read(key)); }
+    if (!['NOT_STARTED', 'DELETED'].includes(previous.state)) {
+      const existing = await read(key);
+      if (!(readyStates.has(existing.state) && existing.welcomed)) kick(key);
+      return publicState(existing);
+    }
     const available = await options();
     if (input.optionsId !== available.optionsId) throw portableError('ASSISTANT_OPTIONS_CHANGED', '开通配置已变化，请刷新后确认');
     const memory = available.memories.find(item => item.id === input.memoryId) || (available.memories.length === 1 && !input.memoryId ? available.memories[0] : null);
