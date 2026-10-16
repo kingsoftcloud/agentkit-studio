@@ -12,7 +12,7 @@ import { verifyPackage } from '../src/catalog-dependencies.mjs';
 import { createTemplateWorkflows } from '../src/template-workflows.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
 async function fixture(t) {
-  const directory = await mkdtemp(join(tmpdir(),'studio-download-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const directory = await mkdtemp(join(tmpdir(),'studio-download-')), disposers = [];
   const payload = Buffer.from('FULL_REFERENCE_8316\n'.repeat(9000));
   const entries=[{name:'skills/demo/SKILL.md',data:Buffer.from('---\nname: demo\ndescription: Demo\n---\nRead references/context.txt')},{name:'skills/demo/references/context.txt',data:payload},{name:'skills/demo/scripts/check.sh',data:Buffer.from('#!/bin/sh\necho full-assets\n'),executable:true}];
   const zip=createZip(entries),files=entries.map(row=>({path:row.name,size:row.data.length,sha256:hash(row.data),executable:!!row.executable}));
@@ -23,12 +23,15 @@ async function fixture(t) {
     const data=corrupt?Buffer.alloc(zip.length,1):zip;
     const timer=setInterval(()=>{const end=Math.min(offset+8192,data.length);res.write(data.subarray(offset,end));offset=end;if(offset===data.length){clearInterval(timer);res.end();}},3);
     req.on('close',()=>clearInterval(timer));
-  });server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();return new Promise(resolve=>server.close(resolve));});
+  });server.listen(0,'127.0.0.1');await once(server,'listening');t.after(async()=>{
+    try { for (const dispose of disposers) await dispose(); }
+    finally { server.closeAllConnections(); await new Promise(resolve=>server.close(resolve)); await rm(directory,{recursive:true,force:true}); }
+  });
   const asset={catalogId:'private-release',sha256:hash(zip),bytes:zip.length,expandedBytes:entries.reduce((n,r)=>n+r.data.length,0),type:'zip'};
   const client={action:async(action,payload)=>{assert.equal(action,'GetStudioTemplateDownload');tickets.push(payload);return{...asset,DownloadUrl:`http://127.0.0.1:${server.address().port}/file`};}};
   const cache=createTemplatePackageCache({directory:join(directory,'downloads'),client,allowTestLoopback:true});
   const bundle={digest:hash(JSON.stringify(files)),files,archive:asset};
-  return{directory,cache,asset,bundle,calls,tickets,payload,setCorrupt:value=>{corrupt=value;}};
+  return{directory,cache,asset,bundle,calls,tickets,payload,dispose:callback=>disposers.push(callback),setCorrupt:value=>{corrupt=value;}};
 }
 test('streamed bytes support cancel/resume with Range; complete cache and installed Skills avoid new downloads',async t=>{
   const f=await fixture(t),controller=new AbortController(),progress=[];
@@ -62,9 +65,15 @@ test('digest mismatch refuses installation; a forged file inventory cannot be co
 test('workflow cancellation and failures never continue into Agent creation; retries reconcile the same operation',async t=>{
   const f=await fixture(t);let creates=0;
   const workflows=createTemplateWorkflows({directory:join(f.directory,'workflows'),summon:async({signal,onProgress})=>{await f.cache.download(f.asset,{signal,onProgress});signal.throwIfAborted();onProgress({phase:'creating',cancellable:false});creates++;return{status:'created',agent:{metadata:{id:'ordinary-agent'}}};}});
+  f.dispose(()=>workflows.close());
   const payload={requestId:'operation-123456789',ref:{id:'expert'}};await workflows.start(payload);await workflows.cancel({requestId:payload.requestId});
   let status;do{await new Promise(r=>setTimeout(r,5));status=await workflows.status({requestId:payload.requestId});}while(status.status==='running');
   assert.equal(status.status,'cancelled');assert.equal(creates,0);
   await workflows.start(payload);do{await new Promise(r=>setTimeout(r,5));status=await workflows.status({requestId:payload.requestId});}while(status.status==='running');
   assert.equal(status.status,'succeeded');assert.equal(creates,1);await workflows.start(payload);assert.equal(creates,1);
+  await workflows.close();
+  const restarted=createTemplateWorkflows({directory:join(f.directory,'workflows'),summon:async()=>{creates++;throw Error('completed creation must never repeat');}});
+  f.dispose(()=>restarted.close());
+  assert.equal((await restarted.start(payload)).result.agent.metadata.id,'ordinary-agent');
+  assert.equal(creates,1);
 });
