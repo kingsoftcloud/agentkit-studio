@@ -197,6 +197,11 @@ try {
   assert.match(firstRequest?.identity || '', /"assistantName":"小星"/);
   assert.match(firstRequest?.identity || '', /"ownerName":"小夏"/);
   check('saved-assistant-and-owner-names-reach-real-model-system-prompt');
+  stage = 'same-root-runtime-reload';
+  await fiber.dispose(); fiber = undefined;
+  await mount(runtime);
+  assert.equal((await api('snapshot')).status, 'completed');
+  check('same-root-runtime-reload-releases-and-restores-native-identity');
   stage = 'idempotent-submit';
   const before = requests.filter(row => row.input === 'continue after client exit').length;
   await api('submit', { requestId: 'first', text: 'continue after client exit' });
