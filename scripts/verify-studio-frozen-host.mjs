@@ -43,6 +43,8 @@ const deadline = async (promise, ms = 15000) => {
 };
 const frame = value => `data: ${JSON.stringify(value)}\n\n`;
 const requests = [];
+const businessInputs = new Set(['tool-and-freeze', 'continue-context', 'alternate-model', 'check-model-after-replay', 'cancel-me', 'unload-me']);
+let auxiliaryModelCalls = 0;
 let toolCalls = 0, pending;
 const modelServer = createServer(async (request, response) => {
   try {
@@ -52,6 +54,14 @@ const modelServer = createServer(async (request, response) => {
     const body = JSON.parse(raw);
     const lastUser = body.messages.findLast(item => item.role === 'user');
     const input = typeof lastUser.content === 'string' ? lastUser.content : lastUser.content.map(part => part.text || '').join('');
+    // Native automatic titles also call this model. They have their own prompt,
+    // no tool history, and must not enter business-turn/replay call accounting.
+    if (!businessInputs.has(input)) {
+      auxiliaryModelCalls++;
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(frame({ choices: [{ delta: { content: 'Frozen runtime verification' }, finish_reason: 'stop' }] }) + 'data: [DONE]\n\n');
+      return;
+    }
     const withTool = body.messages.some(item => item.role === 'tool' && JSON.stringify(item.content).includes('FROZEN_TOOL_OK'));
     requests.push({ model: body.model, frozenPrompt: JSON.stringify(body.messages[0]).includes('FROZEN_SYSTEM_A'), latestPrompt: JSON.stringify(body.messages[0]).includes('LATEST_SYSTEM_B'), withTool, input });
     assert.equal(body.model, ['alternate-model', 'check-model-after-replay'].includes(input) ? 'model-b' : 'model-a', 'the selected frozen model must match the admitted request');
@@ -72,7 +82,8 @@ const modelServer = createServer(async (request, response) => {
     response.end('data: [DONE]\n\n');
   } catch (error) {
     report.modelFailure = { name: error.name, code: error.code || 'MODEL_FIXTURE_ASSERTION' };
-    response.writeHead(500); response.end('controlled fixture failed');
+    if (!response.headersSent) { response.writeHead(500); response.end('controlled fixture failed'); }
+    else response.destroy();
   }
 });
 modelServer.listen(0, '127.0.0.1'); await once(modelServer, 'listening');
@@ -95,6 +106,7 @@ const recordIncompleteExit = code => {
   report.failure ??= { stage, code: 'VERIFY_PROCESS_EXITED_BEFORE_COMPLETION', processCode: code };
   report.passed = false;
   report.modelRequests = requests.map(({ input, ...summary }) => summary);
+  report.auxiliaryModelCalls = auxiliaryModelCalls;
   writeFileSync(target, JSON.stringify(report, null, 2) + '\n');
   process.exitCode = 1;
 };
@@ -365,6 +377,7 @@ try {
   process.exitCode = 1;
 } finally {
   report.modelRequests = requests.map(({ input, ...summary }) => summary);
+  report.auxiliaryModelCalls = auxiliaryModelCalls;
   stage = 'final-host-cleanup';
   await fiber?.dispose();
   if (running) {
