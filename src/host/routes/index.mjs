@@ -13,6 +13,7 @@ import { createEvaluationRoutes } from './evaluations.mjs';
 import { createChannelRoutes } from './channels.mjs';
 import { createServerActionRoutes } from './server.mjs';
 import { createIntegrationServices } from '../services/integrations.mjs';
+import { createAssistantRoutes } from './assistant.mjs';
 
 /** Each domain captures only its declared dependencies from this Host. */
 export function createStudioRoutes(ctx, services) {
@@ -22,6 +23,7 @@ export function createStudioRoutes(ctx, services) {
   const builds = createBuildRoutes(deps);
   const models = createModelRoutes(deps);
   return Object.freeze({
+    assistant: createAssistantRoutes(deps),
     host: async () => ({ ok: true, value: services.hostCompatibility.inspect() }),
     resources, mcp: resources,
     credentials: (_endpoint, payload) => credentials(payload),

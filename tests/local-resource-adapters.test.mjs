@@ -160,7 +160,7 @@ test('knowledge adapter bounds DSH search text to the RetrieveKnowledge contract
 test('memory adapter writes a bounded conversation through CreateMemorySdk', async () => {
   let call;
   const adapters = createLocalResourceAdapters({
-    serverClient: { action: async (...args) => { call = args; return { data: { accepted: true } }; } },
+    serverClient: { action: async (...args) => { call = args; return { requestId: 'write-receipt', data: { accepted: true } }; } },
   });
   const result = await adapters.writeMemory('mem-1', 'user-1', [
     { role: 'user', content: '我喜欢轻松口吻' },
@@ -306,4 +306,17 @@ test('MCP clients are replaced when a DSH credential rotates', async () => {
   const distinct = authorizations.filter(Boolean).filter((value, index, values) => index === 0 || value !== values[index - 1]);
   assert.deepEqual(distinct, ['Bearer first-token', 'Bearer second-token']);
   await adapters.close();
+});
+
+
+test('memory mutations require a successful receipt and lists cannot cross partitions', async () => {
+  let reply = { data: {} };
+  const adapters = createLocalResourceAdapters({ serverClient: { action: async () => reply } });
+  await assert.rejects(adapters.writeMemory('m', 'u', [{ role: 'user', content: 'remember' }]), { code: 'MEMORY_RESPONSE_UNKNOWN' });
+  reply = { requestId: 'r', data: { Code: 403 } };
+  await assert.rejects(adapters.deleteMemory('m', 'u', 'memory'), { code: 'MEMORY_RESPONSE_UNKNOWN' });
+  reply = { requestId: 'r', data: { MemoryList: [{ MemoryId: 'foreign', Memory: 'private', AgentUserId: 'other' }] } };
+  await assert.rejects(adapters.listMemory('m', 'u'), { code: 'MEMORY_PARTITION_MISMATCH' });
+  reply = { requestId: 'r', data: { Success: true } };
+  assert.deepEqual(await adapters.updateMemory('m', 'u', 'memory', 'corrected'), { accepted: true });
 });
