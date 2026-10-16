@@ -113,7 +113,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
         button(editing ? '保存纠正' : '记住这条信息', () => void execute(editing ? 'memory-update' : 'memory-save', { id: editing, text: memoryText }, () => { setMemoryText(''); setEditing(''); setNotice('已提交记忆更新，列表会自动刷新。'); }), !view?.memoryEnabled || !memoryText.trim())) : null,
       chosen && tab === 'schedule' ? h('div', { style: { display: 'grid', gap: '12px' } },
         h('p', null, '由云端 DSH 官方定时任务插件触发，结果回到此会话。第一版支持一次性提醒；无需保持 Studio 打开。'),
-        ...tasks.map(task => h('div', { key: task.id, style: box }, h('strong', null, task.title), h('p', null, `${task.scheduledAt} · ${task.status === 'active' ? '等待触发' : '已投递'}`),
+        ...tasks.map(task => h('div', { key: task.id, style: box }, h('strong', null, task.title), h('p', { style: { whiteSpace: 'pre-wrap' } }, task.prompt), h('p', null, `${task.scheduledAt} · ${task.status === 'active' ? '等待触发' : '已投递'}`),
           button('删除任务', async () => { if (await actions.confirm({ title: '删除定时任务', detail: '停止后续触发，并删除此任务的投递记录。', confirmLabel: '删除', danger: true })) void execute('schedule-delete', { id: task.id }, () => setTasks(rows => rows.filter(row => row.id !== task.id))); }))),
         h('input', { 'aria-label': '任务名称', placeholder: '任务名称', value: scheduleTitle, maxLength: 120, style: inputStyle(), onChange: event => setScheduleTitle(event.target.value) }),
         h('textarea', { 'aria-label': '任务内容', placeholder: '到时间后让助理执行什么', value: schedulePrompt, maxLength: 4000, rows: 3, style: inputStyle(), onChange: event => setSchedulePrompt(event.target.value) }),

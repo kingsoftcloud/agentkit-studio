@@ -48,7 +48,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
       if (!role) return [];
       const message = role === 'assistant' ? event.data?.message : event.data;
       if (role === 'user' && !['user', 'schedule'].includes(message?.source?.kind)) return [];
-      return [{ source: message?.source?.kind, id: `${sessionId}:${event.seq}`, seq: event.seq, role, text: text(message?.content), requestId: message?.source?.rpcId || '' }];
+      return [{ source: message?.source?.kind, id: `${sessionId}:${event.seq}`, seq: event.seq, role, text: message?.source?.kind === 'schedule' ? '定时任务已触发。' : text(message?.content), requestId: message?.source?.rpcId || '' }];
     });
     const end = events.findLast(event => event.type === 'turn/start' || event.type === 'turn/end');
     const status = end?.type === 'turn/start' ? 'running' : end?.data?.reason?.kind === 'completed' ? 'completed'
