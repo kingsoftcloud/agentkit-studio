@@ -12,7 +12,7 @@ import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { dshModelFailure } from '../model-failure.mjs';
 import { createCodexToolRecorder } from './codex-tool-events.mjs';
-import { gatewayHistory, isDshUserInput } from './dsh-messages.mjs';
+import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 
@@ -119,7 +119,7 @@ function textOf(message) {
 }
 
 function isUserInput(message, includeTeamMessages = false) {
-  return isDshUserInput(message) || (includeTeamMessages && message?.role === 'user' && message.source?.kind === 'team-message');
+  return isDshUserInput(message) || (includeTeamMessages && isDshAgentNotice(message));
 }
 
 function lastUser(messages, includeTeamMessages = false) {

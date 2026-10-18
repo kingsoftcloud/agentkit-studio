@@ -163,7 +163,7 @@ try {
   await boot(); await mount();
   stage = 'host-compatibility';
   const compatibility = await rpc('host/compatibility');
-  assert.deepEqual(compatibility.baseline, { required: '0.2.0-rc.2', actual: '0.2.0-rc.2', compatible: true });
+  assert.deepEqual(compatibility.baseline, { required: '0.2.1-rc.2', actual: '0.2.1-rc.2', compatible: true });
   assert.deepEqual(compatibility.contract, { required: 1, actual: 1, compatible: true });
   assert.ok(Object.values(compatibility.features).every(feature => feature.available));
   check('running-dsh-baseline-and-live-capabilities', { compatibility });
@@ -196,7 +196,7 @@ try {
     Object.defineProperty(controllerForCompatibility, 'promptFingerprintVersion', { ...fingerprintDescriptor, value: undefined });
     await mount({ ...runtime, AGENTKIT_STUDIO_DSH_VERSION: 'display-only-version' });
     const missing = await rpc('host/compatibility');
-    assert.equal(missing.baseline.actual, '0.2.0-rc.2', 'display metadata must not establish Host identity');
+    assert.equal(missing.baseline.actual, '0.2.1-rc.2', 'display metadata must not establish Host identity');
     assert.equal(missing.features['frozen-runtime'].available, false);
     assert.equal(missing.features['agent-presets'].available, true);
     assert.deepEqual(missing.features['frozen-runtime'].missingCapabilities, ['request-fingerprint']);

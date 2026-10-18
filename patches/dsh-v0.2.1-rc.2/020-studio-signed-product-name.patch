@@ -1,0 +1,46 @@
+diff --git a/apps/desktop/scripts/package-macos.ts b/apps/desktop/scripts/package-macos.ts
+index 4ba0fd12ca8cff27d3c4f1e085cd6022cc66dc1a..f66aed5c334e5d5f07e9d0aad9128371255d7f68 100644
+--- a/apps/desktop/scripts/package-macos.ts
++++ b/apps/desktop/scripts/package-macos.ts
+@@ -78,7 +78,8 @@ export async function packageMacOSArtifacts(
+   const expected = resolveMacOSSigningEnvironment(environment)
+   const credentials = resolveMacOSNotarizationEnvironment(environment)
+   const update = resolveDesktopAutoUpdateConfig(environment, 'darwin', arch)
+-  const appPath = join(artifactsRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app')
++  const productName = environment.DSH_DESKTOP_PRODUCT_NAME?.trim() || 'DeepSeek Harness'
++  const appPath = join(artifactsRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', `${productName}.app`)
+   const root = await mkdtemp(join(dirname(artifactsRoot), 'notarization-'))
+   const zipApp = join(root, 'zip', basename(appPath))
+   const dmgApp = join(root, 'dmg', basename(appPath))
+diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
+index 14e5e17e166467526510ffc4e2dc7cb14e522f30..b4b5cc07f1f39ea4786b25e73d34ac1ce39d7f3e 100644
+--- a/apps/desktop/scripts/package-target.ts
++++ b/apps/desktop/scripts/package-target.ts
+@@ -519,7 +519,8 @@ export async function packageTarget(
+   } else if (target.platform === 'darwin' && !invocation.unsigned && !invocation.skipNotarization) {
+     await execute([...desktopElectronBuilderArguments(target, true), '--config.mac.notarize=false'], electronBuilderEnv)
+     await execute(['exec', 'tsx', 'scripts/smoke-packaged-runtime.ts'], targetEnv)
+-    const appPath = join(buildPaths.artifacts, target.arch === 'arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app')
++    const productName = electronBuilderEnv.DSH_DESKTOP_PRODUCT_NAME?.trim() || 'DeepSeek Harness'
++    const appPath = join(buildPaths.artifacts, target.arch === 'arm64' ? 'mac-arm64' : 'mac', `${productName}.app`)
+     await withMacOSNotarizationProxy(mac?.notarizationProxy,
+       () => notarizeMacOS({ appPath, ...resolveMacOSNotarizationEnvironment(environment) }), undefined, undefined, proxyEvent)
+   } else {
+diff --git a/apps/desktop/scripts/smoke-packaged-runtime.ts b/apps/desktop/scripts/smoke-packaged-runtime.ts
+index 812f5de4c2566bb7bfd4a8c162839eab580b26bd..be6803e4f9f301b377e640c01225f663e41c6ae8 100644
+--- a/apps/desktop/scripts/smoke-packaged-runtime.ts
++++ b/apps/desktop/scripts/smoke-packaged-runtime.ts
+@@ -12,11 +12,11 @@ const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default:
+ const target = resolveDesktopBuildTarget()
+ const windows = target === 'win-x64'
+ const artifacts = desktopArtifactOutput(paths, { unsigned: values.unsigned, skipNotarization: values['skip-notarization'] }).directory
+-const productName = values.unsigned && !windows ? process.env.DSH_CLIENT_TITLE || 'DeepSeek Harness' : 'DeepSeek Harness'
++const productName = process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || process.env.DSH_CLIENT_TITLE?.trim() || 'DeepSeek Harness'
+ const application = windows ? join(artifacts, 'win-unpacked')
+   : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', `${productName}.app`, 'Contents')
+ const resources = join(application, windows ? 'resources' : 'Resources')
+-const executable = windows ? join(application, 'DeepSeek Harness.exe') : join(application, 'MacOS', productName)
++const executable = windows ? join(application, `${productName}.exe`) : join(application, 'MacOS', productName)
+ const descriptor = await verifyDesktopRuntime(paths.dsh, readDesktopRuntime(paths.dsh).release.version,
+   resolveDesktopPackageTarget(target))
+ if (windows && !values.unsigned) await verifyWindowsCode(application)

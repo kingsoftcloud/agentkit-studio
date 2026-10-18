@@ -1,0 +1,154 @@
+diff --git a/docs/subsystems/session.md b/docs/subsystems/session.md
+index 4933734d57745a6473a460decfeaa48e24001a40..97a989687d7911efed451219a8888d72c20ddcee 100644
+--- a/docs/subsystems/session.md
++++ b/docs/subsystems/session.md
+@@ -590,6 +590,9 @@ declare class Session {
+    *   rejected by the compiler for non-surface types like `turn/start` or
+    *   `assistant/attempt`. Assistant messages embed their exact provider
+    *   stream and cannot cite top-level source events.
++   *   Non-surface informational events may instead pass `ignorable: true`
++   *   when omitting them cannot affect model history or execution recovery.
++   *   Message-producing events cannot use this marker.
+    * @returns the logged event — its assigned `seq`/`time` plus the SNAPSHOT of
+    *   `data` that entered the log, so reading `event.data` back sees the logged
+    *   value, never the caller's still-mutable input.
+@@ -611,7 +614,7 @@ declare class Session {
+   append<T extends SessionEventType>(
+     type: T,
+     data: SessionEventMap[T],
+-    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
++    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : [opts?: { ignorable: true }]
+     ): SessionEvent<T>;
+   /**
+    * The {@link EpochHeader} in force after the log's last header event — the
+diff --git a/docs/subsystems/session.zh.md b/docs/subsystems/session.zh.md
+index a3e5446b610f5ddfadaea2550d0b46bf69034e50..937cc5cf2fe7a81cf45bb01e2b37b5b415e85b1f 100644
+--- a/docs/subsystems/session.zh.md
++++ b/docs/subsystems/session.zh.md
+@@ -592,6 +592,9 @@ declare class Session {
+    *   rejected by the compiler for non-surface types like `turn/start` or
+    *   `assistant/attempt`. Assistant messages embed their exact provider
+    *   stream and cannot cite top-level source events.
++   *   Non-surface informational events may instead pass `ignorable: true`
++   *   when omitting them cannot affect model history or execution recovery.
++   *   Message-producing events cannot use this marker.
+    * @returns the logged event — its assigned `seq`/`time` plus the SNAPSHOT of
+    *   `data` that entered the log, so reading `event.data` back sees the logged
+    *   value, never the caller's still-mutable input.
+@@ -613,7 +616,7 @@ declare class Session {
+   append<T extends SessionEventType>(
+     type: T,
+     data: SessionEventMap[T],
+-    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
++    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : [opts?: { ignorable: true }]
+     ): SessionEvent<T>;
+   /**
+    * The {@link EpochHeader} in force after the log's last header event — the
+diff --git a/packages/core/session/README.i18n.yaml b/packages/core/session/README.i18n.yaml
+index c4e74b13905926c3b6cf0429634dfba83de6630c..111c68b1f3ed74ebe1ef27e9a569e5ee22b868b4 100644
+--- a/packages/core/session/README.i18n.yaml
++++ b/packages/core/session/README.i18n.yaml
+@@ -21,8 +21,8 @@
+   en: f80dab583fa3939d
+   zh: 5a9a79ebcef86119
+ /deepseek-ai-dsh-session/use-this-package/append-and-derive:
+-  en: aa5f1951ecf3ac0c
+-  zh: 62a599ace8f2bf15
++  en: 75e1149191142124
++  zh: 9dd20334b277ed84
+ /deepseek-ai-dsh-session/use-this-package/read-the-log:
+   en: c4bf3103b9762b6c
+   zh: 369c734bb20de2ea
+diff --git a/packages/core/session/README.md b/packages/core/session/README.md
+index 178dc708b878d8648942c7b6124c59f69db71a8a..340a3e19e89b50734bd7e8a109f55c8c95382b19 100644
+--- a/packages/core/session/README.md
++++ b/packages/core/session/README.md
+@@ -49,6 +49,8 @@ session.deriveMessages()         // the derived model history
+ 
+ Surface events (`system/message`, `developer/message`, `user/message`, `assistant/message`, `tool/result`) require `surfaceOp` in both typed events and append input. A replacement uses exactly `{ op: 'replace', startSeq, endSeq }`, with inclusive `SessionSeq` endpoints in current surface order. An Assistant message embeds its exact compact provider stream and forbids `sourceEventSeqs`. Known log-only events forbid both metadata fields and never produce a message.
+ 
++Informational non-surface events may pass `{ ignorable: true }` to `session.append`. Use it only when omission cannot change model history or execution recovery. The marker survives persistence, allowing a reader without the producing plugin to retain the event without interpreting it; it is rejected for message-producing events.
++
+ `developer/message` stores tool-addition names and a `headerSeq` reference to an earlier `request/header`. The reference is required exactly when additions are present, and each name must identify exactly one complete schema in that header. Removals name the tool without a header reference. Historical headers remain available across restart, fork, and surface replacement; the current registry and latest header do not select an earlier addition's definition. `sourceEventSeqs` continues to describe derivation and replaced nodes.
+ 
+ Plugins declare content-changing events with `@messageProjection` and register a pure definition through `ctx.sessions.registerMessageProjection()`. Session calls the definition before accepting an event and caches its immutable message updates. Missing definitions reject append and restore; unloading a used definition also blocks cached reads. Detached constructors and `foldSurface(events, projections)` require explicit definitions. Reconstructors pass the fold's `projectedMessages` to `deriveEventMessage()`; live instance methods apply the same projections automatically. [Plugin-owned message projections](../../../.agents/notes/implemented/architecture/2026-09-11-plugin-owned-message-projections.md) defines ownership and offline assembly.
+diff --git a/packages/core/session/README.zh.md b/packages/core/session/README.zh.md
+index 4f4908efdd28958113ee01b891e9b00a46c1e81a..eacce415ebaaa158b35bbcbe929ef36b47beb99e 100644
+--- a/packages/core/session/README.zh.md
++++ b/packages/core/session/README.zh.md
+@@ -49,6 +49,8 @@ session.deriveMessages()         // the derived model history
+ 
+ 表层事件（`system/message`、`developer/message`、`user/message`、`assistant/message`、`tool/result`）在类型化事件与追加输入中都必须带有 `surfaceOp`。替换操作仅接受 `{ op: 'replace', startSeq, endSeq }`，端点为包含边界的 `SessionSeq`，按当前 surface 顺序解释。assistant 消息会嵌入精确、紧凑的提供方流，并禁止 `sourceEventSeqs`。已知仅日志事件禁止这两个元数据字段，且从不产生消息。
+ 
++仅作信息展示的非 surface 事件可向 `session.append` 传入 `{ ignorable: true }`。只有省略该事件不影响模型历史或执行恢复时才能使用。标记随事件持久化，允许未安装生产插件的读取方保留事件而不解释它；产生消息的事件不能使用该标记。
++
+ `developer/message` 存储工具添加名称，以及指向更早 `request/header` 的 `headerSeq` 引用。仅在存在添加块时必须携带该引用，每个名称必须在所引用的请求头中恰好对应一个完整模式。移除块仅记录工具名称，不携带请求头引用。重启、fork 和 surface 替换保留历史请求头；较早添加的定义不由当前注册表或最新请求头决定。`sourceEventSeqs` 继续描述派生来源及被替换节点。
+ 
+ 插件用 `@messageProjection` 声明修改内容的事件，并通过 `ctx.sessions.registerMessageProjection()` 注册纯处理器。Session 在接受事件前调用处理器，并缓存其不可变消息更新。缺少处理器时拒绝追加和恢复，卸载已经使用的处理器后也会拒绝读取缓存。独立构造函数和 `foldSurface(events, projections)` 必须显式接收处理器。重建函数将折叠结果的 `projectedMessages` 传给 `deriveEventMessage()`，实时实例方法自动应用相同的投影。[插件拥有消息投影](../../../.agents/notes/implemented/architecture/2026-09-11-plugin-owned-message-projections.zh.md)说明职责划分和离线装配。
+diff --git a/packages/core/session/src/index.ts b/packages/core/session/src/index.ts
+index e1ecb920bd197aa9648b41c9a2d307ed14ac6edc..b12f1f2db867598425f7f63349c0ae867f206b12 100644
+--- a/packages/core/session/src/index.ts
++++ b/packages/core/session/src/index.ts
+@@ -777,6 +777,9 @@ export class Session {
+    *   rejected by the compiler for non-surface types like `turn/start` or
+    *   `assistant/attempt`. Assistant messages embed their exact provider
+    *   stream and cannot cite top-level source events.
++   *   Non-surface informational events may instead pass `ignorable: true`
++   *   when omitting them cannot affect model history or execution recovery.
++   *   Message-producing events cannot use this marker.
+    * @returns the logged event — its assigned `seq`/`time` plus the SNAPSHOT of
+    *   `data` that entered the log, so reading `event.data` back sees the logged
+    *   value, never the caller's still-mutable input.
+@@ -798,10 +801,15 @@ export class Session {
+   append<T extends SessionEventType>(
+     type: T,
+     data: SessionEventMap[T],
+-    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
++    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : [opts?: { ignorable: true }]
+   ): SessionEvent<T> {
+-    const surfaceOpts: SurfaceIntent | undefined = opts[0]
++    const surfaceOpts = opts[0] as (SurfaceIntent & { ignorable?: true }) | undefined
++    const ignorable: unknown = surfaceOpts?.ignorable
++    if (ignorable !== undefined && (ignorable !== true || isMessageEventType(type))) {
++      throw new Error('ignorable must be true and is allowed only for non-surface informational events')
++    }
+     const surfaceMetadata = {
++      ...ignorable === undefined ? {} : { ignorable },
+       ...surfaceOpts?.sourceEventSeqs === undefined ? {} : { sourceEventSeqs: surfaceOpts.sourceEventSeqs },
+       ...surfaceOpts?.surfaceOp === undefined ? {} : { surfaceOp: surfaceOpts.surfaceOp },
+     }
+diff --git a/packages/core/session/tests/session.spec.ts b/packages/core/session/tests/session.spec.ts
+index 5483c354644f4faaa8c8d073959b03355cc093a3..89e0d08bba93ae0636ac1b7f239905d01e19dfc8 100644
+--- a/packages/core/session/tests/session.spec.ts
++++ b/packages/core/session/tests/session.spec.ts
+@@ -23,6 +23,17 @@ declare module '@deepseek-ai/dsh-llm' {
+ }
+ 
+ describe('Session', () => {
++  it('persists explicit informational markers without changing model history', () => {
++    const session = Session.create(SessionId('informational'))
++    const required = session.append('turn/start', { turn: 1 })
++    expect(required.ignorable).toBeUndefined()
++    const event = session.append('assistant/attempt', { turn: 1, step: 1, stream: [] }, { ignorable: true })
++    expect(event.ignorable).toBe(true)
++    expect(Session.create(SessionId('restored-info'), [required, event]).deriveMessages()).toEqual([])
++    expect(() => session.append('turn/start', { turn: 1 }, { ignorable: false } as never)).toThrow(/ignorable must be true/)
++    expect(() => session.append('user/message', createUserMessage({ content: [], source: { kind: 'user' } }), { surfaceOp: 'append', ignorable: true } as never)).toThrow(/non-surface/)
++  })
++
+   it('exposes one stable readonly surface view', () => {
+     const session = Session.create(SessionId('surface-view'))
+     const surface = session.surface
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index e4344cb8e135ecab1d738ba67f5a438a88402713..5a865c34dfca3b5b7033dd545de4c7eb99841c50 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -7003,7 +7003,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'Session',
+-    declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader, inheritedEventCount?: SessionLogOffset, projections?: readonly SessionMessageProjection[]): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader, inheritedEventCount: SessionLogOffset, eventState: SessionSeedEventState, projections?: readonly SessionMessageProjection[]): Session;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent<T>\n    ] : [\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}',
++    declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader, inheritedEventCount?: SessionLogOffset, projections?: readonly SessionMessageProjection[]): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader, inheritedEventCount: SessionLogOffset, eventState: SessionSeedEventState, projections?: readonly SessionMessageProjection[]): Session;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent<T>\n    ] : [\n        opts?: {\n            ignorable: true;\n        }\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}',
+   },
+   {
+     name: 'SessionAccess',

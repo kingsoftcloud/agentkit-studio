@@ -14,7 +14,6 @@ const dshRoot = resolve(process.env.AGENTKIT_DSH_ROOT || join(studioRoot, '../..
 const profile = String(process.env.AGENTKIT_DSH_PROFILE || 'web').trim() || 'web';
 const curated = [
   '@deepseek-ai/dsh-experimental-agent-team-profile',
-  '@deepseek-ai/dsh-experimental-schedule-bundle',
   '@deepseek-ai/dsh-experimental-voice-input-bundle',
   '@deepseek-ai/dsh-experimental-auto-review',
 ];

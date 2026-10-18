@@ -1,0 +1,78 @@
+diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
+index 8ced0c9f7bbaf56fdb41e7a2f424784d8b13d81c..18ba6c018958cab0f9d0bb9ef5c33bbba65b332d 100644
+--- a/apps/desktop/scripts/smoke-runtime.ts
++++ b/apps/desktop/scripts/smoke-runtime.ts
+@@ -41,6 +41,7 @@ export async function smokeDesktopRuntime(
+   try {
+     writeFileSync(join(home, 'npmrc'), '')
+     createPluginProfile(profile)
++    const probe = join(home, 'plugin-probe.json')
+     const pluginName = 'desktop-runtime-smoke-plugin'
+     const plugin = join(home, pluginName)
+     mkdirSync(plugin, { recursive: true })
+@@ -80,9 +81,24 @@ export function apply(ctx) {
+     const cordis = runtime.sharedPackages.find(entry => entry.name === '@deepseek-ai/cordis')
+     if (cordis === undefined) throw new Error('desktop runtime: missing shared Cordis package')
+     writeFileSync(join(plugin, 'package.json'), JSON.stringify({
+-      name: pluginName, version: '1.0.0', type: 'module', exports: './index.js',
++      name: pluginName, version: '1.0.0', type: 'module', exports: { '.': './index.js', './probe': './probe.js' },
+       peerDependencies: { '@deepseek-ai/cordis': cordis.version }, dsh: { bundle: { patch: './bundle.yml' } },
+     }))
++    writeFileSync(join(plugin, 'probe.js'), `
++import { Context } from '@deepseek-ai/cordis'
++import { writeFileSync } from 'node:fs'
++const state = { imported: true, applied: false, sharedContext: false, services: {} }
++const save = () => writeFileSync(${JSON.stringify(probe)}, JSON.stringify(state))
++save()
++export function apply(ctx) {
++  state.applied = true
++  state.sharedContext = ctx instanceof Context
++  save()
++  for (const service of ['webServer', 'officeToPdf', 'skills']) {
++    ctx.inject([service], () => { state.services[service] = true; save() })
++  }
++}
++`)
+     writeFileSync(join(plugin, 'index.js'), `
+ import { Context } from '@deepseek-ai/cordis'
+ import { inspect, promisify } from 'node:util'
+@@ -135,7 +151,7 @@ export function apply(ctx) {
+   }
+ }
+ `)
+-    writeFileSync(join(plugin, 'bundle.yml'), '- insert:\n    - id: desktop-runtime-smoke-plugin\n      name: desktop-runtime-smoke-plugin\n      inject: [webServer, officeToPdf, skills, pluginManager]\n')
++    writeFileSync(join(plugin, 'bundle.yml'), '- insert:\n    - id: desktop-runtime-smoke-probe\n      name: desktop-runtime-smoke-plugin/probe\n    - id: desktop-runtime-smoke-plugin\n      name: desktop-runtime-smoke-plugin\n      inject: [webServer, officeToPdf, skills, pluginManager]\n')
+     cpSync(plugin, join(profile, 'node_modules', pluginName), { recursive: true })
+     const manifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')) as {
+       dependencies?: Record<string, string>
+@@ -171,7 +187,15 @@ export function apply(ctx) {
+       await pluginResponse.body?.cancel().catch(() => undefined)
+       await new Promise(done => setTimeout(done, 200))
+     }
+-    if (!pluginReady) throw new Error(`desktop runtime: plugin HTTP route failed after 30 seconds (HTTP ${pluginStatus})`)
++    if (!pluginReady) {
++      let state: unknown = { imported: false }
++      try { state = JSON.parse(readFileSync(probe, 'utf8')) } catch { /* No imported probe is itself diagnostic. */ }
++      // This child uses an isolated credential-free profile. Still scrub authentication URLs and key fields.
++      const diagnostic = host.diagnosticOutput.replace(/https?:\/\/[^\s]+/gu, '[url]')
++        .replace(/((?:token|secret|password|api[-_]?key|authorization)\s*[:=]\s*)[^\s,;]+/giu, '$1[redacted]')
++      console.error('desktop runtime: plugin readiness evidence', JSON.stringify(state), diagnostic)
++      throw new Error(`desktop runtime: plugin HTTP route failed after 30 seconds (HTTP ${pluginStatus})`)
++    }
+     const installation = await fetch(new URL('/desktop-smoke-install', ready.url), {
+       headers: { cookie }, signal: AbortSignal.timeout(120_000),
+     })
+diff --git a/apps/desktop/src/host-process.ts b/apps/desktop/src/host-process.ts
+index 948a88e6b0e3a439a719aea46e3b77843e412abc..06cc4870cf6b0ddb9c9ea97d40f46c36516f6067 100644
+--- a/apps/desktop/src/host-process.ts
++++ b/apps/desktop/src/host-process.ts
+@@ -145,6 +145,9 @@ export class DesktopHostProcess {
+   })
+   private exitPromise: Promise<void> | undefined
+   private stderr = ''
++  /** Bounded child stderr for startup failure diagnostics, without modifying child lifecycle. */
++  get diagnosticOutput(): string { return this.stderr }
++
+   private failureReported = false
+   private stopping = false
+   private shutdownCompleted = false

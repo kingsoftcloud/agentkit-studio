@@ -1,0 +1,94 @@
+diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
+index e3a442de8039453799d636f53e4b95b46c64cd5a..61f54c428b8dbf04cfb2a74470db44b50f26cf02 100644
+--- a/apps/desktop-host/src/index.ts
++++ b/apps/desktop-host/src/index.ts
+@@ -14,6 +14,7 @@ import { installDesktopUpdateTaskControl } from './update-tasks.ts'
+ import { installDesktopQuitInspection } from './quit-inspection.ts'
+ import { installPlatformSessionPublisher } from './platform-session.ts'
+ import { installOfficeEngineResolution } from './office-engine.ts'
++import { resolveDesktopWebPort } from './listen-port.ts'
+ 
+ async function main(): Promise<void> {
+   const runtimeDir = process.argv[2] as string
+@@ -29,7 +30,7 @@ async function main(): Promise<void> {
+     profile: 'desktop',
+     resolvedProfile: { profile, installAnchor },
+     patchFiles: [],
+-    args: ['--no-open', '--host', '127.0.0.1', '--port', '0'],
++    args: ['--no-open', '--host', '127.0.0.1', '--port', String(resolveDesktopWebPort(projectDir))],
+     ...(process.argv[5] === undefined ? {} : {
+       packageManager: {
+         command: process.execPath,
+diff --git a/apps/desktop-host/src/listen-port.ts b/apps/desktop-host/src/listen-port.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..79c74fa3787df6930d806f547cc80207c72fde5d
+--- /dev/null
++++ b/apps/desktop-host/src/listen-port.ts
+@@ -0,0 +1,19 @@
++/** Resolve the Desktop web server port before profile startup. */
++
++/**
++ * Select the configured port or preserve the profile's existing default.
++ * @param projectDir - Managed Desktop profile directory.
++ * @param env - Process environment containing an optional DSH_DESKTOP_WEB_PORT.
++ * @returns An integer TCP port; zero requests an available port from the OS.
++ * @throws When the configured value is not a decimal integer from 0 through 65535.
++ */
++export function resolveDesktopWebPort(_projectDir: string, env: NodeJS.ProcessEnv = process.env): number {
++  const configured = env.DSH_DESKTOP_WEB_PORT
++  if (configured === undefined) return 0
++  const value = configured.trim()
++  const port = Number(value)
++  if (!/^[0-9]+$/.test(value) || !Number.isInteger(port) || port > 65535) {
++    throw new Error('DSH_DESKTOP_WEB_PORT must be a decimal integer from 0 through 65535')
++  }
++  return port
++}
+diff --git a/apps/desktop-host/tests/listen-port.spec.ts b/apps/desktop-host/tests/listen-port.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..525d872d1a47b9609d774477bdb9a25d23261102
+--- /dev/null
++++ b/apps/desktop-host/tests/listen-port.spec.ts
+@@ -0,0 +1,16 @@
++import { join } from 'node:path'
++import { expect, it } from 'vitest'
++import { resolveDesktopWebPort } from '../src/listen-port.ts'
++
++it('preserves the existing profile defaults when no explicit port is configured', () => {
++  expect(resolveDesktopWebPort(join('profiles', 'desktop'), {})).toBe(0)
++  expect(resolveDesktopWebPort(join('profiles', 'desktop-agentkit-studio'), {})).toBe(0)
++})
++
++it.each(['0', '1', '19387', '65535', ' 3210 '])('uses the explicitly configured listen port %s', (value) => {
++  expect(resolveDesktopWebPort(join('profiles', 'desktop'), { DSH_DESKTOP_WEB_PORT: value })).toBe(Number(value))
++})
++
++it.each(['', ' ', '-1', '65536', '1.5', 'NaN', '0x50', '1e3'])('rejects an invalid listen port before starting the profile: %j', (value) => {
++  expect(() => resolveDesktopWebPort(join('profiles', 'desktop'), { DSH_DESKTOP_WEB_PORT: value })).toThrow('DSH_DESKTOP_WEB_PORT')
++})
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index 947299d7b22a24940c7f5600be55f0f6e0b224df..844c51f7b4a911e26e89660c9566cbe197a459b5 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -354,6 +354,8 @@ The downloaded bytes are inert, and the installation call is recorded rather tha
+ 
+ An unpackaged Electron process uses `.desktop-build/development/project` under its application directory as its development project. `DSH_DESKTOP_PNPM_ENTRY` and `DSH_DESKTOP_DSH_DIR` are optional overrides with application-path defaults. `DSH_DESKTOP_PRIMARY_RUNTIME_DIR` is required for every unpackaged launch: the development launchers (`dev:desktop`, `start:desktop`, and the workspace-update qualification runner) set it to the primary-runtime directory of the target they prepared, and a launch without it fails with the fatal startup dialog. The launcher must set it because the shell cannot derive that directory from `process.arch`: the build target fixes Windows to x64 while the host may be arm64. Packaged applications ignore these variables, resolve signed resources from `process.resourcesPath`, and use the managed Desktop profile.
+ 
++`DSH_DESKTOP_WEB_PORT` selects the local web server port for packaged and unpackaged Desktop launches. It accepts a decimal integer from `0` through `65535`; `0` lets the OS select an available port so isolated instances can run together. Invalid or empty values fail startup. When omitted, the OS selects an available loopback port. This setting does not change profile or user-data directories.
++
+ <a id="known-limitations"></a>
+ 
+ ## Known limitations
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index abc9a2adb2d826e8ae91bf36252928720f43939e..99de06bbb3982ae0a3365bd0212679a8c03ea811 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -354,6 +354,8 @@ node apps/desktop/node_modules/pnpm/bin/pnpm.mjs --dir apps/desktop run test:upd
+ 
+ 未打包的 Electron 进程使用应用目录下的 `.desktop-build/development/project` 作为开发项目。`DSH_DESKTOP_PNPM_ENTRY` 和 `DSH_DESKTOP_DSH_DIR` 是带应用路径默认值的可选覆盖项。每次未打包启动都必须设置 `DSH_DESKTOP_PRIMARY_RUNTIME_DIR`：开发启动器（`dev:desktop`、`start:desktop` 及工作区更新验证运行器）会把它设置为自己已准备目标的 primary-runtime 目录；缺少该变量的启动会以致命启动对话框失败。启动器必须设置它，因为壳无法从 `process.arch` 推导该目录：构建目标将 Windows 固定为 x64，而宿主可能是 arm64。打包应用会忽略这些变量，从 `process.resourcesPath` 解析签名资源，并使用受管 Desktop profile。
+ 
++`DSH_DESKTOP_WEB_PORT` 为打包及未打包的 Desktop 启动选择本地 Web 服务端口。它接受 `0` 至 `65535` 的十进制整数；`0` 让操作系统分配可用端口，使隔离实例可以同时运行。无效值或空值会使启动失败。省略时端口仍为 `19387`，已有的 `desktop-agentkit-studio` Profile 则使用可用端口。此设置不改变 Profile 或用户数据目录。
++
+ <a id="known-limitations"></a>
+ 
+ ## 已知限制

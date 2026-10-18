@@ -3,6 +3,12 @@ export function isDshUserInput(message) {
   return message?.role === 'user' && (!message.source || ['user', 'schedule'].includes(message.source.kind));
 }
 
+/** Current DSH peer delivery and runtime completion notices remain recorded context. */
+export function isDshAgentNotice(message) {
+  return message?.role === 'user' && ((message.source?.kind === 'agent-message' && message.source.form === 'relay')
+    || (message.source?.kind === 'subagent-settled' && message.source.form === 'notice'));
+}
+
 /** Resolve DSH's durable image receipts only at the model transport boundary. */
 export async function gatewayHistory(messages, { attachments, signal, includeNotices = false } = {}) {
   const images = new Map();
@@ -37,7 +43,7 @@ export async function gatewayHistory(messages, { attachments, signal, includeNot
   };
   const history = [];
   for (const message of Array.isArray(messages) ? messages : []) {
-    if (isDshUserInput(message) || (includeNotices && message?.role === 'user' && ['team-message', 'subagent-result'].includes(message.source?.kind))) {
+    if (isDshUserInput(message) || (includeNotices && isDshAgentNotice(message))) {
       const content = await contentOf(message);
       if (content?.length) history.push({ role: 'user', content });
     } else if (message?.role === 'assistant') {

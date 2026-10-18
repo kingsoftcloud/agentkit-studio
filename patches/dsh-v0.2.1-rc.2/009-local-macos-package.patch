@@ -1,0 +1,354 @@
+diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
+index 3086755b0bf5da567f01531cef2093ee597c2fbb..e3a442de8039453799d636f53e4b95b46c64cd5a 100644
+--- a/apps/desktop-host/src/index.ts
++++ b/apps/desktop-host/src/index.ts
+@@ -19,7 +19,9 @@ async function main(): Promise<void> {
+   const runtimeDir = process.argv[2] as string
+   const projectDir = process.argv[3] as string
+   installOfficeEngineResolution(runtimeDir)
+-  const installAnchor = join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
++  // The sealed runtime declares both DSH and product plugins. Anchoring at
++  // DSH alone hides bundled product dependencies from the profile resolver.
++  const installAnchor = join(runtimeDir, 'package.json')
+   const profile = loadProfileDirectory('dsh', projectDir, installAnchor)
+   reportSkippedBundles('dsh', profile)
+   const application = runProfile({
+diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
+index 0682e6e9adc28e5a09b5c27810dab0f27b155ef3..bf79847d2b00eccfcfddb3a94f20e49fbcaefdbc 100644
+--- a/apps/desktop/electron-builder.config.d.mts
++++ b/apps/desktop/electron-builder.config.d.mts
+@@ -3,6 +3,7 @@ import type { AfterPackContext, BeforePackContext } from 'app-builder-lib'
+ /** Electron-builder fields asserted by the Desktop release tests. */
+ export interface DesktopElectronBuilderConfig {
+   readonly appId: string
++  readonly productName: string
+   readonly artifactName: string
+   readonly protocols: readonly [{ readonly name: 'DeepSeek Harness'; readonly schemes: readonly ['dsh'] }]
+   readonly directories: {
+@@ -21,6 +22,7 @@ export interface DesktopElectronBuilderConfig {
+     ...{ readonly from: string, readonly to: 'tray.ico' }[],
+   ]
+   readonly mac: {
++    readonly icon: string
+     readonly extendInfo: { readonly NSMicrophoneUsageDescription: string }
+     readonly entitlements: string
+     readonly entitlementsInherit: string
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index 4b9cd27a8d5c1eee9219cfc9ca8b60b1c2562deb..f606c7159c6f47d619f33e756a791b5e8cc96559 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -74,7 +74,7 @@ export function createElectronBuilderConfig(
+   let primaryRuntimeDestination
+   let dshDestination
+   let windowsCode = []
+-  const unpack = ['**/*.{node,dylib,dll,so,exe}', '**/*.so.*', '**/spawn-helper', '**/@vscode/ripgrep-*/bin/rg',
++  const unpack = ['**/@openai/codex*/**/*', '**/*.{node,dylib,dll,so,exe}', '**/*.so.*', '**/spawn-helper', '**/@vscode/ripgrep-*/bin/rg',
+     `**/node_modules/@deepseek-ai/libreoffice-kit-${resolvedPlatform}-${resolvedArch}/**/*`]
+   const windowsSigner = packagesWindows && !unsigned
+     ? createWindowsTokenSigner({
+@@ -100,6 +100,8 @@ export function createElectronBuilderConfig(
+   // electron-builder merges extraMetadata into the packaged manifest, so a build version here reaches
+   // the artifact names, the update feed, and the installed app.getVersion() the updater compares against.
+   const productVersion = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version
++  const productName = env.DSH_CLIENT_TITLE?.trim() || 'DeepSeek Harness'
++  const productIcon = env.DSH_DESKTOP_PRODUCT_ICON?.trim()
+   const buildVersion = resolveDesktopBuildVersion(env, productVersion)
+   if (update?.channel === 'latest' && buildVersion.includes('-')) throw new Error('desktop package: latest requires a stable version')
+   const packaged = resolveDesktopBuildCommit(env)
+@@ -113,7 +115,7 @@ export function createElectronBuilderConfig(
+       ...buildVersion === productVersion ? {} : { version: buildVersion },
+       ...packaged === undefined ? {} : { dshBuildCommit: packaged.commit, dshBuildDirty: packaged.dirty },
+     },
+-    productName: 'DeepSeek Harness',
++    productName,
+     // Unsigned builds carry their own suffix so a shared file can never pass for a release artifact.
+     artifactName: `deepseek-harness-\${version}-\${os}-\${arch}${output.suffix}.\${ext}`,
+     directories: { output: output.directory },
+@@ -152,20 +154,19 @@ export function createElectronBuilderConfig(
+     asarUnpack: unpack,
+     extraResources: [
+       { from: buildPaths.runtime, to: 'runtime' },
+-      { from: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
++      { from: productIcon || fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
+       // Windows tray bitmaps; macOS keeps the Dock and ships no menu bar icon.
+       ...(packagesWindows ? [{ from: fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),
+     ],
+     mac: {
+-      icon: fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
++      icon: productIcon || fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
+       category: 'public.app-category.developer-tools',
+       // macOS matches the application locale against this bundle, not Electron Framework resources.
+-      extendInfo: { CFBundleLocalizations: ['en', 'zh_CN'] },
++      extendInfo: { CFBundleLocalizations: ['en', 'zh_CN'], NSMicrophoneUsageDescription: `${productName} uses your microphone to transcribe speech into message drafts.` },
+       // Ad-hoc signing keeps the modified Electron executable runnable without a Developer ID.
+       identity: unsigned ? '-' : macOSSigning?.signingIdentity,
+       forceCodeSigning: !unsigned,
+       hardenedRuntime: true,
+-      extendInfo: { NSMicrophoneUsageDescription: 'DeepSeek Harness uses your microphone to transcribe speech into message drafts.' },
+       entitlements: fileURLToPath(new URL('./macos-entitlements.plist', import.meta.url)),
+       entitlementsInherit: fileURLToPath(new URL('./macos-entitlements.plist', import.meta.url)),
+       // Prepared runtime files retain their signatures; PAK resources are sealed by their enclosing bundle.
+diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
+index be2f577e1b25a3905589d339393f7af759bfa4c7..c8fc928536e42395eda3b1c94cfc709c9b92794c 100644
+--- a/apps/desktop/scripts/package-target.ts
++++ b/apps/desktop/scripts/package-target.ts
+@@ -377,7 +377,7 @@ async function main(): Promise<void> {
+   try {
+     await packagingStep(run.directory, 'configuration', async () => { validateDesktopPackageEnvironment(environment, target, invocation) }, secrets)
+     await packagingStep(run.directory, 'toolchain', () => requireDesktopToolchain(target.platform, environment), secrets)
+-    if (target.platform === 'darwin') {
++    if (target.platform === 'darwin' && !invocation.unsigned) {
+       const settings = resolveMacOSPackageSettings(environment)
+       recordPackagingEvent(run.directory, { type: 'macos-settings', packConcurrency: settings.packConcurrency,
+         downloadProxyConfigured: settings.downloadProxy !== undefined,
+@@ -386,7 +386,7 @@ async function main(): Promise<void> {
+         ? packageTarget(invocation, environment, run)
+         : withMacOSSigningKeychain(environment, signingEnvironment => packageTarget(invocation, signingEnvironment, run)), secrets)
+     } else {
+-      await packagingStep(run.directory, 'windows-package', () => packageTarget(invocation, environment, run), secrets)
++      await packagingStep(run.directory, target.platform === 'darwin' ? 'local-macos-package' : 'windows-package', () => packageTarget(invocation, environment, run), secrets)
+     }
+     success = true
+   } catch (error) {
+@@ -438,6 +438,7 @@ export async function packageTarget(
+     DSH_DESKTOP_MACOS_SKIP_NOTARIZATION: invocation.skipNotarization ? '1' : '0',
+     DSH_DESKTOP_TARGET_PLATFORM: target.platform,
+     DSH_DESKTOP_TARGET_ARCH: target.arch,
++    DSH_DESKTOP_UNSIGNED: invocation.unsigned ? '1' : '0',
+   }
+   const downloadEnv = macOSDownloadEnvironment(targetEnv, mac?.downloadProxy)
+   const electronBuilderEnv = desktopElectronBuilderEnvironment(downloadEnv, invocation.unsigned)
+diff --git a/apps/desktop/scripts/prepare-dsh.ts b/apps/desktop/scripts/prepare-dsh.ts
+index 9de39d3ff2dce4d63df2729d17b30615987f8102..0505130cf0841a11bf28ab73643ee2158f743132 100644
+--- a/apps/desktop/scripts/prepare-dsh.ts
++++ b/apps/desktop/scripts/prepare-dsh.ts
+@@ -148,6 +148,7 @@ async function main(): Promise<void> {
+     writeFileSync(join(DSH_OUTPUT_ROOT, 'package.json'), `${JSON.stringify({
+       name: '@deepseek-ai/dsh-desktop-runtime', private: true, version: release.version, type: 'module',
+       dependencies: Object.fromEntries(packageSet.packages.map(entry => [entry.name, entry.version])),
++      dsh: JSON.parse(readFileSync(join(BUILD_ROOT, 'package.json'), 'utf8')).dsh,
+     }, undefined, 2)}\n`)
+     for (const file of DESKTOP_HOST_RUNTIME_FILES) {
+       if (!existsSync(join(DSH_OUTPUT_ROOT, 'node_modules', DESKTOP_HOST_PACKAGE, file))) {
+diff --git a/apps/desktop/scripts/smoke-packaged-runtime.ts b/apps/desktop/scripts/smoke-packaged-runtime.ts
+index 6c3c12c8572593a1f038ed39f4ff3da898cecf70..812f5de4c2566bb7bfd4a8c162839eab580b26bd 100644
+--- a/apps/desktop/scripts/smoke-packaged-runtime.ts
++++ b/apps/desktop/scripts/smoke-packaged-runtime.ts
+@@ -12,10 +12,11 @@ const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default:
+ const target = resolveDesktopBuildTarget()
+ const windows = target === 'win-x64'
+ const artifacts = desktopArtifactOutput(paths, { unsigned: values.unsigned, skipNotarization: values['skip-notarization'] }).directory
++const productName = values.unsigned && !windows ? process.env.DSH_CLIENT_TITLE || 'DeepSeek Harness' : 'DeepSeek Harness'
+ const application = windows ? join(artifacts, 'win-unpacked')
+-  : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app', 'Contents')
++  : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', `${productName}.app`, 'Contents')
+ const resources = join(application, windows ? 'resources' : 'Resources')
+-const executable = windows ? join(application, 'DeepSeek Harness.exe') : join(application, 'MacOS', 'DeepSeek Harness')
++const executable = windows ? join(application, 'DeepSeek Harness.exe') : join(application, 'MacOS', productName)
+ const descriptor = await verifyDesktopRuntime(paths.dsh, readDesktopRuntime(paths.dsh).release.version,
+   resolveDesktopPackageTarget(target))
+ if (windows && !values.unsigned) await verifyWindowsCode(application)
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 2afdfd71948053aedd65f6a04a9ed9b279e13376..6459d73589737e5139cf441b5c5de264d236c886 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -23,7 +23,7 @@ import {
+   type MenuItemConstructorOptions,
+ } from 'electron'
+ import { resolveDesktopPaths } from './paths.ts'
+-import { DesktopProjectManager } from './project-manager.ts'
++import { DesktopProjectManager, readRuntimeProfileBundles } from './project-manager.ts'
+ import { DesktopHostFatalError, DesktopHostProcess, DesktopHostUncleanExitError } from './host-process.ts'
+ import { DesktopPlatformView, PLATFORM_IPC, platformBounds } from './platform-view.ts'
+ import { installDesktopDirectoryPicker } from './directory-picker.ts'
+@@ -327,6 +327,7 @@ async function main(): Promise<void> {
+     : join(process.resourcesPath, 'runtime', 'primary-runtime')
+   const activeProject = paths.profile
+   const manager = new DesktopProjectManager(paths, resources)
++  const productBundles = readRuntimeProfileBundles(resources.dsh)
+   // Dock and Finder launches inherit only launchd's environment; every Host shares one login-shell read.
+   const loginShellRead = new AbortController()
+   // The probe runs in its own process group, which outlives Desktop unless the read is aborted.
+@@ -475,7 +476,7 @@ async function main(): Promise<void> {
+           if (state.status === 'credential-stored' && attempt?.phase === 'succeeded' && welcomeWindow !== undefined) void enterWorkspace({ activate: false }).catch(() => undefined)
+           if (previousAccountStatus === 'credential-stored' && state.status === 'signed-out') {
+             void readWelcomeState().then(async (value) => {
+-              if (needsWelcome(value) && !quitting) {
++              if (needsWelcome(value, productBundles) && !quitting) {
+                 enteredWorkspace = false
+                 await showWelcome()
+                 if (welcomeWindow !== undefined && !welcomeWindow.isDestroyed()) welcomeWindow.webContents.send(WELCOME_IPC.state, state)
+@@ -488,7 +489,7 @@ async function main(): Promise<void> {
+           // The stream reconnects; a transport failure does not change account state.
+         }, () => {
+           void readWelcomeState().then(async (value) => {
+-            if (!needsWelcome(value) || quitting) return
++            if (!needsWelcome(value, productBundles) || quitting) return
+             pendingWelcomeNotice = 'session-expired'
+             enteredWorkspace = false
+             await showWelcome()
+@@ -1208,7 +1209,7 @@ async function main(): Promise<void> {
+     locale = resolveDesktopStartupLocale(state.localePreference, systemLanguages)
+     windowsLanguage = locale.id
+     refreshApplicationMenu()
+-    if (!enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey })) {
++    if (!enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey }, productBundles)) {
+       // A later login must retain its own activation policy instead of replaying startup focus.
+       raiseAfterUpdate = false
+       await showWelcome()
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index 5058ea05e5f43b4ecc89efc5edad6e7b52769d62..e2a2d3c4f593beec11db7cb15e53cf2816e41446 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -91,7 +91,7 @@ export class DesktopProjectManager {
+       // Validation only: an unreadable or mismatched runtime descriptor stops preparation before the Host starts.
+       readDesktopRuntime(this.runtime.dsh)
+       migrateProfileSettings(this.paths.profile)
+-      createPluginProfile(this.paths.profile)
++      createPluginProfile(this.paths.profile, readRuntimeProfileBundles(this.runtime.dsh))
+       removeLinkProjections(this.paths.profile)
+     })
+   }
+@@ -177,6 +177,21 @@ export function createDevelopmentProjectMetadata(projectDir: string, release: De
+ }
+ 
+ /** Create the first external plugin profile without running a package manager. */
+-export function createPluginProfile(projectDir: string): void {
+-  initProfile(projectDir, WEB_PROFILE.bundles)
++export function createPluginProfile(projectDir: string, bundles: readonly string[] = WEB_PROFILE.bundles): void {
++  initProfile(projectDir, [...bundles])
++}
++
++/** Product defaults travel with the sealed runtime, never with launch-time environment. */
++export function readRuntimeProfileBundles(runtimeDir: string): string[] {
++  const manifestPath = join(runtimeDir, 'package.json')
++  // Preserve the older runtime's default profile; byte qualification remains
++  // the runtime verifier's job rather than every profile metadata operation.
++  if (!existsSync(manifestPath)) return [...WEB_PROFILE.bundles]
++  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dsh?: { profile?: { bundles?: unknown } } }
++  const bundles = manifest.dsh?.profile?.bundles
++  if (bundles === undefined) return [...WEB_PROFILE.bundles]
++  if (!Array.isArray(bundles) || bundles.some(value => typeof value !== 'string' || value.trim() === '')) {
++    throw new Error('desktop runtime: invalid bundled product profile')
++  }
++  return [...new Set([...WEB_PROFILE.bundles, ...bundles])]
+ }
+diff --git a/apps/desktop/src/welcome-api.ts b/apps/desktop/src/welcome-api.ts
+index c693f385d684aa5b2ea671c5cc3d99209b78dcc0..4354031fbb207f0b9b25257d988ac41f342625ec 100644
+--- a/apps/desktop/src/welcome-api.ts
++++ b/apps/desktop/src/welcome-api.ts
+@@ -70,6 +70,9 @@ export interface WelcomeAuthentication {
+  * @param authentication - current account and independently stored API-key facts.
+  * @returns true only when neither authentication route is configured.
+  */
+-export function needsWelcome(authentication: WelcomeAuthentication): boolean {
++export function needsWelcome(authentication: WelcomeAuthentication, productBundles: readonly string[] = []): boolean {
++  // Studio owns model setup in its plugin. This controls onboarding only;
++  // Host authentication and native tool permissions are unchanged.
++  if (productBundles.includes('@kingsoftcloud/agentkit-studio')) return false
+   return !authentication.loggedIn && !authentication.hasApiKey
+ }
+diff --git a/apps/desktop/tests/local-macos-package.spec.ts b/apps/desktop/tests/local-macos-package.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ebb2cdd14ba71c4340a71e1b5e9ef4c24b35a233
+--- /dev/null
++++ b/apps/desktop/tests/local-macos-package.spec.ts
+@@ -0,0 +1,16 @@
++import { expect, it } from 'vitest'
++import { parseDesktopPackageInvocation } from '../scripts/package-target.ts'
++import { createElectronBuilderConfig } from '../scripts/electron-builder-config.mjs'
++
++it('explicit local macOS builds require neither release credentials nor an update feed', () => {
++  expect(parseDesktopPackageInvocation(['mac-arm64', '--unsigned'], 'darwin', 'arm64').unsigned).toBe(true)
++  const config = createElectronBuilderConfig({
++    DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio.local',
++    DSH_DESKTOP_TARGET_PLATFORM: 'darwin', DSH_DESKTOP_TARGET_ARCH: 'arm64', DSH_DESKTOP_UNSIGNED: '1',
++  }, 'darwin', 'arm64')
++  expect(config.mac.identity).toBeNull()
++  expect(config.mac.forceCodeSigning).toBe(false)
++  expect(config.artifactName).toContain('-unsigned')
++  expect(config.publish).toBeNull()
++  expect(config.extraMetadata).toMatchObject({ dshMandatoryUpdatePolicy: undefined })
++})
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index d9a8f3103b2a963ebf6825c62a86e8ee12064deb..1ff71f2e48822dea72c7f8522c6745cf20f532f4 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -319,6 +319,7 @@ vi.mock('../src/login-shell-environment.ts', async importOriginal => ({
+ vi.mock('../src/runtime-tree.ts', () => ({ readDesktopRuntime: () => ({ release: { version: '1.0.0' } }) }))
+ vi.mock('../src/paths.ts', () => ({ resolveDesktopPaths: () => ({ profile: 'desktop-test-profile' }) }))
+ vi.mock('../src/project-manager.ts', () => ({
++  readRuntimeProfileBundles: () => [],
+   DesktopProjectManager: class {
+     readonly applyRelease = harness.applyRelease
+     disableAllPlugins = harness.disableAllPlugins
+diff --git a/apps/desktop/tests/product-branding.spec.ts b/apps/desktop/tests/product-branding.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..6b2c2c9e91cc64895da58370752eb05f63e02a1d
+--- /dev/null
++++ b/apps/desktop/tests/product-branding.spec.ts
+@@ -0,0 +1,18 @@
++import { expect, it } from 'vitest'
++import { fileURLToPath } from 'node:url'
++import { createElectronBuilderConfig } from '../scripts/electron-builder-config.mjs'
++
++const env = { DSH_DESKTOP_APP_ID: 'com.example.studio.local', DSH_DESKTOP_TARGET_PLATFORM: 'darwin', DSH_DESKTOP_TARGET_ARCH: 'arm64', DSH_DESKTOP_UNSIGNED: '1' }
++it('product builds use the supplied icon in the macOS bundle and bundled resources', () => {
++  const config = createElectronBuilderConfig({ ...env, DSH_CLIENT_TITLE: 'AgentKit Studio', DSH_DESKTOP_PRODUCT_ICON: '/tmp/studio-icon.png' }, 'darwin', 'arm64')
++  expect(config.productName).toBe('AgentKit Studio')
++  expect(config.mac.icon).toBe('/tmp/studio-icon.png')
++  expect(config.asarUnpack).toContain('**/@openai/codex*/**/*')
++  expect(config.extraResources).toContainEqual({ from: '/tmp/studio-icon.png', to: 'icon.png' })
++  expect(config.mac.extendInfo).toMatchObject({ CFBundleLocalizations: ['en', 'zh_CN'], NSMicrophoneUsageDescription: 'AgentKit Studio uses your microphone to transcribe speech into message drafts.' })
++})
++it('ordinary DSH builds keep the official icon and name', () => {
++  const config = createElectronBuilderConfig(env, 'darwin', 'arm64')
++  expect(config.productName).toBe('DeepSeek Harness')
++  expect(config.mac.icon).toBe(fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)))
++})
+diff --git a/apps/desktop/tests/product-onboarding.spec.ts b/apps/desktop/tests/product-onboarding.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..5e178547e4459c38aa95fc69ce8a87327a3c25db
+--- /dev/null
++++ b/apps/desktop/tests/product-onboarding.spec.ts
+@@ -0,0 +1,8 @@
++import { expect, it } from 'vitest'
++import { needsWelcome } from '../src/welcome-api.ts'
++
++it('Studio product setup does not require a DeepSeek credential and leaves official onboarding intact', () => {
++  expect(needsWelcome({ loggedIn: false, hasApiKey: false }, ['@kingsoftcloud/agentkit-studio'])).toBe(false)
++  expect(needsWelcome({ loggedIn: false, hasApiKey: false })).toBe(true)
++  expect(needsWelcome({ loggedIn: false, hasApiKey: true })).toBe(false)
++})
+diff --git a/apps/desktop/tests/project-manager.spec.ts b/apps/desktop/tests/project-manager.spec.ts
+index 1dd76b35f9be8ef72332ae2acbce19fe25774a8a..e01bfc735d03e4348f9d807545ee4c17f513d3e6 100644
+--- a/apps/desktop/tests/project-manager.spec.ts
++++ b/apps/desktop/tests/project-manager.spec.ts
+@@ -43,6 +43,14 @@ afterEach(() => {
+ })
+ 
+ describe('desktop external plugin profile', () => {
++  it('uses packaged product bundles for a clean profile without relying on launch environment', async () => {
++    const { manager } = setup()
++    const manifestPath = join(manager.runtime.dsh, 'package.json')
++    writeFileSync(manifestPath, JSON.stringify({ type: 'module', dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio'] } } }))
++    await manager.applyRelease()
++    const manifest = JSON.parse(readFileSync(join(manager.paths.profile, 'package.json'), 'utf8'))
++    expect(manifest.dsh.profile.bundles).toContain('@kingsoftcloud/agentkit-studio')
++  })
+   it('preserves installed packages, profile state, and the lockfile when preparing a launch', async () => {
+     const { manager } = setup()
+     await manager.applyRelease()
+diff --git a/apps/desktop/tests/welcome-startup.spec.ts b/apps/desktop/tests/welcome-startup.spec.ts
+index 7915248243e408841a829b4f887face59d7bf419..6953ac9b2906569a9f4afbc1c765b63251370de6 100644
+--- a/apps/desktop/tests/welcome-startup.spec.ts
++++ b/apps/desktop/tests/welcome-startup.spec.ts
+@@ -107,7 +107,7 @@ vi.mock('../src/login-shell-environment.ts', async importOriginal => ({
+   ...await importOriginal<typeof import('../src/login-shell-environment.ts')>(),
+   readDesktopLoginShellEnvironment: async (base: NodeJS.ProcessEnv) => ({ environment: base, failures: [] }),
+ }))
+-vi.mock('../src/project-manager.ts', () => ({ DesktopProjectManager: class {
++vi.mock('../src/project-manager.ts', () => ({ readRuntimeProfileBundles: () => [], DesktopProjectManager: class {
+   applyRelease = vi.fn(async () => {})
+   canRecoverProfile = vi.fn(() => true)
+ } }))

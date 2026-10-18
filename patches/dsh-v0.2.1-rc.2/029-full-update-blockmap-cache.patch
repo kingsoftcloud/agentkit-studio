@@ -1,0 +1,54 @@
+diff --git a/apps/desktop/src/mac-full-update-cache.ts b/apps/desktop/src/mac-full-update-cache.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b3f3a4fc7789762e9ef9b8ea4bc128c9d5209b41
+--- /dev/null
++++ b/apps/desktop/src/mac-full-update-cache.ts
+@@ -0,0 +1,28 @@
++/** Keep the official updater cache consistent after an explicitly full Studio release. */
++import { rmSync } from 'node:fs'
++import { basename, dirname, isAbsolute, join } from 'node:path'
++
++/**
++ * Remove only stale indexes after the real native full-download event. The
++ * next native differential download fetches its versioned published blockmap.
++ * ZIPs, signatures, validation and installation remain native-owned.
++ * @param event Native downloaded event, including feed metadata.
++ * @param options Platform override for filesystem tests.
++ * @returns Whether the full-release cache cleanup was requested.
++ */
++export function discardFullUpdateBlockmaps(event: unknown, { platform = process.platform }: { platform?: string } = {}): boolean {
++  if (platform !== 'darwin' || !event || typeof event !== 'object' || Array.isArray(event)) return false
++  const info = event as Record<string, unknown>
++  if (info.agentkitUpdateMode !== 'full') return false
++  const file = info.downloadedFile
++  if (typeof file !== 'string' || !isAbsolute(file) || !file.endsWith('.zip')
++    || basename(dirname(file)) !== 'pending'
++    || !basename(dirname(dirname(file))).endsWith('-updater')) {
++    throw new Error('Full-update cache cleanup requires a native updater download path')
++  }
++  const pending = dirname(file), cache = dirname(pending)
++  // AppUpdater copies the pending map after dispatch; clear both before its check.
++  rmSync(join(cache, 'current.blockmap'), { force: true })
++  rmSync(join(pending, 'current.blockmap'), { force: true })
++  return true
++}
+diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
+index c09abaf9292034803ca6dd1bdd3c9354822155b0..1d8c2d7d19f245000192195532d73bc60181392a 100644
+--- a/apps/desktop/src/update-coordinator.ts
++++ b/apps/desktop/src/update-coordinator.ts
+@@ -8,6 +8,7 @@ import { gt, valid } from 'semver'
+ import type { DesktopUpdateState } from './ipc.ts'
+ import { DesktopUpdateHttpExecutor } from './update-http-executor.ts'
+ import { DesktopUpdatePreparationError } from './update-error.ts'
++import { discardFullUpdateBlockmaps } from './mac-full-update-cache.ts'
+ 
+ const { autoUpdater } = electronUpdater
+ 
+@@ -29,6 +30,7 @@ export class DesktopUpdateCoordinator {
+ 
+   private readonly onDownloaded = (info: UpdateInfo): void => {
+     if (this.downloadOperation === undefined || info.version !== this.candidate) return
++    discardFullUpdateBlockmaps(info)
+     this.downloaded = true
+   }
+ 
