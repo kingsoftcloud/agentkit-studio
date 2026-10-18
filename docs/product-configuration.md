@@ -1,6 +1,6 @@
 # 产品配置
 
-阶段 5B 正在实施。`src/product.json` 是 Studio 产品输入的定义，`scripts/product-config.mjs` 是构建侧解析接口。插件品牌、Makefile 默认值、隔离桌面打包、可卸载的产品文案和两平台发行工作流已接入；产品文案对应的宿主接口由补丁 035 提供，替代 001、002、003、005 的直接源码修改。当前 31 项补丁已完成本地真实页面和打包 Desktop Host 的 Profile 验证；最终跨平台及适用安装验收通过前，不能标记 5B 完成。
+`src/product.json` 是 Studio 产品输入的定义，`scripts/product-config.mjs` 是构建侧解析接口。插件品牌、Makefile 默认值、隔离桌面打包、可卸载的产品文案和发行工作流使用这些输入。产品文案扩展由补丁 035 提供，替代 001、002、003、005 的直接源码修改。侧栏名称、侧栏图标和首页图标使用 DSH 已声明的插槽；宿主及安装包的验收范围仍按各项记录判断。
 
 | 输入 | 维护位置与解析规则 |
 | --- | --- |
@@ -20,6 +20,8 @@
 `node scripts/build-product-host.mjs --source <DSH> --script build:official` 将公开产品输入交给官方构建入口。候选宿主接口保留 `DSH_CLIENT_LOCALE_OVERRIDES` 和 `DSH_CLIENT_BRAND_MARK_URL`，并写入客户端构建记录；未传入这些值时保留 DSH 原生文案和动画图标。官方构建的初始 HTML 标题仍遵循 DSH 默认值，Studio 挂载后通过有生命周期归属的文档标题贡献显示产品名称。直接运行 DSH 的 `build:official` 不会自动读取 Studio 配置。
 
 运行时通过 `locale.override()` 贡献部分词条，并由插件的 effect 持有 disposer。后注册者只覆盖自己声明的 locale/key；卸载时恢复仍在生效的贡献或原生词条，不修改语言偏好和会话数据。构建输入负责插件激活前的文案与图标，运行时贡献负责插件自身的生命周期。
+
+宿主没有可选的 `locale.override()` 时，插件保留原生文案，不注册同名词典或修改 DOM 文本。该展示层回退不放宽 Agent 预设、自动化和冻结运行时的准入检查。当前 DSH 基线和验证边界见[插件展示与 Host 兼容性](upstream-plugin-compatibility.md)。
 
 两平台工作流使用工作流提交中的解析工具，读取已核验 App 源码的产品定义；名称、App ID、版本、更新源和 Windows 图标再传给后续任务。解析工具版本与签名 App 源码分别固定，不能把工具自身的产品默认值当成历史 App 的配置。macOS 的 `publish_feed` 仍默认关闭，Windows 诊断模式继续跳过签名与安装验收。
 
