@@ -50,6 +50,13 @@ test('missing Studio metadata is not replaced by a historical framework image', 
   assert.throws(() => parseStudioImageCatalog(response(), { runtime: 'openclaw' }), { code: 'DEPLOYMENT_RUNTIME_UNSUPPORTED' });
 });
 
+test('missing image metadata identifies the selected environment without changing it', () => {
+  const data = response(); delete data.Configs[STUDIO_IMAGE_CONFIG_KEY]; data.Environment = 'online';
+  assert.throws(() => parseStudioImageCatalog(data, { runtime: 'dsh-native' }), error =>
+    error.code === 'DEPLOYMENT_CATALOG_MISSING' && /线上环境（cn-beijing-6）/.test(error.message));
+  assert.equal(data.Environment, 'online');
+});
+
 test('invalid scopes, mutable image references and ambiguous releases are refused', () => {
   const cases = [
     { environment: 'production' }, { region: 'cn-guangzhou-1' }, { releases: [release, release] }, { defaultReleaseId: 'missing' },

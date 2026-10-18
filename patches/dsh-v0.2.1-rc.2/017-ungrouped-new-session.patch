@@ -1,0 +1,903 @@
+diff --git a/apps/web/tests/expected/agent-preset-selection/hero.expected.md b/apps/web/tests/expected/agent-preset-selection/hero.expected.md
+index 2fe7ad2c8f5d683c6951b41aff467d68180dc812..59a7ecebd5148887a9bec9ac622aaef71e6acba4 100644
+--- a/apps/web/tests/expected/agent-preset-selection/hero.expected.md
++++ b/apps/web/tests/expected/agent-preset-selection/hero.expected.md
+@@ -1,2 +1,3 @@
++- button "Clear workspace"
+ - button "Choose workspace": workspace
+ - button "Standard mode"
+diff --git a/packages/api/session-controller/tests/sessions-service.client.spec.ts b/packages/api/session-controller/tests/sessions-service.client.spec.ts
+index d92a83198eecfc8f0410a7de324e1dd10c428db1..eb3db7166df14c4e6f7af5abc87799486cdfafe2 100644
+--- a/packages/api/session-controller/tests/sessions-service.client.spec.ts
++++ b/packages/api/session-controller/tests/sessions-service.client.spec.ts
+@@ -884,8 +884,8 @@ describe('create', () => {
+   it('passes a preallocated id and preserves it on ordinary failure', async ({ bench }) => {
+     const b = bench()
+     b.mock.remote.session.create.mockResolvedValue(ok({ sessionId: sid('fresh') }))
+-    await expect(b.svc.create({ cwd: '/w', sessionId: sid('fresh') })).resolves.toBe('fresh')
+-    expect(b.mock.remote.session.create).toHaveBeenCalledExactlyOnceWith({ cwd: '/w', sessionId: 'fresh' })
++    await expect(b.svc.create({ cwd: '/w', sessionId: sid('fresh'), agentPreset: 'chosen-preset' })).resolves.toBe('fresh')
++    expect(b.mock.remote.session.create).toHaveBeenCalledExactlyOnceWith({ cwd: '/w', sessionId: 'fresh', agentPreset: 'chosen-preset' })
+     b.mock.remote.session.create.mockResolvedValue(err(new RemoteError('gateway/internal', '爆了', {})))
+     const failure = await b.svc.create({ sessionId: sid('candidate') }).catch((error: unknown) => error)
+     expect(failure).toBeInstanceOf(SessionCreateError)
+diff --git a/packages/client/ui-conversation/README.md b/packages/client/ui-conversation/README.md
+index 1a0cb88bc91bfeba2de109b8bc8d95ec43a08211..91b89ce639e293a9c71b73d172a0ff8f7c5a3320 100644
+--- a/packages/client/ui-conversation/README.md
++++ b/packages/client/ui-conversation/README.md
+@@ -80,7 +80,7 @@ Drafts retain plain text and file, folder, and Session reference chips across Se
+ 
+ A claimed command is one atomic chip at the start of the draft, and the claim lasts exactly as long as that chip. Deleting the arguments and separator keeps the claim. At the chip's edge, the first Backspace or Delete selects the whole chip and the next one removes it and releases the claim, leaving the arguments as plain text; any other key, a click, or a caret move clears the selection. Text or a line break inserted before the chip turns it back into its literal token and releases the claim, and undo restores a deleted chip together with its claim. The persisted draft records the chip's token, so a reload rebuilds the chip once the command catalog resolves the claim; editing the draft first keeps the literal token, which Enter still submits as the command. The same rules apply to every command and locale, including `/goal`, `/目标`, `/plan`, and `/计划`. Command hints and ordinary placeholders remain hidden throughout IME composition and reappear only after the editor commits the final text and the corresponding input is empty.
+ 
+-Workspace selection uses `uiWorkspace.openWorkspace` to prepare the target and commit navigation. Draft content, including structured references, and attachments move in its synchronous preparation callback only while that request is current; later navigation or owner disposal leaves the original draft intact.
++Workspace selection uses `uiWorkspace.openWorkspace` to prepare the target and commit navigation. Draft content, including structured references, and attachments move in its synchronous preparation callback only while that request is current; later navigation or owner disposal leaves the original draft intact. Before the first message, the close button beside the Workspace name calls `openWorkspace(null)` to create an ungrouped Session and carry the draft through the same guarded callback. It does not remove the Workspace or alter existing conversation history.
+ 
+ The package occupies the root-scoped `main` key `conversation`. Its `main.conversation` shell keeps the resident `conversation.header` outside the optional-Session `conversation.content` Component Factory. The header hosts root-scoped navigation without a selected Session; titles, actions, and View tabs remain in its strict Session child. The Factory owns the shared body and Composer, reads the current Session through its standard Hook, and exposes strict-Session `views` plus root-scoped `widthControls` local positions. Its default adapter renders the existing `conversation.session` entry, while the main occurrence selects the width handles; an embedded occurrence can replace `views` and omit those handles without rendering the main Header. The shared body and Composer register the queue and Todo docks. The Todo dock uses the shared panel elevation above the composer; its rows use the shared idle, ongoing, and done markers for pending, in-progress, and completed items. `ctx.uiSession.provide()` materializes the Conversation and input sources from the same Session binding and supplies `inputActions` as a stable standard prop.
+ 
+diff --git a/packages/client/ui-conversation/README.zh.md b/packages/client/ui-conversation/README.zh.md
+index ccef5969242f852a72fccc3a97098efbd6833973..a617c945af14386aab3116153979b54841897f09 100644
+--- a/packages/client/ui-conversation/README.zh.md
++++ b/packages/client/ui-conversation/README.zh.md
+@@ -80,7 +80,7 @@ Queue 预览启用空白折叠和文档边缘 trim，保留 emoji，并使用 CS
+ 
+ 已认领的命令是草稿开头的一个原子 chip，认领与该 chip 同生共灭。删除参数和分隔空格不影响认领。光标到达 chip 边缘时，第一次 Backspace 或 Delete 选中整个 chip，再按一次才删除它并释放认领，参数保留为普通文字；按其他键、点击或移动光标会取消选中。在 chip 前插入文字或换行会把它还原为字面 token 并释放认领，撤销会连同认领一起恢复被删除的 chip。持久化的草稿记录 chip 的 token，刷新后命令目录解析出认领即重建 chip；在此之前先编辑了草稿则保留字面 token，Enter 仍会把它作为命令提交。所有命令和语言使用相同规则，包括 `/goal`、`/目标`、`/plan` 和 `/计划`。输入法组合输入期间，命令提示和普通占位文字持续隐藏，直到编辑器提交最终文字且对应输入为空时才重新显示。
+ 
+-工作区选择使用 `uiWorkspace.openWorkspace` 准备目标并提交导航。草稿内容（包括结构化引用）和附件仅在该请求仍为当前请求时，通过它的同步准备回调搬移；后续导航或所有者释放会保留原草稿。
++工作区选择使用 `uiWorkspace.openWorkspace` 准备目标并提交导航。草稿内容（包括结构化引用）和附件仅在该请求仍为当前请求时，通过它的同步准备回调搬移；后续导航或所有者释放会保留原草稿。 首轮消息发送前，工作区名称旁的叉号调用 `openWorkspace(null)` 创建未分组会话，通过同一个受导航生命周期保护的回调搬移草稿；不会删除工作区或修改已有会话历史。
+ 
+ 本包占据 root 作用域 `main` 中的 `conversation` key。其 `main.conversation` 外壳将常驻的 `conversation.header` 放在可选 Session 的 `conversation.content` Component Factory 外。未选中 Session 时，头部仍承载根作用域导航；标题、操作和 View 标签保留在严格 Session 子组件中。Factory 拥有共享正文与 Composer，通过其标准 Hook 读取当前 Session，并公开 strict-Session `views` 与 root-scoped `widthControls` 两个局部位置。默认 adapter 渲染现有 `conversation.session` entry，主 occurrence 选择宽度拖拽条；嵌入式 occurrence 可以替换 `views`、省略拖拽条，且不渲染主 Header。共享正文与 Composer 注册 queue dock 和 Todo dock。Todo dock 在 composer 上方使用共享面板 elevation；其中的行分别以共享 idle、ongoing 与 done 标记表示待处理、进行中与已完成。`ctx.uiSession.provide()` 从同一个 Session binding 物化 Conversation 与 input source，并将 `inputActions` 作为稳定标准 prop 提供。
+ 
+diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/client/ui-conversation/src/client/apply.ts
+index e567bd1a50b42f4a25cf7795afa5afafeb632e8e..4f32bf639197d8992e875f65a8150a6628783b45 100644
+--- a/packages/client/ui-conversation/src/client/apply.ts
++++ b/packages/client/ui-conversation/src/client/apply.ts
+@@ -116,6 +116,7 @@ interface WorkspaceNavigation {
+   openWorkspace(
+     workspaceId: Parameters<ConversationInjected['selectWorkspace']>[0],
+     beforeOpen: (sessionId: SessionId) => void,
++    options?: { readonly settingsFrom?: SessionId },
+   ): Promise<void>
+ }
+ 
+@@ -375,7 +376,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+             }
+           }
+         }
+-      }),
++      }, workspaceId === null && sessionId !== undefined ? { settingsFrom: sessionId } : undefined),
+     }),
+   }, ConversationContent)
+ 
+diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
+index a02f5aa662e47b9de87f424cc6bf54c41502c7c3..3595b898d95fcdc3024515b6760c83a4bd8993e5 100644
+--- a/packages/client/ui-conversation/src/client/contract/slots.ts
++++ b/packages/client/ui-conversation/src/client/contract/slots.ts
+@@ -403,8 +403,8 @@ export type ConvViewProps = PropsRuntime<'conversation.view'>
+ 
+ /** Business callbacks injected into the resident Conversation shell. */
+ export interface ConversationInjected {
+-  /** Connect and open a blank Session in the selected Workspace. */
+-  selectWorkspace: (workspaceId: WorkspaceId) => Promise<void>
++  /** Open a blank Session and carry the draft; null explicitly removes Workspace context. */
++  selectWorkspace: (workspaceId: WorkspaceId | null) => Promise<void>
+   /** Session-addressed composer block source, or the stable absent source. */
+   hooks: { composerBlock: ObservableSnapshot<ComposerBlock | undefined> }
+ }
+diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
+index f1f708073b3264abb603aae371a7cf6ca03ae750..51e860c17af63e10a004572c54653893758eb1d4 100644
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -77,6 +77,7 @@ export const zh = {
+   'hero.headline': '探索未至之境',
+   'hero.preview': '预览版',
+   'hero.chooseWorkspace': '选择工作区',
++  'hero.clearWorkspace': '取消工作区',
+   'session.hierarchy': '会话层级',
+   'todo.title': '任务',
+   'todo.progress.done': '{done} 已完成',
+@@ -457,6 +458,7 @@ export const en = {
+   'hero.headline': 'Into the Unknown',
+   'hero.preview': 'Preview',
+   'hero.chooseWorkspace': 'Choose workspace',
++  'hero.clearWorkspace': 'Clear workspace',
+   'session.hierarchy': 'Session hierarchy',
+   'todo.title': 'To-dos',
+   'todo.progress.done': '{done} completed',
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
+index 959593a16c5f47ec952e9eb4b93125ae7bbf0b18..97a1378d34e733a0bd09d3cc9530f7540880bc53 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
+@@ -39,7 +39,7 @@ export function ConversationContent(props: ConversationContentProps) {
+   const composerBlock = useComposerBlock(block => block)
+ 
+   const [pickerOpen, setPickerOpen] = useState(false)
+-  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<WorkspaceId | undefined>()
++  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<WorkspaceId | null | undefined>()
+   const pickerAnchor = useRef<HTMLButtonElement>(null)
+ 
+   // Publishes the two live measurements floating View chrome reads off the
+@@ -77,8 +77,9 @@ export function ConversationContent(props: ConversationContentProps) {
+   // workspace disappears from a ready list (deleted from the sidebar).
+   useEffect(() => {
+     if (pendingWorkspaceId === undefined) return
+-    if (sessionWorkspace?.workspaceId === pendingWorkspaceId
+-      || (workspaces.phase === 'ready' && pendingWorkspace === undefined)) {
++    if ((pendingWorkspaceId === null && sessionWorkspace === undefined)
++      || sessionWorkspace?.workspaceId === pendingWorkspaceId
++      || (pendingWorkspaceId !== null && workspaces.phase === 'ready' && pendingWorkspace === undefined)) {
+       setPendingWorkspaceId(undefined)
+     }
+   }, [pendingWorkspaceId, sessionWorkspace?.workspaceId, workspaces.phase, pendingWorkspace])
+@@ -96,7 +97,7 @@ export function ConversationContent(props: ConversationContentProps) {
+   //      placeholder, never the deleted folder's name via cwd.
+   // A title still automatic reads in the reader's language, matching the
+   // sidebar row the same Workspace has there.
+-  const storedChipTitle = pendingWorkspace?.title
++  const storedChipTitle = pendingWorkspaceId === null ? undefined : pendingWorkspace?.title
+     ?? (sessionId === undefined
+       ? undefined
+       : sessionWorkspace?.title
+@@ -114,6 +115,13 @@ export function ConversationContent(props: ConversationContentProps) {
+         label={chipTitle}
+         menuOpen={pickerOpen}
+         onClick={() => { setPickerOpen(open => !open) }}
++        onClear={() => {
++          setPickerOpen(false)
++          setPendingWorkspaceId(null)
++          void selectWorkspace(null).catch(() => {
++            setPendingWorkspaceId(current => current === null ? undefined : current)
++          })
++        }}
+         t={t}
+       />
+       {renderSlot('conversation.hero.workspace', {
+diff --git a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx b/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
+index 40df87269b5f9b434dbe561b03f3d368d0d53301..bed3560fbaa10d656f6053e6122adc0427829a1b 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
+@@ -4,7 +4,7 @@
+ import { useState } from 'react'
+ import type { ReactNode, RefObject } from 'react'
+ import {
+-  FISH_LOGO_PATH, FISH_LOGO_VIEWBOX, IconChevronDownOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
++  FISH_LOGO_PATH, FISH_LOGO_VIEWBOX, IconChevronDownOutlineRegular, IconCloseOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
+ } from '@deepseek-ai/dsh-client-ui-primitives'
+ import { workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
+ import type { ConversationContentProps } from '../contract/slots.ts'
+@@ -33,31 +33,46 @@ export function workspaceLabel(cwd: string): string {
+  * @param props.label - chip label (see {@link workspaceLabel}); omitted → placeholder.
+  * @param props.menuOpen - menu expansion echo.
+  * @param props.onClick - menu toggle.
+- * @returns the chip button element.
++ * @param props.onClear - cancel the chosen Workspace before the first message.
++ * @returns the selector and its separate accessible clear button.
+  */
+-export function WorkspaceChip({ buttonRef, label, menuOpen = false, onClick, t }: {
++export function WorkspaceChip({ buttonRef, label, menuOpen = false, onClick, onClear, t }: {
+   buttonRef?: RefObject<HTMLButtonElement>
+   label?: string | undefined
+   menuOpen?: boolean
+   onClick?: () => void
++  onClear?: () => void
+   t: HeroTranslate
+ }) {
+   return (
+-    <button
+-      ref={buttonRef}
+-      type="button"
+-      className={css.workspace}
+-      aria-label={t('hero.chooseWorkspace')}
+-      aria-haspopup="menu"
+-      aria-expanded={menuOpen}
+-      onClick={onClick}
+-    >
+-      {label === undefined
+-        ? <IconFolderCloseRegular className={css.folder} size={16} />
+-        : <IconFolderOpenRegular className={css.folder} size={16} />}
+-      <span className={css.workspaceLabel}>{label ?? t('hero.chooseWorkspace')}</span>
+-      <IconChevronDownOutlineRegular className={css.chevron} size={12} />
+-    </button>
++    <span className={css.workspaceGroup}>
++      {label !== undefined && onClear !== undefined && (
++        <button
++          type="button"
++          className={css.clearWorkspace}
++          aria-label={t('hero.clearWorkspace')}
++          title={t('hero.clearWorkspace')}
++          onClick={onClear}
++        >
++          <IconCloseOutlineRegular size={12} />
++        </button>
++      )}
++      <button
++        ref={buttonRef}
++        type="button"
++        className={css.workspace}
++        aria-label={t('hero.chooseWorkspace')}
++        aria-haspopup="menu"
++        aria-expanded={menuOpen}
++        onClick={onClick}
++      >
++        {label === undefined
++          ? <IconFolderCloseRegular className={css.folder} size={16} />
++          : <IconFolderOpenRegular className={css.folder} size={16} />}
++        <span className={css.workspaceLabel}>{label ?? t('hero.chooseWorkspace')}</span>
++        <IconChevronDownOutlineRegular className={css.chevron} size={12} />
++      </button>
++    </span>
+   )
+ }
+ 
+diff --git a/packages/client/ui-conversation/src/client/skeleton/HeroShell.module.css b/packages/client/ui-conversation/src/client/skeleton/HeroShell.module.css
+index aac6a5cf616ca5b7a0d14a1b2bce9356624b92ec..77f48180de410dd58733473216855fcc00a1d864 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/HeroShell.module.css
++++ b/packages/client/ui-conversation/src/client/skeleton/HeroShell.module.css
+@@ -149,6 +149,39 @@
+    Overflow-driven degradation, no breakpoint: the label shrinks with an
+    ellipsis down to nothing, so folder and chevron always sit snug against
+    whatever text remains — full text, ellipsized text, or none. */
++.workspaceGroup {
++  display: inline-flex;
++  align-items: center;
++  min-width: 0;
++  max-width: 360px;
++}
++
++.clearWorkspace {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  flex: none;
++  width: 18px;
++  height: 18px;
++  padding: 0;
++  margin-left: 6px;
++  border: none;
++  border-radius: 50%;
++  corner-shape: round;
++  background: var(--dsw-alias-label-secondary);
++  color: var(--dsw-alias-label-primary-foreground);
++  cursor: pointer;
++}
++
++.clearWorkspace:hover {
++  background: var(--dsw-alias-label-primary);
++}
++
++.clearWorkspace:focus-visible {
++  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
++  outline-offset: 2px;
++}
++
+ .workspace {
+   display: inline-flex;
+   align-items: center;
+diff --git a/packages/client/ui-conversation/tests/apply-inject.client.spec.tsx b/packages/client/ui-conversation/tests/apply-inject.client.spec.tsx
+index 83d6db85c9c17c81d3ec4bc9f1246f357da7a4ac..c6be900504dc2af404c9524bffda23bc79dc5e22 100644
+--- a/packages/client/ui-conversation/tests/apply-inject.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/apply-inject.client.spec.tsx
+@@ -537,7 +537,7 @@ describe('Conversation inject API', () => {
+     b.uploads.set(other, targetUpload)
+     await b.runtime.sessions.add({ id: other, session: {} })
+     b.connectWorkspace.mockResolvedValueOnce(other)
+-    await resident.selectWorkspace('workspace-2' as WorkspaceId)
++    await resident.selectWorkspace(null)
+     expect(b.opened).toHaveBeenCalledWith(other)
+     expect(state.getSnapshot().draft).toBe('')
+     expect(b.inputApi(other).state.getSnapshot().draft).toBe('carry me')
+diff --git a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+index bcd1005a30e5c2c78df6f6e130270558eaa68952..f659d3ba69c3395230c808b1d5d2dd2af4d18c04 100644
+--- a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+@@ -122,7 +122,7 @@ function sessionSnapshotOf(overrides: Partial<SessionSnapshot> = {}): SessionSna
+ function mount(
+   snapshot: SessionSnapshot,
+   workspaceRows: WorkspaceView[] = [{ ...workspace('one'), sessionIds: [SID] }],
+-  retargetWorkspace = vi.fn(async (_workspaceId: WorkspaceId) => {}),
++  retargetWorkspace = vi.fn(async (_workspaceId: WorkspaceId | null) => {}),
+   options: {
+     /** Explicit undefined exercises the shell before a Session is selected. */
+     sessionId?: SessionId | undefined
+@@ -452,20 +452,16 @@ describe('ConversationRoot resident composer', () => {
+     expect(seat('conversation.input.plan')).toEqual({ locked: true })
+   })
+ 
+-  it('lets the no-workspace posture win over a block', () => {
+-    // Picking a workspace is the earlier prerequisite; naming a model first
+-    // would send the user somewhere they cannot act yet.
++  it('keeps the model selector usable when an ungrouped Session has a model blocker', () => {
+     const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
+       summaryBlank: true,
+       composerBlock: { reason: 'select a model first' },
+     })
+     const box = b.view.getByRole('textbox')
+-    expect(box.getAttribute('aria-disabled')).not.toBe('true')
+-    expect(box.getAttribute('contenteditable')).not.toBe('true')
+-    expect(box.getAttribute('aria-haspopup')).toBe('menu')
+-    expect(box.getAttribute('data-placeholder')).not.toBe('select a model first')
++    expect(box.getAttribute('aria-disabled')).toBe('true')
++    expect(box.getAttribute('data-placeholder')).toBe('select a model first')
+     const modelSeat = b.seatOwners.filter(call => call.key === 'conversation.input.model').at(-1)?.owner
+-    expect(modelSeat).toEqual({ locked: true })
++    expect(modelSeat).toEqual({ locked: false })
+   })
+ 
+   it('keeps composer text in the machine, mirrors to the Conversation store, and submits through the sink', () => {
+@@ -573,6 +569,27 @@ describe('ConversationRoot resident composer', () => {
+     expect(b.view.getByText('Selected Folder')).toBeTruthy()
+   })
+ 
++  it('clears the Workspace through its compact close button without opening the picker', async () => {
++    const b = mount(sessionSnapshotOf({ blank: true }), [{ ...workspace('one'), sessionIds: [SID] }])
++    act(() => { b.wiring.setDraft('keep my unsent draft') })
++    await act(async () => { fireEvent.click(b.view.getByRole('button', { name: '取消工作区' })) })
++    expect(b.retargetWorkspace).toHaveBeenCalledWith(null)
++    expect((b.pickerOwner() as { open: boolean }).open).toBe(false)
++    expect(b.wiring.snapshot.draft).toBe('keep my unsent draft')
++    expect(b.view.queryByRole('button', { name: '取消工作区' })).toBeNull()
++    expect(b.view.getByRole('textbox').getAttribute('contenteditable')).toBe('true')
++  })
++
++  it('restores the Workspace chip and keeps the draft when clearing fails', async () => {
++    const clear = vi.fn(async (_id: WorkspaceId | null) => { throw new Error('host unavailable') })
++    const b = mount(sessionSnapshotOf({ blank: true }), [{ ...workspace('one'), sessionIds: [SID] }], clear)
++    act(() => { b.wiring.setDraft('retry later') })
++    await act(async () => { fireEvent.click(b.view.getByRole('button', { name: '取消工作区' })) })
++    expect(b.view.getByRole('button', { name: '取消工作区' })).toBeTruthy()
++    expect(b.view.getByText('one')).toBeTruthy()
++    expect(b.wiring.snapshot.draft).toBe('retry later')
++  })
++
+   it('keeps a rejected first prompt engaging instead of returning to the Hero', () => {
+     const failed = sessionSnapshotOf({
+       blank: true,
+diff --git a/packages/client/ui-workspace/README.md b/packages/client/ui-workspace/README.md
+index 2654447b77e554b400baf238ea9315c43b8487a1..2f5c47af7d502b548b7d67df4e92fbaff5e44100 100644
+--- a/packages/client/ui-workspace/README.md
++++ b/packages/client/ui-workspace/README.md
+@@ -232,3 +232,5 @@ These limits define the search depth, the archive surface, and the picking carri
+ None.
+ 
+ </details>
++
++The Ungrouped header’s **+** calls `startSession(null)` to create a fresh Session without inheriting a Workspace. Clearing a blank Session’s Workspace preserves its Agent preset, selected model and named access policy through `openWorkspace(null, beforeOpen, { settingsFrom })`; the draft and attachments transfer only after that preparation succeeds. A Workspace-scoped custom access policy is replaced by the new Session default.
+diff --git a/packages/client/ui-workspace/README.zh.md b/packages/client/ui-workspace/README.zh.md
+index c6559954535e2740e8c06daa8e8d0df0546a3232..f63c3b0fb093977cfa04fb6adaacaa16d2de56cf 100644
+--- a/packages/client/ui-workspace/README.zh.md
++++ b/packages/client/ui-workspace/README.zh.md
+@@ -232,3 +232,5 @@ Workspace 与 Session 悬浮卡片会复制对应行被截断的值：激活 Wor
+ 无。
+ 
+ </details>
++
++未分组标题的 **+** 调用 `startSession(null)` 创建不继承工作区的新会话。清除空白会话的工作区时，通过 `openWorkspace(null, beforeOpen, { settingsFrom })` 保留 Agent 预设、所选模型和具名访问策略，准备成功后才搬移草稿和附件；工作区作用域的自定义访问策略改用新会话的默认策略。
+diff --git a/packages/client/ui-workspace/src/client/contract/slots.ts b/packages/client/ui-workspace/src/client/contract/slots.ts
+index d00b3658d82e30f6efea26adbadb1b4533a67868..502581f98f389833eb9009235dccf6ac216024bc 100644
+--- a/packages/client/ui-workspace/src/client/contract/slots.ts
++++ b/packages/client/ui-workspace/src/client/contract/slots.ts
+@@ -240,9 +240,9 @@ export type WorkspaceBrowserInjected = {
+   /**
+    * Create a fresh Session, or preserve a reusable blank with explicit draft options.
+    * Without an explicit Workspace, inherit the current Session Workspace,
+-   * then the recent Workspace, or clear into the New Session view.
++   * then the recent Workspace, or clear into the New Session view. Pass null to create an ungrouped Session.
+    */
+-  startSession: (workspaceId?: WorkspaceId, options?: StartSessionOptions) => void
++  startSession: (workspaceId?: WorkspaceId | null, options?: StartSessionOptions) => void
+   /** Open a real Session. */
+   open: (sessionId: SessionId) => void
+   /**
+@@ -260,14 +260,14 @@ export type WorkspaceBrowserInjected = {
+   /** Tell the user an archived row cannot be opened (a click on it). */
+   notifyArchivedNotOpenable: () => void
+   /** Rename a Host Workspace (rejects on name conflict; resolves on durability). */
+-  renameWorkspace: (workspaceId: WorkspaceId, title: string) => Promise<void>
++  renameWorkspace: (workspaceId: WorkspaceId | null, title: string) => Promise<void>
+   /** Delete only a Host Workspace registration; directory and Session logs remain. */
+   deleteWorkspace: (workspaceId: WorkspaceId) => Promise<void>
+   /**
+    * Reorder a Workspace in the durable registry display order.
+    * Omitted anchor appends to the end.
+    */
+-  insertWorkspaceBefore: (workspaceId: WorkspaceId, beforeWorkspaceId?: WorkspaceId) => Promise<void>
++  insertWorkspaceBefore: (workspaceId: WorkspaceId | null, beforeWorkspaceId?: WorkspaceId) => Promise<void>
+   /** Remove a Session from the registry-global archived set (the search results' restore button). */
+   unarchiveSession: (sessionId: SessionId) => Promise<void>
+   /** Adopt a picked host directory as a real Workspace before targeting a Session. */
+diff --git a/packages/client/ui-workspace/src/client/index.ts b/packages/client/ui-workspace/src/client/index.ts
+index cc9da072c9bd8053baf4a3551b61069ce594fd6b..08cd68078595931930ce79b1da4b1f2a12450fbb 100644
+--- a/packages/client/ui-workspace/src/client/index.ts
++++ b/packages/client/ui-workspace/src/client/index.ts
+@@ -100,7 +100,7 @@ const NS = 'workspace'
+  * declaration through `slots.inject()` instead of assuming order.
+  */
+ export const inject = [
+-  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts', 'remoteAccess',
++  'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.session', 'remote.commands', 'remote.directoryPicker', 'layout', 'shortcuts', 'remoteAccess',
+ ]
+ 
+ /**
+@@ -123,6 +123,8 @@ export function apply(ctx: Context): void {
+   const notify = (toast: RowToast): void => { rowToast.set({ ...toast, seq: ++toastSeq }) }
+   const uiWorkspace = new UiWorkspaceService(
+     ctx, ctx.remote.directoryPicker, workspaces, sessions, viewInstance.actions, notify,
++    input => ctx.remote.session.selectModel(input),
++    (sessionId, input, attachments) => ctx.remote.commands.execute(sessionId, input, attachments),
+   )
+   ctx.slots.provideRoot({
+     hooks: { workspaces: workspaces.list },
+diff --git a/packages/client/ui-workspace/src/client/navigation.ts b/packages/client/ui-workspace/src/client/navigation.ts
+index 9c8fa977605527492b75441a2c91790f9ae27a75..f1807cebffbc5af46fd6ae525b7c7c6e9b815dae 100644
+--- a/packages/client/ui-workspace/src/client/navigation.ts
++++ b/packages/client/ui-workspace/src/client/navigation.ts
+@@ -44,7 +44,7 @@ export interface UiWorkspace {
+   openSession(target: SessionTarget): void
+   /**
+    * Connect a Workspace and open its Session unless a later navigation supersedes it.
+-   * @param workspaceId - target Workspace.
++   * @param workspaceId - target Workspace; null opens a new ungrouped Session.
+    * @param beforeOpen - optional synchronous preparation for the selected Session,
+    * skipped after supersession; a throw aborts the open and releases the retained reference.
+    * @param options - choices for the Session the connection creates or reuses.
+@@ -53,9 +53,9 @@ export interface UiWorkspace {
+    * notice unless a later navigation or disposal superseded the request.
+    */
+   openWorkspace(
+-    workspaceId: WorkspaceId,
++    workspaceId: WorkspaceId | null,
+     beforeOpen?: (sessionId: SessionId) => void,
+-    options?: Pick<StartSessionOptions, 'agentPreset'>,
++    options?: Pick<StartSessionOptions, 'agentPreset'> & { readonly settingsFrom?: SessionId },
+   ): Promise<void>
+   /**
+    * Fork a Session without changing the current selection.
+@@ -81,11 +81,11 @@ export interface UiWorkspace {
+   /**
+    * Create a fresh Session, or reuse a blank when preparing an explicit draft. A creation the Host
+    * refuses is shown through the Workspace notice and leaves the selection as it was.
+-   * @param workspaceId - explicit target; absent inherits the current or most recent Workspace.
++   * @param workspaceId - explicit target; null creates an ungrouped Session; absent inherits the current or most recent Workspace.
+    * @param options - initial content and the reused blank's preset; existing text or attachments
+    * are preserved unless clearPreviousDraft is true.
+    */
+-  startSession(workspaceId?: WorkspaceId, options?: StartSessionOptions): void
++  startSession(workspaceId?: WorkspaceId | null, options?: StartSessionOptions): void
+   /**
+    * Archive a Session and clear it when it is the current selection.
+    * @param sessionId - Session to archive.
+@@ -176,6 +176,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+     private readonly sessions: ISessions,
+     private readonly view: Pick<WorkspaceViewStoreActions, 'pinSessionOrder'>,
+     private readonly notify: (toast: RowToast) => void,
++    private readonly selectModel: ClientRemote['session']['selectModel'],
++    private readonly executeCommand: ClientRemote['commands']['execute'],
+   ) {
+     super(ctx, 'uiWorkspace')
+     ctx.effect(() => {
+@@ -278,29 +280,58 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+   }
+ 
+   openWorkspace(
+-    workspaceId: WorkspaceId,
++    workspaceId: WorkspaceId | null,
+     beforeOpen?: (sessionId: SessionId) => void,
+-    options: Pick<StartSessionOptions, 'agentPreset'> = {},
++    options: Pick<StartSessionOptions, 'agentPreset'> & { readonly settingsFrom?: SessionId } = {},
+   ): Promise<void> {
+-    return this.openWorkspaceSession(workspaceId, beforeOpen, options)
++    return this.openWorkspaceSession(workspaceId, beforeOpen, options, options.settingsFrom)
+   }
+ 
+   private async openWorkspaceSession(
+-    workspaceId: WorkspaceId,
++    workspaceId: WorkspaceId | null,
+     beforeOpen: ((sessionId: SessionId) => void) | undefined,
+     reuse: Pick<StartSessionOptions, 'agentPreset'> | undefined,
++    settingsFrom?: SessionId,
+   ): Promise<void> {
+     const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
++    // Cancellation can change while an awaited operation settles.
++    const cancelled = (): boolean => navigation.aborted
+     let sessionId: SessionId
+     try {
+-      sessionId = await this.connectBlank(workspaceId, reuse)
++      if (settingsFrom !== undefined) await this.sessions.refreshProjections(settingsFrom)
++      if (cancelled()) return
++      const source = settingsFrom === undefined ? undefined : this.sessions.list.getSnapshot().byId[settingsFrom]
++      if (settingsFrom !== undefined && source?.blank !== true) throw new Error('Workspace changes require a blank source Session')
++      if (settingsFrom !== undefined && workspaceId !== null) throw new Error('Inherited settings are only supported when clearing a Workspace')
++      const permissions = source?.projectionValues?.permissions
++      const permission = permissions && typeof permissions === 'object' && 'currentValue' in permissions ? permissions.currentValue : undefined
++      // A custom access policy is scoped to the Workspace. Clearing the
++      // Workspace must still create a usable ungrouped Session; let the new
++      // Session use its default named policy instead of aborting navigation.
++      const preset = source?.projectionValues?.agentPreset
++      const model = source?.projectionValues?.modelSelection?.next
++      sessionId = await (workspaceId === null
++        ? this.sessions.create(typeof preset === 'string' ? { agentPreset: preset } : reuse ?? {})
++        : this.connectBlank(workspaceId, reuse))
++      if (cancelled()) return
++      if (model !== undefined && model !== null) {
++        const result = await this.selectModel({ sessionId, ...model, saveDefault: false })
++        if (!result.ok) throw new Error(result.error.message)
++      }
++      if (cancelled()) return
++      if (typeof permission === 'string' && permission !== 'custom') {
++        const result = await this.executeCommand(sessionId, `/permission ${permission}`, [])
++        if (!result.ok) throw new Error(result.error.message)
++        if (result.value === undefined) throw new Error('Host cannot restore the access mode')
++        if (result.value.result.kind === 'error') throw new Error(result.value.result.text)
++      }
+     } catch (error: unknown) {
+       // Reported here, not in connectWorkspace: startup restoration calls that
+       // directly and stays console-only.
+-      if (!navigation.aborted) this.notify({ kind: 'createFailed', message: creationFailureMessage(error) })
++      if (!cancelled()) this.notify({ kind: 'createFailed', message: creationFailureMessage(error) })
+       throw error
+     }
+-    if (navigation.aborted) return
++    if (cancelled()) return
+     this.replaceMain(sessionId, navigation, 'reveal', beforeOpen)
+   }
+ 
+@@ -317,7 +348,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+     })
+   }
+ 
+-  startSession(workspaceId?: WorkspaceId, options?: StartSessionOptions): void {
++  startSession(workspaceId?: WorkspaceId | null, options?: StartSessionOptions): void {
+     const { agentPreset, ...draft } = options ?? {}
+     const draftOptions = options === undefined ? undefined : draft
+     const initializeDraft = draftOptions !== undefined
+@@ -331,7 +362,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+     const recent = workspace.phase === 'ready' && sessions.phase === 'ready'
+       ? recentWorkspace(workspace.items, sessions.byId)
+       : undefined
+-    const target = workspaceId ?? currentWorkspaceId ?? recent
++    const target = workspaceId === null ? null : workspaceId ?? currentWorkspaceId ?? recent
+     if (target === undefined) {
+       if (initializeDraft) {
+         this.notify({ kind: 'createFailed', message: this.ctx.locale.bind('workspace')('draft.workspaceRequired') })
+diff --git a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
+index df871654ee16030fbe639a6748e77944a8f13904..5a0a70696ef09ec29b0667c7610fa2a5e74b634b 100644
+--- a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
++++ b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
+@@ -565,10 +565,8 @@ function SessionTree({
+             setGroupExpanded(group.key, !group.expanded)
+           }}
+           onCreate={() => {
+-            if (group.workspaceId !== undefined) {
+-              setGroupExpanded(group.key, true)
+-              startSession(group.workspaceId)
+-            }
++            setGroupExpanded(group.key, true)
++            startSession(group.workspaceId ?? null)
+           }}
+           drag={workspaceDragProps}
+           actions={group.workspaceId === undefined
+diff --git a/packages/client/ui-workspace/tests/apply.client.spec.ts b/packages/client/ui-workspace/tests/apply.client.spec.ts
+index 0d3278cdf0af56790cf6232f9d0b6ab5ff059972..3311146c6b59f4056ac1a03649431f50ae74e1a9 100644
+--- a/packages/client/ui-workspace/tests/apply.client.spec.ts
++++ b/packages/client/ui-workspace/tests/apply.client.spec.ts
+@@ -153,7 +153,11 @@ async function bench() {
+   } as never)
+   const pickDirectory = vi.fn(() => Promise.resolve({ ok: true as const, value: '/projects/picked' }))
+   const directoryPicker = { pick: pickDirectory }
+-  Object.assign(new TestRemote(ctx), { directoryPicker })
++  const session = { selectModel: vi.fn() }
++  const commands = { execute: vi.fn() }
++  Object.assign(new TestRemote(ctx), { directoryPicker, session, commands })
++  ctx.provide('remote.session', session as never)
++  ctx.provide('remote.commands', commands as never)
+   ctx.provide('remote.directoryPicker', directoryPicker as never)
+   const locale = new LocaleRuntime(ctx)
+   // These specs assert the shipped Chinese copy. There is no jsdom `window`
+@@ -219,7 +223,7 @@ describe('ui-workspace apply', () => {
+ 
+   it('declares the services it drives', () => {
+     expect(inject).toEqual([
+-      'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts', 'remoteAccess',
++      'slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.session', 'remote.commands', 'remote.directoryPicker', 'layout', 'shortcuts', 'remoteAccess',
+     ])
+   })
+ 
+diff --git a/packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx b/packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx
+index 041365805d55726cb2f9334e9609a78fe5a1e756..8a7783aa91b1e84aa5b1ae2344c8b9519beee229 100644
+--- a/packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx
++++ b/packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx
+@@ -35,7 +35,7 @@ async function bench() {
+   runtime.releaseWorkspaceSource()
+   const directoryPicker = {}
+   const { remote } = runtime
+-  remote.provideNamespaces({ directoryPicker })
++  remote.provideNamespaces({ directoryPicker, session: { selectModel: vi.fn() }, commands: { execute: vi.fn() } })
+   const locale = new LocaleRuntime(runtime.ctx)
+   runtime.ctx.provide('locale', locale)
+   runtime.slots.installLocale(locale)
+diff --git a/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx b/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
+index 274f595533be50e500d35dc105ed6f890c0e300f..e4143862cec9ccf69ff7a901eb4a4603210c0c31 100644
+--- a/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
++++ b/packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx
+@@ -43,7 +43,7 @@ async function createRuntime(): Promise<SlotTestRuntime> {
+   // The rename flow never picks a directory; the namespace only has to be there
+   // for ui-workspace's inject to settle.
+   const directoryPicker = {}
+-  runtime.remote.provideNamespaces({ directoryPicker })
++  runtime.remote.provideNamespaces({ directoryPicker, session: { selectModel: vi.fn() }, commands: { execute: vi.fn() } })
+   const locale = new LocaleRuntime(runtime.ctx)
+   runtime.ctx.provide('locale', locale)
+   runtime.slots.installLocale(locale)
+diff --git a/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx b/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
+index 4b62826cbc2e3325f58562a161c5e649d9c8e63a..2796b05a9d01b377bdbe09e5cc259c600258b6f6 100644
+--- a/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
++++ b/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
+@@ -1290,7 +1290,7 @@ describe('WorkspaceBrowser', () => {
+     expect(startSession).toHaveBeenCalledWith(wid('alpha'))
+   })
+ 
+-  it('auto-expands the Ungrouped bucket for a loose current session; its header has no menu and its ＋ is inert', () => {
++  it('starts a workspace-free Session from the Ungrouped header while keeping it expanded', () => {
+     const startSession = vi.fn()
+     mount({
+       useSessions: hook(sessionState([summary('loose', 1)], { main: sid('loose') })),
+@@ -1301,7 +1301,7 @@ describe('WorkspaceBrowser', () => {
+     expect(screen.getByText('loose')).toBeTruthy()
+     expect(screen.queryByRole('button', { name: '工作区“未分组”的操作' })).toBeNull()
+     fireEvent.click(screen.getByRole('button', { name: '在“未分组”中新建会话' }))
+-    expect(startSession).not.toHaveBeenCalled()
++    expect(startSession).toHaveBeenCalledExactlyOnceWith(null)
+   })
+ 
+   it('keeps an already-expanded group when the selection moves within it', () => {
+diff --git a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
+index 1662c1cd5fed364244a2c9cf9fccc48fd62e4004..35b735794b6f9807d2674e891a4aeff657e641f3 100644
+--- a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
++++ b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
+@@ -302,6 +302,8 @@ function bench(options: BenchOptions = {}) {
+   options.configureSessions?.(sessions)
+   const view = createWorkspaceViewStore().create()
+   const notify = vi.fn<(toast: RowToast) => void>()
++  const selectModel = vi.fn<ClientRemote['session']['selectModel']>(async input => ({ ok: true, value: { selected: { provider: input.provider, model: input.model } } }))
++  const executeCommand = vi.fn<ClientRemote['commands']['execute']>(async () => ({ ok: true, value: { commandId: 'permission-copy' as never, result: { kind: 'success' } } }))
+   const uiWorkspace = new UiWorkspaceService(
+     ctx,
+     directoryPicker.remote,
+@@ -309,8 +311,10 @@ function bench(options: BenchOptions = {}) {
+     sessions,
+     view.actions,
+     notify,
++    selectModel,
++    executeCommand,
+   )
+-  return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify, requestDraftInitialization }
++  return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify, requestDraftInitialization, selectModel, executeCommand }
+ }
+ 
+ function lastOpening(open: MockInstance<UiWorkspaceService['openWorkspace']>): Promise<void> {
+@@ -728,6 +732,119 @@ describe('UiWorkspaceService', () => {
+     expect(b.notify).toHaveBeenCalledTimes(3)
+   })
+ 
++  it('creates an explicitly ungrouped Session without inheriting the current Workspace', async () => {
++    const b = bench({ workspaces: workspaceState([workspace('a')]), sessions: sessionState() })
++    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
++    b.sessions.create.mockClear().mockResolvedValueOnce(sid('workspace-free'))
++
++    b.uiWorkspace.startSession(null)
++
++    await vi.waitFor(() => {
++      expect(b.sessions.retain).toHaveBeenLastCalledWith(sid('workspace-free'), { source: 'mainView' })
++    })
++    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({})
++    expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
++  })
++
++  it('preserves the Agent preset, model and access mode when cancelling a Workspace', async () => {
++    const current = summary('source', { blank: true, projectionValues: {
++      agentPreset: 'studio-test-preset', modelSelection: { next: { provider: 'gateway', model: 'chosen', reasoningEffort: 'high' }, lastUsed: null },
++      permissions: { currentValue: 'read-only' },
++    } })
++    const b = bench({ workspaces: workspaceState([workspace('a', [current.id])]), sessions: sessionState([current]) })
++    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
++    b.sessions.create.mockClear().mockResolvedValueOnce(sid('no-folder'))
++    const prepare = vi.fn()
++    await b.uiWorkspace.openWorkspace(null, prepare, { settingsFrom: current.id })
++    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({ agentPreset: 'studio-test-preset' })
++    expect(b.selectModel).toHaveBeenCalledExactlyOnceWith({ sessionId: 'no-folder', provider: 'gateway', model: 'chosen', reasoningEffort: 'high', saveDefault: false })
++    expect(b.executeCommand).toHaveBeenCalledExactlyOnceWith(sid('no-folder'), '/permission read-only', [])
++    expect(prepare).toHaveBeenCalledExactlyOnceWith(sid('no-folder'))
++  })
++
++  it('keeps the old Session and draft when restoring the model fails', async () => {
++    const current = summary('source', { blank: true, projectionValues: {
++      modelSelection: { next: { provider: 'gateway', model: 'chosen' }, lastUsed: null },
++    } })
++    const b = bench({ workspaces: workspaceState([workspace('a', [current.id])]), sessions: sessionState([current]) })
++    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
++    b.selectModel.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'model unavailable', {}) })
++    const prepare = vi.fn()
++    await expect(b.uiWorkspace.openWorkspace(null, prepare, { settingsFrom: current.id })).rejects.toThrow('model unavailable')
++    expect(prepare).not.toHaveBeenCalled()
++    expect(b.sessions.retained[0]!.release).not.toHaveBeenCalled()
++  })
++
++  it('does not move the draft after navigation supersedes model restoration', async () => {
++    const current = summary('source', { blank: true, projectionValues: {
++      modelSelection: { next: { provider: 'gateway', model: 'chosen' }, lastUsed: null },
++    } })
++    const b = bench({ workspaces: workspaceState([workspace('a', [current.id])]), sessions: sessionState([current]) })
++    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
++    const result = Promise.withResolvers<Awaited<ReturnType<ClientRemote['session']['selectModel']>>>()
++    b.selectModel.mockReturnValueOnce(result.promise)
++    const prepare = vi.fn()
++    const opening = b.uiWorkspace.openWorkspace(null, prepare, { settingsFrom: current.id })
++    await vi.waitFor(() => { expect(b.selectModel).toHaveBeenCalledOnce() })
++    b.uiWorkspace.openSession(sid('override'))
++    result.resolve({ ok: true, value: { selected: { provider: 'gateway', model: 'chosen' } } })
++    await opening
++    expect(prepare).not.toHaveBeenCalled()
++    expect(b.sessions.retain).toHaveBeenLastCalledWith(sid('override'), { source: 'mainView' })
++  })
++
++  it('drops a Workspace-scoped custom access mode while clearing the Workspace', async () => {
++    const current = summary('source', { blank: true, projectionValues: { permissions: { currentValue: 'custom' } } })
++    const b = bench({ workspaces: workspaceState([workspace('a', [current.id])]), sessions: sessionState([current]) })
++    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
++    b.executeCommand.mockClear()
++    const prepare = vi.fn()
++    b.sessions.create.mockResolvedValueOnce(sid('no-folder'))
++    await b.uiWorkspace.openWorkspace(null, prepare, { settingsFrom: current.id })
++    expect(b.executeCommand).not.toHaveBeenCalled()
++    expect(prepare).toHaveBeenCalledExactlyOnceWith(sid('no-folder'))
++  })
++
++  it('prepares an ungrouped Session before opening it through the Workspace clear action', async () => {
++    const b = bench({ workspaces: workspaceState([workspace('a')]), sessions: sessionState() })
++    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
++    b.sessions.create.mockClear().mockResolvedValueOnce(sid('cleared-workspace'))
++    const prepare = vi.fn()
++    await b.uiWorkspace.openWorkspace(null, prepare)
++    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({})
++    expect(prepare).toHaveBeenCalledExactlyOnceWith(sid('cleared-workspace'))
++    expect(b.sessions.retain).toHaveBeenLastCalledWith(sid('cleared-workspace'), { source: 'mainView' })
++  })
++
++  it.each(['session', 'disposal'] as const)('does not select a late ungrouped Session after %s', async (kind) => {
++    const b = bench({ workspaces: workspaceState([workspace('a')]), sessions: sessionState() })
++    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
++    const created = Promise.withResolvers<SessionId>()
++    b.sessions.create.mockClear().mockReturnValueOnce(created.promise)
++    b.uiWorkspace.startSession(null)
++    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({})
++    if (kind === 'session') b.uiWorkspace.openSession(sid('override'))
++    else await b.ctx.fiber.dispose()
++    created.resolve(sid('late-free'))
++    await setImmediate()
++    expect(b.sessions.retain).not.toHaveBeenCalledWith(sid('late-free'), expect.anything())
++    expect(b.notify).not.toHaveBeenCalled()
++  })
++
++  it('reports a failed ungrouped creation without replacing the current Session', async () => {
++    const b = bench({ workspaces: workspaceState([workspace('a')]), sessions: sessionState() })
++    await vi.waitFor(() => { expect(b.sessions.retain).toHaveBeenCalledOnce() })
++    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
++    b.sessions.create.mockClear().mockRejectedValueOnce(new Error('creation refused'))
++    b.uiWorkspace.startSession(null)
++    await vi.waitFor(() => {
++      expect(b.notify).toHaveBeenCalledExactlyOnceWith({ kind: 'createFailed', message: 'creation refused' })
++    })
++    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({})
++    expect(b.sessions.retained[0]!.release).not.toHaveBeenCalled()
++    expect(warning).toHaveBeenCalledOnce()
++  })
++
+   it('uses only an explicit Workspace or the recent-Workspace policy for new Sessions', async () => {
+     const current = summary('current', { cwd: '/w/current-home', updatedAt: 1 })
+     const recent = summary('recent', { cwd: '/w/recent-home', updatedAt: 2 })
+diff --git a/packages/extensions/cordis-client-runner/src/client/api-catalog.ts b/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
+index 1dd6bf22b9f4ee5c58eaf07bec3fd5cbbf49da9d..6db0330d1ead05faa6edc5206fadc339da73493f 100644
+--- a/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
++++ b/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
+@@ -341,7 +341,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         parameters: [{ name: 'target', description: 'known Session identity or durable direct-parent subagent address to display.' }],
+       },
+       {
+-        signature: 'openWorkspace( workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void, options?: Pick<StartSessionOptions, \'agentPreset\'>, ): Promise<void>',
++        signature: 'openWorkspace( workspaceId: WorkspaceId | null, beforeOpen?: (sessionId: SessionId) => void, options?: Pick<StartSessionOptions, \'agentPreset\'>, ): Promise<void>',
+         description: 'Connect a Workspace and open its Session unless a later navigation supersedes it.',
+         parameters: [{ name: 'workspaceId', description: 'target Workspace.' }, { name: 'beforeOpen', description: 'optional synchronous preparation for the selected Session, skipped after supersession; a throw aborts the open and releases the retained reference.' }, { name: 'options', description: 'choices for the Session the connection creates or reuses.' }],
+         returns: 'completion; a superseded request may create a Session but does not open it.',
+@@ -354,13 +354,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         returns: 'the child SessionId after creation and inherited-title increment.',
+       },
+       {
+-        signature: 'connectWorkspace(workspaceId: WorkspaceId, options?: Pick<StartSessionOptions, \'agentPreset\'>): Promise<SessionId>',
++        signature: 'connectWorkspace(workspaceId: WorkspaceId | null, options?: Pick<StartSessionOptions, \'agentPreset\'>): Promise<SessionId>',
+         description: 'Resolve the Session for a new conversation in a Workspace: the Host reuses the first listed blank member while it is reusable and otherwise creates one, under the requested preset or the Host default.',
+         parameters: [{ name: 'workspaceId', description: 'target Workspace.' }, { name: 'options', description: 'choices for the created or reused Session.' }],
+         returns: 'a Session already addressable through the Session Controller.',
+       },
+       {
+-        signature: 'startSession(workspaceId?: WorkspaceId, options?: StartSessionOptions): void',
++        signature: 'startSession(workspaceId?: WorkspaceId | null, options?: StartSessionOptions): void',
+         description: 'Create a fresh Session, or reuse a blank when preparing an explicit draft. A creation the Host refuses is shown through the Workspace notice and leaves the selection as it was.',
+         parameters: [{ name: 'workspaceId', description: 'explicit target; absent inherits the current or most recent Workspace.' }, { name: 'options', description: 'initial content and the reused blank\'s preset; existing text or attachments are preserved unless clearPreviousDraft is true.' }],
+       },
+@@ -406,7 +406,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         returns: 'the created or idempotently resolved Workspace.',
+       },
+       {
+-        signature: 'rename(workspaceId: WorkspaceId, title: string): Promise<WorkspaceView>',
++        signature: 'rename(workspaceId: WorkspaceId | null, title: string): Promise<WorkspaceView>',
+         description: 'Rename a Workspace.',
+         parameters: [{ name: 'workspaceId', description: 'target Workspace.' }, { name: 'title', description: 'new display title.' }],
+         returns: 'the renamed Workspace.',
+@@ -428,7 +428,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         parameters: [{ name: 'sessionId', description: 'Session to unarchive.' }],
+       },
+       {
+-        signature: 'insertSessionBefore( workspaceId: WorkspaceId, sessionId: SessionId, beforeSessionId?: SessionId, ): Promise<WorkspaceView>',
++        signature: 'insertSessionBefore( workspaceId: WorkspaceId | null, sessionId: SessionId, beforeSessionId?: SessionId, ): Promise<WorkspaceView>',
+         description: 'Move a Session within one Workspace account.',
+         parameters: [{ name: 'workspaceId', description: 'owning Workspace.' }, { name: 'sessionId', description: 'Session to move.' }, { name: 'beforeSessionId', description: 'anchor Session; omitted appends.' }],
+         returns: 'the changed Workspace.',
+diff --git a/snapshots/web/fresh-round-trip/blank-reload.expected.md b/snapshots/web/fresh-round-trip/blank-reload.expected.md
+index 89d0cacb3cfae84526f9478e370679b43ae4159b..f6f1bf5ed4b8649b680d891c74c66e770e17265c 100644
+--- a/snapshots/web/fresh-round-trip/blank-reload.expected.md
++++ b/snapshots/web/fresh-round-trip/blank-reload.expected.md
+@@ -1,6 +1,7 @@
+ - banner:
+   - button "Open right sidebar"
+ - text: Into the Unknown Preview
++- button "Clear workspace"
+ - button "Choose workspace": workspace
+ - button "Standard mode"
+ - textbox "Describe what you want to build, / commands, @ files or sessions"
+diff --git a/snapshots/web/lifecycle-chrome/hero.expected.md b/snapshots/web/lifecycle-chrome/hero.expected.md
+index 5e41fa9d10d0f7b073fe37efd34382e937f9114d..1b7f04f8aeb02b6045f97eabf16ac5b19b45e39a 100644
+--- a/snapshots/web/lifecycle-chrome/hero.expected.md
++++ b/snapshots/web/lifecycle-chrome/hero.expected.md
+@@ -16,6 +16,7 @@
+ - banner:
+   - button "Open right sidebar"
+ - text: Into the Unknown Preview
++- button "Clear workspace"
+ - button "Choose workspace": workspace
+ - button "Standard mode"
+ - textbox "Describe what you want to build, / commands, @ files or sessions":
+diff --git a/snapshots/web/lifecycle-chrome/plan-active-zh.expected.md b/snapshots/web/lifecycle-chrome/plan-active-zh.expected.md
+index 08933c11531b0cdfcb93118db6b3c6235c2c6677..ac56ae05a4e2e14eea038d31d12f2bb3f59b2efc 100644
+--- a/snapshots/web/lifecycle-chrome/plan-active-zh.expected.md
++++ b/snapshots/web/lifecycle-chrome/plan-active-zh.expected.md
+@@ -16,6 +16,7 @@
+ - banner:
+   - button "打开右侧边栏"
+ - text: 探索未至之境 预览版
++- button "取消工作区"
+ - button "选择工作区": workspace
+ - button "标准模式"
+ - textbox "描述你想要构建的内容, / 调用指令, @ 文件或对话"
+diff --git a/snapshots/web/lifecycle-chrome/plan-active.expected.md b/snapshots/web/lifecycle-chrome/plan-active.expected.md
+index 9834d58129b4d8c027bf5607cc86042b16ec0ce6..eac9f52e7a5f0c0e4febb617361278d160ea0a4d 100644
+--- a/snapshots/web/lifecycle-chrome/plan-active.expected.md
++++ b/snapshots/web/lifecycle-chrome/plan-active.expected.md
+@@ -16,6 +16,7 @@
+ - banner:
+   - button "Open right sidebar"
+ - text: Into the Unknown Preview
++- button "Clear workspace"
+ - button "Choose workspace": workspace
+ - button "Standard mode"
+ - textbox "Describe what you want to build, / commands, @ files or sessions"
+diff --git a/snapshots/web/voice-input/ui.expected.md b/snapshots/web/voice-input/ui.expected.md
+index 94222502c54e52368ea348c228194580ccf2a320..ad35250c89db937862874fa291a3687b1c05d900 100644
+--- a/snapshots/web/voice-input/ui.expected.md
++++ b/snapshots/web/voice-input/ui.expected.md
+@@ -1,6 +1,7 @@
+ - banner:
+   - button "Open right sidebar"
+ - text: Into the Unknown Preview
++- button "Clear workspace"
+ - button "Choose workspace": workspace
+ - button "Standard mode"
+ - textbox "Describe what you want to build, / commands, @ files or sessions":

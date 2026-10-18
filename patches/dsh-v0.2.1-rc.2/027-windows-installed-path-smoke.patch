@@ -1,0 +1,68 @@
+diff --git a/apps/desktop/scripts/smoke-packaged-runtime.ts b/apps/desktop/scripts/smoke-packaged-runtime.ts
+index be6803e4f9f301b377e640c01225f663e41c6ae8..ecf9164d2c5e0201985896fb5df968272adab610 100644
+--- a/apps/desktop/scripts/smoke-packaged-runtime.ts
++++ b/apps/desktop/scripts/smoke-packaged-runtime.ts
+@@ -6,6 +6,7 @@ import { readDesktopRuntime, verifyDesktopRuntime } from '../src/runtime-tree.ts
+ import { verifyWindowsCode } from './windows-runtime-signature.mjs'
+ import { smokePreparedRuntime } from './smoke-prepared-runtime.ts'
+ import { resolveDesktopPackageTarget } from './package-target.ts'
++import { withWindowsSmokeApplication } from './windows-smoke-application.mjs'
+ 
+ const paths = resolveDesktopTargetBuildPaths()
+ const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default: false }, 'skip-notarization': { type: 'boolean', default: false } }, allowPositionals: false })
+@@ -15,9 +16,13 @@ const artifacts = desktopArtifactOutput(paths, { unsigned: values.unsigned, skip
+ const productName = process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || process.env.DSH_CLIENT_TITLE?.trim() || 'DeepSeek Harness'
+ const application = windows ? join(artifacts, 'win-unpacked')
+   : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', `${productName}.app`, 'Contents')
+-const resources = join(application, windows ? 'resources' : 'Resources')
+-const executable = windows ? join(application, `${productName}.exe`) : join(application, 'MacOS', productName)
+ const descriptor = await verifyDesktopRuntime(paths.dsh, readDesktopRuntime(paths.dsh).release.version,
+   resolveDesktopPackageTarget(target))
+-if (windows && !values.unsigned) await verifyWindowsCode(application)
+-await smokePreparedRuntime(join(resources, 'app.asar', 'dsh'), executable, join(resources, 'runtime'), descriptor)
++async function smokeApplication(directory: string): Promise<void> {
++  const resources = join(directory, windows ? 'resources' : 'Resources')
++  const executable = windows ? join(directory, `${productName}.exe`) : join(directory, 'MacOS', productName)
++  if (windows && !values.unsigned) await verifyWindowsCode(directory)
++  await smokePreparedRuntime(join(resources, 'app.asar', 'dsh'), executable, join(resources, 'runtime'), descriptor)
++}
++if (windows) await withWindowsSmokeApplication(application, smokeApplication)
++else await smokeApplication(application)
+diff --git a/apps/desktop/scripts/windows-smoke-application.d.mts b/apps/desktop/scripts/windows-smoke-application.d.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4f09beefdd5e2e325d2cc610add48c4ce3159763
+--- /dev/null
++++ b/apps/desktop/scripts/windows-smoke-application.d.mts
+@@ -0,0 +1,2 @@
++/** Run the same assembled Windows app at an install-sized path and clean its private copy. */
++export function withWindowsSmokeApplication<T>(application: string, action: (directory: string) => Promise<T>): Promise<T>
+diff --git a/apps/desktop/scripts/windows-smoke-application.mjs b/apps/desktop/scripts/windows-smoke-application.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1ebf68010b5a5981589a87123ae3bf73dd75a06
+--- /dev/null
++++ b/apps/desktop/scripts/windows-smoke-application.mjs
+@@ -0,0 +1,24 @@
++/** Exercise the signed Windows app at an install-sized path, away from deep build directories. */
++import { cp, mkdtemp, rm } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++
++/**
++ * Preserve the complete assembled app; archive integrity and signatures are checked by the caller.
++ * @template T
++ * @param {string} application Assembled Windows app directory.
++ * @param {(directory: string) => Promise<T>} action Actual signed-runtime acceptance.
++ * @returns {Promise<T>} Acceptance result after teardown.
++ */
++export async function withWindowsSmokeApplication(application, action) {
++  const root = await mkdtemp(join(tmpdir(), 'dsh-app-'))
++  try {
++    const installed = join(root, 'app')
++    // LibreOffice's native directory enumeration still observes MAX_PATH.
++    // The isolated source/build path can exceed that limit even though a normal install does not.
++    await cp(application, installed, { recursive: true, force: false, errorOnExist: true })
++    return await action(installed)
++  } finally {
++    await rm(root, { recursive: true, force: true })
++  }
++}

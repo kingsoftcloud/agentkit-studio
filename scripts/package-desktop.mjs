@@ -14,8 +14,9 @@ import { assertPatchedSource } from './patched-source-fingerprint.mjs';
 import { resolveProductInputs } from './product-config.mjs';
 import { createBuildOutputRedactor } from './build-output-redaction.mjs';
 import { finished } from 'node:stream/promises';
+import { verifyPackagedUpdateSource } from './packaged-update-source.mjs';
 
-const credentialPaths = new Set(['DSH_DESKTOP_WINDOWS_CER_FILE','DSH_DESKTOP_WINDOWS_SIGNTOOL','APPLE_API_KEY','APPLE_KEYCHAIN','CSC_LINK']);
+const credentialPaths = new Set(['DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN','DSH_DESKTOP_WINDOWS_CER_FILE','DSH_DESKTOP_WINDOWS_SIGNTOOL','APPLE_API_KEY','APPLE_KEYCHAIN','CSC_LINK']);
 
 function parseReleaseSettings(contents) {
   try { return parseEnv(contents.replace(/^\uFEFF/u,'')); }
@@ -73,7 +74,8 @@ export function packageManagerEnvironment(environment) {
 }
 
 export async function packageDesktop(options) {
-  const {target,unsigned=false,directory=false,source,output,dshVersion}=options;
+  const {target,unsigned=false,directory=false,skipNotarization=false,source,output,dshVersion}=options;
+  if (skipNotarization && (unsigned || target === 'win-x64')) throw new Error('desktop packaging: skip-notarization requires a signed macOS build');
   const requestedBuildVersion=options.buildVersion ?? process.env.DSH_DESKTOP_BUILD_VERSION;
   if (!['mac-arm64','mac-x64','win-x64'].includes(target)) throw new Error('desktop packaging: unsupported target');
   if (unsigned && target !== 'win-x64' && (target!=='mac-arm64'||directory)) throw new Error('desktop packaging: local unsigned export requires a mac-arm64 image');
@@ -89,7 +91,7 @@ export async function packageDesktop(options) {
     if(manifest.version!==dshVersion) throw new Error('desktop packaging: DSH version does not match source snapshot');
     const settingsName=target==='win-x64'?'.env.windows':'.env.macos';
     const settingsPath=join(checkout,'apps/desktop',settingsName);
-    let copiedSettings=false;
+    let copiedSettings=false, updateSettings;
     const inputs=await snapshotDesktopPluginInputs(environment.DSH_DESKTOP_PLUGIN_INPUTS,dirname(checkout));
     environment.DSH_DESKTOP_PLUGIN_INPUTS=inputs.value;
     const image=join(checkout,`apps/desktop/.desktop-build/targets/${target}/unsigned-artifacts/deepseek-harness-${buildVersion ?? dshVersion}-${target}-unsigned.dmg`);
@@ -106,6 +108,7 @@ export async function packageDesktop(options) {
           updateEnvironment: releaseSettings.DSH_DESKTOP_AUTO_UPDATE_ENV,
         });
         const settings=relocateReleaseSettings(original,sourceDirectory,releaseProduct.settings);
+        updateSettings = parseReleaseSettings(settings);
         await mkdir(join(checkout,'apps/desktop'),{recursive:true});
         await writeFile(settingsPath,settings,{mode:0o600,flag:'wx'});
         copiedSettings=true;
@@ -114,7 +117,7 @@ export async function packageDesktop(options) {
       // The official entrypoint owns the child environment and overwrites its
       // build-version variable. Its CLI argument is the authoritative input.
       const args=['--dir','apps/desktop','run','package',target,...unsigned?['--unsigned']:[],...directory?['--dir']:[],
-        ...buildVersion===undefined?[]:['--build-version',buildVersion]];
+        ...skipNotarization?['--skip-notarization']:[], ...buildVersion===undefined?[]:['--build-version',buildVersion]];
       if(unsigned && target!=='win-x64') await rm(image,{force:true});
       await invoke(args,checkout);
       if(unsigned && target!=='win-x64') {
@@ -122,7 +125,13 @@ export async function packageDesktop(options) {
         console.log(`Studio unsigned DMG: ${result.path}\nSHA256: ${result.sha256}\nBytes: ${result.bytes}`);
         return result;
       }
-      const artifacts=join(checkout,`apps/desktop/.desktop-build/targets/${target}/${unsigned?'unsigned-artifacts':'artifacts'}`);
+      const artifacts=join(checkout,`apps/desktop/.desktop-build/targets/${target}/${unsigned?'unsigned-artifacts':skipNotarization?'unnotarized-artifacts':'artifacts'}`);
+      if (!unsigned) {
+        const resources = target === 'win-x64' ? join(artifacts, 'win-unpacked/resources')
+          : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', `${product.name}.app/Contents/Resources`);
+        await verifyPackagedUpdateSource(resources, { target, origin: updateSettings.DSH_DESKTOP_AUTO_UPDATE_ENV === 'test' ? updateSettings.DOWNLOAD_TEST_ORIGIN : updateSettings.DSH_DESKTOP_UPDATE_ORIGIN,
+          channel: updateSettings.DSH_DESKTOP_UPDATE_CHANNEL, environment: updateSettings.DSH_DESKTOP_AUTO_UPDATE_ENV, releaseId: updateSettings.DOWNLOAD_TEST_RELEASE_ID });
+      }
       console.log(`Official desktop artifacts: ${artifacts}`);
       return {artifacts};
     } finally {
@@ -145,7 +154,7 @@ export async function verifyDesktopPackageInputs(options) {
     const required = [
       ['apps/desktop/scripts/prepare-package-set.ts', 'DSH_DESKTOP_PLUGIN_INPUTS'],
       ['apps/desktop/src/project-manager.ts', 'DSH_DESKTOP_PLUGIN_BUNDLES'],
-      ['apps/desktop/scripts/package-target.ts', 'invocation.unsigned && target.platform'],
+      ['apps/desktop/scripts/package-target.ts', 'DSH_DESKTOP_PRODUCT_NAME'],
     ];
     for (const [relative, marker] of required) {
       const path = join(checkout, relative);
@@ -159,8 +168,8 @@ export async function verifyDesktopPackageInputs(options) {
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
-  const {values}=parseArgs({options:Object.fromEntries(['source','output','patches','commit','target','studio-version','dsh-version','build-version','pnpm-script'].map(key=>[key,{type:'string'}]).concat([['unsigned',{type:'boolean'}],['directory',{type:'boolean'}],['preflight',{type:'boolean'}]]))});
-  const options = {...values,studioVersion:values['studio-version'],dshVersion:values['dsh-version'],buildVersion:values['build-version'],pnpmScript:values['pnpm-script']};
+  const {values}=parseArgs({options:Object.fromEntries(['source','output','patches','commit','target','studio-version','dsh-version','build-version','pnpm-script'].map(key=>[key,{type:'string'}]).concat([['unsigned',{type:'boolean'}],['directory',{type:'boolean'}],['skip-notarization',{type:'boolean'}],['preflight',{type:'boolean'}]]))});
+  const options = {...values,skipNotarization:values['skip-notarization'],studioVersion:values['studio-version'],dshVersion:values['dsh-version'],buildVersion:values['build-version'],pnpmScript:values['pnpm-script']};
   if (values.preflight) {
     const result = await verifyDesktopPackageInputs(options);
     console.log(`Desktop package preflight passed in isolated checkout: ${result.checkout}`);

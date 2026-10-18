@@ -16,7 +16,7 @@ test('DSH failed install result rejects instead of claiming installation succeed
 test('DSH shipped bundles activate without reinstalling and preserve loaded row state', async () => {
   const calls = [];
   const plugins = adapter({
-    listBundles: async () => [{ name: 'optional-addon', installed: false, enabled: false, optional: true, removable: false, rows: [{ rowId: 'tool-addon', live: [{ status: 'active' }] }], overrides: [] }],
+    listBundles: async () => [{ name: 'optional-addon', installed: false, availability: 'installation', enabled: false, optional: true, removable: false, rows: [{ rowId: 'tool-addon', fiberPhase: 'active' }], overrides: [] }],
     inspect: async () => { throw new Error('must not inspect a shipped bundle'); },
     installBundle: async () => { throw new Error('must not reinstall a shipped bundle'); },
     setBundleEnabled: async (...args) => { calls.push(args); return { application: 'applied', changed: true }; },
@@ -41,13 +41,13 @@ test('DSH refused inspection stops before package installation', async () => {
 
 test('DSH enable failure does not fall through and toggle an unrelated loader entry', async () => {
   let entryCalls = 0;
-  const plugins = adapter({ listBundles: async () => [{ name: 'broken-addon', installed: true, enabled: false }], setBundleEnabled: async () => ({ application: 'failed', error: { code: 'incompatible-version' } }), setPluginEnabled: async () => { entryCalls += 1; } });
+  const plugins = adapter({ listBundles: async () => [{ name: 'broken-addon', installed: true, availability: 'profile', enabled: false }], setBundleEnabled: async () => ({ application: 'failed', error: { code: 'incompatible-version' } }), setPluginEnabled: async () => { entryCalls += 1; } });
   await assert.rejects(() => plugins.setDshEnabled('broken-addon', true), error => error instanceof StudioPluginsError && error.details.error.code === 'incompatible-version');
   assert.equal(entryCalls, 0);
 });
 
 test('DSH catalog surfaces load errors and required bundles instead of enabled success', async () => {
-  const plugins = adapter({ listBundles: async () => [{ name: 'broken', installed: true, enabled: true, removable: false, readOnlyReason: 'management-required', error: { code: 'invalid-patch' }, rows: [], overrides: [] }] });
+  const plugins = adapter({ listBundles: async () => [{ name: 'broken', installed: true, availability: 'profile', enabled: true, removable: false, readOnlyReason: 'management-required', error: { code: 'invalid-patch' }, rows: [], overrides: [] }] });
   const item = (await plugins.listDsh()).items.find(row => row.pluginId === 'broken');
   assert.ok(item);
   assert.equal(item.error.code, 'invalid-patch');
@@ -58,7 +58,7 @@ test('DSH catalog surfaces load errors and required bundles instead of enabled s
 test('DSH updates replace the dependency without removing the working bundle first', async () => {
   const calls = [];
   const plugins = adapter({
-    listBundles: async () => [{ name: 'addon', installed: true, enabled: true }],
+    listBundles: async () => [{ name: 'addon', installed: true, availability: 'profile', enabled: true }],
     installBundle: async (...args) => { calls.push(args); return { application: 'restart-required', changed: true }; },
     removeBundle: async () => { throw new Error('must not remove before upgrade'); },
   });
@@ -69,7 +69,7 @@ test('DSH updates replace the dependency without removing the working bundle fir
 
 test('DSH cannot claim a fully loaded bundle when its UI is active but service is disabled', async () => {
   const plugins = adapter({
-    listBundles: async () => [{ name: 'addon', installed: true, enabled: true, rows: [{ rowId: 'service', entryId: 'service:1' }, { rowId: 'ui', entryId: 'ui:1' }] }],
+    listBundles: async () => [{ name: 'addon', installed: true, availability: 'profile', enabled: true, rows: [{ rowId: 'service', entryId: 'service:1' }, { rowId: 'ui', entryId: 'ui:1' }] }],
     listPlugins: async () => [{ entryId: 'service:1', enabled: false, fiberPhase: null }, { entryId: 'ui:1', enabled: true, fiberPhase: 'active' }],
   });
   assert.equal((await plugins.listDsh()).items.find(row => row.pluginId === 'addon')?.status, 'partial');
@@ -98,16 +98,25 @@ test('curated Agent Teams install is accepted only after rows and Host service p
   assert.deepEqual(calls, [['@deepseek-ai/dsh-experimental-agent-team-profile', true]]);
 });
 
-test('curated Schedule install fails closed when the live Host service is missing', async () => {
+test('current host built-in scheduling is not advertised as an obsolete optional bundle', async () => {
+  const plugins = adapter({ listBundles: async () => [], listPlugins: async () => [] });
+  assert.equal((await plugins.listDsh()).items.some(item => item.pluginId.includes('schedule-bundle')), false);
+});
+
+test('official on-demand entries are missing until the exact host install target is installed', async () => {
+  const name = '@deepseek-ai/dsh-experimental-agent-team-profile';
+  const calls = []; let installed = false;
   const manager = {
-    listBundles: async () => [{ name: '@deepseek-ai/dsh-experimental-schedule-bundle', installed: false, enabled: true, optional: true, rows: [
-      { rowId: 'time-context', fiberPhase: 'active' },
-      { rowId: 'schedule', fiberPhase: 'active' },
-      { rowId: 'ui-schedule', fiberPhase: 'active' },
-    ] }],
+    listBundles: async () => [{ name, official: true, installed, availability: installed ? 'profile' : 'missing', enabled: installed,
+      installTarget: { spec: name + '@0.2.1-rc.2', version: '0.2.1-rc.2' }, rows: installed ? ['agent-team', 'tool-agent-team', 'ui-agent-team'].map(rowId => ({ rowId, fiberPhase: 'active' })) : [] }],
     listPlugins: async () => [],
-    setBundleEnabled: async () => ({ application: 'applied', changed: true }),
+    installBundle: async (...args) => { calls.push(args); installed = true; return { application: 'applied', changed: true }; },
+    setBundleEnabled: async () => assert.fail('an absent on-demand package must be installed before enabling'),
   };
-  const plugins = adapter(manager);
-  await assert.rejects(() => plugins.installDsh('@deepseek-ai/dsh-experimental-schedule-bundle'), error => error.code === 'DSH_PLUGIN_NOT_USABLE' && error.message.includes('schedule'));
+  const plugins = createStudioPlugins({ getService: key => key === 'pluginManager' ? manager : key === 'agentTeams' ? { listMembers() {}, spawnTeammate() {}, createTask() {} } : null });
+  const entry = (await plugins.listDsh()).items.find(item => item.pluginId === name);
+  assert.equal(entry.installed, false); assert.equal(entry.source, 'catalog'); assert.equal(entry.status, 'available');
+  assert.equal(entry.readOnlyReason, '');
+  assert.equal((await plugins.installDsh(name)).verification.state, 'ready');
+  assert.deepEqual(calls, [[name + '@0.2.1-rc.2', { enabled: true, saveExact: true }]]);
 });

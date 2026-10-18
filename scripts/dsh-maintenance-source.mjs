@@ -14,7 +14,7 @@ const json = value => JSON.stringify(value, null, 2) + '\n';
 const oid = value => /^[a-f0-9]{40}$/.test(value || '');
 const fail = message => { throw Object.assign(new Error(`DSH maintenance source: ${message}`), { code: 'DSH_MAINTENANCE_SOURCE_INVALID' }); };
 const descriptorName = 'source.json';
-const defaultPatches = fileURLToPath(new URL('../patches/dsh-v0.2.0-rc.2', import.meta.url));
+const defaultPatches = fileURLToPath(new URL('../patches/dsh-v0.2.1-rc.2', import.meta.url));
 function bundlePath(patches) {
   const version = basename(patches);
   if (!/^dsh-v[0-9][a-zA-Z0-9.-]+$/.test(version)) fail('patch directory must name its DSH version');

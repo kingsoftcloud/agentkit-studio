@@ -1,6 +1,6 @@
-/** DSH plugin ecosystem adapter for the Studio plugin Node host (rc.2+).
+/** DSH plugin ecosystem adapter for the Studio plugin Node host (0.2.1-rc.2).
  *
- * DSH 0.2.0-rc.2 ships a first-class plugin manager service
+ * DSH 0.2.1-rc.2 ships a first-class plugin manager service
  * (`PluginManager`, `PluginInventoryGateway`) inside the host process. The
  * plugin Node half shares that context, so this adapter calls the services
  * directly — no profile file reads, no CLI forwarding.
@@ -26,12 +26,11 @@ function changeResult(change) {
 }
 
 function rowIsActive(row) {
-  if (row?.fiberPhase === 'active') return true;
-  return Array.isArray(row?.live) && row.live.some(item => item?.status === 'active' || item?.fiberPhase === 'active');
+  return row?.fiberPhase === 'active';
 }
 
 function rowKey(row) {
-  return String(row?.rowId || row?.entryId || row?.id || row?.moduleName || row?.name || '').trim();
+  return String(row?.rowId || '').trim();
 }
 
 async function serviceReadiness(getService, requirement) {
@@ -66,7 +65,7 @@ async function verifyItem(item, getService) {
   const rows = Array.isArray(item.rows) ? item.rows : [];
   const rowChecks = curated.expectedEntries.map(expected => {
     const row = rows.find(candidate => rowKey(candidate) === expected || rowKey(candidate).endsWith(`#${expected}`) || rowKey(candidate).endsWith(`:${expected}`));
-    return { entry: expected, ok: Boolean(row && rowIsActive(row)), phase: row?.fiberPhase || row?.live?.find(value => value?.status)?.status || 'missing' };
+    return { entry: expected, ok: Boolean(row && rowIsActive(row)), phase: row?.fiberPhase || 'missing' };
   });
   const missing = rowChecks.filter(check => !check.ok).map(check => check.entry);
   if (missing.length) return { state: 'failed', checks: rowChecks, note: `Host 尚未加载能力行：${missing.join('、')}` };
@@ -79,7 +78,7 @@ async function verifyItem(item, getService) {
 export function createStudioPlugins({ getService } = {}) {
   function service(name) {
     const instance = getService?.(name);
-    if (!instance) throw new StudioPluginsError('SERVICE_UNAVAILABLE', `宿主服务 ${name} 不可用（需要 DSH 0.2.0-rc.2+）`, { service: name });
+    if (!instance) throw new StudioPluginsError('SERVICE_UNAVAILABLE', `宿主服务 ${name} 不可用（需要 DSH 0.2.1-rc.2）`, { service: name });
     return instance;
   }
 
@@ -102,17 +101,18 @@ export function createStudioPlugins({ getService } = {}) {
         displayName: String(bundle.meta?.displayName || curated?.displayName || bundle.name),
         description: String(bundle.description || curated?.description || ''),
         version: String(bundle.version || ''),
-        source: bundle.installed ? 'profile' : 'bundled',
+        source: bundle.installed ? 'profile' : bundle.availability === 'installation' ? 'bundled' : 'catalog',
         enabled: bundle.enabled !== false,
         kind: 'dsh',
-        // installed=false means supplied by the DSH installation, not absent.
-        installed: true,
+        availability: bundle.availability,
+        installTarget: bundle.installTarget,
+        installed: bundle.installed || bundle.availability !== 'missing',
         optional: bundle.optional === true,
         removable: bundle.removable === true,
-        readOnlyReason: bundle.readOnlyReason || (!bundle.installed && !bundle.optional ? 'host-component' : ''),
+        readOnlyReason: bundle.readOnlyReason || (bundle.availability === 'installation' && !bundle.installed && !bundle.optional ? 'host-component' : ''),
         ...(error ? { error } : {}),
         rows,
-        status: error ? 'error' : !bundle.enabled ? 'disabled'
+        status: error ? 'error' : bundle.availability === 'missing' && !bundle.installed ? 'available' : !bundle.enabled ? 'disabled'
           : activeRows.length === rows.length && rows.length ? 'active' : activeRows.length ? 'partial' : 'selected',
       };
       return { ...item, ...(curated ? { ...curated, pluginId: item.pluginId, name: item.name, version: item.version, source: item.source, enabled: item.enabled, installed: item.installed, optional: item.optional, removable: item.removable, readOnlyReason: item.readOnlyReason, rows: item.rows, status: item.status, verification: await verifyItem(item, getService) } : {}) };
@@ -145,7 +145,9 @@ export function createStudioPlugins({ getService } = {}) {
     const manager = service('pluginManager');
     const existing = (await manager.listBundles()).find(bundle => bundle.name === String(spec));
     if (existing) {
-      const change = changeResult(await manager.setBundleEnabled(existing.name, true));
+      const change = changeResult(existing.availability === 'missing' && existing.installTarget
+        ? await manager.installBundle(existing.installTarget.spec, { enabled: true, saveExact: true })
+        : await manager.setBundleEnabled(existing.name, true));
       const verification = await verifyUsable(manager, existing.name, change);
       return { ...change, verification, note: verification.note };
     }
@@ -176,7 +178,7 @@ export function createStudioPlugins({ getService } = {}) {
     const manager = service('pluginManager');
     const current = (await manager.listBundles()).find(bundle => bundle.name === String(name));
     if (!current) throw new StudioPluginsError('DSH_PLUGIN_NOT_FOUND', '待更新的插件不存在');
-    const change = changeResult(await manager.installBundle(`${name}@latest`, { enabled: current.enabled !== false }));
+    const change = changeResult(await manager.installBundle(current.installTarget?.spec || `${name}@latest`, { enabled: current.enabled !== false, ...(current.installTarget ? { saveExact: true } : {}) }));
     const verification = current.enabled !== false ? await verifyUsable(manager, name, change) : { state: 'disabled', checks: [], note: '插件已更新但保持停用。' };
     return { ...change, verification, note: verification.note };
   }

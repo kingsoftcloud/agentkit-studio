@@ -15,7 +15,7 @@ const OFFICIAL_URL = 'https://download.deepseek.com/desktop/dsh-latest-windows-x
 const OFFICIAL_SHA256 = 'd61cd8882f8b8a1251144320493ad27920d15139503eba2465b9579eee720cfc';
 
 export async function verifyOfficialDshCoexistence(executablePath, environment, root, evidence) {
-  const installer = join(root, 'official-dsh-0.2.0-rc.2.exe'), destination = join(root, 'official-dsh-installed');
+  const installer = join(root, 'official-dsh-0.2.1-rc.2.exe'), destination = join(root, 'official-dsh-installed');
   const response = await fetch(OFFICIAL_URL, { signal: AbortSignal.timeout(600000) });
   if (!response.ok || !response.body) throw new Error('Official DSH installer is unavailable');
   const hash = createHash('sha256');

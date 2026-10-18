@@ -38,7 +38,7 @@ export function mountStudio(ctx, app) {
     return () => window.removeEventListener('agentkit-studio:open-plugin-center', open);
   }, 'agentkit-studio:plugin-center-navigation');
   // Schedule is a capability, not a hard requirement for the fixed
-  // dsh-v0.2.0-rc.2 host. Older profiles can still expose the Studio
+  // dsh-v0.2.1-rc.2 host. Older profiles can still expose the Studio
   // product surface and all model/agent/resource surfaces while the automation
   // panel reports that its host service is unavailable.
   // `remote.schedule` is optional across pinned DSH hosts. Cordis proxies

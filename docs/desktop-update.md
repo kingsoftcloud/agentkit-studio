@@ -12,7 +12,7 @@ Production builds require an HTTPS update origin and an explicit `stable` or
 
 - Immutable DMG, ZIP and blockmap: `studio/<version>/`.
 - Channel feed: `studio/feeds/mac-arm64/`.
-- Native DSH feed entry in the same bucket: `dsh-desk/feeds/mac-arm64/`.
+- Compatibility feed for older installed Studio builds: `dsh-desk/feeds/mac-arm64/`.
 
 Each release uses a strictly increasing semantic App version. Older installers
 that embed another origin need one manual installation of the new signed DMG;
@@ -49,7 +49,9 @@ App bytes. It must never relabel a newer source commit as the signed candidate.
 ## Publish incremental or full updates
 
 The repository release command publishes immutable assets before replacing the
-channel feed. Supply the previous version as a concurrency guard:
+channel feed. `studio` is the default layout, and verification reads exactly the
+`studio/feeds/mac-arm64/` URL embedded in the App. A working legacy feed cannot
+substitute for that canonical entry. Supply the previous version as a concurrency guard:
 
 ```sh
 node scripts/desktop-release.mjs publish \

@@ -6,7 +6,7 @@ import { importPortableBundle, loadPortableRuntime, verifyPortableBundle } from 
 import { portableError, sha256, validatePortableCredentialNames } from './portable-resources.mjs';
 
 const PROFILE = 'agentkit-runtime';
-const BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-experimental-schedule-bundle', '@kingsoftcloud/agentkit-studio'];
+const BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio'];
 const fail = (code, message) => { throw portableError(code, message); };
 const exists = path => lstat(path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
 const json = async path => JSON.parse(await readFile(path, 'utf8'));

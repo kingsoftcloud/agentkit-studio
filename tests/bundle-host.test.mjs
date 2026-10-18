@@ -39,7 +39,7 @@ test('offline boot wires the public DSH CLI/profile and forwards only target res
   assert.equal(plan.env.DSH_HOME, join(f.state, 'dsh'));
   const profile = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime');
   assert.deepEqual(JSON.parse(await readFile(join(profile, 'package.json'))).dsh.profile.bundles,
-    ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-experimental-schedule-bundle', '@kingsoftcloud/agentkit-studio']);
+    ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio']);
   assert.equal(await realpath(join(profile, 'node_modules')), join(f.installation, 'node_modules'));
   assert.equal((await readFile(join(plan.env.AGENTKIT_HOME, 'portable-bundle.zip'))).equals(await readFile(f.archive)), true);
   assert.equal(JSON.stringify(plan.identity).includes('secret'), false);
