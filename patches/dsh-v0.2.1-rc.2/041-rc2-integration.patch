@@ -411,6 +411,24 @@ index 6392ea0162938bc196463bc1a8860f44c514c080..0c81482d664df052a659fdf8de0307cb
      expect(latest.artifacts.every(file => !nightly.artifacts.some(other => other.key === file.key))).toBe(true)
      const prerelease = await fixture('win-x64', '1.2.3-alpha.1', environment, 'latest')
      await expect(createDesktopUploadPlan('win-x64', prerelease)).rejects.toThrow(/latest requires a stable version/u)
+diff --git a/apps/desktop/tests/local-macos-package.spec.ts b/apps/desktop/tests/local-macos-package.spec.ts
+index ebb2cdd14ba71c4340a71e1b5e9ef4c24b35a233..fbac3792f5d1d4ad1a6df47cd2381e5547d6a252 100644
+--- a/apps/desktop/tests/local-macos-package.spec.ts
++++ b/apps/desktop/tests/local-macos-package.spec.ts
+@@ -8,9 +8,11 @@ it('explicit local macOS builds require neither release credentials nor an updat
+     DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio.local',
+     DSH_DESKTOP_TARGET_PLATFORM: 'darwin', DSH_DESKTOP_TARGET_ARCH: 'arm64', DSH_DESKTOP_UNSIGNED: '1',
+   }, 'darwin', 'arm64')
+-  expect(config.mac.identity).toBeNull()
++  // The current host uses an ad-hoc signature to keep local Electron builds runnable.
++  expect(config.mac.identity).toBe('-')
+   expect(config.mac.forceCodeSigning).toBe(false)
++  expect(config.mac.notarize).toBe(false)
+   expect(config.artifactName).toContain('-unsigned')
+   expect(config.publish).toBeNull()
+-  expect(config.extraMetadata).toMatchObject({ dshMandatoryUpdatePolicy: undefined })
++  expect(config.extraMetadata).not.toHaveProperty('dshMandatoryUpdatePolicy')
+ })
 diff --git a/apps/desktop/tests/macos-signing-keychain.spec.ts b/apps/desktop/tests/macos-signing-keychain.spec.ts
 index 6b41fe7bcffa5da8dab42fd22d9bf68e7358e39f..6248384c9727fcd7574877b1879d647cab4af886 100644
 --- a/apps/desktop/tests/macos-signing-keychain.spec.ts
