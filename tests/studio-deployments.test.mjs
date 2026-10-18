@@ -10,7 +10,7 @@ import { createStudioDeployments } from '../src/studio-deployments.mjs';
 import { createDeploymentStore } from '../src/deployment-store.mjs';
 import { resolveDeploymentCredentials } from '../src/deployment-credentials.mjs';
 
-async function fixture(t, { runtime = 'harness', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING' } = {}) {
+async function fixture(t, { runtime = 'harness', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-deploy-')); t.after(() => rm(root, { force: true, recursive: true }));
   const agentId = 'ar-local-1234567890abcdef', cloudAgentId = 'ar-cloud-test';
   const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk', cloudBucket: 'private-test' };
@@ -63,7 +63,11 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
   };
   const options = { storeDir: join(root, 'deployments'), build, portableBundles, models, adapters, configuration, client,
     operations: createOperationManager({ storeDir: join(root, 'operations') }),
-    storageFactory: () => ({ upload: async (zip, reference) => { calls.push(['upload', reference]); return reference; } }),
+    storageFactory: () => ({ upload: async (zip, reference) => {
+      calls.push(['upload', reference]);
+      if (uploadDelayMs) await new Promise(resolve => setTimeout(resolve, uploadDelayMs));
+      return reference;
+    } }),
     fetchImpl: async (url, init) => {
       calls.push(['health', String(url)]); assert.equal(init.headers.Authorization, `Bearer ${key}`);
       if (String(url).endsWith('/v1/agentkit/runtime')) return Response.json(access.runtimeIdentity || {
@@ -83,15 +87,35 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
   const preview = await service.prepare(input);
   const request = { ...input, bundleId: preview.bundleId, releaseId: preview.releaseId, previewId: preview.previewId, idempotencyKey: 'request-test-123456' };
   async function settled() {
-    for (let n = 0; n < 150; n++) {
-      const records = await options.operations.list();
+    const deadline = performance.now() + 10_000;
+    let records = [];
+    do {
+      records = await options.operations.list();
       if (records.length && records.every(row => ['succeeded', 'failed'].includes(row.status))) return;
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    assert.fail('deployment operation did not settle');
+      await new Promise(resolve => setTimeout(resolve, 25));
+    } while (performance.now() < deadline);
+    assert.fail(`deployment operation did not settle: ${JSON.stringify(records.map(({ id, status, result }) => ({ id, status, result })))}`);
   }
   return { root, service, options, input, preview, request, calls, remote, profile, mcp, values, settled, release, access };
 }
+
+test('deployment checks wait for background uploads before asserting the final state', async t => {
+  const f = await fixture(t, { uploadDelayMs: 1700 });
+  const deployment = await f.service.create(f.request);
+  let completed = false;
+  // Keep cleanup behind the runner even when the wait assertion fails.
+  try {
+    await f.settled();
+    completed = true;
+    const operations = await f.options.operations.list();
+    assert.equal(operations.length, 1);
+    assert.equal(operations[0].status, 'succeeded');
+    assert.equal((await f.service.get(deployment.id)).state, 'TOKEN_PENDING');
+    assert.equal(f.calls.filter(([action]) => action === 'create').length, 1);
+  } finally {
+    if (!completed) await new Promise(resolve => setTimeout(resolve, 1800));
+  }
+});
 
 test('three runtimes create from a frozen Build, synchronize the platform token, verify health and delete only the owned Agent', async t => {
   for (const runtime of ['harness', 'dsh-native', 'codex']) {
