@@ -15,6 +15,7 @@
 - [Compatibility patches](../patches/dsh-v0.2.1-rc.2/README.md): pinned upstream changes.
 - [Host compatibility](host-compatibility.md): runtime baseline, required capabilities and feature-specific admission.
 - [Product configuration](product-configuration.md): shared brand and desktop inputs, version sources and migration status.
+- [Plugin presentation compatibility](upstream-plugin-compatibility.md): declared slots, optional copy contributions and execution admission boundaries.
 - [Visual system](brand/visual-system.md): AgentKit Studio identity and UI conventions.
 - [Public release checks](public-release-boundary.md) and [repository mirrors](branch-sync.md).
 

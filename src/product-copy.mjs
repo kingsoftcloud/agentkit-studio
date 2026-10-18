@@ -20,9 +20,11 @@ export function resolveProductCopy(configuration = product) {
   return copy;
 }
 
-/** The caller owns this disposer; partial setup also releases earlier owners. */
+/** Native DSH keeps its own copy when the optional product extension is absent.
+ * The caller owns this disposer; partial setup also releases earlier owners.
+ */
 export function installProductCopy(locale, configuration) {
-  if (typeof locale?.override !== 'function') throw Object.assign(new Error('Host capability locale.override is required for product copy'), { code: 'DSH_CAPABILITY_UNAVAILABLE' });
+  if (typeof locale?.override !== 'function') return () => {};
   const disposers = [];
   const release = () => { for (const dispose of disposers.splice(0).reverse()) dispose(); };
   try { for (const [namespace, dictionaries] of Object.entries(resolveProductCopy(configuration))) disposers.push(locale.override(namespace, dictionaries)); }

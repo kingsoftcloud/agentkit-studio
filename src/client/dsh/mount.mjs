@@ -113,10 +113,6 @@ export function mountStudio(ctx, app) {
     { name: 'conversation.hero.brand.mark' },
     ({ size }) => h('span', { style: { display: 'inline-flex', color: BRAND.accentStrong } }, h(StudioMark, { size, title: '' })),
   ));
-  ctx.slots.inject('conversation.hero.brand.name', () => ctx.slots.register(
-    { name: 'conversation.hero.brand.name' },
-    () => h(StudioWordmark),
-  ));
   // Use the official session-maybe hero slot so the selector receives the
   // current sessionId/useSessions hooks. This keeps the binding scoped to
   // one blank conversation instead of leaking a global selection across
