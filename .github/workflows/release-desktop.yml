@@ -379,7 +379,7 @@ jobs:
           import YAML from 'yaml'
 
           const appUpdate = YAML.parse(await readFile(process.env.APP_UPDATE_PATH, 'utf8'))
-          const expectedFeedUrl = `${process.env.EXPECTED_UPDATE_ORIGIN}/dsh-desk/feeds/mac-arm64/`
+          const expectedFeedUrl = `${process.env.EXPECTED_UPDATE_ORIGIN}/studio/feeds/mac-arm64/`
           if (appUpdate?.provider !== 'generic' || appUpdate.url !== expectedFeedUrl || appUpdate.channel !== process.env.EXPECTED_UPDATE_CHANNEL) {
             throw new Error(`packaged app-update.yml does not match the requested Studio feed: expected ${expectedFeedUrl} (${process.env.EXPECTED_UPDATE_CHANNEL}), got ${appUpdate?.url} (${appUpdate?.channel})`)
           }
@@ -546,7 +546,7 @@ jobs:
           STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
           EXPECTED_PREVIOUS: ${{ inputs.expected_previous_version }}
           STORAGE_ORIGIN: ${{ needs.source-gate.outputs.storage_origin }}
-          RELEASE_LAYOUT: ${{ inputs.release_layout || 'legacy' }}
+          RELEASE_LAYOUT: ${{ inputs.release_layout || 'studio' }}
           UPDATE_MODE: ${{ inputs.update_mode || 'incremental' }}
           COMPATIBILITY_ORIGIN: ${{ inputs.compatibility_origin }}
         run: |
@@ -557,7 +557,7 @@ jobs:
           git checkout --detach "$TOOLS_REF_VALUE"
           test "$(git rev-parse HEAD)" = "$TOOLS_REF_VALUE"
           pnpm install --frozen-lockfile
-          node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64" || r.commit !== process.env.EXPECTED_DSH_COMMIT || r.publicUrl !== process.env.EXPECTED_UPDATE_ORIGIN + "/dsh-desk/feeds/mac-arm64/") throw Error("Signed candidate identity mismatch")'
+          node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64" || r.commit !== process.env.EXPECTED_DSH_COMMIT || r.publicUrl !== process.env.EXPECTED_UPDATE_ORIGIN + "/studio/feeds/mac-arm64/") throw Error("Signed candidate identity mismatch")'
           node scripts/verify-codex-signing.mjs --record-only "$GITHUB_WORKSPACE/candidate/mac-arm64-release.json"
           zip="$(find "$GITHUB_WORKSPACE/candidate" -maxdepth 1 -name '*.zip' -type f -print -quit)"
           test -n "$zip"
@@ -620,7 +620,7 @@ jobs:
           STUDIO_REF_VALUE: ${{ inputs.studio_ref }}
           TOOLS_REF_VALUE: ${{ inputs.release_tools_ref || inputs.studio_ref }}
           STORAGE_ORIGIN: ${{ needs.source-gate.outputs.storage_origin }}
-          RELEASE_LAYOUT: ${{ inputs.release_layout || 'legacy' }}
+          RELEASE_LAYOUT: ${{ inputs.release_layout || 'studio' }}
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$STUDIO_REF_VALUE" HEAD
@@ -746,14 +746,6 @@ jobs:
           export DSH_HOME="$RUNNER_TEMP/studio-accepted-web-dsh"
           export AGENTKIT_HOME="$RUNNER_TEMP/studio-accepted-web-agentkit"
           make profile-install DSH_ROOT="$host_source" DSH_PROFILE=studio-refactor
-          node --input-type=module - <<'JS'
-          import {readFile,writeFile} from 'node:fs/promises';
-          import {join} from 'node:path';
-          const path=join(process.env.DSH_HOME,'profiles/studio-refactor/package.json');
-          const value=JSON.parse(await readFile(path,'utf8'));
-          value.dsh.profile.bundles.push('@deepseek-ai/dsh-experimental-schedule-bundle');
-          await writeFile(path,JSON.stringify(value,null,2)+'\n');
-          JS
           printf 'AGENTKIT_DSH_ROOT=%s\nDSH_HOME=%s\nAGENTKIT_HOME=%s\n' "$host_source" "$DSH_HOME" "$AGENTKIT_HOME" >> "$GITHUB_ENV"
           printf 'STUDIO_VERIFY_CHROME=%s\n' "$(node --input-type=module -e 'import {chromium} from "@playwright/test"; console.log(chromium.executablePath())')" >> "$GITHUB_ENV"
       - name: Verify complete plugin lifecycle
