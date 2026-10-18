@@ -23,5 +23,16 @@ test('each product owner releases only its contributions and rolls back partial 
   let calls = 0;
   assert.throws(() => installProductCopy({ override(namespace) { if (++calls === 2) throw new Error('second namespace rejected'); return locale.override(namespace); } }));
   assert.equal(active.size, 0);
-  assert.throws(() => installProductCopy({}), { code: 'DSH_CAPABILITY_UNAVAILABLE' });
+});
+
+test('native copy remains untouched when the optional product extension is absent', () => {
+  const dictionary = Object.freeze({ 'hero.headline': 'Native headline' });
+  const locale = Object.freeze({
+    dictionary,
+    register() { assert.fail('A product must not replace the native dictionary owner'); },
+  });
+  const dispose = installProductCopy(locale);
+  dispose(); dispose();
+  assert.equal(locale.dictionary, dictionary);
+  assert.equal(locale.dictionary['hero.headline'], 'Native headline');
 });
