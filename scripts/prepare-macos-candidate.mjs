@@ -1,6 +1,7 @@
 /** Reuse signed macOS bytes after verifying their original build, source and transport digest. */
 import {execFile} from 'node:child_process';
-import {promisify,parseArgs,stripVTControlCharacters} from 'node:util';
+import {promisify,parseArgs} from 'node:util';
+import {readGitHubJobLogs} from './github-job-logs.mjs';
 import {createHash} from 'node:crypto';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
@@ -18,7 +19,7 @@ const job=(await api(`actions/runs/${run}/jobs`)).jobs.find(item=>item.name==='m
 for(const name of ['Verify immutable source inputs','Build, sign and notarize Studio','Verify signed and notarized artifacts']) {
   if(job?.steps.find(step=>step.name===name)?.conclusion!=='success') throw Error(`Original candidate has not passed ${name}`);
 }
-const logs=stripVTControlCharacters((await execute('gh',['api','--allow-escape-sequences',`repos/${repository}/actions/jobs/${job.id}/logs`],{maxBuffer:32*1024*1024})).stdout);
+const logs=await readGitHubJobLogs(execute,`repos/${repository}/actions/jobs/${job.id}/logs`);
 const sources=[...new Set([...logs.matchAll(/\bSTUDIO_REF_VALUE:\s*([0-9a-f]{40})\b/g)].map(match=>match[1]))];
 const versions=[...new Set([...logs.matchAll(/\bBUILD_VERSION(?:_VALUE)?:\s*([0-9A-Za-z.-]+)/g)].map(match=>match[1]))];
 if(sources.length!==1||sources[0]!==source||versions.length!==1||versions[0]!==version) throw Error('Original signed source or version differs');

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep native DSH copy when the optional product locale extension is absent, and remove the undeclared hero-name slot without weakening execution admission.
+- Read signed candidate job logs with both current and older GitHub CLIs; retry only an unsupported output flag and preserve source, version and artifact checks on macOS and Windows.
+
 - 修复安装包指纹测试未等待 ASAR 输出流写完的竞态，避免 Linux 门禁读取尚未落盘的归档。
 
 - 同步新版 DSH 本地打包测试：验证 ad-hoc 签名、公证关闭及更新策略元数据缺省行为，修复完整 Host 门禁中的过期断言，不改动正式签名流程。

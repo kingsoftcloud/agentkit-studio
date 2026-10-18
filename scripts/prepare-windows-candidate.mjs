@@ -1,6 +1,7 @@
 /** Reuse signed Windows bytes only after checking their original build and transport digest. */
 import { execFile } from 'node:child_process';
-import { promisify, parseArgs, stripVTControlCharacters } from 'node:util';
+import { promisify, parseArgs } from 'node:util';
+import { readGitHubJobLogs } from './github-job-logs.mjs';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -20,7 +21,7 @@ for(const name of ['Verify immutable Studio source','Package the official DSH Wi
  if(job?.steps.find(step=>step.name===name)?.conclusion!=='success')throw Error(`Original candidate has not passed ${name}`);
 }
 let logs;
-try { logs=stripVTControlCharacters((await execute('gh',['api','--allow-escape-sequences',`repos/${repository}/actions/jobs/${job.id}/logs`],{maxBuffer:32*1024*1024})).stdout); }
+try { logs=await readGitHubJobLogs(execute,`repos/${repository}/actions/jobs/${job.id}/logs`); }
 catch { throw Error('Original candidate job logs could not be read safely'); }
 const sources=[...new Set([...logs.matchAll(/\bSTUDIO_SHA:\s*([0-9a-f]{40})\b/g)].map(value=>value[1]))];
 const versions=[...new Set([...logs.matchAll(/\bBUILD_VERSION:\s*([0-9A-Za-z.-]+)/g)].map(value=>value[1]))];
