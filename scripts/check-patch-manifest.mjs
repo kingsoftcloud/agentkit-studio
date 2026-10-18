@@ -80,7 +80,7 @@ export async function checkPatchManifest(directory, options) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const directory = resolve(process.argv[2] || join(root, 'patches/dsh-v0.2.0-rc.2'));
+  const directory = resolve(process.argv[2] || join(root, 'patches/dsh-v0.2.1-rc.2'));
   const { report } = await checkPatchManifest(directory, process.argv[3] ? { baseCommit: process.argv[3] } : undefined);
   console.log(JSON.stringify(report));
 }

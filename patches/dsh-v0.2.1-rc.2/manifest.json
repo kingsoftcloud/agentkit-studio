@@ -1,0 +1,1661 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+  "upstream": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
+    "ref": "dsh-v0.2.1-rc.2"
+  },
+  "retired": [
+    {
+      "id": "007",
+      "reason": "Use the complete native DSH session list; Agent selection no longer filters visibility."
+    },
+    {
+      "id": "021",
+      "reason": "The pinned upstream default already forces idle/check-failure refresh and preserves available/ready actions. The unconditional manual override regressed six action cases.",
+      "equivalence": {
+        "baseCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+        "testFile": "apps/desktop/tests/main-startup.spec.ts",
+        "passed": 114,
+        "failed": 0,
+        "evidence": "docs/refactor-patches.md"
+      }
+    },
+    {
+      "id": "001",
+      "reason": "Scoped locale contributions and explicit product build inputs replace direct source edits; native/configured DSH and assembled Desktop Host profile behavior were verified locally.",
+      "equivalence": {
+        "replacement": "035",
+        "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+        "evidence": "docs/product-configuration.md",
+        "remaining": "Final cross-platform and installed-update acceptance remains required."
+      }
+    },
+    {
+      "id": "002",
+      "reason": "Scoped locale contributions and explicit product build inputs replace direct source edits; native/configured DSH and assembled Desktop Host profile behavior were verified locally.",
+      "equivalence": {
+        "replacement": "035",
+        "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+        "evidence": "docs/product-configuration.md",
+        "remaining": "Final cross-platform and installed-update acceptance remains required."
+      }
+    },
+    {
+      "id": "003",
+      "reason": "Scoped locale contributions and explicit product build inputs replace direct source edits; native/configured DSH and assembled Desktop Host profile behavior were verified locally.",
+      "equivalence": {
+        "replacement": "035",
+        "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+        "evidence": "docs/product-configuration.md",
+        "remaining": "Final cross-platform and installed-update acceptance remains required."
+      }
+    },
+    {
+      "id": "005",
+      "reason": "Scoped locale contributions and explicit product build inputs replace direct source edits; native/configured DSH and assembled Desktop Host profile behavior were verified locally.",
+      "equivalence": {
+        "replacement": "035",
+        "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
+        "evidence": "docs/product-configuration.md",
+        "remaining": "Final cross-platform and installed-update acceptance remains required."
+      }
+    },
+    {
+      "id": "018",
+      "reason": "Consolidated into 017 when porting the current Workspace StartSessionOptions and Agent preset flow. No old DSH runtime compatibility is supported.",
+      "equivalence": {
+        "replacement": "017",
+        "evidence": "docs/dsh-0.2.1-upgrade.md"
+      }
+    }
+  ],
+  "verificationProfiles": {
+    "source": {
+      "kind": "source",
+      "target": "make public-gate"
+    },
+    "web": {
+      "kind": "real-dsh-web",
+      "script": "scripts/verify-studio-native-sidebar-web.mjs"
+    },
+    "electron": {
+      "kind": "development-electron",
+      "script": "scripts/verify-studio-desktop-dev.mjs"
+    },
+    "lifecycle": {
+      "kind": "real-installed-host",
+      "script": "scripts/verify-studio-plugin-lifecycle.mjs"
+    },
+    "frozen": {
+      "kind": "real-installed-host-controlled-provider",
+      "script": "scripts/verify-studio-frozen-host.mjs"
+    },
+    "persistence": {
+      "kind": "real-assembled-desktop-host-persistence-controlled-resource",
+      "script": "scripts/verify-studio-persistence.mjs"
+    },
+    "macos": {
+      "kind": "unsigned-or-signed-package",
+      "script": "scripts/package-desktop.mjs",
+      "target": "mac-arm64"
+    },
+    "windows": {
+      "kind": "unsigned-or-signed-package",
+      "script": "scripts/package-desktop.mjs",
+      "target": "win-x64"
+    },
+    "installed-update": {
+      "kind": "real-installed-update",
+      "script": "scripts/verify-windows-online-update.mjs"
+    },
+    "dsh-web": {
+      "kind": "real-dsh-keyless-web",
+      "target": "DSH_SNAPSHOT=replay pnpm run test:web"
+    },
+    "product-profiles": {
+      "kind": "real-assembled-desktop-host",
+      "script": "scripts/verify-studio-product-profiles.mjs"
+    },
+    "node-projection": {
+      "kind": "real-dsh-node-projection",
+      "script": "scripts/verify-dsh-node-store.mjs"
+    }
+  },
+  "patches": [
+    {
+      "id": "004",
+      "file": "004-sidebar-panel-lifecycle.patch",
+      "category": "lifecycle",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "111e9a416df3721543ad74e7b10846c208c1ed729139b18016d4fe0572aac089",
+      "dependsOn": [],
+      "affectedFiles": [
+        "packages/client/ui-sidebar/src/client/SidebarRoot.tsx"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "contracts": [
+        "修复动态面板注册后的侧栏选择"
+      ],
+      "risk": "medium",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游侧栏生命周期修复进入发布版本",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "web",
+          "electron",
+          "lifecycle",
+          "frozen"
+        ]
+      }
+    },
+    {
+      "id": "006",
+      "file": "006-desktop-plugin-package-set.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "fe78af7c47a573f169e790d269500493c8c640cfc4f7aa63e76a56eb60586394",
+      "dependsOn": [],
+      "affectedFiles": [
+        "apps/desktop/scripts/prepare-package-set.ts",
+        "apps/desktop/src/project-manager.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "让官方 Desktop package-set 接受额外的 Studio tarball，并把 Studio bundle 写入内置 Profile"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游支持外部产品 bundle 的 Desktop package-set/profile 配置",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "product-profiles"
+        ]
+      }
+    },
+    {
+      "id": "008",
+      "file": "008-agent-session-without-workspace.patch",
+      "category": "session-contract",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "55d874f62b72c4cf210cc3f73af806746ec99c333c12ddef667e1292419b5888",
+      "dependsOn": [],
+      "affectedFiles": [
+        "packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "contracts": [
+        "允许已有 Agent 会话在未选择 Workspace 时直接使用原生 composer；Workspace 仍可作为 cwd/文件工具上下文"
+      ],
+      "risk": "medium",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游把 Workspace 从会话发送前置条件改为可选上下文",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "web",
+          "electron",
+          "lifecycle",
+          "frozen"
+        ]
+      }
+    },
+    {
+      "id": "009",
+      "file": "009-local-macos-package.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "51bbaa62456a9c53b354fc86ce9789985e0553614456293ba87756becf5fdd06",
+      "dependsOn": [
+        "006"
+      ],
+      "affectedFiles": [
+        "apps/desktop-host/src/index.ts",
+        "apps/desktop/electron-builder.config.d.mts",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/scripts/package-target.ts",
+        "apps/desktop/scripts/prepare-dsh.ts",
+        "apps/desktop/scripts/smoke-packaged-runtime.ts",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/src/welcome-api.ts",
+        "apps/desktop/tests/local-macos-package.spec.ts",
+        "apps/desktop/tests/main-startup.spec.ts",
+        "apps/desktop/tests/product-branding.spec.ts",
+        "apps/desktop/tests/product-onboarding.spec.ts",
+        "apps/desktop/tests/project-manager.spec.ts",
+        "apps/desktop/tests/welcome-startup.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-desktop-host"
+      ],
+      "contracts": [
+        "显式 `--unsigned` macOS 本地测试包复用官方离线运行时流水线；根 manifest 保留产品 bundle，干净 Profile 使用该 bundle，启动器从根 manifest 解析插件；Studio 跳过仅适用于 DeepSeek 的 welcome。支持产品名称和 macOS 图标覆盖，保留普通 DSH 默认品牌；正式签名、公证与发布门禁保持启用"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游提供 macOS 本地验收包、产品首次配置和打包插件解析的等价合同",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/macos-signature.spec.ts",
+          "apps/desktop/tests/main-startup.spec.ts",
+          "apps/desktop/tests/package-target.spec.ts",
+          "apps/desktop/tests/project-manager.spec.ts",
+          "apps/desktop/tests/welcome-startup.spec.ts",
+          "apps/desktop/tests/local-macos-package.spec.ts",
+          "apps/desktop/tests/product-onboarding.spec.ts",
+          "apps/desktop/tests/product-branding.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "product-profiles"
+        ]
+      }
+    },
+    {
+      "id": "010",
+      "file": "010-session-model-default.patch",
+      "category": "session-contract",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "5dc4fb8d8651526804a226061aaf302a8a8a8d2907bfd86ceed92f0b5d0d695e",
+      "dependsOn": [],
+      "affectedFiles": [
+        "packages/api/session-controller/src/commands.ts",
+        "packages/api/session-controller/src/types.ts",
+        "packages/api/session-controller/tests/session-models.host.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-api-session-controller"
+      ],
+      "contracts": [
+        "为公开 `session.selectModel` 增加可选 `saveDefault: false`，Agent 绑定和自动化只修改自己的会话模型；普通模型选择器仍保存默认值"
+      ],
+      "risk": "medium",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游提供会话模型选择与全局默认值分离的合同",
+      "verification": {
+        "hostTests": [
+          "packages/api/session-controller/tests/session-models.host.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron",
+          "lifecycle",
+          "frozen"
+        ]
+      }
+    },
+    {
+      "id": "011",
+      "file": "011-cjk-autolinks.patch",
+      "category": "general-fix",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "d33408ec6e20d1bf4f877f8f78e402fb57d902f8fca599e62645e896bd75da9a",
+      "dependsOn": [],
+      "affectedFiles": [
+        "packages/client/ui-primitives/README.md",
+        "packages/client/ui-primitives/README.zh.md",
+        "packages/client/ui-primitives/src/markdown/cjkAutolinks.ts",
+        "packages/client/ui-primitives/src/markdown/parse.ts",
+        "packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.settled.txt",
+        "packages/client/ui-primitives/tests/fixtures/markdown-dom/cjk-link-commentary.streaming.txt",
+        "packages/client/ui-primitives/tests/markdown-cjk-links.client.spec.tsx",
+        "packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
+      "contracts": [
+        "原生 Markdown 的裸网址在中文标点前结束，避免加粗结束符及说明被拼进地址；复用 GFM 解析和既有流式渲染，保留显式链接、Unicode 路径及源位置"
+      ],
+      "risk": "medium",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游修复中文标点相邻的自动链接",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-primitives/tests/markdown-dom-parity.client.spec.tsx",
+          "packages/client/ui-primitives/tests/markdown-cjk-links.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron"
+        ]
+      }
+    },
+    {
+      "id": "012",
+      "file": "012-preset-roster-invalidation.patch",
+      "category": "session-contract",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "b2f3681125b922a1e244aeb236ed2c911818813286e34cde73e8b5110c878933",
+      "dependsOn": [],
+      "affectedFiles": [
+        "packages/api/remotes/src/remote-events.ts",
+        "packages/client/ui-agent-preset/README.md",
+        "packages/client/ui-agent-preset/README.zh.md",
+        "packages/client/ui-agent-preset/src/client/index.ts",
+        "packages/client/ui-agent-preset/src/client/settings-store.ts",
+        "packages/client/ui-agent-preset/tests/apply.client.spec.ts",
+        "packages/client/ui-agent-preset/tests/settings-store.client.spec.ts",
+        "packages/preset/agent-preset-registry/README.md",
+        "packages/preset/agent-preset-registry/README.zh.md",
+        "packages/preset/agent-preset-registry/src/index.ts",
+        "packages/preset/agent-preset-registry/src/types.ts",
+        "packages/preset/agent-preset-registry/tests/registry.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent-preset-registry",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-agent-preset"
+      ],
+      "contracts": [
+        "注册表声明激活或移除后发布目录事件，经现有 Remote 转发让原生预设界面刷新；会话标签合并请求期间的变更，启动恢复后自动显示 Agent 名称"
+      ],
+      "risk": "medium",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游提供动态预设目录失效通知和请求合并",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-agent-preset/tests/apply.client.spec.ts",
+          "packages/client/ui-agent-preset/tests/settings-store.client.spec.ts",
+          "packages/preset/agent-preset-registry/tests/registry.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron",
+          "lifecycle",
+          "frozen"
+        ]
+      }
+    },
+    {
+      "id": "013",
+      "file": "013-existing-product-profile.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "ac2724fc749623a1adf5c148776d69f619b531f8a2b12a1b670a6f0533975065",
+      "dependsOn": [
+        "009"
+      ],
+      "affectedFiles": [
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/tests/project-manager.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "已有 Desktop Profile 首次遇到新的产品 bundle 时补齐激活项，保留现有插件、设置和锁文件；记录已见默认项，保留后续用户或恢复操作的禁用选择"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游支持已有桌面 Profile 的产品默认项迁移",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/project-manager.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "product-profiles"
+        ]
+      }
+    },
+    {
+      "id": "014",
+      "file": "014-desktop-product-brand.patch",
+      "category": "product",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "0b49a70318ead15a0fb940775427ce992125c67de73db6dfcdbb7f20ab350fff",
+      "dependsOn": [
+        "009",
+        "013"
+      ],
+      "affectedFiles": [
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/scripts/package-target.ts",
+        "apps/desktop/src/locale.ts",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/tests/expected/product-brand-zh-CN.json",
+        "apps/desktop/tests/locale.spec.ts",
+        "apps/desktop/tests/main-startup.spec.ts",
+        "apps/desktop/tests/package-target-stages.spec.ts",
+        "apps/desktop/tsdown.config.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "原生菜单、“关于”和恢复提示使用安装产品名称，修复图标已更新但仍显示 DeepSeek Harness 的混合品牌；保留默认 DSH 文案、模型提供方名称和用户数据目录"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游提供原生 shell 的产品品牌合同",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/package-target-stages.spec.ts",
+          "apps/desktop/tests/main-startup.spec.ts",
+          "apps/desktop/tests/locale.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "015",
+      "file": "015-compatibility-docs.patch",
+      "category": "generated-docs",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "9905f19acf7049331b11e28234083e30290ba55e2d1920ef69b67863c92a3cda",
+      "dependsOn": [],
+      "affectedFiles": [
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tool-cordis",
+        "repository-docs"
+      ],
+      "contracts": [
+        "通过官方生成器同步事件、Cordis API 与持久化目录；持久化类型摘要未改变"
+      ],
+      "risk": "low",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游提供等价模型选择和预设目录事件合同，并同步对应生成目录",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "web",
+          "electron"
+        ]
+      }
+    },
+    {
+      "id": "016",
+      "file": "016-informational-session-events.patch",
+      "category": "session-contract",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "2dafd72427a39ff19282637ce2afd49f0a3996f42284305d1cb2ea9cc053ed43",
+      "dependsOn": [
+        "015"
+      ],
+      "affectedFiles": [
+        "docs/subsystems/session.md",
+        "docs/subsystems/session.zh.md",
+        "packages/core/session/README.i18n.yaml",
+        "packages/core/session/README.md",
+        "packages/core/session/README.zh.md",
+        "packages/core/session/src/index.ts",
+        "packages/core/session/tests/session.spec.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-session",
+        "@deepseek-ai/dsh-tool-cordis",
+        "repository-docs"
+      ],
+      "contracts": [
+        "为 Session.append 的非模型事件开放现有 ignorable 标记，修复下游插件展示记录在磁盘重开时被拒绝的问题；禁止消息事件使用，保留默认 required 和官方静态事件清单，附带单测与双语说明"
+      ],
+      "risk": "high",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游公开可写入纯展示事件 ignorable 标记的等价接口",
+      "verification": {
+        "hostTests": [
+          "packages/core/session/tests/session.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron",
+          "lifecycle",
+          "frozen",
+          "persistence"
+        ]
+      }
+    },
+    {
+      "id": "017",
+      "file": "017-ungrouped-new-session.patch",
+      "category": "session-contract",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "4c43665faac187495f2af3ec1db2d37d725ffeebdc03f878db1764a566aadb38",
+      "dependsOn": [
+        "008"
+      ],
+      "affectedFiles": [
+        "apps/web/tests/expected/agent-preset-selection/hero.expected.md",
+        "packages/api/session-controller/tests/sessions-service.client.spec.ts",
+        "packages/client/ui-conversation/README.md",
+        "packages/client/ui-conversation/README.zh.md",
+        "packages/client/ui-conversation/src/client/apply.ts",
+        "packages/client/ui-conversation/src/client/contract/slots.ts",
+        "packages/client/ui-conversation/src/client/locales.ts",
+        "packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx",
+        "packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx",
+        "packages/client/ui-conversation/src/client/skeleton/HeroShell.module.css",
+        "packages/client/ui-conversation/tests/apply-inject.client.spec.tsx",
+        "packages/client/ui-conversation/tests/skeleton.client.spec.tsx",
+        "packages/client/ui-workspace/README.md",
+        "packages/client/ui-workspace/README.zh.md",
+        "packages/client/ui-workspace/src/client/contract/slots.ts",
+        "packages/client/ui-workspace/src/client/index.ts",
+        "packages/client/ui-workspace/src/client/navigation.ts",
+        "packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx",
+        "packages/client/ui-workspace/tests/apply.client.spec.ts",
+        "packages/client/ui-workspace/tests/host-home-staleness.client.spec.tsx",
+        "packages/client/ui-workspace/tests/rename-assembly.client.spec.tsx",
+        "packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx",
+        "packages/client/ui-workspace/tests/workspaces-service.client.spec.ts",
+        "packages/extensions/cordis-client-runner/src/client/api-catalog.ts",
+        "snapshots/web/fresh-round-trip/blank-reload.expected.md",
+        "snapshots/web/lifecycle-chrome/hero.expected.md",
+        "snapshots/web/lifecycle-chrome/plan-active-zh.expected.md",
+        "snapshots/web/lifecycle-chrome/plan-active.expected.md",
+        "snapshots/web/voice-input/ui.expected.md"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-cordis-client-runner"
+      ],
+      "contracts": [
+        "接通“未分组”加号，并在工作区名称旁提供取消叉号；显式空工作区不再回退到当前或最近目录，取消目录沿用草稿迁移，复用导航取消与错误提示"
+      ],
+      "risk": "medium",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游支持从未分组创建无工作区会话及取消所选目录",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-conversation/tests/apply-inject.client.spec.tsx",
+          "packages/client/ui-conversation/tests/skeleton.client.spec.tsx",
+          "packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx",
+          "packages/client/ui-workspace/tests/workspaces-service.client.spec.ts"
+        ],
+        "integrations": [
+          "dsh-web",
+          "electron",
+          "frozen",
+          "lifecycle",
+          "source",
+          "web"
+        ]
+      }
+    },
+    {
+      "id": "019",
+      "file": "019-studio-product-update-feed.patch",
+      "category": "updater",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "9bfb39c3853040a91d94f300a8141a57538d900406a4fe850dccf36a8a70db44",
+      "dependsOn": [
+        "009",
+        "014"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/desktop-auto-update-environment.d.mts",
+        "apps/desktop/scripts/desktop-auto-update-environment.mjs",
+        "apps/desktop/scripts/desktop-package-environment.mjs",
+        "apps/desktop/scripts/desktop-release-environment.mjs",
+        "apps/desktop/scripts/desktop-upload-plan.ts",
+        "apps/desktop/scripts/macos-app-update-config.mjs",
+        "apps/desktop/src/update-coordinator.ts",
+        "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
+        "apps/desktop/tests/desktop-upload-plan.spec.ts",
+        "apps/desktop/tests/expected/latest-installer-uploads.json",
+        "apps/desktop/tests/macos-app-update-config.spec.ts",
+        "apps/desktop/tests/macos-signature.spec.ts",
+        "apps/desktop/tests/update-coordinator.spec.ts",
+        "apps/desktop/tsdown.config.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "把 Desktop 更新源、Stable/Preview 通道和 metadata 文件名变成显式产品输入；生产构建不再回退到 DeepSeek 下载源，Studio 使用自己的 App ID/更新源，仍保留 Nightly 仅用于旧测试夹具兼容"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游提供产品 App ID、更新源和 Stable/Preview 配置接口，并且可由产品包直接传入",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
+          "apps/desktop/tests/desktop-upload-plan.spec.ts",
+          "apps/desktop/tests/macos-app-update-config.spec.ts",
+          "apps/desktop/tests/macos-signature.spec.ts",
+          "apps/desktop/tests/update-coordinator.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "installed-update"
+        ]
+      }
+    },
+    {
+      "id": "020",
+      "file": "020-studio-signed-product-name.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "162bf6ec35dd52ac6242db9bc7835b160203a2b4395067c452a1a1c88f142e05",
+      "dependsOn": [
+        "009",
+        "014",
+        "019"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/package-macos.ts",
+        "apps/desktop/scripts/package-target.ts",
+        "apps/desktop/scripts/smoke-packaged-runtime.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "让正式签名、公证和签名后 smoke 沿用产品 bundle 名称，而不是硬编码查找 `DeepSeek Harness.app`；默认 DSH 品牌保持不变"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游签名和公证路径统一使用 `DSH_DESKTOP_PRODUCT_NAME`",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "022",
+      "file": "022-ks3-single-range-updates.patch",
+      "category": "updater",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "bb1cc8a44c9510ca1807965c2bf7378dca0e0607a667ae468401d56bb2f7f3f9",
+      "dependsOn": [
+        "019"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/macos-app-update-config.d.mts",
+        "apps/desktop/scripts/macos-app-update-config.mjs",
+        "apps/desktop/tests/macos-app-update-config.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "签名前封装官方 Generic Provider 的 `useMultipleRangeRequest: false`；KS3 公网多段 Range 返回 416，使用官方单段 Range 下载器完成差分，并在打包校验中拒绝默认多段配置"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游产品更新配置允许显式关闭多段 Range",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/macos-app-update-config.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "installed-update"
+        ]
+      }
+    },
+    {
+      "id": "023",
+      "file": "023-codex-code-mode-signing.patch",
+      "category": "signing",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "20d025dde4897e1fa8471e9caffa754337a8496c59cbf3b61ac7e1d32ae30fbb",
+      "dependsOn": [],
+      "affectedFiles": [
+        "apps/desktop/scripts/codex-code-mode-host-entitlements.plist",
+        "apps/desktop/scripts/macos-runtime.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "为 Codex 的 Code Mode 执行助手保留官方 `allow-jit` 和 `allow-unsigned-executable-memory` 权限；只匹配 Codex macOS 平台包中的该助手，不扩大其他运行时文件权限"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游运行时签名识别 Codex Code Mode 助手，并验证其所需权限",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "installed-update"
+        ]
+      }
+    },
+    {
+      "id": "024",
+      "file": "024-desktop-build-version.patch",
+      "category": "product",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "cf9005dce739109fa571cb7647f41e8b4dc2244336f86b5f470532fe94bdb542",
+      "dependsOn": [
+        "014"
+      ],
+      "affectedFiles": [
+        "apps/desktop/src/main.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "用 Electron `app.getVersion()` 向 Host 注入实际桌面构建版本，Studio 设置页不再误用固定的 `DSH_CLIENT_VERSION` 宿主基线"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游向产品插件提供实际桌面 App 版本；设置页、Info.plist 和 updater 当前版本一致",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "025",
+      "file": "025-windows-certificate-store-signing.patch",
+      "category": "signing",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "c364bd72d04efc10589e604eba75a24cb90c665ebaee7fb4af55ec748dd69099",
+      "dependsOn": [
+        "009",
+        "019",
+        "020"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/desktop-package-environment.mjs",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/scripts/installed-update-packaging.ts",
+        "apps/desktop/scripts/package-target.ts",
+        "apps/desktop/scripts/sign-primary-runtime.ts",
+        "apps/desktop/scripts/windows-sign.cmd",
+        "apps/desktop/scripts/windows-sign.d.mts",
+        "apps/desktop/scripts/windows-sign.mjs",
+        "apps/desktop/scripts/windows-signing-preflight.ts",
+        "apps/desktop/tests/windows-sign.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "支持经验证的 Windows 证书存储签名，保留时间戳和发行者检查"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游支持等价证书存储签名输入",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/windows-sign.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "installed-update"
+        ]
+      }
+    },
+    {
+      "id": "026",
+      "file": "026-preset-composition-reuse.patch",
+      "category": "session-contract",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "8759d71828e21d60b45d1801229353f819211e51f3e9e0c9d3a3313b835cd399",
+      "dependsOn": [
+        "012"
+      ],
+      "affectedFiles": [
+        "packages/preset/agent-preset-registry/package.json",
+        "packages/preset/agent-preset-registry/src/index.ts",
+        "packages/preset/agent-preset-registry/tests/registry.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent-preset-registry"
+      ],
+      "contracts": [
+        "从官方预设注册表取得独立组合快照，复用已验证的原生工具和 PTC 指引"
+      ],
+      "risk": "medium",
+      "maintainerRole": "DSH compatibility maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游提供经注册表校验的组合快照 API",
+      "verification": {
+        "hostTests": [
+          "packages/preset/agent-preset-registry/tests/registry.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron",
+          "lifecycle",
+          "frozen"
+        ]
+      }
+    },
+    {
+      "id": "027",
+      "file": "027-windows-installed-path-smoke.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "076bde9be0cf3dee74c59c96578fde5ab2100d798c9fc4986015988b0d119684",
+      "dependsOn": [
+        "020"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/smoke-packaged-runtime.ts",
+        "apps/desktop/scripts/windows-smoke-application.d.mts",
+        "apps/desktop/scripts/windows-smoke-application.mjs"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "在完整 App 的短安装路径执行签名、模块与 Office 检查"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游打包检查使用实际安装长度的目录",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "028",
+      "file": "028-smoke-plugin-readiness.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "db484e7d2a731515ee5b069db6325723db0446ad9e1dc00127ceebf2dac27a7a",
+      "dependsOn": [],
+      "affectedFiles": [
+        "apps/desktop/scripts/smoke-runtime.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "等待异步注入的插件路由，仍要求真实 HTTP 200 和指定正文"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游 smoke 等待插件实际可用",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "029",
+      "file": "029-full-update-blockmap-cache.patch",
+      "category": "updater",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "ca0639b6b90eddce50732329e200b78f7bd5ec5344c403f9071cfc077337706b",
+      "dependsOn": [
+        "019"
+      ],
+      "affectedFiles": [
+        "apps/desktop/src/mac-full-update-cache.ts",
+        "apps/desktop/src/update-coordinator.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "全量更新完成后清除与新 ZIP 不匹配的旧 blockmap 索引"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游全量下载同时正确更新或失效缓存索引",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "installed-update"
+        ]
+      }
+    },
+    {
+      "id": "030",
+      "file": "030-plugin-smoke-diagnostics.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "67801ff43685d1fff0c3adee0a47e77b3ee43f05f4e91af679c7f512cd3b5b3a",
+      "dependsOn": [
+        "028"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/smoke-runtime.ts",
+        "apps/desktop/src/host-process.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "隔离打包失败记录插件导入、执行、共享 Context、依赖服务和脱敏诊断"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游提供等价的打包失败诊断",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "031",
+      "file": "031-canonical-windows-smoke-paths.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "aa8835d6db3870f1b14bc036f226fbd10e2d690e7179dab1bc756c37ef141569",
+      "dependsOn": [
+        "027",
+        "030"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/smoke-runtime.ts",
+        "apps/desktop/scripts/windows-smoke-application.mjs"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "测试安装和 profile 使用统一真实路径，避免 Windows 短路径别名造成重复模块身份"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游在启动打包检查前统一安装与 profile 路径",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "032",
+      "file": "032-windows-studio-product.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "af2c5228381354cf03293d214d9b5d7d9578e137bdb91a483d7467feb8250d78",
+      "dependsOn": [
+        "009",
+        "019",
+        "025"
+      ],
+      "affectedFiles": [
+        "apps/desktop/electron-builder.config.d.mts",
+        "apps/desktop/installer/strings.nsh",
+        "apps/desktop/scripts/desktop-auto-update-environment.mjs",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/scripts/prepare-windows-installer.ps1",
+        "apps/desktop/src/paths.ts",
+        "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
+        "apps/desktop/tests/product-branding.spec.ts",
+        "apps/desktop/tests/studio-paths.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-desktop-host"
+      ],
+      "contracts": [
+        "Windows 产品 App ID、用户数据目录、NSIS 品牌与安装完成后启动输入，保留 DSH 默认产品路径"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游 Windows 产品配置提供等价 App ID、数据路径、安装品牌和完成后启动合同",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
+          "apps/desktop/tests/product-branding.spec.ts",
+          "apps/desktop/tests/studio-paths.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "033",
+      "file": "033-windows-single-range-evidence.patch",
+      "category": "updater",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "776ad97adfc42544cfdcee72dce00be92b3a3bf029611a95ef0762597666fa5e",
+      "dependsOn": [
+        "019",
+        "029",
+        "032"
+      ],
+      "affectedFiles": [
+        "apps/desktop/electron-builder.config.d.mts",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/src/ipc.ts",
+        "apps/desktop/src/update-coordinator.ts",
+        "apps/desktop/src/update-journal.ts",
+        "apps/desktop/tests/update-coordinator.spec.ts",
+        "apps/desktop/tests/update-journal.spec.ts",
+        "apps/desktop/tests/windows-asar-unpack.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Windows Studio 的 Generic Provider 使用 KS3 单区间请求；保留原生下载实际字节数用于增量验收，差分计划日志不能单独证明通过"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游 Windows 产品配置支持单区间请求和实际下载字节记录",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/update-coordinator.spec.ts",
+          "apps/desktop/tests/update-journal.spec.ts",
+          "apps/desktop/tests/windows-asar-unpack.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "installed-update"
+        ]
+      }
+    },
+    {
+      "id": "034",
+      "file": "034-product-windows-tray.patch",
+      "category": "product",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "b1bae223890371b640c3e2e32a0db93163b07a0da7db2a07b71856f162751dfc",
+      "dependsOn": [
+        "033"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/tests/windows-asar-unpack.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "托盘图标独立使用产品输入，Studio 不再复制官方鲸鱼 ICO；保留官方默认值"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游支持产品托盘资源输入",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/windows-asar-unpack.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "035",
+      "file": "035-public-product-presentation.patch",
+      "category": "product",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "579395d61fabcecdbcd74ca7848de129e01524dd9bb92e0cf43c5b4c72939597",
+      "dependsOn": [
+        "017"
+      ],
+      "affectedFiles": [
+        ".agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.i18n.yaml",
+        ".agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.md",
+        ".agents/notes/implemented/architecture/2026-10-15-owned-product-presentation.zh.md",
+        "apps/desktop/tests/client-product-environment.spec.ts",
+        "packages/client/locale/README.i18n.yaml",
+        "packages/client/locale/README.md",
+        "packages/client/locale/README.zh.md",
+        "packages/client/locale/src/client/index.ts",
+        "packages/client/locale/tests/product-copy.client.spec.ts",
+        "packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx",
+        "packages/client/ui-conversation/tests/product-brand.client.spec.tsx",
+        "scripts/client-build-environment.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-desktop",
+        "repository-build"
+      ],
+      "contracts": [
+        "Default DSH retains its native dictionaries and animated mark without product inputs",
+        "Owned partial locale overrides preserve fallback order and release only their contributions",
+        "Explicit public product build inputs are recorded and used for the first hero render"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local candidate only; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream baseline contains the equivalent product extension.",
+      "verification": {
+        "hostTests": [
+          "packages/client/locale/tests/locale.client.spec.ts",
+          "packages/client/locale/tests/product-copy.client.spec.ts",
+          "packages/client/ui-conversation/tests/product-brand.client.spec.tsx",
+          "packages/client/ui-conversation/tests/skeleton.client.spec.tsx",
+          "apps/desktop/tests/client-product-environment.spec.ts",
+          "scripts/client-build-environment.client.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron",
+          "lifecycle",
+          "dsh-web",
+          "product-profiles"
+        ]
+      }
+    },
+    {
+      "id": "036",
+      "file": "036-preset-composition-generated-api.patch",
+      "category": "generated-docs",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "80851a91fd4627f4cd3a602011322ab5be4efe90337d6e9029ab2de9a519ffb2",
+      "dependsOn": [
+        "015",
+        "016",
+        "026"
+      ],
+      "affectedFiles": [
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent-preset-registry",
+        "@deepseek-ai/dsh-tool-cordis",
+        "repository-docs"
+      ],
+      "contracts": [
+        "Generated Host inspection catalog and bilingual core API reference expose the existing pluginsFor registry method"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local candidate only; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream API reference includes the composition method.",
+      "verification": {
+        "hostTests": [
+          "packages/preset/agent-preset-registry/tests/registry.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      }
+    },
+    {
+      "id": "037",
+      "file": "037-web-editor-snapshot-ready-state.patch",
+      "category": "general-fix",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "16a36a0bcc1597b658403a7b00fca4ef87dd2cdee02e60fcc8e3595c9afcecb6",
+      "dependsOn": [
+        "017"
+      ],
+      "affectedFiles": [
+        "apps/web/tests/lifecycle-chrome.e2e.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-app-web"
+      ],
+      "contracts": [
+        "Initialize one empty editor paragraph through real typing and deletion before capturing the hero ARIA snapshot",
+        "Preserve the existing recorded Session generations and replay-consumption assertions"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local candidate only; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream hero scenario establishes the same stable empty editor state.",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "dsh-web"
+        ]
+      }
+    },
+    {
+      "id": "038",
+      "file": "038-prompt-request-fingerprint.patch",
+      "category": "session-contract",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "898d2999778b569704e63f8d25e6dd6a952363092dcdc3f885f3a891daa52a61",
+      "dependsOn": [
+        "010",
+        "015",
+        "017",
+        "036"
+      ],
+      "affectedFiles": [
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.i18n.yaml",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.schema.json",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.zh.md",
+        "packages/api/session-controller/README.md",
+        "packages/api/session-controller/README.zh.md",
+        "packages/api/session-controller/src/commands.ts",
+        "packages/api/session-controller/src/index.ts",
+        "packages/api/session-controller/src/types.ts",
+        "packages/api/session-controller/tests/commands-upload-file.host.spec.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-tool-cordis",
+        "repository-docs"
+      ],
+      "contracts": [
+        "Persist an optional caller fingerprint with the first accepted native user-rpc source; retries must preserve its value including absence",
+        "Reject conflicting request identities before message admission, including concurrent attachment admission, claimed input, canceled queues and restored Sessions",
+        "Retain existing messages without rewriting and expose promptFingerprintVersion = 1 for consumers that require the contract"
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local maintenance implementation; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream baseline provides equivalent durable request fingerprint and conflict semantics.",
+      "verification": {
+        "hostTests": [
+          "packages/api/session-controller/tests/commands-upload-file.host.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "frozen",
+          "persistence",
+          "lifecycle",
+          "web",
+          "electron",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "039",
+      "file": "039-exclude-package-ci-metadata.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "95e75002a63b5a5ade2acfb29ed47850eedcb891cf2f6fe16da89f03202eda41",
+      "dependsOn": [
+        "019",
+        "033",
+        "034"
+      ],
+      "affectedFiles": [
+        "apps/desktop/electron-builder.config.d.mts",
+        "apps/desktop/scripts/electron-builder-config.d.mts",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/scripts/installed-update-builder.ts",
+        "apps/desktop/scripts/runtime-file-policy.ts",
+        "apps/desktop/tests/installed-update-builder.spec.ts",
+        "apps/desktop/tests/installer-packaging.spec.ts",
+        "apps/desktop/tests/macos-signature.spec.ts",
+        "apps/desktop/tests/package-ci-metadata.spec.ts",
+        "apps/desktop/tests/runtime-file-policy.spec.ts",
+        "apps/desktop/tests/windows-update-publisher.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Exclude Coveralls CI configuration before sealing the runtime inventory and from ordinary and installed-update qualification archive copy rules",
+        "Preserve executable modules, package manifests, licenses and runtime provider data; the complete prepared inventory must match the actual archive"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local packaging hygiene fix based on inspected release bytes; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream ordinary and qualification packagers exclude unused third-party Coveralls CI metadata with equivalent archive verification.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/core-package-set.spec.ts",
+          "apps/desktop/tests/installed-update-builder.spec.ts",
+          "apps/desktop/tests/installed-update-packaging.spec.ts",
+          "apps/desktop/tests/installer-packaging.spec.ts",
+          "apps/desktop/tests/local-macos-package.spec.ts",
+          "apps/desktop/tests/macos-signature.spec.ts",
+          "apps/desktop/tests/package-ci-metadata.spec.ts",
+          "apps/desktop/tests/package-macos.spec.ts",
+          "apps/desktop/tests/package-target-stages.spec.ts",
+          "apps/desktop/tests/package-target.spec.ts",
+          "apps/desktop/tests/packaged-runtime-verification.spec.ts",
+          "apps/desktop/tests/product-branding.spec.ts",
+          "apps/desktop/tests/runtime-file-policy.spec.ts",
+          "apps/desktop/tests/windows-asar-unpack.spec.ts",
+          "apps/desktop/tests/windows-update-publisher.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "040",
+      "file": "040-desktop-web-port-configuration.patch",
+      "category": "general-fix",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "be989d3805422d9a6d3eccb7e84a4ff20e958cb8a0d597d73d49682cd539468a",
+      "dependsOn": [
+        "009",
+        "014",
+        "032",
+        "039"
+      ],
+      "affectedFiles": [
+        "apps/desktop-host/src/index.ts",
+        "apps/desktop-host/src/listen-port.ts",
+        "apps/desktop-host/tests/listen-port.spec.ts",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop-host",
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Validate optional DSH_DESKTOP_WEB_PORT before Desktop profile startup; zero requests an OS-assigned port for isolated simultaneous instances",
+        "Preserve existing defaults and managed profile/user-data directories when the setting is absent; reject empty, malformed and out-of-range explicit values"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local Desktop deployment configuration; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned upstream Desktop launch provides an equivalent validated web-port setting with the same default-profile behavior.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop-host/tests/listen-port.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      }
+    },
+    {
+      "id": "041",
+      "file": "041-rc2-integration.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "packaging",
+      "risk": "high",
+      "maintainerRole": "Studio Host integration and Desktop release owner",
+      "removeWhen": "Equivalent Studio update channels, product delivery validation, and explicit existing-keychain packaging are available upstream.",
+      "contracts": [
+        "DSH 0.2.1-rc.2 only; current Workspace and preset contracts",
+        "Stable and Preview channels round-trip through packaged runtime and release metadata",
+        "Explicit existing keychain signing keeps identity and Team ID validation without modifying the keychain",
+        "Generated Session and client catalogs match the current APIs"
+      ],
+      "affectedPackages": [
+        "apps/desktop",
+        "apps/desktop-host",
+        "packages/client/ui-workspace",
+        "packages/api/session-controller"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Ported against official dsh-v0.2.1-rc.2; Studio product integration only."
+      },
+      "dependsOn": [
+        "014",
+        "017",
+        "019",
+        "022",
+        "025",
+        "032",
+        "033",
+        "038",
+        "040"
+      ],
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/update-channel.spec.ts",
+          "apps/desktop/tests/update-coordinator.spec.ts",
+          "apps/desktop/tests/macos-signing-keychain.spec.ts",
+          "apps/desktop/tests/desktop-package-environment.spec.ts",
+          "apps/desktop/tests/desktop-upload-plan.spec.ts",
+          "packages/client/ui-workspace/tests/apply.client.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "installed-update"
+        ]
+      },
+      "affectedFiles": [
+        "apps/desktop/.env.macos.example",
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/packaging/README.i18n.yaml",
+        "apps/desktop/packaging/README.md",
+        "apps/desktop/packaging/README.zh.md",
+        "apps/desktop/scripts/desktop-auto-update-environment.mjs",
+        "apps/desktop/scripts/desktop-package-environment.mjs",
+        "apps/desktop/scripts/desktop-publish-route.ts",
+        "apps/desktop/scripts/desktop-release-store.ts",
+        "apps/desktop/scripts/desktop-upload-plan.ts",
+        "apps/desktop/scripts/macos-app-update-config.d.mts",
+        "apps/desktop/scripts/macos-signing-keychain.mjs",
+        "apps/desktop/scripts/publish-desktop-ci.ts",
+        "apps/desktop/src/mandatory-update-policy.ts",
+        "apps/desktop/src/update-channel.ts",
+        "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
+        "apps/desktop/tests/desktop-upload-plan.spec.ts",
+        "apps/desktop/tests/macos-signing-keychain.spec.ts",
+        "apps/desktop/tests/update-channel.spec.ts",
+        "apps/desktop/tests/update-coordinator.spec.ts",
+        "docs/event-producer-consumer.md",
+        "docs/event-producer-consumer.zh.md",
+        "docs/persistence-catalog.i18n.yaml",
+        "docs/persistence-catalog.md",
+        "docs/persistence-catalog.zh.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.schema.json",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.zh.md",
+        "docs/persistence-schema.json",
+        "packages/api/session-controller/README.i18n.yaml",
+        "packages/client/ui-agent-preset/README.i18n.yaml",
+        "packages/client/ui-conversation/README.i18n.yaml",
+        "packages/client/ui-primitives/README.i18n.yaml",
+        "packages/client/ui-workspace/README.i18n.yaml",
+        "packages/client/ui-workspace/src/client/contract/slots.ts",
+        "packages/client/ui-workspace/tests/apply.client.spec.ts",
+        "packages/client/ui-workspace/tests/workspaces-service.client.spec.ts",
+        "packages/extensions/cordis-client-runner/src/client/api-catalog.ts",
+        "packages/preset/agent-preset-registry/README.i18n.yaml"
+      ],
+      "sha256": "53a48afe246713b9860ece8f95bc627011bb17c26969eea377c5301b0b86427d"
+    }
+  ],
+  "patchedTree": "063f9cee73d7070dc4f1a0cacc80d8a9b3eb0e90",
+  "patchedSourceSha256": "59096369757e44f716b0e2d29bdde79f7016615faca4bc9e46e388fedf98d5ae",
+  "maintenanceSource": {
+    "descriptor": "source.json",
+    "sha256": "da3597fe786bb52889e60634712dfbe829f7655478f70f9476c4090692013eba"
+  }
+}

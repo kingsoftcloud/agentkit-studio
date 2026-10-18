@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { checkPatchManifest, validatePatchManifest } from '../scripts/check-patch-manifest.mjs';
 import { packageDesktop } from '../scripts/package-desktop.mjs';
 
-const directory = new URL('../patches/dsh-v0.2.0-rc.2/', import.meta.url);
+const directory = new URL('../patches/dsh-v0.2.1-rc.2/', import.meta.url);
 async function inputs() {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', directory), 'utf8'));
   const files = new Map(await Promise.all((await readdir(directory)).filter(name => name.endsWith('.patch')).map(async name => [name, await readFile(new URL(name, directory))])));
@@ -17,7 +17,7 @@ const invalid = error => error.code === 'PATCH_MANIFEST_INVALID';
 
 test('all shipped patches have exact content, paths, ordered dependencies and verification ownership', async () => {
   const { report } = await checkPatchManifest(fileURLToPath(directory));
-  assert.equal(report.patches, 34); assert.equal(report.paths, 171); assert.ok(report.hostTests.length > 0);
+  assert.equal(report.patches, 34); assert.equal(report.paths, 179); assert.ok(report.hostTests.length > 0);
 });
 
 test('unregistered patch files and modified content cannot enter a build', async () => {

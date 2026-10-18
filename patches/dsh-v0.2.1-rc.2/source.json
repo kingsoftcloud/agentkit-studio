@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "exportFormat": 1,
+  "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+  "headCommit": "28c319401309d6927e043d10f59a4f4b58677525",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
+  "tree": "063f9cee73d7070dc4f1a0cacc80d8a9b3eb0e90",
+  "sourceSha256": "59096369757e44f716b0e2d29bdde79f7016615faca4bc9e46e388fedf98d5ae",
+  "bundle": {
+    "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
+    "sha256": "69693bf9d542d23255f52d3ad8dc1bfc7bd68d15526059673ab72ae068054127"
+  },
+  "commits": [
+    {
+      "id": "004",
+      "file": "004-sidebar-panel-lifecycle.patch",
+      "commit": "a8b84ef7a154fae7e86baa2f3d348bd45cd0a18a",
+      "sha256": "111e9a416df3721543ad74e7b10846c208c1ed729139b18016d4fe0572aac089"
+    },
+    {
+      "id": "006",
+      "file": "006-desktop-plugin-package-set.patch",
+      "commit": "4898fdf1f95f466dd4d78c6ef5392ba938ad39e1",
+      "sha256": "fe78af7c47a573f169e790d269500493c8c640cfc4f7aa63e76a56eb60586394"
+    },
+    {
+      "id": "008",
+      "file": "008-agent-session-without-workspace.patch",
+      "commit": "636ad32adf2b7a5f4a260f59914d2122311a0ca2",
+      "sha256": "55d874f62b72c4cf210cc3f73af806746ec99c333c12ddef667e1292419b5888"
+    },
+    {
+      "id": "009",
+      "file": "009-local-macos-package.patch",
+      "commit": "4056c741b01840791eb5e06bcc132199817abcc1",
+      "sha256": "51bbaa62456a9c53b354fc86ce9789985e0553614456293ba87756becf5fdd06"
+    },
+    {
+      "id": "010",
+      "file": "010-session-model-default.patch",
+      "commit": "3bff7dc5f5c54671a035b280a82503c54065de8b",
+      "sha256": "5dc4fb8d8651526804a226061aaf302a8a8a8d2907bfd86ceed92f0b5d0d695e"
+    },
+    {
+      "id": "011",
+      "file": "011-cjk-autolinks.patch",
+      "commit": "d84383d7e71f7e30535f1f6aa667b4e921944309",
+      "sha256": "d33408ec6e20d1bf4f877f8f78e402fb57d902f8fca599e62645e896bd75da9a"
+    },
+    {
+      "id": "012",
+      "file": "012-preset-roster-invalidation.patch",
+      "commit": "04bd5cd164103d9bd3b49232fbbd17668ec39a8e",
+      "sha256": "b2f3681125b922a1e244aeb236ed2c911818813286e34cde73e8b5110c878933"
+    },
+    {
+      "id": "013",
+      "file": "013-existing-product-profile.patch",
+      "commit": "4dcc4266fde095ab94f6780280718fb1ca876108",
+      "sha256": "ac2724fc749623a1adf5c148776d69f619b531f8a2b12a1b670a6f0533975065"
+    },
+    {
+      "id": "014",
+      "file": "014-desktop-product-brand.patch",
+      "commit": "385f7a62d804f79b74fdacd66e1acbf746102777",
+      "sha256": "0b49a70318ead15a0fb940775427ce992125c67de73db6dfcdbb7f20ab350fff"
+    },
+    {
+      "id": "015",
+      "file": "015-compatibility-docs.patch",
+      "commit": "2d6ab4e9390dc917aee40b02dc9e6072e4790b83",
+      "sha256": "9905f19acf7049331b11e28234083e30290ba55e2d1920ef69b67863c92a3cda"
+    },
+    {
+      "id": "016",
+      "file": "016-informational-session-events.patch",
+      "commit": "47d4b830bb1429895b42b439a5c3a183ee24af0f",
+      "sha256": "2dafd72427a39ff19282637ce2afd49f0a3996f42284305d1cb2ea9cc053ed43"
+    },
+    {
+      "id": "017",
+      "file": "017-ungrouped-new-session.patch",
+      "commit": "8d9b1e9efc62611f945d29f21a59e86313df26f5",
+      "sha256": "4c43665faac187495f2af3ec1db2d37d725ffeebdc03f878db1764a566aadb38"
+    },
+    {
+      "id": "019",
+      "file": "019-studio-product-update-feed.patch",
+      "commit": "7a67cf15ebd8cac3469c86c68b7dfa3f472baf9f",
+      "sha256": "9bfb39c3853040a91d94f300a8141a57538d900406a4fe850dccf36a8a70db44"
+    },
+    {
+      "id": "020",
+      "file": "020-studio-signed-product-name.patch",
+      "commit": "82a90cfd2cd2f8d27711e679a4c8d6eb16ef2d70",
+      "sha256": "162bf6ec35dd52ac6242db9bc7835b160203a2b4395067c452a1a1c88f142e05"
+    },
+    {
+      "id": "022",
+      "file": "022-ks3-single-range-updates.patch",
+      "commit": "70515a25a815d6ea7247846596287ec01fccb299",
+      "sha256": "bb1cc8a44c9510ca1807965c2bf7378dca0e0607a667ae468401d56bb2f7f3f9"
+    },
+    {
+      "id": "023",
+      "file": "023-codex-code-mode-signing.patch",
+      "commit": "39f9a131a819e65c20378c6af654cd8e21b8c566",
+      "sha256": "20d025dde4897e1fa8471e9caffa754337a8496c59cbf3b61ac7e1d32ae30fbb"
+    },
+    {
+      "id": "024",
+      "file": "024-desktop-build-version.patch",
+      "commit": "22b780ba3cb199db58dde9f4a5473322d4f585f9",
+      "sha256": "cf9005dce739109fa571cb7647f41e8b4dc2244336f86b5f470532fe94bdb542"
+    },
+    {
+      "id": "025",
+      "file": "025-windows-certificate-store-signing.patch",
+      "commit": "4da73515f9062494540acca2cf08e4e927498417",
+      "sha256": "c364bd72d04efc10589e604eba75a24cb90c665ebaee7fb4af55ec748dd69099"
+    },
+    {
+      "id": "026",
+      "file": "026-preset-composition-reuse.patch",
+      "commit": "4c65ed496456fe25422c15c182f338b9b5b5128c",
+      "sha256": "8759d71828e21d60b45d1801229353f819211e51f3e9e0c9d3a3313b835cd399"
+    },
+    {
+      "id": "027",
+      "file": "027-windows-installed-path-smoke.patch",
+      "commit": "eb1be802ab99d378039b0b33cb1a6cbbd9399f77",
+      "sha256": "076bde9be0cf3dee74c59c96578fde5ab2100d798c9fc4986015988b0d119684"
+    },
+    {
+      "id": "028",
+      "file": "028-smoke-plugin-readiness.patch",
+      "commit": "a84af5a2cd476afdf94e9fe67e0ba079a49b4264",
+      "sha256": "db484e7d2a731515ee5b069db6325723db0446ad9e1dc00127ceebf2dac27a7a"
+    },
+    {
+      "id": "029",
+      "file": "029-full-update-blockmap-cache.patch",
+      "commit": "9e314e44bf207bb05fd541fb0f2c61386891c758",
+      "sha256": "ca0639b6b90eddce50732329e200b78f7bd5ec5344c403f9071cfc077337706b"
+    },
+    {
+      "id": "030",
+      "file": "030-plugin-smoke-diagnostics.patch",
+      "commit": "0a90ac0baa2e19c215e4c2a84e3cd45a8c7ea7f3",
+      "sha256": "67801ff43685d1fff0c3adee0a47e77b3ee43f05f4e91af679c7f512cd3b5b3a"
+    },
+    {
+      "id": "031",
+      "file": "031-canonical-windows-smoke-paths.patch",
+      "commit": "cbae61cddfaedec1f7552886ce364c672fdf6024",
+      "sha256": "aa8835d6db3870f1b14bc036f226fbd10e2d690e7179dab1bc756c37ef141569"
+    },
+    {
+      "id": "032",
+      "file": "032-windows-studio-product.patch",
+      "commit": "529e2ab9d86957a9ace5d2fc64723c32d07c0925",
+      "sha256": "af2c5228381354cf03293d214d9b5d7d9578e137bdb91a483d7467feb8250d78"
+    },
+    {
+      "id": "033",
+      "file": "033-windows-single-range-evidence.patch",
+      "commit": "06aaca884702970771df5f61499bcded23be7863",
+      "sha256": "776ad97adfc42544cfdcee72dce00be92b3a3bf029611a95ef0762597666fa5e"
+    },
+    {
+      "id": "034",
+      "file": "034-product-windows-tray.patch",
+      "commit": "2dfba351fbb2b75e541c00143a268fb084863e3c",
+      "sha256": "b1bae223890371b640c3e2e32a0db93163b07a0da7db2a07b71856f162751dfc"
+    },
+    {
+      "id": "035",
+      "file": "035-public-product-presentation.patch",
+      "commit": "3cb29a4f402c525cdf488c97eaef2d35f2337685",
+      "sha256": "579395d61fabcecdbcd74ca7848de129e01524dd9bb92e0cf43c5b4c72939597"
+    },
+    {
+      "id": "036",
+      "file": "036-preset-composition-generated-api.patch",
+      "commit": "97271f79e2c39e647662d312d4685bcb63ace877",
+      "sha256": "80851a91fd4627f4cd3a602011322ab5be4efe90337d6e9029ab2de9a519ffb2"
+    },
+    {
+      "id": "037",
+      "file": "037-web-editor-snapshot-ready-state.patch",
+      "commit": "b4dacc8dfd7ad2689ccd84ce7d7c466c1fe90b28",
+      "sha256": "16a36a0bcc1597b658403a7b00fca4ef87dd2cdee02e60fcc8e3595c9afcecb6"
+    },
+    {
+      "id": "038",
+      "file": "038-prompt-request-fingerprint.patch",
+      "commit": "7c883941ebad778d576666abb4d595445a4ac345",
+      "sha256": "898d2999778b569704e63f8d25e6dd6a952363092dcdc3f885f3a891daa52a61"
+    },
+    {
+      "id": "039",
+      "file": "039-exclude-package-ci-metadata.patch",
+      "commit": "55e6a7e924e88882ba783acb6803f48a0e2feb3e",
+      "sha256": "95e75002a63b5a5ade2acfb29ed47850eedcb891cf2f6fe16da89f03202eda41"
+    },
+    {
+      "id": "040",
+      "file": "040-desktop-web-port-configuration.patch",
+      "commit": "5d9d4f46a4e0ea41b3f5d5fb55c086978e7aa9ca",
+      "sha256": "be989d3805422d9a6d3eccb7e84a4ff20e958cb8a0d597d73d49682cd539468a"
+    },
+    {
+      "id": "041",
+      "file": "041-rc2-integration.patch",
+      "commit": "28c319401309d6927e043d10f59a4f4b58677525",
+      "sha256": "53a48afe246713b9860ece8f95bc627011bb17c26969eea377c5301b0b86427d"
+    }
+  ]
+}

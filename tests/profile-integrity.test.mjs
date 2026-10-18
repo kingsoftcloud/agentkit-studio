@@ -22,8 +22,8 @@ async function fixture() {
   await writeFile(resolve(pluginRoot, 'studio.plugin.json'), JSON.stringify({
     id: 'agentkit-studio',
     version: '0.0.1',
-    requiredDsh: '0.2.0-rc.2',
-    requiredHostApi: 'dsh-native/0.2.0-rc.2',
+    requiredDsh: '0.2.1-rc.2',
+    requiredHostApi: 'dsh-native/0.2.1-rc.2',
   }));
   await writeFile(resolve(pluginRoot, 'dist/client.js'), '');
   await writeFile(resolve(pluginRoot, 'src/index.mjs'), '');

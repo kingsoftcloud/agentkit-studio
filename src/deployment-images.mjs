@@ -24,7 +24,7 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
     fail('DEPLOYMENT_CATALOG_INVALID', '云端镜像目录的产品、环境或区域不匹配');
   }
   const raw = data.Configs?.[STUDIO_IMAGE_CONFIG_KEY];
-  if (!raw) fail('DEPLOYMENT_CATALOG_MISSING', '当前环境尚未发布 Studio 运行镜像，请先发布对应区域的镜像目录');
+  if (!raw) fail('DEPLOYMENT_CATALOG_MISSING', `${data.Environment === 'online' ? '线上' : data.Environment === 'pre-online' ? '预发' : data.Environment}环境（${data.Region}）尚未发布 Studio 运行镜像。请在设置中核对云端环境，或由管理员发布该环境的镜像目录。`);
   if (!object(raw) || raw.format !== FORMAT || !Array.isArray(raw.releases) || raw.releases.length > 100
     || raw.environment !== data.Environment || raw.region !== data.Region) {
     fail('DEPLOYMENT_CATALOG_INVALID', 'Studio 镜像目录格式或目标环境无效');

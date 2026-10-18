@@ -1,0 +1,40 @@
+diff --git a/apps/desktop/scripts/codex-code-mode-host-entitlements.plist b/apps/desktop/scripts/codex-code-mode-host-entitlements.plist
+new file mode 100644
+index 0000000000000000000000000000000000000000..26b12f28868c0dca58d8163ebd3112bcd081616b
+--- /dev/null
++++ b/apps/desktop/scripts/codex-code-mode-host-entitlements.plist
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++	<key>com.apple.security.cs.allow-jit</key>
++	<true/>
++	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
++	<true/>
++</dict>
++</plist>
+diff --git a/apps/desktop/scripts/macos-runtime.ts b/apps/desktop/scripts/macos-runtime.ts
+index 1d4c27c0d577eb7406d0a7c4aa3af86efd3f9ed9..4b3b708ee3a7155353ddd79608452e8436b107b6 100644
+--- a/apps/desktop/scripts/macos-runtime.ts
++++ b/apps/desktop/scripts/macos-runtime.ts
+@@ -58,10 +58,16 @@ export async function signMacOSRuntime(
+       if (path === undefined) return
+       const identifier = `${appId}.runtime.${createHash('sha256').update(path).digest('hex')}`
+       const isNode = path === 'dependencies/node/bin/node'
+-      const needsJit = isNode
++      // Codex Code Mode embeds V8. Its official macOS release requires both
++      // JIT and unsigned executable memory; generic runtime signing strips them.
++      const isCodexCodeModeHost =
++        /^node_modules\/@openai\/codex-darwin-(?:arm64|x64)\/vendor\/(?:aarch64|x86_64)-apple-darwin\/bin\/codex-code-mode-host$/u.test(
++          path,
++        )
++      const needsJit = isNode || isCodexCodeModeHost
+         || /^node_modules\/@deepseek-ai\/libreoffice-kit-darwin-(?:arm64|x64)\/bin\/libreoffice-kit$/u.test(path)
+-      const entitlementsFile = isNode && arch === 'x64'
+-        ? 'node-x64-entitlements.plist' : 'jit-entitlements.plist'
++      const entitlementsFile = isCodexCodeModeHost ? 'codex-code-mode-host-entitlements.plist'
++        : isNode && arch === 'x64' ? 'node-x64-entitlements.plist' : 'jit-entitlements.plist'
+       const entitlements = needsJit ? join(import.meta.dirname, entitlementsFile) : undefined
+       const file = join(root, path)
+       const thin = ['cefaedfe', 'cffaedfe', 'feedface', 'feedfacf'].includes(magic(file))

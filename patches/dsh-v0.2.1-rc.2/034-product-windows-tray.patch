@@ -1,0 +1,42 @@
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index b07bf95587272a06bf01ad958471e87131e62c7e..edc845292e3c597a7a4a63d45e3113e543f82b89 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -103,6 +103,7 @@ export function createElectronBuilderConfig(
+   const productVersion = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version
+   const productName = env.DSH_CLIENT_TITLE?.trim() || 'DeepSeek Harness'
+   const productIcon = env.DSH_DESKTOP_PRODUCT_ICON?.trim()
++  const productTrayIcon = env.DSH_DESKTOP_PRODUCT_TRAY_ICON?.trim()
+   const buildVersion = resolveDesktopBuildVersion(env, productVersion)
+   if (update?.channel === 'latest' && buildVersion.includes('-')) throw new Error('desktop package: latest requires a stable version')
+   const packaged = resolveDesktopBuildCommit(env)
+@@ -159,7 +160,7 @@ export function createElectronBuilderConfig(
+       { from: buildPaths.runtime, to: 'runtime' },
+       { from: productIcon || fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
+       // Windows tray bitmaps; macOS keeps the Dock and ships no menu bar icon.
+-      ...(packagesWindows ? [{ from: fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),
++      ...(packagesWindows ? [{ from: productTrayIcon || fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),
+     ],
+     mac: {
+       icon: productIcon || fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
+diff --git a/apps/desktop/tests/windows-asar-unpack.spec.ts b/apps/desktop/tests/windows-asar-unpack.spec.ts
+index ff988d6e4895813bfbda04a1a7447052ab94d9f1..58b5456a75cbe5ef888334af50fcdf0c1fd275fe 100644
+--- a/apps/desktop/tests/windows-asar-unpack.spec.ts
++++ b/apps/desktop/tests/windows-asar-unpack.spec.ts
+@@ -67,6 +67,16 @@ it('uses single byte ranges for the Studio KS3 Windows update provider', () => {
+   expect(config.publish?.[0]).toMatchObject({ useMultipleRangeRequest: false })
+ })
+ 
++it('packages the product tray icon independently of the application icon', () => {
++  const config = createElectronBuilderConfig({
++    DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio', DSH_DESKTOP_UNSIGNED: '1',
++    DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://policy.example.com',
++    DSH_DESKTOP_MANDATORY_UPDATE_CONFIG: JSON.stringify({ allowedAuthOrigins: ['https://login.example.com'] }),
++    DSH_DESKTOP_PRODUCT_TRAY_ICON: '/product/nexus-tray.ico',
++  }, 'win32', 'x64')
++  expect(config.extraResources.find(resource => resource.to === 'tray.ico')?.from).toBe('/product/nexus-tray.ico')
++})
++
+ async function fixture(external: boolean) {
+   const root = await mkdtemp(join(tmpdir(), 'windows-asar-'))
+   roots.push(root)

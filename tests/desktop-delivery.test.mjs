@@ -36,7 +36,7 @@ async function fixture(t, result = 'success') {
   git(['init','-q']); git(['add','.']); git(['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','baseline']);
   const commit = git(['rev-parse','HEAD']);
   await writeFile(join(dsh,'marker.txt'),'patch marker\n');
-  await writeFile(join(dsh, 'apps/desktop/scripts/package-target.ts'), 'official package target\ninvocation.unsigned && target.platform');
+  await writeFile(join(dsh, 'apps/desktop/scripts/package-target.ts'), 'official package target\nDSH_DESKTOP_PRODUCT_NAME');
   await writeFile(join(dsh, 'apps/desktop/scripts/prepare-package-set.ts'), 'official package set\nDSH_DESKTOP_PLUGIN_INPUTS');
   await writeFile(join(dsh, 'apps/desktop/src/project-manager.ts'), 'official project manager\nDSH_DESKTOP_PLUGIN_BUNDLES');
   git(['add','marker.txt', 'apps/desktop/scripts/package-target.ts', 'apps/desktop/scripts/prepare-package-set.ts', 'apps/desktop/src/project-manager.ts']);
@@ -50,10 +50,10 @@ async function fixture(t, result = 'success') {
   await writeFile(join(bin, 'uname'), '#!/bin/sh\necho Darwin\n', { mode: 0o755 });
   const artifact = join(output, `AgentKit-Studio-${studioVersion}-mac-arm64-local.dmg`);
   await writeFile(artifact, 'old image');
-  const execute = (nextResult = result, target = 'desktop-package-mac-arm64-unsigned') => run('make', [target, '-o', 'desktop-package-preflight', `DSH_ROOT=${dsh}`, `PACK_DIR=${output}`, `PATCH_ROOT=${patches}`, `DSH_COMMIT=${commit}`, `DESKTOP_PLUGIN_INPUTS=${patches}`], {
+  const execute = (nextResult = result, target = 'desktop-package-mac-arm64-unsigned') => run('make', [target, '-o', 'desktop-package-preflight', `DSH_ROOT=${dsh}`, `PACK_DIR=${output}`, `PATCH_ROOT=${patches}`, `DSH_COMMIT=${commit}`, 'DSH_VERSION=0.2.0-rc.2', `DESKTOP_PLUGIN_INPUTS=${patches}`], {
     cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUDIO_TEST_SOURCE: source, STUDIO_TEST_RESULT: nextResult },
   });
-  const preflight = () => run('make', ['desktop-package-preflight', `DSH_ROOT=${dsh}`, `PACK_DIR=${output}`, `PATCH_ROOT=${patches}`, `DSH_COMMIT=${commit}`, `DESKTOP_PLUGIN_INPUTS=${patches}`], {
+  const preflight = () => run('make', ['desktop-package-preflight', `DSH_ROOT=${dsh}`, `PACK_DIR=${output}`, `PATCH_ROOT=${patches}`, `DSH_COMMIT=${commit}`, 'DSH_VERSION=0.2.0-rc.2', `DESKTOP_PLUGIN_INPUTS=${patches}`], {
     cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUDIO_PACK_TARBALL: join(output, `kingsoftcloud-agentkit-studio-${studioVersion}.tgz`) },
   });
   return { artifact, output, execute, preflight, dsh, commit };
@@ -68,7 +68,7 @@ test('desktop preflight applies hooks in the isolated checkout and leaves pinned
   const checkout = join(output, 'desktop-checkouts', cache, 'source');
   assert.match(await readFile(join(checkout, 'apps/desktop/scripts/prepare-package-set.ts'), 'utf8'), /DSH_DESKTOP_PLUGIN_INPUTS/);
   assert.match(await readFile(join(checkout, 'apps/desktop/src/project-manager.ts'), 'utf8'), /DSH_DESKTOP_PLUGIN_BUNDLES/);
-  assert.match(await readFile(join(checkout, 'apps/desktop/scripts/package-target.ts'), 'utf8'), /invocation\.unsigned && target\.platform/);
+  assert.match(await readFile(join(checkout, 'apps/desktop/scripts/package-target.ts'), 'utf8'), /DSH_DESKTOP_PRODUCT_NAME/);
   assert.doesNotMatch(await readFile(join(dsh, 'apps/desktop/scripts/package-target.ts'), 'utf8'), /invocation\.unsigned/);
 });
 

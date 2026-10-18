@@ -3,8 +3,8 @@
   "package": "@kingsoftcloud/agentkit-harness",
   "version": "0.0.1",
   "type": "dsh-plugin",
-  "requiredDsh": ">=0.2.0-rc.2 <0.3.0",
-  "requiredHostApi": "dsh-native/0.2.0-rc.2",
+  "requiredDsh": ">=0.2.1-rc.2 <0.3.0",
+  "requiredHostApi": "dsh-native/0.2.1-rc.2",
   "inject": ["agents", "sessions", "llm"],
   "capabilities": ["dsh-session", "dsh-session-events", "dsh-assistant-stream", "dsh-cancel", "dsh-resume", "dsh-persistence"],
   "contributes": ["agentkitHarness"]

@@ -1,0 +1,60 @@
+diff --git a/apps/desktop/scripts/macos-app-update-config.d.mts b/apps/desktop/scripts/macos-app-update-config.d.mts
+index ce18266c4822d3c5fb377907989722e4dc85cde4..a4eeef2d1cf97c48f0f8776da0b6c6bf3dfa3593 100644
+--- a/apps/desktop/scripts/macos-app-update-config.d.mts
++++ b/apps/desktop/scripts/macos-app-update-config.d.mts
+@@ -7,6 +7,7 @@ export interface MacOSAppUpdateFeed {
+ /** Packaged electron-updater configuration for macOS. */
+ export interface MacOSAppUpdateConfig {
+   readonly provider: 'generic'
++  readonly useMultipleRangeRequest: false
+   readonly url: string
+   readonly channel: 'nightly' | 'latest'
+   readonly updaterCacheDirName: string
+diff --git a/apps/desktop/scripts/macos-app-update-config.mjs b/apps/desktop/scripts/macos-app-update-config.mjs
+index 79bcfecf2cb251e107e17f4230b17abfbecd44fd..4a6d9f22ec06a670a704585612cb9629bf4e79cc 100644
+--- a/apps/desktop/scripts/macos-app-update-config.mjs
++++ b/apps/desktop/scripts/macos-app-update-config.mjs
+@@ -53,6 +53,8 @@ export function resolveMacOSAppUpdateFeed(publish) {
+ export function createMacOSAppUpdateConfig(update, updaterCacheDirName) {
+   return {
+     provider: 'generic',
++    // KS3 accepts single byte ranges but rejects multipart Range requests.
++    useMultipleRangeRequest: false,
+     url: nonEmptyString(update.publicUrl, 'public URL'),
+     channel: channel(update.channel ?? 'nightly'),
+     updaterCacheDirName: nonEmptyString(updaterCacheDirName, 'updater cache directory'),
+@@ -88,6 +90,9 @@ export async function verifyMacOSAppUpdateConfig(appPath, update, updaterCacheDi
+     throw new Error(`desktop macOS update config: cannot read ${path}: ${error instanceof Error ? error.message : String(error)}`)
+   }
+   const config = object(parsed, CONFIG_FILENAME)
++  if (config.useMultipleRangeRequest !== false) {
++    throw new Error('desktop macOS update config: single byte ranges must be sealed before signing')
++  }
+   if (config.provider !== 'generic' || config.url !== update.publicUrl || config.channel !== channel(update.channel ?? 'nightly')) {
+     throw new Error(`desktop macOS update config: ${path} does not match ${update.publicUrl}`)
+   }
+diff --git a/apps/desktop/tests/macos-app-update-config.spec.ts b/apps/desktop/tests/macos-app-update-config.spec.ts
+index 27ab964acd21ff5ed4b0f32e202e7db82506b8b0..be301e52784aa422fa68a2bf12efe8884da3c0fa 100644
+--- a/apps/desktop/tests/macos-app-update-config.spec.ts
++++ b/apps/desktop/tests/macos-app-update-config.spec.ts
+@@ -39,6 +39,7 @@ describe('macOS packaged updater configuration', () => {
+     const paths = await fixture()
+     expect(createMacOSAppUpdateConfig(update, 'deepseek-harness-updater')).toEqual({
+       provider: 'generic',
++      useMultipleRangeRequest: false,
+       url: update.publicUrl,
+       channel: 'preview',
+       updaterCacheDirName: 'deepseek-harness-updater',
+@@ -63,6 +64,12 @@ describe('macOS packaged updater configuration', () => {
+     await expect(verifyMacOSAppUpdateConfig(paths.appPath, update, 'deepseek-harness-updater'))
+       .rejects.toThrow(/expected deepseek-harness-updater/u)
+   })
++
++  it('rejects the multipart Range default unsupported by KS3', async () => {
++    const paths = await fixture()
++    await writeFile(join(paths.resourcesDir, 'app-update.yml'), ['provider: generic', 'url: ' + update.publicUrl, 'channel: preview', 'updaterCacheDirName: fixture', 'useMultipleRangeRequest: true'].join('\n'))
++    await expect(verifyMacOSAppUpdateConfig(paths.appPath, update)).rejects.toThrow(/single byte ranges/u)
++  })
+ })
+ 
+ 

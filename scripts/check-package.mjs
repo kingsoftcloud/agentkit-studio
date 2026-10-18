@@ -25,14 +25,14 @@ const expected = [
   'packages/agentkit-harness/src/index.d.ts',
   'scripts/build-client.mjs', 'docs/brand/visual-system.md',
   'docs/README.md', 'docs/architecture.md', 'docs/getting-started.md',
-  'patches/dsh-v0.2.0-rc.2/README.md',
+  'patches/dsh-v0.2.1-rc.2/README.md',
 ];
 const missing = expected.filter(path => !files.has(path));
 if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);
 if (packageJson.name !== '@kingsoftcloud/agentkit-studio') throw new Error(`unexpected package name: ${String(packageJson.name)}`);
 if (!/^\d+\.\d+\.\d+$/.test(String(packageJson.version))) throw new Error(`package version must be stable semver: ${String(packageJson.version)}`);
 if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.version) throw new Error('plugin manifest identity/version does not match package.json');
-if (manifest.requiredDsh !== '0.2.0-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
+if (manifest.requiredDsh !== '0.2.1-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
 if (packageJson.private !== true) throw new Error('package.json must remain private until registry publication is approved');
 const harnessPackage = JSON.parse(read('packages/agentkit-harness/package.json'));
 const harnessManifest = JSON.parse(read('packages/agentkit-harness/agentkit-harness.plugin.json'));
