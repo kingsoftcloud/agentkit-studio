@@ -1582,6 +1582,7 @@
         "evidence": "Ported against official dsh-v0.2.1-rc.2; Studio product integration only."
       },
       "dependsOn": [
+        "009",
         "014",
         "017",
         "019",
@@ -1594,11 +1595,12 @@
       ],
       "verification": {
         "hostTests": [
-          "apps/desktop/tests/update-channel.spec.ts",
-          "apps/desktop/tests/update-coordinator.spec.ts",
-          "apps/desktop/tests/macos-signing-keychain.spec.ts",
           "apps/desktop/tests/desktop-package-environment.spec.ts",
           "apps/desktop/tests/desktop-upload-plan.spec.ts",
+          "apps/desktop/tests/local-macos-package.spec.ts",
+          "apps/desktop/tests/macos-signing-keychain.spec.ts",
+          "apps/desktop/tests/update-channel.spec.ts",
+          "apps/desktop/tests/update-coordinator.spec.ts",
           "packages/client/ui-workspace/tests/apply.client.spec.ts"
         ],
         "integrations": [
@@ -1626,6 +1628,7 @@
         "apps/desktop/src/update-channel.ts",
         "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
         "apps/desktop/tests/desktop-upload-plan.spec.ts",
+        "apps/desktop/tests/local-macos-package.spec.ts",
         "apps/desktop/tests/macos-signing-keychain.spec.ts",
         "apps/desktop/tests/update-channel.spec.ts",
         "apps/desktop/tests/update-coordinator.spec.ts",
@@ -1649,13 +1652,13 @@
         "packages/extensions/cordis-client-runner/src/client/api-catalog.ts",
         "packages/preset/agent-preset-registry/README.i18n.yaml"
       ],
-      "sha256": "53a48afe246713b9860ece8f95bc627011bb17c26969eea377c5301b0b86427d"
+      "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b"
     }
   ],
-  "patchedTree": "063f9cee73d7070dc4f1a0cacc80d8a9b3eb0e90",
-  "patchedSourceSha256": "59096369757e44f716b0e2d29bdde79f7016615faca4bc9e46e388fedf98d5ae",
+  "patchedTree": "c7708d335b13be18a08e483e9a2976115c6354b2",
+  "patchedSourceSha256": "81ef0e4c1bc8890b6627681fa9dc3117a6a815e449e2d89f377642f03d6b01a4",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "da3597fe786bb52889e60634712dfbe829f7655478f70f9476c4090692013eba"
+    "sha256": "dc71e8f5be0d78803a1f061eaeeec559b19be2b6ff5a0f36c7a3b0ca884d3a60"
   }
 }

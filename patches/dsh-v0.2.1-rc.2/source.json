@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "28c319401309d6927e043d10f59a4f4b58677525",
+  "headCommit": "00ebab9280540b4a4ad3cbbb786a513c41117e39",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
-  "tree": "063f9cee73d7070dc4f1a0cacc80d8a9b3eb0e90",
-  "sourceSha256": "59096369757e44f716b0e2d29bdde79f7016615faca4bc9e46e388fedf98d5ae",
+  "tree": "c7708d335b13be18a08e483e9a2976115c6354b2",
+  "sourceSha256": "81ef0e4c1bc8890b6627681fa9dc3117a6a815e449e2d89f377642f03d6b01a4",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "69693bf9d542d23255f52d3ad8dc1bfc7bd68d15526059673ab72ae068054127"
+    "sha256": "f9a4ffbc6151e9f29ccb78d311286e53a0b114929353c775904cad2b428d1fbc"
   },
   "commits": [
     {
@@ -212,8 +212,8 @@
     {
       "id": "041",
       "file": "041-rc2-integration.patch",
-      "commit": "28c319401309d6927e043d10f59a4f4b58677525",
-      "sha256": "53a48afe246713b9860ece8f95bc627011bb17c26969eea377c5301b0b86427d"
+      "commit": "00ebab9280540b4a4ad3cbbb786a513c41117e39",
+      "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b"
     }
   ]
 }
