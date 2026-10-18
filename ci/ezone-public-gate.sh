@@ -14,9 +14,8 @@ sha256_file() {
   fi
 }
 
-# A full Ezone clone can reuse pinned tool blobs from the retained tool-cache
-# history without adding binaries or that history to the product branch. The
-# existing SHA-256 checks below remain mandatory before extraction/execution.
+# Restore pinned tools without adding binaries or their cache history to the
+# product branch. The SHA-256 checks remain mandatory before execution.
 restore_worker_archive() {
   local archive="$1" object="$2" expected="$3" temporary
   [[ -f "$archive" ]] && return 0
@@ -31,6 +30,14 @@ restore_worker_archive() {
   mv "$temporary" "$archive"
 }
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Fetch a dedicated active CI input when a clean/single-branch clone lacks the
+# blobs. Development branch cleanup must not remove the worker's bootstrap tools.
+for object in e40c700f23af7f7043735845d554d79757e750eb 9b8d230e71682849ba86598c03511eafb711fb1f ee8d9651d24c80aad9a90407b9142c1e695dbbef e75c9202b3e056860860953b0540ec8efaefe99a; do
+  if ! git -C "$repo_root" cat-file -e "$object^{blob}" 2>/dev/null; then
+    git -C "$repo_root" fetch --no-tags origin refs/heads/codex/studio-ci-tool-cache-v1
+    break
+  fi
+done
 restore_worker_archive "$repo_root/.ci-tools/gitleaks-v8.30.1/gitleaks.tar.gz" e40c700f23af7f7043735845d554d79757e750eb 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 restore_worker_archive "$repo_root/.ci-tools/node-v22.19.0/node.tar.xz" 9b8d230e71682849ba86598c03511eafb711fb1f b2eb68fe2dae8c7a7d27255a4fcff6292179a6089835879932b2641aad0bc9d9
 restore_worker_archive "$repo_root/.ci-tools/node-v22.19.0/node-libs.tar.gz" ee8d9651d24c80aad9a90407b9142c1e695dbbef 127c4a3eab99ab5c48bea474f12d08c80c3590a63892d130e1c02f272b13cb02
