@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fetch Ezone's checksum-pinned offline worker tools from a dedicated CI cache so deleting obsolete development branches cannot break clean-clone gates.
 - Keep native DSH copy when the optional product locale extension is absent, and remove the undeclared hero-name slot without weakening execution admission.
 - Read signed candidate job logs with both current and older GitHub CLIs; retry only an unsupported output flag and preserve source, version and artifact checks on macOS and Windows.
 
