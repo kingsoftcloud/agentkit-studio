@@ -155,7 +155,8 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
             h('button', { type: 'button', onClick: () => void start(), disabled: setupBusy || !setupMemory, style: { ...buttonStyle(), padding: '12px 24px', borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }, '开通个人助理'),
             h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7, marginTop: '18px' } }, setupOptions.billingNotice),
             h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, `使用 ${setupOptions.model.name} · ${setupOptions.memories.find(item => item.id === setupMemory)?.name || '选择一个记忆库'}`)) : null,
-          !preparing && (error || setup?.failure) ? button('查看运行中心', () => onNavigate?.('operations')) : null));
+          !preparing && (error || setup?.failure) ? h('div', { style: { display: 'flex', gap: '12px', justifyContent: 'center' } },
+            button('检查云端设置', openSettings), button('查看运行中心', () => onNavigate?.('operations'))) : null));
     }
     return h('section', { 'data-studio-assistant': true, style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: BRAND.surface } },
       h('style', null, `[data-studio-assistant] .studio-assistant-composer:focus-within { outline: 1px solid ${BRAND.border}; outline-offset: 2px; } [data-studio-assistant] textarea[aria-label="发给助理"]::placeholder { color: ${BRAND.inkMuted}; opacity: 1; }`),

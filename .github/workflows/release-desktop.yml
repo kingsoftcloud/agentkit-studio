@@ -15,12 +15,12 @@ on:
       dsh_ref:
         description: "DSH tag or commit used by the Studio release"
         required: true
-        default: dsh-v0.2.0-rc.2
+        default: dsh-v0.2.1-rc.2
         type: string
       dsh_commit:
         description: "Expected immutable DSH commit SHA"
         required: true
-        default: 639ed015397290b3745d163aafe02ffee4aa3f84
+        default: 687f282e8625c6b8d11ff58211a90524be2e4317
         type: string
       channel:
         description: "Production update lane; empty uses product configuration"
@@ -182,7 +182,7 @@ jobs:
           node-version: "22"
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.7.0
+          version: 11.28.5
           package_json_file: dsh-source/package.json
 
       - name: Verify immutable source inputs
@@ -253,7 +253,7 @@ jobs:
             echo 'qualify_installed_update requires an HTTPS installed_dmg_url' >&2
             exit 1
           }
-          test "$BUILD_VERSION_VALUE" != '0.2.0-rc.2' || {
+          test "$BUILD_VERSION_VALUE" != '0.2.1-rc.2' || {
             echo 'qualify_installed_update requires a higher build_version than the product baseline' >&2
             exit 1
           }
@@ -325,7 +325,7 @@ jobs:
         env:
           DSH_ROOT: ${{ github.workspace }}/dsh-source
           DSH_COMMIT: ${{ inputs.dsh_commit }}
-          DSH_VERSION: 0.2.0-rc.2
+          DSH_VERSION: 0.2.1-rc.2
           BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
           PACK_DIR: ${{ github.workspace }}/studio/.artifacts
           EXPECTED_APP_ID: ${{ needs.source-gate.outputs.app_id }}
@@ -344,7 +344,7 @@ jobs:
         env:
           DSH_ROOT: ${{ github.workspace }}/dsh-source
           DSH_COMMIT: ${{ inputs.dsh_commit }}
-          DSH_VERSION: 0.2.0-rc.2
+          DSH_VERSION: 0.2.1-rc.2
           BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
           PACK_DIR: ${{ github.workspace }}/studio/.artifacts
           EXPECTED_APP_ID: ${{ needs.source-gate.outputs.app_id }}
@@ -379,7 +379,7 @@ jobs:
           import YAML from 'yaml'
 
           const appUpdate = YAML.parse(await readFile(process.env.APP_UPDATE_PATH, 'utf8'))
-          const expectedFeedUrl = `${process.env.EXPECTED_UPDATE_ORIGIN}/dsh-desk/feeds/mac-arm64/`
+          const expectedFeedUrl = `${process.env.EXPECTED_UPDATE_ORIGIN}/studio/feeds/mac-arm64/`
           if (appUpdate?.provider !== 'generic' || appUpdate.url !== expectedFeedUrl || appUpdate.channel !== process.env.EXPECTED_UPDATE_CHANNEL) {
             throw new Error(`packaged app-update.yml does not match the requested Studio feed: expected ${expectedFeedUrl} (${process.env.EXPECTED_UPDATE_CHANNEL}), got ${appUpdate?.url} (${appUpdate?.channel})`)
           }
@@ -528,7 +528,7 @@ jobs:
           node-version: "22"
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.7.0
+          version: 11.28.5
           package_json_file: dsh-source/package.json
       - name: Publish via Studio KS3 uploader and verify public feed
         working-directory: studio
@@ -546,7 +546,7 @@ jobs:
           STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
           EXPECTED_PREVIOUS: ${{ inputs.expected_previous_version }}
           STORAGE_ORIGIN: ${{ needs.source-gate.outputs.storage_origin }}
-          RELEASE_LAYOUT: ${{ inputs.release_layout || 'legacy' }}
+          RELEASE_LAYOUT: ${{ inputs.release_layout || 'studio' }}
           UPDATE_MODE: ${{ inputs.update_mode || 'incremental' }}
           COMPATIBILITY_ORIGIN: ${{ inputs.compatibility_origin }}
         run: |
@@ -557,7 +557,7 @@ jobs:
           git checkout --detach "$TOOLS_REF_VALUE"
           test "$(git rev-parse HEAD)" = "$TOOLS_REF_VALUE"
           pnpm install --frozen-lockfile
-          node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64" || r.commit !== process.env.EXPECTED_DSH_COMMIT || r.publicUrl !== process.env.EXPECTED_UPDATE_ORIGIN + "/dsh-desk/feeds/mac-arm64/") throw Error("Signed candidate identity mismatch")'
+          node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64" || r.commit !== process.env.EXPECTED_DSH_COMMIT || r.publicUrl !== process.env.EXPECTED_UPDATE_ORIGIN + "/studio/feeds/mac-arm64/") throw Error("Signed candidate identity mismatch")'
           node scripts/verify-codex-signing.mjs --record-only "$GITHUB_WORKSPACE/candidate/mac-arm64-release.json"
           zip="$(find "$GITHUB_WORKSPACE/candidate" -maxdepth 1 -name '*.zip' -type f -print -quit)"
           test -n "$zip"
@@ -620,7 +620,7 @@ jobs:
           STUDIO_REF_VALUE: ${{ inputs.studio_ref }}
           TOOLS_REF_VALUE: ${{ inputs.release_tools_ref || inputs.studio_ref }}
           STORAGE_ORIGIN: ${{ needs.source-gate.outputs.storage_origin }}
-          RELEASE_LAYOUT: ${{ inputs.release_layout || 'legacy' }}
+          RELEASE_LAYOUT: ${{ inputs.release_layout || 'studio' }}
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$STUDIO_REF_VALUE" HEAD
@@ -724,7 +724,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: dsh-v0.2.0-rc.2
+          ref: dsh-v0.2.1-rc.2
           path: .ci-dsh
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -732,11 +732,11 @@ jobs:
           node-version: '24'
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.7.0
+          version: 11.28.5
           package_json_file: .ci-dsh/package.json
       - run: pnpm install --frozen-lockfile
       - name: Build and verify the maintained Host
-        run: node scripts/verify-patched-dsh-host.mjs --source ../.ci-dsh --patches patches/dsh-v0.2.0-rc.2 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+        run: node scripts/verify-patched-dsh-host.mjs --source ../.ci-dsh --patches patches/dsh-v0.2.1-rc.2 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
       - name: Install accepted plugin in an isolated test profile
@@ -746,14 +746,6 @@ jobs:
           export DSH_HOME="$RUNNER_TEMP/studio-accepted-web-dsh"
           export AGENTKIT_HOME="$RUNNER_TEMP/studio-accepted-web-agentkit"
           make profile-install DSH_ROOT="$host_source" DSH_PROFILE=studio-refactor
-          node --input-type=module - <<'JS'
-          import {readFile,writeFile} from 'node:fs/promises';
-          import {join} from 'node:path';
-          const path=join(process.env.DSH_HOME,'profiles/studio-refactor/package.json');
-          const value=JSON.parse(await readFile(path,'utf8'));
-          value.dsh.profile.bundles.push('@deepseek-ai/dsh-experimental-schedule-bundle');
-          await writeFile(path,JSON.stringify(value,null,2)+'\n');
-          JS
           printf 'AGENTKIT_DSH_ROOT=%s\nDSH_HOME=%s\nAGENTKIT_HOME=%s\n' "$host_source" "$DSH_HOME" "$AGENTKIT_HOME" >> "$GITHUB_ENV"
           printf 'STUDIO_VERIFY_CHROME=%s\n' "$(node --input-type=module -e 'import {chromium} from "@playwright/test"; console.log(chromium.executablePath())')" >> "$GITHUB_ENV"
       - name: Verify complete plugin lifecycle

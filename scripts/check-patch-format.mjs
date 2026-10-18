@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '..')
-const patchRoot = resolve(repoRoot, process.argv[2] ?? 'patches/dsh-v0.2.0-rc.2')
+const patchRoot = resolve(repoRoot, process.argv[2] ?? 'patches/dsh-v0.2.1-rc.2')
 
 /** Validate text diffs, including file creation and deletion, with Git's parser. */
 export function validatePatchFormat(source) {

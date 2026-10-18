@@ -12,8 +12,8 @@ DSH_WEB_PORT ?= 3098
 # Keep the caller's package manager on PATH for existing Profile dependencies.
 DSH_SOURCE_CLI := node --import tsx/esm apps/cli/src/bin.ts
 PACK_DIR ?= .artifacts
-DSH_VERSION ?= 0.2.0-rc.2
-DSH_COMMIT ?= 639ed015397290b3745d163aafe02ffee4aa3f84
+DSH_VERSION ?= 0.2.1-rc.2
+DSH_COMMIT ?= 687f282e8625c6b8d11ff58211a90524be2e4317
 DSH_REPO ?= https://github.com/deepseek-ai/deepseek-harness.git
 DSH_REF ?= dsh-v$(DSH_VERSION)
 PATCH_ROOT ?= $(abspath patches/dsh-v$(DSH_VERSION))

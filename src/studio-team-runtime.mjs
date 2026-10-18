@@ -9,7 +9,7 @@ export function ensureStudioTeamRuntime(ctx, { load = () => import('@deepseek-ai
     if(stopped||ctx.get('agentTeams'))return;
     const module=await load();
     if(stopped||ctx.get('agentTeams'))return;
-    await ctx.plugin(module.default,{maxMembers:8,maxTasks:256,maxPendingMessagesPerMember:64,maxMessageBytes:65536,disposalTimeoutMs:5000});
+    await ctx.plugin(module.default,{maxMembers:8,maxTasks:256,maxMessageBytes:65536,disposalTimeoutMs:5000});
     if(!ctx.get('agentTeams'))throw Object.assign(new Error('官方 agent-teams 服务未启动'),{code:'TEAM_RUNTIME_UNAVAILABLE'});
   })();
   void ready.catch(error=>console.warn('[agentkit-studio] team runtime unavailable:',error.code||'TEAM_RUNTIME_UNAVAILABLE'));

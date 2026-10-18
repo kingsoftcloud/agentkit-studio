@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 
 const PLUGIN_PACKAGE = '@kingsoftcloud/agentkit-studio';
 const PLUGIN_ID = 'agentkit-studio';
-const EXPECTED_DSH = '0.2.0-rc.2';
+const EXPECTED_DSH = '0.2.1-rc.2';
 
 function readJson(path, label) {
   if (!existsSync(path)) throw new Error(`${label} is missing: ${path}`);

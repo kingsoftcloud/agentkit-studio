@@ -8,6 +8,14 @@ import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { prepareDesktopCheckout, withDesktopCheckout } from '../scripts/desktop-checkout.mjs';
 
+// The fake compiler still emits the release metadata checked at the delivery boundary.
+const sealedUpdateFixture = `if (process.argv.includes('package')) {
+  const target = process.argv.includes('win-x64') ? 'win-x64' : 'mac-arm64';
+  const resources = process.cwd() + '/apps/desktop/.desktop-build/targets/' + target + '/artifacts/' + (target === 'win-x64' ? 'win-unpacked/resources' : 'mac-arm64/AgentKit Studio.app/Contents/Resources');
+  fs.mkdirSync(resources, {recursive:true});
+  fs.writeFileSync(resources + '/app-update.yml', JSON.stringify({provider:'generic',url:'https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/' + target + '/',channel:'preview',updaterCacheDirName:'studio-updater'}));
+}`;
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'studio-build-isolation-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -15,7 +23,7 @@ async function fixture(t) {
   await mkdir(source); await mkdir(patches);
   const git = args => execFileSync('git', args, { cwd: source, encoding: 'utf8' }).trim();
   git(['init', '-q']);
-  await writeFile(join(source, '.gitignore'), 'dist/\nnode_modules/\n.env*\napps/desktop/.env*\n');
+  await writeFile(join(source, '.gitignore'), 'dist/\nnode_modules/\n.desktop-build/\n.env*\napps/desktop/.env*\n');
   await writeFile(join(source, 'package.json'), '{"version":"0.2.0-rc.2"}');
   await writeFile(join(source, 'client.js'), 'original source\n');
   git(['add', '.']); git(['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','baseline']);
@@ -111,7 +119,7 @@ test('CI build version reaches the official package CLI instead of being lost in
   const calls=join(input.root,'calls.jsonl');
   const fake=join(bin,'pnpm');
   const launchToken=['fixture','launch','key'].join('-');
-  await writeFile(fake,`#!${process.execPath}\nimport('node:fs').then(fs=>fs.appendFileSync(process.env.PACKAGE_CALLS,JSON.stringify(process.argv.slice(2))+'\\n'));
+  await writeFile(fake,`#!${process.execPath}\nimport('node:fs').then(fs=>{fs.appendFileSync(process.env.PACKAGE_CALLS,JSON.stringify(process.argv.slice(2))+'\\n');${sealedUpdateFixture}});
 process.stdout.write('dsh web: http://127.0.0.1:12345/?tok');
 setImmediate(()=>{process.stdout.write('en=${launchToken}');process.stderr.write('diagnostic http://127.0.0.1:12345/?mode=web&token=${launchToken}');});\n`);
   await chmod(fake,0o755);
@@ -135,7 +143,7 @@ test('Windows target reads its own settings and delegates NSIS packaging to DSH'
   const input=await fixture(t);
   const bin=join(input.root,'bin'); await mkdir(bin);
   const calls=join(input.root,'windows-calls.jsonl');
-  await writeFile(join(bin,'pnpm'),`#!${process.execPath}\nimport('node:fs').then(fs=>fs.appendFileSync(process.env.PACKAGE_CALLS,JSON.stringify({args:process.argv.slice(2),settings:fs.readFileSync('apps/desktop/.env.windows','utf8')})+'\\n'));\n`,{mode:0o755});
+  await writeFile(join(bin,'pnpm'),`#!${process.execPath}\nimport('node:fs').then(fs=>{fs.appendFileSync(process.env.PACKAGE_CALLS,JSON.stringify({args:process.argv.slice(2),settings:fs.readFileSync('apps/desktop/.env.windows','utf8')})+'\\n');${sealedUpdateFixture}});\n`,{mode:0o755});
   await mkdir(join(input.source,'apps/desktop'),{recursive:true});
   await writeFile(join(input.source,'apps/desktop/.env.windows'),'DSH_DESKTOP_WINDOWS_SIGNING_MODE=certificate-store\n');
   const {promisify}=await import('node:util'); const {execFile}=await import('node:child_process');

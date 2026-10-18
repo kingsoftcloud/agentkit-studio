@@ -1,0 +1,30 @@
+diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
+index bbc2d3e7ae80e3870d415e1661de50b08f6bd0a2..8ced0c9f7bbaf56fdb41e7a2f424784d8b13d81c 100644
+--- a/apps/desktop/scripts/smoke-runtime.ts
++++ b/apps/desktop/scripts/smoke-runtime.ts
+@@ -155,8 +155,23 @@ export function apply(ctx) {
+     if (response.status !== 200 || !(await response.text()).includes('<html')) {
+       throw new Error('desktop runtime: packaged frontend smoke failed')
+     }
+-    const pluginResponse = await fetch(new URL('/desktop-smoke', ready.url), { headers: { cookie } })
+-    if (await pluginResponse.text() !== 'plugin route ready') throw new Error('desktop runtime: plugin HTTP route failed')
++    // A listening WebServer does not guarantee that asynchronously injected plugins have mounted.
++    const pluginDeadline = Date.now() + 30_000
++    let pluginReady = false
++    let pluginStatus = 0
++    while (Date.now() < pluginDeadline) {
++      const pluginResponse = await fetch(new URL('/desktop-smoke', ready.url), {
++        headers: { cookie }, signal: AbortSignal.timeout(5_000),
++      })
++      pluginStatus = pluginResponse.status
++      if (pluginResponse.ok && await pluginResponse.text() === 'plugin route ready') {
++        pluginReady = true
++        break
++      }
++      await pluginResponse.body?.cancel().catch(() => undefined)
++      await new Promise(done => setTimeout(done, 200))
++    }
++    if (!pluginReady) throw new Error(`desktop runtime: plugin HTTP route failed after 30 seconds (HTTP ${pluginStatus})`)
+     const installation = await fetch(new URL('/desktop-smoke-install', ready.url), {
+       headers: { cookie }, signal: AbortSignal.timeout(120_000),
+     })

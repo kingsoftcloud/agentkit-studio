@@ -5,7 +5,7 @@ import { withDesktopCheckout } from './desktop-checkout.mjs';
 
 const studioRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dshRoot = resolve(process.env.AGENTKIT_DSH_ROOT || join(studioRoot, '../../deepseek-harness'));
-const patchRoot = resolve(process.env.AGENTKIT_DESKTOP_UPDATE_PATCHES || join(studioRoot, 'patches/dsh-v0.2.0-rc.2'));
+const patchRoot = resolve(process.env.AGENTKIT_DESKTOP_UPDATE_PATCHES || join(studioRoot, 'patches/dsh-v0.2.1-rc.2'));
 const read = path => readFile(path, 'utf8');
 
 async function verify(checkout) {
@@ -67,7 +67,7 @@ if (isGitCheckout) {
     source: dshRoot,
     output: join(studioRoot, '.artifacts', 'update-verification'),
     patches: patchRoot,
-    commit: process.env.DSH_COMMIT || '639ed015397290b3745d163aafe02ffee4aa3f84',
+    commit: process.env.DSH_COMMIT || '687f282e8625c6b8d11ff58211a90524be2e4317',
   }, verify);
 } else {
   await verify(dshRoot);

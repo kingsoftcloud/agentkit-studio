@@ -38,7 +38,7 @@ function channel(value) {
   return selected
 }
 
-function targetPrefix(originValue) { return `${originValue}/dsh-desk/feeds/${TARGET}/` }
+function targetPrefix(originValue, layout) { return `${originValue}/${layout === 'studio' ? 'studio' : 'dsh-desk'}/feeds/${TARGET}/` }
 
 async function sha512File(path) {
   const hash = createHash('sha512')
@@ -97,7 +97,7 @@ async function digestResponse(response) {
 }
 
 async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expectedPreviousVersion, output, allowLoopback, layout = 'legacy', storageOrigin = feedOrigin }) {
-  const feedRoot = targetPrefix(feedOrigin)
+  const feedRoot = targetPrefix(feedOrigin, layout)
   const feedUrl = `${feedRoot}${selectedChannel}-mac.yml`
   const { response, bytes } = await fetchBytes(feedUrl)
   const feed = YAML.parse(bytes.toString('utf8'))
@@ -193,7 +193,7 @@ else {
   try {
     const feedOrigin = origin(values.origin, values['allow-loopback'] === true)
     const selectedChannel = channel(values.channel)
-    const layout = values.layout || 'legacy', mode = values['update-mode'] || 'incremental'
+    const layout = values.layout || 'studio', mode = values['update-mode'] || 'incremental'
     if (!['legacy', 'studio'].includes(layout) || !['incremental', 'full'].includes(mode) || layout === 'legacy' && mode !== 'incremental') throw new Error('unsupported publication layout or update mode')
     const storageOrigin = values['storage-origin'] ? origin(values['storage-origin'], values['allow-loopback'] === true) : feedOrigin
     if (layout === 'legacy' && storageOrigin !== feedOrigin) throw new Error('separate storage origin requires the Studio layout')
