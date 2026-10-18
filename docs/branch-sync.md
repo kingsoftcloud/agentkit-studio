@@ -18,7 +18,7 @@ Configure ref names to match the destination forge. A mismatch blocks release
 synchronization; resolve it through review without forcing a branch update.
 
 The Ezone worker bootstraps its pinned offline tools from the dedicated
-`codex/studio-ci-tool-cache-v1` branch on that forge. It is an orphan cache of
+`codex/studio-ci-tool-cache-v1` branch on that forge. Its separate cache tree holds
 verified Gitleaks, Node.js/runtime-library and pnpm archives, not a product source
 branch, and is not mirrored to GitHub. The adapter explicitly fetches that ref
 when a clean clone lacks its pinned blobs and checks archive SHA-256 values before
