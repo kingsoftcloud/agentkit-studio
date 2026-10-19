@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Align the cloud HTTP transport with the Host's Undici version so desktop packaging reuses one dependency and preserves the sealed runtime inventory.
+- Align the cloud HTTP transport with the Host's Undici version and pair its fetch with its dispatcher, preserving both the sealed archive and the packaged Node runtime contract.
 
 - Show an assistant setup failure once, stop the progress spinner, and keep the cloud settings and deployment recovery actions available.
 
