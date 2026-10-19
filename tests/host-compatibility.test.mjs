@@ -14,8 +14,25 @@ function host(options = {}) {
     sessionController: { promptFingerprintVersion: 1, ...Object.fromEntries(['create', 'selectModel', 'resolveAgent', 'prompt', 'page', 'projections'].map(name => [name, unused])) },
     agents: { withoutInitiator: unused }, commands: { execute: unused }, permissionPresets: { set: unused }, approval: { setPolicy: unused },
   };
-  return { services, compatibility: createHostCompatibility({ getService: name => services[name], requiredDsh: '0.2.0-rc.2', dshVersion: '0.2.0-rc.2', ...options }) };
+  return { services, compatibility: createHostCompatibility({ getService: name => services[name], requiredDsh: '0.2.0-rc.2', dshVersion: '0.2.0-rc.2', requestIsAgentLoop: () => true, ...options }) };
 }
+
+test('the running Host must supply its public request-origin marker before native execution', () => {
+  const { compatibility } = host({ requestIsAgentLoop: undefined });
+  for (const feature of ['agent-presets', 'automation', 'frozen-runtime']) {
+    assert.equal(compatibility.inspect().features[feature].available, false);
+    assert.ok(compatibility.inspect().features[feature].missingCapabilities.includes('agent-loop-origin'));
+    assert.throws(() => compatibility.require(feature), { code: 'STUDIO_HOST_INCOMPATIBLE' });
+  }
+});
+
+test('request origin is decided by the Host helper, not serialized request fields', () => {
+  const owned = new WeakSet();
+  const request = Object.freeze({ sessionId: 'same-session' }); owned.add(request);
+  const { compatibility } = host({ requestIsAgentLoop: value => owned.has(value) });
+  assert.equal(compatibility.isAgentLoopRequest(request), true);
+  assert.equal(compatibility.isAgentLoopRequest({ ...request, isAgentLoopRequest: true }), false);
+});
 
 test('same-version Host missing patched API disables only its dependent features', () => {
   const { services, compatibility } = host();
