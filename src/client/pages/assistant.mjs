@@ -129,7 +129,8 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
     const openSettings = () => window.dispatchEvent(new window.CustomEvent('agentkit-studio:open-settings'));
     const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
     if (catalogReady && !catalog.length && !chosen) {
-      const preparing = setup && !['NOT_STARTED', 'ACTION_REQUIRED', 'FAILED', 'CREATE_UNKNOWN', 'UPLOAD_UNKNOWN', 'DELETED'].includes(setup.state);
+      const setupError = error || setup?.failure?.message || (setup?.failure ? setup.message : '');
+      const preparing = !setupError && setup && !['NOT_STARTED', 'ACTION_REQUIRED', 'FAILED', 'CREATE_UNKNOWN', 'UPLOAD_UNKNOWN', 'DELETED'].includes(setup.state);
       const start = async () => {
         if (setupBusy || !setupOptions) return;
         setSetupBusy(true); setError('');
@@ -143,11 +144,10 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
           h('span', { style: { fontSize: '16px', fontWeight: 600 } }, '个人助理'), h(ComputerConnection, { assistantName: '个人助理' })),
         h('div', { style: { maxWidth: '440px', width: '100%', textAlign: 'center' } },
           preparing || setupBusy ? h('div', { 'data-studio-assistant-spinner': true, 'aria-hidden': true, style: { width: '32px', height: '32px', border: `3px solid ${BRAND.border}`, borderTopColor: BRAND.primaryFill, borderRadius: '50%', margin: '0 auto 24px', animation: 'assistant-setup-spin 1s linear infinite' } }) : null,
-          h('h1', { style: { fontSize: '26px', fontWeight: 500, margin: '0 0 14px' } }, preparing || setupBusy ? '你的助理正在准备中' : '7×24 的个人助理'),
+          h('h1', { style: { fontSize: '26px', fontWeight: 500, margin: '0 0 14px' } }, setupError ? '助理连接暂不可用' : preparing || setupBusy ? '你的助理正在准备中' : '7×24 的个人助理'),
           h('p', { style: { color: BRAND.inkMuted, lineHeight: 1.8, margin: '0 0 24px' } }, preparing || setupBusy ? '准备好后，我们就在这里聊。你也可以先离开，回来会继续显示进度。' : '交代任务、安排提醒，慢慢记住你的偏好。关闭 Studio 后，助理仍能在云端继续工作。'),
           preparing ? h('p', { role: 'status', style: { fontSize: '14px' } }, setup.message) : null,
-          setup?.failure ? h('p', { role: 'alert', style: { color: BRAND.danger, lineHeight: 1.7 } }, setup.message) : null,
-          error ? h('p', { role: 'alert', style: { color: BRAND.danger, lineHeight: 1.7 } }, error) : null,
+          setupError ? h('p', { role: 'alert', style: { color: BRAND.danger, lineHeight: 1.7 } }, setupError) : null,
           ['NOT_STARTED', 'DELETED'].includes(setup?.state) && setupOptions ? h('div', null,
             setupOptions.memories.length > 1 ? h('label', { style: { display: 'block', textAlign: 'left', fontSize: '13px', marginBottom: '16px' } }, '把记忆保存在',
               h('select', { 'aria-label': '助理记忆库', value: setupMemory, onChange: event => setSetupMemory(event.target.value), style: { ...inputStyle(), width: '100%', marginTop: '8px' } },
@@ -155,7 +155,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
             h('button', { type: 'button', onClick: () => void start(), disabled: setupBusy || !setupMemory, style: { ...buttonStyle(), padding: '12px 24px', borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }, '开通个人助理'),
             h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7, marginTop: '18px' } }, setupOptions.billingNotice),
             h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, `使用 ${setupOptions.model.name} · ${setupOptions.memories.find(item => item.id === setupMemory)?.name || '选择一个记忆库'}`)) : null,
-          !preparing && (error || setup?.failure) ? h('div', { style: { display: 'flex', gap: '12px', justifyContent: 'center' } },
+          setupError ? h('div', { style: { display: 'flex', gap: '12px', justifyContent: 'center' } },
             button('检查云端设置', openSettings), button('查看运行中心', () => onNavigate?.('operations'))) : null));
     }
     return h('section', { 'data-studio-assistant': true, style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: BRAND.surface } },

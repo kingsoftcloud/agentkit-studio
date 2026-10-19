@@ -27,6 +27,8 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
   await writeFile(join(home, 'agentkit/config.yaml'), JSON.stringify({ modelProfiles: profiles,
     modelProfileKeys: { STUDIO_FROZEN_FIXTURE_KEY: 'synthetic-frozen-fixture' } }));
   let child, browser, context, page;
+  let setupFailureFixture = true;
+  const setupFailureMessage = '云端入口的 TLS 证书校验失败；请检查证书链';
   const errors = [];
   const start = async () => {
     child = spawn(process.execPath, [join(source, 'apps/cli/lib/bin.js'), '--profile', 'assistant-ui', '--host', '127.0.0.1', '--no-open', '--port', String(port)], {
@@ -75,13 +77,20 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
       const body = route.request().postDataJSON();
       if (!body?.method?.startsWith('assistant/')) return route.continue();
       try {
-        const value = body.method === 'assistant/catalog' ? { items: [{ metadata: { id: 'cloud-fixture', name: '云端助理验收' }, deployment: { id: 'fixture-deployment', versionId: 'fixture-version' }, spec: { runtime: { type: 'dsh-native' } } }] }
+        const value = setupFailureFixture && body.method === 'assistant/catalog' ? { items: [] }
+          : setupFailureFixture && body.method === 'assistant/setup-status' ? { state: 'STARTING', ready: false,
+            message: setupFailureMessage, failure: { code: 'DEPLOYMENT_TLS_FAILED', message: setupFailureMessage } }
+          : body.method === 'assistant/catalog' ? { items: [{ metadata: { id: 'cloud-fixture', name: '云端助理验收' }, deployment: { id: 'fixture-deployment', versionId: 'fixture-version' }, spec: { runtime: { type: 'dsh-native' } } }] }
           : await api(body.payload.operation, body.payload.input);
         await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: true, value } } });
       } catch { await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: false, error: { code: 'TEST_RELAY_FAILED', message: '验收连接失败' } } } }); }
     });
     if (url) await page.goto(url); else await page.reload();
     await page.getByText('个人助理', { exact: true }).first().click({ timeout: 30000 });
+    if (setupFailureFixture) return;
+    await waitForConversation();
+  };
+  const waitForConversation = async () => {
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('agentkit.assistant.agent')) === 'cloud-fixture');
     assert.equal(await page.getByRole('tablist', { name: '助理功能' }).count(), 0, 'conversation opens without configuration tabs');
     assert.equal(await page.getByLabel('云端助理', { exact: true }).isVisible(), false, 'connection selector belongs in secondary settings');
@@ -90,6 +99,17 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
   };
   try {
     await open();
+    const setupView = page.locator('[data-studio-assistant-setup]');
+    await setupView.getByRole('heading', { name: '助理连接暂不可用', exact: true }).waitFor();
+    assert.equal(await setupView.getByText(setupFailureMessage, { exact: true }).count(), 1, 'one failure must not render as both progress and alert');
+    assert.equal(await setupView.getByRole('alert').count(), 1);
+    assert.equal(await setupView.locator('[data-studio-assistant-spinner]').count(), 0, 'failed setup must stop spinning');
+    await setupView.getByRole('button', { name: '查看运行中心', exact: true }).waitFor();
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-setup-error.png'), fullPage: true });
+    setupFailureFixture = false;
+    await page.reload();
+    await page.getByText('个人助理', { exact: true }).first().click({ timeout: 30000 });
+    await waitForConversation();
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-welcome.png'), fullPage: true });
     await page.getByLabel('发给助理', { exact: true }).fill('保留这份草稿');
     assert.equal(await page.getByRole('button', { name: '助理设置', exact: true }).count(), 0);
