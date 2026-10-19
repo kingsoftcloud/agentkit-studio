@@ -1,7 +1,7 @@
 /** Preprod runtime TLS exception; never changes the process-wide trust policy. */
-import { Agent } from 'undici';
+import { Agent, fetch as undiciFetch } from 'undici';
 
-export function createCloudRuntimeFetch({ configuration, fetchImpl = fetch, createDispatcher = () => new Agent({ connect: { rejectUnauthorized: false } }) }) {
+export function createCloudRuntimeFetch({ configuration, fetchImpl = fetch, runtimeFetchImpl = undiciFetch, createDispatcher = () => new Agent({ connect: { rejectUnauthorized: false } }) }) {
   let dispatcher, closed = false;
   const assertOpen = () => { if (closed) throw Object.assign(new Error('Runtime transport is closed'), { code: 'RUNTIME_TRANSPORT_CLOSED' }); };
   const request = async (input, init = {}) => {
@@ -16,7 +16,14 @@ export function createCloudRuntimeFetch({ configuration, fetchImpl = fetch, crea
         dispatcher ||= createDispatcher();
         // Never follow a redirect with this dispatcher: the exception belongs
         // only to the exact preprod runtime origin checked above.
-        return fetchImpl(input, { ...init, dispatcher, redirect: 'error' });
+        // Node's bundled fetch may use a different Undici dispatcher protocol.
+        // Pair this dispatcher with the fetch exported by the same dependency.
+        if (input instanceof Request) {
+          const request = new Request(input, init);
+          return runtimeFetchImpl(request.url, { method: request.method, headers: request.headers,
+            body: request.body, signal: request.signal, duplex: 'half', dispatcher, redirect: 'error' });
+        }
+        return runtimeFetchImpl(input, { ...init, dispatcher, redirect: 'error' });
       }
     }
     return fetchImpl(input, init);

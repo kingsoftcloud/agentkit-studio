@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Align the cloud HTTP transport with the Host's Undici version and pair its fetch with its dispatcher, preserving both the sealed archive and the packaged Node runtime contract.
+
 - Show an assistant setup failure once, stop the progress spinner, and keep the cloud settings and deployment recovery actions available.
 
 - Allow self-signed runtime certificates only for explicit pre-online Agent connections, with redirects disabled. Keep production, control-plane and download TLS verification unchanged.
