@@ -2,6 +2,7 @@
 import { _electron as electron, expect } from '@playwright/test';
 import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { finished } from 'node:stream/promises';
 import asar from '@electron/asar';
 
 export async function verifyWindowsCoexistence(executablePath, environment, root, evidence) {
@@ -29,7 +30,7 @@ app.whenReady().then(() => {
   });
 });
 `);
-  await asar.createPackage(source, join(fixture, 'resources', 'app.asar'));
+  await finished(await asar.createPackage(source, join(fixture, 'resources', 'app.asar')));
   const legacyProfile = join(environment.DSH_HOME, 'profiles', 'desktop');
   await mkdir(legacyProfile, { recursive: true });
   const legacyPatch = '# existing official DSH plugin configuration\n[]\n';
@@ -44,7 +45,7 @@ app.whenReady().then(() => {
     await expect(page.getByRole('button', { name: '总览', exact: true })).toBeVisible({ timeout: 120000 });
     const later=page.locator('.agentkit-credential-onboarding-content').getByRole('button',{name:'稍后设置',exact:true});
     if(await later.isVisible()) await later.click();
-    await expect(page.getByRole('button', { name: 'Agents', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^(智能体|Agents)$/ })).toBeVisible();
     const identity = await studio.evaluate(({ app }) => ({ name: app.name, version: app.getVersion(), userData: app.getPath('userData') }));
     const foreignIdentity = await foreign.evaluate(({ app }) => ({ name: app.name, userData: app.getPath('userData') }));
     if (identity.userData === foreignIdentity.userData) throw new Error('Studio still shares official DSH Electron state');

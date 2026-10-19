@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "$SOURCE_SHA" HEAD
-          node scripts/prepare-windows-candidate.mjs --repository "$GITHUB_REPOSITORY" --run "$CANDIDATE_RUN" --source "$SOURCE_SHA" --version "$BUILD_VERSION" --output "$RUNNER_TEMP/candidate"
+          node scripts/prepare-windows-candidate.mjs --repository "$GITHUB_REPOSITORY" --run "$CANDIDATE_RUN" --source "$SOURCE_SHA" --version "$BUILD_VERSION" --require-ui --output "$RUNNER_TEMP/candidate"
           unzip -q "$RUNNER_TEMP/candidate/candidate.zip" -d "$RUNNER_TEMP/candidate/unpacked"
       - name: Publish exact signed Windows bytes and verify canonical feed
         env:
