@@ -1,0 +1,201 @@
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..91c4067b698d5626520839468cd738021fdd4f48
+--- /dev/null
++++ b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml
+@@ -0,0 +1,16 @@
++# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
++# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
++# After editing either side, bring the other along and re-record with:
++#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md
++/:
++  en: 16121602d5b5b409
++  zh: 8a979209e7ccab51
++/tool-dispatch-definition-identity:
++  en: 4fc47785ff40177c
++  zh: 49ba644ead1c9030
++/tool-dispatch-definition-identity/change:
++  en: a6b01e8c25259b4a
++  zh: 9e54601ec794dfc5
++/tool-dispatch-definition-identity/migration:
++  en: 1e741109fb582ce5
++  zh: 55aaea13352b83eb
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..3580d021784b7bda09198cabae609ebb6c111982
+--- /dev/null
++++ b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md
+@@ -0,0 +1,16 @@
++---
++kind: upgrade-guide
++description: Tool callbacks replaced during a prepared execution now fail before their body runs.
++---
++
++# Tool dispatch definition identity
++
++## Change
++
++Tool calls bind the visible definition and its execution callback before policy begins. Replacing that definition or callback during `tools/pre-execute`, approval, or `tools/execute` now produces an error without invoking the replacement. Previously, dispatch could resolve and execute a different definition after the call had passed policy. Unchanged definitions and around-dispatch listeners that return their own result are unaffected.
++
++## Migration
++
++1. In plugins that replace tool registrations or mutate `execute`, finish the replacement before submitting a call through `ctx.tools.execute`.
++2. Do not use policy or around-dispatch listeners to swap the implementation of an already prepared call. Submit a new call after registration instead.
++3. Verify that the new call passes normal policy and invokes the intended definition once; an in-flight replacement must return a normal tool error.
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..5df9f5a6978d5c0ebc57713ded003fb3b4862d62
+--- /dev/null
++++ b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md
+@@ -0,0 +1,16 @@
++---
++kind: upgrade-guide
++description: 已准备执行的工具若被替换回调，会在执行函数运行前失败。
++---
++
++# 工具调度定义身份
++
++## 变更
++
++工具调用在策略开始前绑定可见定义及其执行回调。在 `tools/pre-execute`、审批或 `tools/execute` 阶段替换定义或回调，现在会返回错误而不执行替代实现。此前，调度可能在调用通过策略后解析并执行不同定义。未更改的定义，以及直接返回自有结果的调度包装监听器，不受影响。
++
++## 迁移
++
++1. 对于替换工具注册或修改 `execute` 的插件，应先完成替换，再通过 `ctx.tools.execute` 提交调用。
++2. 不要通过策略或调度包装监听器替换已经准备好的调用实现。注册完成后应提交新调用。
++3. 验证新调用正常通过策略并执行目标定义一次；执行中的替换必须返回普通工具错误。
+diff --git a/packages/core/tools/README.i18n.yaml b/packages/core/tools/README.i18n.yaml
+index f90a284f2676ee3b6bceb9835ca0bc3cc381668c..10b58238291f8146230b5c21d2c2500226078573 100644
+--- a/packages/core/tools/README.i18n.yaml
++++ b/packages/core/tools/README.i18n.yaml
+@@ -27,8 +27,8 @@
+   en: c6f98b2283cc2e47
+   zh: c2cdce5d13473f15
+ /deepseek-ai-dsh-tools/use-this-package/enforce-policy-on-calls:
+-  en: cbfe8317565ac62d
+-  zh: 1e71c66941e50881
++  en: 59aa864c68397896
++  zh: 33eb20982fe32234
+ /deepseek-ai-dsh-tools/use-this-package/host-presentation-descriptors:
+   en: 258e16bb367229e5
+   zh: 7c1eb91062b4e4ad
+diff --git a/packages/core/tools/README.md b/packages/core/tools/README.md
+index a5a7044916b33d882d3b87202c7ef8dec3098e6e..e4e71b902dd545ccad09537eb8eef55f4934e42a 100644
+--- a/packages/core/tools/README.md
++++ b/packages/core/tools/README.md
+@@ -88,6 +88,8 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
+ 
+ `ctx.tools.guard(guard)` registers a monotonic synchronous guard after the extensible `tools/pre-execute` waterfall: a returned reason denies the call, and no later listener can turn that denial back into permission. The pipeline's events give plugins more control — `tools/pre-execute` decides allow/deny/ask, `tools/execute` wraps dispatch for timeout or retry, `tools/post-execute` inspects or replaces the result, and `tools/result` observes the frozen final outcome.
+ 
++Each prepared call binds the visible definition and its execution body before policy begins. If a policy or around-dispatch listener replaces either before dispatch, the call returns an error without invoking a body. Register replacements before submitting a new call; guards run once per preparation.
++
+ A tool’s `projectContent` installs execution-prepared content before post-execute policies. Policies may still replace or block it; `finalizeContent` remains the final content transform after those policies.
+ 
+ ### Host presentation descriptors
+diff --git a/packages/core/tools/README.zh.md b/packages/core/tools/README.zh.md
+index 631654308821fd6464296d74e22a64eedb102c12..e3e01ab3d2fb99fb8534d6c407e49a17b580d200 100644
+--- a/packages/core/tools/README.zh.md
++++ b/packages/core/tools/README.zh.md
+@@ -88,6 +88,8 @@ ctx.tools.register(defineTool({
+ 
+ `ctx.tools.guard(guard)` 在可扩展的 `tools/pre-execute` waterfall（瀑布式事件）之后注册单调同步守卫：返回的理由会拒绝调用，后续监听器无法把该拒绝重新变为允许。流水线事件给插件更多控制——`tools/pre-execute` 决定允许／拒绝／询问，`tools/execute` 为超时或重试包装分发，`tools/post-execute` 检查或替换结果，`tools/result` 观测冻结的最终结果。
+ 
++每个准备完成的调用在策略开始前绑定可见的定义及其执行函数。如果策略或调度包装监听器在实际调度前替换其中任一项，调用会返回错误且不执行工具函数。应先注册替代定义，再提交新调用；守卫在每次准备过程中仅运行一次。
++
+ 工具的 `projectContent` 在执行后策略之前安装执行期间准备的图文内容。策略仍可替换或阻止这些内容；`finalizeContent` 保留为策略之后的最终内容处理。
+ 
+ ### Host 展示描述
+diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
+index 0e79648a0a0c06f99c182b1b48966cee257be650..1c5dc6a35ee2df949cf84dbbb7c29033856e1fdc 100644
+--- a/packages/core/tools/src/index.ts
++++ b/packages/core/tools/src/index.ts
+@@ -831,6 +831,8 @@ export class ToolRuntime extends Service {
+   private contentFinalizers = new WeakMap<ToolRunContext, ToolDefinition['finalizeContent']>()
+   /** Execution-prepared content installed before post-execute policy. */
+   private contentProjectors = new WeakMap<ToolRunContext, ToolDefinition['projectContent']>()
++  /** Validated definition and body identity, captured before extensible policy. */
++  private dispatchDefinitions = new WeakMap<ToolRunContext, { definition: ToolDefinition; body: ToolDefinition['execute'] }>()
+   private readonly layers = new ScopedLayers(
+     scope => new ToolLayer(scope),
+     () => { this.ctx.emit('tools/change') },
+@@ -1505,6 +1507,8 @@ export class ToolRuntime extends Service {
+     const created = this.createExecution(input)
+     if (created.kind !== 'ready') return next(created)
+     const exec = created.exec
++    const definition = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
++    if (definition) this.dispatchDefinitions.set(exec, { definition, body: definition.execute })
+     if (this.callerCancelled(exec)) {
+       return next({ kind: 'final-result', exec, result: toolAbortedBeforeDispatchResult() })
+     }
+@@ -1585,6 +1589,10 @@ export class ToolRuntime extends Service {
+     try {
+       const tool = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
+       if (!tool) throw new ToolNotFoundError(exec.name)
++      const accepted = this.dispatchDefinitions.get(exec)
++      if (tool !== accepted?.definition || tool.execute !== accepted.body) {
++        throw new Error('Tool definition changed after execution preparation; submit a new call')
++      }
+       state.bodyInvoked = true
+       const returned = await tool.execute(exec.arguments, exec)
+       const result = this.createSuccessResult(exec, tool, returned)
+diff --git a/packages/core/tools/tests/scoped.spec.ts b/packages/core/tools/tests/scoped.spec.ts
+index 7eac6489f7667a42874b563837d53e066f18dcce..39f40ab555a34ef01d3946036107013ec3e239c3 100644
+--- a/packages/core/tools/tests/scoped.spec.ts
++++ b/packages/core/tools/tests/scoped.spec.ts
+@@ -315,6 +315,56 @@ describe('scoped execution dispatch', () => {
+     expect(bodyCalls).toBe(2)
+   })
+ 
++  it('rejects definition replacement after a guard without consuming that guard twice', async () => {
++    const ctx = await mount()
++    const { scope, key } = await mintAgentScope(ctx, 'a')
++    let guardCalls = 0
++    let bodyCalls = 0
++    ctx.tools.register(tool('t'))
++    scope.ctx.tools.guard(() => { guardCalls += 1; return undefined })
++    scope.ctx.on('tools/execute', (_exec, next) => {
++      scope.ctx.tools.register({ ...tool('t'), execute: async () => { bodyCalls += 1; return 'changed' } })
++      return next()
++    })
++    try {
++      expect(await run(ctx, 't', key)).toBe('Error: Tool definition changed after execution preparation; submit a new call')
++      expect(guardCalls).toBe(1)
++      expect(bodyCalls).toBe(0)
++    } finally { await ctx.fiber.dispose() }
++  })
++
++  it('rejects in-place body replacement during policy while allowing unchanged definitions', async () => {
++    const ctx = await mount()
++    const definition = tool('t')
++    let bodyCalls = 0
++    let guardCalls = 0
++    ctx.tools.register(definition)
++    ctx.tools.guard(() => { guardCalls += 1; return undefined })
++    expect(await run(ctx, 't')).toBe('ran:t')
++    ctx.on('tools/pre-execute', (_exec, next) => {
++      definition.execute = async () => { bodyCalls += 1; return 'changed' }
++      return next()
++    })
++    try {
++      expect(await run(ctx, 't')).toBe('Error: Tool definition changed after execution preparation; submit a new call')
++      expect(guardCalls).toBe(2)
++      expect(bodyCalls).toBe(0)
++    } finally { await ctx.fiber.dispose() }
++  })
++
++  it('does not execute a tool registered only after an unknown call was prepared', async () => {
++    const ctx = await mount()
++    let bodyCalls = 0
++    ctx.on('tools/execute', (_exec, next) => {
++      ctx.tools.register({ ...tool('late'), execute: async () => { bodyCalls += 1; return 'changed' } })
++      return next()
++    })
++    try {
++      expect(await run(ctx, 'late')).toBe('Error: Tool definition changed after execution preparation; submit a new call')
++      expect(bodyCalls).toBe(0)
++    } finally { await ctx.fiber.dispose() }
++  })
++
+   it('composes global guards monotonically when one abstains and a later one denies', async () => {
+     const ctx = await mount()
+     let bodyCalls = 0

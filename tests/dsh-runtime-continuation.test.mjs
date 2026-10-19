@@ -32,6 +32,31 @@ for (const runtime of ['dsh-native', 'harness', 'codex']) {
   });
 }
 
+test('same-session titles bypass actual resource context and memory persistence while marked turns still use them', async t => {
+  const bridge = createRuntimeBridge(); t.after(() => bridge.close());
+  bridge.bindRoute('managed-cloud-session', { agentId: 'assistant-agent', runtime: 'codex', local: true });
+  const owned = new WeakSet(), memory = [], resources = [];
+  const adapter = createDshRuntimeAdapter({ bridge,
+    codexResourceContext: async request => {
+      resources.push(request);
+      return { writeMemory: async text => { memory.push(text); return { accepted: true }; } };
+    },
+    codexRuntime: { async *stream() { yield { type: 'text', text: 'business answer' }; } },
+  });
+  bridge.setAdapter(adapter);
+  const next = async function* () { yield { type: 'text', text: 'title' }; };
+  const read = request => Array.fromAsync(routeDshRuntime(request, next, bridge, value => owned.has(value)));
+  const turn = Object.freeze({ ...prompt, sessionId: 'managed-cloud-session' }); owned.add(turn);
+  const title = { ...turn, messages: [{ role: 'user', content: 'Name this conversation' }], tools: [] };
+  assert.equal((await read(title))[0].text, 'title');
+  assert.equal(resources.length, 0); assert.deepEqual(memory, []);
+  const chunks = await read(turn);
+  assert.ok(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.text === 'business answer'));
+  assert.equal(resources.length, 1); assert.deepEqual(memory, ['business answer']);
+  assert.equal((await read({ ...turn, metadata: { isAgentLoopRequest: true } }))[0].text, 'title');
+  assert.equal(resources.length, 1); assert.deepEqual(memory, ['business answer']);
+});
+
 async function selectPreset(runtime, sessionId, buildId) {
   const listeners = new Map();
   applyDshRuntimePlugin({

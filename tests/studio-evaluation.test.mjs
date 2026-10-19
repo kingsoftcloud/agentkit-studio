@@ -7,6 +7,20 @@ import { createStudioEvaluation } from '../src/studio-evaluation.mjs';
 
 async function makeStore() { return mkdtemp(join(tmpdir(), 'agentkit-eval-')); }
 
+async function waitForPublishedRun(evaluation, runId, { observe = () => {}, until = record => record?.completedAt && ['succeeded', 'partial', 'failed'].includes(record.status) } = {}) {
+  const deadline = performance.now() + 5000;
+  let record;
+  while (performance.now() < deadline) {
+    record = await evaluation.getRun(runId);
+    observe(record);
+    if (until(record)) return record;
+    // Yield to the producer's asynchronous filesystem work. Read counts are
+    // not a completion clock, especially with parallel CI workers.
+    await new Promise(setImmediate);
+  }
+  assert.fail(`evaluation did not reach the expected published state (last status: ${record?.status || 'missing'})`);
+}
+
 test('evalset native and studio_suite formats parse with assertions', async () => {
   const store = await makeStore();
   const evaluation = createStudioEvaluation({ storeDir: store });
@@ -61,27 +75,33 @@ test('the Studio create contract resolves a frozen target before running and res
   try {
     const imported = await evaluation.importEvalset({ content: JSON.stringify([{ input: 'check', assertions: [{ type: 'response.jsonSchema', value: { type: 'object', properties: { value: { type: 'number' } }, required: ['value'] } }] }]), fileName: 'schema.json' });
     const run = await evaluation.createEvaluation({ evalsetFile: imported.id, target: { kind: 'studio_build', locator: 'build-frozen' } });
-    for (let i = 0; i < 30; i++) { await new Promise(resolve => setTimeout(resolve, 10)); if ((await evaluation.getRun(run.id)).status === 'failed') break; }
+    const done = await waitForPublishedRun(evaluation, run.id);
     assert.equal(seen[0].agentId, 'frozen-agent'); assert.equal(seen[0].buildId, 'build-frozen');
-    assert.equal((await evaluation.getRun(run.id)).summary.failed, 1);
+    assert.equal(done.status, 'failed'); assert.equal(done.summary.failed, 1);
   } finally { await rm(store, { recursive: true, force: true }); }
 });
 
 test('polling a running evaluation never observes a partially written record', async () => {
   const store = await makeStore();
-  const evaluation = createStudioEvaluation({ storeDir: store, runner: async () => ({ output: 'ok'.repeat(1024), toolCalls: [] }) });
+  const releaseRunner = Promise.withResolvers();
+  const evaluation = createStudioEvaluation({ storeDir: store, runner: async () => { await releaseRunner.promise; return { output: 'ok'.repeat(1024), toolCalls: [] }; } });
   try {
     const imported = await evaluation.importEvalset({ content: JSON.stringify(Array.from({ length: 24 }, (_, i) => ({ id: `case-${i}`, input: 'check', assertions: [{ type: 'response.contains', value: 'ok' }] }))), fileName: 'poll.json' });
     const run = await evaluation.createEvaluation({ evalsetId: imported.id, target: 'build-poll', agentId: 'agent-poll' });
-    let missing = 0;
+    await waitForPublishedRun(evaluation, run.id, { until: record => record?.status === 'running' });
+    let missing = 0, startedReaders = 0;
     await Promise.all(Array.from({ length: 8 }, async () => {
-      for (let i = 0; i < 200; i++) {
-        const record = await evaluation.getRun(run.id);
+      let firstRead = true;
+      const done = await waitForPublishedRun(evaluation, run.id, { observe(record) {
         if (!record) missing++;
-        if (record?.status === 'succeeded') return;
-      }
-      assert.fail('evaluation did not complete');
+        if (firstRead) {
+          firstRead = false;
+          assert.equal(record?.status, 'running', 'every reader must observe the live run before completion is released');
+          if (++startedReaders === 8) releaseRunner.resolve();
+        }
+      } });
+      assert.equal(done.status, 'succeeded'); assert.equal(done.summary.passed, 24);
     }));
     assert.equal(missing, 0, 'a published run must remain readable while its status is updated');
-  } finally { await rm(store, { recursive: true, force: true }); }
+  } finally { releaseRunner.resolve(); await rm(store, { recursive: true, force: true }); }
 });

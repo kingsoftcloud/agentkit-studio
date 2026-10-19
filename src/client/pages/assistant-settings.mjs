@@ -60,19 +60,19 @@ export function createAssistantSettings({ ui, hostRemote, actions, window }) {
     const closeAssistant = async () => {
       if (closing || !chosen?.deployment) return;
       const confirmed = await confirm({ title: '关闭并删除个人助理',
-        detail: `将删除「${chosen.metadata.name}」的专属云端部署、会话和记忆，停止计划任务。记忆无法恢复；共享知识库和记忆库实例会保留。`,
+        detail: `将删除「${chosen.metadata.name}」的专属云端部署、会话、工作区文件和记忆，停止计划任务。工作区文件和记忆无法恢复；共享知识库和记忆库实例会保留。`,
         confirmLabel: '关闭并删除', danger: true });
       if (!confirmed) return;
       setClosing(true); setError('');
       try {
         const result = await hostRemote.closeAssistant({ agentId, confirmAgentId: agentId, deploymentId: chosen.deployment.id, versionId: chosen.deployment.versionId });
-        if (!result.deleted) { setNotice('专属会话和记忆已清理，云端部署正在删除。再次点击可核对关闭结果。'); return; }
+        if (!result.deleted) { setNotice('专属会话、工作区文件和记忆已清理，云端部署正在删除。再次点击可核对关闭结果。'); return; }
         window.localStorage.removeItem(key);
         window.localStorage.removeItem(`agentkit.assistant.pending.${agentId}`);
         setCatalog(items => items.filter(item => item.metadata.id !== agentId)); setAgentId(''); setView(null);
         window.dispatchEvent(new window.CustomEvent('agentkit-studio:assistant-deleted', { detail: agentId }));
         window.dispatchEvent(new window.CustomEvent('agentkit-studio:assistant-changed', { detail: '' }));
-        setNotice('个人助理已关闭，专属会话和记忆已删除。重新启用需要创建新的云端助理。');
+        setNotice('个人助理已关闭，专属会话、工作区文件和记忆已删除。重新启用需要创建新的云端助理。');
       } catch (reason) { setError(reason.message || '关闭结果尚未确认，请保留当前部署并重试核对。'); }
       finally { setClosing(false); }
     };
@@ -108,7 +108,7 @@ export function createAssistantSettings({ ui, hostRemote, actions, window }) {
           }), !assistantName.trim()))) : chosen && view ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '更新云端助理后，可保存助理名字和对你的称呼。') : null,
         chosen ? h('div', { style: { borderTop: '1px solid ' + BRAND.border, marginTop: '24px', paddingTop: '20px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px' } },
-            h('div', null, h('strong', { style: { fontSize: '13px' } }, '关闭个人助理'), h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7, margin: '6px 0' } }, '删除专属云端部署、会话和记忆，无法恢复。')),
+            h('div', null, h('strong', { style: { fontSize: '13px' } }, '关闭个人助理'), h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7, margin: '6px 0' } }, '删除专属云端部署、会话、工作区文件和记忆，无法恢复。')),
             h('button', { type: 'button', disabled: closing || busy || !view?.canClose, onClick: closeAssistant, style: { ...buttonStyle(), color: BRAND.danger, flexShrink: 0 } }, closing ? '正在关闭…' : '关闭并删除')),
           !view?.canClose ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '当前镜像尚未提供专属数据删除能力，请先更新云端助理。') : null) : null) : null,
       chosen && panel === 'memory' && !view?.memoryEnabled ? h('p', { role: 'status' }, '为助理绑定记忆库后，可在这里查看和管理记忆。') : null,

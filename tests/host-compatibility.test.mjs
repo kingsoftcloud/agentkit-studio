@@ -6,6 +6,7 @@ import { createNativeAutomationRunner } from '../src/native-automation-runner.mj
 import { createStudioRoutes } from '../src/host/routes/index.mjs';
 import { createControlPlaneDispatcher } from '../src/host/routes/dispatcher.mjs';
 import { createAgentRoutes } from '../src/host/routes/agents.mjs';
+import { bindFrozenRuntime } from '../src/host/frozen-runtime-lifecycle.mjs';
 
 function host(options = {}) {
   const unused = () => { throw new Error('Inspection must not invoke a Host operation'); };
@@ -110,4 +111,14 @@ test('unattended execution requires the public preset setter instead of issuing 
   delete services.permissionPresets;
   assert.equal(compatibility.inspect().features['agent-presets'].available, true);
   assert.throws(() => compatibility.require('automation'), { code: 'STUDIO_HOST_INCOMPATIBLE' });
+});
+
+test('frozen runtime lifecycle tracks the same permission service required by compatibility', () => {
+  let dependencies;
+  bindFrozenRuntime({ inject: names => { dependencies = names; } }, {});
+  assert.ok(dependencies.includes('permissionPresets'));
+  assert.ok(!dependencies.includes('commands'), 'runtime startup must not depend on slash-command dispatch');
+  const { services, compatibility } = host();
+  delete services.commands;
+  assert.doesNotThrow(() => compatibility.require('frozen-runtime'));
 });

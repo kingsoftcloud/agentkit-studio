@@ -22,3 +22,5 @@
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for validation and pull requests.
 
 - [Start checks](start-checks.md): read-only configuration checks and the meaning of confirmed, missing and unknown.
+
+- [Automatic assistant startup](assistant-automatic-startup.md): installed CLI cold-start/restart acceptance and explicit legacy profile migration.

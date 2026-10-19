@@ -1,0 +1,268 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link } from 'node:fs/promises';
+import { existsSync, renameSync, symlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { Context } from '@deepseek-ai/cordis';
+import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop';
+import { createScope } from '@deepseek-ai/dsh-scope';
+import SessionStore, { Session, SessionId, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session';
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
+import ToolRuntime from '@deepseek-ai/dsh-tools';
+import { ToolCallId } from '@deepseek-ai/dsh-llm';
+import SandboxPolicy from '@deepseek-ai/dsh-sandbox-policy';
+import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox';
+import WorkingDirectory from '@deepseek-ai/dsh-working-directory';
+import Approval, { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval';
+import Commands from '@deepseek-ai/dsh-commands';
+import PermissionPresets from '@deepseek-ai/dsh-permission-presets';
+import LocalSubprocess from '@deepseek-ai/dsh-subprocess-local';
+import * as ToolFs from '@deepseek-ai/dsh-tool-fs';
+import * as Observation from '@deepseek-ai/dsh-fs-observation-policy';
+import * as Search from '@deepseek-ai/dsh-tool-fs-search';
+import { createAssistantPermissionModel, installAssistantStartupGuard, ASSISTANT_PERMISSION_PROFILE } from '@studio/src/assistant-permission-model.mjs';
+import { createAssistantApprovalBridge } from '@studio/src/assistant-approval-bridge.mjs';
+import { ASSISTANT_DELETE_FILE_TOOL } from '@studio/src/assistant-workspace-tools.mjs';
+import LocalAttachments from '@deepseek-ai/dsh-attachment-local';
+import { prepareAssistantPrompt } from '@studio/src/assistant-attachment-runtime.mjs';
+
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+async function fixture() {
+  // Native workspace-write also grants platform temp areas; keep this fixture
+  // outside TMPDIR so an outside-write test exercises the actual workspace fence.
+  const root = await mkdtemp(join(process.cwd(), '.assistant-permission-native-'));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'agentkit')); await mkdir(join(root, 'dsh'));
+  const digest = 'a'.repeat(64);
+  await writeFile(join(root, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: digest }));
+  const env = { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: digest };
+  const ctx = new Context(); cleanups.push(() => ctx.fiber.dispose());
+  await ctx.plugin(SessionStore); await ctx.plugin(SessionProjectionRegistry); await ctx.plugin(SystemPrompt);
+  await ctx.plugin(ToolRuntime); await ctx.plugin(SandboxPolicy, { mode: 'read-only' });
+  await ctx.plugin(SandboxedFileSystem); await ctx.plugin(WorkingDirectory);
+  await ctx.plugin(Approval, { policy: 'never' }); await ctx.plugin(Commands);
+  // The preset requires a confining shell capability fact; no shell tool or
+  // executor is installed or invoked by this controlled permission proof.
+  ctx.provide('shell', { sandboxMode: 'read-only' });
+  await ctx.plugin(PermissionPresets, { defaultPreset: 'workspace-write' });
+  await ctx.plugin(Observation); await ctx.plugin(ToolFs); await ctx.plugin(LocalSubprocess);
+  await ctx.plugin(Search, { sampleOverCapGlobResults: false });
+  let unsupportedCalls = 0;
+  ctx.tools.register({ name: 'bash', description: 'controlled forbidden tool', parameters: { type: 'object', properties: {} },
+    output: { schema: { type: 'string' }, render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }] },
+    execute: async () => { unsupportedCalls++; return 'must not run'; } });
+  const model = await createAssistantPermissionModel({ ctx, env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'product-agent' });
+  const id = SessionId('assistant-managed'); const cwd = await model.newSessionCwd(id);
+  const session = Session.create(id, undefined, { version: SESSION_FORMAT_VERSION, id, createdAt: 0, isSeeded: false, cwd });
+  const agent: any = { session, inject: () => {} };
+  await ctx.plugin(Object.assign((inner: Context) => { agent.ctx = createScope(inner, agent).ctx; }, { inject: ['tools', 'systemPrompt', 'approval'] }));
+  let callIndex = 0;
+  const call = (name: string, args: any = {}, signal = new AbortController().signal) => ctx.tools.execute({ name, arguments: args, agent, signal, callId: ToolCallId(`call-${++callIndex}`) });
+  const ensure = () => model.ensure(agent, true);
+  return { root, env, ctx, model, agent, cwd, call, ensure, unsupportedCalls: () => unsupportedCalls };
+}
+
+describe('managed assistant permissions over native DSH tools, filesystem and approval audit', () => {
+  it('reads a verified native upload through a workspace copy while refusing the global hard-linked attachment path', async () => {
+    const f = await fixture(); await f.ensure();
+    await f.ctx.plugin(LocalAttachments, { dshHome: f.env.DSH_HOME });
+    const bytes = Buffer.from('uploaded invoice total: 125');
+    const ref = await f.ctx.attachments.saveFile({ name: 'invoice.txt', data: bytes });
+    const receiptId = '9db8f94b-780c-4e5f-a5f7-f2dfbb5fbe5b';
+    f.ctx.provide('fileUploads', { upload() {}, resolve: (agent: unknown, id: string) => agent === f.agent && id === receiptId ? ref : undefined, bindPrompt() {} } as never);
+    const prepared = await prepareAssistantPrompt(f.ctx, f.agent, [{ type: 'file', receiptId }], {
+      stageFile: (ref: any, bytes: Uint8Array) => f.model.stageAttachment(f.agent, ref, bytes),
+    });
+    expect(prepared.content).toEqual([{ type: 'file', receiptId }]);
+    const path = join('.assistant-inputs', String(ref.attachmentId).slice(7), 'invoice.txt');
+    expect((await f.call('glob', { pattern: '**/invoice.txt', path: '.assistant-inputs' })).isError).toBe(false);
+    const result = await f.call('read', { file_path: path });
+    expect(result.isError).toBe(false); expect(JSON.stringify(result)).toContain('uploaded invoice total: 125');
+    expect((await f.call('read', { file_path: f.ctx.attachments.fileHostPath(ref) })).isError).toBe(true);
+  });
+  it('uses the real permission setter and real write/read/edit/glob/grep bodies without user command notices', async () => {
+    const f = await fixture();
+    const command = vi.spyOn(f.ctx.commands, 'execute').mockRejectedValue(new Error('Initialization must not run a user command'));
+    const preset = vi.spyOn(f.ctx.permissionPresets, 'set');
+    const inject = vi.fn(); f.agent.inject = inject;
+    expect((await f.ensure()).approval).toBe('ask');
+    expect(preset).toHaveBeenCalledExactlyOnceWith(f.agent.session, 'workspace-write');
+    expect(command).not.toHaveBeenCalled(); expect(inject).not.toHaveBeenCalled();
+    expect(f.ctx.sandboxPolicy.resolve({ session: f.agent.session }).mode).toBe('workspace-write');
+    expect((await f.call('write', { file_path: 'report.txt', content: 'alpha' })).isError).toBe(false);
+    expect((await f.call('read', { file_path: 'report.txt' })).isError).toBe(false);
+    expect((await f.call('edit', { file_path: 'report.txt', old_string: 'alpha', new_string: 'beta' })).isError).toBe(false);
+    expect(await readFile(join(f.cwd, 'report.txt'), 'utf8')).toBe('beta');
+    expect((await f.call('glob', { pattern: '*.txt' })).isError).toBe(false);
+    expect((await f.call('grep', { pattern: 'beta' })).isError).toBe(false);
+    expect((await f.call('bash')).isError).toBe(true); expect(f.unsupportedCalls()).toBe(0);
+  });
+  it('rejects traversal, symlinks, hardlinks, explicit escalation and cwd escape', async () => {
+    const f = await fixture(); await f.ensure();
+    await writeFile(join(f.root, 'outside.txt'), 'outside');
+    await symlink(join(f.root, 'outside.txt'), join(f.cwd, 'alias.txt'));
+    await link(join(f.root, 'outside.txt'), join(f.cwd, 'hardlink.txt'));
+    await mkdir(join(f.root, 'outside-subdir')); await symlink(join(f.root, 'outside-subdir'), join(f.cwd, 'alias-dir'));
+    expect((await f.call('grep', { pattern: 'outside', path: 'alias-dir/..' })).isError).toBe(true);
+    expect((await f.call('grep', { pattern: 'outside', path: '.' })).isError).toBe(true);
+    expect((await f.call('glob', { pattern: '**/*', path: '.' })).isError).toBe(true);
+    for (const file_path of ['../../agentkit/private', join(f.root, 'outside.txt'), 'alias.txt', 'hardlink.txt', 'alias-dir/../outside.txt']) {
+      expect((await f.call('read', { file_path })).isError).toBe(true);
+      expect((await f.call('write', { file_path, content: 'changed' })).isError).toBe(true);
+    }
+    expect((await f.call('write', { file_path: 'safe.txt', content: 'x', sandbox_permissions: 'danger-full-access', justification: 'test' })).isError).toBe(true);
+    f.agent.session.append('working-directory/change', { cwd: f.root });
+    expect((await f.call('read', { file_path: 'outside.txt' })).isError).toBe(true);
+    expect(await readFile(join(f.root, 'outside.txt'), 'utf8')).toBe('outside');
+  });
+  it('checks paths again in the monotonic guard after a pre-execute symlink swap', async () => {
+    const f = await fixture(); await f.ensure();
+    await mkdir(join(f.cwd, 'folder')); await writeFile(join(f.root, 'outside.txt'), 'outside');
+    const stop = f.agent.ctx.on('tools/pre-execute', async (_exec: any, next: any) => {
+      const result = await next(); renameSync(join(f.cwd, 'folder'), join(f.cwd, 'old-folder')); symlinkSync(f.root, join(f.cwd, 'folder')); return result;
+    }, { prepend: true });
+    expect((await f.call('read', { file_path: 'folder/outside.txt' })).isError).toBe(true); stop();
+  });
+  it('native filesystem fencing rejects a late symlink swap after the tool guard', async () => {
+    const f = await fixture(); await f.ensure(); await mkdir(join(f.cwd, 'folder'));
+    await mkdir(join(f.root, 'outside-folder'));
+    const stop = f.agent.ctx.on('tools/execute', async (_exec: any, next: any) => {
+      renameSync(join(f.cwd, 'folder'), join(f.cwd, 'old-folder')); symlinkSync(join(f.root, 'outside-folder'), join(f.cwd, 'folder')); return next();
+    });
+    expect((await f.call('write', { file_path: 'folder/file.txt', content: 'must stay inside' })).isError).toBe(true); stop();
+    expect(existsSync(join(f.root, 'outside-folder/file.txt'))).toBe(false);
+  });
+  it('disposal cancels a pending native approval and leaves the final deny guard installed', async () => {
+    const f = await fixture(); await f.ensure(); await f.call('write', { file_path: 'keep.txt', content: 'keep' });
+    f.agent.session.append('turn/start', { turn: 1 });
+    let waiting = false;
+    const stop = f.ctx.on('approval/request', () => { waiting = true; return new Promise(() => {}); });
+    const pending = f.call(ASSISTANT_DELETE_FILE_TOOL, { file_path: 'keep.txt' });
+    await expect.poll(() => waiting).toBe(true); f.model.dispose();
+    expect((await pending).isError).toBe(true); stop();
+    expect(existsSync(join(f.cwd, 'keep.txt'))).toBe(true);
+    expect((await f.call('write', { file_path: 'keep.txt', content: 'changed' })).isError).toBe(true);
+    await expect(f.model.ensure(f.agent)).rejects.toThrow('closed');
+  });
+  it('requires a real one-shot approval for a production delete and audits the exact content', async () => {
+    const f = await fixture(); await f.ensure();
+    await f.call('write', { file_path: 'delete.txt', content: 'approved bytes' });
+    f.agent.session.append('turn/start', { turn: 1 });
+    expect((await f.call(ASSISTANT_DELETE_FILE_TOOL, { file_path: 'delete.txt' })).isError).toBe(true);
+    expect(existsSync(join(f.cwd, 'delete.txt'))).toBe(true);
+    let asked = '';
+    const stop = f.ctx.on('approval/request', (request: any) => { asked = request.reason; return Promise.resolve('allowed-once'); });
+    expect((await f.call(ASSISTANT_DELETE_FILE_TOOL, { file_path: 'delete.txt' })).isError).toBe(false); stop();
+    expect(asked).toContain('delete.txt'); expect(asked).toMatch(/SHA256 [a-f0-9]{64}/); expect(asked).toContain('14 bytes');
+    expect(existsSync(join(f.cwd, 'delete.txt'))).toBe(false);
+    const events = Array.from({ length: f.agent.session.seq }, (_, index) => f.agent.session.eventAt(index));
+    expect(events.filter((event: any) => event.type === 'approval/asked')).toHaveLength(2);
+    expect(events.filter((event: any) => event.type === 'approval/decided').map((event: any) => event.data.outcome)).toEqual(['unavailable', 'allowed-once']);
+  });
+  it('does not let a pre-execute allow bypass the mandatory sensitive approval', async () => {
+    const f = await fixture(); await f.ensure(); await f.call('write', { file_path: 'keep.txt', content: 'keep' });
+    f.agent.session.append('turn/start', { turn: 1 });
+    const stop = f.agent.ctx.on('tools/pre-execute', () => Promise.resolve({ kind: 'allow' }), { prepend: true });
+    expect((await f.call(ASSISTANT_DELETE_FILE_TOOL, { file_path: 'keep.txt' })).isError).toBe(true); stop();
+    expect(existsSync(join(f.cwd, 'keep.txt'))).toBe(true);
+  });
+  it('rejects a changed file after a genuine approval and denies each rejected retry', async () => {
+    const f = await fixture(); await f.ensure(); await f.call('write', { file_path: 'keep.txt', content: 'before' });
+    f.agent.session.append('turn/start', { turn: 1 });
+    const stop = f.ctx.on('approval/request', async () => { await writeFile(join(f.cwd, 'keep.txt'), 'changed'); return 'allowed-once'; });
+    expect((await f.call(ASSISTANT_DELETE_FILE_TOOL, { file_path: 'keep.txt' })).isError).toBe(true); stop();
+    expect(await readFile(join(f.cwd, 'keep.txt'), 'utf8')).toBe('changed');
+    const reject = f.ctx.on('approval/request', () => Promise.resolve('rejected'));
+    expect((await f.call(ASSISTANT_DELETE_FILE_TOOL, { file_path: 'keep.txt' })).isError).toBe(true); reject();
+  });
+  it('routes the production delete through the live Studio bridge and rejects disconnect/late answers', async () => {
+    const f = await fixture(); await f.ensure();
+    f.ctx.sessionProjections.register(turnBoundaryProjectionDefinition);
+    f.ctx.provide('agents', { get: (id: string) => id === f.agent.session.id ? f.agent : undefined, list: () => [f.agent] });
+    let online = true, earlierAnswererCalls = 0;
+    const earlierAnswerer = f.ctx.on('approval/request', () => { earlierAnswererCalls++; return new Promise(() => {}); });
+    cleanups.push(async () => earlierAnswerer());
+    const bridge = createAssistantApprovalBridge({ ctx: f.ctx, hostId: 'controlled-host', ownsSession: (id: string) => id === f.agent.session.id,
+      enabled: true, policyOf: f.model.policyOf, isConnected: () => online });
+    cleanups.push(async () => bridge.dispose());
+    await f.call('write', { file_path: 'approved.txt', content: 'delete once' });
+    f.agent.session.append('turn/start', { turn: 1 });
+    const operation = f.call(ASSISTANT_DELETE_FILE_TOOL, { file_path: 'approved.txt' });
+    await expect.poll(() => bridge.snapshot(f.agent.session.id).pending.length).toBe(1);
+    const approval = bridge.snapshot(f.agent.session.id).pending[0];
+    expect(bridge.decide(f.agent.session.id, { ...approval, decision: 'allowed-once' }).accepted).toBe(true);
+    expect((await operation).isError).toBe(false);
+    expect(bridge.decide(f.agent.session.id, { ...approval, decision: 'allowed-once' }).accepted).toBe(false);
+    await f.call('write', { file_path: 'keep.txt', content: 'keep' });
+    const pending = f.call(ASSISTANT_DELETE_FILE_TOOL, { file_path: 'keep.txt' });
+    await expect.poll(() => bridge.snapshot(f.agent.session.id).pending.length).toBe(1);
+    const stale = bridge.snapshot(f.agent.session.id).pending[0]; online = false; bridge.disconnect(f.agent.session.id);
+    expect((await pending).isError).toBe(true); expect(existsSync(join(f.cwd, 'keep.txt'))).toBe(true);
+    expect(bridge.decide(f.agent.session.id, { ...stale, decision: 'allowed-once' }).accepted).toBe(false);
+    expect(earlierAnswererCalls).toBe(0);
+  });
+  it.each(['missing', 'malformed'])('retains a bootstrap-only deny even with a %s digest and after plugin disposal', async kind => {
+    const f = await fixture(); f.model.dispose();
+    f.ctx.provide('agents', { get: () => f.agent, list: () => [] });
+    const stop = installAssistantStartupGuard(f.ctx, { ...f.env, AGENTKIT_BUNDLE_SHA256: kind === 'missing' ? undefined : 'invalid' });
+    f.ctx.emit('agent/created', { agent: f.agent });
+    expect((await f.call('bash')).isError).toBe(true); expect(f.unsupportedCalls()).toBe(0);
+    stop();
+    expect((await f.call('bash')).isError).toBe(true); expect(f.unsupportedCalls()).toBe(0);
+    const restored = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'product-agent' });
+    await restored.ensure(f.agent, true);
+    expect(restored.ownsSession(f.agent.session.id)).toBe(true);
+    expect((await f.call('write', { file_path: 'ready.txt', content: 'ready' })).isError).toBe(false);
+    restored.dispose(); expect(restored.ownsSession(f.agent.session.id)).toBe(false);
+  });
+  it('guards existing managed Agents before the factory yields to receipt filesystem I/O', async () => {
+    const f = await fixture(); f.model.dispose();
+    f.ctx.provide('agents', { get: () => f.agent, list: () => [f.agent] });
+    const starting = createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'product-agent' });
+    expect((await f.call('bash')).isError).toBe(true); expect(f.unsupportedCalls()).toBe(0);
+    await starting;
+  });
+  it('rejects a tool definition replaced by around-dispatch after policy admission', async () => {
+    const f = await fixture(); await f.ensure(); let replacedBodyRan = false;
+    const stop = f.agent.ctx.on('tools/execute', async (_exec: any, next: any) => {
+      f.agent.ctx.get('tools').register({ name: 'write', description: 'controlled replacement', parameters: { type: 'object' },
+        output: { schema: { type: 'string' }, render: () => [] }, execute: async () => { replacedBodyRan = true; return 'replacement'; } });
+      return next();
+    });
+    expect((await f.call('write', { file_path: 'safe.txt', content: 'safe' })).isError).toBe(true); stop();
+    expect(replacedBodyRan).toBe(false);
+  });
+  it('disposal during asynchronous receipt validation cannot open the staged guard', async () => {
+    const f = await fixture();
+    const initializing = f.model.ensure(f.agent, true); f.model.dispose();
+    await expect(initializing).rejects.toThrow();
+    expect((await f.call('bash')).isError).toBe(true); expect(f.unsupportedCalls()).toBe(0);
+    expect((await f.call('write', { file_path: 'late.txt', content: 'must not write' })).isError).toBe(true);
+    expect(f.model.ownsSession(f.agent.session.id)).toBe(false);
+    expect(f.ctx.sandboxPolicy.resolve({ session: f.agent.session }).mode).toBe('read-only');
+  });
+  it('awaits native serial creation validation before restored work can execute', async () => {
+    const f = await fixture(); await f.ensure(); f.model.dispose();
+    const restored = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'product-agent' });
+    expect((await f.call('write', { file_path: 'restored.txt', content: 'too early' })).isError).toBe(true);
+    await f.ctx.serial('agent/created', { agent: f.agent, source: 'resume' });
+    expect(restored.ownsSession(f.agent.session.id)).toBe(true);
+    expect((await f.call('write', { file_path: 'restored.txt', content: 'ready after lifecycle' })).isError).toBe(false);
+    expect(await readFile(join(f.cwd, 'restored.txt'), 'utf8')).toBe('ready after lifecycle');
+  });
+  it('installs restored-agent denial synchronously and preserves durable never without migration', async () => {
+    const f = await fixture();
+    f.ctx.emit('agent/created', { agent: f.agent });
+    expect((await f.call('bash')).isError).toBe(true); expect(f.unsupportedCalls()).toBe(0);
+    await f.ensure(); setApprovalPolicy(f.agent.session, 'never');
+    const seq = f.agent.session.seq;
+    expect((await f.model.ensure(f.agent)).approval).toBe('never');
+    expect(f.agent.session.seq).toBe(seq);
+    f.model.dispose(); expect((await f.call('write', { file_path: 'after.txt', content: 'x' })).isError).toBe(true);
+    const restored = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'product-agent' });
+    expect((await restored.ensure(f.agent)).approval).toBe('never');
+    expect(f.agent.session.seq).toBe(seq);
+    expect((await f.call('write', { file_path: 'after.txt', content: 'x' })).isError).toBe(false);
+  });
+});

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
 import { registerControlPlaneRoutes } from '../src/host/routes/http.mjs';
+import { ASSISTANT_UPLOAD_RPC_PATH, ASSISTANT_UPLOAD_RPC_BODY_BYTES } from '../src/contracts/assistant-attachments.mjs';
 
 async function harness(t, options = {}) {
   const routes = new Map(), releases = [], calls = [];
@@ -19,7 +20,8 @@ async function harness(t, options = {}) {
     getLegacyLocalConversationHandler: options.getLegacyLocalConversationHandler,
   });
   const server = createServer((request, response) => {
-    const handler = routes.get(request.url);
+    const path = [...routes.keys()].sort((a, b) => b.length - a.length).find(path => request.url.startsWith(path));
+    const handler = routes.get(path);
     if (!handler) { response.writeHead(404); response.end(); return; }
     Promise.resolve(handler(request, response)).catch(error => response.destroy(error));
   });
@@ -89,6 +91,36 @@ test('control RPC rejects non-POST, malformed JSON and requests over one MiB', a
   assert.equal(await oversized.text(), 'request too large');
   assert.equal(host.calls.length, 0);
 });
+
+test('only the exact authenticated attachment RPC ingress accepts large uploads', async t => {
+  const host = await harness(t);
+  const payload = { agentId: 'fixture', operation: 'attachment-upload', input: {
+    kind: 'file', name: 'large.txt', data: Buffer.alloc(800 * 1024, 97).toString('base64'),
+  } };
+  const message = { method: 'assistant/execute', rpcId: 'upload', payload };
+  const body = JSON.stringify(message);
+  for (const path of ['/agentkit/assistant/execute', ASSISTANT_UPLOAD_RPC_PATH + '/other', ASSISTANT_UPLOAD_RPC_PATH + '?large=true']) {
+    assert.equal((await host.request(path, body)).status, 413);
+  }
+  assert.equal(host.calls.length, 0);
+  const response = await host.request(ASSISTANT_UPLOAD_RPC_PATH, body);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).rpcId, 'upload');
+  assert.deepEqual(host.calls[0].slice(0, 2), ['assistant/execute', payload]);
+  for (const invalid of [{ ...message, method: 'agents/list' }, { ...message, payload: { ...payload, operation: 'submit' } }]) {
+    assert.equal((await host.request(ASSISTANT_UPLOAD_RPC_PATH, JSON.stringify(invalid))).status, 400);
+  }
+  assert.equal((await host.request(ASSISTANT_UPLOAD_RPC_PATH, 'x'.repeat(ASSISTANT_UPLOAD_RPC_BODY_BYTES + 1))).status, 413);
+  assert.equal(host.calls.length, 1);
+});
+
+for (const status of [401, 403]) {
+  test(`attachment ingress preserves admission ${status} before parsing`, async t => {
+    const host = await harness(t, { admit: () => ({ rejection: status }) });
+    assert.equal((await host.request(ASSISTANT_UPLOAD_RPC_PATH, '{malformed')).status, status);
+    assert.equal(host.calls.length, 0);
+  });
+}
 
 test('cloud SSE keeps action input, incremental bytes and cancellation signal', async t => {
   let received;

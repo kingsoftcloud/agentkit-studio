@@ -1765,12 +1765,115 @@
         "packages/subagent/subagent/tests/activation-policy.spec.ts"
       ],
       "sha256": "88554732149613ffd5c0d9113285369d1f966bf17b072f1737b80d9493917615"
+    },
+    {
+      "id": "044",
+      "file": "044-conversation-instance-isolation.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "general-fix",
+      "risk": "medium",
+      "maintainerRole": "Studio Host integration owner",
+      "removeWhen": "The pinned upstream exposes equivalent per-instance composer intake, draft-persistence, and submission-action policies without changing native defaults.",
+      "contracts": [
+        "Default Conversation instances keep native host-path references and Session-local browser draft persistence.",
+        "Upload-only instances never read the shell host-path bridge, upload generic files, and reject directory batches before attachment intake.",
+        "Memory-only instances neither read nor write native browser draft and View storage, including when different Hosts reuse a Session id.",
+        "Queue-only instances hide native composer Stop and steering actions and shortcuts; accelerated Enter never falls back to queue submission."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local opt-in client configuration with native composer and storage isolation regressions; no upstream submission or merge receipt."
+      },
+      "dependsOn": [
+        "041"
+      ],
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-conversation/tests/apply-inject.client.spec.tsx",
+          "packages/client/ui-conversation/tests/apply-wiring.client.spec.tsx",
+          "packages/client/ui-conversation/tests/conversation-store.client.spec.ts",
+          "packages/client/ui-conversation/tests/draft-hub.client.spec.ts",
+          "packages/client/ui-conversation/tests/input-bar.client.spec.tsx",
+          "packages/client/ui-conversation/tests/keymap-routing.client.spec.tsx",
+          "packages/client/ui-conversation/tests/service-orchestration.client.spec.ts",
+          "packages/client/ui-conversation/tests/stop-shortcut.client.spec.ts",
+          "packages/client/ui-conversation/tests/submission-policy.client.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-conversation/README.i18n.yaml",
+        "packages/client/ui-conversation/README.md",
+        "packages/client/ui-conversation/README.zh.md",
+        "packages/client/ui-conversation/src/client/apply.ts",
+        "packages/client/ui-conversation/src/client/contract/slots.ts",
+        "packages/client/ui-conversation/src/client/input/editor/view-binding.ts",
+        "packages/client/ui-conversation/src/client/input/hub.ts",
+        "packages/client/ui-conversation/src/client/skeleton/InputBar.tsx",
+        "packages/client/ui-conversation/src/client/stores.ts",
+        "packages/client/ui-conversation/tests/apply-inject.client.spec.tsx",
+        "packages/client/ui-conversation/tests/conversation-store.client.spec.ts",
+        "packages/client/ui-conversation/tests/input-bar.client.spec.tsx"
+      ],
+      "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3"
+    },
+    {
+      "id": "045",
+      "file": "045-tool-dispatch-definition.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "general-fix",
+      "risk": "medium",
+      "maintainerRole": "Studio Host integration owner",
+      "removeWhen": "The pinned upstream binds a prepared execution to its accepted definition and execution callback through final dispatch.",
+      "contracts": [
+        "A prepared tool execution cannot invoke a replacement definition or execution callback after policy began.",
+        "Final identity validation is synchronous at dispatch and does not consume monotonic guards or one-shot approval grants twice.",
+        "Unchanged tool definitions, cancellation, structured errors and middleware-owned results retain existing semantics."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local native ToolRuntime and managed-workspace permission regressions pass; no upstream submission or merge receipt."
+      },
+      "dependsOn": [
+        "043"
+      ],
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/scoped.spec.ts",
+          "packages/core/tools/tests/tools.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "frozen"
+        ]
+      },
+      "affectedFiles": [
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md",
+        "packages/core/tools/README.i18n.yaml",
+        "packages/core/tools/README.md",
+        "packages/core/tools/README.zh.md",
+        "packages/core/tools/src/index.ts",
+        "packages/core/tools/tests/scoped.spec.ts"
+      ],
+      "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
     }
   ],
-  "patchedTree": "854d4eb3cf8b25c13715993a94a678401f52bb67",
-  "patchedSourceSha256": "163fb2105874749e211611c196ff5f8fd0b3f6a13ee35469cd063b914f68a59d",
+  "patchedTree": "0331b5810698a91b459a1a6f70aade3691ef0392",
+  "patchedSourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "6bfa76eb52fcd98e3987b8c12b280a18a4505b9db1e6b56cad0eab64eb570cd5"
+    "sha256": "9ef4079d985adc9494ec8fa90b0795a242f737d5c163e70d74f1f84eb942dc83"
   }
 }

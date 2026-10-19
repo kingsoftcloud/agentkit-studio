@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "94a3e61b0360cd99368c8b2b1c634a8fdf01d779",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
-  "tree": "854d4eb3cf8b25c13715993a94a678401f52bb67",
-  "sourceSha256": "163fb2105874749e211611c196ff5f8fd0b3f6a13ee35469cd063b914f68a59d",
+  "headCommit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-11",
+  "tree": "0331b5810698a91b459a1a6f70aade3691ef0392",
+  "sourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "ff4c2d82dc65d78f85e2820849917e96590786c0c40f75506e2c4e80eb15fd93"
+    "sha256": "035164e7cc34c39d0326cd4eef11e6a2c9c64afc7a3f798275a092e9620dc3b2"
   },
   "commits": [
     {
@@ -226,6 +226,18 @@
       "file": "043-cloud-permission-presentation.patch",
       "commit": "94a3e61b0360cd99368c8b2b1c634a8fdf01d779",
       "sha256": "88554732149613ffd5c0d9113285369d1f966bf17b072f1737b80d9493917615"
+    },
+    {
+      "id": "044",
+      "file": "044-conversation-instance-isolation.patch",
+      "commit": "a7c70c4610e31ca0e7330cb3c62975cb9bf5b21f",
+      "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3"
+    },
+    {
+      "id": "045",
+      "file": "045-tool-dispatch-definition.patch",
+      "commit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
+      "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
     }
   ]
 }

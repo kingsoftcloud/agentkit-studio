@@ -29,6 +29,9 @@ export function createAssistantLifecycle({ directory, deployments, fetchImpl = f
       const response = await fetchImpl(`${connection.endpoint}/v1/assistant/close`, { method: 'POST', redirect: 'error',
         headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(120000) });
       const cleanup = await response.json();
+      const managed = connection.agent.spec?.security?.assistantPermissions?.profile === 'workspace-managed/v1'
+        || connection.capabilities?.includes('personal-assistant-workspace-managed/v1');
+      if (managed && cleanup.workspaceDeleted !== true) throw fail('ASSISTANT_DELETE_UNCONFIRMED', '助理专属工作区清理尚未确认，云端部署未删除');
       if (!response.ok || cleanup.deleted !== true || cleanup.historyDeleted !== true || cleanup.memoryDeleted !== true
         || cleanup.agentId !== record.agentId || cleanup.buildId !== record.buildId) throw fail('ASSISTANT_DELETE_UNCONFIRMED', '助理专属数据清理尚未确认，云端部署未删除');
       await save({ versionId: payload.versionId, phase: 'removing', cleanup });
@@ -37,7 +40,7 @@ export function createAssistantLifecycle({ directory, deployments, fetchImpl = f
     const deleted = record.state === 'DELETED';
     await save({ ...journal, phase: deleted ? 'closed' : 'removing' });
     return { status: deleted ? 'closed' : 'deleting', deleted, deploymentId: payload.deploymentId,
-      historyDeleted: true, memoryDeleted: true };
+      historyDeleted: true, memoryDeleted: true, ...(journal.cleanup?.workspaceDeleted === true ? { workspaceDeleted: true } : {}) };
   }
   return { close };
 }

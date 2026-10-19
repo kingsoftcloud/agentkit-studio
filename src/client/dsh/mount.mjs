@@ -19,6 +19,7 @@ export function mountStudio(ctx, app) {
 
   ctx.effect(() => authoring.mount(), 'agentkit-studio:authoring-owner');
   ctx.uiConversation.events.register(codexToolDefinition);
+  ctx.effect(() => app.assistantConversation.bind(ctx.uiConversation), 'agentkit-studio:assistant-native-history');
   // Settings owns first-run coordination. Registering here makes the
   // guide visible in the real DSH onboarding path and gives the shell a
   // stable entry it can reopen after the user chose “later”.

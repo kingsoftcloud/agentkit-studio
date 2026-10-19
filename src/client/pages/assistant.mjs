@@ -1,16 +1,37 @@
 /** Assistant client: closing this view only releases reads, never cloud work. */
-export function createAssistantPage({ ui, hostRemote, actions, window }) {
-  const { React: { createElement: h, useState, useEffect, useRef }, BRAND, buttonStyle, inputStyle, ComputerConnection, MarkdownText } = ui;
+import { assistantCancelAvailable, assistantRetryAvailable, assistantTranscript, createAssistantSession } from '../state/assistant-session.mjs';
+import { createAssistantApprovals } from '../components/assistant-approvals.mjs';
+import { createAssistantNativeComposer } from '../components/assistant-native-composer.mjs';
+import { readAssistantAttachment } from '../state/assistant-attachments.mjs';
+export function createAssistantPage({ ui, hostRemote, actions, window, nativeModules }) {
+  const { React: { createElement: h, useState, useEffect, useRef }, BRAND, buttonStyle, inputStyle, ComputerConnection, AssistantTranscript, Button, FileTypeIcon, StateDot } = ui;
+  const NativeComposer = nativeModules ? createAssistantNativeComposer({ ui, hostRemote, nativeModules, window }) : null;
+  const Action = Button || 'button';
+  const AssistantApprovals = createAssistantApprovals({ ui, window });
   const read = key => { try { return JSON.parse(window.localStorage.getItem(key)); } catch { return null; } };
   const save = (key, value) => window.localStorage.setItem(key, JSON.stringify(value));
-  const pendingKey = id => `agentkit.assistant.pending.${id}`;
   return function AssistantPage({ onNavigate }) {
     const [catalog, setCatalog] = useState([]), [agentId, setAgentId] = useState(() => read('agentkit.assistant.agent') || '');
-    const [view, setView] = useState(null), [error, setError] = useState('');
-    const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [notice, setNotice] = useState('');
-    const [pending, setPending] = useState(null);
-    const [older, setOlder] = useState([]), [olderCursor, setOlderCursor] = useState(null), [olderHasMore, setOlderHasMore] = useState(null);
-    const epoch = useRef(0), submitting = useRef(false), composer = useRef(null), history = useRef(null), followLatest = useRef(true);
+    const [error, setError] = useState('');
+    const sessionRef = useRef(null);
+    if (!sessionRef.current) sessionRef.current = createAssistantSession({
+      execute: (id, operation, input, signal) => hostRemote.assistantExecute(id, operation, input, signal),
+      storage: { getItem: key => window.localStorage.getItem(key), setItem: (key, value) => window.localStorage.setItem(key, value), removeItem: key => window.localStorage.removeItem(key) },
+      createRequestId: () => window.crypto.randomUUID(),
+      readAttachment: (file, options) => readAssistantAttachment(file, { ...options, FileReader: window.FileReader }), setTimer: (work, delay) => window.setTimeout(work, delay), clearTimer: id => window.clearTimeout(id),
+    });
+    const session = sessionRef.current;
+    const [sessionState, setSessionState] = useState(() => session.getState());
+    // Effects connect the selected agent after render. Never pair an old transcript
+    // (including its attachment IDs) with the newly selected cloud agent.
+    const sessionMatches = sessionState.agentId === agentId;
+    const { draft, attachments, attachmentError, busy, pending, pendingInvalid, notice, olderHasMore, loadingOlder, cancelPhase } = sessionMatches ? sessionState
+      : { draft: '', attachments: [], attachmentError: '', busy: true, pending: null, pendingInvalid: false, notice: '', olderHasMore: null, loadingOlder: false, cancelPhase: null };
+    const { messages, view } = sessionMatches ? assistantTranscript(sessionState) : { messages: [], view: null };
+    const nativeComposerAvailable = Boolean(NativeComposer && view?.capabilities?.composer?.nativeComposer === true);
+    const useNativeComposer = Boolean(nativeComposerAvailable && !pending && !pendingInvalid && !attachments.length && !draft.trim());
+    const composer = useRef(null), filePicker = useRef(null), history = useRef(null), followLatest = useRef(true);
+    useEffect(() => session.subscribe(setSessionState), [session]);
     const [catalogReady, setCatalogReady] = useState(false);
     const [setup, setSetup] = useState(null), [setupOptions, setSetupOptions] = useState(null);
     const [setupMemory, setSetupMemory] = useState(''), [setupBusy, setSetupBusy] = useState(false);
@@ -58,76 +79,54 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
       void refresh();
       return () => { stopped = true; window.clearTimeout(timer); };
     }, [catalogReady, catalog.length]);
+    const connectedAgentId = catalog.some(item => item.metadata.id === agentId) ? agentId : '';
     useEffect(() => {
-      const version = ++epoch.current;
-      let stopped = false, timer;
-      setView(null); setNotice(''); setPending(read(pendingKey(agentId)));
-      setBusy(false); setOlder([]); setOlderCursor(null); setOlderHasMore(null);
-      if (!agentId || !catalog.some(item => item.metadata.id === agentId)) return;
-      const refresh = async () => {
-        try {
-          const snapshot = await hostRemote.assistantExecute(agentId, 'snapshot');
-          if (stopped || version !== epoch.current) return;
-          setView(snapshot); setError('');
-          const unknown = read(pendingKey(agentId));
-          if (unknown && snapshot.messages.some(message => message.requestId === unknown.requestId)) {
-            window.localStorage.removeItem(pendingKey(agentId)); setPending(null);
-          }
-        } catch (reason) { if (!stopped && version === epoch.current) setError(reason.message); }
-        finally { if (!stopped) timer = window.setTimeout(refresh, 5000); }
+      followLatest.current = true;
+      session.connect(connectedAgentId);
+      return () => session.disconnect();
+    }, [connectedAgentId, session]);
+    useEffect(() => {
+      const reconnect = () => { if (window.document?.visibilityState !== 'hidden') void session.refresh(); };
+      window.addEventListener('online', reconnect);
+      window.addEventListener('focus', reconnect);
+      window.document?.addEventListener('visibilitychange', reconnect);
+      return () => {
+        window.removeEventListener('online', reconnect);
+        window.removeEventListener('focus', reconnect);
+        window.document?.removeEventListener('visibilitychange', reconnect);
       };
-      void refresh();
-      return () => { stopped = true; epoch.current++; window.clearTimeout(timer); };
-    }, [agentId, catalog]);
+    }, [session]);
     useEffect(() => {
       const changed = event => { if (!event.detail || catalog.some(item => item.metadata.id === event.detail)) setAgentId(event.detail || ''); };
-      const deleted = event => { setCatalog(items => items.filter(item => item.metadata.id !== event.detail)); if (event.detail === agentId) { setAgentId(''); setDraft(''); setView(null); setPending(null); } };
+      const deleted = event => { setCatalog(items => items.filter(item => item.metadata.id !== event.detail)); if (event.detail === agentId) { setAgentId(''); } };
       window.addEventListener('agentkit-studio:assistant-changed', changed);
       window.addEventListener('agentkit-studio:assistant-deleted', deleted);
       return () => { window.removeEventListener('agentkit-studio:assistant-changed', changed); window.removeEventListener('agentkit-studio:assistant-deleted', deleted); };
     }, [catalog, agentId]);
     useEffect(() => {
-      const changed = event => { if (event.detail?.agentId === agentId) setView(previous => ({ ...previous, identity: event.detail.identity })); };
+      const changed = event => { if (event.detail?.agentId === agentId) session.updateIdentity(event.detail.identity, event.detail.agentId); };
       window.addEventListener('agentkit-studio:assistant-identity-changed', changed);
       return () => window.removeEventListener('agentkit-studio:assistant-identity-changed', changed);
-    }, [agentId]);
+    }, [agentId, session]);
     useEffect(() => {
       if (followLatest.current && history.current) history.current.scrollTop = history.current.scrollHeight;
-    }, [view?.messages?.length, pending?.requestId]);
-    const execute = async (operation, input, onSuccess) => {
-      const version = epoch.current;
-      if (submitting.current) return;
-      submitting.current = true; setBusy(true); setError('');
-      try {
-        const result = await hostRemote.assistantExecute(agentId, operation, input);
-        if (version !== epoch.current) return;
-        onSuccess?.(result);
-      } catch (reason) { if (version === epoch.current) setError(reason.message); }
-      finally { submitting.current = false; if (version === epoch.current) setBusy(false); }
-    };
-    const submit = async retryText => {
-      if (submitting.current || !view) return;
-      const request = read(pendingKey(agentId)) || pending || { text: (retryText ?? draft).trim(), requestId: window.crypto.randomUUID(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
-      if (!request.text) return;
-      try { save(pendingKey(agentId), request); } catch { setError('无法保存提交标识，请检查本机存储后重试。'); return; }
-      setPending(request); followLatest.current = true;
-      await execute('submit', request, result => {
-        if (!result.accepted || result.requestId !== request.requestId) { setError('提交结果未确认，请刷新后核对。'); return; }
-        window.localStorage.removeItem(pendingKey(agentId)); setPending(null); setDraft('');
-        setNotice('已收到。你可以随时离开，结果会留在这里。');
-        setView(previous => ({ ...previous, status: 'running', messages: previous.messages.some(item => item.requestId === request.requestId) ? previous.messages : [...previous.messages,
-          { id: `pending:${request.requestId}`, requestId: request.requestId, seq: (previous.messages.at(-1)?.seq ?? 0) + 1, role: 'user', text: request.text }] }));
-      });
-    };
-    const button = (label, onClick, disabled = false) => h('button', { type: 'button', onClick, disabled: busy || disabled, style: buttonStyle() }, label);
+    }, [view?.asOfSeq, messages.length, pending?.requestId]);
+    const submit = () => { followLatest.current = true; return session.submit(); };
+    const button = (label, onClick, disabled = false) => h(Action, { type: 'button', onClick, disabled: busy || disabled, ...(Button ? { variant: 'outline', size: 'sm' } : { style: buttonStyle() }) }, label);
     const box = { border: `1px solid ${BRAND.border}`, borderRadius: '12px', padding: '16px', background: BRAND.surface };
-    const messages = [...new Map([...older, ...(view?.messages || [])].map(item => [item.id, item])).values()]
-      .filter(item => item.requestId !== 'assistant-welcome-v1' && (item.role !== 'assistant' || item.text?.trim())).sort((a, b) => a.seq - b.seq);
     const chosen = catalog.find(item => item.metadata.id === agentId);
     const assistantName = view?.identity?.assistantName || chosen?.metadata.name || '个人助理';
     const running = view?.status === 'running';
+    const canCancel = assistantCancelAvailable(view);
+    const canUpload = view?.capabilities?.input?.attachments === true;
+    const attachmentsReady = attachments.every(row => row.status === 'ready');
+    const historyUnavailable = view?.historyState === 'migration-required' || view?.status === 'migration-required';
+    const hasConversation = Boolean(pending || view?.queued?.length || messages.some(message => message.requestId !== 'assistant-welcome-v1')
+      || view?.events?.some(event => ['assistant/message', 'tool/call', 'tool/result', 'deliverables/presented', 'goal/change', 'approval/asked'].includes(event.type)));
+    const stopping = cancelPhase === 'stopping' || cancelPhase === 'requesting';
+    const statusLabel = stopping ? '正在等待云端确认停止…' : running ? '正在处理…' : view?.status === 'queued' ? '已排队，等待处理…' : '';
+    const conversationError = (sessionMatches && (sessionState.error || sessionState.readError)) || error || view?.failure?.message || (view?.status === 'failed' ? '助理本次任务未完成，请重试。' : '');
     const openSettings = () => window.dispatchEvent(new window.CustomEvent('agentkit-studio:open-settings'));
-    const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
     if (catalogReady && !catalog.length && !chosen) {
       const setupError = error || setup?.failure?.message || (setup?.failure ? setup.message : '');
       const preparing = !setupError && setup && !['NOT_STARTED', 'ACTION_REQUIRED', 'FAILED', 'CREATE_UNKNOWN', 'UPLOAD_UNKNOWN', 'DELETED'].includes(setup.state);
@@ -154,6 +153,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
                 h('option', { value: '' }, '选择记忆库'), ...setupOptions.memories.map(item => h('option', { key: item.id, value: item.id }, item.name)))) : null,
             h('button', { type: 'button', onClick: () => void start(), disabled: setupBusy || !setupMemory, style: { ...buttonStyle(), padding: '12px 24px', borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }, '开通个人助理'),
             h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7, marginTop: '18px' } }, setupOptions.billingNotice),
+            setupOptions.permissionNotice ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7 } }, setupOptions.permissionNotice) : null,
             h('p', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, `使用 ${setupOptions.model.name} · ${setupOptions.memories.find(item => item.id === setupMemory)?.name || '选择一个记忆库'}`)) : null,
           setupError ? h('div', { style: { display: 'flex', gap: '12px', justifyContent: 'center' } },
             button('检查云端设置', openSettings), button('查看运行中心', () => onNavigate?.('operations'))) : null));
@@ -162,35 +162,57 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
       h('style', null, `[data-studio-assistant] .studio-assistant-composer:focus-within { outline: 1px solid ${BRAND.border}; outline-offset: 2px; } [data-studio-assistant] textarea[aria-label="发给助理"]::placeholder { color: ${BRAND.inkMuted}; opacity: 1; }`),
       h('header', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', gap: '12px' } },
         h('div', null, h('h1', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, assistantName),
-          running ? h('span', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, '正在处理…') : null),
+          statusLabel ? h('span', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, statusLabel) : null),
         h(ComputerConnection, { assistantName, deploymentName: chosen?.metadata.name })),
       h('div', { ref: history, 'aria-label': '助理会话', onScroll: event => { const node = event.currentTarget; followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100; },
         style: { flex: '1 1 0', minHeight: 0, overflow: 'auto', padding: '20px 24px' } },
-        h('div', { style: { maxWidth: '760px', margin: '0 auto', minHeight: '100%', display: 'flex', flexDirection: 'column', gap: '24px', justifyContent: messages.length ? 'flex-start' : 'center' } },
-          (olderHasMore ?? view?.hasMore) ? h('div', { style: { textAlign: 'center' } }, button('加载更早记录', () => void execute('snapshot', { beforeSeq: olderCursor ?? view.beforeSeq }, result => { followLatest.current = false; setOlder(rows => [...result.messages, ...rows]); setOlderCursor(result.beforeSeq); setOlderHasMore(result.hasMore); }))) : null,
-          !messages.length ? h('div', { style: { textAlign: 'center', paddingBottom: '40px' } },
-            h('h2', { style: { fontSize: '26px', fontWeight: 500, letterSpacing: '-0.04em', margin: '0 0 12px' } }, '有什么想一起完成的？'),
-            h('p', { style: { color: BRAND.inkMuted, fontSize: '14px', lineHeight: 1.8 } }, chosen ? '交代一件事，或告诉我你希望记住的偏好。' : catalogReady ? '先连接你的助理，之后我们就在这里继续。' : '正在连接你的助理…'),
+        h('div', { style: { maxWidth: '760px', margin: '0 auto', minHeight: '100%', display: 'flex', flexDirection: 'column', gap: '24px', justifyContent: hasConversation || historyUnavailable ? 'flex-start' : 'center' } },
+          (olderHasMore ?? view?.hasMore) ? h('div', { style: { textAlign: 'center' } }, button(loadingOlder ? '正在加载…' : '加载更早记录', () => { followLatest.current = false; void session.loadOlder(); }, loadingOlder)) : null,
+          !hasConversation && !historyUnavailable ? h('div', { style: { textAlign: 'center', paddingBottom: '40px' } },
+            h('h2', { style: { fontSize: '26px', fontWeight: 500, letterSpacing: '-0.04em', margin: '0 0 12px' } }, chosen && !view ? '正在恢复云端会话…' : '有什么想一起完成的？'),
+            h('p', { style: { color: BRAND.inkMuted, fontSize: '14px', lineHeight: 1.8 } }, chosen ? !view ? '已有任务会继续执行，连接恢复后会显示进度。' : '交代一件事，或告诉我你希望记住的偏好。' : catalogReady ? '先连接你的助理，之后我们就在这里继续。' : '正在连接你的助理…'),
             catalogReady && !chosen ? button('在系统设置中连接助理', openSettings) : null) : null,
-          ...messages.map(message => h('article', { key: message.id, 'aria-label': message.source === 'schedule' ? '提醒' : message.role === 'user' ? '你' : '助理', style: { alignSelf: message.role === 'user' && message.source !== 'schedule' ? 'flex-end' : 'stretch',
-            maxWidth: message.role === 'user' ? '86%' : '100%', borderRadius: '16px', padding: message.role === 'user' ? '12px 16px' : '0',
-            background: message.role === 'user' ? BRAND.accentSoft : 'transparent', whiteSpace: message.role === 'user' ? 'pre-wrap' : 'normal', overflowWrap: 'anywhere', lineHeight: 1.8, fontSize: '15px' } },
-            message.source === 'schedule' ? h('div', { style: { fontSize: '12px', color: BRAND.inkMuted } }, '提醒') : null, message.role === 'assistant' ? h(MarkdownText, { text: message.text, labels: markdownLabels }) : message.text)),
-          pending && !messages.some(message => message.requestId === pending.requestId) ? h('article', { style: { alignSelf: 'flex-end', maxWidth: '86%', ...box, background: BRAND.accentSoft, whiteSpace: 'pre-wrap' } }, pending.text) : null)),
+          h(AssistantTranscript, { messages, view, pending, assistantName, agentId }))),
       h('div', { style: { padding: '8px 24px 20px', flexShrink: 0 } }, h('div', { style: { maxWidth: '760px', margin: '0 auto' } },
-        (error || view?.failure?.message || (view?.status === 'failed' ? '助理本次任务未完成，请重试。' : '')) ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '13px', display: 'flex', gap: '12px', alignItems: 'center' } },
-          h('span', null, error || view?.failure?.message || '助理本次任务未完成，请重试。'),
-          !pending && view?.status === 'failed' && (view.retry?.text || messages.findLast(item => item.role === 'user')?.text) ? button('重试任务', () => void submit(view.retry?.text || messages.findLast(item => item.role === 'user').text)) : null) : null,
-        pending ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, '还在确认上一条消息，重试不会重复执行。') : null,
-        h('form', { className: 'studio-assistant-composer', onSubmit: event => { event.preventDefault(); void submit(); }, style: { ...box, padding: '12px 14px', borderRadius: '20px' } },
+        h(AssistantApprovals, { view, agentId, busy, decision: sessionMatches ? sessionState.approvalDecision : null, onDecide: (request, decision) => session.decideApproval(request, decision) }),
+        conversationError ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '13px', display: 'flex', gap: '12px', alignItems: 'center' } },
+          h('span', null, conversationError),
+          sessionMatches && sessionState.errorKind === 'attachment-expired' ? button('重新选择附件', () => { if (session.replaceExpiredAttachments()) filePicker.current?.click(); }) : null,
+          historyUnavailable ? button('检查云端设置', openSettings) : sessionMatches && (sessionState.readError || pendingInvalid) ? button('重新连接', () => void session.refresh()) : null,
+          !pending && assistantRetryAvailable(view) ? button('重试任务', () => { followLatest.current = true; void session.retry(); }) : null) : null,
+        running && !canCancel ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, '请更新云端运行环境后使用按任务停止，避免影响后续任务。') : null,
+        pending ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, pending.observed ? '消息已出现在云端，保存结果仍待确认。确认提交不会重复执行。' : '还在确认上一条消息，重试不会重复执行。') : null,
+        nativeComposerAvailable ? h(NativeComposer, { key: agentId, agentId, hiddenComposer: !useNativeComposer, onAccepted: () => session.refresh() }) : null,
+        useNativeComposer ? h('div', null,
+          running ? button(!canCancel ? '停止（需更新云端）' : stopping ? '正在停止…' : '停止当前任务', () => void session.cancel(() => actions.confirm({ title: '停止当前任务', detail: '停止助理正在处理的任务？停止请求受理后，仍需等待云端确认。', confirmLabel: '停止' })), stopping || !canCancel) : null) : h('form', { className: 'studio-assistant-composer',
+          onDragOver: event => { if (canUpload && Array.from(event.dataTransfer?.types || []).includes('Files')) event.preventDefault(); },
+          onDrop: event => { if (event.dataTransfer?.files?.length) { event.preventDefault(); session.addAttachments(Array.from(event.dataTransfer.files)); } },
+          onSubmit: event => { event.preventDefault(); void submit(); }, style: { ...box, padding: '12px 14px', borderRadius: '20px' } },
+          h('input', { ref: filePicker, type: 'file', multiple: true, 'aria-label': '上传附件', disabled: !canUpload || busy || Boolean(pending) || historyUnavailable, style: { display: 'none' },
+            onChange: event => { session.addAttachments(Array.from(event.target.files || [])); event.target.value = ''; } }),
+          attachments.length ? h('ul', { 'aria-label': '待发送附件', style: { listStyle: 'none', padding: 0, margin: '0 0 8px', display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+            ...attachments.map(row => h('li', { key: row.id, style: { border: `1px solid ${BRAND.border}`, borderRadius: '12px', padding: '8px 10px', minWidth: 0, maxWidth: '100%', display: 'flex', alignItems: 'center', gap: '8px' } },
+              FileTypeIcon ? h(FileTypeIcon, { path: row.name, size: 28 }) : null,
+              h('div', { style: { minWidth: 0 } }, h('div', { style: { fontSize: '13px', overflowWrap: 'anywhere' } }, row.name),
+                h('div', { role: 'status', style: { fontSize: '11px', color: ['failed', 'cancelled', 'expired'].includes(row.status) ? BRAND.danger : BRAND.inkMuted } },
+                  StateDot ? h(StateDot, { state: row.status === 'ready' ? 'done' : ['reading', 'uploading'].includes(row.status) ? 'ongoing' : 'error' }) : null,
+                  ' ', row.status === 'ready' ? '已上传，等待发送' : row.status === 'reading' ? `正在读取 ${row.progress || 0}%` : row.status === 'uploading' ? '正在上传，等待云端回执…' : row.error || '上传未完成'),
+                ['reading', 'uploading'].includes(row.status) ? h('progress', { 'aria-label': `附件进度：${row.name}`, ...(row.status === 'reading' ? { value: row.progress || 0, max: 100 } : {}), style: { maxWidth: '160px', width: '100%' } }) : null),
+              ['failed', 'cancelled'].includes(row.status) ? button('重试上传', () => void session.retryUpload(row.id), Boolean(pending)) : null,
+              ['reading', 'uploading'].includes(row.status) ? button('取消上传', () => session.cancelUpload(row.id), Boolean(pending)) : null,
+              h(Action, { type: 'button', 'aria-label': `移除附件：${row.name}`, disabled: busy || Boolean(pending), onClick: () => session.removeAttachment(row.id), ...(Button ? { size: 'sm', variant: 'ghost' } : { style: buttonStyle() }) }, '移除')))) : null,
+          attachmentError ? h('p', { role: 'alert', style: { margin: '4px 0 8px', color: BRAND.danger, fontSize: '12px' } }, attachmentError) : null,
           h('textarea', { ref: composer, 'aria-label': '发给助理', value: draft, maxLength: 32000, disabled: busy || Boolean(pending), rows: 3,
             style: { ...inputStyle(), border: 0, outline: 'none', height: 'auto', minHeight: '72px', padding: '4px 2px', background: 'transparent', boxShadow: 'none', width: '100%', resize: 'none', boxSizing: 'border-box', lineHeight: 1.6 },
-            onChange: event => setDraft(event.target.value), placeholder: '有什么想让我帮你做的？',
-            onKeyDown: event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!busy && view) void submit(); } } }),
+            onChange: event => session.setDraft(event.target.value),
+            onPaste: event => { if (event.clipboardData?.files?.length) { if (!event.clipboardData.getData('text/plain')) event.preventDefault(); session.addAttachments(Array.from(event.clipboardData.files)); } }, placeholder: '有什么想让我帮你做的？',
+            onKeyDown: event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!busy && view && !historyUnavailable) void submit(); } } }),
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } },
-            h('span', { style: { fontSize: '11px', color: BRAND.inkMuted } }, chosen ? 'Shift + Enter 换行' : '连接后即可发送，草稿会保留'),
-            h('div', { style: { display: 'flex', gap: '8px' } }, running ? button('停止', async () => { if (await actions.confirm({ title: '停止当前任务', detail: '停止助理正在处理的任务？', confirmLabel: '停止' })) void execute('cancel', {}, () => setNotice('已请求停止。')); }) : null,
-              h('button', { type: 'submit', disabled: busy || !view || (!pending && !draft.trim()), style: { ...buttonStyle(), borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }, pending ? '重试上一条' : '发送')))),
+            h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+              canUpload ? button('添加附件', () => filePicker.current?.click(), Boolean(pending) || historyUnavailable) : null,
+              h('span', { style: { fontSize: '11px', color: BRAND.inkMuted } }, chosen ? canUpload ? '可粘贴或拖入附件 · Shift + Enter 换行' : 'Shift + Enter 换行' : '连接后即可发送，草稿会保留')),
+            h('div', { style: { display: 'flex', gap: '8px' } }, running ? button(!canCancel ? '停止（需更新云端）' : stopping ? '正在停止…' : '停止', () => void session.cancel(() => actions.confirm({ title: '停止当前任务', detail: '停止助理正在处理的任务？停止请求受理后，仍需等待云端确认。', confirmLabel: '停止' })), stopping || !canCancel) : null,
+              h(Action, { type: 'submit', disabled: busy || !view || historyUnavailable || pendingInvalid || (!pending && (!attachmentsReady || !draft.trim() && !attachments.length)), ...(Button ? { variant: 'primary' } : { style: { ...buttonStyle(), borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }) }, pending ? pending.observed ? '确认提交' : '重试上一条' : '发送')))),
         h('p', { role: 'status', style: { margin: '8px 0 0', minHeight: '16px', fontSize: '11px', color: BRAND.inkMuted, textAlign: 'center' } }, notice || (chosen ? '离开也没关系，回来可以接着聊。' : '')))));
   };
 }

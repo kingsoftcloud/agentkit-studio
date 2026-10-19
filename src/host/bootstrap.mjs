@@ -17,7 +17,7 @@ import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
-import { bindFrozenRuntime } from './frozen-runtime-lifecycle.mjs';
+import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory } = {}) {
   const hostCompatibility = await loadHostCompatibility(ctx);
@@ -27,10 +27,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     innerIamUrl: runtimeEnv.AGENTENGINE_INNER_IAM_URL || '',
   };
   const bridge = mountRuntimeBridge(ctx);
-  // Keep Node-only configuration and HTTPS/KOP dependencies out of the
-  // browser-facing plugin module graph. DSH loads this module for both the
-  // Host and client faces; importing node:fs or aws4 at activation time makes
-  // the whole plugin fail before the Host route can be registered.
+  // Defer optional portable-bundle dependencies until Host activation.
+  // The browser uses the separately declared ./client bundle; it must never
+  // load this Host bootstrap or its Node-only configuration dependencies.
   const { loadPortableRuntime, createPortableBundles } = await import('../portable-bundle.mjs');
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
@@ -293,6 +292,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const { startFrozenBuildRuntime } = await import('../frozen-build-runtime.mjs');
   const bindRuntime = () => bindFrozenRuntime(ctx, {
+    // The portable profile delays native schedule restoration until frozen
+    // preset/model/permission initialization has completed. No timer retry or
+    // Session prewarming substitutes for the native dependency lifecycle.
+    readyService: portableRuntime ? FROZEN_RUNTIME_READY : undefined,
     start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
       admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) }),
     onUnavailable: error => console.warn('[agentkit-studio] frozen runtime unavailable:', error.message),
