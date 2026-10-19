@@ -2,7 +2,7 @@
 import { createAssistantLifecycle } from '../../assistant-lifecycle.mjs';
 const operations = new Set(['snapshot', 'submit', 'cancel', 'identity-update', 'schedule-list', 'schedule-create', 'schedule-delete', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
-export function createAssistantRoutes({ deployments, assistantStoreDir, assistantSetup, fetchImpl = fetch }) {
+export function createAssistantRoutes({ deployments, assistantStoreDir, assistantSetup, runtimeFetch, fetchImpl = runtimeFetch || fetch }) {
   const lifecycle = createAssistantLifecycle({ directory: assistantStoreDir, deployments, fetchImpl });
   return async (endpoint, payload = {}, signal) => {
     if (endpoint === 'assistant/close') return { ok: true, value: await lifecycle.close(payload) };

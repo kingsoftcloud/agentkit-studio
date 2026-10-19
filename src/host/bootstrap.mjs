@@ -93,7 +93,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     bridge,
     AdapterBase: LlmAdapter,
     attachments: () => ctx.get('attachments'),
-    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise }),
+    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise, fetchImpl: services.runtimeFetch }),
     localHandler: localRuntimeHandler,
     codexRuntime,
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),

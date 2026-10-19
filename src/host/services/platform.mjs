@@ -1,3 +1,4 @@
+import { createCloudRuntimeFetch } from '../../cloud-runtime-fetch.mjs';
 /** Domain construction only; state belongs to this Host scope. */
 export function createPlatformServices(ctx, { env: runtimeEnv, portableRuntime, cloudEndpointOptions, configurationHome }) {
     const configurationPromise = import('../../global-config.mjs').then(({ createGlobalConfiguration }) => createGlobalConfiguration({ env: runtimeEnv, home: configurationHome, inheritLegacy: !portableRuntime }));
@@ -10,5 +11,7 @@ export function createPlatformServices(ctx, { env: runtimeEnv, portableRuntime, 
     })));
     const deploymentClientPromise = Promise.all([import('../../server-client.mjs'), configurationPromise])
         .then(([{ createAgentEngineDeploymentClient }, configuration]) => createAgentEngineDeploymentClient({ configuration, ...cloudEndpointOptions }));
-    return { configurationPromise, credentialsService, serverClientPromise, deploymentClientPromise };
+    const runtimeFetch = createCloudRuntimeFetch({ configuration: configurationPromise });
+    ctx.effect(() => () => runtimeFetch.close(), 'agentkit-studio: cloud runtime transport lifetime');
+    return { configurationPromise, credentialsService, serverClientPromise, deploymentClientPromise, runtimeFetch };
 }
