@@ -91,7 +91,7 @@ export function createAgentStore({ storeDir } = {}) {
     return revisions.filter(Boolean);
   }
 
-  async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {}, templateSource, creationKey, teamRole }) {
+  async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {}, templateSource, creationKey, teamRole, purpose }) {
     await ensureDir();
     const agentId = `ar-local-${randomUUID().replace(/-/g, '').slice(0, 16)}`;
     const normalizedBindings = normalizeAgentBindings(spec.bindings ?? bindings);
@@ -104,6 +104,7 @@ export function createAgentStore({ storeDir } = {}) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         local: true,
+        ...(purpose === 'personal-assistant' ? { purpose } : {}),
         ...(templateSource ? { templateSource: structuredClone(templateSource) } : {}),
         ...(teamRole ? { teamRole: structuredClone(teamRole) } : {}),
         ...(creationKey ? { creationKey: String(creationKey) } : {}),

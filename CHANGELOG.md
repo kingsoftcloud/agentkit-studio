@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep cloud Node 22 resource, model and MCP POSTs on DSH's Undici transport so the first web fetch cannot break subsequent requests with an invalid content-length header.
+
+- Prevent plugin inspection snapshots from terminating the Host when their retained-record envelope reaches the frame limit.
+- Show personal assistant task failures with an explicit retry action, omit empty tool-only replies, and bind personal assistant conversations to the verified cloud instance instead of its local configuration.
+
 - Publish accepted Windows installers and blockmaps to KS3 before advancing the canonical and compatibility feeds; require original signing, actual installation and native UI evidence when reusing candidates.
 
 - Align the cloud HTTP transport with the Host's Undici version and pair its fetch with its dispatcher, preserving both the sealed archive and the packaged Node runtime contract.

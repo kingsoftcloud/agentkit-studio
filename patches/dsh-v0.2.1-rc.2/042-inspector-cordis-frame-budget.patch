@@ -1,0 +1,102 @@
+diff --git a/packages/experimental/inspector/README.md b/packages/experimental/inspector/README.md
+index 9856c718e5128b0d655fa5fec39bd89691c78467..b5d6700697809dd4f430a2280be31a050b4f0877 100644
+--- a/packages/experimental/inspector/README.md
++++ b/packages/experimental/inspector/README.md
+@@ -60,7 +60,7 @@ Client sources declare typed Runtime, Console, and read-only Sources capabilitie
+ 
+ A Client synchronously closes its source on `pagehide` and reconnects with the same logical identity on `pageshow` after a cached-page restore. Switching a live page to the background does not disconnect it. Closed generations cannot publish delayed execution contexts or script catalogs.
+ 
+-Both plugin faces run the same browser-safe Cordis collector. It converts reachable Context and Fiber objects into a versioned `CordisTreeSnapshot`; the Worker stores that CDP-independent representation and projects each Host or Client source into the Elements panel.
++Cordis snapshot publication reserves the complete retained-record envelope before pruning the tree to the source-frame limit; enabling additional plugins truncates inspection without terminating the Host. Both plugin faces run the same browser-safe Cordis collector. It converts reachable Context and Fiber objects into a versioned `CordisTreeSnapshot`; the Worker stores that CDP-independent representation and projects each Host or Client source into the Elements panel.
+ 
+ <a id="configuration"></a>
+ ## Configuration
+diff --git a/packages/experimental/inspector/README.zh.md b/packages/experimental/inspector/README.zh.md
+index 66b25ec2cc5cf4f37d6267efa6d2ebe242dd0116..6adb0ba822196c91f2f652d1710c1aa9ee052e18 100644
+--- a/packages/experimental/inspector/README.zh.md
++++ b/packages/experimental/inspector/README.zh.md
+@@ -60,7 +60,7 @@ Client source 声明类型化 Runtime、Console 和只读 Sources 能力。`Runt
+ 
+ Client 在 `pagehide` 时同步关闭 source，缓存页面恢复并收到 `pageshow` 后，使用同一逻辑身份重新连接。仍然存活的页面切到后台不会断开。已关闭的 generation 不会在异步操作完成后发布执行上下文或 script catalog。
+ 
+-两个插件端运行同一份可在浏览器中安全运行的 Cordis collector。它把可达 Context 与 Fiber 对象转换成有版本的 `CordisTreeSnapshot`；Worker 存储这份与 CDP 无关的表示，并把每个 Host 或 Client source 投影到 Elements 面板。
++Cordis 快照先预留完整记录包装的字节，再按传输帧上限裁剪；启用更多插件只会截断诊断树，不会终止 Host。两个插件端运行同一份可在浏览器中安全运行的 Cordis collector。它把可达 Context 与 Fiber 对象转换成有版本的 `CordisTreeSnapshot`；Worker 存储这份与 CDP 无关的表示，并把每个 Host 或 Client source 投影到 Elements 面板。
+ 
+ <a id="configuration"></a>
+ ## 配置
+diff --git a/packages/experimental/inspector/src/shared/cordis/publisher.ts b/packages/experimental/inspector/src/shared/cordis/publisher.ts
+index 0519e302d87793f0e7d26a1a5d898a523b6af3bc..33aa17684d7e53993793d13af233608156060121 100644
+--- a/packages/experimental/inspector/src/shared/cordis/publisher.ts
++++ b/packages/experimental/inspector/src/shared/cordis/publisher.ts
+@@ -3,7 +3,7 @@
+ import type { Context } from '@deepseek-ai/cordis'
+ import { CORDIS_TREE_TOPIC } from '../bridge/messages/cordis.ts'
+ import type { InspectorStatePublisher } from '../bridge/publisher.ts'
+-import type { InspectorJsonValue } from '../json.ts'
++import { jsonByteLength, type InspectorJsonValue } from '../json.ts'
+ import type { CordisTreeLimits } from './collector.ts'
+ import { observeCordisTree } from './observer.ts'
+ 
+@@ -11,7 +11,7 @@ import { observeCordisTree } from './observer.ts'
+  * Observe one Cordis runtime and retain its latest source snapshot.
+  * @param ctx - Plugin context whose root is inspected.
+  * @param publisher - Active Host or Client source publisher.
+- * @param limits - Snapshot node and encoded-byte limits.
++ * @param limits - Snapshot node and retained-record byte limits, excluding the source-frame envelope.
+  * @returns A disposer that stops observation and releases retained objects.
+  */
+ export function publishCordisTree(
+@@ -19,7 +19,10 @@ export function publishCordisTree(
+   publisher: InspectorStatePublisher,
+   limits: CordisTreeLimits,
+ ): () => void {
++  // The buffer retains an array of records, not a bare snapshot. Reserve the
++  // complete record wrapper, including a maximal finite source timestamp.
++  const envelopeBytes = jsonByteLength([{ topic: CORDIS_TREE_TOPIC, monotonicMs: -Number.MAX_VALUE, payload: null }]) - 4
+   return observeCordisTree(ctx, (snapshot) => {
+     publisher.setState(CORDIS_TREE_TOPIC, snapshot as unknown as InspectorJsonValue)
+-  }, limits)
++  }, { ...limits, maxBytes: limits.maxBytes - envelopeBytes })
+ }
+diff --git a/packages/experimental/inspector/tests/cordis-frame-budget.host.spec.ts b/packages/experimental/inspector/tests/cordis-frame-budget.host.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..28caf8a0b8ce3bea7f3cd7cc0f4aeab2f7f46a8a
+--- /dev/null
++++ b/packages/experimental/inspector/tests/cordis-frame-budget.host.spec.ts
+@@ -0,0 +1,36 @@
++/** Cordis publication must include its retained-record envelope in the frame budget. */
++import { Context } from '@deepseek-ai/cordis'
++import { expect, it } from 'vitest'
++import { InspectorSourceBuffer } from '../src/shared/bridge/buffer.ts'
++import { inspectorId } from '../src/shared/bridge/ids.ts'
++import { CordisTreeCollector } from '../src/shared/cordis/collector.ts'
++import { publishCordisTree } from '../src/shared/cordis/publisher.ts'
++
++it('enabling plugins publishes a bounded tree through the real retained-state buffer', async () => {
++  const root = new Context()
++  const fibers = Array.from({ length: 30 }, (_, i) => root.plugin({ name: `plugin-${String(i)}`, apply() {} }))
++  await Promise.all(fibers.map(fiber => fiber.await()))
++  const collector = new CordisTreeCollector(root, { maxNodes: 1000, maxBytes: 1024 * 1024 })
++  const maxBytes = Buffer.byteLength(JSON.stringify(collector.snapshot()))
++  collector.close()
++  const records = new InspectorSourceBuffer({ topics: ['*'], maxQueuedRecords: 100,
++    maxQueuedBytes: 1024 * 1024, maxRecordsPerFrame: 128, maxFrameBytes: maxBytes + 4096 })
++  let stop: (() => void) | undefined
++  try {
++    expect(() => {
++      stop = publishCordisTree(root, {
++        publish: (topic, payload) => { records.publish(topic, payload, 1) },
++        setState: (topic, payload) => { records.setState(topic, payload, 1) },
++      }, { maxNodes: 1000, maxBytes })
++    }).not.toThrow()
++    const sourceId = inspectorId<'InspectorSourceId'>('test-host', 'sourceId')
++    const generation = inspectorId<'InspectorSourceGeneration'>('test-generation', 'generation')
++    const frame = records.replacement(sourceId, generation)
++    expect(frame.records).toHaveLength(1)
++    expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThanOrEqual(maxBytes + 4096)
++    expect(frame.records[0]?.payload).toMatchObject({ truncated: true })
++  } finally {
++    stop?.()
++    await Promise.all(fibers.map(fiber => fiber.dispose()))
++  }
++})

@@ -103,3 +103,18 @@ test('assistant transcript does not present injected instructions as human messa
   const snapshot = await api('snapshot');
   assert.deepEqual(snapshot.messages.map(message => message.text), ['hello']);
 });
+
+test('a failed tool-only turn exposes one visible failure rather than empty assistant bubbles', async () => {
+  const f = fixture(), api = f.create();
+  const receipt = await api('submit', { requestId: 'news', text: '查一下今天最新的 AI 新闻' });
+  const events = f.logs.get(receipt.sessionId);
+  events.push({ seq: 10, type: 'assistant/message', data: { message: { content: [], toolCalls: [{ name: 'web_search' }] } } });
+  events.push({ seq: 12, type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { code: 'UNKNOWN', message: 'Authorization: Bearer private-secret' } } } });
+  const snapshot = await api('snapshot');
+  assert.equal(snapshot.status, 'failed');
+  assert.deepEqual(snapshot.messages.map(item => item.role), ['user']);
+  assert.equal(snapshot.failure.code, 'ASSISTANT_TURN_FAILED');
+  assert.match(snapshot.failure.message, /未完成/);
+  assert.ok(!JSON.stringify(snapshot).includes('private-secret'));
+  assert.equal(snapshot.retry.text, '查一下今天最新的 AI 新闻');
+});

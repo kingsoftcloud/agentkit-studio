@@ -66,12 +66,19 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
       if (!role) return [];
       const message = role === 'assistant' ? event.data?.message : event.data;
       if (role === 'user' && !['user', 'schedule'].includes(message?.source?.kind)) return [];
-      return [{ source: message?.source?.kind, id: `${sessionId}:${event.seq}`, seq: event.seq, role, text: message?.source?.kind === 'schedule' ? '定时任务已触发。' : text(message?.content), requestId: message?.source?.rpcId || '' }];
+      const visibleText = message?.source?.kind === 'schedule' ? '定时任务已触发。' : text(message?.content);
+      if (role === 'assistant' && !visibleText.trim()) return [];
+      return [{ source: message?.source?.kind, id: `${sessionId}:${event.seq}`, seq: event.seq, role, text: visibleText, requestId: message?.source?.rpcId || '' }];
     });
     const end = events.findLast(event => event.type === 'turn/start' || event.type === 'turn/end');
     const status = end?.type === 'turn/start' ? 'running' : end?.data?.reason?.kind === 'completed' ? 'completed'
       : end?.data?.reason?.kind === 'aborted' ? 'cancelled' : end ? 'failed' : 'idle';
-    return { messages, status, hasMore: page.hasMore === true, beforeSeq: events[0]?.seq,
+    // Raw provider/tool failures can contain credentials; expose a stable
+    // product error while retaining the original reason in the DSH log.
+    const failure = status === 'failed' ? { code: 'ASSISTANT_TURN_FAILED', message: '助理本次任务未完成，请重试；若仍失败，请检查模型和工具连接。' } : null;
+    const lastUser = messages.findLast(item => item.role === 'user' && item.source !== 'schedule');
+    const retry = failure && lastUser ? { text: lastUser.text } : null;
+    return { messages, status, failure, retry, hasMore: page.hasMore === true, beforeSeq: events[0]?.seq,
       ...profile, memoryEnabled, scheduleEnabled: Boolean(ctx.get('schedule')), canClose: Boolean(retirement) };
   }
   const run = async (operation, payload = {}) => {
