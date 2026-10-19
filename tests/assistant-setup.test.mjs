@@ -20,7 +20,7 @@ async function fixture(t, { loseWelcome = false } = {}) {
       Product: 'agentkit-studio', ClientType: 'studio', Environment: 'pre-online', Region: 'cn-beijing-6',
       Capabilities: { ContainerStorage: { Contract: 'agentengine.container-storage/v1', Frameworks: ['harness'], MinSizeGi: 20, MaxSizeGi: 500, MaxReplicas: 1, PaymentType: 'Daily' } },
       Configs: { 'studio.runtime.images.v1': { format: 'agentkit.runtime-images/v1', environment: 'pre-online', region: 'cn-beijing-6', defaultReleaseId: null,
-        releases: [{ id: 'assistant-fixture', version: 'assistant-fixture', label: 'Fixture', enabled: true, channel: 'preview', runtimeIdentity: true, capabilities: ['personal-assistant/v1'],
+        releases: [{ id: 'assistant-fixture', version: 'assistant-fixture', label: 'Fixture', enabled: true, channel: 'preview', runtimeIdentity: true, capabilities: ['personal-assistant/v1', 'personal-assistant-workspace-managed/v1'],
           image: `hub.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`, port: 8080, platform: 'linux/amd64', runtimes: ['dsh-native'], bundleFormat: 'agentkit.portable-bundle/v1', minimumStudioVersion: '0.0.2', notices: [] }] } },
     } }) },
     deployments: {
@@ -28,7 +28,7 @@ async function fixture(t, { loseWelcome = false } = {}) {
       get: async id => { if (!records.has(id)) throw Object.assign(Error(), { code: 'DEPLOYMENT_NOT_FOUND' }); return records.get(id); },
       create: async input => { calls.create++; const id = 'dep_' + sha256(input.idempotencyKey).slice(0, 32); const d = { id, state: 'PROVISIONING', cloudAgentId: 'ar-cloud-test' }; records.set(id, d); return d; },
       refresh: async id => { const d = { ...records.get(id), state: 'READY' }; records.set(id, d); return d; },
-      agents: { connect: async () => ({ endpoint: 'https://assistant.test', token: 'synthetic-runtime-token', capabilities: ['personal-assistant/v1'] }) },
+      agents: { connect: async () => ({ endpoint: 'https://assistant.test', token: 'synthetic-runtime-token', capabilities: ['personal-assistant/v1', 'personal-assistant-workspace-managed/v1'] }) },
     },
     fetchImpl: async (url, init) => {
       if (url.endsWith('/snapshot')) return Response.json({ messages });
@@ -53,6 +53,7 @@ test('opening is explicit, deduplicated, durable and welcomes only after cloud r
   await restarted.start(input);
   await new Promise(r => setTimeout(r, 30));
   assert.equal(f.calls.create, 1); assert.equal(f.calls.welcome, 1);
+  assert.equal((await f.deps.agents.list())[0].spec.security.assistantPermissions.profile, 'workspace-managed/v1');
   const files = await readdir(join(f.root, 'setup'));
   const saved = (await Promise.all(files.filter(x => x.endsWith('.json')).map(x => readFile(join(f.root, 'setup', x), 'utf8')))).join('');
   for (const secret of ['synthetic-access', 'synthetic-secret', 'synthetic-model-key', 'synthetic-runtime-token']) assert.ok(!saved.includes(secret));
@@ -125,4 +126,13 @@ test('assistant reference is a read-only scoped lineage, including existing reco
   f.values.cloudRegion = 'another-region';
   assert.equal(await f.service.reference(), null);
   assert.equal(f.calls.create, 1);
+});
+
+test('new managed assistants require matching image capability before creating billable resources', async t => {
+  const f = await fixture(t), load = f.deps.deploymentClient.getBootstrapConfig;
+  f.deps.deploymentClient.getBootstrapConfig = async () => {
+    const result = await load(); result.data.Configs['studio.runtime.images.v1'].releases[0].capabilities = ['personal-assistant/v1']; return result;
+  };
+  await assert.rejects(f.service.options(), {code:'ASSISTANT_IMAGE_UNAVAILABLE'});
+  assert.equal(f.calls.create,0); assert.equal((await f.deps.agents.list()).length,0);
 });

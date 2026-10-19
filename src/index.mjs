@@ -13,12 +13,16 @@
  */
 import { AGENTKIT_STUDIO_MARK_SVG } from './brand.js';
 import * as AgentKitHarnessPlugin from '../packages/agentkit-harness/src/index.mjs';
+import { installAssistantStartupGuard } from './assistant-permission-model.mjs';
 
 export const name = 'agentkit-studio';
 export const inject = ['connection', 'webServer', 'credentials'];
 const runtimeEnv = typeof process === 'object' && process?.env ? process.env : {};
 
 export async function apply(ctx) {
+  // Deny-only gate must precede preset registration and every asynchronous boot step.
+  // Receipt verification later replaces this guard without a permission gap.
+  installAssistantStartupGuard(ctx, runtimeEnv);
   // Harness is a separately publishable DSH plugin, even when bundled with
   // Studio. The DSH host owns its Agent/Session services and its teardown.
   ctx.inject(['agents', 'sessions', 'llm'], harnessCtx => {

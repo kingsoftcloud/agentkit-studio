@@ -15,7 +15,8 @@ export async function createAssistantRetirement({ ctx, env }) {
     if (!info.isDirectory() || info.isSymbolicLink()) return null;
   }
   const domains = ctx.get('storageDomain');
-  if (typeof domains?.closeAll !== 'function') return null;
+  const agents = ctx.get('agents');
+  if (typeof domains?.closeAll !== 'function' || typeof agents?.get !== 'function' || typeof agents.list !== 'function') return null;
   const marker = join(root, '.assistant-closed.json');
   let result, pending;
   const persist = async value => { await writeFile(marker + '.next', JSON.stringify(value) + '\n', { mode: 0o600 }); await rename(marker + '.next', marker); };
@@ -26,18 +27,29 @@ export async function createAssistantRetirement({ ctx, env }) {
       await persist({ phase: 'closing', bundleSha256: receipt.bundleSha256 });
       const controller = ctx.get('sessionController'), schedule = ctx.get('schedule');
       // This Host is a dedicated frozen deployment, proven by its boot receipt.
-      // Stop timers before cancelling every native Session in that deployment.
+      // Stop timers before cancelling live Agents in that deployment. The
+      // durable catalog also includes cold Sessions; cancel does not resume them.
       if (schedule) for (const task of await schedule.catalog()) await schedule.delete({ sessionId: task.sessionId, id: task.id });
       const sessions = await controller.list({}, new AbortController().signal);
-      for (const item of sessions.items) await controller.cancel({ sessionId: item.sessionId });
+      for (const item of sessions.items) {
+        // Native get/cancel are synchronous: no await may separate this live
+        // identity check from dispatch. Real cancellation failures must stop
+        // retirement; only an actually absent Agent is safe to skip.
+        if (agents.get(item.sessionId)) await controller.cancel({ sessionId: item.sessionId });
+      }
       const until = Date.now() + 20000;
-      while (ctx.get('agents').list().some(agent => agent.status === 'running')) {
+      while (agents.list().some(agent => agent.status === 'running')) {
         if (Date.now() >= until) throw fail('ASSISTANT_DELETE_BUSY', '助理任务尚未停止，请稍后重试关闭');
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       for (const session of ctx.get('sessions').list()) {
         if (!await ctx.get('sessions').flush(session)) throw fail('ASSISTANT_DELETE_UNCONFIRMED', '会话停止结果尚未确认');
       }
+      // Managed workspaces live alongside configuration, never inside it. A
+      // replaced top-level directory must stop cleanup before any memory write.
+      const workspace = join(root, 'assistant-workspaces');
+      const workspaceInfo = await lstat(workspace).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
+      if (workspaceInfo && (!workspaceInfo.isDirectory() || workspaceInfo.isSymbolicLink() || await realpath(workspace) !== workspace)) throw fail('ASSISTANT_DELETE_SCOPE_INVALID', '助理工作区归属无法核对');
       const memory = await clearMemory();
       // Session.flush owns the event log, not write-behind projection caches.
       // Close the dedicated Host's native domains: reject new cache writes and
@@ -45,13 +57,14 @@ export async function createAssistantRetirement({ ctx, env }) {
       await domains.closeAll();
       await ctx.get('sessionPersistence')?.flush();
       // Revalidate immediately before deletion; no caller can supply a path.
-      for (const name of ['agentkit', 'dsh']) {
+      for (const name of ['agentkit', 'dsh', 'assistant-workspaces']) {
         const path = join(root, name), info = await lstat(path).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
         if (info && (!info.isDirectory() || info.isSymbolicLink() || await realpath(path) !== path)) throw fail('ASSISTANT_DELETE_SCOPE_INVALID', '专属运行目录归属无法核对');
       }
+      await rm(workspace, { recursive: true, force: true });
       await rm(join(root, 'dsh'), { recursive: true, force: true });
       await rm(join(root, 'agentkit'), { recursive: true, force: true });
-      result = { deleted: true, historyDeleted: true, memoryDeleted: true, memoryCount: memory.count,
+      result = { deleted: true, historyDeleted: true, memoryDeleted: true, workspaceDeleted: true, memoryCount: memory.count,
         agentId: env.AGENTKIT_RUNTIME_AGENT_ID, buildId: env.AGENTKIT_RUNTIME_BUILD_ID };
       await persist({ phase: 'closed', bundleSha256: receipt.bundleSha256, result });
       return result;

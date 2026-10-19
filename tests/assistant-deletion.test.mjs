@@ -42,12 +42,13 @@ test('wrong ownership, an old image or unconfirmed cleanup cannot delete a deplo
 });
 test('retirement erases only receipt-owned runtime files after native writers drain', async t => {
   const root = await temp(t), hash = 'a'.repeat(64), calls = [];
+  const liveAgent = { session: { id: 'assistant' }, status: 'idle' };
   for (const name of ['agentkit', 'dsh', 'shared']) { await mkdir(join(root, name)); await writeFile(join(root, name, 'data'), name); }
   await writeFile(join(root, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: hash }));
   const ctx = { get: name => ({
     sessionController: { list: async () => ({ items: [{ sessionId: 'assistant' }] }), cancel: async () => calls.push('cancel') },
     schedule: { catalog: async () => [{ id: 'timer', sessionId: 'assistant' }], delete: async () => calls.push('timer') },
-    agents: { list: () => [] }, sessions: { list: () => ['session'], flush: async () => { calls.push('flush'); return true; } },
+    agents: { get: id => id === liveAgent.session.id ? liveAgent : undefined, list: () => [liveAgent] }, sessions: { list: () => ['session'], flush: async () => { calls.push('flush'); return true; } },
     storageDomain: { closeAll: async () => { await access(join(root, 'dsh/data')); calls.push('domains'); } },
     sessionPersistence: { flush: async () => calls.push('persistence') },
   })[name] };
@@ -59,6 +60,74 @@ test('retirement erases only receipt-owned runtime files after native writers dr
   assert.equal(await readFile(join(root, 'shared/data'), 'utf8'), 'shared');
   assert.equal(JSON.parse(await readFile(join(root, '.assistant-closed.json'))).phase, 'closed');
   assert.deepEqual(await retire(() => assert.fail('cleanup repeated')), result);
+});
+
+async function retirementFixture(t) {
+  const root = await temp(t), hash = 'c'.repeat(64), calls = [];
+  for (const name of ['agentkit', 'dsh']) { await mkdir(join(root, name)); await writeFile(join(root, name, 'data'), name); }
+  await writeFile(join(root, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: hash }));
+  const live = new Map([['live', { session: { id: 'live' }, status: 'idle' }]]);
+  const services = {
+    sessionController: {
+      list: async () => { calls.push('catalog'); return { items: [{ sessionId: 'cold' }, { sessionId: 'live' }] }; },
+      resolveAgent: async () => assert.fail('Retirement must not restore a cold Session'),
+      cancel: ({ sessionId }) => {
+        assert.ok(live.has(sessionId), 'Only an existing live Agent may be cancelled'); calls.push(`cancel:${sessionId}`); return { accepted: true };
+      },
+    },
+    agents: { get: id => live.get(id), list: () => [...live.values()] },
+    sessions: { list: () => [], flush: async () => { calls.push('flush'); return true; } },
+    storageDomain: { closeAll: async () => { await access(join(root, 'dsh/data')); calls.push('domains'); } },
+    sessionPersistence: { flush: async () => calls.push('persistence') },
+  };
+  const ctx = { get: name => services[name] }, env = { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: hash };
+  return { root, calls, live, services, ctx, env, clearMemory: async () => { calls.push('memory'); return { count: 0 }; } };
+}
+
+test('retirement keeps cold catalog reads but never cancels or resumes their absent Agents', async t => {
+  const f = await retirementFixture(t), retire = await createAssistantRetirement(f);
+  assert.equal((await retire(f.clearMemory)).deleted, true);
+  assert.deepEqual(f.calls, ['catalog', 'cancel:live', 'memory', 'domains', 'persistence']);
+  await assert.rejects(access(join(f.root, 'dsh')), { code: 'ENOENT' });
+});
+
+test('an all-cold deployment retires without creating or cancelling any Agent', async t => {
+  const f = await retirementFixture(t); f.live.clear();
+  const retire = await createAssistantRetirement(f);
+  assert.equal((await retire(f.clearMemory)).deleted, true);
+  assert.deepEqual(f.calls, ['catalog', 'memory', 'domains', 'persistence']);
+});
+
+test('native live lookup and cancel dispatch share one synchronous boundary', async t => {
+  const f = await retirementFixture(t);
+  f.services.agents.get = id => {
+    const current = f.live.get(id);
+    if (current) queueMicrotask(() => f.live.delete(id));
+    return current;
+  };
+  const retire = await createAssistantRetirement(f);
+  assert.equal((await retire(f.clearMemory)).deleted, true);
+  assert.ok(f.calls.includes('cancel:live'));
+});
+
+test('a live cancellation failure remains visible and prevents memory or filesystem deletion', async t => {
+  const f = await retirementFixture(t), failure = Object.assign(new Error('live cancellation failed'), { code: 'session/not-found' });
+  f.services.sessionController.cancel = () => { f.calls.push('cancel-failed'); throw failure; };
+  const retire = await createAssistantRetirement(f);
+  await assert.rejects(retire(f.clearMemory), error => error === failure);
+  assert.deepEqual(f.calls, ['catalog', 'cancel-failed']);
+  await access(join(f.root, 'agentkit/data')); await access(join(f.root, 'dsh/data'));
+  assert.equal(JSON.parse(await readFile(join(f.root, '.assistant-closed.json'))).phase, 'closing');
+  // A subsequent attempt can observe that the Agent has genuinely gone away.
+  f.live.clear();
+  assert.equal((await retire(f.clearMemory)).deleted, true);
+  assert.equal(f.calls.filter(call => call === 'cancel-failed').length, 1);
+});
+
+test('a Host without live-Agent lookup does not advertise safe retirement', async t => {
+  const f = await retirementFixture(t); delete f.services.agents.get;
+  assert.equal(await createAssistantRetirement(f), null);
+  assert.deepEqual(f.calls, []); await access(join(f.root, 'dsh/data'));
 });
 test('unowned or linked runtime directories cannot gain delete capability', async t => {
   const root = await temp(t), hash = 'b'.repeat(64);
@@ -78,4 +147,40 @@ test('closing drains only the bound assistant memory partition and blocks new me
   const result = await api('close'); assert.equal(result.count, 205); assert.equal(memories.length, 0);
   assert.ok(calls.every(([collection, user, options]) => collection === 'shared-collection' && user === 'studio-anonymous' && options.agentId === 'owned-agent'));
   await assert.rejects(api('submit', { requestId: 'later', text: 'run' }), { code: 'ASSISTANT_CLOSED' });
+});
+
+test('retirement includes managed workspace files while leaving unrelated siblings untouched', async t => {
+  const f = await retirementFixture(t), workspace = join(f.root, 'assistant-workspaces');
+  await mkdir(join(workspace,'owned','files'),{recursive:true}); await writeFile(join(workspace,'owned','files','note.txt'),'private workspace note');
+  await mkdir(join(f.root,'unrelated')); await writeFile(join(f.root,'unrelated','keep.txt'),'keep');
+  const retire = await createAssistantRetirement(f), result = await retire(f.clearMemory);
+  assert.equal(result.workspaceDeleted,true); await assert.rejects(access(workspace),{code:'ENOENT'});
+  assert.equal(await readFile(join(f.root,'unrelated','keep.txt'),'utf8'),'keep');
+});
+
+test('a substituted workspace root blocks cleanup before memory or unrelated files are touched', async t => {
+  const f = await retirementFixture(t), outside = join(f.root,'outside');
+  await mkdir(outside); await writeFile(join(outside,'keep.txt'),'outside');
+  await symlink(outside,join(f.root,'assistant-workspaces'));
+  const retire = await createAssistantRetirement(f);
+  await assert.rejects(retire(f.clearMemory),{code:'ASSISTANT_DELETE_SCOPE_INVALID'});
+  assert.equal(f.calls.includes('memory'),false); assert.equal(await readFile(join(outside,'keep.txt'),'utf8'),'outside');
+  await access(join(f.root,'agentkit','data')); await access(join(f.root,'dsh','data'));
+});
+
+
+test('managed deployments require explicit workspace erasure before removal', async t => {
+  const directory = await temp(t), f = deploymentFixture();
+  f.service.agents.connect = async () => ({ agent: { deployment: { id: f.record.id } },
+    capabilities: ['personal-assistant-delete/v1', 'personal-assistant-workspace-managed/v1'],
+    endpoint: 'https://runtime.example.test', token: 'fixture-token' });
+  let workspaceDeleted = false;
+  const lifecycle = createAssistantLifecycle({ directory, deployments: async () => f.service, fetchImpl: async () =>
+    Response.json({ deleted: true, historyDeleted: true, memoryDeleted: true, workspaceDeleted,
+      agentId: f.record.agentId, buildId: f.record.buildId }) });
+  await assert.rejects(lifecycle.close(payload), { code: 'ASSISTANT_DELETE_UNCONFIRMED' });
+  assert.deepEqual(f.calls, []);
+  workspaceDeleted = true;
+  assert.equal((await lifecycle.close(payload)).workspaceDeleted, true);
+  assert.deepEqual(f.calls, ['remove']);
 });

@@ -1,6 +1,10 @@
 /** Only receipt-owned DSH deployments may be reached; tokens stay in Node. */
+import { createHash } from 'node:crypto';
 import { createAssistantLifecycle } from '../../assistant-lifecycle.mjs';
-const operations = new Set(['snapshot', 'submit', 'cancel', 'identity-update', 'schedule-list', 'schedule-create', 'schedule-delete', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
+import { ASSISTANT_ATTACHMENT_CAPABILITIES } from '../../contracts/assistant-attachments.mjs';
+import { encodeAssistantInput, readAssistantResponse, assistantCloudFailure } from '../../assistant-transport.mjs';
+import { ASSISTANT_NATIVE_CAPABILITY, ASSISTANT_NATIVE_OPERATIONS, isAssistantNativeOperation } from '../../contracts/assistant-native.mjs';
+const operations = new Set([...ASSISTANT_NATIVE_OPERATIONS, 'snapshot', 'image-read', 'attachment-upload', 'file-read', 'approval-decide', 'cancel-turn', 'submit', 'cancel', 'identity-update', 'schedule-list', 'schedule-create', 'schedule-delete', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
 export function createAssistantRoutes({ deployments, assistantStoreDir, assistantSetup, runtimeFetch, fetchImpl = runtimeFetch || fetch }) {
   const lifecycle = createAssistantLifecycle({ directory: assistantStoreDir, deployments, fetchImpl });
@@ -21,12 +25,30 @@ export function createAssistantRoutes({ deployments, assistantStoreDir, assistan
     const { agent, endpoint: base, token, capabilities } = await agents.connect(payload.agentId);
     if (agent.spec?.runtime?.type !== 'dsh-native') throw fail('ASSISTANT_RUNTIME_INVALID', '个人助理需要 DSH Runtime');
     if (!capabilities.includes('personal-assistant/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '请更新云端 DSH 镜像以启用个人助理和后台会话恢复', 409);
+    if (isAssistantNativeOperation(payload.operation) && !capabilities.includes(ASSISTANT_NATIVE_CAPABILITY)) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供安全的原生会话连接，请更新后重试', 409);
+    if (payload.operation === 'cancel-turn' && !capabilities.includes('personal-assistant-cancel-turn/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供按任务停止能力，请更新后重试', 409);
+    if (payload.operation === 'approval-decide' && !capabilities.includes('personal-assistant-approval-bridge/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供实时审批接口', 409);
+    if (payload.operation === 'image-read' && !capabilities.includes('personal-assistant-images/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供助理图片读取能力', 409);
     if (payload.operation === 'identity-update' && !capabilities.includes('personal-assistant-identity/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '请更新云端 DSH 镜像以保存助理名字和称呼', 409);
+    const capability = payload.operation === 'attachment-upload' ? ASSISTANT_ATTACHMENT_CAPABILITIES.upload
+      : payload.operation === 'file-read' ? ASSISTANT_ATTACHMENT_CAPABILITIES.read
+        : payload.operation === 'submit' && payload.input?.content !== undefined ? ASSISTANT_ATTACHMENT_CAPABILITIES.content : null;
+    if (capability && !capabilities.includes(capability)) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供所需附件能力，请更新后重试', 409);
+    let journalScope;
+    if (payload.operation === 'native-open') {
+      const receipt = agent.deployment;
+      if (!receipt || !['id', 'buildId', 'versionId'].every(key => typeof receipt[key] === 'string' && receipt[key])) throw fail('ASSISTANT_NATIVE_UNAVAILABLE', '当前部署缺少原生会话所需的归属信息', 409);
+      // Only public receipt identity contributes to the browser draft namespace;
+      // tokens, endpoints and account credentials are never hashed or exposed.
+      journalScope = createHash('sha256').update(JSON.stringify([payload.agentId, receipt.id, receipt.buildId, receipt.versionId,
+        payload.input?.conversation ?? 'personal'])).digest('hex');
+    }
+    const body = encodeAssistantInput(payload.operation, payload.input);
     const response = await fetchImpl(`${base}/v1/assistant/${payload.operation}`, { method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, redirect: 'error',
-      body: JSON.stringify(payload.input || {}), signal: AbortSignal.any([signal, AbortSignal.timeout(30000)].filter(Boolean)) });
-    let value; try { value = await response.json(); } catch { throw fail('ASSISTANT_RESPONSE_INVALID', '云端助理返回格式无法识别', 502); }
-    if (!response.ok) throw fail('ASSISTANT_CLOUD_REQUEST_FAILED', `云端助理请求未完成（${response.status}）；请刷新核对状态`, response.status);
-    return { ok: true, value };
+      body, signal: AbortSignal.any([signal, AbortSignal.timeout(30000)].filter(Boolean)) });
+    const value = await readAssistantResponse(response);
+    if (!response.ok) throw assistantCloudFailure(response.status, value);
+    return { ok: true, value: journalScope ? { ...value, journalScope } : value };
   };
 }

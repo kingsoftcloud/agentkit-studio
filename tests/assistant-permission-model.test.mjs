@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, stat, chmod } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { createAssistantPermissionModel, selectAssistantPermissionProfile, ASSISTANT_PERMISSION_PROFILE } from '../src/assistant-permission-model.mjs';
+
+async function fixture(t, profile = ASSISTANT_PERMISSION_PROFILE) {
+  const root = await mkdtemp(join(tmpdir(), 'assistant-permission-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'agentkit')); await mkdir(join(root, 'dsh'));
+  const digest = 'a'.repeat(64);
+  await writeFile(join(root, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: digest }));
+  const env = { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: digest };
+  const ctx = { get: () => undefined, on: () => () => {} };
+  return { root, env, ctx, model: await createAssistantPermissionModel({ ctx, env, profile, agentId: 'agent-one' }) };
+}
+
+test('only the explicit versioned profile opts in; unknown and old specs remain legacy', () => {
+  for (const input of [undefined, null, 'ask', 'workspace-write', 'workspace-managed/v2', { profile: ASSISTANT_PERMISSION_PROFILE }]) assert.equal(selectAssistantPermissionProfile(input), 'legacy-read-only/v1');
+  assert.equal(selectAssistantPermissionProfile(ASSISTANT_PERMISSION_PROFILE), ASSISTANT_PERMISSION_PROFILE);
+});
+
+test('legacy does not create workspaces or mutate native policies', async t => {
+  const f = await fixture(t, undefined);
+  // An omitted argument selects the fixture default, so construct the actual legacy model explicitly.
+  const model = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, agentId: 'agent-one' });
+  assert.equal(model.enabled, false); assert.equal(await model.newSessionCwd('assistant-one'), undefined);
+  assert.deepEqual(await model.ensure({ session: { id: 'assistant-one' } }, false), { profile: 'legacy-read-only/v1', permission: 'read-only', approval: 'never', managed: false });
+});
+
+test('invalid runtime receipt cannot grant managed workspace authority', async t => {
+  const f = await fixture(t);
+  const model = await createAssistantPermissionModel({ ctx: f.ctx, env: { ...f.env, AGENTKIT_BUNDLE_SHA256: 'b'.repeat(64) }, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one' });
+  assert.equal(model.enabled, false); await assert.rejects(model.newSessionCwd('assistant-one'), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+});
+
+test('creates private per-session file roots separate from configuration and ownership records', async t => {
+  const f = await fixture(t), first = await f.model.newSessionCwd('assistant-one'), second = await f.model.newSessionCwd('assistant-two');
+  assert.notEqual(first, second); assert.equal(await f.model.newSessionCwd('assistant-one'), first);
+  assert.ok(first.startsWith(join(f.root, 'assistant-workspaces'))); assert.equal((await stat(first)).mode & 0o077, 0);
+  const owner = JSON.parse(await readFile(join(dirname(first), 'owner.json'), 'utf8'));
+  assert.equal(owner.sessionId, 'assistant-one'); assert.equal(owner.agentId, 'agent-one');
+});
+
+test('does not adopt an existing Session cwd even when the new product spec opts in', async t => {
+  const f = await fixture(t);
+  const old = { session: { id: 'assistant-old', header: { cwd: f.root } } };
+  assert.equal((await f.model.ensure(old, false)).managed, false);
+  await assert.rejects(f.model.ensure(old, true), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+});
+
+test('cold snapshots report unknown without restoring a native Agent', async t => {
+  const f = await fixture(t);
+  assert.deepEqual(f.model.snapshot('assistant-cold'), { profile: ASSISTANT_PERMISSION_PROFILE, managed: false, permission: 'unknown', approval: 'unavailable', status: 'awaiting-session-validation' });
+});
+
+test('refuses symlinked workspace parents and widened directory access', async t => {
+  const f = await fixture(t); await mkdir(join(f.root, 'elsewhere'));
+  await symlink(join(f.root, 'elsewhere'), join(f.root, 'assistant-workspaces'));
+  await assert.rejects(f.model.newSessionCwd('assistant-one'), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+  await rm(join(f.root, 'assistant-workspaces')); await mkdir(join(f.root, 'assistant-workspaces'), { mode: 0o700 });
+  await chmod(join(f.root, 'assistant-workspaces'), 0o755);
+  await assert.rejects(f.model.newSessionCwd('assistant-one'), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+});
+
+test('refuses tampered per-session ownership records', async t => {
+  const f = await fixture(t), cwd = await f.model.newSessionCwd('assistant-one');
+  const path = join(dirname(cwd), 'owner.json'), data = JSON.parse(await readFile(path, 'utf8'));
+  await writeFile(path, JSON.stringify({ ...data, agentId: 'foreign-agent' }));
+  await assert.rejects(f.model.newSessionCwd('assistant-one'), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+});

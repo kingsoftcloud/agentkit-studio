@@ -27,10 +27,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     innerIamUrl: runtimeEnv.AGENTENGINE_INNER_IAM_URL || '',
   };
   const bridge = mountRuntimeBridge(ctx);
-  // Keep Node-only configuration and HTTPS/KOP dependencies out of the
-  // browser-facing plugin module graph. DSH loads this module for both the
-  // Host and client faces; importing node:fs or aws4 at activation time makes
-  // the whole plugin fail before the Host route can be registered.
+  // Defer optional portable-bundle dependencies until Host activation.
+  // The browser uses the separately declared ./client bundle; it must never
+  // load this Host bootstrap or its Node-only configuration dependencies.
   const { loadPortableRuntime, createPortableBundles } = await import('../portable-bundle.mjs');
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');

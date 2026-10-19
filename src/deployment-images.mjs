@@ -1,5 +1,6 @@
 /** Resolve Studio's own immutable image releases from the existing Server metadata API. */
 import { createHash } from 'node:crypto';
+import { ASSISTANT_IMAGE_CAPABILITIES } from './contracts/assistant-capabilities.mjs';
 import { containerStorageCapability } from './deployment-storage.mjs';
 import { studioVersions } from './studio-version.mjs';
 
@@ -33,7 +34,7 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
   for (const item of raw.releases) {
     const image = typeof item?.image === 'string' && IMAGE.exec(item.image);
     if (!object(item) || !ID.test(item.id || '') || ids.has(item.id) || !image
-      || (item.capabilities !== undefined && (!Array.isArray(item.capabilities) || item.capabilities.some(value => !['personal-assistant/v1', 'personal-assistant-identity/v1', 'personal-assistant-delete/v1'].includes(value)) || new Set(item.capabilities).size !== item.capabilities.length))
+      || (item.capabilities !== undefined && (!Array.isArray(item.capabilities) || item.capabilities.some(value => !ASSISTANT_IMAGE_CAPABILITIES.includes(value)) || new Set(item.capabilities).size !== item.capabilities.length))
       || (item.runtimeIdentity !== undefined && typeof item.runtimeIdentity !== 'boolean')
       || typeof item.enabled !== 'boolean' || !['preview', 'stable'].includes(item.channel)
       || !Array.isArray(item.runtimes) || !item.runtimes.length || new Set(item.runtimes).size !== item.runtimes.length

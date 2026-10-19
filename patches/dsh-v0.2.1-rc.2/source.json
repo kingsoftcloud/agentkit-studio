@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "e4363ce41cf53ba040b18b887d7cdc097f581d54",
+  "headCommit": "7d51174b5fa222fa2f4b7d9ccb0e7c0b21f83543",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
-  "tree": "fc465fb3eca581dca81be644b23ac63e56a9ff2a",
-  "sourceSha256": "3edacaedecc7fe49fbad21dedcf1a1a1a5defe0da6b055d0b9416150f64e91ad",
+  "tree": "4d0939ffd93cf8f6f47a05cffb42c0ecd72e7169",
+  "sourceSha256": "56c6489276fe007dcbf0b0bdeb827f13e20df6ae7abe407cb7016e0fe3507d7a",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "44ad816988f52a44ea3342947d13418fe2136205357b590b0b13780bbeeeccc7"
+    "sha256": "ed0230a26a5fc80bb0fe03966816b7977b5b2cbfd57777bba2f594f44e85553e"
   },
   "commits": [
     {
@@ -220,6 +220,18 @@
       "file": "042-inspector-cordis-frame-budget.patch",
       "commit": "e4363ce41cf53ba040b18b887d7cdc097f581d54",
       "sha256": "ef2592ef7edb77b28b60e2ff5c6332415656121b05c52de337c8c481fcb2094d"
+    },
+    {
+      "id": "043",
+      "file": "043-conversation-instance-isolation.patch",
+      "commit": "05ca86c70e895aae4e31090a9e8ab7ce32670cf9",
+      "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3"
+    },
+    {
+      "id": "044",
+      "file": "044-tool-dispatch-definition.patch",
+      "commit": "7d51174b5fa222fa2f4b7d9ccb0e7c0b21f83543",
+      "sha256": "0006af27f870dab86b7b95fbf1660e9e5e9ec74f51ed26a034d5b5395cf3aeca"
     }
   ]
 }

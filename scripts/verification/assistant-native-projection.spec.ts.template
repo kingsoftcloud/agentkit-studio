@@ -1,0 +1,232 @@
+// @vitest-environment jsdom
+// Actual native source/consumer; only the external carrier is controlled.
+import { Context } from '@deepseek-ai/cordis';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { installConnection } from '@deepseek-ai/dsh-client-connection/client';
+import * as typert from '@deepseek-ai/dsh-typert-registry/client';
+import * as gateway from '@deepseek-ai/dsh-api-gateway/client';
+import * as remotes from '@deepseek-ai/dsh-api-remotes/client';
+import * as sessions from '@deepseek-ai/dsh-api-session-controller/client';
+import * as fileUpload from '@deepseek-ai/dsh-client-file-upload/client';
+import * as renderer from '@deepseek-ai/dsh-client-ui-renderer/client';
+import * as access from '@deepseek-ai/dsh-api-remote-access/client';
+import * as uiSession from '@deepseek-ai/dsh-client-ui-session/client';
+import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session/types';
+import { RemoteMock, ok } from '@deepseek-ai/dsh-remote-mock';
+
+const disposers: Array<() => Promise<unknown>> = [];
+afterEach(async () => {
+  for (const dispose of disposers.splice(0).reverse()) await dispose();
+  vi.unstubAllGlobals(); vi.restoreAllMocks();
+});
+
+function carrier(sessionId = 'cloud-session', home = '/cloud') {
+  const mock = RemoteMock.create({ host: { home } });
+  mock.load({
+    unary: {
+      'session/list': ok({ items: [{ sessionId, updatedAt: 1, running: false, blank: true, agentAvailable: true }] }),
+      'session/projections': ok({ kind: 'sequenced', asOfSeq: -1, values: {} }),
+      'session/prompt': ok({ accepted: true }),
+      'settings/describe': ok({ namespaces: [], writable: false, hasDocument: false }),
+      'fileUploads/upload': ok({ receiptId: 'fixture-receipt', file: { attachmentId: 'sha256:' + 'a'.repeat(64), name: 'report.txt', bytes: 4 } }),
+    },
+    stream: {
+      'session/control': (_args, stream) => { stream.push({ type: 'baseline', value: { projections: {} } }); },
+      'session/follow': ([wire], stream) => {
+        const input = (wire as { request: { address: { sessionId: string }; assistantStream: boolean } }).request;
+        expect(input.address.sessionId).toBe(sessionId);
+        stream.push({ type: 'snapshot', header: { version: SESSION_FORMAT_VERSION, id: sessionId, createdAt: 0, isSeeded: false },
+          cursor: -1, records: [], hasMore: false, projections: { asOfSeq: -1, values: {} },
+          ...(input.assistantStream ? { assistantStream: { revision: 0 } } : {}) });
+      },
+      'remoteAccess/follow': (_args, stream) => { stream.push({ type: 'baseline', owner: false, grants: [
+        { resource: { kind: 'session', id: sessionId }, actions: ['session/follow', 'session/projections', 'session/page'] },
+      ] }); },
+    },
+  });
+  return mock;
+}
+
+async function graph(mock = carrier()) {
+  const ctx = new Context();
+  disposers.push(() => ctx.fiber.dispose());
+  const localSocket = vi.fn(() => { throw new Error('default/local socket forbidden'); });
+  await ctx.plugin({ apply(scope: Context) {
+    installConnection(scope, { interactions: 'answer', location: { hostname: 'cloud-assistant.invalid' },
+      transport: { rpc: mock.rpc, ownsHost: false, createWebSocket: localSocket },
+      recovery: { backoffBaseMs: 10, backoffMaxMs: 10 } });
+  } }).await();
+  for (const plugin of [typert, gateway, remotes, renderer, fileUpload, access, sessions, uiSession]) await ctx.plugin(plugin).await();
+  await vi.waitFor(() => { expect(ctx.get('connection').generation.getSnapshot()).toBeDefined(); });
+  await mock.streams.opened('remoteAccess/follow', 1);
+  return { ctx, mock, localSocket };
+}
+
+
+import { projectAssistantNativePage as projectPage, projectAssistantNativeControlFrame as projectControl, projectAssistantNativeEvent as projectEvent, projectAssistantNativeAssistantFrame as projectLive, projectAssistantNativeFollowFrame as projectFollow } from '@studio/src/assistant-native-projection.mjs';
+import NativeSessions, { foldSurface, deriveEventMessage } from '@deepseek-ai/dsh-session';
+import { validateSessionEventData, validateSurfaceMetadata } from '@deepseek-ai/dsh-session/surface';
+import { createSystemMessage, createUserMessage, createAssistantMessage, createDeveloperMessage } from '@deepseek-ai/dsh-llm';
+
+// Fixture inputs intentionally cover extensible and rejected event variants;
+// broad test-only values let native runtime validators exercise those cases.
+const CANARY = 'synthetic-private-payload-privacy-probe';
+async function privacySource() {
+  const host = new Context(); await host.plugin(NativeSessions).await(); disposers.push(() => host.fiber.dispose());
+  const s = host.sessions.create('cloud-session');
+  const add = (type: any, data: any, intent?: any) => s.append(type, data, intent);
+  add('turn/start', { turn: 1 }); add('step/start', { turn: 1, step: 1 });
+  add('system/message', { turn: 1, step: 1, message: createSystemMessage({ content: [{ type:'text',text:CANARY }] }) }, {surfaceOp:'append'});
+  add('request/header', { reason:'initial', header:{ config:{provider:'test',model:'test',stop:[CANARY]},tools:[{name:'fixture-tool',description:CANARY,parameters:{type:'object',description:CANARY}}] } });
+  add('developer/message', { turn:1,step:1,headerSeq:3,message:createDeveloperMessage({source:{kind:'runtime-context'},content:[{type:'tool-addition',toolName:'fixture-tool'}]}) }, {surfaceOp:'append'});
+  const hidden = createUserMessage({source:{kind:'runtime-context',form:'snapshot',sections:[{name:'identity',text:CANARY}]}, content:[{type:'text',text:CANARY}]});
+  const visible = createUserMessage({source:{kind:'user',rpcId:'original-request'},content:[{type:'text',text:'visible question'}]});
+  add('agent/inbox/spliced',{target:'next-turn',start:0,inserted:[hidden,visible]});
+  add('agent/inbox/spliced',{target:'next-turn',start:0,removedCount:2,inserted:[]});
+  add('user/message',hidden,{surfaceOp:'append'});add('user/message',visible,{surfaceOp:'append'});
+  add('assistant/message',{turn:1,step:1,message:createAssistantMessage({source:{provider:'test',model:'test',replayState:{raw:CANARY}},content:[{type:'reasoning',text:CANARY},{type:'text',text:'visible answer'}]}),stream:[{type:'reasoning-chunks',time0:1,index:0,dt:[],texts:[CANARY]}]}, {surfaceOp:'append'});
+  add('step/end',{turn:1,step:1});
+  add('step/start',{turn:1,step:2});
+  add('system/message',{turn:1,step:2,message:createSystemMessage({content:[{type:'text',text:CANARY}]})},{surfaceOp:{op:'replace',startSeq:2,endSeq:2},sourceEventSeqs:[2]});
+  add('turn/end',{turn:1,reason:{kind:'completed'}});
+  return {raw:s.snapshotEvents(), header:s.header, session:s};
+}
+function placeholder(e:any):any {return {type:'agentkit/privacy-redacted',ignorable:true,seq:e.seq,time:e.time,data:{sourceSeq:e.seq}};}
+
+describe('Production privacy projection using actual Session source and actual Client Controller binding',()=>{
+  it('content-only clearing leaks metadata while a typed allowlist preserves every source envelope and no private payload',async()=>{
+    const {raw}=await privacySource(); const original=JSON.stringify(raw);
+    const contentOnly=raw.map((e:any)=>e.type==='user/message'?{...e,data:{...e.data,content:[]}}:e.data.message?{...e,data:{...e.data,message:{...e.data.message,content:[]}}}:e);
+    expect(JSON.stringify(contentOnly)).toContain(CANARY);
+    const projected=raw.map(projectEvent);
+    expect(JSON.stringify(projected)).not.toContain(CANARY);
+    for(let i=0;i<raw.length;i++){
+      const envelope=(e:any)=>({type:e.type,seq:e.seq,time:e.time,surfaceOp:e.surfaceOp,sourceEventSeqs:e.sourceEventSeqs});
+      expect(envelope(projected[i])).toEqual(envelope(raw[i]));
+      validateSurfaceMetadata(projected[i]); validateSessionEventData(projected[i],'privacy probe');
+    }
+    expect(foldSurface(projected).nodes).toEqual(foldSurface(raw).nodes);
+    for(const e of projected) expect(()=>deriveEventMessage(e)).not.toThrow();
+    expect(JSON.stringify(raw)).toBe(original);
+  });
+  it('placeholder substitution cannot remove a surface node still named by a retained replacement',async()=>{
+    const {raw}=await privacySource();const p=raw.map(projectEvent);p[2]=placeholder(p[2]);
+    expect(()=>validateSurfaceMetadata(p[2])).not.toThrow();
+    expect(()=>foldSurface(p)).toThrow(/start seq 2 not found/);
+  });
+  it('developer empty-content clearing must also remove headerSeq; retained additions need matching header tool schema',async()=>{
+    const {raw}=await privacySource(); const p=raw.map(projectEvent);
+    const broken={...p[4],data:{...p[4].data,headerSeq:3}};
+    expect(()=>validateSessionEventData(broken,'privacy probe')).toThrow(/headerSeq exactly/);
+    p[4]=raw[4];expect(()=>foldSurface(p)).toThrow(/must name exactly one tool/);
+  });
+  it('production full projection opens a genuine cloud Session binding and does not leak via inbox projection',async()=>{
+    const {raw,header}=await privacySource(), mock=carrier();
+    const projections={asOfSeq:raw.at(-1)!.seq,values:{inbox:{'next-turn':[],'next-step':[]}}};
+    mock.stream('session/follow',(_args,stream)=>{stream.push(projectFollow({type:'snapshot',header,cursor:raw.at(-1)!.seq,records:raw.map(event=>({type:'event',event})),hasMore:false,projections,assistantStream:{revision:0}},'cloud-session'))});
+    const b=await graph(mock),ref=b.ctx.sessions.retain('cloud-session',{source:'controllerOperation'});await ref.ready;
+    expect(ref.binding.session.getSnapshot().openError).toBeNull();expect(ref.binding.session.getSnapshot().openState).toBe('open');
+    expect(b.ctx.sessions.binding('cloud-session')).toBe(ref.binding);
+    expect(ref.binding.eventSource.getSnapshot().entries.map((e:any)=>e.event.seq)).toEqual(raw.map((e:any)=>e.seq));
+    expect(JSON.stringify(ref.binding.eventSource.getSnapshot())).not.toContain(CANARY);
+    expect(JSON.stringify(ref.binding.session.projections.faceOf('inbox').getSnapshot())).not.toContain(CANARY);
+    ref.release();
+  });
+  it('production live payload is emptied while dense frame indexes and settlement identity remain intact',async()=>{
+    const mock=carrier();let feed:any;
+    mock.stream('session/follow',(_args,stream)=>{feed=stream;stream.push({type:'snapshot',header:{version:4,id:'cloud-session',createdAt:0,isSeeded:false},cursor:-1,records:[],hasMore:false,projections:{asOfSeq:-1,values:{}},assistantStream:{revision:0}})});
+    const b=await graph(mock),ref=b.ctx.sessions.retain('cloud-session',{source:'controllerOperation'});await ref.ready;
+    const sourceFrames=[{type:'start',attemptId:'real-attempt',revision:1,startedAfterSeq:-1,turn:1,step:1},{type:'chunk',attemptId:'real-attempt',revision:2,index:0,time:1,chunk:{type:'reasoning-delta',index:0,text:CANARY}},{type:'chunk',attemptId:'real-attempt',revision:3,index:1,time:2,chunk:{type:'text-delta',index:1,text:'visible live answer'}}];
+    for(const frame of sourceFrames) feed.push({type:'assistant-stream',frame:projectLive(frame)});
+    await vi.waitFor(()=>expect(ref.binding.eventSource.getSnapshot().entries).toHaveLength(2));
+    expect(JSON.stringify(ref.binding.eventSource.getSnapshot())).not.toContain(CANARY);
+    expect(JSON.stringify(ref.binding.eventSource.getSnapshot())).not.toContain('visible live answer');
+    expect(mock.log.streams('session/follow')).toHaveLength(1);
+    feed.push(projectFollow({type:'event',event:{seq:0,time:3,type:'assistant/message',surfaceOp:'append',data:{turn:1,step:1,message:createAssistantMessage({source:{provider:'test',model:'test'},content:[{type:'text',text:'visible live answer'}]}),stream:[]}}},'cloud-session'));
+    feed.push(projectFollow({type:'assistant-stream',frame:{type:'end',attemptId:'real-attempt',revision:4,index:2,outcome:{kind:'committed',eventType:'assistant/message',seq:0}}},'cloud-session'));
+    await vi.waitFor(()=>expect(ref.binding.eventSource.getSnapshot().entries.some((e:any)=>e.event.type==='assistant/message')).toBe(true));
+    expect(ref.binding.session.getSnapshot().openState).toBe('open');expect(mock.log.streams('session/follow')).toHaveLength(1);ref.release();
+  });
+  it('keeps original pagination cursors and a deduplicated source sequence after reconnecting the same binding',async()=>{
+    const {raw,header}=await privacySource(), mock=carrier();
+    const pageCalls:any[]=[];
+    mock.unary('session/page', (wire)=>{
+      pageCalls.push(wire);
+      return ok(projectPage({records:raw.slice(0,9).map(event=>({type:'event',event})),hasMore:false}));
+    });
+    let opens=0;
+    mock.stream('session/follow',(_args,stream)=>{
+      opens++;
+      stream.push(projectFollow({type:'snapshot',header,cursor:raw.at(-1)!.seq,
+        records:(opens===1?raw.slice(9):raw).map(event=>({type:'event',event})),hasMore:opens===1,
+        projections:{asOfSeq:raw.at(-1)!.seq,values:{}},assistantStream:{revision:0}},'cloud-session'));
+    });
+    const b=await graph(mock),ref=b.ctx.sessions.retain('cloud-session',{source:'controllerOperation'});await ref.ready;
+    const binding=ref.binding;
+    expect(binding.eventSource.getSnapshot().entries.map((entry:any)=>entry.event.seq)).toEqual([9,10,11,12,13]);
+    await vi.waitFor(()=>expect(binding.session.getSnapshot()).toMatchObject({openState:'open',hasMore:true}));
+    await binding.session.loadOlder();
+    expect(pageCalls).toHaveLength(1);
+    expect(pageCalls[0].request).toMatchObject({address:{sessionId:'cloud-session'},beforeSeq:9,throughSeq:13});
+    const sourceSeq=raw.map((event:any)=>event.seq);
+    expect(binding.eventSource.getSnapshot().entries.map((entry:any)=>entry.event.seq)).toEqual(sourceSeq);
+    expect(JSON.stringify(binding.eventSource.getSnapshot())).not.toContain(CANARY);
+    const resumed=Promise.withResolvers<void>();
+    mock.stream('$events',(_args,stream)=>{void resumed.promise.then(()=>stream.push({type:'ready',clientId:'resumed-projection',host:{home:''}}));});
+    b.ctx.connection.reconnect();
+    await vi.waitFor(()=>expect(b.ctx.connection.generation.getSnapshot()).toBeUndefined());
+    expect(mock.streams.fail('session/follow',new gateway.RemoteStreamCarrierError('controlled reconnect'))).toBe(1);
+    resumed.resolve();
+    await vi.waitFor(()=>expect(opens).toBe(2));
+    expect(ref.binding).toBe(binding);
+    await vi.waitFor(()=>expect(binding.eventSource.getSnapshot().entries.map((entry:any)=>entry.event.seq)).toEqual(sourceSeq));
+    expect(JSON.stringify(binding.eventSource.getSnapshot())).not.toContain(CANARY);
+    expect(binding.session.getSnapshot().openError).toBeNull();ref.release();
+  });
+  it('retains real rpcId and hidden inbox positions until the same native Controller retires one observed echo',async()=>{
+    const {raw,header,session}=await privacySource(),mock=carrier();let feed:any,control:any;
+    mock.stream('session/control',(_args,stream)=>{control=stream;stream.push(projectControl({type:'baseline',value:{projections:{}}},'cloud-session'));});
+    mock.stream('session/follow',(_args,stream)=>{feed=stream;stream.push(projectFollow({type:'snapshot',header,cursor:raw.at(-1)!.seq,
+      records:raw.map(event=>({type:'event',event})),hasMore:false,projections:{asOfSeq:raw.at(-1)!.seq,values:{inbox:{'next-turn':[],'next-step':[]}}},assistantStream:{revision:0}},'cloud-session'));});
+    const b=await graph(mock),ref=b.ctx.sessions.retain('cloud-session',{source:'controllerOperation'});await ref.ready;
+    const retired=vi.fn(),handle=ref.binding.session.beginSubmission({mode:'queue',text:'new public question',attachments:[],onRetire:retired});
+    expect(ref.binding.session.getSnapshot().pendingSubmissions).toHaveLength(1);
+    const hidden=createUserMessage({source:{kind:'runtime-context',form:'snapshot',sections:[{name:'private',text:CANARY}]},content:[{type:'text',text:CANARY}]});
+    const human=createUserMessage({source:{kind:'user',rpcId:handle.requestId},content:[{type:'text',text:'new public question'}]});
+    const append=(type:any,data:any,intent?:any)=>{const e=session.append(type,data,intent);feed.push(projectFollow({type:'event',event:e},'cloud-session'));return e;};
+    const accepted=append('agent/inbox/spliced',{target:'next-turn',start:0,inserted:[hidden,human]});
+    control.push(projectControl({type:'projection',sessionId:'cloud-session',key:'inbox',seq:accepted.seq,value:{'next-turn':[hidden,human],'next-step':[]}},'cloud-session'));
+    const claim=append('agent/inbox/spliced',{target:'next-turn',start:0,removedCount:2,inserted:[]});
+    control.push(projectControl({type:'projection',sessionId:'cloud-session',key:'inbox',seq:claim.seq,value:{'next-turn':[],'next-step':[]}},'cloud-session'));
+    append('user/message',hidden,{surfaceOp:'append'});append('user/message',human,{surfaceOp:'append'});
+    await vi.waitFor(()=>expect(ref.binding.session.getSnapshot().pendingSubmissions).toEqual([]));
+    expect(retired).toHaveBeenCalledExactlyOnceWith({reason:'observed',attachments:[]});
+    const events=ref.binding.eventSource.getSnapshot().entries.map((entry:any)=>entry.event);
+    expect(events.at(-1).data.source.rpcId).toBe(handle.requestId);
+    expect(events.at(-4).data.inserted).toHaveLength(2);
+    expect(JSON.stringify(events)).not.toContain(CANARY);
+    expect(JSON.stringify(ref.binding.session.projections.faceOf('inbox').getSnapshot())).not.toContain(CANARY);
+    expect(ref.binding.session.getSnapshot().openError).toBeNull();ref.release();
+  });
+
+  it('keeps a real private tool event as one ignorable position without exposing or executing the call',async()=>{
+    const {session,header}=await privacySource();
+    session.append('turn/start',{turn:2});session.append('step/start',{turn:2,step:1});
+    const call=session.append('tool/call',{turn:2,step:1,callId:'actual-call',name:'synthetic-tool',arguments:JSON.stringify({private:CANARY})});
+    session.append('step/end',{turn:2,step:1});session.append('turn/end',{turn:2,reason:{kind:'completed'}});
+    const raw=session.snapshotEvents(),source=JSON.stringify(raw),mock=carrier();
+    const projected=projectEvent(call);
+    expect(projected).toEqual({type:'agentkit/privacy-redacted',seq:call.seq,time:call.time,ignorable:true,data:{sourceSeq:call.seq}});
+    validateSurfaceMetadata(projected);validateSessionEventData(projected,'privacy placeholder');
+    mock.stream('session/follow',(_args,stream)=>stream.push(projectFollow({type:'snapshot',header,cursor:raw.at(-1)!.seq,
+      records:raw.map(event=>({type:'event',event})),hasMore:false,projections:{asOfSeq:raw.at(-1)!.seq,values:{}},assistantStream:{revision:0}},'cloud-session')));
+    const b=await graph(mock),ref=b.ctx.sessions.retain('cloud-session',{source:'controllerOperation'});await ref.ready;
+    expect(ref.binding.session.getSnapshot().openError).toBeNull();
+    const events=ref.binding.eventSource.getSnapshot().entries.map((entry:any)=>entry.event);
+    expect(events.map((event:any)=>event.seq)).toEqual(raw.map(event=>event.seq));
+    expect(events[call.seq]).toEqual(projected);
+    expect(JSON.stringify(events)).not.toContain(CANARY);
+    expect(JSON.stringify(session.snapshotEvents())).toBe(source);ref.release();
+  });
+
+});

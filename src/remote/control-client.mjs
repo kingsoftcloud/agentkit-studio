@@ -215,7 +215,7 @@ export function createProductClient(connection, { window = globalThis.window } =
         computerConnection: signal => studioBridgeOperation('host/computer', {}, signal),
         closeAssistant: payload => studioBridgeOperation('assistant/close', payload),
         assistantCatalog: () => studioBridgeOperation('assistant/catalog', {}),
-        assistantExecute: (agentId, operation, input = {}) => studioBridgeOperation('assistant/execute', { agentId, operation, input }),
+        assistantExecute: (agentId, operation, input = {}, signal) => studioBridgeOperation('assistant/execute', { agentId, operation, input }, signal),
         assistantSetupOptions: () => studioBridgeOperation('assistant/setup-options', {}),
         assistantSetupStart: input => studioBridgeOperation('assistant/setup-start', input),
         assistantSetupStatus: () => studioBridgeOperation('assistant/setup-status', {}),

@@ -101,3 +101,12 @@ test('image lookup uses the existing signed bootstrap Action and makes no mutati
   assert.equal(init.headers['X-KSC-CUSTOM-SOURCE'], 'pre');
   assert.match(init.headers.Authorization, /cn-beijing-6\/aicp\/aws4_request/);
 });
+
+test('image catalogs accept the implemented attachment, native carrier and managed permission vocabulary only', async () => {
+  const { ASSISTANT_IMAGE_CAPABILITIES } = await import('../src/contracts/assistant-capabilities.mjs');
+  const catalog = parseStudioImageCatalog(response({releases:[{...release,capabilities:[...ASSISTANT_IMAGE_CAPABILITIES]}]}),{runtime:'dsh-native'});
+  assert.deepEqual(catalog.releases[0].capabilities,ASSISTANT_IMAGE_CAPABILITIES);
+  for(const capability of ['personal-assistant-owner/v1','personal-assistant-arbitrary-shell/v1','personal-assistant-workspace-managed/v2']) {
+    assert.throws(()=>parseStudioImageCatalog(response({releases:[{...release,capabilities:[capability]}]}),{runtime:'dsh-native'}),{code:'DEPLOYMENT_CATALOG_INVALID'});
+  }
+});

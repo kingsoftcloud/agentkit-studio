@@ -1,0 +1,218 @@
+// @vitest-environment jsdom
+// Actual native Session, query/history implementation and Client Controller.
+// The external RPC route is controlled; its production carrier/projector are real.
+import { Context } from '@deepseek-ai/cordis';
+import { afterEach, expect, it, vi } from 'vitest';
+import { installConnection } from '@deepseek-ai/dsh-client-connection/client';
+import * as typert from '@deepseek-ai/dsh-typert-registry/client';
+import * as gateway from '@deepseek-ai/dsh-api-gateway/client';
+import * as remotes from '@deepseek-ai/dsh-api-remotes/client';
+import * as sessions from '@deepseek-ai/dsh-api-session-controller/client';
+import * as fileUpload from '@deepseek-ai/dsh-client-file-upload/client';
+import * as renderer from '@deepseek-ai/dsh-client-ui-renderer/client';
+import * as access from '@deepseek-ai/dsh-api-remote-access/client';
+import * as uiSession from '@deepseek-ai/dsh-client-ui-session/client';
+import NativeSessions, { foldSurface } from '@deepseek-ai/dsh-session';
+import { validateSessionEventData, validateSurfaceMetadata } from '@deepseek-ai/dsh-session/surface';
+import SessionQueryEngine from '@deepseek-ai/dsh-session-query';
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
+import { inboxProjectionDefinition } from '@dsh/packages/core/agent-loop/src/inbox.ts';
+import { SessionHistoryController } from '@dsh/packages/api/session-controller/src/history.ts';
+import { createSystemMessage, createUserMessage, createAssistantMessage } from '@deepseek-ai/dsh-llm';
+import { createAssistantNativeCarrierService } from '@studio/src/assistant-native-carrier.mjs';
+
+// Test-only external RPC fields deliberately reach production wire validation.
+const disposers: Array<() => Promise<unknown>> = [];
+afterEach(async () => { for (const dispose of disposers.splice(0).reverse()) await dispose(); });
+const wait = (signal: AbortSignal) => signal.aborted ? Promise.resolve() : new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+class PointQuery extends SessionQueryEngine {
+  override searchSessions(): Promise<never> { return Promise.reject(new Error('search unused')); }
+  override searchEvents(): Promise<never> { return Promise.reject(new Error('search unused')); }
+}
+async function fixture(contents: string[], replacement = false, options: any = {}) {
+  const host = new Context(); await host.plugin(NativeSessions).await();
+  disposers.push(() => host.fiber.dispose());
+  new PointQuery(host);
+  const projections = new SessionProjectionRegistry(host); projections.register(inboxProjectionDefinition);
+  const source = host.sessions.create('cloud-size-session', { meta: { cwd: '/cloud/fixture' } });
+  source.append('turn/start', { turn: 1 });
+  source.append('system/message', { turn: 1, step: 1, message: createSystemMessage({ content: [{ type: 'text', text: 'private-fixture-marker' }] }) }, { surfaceOp: 'append' });
+  for (const [index, text] of contents.entries()) source.append('user/message', createUserMessage({ source: { kind: 'user', rpcId: `request-${index}` }, content: [{ type: 'text', text }] }), { surfaceOp: 'append' });
+  if (replacement) source.append('system/message', { turn: 1, step: 2, message: createSystemMessage({ content: [{ type: 'text', text: 'replacement-private-marker' }] }) }, { surfaceOp: { op: 'replace', startSeq: 1, endSeq: 1 }, sourceEventSeqs: [1] });
+  source.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
+  if (options.inbox) source.append('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: options.inbox });
+  if (options.replay) source.append('assistant/message', { turn: 1, step: 1, message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [{ type: 'text', text: 'durable answer' }] }), stream: options.replay }, { surfaceOp: 'append' });
+  const raw = source.snapshotEvents(), original = JSON.stringify(raw), history = new SessionHistoryController(host, observation => observation[Symbol.dispose]());
+  const live = (frame: any) => host.emit('agent/assistant-stream', { agent: { session: source }, frame });
+  if (options.activeChunks) {
+    live({ type: 'start', attemptId: 'active-size', revision: 1, turn: 2, step: 1 });
+    for (let index = 0; index < options.activeChunks; index++) live({ type: 'chunk', attemptId: 'active-size', revision: index + 2, index, time: index, chunk: { type: 'text-delta', index: 0, text: 'private-fixture-marker' } });
+  }
+  const upstream: any[] = [], responses: any[] = [];
+  let generation = 0, serial = 0;
+  const nativeGateway = {
+    async invoke({ method, args, signal }: any) {
+      upstream.push({ method, request: args.request });
+      if (method === 'page') return history.page(args.request, signal);
+      if (method === 'projections') return { kind: 'sequenced', ...projections.snapshot(source) };
+      if (method === 'list') return { items: [{ sessionId: source.id, updatedAt: 1, running: false, blank: false, agentAvailable: true }] };
+      throw new Error('unused RPC');
+    },
+    wireStream: { async open(endpoint: string, payload: any, _uplink: any, _peer: any, signal: AbortSignal) {
+      upstream.push({ method: endpoint, request: payload.args.request });
+      if (endpoint === 'session/follow') return history.follow(payload.args.request, signal);
+      if (endpoint === 'session/control') return (async function* () {
+        const queue: any[] = []; let wake: (() => void) | undefined;
+        const stop = projections.onChanged((session, key, value, seq) => { queue.push({ type: 'projection', sessionId: session.id, key, seq, value }); wake?.(); });
+        const aborted = () => wake?.(); signal.addEventListener('abort', aborted);
+        try {
+          yield { type: 'baseline', value: { projections: { [source.id]: projections.snapshot(source) } } };
+          while (!signal.aborted) { if (queue.length) yield queue.shift(); else await new Promise<void>(resolve => { wake = resolve; }); }
+        } finally { stop(); signal.removeEventListener('abort', aborted); }
+      })();
+      return (async function* () {
+        if (endpoint === '$events') yield { type: 'ready', clientId: `size-generation-${++generation}`, host: { home: '/cloud/private' } };
+        else throw new Error('unused stream');
+        await wait(signal);
+      })();
+    } },
+  };
+  const service = createAssistantNativeCarrierService({ ctx: { get: (name: string) => ({ typertGateway: nativeGateway, remoteAccess: { registerPolicy: () => () => {}, invalidate() {} } })[name] },
+    createPeer: ({ principal }: any) => { const abort = new AbortController(); return { principal, signal: abort.signal, async dispose() { abort.abort(); } }; },
+    pollMs: 10, idleMs: 60000 });
+  disposers.push(() => service.dispose());
+  const opened = service.open({ sessionId: source.id, runAssistant: () => { throw new Error('no write in read probe'); } });
+  const request = async (operation: string, input: any, signal?: AbortSignal) => {
+    const result = await service.request(source.id, operation, { carrierId: opened.carrierId, ...input }, { signal });
+    responses.push({ operation, result });
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(256 * 1024);
+    expect(JSON.stringify(result)).not.toContain('private-fixture-marker');
+    expect(JSON.stringify(result)).not.toContain('replacement-private-marker');
+    return result;
+  };
+  const follows = new Set<AbortController>();
+  const rpc = {
+    call: (channel: string, endpoint: string, payload: any, signal: AbortSignal) => request('native-call', { channel, endpoint, payload }, signal),
+    async *open(_channel: string, endpoint: string, payload: any, signal: AbortSignal) {
+      const streamId = `size-stream-${++serial}`, abort = new AbortController();
+      const combined = AbortSignal.any([signal, abort.signal]);
+      if (endpoint === 'session/follow') follows.add(abort);
+      await request('native-stream-open', { endpoint, payload, streamId }, combined);
+      try {
+        while (!signal.aborted) {
+          const page = await request('native-stream-poll', { streamId }, combined);
+          for (const frame of page.items) yield frame;
+          if (page.error) throw new Error(JSON.stringify(page.error));
+          if (page.ended) return;
+        }
+      } catch (error) { if (!signal.aborted) throw new gateway.RemoteStreamCarrierError('controlled connection loss'); throw error; }
+      finally { follows.delete(abort); await request('native-stream-cancel', { streamId }); }
+    },
+  };
+  const client = new Context(); disposers.push(() => client.fiber.dispose());
+  await client.plugin({ apply(ctx: Context) { installConnection(ctx, { interactions: 'answer', location: { hostname: 'cloud-size.invalid' }, transport: { rpc, ownsHost: false, createWebSocket: () => { throw new Error('no local socket'); } }, recovery: { backoffBaseMs: 10, backoffMaxMs: 10 } }); } }).await();
+  for (const plugin of [typert, gateway, remotes, renderer, fileUpload, access, sessions, uiSession]) await client.plugin(plugin).await();
+  await vi.waitFor(() => expect(client.connection.generation.getSnapshot()).toBeDefined());
+  const ref = client.sessions.retain(source.id, { source: 'controllerOperation' });
+  await ref.ready;
+  const entries = () => ref.binding.eventSource.getSnapshot().entries.map((entry: any) => entry.event);
+  async function allPages() {
+    let pages = 0;
+    while (ref.binding.session.getSnapshot().hasMore) {
+      const before = entries()[0].seq;
+      await ref.binding.session.loadOlder();
+      expect(entries()[0].seq).toBeLessThan(before);
+      expect(++pages).toBeLessThanOrEqual(raw.length);
+    }
+    return pages;
+  }
+  return { client, ref, source, raw, original, history, upstream, responses, entries, allPages, request, live, dropFollow: () => { for (const abort of follows) abort.abort(); } };
+}
+
+it('50 real 8 KiB messages open, paginate and reconnect with exact source cursors instead of repeating a permanently oversized snapshot', async () => {
+  const f = await fixture(Array.from({ length: 50 }, (_, i) => `${i}: ` + 'message '.repeat(1024)), true);
+  expect(f.ref.binding.session.getSnapshot().openState).toBe('open');
+  expect(f.ref.binding.session.getSnapshot().openError).toBeNull();
+  const unbounded = await f.history.page({ address: { kind: 'session', sessionId: f.source.id }, throughSeq: f.raw.at(-1)!.seq,
+    maxMessages: 500, turnWindow: { minMessages: 50, minTurns: 2 } }, new AbortController().signal);
+  expect(Buffer.byteLength(JSON.stringify(unbounded))).toBeGreaterThan(256 * 1024);
+  const initial = f.responses.flatMap(row => row.result.items || []).find(frame => frame.type === 'snapshot');
+  expect(initial.hasMore).toBe(true); expect(initial.cursor).toBe(f.raw.at(-1)!.seq);
+  expect(initial.records.at(-1).event.seq).toBe(initial.cursor);
+  const first = f.upstream.find(row => row.method === 'session/follow');
+  expect(first.request.maxMessages).toBe(16); expect(first.request.turnWindow).toBeUndefined();
+  expect(await f.allPages()).toBeGreaterThan(1);
+  expect(f.entries().map((event: any) => event.seq)).toEqual(f.raw.map(event => event.seq));
+  expect(foldSurface(f.entries()).nodes).toEqual(foldSurface(f.raw).nodes);
+  const binding = f.ref.binding, oldFollowCount = f.upstream.filter(row => row.method === 'session/follow').length;
+  f.client.connection.reconnect(); f.dropFollow();
+  await vi.waitFor(() => expect(f.upstream.filter(row => row.method === 'session/follow').length).toBeGreaterThan(oldFollowCount));
+  await vi.waitFor(() => expect(binding.session.getSnapshot().openState).toBe('open'));
+  await f.allPages();
+  expect(f.ref.binding).toBe(binding);
+  expect(f.entries().map((event: any) => event.seq)).toEqual(f.raw.map(event => event.seq));
+  expect(new Set(f.entries().map((event: any) => event.seq)).size).toBe(f.raw.length);
+  expect(JSON.stringify(f.source.snapshotEvents())).toBe(f.original); f.ref.release();
+}, 30000);
+
+it('a huge single native message is explicitly previewed while validators and replacement/source links remain valid', async () => {
+  const f = await fixture(['public '.repeat(100000)], true);
+  expect(f.ref.binding.session.getSnapshot().openState).toBe('open'); await f.allPages();
+  const events = f.entries(), message = events.find((event: any) => event.type === 'user/message');
+  expect(message.data.content.at(-1).text).toContain('展示预览已截断');
+  expect(message.data.source.rpcId).toBe('request-0');
+  for (const event of events) { validateSurfaceMetadata(event); validateSessionEventData(event, 'bounded native preview'); }
+  expect(events.map((event: any) => ({ seq: event.seq, type: event.type, surfaceOp: event.surfaceOp, sourceEventSeqs: event.sourceEventSeqs })))
+    .toEqual(f.raw.map(event => ({ seq: event.seq, type: event.type, surfaceOp: event.surfaceOp, sourceEventSeqs: event.sourceEventSeqs })));
+  expect(foldSurface(events).nodes).toEqual(foldSurface(f.raw).nodes);
+  expect(JSON.stringify(f.source.snapshotEvents())).toBe(f.original); f.ref.release();
+}, 30000);
+
+
+it('actual byte limits further reduce a legal sixteen-message native window and still page every original event', async () => {
+  const f = await fixture(Array(30).fill('visible '.repeat(4096)), true);
+  const initial = f.responses.flatMap(row => row.result.items || []).find(frame => frame.type === 'snapshot');
+  expect(initial.records.filter((row: any) => row.event.type === 'user/message').length).toBeLessThan(16);
+  expect(await f.allPages()).toBeGreaterThan(2);
+  expect(f.entries().map((event: any) => event.seq)).toEqual(f.raw.map(event => event.seq));
+  expect(foldSurface(f.entries()).nodes).toEqual(foldSurface(f.raw).nodes); f.ref.release();
+}, 30000);
+
+it('oversized real compact replay is omitted while the same native attempt accepts its next index and settles once', async () => {
+  const replay = [{ type: 'text-chunks', time0: 0, index: 0, dt: Array(60000).fill(1), texts: Array(60001).fill('private-fixture-marker') }];
+  const f = await fixture(['hello'], false, { replay, activeChunks: 60001 });
+  expect(f.ref.binding.session.getSnapshot().openState).toBe('open');
+  const initial = f.responses.flatMap(row => row.result.items || []).find(frame => frame.type === 'snapshot');
+  expect(initial.assistantStream.activeAttempt).toMatchObject({ attemptId: 'active-size', nextIndex: 60001, stream: [] });
+  expect(initial.assistantStream.revision).toBe(60002);
+  const persisted = f.entries().find((event: any) => event.type === 'assistant/message');
+  expect(persisted.data.stream).toEqual([]); validateSessionEventData(persisted, 'bounded replay');
+  const follows = f.upstream.filter(row => row.method === 'session/follow').length;
+  f.live({ type: 'chunk', attemptId: 'active-size', revision: 60003, index: 60001, time: 60001, chunk: { type: 'text-delta', index: 0, text: 'private-fixture-marker' } });
+  const settled = f.source.append('assistant/message', { turn: 2, step: 1, message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [{ type: 'text', text: 'new durable answer' }] }), stream: replay }, { surfaceOp: 'append' });
+  f.live({ type: 'end', attemptId: 'active-size', revision: 60004, index: 60002, outcome: { kind: 'committed', eventType: 'assistant/message', seq: settled.seq } });
+  await vi.waitFor(() => expect(f.entries().filter((event: any) => event.seq === settled.seq)).toHaveLength(1), { timeout: 5000 });
+  expect(f.upstream.filter(row => row.method === 'session/follow')).toHaveLength(follows);
+  expect(f.entries().find((event: any) => event.seq === settled.seq).data.stream).toEqual([]);
+  expect(f.ref.binding.session.getSnapshot().openError).toBeNull();
+  expect(f.source.snapshotEvents().at(-1)!.data.stream).toEqual(replay); f.ref.release();
+}, 30000);
+
+it('large real inbox snapshot and live splice preserve every echo id and position while omitting queue bodies', async () => {
+  const inbox = Array.from({ length: 150 }, (_, index) => createUserMessage({ source: { kind: 'user', rpcId: `inbox-request-${index}` }, content: [{ type: 'text', text: 'queued public '.repeat(1000) }] }));
+  const f = await fixture(['hello'], false, { inbox });
+  const projected = f.ref.binding.session.projections.faceOf('inbox').getSnapshot()['next-turn'];
+  expect(projected.map((message: any) => [message.id, message.source.rpcId])).toEqual(inbox.map(message => [message.id, message.source.rpcId]));
+  expect(projected.every((message: any) => message.content.length === 0)).toBe(true);
+  const retired = vi.fn(), handle = f.ref.binding.session.beginSubmission({ mode: 'queue', text: 'new question', attachments: [], onRetire: retired });
+  const hidden = createUserMessage({ source: { kind: 'runtime-context' }, content: [{ type: 'text', text: 'private-fixture-marker' }] });
+  const own = createUserMessage({ source: { kind: 'user', rpcId: handle.requestId }, content: [{ type: 'text', text: 'new question' }] });
+  f.source.append('agent/inbox/spliced', { target: 'next-turn', start: 150, inserted: [hidden, own] });
+  f.source.append('agent/inbox/spliced', { target: 'next-turn', start: 150, removedCount: 2, inserted: [] });
+  f.source.append('user/message', hidden, { surfaceOp: 'append' });
+  f.source.append('user/message', own, { surfaceOp: 'append' });
+  await vi.waitFor(() => expect(f.ref.binding.session.getSnapshot().pendingSubmissions).toEqual([]), { timeout: 5000 });
+  expect(retired).toHaveBeenCalledExactlyOnceWith({ reason: 'observed', attachments: [] });
+  expect(f.entries().at(-4).data.start).toBe(150); expect(f.entries().at(-4).data.inserted).toHaveLength(2);
+  expect(f.ref.binding.session.getSnapshot().openError).toBeNull(); f.ref.release();
+}, 30000);

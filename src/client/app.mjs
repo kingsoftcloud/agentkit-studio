@@ -42,6 +42,8 @@ import { readProductVersions } from "./state/product-versions.mjs";
 import { createStudioActions } from "./state/actions.mjs";
 import { createComputerConnection } from './components/computer-connection.mjs';
 import { createAssistantSettings } from './pages/assistant-settings.mjs';
+import { createAssistantConversation } from './dsh/assistant-conversation.mjs';
+import { createAssistantTranscript } from './components/assistant-transcript.mjs';
 import { createAssistantPage } from './pages/assistant.mjs';
 
 import { createExpertPages } from './pages/expert-catalog.mjs';
@@ -50,15 +52,15 @@ import { createStudioTeamPages } from './pages/studio-teams.mjs';
 import { createTemplateResourcePages } from './pages/template-resource-library.mjs';
 
 /** Build one presentation graph and one set of owners for each apply(ctx). */
-export function createStudioApp({ React, primitives }, { window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent, MutationObserver = globalThis.MutationObserver } = {}) {
+export function createStudioApp({ React, primitives, ConversationNodeAssembler, nativeModules }, { window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent, MutationObserver = globalThis.MutationObserver } = {}) {
   let closed = false;
 
   /** Show only the value just typed; stored credentials are never read back. */
   const { SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction } = createStudioPrimitives({ React });
   const { inputStyle, buttonStyle, pagerButtonStyle } = createFormStyles(BRAND);
   const ResourceDialog = createResourceDialog({ React, buttonStyle });
-  const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText } = primitives;
-  const ui = { React, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText };
+  const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button, RiskConfirmation } = primitives;
+  const ui = { React, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button, RiskConfirmation };
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = readProductVersions(window.__AGENTKIT_STUDIO__);
   const connectionOwner = createConnectionOwner();
   const hostRemote = createProductClient(connectionOwner.connection, { window });
@@ -101,7 +103,9 @@ export function createStudioApp({ React, primitives }, { window = globalThis.win
   Object.assign(ui, createAgentPages({ ui, hostRemote, actions, window }));
   ui.ComputerConnection = createComputerConnection({ ui, hostRemote, actions, window, document });
   ui.AssistantSettingsSection = createAssistantSettings({ ui, hostRemote, actions, window });
-  ui.AssistantPage = createAssistantPage({ ui, hostRemote, actions, window });
+  const assistantConversation = createAssistantConversation({ ConversationNodeAssembler });
+  ui.AssistantTranscript = createAssistantTranscript({ ui, hostRemote, assistantConversation, window });
+  ui.AssistantPage = createAssistantPage({ ui, hostRemote, actions, window, nativeModules });
   Object.assign(ui, createExpertPages({ ui, hostRemote, actions, window, CustomEvent }));
   Object.assign(ui, createTemplateSquare({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createStudioTeamPages({ ui, hostRemote, actions, window, CustomEvent }));
@@ -112,7 +116,7 @@ export function createStudioApp({ React, primitives }, { window = globalThis.win
 
 
   return {
-    ui: Object.freeze(ui), window, CustomEvent, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent,
+    ui: Object.freeze(ui), assistantConversation, window, CustomEvent, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent,
     closed: () => closed,
     dispose() { if (closed) return; closed = true; actions.dispose(); confirmation.dispose(); authoring.dispose(); connectionOwner.dispose(); },
   };

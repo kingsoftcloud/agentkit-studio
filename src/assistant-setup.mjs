@@ -6,6 +6,7 @@ import { sha256, portableError } from './portable-resources.mjs';
 import { createDeploymentImages } from './deployment-images.mjs';
 import { admitDeploymentStorage } from './deployment-storage.mjs';
 import { listStudioResources } from './resource-catalog.mjs';
+import { ASSISTANT_MANAGED_PERMISSION_CAPABILITY } from './contracts/assistant-capabilities.mjs';
 
 export const ASSISTANT_WELCOME_REQUEST = 'assistant-welcome-v1';
 const resources = Object.freeze({ cpu: 2, memoryGiB: 4, storageGiB: 20 });
@@ -74,19 +75,22 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
   async function options() {
     const key = await scope();
     const [model, catalog, memory] = await Promise.all([models.profile(''), images.list('dsh-native'), listStudioResources({ serverClient, query: { kind: 'memory-instance', limit: 200 } })]);
-    const eligible = catalog.releases.filter(item => item.runtimeIdentity && item.capabilities.includes('personal-assistant/v1'));
+    const eligible = catalog.releases.filter(item => item.runtimeIdentity && item.capabilities.includes('personal-assistant/v1') && item.capabilities.includes(ASSISTANT_MANAGED_PERMISSION_CAPABILITY));
     const image = eligible.find(item => item.id === catalog.defaultReleaseId) || (eligible.length === 1 ? eligible[0] : null);
-    if (!image) throw portableError('ASSISTANT_IMAGE_UNAVAILABLE', '当前环境还没有推荐的个人助理镜像，请先完成云端版本配置');
+    if (!image) throw portableError('ASSISTANT_IMAGE_UNAVAILABLE', '当前环境还没有支持受管工作区与敏感审批的个人助理镜像，请先更新云端版本配置');
     admitDeploymentStorage(resources, catalog, 'dsh-native');
     const memories = memory.items.filter(item => !item.disabled).map(item => ({ id: item.resourceId, name: item.name || item.resourceId, region: item.region || catalog.region }));
     if (!memories.length) throw portableError('ASSISTANT_MEMORY_REQUIRED', '请先创建一个云端记忆库，再开通能够长期记忆的助理');
-    return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories])), model: { id: model.id, name: model.displayName || model.modelName },
+    return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories, 'workspace-managed/v1'])), model: { id: model.id, name: model.displayName || model.modelName },
+      permissionProfile: 'workspace-managed/v1',
+      permissionNotice: '助理可在专属云工作区读写文件并搜索；删除单个文件需在线逐次确认。任意 Shell、越界访问及未接通的外发、支付、账号操作不会自动开放。',
       memories, releaseId: image.id, environment: catalog.environment, region: catalog.region, resources,
       billingNotice: '开通后创建 1 个常驻实例（2 核 / 4 GiB）和 20 GiB 持久存储，按平台规则计费；关闭 Studio 不会停止云端计费。' };
   }
   async function welcome(record) {
     const connection = await deployments.agents.connect(record.cloudAgentId);
     if (!connection.capabilities.includes('personal-assistant/v1')) throw portableError('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '云端版本未提供个人助理能力');
+    if (record.selection?.permissionProfile === 'workspace-managed/v1' && !connection.capabilities.includes(ASSISTANT_MANAGED_PERMISSION_CAPABILITY)) throw portableError('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '当前云端版本未确认受管工作区权限能力，尚未发送欢迎任务');
     const call = async (operation, input) => {
       const response = await fetchImpl(`${connection.endpoint}/v1/assistant/${operation}`, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(30000) });
       if (!response.ok) throw portableError('ASSISTANT_WELCOME_PENDING', '助理正在准备欢迎消息，请稍后刷新');
@@ -107,6 +111,7 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
         if (!record.agentId) {
           const selected = record.selection;
           const agent = await agents.create({ name: '我的个人助理', purpose: 'personal-assistant', runtimeType: 'dsh-native', spec: {
+            ...(selected.permissionProfile === 'workspace-managed/v1' ? { security: { assistantPermissions: { profile: selected.permissionProfile } } } : {}),
             instructions: { system: '你是用户的个人助理。自然、简洁地用中文交流。准确区分计划和已执行的工作；仅在用户明确要求时记录长期记忆，允许用户纠正和删除。' },
             memory: { enabled: true, write: { mode: 'explicit_only' } },
             bindings: { modelProfileId: selected.modelId, plugins: [{ name: 'memory', config: { binding: { resource: { kind: 'memory-instance', ...selected.memory } } } }] },
@@ -182,7 +187,7 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
       // turn the same opening action into a second billable cloud create.
       const requestId = existing ? `assistant-${key}-${randomUUID()}` : `assistant-${key}`;
       await write({ format: 'agentkit.assistant-setup/v1', scope: key, state: 'PREPARING', startedAt: new Date().toISOString(), requestId,
-        deploymentId: `dep_${sha256(requestId).slice(0, 32)}`, selection: { modelId: available.model.id, memory, releaseId: available.releaseId } });
+        deploymentId: `dep_${sha256(requestId).slice(0, 32)}`, selection: { modelId: available.model.id, memory, releaseId: available.releaseId, permissionProfile: available.permissionProfile } });
     });
     kick(key); return publicState(await read(key));
   }
