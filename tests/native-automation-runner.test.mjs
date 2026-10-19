@@ -5,8 +5,9 @@ function harness(reason = { kind: 'completed' }, extraEvents = []) {
   const calls = []; let done = false;
   const services = {
     agents: { withoutInitiator: work => work() },
-    commands: { execute: async (...args) => { calls.push(['permission', args[1]]); return { result: {} }; } },
-    approval: { setPolicy: (_agent, policy) => calls.push(['approval', policy]) },
+    commands: { execute: () => assert.fail('unattended policy must not execute a user command') },
+    permissionPresets: { set: (_session, preset) => calls.push(['permission', preset]) },
+    approval: { setPolicy: (_agent, policy, options) => calls.push(['approval', policy, options]) },
     sessionController: {
       create: async value => calls.push(['create', value]), selectModel: async value => calls.push(['model', value]),
       resolveAgent: async () => ({ agent: { whenIdle: async () => { done = true; }, cancel() {} } }),
@@ -22,15 +23,16 @@ test('automation preserves its Agent preset, model and native Session without a 
   const result = await run({ agentId: 'agent-a', sessionId: 'session-a', occurrenceId: 'occ-a', input: 'probe' });
   assert.deepEqual(calls[0], ['create', { sessionId: 'session-a', agentPreset: 'frozen-preset' }]);
   assert.deepEqual(calls[1], ['model', { sessionId: 'session-a', provider: 'bound', model: 'model-a', saveDefault: false }]);
-  assert.deepEqual(calls[2], ['permission', '/permission read-only']);
-  assert.deepEqual(calls[3], ['approval', 'never']);
+  assert.deepEqual(calls[2], ['permission', 'read-only']);
+  assert.deepEqual(calls[3], ['approval', 'never', { actor: 'automation' }]);
+  assert.deepEqual(run.executionPolicy, { format: 'agentkit.execution-policy/v1', permissionMode: 'read-only', approvalPolicy: 'never', approvalSource: 'runtime-policy' });
   assert.equal(calls[4][1].content[0].text, 'probe'); assert.equal(result.runId, 'dsh:session-a:9');
 });
 test('headless runs fail before prompting when the approval service is unavailable', async () => {
   let prompted = false;
   const services = {
     agents: { withoutInitiator: work => work() },
-    commands: { execute: async () => ({ result: {} }) },
+    permissionPresets: { set() {} },
     sessionController: { create: async () => {}, resolveAgent: async () => ({ agent: {} }), prompt: async () => { prompted = true; } },
   };
   const run = createNativeAutomationRunner({ getService: name => services[name], admit: async () => ({ presetId: 'frozen' }) });

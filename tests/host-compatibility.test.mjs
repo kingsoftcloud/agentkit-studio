@@ -12,7 +12,7 @@ function host(options = {}) {
   const services = {
     agentPresets: { register: unused, pluginsFor: unused },
     sessionController: { promptFingerprintVersion: 1, ...Object.fromEntries(['create', 'selectModel', 'resolveAgent', 'prompt', 'page', 'projections'].map(name => [name, unused])) },
-    agents: { withoutInitiator: unused }, commands: { execute: unused }, approval: { setPolicy: unused },
+    agents: { withoutInitiator: unused }, commands: { execute: unused }, permissionPresets: { set: unused }, approval: { setPolicy: unused },
   };
   return { services, compatibility: createHostCompatibility({ getService: name => services[name], requiredDsh: '0.2.0-rc.2', dshVersion: '0.2.0-rc.2', ...options }) };
 }
@@ -71,7 +71,7 @@ test('incompatible admission rejects before model lookup or preset registration'
 
 test('incompatible automation rejects before Session, permission or model operations', async () => {
   const { services, compatibility } = host();
-  services.commands = undefined;
+  services.permissionPresets = undefined;
   const run = createNativeAutomationRunner({ getService: name => services[name], assertHostCompatible: () => compatibility.require('automation') });
   await assert.rejects(run({ sessionId: 'test-session' }), { code: 'STUDIO_HOST_INCOMPATIBLE' });
 });
@@ -86,4 +86,11 @@ test('compatibility diagnostic remains available when the optional server cannot
   assert.equal(result.ok, true);
   assert.equal(result.value.baseline.actual, null);
   assert.equal(result.value.features.automation.available, false);
+});
+
+test('unattended execution requires the public preset setter instead of issuing a user command', () => {
+  const { services, compatibility } = host();
+  delete services.permissionPresets;
+  assert.equal(compatibility.inspect().features['agent-presets'].available, true);
+  assert.throws(() => compatibility.require('automation'), { code: 'STUDIO_HOST_INCOMPATIBLE' });
 });

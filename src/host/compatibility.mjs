@@ -18,7 +18,7 @@ export function createHostCompatibility({ getService, dshVersion, requiredDsh, r
     const capabilities = {
       'preset-composition': methods(registry, ['register', 'pluginsFor']) ? 1 : 0,
       'session-controller': methods(controller, ['create', 'selectModel', 'resolveAgent', 'prompt', 'page', 'projections']) ? 1 : 0,
-      'automation-policy': methods(getService('agents'), ['withoutInitiator']) && methods(getService('commands'), ['execute']) && methods(getService('approval'), ['setPolicy']) ? 1 : 0,
+      'automation-policy': methods(getService('agents'), ['withoutInitiator']) && methods(getService('permissionPresets'), ['set']) && methods(getService('approval'), ['setPolicy']) ? 1 : 0,
       'request-fingerprint': controller?.promptFingerprintVersion === 1 && methods(controller, ['prompt']) ? 1 : 0,
     };
     const baseline = { required: requiredDsh, actual: dshVersion ?? null, compatible: typeof dshVersion === 'string' && dshVersion === requiredDsh };

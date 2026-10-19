@@ -1,3 +1,4 @@
+import { selectCloudPermissionPresentation } from './cloud-permission.mjs';
 import { codexToolDefinition } from './codex-tool.mjs';
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_DEFAULT_MODEL_SETTINGS_NS, DSH_MODEL_CREDENTIAL, modelCredentialName } from './model-bridge.mjs';
 import { createNativeSessionBinding } from './session-entry.mjs';
@@ -7,7 +8,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
-  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudSessionStatus, CodexPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection, AssistantSettingsSection } = ui;
+  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection, AssistantSettingsSection } = ui;
   const { createElement: h } = React;
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles } = documentEffects;
   const { openAgentAuthoring } = authoring;
@@ -124,6 +125,10 @@ export function mountStudio(ctx, app) {
     { name: 'conversation.hero.agentPreset', priority: -20 },
     props => h(AgentContextSelector, { ...props, studioRemote: ctx.remote, modelDirectories: ctx.modelDirectories }),
   ));
+  ctx.slots.inject('conversation.input.permission.presentation', () => ctx.slots.register({
+    name: 'conversation.input.permission.presentation', id: 'agentkit-cloud-permission',
+    select: selectCloudPermissionPresentation,
+  }, CloudPermissionPresentation));
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
     { name: 'conversation.session.header.actions', id: 'agentkit-studio-cloud-status', order: -10 }, CloudSessionStatus,
   ));
