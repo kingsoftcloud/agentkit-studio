@@ -96,6 +96,12 @@ export function resolveKs3ReleaseCredentials(environment, origin) {
   };
 }
 
+/** Sign against the selected public origin, independently of stale bucket aliases. */
+export function resolveKs3OriginCredentials(environment, origin) {
+  return resolveKs3ReleaseCredentials({ ...environment,
+    STUDIO_DOWNLOAD_PROD_KS3_BUCKET: undefined, DOWNLOAD_PROD_KS3_BUCKET: undefined, KS3_BUCKET: undefined }, origin);
+}
+
 /** Upload one release object exactly once; callers reconcile any ambiguous failure before retrying. */
 export async function uploadKs3ReleaseArtifact({ origin, bucket, accessKey, secretKey, objectKey, path, contentType,
   fetchImpl = fetch, now = () => new Date(), timeoutMs = DEFAULT_TIMEOUT_MS, onProgress = () => {} }) {

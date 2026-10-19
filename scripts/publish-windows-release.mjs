@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
-import { resolveKs3ReleaseCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
+import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
 import { studioWindowsPublication } from '../src/desktop-release-metadata.mjs';
 
 async function digest(path, algorithm = 'sha512') {
@@ -68,7 +68,7 @@ export async function publishWindowsRelease({ candidate, evidence, origin, chann
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const { values } = parseArgs({ options: Object.fromEntries(['candidate', 'evidence', 'origin', 'channel', 'source'].map(key => [key, { type: 'string' }])) });
-  const credentials = resolveKs3ReleaseCredentials(process.env, values.origin);
+  const credentials = resolveKs3OriginCredentials(process.env, values.origin);
   const result = await publishWindowsRelease({ ...values, sourceCommit: values.source, credentials });
   console.log(`Windows feed published: ${result.feedUrl}`);
 }

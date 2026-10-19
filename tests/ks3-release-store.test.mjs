@@ -4,11 +4,27 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveKs3ReleaseCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
+import { resolveKs3ReleaseCredentials, resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
 
 test('KS3 release credentials accept Studio aliases and derive the bucket from the public origin', () => {
   assert.deepEqual(resolveKs3ReleaseCredentials({ KS3_ACCESS_KEY: 'ak', KS3_SECRET_KEY: 'sk' },
     'https://ksadk.ks3-cn-beijing.ksyuncs.com'), { bucket: 'ksadk', accessKey: 'ak', secretKey: 'sk' });
+});
+
+test('public release signing and probes resolve each selected origin despite stale bucket aliases', () => {
+  const environment = { STUDIO_DOWNLOAD_PROD_KS3_BUCKET: 'old-studio', DOWNLOAD_PROD_KS3_BUCKET: 'old-download',
+    KS3_BUCKET: 'old-generic', STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: 'ak', STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: 'sk' };
+  const original = { ...environment };
+  for (const bucket of ['agentkit', 'ksadk']) {
+    assert.deepEqual(resolveKs3OriginCredentials(environment, `https://${bucket}.ks3-cn-beijing.ksyuncs.com`),
+      { bucket, accessKey: 'ak', secretKey: 'sk' });
+  }
+  assert.deepEqual(environment, original);
+  assert.throws(() => resolveKs3OriginCredentials(environment, 'https://downloads.example.com'), /KS3 bucket is required/);
+});
+
+test('origin-scoped release credentials still require a key pair', () => {
+  assert.throws(() => resolveKs3OriginCredentials({ KS3_BUCKET: 'old' }, 'https://agentkit.ks3-cn-beijing.ksyuncs.com'), /KS3 access key is required/);
 });
 
 test('a private Bucket requires an authenticated missing-key response before creating a public versioned artifact', async t => {

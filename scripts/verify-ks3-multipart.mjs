@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs } from 'node:util';
-import { resolveKs3ReleaseCredentials } from '../src/ks3-release-store.mjs';
+import { resolveKs3OriginCredentials } from '../src/ks3-release-store.mjs';
 import { uploadKs3Multipart } from '../src/ks3-release-multipart.mjs';
 
 const { values } = parseArgs({ options: { origin: { type: 'string' }, output: { type: 'string' } } });
@@ -12,7 +12,7 @@ const origin = values.origin;
 if (!origin || !values.output) throw new Error('--origin and --output are required');
 const parsed = new URL(origin);
 if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) throw new Error('probe requires a plain HTTPS release origin');
-const credentials = resolveKs3ReleaseCredentials(process.env, origin);
+const credentials = resolveKs3OriginCredentials(process.env, origin);
 const directory = await mkdtemp(join(tmpdir(), 'studio-ks3-probe-'));
 const bytes = randomBytes(11 * 1024 * 1024);
 const path = join(directory, 'probe.bin');

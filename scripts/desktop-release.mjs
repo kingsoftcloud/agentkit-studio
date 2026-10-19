@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import YAML from 'yaml'
-import { resolveKs3ReleaseCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs'
+import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs'
 import { publishedDesktopMetadata, studioDesktopPublication } from '../src/desktop-release-metadata.mjs'
 
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
@@ -139,8 +139,7 @@ async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expect
 }
 
 async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviousVersion, layout, storageOrigin, mode, compatibilityOrigin }) {
-  const credentialsFor = selectedOrigin => resolveKs3ReleaseCredentials({ ...process.env,
-    STUDIO_DOWNLOAD_PROD_KS3_BUCKET: undefined, DOWNLOAD_PROD_KS3_BUCKET: undefined, KS3_BUCKET: undefined }, selectedOrigin)
+  const credentialsFor = selectedOrigin => resolveKs3OriginCredentials(process.env, selectedOrigin)
   const previous = expectedPreviousVersion === undefined ? undefined
     : await verifyFeed({ feedOrigin, storageOrigin, layout, selectedChannel, expectedVersion: expectedPreviousVersion, output: join(candidate.root, '.prepublish'), allowLoopback: false })
   const output = join(candidate.root, '.desktop-release')
