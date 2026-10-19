@@ -104,7 +104,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     observability: await studioObservabilityPromise,
   });
   ctx.effect(() => bridge.setAdapter(dshRuntimeAdapter), 'agentkit-studio: runtime transport registration');
-  const routeDshRuntime = (options, next) => routeRuntime(options, next, bridge);
+  const routeDshRuntime = (options, next) => routeRuntime(options, next, bridge, request => hostCompatibility.isAgentLoopRequest(request));
   ctx.on('llm/stream', routeDshRuntime);
   ctx.effect(() => bridge.setResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal } = {}) => {
     const adapters = await resourceAdaptersPromise;

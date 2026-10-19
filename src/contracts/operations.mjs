@@ -33,6 +33,7 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "agents/create-local",
   "agents/update-cloud",
   "agents/ensure-preset",
+  "agents/execution-policy",
   "agents/conversation-surface",
   "models/sync-credential",
   "models/credential-status",

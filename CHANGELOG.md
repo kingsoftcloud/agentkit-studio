@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep automatic titles and other auxiliary model requests out of bound resource execution and long-term memory writes by checking the running DSH Agent loop request marker.
+
+- Display verified cloud execution policy independently of the local permission picker, retain unknown policy for older runtimes, and stop attributing automated approval rejections to a user action.
+
 - Keep cloud Node 22 resource, model and MCP POSTs on DSH's Undici transport so the first web fetch cannot break subsequent requests with an invalid content-length header.
 
 - Prevent plugin inspection snapshots from terminating the Host when their retained-record envelope reaches the frame limit.

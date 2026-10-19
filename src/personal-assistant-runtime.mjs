@@ -1,4 +1,5 @@
 /** Cloud assistant facade. DSH owns execution, history, persistence and timers. */
+import { UNATTENDED_EXECUTION_POLICY } from './execution-policy.mjs';
 import { createHash } from 'node:crypto';
 
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
@@ -48,9 +49,10 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     if (resolved.error) throw resolved.error;
     installIdentity(resolved.agent);
     // Unattended tools retain confinement and cannot wait for a desktop approval.
-    const permission = await ctx.get('commands').execute(resolved.agent, '/permission read-only', [], new AbortController().signal);
-    if (!permission) throw fail('ASSISTANT_PERMISSION_UNAVAILABLE', '无法设置无人值守权限', 503);
-    ctx.get('approval').setPolicy(resolved.agent, 'never');
+    const presets = ctx.get('permissionPresets');
+    if (!presets) throw fail('ASSISTANT_PERMISSION_UNAVAILABLE', '无法设置无人值守权限', 503);
+    presets.set(resolved.agent.session, UNATTENDED_EXECUTION_POLICY.permissionMode);
+    ctx.get('approval').setPolicy(resolved.agent, UNATTENDED_EXECUTION_POLICY.approvalPolicy, { actor: 'automation' });
     return resolved.agent;
   }
   async function snapshot(sessionId, beforeSeq) {

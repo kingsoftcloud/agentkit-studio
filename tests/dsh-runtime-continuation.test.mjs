@@ -2,10 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createDshRuntimeAdapter, unbindDshAgentRoutes, routeDshRuntime, setDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
+import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 
 const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
 const completed = `data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`;
 const prompt = { model: 'gateway-model', messages: [{ role: 'user', content: '运行冻结版本' }] };
+
+for (const runtime of ['dsh-native', 'harness', 'codex']) {
+  test(`${runtime} Host routing never sends same-session auxiliary or copied requests through resource consumers`, async t => {
+    const bridge = createRuntimeBridge(); t.after(() => bridge.close());
+    bridge.bindRoute('same-session', { agentId: 'agent', runtime, local: true, agentRevision: 1 });
+    const owned = new WeakSet();
+    let resourceEffects = 0, auxiliaryCalls = 0;
+    bridge.setAdapter({ async *stream() { resourceEffects++; yield { type: 'text', text: 'business' }; } });
+    const next = async function* () { auxiliaryCalls++; yield { type: 'text', text: 'auxiliary' }; };
+    const business = Object.freeze({ ...prompt, sessionId: 'same-session' }); owned.add(business);
+    const read = options => Array.fromAsync(routeDshRuntime(options, next, bridge, request => owned.has(request)));
+    assert.equal((await read(business))[0].text, 'business');
+    assert.equal(resourceEffects, 1);
+    for (const options of [
+      { ...business, purpose: 'session-title', tools: [] },
+      { ...business, purpose: 'compaction' },
+      { ...business, metadata: { isAgentLoopRequest: true } },
+    ]) {
+      assert.equal((await read(options))[0].text, 'auxiliary');
+      assert.equal(resourceEffects, 1, 'an auxiliary call must not recall or write bound memory');
+    }
+    assert.equal(auxiliaryCalls, 3);
+  });
+}
 
 async function selectPreset(runtime, sessionId, buildId) {
   const listeners = new Map();

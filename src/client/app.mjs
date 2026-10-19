@@ -6,6 +6,7 @@ import { createCredentialOnboarding } from "./pages/credential-onboarding.mjs";
 import { createStartChecks } from "./pages/start-checks.mjs";
 import { createOverviewPage } from "./pages/overview.mjs";
 import { createAgentSelector } from "./dsh/agent-selector.mjs";
+import { createCloudPermissionPresentation } from './dsh/cloud-permission.mjs';
 import { createCloudSessionStatus } from "./dsh/cloud-status.mjs";
 import { createNavigation } from "./components/navigation.mjs";
 import { createRuntimeCatalogPage } from "./pages/runtime-catalog.mjs";
@@ -80,6 +81,7 @@ export function createStudioApp({ React, primitives }, { window = globalThis.win
   ui.StartChecks = createStartChecks({ ui, hostRemote, window, CustomEvent });
   ui.OverviewPage = createOverviewPage({ ui, hostRemote, window, CustomEvent });
   ui.AgentContextSelector = createAgentSelector({ ui, hostRemote, readConversationAgent, writeConversationAgent });
+  ui.CloudPermissionPresentation = createCloudPermissionPresentation({ ui, hostRemote, window });
   ui.CloudSessionStatus = createCloudSessionStatus({ ui, hostRemote });
   ui.RuntimeCatalogPage = createRuntimeCatalogPage({ ui, hostRemote, window, CustomEvent });
   ui.DomainPage = createDomainPage({ ui });

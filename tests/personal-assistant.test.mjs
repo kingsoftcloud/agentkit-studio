@@ -20,8 +20,8 @@ function fixture() {
     cancel: ({ sessionId }) => { cancelled++; append(sessionId, 'turn/end', { reason: { kind: 'aborted' } }); return { accepted: true }; },
     page: async ({ address }) => ({ records: logs.get(address.sessionId).map(event => ({ type: 'event', event })), hasMore: false }),
   };
-  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) },
-    approval: { setPolicy: (_agent, value) => assert.equal(value, 'never') }, sessions: { flush: async () => flush },
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} },
+    approval: { setPolicy: (_agent, value, options) => { assert.equal(value, 'never'); assert.deepEqual(options, { actor: 'automation' }); } }, sessions: { flush: async () => flush },
     schedule: { catalog: async () => [...timers.values()], create: async (sessionId, spec) => { const row = { ...spec, id: `task-${timers.size}`, sessionId }; timers.set(row.id, row); return row; },
       delete: async ({ sessionId, id }) => { assert.equal(timers.get(id).sessionId, sessionId); timers.delete(id); return { deleted: true }; } } };
   const calls = [], memories = [{ id: 'memory-a', text: 'prefer concise responses' }];
