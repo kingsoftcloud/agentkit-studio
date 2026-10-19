@@ -96,13 +96,15 @@ try {
         Start-Sleep -Milliseconds 300
         continue
       }
-      $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Agents')
+      $condition = [System.Windows.Automation.OrCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '智能体'),
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Agents'))
       $navigation = $element.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
       if ($navigation) { break }
     }
     Start-Sleep -Milliseconds 500
   } while ((Get-Date) -lt $deadline)
-  if (-not $started -or -not $navigation) { throw 'Finish Launch now did not render Studio Agents navigation in the installed process' }
+  if (-not $started -or -not $navigation) { throw 'Finish Launch now did not render Studio navigation in the installed process' }
   [StudioInstallerWindow]::Capture($started.MainWindowHandle, (Join-Path $Evidence 'windows-installer-launched-app.png'), $false)
   [ordered]@{installerBrandVerified=$true;visibleInstallation=$true;finishLaunchVerified=$true;studioNavigationVerified=$true;installedPath=$appPath;pid=$started.Id} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-installer-ui.json')
 } finally {

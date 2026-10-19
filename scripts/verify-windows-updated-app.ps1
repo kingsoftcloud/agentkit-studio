@@ -26,7 +26,9 @@ do {
  if($app) {
   try {
   $element=[System.Windows.Automation.AutomationElement]::FromHandle($app.MainWindowHandle)
-  $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'Agents')
+  $condition=[System.Windows.Automation.OrCondition]::new(
+   [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'智能体'),
+   [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'Agents'))
   $navigation=$element.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
   if($navigation) {
    $elements=$element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
