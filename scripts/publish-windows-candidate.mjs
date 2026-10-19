@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { studioWindowsPublication } from '../src/desktop-release-metadata.mjs';
-import { resolveKs3ReleaseCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
+import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
 
 async function digest(body, algorithm = 'sha512', encoding = 'base64') {
   const hash = createHash(algorithm); let size = 0;
@@ -43,8 +43,7 @@ export async function publishWindowsCandidate({ candidate, proof, origin, source
     const identical = current.version === version && current.files?.[0]?.sha512 === actual.hash && current.files?.[0]?.url === plan.metadata.files[0].url;
     if (!identical && (previous === 'absent' || current.version !== previous)) throw Error('Previous feed changed');
   }
-  const credentials = resolveKs3ReleaseCredentials({ ...environment,
-    STUDIO_DOWNLOAD_PROD_KS3_BUCKET: undefined, DOWNLOAD_PROD_KS3_BUCKET: undefined, KS3_BUCKET: undefined }, origin);
+  const credentials = resolveKs3OriginCredentials(environment, origin);
   const send = (objectKey, path, contentType) => upload({ ...credentials, origin, objectKey, path, contentType });
   await send(plan.assets.exe, installer, 'application/vnd.microsoft.portable-executable');
   await send(plan.assets.blockmap, blockmap, 'application/octet-stream');
