@@ -8,10 +8,11 @@ import { dirname, join } from 'node:path';
 import { appendFileSync, constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { assertDesktopDevResources, closeVerificationClient } from './desktop-dev-resources.mjs';
+import { ASSISTANT_UPLOAD_RPC_PATH } from '../src/contracts/assistant-attachments.mjs';
 const require = createRequire(import.meta.url);
 const { chromium, _electron } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 
-export async function verifyPersonalAssistantUi({ source, installed, api, profiles, screenshot, port }) {
+export async function verifyPersonalAssistantUi({ source, installed, api, relay, attachmentFixture, profiles, screenshot, port }) {
   const home = await mkdtemp(join(tmpdir(), 'assistant-web-'));
   const profile = join(home, 'dsh/profiles/assistant-ui');
   await mkdir(join(profile, 'node_modules/@kingsoftcloud'), { recursive: true });
@@ -29,7 +30,15 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
   let child, browser, context, page;
   let setupFailureFixture = true;
   const setupFailureMessage = '云端入口的 TLS 证书校验失败；请检查证书链';
-  const errors = [];
+  const errors = [], promptAttempts = [], relayFailures = [];
+  let losePromptAck = false;
+  const composer = () => page.getByRole('region', { name: '云端原生输入', exact: true });
+  const input = () => composer().locator('[data-composer-input][role="textbox"]');
+  const until = async (test, label) => {
+    const limit = Date.now() + 15000;
+    while (Date.now() < limit) { if (await test()) return; await new Promise(resolve => setTimeout(resolve, 50)); }
+    throw new Error('Browser assertion timed out: ' + label);
+  };
   const start = async () => {
     child = spawn(process.execPath, [join(source, 'apps/cli/lib/bin.js'), '--profile', 'assistant-ui', '--host', '127.0.0.1', '--no-open', '--port', String(port)], {
       cwd: source, env: { ...process.env, DSH_HOME: join(home, 'dsh'), AGENTKIT_HOME: join(home, 'agentkit') }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -73,17 +82,27 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
       page = await context.newPage();
     }
     page.on('pageerror', error => errors.push(error.message));
-    await page.route('**/agentkit/**', async route => {
+    await page.route(url => url.pathname.startsWith('/agentkit/') || url.pathname === ASSISTANT_UPLOAD_RPC_PATH, async route => {
       const body = route.request().postDataJSON();
       if (!body?.method?.startsWith('assistant/')) return route.continue();
       try {
-        const value = setupFailureFixture && body.method === 'assistant/catalog' ? { items: [] }
-          : setupFailureFixture && body.method === 'assistant/setup-status' ? { state: 'STARTING', ready: false,
-            message: setupFailureMessage, failure: { code: 'DEPLOYMENT_TLS_FAILED', message: setupFailureMessage } }
-          : body.method === 'assistant/catalog' ? { items: [{ metadata: { id: 'cloud-fixture', name: '云端助理验收' }, deployment: { id: 'fixture-deployment', versionId: 'fixture-version' }, spec: { runtime: { type: 'dsh-native' } } }] }
-          : await api(body.payload.operation, body.payload.input);
-        await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: true, value } } });
-      } catch { await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: false, error: { code: 'TEST_RELAY_FAILED', message: '验收连接失败' } } } }); }
+        const result = setupFailureFixture && body.method === 'assistant/catalog' ? { ok: true, value: { items: [] } }
+          : setupFailureFixture && body.method === 'assistant/setup-status' ? { ok: true, value: { state: 'STARTING', ready: false,
+            message: setupFailureMessage, failure: { code: 'DEPLOYMENT_TLS_FAILED', message: setupFailureMessage } } }
+          : await relay(body.method, body.payload);
+        const request = body.payload?.operation === 'native-call' && body.payload.input?.endpoint === 'session/prompt'
+          ? body.payload.input.payload?.args?.request : null;
+        if (request) {
+          promptAttempts.push(JSON.parse(JSON.stringify(request)));
+          if (losePromptAck && result.ok === true && result.value?.ok === true && result.value.value?.accepted === true) {
+            losePromptAck = false;
+            await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId,
+              result: { ok: false, error: { code: 'TEST_ACK_LOST', message: '验收：云端已受理，首次回执丢失' } } } });
+            return;
+          }
+        }
+        await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result } });
+      } catch (error) { relayFailures.push({ method: body.method, operation: body.payload?.operation, code: error.code || error.name }); await route.fulfill({ json: { type: 'server-response', rpcId: body.rpcId, result: { ok: false, error: { code: 'TEST_RELAY_FAILED', message: '验收连接失败' } } } }); }
     });
     if (url) await page.goto(url); else await page.reload();
     await page.getByText('个人助理', { exact: true }).first().click({ timeout: 30000 });
@@ -94,8 +113,12 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('agentkit.assistant.agent')) === 'cloud-fixture');
     assert.equal(await page.getByRole('tablist', { name: '助理功能' }).count(), 0, 'conversation opens without configuration tabs');
     assert.equal(await page.getByLabel('云端助理', { exact: true }).isVisible(), false, 'connection selector belongs in secondary settings');
-    await page.getByLabel('发给助理', { exact: true }).waitFor();
-    await page.getByRole('button', { name: '发送', exact: true }).waitFor();
+    await input().waitFor();
+    assert.equal(await input().count(), 1, 'exactly one native DSH editor must be mounted');
+    assert.equal(await input().getAttribute('contenteditable'), 'true');
+    assert.equal(await page.getByLabel('发给助理', { exact: true }).count(), 0);
+    await composer().getByRole('button', { name: '添加附件', exact: true }).waitFor();
+    await composer().getByText('原生输入已绑定云端会话；附件保存后提交，关闭页面也会继续执行。', { exact: true }).waitFor();
   };
   try {
     await open();
@@ -111,7 +134,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await page.getByText('个人助理', { exact: true }).first().click({ timeout: 30000 });
     await waitForConversation();
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-welcome.png'), fullPage: true });
-    await page.getByLabel('发给助理', { exact: true }).fill('保留这份草稿');
+    await input().fill('保留这份草稿');
     assert.equal(await page.getByRole('button', { name: '助理设置', exact: true }).count(), 0);
     await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
     const connectionCard = page.getByRole('dialog', { name: '助理连接信息', exact: true });
@@ -153,15 +176,37 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
     await page.getByRole('dialog', { name: '助理连接信息', exact: true }).getByText('小星', { exact: true }).waitFor();
     await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
-    assert.equal(await page.getByLabel('发给助理', { exact: true }).inputValue(), '保留这份草稿');
-    await page.getByLabel('发给助理', { exact: true }).fill('browser task survives Studio Host exit');
-    await page.getByLabel('发给助理', { exact: true }).press('Enter');
-    await page.getByRole('status').filter({ hasText: '已收到。' }).waitFor({ timeout: 15000 });
+    assert.equal(await input().textContent(), '保留这份草稿');
+    await input().fill('browser task survives Studio Host exit');
+    const uploadResponse = page.waitForResponse(response => response.request().postDataJSON()?.payload?.operation === 'attachment-upload');
+    const picking = page.waitForEvent('filechooser');
+    await composer().getByRole('button', { name: '添加附件', exact: true }).click();
+    await (await picking).setFiles({ name: attachmentFixture.name, mimeType: 'text/plain', buffer: attachmentFixture.bytes });
+    const uploadedResponse = await uploadResponse;
+    assert.equal(new URL(uploadedResponse.url()).pathname, ASSISTANT_UPLOAD_RPC_PATH, 'attachments must use the dedicated authenticated upload ingress');
+    const uploaded = await uploadedResponse.json();
+    assert.deepEqual(relayFailures, [], 'production Host relay must accept the native upload');
+    assert.equal(uploaded.result.ok, true, 'native attachment upload must succeed'); assert.equal(uploaded.result.value.attachment.name, attachmentFixture.name);
+    assert.equal(uploaded.result.value.attachment.bytes, attachmentFixture.bytes.length);
+    await until(() => composer().getByRole('button', { name: '发送消息', exact: true }).isEnabled(), 'native attachment receipt is ready');
+    losePromptAck = true;
+    await input().press('Enter');
+    const confirm = composer().getByRole('button', { name: '确认提交', exact: true });
+    await confirm.waitFor();
+    await until(async () => !losePromptAck && await confirm.isEnabled(), 'first durable ACK is lost and explicit confirmation becomes available');
+    assert.equal(promptAttempts.length, 1);
+    assert.equal(promptAttempts[0].content.filter(part => part.type === 'file').length, 1);
+    assert.equal(promptAttempts[0].content.find(part => part.type === 'file').receiptId, uploaded.result.value.receiptId, 'native submission must contain the exact uploaded cloud file receipt');
+    await confirm.click(); await confirm.waitFor({ state: 'hidden' });
+    await until(async () => (await input().textContent()).trim() === '', 'native ACK clears the accepted draft');
+    assert.equal(promptAttempts.length, 2); assert.deepEqual(promptAttempts[1], promptAttempts[0], 'confirmation must retry the exact native request');
     const state = await context.storageState();
     await closeVerificationClient(browser); browser = null; await stop();
     let complete = false;
     for (let i = 0; i < 100; i++) { const snapshot = await api('snapshot'); if (snapshot.status === 'completed' && snapshot.messages.some(item => item.text === 'browser task survives Studio Host exit')) { complete = true; break; } await new Promise(resolve => setTimeout(resolve, 100)); }
     assert.equal(complete, true);
+    const saved = await api('snapshot');
+    assert.equal(saved.events.filter(event => event.type === 'user/message' && event.data.source?.rpcId === promptAttempts[0].requestId).length, 1, 'lost ACK retry must not duplicate durable input');
     await open(state);
     await page.getByRole('heading', { name: '小星', exact: true }).waitFor();
     await page.getByLabel('助理会话', { exact: true }).getByText('browser task survives Studio Host exit', { exact: true }).waitFor({ timeout: 15000 });
@@ -171,12 +216,21 @@ export async function verifyPersonalAssistantUi({ source, installed, api, profil
     await page.locator('pre code').filter({ hasText: 'console.log("studio");' }).waitFor();
     assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
     assert.equal(await page.evaluate(() => globalThis.__studioMarkdownUnsafe === true), false);
+    assert.equal(await page.getByText('原生会话展示暂不可用，正在显示已保存的文字记录。', { exact: true }).count(), 0);
+    for (const tool of ['glob', 'read']) await page.getByRole('button', { name: `${tool} · 已完成`, exact: true }).waitFor();
+    await page.getByRole('button', { name: 'read · 已完成', exact: true }).click();
+    await page.getByLabel('工具：read', { exact: true }).getByText(attachmentFixture.bytes.toString('utf8').trim(), { exact: false }).waitFor();
+    const downloading = page.waitForEvent('download');
+    await page.getByRole('button', { name: `下载文件：${attachmentFixture.name}`, exact: true }).click();
+    const downloaded = await downloading, stream = await downloaded.createReadStream(), chunks = [];
+    assert.ok(stream); for await (const chunk of stream) chunks.push(chunk);
+    assert.deepEqual(Buffer.concat(chunks), attachmentFixture.bytes, 'cloud download must preserve original native attachment bytes');
     await page.screenshot({ path: screenshot, fullPage: true });
     const { verifyStudioCatalogUi } = await import('./verify-studio-catalog-ui.mjs');
     const catalog = await verifyStudioCatalogUi(page);
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-catalog.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    return { passed: true, catalog, savedAssistantAndOwnerNames: true, renamedTitleAndDeviceCard: true, identitySurvivesClientRestart: true, nativeSystemSettings: true, deletionConfirmationCancelled: true, localComputerCard: true, connectionRecovers: true, nativeMarkdown: true, unsafeMarkdownBlocked: true, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
+    return { passed: true, catalog, savedAssistantAndOwnerNames: true, renamedTitleAndDeviceCard: true, identitySurvivesClientRestart: true, nativeSystemSettings: true, deletionConfirmationCancelled: true, localComputerCard: true, connectionRecovers: true, nativeComposer: true, nativeReceiptUpload: true, nativeToolRead: true, nativeDownloadBytes: true, exactNativeAckRetry: true, nativeMarkdown: true, unsafeMarkdownBlocked: true, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
       localHostRestarted: true, clientRestarted: true, nativeElectron: process.env.STUDIO_VERIFY_NATIVE === '1', cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
   } catch (error) { await page?.screenshot({ path: screenshot.replace(/\.png$/, '-failure.png'), fullPage: true, timeout: 3000 }).catch(() => {}); throw error; }
   finally { try { await closeVerificationClient(browser); } finally { await stop(); } }

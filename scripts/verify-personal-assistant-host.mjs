@@ -72,6 +72,10 @@ const managedToolPlans = new Map([
   ['managed guarded shell', [['bash', { command: 'printf controlled > forbidden-shell.txt' }]]],
   ['managed restored write', [['write', { file_path: 'restored.txt', content: 'restored managed workspace' }]]],
   ['managed resumed schedule', [['write', { file_path: 'scheduled.txt', content: 'restored schedule workspace' }]]],
+  ['browser task survives Studio Host exit', [
+    ['glob', { path: '.assistant-inputs', pattern: '**/browser-native.txt' }],
+    ['read', { file_path: `.assistant-inputs/${createHash('sha256').update(fileBytes).digest('hex')}/browser-native.txt` }],
+  ]],
 ]);
 const managedToolProgress = new Map();
 let toolCalls = 0, pending;
@@ -92,6 +96,20 @@ const modelServer = createServer(async (request, response) => {
     requests.push({ model: body.model, input, priorResponse: JSON.stringify(body.messages).includes('ASSISTANT_DONE'),
       images,
       identity: body.messages.filter(item => item.role === 'system').flatMap(item => (typeof item.content === 'string' ? item.content : JSON.stringify(item.content)).split('\n')).find(line => line.startsWith('{"assistantName":')) || '' });
+    // The real native session list enables DSH's independent title provider.
+    // Its framed user text contains the task too, but it is not a tool turn.
+    if (body.messages.some(item => item.role === 'system' && typeof item.content === 'string'
+      && item.content.startsWith('Create a concise title for an AI coding-assistant session from the supplied human messages.'))) {
+      const prefix = 'Generate the session title from this JSON array of human messages:\n';
+      assert.ok(input.startsWith(prefix), 'official title provider must frame its source messages');
+      const messages = JSON.parse(input.slice(prefix.length));
+      assert.ok(Array.isArray(messages) && messages.length > 0 && messages.every(item => Number.isSafeInteger(item.seq) && typeof item.text === 'string'));
+      assert.equal(body.tools?.length || 0, 0, 'title generation must not receive task tools');
+      requests.at(-1).purpose = 'session-title';
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.write(frame({ choices: [{ delta: { content: 'Browser attachment verification' }, finish_reason: 'stop' }] }));
+      response.end('data: [DONE]\n\n'); return;
+    }
     const planKey = [...managedToolPlans.keys()].find(key => input.includes(key));
     const plan = managedToolPlans.get(planKey), step = managedToolProgress.get(planKey) || 0;
     if (plan && step < plan.length) {
@@ -112,7 +130,7 @@ const modelServer = createServer(async (request, response) => {
     response.write(frame({ choices: [{ delta: { content: "DONE\n\n## Markdown 验收\n\n- 原生列表\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 已渲染 |\n\n```js\nconsole.log(\"studio\");\n```\n\n[文档](https://example.com)\n\n[拒绝危险链接](javascript:alert(1))\n\n<img src=x onerror=\"globalThis.__studioMarkdownUnsafe=true\">" }, finish_reason: 'stop' }] }));
     response.end('data: [DONE]\n\n');
   } catch (error) {
-    report.modelFailure = { name: error.name, code: error.code || 'MODEL_FIXTURE_ASSERTION' };
+    report.modelFailure = { name: error.name, code: error.code || 'MODEL_FIXTURE_ASSERTION', location: error.stack?.split('\n').filter(line => line.includes('verify-personal-assistant-host.mjs')).map(line => line.trim()).slice(0, 3) };
     if (!response.headersSent) response.writeHead(500);
     response.end('controlled fixture failed');
   }
@@ -594,7 +612,21 @@ try {
     const native = process.env.STUDIO_VERIFY_NATIVE === '1';
     stage = native ? 'macos-ui' : 'web-ui';
     const { verifyPersonalAssistantUi } = await import('./verify-personal-assistant-ui.mjs');
-    report.ui = await verifyPersonalAssistantUi({ source, installed, api: (operation, input = {}) => api(operation, { ...input, conversation: 'ui-acceptance' }), profiles, screenshot: target.replace(/\.json$/, '.png'), port: await freePort() });
+    const { createAssistantRoutes } = await loadStudio('host/routes/assistant.mjs');
+    const uiAgent = { metadata: { id: 'cloud-fixture', name: '云端助理验收' },
+      deployment: { id: 'fixture-deployment', buildId, versionId: 'fixture-version' }, spec: { runtime: { type: 'dsh-native' } } };
+    // Control ownership only. The production Host route adds receipt-bound
+    // journalScope and performs native/attachment admission over real HTTP.
+    const uiRoutes = createAssistantRoutes({ assistantStoreDir: join(scratch, 'ui-lifecycle'), deployments: async () => ({ agents: {
+      list: async () => ({ items: [uiAgent] }),
+      connect: async id => { assert.equal(id, uiAgent.metadata.id); return { agent: uiAgent, endpoint: base, token, capabilities: runtimeIdentity.capabilities }; },
+    } }) });
+    report.ui = await verifyPersonalAssistantUi({ source, installed,
+      api: (operation, input = {}) => api(operation, { ...input, conversation: 'ui-acceptance' }),
+      relay: (method, payload) => uiRoutes(method, method === 'assistant/execute' ? { ...payload, input: { ...payload.input, conversation: 'ui-acceptance' } } : payload),
+      attachmentFixture: { name: 'browser-native.txt', bytes: fileBytes }, profiles, screenshot: target.replace(/\.json$/, '.png'), port: await freePort() });
+    const browserWork = requests.filter(row => row.input.includes('browser task survives Studio Host exit'));
+    assert.deepEqual(browserWork.filter(row => row.requestedTool).map(row => row.requestedTool), ['glob', 'read']);
     report.limits[2] = 'Controlled model and ownership catalog; real cloud deployment and memory extraction require separate acceptance.';
     check(native ? 'real-electron-ui-reopens-after-local-host-exits' : 'real-web-ui-reopens-after-local-host-exits');
   }
