@@ -1,6 +1,6 @@
 /** The configured runtime lives exactly as long as its native dependencies. */
 export function bindFrozenRuntime(ctx, { start, onUnavailable }) {
-  return ctx.inject(['agentPresets', 'sessionController', 'agents', 'commands', 'approval'], async runtimeCtx => {
+  return ctx.inject(['agentPresets', 'sessionController', 'agents', 'permissionPresets', 'approval'], async runtimeCtx => {
     let stopped = false, runtime;
     runtimeCtx.effect(() => () => { stopped = true; return runtime?.close(); }, 'agentkit-studio: frozen runtime dependencies');
     try {

@@ -1,0 +1,410 @@
+diff --git a/packages/client/ui-permission-presets/README.md b/packages/client/ui-permission-presets/README.md
+index 50d8b4918c1e3afdce84b66832a2d214c5d8e817..44a0dceeb2fccd3f06e5867e94ff022c2966e469 100644
+--- a/packages/client/ui-permission-presets/README.md
++++ b/packages/client/ui-permission-presets/README.md
+@@ -92,3 +92,5 @@ These limits define the current permission surfaces. They are current package co
+ None.
+ 
+ </details>
++
++The composer permission entry owns a session-scoped chain, `conversation.input.permission.presentation`. Its owner supplies `locked` and the selected `agentPreset` identifier. A product can present a remote execution policy for its own presets; when every contribution declines, the unchanged native picker and confirmation are rendered. This presentation extension grants no permissions.
+diff --git a/packages/client/ui-permission-presets/README.zh.md b/packages/client/ui-permission-presets/README.zh.md
+index df37cea7ececee8e6bda6d3bf453bbd09e0aed38..a7e1bfd4baa7c47d54559ec06f93e9f68a21f234 100644
+--- a/packages/client/ui-permission-presets/README.zh.md
++++ b/packages/client/ui-permission-presets/README.zh.md
+@@ -92,3 +92,5 @@ General Settings 行经 `ctx.configForms` 读取显式暴露的 `permission` Set
+ 无。
+ 
+ </details>
++
++会话输入框的权限入口声明 `conversation.input.permission.presentation`，按当前 `agentPreset` 选择显示贡献。没有贡献接管时保留原生权限菜单与确认流程。产品可在自己的远端预设中展示实际运行策略；这个展示扩展不授予权限。
+diff --git a/packages/client/ui-permission-presets/src/client/PermissionSelect.tsx b/packages/client/ui-permission-presets/src/client/PermissionSelect.tsx
+index 0281c41a2476d25fab510d9ccbe500188d7911ab..13e1262753c1ce493c20bf538ae2b625166b7053 100644
+--- a/packages/client/ui-permission-presets/src/client/PermissionSelect.tsx
++++ b/packages/client/ui-permission-presets/src/client/PermissionSelect.tsx
+@@ -7,12 +7,12 @@ import {
+ } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type {
+-  HostObservable, InjectFace, PropsLocale, PropsRuntime,
++  HostObservable, InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime,
+ } from '@deepseek-ai/dsh-client-ui-slots'
+ import type { PresetOption } from '@deepseek-ai/dsh-permission-presets/client'
+ // Type-only: pulls the conversation-owned permission slot declaration and
+ // the standard session projection hook into this package's Client face.
+-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
++import type { InputControlOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+ import type { PermissionCatalogState } from './catalog.ts'
+ import { PERMISSION_ACCESS_NS } from './locales.ts'
+ import {
+@@ -209,3 +209,32 @@ export function PermissionSelect({
+     </>
+   )
+ }
++
++/** A presentation override carries no policy-writing authority. */
++export interface PermissionPresentationOwnerProps extends InputControlOwnerProps {
++  agentPreset?: string
++}
++
++declare module '@deepseek-ai/dsh-client-ui-slots' {
++  interface SlotMap {
++    /** Product presentation for a remotely executed preset; native control is the owner fallback. */
++    'conversation.input.permission.presentation': {
++      kind: 'chain'
++      scope: 'session'
++      owner: PermissionPresentationOwnerProps
++    }
++  }
++}
++
++/** Permission presentation owner; the existing picker remains the default. */
++export type PermissionControlProps = PermissionSelectProps
++  & PropsRenderSlots<'conversation.input.permission.presentation'>
++
++/** Keep local selection and confirmation in the native control. */
++export function PermissionControl({ renderSlotChain, ...props }: PermissionControlProps) {
++  const preset = props.useSessions(state => state?.byId[props.sessionId]?.projectionValues?.agentPreset)
++  return renderSlotChain('conversation.input.permission.presentation', {
++    locked: props.locked,
++    ...(typeof preset === 'string' ? { agentPreset: preset } : {}),
++  }, { fallback: <PermissionSelect {...props} /> })
++}
+diff --git a/packages/client/ui-permission-presets/src/client/index.ts b/packages/client/ui-permission-presets/src/client/index.ts
+index 454171883925f9aac2d3d5164099de13578b3a71..90641016487f28f6937f56591137d851e25bc09d 100644
+--- a/packages/client/ui-permission-presets/src/client/index.ts
++++ b/packages/client/ui-permission-presets/src/client/index.ts
+@@ -36,7 +36,7 @@ import type { CommandUiContract, SelectOption } from '@deepseek-ai/dsh-client-ui
+ import type { ClientSessionContext } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+ import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+ import { PermissionCatalogDirectory } from './catalog.ts'
+-import { PermissionSelect } from './PermissionSelect.tsx'
++import { PermissionControl } from './PermissionSelect.tsx'
+ import type { PermissionSelectInjected } from './PermissionSelect.tsx'
+ import { PermissionRow } from './PermissionRow.tsx'
+ import type { PermissionRowInjected } from './PermissionRow.tsx'
+@@ -50,7 +50,7 @@ import { PermissionPresetSettingsController } from './settings-store.ts'
+ 
+ export type { PermissionRowInjected, PermissionRowProps } from './PermissionRow.tsx'
+ export type { PermissionCatalogState } from './catalog.ts'
+-export type { PermissionSelectInjected, PermissionSelectProps } from './PermissionSelect.tsx'
++export type { PermissionControlProps, PermissionPresentationOwnerProps, PermissionSelectInjected, PermissionSelectProps } from './PermissionSelect.tsx'
+ export type {
+   PermissionDefaultOption, PermissionSettingsState,
+ } from './settings-store.ts'
+@@ -166,12 +166,13 @@ export function apply(ctx: ClientContext): void {
+ 
+   ctx.slots.inject('conversation.input.permission', () => ctx.slots.register({
+     name: 'conversation.input.permission',
++    children: { 'conversation.input.permission.presentation': { kind: 'chain', scope: 'session' } },
+     locale: PERMISSION_ACCESS_NS,
+     inject: (sessionId: SessionId): PermissionSelectInjected => ({
+       hooks: { permissionCatalog: catalog.store },
+       select: preset => submit(sessionId, preset),
+     }),
+-  }, PermissionSelect))
++  }, PermissionControl))
+ 
+   ctx.effect(() => command.decorate({
+     name: 'permission',
+diff --git a/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts b/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
+index 916f4d5fcf4caf76de6945b1bf190e11b69f6521..ed523ad05a2eed503f95b233aa09a2d919b65761 100644
+--- a/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
++++ b/packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts
+@@ -24,7 +24,7 @@ import type {
+ import {
+   PermissionRow, type PermissionRowInjected,
+ } from '../src/client/PermissionRow.tsx'
+-import { PermissionSelect } from '../src/client/PermissionSelect.tsx'
++import { PermissionControl } from '../src/client/PermissionSelect.tsx'
+ import type { PermissionSelectInjected } from '../src/client/PermissionSelect.tsx'
+ import { apply, inject } from '../src/client/index.ts'
+ import { accessEn, accessZh } from '../src/client/locales.ts'
+@@ -149,7 +149,7 @@ async function bench() {
+     permissionRow: () => ctx.slots.entries('settings.general.item')
+       .find(entry => entry.component === PermissionRow),
+     permissionSelect: () => ctx.slots.entries('conversation.input.permission')
+-      .find(entry => entry.component === PermissionSelect),
++      .find(entry => entry.component === PermissionControl),
+   }
+ }
+ 
+diff --git a/packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx b/packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx
+index 78654aef56d8446c67dd6a66795e531788e0e7f5..62dd7b0945e56f3b0a18b69ef5f693963ab41e09 100644
+--- a/packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx
++++ b/packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx
+@@ -7,7 +7,7 @@ import type {
+   PermissionCatalog, PermissionSelection,
+ } from '@deepseek-ai/dsh-permission-presets/client'
+ import {
+-  PermissionSelect, type PermissionSelectProps,
++  PermissionControl, PermissionSelect, type PermissionControlProps, type PermissionSelectProps,
+ } from '../src/client/PermissionSelect.tsx'
+ import type { PermissionCatalogState } from '../src/client/catalog.ts'
+ import { accessZh } from '../src/client/locales.ts'
+@@ -239,3 +239,34 @@ describe('PermissionSelect', () => {
+     expect(trigger().textContent).toBe('工作区内修改')
+   })
+ })
++
++describe('PermissionControl presentation extension', () => {
++  it('uses the native menu and writer when no presentation elects an override', async () => {
++    const native = setup({ selection: { currentValue: 'workspace-write' } })
++    cleanup()
++    const renderSlotChain: PermissionControlProps['renderSlotChain'] = (_key, _owner, options) => options?.fallback
++    const props = { ...native.props, renderSlotChain, renderSlot: {}, useSessions: vi.fn() } as PermissionControlProps
++    render(<PermissionControl {...props} />)
++    fireEvent.click(trigger())
++    fireEvent.click(screen.getByRole('menuitem', { name: '仅可查看' }))
++    await act(async () => { await Promise.resolve() })
++    expect(native.select).toHaveBeenCalledExactlyOnceWith('read-only')
++  })
++
++  it('gives the selected preset to a public chain and retains the native picker as fallback', () => {
++    const renderSlotChain = vi.fn((_key, owner, options) => {
++      expect(owner).toEqual({ locked: false, agentPreset: 'remote-preset' })
++      expect(options.fallback.type).toBe(PermissionSelect)
++      return <span>Remote policy</span>
++    })
++    const props = {
++      sessionId: 'session-remote', locked: false,
++      useSessions: (selector: (value: object) => unknown) => selector({ byId: { 'session-remote': { projectionValues: { agentPreset: 'remote-preset' } } } }),
++      renderSlotChain,
++    } as PermissionControlProps
++    render(<PermissionControl {...props} />)
++    expect(screen.getByText('Remote policy')).toBeTruthy()
++    expect(renderSlotChain).toHaveBeenCalledOnce()
++    expect(screen.queryByRole('button')).toBeNull()
++  })
++})
+diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
+index ca939d4dfb2347f03a808225c2e0feb826a38c45..0e79648a0a0c06f99c182b1b48966cee257be650 100644
+--- a/packages/core/tools/src/index.ts
++++ b/packages/core/tools/src/index.ts
+@@ -1729,7 +1729,7 @@ export class ToolRuntime extends Service {
+    * An agent-less execution also degrades: without an agent there is no
+    * session to audit to and no UI to route to. Otherwise the outcome maps
+    * one-to-one — `allowed-once` proceeds; the three non-grants deny with
+-   * distinct reasons so the model can tell a human "no" from an absent
++   * distinct reasons so the model can tell rejection from an absent
+    * approval channel.
+    */
+   private async serviceAsk(
+@@ -1760,7 +1760,7 @@ export class ToolRuntime extends Service {
+     switch (outcome) {
+       case 'allowed-once': return { decision: { kind: 'allow' }, approvalCancelled: false }
+       case 'rejected': return {
+-        decision: { kind: 'deny', reason: `the user rejected tool "${exec.name}"` },
++        decision: { kind: 'deny', reason: `approval for tool "${exec.name}" was rejected` },
+         approvalCancelled: false,
+       }
+       case 'cancelled': return {
+diff --git a/packages/core/tools/tests/tools.spec.ts b/packages/core/tools/tests/tools.spec.ts
+index 870c72fe4cd5795a4ba898019d2e7c652fceaf55..3a1e8dcbf3044509e0f4fe24c6d762021a89f4fc 100644
+--- a/packages/core/tools/tests/tools.spec.ts
++++ b/packages/core/tools/tests/tools.spec.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, expectTypeOf, it } from 'vitest'
++import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+ import { Context } from '@deepseek-ai/cordis'
+ import LlmRuntime, { createUserMessage, ToolCallId, HarnessError, type ContentBlock  } from '@deepseek-ai/dsh-llm'
+ import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+@@ -842,14 +842,27 @@ describe('ToolRuntime', () => {
+       expect(seen[0]?.signal).toBe(controller.signal)
+     })
+ 
+-    it('denies with the user-rejection reason on rejected', async () => {
++    it('denies with a neutral rejection reason on rejected', async () => {
+       const ctx = await approvalSetup()
+       ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('rejected'))
+       ctx.on('tools/pre-execute', async (_exec, _next): Promise<PreToolDecision> => ({ kind: 'ask' }))
+ 
+       const result = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('c1'), name: 'echo', arguments: {}, agent: fakeAgent() })
+       expect(result.isError).toBe(true)
+-      expect(result.content[0]).toMatchObject({ text: 'Error: the user rejected tool "echo"' })
++      expect(result.content[0]).toMatchObject({ text: 'Error: approval for tool "echo" was rejected' })
++    })
++
++    it('does not attribute a never-policy rejection to a person', async () => {
++      const ctx = await approvalSetup()
++      const agent = { ...fakeAgent(), inject: vi.fn<Agent['inject']>() } as Agent
++      ctx.approval.setPolicy(agent, 'never')
++      const answerer = vi.fn(() => Promise.resolve<ApprovalOutcome>('allowed-once'))
++      ctx.on('approval/request', answerer)
++      ctx.on('tools/pre-execute', async (_exec, _next): Promise<PreToolDecision> => ({ kind: 'ask' }))
++      const result = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('auto'), name: 'echo', arguments: {}, agent })
++      expect(result.isError).toBe(true)
++      expect(result.content[0]).toMatchObject({ text: 'Error: approval for tool "echo" was rejected' })
++      expect(answerer).not.toHaveBeenCalled()
+     })
+ 
+     it('denies with the cancellation reason on cancelled', async () => {
+diff --git a/packages/experimental/auto-review/tests/auto-review.spec.ts b/packages/experimental/auto-review/tests/auto-review.spec.ts
+index 096addd35bc934d296aaf88e7754c2071a3b7971..eb3437eb0bc1fb7450b71e62c48baf0112216f37 100644
+--- a/packages/experimental/auto-review/tests/auto-review.spec.ts
++++ b/packages/experimental/auto-review/tests/auto-review.spec.ts
+@@ -808,7 +808,7 @@ describe('native review request', () => {
+       expect(result.isError).toBe(!item.allowed)
+       expect(JSON.stringify(result)).not.toContain('"risk"')
+       if (item.allowed) continue
+-      expect(result).toMatchObject({ error: { message: 'the user rejected tool "probe"' } })
++      expect(result).toMatchObject({ error: { message: 'approval for tool "probe" was rejected' } })
+       expect(approvalReasons.at(-1)).toBe(item.expectedReason === undefined
+         ? 'Auto review denied tool "probe"'
+         : `Auto review denied tool "probe": ${item.expectedReason}`)
+@@ -824,7 +824,7 @@ describe('native review request', () => {
+ 
+   it.each([
+     { outcome: 'allowed-once', runs: 1, error: undefined },
+-    { outcome: 'rejected', runs: 0, error: 'the user rejected tool "probe"' },
++    { outcome: 'rejected', runs: 0, error: 'approval for tool "probe" was rejected' },
+     { outcome: 'cancelled', runs: 0, error: 'approval for tool "probe" was cancelled' },
+   ] as const)('executes a reviewer-denied call only when the user answers $outcome with a grant', async ({ outcome, runs, error }) => {
+     const { ctx } = await harness([decisionChunks('{"risk":"medium","decision":"deny","reason":"not authorized"}')])
+diff --git a/packages/fs/tool-fs/tests/tools.spec.ts b/packages/fs/tool-fs/tests/tools.spec.ts
+index 2ea469c3f863657f204425a3c966689d0a2f4cbd..383976b6c400ec43fb19e15f2969990ff5cf7de7 100644
+--- a/packages/fs/tool-fs/tests/tools.spec.ts
++++ b/packages/fs/tool-fs/tests/tools.spec.ts
+@@ -1023,7 +1023,7 @@ describe('sandbox escalation API (write/edit)', () => {
+     ctx.on('approval/request', () => Promise.resolve('rejected' as const))
+     const result = await call(ctx, 'edit', { file_path: 'a.txt', old_string: 'x', new_string: 'y', sandbox_permissions: 'danger-full-access', justification: 'the test needs it' }, escalationAgent())
+     expect(result.isError).toBe(true)
+-    expect(text(result)).toContain('the user rejected escalating this operation to "danger-full-access"')
++    expect(text(result)).toContain('approval for escalating this operation to "danger-full-access" was rejected')
+     expect(fs.stamped).toEqual([])
+   })
+ 
+diff --git a/packages/interaction/user-approval/README.md b/packages/interaction/user-approval/README.md
+index 8c52fa0905c160fb9d229ccf0022169ae7c22b9e..708c2b082cbb9973d36cf23b5f657c439919b8af 100644
+--- a/packages/interaction/user-approval/README.md
++++ b/packages/interaction/user-approval/README.md
+@@ -164,3 +164,5 @@ These limits define when the seam is a poor fit or needs special composition car
+ None.
+ 
+ </details>
++
++Programmatic callers use `setPolicy(agent, policy, { actor: 'automation' })` to attribute the logged model-visible notice to automation. Omitting the option retains user attribution. Rejected approval outcomes do not identify a human decision; the `never` policy rejects before consulting any answerer.
+diff --git a/packages/interaction/user-approval/README.zh.md b/packages/interaction/user-approval/README.zh.md
+index 66d30dfd41cb9414d8166fe5fbf4fb80f6dfa9c8..f5dda04ba6e478c0688ab420125a27353387fbe0 100644
+--- a/packages/interaction/user-approval/README.zh.md
++++ b/packages/interaction/user-approval/README.zh.md
+@@ -164,3 +164,5 @@ Approval prompts are disabled in this session: actions that require approval are
+ 无。
+ 
+ </details>
++
++程序设置策略时可调用 `setPolicy(agent, policy, { actor: 'automation' })`，让已记录的模型通知明确说明由自动化设置。省略该选项时保留用户操作归因。`rejected` 本身不能证明用户点了拒绝：`never` 会在询问任何审批方之前直接拒绝。
+diff --git a/packages/interaction/user-approval/src/index.ts b/packages/interaction/user-approval/src/index.ts
+index 9a14f04d0b3c7f6dbcacb1fd2537186b1213f02e..b50f57bbe1dbfa88363866178f2f7285f60c1672 100644
+--- a/packages/interaction/user-approval/src/index.ts
++++ b/packages/interaction/user-approval/src/index.ts
+@@ -180,15 +180,16 @@ export class ApprovalService extends Service {
+    * because there is no previously visible policy to change.
+    * @param agent - the live agent whose policy is changing.
+    * @param policy - the new effective policy.
++   * @param options - attributes a programmatic change without implying a human action.
+    */
+-  setPolicy(agent: Agent, policy: ApprovalPolicy): void {
++  setPolicy(agent: Agent, policy: ApprovalPolicy, options: { actor?: 'user' | 'automation' } = {}): void {
+     const previous = this.effectivePolicy(agent.session)
+     if (previous === policy) return
+     setApprovalPolicy(agent.session, policy)
+     agent.inject(createUserMessage({
+       content: [{
+         type: 'text',
+-        text: `The approval policy changed from "${previous}" to "${policy}" (changed by the user).`,
++        text: `The approval policy changed from "${previous}" to "${policy}" (${options.actor === 'automation' ? 'set by automation' : 'changed by the user'}).`,
+       }],
+       source: { kind: 'user-approval' },
+     }))
+diff --git a/packages/interaction/user-approval/tests/approval.spec.ts b/packages/interaction/user-approval/tests/approval.spec.ts
+index 0ec3b9580b633375f0fede749e8c8e36670db8e9..eb60a3aa36e2df68bf67aec0b37410cc9521c48e 100644
+--- a/packages/interaction/user-approval/tests/approval.spec.ts
++++ b/packages/interaction/user-approval/tests/approval.spec.ts
+@@ -475,6 +475,21 @@ describe('approval policy (the approval/policy fold)', () => {
+     })
+   })
+ 
++  it('attributes an unattended policy change to automation without changing its decision', async () => {
++    const ctx = new Context()
++    await ctx.plugin(ApprovalService)
++    const { agent, session } = sessionAgent('sess-automation-policy-notice')
++    const inject = vi.fn<Agent['inject']>()
++    const liveAgent = { ...agent, inject } as Agent
++    ctx.approval.setPolicy(liveAgent, 'never', { actor: 'automation' })
++    expect(ctx.approval.overrideOf(session)).toBe('never')
++    expect(inject.mock.calls[0]?.[0]).toMatchObject({
++      content: [{ type: 'text', text: 'The approval policy changed from "ask" to "never" (set by automation).' }],
++      source: { kind: 'user-approval' },
++    })
++    await expect(ctx.approval.request({ agent: liveAgent, toolName: 'bash' })).resolves.toBe('rejected')
++  })
++
+   it('contributes the complete current ask or never policy as cache-safe context', async () => {
+     const ctx = new Context()
+     await ctx.plugin(SystemPrompt)
+diff --git a/packages/sandbox/sandbox/src/escalation.ts b/packages/sandbox/sandbox/src/escalation.ts
+index 9e01fcbe41e04ae6824e383cb3045755835bd490..9c6d42e86c58e0235f3b394674f53c6cc1df36b1 100644
+--- a/packages/sandbox/sandbox/src/escalation.ts
++++ b/packages/sandbox/sandbox/src/escalation.ts
+@@ -200,7 +200,7 @@ export async function approveEscalation<A, C>(request: EscalationRequest, approv
+     // The schema enum already pinned `mode` to the closed target vocabulary;
+     // the check above proved it is strictly wider.
+     case 'allowed-once': return mode as SandboxMode
+-    case 'rejected': throw new Error(`the user rejected escalating this ${subject} to "${mode}"; it stays denied, so stop and explain instead of working around it`)
++    case 'rejected': throw new Error(`approval for escalating this ${subject} to "${mode}" was rejected; it stays denied, so stop and explain instead of working around it`)
+     case 'cancelled': throw new Error(`approval for escalating to "${mode}" was cancelled`)
+     case 'unavailable': throw new Error(`sandbox escalation to "${mode}" requires approval, but no approval channel is available`)
+     default: return assertNever(outcome, 'EscalationOutcome')
+diff --git a/packages/sandbox/sandbox/tests/escalation.spec.ts b/packages/sandbox/sandbox/tests/escalation.spec.ts
+index 0223dc0a31aeb33c5f56ad705edd9bbff517f43f..ca9f2e641027db5b5fcee9fe1486cd2c1308462d 100644
+--- a/packages/sandbox/sandbox/tests/escalation.spec.ts
++++ b/packages/sandbox/sandbox/tests/escalation.spec.ts
+@@ -122,7 +122,7 @@ describe('approveEscalation', () => {
+ 
+   it('maps each non-grant outcome to its distinct verbatim text (subject in the rejection)', async () => {
+     await expect(approveEscalation(req({ subject: 'operation' }), ingredients({ approver: approver('rejected') })))
+-      .rejects.toThrow('the user rejected escalating this operation to "workspace-write"; it stays denied, so stop and explain instead of working around it')
++      .rejects.toThrow('approval for escalating this operation to "workspace-write" was rejected; it stays denied, so stop and explain instead of working around it')
+     await expect(approveEscalation(req(), ingredients({ approver: approver('cancelled') })))
+       .rejects.toThrow('approval for escalating to "workspace-write" was cancelled')
+     await expect(approveEscalation(req(), ingredients({ approver: approver('unavailable') })))
+diff --git a/packages/shell/tool-bash/tests/tools.spec.ts b/packages/shell/tool-bash/tests/tools.spec.ts
+index 0b01d7c81b85d66aedf4ccda35f5056dbfc9fff5..98fc0ee22a70798845b111651258110a656cd20e 100644
+--- a/packages/shell/tool-bash/tests/tools.spec.ts
++++ b/packages/shell/tool-bash/tests/tools.spec.ts
+@@ -829,7 +829,7 @@ describe('sandbox escalation through the generic task producer', () => {
+   })
+ 
+   it.each([
+-    ['rejected', 'user rejected'],
++    ['rejected', 'approval for escalating'],
+     ['cancelled', 'was cancelled'],
+   ] as const)('maps an approval %s to its distinct failure', async (outcome, message) => {
+     const { ctx, bash } = await setupSandboxed(true)
+diff --git a/packages/shell/tool-pwsh/tests/tools.spec.ts b/packages/shell/tool-pwsh/tests/tools.spec.ts
+index 66920cc9e95b8cb00a939faccefbe4300eaaf2c5..12e07cfb70daf922af17d307736d13c14861e088 100644
+--- a/packages/shell/tool-pwsh/tests/tools.spec.ts
++++ b/packages/shell/tool-pwsh/tests/tools.spec.ts
+@@ -700,7 +700,7 @@ describe('sandbox escalation through ctx.approval', () => {
+   })
+ 
+   it.each([
+-    ['rejected', 'user rejected'],
++    ['rejected', 'approval for escalating'],
+     ['cancelled', 'was cancelled'],
+   ] as const)('maps an approval %s to its distinct failure', async (outcome, message) => {
+     const { ctx, bash } = await setupSandboxed(true)
+diff --git a/packages/subagent/subagent/tests/activation-policy.spec.ts b/packages/subagent/subagent/tests/activation-policy.spec.ts
+index 38d9d44005a9388664de93ee0911a9554fa3944a..165ddee63305fe3596f9ba206d2dfbde484b9284 100644
+--- a/packages/subagent/subagent/tests/activation-policy.spec.ts
++++ b/packages/subagent/subagent/tests/activation-policy.spec.ts
+@@ -306,7 +306,7 @@ describe('in-process policy inheritance', () => {
+       await expect(readFile(blocked, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+       expect(consulted).toBe(false)
+       expect(toolResultTexts(child).join('\n'))
+-        .toContain('the user rejected escalating this operation to "workspace-write"')
++        .toContain('approval for escalating this operation to "workspace-write" was rejected')
+       const asked = child.session.snapshotEvents().find(
+         (event): event is SessionEvent<'approval/asked'> => event.type === 'approval/asked',
+       )

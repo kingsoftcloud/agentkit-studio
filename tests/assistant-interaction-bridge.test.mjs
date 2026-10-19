@@ -231,8 +231,8 @@ function runtimeFixture({ interactive = false } = {}) {
     prompt: async () => {},
   };
   f.services.agents.withoutInitiator = operation => operation();
-  f.services.commands = { execute: async (_agent, permission) => { permissions.push(permission); return {}; } };
-  f.services.approval.setPolicy = (_agent, policy) => { policies.push(policy); f.setPolicy(policy); };
+  f.services.permissionPresets = { set: (_session, permission) => { permissions.push(permission); } };
+  f.services.approval.setPolicy = (_agent, policy, options) => { assert.deepEqual(options, { actor: 'automation' }); policies.push(policy); f.setPolicy(policy); };
   f.services.sessions = { flush: async () => true };
   const bridge = interactive ? createAssistantApprovalBridge({ ...f.options, enabled: true, policyOf: f.policyOf }) : undefined;
   const runtime = createPersonalAssistantRuntime({ ctx: f.options.ctx, agentId: 'a', buildId: 'b',
@@ -251,7 +251,7 @@ test('runtime advertises the bridge contract but keeps native composer, approval
   assert.equal(snapshot.capabilities.localHandoffDetails.reason, 'executor-unavailable');
   assert.equal(snapshot.capabilities.execution.permission, 'read-only'); assert.equal(snapshot.capabilities.execution.approval, 'never');
   await f.runtime('submit', { requestId: 'test-submit', text: 'Keep existing confinement.' });
-  assert.deepEqual(f.permissions, ['/permission read-only']); assert.deepEqual(f.policies, ['never']);
+  assert.deepEqual(f.permissions, ['read-only']); assert.deepEqual(f.policies, ['never']);
   assert.deepEqual(await f.runtime('approval-decide', { requestId: 'old-history-approval', decision: 'allowed-once' }), { accepted: false, reason: 'request-stale' });
   f.dispose();
 });

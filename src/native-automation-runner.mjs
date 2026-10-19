@@ -1,4 +1,5 @@
 /** Run automated work through the same public DSH Session/Agent API as native chats. */
+import { UNATTENDED_EXECUTION_POLICY } from './execution-policy.mjs';
 import { readNativeRequestEvents } from './native-request-history.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
@@ -35,11 +36,11 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (resolved.error) throw resolved.error;
     const agent = resolved.agent;
     signal.throwIfAborted();
-    const permission = await service('commands').execute(agent, '/permission read-only', [], signal);
-    if (!permission) throw Object.assign(new Error('自动化无法设置 Agent 只读权限'), { code: 'AUTOMATION_PERMISSION_UNAVAILABLE' });
+    // The command is a user action and would misattribute its approval notice.
+    service('permissionPresets').set(agent.session, UNATTENDED_EXECUTION_POLICY.permissionMode);
     // Headless runs have no person to answer the Host's interactive approval UI.
     // Keep confinement and reject escalation through the public approval service.
-    service('approval').setPolicy(agent, 'never');
+    service('approval').setPolicy(agent, UNATTENDED_EXECUTION_POLICY.approvalPolicy, { actor: 'automation' });
     signal.throwIfAborted();
     const unobserve = onFrame ? observe?.(agent, onFrame) : undefined;
     try {
@@ -61,13 +62,15 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
       return nativeRunResult(events, sessionId, startedAt);
     } finally { unobserve?.(); }
   });
-  return request => {
+  const runner = request => {
     const previous = lanes.get(request.sessionId) || Promise.resolve();
     const task = previous.catch(() => {}).then(() => { assertHostCompatible?.(); return run(request); });
     lanes.set(request.sessionId, task);
     void task.finally(() => { if (lanes.get(request.sessionId) === task) lanes.delete(request.sessionId); }).catch(() => {});
     return task;
   };
+  runner.executionPolicy = UNATTENDED_EXECUTION_POLICY;
+  return runner;
 }
 
 function nativeRunResult(events, sessionId, startedAt) {

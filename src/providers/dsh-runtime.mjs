@@ -104,9 +104,13 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
 
 /** A single Host waterfall owns transport selection; unrelated LLM calls
  * (including titles) retain their original adapter and credentials. */
-export function routeDshRuntime(options, next, owner) {
+export function routeDshRuntime(options, next, owner, requestOrigin) {
   const route = resolveRuntimeBridge(owner).getRoute(options?.sessionId);
-  return route ? streamDshRuntime(options, route, owner) : next();
+  // A title request carries the same SessionId as the business loop. The
+  // running Host supplies DSH's object-identity marker; copied options or a
+  // caller-authored `purpose`/metadata field cannot grant execution authority.
+  if (!route || (requestOrigin && !requestOrigin(options))) return next();
+  return streamDshRuntime(options, route, owner);
 }
 
 function textOf(message) {

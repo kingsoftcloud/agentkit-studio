@@ -106,7 +106,7 @@ index 631654308821fd6464296d74e22a64eedb102c12..e3e01ab3d2fb99fb8534d6c407e49a17
  
  ### Host 展示描述
 diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
-index ca939d4dfb2347f03a808225c2e0feb826a38c45..9c83ce9e60fd92336ef448c4a02e070c2e535e1a 100644
+index 0e79648a0a0c06f99c182b1b48966cee257be650..1c5dc6a35ee2df949cf84dbbb7c29033856e1fdc 100644
 --- a/packages/core/tools/src/index.ts
 +++ b/packages/core/tools/src/index.ts
 @@ -831,6 +831,8 @@ export class ToolRuntime extends Service {

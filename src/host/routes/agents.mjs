@@ -62,6 +62,13 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
         if (endpoint === 'agents/list') {
             return { ok: true, value: await (await agentCatalogPromise).list(payload, { signal }) };
         }
+        if (endpoint === 'agents/execution-policy') {
+            const agentId = String(payload?.agentId || '').trim();
+            if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
+            const connection = await (await deployments()).agents.connect(agentId);
+            return { ok: true, value: { agentId, buildId: connection.agent.deployment.buildId,
+                executionPolicy: connection.executionPolicy || null } };
+        }
         if (endpoint === 'agents/ensure-preset') {
             let agentId = String(payload?.agentId || '').trim();
             if (!agentId)

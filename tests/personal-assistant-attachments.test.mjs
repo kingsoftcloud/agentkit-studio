@@ -13,8 +13,8 @@ function fixture() {
   const append = (sessionId, type, data) => { const rows = sessions.get(sessionId).events; rows.push({ seq: rows.length, type, data }); };
   const save = (bytes, name) => { const ref = { attachmentId: idOf(bytes), bytes: bytes.length, name }; stored.set(ref.attachmentId, bytes); return ref; };
   const services = {
-    agents: { withoutInitiator: work => work() }, commands: { execute: async (_agent, command) => { assert.equal(command, '/permission read-only'); return {}; } },
-    approval: { setPolicy: (_agent, policy) => assert.equal(policy, 'never') }, sessions: { flush: async () => flush },
+    agents: { withoutInitiator: work => work() }, permissionPresets: { set: (_session, preset) => { assert.equal(preset, 'read-only'); } },
+    approval: { setPolicy: (_agent, policy, options) => { assert.equal(policy, 'never'); assert.deepEqual(options, { actor: 'automation' }); } }, sessions: { flush: async () => flush },
     attachments: {
       imageLimits: { maxImageBytes: limits.maxAttachmentBytes },
       validateImage: async ({ data, mediaType }) => { assert.equal(mediaType, 'image/png'); assert.deepEqual(Buffer.from(data), png); },

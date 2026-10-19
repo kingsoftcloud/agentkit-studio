@@ -6,16 +6,34 @@ import { createNativeAutomationRunner } from '../src/native-automation-runner.mj
 import { createStudioRoutes } from '../src/host/routes/index.mjs';
 import { createControlPlaneDispatcher } from '../src/host/routes/dispatcher.mjs';
 import { createAgentRoutes } from '../src/host/routes/agents.mjs';
+import { bindFrozenRuntime } from '../src/host/frozen-runtime-lifecycle.mjs';
 
 function host(options = {}) {
   const unused = () => { throw new Error('Inspection must not invoke a Host operation'); };
   const services = {
     agentPresets: { register: unused, pluginsFor: unused },
     sessionController: { promptFingerprintVersion: 1, ...Object.fromEntries(['create', 'selectModel', 'resolveAgent', 'prompt', 'page', 'projections'].map(name => [name, unused])) },
-    agents: { withoutInitiator: unused }, commands: { execute: unused }, approval: { setPolicy: unused },
+    agents: { withoutInitiator: unused }, commands: { execute: unused }, permissionPresets: { set: unused }, approval: { setPolicy: unused },
   };
-  return { services, compatibility: createHostCompatibility({ getService: name => services[name], requiredDsh: '0.2.0-rc.2', dshVersion: '0.2.0-rc.2', ...options }) };
+  return { services, compatibility: createHostCompatibility({ getService: name => services[name], requiredDsh: '0.2.0-rc.2', dshVersion: '0.2.0-rc.2', requestIsAgentLoop: () => true, ...options }) };
 }
+
+test('the running Host must supply its public request-origin marker before native execution', () => {
+  const { compatibility } = host({ requestIsAgentLoop: undefined });
+  for (const feature of ['agent-presets', 'automation', 'frozen-runtime']) {
+    assert.equal(compatibility.inspect().features[feature].available, false);
+    assert.ok(compatibility.inspect().features[feature].missingCapabilities.includes('agent-loop-origin'));
+    assert.throws(() => compatibility.require(feature), { code: 'STUDIO_HOST_INCOMPATIBLE' });
+  }
+});
+
+test('request origin is decided by the Host helper, not serialized request fields', () => {
+  const owned = new WeakSet();
+  const request = Object.freeze({ sessionId: 'same-session' }); owned.add(request);
+  const { compatibility } = host({ requestIsAgentLoop: value => owned.has(value) });
+  assert.equal(compatibility.isAgentLoopRequest(request), true);
+  assert.equal(compatibility.isAgentLoopRequest({ ...request, isAgentLoopRequest: true }), false);
+});
 
 test('same-version Host missing patched API disables only its dependent features', () => {
   const { services, compatibility } = host();
@@ -71,7 +89,7 @@ test('incompatible admission rejects before model lookup or preset registration'
 
 test('incompatible automation rejects before Session, permission or model operations', async () => {
   const { services, compatibility } = host();
-  services.commands = undefined;
+  services.permissionPresets = undefined;
   const run = createNativeAutomationRunner({ getService: name => services[name], assertHostCompatible: () => compatibility.require('automation') });
   await assert.rejects(run({ sessionId: 'test-session' }), { code: 'STUDIO_HOST_INCOMPATIBLE' });
 });
@@ -86,4 +104,21 @@ test('compatibility diagnostic remains available when the optional server cannot
   assert.equal(result.ok, true);
   assert.equal(result.value.baseline.actual, null);
   assert.equal(result.value.features.automation.available, false);
+});
+
+test('unattended execution requires the public preset setter instead of issuing a user command', () => {
+  const { services, compatibility } = host();
+  delete services.permissionPresets;
+  assert.equal(compatibility.inspect().features['agent-presets'].available, true);
+  assert.throws(() => compatibility.require('automation'), { code: 'STUDIO_HOST_INCOMPATIBLE' });
+});
+
+test('frozen runtime lifecycle tracks the same permission service required by compatibility', () => {
+  let dependencies;
+  bindFrozenRuntime({ inject: names => { dependencies = names; } }, {});
+  assert.ok(dependencies.includes('permissionPresets'));
+  assert.ok(!dependencies.includes('commands'), 'runtime startup must not depend on slash-command dispatch');
+  const { services, compatibility } = host();
+  delete services.commands;
+  assert.doesNotThrow(() => compatibility.require('frozen-runtime'));
 });

@@ -8,6 +8,7 @@ import { checkPatchManifest } from './check-patch-manifest.mjs';
 import { withDesktopCheckout } from './desktop-checkout.mjs';
 import { packageManagerEnvironment, packageManagerInvocation } from './package-desktop.mjs';
 import { assertPatchedSource } from './patched-source-fingerprint.mjs';
+import { assertHostDependencyLifecycleReport } from './verification/host-dependency-lifecycle-report.mjs';
 
 const { values } = parseArgs({ options: Object.fromEntries(['source', 'output', 'patches', 'report'].map(name => [name, { type: 'string' }])) });
 if (!values.source || !values.output || !values.patches || !values.report) throw new Error('usage: verify-patched-dsh-host.mjs --source <fixed DSH> --output <isolated root> --patches <series> --report <json>');
@@ -43,7 +44,7 @@ try {
       env: { ...environment, AGENTKIT_DSH_ROOT: checkout }, timeout: 30000,
     });
     result.dependencyLifecycle = JSON.parse(await readFile(lifecycleReport, 'utf8'));
-    if (!result.dependencyLifecycle.passed || result.dependencyLifecycle.checks.length !== 4) throw new Error('Host dependency lifecycle verification did not complete');
+    assertHostDependencyLifecycleReport(result.dependencyLifecycle);
     const testReport = join(output, 'host-tests.json');
     try {
       await run(['exec', 'vitest', 'run', ...inputs.hostTests, '--reporter=default', '--reporter=json', `--outputFile=${testReport}`], checkout);

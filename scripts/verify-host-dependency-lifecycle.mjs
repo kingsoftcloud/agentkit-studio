@@ -39,6 +39,7 @@ try {
   const owner = await ctx.plugin({ name: 'controlled-studio-owner', apply: async scope => {
     binding = bindFrozenRuntime(scope, {
       start: async runtimeCtx => {
+        assert.equal(typeof runtimeCtx.get('permissionPresets')?.set, 'function');
         const controller = runtimeCtx.get('sessionController');
         if (!controller.ready) throw Object.assign(new Error('controlled missing capability'), { code: 'STUDIO_HOST_INCOMPATIBLE' });
         starts++; current = await listen(controller.label, () => { closes++; }); return current;
@@ -51,7 +52,11 @@ try {
   assert.equal(starts, 0);
   const absentCapability = await provide(ctx, { sessionController: { ready: false } });
   await binding;
+  assert.equal(unavailable, 0); assert.equal(starts, 0, 'commands cannot substitute for a missing permission setter');
+  const permission = await provide(ctx, { permissionPresets: { set() {} } });
+  await binding;
   assert.equal(unavailable, 1); assert.equal(starts, 0);
+  checks('late-permission-preset-service-enables-runtime-inspection');
   await absentCapability.dispose();
   const first = await provide(ctx, { sessionController: { ready: true, label: 'first' } });
   await binding;
@@ -64,11 +69,17 @@ try {
   await binding;
   assert.equal(starts, 2); assert.equal(await (await fetch(current.url)).text(), 'replacement');
   checks('service-removal-closes-listener-and-replacement-restarts-it');
-  await owner.dispose(); assert.equal(closes, 2); assert.equal(servers.size, 0);
+  await permission.dispose(); await binding;
+  assert.equal(closes, 2); assert.equal(servers.size, 0);
+  await provide(ctx, { permissionPresets: { set() {} } });
+  await binding;
+  assert.equal(starts, 3); assert.equal(await (await fetch(current.url)).text(), 'replacement');
+  checks('permission-preset-removal-closes-listener-and-replacement-restarts-it');
+  await owner.dispose(); assert.equal(closes, 3); assert.equal(servers.size, 0);
   checks('studio-owner-disposal-closes-current-runtime');
   stage = 'pending-start-disposal';
   const delayed = new Context(), entered = Promise.withResolvers(), release = Promise.withResolvers();
-  await provide(delayed, { agentPresets: {}, agents: {}, commands: {}, approval: {}, sessionController: {} });
+  await provide(delayed, { agentPresets: {}, agents: {}, permissionPresets: { set() {} }, approval: {}, sessionController: {} });
   let pendingBinding, lateCloses = 0;
   const pendingOwner = await delayed.plugin({ name: 'delayed-studio-owner', apply: scope => {
     pendingBinding = bindFrozenRuntime(scope, { start: async () => {

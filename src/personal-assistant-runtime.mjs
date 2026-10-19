@@ -1,4 +1,5 @@
 /** Cloud assistant facade. DSH owns execution, history, persistence and timers. */
+import { UNATTENDED_EXECUTION_POLICY } from './execution-policy.mjs';
 import { createHash } from 'node:crypto';
 import { readAssistantHistory, readAssistantImage } from './assistant-history-reader.mjs';
 import { assistantAttachmentCapabilities, assistantRequestObserved, normalizeAssistantInput,
@@ -79,13 +80,16 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     // the new workspace profile merely by reopening the page.
     // Unattended tools retain confinement and cannot wait for a desktop approval.
     // The durable knob, not the preset name, proves confinement. Reapplying the
-    // read-only preset would temporarily switch never to ask and inject notices.
+    // read-only preset would temporarily switch never to ask on every retry.
     const mode = ctx.get('sessionProjections')?.stateOf(resolved.agent.session, 'sandboxMode');
-    if (mode !== 'read-only') {
-      const permission = await ctx.get('commands').execute(resolved.agent, '/permission read-only', [], new AbortController().signal);
-      if (!permission || permission.result?.kind === 'error') throw fail('ASSISTANT_PERMISSION_UNAVAILABLE', '无法设置无人值守权限', 503);
+    if (mode !== UNATTENDED_EXECUTION_POLICY.permissionMode) {
+      const presets = ctx.get('permissionPresets');
+      if (typeof presets?.set !== 'function') throw fail('ASSISTANT_PERMISSION_UNAVAILABLE', '无法设置无人值守权限', 503);
+      // Use the official setter; slash commands are attributed to the user.
+      try { presets.set(resolved.agent.session, UNATTENDED_EXECUTION_POLICY.permissionMode); }
+      catch { throw fail('ASSISTANT_PERMISSION_UNAVAILABLE', '无法设置无人值守权限', 503); }
     }
-    ctx.get('approval').setPolicy(resolved.agent, 'never');
+    ctx.get('approval').setPolicy(resolved.agent, UNATTENDED_EXECUTION_POLICY.approvalPolicy, { actor: 'automation' });
     return resolved.agent;
   }
   async function snapshot(sessionId, payload) {

@@ -186,8 +186,12 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     lifetime.signal.throwIfAborted();
     if (!created) return;
     const approval = ctx.get('approval');
-    const result = await ctx.get('commands')?.execute(agent, '/permission workspace-write', [], new AbortController().signal);
-    if (!result || result.result?.kind === 'error' || ctx.get('sandboxPolicy')?.resolve({ session: agent.session }).mode !== 'workspace-write'
+    const presets = ctx.get('permissionPresets');
+    if (typeof presets?.set !== 'function') throw fail('Native managed permission initialization failed');
+    // This is trusted initialization, not a user-issued permission command.
+    try { presets.set(agent.session, 'workspace-write'); }
+    catch { throw fail('Native managed permission initialization failed'); }
+    if (ctx.get('sandboxPolicy')?.resolve({ session: agent.session }).mode !== 'workspace-write'
       || approval.effectivePolicy(agent.session) !== 'ask') throw fail('Native managed permission initialization failed');
   }
   async function ensure(agent, created = false) {

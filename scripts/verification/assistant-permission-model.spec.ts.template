@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link } from 'node:fs/promises';
 import { existsSync, renameSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -62,8 +62,14 @@ async function fixture() {
 }
 
 describe('managed assistant permissions over native DSH tools, filesystem and approval audit', () => {
-  it('uses the real permission command and real write/read/edit/glob/grep bodies', async () => {
-    const f = await fixture(); expect((await f.ensure()).approval).toBe('ask');
+  it('uses the real permission setter and real write/read/edit/glob/grep bodies without user command notices', async () => {
+    const f = await fixture();
+    const command = vi.spyOn(f.ctx.commands, 'execute').mockRejectedValue(new Error('Initialization must not run a user command'));
+    const preset = vi.spyOn(f.ctx.permissionPresets, 'set');
+    const inject = vi.fn(); f.agent.inject = inject;
+    expect((await f.ensure()).approval).toBe('ask');
+    expect(preset).toHaveBeenCalledExactlyOnceWith(f.agent.session, 'workspace-write');
+    expect(command).not.toHaveBeenCalled(); expect(inject).not.toHaveBeenCalled();
     expect(f.ctx.sandboxPolicy.resolve({ session: f.agent.session }).mode).toBe('workspace-write');
     expect((await f.call('write', { file_path: 'report.txt', content: 'alpha' })).isError).toBe(false);
     expect((await f.call('read', { file_path: 'report.txt' })).isError).toBe(false);
@@ -231,10 +237,13 @@ describe('managed assistant permissions over native DSH tools, filesystem and ap
     f.ctx.emit('agent/created', { agent: f.agent });
     expect((await f.call('bash')).isError).toBe(true); expect(f.unsupportedCalls()).toBe(0);
     await f.ensure(); setApprovalPolicy(f.agent.session, 'never');
+    const seq = f.agent.session.seq;
     expect((await f.model.ensure(f.agent)).approval).toBe('never');
+    expect(f.agent.session.seq).toBe(seq);
     f.model.dispose(); expect((await f.call('write', { file_path: 'after.txt', content: 'x' })).isError).toBe(true);
     const restored = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'product-agent' });
     expect((await restored.ensure(f.agent)).approval).toBe('never');
+    expect(f.agent.session.seq).toBe(seq);
     expect((await f.call('write', { file_path: 'after.txt', content: 'x' })).isError).toBe(false);
   });
 });

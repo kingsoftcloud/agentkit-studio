@@ -2,10 +2,60 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createDshRuntimeAdapter, unbindDshAgentRoutes, routeDshRuntime, setDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
+import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 
 const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
 const completed = `data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`;
 const prompt = { model: 'gateway-model', messages: [{ role: 'user', content: '运行冻结版本' }] };
+
+for (const runtime of ['dsh-native', 'harness', 'codex']) {
+  test(`${runtime} Host routing never sends same-session auxiliary or copied requests through resource consumers`, async t => {
+    const bridge = createRuntimeBridge(); t.after(() => bridge.close());
+    bridge.bindRoute('same-session', { agentId: 'agent', runtime, local: true, agentRevision: 1 });
+    const owned = new WeakSet();
+    let resourceEffects = 0, auxiliaryCalls = 0;
+    bridge.setAdapter({ async *stream() { resourceEffects++; yield { type: 'text', text: 'business' }; } });
+    const next = async function* () { auxiliaryCalls++; yield { type: 'text', text: 'auxiliary' }; };
+    const business = Object.freeze({ ...prompt, sessionId: 'same-session' }); owned.add(business);
+    const read = options => Array.fromAsync(routeDshRuntime(options, next, bridge, request => owned.has(request)));
+    assert.equal((await read(business))[0].text, 'business');
+    assert.equal(resourceEffects, 1);
+    for (const options of [
+      { ...business, purpose: 'session-title', tools: [] },
+      { ...business, purpose: 'compaction' },
+      { ...business, metadata: { isAgentLoopRequest: true } },
+    ]) {
+      assert.equal((await read(options))[0].text, 'auxiliary');
+      assert.equal(resourceEffects, 1, 'an auxiliary call must not recall or write bound memory');
+    }
+    assert.equal(auxiliaryCalls, 3);
+  });
+}
+
+test('same-session titles bypass actual resource context and memory persistence while marked turns still use them', async t => {
+  const bridge = createRuntimeBridge(); t.after(() => bridge.close());
+  bridge.bindRoute('managed-cloud-session', { agentId: 'assistant-agent', runtime: 'codex', local: true });
+  const owned = new WeakSet(), memory = [], resources = [];
+  const adapter = createDshRuntimeAdapter({ bridge,
+    codexResourceContext: async request => {
+      resources.push(request);
+      return { writeMemory: async text => { memory.push(text); return { accepted: true }; } };
+    },
+    codexRuntime: { async *stream() { yield { type: 'text', text: 'business answer' }; } },
+  });
+  bridge.setAdapter(adapter);
+  const next = async function* () { yield { type: 'text', text: 'title' }; };
+  const read = request => Array.fromAsync(routeDshRuntime(request, next, bridge, value => owned.has(value)));
+  const turn = Object.freeze({ ...prompt, sessionId: 'managed-cloud-session' }); owned.add(turn);
+  const title = { ...turn, messages: [{ role: 'user', content: 'Name this conversation' }], tools: [] };
+  assert.equal((await read(title))[0].text, 'title');
+  assert.equal(resources.length, 0); assert.deepEqual(memory, []);
+  const chunks = await read(turn);
+  assert.ok(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.text === 'business answer'));
+  assert.equal(resources.length, 1); assert.deepEqual(memory, ['business answer']);
+  assert.equal((await read({ ...turn, metadata: { isAgentLoopRequest: true } }))[0].text, 'title');
+  assert.equal(resources.length, 1); assert.deepEqual(memory, ['business answer']);
+});
 
 async function selectPreset(runtime, sessionId, buildId) {
   const listeners = new Map();

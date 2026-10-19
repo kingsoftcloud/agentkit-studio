@@ -20,8 +20,8 @@ function fixture() {
     cancel: ({ sessionId }) => { cancelled++; append(sessionId, 'turn/end', { reason: { kind: 'aborted' } }); return { accepted: true }; },
     page: async ({ address }) => ({ records: logs.get(address.sessionId).map(event => ({ type: 'event', event })), hasMore: false }),
   };
-  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) },
-    approval: { setPolicy: (_agent, value) => assert.equal(value, 'never') }, sessions: { flush: async () => flush },
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} },
+    approval: { setPolicy: (_agent, value, options) => { assert.equal(value, 'never'); assert.deepEqual(options, { actor: 'automation' }); } }, sessions: { flush: async () => flush },
     schedule: { catalog: async () => [...timers.values()], create: async (sessionId, spec) => { const row = { ...spec, id: `task-${timers.size}`, sessionId }; timers.set(row.id, row); return row; },
       delete: async ({ sessionId, id }) => { assert.equal(timers.get(id).sessionId, sessionId); timers.delete(id); return { deleted: true }; } } };
   const calls = [], memories = [{ id: 'memory-a', text: 'prefer concise responses' }];
@@ -54,6 +54,53 @@ test('cloud acceptance is durable and independent from client; fresh facade rest
   assert.equal((await fetch(url, { method: 'POST', body: '{}' })).status, 401);
 });
 
+test('closing the submit transport before flush cannot cancel accepted cloud work or replay it twice', async t => {
+  const f = fixture(), assistant = f.create();
+  const started = Promise.withResolvers(), persisted = Promise.withResolvers();
+  f.services.sessions.flush = () => { started.resolve(); return persisted.promise; };
+  const token = 'fixture-assistant-token-at-least-24-chars';
+  let responseRuns = 0;
+  const runtime = await startBuildRuntimeHttp({ agentId: 'a', buildId: 'build_0123456789abcdef0123', token,
+    runner: async () => { responseRuns++; assert.fail('assistant submission cannot use the Responses runner'); }, assistant, port: 0 });
+  t.after(() => runtime.close()); t.after(() => persisted.resolve(true));
+  const request = { requestId: 'lost-ack', text: 'finish after the page closes' }, client = new AbortController();
+  const pending = fetch(`http://127.0.0.1:${runtime.address.port}/v1/assistant/submit`, { method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(request), signal: client.signal });
+  await started.promise;
+  assert.equal(f.runs, 1); assert.equal(f.cancelled, 0);
+  client.abort(); await assert.rejects(pending, { name: 'AbortError' });
+  persisted.resolve(true);
+  assert.equal((await assistant('submit', request)).accepted, true);
+  f.complete();
+  const snapshot = await f.create()('snapshot', { requestId: request.requestId });
+  assert.equal(snapshot.status, 'completed'); assert.equal(snapshot.receipt.accepted, true);
+  assert.equal(f.runs, 1); assert.equal(f.cancelled, 0); assert.equal(responseRuns, 0);
+});
+
+test('closing a native read poll releases that read without cancelling an accepted assistant turn', async t => {
+  const f = fixture(), polling = Promise.withResolvers(), disconnected = Promise.withResolvers();
+  const nativeCarrier = { dispose() {}, request(_sessionId, operation, _payload, { signal }) {
+    assert.equal(operation, 'native-stream-poll');
+    return new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => { disconnected.resolve(); reject(signal.reason); }, { once: true });
+      polling.resolve();
+    });
+  } };
+  const assistant = createPersonalAssistantRuntime({ ctx: { get: key => f.services[key] }, agentId: 'a', buildId: 'b',
+    frozen: { spec: { runtime: { type: 'dsh-native' } } }, admit: async () => ({ presetId: 'assistant' }), nativeCarrier });
+  await assistant('submit', { requestId: 'read-disconnect', text: 'keep working' });
+  const token = 'fixture-assistant-token-at-least-24-chars';
+  const runtime = await startBuildRuntimeHttp({ agentId: 'a', buildId: 'build_0123456789abcdef0123', token,
+    runner: async () => assert.fail('assistant reads cannot use the Responses runner'), assistant, port: 0 });
+  t.after(() => runtime.close());
+  const client = new AbortController();
+  const pending = fetch(`http://127.0.0.1:${runtime.address.port}/v1/assistant/native-stream-poll`, { method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}', signal: client.signal });
+  await polling.promise; client.abort(); await assert.rejects(pending, { name: 'AbortError' }); await disconnected.promise;
+  assert.equal(f.cancelled, 0); assert.equal((await assistant('snapshot')).status, 'running');
+  f.complete(); assert.equal((await f.create()('snapshot')).status, 'completed');
+});
+
 test('failed persistence never acknowledges; cancellation is an explicit command only', async () => {
   const f = fixture(), api = f.create(); f.setFlush(false);
   await assert.rejects(api('submit', { requestId: 'r', text: 'work' }), { code: 'ASSISTANT_PERSISTENCE_UNAVAILABLE' });
@@ -70,26 +117,30 @@ test('restarted duplicate requests keep completed status without policy changes 
     const value = await projections(input); return value && { ...value, values: { inbox } };
   };
   f.services.sessionProjections = { stateOf(session, key) { assert.equal(key, 'sandboxMode'); return modes.get(session.id); } };
-  const setPolicy = (agent, policy) => {
+  const setPolicy = (agent, policy, actor = 'user') => {
     const previous = policies.get(agent.session.id) || 'ask';
     if (previous === policy) return;
-    policies.set(agent.session.id, policy); notices++;
+    policies.set(agent.session.id, policy);
+    if (actor === 'automation') return;
+    notices++;
     const message = { id: `policy-${notices}`, source: { kind: 'user-approval' }, content: [{ type: 'text', text: `Policy changed from ${previous} to ${policy}` }] };
     inbox['next-step'].push(message);
     const events = f.logs.get(agent.session.id);
     events.push({ seq: events.length, type: 'agent/inbox/spliced', data: { target: 'next-step', start: inbox['next-step'].length - 1, inserted: [message] } });
   };
-  f.services.commands.execute = async (agent, command) => {
-    assert.equal(command, '/permission read-only'); permissionCalls++;
-    modes.set(agent.session.id, 'read-only'); setPolicy(agent, 'ask');
-    return { result: { kind: 'success' } };
+  f.services.permissionPresets.set = (session, preset) => {
+    assert.equal(preset, 'read-only'); permissionCalls++;
+    modes.set(session.id, 'read-only'); policies.set(session.id, 'ask');
   };
-  f.services.approval.setPolicy = (agent, policy) => { assert.equal(policy, 'never'); setPolicy(agent, policy); };
+  f.services.commands = { execute() { assert.fail('automation must not execute a user permission command'); } };
+  f.services.approval.setPolicy = (agent, policy, options) => {
+    assert.equal(policy, 'never'); assert.deepEqual(options, { actor: 'automation' }); setPolicy(agent, policy, options.actor);
+  };
   const prompt = f.services.sessionController.prompt;
   f.services.sessionController.prompt = request => { assert.equal(policies.get(request.sessionId), 'never'); return prompt(request); };
   const request = { requestId: 'repeated', text: 'finish once' }, api = f.create();
   const accepted = await api('submit', request); inbox['next-step'].length = 0; f.complete();
-  assert.equal((await api('snapshot')).status, 'completed'); assert.equal(permissionCalls, 1);
+  assert.equal((await api('snapshot')).status, 'completed'); assert.equal(permissionCalls, 1); assert.equal(notices, 0);
   // Old runtimes can leave these internal notices durable after the task ended.
   for (let i = 0; i < 2; i++) { setPolicy({ session: { id: accepted.sessionId } }, 'ask'); setPolicy({ session: { id: accepted.sessionId } }, 'never'); }
   const beforeReplay = notices, restarted = f.create();
@@ -104,10 +155,10 @@ test('restarted duplicate requests keep completed status without policy changes 
   assert.equal(f.runs, 1); assert.equal((await restarted('snapshot')).status, 'completed');
 });
 
-test('an unsuccessful native permission command rejects the request before model admission', async () => {
-  for (const permission of [null, { result: { kind: 'error', text: 'unknown preset' } }]) {
+test('an unavailable or rejected native permission setter rejects the request before model admission', async () => {
+  for (const permission of [undefined, {}, { set() { throw new Error('unknown preset'); } }]) {
     const f = fixture();
-    f.services.commands.execute = async () => permission;
+    f.services.permissionPresets = permission;
     await assert.rejects(f.create()('submit', { requestId: 'rejected', text: 'must not run' }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
     assert.equal(f.runs, 0); assert.equal(f.requests.size, 0);
   }
@@ -261,11 +312,11 @@ test('unavailable native carrier never creates a Session or advertises a binding
 
 test('new managed workspace creation is explicit while stored legacy sessions retain their previous policy', async () => {
   const f = fixture(), applied = [], creates = [];
-  let fallbackCommands = 0, fallbackPolicies = 0;
+  let fallbackPresets = 0, fallbackPolicies = 0;
   const create = f.services.sessionController.create;
   f.services.sessionController.create = input => { creates.push(input); return create(input); };
-  f.services.commands.execute = async () => { fallbackCommands++; return {}; };
-  f.services.approval.setPolicy = () => { fallbackPolicies++; };
+  f.services.permissionPresets.set = (_session, preset) => { assert.equal(preset, 'read-only'); fallbackPresets++; };
+  f.services.approval.setPolicy = (_agent, policy, options) => { assert.equal(policy, 'never'); assert.deepEqual(options, { actor: 'automation' }); fallbackPolicies++; };
   const profile = { profile: 'workspace-managed/v1', managed: true, permission: 'workspace-write', approval: 'ask' };
   const permissionModel = { enabled: true, newSessionCwd: async () => '/controlled-runtime/assistant-workspaces/owned/files',
     ensure: async (agent, created) => { applied.push({sessionId:agent.session.id,created}); return profile; },
@@ -276,10 +327,10 @@ test('new managed workspace creation is explicit while stored legacy sessions re
   await api('submit',{requestId:'managed-two',text:'read the note'});
   assert.equal(creates.length,1); assert.equal(creates[0].cwd,'/controlled-runtime/assistant-workspaces/owned/files');
   assert.deepEqual(applied.map(item=>item.created),[true,false]);
-  assert.equal(fallbackCommands,0); assert.equal(fallbackPolicies,0);
+  assert.equal(fallbackPresets,0); assert.equal(fallbackPolicies,0);
   assert.equal((await api('snapshot')).capabilities.execution.permission,'workspace-write');
   assert.equal(api.managedPermissionsSupported,false,'interactive capability also needs the scoped native presence service');
   permissionModel.ensure = async () => ({managed:false});
   await api('submit',{requestId:'legacy',text:'keep original confinement'});
-  assert.equal(fallbackCommands,1); assert.equal(fallbackPolicies,1);
+  assert.equal(fallbackPresets,1); assert.equal(fallbackPolicies,1);
 });

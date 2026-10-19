@@ -78,7 +78,7 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
     ? createAssistantNativeCarrierService({ ctx, createPeer: options => connection.createPeer(options),
       onSessionDisconnect: sessionId => assistant?.disconnectInteractions(sessionId) }) : undefined;
   assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement, identity, nativeCarrier, permissionModel });
-  return startBuildRuntimeHttp({ agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, validatePrevious, assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
+  return startBuildRuntimeHttp({ agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: nativeRun.executionPolicy, validatePrevious, assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 

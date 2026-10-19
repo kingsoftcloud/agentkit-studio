@@ -29,8 +29,8 @@ with denial retained. The guard also covers restored and timer-activated
 managed Sessions. Other native Sessions are unaffected.
 
 For a genuinely created managed Session, `ensure(agent, true)` uses the public
-`/permission workspace-write` command and verifies the actual sandbox/approval
-folds: workspace-write plus ask. This is an explicit durable product default,
+`permissionPresets.set(agent.session, 'workspace-write')` setter and verifies
+the actual sandbox/approval folds: workspace-write plus ask. This is an explicit durable product default,
 not a temporary ask-and-restore trick. Subsequent ensures preserve the Session's
 stored knobs, including a later never policy. Cold snapshots say that permission
 is not yet verified; they never restore an Agent merely to display permissions.
@@ -105,7 +105,7 @@ The upstream contracts reviewed are pinned to DSH commit
 
 - `packages/sandbox/sandbox/src/index.ts`: file-only sandbox vocabulary
 - `packages/sandbox/sandbox-policy/src/index.ts`: per-Session policy resolution
-- `packages/interaction/permission-presets/src/index.ts`: durable preset command
+- `packages/interaction/permission-presets/src/index.ts`: durable preset setter
 - `packages/core/tools/src/index.ts`: pre-execute pipeline and monotonic guards
 - `packages/fs/fs-sandbox/src/index.ts`: containment and residual TOCTOU contract
 - `packages/fs/tool-fs-search/src/{glob,grep}.ts`: fixed subprocess argv
@@ -116,7 +116,7 @@ The upstream contracts reviewed are pinned to DSH commit
 Run `node --test tests/assistant-permission-model.test.mjs` for receipt,
 ownership, legacy and cold-state contracts. With the pinned DSH checkout, run
 `AGENTKIT_DSH_ROOT=/path/to/deepseek-harness node scripts/verification/verify-assistant-permission-model.mjs`.
-The latter executes real native commands, tools, filesystem writes/edits/search,
+The latter executes the real native permission setter, tools, filesystem writes/edits/search,
 monotonic guard rejection, native approval audit and the production live bridge.
 It includes changed-file refusal, pre-execute approval bypass, symlink swaps,
 restored-agent denial and disposal during pending approval. Controlled package

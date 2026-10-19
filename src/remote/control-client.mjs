@@ -230,6 +230,7 @@ export function createProductClient(connection, { window = globalThis.window } =
             : request('/api/v1/catalog/runtimes'),
         // `/api/v1/agents` is an older collection endpoint in some Hosts and
         // returns an array; normalize it to the Studio `{ items }` contract.
+        agentExecutionPolicy: agentId => studioBridgeOperation('agents/execution-policy', { agentId }),
         agents: async ({ page = 1, pageSize = 50, query = '', source = 'all' } = {}) => {
             // DSH Web renders plugin UI in an opaque srcdoc frame.  Use the
             // authenticated Connection carrier for the local control plane;

@@ -32,13 +32,15 @@ test('Responses selects each bound model on the native session and preserves its
     },
     page: async ({ address }) => ({ records: history.get(address.sessionId).map(event => ({ type: 'event', event })) }),
   };
-  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) }, approval: { setPolicy() {} } };
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} }, approval: { setPolicy() {} } };
   const frozen = { spec: { bindings: { modelProfileId: 'profile-a', modelProfileIds: ['profile-a', 'profile-b'] } } };
   const start = () => startFrozenBuildRuntime({ ctx: { get: name => services[name], on: () => () => {} }, build: { resolve: async () => frozen },
     modelService: { profile: async id => ({ modelName: id === 'profile-a' ? 'model-a' : 'model-b' }) },
     admit: async (_id, record) => ({ presetId: 'preset', modelSelection: { provider: 'bound', model: record.spec.bindings.modelProfileId } }),
     env: { AGENTKIT_RUNTIME_AGENT_ID: 'test-agent', AGENTKIT_RUNTIME_BUILD_ID: buildId, AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: '0' } });
   let runtime = await start(); t.after(() => runtime.close());
+  const diagnostic = await (await fetch(`http://127.0.0.1:${runtime.address.port}/v1/agentkit/runtime`, { headers: { authorization: `Bearer ${token}` } })).json();
+  assert.deepEqual(diagnostic.executionPolicy, { format: 'agentkit.execution-policy/v1', permissionMode: 'read-only', approvalPolicy: 'never', approvalSource: 'runtime-policy' });
   const post = body => fetch(`http://127.0.0.1:${runtime.address.port}/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const firstRequest = { input: 'question', session_id: 'conversation', request_id: 'first', model: 'model-b' };
   const first = await (await post(firstRequest)).json();
@@ -77,7 +79,7 @@ test('frozen runtime preserves build admission, durable replay and request-input
     },
     page: async ({ address }) => ({ records: history.get(address.sessionId).map(event => ({ type: 'event', event })) }),
   };
-  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, commands: { execute: async () => ({}) }, approval: { setPolicy: (_agent, policy) => assert.equal(policy, 'never') } };
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} }, approval: { setPolicy: (_agent, policy) => assert.equal(policy, 'never') } };
   const frozen = { metadata: { id: 'test-agent', revision: 1 }, buildId, spec: { instructions: { system: 'frozen' } } };
   const runtime = await startFrozenBuildRuntime({ ctx: { get: name => services[name] },
     build: { resolve: async (id, build) => { assert.equal(id, 'test-agent'); assert.equal(build, buildId); return frozen; } },

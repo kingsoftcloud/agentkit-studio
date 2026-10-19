@@ -29,7 +29,7 @@ async function fixture(t, { rejectPermissionOnce = false } = {}) {
     page: async ({ address }) => ({ records: history.get(address.sessionId).map(event => ({ type: 'event', event })) }),
   };
   const services = { sessionController: controller, agents: { withoutInitiator: work => work() },
-    commands: { execute: async () => { mutations.push('permission'); if (rejectPermissionOnce) { rejectPermissionOnce = false; return null; } return {}; } },
+    permissionPresets: { set: () => { mutations.push('permission'); if (rejectPermissionOnce) { rejectPermissionOnce = false; throw Object.assign(new Error('permission unavailable'), { code: 'AUTOMATION_PERMISSION_UNAVAILABLE' }); } } },
     approval: { setPolicy() { mutations.push('approval'); } } };
   const frozen = { spec: { bindings: { modelProfileId: 'profile-a', modelProfileIds: ['profile-a', 'profile-b'] } } };
   const token = 'replay-fixture-token-at-least-24-characters';

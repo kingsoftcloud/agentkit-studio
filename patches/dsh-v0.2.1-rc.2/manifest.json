@@ -1697,7 +1697,78 @@
     },
     {
       "id": "043",
-      "file": "043-conversation-instance-isolation.patch",
+      "file": "043-cloud-permission-presentation.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "general-fix",
+      "risk": "medium",
+      "maintainerRole": "Studio cloud execution integration owner",
+      "removeWhen": "Pinned upstream provides the permission presentation slot and neutral automated-approval attribution.",
+      "contracts": [
+        "A remote preset presentation never grants permissions or replaces native local permission execution.",
+        "A never-policy rejection is not evidence of a human rejection.",
+        "Programmatic policy changes remain durably model-visible with automation attribution."
+      ],
+      "affectedPackages": [
+        "packages/client/ui-permission-presets",
+        "packages/core/tools",
+        "packages/experimental/auto-review",
+        "packages/fs/tool-fs",
+        "packages/interaction/user-approval",
+        "packages/sandbox/sandbox",
+        "packages/shell/tool-bash",
+        "packages/shell/tool-pwsh",
+        "packages/subagent/subagent"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Reproduced through the actual ApprovalService and ToolRuntime with policy never, plus the native permission component and registration."
+      },
+      "dependsOn": [],
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts",
+          "packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx",
+          "packages/core/tools/tests/tools.spec.ts",
+          "packages/experimental/auto-review/tests/auto-review.spec.ts",
+          "packages/fs/tool-fs/tests/tools.spec.ts",
+          "packages/interaction/user-approval/tests/approval.spec.ts",
+          "packages/sandbox/sandbox/tests/escalation.spec.ts",
+          "packages/shell/tool-bash/tests/tools.spec.ts",
+          "packages/shell/tool-pwsh/tests/tools.spec.ts",
+          "packages/subagent/subagent/tests/activation-policy.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "dsh-web",
+          "lifecycle"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-permission-presets/README.md",
+        "packages/client/ui-permission-presets/README.zh.md",
+        "packages/client/ui-permission-presets/src/client/PermissionSelect.tsx",
+        "packages/client/ui-permission-presets/src/client/index.ts",
+        "packages/client/ui-permission-presets/tests/browser-plugin.client.spec.ts",
+        "packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx",
+        "packages/core/tools/src/index.ts",
+        "packages/core/tools/tests/tools.spec.ts",
+        "packages/experimental/auto-review/tests/auto-review.spec.ts",
+        "packages/fs/tool-fs/tests/tools.spec.ts",
+        "packages/interaction/user-approval/README.md",
+        "packages/interaction/user-approval/README.zh.md",
+        "packages/interaction/user-approval/src/index.ts",
+        "packages/interaction/user-approval/tests/approval.spec.ts",
+        "packages/sandbox/sandbox/src/escalation.ts",
+        "packages/sandbox/sandbox/tests/escalation.spec.ts",
+        "packages/shell/tool-bash/tests/tools.spec.ts",
+        "packages/shell/tool-pwsh/tests/tools.spec.ts",
+        "packages/subagent/subagent/tests/activation-policy.spec.ts"
+      ],
+      "sha256": "88554732149613ffd5c0d9113285369d1f966bf17b072f1737b80d9493917615"
+    },
+    {
+      "id": "044",
+      "file": "044-conversation-instance-isolation.patch",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "category": "general-fix",
       "risk": "medium",
@@ -1754,8 +1825,8 @@
       "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3"
     },
     {
-      "id": "044",
-      "file": "044-tool-dispatch-definition.patch",
+      "id": "045",
+      "file": "045-tool-dispatch-definition.patch",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "category": "general-fix",
       "risk": "medium",
@@ -1773,7 +1844,9 @@
         "state": "not-submitted",
         "evidence": "Local native ToolRuntime and managed-workspace permission regressions pass; no upstream submission or merge receipt."
       },
-      "dependsOn": [],
+      "dependsOn": [
+        "043"
+      ],
       "verification": {
         "hostTests": [
           "packages/core/tools/tests/scoped.spec.ts",
@@ -1794,13 +1867,13 @@
         "packages/core/tools/src/index.ts",
         "packages/core/tools/tests/scoped.spec.ts"
       ],
-      "sha256": "0006af27f870dab86b7b95fbf1660e9e5e9ec74f51ed26a034d5b5395cf3aeca"
+      "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
     }
   ],
-  "patchedTree": "4d0939ffd93cf8f6f47a05cffb42c0ecd72e7169",
-  "patchedSourceSha256": "56c6489276fe007dcbf0b0bdeb827f13e20df6ae7abe407cb7016e0fe3507d7a",
+  "patchedTree": "0331b5810698a91b459a1a6f70aade3691ef0392",
+  "patchedSourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "f0d86b17ff608dc40508ed585a65c26715c88d8c6d4cd1ac8cb164f28a87c683"
+    "sha256": "9ef4079d985adc9494ec8fa90b0795a242f737d5c163e70d74f1f84eb942dc83"
   }
 }

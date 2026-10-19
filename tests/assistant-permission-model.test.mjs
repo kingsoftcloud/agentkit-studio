@@ -70,3 +70,43 @@ test('refuses tampered per-session ownership records', async t => {
   await writeFile(path, JSON.stringify({ ...data, agentId: 'foreign-agent' }));
   await assert.rejects(f.model.newSessionCwd('assistant-one'), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
 });
+
+async function configuredFixture(t) {
+  const f = await fixture(t), cwd = await f.model.newSessionCwd('assistant-configure');
+  const guards = new Set(), definitions = new Map(), calls = [];
+  let permission = 'read-only', policy = 'never';
+  const services = {
+    tools: {
+      guard(callback) { guards.add(callback); return () => guards.delete(callback); },
+      get: name => definitions.get(name), register: definition => definitions.set(definition.name, definition),
+    },
+    approval: { effectivePolicy: () => policy, request: async () => 'unavailable' },
+    fs: { sandboxMode: 'read-only' }, workingDirectory: { get: () => cwd },
+    sandboxPolicy: { resolve: () => ({ mode: permission }) },
+    commands: { execute() { assert.fail('managed initialization must not execute a user command'); } },
+    permissionPresets: { set(session, preset) { calls.push({ session, preset }); permission = preset; policy = 'ask'; } },
+  };
+  f.ctx.get = key => services[key];
+  const agent = { session: { id: 'assistant-configure', header: { cwd } }, ctx: f.ctx };
+  return { ...f, agent, services, guards, calls, setPolicy: value => { policy = value; } };
+}
+
+test('managed initialization uses the official setter once and preserves restored durable approval knobs', async t => {
+  const f = await configuredFixture(t);
+  const created = await f.model.ensure(f.agent, true);
+  assert.equal(created.permission, 'workspace-write'); assert.equal(created.approval, 'ask');
+  assert.deepEqual(f.calls, [{ session: f.agent.session, preset: 'workspace-write' }]);
+  f.setPolicy('never');
+  const restored = await f.model.ensure(f.agent, false);
+  assert.equal(restored.permission, 'workspace-write'); assert.equal(restored.approval, 'never');
+  assert.equal(f.calls.length, 1, 'restoring a managed Session must not reapply a preset');
+});
+
+test('missing, rejected and ineffective managed permission setters leave the tool guard closed', async t => {
+  for (const presets of [undefined, {}, { set() { throw new Error('unavailable'); } }, { set() {} }]) {
+    const f = await configuredFixture(t); f.services.permissionPresets = presets;
+    await assert.rejects(f.model.ensure(f.agent, true), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+    assert.ok([...f.guards].some(guard => guard({ agent: f.agent, name: 'write', arguments: { file_path: 'note.txt' } })), 'failed native initialization must not expose tools');
+    assert.equal(f.model.ownsSession(f.agent.session.id), false);
+  }
+});
