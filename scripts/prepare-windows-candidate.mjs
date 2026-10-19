@@ -2,6 +2,7 @@
 import { execFile } from 'node:child_process';
 import { promisify, parseArgs } from 'node:util';
 import { readGitHubJobLogs } from './github-job-logs.mjs';
+import { verifyWindowsCandidateEvidence } from './windows-candidate-evidence.mjs';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -9,17 +10,14 @@ import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import { join, resolve } from 'node:path';
 const execute=promisify(execFile);
-const {values}=parseArgs({options:Object.fromEntries(['repository','run','source','version','output'].map(key=>[key,{type:'string'}]))});
+const {values}=parseArgs({options:{...Object.fromEntries(['repository','run','source','version','output'].map(key=>[key,{type:'string'}])),'require-ui':{type:'boolean',default:false}}});
 const {repository,run,source,version}=values;
 if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository||'')||!/^\d+$/.test(run||'')||!/^[0-9a-f]{40}$/.test(source||''))throw Error('Invalid candidate identity');
 const api=async path=>JSON.parse((await execute('gh',['api',`repos/${repository}/${path}`],{maxBuffer:32*1024*1024})).stdout);
 const original=await api(`actions/runs/${run}`);
-if(original.status!=='completed'||original.event!=='workflow_dispatch')throw Error('Candidate build must be a completed manual release run');
 const jobs=await api(`actions/runs/${run}/jobs`);
 const job=jobs.jobs.find(value=>value.name==='windows-x64');
-for(const name of ['Verify immutable Studio source','Package the official DSH Windows target','Verify timestamped installer and actual installation']) {
- if(job?.steps.find(step=>step.name===name)?.conclusion!=='success')throw Error(`Original candidate has not passed ${name}`);
-}
+const {reused,installedUiVerified}=verifyWindowsCandidateEvidence(original,job,{requireUi:values['require-ui']});
 let logs;
 try { logs=await readGitHubJobLogs(execute,`repos/${repository}/actions/jobs/${job.id}/logs`); }
 catch { throw Error('Original candidate job logs could not be read safely'); }
@@ -37,5 +35,5 @@ const hash=createHash('sha256');let bytes=0;
 await pipeline(Readable.fromWeb(response.body),new Transform({transform(chunk,_encoding,done){hash.update(chunk);bytes+=chunk.length;done(null,chunk)}}),createWriteStream(archive,{flags:'wx'}));
 const sha256=hash.digest('hex');
 if(artifact.digest!==`sha256:${sha256}`||bytes!==artifact.size_in_bytes)throw Error('Candidate transport digest or size differs from GitHub');
-await writeFile(join(root,'provenance.json'),JSON.stringify({sourceCommit:source,version,candidateRunId:Number(run),artifactId:artifact.id,sha256,bytes,originalSignedStagesVerified:true},null,2));
+await writeFile(join(root,'provenance.json'),JSON.stringify({sourceCommit:source,version,candidateRunId:Number(run),artifactId:artifact.id,sha256,bytes,originalSignedStagesVerified:true,signedCandidateReused:reused,installedUiVerified},null,2));
 console.log('Signed candidate original source, version, signing stages and transport digest verified.');

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Publish accepted Windows installers and blockmaps to KS3 before advancing the canonical and compatibility feeds; require original signing, actual installation and native UI evidence when reusing candidates.
+
 - Align the cloud HTTP transport with the Host's Undici version and pair its fetch with its dispatcher, preserving both the sealed archive and the packaged Node runtime contract.
 
 - Show an assistant setup failure once, stop the progress spinner, and keep the cloud settings and deployment recovery actions available.
