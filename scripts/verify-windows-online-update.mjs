@@ -46,7 +46,7 @@ try {
  page=await app.firstWindow({timeout:120000});
  page.on('pageerror',error=>console.log('Isolated baseline renderer error: '+error.message));
  await expect(page.locator('body')).toContainText('AgentKit Studio',{timeout:120000});
- await expect(page.getByRole('button',{name:'Agents',exact:true})).toBeVisible({timeout:30000});
+ await expect(page.getByRole('button',{name:/^(智能体|Agents)$/})).toBeVisible({timeout:30000});
  const before=await app.evaluate(({app})=>app.getVersion());
  if(before===targetVersion) throw new Error('Updater baseline is already the target version');
  const guide=page.locator('.agentkit-credential-onboarding-content');
