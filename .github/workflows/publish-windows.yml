@@ -1,0 +1,77 @@
+name: Publish accepted Windows candidate
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Original successful signed Windows build run
+        type: string
+        required: true
+      studio_ref:
+        description: Accepted immutable product source SHA
+        type: string
+        required: true
+      build_version:
+        description: Accepted signed candidate version
+        type: string
+        required: true
+      expected_previous_version:
+        description: Existing feed version, or absent for the first publication
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: studio-feed-win-x64
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: studio-signing
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - run: pnpm install --frozen-lockfile
+      - name: Verify original signing and installed UI acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+          SOURCE_SHA: ${{ inputs.studio_ref }}
+          BUILD_VERSION: ${{ inputs.build_version }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$SOURCE_SHA" HEAD
+          node scripts/prepare-windows-candidate.mjs --repository "$GITHUB_REPOSITORY" --run "$CANDIDATE_RUN" --source "$SOURCE_SHA" --version "$BUILD_VERSION" --output "$RUNNER_TEMP/candidate"
+          unzip -q "$RUNNER_TEMP/candidate/candidate.zip" -d "$RUNNER_TEMP/candidate/unpacked"
+      - name: Publish exact signed Windows bytes and verify canonical feed
+        env:
+          SOURCE_SHA: ${{ inputs.studio_ref }}
+          BUILD_VERSION: ${{ inputs.build_version }}
+          PREVIOUS: ${{ inputs.expected_previous_version }}
+          STUDIO_DOWNLOAD_PROD_KS3_BUCKET: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_BUCKET }}
+          STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY }}
+          STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          mapfile -t releases < <(find "$RUNNER_TEMP/candidate/unpacked" -type d -name windows-release)
+          mapfile -t proofs < <(find "$RUNNER_TEMP/candidate/unpacked" -type f -name windows-install.json)
+          test "${#releases[@]}" = 1
+          test "${#proofs[@]}" = 1
+          node scripts/publish-windows-candidate.mjs --candidate "${releases[0]}" --proof "${proofs[0]}" --source "$SOURCE_SHA" --version "$BUILD_VERSION" --previous "$PREVIOUS" --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --channel preview
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-feed-publication-${{ inputs.build_version }}
+          path: ${{ runner.temp }}/candidate/unpacked/**/.publication/
+          include-hidden-files: true
+          if-no-files-found: error

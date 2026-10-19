@@ -14,10 +14,10 @@ const {repository,run,source,version}=values;
 if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository||'')||!/^\d+$/.test(run||'')||!/^[0-9a-f]{40}$/.test(source||''))throw Error('Invalid candidate identity');
 const api=async path=>JSON.parse((await execute('gh',['api',`repos/${repository}/${path}`],{maxBuffer:32*1024*1024})).stdout);
 const original=await api(`actions/runs/${run}`);
-if(original.status!=='completed'||original.event!=='workflow_dispatch')throw Error('Candidate build must be a completed manual release run');
+if(original.status!=='completed'||original.conclusion!=='success'||original.event!=='workflow_dispatch'||original.path!=='.github/workflows/release-windows.yml')throw Error('Candidate build must be a successful manual Windows release run');
 const jobs=await api(`actions/runs/${run}/jobs`);
 const job=jobs.jobs.find(value=>value.name==='windows-x64');
-for(const name of ['Verify immutable Studio source','Package the official DSH Windows target','Verify timestamped installer and actual installation']) {
+for(const name of ['Verify immutable Studio source','Package the official DSH Windows target','Verify timestamped installer and actual installation','Verify the actually installed Windows App UI']) {
  if(job?.steps.find(step=>step.name===name)?.conclusion!=='success')throw Error(`Original candidate has not passed ${name}`);
 }
 let logs;
