@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, realpath, lstat, read
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import { createStudioBuild } from '../src/studio-build.mjs';
 import { createPortableBundles } from '../src/portable-bundle.mjs';
 import { parse as parseYaml } from 'yaml';
@@ -21,7 +22,11 @@ async function fixture(t, credentialName = 'MODEL_KEY') {
   await writeFile(join(dsh, 'lib/bin.js'), '// fixture installation entry');
   // Sequential unit fixtures control the installation facade. The opt-in native
   // verifier separately exercises real kernel exclusion across processes.
-  const persistence = join(modules, '@deepseek-ai/dsh-session-persistence-jsonl');
+  const base = join(dsh, 'node_modules/@deepseek-ai/dsh-base');
+  await mkdir(base, { recursive: true });
+  await writeFile(join(base, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-base', type: 'module', main: 'index.js' }));
+  await writeFile(join(base, 'index.js'), 'export {};');
+  const persistence = join(base, 'node_modules/@deepseek-ai/dsh-session-persistence-jsonl');
   const system = join(persistence, 'node_modules/@deepseek-ai/node-addon-system');
   await mkdir(system, { recursive: true });
   await writeFile(join(persistence, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-session-persistence-jsonl', type: 'module', main: 'index.js' }));
@@ -45,6 +50,10 @@ async function fixture(t, credentialName = 'MODEL_KEY') {
 
 test('offline boot wires the public DSH CLI/profile and forwards only target resource credentials', async t => {
   const f = await fixture(t), plan = await prepareBundleHost(f);
+  const installationRequire = createRequire(join(f.installation, 'package.json'));
+  for (const name of ['@deepseek-ai/dsh-base/package.json', '@deepseek-ai/dsh-session-persistence-jsonl/package.json']) {
+    assert.throws(() => installationRequire.resolve(name), { code: 'MODULE_NOT_FOUND' }, 'strict profile must not hoist ' + name);
+  }
   assert.match(plan.entry, /node_modules\/@deepseek-ai\/dsh\/lib\/bin.js$/);
   assert.deepEqual(plan.args, ['--profile', 'agentkit-runtime', '--host', '127.0.0.1', '--no-open', '--port', '0']);
   assert.equal(plan.env.MODEL_KEY, 'target-secret');
@@ -336,7 +345,7 @@ test('later Schedule patch overrides cannot withdraw the required startup depend
 });
 
 test('Windows mutex lease normalizes identity, closes contenders and accepts abandoned ownership', async t => {
-  const f = await fixture(t), root = join(f.installation, 'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/node_modules/koffi');
+  const f = await fixture(t), root = join(f.installation, 'node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-base/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/node_modules/koffi');
   await mkdir(root, { recursive: true });
   await writeFile(join(root, 'package.json'), '{"type":"module","main":"index.js"}');
   await writeFile(join(root, 'index.js'), `

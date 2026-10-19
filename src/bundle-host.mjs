@@ -1,6 +1,6 @@
 /** Offline boot preparation over the public DSH profile/package contract. */
 import { cp, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { constants as fsConstants } from 'node:fs';
@@ -226,8 +226,11 @@ async function recoverProfile(profiles, profile, expected, identity) {
 // Use the fixed DSH installation's public native primitive. A kernel lease
 // survives stalls and is released on process death; a journal is not a lock.
 export async function acquireBundleProfileLock(profiles, modules, platform = process.platform) {
-  const installation = createRequire(join(dirname(modules), 'package.json'));
-  const persistence = createRequire(installation.resolve('@deepseek-ai/dsh-session-persistence-jsonl'));
+  // Profiles need only link the fixed CLI; pnpm keeps its production bundle
+  // dependencies private. Follow declared public dependencies, never hoisting.
+  const cli = createRequire(await realpath(join(modules, '@deepseek-ai/dsh/package.json')));
+  const base = createRequire(cli.resolve('@deepseek-ai/dsh-base/package.json'));
+  const persistence = createRequire(base.resolve('@deepseek-ai/dsh-session-persistence-jsonl/package.json'));
   if (platform === 'win32') {
     // The fixed persistence package declares public Koffi; use its public FFI
     // API, not the backend's private Session lease or timer-based ownership.
