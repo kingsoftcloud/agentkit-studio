@@ -14,9 +14,12 @@ export function createAssistantConversation({ ConversationNodeAssembler }) {
         .sort((left, right) => left.seq - right.seq);
       // The public history projection intentionally omits provider stream records.
       // Native lifecycle Definitions still require the stream array, even for an
-      // inactive target such as Trajectory. Never reintroduce the raw stream.
+      // inactive target such as Trajectory. Unknown routes stay empty; native token
+      // accounting must remain unavailable instead of restoring provider details.
       const inputs = unique.map(event => ({ type: 'event', event: event.type === 'assistant/message'
-        ? { ...event, data: { ...event.data, stream: [] } } : event }));
+        ? { ...event, data: { ...event.data, stream: [], message: { ...event.data?.message, source: { kind: 'model', provider: '', model: '' } } } }
+        : event.type === 'turn/end' && event.data?.reason?.kind === 'aborted'
+          ? { ...event, data: { ...event.data, reason: { kind: 'aborted', reason: { kind: 'legacy' } } } } : event }));
       const assembler = new ConversationNodeAssembler(registry.events, registry.views, registry.groups);
       assembler.replaceWindow(inputs, hasMore);
       assembler.activateTarget('chat');

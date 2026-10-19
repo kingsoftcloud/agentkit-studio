@@ -40,12 +40,15 @@ test('native assembly supplies only an empty provider stream without mutating pu
   const owner = createAssistantConversation({ ConversationNodeAssembler: Assembler });
   owner.bind({ events: {}, views: {}, groups: {} });
   const missing = { seq: 1, type: 'assistant/message', data: { message: { content: [] } } };
-  const raw = { seq: 2, type: 'assistant/message', data: { stream: [{ privateProviderObject: 'never-display' }] } };
+  const raw = { seq: 2, type: 'assistant/message', data: { stream: [{ privateProviderObject: 'never-display' }], message: { source: { kind: 'model', provider: 'private-provider', model: 'private-model' } } } };
   owner.assemble([missing, raw]);
   assert.deepEqual(inputs.map(entry => entry.event.data.stream), [[], []]);
+  assert.deepEqual(inputs.map(entry => entry.event.data.message.source), [{ kind: 'model', provider: '', model: '' }, { kind: 'model', provider: '', model: '' }]);
   assert.equal(missing.data.stream, undefined);
   assert.equal(raw.data.stream[0].privateProviderObject, 'never-display');
   assert.ok(!JSON.stringify(inputs).includes('never-display'));
+  assert.ok(!JSON.stringify(inputs).includes('private-provider'));
+  assert.ok(!JSON.stringify(inputs).includes('private-model'));
 });
 
 test('image reads use cloud assistant receipts, share one request and release object URLs', async () => {

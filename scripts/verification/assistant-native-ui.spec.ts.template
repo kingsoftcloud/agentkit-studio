@@ -6,6 +6,11 @@ import { Context } from '@deepseek-ai/cordis';
 import { ConversationEventRegistry, ConversationNodeAssembler, ConversationViewRegistry } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import { ConversationGroupRegistry } from '@dsh/packages/client/ui-conversation/src/client/conversation/group-registry.ts';
 import { registerConversationNodes } from '@dsh/packages/client/ui-chat/src/client/conversation-nodes/register.ts';
+import { registerTrajectoryMessageDefinitions } from '@dsh/packages/client/ui-trajectory/src/client/trajectory-message-definitions.ts';
+import { registerTrajectoryRequestHeaderDefinition } from '@dsh/packages/client/ui-trajectory/src/client/trajectory-request-header-definition.ts';
+import { registerTrajectoryToolDefinition } from '@dsh/packages/client/ui-trajectory/src/client/trajectory-tool-definition.ts';
+import { registerTrajectoryCompactionDefinitions } from '@dsh/packages/client/ui-trajectory/src/client/trajectory-compaction-definition.ts';
+import { registerTrajectoryConversationView } from '@dsh/packages/client/ui-trajectory/src/client/trajectory-snapshot-builder.ts';
 import { registerTrajectoryAssistantDefinition } from '@dsh/packages/client/ui-trajectory/src/client/trajectory-assistant-definition.ts';
 import { MarkdownDelegateProvider } from '@dsh/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx';
 import { MarkdownText } from '@dsh/packages/client/ui-primitives/src/markdown/MarkdownText.tsx';
@@ -48,7 +53,12 @@ function fixture(remote = vi.fn().mockResolvedValue(imageResult)) {
   // Match the mounted production registry: even the inactive Trajectory target
   // consumes lifecycle events during assembly, so Chat-only definitions hide bugs.
   registerConversationNodes(ctx);
+  registerTrajectoryMessageDefinitions(ctx);
+  registerTrajectoryRequestHeaderDefinition(ctx);
   registerTrajectoryAssistantDefinition(ctx);
+  registerTrajectoryToolDefinition(ctx);
+  registerTrajectoryCompactionDefinitions(ctx);
+  registerTrajectoryConversationView(ctx);
   const conversation = createAssistantConversation({ ConversationNodeAssembler });
   const unbind = conversation.bind({ events, views, groups });
   cleanups.push(async () => { unbind(); await ctx.fiber.dispose(); });
@@ -79,6 +89,33 @@ describe('Studio assistant with pinned DSH registries, assembler, React and nati
     expect(view.getByRole('heading', { name: 'Native rendered answer' })).toBeTruthy();
     expect(view.queryByText(/原生会话展示暂不可用/)).toBeNull();
     expect(reply.data.stream).toBeUndefined();
+  });
+  it.each(['completed', 'aborted', 'error', 'interrupted', 'blocked', 'max-tokens'])('assembles a complete single-response %s lifecycle through native turn-tail/token accounting', (kind) => {
+    const f = fixture();
+    const events = [
+      at(1, 'turn/start', { turn: 1 }), at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'user/message', msg('greeting', [{ type: 'text', text: 'Hello' }]), { surfaceOp: 'append' }),
+      at(4, 'assistant/message', { turn: 1, step: 1, stream: [{ chunk: { type: 'reasoning-delta', text: 'private-stream' } }],
+        message: { id: 'greeting-reply', source: { kind: 'model', provider: 'private-provider', model: 'private-model' }, content: [{ type: 'text', text: 'Hello from the cloud' }] } }, { surfaceOp: 'append' }),
+      at(5, 'step/end', { turn: 1, step: 1, reason: { kind: 'completed' } }),
+      at(6, 'turn/end', { turn: 1, reason: { kind, ...(kind === 'error' ? { error: { message: 'private-diagnostic' } } : {}) } }),
+    ];
+    const projected = displayEvents(events);
+    // Also accept a previously published safe projection that omitted required
+    // native model-route and stream placeholders. No raw metadata is restored.
+    const reply = projected.find(event => event.type === 'assistant/message')!;
+    delete reply.data.stream; reply.data.message.source = { kind: 'model' };
+    if (kind === 'aborted') projected.find(event => event.type === 'turn/end')!.data.reason = { kind: 'aborted' };
+    const nodes = f.conversation.assemble(projected);
+    expect(nodes.some(node => node.kind === 'assistant-step')).toBe(true);
+    const tail = nodes.find(node => node.kind === 'turn-tail');
+    expect(tail).toBeDefined();
+    expect(tail!.data.tokenUsage).toBeUndefined();
+    const rendered = render(h(f.component, { ...f.props([]), view: { ...f.props([]).view, events: projected } }));
+    expect(rendered.getByText('Hello from the cloud')).toBeTruthy();
+    expect(rendered.queryByText(/原生会话展示暂不可用/)).toBeNull();
+    expect(rendered.container.textContent).not.toMatch(/private-(stream|provider|model|diagnostic)/);
+    expect(reply.data.message.source).toEqual({ kind: 'model' });
   });
   it('shadows inherited Markdown file navigation and image capabilities while preserving HTTPS links', () => {
     const f = fixture(), events = history();

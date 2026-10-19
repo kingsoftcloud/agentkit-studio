@@ -78,7 +78,8 @@ export function displayEvents(events) {
     if (event.type === 'step/end') return [envelope(event, { ...boundary, reason: { kind: ['completed', 'aborted', 'tool-calls', 'stop'].includes(data.reason?.kind) ? data.reason.kind : 'error' } })];
     if (event.type === 'turn/end') {
       const kind = data.reason?.kind;
-      const reason = ['completed', 'aborted', 'interrupted', 'blocked', 'max-tokens'].includes(kind) ? { kind }
+      const reason = kind === 'aborted' ? { kind, reason: { kind: 'legacy' } }
+        : ['completed', 'interrupted', 'blocked', 'max-tokens'].includes(kind) ? { kind }
         : { kind: 'error', error: assistantFailure() };
       return [envelope(event, { turn: boundary.turn, reason })];
     }
@@ -90,7 +91,7 @@ export function displayEvents(events) {
       const content = displayContent(data.message?.content, { tools: true });
       if (!content.length) return [];
       return [envelope(event, { ...boundary, stream: [], ...(data.interrupted === true ? { interrupted: true } : {}), message: { id: identifier(data.message?.id) || `assistant-${event.seq}`,
-        role: 'assistant', source: { kind: 'model' }, content } })];
+        role: 'assistant', source: { kind: 'model', provider: '', model: '' }, content } })];
     }
     if (event.type === 'tool/call' && identifier(data.callId)) return [envelope(event, {
       ...boundary, callId: identifier(data.callId), name: identifier(data.name), arguments: '{}',
