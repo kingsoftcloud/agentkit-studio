@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Align the cloud HTTP transport with the Host's Undici version so desktop packaging reuses one dependency and preserves the sealed runtime inventory.
+
 - Show an assistant setup failure once, stop the progress spinner, and keep the cloud settings and deployment recovery actions available.
 
 - Allow self-signed runtime certificates only for explicit pre-online Agent connections, with redirects disabled. Keep production, control-plane and download TLS verification unchanged.
