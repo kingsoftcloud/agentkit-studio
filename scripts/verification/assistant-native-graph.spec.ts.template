@@ -338,6 +338,47 @@ describe('Isolated native Client graph feasibility, with only its external carri
   });
 
 
+  it('waits for the delayed public cloud catalog before retaining its genuine Session binding', async () => {
+    const mock = carrier(), listed = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+    mock.unary('session/list', async () => {
+      entered.resolve(); await listed.promise;
+      return ok({ items: [{ sessionId: 'cloud-session', updatedAt: 1, running: false, blank: true, agentAvailable: true }] });
+    });
+    const transport = { rpc: mock.rpc, sessionId: 'cloud-session', getState: () => ({ pending: null, busy: false }), subscribe: () => () => {}, dispose: vi.fn(async () => {}) };
+    let settled: unknown;
+    const opening = createAssistantNativeGraph({ modules: { Context, React, connection: { installConnection }, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore }, transport, window })
+      .then(value => ({ value }), error => ({ error }));
+    void opening.then(value => { settled = value; });
+    try {
+      await entered.promise; await new Promise(resolve => setTimeout(resolve, 0));
+      expect(settled).toBeUndefined(); expect(mock.log.streams('session/follow')).toHaveLength(0);
+      listed.resolve(); const result = await opening;
+      expect('error' in result ? result.error : undefined).toBeUndefined();
+      if ('value' in result) {
+        disposers.push(() => result.value.dispose());
+        expect(result.value.reference.binding.session.getSnapshot().openState).toBe('open');
+        expect(result.value.ctx.sessions.binding('cloud-session')).toBe(result.value.reference.binding);
+      }
+    } finally { listed.resolve(); }
+  });
+
+  it('cancels a cloud catalog wait without retaining a Session or accepting its late list', async () => {
+    const mock = carrier(), listed = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+    mock.unary('session/list', async () => {
+      entered.resolve(); await listed.promise;
+      return ok({ items: [{ sessionId: 'cloud-session', updatedAt: 1, running: false, blank: true, agentAvailable: true }] });
+    });
+    const transport = { rpc: mock.rpc, sessionId: 'cloud-session', getState: () => ({ pending: null, busy: false }), subscribe: () => () => {}, dispose: vi.fn(async () => {}) };
+    const lifetime = new AbortController();
+    const opening = createAssistantNativeGraph({ modules: { Context, React, connection: { installConnection }, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore }, transport, window, signal: lifetime.signal }).catch(error => error);
+    await entered.promise; await new Promise(resolve => setTimeout(resolve, 0));
+    expect(transport.dispose).not.toHaveBeenCalled();
+    lifetime.abort(new Error('closed during catalog wait')); listed.resolve();
+    const error = await opening; expect(error).toBeInstanceOf(Error); expect(error.message).not.toContain('unknown session');
+    await vi.waitFor(() => expect(transport.dispose).toHaveBeenCalledOnce());
+    expect(mock.log.streams('session/follow')).toHaveLength(0);
+  });
+
   it('mounts the genuine cloud-bound native composer without reading local Host globals or same-ID drafts', async () => {
     Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
     const localRead = vi.fn(() => { throw new Error('local Host hook read'); });

@@ -3,6 +3,31 @@ import { ASSISTANT_ATTACHMENT_LIMITS, readAssistantAttachment } from '../state/a
 const allowed = new Set(['session/follow', 'session/projections', 'session/page', 'session/prompt', 'fileUploads/upload']);
 const bytesBase64 = bytes => { let value = ''; for (let offset = 0; offset < bytes.length; offset += 0x8000) value += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)); return btoa(value); };
 
+/** Retain accepts discovered identities, not a Host-authenticated id on its own. */
+function waitForCloudSession(sessions, sessionId, signal) {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    let settled = false, unsubscribe = () => {};
+    const finish = error => {
+      if (settled) return; settled = true;
+      clearTimeout(timer); unsubscribe(); signal.removeEventListener('abort', aborted);
+      if (error) reject(error); else resolve();
+    };
+    const aborted = () => finish(signal.reason || new Error('云端输入连接已关闭'));
+    const check = () => {
+      if (signal.aborted) { aborted(); return; }
+      const catalog = sessions.list.getSnapshot();
+      if (catalog.phase !== 'ready') return;
+      finish(catalog.ids.includes(sessionId) && catalog.byId[sessionId] ? undefined : new Error('云端会话尚未出现在当前目录，请重新连接输入'));
+    };
+    const timer = setTimeout(() => finish(new Error('读取云端会话目录超时，请重新连接输入')), 30000);
+    signal.addEventListener('abort', aborted, { once: true });
+    unsubscribe = sessions.list.subscribe(check);
+    if (settled) unsubscribe();
+    check();
+  });
+}
+
 export async function createAssistantNativeGraph({ modules, transport, window, container, signal }) {
   const { Context, React, connection, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore } = modules;
   const policy = conversation.Config?.({});
@@ -82,7 +107,11 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
       ctx.conversation.blocks.set(transport.sessionId, pending.invalid || pending.pending || pending.busy || pending.disconnected ? { reason: '请先确认上一条消息的保存结果' } : undefined);
     };
     updateBlock(); ctx.effect(() => transport.subscribe(updateBlock));
-    reference = ctx.sessions.retain(transport.sessionId, { source: 'controllerOperation' });
+    // Plugin installation starts an asynchronous Host list pull. A real network
+    // must finish catalog discovery before the public synchronous retain call.
+    await waitForCloudSession(ctx.sessions, transport.sessionId, lifetime.signal);
+    lifetime.signal.throwIfAborted();
+    reference = ctx.sessions.retain(transport.sessionId, { source: 'controllerOperation', signal: lifetime.signal });
     await reference.ready;
     if (disposed) throw new Error('Cloud composer was released before it opened');
     const snapshot = reference.binding.session.getSnapshot();

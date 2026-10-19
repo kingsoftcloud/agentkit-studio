@@ -8,7 +8,9 @@ import { projectAssistantNativePage, projectAssistantNativeFollowFrame,
 import { ASSISTANT_NATIVE_REPRESENTATION } from './contracts/assistant-native.mjs';
 export { ASSISTANT_NATIVE_REPRESENTATION } from './contracts/assistant-native.mjs';
 const PRINCIPAL = 'agentkit-assistant-native';
-const READ_SESSION = ['session/page', 'session/follow', 'session/projections'];
+// list/control require both global RPC admission and the exact Session grant:
+// the native Controller filters every returned row using its current action.
+const READ_SESSION = ['session/list', 'session/control', 'session/page', 'session/follow', 'session/projections'];
 const READ_GLOBAL = ['session/list', 'session/control'];
 const CALLS = new Set(['session/list', 'session/projections', 'session/page', 'session/prompt', 'fileUploads/upload']);
 const STREAMS = new Set(['$events', 'session/control', 'session/follow', 'remoteAccess/follow']);

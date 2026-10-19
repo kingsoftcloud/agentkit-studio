@@ -60,6 +60,7 @@ test('non-owner read policy is limited to exact active session; advertised facad
   assert.equal(f.peers[0].interactions, 'answer');
   const bindings = f.policy().bindings(f.peers[0].principal);
   assert.deepEqual(bindings[0].resource, { kind: 'session', id: 'session' });
+  for (const action of ['session/list', 'session/control']) assert.ok(bindings[0].role.actions.includes(action), 'catalog RPCs also need exact-session filtering grants');
   assert.ok(bindings.every(binding => !binding.role.actions.includes('session/prompt')));
   assert.deepEqual(f.policy().bindings({ ...f.peers[0].principal }), [], 'copied principal never gains an internal Peer grant');
   assert.equal(f.opened.capabilities.owner, false);

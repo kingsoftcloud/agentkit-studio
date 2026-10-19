@@ -226,6 +226,26 @@ try {
   assert.equal(closed, 2);
   report.cases.push({ name: 'native-private-journal-disposal-closes-every-generation', passed: true });
 
+  // Use the actual Controller and Gateway: list/control apply a second,
+  // endpoint-specific per-Session allows() check after global RPC admission.
+  await host.plugin((await load('dsh-agent')).default);
+  await host.plugin((await load('dsh-session-projection')).default);
+  host.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'fixture', model: 'fixture' }) });
+  host.provide('llm', { listProviders: () => [], listModels: async () => [] });
+  host.provide('attachments', { imageLimits: { maxImageBytes: 1024, maxImagesPerMessage: 1, maxMessageImageBytes: 1024, maxImagePixels: 1024, maxImageDimension: 32, mediaTypes: ['image/png'] } });
+  host.provide('fileUploads', { registerAgentResolver: () => () => {} });
+  host.provide('fs', {}); host.provide('workspaceRegistry', {});
+  // Only catalog data is controlled. The native SessionController.list/control,
+  // projection registry, invocation scope, access service and Peer are genuine.
+  host.provide('sessionQuery', { listSessions: async () => host.sessions.list().map(item => ({ header: item.header, formatStatus: 'current' })) });
+  const { default: SessionController } = await load('dsh-api-session-controller');
+  await host.plugin(SessionController, { nativeOpen: false });
+  const controller = host.sessionController;
+  const foreign = host.sessions.create('assistant-native-foreign-proof');
+  const unfiltered = await controller.list({}, new AbortController().signal);
+  assert.ok(unfiltered.items.some(row => row.sessionId === session.id));
+  assert.ok(unfiltered.items.some(row => row.sessionId === foreign.id));
+
   const isolatedPeers = [];
   const adapter = createAssistantNativeCarrierService({ ctx: host, createPeer: options => {
     const scoped = new Peer(host, options); isolatedPeers.push(scoped); return scoped;
@@ -240,6 +260,19 @@ try {
     assert.equal(host.remoteAccess.decide({ principal: isolatedPeers[0].principal, action: 'session/prompt', resources: [{ kind: 'session', id: session.id }] }).kind, 'deny');
     assert.equal(host.remoteAccess.decide({ principal: isolatedPeers[0].principal, action: 'session/page', resources: [{ kind: 'session', id: 'foreign' }] }).kind, 'deny');
     assert.equal(host.remoteAccess.decide({ principal: isolatedPeers[0].principal, action: 'session/page', resources: [{ kind: 'session', id: session.id }] }).kind, 'allow');
+    const listed = await request('native-call', { channel: '/api', endpoint: 'session/list', payload: { args: { _request: {} } } });
+    assert.equal(listed.ok, true, JSON.stringify(listed));
+    assert.deepEqual(listed.value.items.map(row => row.sessionId), [session.id], 'actual Controller must admit the exact Session into its catalog');
+    await request('native-stream-open', { streamId: 'native-control', endpoint: 'session/control', payload: { args: {} } });
+    const control = await request('native-stream-poll', { streamId: 'native-control' });
+    const baseline = control.items.find(row => row.type === 'baseline');
+    assert.ok(baseline, JSON.stringify(control));
+    assert.deepEqual(Object.keys(baseline.value.projections), [session.id], 'actual Controller must include only the exact Session control baseline');
+    await request('native-stream-cancel', { streamId: 'native-control' });
+    for (const action of ['session/list', 'session/control']) {
+      assert.equal(host.remoteAccess.decide({ principal: isolatedPeers[0].principal, action, resources: [{ kind: 'session', id: foreign.id }] }).kind, 'deny');
+    }
+    report.cases.push({ name: 'real-controller-list-and-control-discover-only-the-carrier-session', passed: true, foreignSessionVisible: false, owner: false });
     await assert.rejects(adapter.request('foreign', 'native-close', { carrierId: opened.carrierId }));
     await request('native-close'); assert.equal(isolatedPeers[0].signal.aborted, true);
     assert.equal(host.remoteAccess.decide({ principal: isolatedPeers[0].principal, action: 'session/page', resources: [{ kind: 'session', id: session.id }] }).kind, 'deny');

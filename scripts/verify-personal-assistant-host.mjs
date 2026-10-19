@@ -497,6 +497,8 @@ try {
   const carrier = await openLiveCarrier();
   const carrierCall = (op, data) => api(op, { carrierId: carrier.carrierId, ...data });
   const address = { kind: 'session', sessionId: carrier.sessionId };
+  const catalog = await carrierCall('native-call', { channel: '/api', endpoint: 'session/list', payload: { args: { _request: {} } } });
+  assert.equal(catalog.ok, true, JSON.stringify(catalog)); assert.deepEqual(catalog.value.items.map(item => item.sessionId), [carrier.sessionId]);
   const page = await carrierCall('native-call', { channel: '/api', endpoint: 'session/page', payload: { args: { request: { address, throughSeq: managedAgent.session.seq - 1, maxMessages: 16 } } } });
   assert.equal(page.ok, true, JSON.stringify(page)); assert.ok(page.value.records.length > 0);
   await carrierCall('native-stream-open', { streamId: 'follow', endpoint: 'session/follow', payload: { args: { request: { address, maxMessages: 16 } } } });
@@ -507,9 +509,9 @@ try {
   await carrierCall('native-stream-open', { streamId: 'control', endpoint: 'session/control', payload: { args: {} } });
   const control = await carrierCall('native-stream-poll', { streamId: 'control' });
   const controlBaseline = control.items.find(item => item.type === 'baseline');
-  assert.ok(controlBaseline); assert.ok(Object.keys(controlBaseline.value.projections).every(id => id === carrier.sessionId));
+  assert.ok(controlBaseline); assert.deepEqual(Object.keys(controlBaseline.value.projections), [carrier.sessionId]);
   await carrierCall('native-stream-cancel', { streamId: 'control' });
-  check('real-non-owner-native-carrier-events-page-follow-control');
+  check('real-non-owner-native-carrier-events-list-page-follow-control');
   stage = 'native-carrier-durable-prompt';
   const carrierPrompt = { sessionId: carrier.sessionId, requestId: 'native-carrier-durable', mode: 'queue', content: [{ type: 'text', text: 'native carrier durable queue' }] };
   const carrierAccepted = await carrierCall('native-call', { channel: '/api', endpoint: 'session/prompt', payload: { args: { request: carrierPrompt } } });

@@ -14,6 +14,13 @@ with an actually retained SessionReference. Its views and width controls are
 omitted through factory slots. Queue/Todo docks are shadowed through public slots
 because the product transcript already presents their safe information.
 
+Installing the Session service starts an asynchronous Host catalog read. The
+cloud graph waits for the public `sessions.list` to become ready and include the
+exact cloud identity before calling `retain`; an authenticated `native-open` id
+alone is not a discovered Client Session. The bounded wait is cancelled with the
+graph and releases its subscription; a missing identity or timeout requires
+reconnection without creating a local Session or inventing a binding.
+
 The graph does not install the stock page-global remote-access or Blob-upload
 adapters. Its public service implementations start with no access, accept only
 current-cloud-session display grants, and convert browser-selected Blob bytes
