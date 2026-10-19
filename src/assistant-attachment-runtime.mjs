@@ -115,7 +115,7 @@ async function readBytes(store, ref) {
 }
 
 /** Resolve receipts only after duplicate lookup, preserving native image and file semantics. */
-export async function prepareAssistantPrompt(ctx, agent, content) {
+export async function prepareAssistantPrompt(ctx, agent, content, { stageFile } = {}) {
   const attachments = content.filter(part => part.type !== 'text');
   if (!attachments.length) return { content, imageReceipts: [] };
   const capabilities = assistantAttachmentCapabilities(ctx);
@@ -132,7 +132,10 @@ export async function prepareAssistantPrompt(ctx, agent, content) {
   for (const part of content) {
     if (part.type === 'text') { prepared.push(part); continue; }
     const ref = resolved[next++];
-    if (part.type === 'file') { prepared.push(part); continue; }
+    if (part.type === 'file') {
+      if (stageFile) await stageFile(ref, await readBytes(ctx.get('attachments'), ref));
+      prepared.push(part); continue;
+    }
     if (!ref.bytes || ref.bytes > capabilities.input.maxImageBytes) throw tooLarge();
     const bytes = await readBytes(ctx.get('attachments'), ref);
     imageReceipts.push(part.receiptId);

@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, stat, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, stat, chmod, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createAssistantPermissionModel, selectAssistantPermissionProfile, ASSISTANT_PERMISSION_PROFILE } from '../src/assistant-permission-model.mjs';
 
 async function fixture(t, profile = ASSISTANT_PERMISSION_PROFILE) {
-  const root = await mkdtemp(join(tmpdir(), 'assistant-permission-test-'));
+  // The runtime deliberately rejects aliased homes; macOS temp roots use /var.
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'assistant-permission-test-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'agentkit')); await mkdir(join(root, 'dsh'));
   const digest = 'a'.repeat(64);

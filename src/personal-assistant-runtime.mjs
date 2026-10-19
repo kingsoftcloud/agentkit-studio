@@ -177,7 +177,8 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
       return serialize(sessionId, () => ctx.get('agents').withoutInitiator(async () => {
         const agent = await ensure(sessionId, input.content.every(part => part.type === 'text'));
         let prepared;
-        try { prepared = await prepareAssistantPrompt(ctx, agent, input.content); }
+        try { prepared = await prepareAssistantPrompt(ctx, agent, input.content, permissionModel?.snapshot(agent)?.managed
+          ? { stageFile: (ref, bytes) => permissionModel.stageAttachment(agent, ref, bytes) } : {}); }
         catch (error) {
           // New staged inputs use native admission without rereading old pages.
           // A consumed/lost receipt can acknowledge only the exact durable request.

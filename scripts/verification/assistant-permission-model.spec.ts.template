@@ -23,6 +23,8 @@ import * as Search from '@deepseek-ai/dsh-tool-fs-search';
 import { createAssistantPermissionModel, installAssistantStartupGuard, ASSISTANT_PERMISSION_PROFILE } from '@studio/src/assistant-permission-model.mjs';
 import { createAssistantApprovalBridge } from '@studio/src/assistant-approval-bridge.mjs';
 import { ASSISTANT_DELETE_FILE_TOOL } from '@studio/src/assistant-workspace-tools.mjs';
+import LocalAttachments from '@deepseek-ai/dsh-attachment-local';
+import { prepareAssistantPrompt } from '@studio/src/assistant-attachment-runtime.mjs';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -62,6 +64,23 @@ async function fixture() {
 }
 
 describe('managed assistant permissions over native DSH tools, filesystem and approval audit', () => {
+  it('reads a verified native upload through a workspace copy while refusing the global hard-linked attachment path', async () => {
+    const f = await fixture(); await f.ensure();
+    await f.ctx.plugin(LocalAttachments, { dshHome: f.env.DSH_HOME });
+    const bytes = Buffer.from('uploaded invoice total: 125');
+    const ref = await f.ctx.attachments.saveFile({ name: 'invoice.txt', data: bytes });
+    const receiptId = '9db8f94b-780c-4e5f-a5f7-f2dfbb5fbe5b';
+    f.ctx.provide('fileUploads', { upload() {}, resolve: (agent: unknown, id: string) => agent === f.agent && id === receiptId ? ref : undefined, bindPrompt() {} } as never);
+    const prepared = await prepareAssistantPrompt(f.ctx, f.agent, [{ type: 'file', receiptId }], {
+      stageFile: (ref: any, bytes: Uint8Array) => f.model.stageAttachment(f.agent, ref, bytes),
+    });
+    expect(prepared.content).toEqual([{ type: 'file', receiptId }]);
+    const path = join('.assistant-inputs', String(ref.attachmentId).slice(7), 'invoice.txt');
+    expect((await f.call('glob', { pattern: '**/invoice.txt', path: '.assistant-inputs' })).isError).toBe(false);
+    const result = await f.call('read', { file_path: path });
+    expect(result.isError).toBe(false); expect(JSON.stringify(result)).toContain('uploaded invoice total: 125');
+    expect((await f.call('read', { file_path: f.ctx.attachments.fileHostPath(ref) })).isError).toBe(true);
+  });
   it('uses the real permission setter and real write/read/edit/glob/grep bodies without user command notices', async () => {
     const f = await fixture();
     const command = vi.spyOn(f.ctx.commands, 'execute').mockRejectedValue(new Error('Initialization must not run a user command'));

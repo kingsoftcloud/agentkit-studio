@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { registerAssistantWorkspaceTools } from './assistant-workspace-tools.mjs';
+import { createAssistantWorkspaceAttachmentCopies } from './assistant-workspace-attachments.mjs';
 
 export const ASSISTANT_PERMISSION_PROFILE = 'workspace-managed/v1';
 const ROUTINE = Object.freeze(['read', 'read_image', 'write', 'edit', 'glob', 'grep']);
@@ -225,6 +226,7 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     for (const item of registerAssistantWorkspaceTools({ agent, workspaceRoot: cwd })) sensitiveCatalog.set(item.name, item);
     for (const item of sensitiveCatalog.values()) if (tools.get(item.name, agent) !== item.definition) throw fail('Sensitive tool definition is not the trusted catalog entry');
     const admitted = new Map([...ROUTINE, ...sensitiveCatalog.keys()].map(name => [name, tools.get(name, agent)]).filter(([, definition]) => definition));
+    const copies = createAssistantWorkspaceAttachmentCopies({ agent, workspaceRoot: cwd });
     const grants = new WeakSet(); let disposed = false;
     function decision(exec) {
       if (disposed || exec.agent !== agent || exec.signal?.aborted || directory.get(agent.session) !== cwd || agent.session.header.cwd !== cwd) return 'Assistant workspace ownership changed';
@@ -253,8 +255,8 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
       return next();
     }, { prepend: true });
     state.releaseListener = listener;
-    const release = () => { disposed = true; state.ready = false; listener(); releases.delete(release); };
-    releases.add(release); states.set(agent, { cwd, sensitiveCatalog }); byId.set(agent.session.id, agent);
+    const release = () => { disposed = true; state.ready = false; listener(); copies.dispose(); releases.delete(release); };
+    releases.add(release); states.set(agent, { cwd, sensitiveCatalog, copies }); byId.set(agent.session.id, agent);
     state.ready = true;
   }
 
@@ -281,6 +283,12 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
   await validation;
   for (const agent of initial) await ensure(agent);
   return { enabled: optedIn && Boolean(root), newSessionCwd, ensure, snapshot,
+    async stageAttachment(agent, ref, bytes) {
+      const state = states.get(agent);
+      if (closed || !state || !staged.get(agent)?.ready || await owned(agent.session.id) !== state.cwd || agent.session.header.cwd !== state.cwd) throw fail('Attachment workspace ownership cannot be verified');
+      if (closed || !staged.get(agent)?.ready) throw fail('Attachment workspace ownership cannot be verified');
+      await state.copies.stage(ref, bytes);
+    },
     policyOf: agent => snapshot(agent).approval,
     ownsSession: id => { const agent = byId.get(id); return !closed && Boolean(agent && staged.get(agent)?.ready); },
     dispose: () => { closed = true; lifetime.abort(); if (typeof releaseStartup === 'function') releaseStartup(); releaseCreated?.(); for (const release of [...releases]) release(); } };
