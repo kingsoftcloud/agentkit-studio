@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, realpath, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createStudioBuild } from '../src/studio-build.mjs';
 import { createPortableBundles } from '../src/portable-bundle.mjs';
+import { parse as parseYaml } from 'yaml';
+import { FROZEN_RUNTIME_READY } from '../src/host/frozen-runtime-lifecycle.mjs';
 import { prepareBundleHost } from '../src/bundle-host.mjs';
 
 async function fixture(t, credentialName = 'MODEL_KEY') {
@@ -16,6 +18,8 @@ async function fixture(t, credentialName = 'MODEL_KEY') {
   await mkdir(join(dsh, 'lib'), { recursive: true }); await mkdir(studio, { recursive: true });
   await writeFile(join(dsh, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.0-rc.2' }));
   await writeFile(join(dsh, 'lib/bin.js'), '// fixture installation entry');
+  await mkdir(join(modules, 'fixture-dependency'), { recursive: true });
+  await writeFile(join(modules, 'fixture-dependency/package.json'), JSON.stringify({ name: 'fixture-dependency' }));
   await writeFile(join(studio, 'studio.plugin.json'), JSON.stringify({ requiredDsh: '0.2.0-rc.2' }));
   const storeDir = join(root, 'source'), build = createStudioBuild({ storeDir }), agentId = 'ar-local-1234567890abcdef';
   const bindings = { modelProfileId: 'model' };
@@ -40,7 +44,14 @@ test('offline boot wires the public DSH CLI/profile and forwards only target res
   const profile = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime');
   assert.deepEqual(JSON.parse(await readFile(join(profile, 'package.json'))).dsh.profile.bundles,
     ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio']);
-  assert.equal(await realpath(join(profile, 'node_modules')), join(f.installation, 'node_modules'));
+  assert.equal(await realpath(join(profile, 'node_modules')), join(profile, 'node_modules'));
+  assert.deepEqual(parseYaml(await readFile(join(profile, 'cordis.patch.yml'), 'utf8')), [{ id: 'schedule', inject: [FROZEN_RUNTIME_READY] }]);
+  const localStudio = join(profile, 'node_modules/@kingsoftcloud/agentkit-studio');
+  assert.equal((await lstat(localStudio)).isDirectory(), true);
+  assert.equal(await realpath(localStudio), localStudio);
+  assert.equal(await realpath(join(profile, 'node_modules/fixture-dependency')), join(f.installation, 'node_modules/fixture-dependency'));
+  assert.equal(await realpath(join(profile, 'node_modules/@deepseek-ai/dsh')), join(f.installation, 'node_modules/@deepseek-ai/dsh'));
+  assert.equal(await readFile(join(localStudio, 'studio.plugin.json'), 'utf8'), await readFile(join(f.installation, 'node_modules/@kingsoftcloud/agentkit-studio/studio.plugin.json'), 'utf8'));
   assert.equal((await readFile(join(plan.env.AGENTKIT_HOME, 'portable-bundle.zip'))).equals(await readFile(f.archive)), true);
   assert.equal(JSON.stringify(plan.identity).includes('secret'), false);
 });
@@ -114,4 +125,82 @@ test('a deleted assistant cannot be resurrected from its old runtime directory',
   await prepareBundleHost(f);
   await writeFile(join(f.state, '.assistant-closed.json'), JSON.stringify({ phase: 'closed' }));
   await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_ASSISTANT_CLOSED' });
+});
+
+
+test('legacy whole-directory link requires explicit migration and preserves sessions and Settings', async t => {
+  const f = await fixture(t), plan = await prepareBundleHost(f);
+  const profile = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime'), modules = join(profile, 'node_modules');
+  const history = join(plan.env.DSH_HOME, 'session-proof.json'), patch = join(profile, 'cordis.patch.yml');
+  await writeFile(history, 'durable-history'); await writeFile(patch, 'retained-settings');
+  await rm(modules, { recursive: true }); await symlink(join(f.installation, 'node_modules'), modules, 'dir');
+  await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_PROFILE_MIGRATION_REQUIRED' });
+  assert.equal(await readFile(history, 'utf8'), 'durable-history');
+  assert.equal(await readFile(patch, 'utf8'), 'retained-settings');
+  assert.equal(await realpath(modules), join(f.installation, 'node_modules'));
+});
+
+test('profile package edits or a different installed Studio cannot silently replace retained code', async t => {
+  const f = await fixture(t), plan = await prepareBundleHost(f);
+  const profile = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime');
+  await writeFile(join(profile, 'node_modules/@kingsoftcloud/agentkit-studio/extra.mjs'), '// unexpected');
+  await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_PROFILE_CONFLICT' });
+  const g = await fixture(t); await prepareBundleHost(g);
+  await writeFile(join(g.installation, 'node_modules/@kingsoftcloud/agentkit-studio/extra.mjs'), '// changed installation');
+  await assert.rejects(prepareBundleHost(g), { code: 'BUNDLE_HOST_PROFILE_CONFLICT' });
+});
+
+test('private package dependencies stay linked to their original installation', async t => {
+  const f = await fixture(t), dependency = join(f.installation, 'node_modules/@kingsoftcloud/agentkit-studio/node_modules/private-dependency');
+  await mkdir(dependency, { recursive: true }); await writeFile(join(dependency, 'package.json'), '{"name":"private-dependency"}');
+  const plan = await prepareBundleHost(f), copy = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime/node_modules/@kingsoftcloud/agentkit-studio/node_modules/private-dependency');
+  assert.equal((await lstat(copy)).isSymbolicLink(), true);
+  assert.equal(await realpath(copy), dependency);
+  await prepareBundleHost(f);
+});
+
+
+test('profile scope links cannot move Studio outside its current DSH resolution scope', async t => {
+  const f = await fixture(t), plan = await prepareBundleHost(f);
+  const scope = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime/node_modules/@kingsoftcloud');
+  await rm(scope, { recursive: true }); await symlink(join(f.installation, 'node_modules/@kingsoftcloud'), scope, 'dir');
+  await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_PROFILE_CONFLICT' });
+});
+
+test('linked private module directories materialize and are checked again at restart', async t => {
+  const f = await fixture(t), privateModules = join(f.root, 'private-modules');
+  await mkdir(join(privateModules, 'private-dependency'), { recursive: true });
+  await writeFile(join(privateModules, 'private-dependency/package.json'), '{"name":"private-dependency"}');
+  await symlink(privateModules, join(f.installation, 'node_modules/@kingsoftcloud/agentkit-studio/node_modules'), 'dir');
+  const plan = await prepareBundleHost(f), modules = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime/node_modules/@kingsoftcloud/agentkit-studio/node_modules');
+  assert.equal((await lstat(modules)).isDirectory(), true);
+  assert.equal(await realpath(join(modules, 'private-dependency')), join(privateModules, 'private-dependency'));
+  await prepareBundleHost(f);
+  await rm(join(modules, 'private-dependency')); await mkdir(join(modules, 'private-dependency'));
+  await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_PROFILE_CONFLICT' });
+});
+
+
+test('missing schedule startup dependency requires migration without replacing Settings or history', async t => {
+  const f = await fixture(t), plan = await prepareBundleHost(f);
+  const patch = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime/cordis.patch.yml');
+  const settings = '- id: llm-pi-ai\n  config: { providers: {} }\n';
+  await writeFile(patch, settings);
+  await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_PROFILE_MIGRATION_REQUIRED' });
+  assert.equal(await readFile(patch, 'utf8'), settings);
+});
+
+
+test('later Schedule patch overrides cannot withdraw the required startup dependency', async t => {
+  const f = await fixture(t), plan = await prepareBundleHost(f);
+  const patch = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime/cordis.patch.yml');
+  const original = await readFile(patch, 'utf8'), history = join(plan.env.DSH_HOME, 'session-proof.json');
+  await writeFile(history, 'retained-history');
+  for (const override of ['- id: schedule\n  inject: []\n', '- id: schedule\n  disabled: true\n']) {
+    const value = original + override;
+    await writeFile(patch, value);
+    await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_PROFILE_MIGRATION_REQUIRED' });
+    assert.equal(await readFile(patch, 'utf8'), value);
+    assert.equal(await readFile(history, 'utf8'), 'retained-history');
+  }
 });

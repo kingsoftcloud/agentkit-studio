@@ -149,9 +149,15 @@ export function ownAsyncResource(ctx, promise, label) {
   let closed = false;
   let resource;
   ctx.effect(() => () => { closed = true; return resource?.close?.(); }, label);
-  return Promise.resolve(promise).then(async value => {
+  const pending = Promise.resolve(promise).then(async value => {
     resource = value;
     if (closed) { await resource?.close?.(); throw unavailable(); }
     return resource;
   });
+  // Host domains initialize concurrently. Cordis may retire this scope while
+  // another import is awaited, before bootstrap reaches this promise. Observe
+  // rejection immediately without changing the promise returned to its owner:
+  // failed initialization and retired resources must still reject on await.
+  void pending.catch(() => {});
+  return pending;
 }

@@ -17,7 +17,7 @@ import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
-import { bindFrozenRuntime } from './frozen-runtime-lifecycle.mjs';
+import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory } = {}) {
   const hostCompatibility = await loadHostCompatibility(ctx);
@@ -292,6 +292,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const { startFrozenBuildRuntime } = await import('../frozen-build-runtime.mjs');
   const bindRuntime = () => bindFrozenRuntime(ctx, {
+    // The portable profile delays native schedule restoration until frozen
+    // preset/model/permission initialization has completed. No timer retry or
+    // Session prewarming substitutes for the native dependency lifecycle.
+    readyService: portableRuntime ? FROZEN_RUNTIME_READY : undefined,
     start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
       admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) }),
     onUnavailable: error => console.warn('[agentkit-studio] frozen runtime unavailable:', error.message),

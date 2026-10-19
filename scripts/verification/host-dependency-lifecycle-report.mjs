@@ -6,6 +6,11 @@ export const HOST_DEPENDENCY_LIFECYCLE_CHECKS = Object.freeze([
   'permission-preset-removal-closes-listener-and-replacement-restarts-it',
   'studio-owner-disposal-closes-current-runtime',
   'startup-completing-after-disposal-closes-its-listener',
+  'default-runtime-binding-does-not-publish-portable-readiness',
+  'readiness-dependent-waits-until-runtime-start-completes',
+  'successful-runtime-start-activates-readiness-dependent',
+  'native-dependency-removal-withdraws-runtime-readiness',
+  'startup-completing-after-disposal-never-publishes-readiness',
 ]);
 
 export function assertHostDependencyLifecycleReport(report) {
