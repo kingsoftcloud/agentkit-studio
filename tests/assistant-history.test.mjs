@@ -239,6 +239,7 @@ test('reopened interrupted assistant prefixes retain the native interrupted mark
   f.add('assistant/message', { ...assistant(1, [{ type: 'text', text: 'partial response' }]), interrupted: true, stream: [{ chunk: { type: 'reasoning-delta', text: 'private streamed reasoning' } }] });
   f.add('turn/end', { turn: 1, reason: { kind: 'aborted' } });
   const result = await f.read(), output = result.events.find(event => event.type === 'assistant/message');
+  assert.deepEqual(output.data.stream, []);
   assert.equal(output.data.interrupted, true); assert.equal(output.data.message.content[0].text, 'partial response');
   assert.equal(result.status, 'cancelled'); assert.ok(!JSON.stringify(result).includes('private streamed reasoning'));
   assert.deepEqual(f.calls[0].turnWindow, { minMessages: 50, minTurns: 1 }); assert.equal(f.calls[0].maxMessages, 200);

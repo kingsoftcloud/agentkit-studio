@@ -89,7 +89,7 @@ export function displayEvents(events) {
     if (event.type === 'assistant/message') {
       const content = displayContent(data.message?.content, { tools: true });
       if (!content.length) return [];
-      return [envelope(event, { ...boundary, ...(data.interrupted === true ? { interrupted: true } : {}), message: { id: identifier(data.message?.id) || `assistant-${event.seq}`,
+      return [envelope(event, { ...boundary, stream: [], ...(data.interrupted === true ? { interrupted: true } : {}), message: { id: identifier(data.message?.id) || `assistant-${event.seq}`,
         role: 'assistant', source: { kind: 'model' }, content } })];
     }
     if (event.type === 'tool/call' && identifier(data.callId)) return [envelope(event, {

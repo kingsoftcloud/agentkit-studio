@@ -30,6 +30,24 @@ test('native assembly deduplicates complete windows without retaining a local se
   assert.equal(owner.assemble([]), null);
 });
 
+test('native assembly supplies only an empty provider stream without mutating published events', () => {
+  const inputs = [];
+  class Assembler {
+    replaceWindow(entries) { inputs.push(...entries); }
+    activateTarget() {}
+    snapshot() { return { nodes: new Map() }; }
+  }
+  const owner = createAssistantConversation({ ConversationNodeAssembler: Assembler });
+  owner.bind({ events: {}, views: {}, groups: {} });
+  const missing = { seq: 1, type: 'assistant/message', data: { message: { content: [] } } };
+  const raw = { seq: 2, type: 'assistant/message', data: { stream: [{ privateProviderObject: 'never-display' }] } };
+  owner.assemble([missing, raw]);
+  assert.deepEqual(inputs.map(entry => entry.event.data.stream), [[], []]);
+  assert.equal(missing.data.stream, undefined);
+  assert.equal(raw.data.stream[0].privateProviderObject, 'never-display');
+  assert.ok(!JSON.stringify(inputs).includes('never-display'));
+});
+
 test('image reads use cloud assistant receipts, share one request and release object URLs', async () => {
   const calls = [];
   const f = cacheFixture(async (...args) => { calls.push(args); return { attachment: image, data: 'YWJj' }; });

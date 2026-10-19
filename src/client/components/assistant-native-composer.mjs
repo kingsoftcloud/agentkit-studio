@@ -6,7 +6,7 @@ import { createAssistantNativeGraph } from '../dsh/assistant-native-graph.mjs';
 export function createAssistantNativeComposer({ ui, hostRemote, nativeModules, window }) {
   const { React: { createElement: h, useEffect, useRef, useState }, Button, BRAND } = ui;
   return function AssistantNativeComposer({ agentId, onAccepted, hiddenComposer = false }) {
-    const container = useRef(null), active = useRef(null), accepted = useRef(onAccepted);
+    const container = useRef(null), active = useRef(null), accepted = useRef(onAccepted), filePicker = useRef(null);
     accepted.current = onAccepted;
     const [revision, setRevision] = useState(0), [state, setState] = useState({ loading: true, error: '', pending: null, busy: false });
     useEffect(() => {
@@ -38,6 +38,16 @@ export function createAssistantNativeComposer({ ui, hostRemote, nativeModules, w
       state.errorCode === 'ASSISTANT_ATTACHMENT_EXPIRED' ? action('重新选择附件', () => { if (active.current?.transport.discardExpired()) setRevision(value => value + 1); }, state.busy) : null,
       state.disconnected ? action('重新连接输入', () => setRevision(value => value + 1), state.loading) : null,
       h('div', { ref: container, hidden: hiddenComposer, style: { minWidth: 0 } }),
+      !hiddenComposer ? h('div', { style: { marginTop: '6px' } },
+        h('input', { ref: filePicker, type: 'file', multiple: true, hidden: true, 'aria-label': '选择助理附件',
+          disabled: state.loading || state.busy || state.disconnected || Boolean(state.pending) || state.invalid,
+          onChange: event => {
+            const files = Array.from(event.target.files || []); event.target.value = '';
+            if (!files.length) return;
+            const message = active.current?.addFiles(files);
+            if (message) setState(previous => ({ ...previous, error: message }));
+          } }),
+        action('添加附件', () => filePicker.current?.click(), state.loading || state.busy || state.disconnected || Boolean(state.pending) || state.invalid)) : null,
       h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: BRAND.inkMuted, textAlign: 'center' } }, state.loading || state.disconnected ? '云端输入连接恢复后才可发送和处理实时审批。' : hiddenComposer ? '云端原生连接已建立。先处理下面的已有草稿，再使用原生输入。' : '原生输入已绑定云端会话；附件保存后提交，关闭页面也会继续执行。'));
   };
 }

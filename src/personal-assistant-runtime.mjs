@@ -1,6 +1,6 @@
 /** Cloud assistant facade. DSH owns execution, history, persistence and timers. */
 import { UNATTENDED_EXECUTION_POLICY } from './execution-policy.mjs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readAssistantHistory, readAssistantImage } from './assistant-history-reader.mjs';
 import { assistantAttachmentCapabilities, assistantRequestObserved, normalizeAssistantInput,
   prepareAssistantPrompt, readAssistantFile, uploadAssistantAttachment } from './assistant-attachment-runtime.mjs';
@@ -238,7 +238,11 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
       if (operation === 'memory-list') return adapter.listMemory(memoryId, 'studio-anonymous', options);
       if (operation === 'memory-save') {
         if (typeof payload.text !== 'string' || !payload.text.trim() || payload.text.length > 4000) throw fail('ASSISTANT_MEMORY_INVALID', '记忆内容须为 1 至 4000 字');
-        return adapter.writeMemory(memoryId, 'studio-anonymous', [{ role: 'user', content: `请记住：${payload.text}` }], { ...options, sessionId, flush: true });
+        // Each explicit fact is a complete ingestion batch. Reusing an already
+        // flushed ingestion Session can acknowledge later facts without extracting
+        // them. Keep the assistant's real Session and memory partition unchanged.
+        const ingestionSessionId = `${sessionId}:manual-memory:${randomUUID()}`;
+        return adapter.writeMemory(memoryId, 'studio-anonymous', [{ role: 'user', content: `请记住：${payload.text}` }], { ...options, sessionId: ingestionSessionId, flush: true });
       }
       if (operation === 'memory-delete' || operation === 'memory-update') {
         const { items } = await adapter.listMemory(memoryId, 'studio-anonymous', options);

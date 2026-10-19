@@ -176,9 +176,17 @@ test('official schedules are scoped to the cloud conversation', async () => {
 
 test('memory reuses bound resource and partition; foreign IDs fail before mutation', async () => {
   const f = fixture(), api = f.create();
+  await api('submit', { requestId: 'before-memory', text: 'hello' });
+  const beforeSessions = [...f.logs.keys()];
+  assert.equal(beforeSessions.length, 1);
   await api('memory-save', { text: 'concise answers' });
   assert.equal(f.calls[0][0], 'collection-a'); assert.equal(f.calls[0][1], 'studio-anonymous');
   assert.equal(f.calls[0][3].agentId, 'a'); assert.equal(f.calls[0][3].flush, true);
+  await api('memory-save', { text: 'prefer Chinese replies' });
+  assert.notEqual(f.calls[0][3].sessionId, f.calls[1][3].sessionId, 'independent facts must not reuse a flushed ingestion session');
+  assert.equal(f.calls[1][0], 'collection-a'); assert.equal(f.calls[1][1], 'studio-anonymous');
+  assert.equal(f.calls[1][3].agentId, 'a'); assert.equal(f.calls[1][3].flush, true);
+  assert.deepEqual([...f.logs.keys()], beforeSessions, 'ingestion does not replace or create a DSH conversation');
   await assert.rejects(api('memory-delete', { id: 'foreign' }), { code: 'ASSISTANT_MEMORY_NOT_FOUND' });
   await api('memory-delete', { id: 'memory-a' }); assert.equal(f.calls.at(-1)[2], 'memory-a');
   await assert.rejects(api('submit', { text: '', requestId: 'r' }), { code: 'ASSISTANT_INPUT_INVALID' });

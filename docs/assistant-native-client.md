@@ -89,4 +89,4 @@ while its composer stays hidden until the older draft is handled.
 The ModuleLoader test materializes the built browser factory and verifies its
 client dependency boundary. It does not claim a full production Host boot or a
 browser session. The graph tests use a controlled external carrier, not a real
-account. Cloud browser socket access was denied and was not bypassed.
+account. Full release qualification additionally requires automatic Host startup and a real cloud browser flow; mocked carriers alone cannot establish those results.

@@ -476,6 +476,26 @@ describe('Isolated native Client graph feasibility, with only its external carri
     await waitFor(() => expect(b.calls.some(call => call.operation === 'native-close')).toBe(true));
   });
 
+  it('offers an actual file-picker button without enabling the unavailable native command menu', async () => {
+    Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
+    const b = pollingCarrier(carrier());
+    const Component = createAssistantNativeComposer({ ui: { React, Button, BRAND: {} }, hostRemote: { assistantExecute: b.execute },
+      nativeModules: () => ({ Context, React, connection: { installConnection }, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore }),
+      window: { localStorage: b.storage, crypto: webcrypto, FileReader, Blob } });
+    const view = render(React.createElement(Component, { agentId: 'agent-one' }));
+    await view.findByText('原生输入已绑定云端会话；附件保存后提交，关闭页面也会继续执行。');
+    const picker = view.getByLabelText('选择助理附件') as HTMLInputElement;
+    const button = view.getByRole('button', { name: '添加附件' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    const click = vi.spyOn(picker, 'click'); fireEvent.click(button); expect(click).toHaveBeenCalledOnce();
+    fireEvent.change(picker, { target: { files: [new File(['data'], 'report.txt', { type: 'text/plain' })] } });
+    await waitFor(() => expect(b.calls.filter(call => call.operation === 'attachment-upload')).toHaveLength(1));
+    expect(view.container.textContent).toContain('report.txt');
+    expect(b.calls.some(call => /commands|settings\/write/.test(call.value.endpoint || ''))).toBe(false);
+    view.unmount();
+    await waitFor(() => expect(b.calls.some(call => call.operation === 'native-close')).toBe(true));
+  });
+
   it('isolates a late native-open result after switching assistants and closes the old carrier', async () => {
     Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
     const old = pollingCarrier(carrier()), next = pollingCarrier(carrier()), late = Promise.withResolvers<unknown>();

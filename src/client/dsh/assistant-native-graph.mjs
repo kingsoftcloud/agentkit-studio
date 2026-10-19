@@ -119,6 +119,16 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
     if (ctx.sessions.binding(transport.sessionId) !== reference.binding) throw new Error('Cloud session binding changed');
     if (container) unmount = ctx.get('uiRenderer').mount(container);
     return { ctx, reference, transport, dispose,
+      addFiles(files) {
+        if (disposed || ctx.sessions.binding(transport.sessionId) !== reference.binding) return '云端输入连接已关闭，请重新连接';
+        const pending = transport.getState();
+        if (pending.invalid || pending.pending || pending.busy || pending.disconnected) return '请先确认上一条消息的保存结果';
+        // Public ComposerBarInjected owns native browser intake, draft allocation
+        // and upload cancellation; this picker never creates a parallel draft.
+        const bar = ctx.slots.entries('conversation.composer.bar')[0];
+        const intake = bar?.inject(transport.sessionId)?.addFiles;
+        return typeof intake === 'function' ? intake(files) : '当前原生输入未提供文件选择，请重新连接';
+      },
       async confirm() {
         if (disposed) return { accepted: false, reset: false };
         const input = ctx.conversation.input.for(reference.binding.ctx), before = input.state.getSnapshot();

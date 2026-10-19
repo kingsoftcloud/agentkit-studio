@@ -12,8 +12,13 @@ export function createAssistantConversation({ ConversationNodeAssembler }) {
       // events. Replacement tolerates reconnect, duplicate and late pages.
       const unique = [...new Map(events.filter(event => Number.isSafeInteger(event?.seq)).map(event => [event.seq, event])).values()]
         .sort((left, right) => left.seq - right.seq);
+      // The public history projection intentionally omits provider stream records.
+      // Native lifecycle Definitions still require the stream array, even for an
+      // inactive target such as Trajectory. Never reintroduce the raw stream.
+      const inputs = unique.map(event => ({ type: 'event', event: event.type === 'assistant/message'
+        ? { ...event, data: { ...event.data, stream: [] } } : event }));
       const assembler = new ConversationNodeAssembler(registry.events, registry.views, registry.groups);
-      assembler.replaceWindow(unique.map(event => ({ type: 'event', event })), hasMore);
+      assembler.replaceWindow(inputs, hasMore);
       assembler.activateTarget('chat');
       const snapshot = assembler.snapshot('chat');
       return snapshot ? [...snapshot.nodes.values()].filter(node => node.visibility === 'visible') : null;

@@ -6,6 +6,8 @@
 - Add explicitly provisioned managed assistant workspaces with bounded file tools and live single-action deletion approval; preserve existing assistants and their stored permissions.
 - Stage verified uploaded files into a managed assistant's own workspace so it can read attachments without access to the private attachment store.
 - Wait for the authenticated cloud Session catalog before opening its native composer, and grant catalog reads only for that exact Session.
+- Give each explicitly saved memory fact its own completed ingestion batch, preserving the assistant conversation and memory partition across successive saves.
+- Add a cloud-only file picker to native assistant input and keep redacted message history compatible with the complete native view registry.
 
 - Keep automatic titles and other auxiliary model requests out of bound resource execution and long-term memory writes by checking the running DSH Agent loop request marker.
 

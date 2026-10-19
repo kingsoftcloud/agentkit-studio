@@ -5,11 +5,8 @@ import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-libra
 import { Context } from '@deepseek-ai/cordis';
 import { ConversationEventRegistry, ConversationNodeAssembler, ConversationViewRegistry } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import { ConversationGroupRegistry } from '@dsh/packages/client/ui-conversation/src/client/conversation/group-registry.ts';
-import { messageDefinition } from '@dsh/packages/client/ui-chat/src/client/conversation-nodes/message.ts';
-import { assistantDefinition } from '@dsh/packages/client/ui-chat/src/client/conversation-nodes/assistant.ts';
-import { toolDefinition } from '@dsh/packages/client/ui-chat/src/client/conversation-nodes/tool.ts';
-import { unknownFallbackDefinition } from '@dsh/packages/client/ui-chat/src/client/conversation-nodes/fallback.ts';
-import { chatViewDefinition } from '@dsh/packages/client/ui-chat/src/client/conversation-nodes/chat-snapshot-builder.ts';
+import { registerConversationNodes } from '@dsh/packages/client/ui-chat/src/client/conversation-nodes/register.ts';
+import { registerTrajectoryAssistantDefinition } from '@dsh/packages/client/ui-trajectory/src/client/trajectory-assistant-definition.ts';
 import { MarkdownDelegateProvider } from '@dsh/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx';
 import { MarkdownText } from '@dsh/packages/client/ui-primitives/src/markdown/MarkdownText.tsx';
 import { DisclosureRow } from '@dsh/packages/client/ui-primitives/src/DisclosureRow.tsx';
@@ -47,8 +44,11 @@ function history({ userContent = [{ type: 'text', text: 'Read the report' }], to
 function fixture(remote = vi.fn().mockResolvedValue(imageResult)) {
   const ctx = new Context();
   const events = new ConversationEventRegistry(ctx), views = new ConversationViewRegistry(ctx), groups = new ConversationGroupRegistry(ctx, views);
-  for (const definition of [messageDefinition, assistantDefinition, toolDefinition]) events.register(definition);
-  events.registerFallback(unknownFallbackDefinition); views.register(chatViewDefinition);
+  ctx.provide('uiConversation', { events, views, groups } as never);
+  // Match the mounted production registry: even the inactive Trajectory target
+  // consumes lifecycle events during assembly, so Chat-only definitions hide bugs.
+  registerConversationNodes(ctx);
+  registerTrajectoryAssistantDefinition(ctx);
   const conversation = createAssistantConversation({ ConversationNodeAssembler });
   const unbind = conversation.bind({ events, views, groups });
   cleanups.push(async () => { unbind(); await ctx.fiber.dispose(); });
@@ -70,6 +70,15 @@ describe('Studio assistant with pinned DSH registries, assembler, React and nati
     expect(view.container.querySelector('a[href^="javascript:"]')).toBeNull();
     expect(view.container.querySelectorAll('strong')).toHaveLength(1);
     expect(f.hostRemote.assistantExecute).not.toHaveBeenCalled();
+  });
+  it('assembles an already published projection without provider stream records using the full mounted registry', () => {
+    const f = fixture(), events = displayEvents(history());
+    const reply = events.find(event => event.type === 'assistant/message')!;
+    delete reply.data.stream;
+    const view = render(h(f.component, { ...f.props([]), view: { ...f.props([]).view, events } }));
+    expect(view.getByRole('heading', { name: 'Native rendered answer' })).toBeTruthy();
+    expect(view.queryByText(/原生会话展示暂不可用/)).toBeNull();
+    expect(reply.data.stream).toBeUndefined();
   });
   it('shadows inherited Markdown file navigation and image capabilities while preserving HTTPS links', () => {
     const f = fixture(), events = history();
