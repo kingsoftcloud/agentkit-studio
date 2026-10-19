@@ -1,3 +1,4 @@
+import { hostFetch } from '../http-fetch.mjs';
 /** Trusted Host startup and scoped dependency composition. Domain services
  * own their stores; route modules own RPC and HTTP transport adapters.
  */
@@ -79,6 +80,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
           buildStore: (await studioBuildPromise).build,
           modelService: localModels,
           resourceAdapter: resourceAdapters,
+          fetchImpl: hostFetch,
           observability,
         });
       });

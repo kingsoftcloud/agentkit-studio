@@ -1,3 +1,4 @@
+import { hostFetch } from './http-fetch.mjs';
 /** Authenticated model routes hosted by the public DSH WebServer service. */
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -5,7 +6,7 @@ import { responsesToChat, chatToResponses, createResponsesStreamTransformer } fr
 import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 
-export function createModelProxyHandler({ models, admit, fetchImpl = fetch, codexTools = false, onRequestMetrics }) {
+export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics }) {
   return async (request, response) => {
     const admission = admit(request);
     if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(); return; }

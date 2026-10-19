@@ -1,3 +1,4 @@
+import { hostFetch } from './http-fetch.mjs';
 /** Node client for the existing AgentEngine public Action API. */
 import { randomUUID } from 'node:crypto';
 import aws4 from 'aws4';
@@ -180,7 +181,7 @@ export function createAgentEngineDeploymentClient(options) {
 }
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
-function createClient({ configuration, fetchImpl = fetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '', innerKopUrl = '', innerIamUrl = '' }, allowedActions) {
+function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '', innerKopUrl = '', innerIamUrl = '' }, allowedActions) {
   const endpoints = createCloudEndpointPolicy({ innerKopUrl, innerIamUrl });
   const deploymentIdentity = allowedActions.has('CreateAgentProduct') ? createCloudIdentityResolver({ fetchImpl, timeoutMs, endpointPolicy: endpoints }) : null;
   const resolveBase = (values, fallback = endpoints.publicKop) => {

@@ -1,3 +1,4 @@
+import { hostFetch } from './http-fetch.mjs';
 /** Host-owned adapters for resources bound to a local Agent revision. */
 import { createHash, randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -127,7 +128,7 @@ function mcpFailure(error, resourceId, phase = 'connect', toolName = '') {
   });
 }
 
-export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = fetch, cacheDir = join(process.env.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio', 'cloud-skills') } = {}) {
+export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = hostFetch, cacheDir = join(process.env.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio', 'cloud-skills') } = {}) {
   const mcpClients = new Map();
   const connectingClients = new Set();
   const cloudSkillSpaces = new Map();

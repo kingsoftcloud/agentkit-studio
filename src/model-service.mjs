@@ -1,3 +1,4 @@
+import { hostFetch } from './http-fetch.mjs';
 /** Studio-owned model configuration. Only redacted metadata crosses Connection RPC. */
 import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { createHash } from 'node:crypto';
@@ -16,7 +17,7 @@ export function modelInput(model = {}) {
   return ['text', ...(Array.isArray(values) && values.some(value => ['image', '图片', '图像'].includes(value)) ? ['image'] : [])];
 }
 
-export function createModelService({ configuration, credentials, fetchImpl = fetch }) {
+export function createModelService({ configuration, credentials, fetchImpl = hostFetch }) {
   const catalogs = new Map();
   const sync = () => syncGlobalModelCredential({ configuration, credentials });
   const settings = () => configuration.describe();

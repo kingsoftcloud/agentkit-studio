@@ -1,3 +1,4 @@
+import { hostFetch } from '../../http-fetch.mjs';
 /** Legacy REST/SSE consumer; preserve per-request handler construction. */
 export function createLegacyLocalConversationFactory(ctx, {
   agentStorePromise, configurationPromise, resourceAdaptersPromise, studioObservabilityPromise,
@@ -9,6 +10,6 @@ export function createLegacyLocalConversationFactory(ctx, {
     const models = await import('../../model-service.mjs').then(({ createModelService }) =>
       createModelService({ configuration, credentials }));
     const { createLocalConversationHandler } = await import('../../local-runtime.mjs');
-    return createLocalConversationHandler({ agentStore: async () => store, modelService: models, resourceAdapter: resourceAdapters, observability });
+    return createLocalConversationHandler({ agentStore: async () => store, modelService: models, resourceAdapter: resourceAdapters, fetchImpl: hostFetch, observability });
   });
 }

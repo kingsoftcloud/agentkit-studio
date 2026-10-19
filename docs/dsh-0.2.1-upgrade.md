@@ -62,3 +62,7 @@ Studio 直接使用官方 `dsh-v0.2.1-rc.2`，固定提交 `687f282e8625c6b8d11f
 - 预发云端镜像已升级并从启动日志确认 DSH `0.2.1-rc.2`。真实模型任务、绑定记忆写入读取删除、已安装 App 的原生记忆页面，以及助理专属运行数据关闭和实例退役均已验证；共享资源及用户原线上配置保留。命令沙箱仍未通过，镜像保持预发候选范围，不宣称所有 Skill 脚本可执行。
 - DSH `doc-sync` 的仓库引用检查仍报告官方 rc.2 原始 `python/sdk/uv.lock` 提交号；同样的问题已在干净官方基线复现。翻译配对检查通过，未通过修改锁文件或关闭规则掩盖该上游问题。
 - 公共更新 feed 当前返回 404。修复后的本地候选包必须另行完成发布与原生更新验收，不能把内置更新源或签名检查等同为自动更新恢复。Windows 原生安装更新和线上部署不在本次已完成证据内。
+
+## Node 22 HTTP transport
+
+The current cloud runtime uses Node 22.19. Its native fetch fails with `UND_ERR_INVALID_ARG: invalid content-length header` after the first Undici 8 web fetch installs the legacy dispatcher wrapper. Resource RPCs, model discovery/proxy requests, MCP transports and the Host-created model handler use the same Undici fetch implementation as DSH. They retain the existing proxy policy, strict TLS, request signing and explicit retry rules. `tests/http-fetch.test.mjs` exercises resource and subsequent model POSTs through a real loopback server; qualification also runs it under the actual cloud Node 22 runtime, where the previous native-fetch default fails.
