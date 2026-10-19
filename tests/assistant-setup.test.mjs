@@ -110,3 +110,19 @@ test('corrupt setup locks are actionable and cannot silently leave a permanent s
   await assert.rejects(f.service.start({ confirmed: true, optionsId: options.optionsId }), { code: 'ASSISTANT_SETUP_LOCK_INVALID' });
   assert.equal(f.calls.create, 0);
 });
+
+test('assistant reference is a read-only scoped lineage, including existing records without a purpose marker', async t => {
+  const f = await fixture(t);
+  assert.equal(await f.service.reference(), null);
+  assert.equal(f.calls.create, 0);
+  const options = await f.service.options();
+  await f.service.start({ confirmed: true, optionsId: options.optionsId, memoryId: 'memory' });
+  await until(async () => (await f.service.status()).ready);
+  const ref = await f.service.reference();
+  assert.ok(ref.agentId.startsWith('ar-local-'));
+  assert.equal(ref.cloudAgentId, 'ar-cloud-test');
+  assert.equal((await f.deps.agents.get(ref.agentId)).metadata.purpose, 'personal-assistant');
+  f.values.cloudRegion = 'another-region';
+  assert.equal(await f.service.reference(), null);
+  assert.equal(f.calls.create, 1);
+});

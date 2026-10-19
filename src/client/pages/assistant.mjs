@@ -105,9 +105,9 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
       } catch (reason) { if (version === epoch.current) setError(reason.message); }
       finally { submitting.current = false; if (version === epoch.current) setBusy(false); }
     };
-    const submit = async () => {
+    const submit = async retryText => {
       if (submitting.current || !view) return;
-      const request = read(pendingKey(agentId)) || pending || { text: draft.trim(), requestId: window.crypto.randomUUID(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+      const request = read(pendingKey(agentId)) || pending || { text: (retryText ?? draft).trim(), requestId: window.crypto.randomUUID(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
       if (!request.text) return;
       try { save(pendingKey(agentId), request); } catch { setError('无法保存提交标识，请检查本机存储后重试。'); return; }
       setPending(request); followLatest.current = true;
@@ -122,7 +122,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
     const button = (label, onClick, disabled = false) => h('button', { type: 'button', onClick, disabled: busy || disabled, style: buttonStyle() }, label);
     const box = { border: `1px solid ${BRAND.border}`, borderRadius: '12px', padding: '16px', background: BRAND.surface };
     const messages = [...new Map([...older, ...(view?.messages || [])].map(item => [item.id, item])).values()]
-      .filter(item => item.requestId !== 'assistant-welcome-v1').sort((a, b) => a.seq - b.seq);
+      .filter(item => item.requestId !== 'assistant-welcome-v1' && (item.role !== 'assistant' || item.text?.trim())).sort((a, b) => a.seq - b.seq);
     const chosen = catalog.find(item => item.metadata.id === agentId);
     const assistantName = view?.identity?.assistantName || chosen?.metadata.name || '个人助理';
     const running = view?.status === 'running';
@@ -178,7 +178,9 @@ export function createAssistantPage({ ui, hostRemote, actions, window }) {
             message.source === 'schedule' ? h('div', { style: { fontSize: '12px', color: BRAND.inkMuted } }, '提醒') : null, message.role === 'assistant' ? h(MarkdownText, { text: message.text, labels: markdownLabels }) : message.text)),
           pending && !messages.some(message => message.requestId === pending.requestId) ? h('article', { style: { alignSelf: 'flex-end', maxWidth: '86%', ...box, background: BRAND.accentSoft, whiteSpace: 'pre-wrap' } }, pending.text) : null)),
       h('div', { style: { padding: '8px 24px 20px', flexShrink: 0 } }, h('div', { style: { maxWidth: '760px', margin: '0 auto' } },
-        error ? h('p', { role: 'alert', style: { color: BRAND.danger, fontSize: '13px' } }, error) : null,
+        (error || view?.failure?.message || (view?.status === 'failed' ? '助理本次任务未完成，请重试。' : '')) ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '13px', display: 'flex', gap: '12px', alignItems: 'center' } },
+          h('span', null, error || view?.failure?.message || '助理本次任务未完成，请重试。'),
+          !pending && view?.status === 'failed' && (view.retry?.text || messages.findLast(item => item.role === 'user')?.text) ? button('重试任务', () => void submit(view.retry?.text || messages.findLast(item => item.role === 'user').text)) : null) : null,
         pending ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, '还在确认上一条消息，重试不会重复执行。') : null,
         h('form', { className: 'studio-assistant-composer', onSubmit: event => { event.preventDefault(); void submit(); }, style: { ...box, padding: '12px 14px', borderRadius: '20px' } },
           h('textarea', { ref: composer, 'aria-label': '发给助理', value: draft, maxLength: 32000, disabled: busy || Boolean(pending), rows: 3,

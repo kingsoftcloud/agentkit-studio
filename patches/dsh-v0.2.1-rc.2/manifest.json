@@ -1653,12 +1653,53 @@
         "packages/preset/agent-preset-registry/README.i18n.yaml"
       ],
       "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b"
+    },
+    {
+      "id": "042",
+      "file": "042-inspector-cordis-frame-budget.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "general-fix",
+      "risk": "medium",
+      "maintainerRole": "Studio Host integration owner",
+      "removeWhen": "The pinned upstream bounds complete retained Cordis records before publication.",
+      "contracts": [
+        "Plugin activation must not terminate the Host when inspection reaches its frame limit.",
+        "Cordis snapshots reserve the complete retained-record envelope before tree truncation."
+      ],
+      "affectedPackages": [
+        "packages/experimental/inspector"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Reproduced against official dsh-v0.2.1-rc.2 with the actual collector, publisher and retained source buffer."
+      },
+      "dependsOn": [],
+      "verification": {
+        "hostTests": [
+          "packages/experimental/inspector/tests/cordis-frame-budget.host.spec.ts",
+          "packages/experimental/inspector/tests/cordis-tree.host.spec.ts",
+          "packages/experimental/inspector/tests/cordis-collector.host.spec.ts",
+          "packages/experimental/inspector/tests/source-buffer.host.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "lifecycle"
+        ]
+      },
+      "affectedFiles": [
+        "packages/experimental/inspector/README.md",
+        "packages/experimental/inspector/README.zh.md",
+        "packages/experimental/inspector/src/shared/cordis/publisher.ts",
+        "packages/experimental/inspector/tests/cordis-frame-budget.host.spec.ts"
+      ],
+      "sha256": "ef2592ef7edb77b28b60e2ff5c6332415656121b05c52de337c8c481fcb2094d"
     }
   ],
-  "patchedTree": "c7708d335b13be18a08e483e9a2976115c6354b2",
-  "patchedSourceSha256": "81ef0e4c1bc8890b6627681fa9dc3117a6a815e449e2d89f377642f03d6b01a4",
+  "patchedTree": "fc465fb3eca581dca81be644b23ac63e56a9ff2a",
+  "patchedSourceSha256": "3edacaedecc7fe49fbad21dedcf1a1a1a5defe0da6b055d0b9416150f64e91ad",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "dc71e8f5be0d78803a1f061eaeeec559b19be2b6ff5a0f36c7a3b0ca884d3a60"
+    "sha256": "6c4508c66eee0db8a3ee7cc03f1c94ec950923472c4559c5b4e0dfde0beb9735"
   }
 }

@@ -81,3 +81,34 @@ test('unloading while server initialization is pending cannot start a domain aft
   assert.equal((await result).error?.code, 'gateway/cancelled');
   assert.equal(calls, 0);
 });
+
+test('binding the personal assistant configuration admits its verified cloud instance, never its local runtime', async () => {
+  const calls = [];
+  const route = createAgentRoutes({ serverClientPromise: Promise.resolve({}), agentStorePromise: Promise.resolve({ get: async id => { calls.push(['local', id]); return { metadata: { id, local: true } }; } }),
+    assistantSetup: async () => ({ reference: async () => ({ agentId: 'local-assistant', cloudAgentId: 'cloud-assistant' }) }),
+    deployments: async () => ({ agents: { connect: async id => { calls.push(['connect', id]); return {}; } } }),
+    getAdmission: () => ({ ensure: async (id, options) => { calls.push(['admit', id, options]); return { presetId: 'cloud-preset', agentId: id, local: false }; } }) });
+  const result = await route('agents/ensure-preset', { agentId: 'local-assistant' });
+  assert.equal(result.value.agentId, 'cloud-assistant');
+  assert.ok(calls.some(([kind, id]) => kind === 'connect' && id === 'cloud-assistant'));
+  assert.ok(!calls.some(([kind]) => kind === 'local'));
+});
+
+test('an unavailable assistant deployment cannot fall back to the editable local agent', async () => {
+  let admitted = false;
+  const route = createAgentRoutes({ assistantSetup: async () => ({ reference: async () => ({ agentId: 'assistant-config' }) }),
+    getAdmission: () => ({ ensure: async () => { admitted = true; } }) });
+  const result = await route('agents/ensure-preset', { agentId: 'assistant-config' });
+  assert.equal(result.error.code, 'ASSISTANT_DEPLOYMENT_NOT_READY');
+  assert.equal(admitted, false);
+});
+
+test('a personal assistant configuration from another scope never becomes a local execution fallback', async () => {
+  let admitted = false;
+  const route = createAgentRoutes({ assistantSetup: async () => ({ reference: async () => null }),
+    agentStorePromise: Promise.resolve({ get: async () => ({ metadata: { id: 'assistant-config', purpose: 'personal-assistant' } }) }),
+    getAdmission: () => ({ ensure: async () => { admitted = true; } }) });
+  const result = await route('agents/ensure-preset', { agentId: 'assistant-config' });
+  assert.equal(result.error.code, 'ASSISTANT_DEPLOYMENT_NOT_READY');
+  assert.equal(admitted, false);
+});

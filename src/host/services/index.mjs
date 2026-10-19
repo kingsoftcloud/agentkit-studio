@@ -15,7 +15,7 @@ export function createStudioServices(ctx, options) {
   const builds = createBuildServices(options);
   let deployments;
   const getDeployments = () => deployments();
-  const agents = createAgentServices({ ...options, ...builds, deployments: getDeployments });
+  const agents = createAgentServices({ ...options, ...builds, deployments: getDeployments, assistant: async () => (await assistantSetup()).reference() });
   const resources = createResourceServices(ctx, { ...options, ...platform });
   ({ deployments } = createDeploymentServices({ ...options, ...platform, ...builds, ...resources }));
   const automation = createAutomationServices(ctx, { ...options, ...platform, ...builds, ...agents, deployments });

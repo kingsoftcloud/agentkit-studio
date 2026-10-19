@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "00ebab9280540b4a4ad3cbbb786a513c41117e39",
+  "headCommit": "e4363ce41cf53ba040b18b887d7cdc097f581d54",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
-  "tree": "c7708d335b13be18a08e483e9a2976115c6354b2",
-  "sourceSha256": "81ef0e4c1bc8890b6627681fa9dc3117a6a815e449e2d89f377642f03d6b01a4",
+  "tree": "fc465fb3eca581dca81be644b23ac63e56a9ff2a",
+  "sourceSha256": "3edacaedecc7fe49fbad21dedcf1a1a1a5defe0da6b055d0b9416150f64e91ad",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "f9a4ffbc6151e9f29ccb78d311286e53a0b114929353c775904cad2b428d1fbc"
+    "sha256": "44ad816988f52a44ea3342947d13418fe2136205357b590b0b13780bbeeeccc7"
   },
   "commits": [
     {
@@ -214,6 +214,12 @@
       "file": "041-rc2-integration.patch",
       "commit": "00ebab9280540b4a4ad3cbbb786a513c41117e39",
       "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b"
+    },
+    {
+      "id": "042",
+      "file": "042-inspector-cordis-frame-budget.patch",
+      "commit": "e4363ce41cf53ba040b18b887d7cdc097f581d54",
+      "sha256": "ef2592ef7edb77b28b60e2ff5c6332415656121b05c52de337c8c481fcb2094d"
     }
   ]
 }

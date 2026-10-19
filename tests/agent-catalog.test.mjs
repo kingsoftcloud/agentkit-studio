@@ -52,3 +52,17 @@ test('cloud rows come only from deployment receipts, share sorting and never loa
   assert.equal((await catalog.list({ source: 'cloud', query: 'legacy' })).total, 0);
   assert.deepEqual((await catalog.list({ source: 'local' })).warnings, []);
 });
+
+test('assistant identity comes from the current setup receipt, without hiding editable local configuration', async () => {
+  const local = row('local-assistant'), expert = row('ordinary-expert');
+  const cloud = { ...row('cloud-assistant'), source: 'studio-deployment', metadata: { id: 'cloud-assistant', local: false }, deployment: { id: 'dep-assistant' } };
+  const catalog = createAgentCatalog({ store: store([local, expert]), deployments: async () => ({ items: [cloud] }),
+    assistant: async () => ({ agentId: 'local-assistant', cloudAgentId: 'cloud-assistant', deploymentId: 'dep-assistant' }) });
+  const result = await catalog.list();
+  const config = result.items.find(item => item.metadata.id === 'local-assistant');
+  assert.equal(config.metadata.purpose, 'personal-assistant');
+  assert.equal(config.assistant.configuration, true);
+  assert.equal(config.assistant.cloudAgentId, 'cloud-assistant');
+  assert.equal(result.items.find(item => item.metadata.id === 'cloud-assistant').assistant.configuration, false);
+  assert.equal(result.items.find(item => item.metadata.id === 'ordinary-expert').assistant, undefined);
+});

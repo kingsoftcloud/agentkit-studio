@@ -106,7 +106,7 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
       try {
         if (!record.agentId) {
           const selected = record.selection;
-          const agent = await agents.create({ name: '我的个人助理', runtimeType: 'dsh-native', spec: {
+          const agent = await agents.create({ name: '我的个人助理', purpose: 'personal-assistant', runtimeType: 'dsh-native', spec: {
             instructions: { system: '你是用户的个人助理。自然、简洁地用中文交流。准确区分计划和已执行的工作；仅在用户明确要求时记录长期记忆，允许用户纠正和删除。' },
             memory: { enabled: true, write: { mode: 'explicit_only' } },
             bindings: { modelProfileId: selected.modelId, plugins: [{ name: 'memory', config: { binding: { resource: { kind: 'memory-instance', ...selected.memory } } } }] },
@@ -186,5 +186,12 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     });
     kick(key); return publicState(await read(key));
   }
-  return { options, start, status };
+  // Read-only lineage lookup: catalog/binding must never start deployment work.
+  async function reference() {
+    let key;
+    try { key = await scope(); } catch (error) { if (error.code === 'CLOUD_CREDENTIALS_MISSING') return null; throw error; }
+    const record = await read(key);
+    return record ? { agentId: record.agentId, cloudAgentId: record.cloudAgentId, deploymentId: record.deploymentId } : null;
+  }
+  return { options, start, status, reference };
 }
