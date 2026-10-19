@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, realpath, lstat, readdir, cp, rename, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createStudioBuild } from '../src/studio-build.mjs';
 import { createPortableBundles } from '../src/portable-bundle.mjs';
@@ -353,7 +354,7 @@ test('Windows mutex lease normalizes identity, closes contenders and accepts aba
   await assert.rejects(acquireBundleProfileLock(profile.toLowerCase(), modules, 'win32'), { code: 'BUNDLE_HOST_PROFILE_BUSY' });
   await release(); await release();
   const next = await acquireBundleProfileLock(profile, modules, 'win32'); await next();
-  const { calls, forceWait } = await import(new URL('file://' + join(root, 'index.js')));
+  const { calls, forceWait } = await import(pathToFileURL(join(root, 'index.js')));
   forceWait(0x102);
   await assert.rejects(acquireBundleProfileLock(profile, modules, 'win32'), { code: 'BUNDLE_HOST_PROFILE_BUSY' });
   forceWait(0x80);
