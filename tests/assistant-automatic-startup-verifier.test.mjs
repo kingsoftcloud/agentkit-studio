@@ -8,6 +8,7 @@ test('automatic startup smoke requires explicit archive identity and accepts por
   const named = parseSmokeOptions(['--installation', 'installation', '--tgz', 'plugin.tgz', '--report', 'report.json', '--expected-sha256', sha]);
   assert.deepEqual(positional, named); assert.equal(named.sourceCommit, null);
   assert.equal(parseSmokeOptions(['installation', 'plugin.tgz', 'report.json', sha, '--source-commit', commit]).sourceCommit, commit);
+  assert.equal(parseSmokeOptions(['installation', 'plugin.tgz', 'report.json', sha, '--profile-migration']).profileMigration, true);
   assert.throws(() => parseSmokeOptions(['installation', 'plugin.tgz', 'report.json']));
   assert.throws(() => parseSmokeOptions(['installation', 'plugin.tgz', 'report.json', 'not-a-digest']));
 });
@@ -18,10 +19,11 @@ const providerPatch = '- id: llm-pi-ai\n  name: "@deepseek-ai/dsh-llm-pi-ai"\n  
 test('automatic profiles require the exact official Schedule readiness dependency', () => {
   assert.equal(assertAutomaticProfilePatch(schedulePatch).scheduleReadinessRows, 1);
   assert.equal(assertAutomaticProfilePatch(schedulePatch + providerPatch).providerSettingsRows, 1);
+  assert.equal(assertAutomaticProfilePatch(schedulePatch + '  config: { deliveryHistoryDays: 91, deliveryHistoryRecords: 350 }\n').scheduleReadinessRows, 1);
   assert.equal(assertAutomaticProfilePatch(schedulePatch + '  name: "@deepseek-ai/dsh-schedule"\n  disabled: false\n').scheduleReadinessRows, 1);
   for (const patch of ['[]', providerPatch, '- id: schedule\n', '- id: schedule\n  inject: []\n',
     '- id: schedule\n  inject: [studioFrozenRuntimeReady, fixtureBootstrap]\n', schedulePatch + schedulePatch,
-    schedulePatch + '  disabled: true\n', schedulePatch + '  name: fixture-bootstrap\n', schedulePatch + '  config: {}\n']) {
+    schedulePatch + '  disabled: true\n', schedulePatch + '  name: fixture-bootstrap\n']) {
     assert.throws(() => assertAutomaticProfilePatch(patch));
   }
 });

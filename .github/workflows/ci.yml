@@ -75,7 +75,7 @@ jobs:
           archive="$PWD/.artifacts/automatic-startup/kingsoftcloud-agentkit-studio-$version.tgz"
           digest="$(sha256sum "$archive" | cut -d ' ' -f 1)"
           node scripts/verify-assistant-automatic-startup.mjs "$installation" "$archive" \
-            .artifacts/assistant-automatic-startup.json "$digest"
+            .artifacts/assistant-automatic-startup.json "$digest" --profile-migration --source-commit "$GITHUB_SHA"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

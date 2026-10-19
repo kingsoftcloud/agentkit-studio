@@ -11,12 +11,12 @@ import { createConnection } from 'node:net';
 import { once } from 'node:events';
 import { createHash, randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { mkdtemp, mkdir, readFile, writeFile, rm, readdir, lstat, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, readdir, lstat, realpath, symlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 const BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio'];
 const SINGLETONS = ['@deepseek-ai/cordis', '@deepseek-ai/dsh-llm'];
@@ -25,7 +25,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export function parseSmokeOptions(args) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true,
-    options: Object.fromEntries(['installation', 'tgz', 'report', 'expected-sha256', 'source-commit'].map(name => [name, { type: 'string' }])) });
+    options: { ...Object.fromEntries(['installation', 'tgz', 'report', 'expected-sha256', 'source-commit'].map(name => [name, { type: 'string' }])), 'profile-migration': { type: 'boolean', default: false } } });
   const names = ['installation', 'tgz', 'report', 'expected-sha256'];
   assert.ok(positionals.length === 0 || positionals.length === 4, 'Supply four positional arguments or the named options');
   assert.ok(!positionals.length || names.every(name => values[name] === undefined), 'Do not mix positional and named paths');
@@ -34,7 +34,7 @@ export function parseSmokeOptions(args) {
   assert.match(selected['expected-sha256'], /^[a-f0-9]{64}$/, 'expected-sha256 must be the exact lowercase archive SHA256');
   if (values['source-commit']) assert.match(values['source-commit'], /^[a-f0-9]{40}$/, 'source-commit must be a full commit ID');
   return { installation: resolve(selected.installation), tgz: resolve(selected.tgz), target: resolve(selected.report),
-    expectedArchive: selected['expected-sha256'], sourceCommit: values['source-commit'] || null };
+    expectedArchive: selected['expected-sha256'], sourceCommit: values['source-commit'] || null, profileMigration: values['profile-migration'] };
 }
 
 /** The production profile delays official Schedule until portable bootstrap is ready. */
@@ -45,9 +45,10 @@ export function assertAutomaticProfilePatch(text, { requireScheduleReadiness = t
   for (const row of rows) {
     if (row?.id === 'schedule') {
       scheduleReadinessRows++;
-      assert.ok(Object.keys(row).every(key => ['id', 'name', 'disabled', 'inject'].includes(key)), 'unexpected Schedule override');
+      assert.ok(Object.keys(row).every(key => ['id', 'name', 'disabled', 'inject', 'config'].includes(key)), 'unexpected Schedule override');
       if (row.name !== undefined) assert.equal(row.name, '@deepseek-ai/dsh-schedule', 'Schedule must remain the official plugin');
       if (row.disabled !== undefined) assert.equal(row.disabled, false, 'Schedule must remain enabled');
+      if (row.config !== undefined) assert.ok(row.config && typeof row.config === 'object' && !Array.isArray(row.config), 'Schedule Settings must remain an object');
       assert.deepEqual(row.inject, ['studioFrozenRuntimeReady'], 'Schedule must wait for the production frozen runtime');
       continue;
     }
@@ -187,8 +188,68 @@ function profileSingletonResolution(cliEntry, profile, home, canonical) {
   return { evidence: 'read-only-public-profile-resolution-probe; actual Host startup checked separately', modules };
 }
 
+/** Real installed native lock, two processes, and a killed owner's rename journal. */
+async function verifyProfilePreparationExclusion({ plugin, installation, archive, env, state }) {
+  const { prepareBundleHost } = await import(pathToFileURL(join(plugin, 'src/bundle-host.mjs')));
+  const options = { installation, archive, env, state };
+  const plan = await prepareBundleHost(options), profile = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime');
+  await rm(join(profile, '.agentkit-runtime-profile.json'));
+  await rm(join(profile, 'node_modules'), { recursive: true });
+  await symlink(await realpath(join(installation, 'node_modules')), join(profile, 'node_modules'), 'dir');
+  await writeFile(join(profile, 'cordis.patch.yml'), '[]\n');
+  const script = `
+    import fs from 'node:fs'; import { syncBuiltinESMExports } from 'node:module';
+    import { once } from 'node:events'; import { pathToFileURL } from 'node:url';
+    const [init] = await once(process, 'message');
+    process.on('message', () => {}); // Keep the paused owner's IPC handle alive.
+    if (init.pause) {
+      const rename = fs.promises.rename;
+      fs.promises.rename = async (source, target) => {
+        await rename(source, target);
+        if (source === init.profile) { process.send({ kind: 'paused-after-rename' }); await new Promise(() => {}); }
+      };
+      syncBuiltinESMExports();
+    }
+    try { const { prepareBundleHost } = await import(pathToFileURL(init.entry)); await prepareBundleHost(init.options); process.send({ kind: 'complete' }); }
+    catch (error) { process.send({ kind: 'failed', code: error.code || 'UNKNOWN' }); }
+    process.disconnect();
+  `;
+  const spawnProbe = pause => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { env: { PATH: process.env.PATH }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const done = once(child, 'exit'); void done.catch(() => {});
+    const reply = new Promise((accept, reject) => {
+      const timer = setTimeout(() => reject(Error('Profile lock probe timed out')), 30000);
+      child.once('message', message => { clearTimeout(timer); accept(message); });
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('exit', () => { clearTimeout(timer); reject(Error('Profile lock probe exited before its reply')); });
+    });
+    child.send({ pause, entry: join(plugin, 'src/bundle-host.mjs'), options, profile });
+    return { child, done, reply };
+  };
+  const holder = spawnProbe(true);
+  try {
+    assert.equal((await holder.reply).kind, 'paused-after-rename');
+    assert.equal(holder.child.exitCode, null, 'the lock holder must still be alive at the barrier');
+    const journalPath = join(plan.env.DSH_HOME, 'profiles/.agentkit-runtime-profile-transaction.json');
+    const journal = await readFile(journalPath), transaction = JSON.parse(journal);
+    const staging = join(plan.env.DSH_HOME, 'profiles', transaction.staging);
+    assert.equal((await lstat(staging)).isDirectory(), true);
+    const competing = spawnProbe(false);
+    assert.deepEqual(await competing.reply, { kind: 'failed', code: 'BUNDLE_HOST_PROFILE_BUSY' }); await competing.done;
+    assert.deepEqual(await readFile(journalPath), journal, 'a live contender must not run journal recovery');
+    assert.equal((await lstat(staging)).isDirectory(), true, 'a live contender must not delete staging');
+    holder.child.kill('SIGKILL'); await holder.done;
+    const successor = spawnProbe(false); assert.equal((await successor.reply).kind, 'complete'); await successor.done;
+    assert.equal((await lstat(join(profile, 'node_modules'))).isDirectory(), true);
+    await assert.rejects(lstat(journalPath), { code: 'ENOENT' });
+    assert.equal(JSON.parse(await readFile(join(profile, '.agentkit-runtime-profile.json'))).identity.bundleSha256, plan.identity.sha256);
+  } finally {
+    if (holder.child.exitCode === null && holder.child.signalCode === null) { holder.child.kill('SIGKILL'); await holder.done; }
+  }
+}
+
 export async function runAutomaticStartupSmoke(options) {
-  const { installation, tgz, target, expectedArchive, sourceCommit } = options;
+  const { installation, tgz, target, expectedArchive, sourceCommit, profileMigration = false } = options;
   const plugin = join(installation, 'node_modules/@kingsoftcloud/agentkit-studio');
   const root = await realpath(await mkdtemp(join(tmpdir(), 'assistant-automatic-startup-'))), state = join(root, 'state');
   const report = { evidence: 'automatic-installed-studio-bundle-cli-cold-start-and-process-restart',
@@ -344,6 +405,11 @@ export async function runAutomaticStartupSmoke(options) {
       check(label + '-automatic-profile-index-and-runtime-ready', { readyMs: record.readyMs, bundleIdentityVerified: true, officialCookie: true });
       return record;
     }
+    if (profileMigration) {
+      stage = 'native-profile-lock-exclusion';
+      await verifyProfilePreparationExclusion({ plugin, installation, archive, env, state: join(root, 'lock-fixture') });
+      check('native-kernel-profile-lock-excludes-live-process-and-recovers-killed-owner');
+    }
     stage = 'cold-automatic-launch'; await start('cold');
     const first = { requestId: 'automatic-cold-task', text: plans[0].prompt }, accepted = await api('submit', first);
     assert.equal(accepted.accepted, true); const sessionId = accepted.sessionId;
@@ -373,7 +439,41 @@ export async function runAutomaticStartupSmoke(options) {
     while (Date.now() <= dueAt) await pause(Math.min(1000, dueAt - Date.now() + 1));
     assert.equal(count(plans[1].prompt), 0, 'stopped Host must have no surviving scheduler');
     await assert.rejects(readFile(join(workspace, plans[1].file)), { code: 'ENOENT' });
+    let retainedPatch, retainedReceipt, retainedHomePatch;
+    if (profileMigration) {
+      stage = 'legacy-profile-migration-fixture';
+      const patchPath = join(profile, 'cordis.patch.yml');
+      retainedPatch = await readFile(patchPath, 'utf8');
+      const homePatch = join(state, 'dsh/cordis.patch.yml');
+      // Legitimate model Settings can be persisted at Host scope independently
+      // of the old launcher's empty profile patch. Keep their exact bytes.
+      const extraSettings = parseYaml(retainedPatch).filter(row => row.id !== 'schedule');
+      retainedHomePatch = stringifyYaml(extraSettings);
+      await assert.rejects(lstat(homePatch), { code: 'ENOENT' });
+      await writeFile(homePatch, retainedHomePatch, { mode: 0o600 });
+      // Exact pre-readiness launcher patch; other user Settings are separate
+      // preserved files and the real provider Settings in DSH home.
+      await writeFile(patchPath, '[]\n');
+      await writeFile(join(profile, 'retained-other-settings.json'), '{"retained":true}');
+      retainedReceipt = await readFile(join(state, '.agentkit-runtime.json'));
+      await rm(join(profile, '.agentkit-runtime-profile.json'));
+      await rm(join(profile, 'node_modules'), { recursive: true });
+      await symlink(await realpath(join(installation, 'node_modules')), join(profile, 'node_modules'), 'dir');
+      check('exact-legacy-profile-layout-retains-real-history-and-overdue-schedule', { sameBundleSha256: bundleSha256, sessionId, scheduleId: scheduled.id });
+    }
     stage = 'restart-automatic-launch'; const restarted = await start('restarted');
+    if (profileMigration) {
+      const migratedPatch = await readFile(join(profile, 'cordis.patch.yml'), 'utf8');
+      assert.deepEqual(parseYaml(migratedPatch), parseYaml(retainedPatch));
+      retainedPatch = migratedPatch;
+      assert.equal(await readFile(join(state, 'dsh/cordis.patch.yml'), 'utf8'), retainedHomePatch);
+      assert.deepEqual(await readFile(join(state, '.agentkit-runtime.json')), retainedReceipt);
+      assert.equal(await readFile(join(profile, 'retained-other-settings.json'), 'utf8'), '{"retained":true}');
+      assert.equal((await readdir(join(state, 'dsh/profiles'))).filter(name => name.startsWith('.previous-')).length, 1);
+      const backup = (await readdir(join(state, 'dsh/profiles'))).find(name => name.startsWith('.previous-'));
+      assert.equal(await readFile(join(state, 'dsh/profiles', backup, 'cordis.patch.yml'), 'utf8'), '[]\n');
+      check('legacy-launcher-profile-migrates-to-owned-code-with-rollback-and-settings');
+    }
     assert.notEqual(report.processes[0].launcherPid, restarted.launcherPid);
     // The first restored Session access must be the native scheduler. Poll the
     // isolated file, not snapshot/submit/native-open/ensure, until its write ran.
@@ -402,11 +502,41 @@ export async function runAutomaticStartupSmoke(options) {
     assert.ok(requests.find(item => item.prompt === plans[2].prompt)?.priorReply);
     assert.equal(count(plans[0].prompt), beforeRestartCalls); assert.equal(count(plans[1].prompt), 2); assert.equal(count(plans[2].prompt), 2);
     check('new-process-continues-original-history-and-native-managed-tools');
+    if (profileMigration) {
+      stage = 'same-bundle-image-code-refresh'; await stop();
+      const markerPath = join(profile, '.agentkit-runtime-profile.json'), previousMarker = JSON.parse(await readFile(markerPath));
+      // A private inert source file changes the installed image code digest;
+      // all published archive files stay byte-identical throughout this probe.
+      const sentinel = join(plugin, '.profile-code-upgrade-probe.mjs');
+      await writeFile(sentinel, '// controlled image-code upgrade probe\n', { flag: 'wx' });
+      await start('code-upgraded');
+      const refreshedMarker = JSON.parse(await readFile(markerPath));
+      assert.deepEqual(refreshedMarker.identity, previousMarker.identity);
+      assert.notEqual(refreshedMarker.code.studioDigest, previousMarker.code.studioDigest);
+      assert.equal(await readFile(join(profile, 'node_modules/@kingsoftcloud/agentkit-studio/.profile-code-upgrade-probe.mjs'), 'utf8'), '// controlled image-code upgrade probe\n');
+      assert.deepEqual(await readFile(join(state, '.agentkit-runtime.json')), retainedReceipt);
+      assert.equal(await readFile(join(profile, 'cordis.patch.yml'), 'utf8'), retainedPatch);
+      assert.equal(await readFile(join(state, 'dsh/cordis.patch.yml'), 'utf8'), retainedHomePatch);
+      const afterUpgrade = await api('snapshot');
+      assert.deepEqual(afterUpgrade.events, continued.events); assert.deepEqual(afterUpgrade.identity, continued.identity);
+      const afterSchedule = (await api('schedule-list')).items.find(item => item.id === scheduled.id);
+      assert.equal(afterSchedule.lastDelivery.messageId, restoredSchedule.lastDelivery.messageId);
+      assert.equal(afterSchedule.sessionId, sessionId);
+      assert.equal((await readdir(join(state, 'dsh/profiles'))).filter(name => name.startsWith('.previous-')).length, 2);
+      assert.equal(count(plans[1].prompt), 2, 'code refresh must not redeliver an expired schedule');
+      check('same-bundle-image-code-refresh-retains-session-settings-and-delivery');
+      await stop(); await rm(sentinel);
+      // Boot once more without the sentinel: the verified owner marker permits
+      // a code rollback, while retaining the same session and Settings.
+      await start('code-rollback');
+      assert.deepEqual((await api('snapshot')).events, continued.events);
+      check('verified-image-code-rollback-preserves-original-session');
+    }
     stage = 'shutdown'; await stop(); await verifyProfile('after-final-stop');
     assert.equal(count(plans[0].prompt), beforeRestartCalls, 'replayed work must not run later');
     assert.equal(count(plans[1].prompt), 2); assert.equal(count(plans[2].prompt), 2); assert.equal(modelFailure, undefined);
     await comparePackage(plugin, archiveFiles);
-    check('both-launcher-processes-exit-after-sigterm-and-runtime-port-closes');
+    check('all-launcher-processes-exit-after-sigterm-and-runtime-port-closes');
     report.passed = true;
   } catch (error) {
     report.failure = { stage, code: error.code || 'SMOKE_ASSERTION_FAILED', message: String(error.message).slice(0, 350) };
