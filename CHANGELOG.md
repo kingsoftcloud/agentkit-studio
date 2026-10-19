@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show an assistant setup failure once, stop the progress spinner, and keep the cloud settings and deployment recovery actions available.
+
 - Allow self-signed runtime certificates only for explicit pre-online Agent connections, with redirects disabled. Keep production, control-plane and download TLS verification unchanged.
 
 - Give deployment test background operations a bounded ten-second wait with terminal-state diagnostics; cover slow uploads so busy CI workers do not fail a valid deployment after 1.5 seconds.
