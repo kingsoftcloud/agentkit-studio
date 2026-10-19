@@ -78,7 +78,9 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     } else {
       url = await start();
       browser = await chromium.launch({ executablePath: process.env.STUDIO_VERIFY_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
-      context = await browser.newContext({ viewport: { width: 1280, height: 900 }, ...(state ? { storageState: state } : {}) });
+      // Both Studio and native DSH assertions below use Chinese UI copy.
+      // A fresh Linux browser otherwise selects English from navigator.languages.
+      context = await browser.newContext({ locale: 'zh-CN', viewport: { width: 1280, height: 900 }, ...(state ? { storageState: state } : {}) });
       page = await context.newPage();
     }
     page.on('pageerror', error => errors.push(error.message));
