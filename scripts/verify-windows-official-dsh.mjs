@@ -11,19 +11,23 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import asar from '@electron/asar';
 
-const OFFICIAL_URL = 'https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe';
-const OFFICIAL_SHA256 = 'd61cd8882f8b8a1251144320493ad27920d15139503eba2465b9579eee720cfc';
+const OFFICIAL_VERSION = '0.2.1-rc.2';
+const OFFICIAL_URL = `https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-${OFFICIAL_VERSION}-win-x64.exe`;
+const OFFICIAL_SHA256 = '72e4a8579f11b5428dd0a1506532777924adba7ecaacc710a7e429085796537f';
 
 export async function verifyOfficialDshCoexistence(executablePath, environment, root, evidence) {
-  const installer = join(root, 'official-dsh-0.2.1-rc.2.exe'), destination = join(root, 'official-dsh-installed');
-  const response = await fetch(OFFICIAL_URL, { signal: AbortSignal.timeout(600000) });
+  const installer = join(root, `official-dsh-${OFFICIAL_VERSION}.exe`), destination = join(root, 'official-dsh-installed');
+  const response = await fetch(OFFICIAL_URL, { redirect: 'error', signal: AbortSignal.timeout(600000) });
   if (!response.ok || !response.body) throw new Error('Official DSH installer is unavailable');
   const hash = createHash('sha256');
   await pipeline(Readable.fromWeb(response.body), new Transform({ transform(bytes, _encoding, done) { hash.update(bytes); done(null, bytes); } }), createWriteStream(installer, { flags: 'wx' }));
-  if (hash.digest('hex') !== OFFICIAL_SHA256) throw new Error('Official mutable download has changed; review and pin the new official installer before continuing');
-  await promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', '$ErrorActionPreference="Stop"; $s=Get-AuthenticodeSignature $env:OFFICIAL_INSTALLER; if($s.Status -ne "Valid" -or -not $s.TimeStamperCertificate){throw "Official installer signature invalid"}; $p=Start-Process $env:OFFICIAL_INSTALLER -ArgumentList @("/S",("/D="+$env:OFFICIAL_DESTINATION)) -PassThru -Wait; if($p.ExitCode){throw "Official installation failed"}'], { env: { ...environment, OFFICIAL_INSTALLER: installer, OFFICIAL_DESTINATION: destination }, timeout: 300000 });
+  const downloadedSha256 = hash.digest('hex');
+  await writeFile(join(evidence, 'windows-official-installer-download.json'), JSON.stringify({ url: OFFICIAL_URL, version: OFFICIAL_VERSION, expectedSha256: OFFICIAL_SHA256, downloadedSha256 }, null, 2));
+  if (downloadedSha256 !== OFFICIAL_SHA256) throw new Error(`Pinned official installer digest differs: ${downloadedSha256}`);
+  await promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', '$ErrorActionPreference="Stop"; $s=Get-AuthenticodeSignature $env:OFFICIAL_INSTALLER; if($s.Status -ne "Valid" -or -not $s.TimeStamperCertificate){throw "Official installer signature invalid"}; if($s.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne "Hangzhou DeepSeek Artificial Intelligence Co., Ltd."){throw "Official installer publisher differs"}; if((Get-Item $env:OFFICIAL_INSTALLER).VersionInfo.ProductVersion -ne $env:OFFICIAL_VERSION){throw "Official installer version differs"}; $p=Start-Process $env:OFFICIAL_INSTALLER -ArgumentList @("/S",("/D="+$env:OFFICIAL_DESTINATION)) -PassThru -Wait; if($p.ExitCode){throw "Official installation failed"}'], { env: { ...environment, OFFICIAL_INSTALLER: installer, OFFICIAL_DESTINATION: destination, OFFICIAL_VERSION }, timeout: 300000 });
   const officialPath = join(destination, 'DeepSeek Harness.exe');
   const officialMetadata = JSON.parse(asar.extractFile(join(destination, 'resources', 'app.asar'), 'package.json'));
+  if (officialMetadata.version !== OFFICIAL_VERSION) throw new Error('Installed official DSH version differs');
   const sharedHome = join(root, 'real-official-shared-dsh');
   const shared = { ...environment, DSH_HOME: sharedHome, AGENTKIT_HOME: join(root, 'real-official-agentkit'), DEEPSEEK_API_KEY: 'qualification-local-only', DSH_TELEMETRY_DISABLED: '1' };
   console.log('Official signed installer installed; launching its normal desktop entry.');
