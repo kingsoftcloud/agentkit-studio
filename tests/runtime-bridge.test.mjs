@@ -4,6 +4,7 @@ import { Context } from '@deepseek-ai/cordis';
 import { createRuntimeBridge, mountRuntimeBridge, ownAsyncResource, resolveRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { apply as applyPreset } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
+import { spawnSync } from 'node:child_process';
 
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
 
@@ -73,6 +74,26 @@ test('late initialization closes its result after the owning fiber retired', asy
   await rejected;
   assert.equal(closed, 1);
   await ctx.fiber.dispose();
+});
+
+test('concurrent Host initialization observes a retired resource before bootstrap awaits it', () => {
+  const moduleUrl = new URL('../src/host/runtime-bridge.mjs', import.meta.url).href;
+  const result = spawnSync(process.execPath, ['--unhandled-rejections=strict', '--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
+    import { ownAsyncResource } from ${JSON.stringify(moduleUrl)};
+    let retire, resolve, closed = 0;
+    const gate = new Promise(done => { resolve = done; });
+    const pending = ownAsyncResource({ effect(callback) { retire = callback(); } }, gate, 'delayed bootstrap');
+    retire(); resolve({ close() { closed++; } });
+    await new Promise(done => setTimeout(done, 20));
+    await assert.rejects(pending, { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
+    assert.equal(closed, 1);
+    const failed = ownAsyncResource({ effect() {} }, Promise.reject(Object.assign(new Error('fixture'), { code: 'INITIALIZATION_FAILED' })), 'failed bootstrap');
+    await new Promise(done => setTimeout(done, 20));
+    await assert.rejects(failed, { code: 'INITIALIZATION_FAILED' });
+  `], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.signal, null);
 });
 
 test('resource adapter retirement aborts MCP initialization and prevents reconnection', async () => {
