@@ -1,0 +1,1120 @@
+{
+  "normalization": {
+    "kept": [
+      "phase",
+      "outcome",
+      "reason",
+      "model_calls",
+      "tool_calls",
+      "descendant_*_calls",
+      "continuations",
+      "output_restarts",
+      "repair_attempts",
+      "provider_errors",
+      "model_errors",
+      "final_text",
+      "workspace_changed_paths",
+      "workspace_modified_paths",
+      "artifact_ref_count",
+      "child_run_id_count",
+      "background_command_count",
+      "verification",
+      "event_kinds"
+    ],
+    "stripped": [
+      "run_id",
+      "turn_id",
+      "request_id",
+      "attempt_id",
+      "operation_key",
+      "event_id",
+      "event_seq",
+      "retry_not_before",
+      "execution_elapsed_seconds",
+      "profile/contract/configuration digests",
+      "candidate_id",
+      "scope"
+    ]
+  },
+  "scenario_count": 20,
+  "scenarios": [
+    {
+      "description": "No-tool turn: model returns final text, host verifier passes with evidence refs.",
+      "id": "closed_loop_verified",
+      "input": {
+        "goal": "Return {answer:42} as JSON",
+        "max_model_calls": 4,
+        "model_script": [
+          [
+            "stop",
+            "{\"answer\": 42}",
+            []
+          ]
+        ],
+        "verifier": "passed+evidence"
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"answer\": 42}",
+        "model_calls": 1,
+        "model_errors": 0,
+        "outcome": "verified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "required_acceptance_verified",
+        "repair_attempts": 0,
+        "tool_calls": 0,
+        "verification": {
+          "item_statuses": [
+            "passed"
+          ],
+          "reason": null,
+          "status": null
+        },
+        "verifier_calls": 1,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/engine.py::NativeKernel.run_until_idle",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_live_short_tasks.py::test_short_no_tool_repair_uses_host_verifier"
+      }
+    },
+    {
+      "description": "Single read tool then final text; verifier passes -> verified/completed.",
+      "id": "closed_loop_with_tool_verified",
+      "input": {
+        "model_script": [
+          "tool_calls(read)",
+          "stop"
+        ],
+        "tool": "read ok",
+        "verifier": "passed+evidence"
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "tools.completed",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"answer\": 42}",
+        "model_calls": 2,
+        "model_errors": 0,
+        "outcome": "verified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "required_acceptance_verified",
+        "repair_attempts": 0,
+        "tool_calls": 1,
+        "tool_executed_args": [
+          {
+            "path": "a.txt"
+          }
+        ],
+        "verification": {
+          "item_statuses": [
+            "passed"
+          ],
+          "reason": null,
+          "status": null
+        },
+        "verifier_calls": 1,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::reduce_tool",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_kernel_process_recovery.py::_ScriptedTaskModel"
+      }
+    },
+    {
+      "description": "Two concurrent_safe read_only calls in one model response share one parallel effect.",
+      "id": "parallel_readonly_batch",
+      "input": {
+        "model_script": [
+          "tool_calls(read,read)",
+          "stop"
+        ],
+        "tool": "read concurrent_safe"
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "calls_in_parallel_batch": 2,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "tool.member_settled",
+          "tool.member_settled",
+          "effect.received",
+          "tools.completed",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"answer\": 42}",
+        "model_calls": 2,
+        "model_errors": 0,
+        "outcome": "verified",
+        "output_restarts": 0,
+        "parallel_effect_prepared": true,
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "required_acceptance_verified",
+        "repair_attempts": 0,
+        "tool_calls": 2,
+        "tool_effect_count": 1,
+        "tool_executed_paths": [
+          "a",
+          "b"
+        ],
+        "verification": {
+          "item_statuses": [
+            "passed"
+          ],
+          "reason": null,
+          "status": null
+        },
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::reduce_parallel_readonly_tools",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_canonical_tool_observation.py"
+      }
+    },
+    {
+      "description": "Non-readonly writer executes in its own serial effect; workspace_changed_paths recorded.",
+      "id": "serial_write_workspace_paths",
+      "input": {
+        "model_script": [
+          "tool_calls(write)",
+          "stop"
+        ],
+        "tool": "write ok paths=[out.txt]"
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "tools.completed",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"answer\": 42}",
+        "model_calls": 2,
+        "model_errors": 0,
+        "outcome": "verified",
+        "output_restarts": 0,
+        "parallel_readonly_flags": [
+          null
+        ],
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_paused_from": null,
+        "prepared_tool_effect_count": 1,
+        "provider_errors": 0,
+        "reason": "required_acceptance_verified",
+        "repair_attempts": 0,
+        "tool_calls": 1,
+        "verification": {
+          "item_statuses": [
+            "passed"
+          ],
+          "reason": null,
+          "status": null
+        },
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": [
+          "out.txt"
+        ]
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::next_transition (EXECUTING_TOOLS)",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_kernel_process_recovery.py::_DurableFileTool"
+      }
+    },
+    {
+      "description": "cancel (priority 100) enqueued while a tool effect is running wins and cancels the in-flight tool task.",
+      "id": "cancel_priority_over_inflight_tool",
+      "input": {
+        "command": "cancel",
+        "model_script": [
+          "tool_calls(write)"
+        ],
+        "tool": "blocks"
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "command_receipt_status": "accepted",
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "tools.interrupted",
+          "command.consumed",
+          "run.canceled"
+        ],
+        "final_text": "",
+        "model_calls": 1,
+        "model_errors": 0,
+        "outcome": "unverified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "canceled",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "user_canceled",
+        "repair_attempts": 0,
+        "tool_calls": 1,
+        "tool_cancelled": 1,
+        "verification": null,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/effect_runtime.py::dispatch_cancellable_effect",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_delegate_inflight_cancellation.py"
+      }
+    },
+    {
+      "description": "pause at REQUESTING_MODEL (prepared, unclaimed effect) -> PAUSED; resume -> completes.",
+      "id": "pause_resume",
+      "input": {
+        "commands": [
+          "pause",
+          "resume"
+        ],
+        "model_script": [
+          "stop"
+        ]
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "command.consumed",
+          "command.consumed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"answer\": 42}",
+        "model_calls": 1,
+        "model_errors": 0,
+        "outcome": "verified",
+        "output_restarts": 0,
+        "pause_receipt_status": "accepted",
+        "paused_from": "requesting_model",
+        "paused_phase": "paused",
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_before_pause": "requesting_model",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "required_acceptance_verified",
+        "repair_attempts": 0,
+        "resume_receipt_status": "accepted",
+        "tool_calls": 0,
+        "verification": {
+          "item_statuses": [
+            "passed"
+          ],
+          "reason": null,
+          "status": null
+        },
+        "verifier_calls": 1,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::reduce_command",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_child_wait_controls.py"
+      }
+    },
+    {
+      "description": "Tool returns approval_required -> AWAITING_INTERACTION; submit_interaction with matching interaction_id+allow re-dispatches the tool with interaction granted.",
+      "id": "approval_match_allow",
+      "input": {
+        "model_script": [
+          "tool_calls(write)",
+          "stop"
+        ],
+        "tool": "approval_required then ok"
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "awaiting_phase": "awaiting_interaction",
+        "background_command_count": 0,
+        "bad_receipt_status": "accepted",
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "approval.requested",
+          "command.consumed",
+          "command.consumed",
+          "approval.resolved",
+          "effect.prepared",
+          "effect.received",
+          "tools.completed",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"answer\": 42}",
+        "good_receipt_status": "accepted",
+        "interaction_decisions": [
+          "allow"
+        ],
+        "model_calls": 2,
+        "model_errors": 0,
+        "outcome": "verified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "required_acceptance_verified",
+        "repair_attempts": 0,
+        "tool_calls": 1,
+        "verification": {
+          "item_statuses": [
+            "passed"
+          ],
+          "reason": null,
+          "status": null
+        },
+        "verifier_calls": 1,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": [
+          "out.txt"
+        ]
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::reduce_command (submit_interaction)",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_child_approval_bridge.py"
+      }
+    },
+    {
+      "description": "Running tool intent with no receipt (simulated crash) -> reattach must NOT re-execute the tool; effect becomes uncertain and the run interrupts.",
+      "id": "lost_effect_not_rerun",
+      "input": {
+        "crash": "after tool entered, before receipt",
+        "model_script": [
+          "tool_calls(write)"
+        ]
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "crashed_intent_status": "running",
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "tools.interrupted",
+          "run.finalizing",
+          "run.interrupted"
+        ],
+        "final_text": "",
+        "model_calls": 1,
+        "model_errors": 0,
+        "outcome": "unverified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "interrupted",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "effect_outcome_unknown",
+        "repair_attempts": 0,
+        "tool_a_calls": 1,
+        "tool_b_calls": 0,
+        "tool_calls": 1,
+        "verification": null,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/engine.py::NativeKernel._execute",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_kernel_process_recovery.py (effect_without_receipt)"
+      }
+    },
+    {
+      "description": "max_model_calls=1 and the only response asks for tools -> budget_exhausted/failed, never completed.",
+      "id": "model_budget_exhausted_not_success",
+      "input": {
+        "max_model_calls": 1,
+        "model_script": [
+          "tool_calls(read)"
+        ]
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "tools.completed",
+          "budget.exhausted",
+          "run.finalizing",
+          "run.failed"
+        ],
+        "final_text": "",
+        "model_calls": 1,
+        "model_errors": 0,
+        "outcome": "budget_exhausted",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "failed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "model_budget_exhausted",
+        "repair_attempts": 0,
+        "tool_calls": 1,
+        "verification": null,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::next_transition (call_room)",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_kernel.py"
+      }
+    },
+    {
+      "description": "Duplicate tool call_id -> malformed_tool_call; after max_retries+1 attempts the malformed budget exhausts -> failed (separate from provider budget).",
+      "id": "malformed_tool_call_retry_exhausted",
+      "input": {
+        "max_retries": 1,
+        "model_script": [
+          "tool_calls(dup,dup) x2"
+        ]
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "run.failed"
+        ],
+        "final_text": "",
+        "model_calls": 2,
+        "model_errors": 2,
+        "outcome": "failed",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "failed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "malformed_tool_call_retry_exhausted",
+        "repair_attempts": 0,
+        "tool_calls": 0,
+        "verification": null,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::reduce_model (malformed_tool_call)",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_kernel.py"
+      }
+    },
+    {
+      "description": "provider_retryable_error (rate_limit) repeated past max_provider_retries -> failed (provider_terminal budget), distinct from the malformed/empty budget.",
+      "id": "provider_retry_budget_exhausted",
+      "input": {
+        "max_provider_retries": 2,
+        "model_script": [
+          "provider_retryable_error(rate_limit) x3"
+        ]
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "model.provider_failure",
+          "usage.unavailable",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "model.provider_failure",
+          "usage.unavailable",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "model.provider_failure",
+          "usage.unavailable",
+          "run.failed"
+        ],
+        "final_text": "",
+        "model_calls": 3,
+        "model_errors": 0,
+        "outcome": "failed",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "failed",
+        "phase_paused_from": null,
+        "provider_errors": 3,
+        "reason": "provider_retryable_error_retry_exhausted",
+        "repair_attempts": 0,
+        "tool_calls": 0,
+        "verification": null,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::reduce_model (provider_retryable_error)",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_openai_stream.py"
+      }
+    },
+    {
+      "description": "Truncated output (output_limit) with max_continuations=0 -> continuation_budget_exhausted; partial tool calls are NOT executed.",
+      "id": "output_limit_tools_not_executed",
+      "input": {
+        "max_continuations": 0,
+        "model_script": [
+          "length(partial)"
+        ]
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuation_message_kinds": [
+          "continuation_fragment",
+          "continuation_observation"
+        ],
+        "continuations": 1,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "run.finalizing",
+          "run.failed"
+        ],
+        "final_text": "",
+        "model_calls": 2,
+        "model_errors": 0,
+        "outcome": "unverified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "failed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "continuation_budget_exhausted",
+        "repair_attempts": 0,
+        "tool_calls": 0,
+        "verification": null,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::reduce_model (output_limit)",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_review_continuation_boundaries.py"
+      }
+    },
+    {
+      "description": "With no VerificationPort the run completes but the outcome stays unverified (no verified claim).",
+      "id": "no_verifier_unverified",
+      "input": {
+        "model_script": [
+          "stop"
+        ],
+        "verifier": "absent"
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"answer\": 42}",
+        "model_calls": 1,
+        "model_errors": 0,
+        "outcome": "unverified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "verification_report_missing",
+        "repair_attempts": 0,
+        "tool_calls": 0,
+        "verification": null,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/verification_runtime.py::reduce_verification",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_default_finalization.py"
+      }
+    },
+    {
+      "description": "Verifier passes every item but supplies no evidence_refs -> outcome unverified (qualified_evidence_missing), not verified.",
+      "id": "verifier_no_evidence_unverified",
+      "input": {
+        "model_script": [
+          "stop"
+        ],
+        "verifier": "passed but evidence_refs=[]"
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"answer\": 42}",
+        "model_calls": 1,
+        "model_errors": 0,
+        "outcome": "unverified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "qualified_evidence_missing",
+        "repair_attempts": 0,
+        "tool_calls": 0,
+        "verification": {
+          "item_statuses": [
+            "passed"
+          ],
+          "reason": null,
+          "status": null
+        },
+        "verifier_calls": 1,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/completion.py::terminal_verification",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_live_short_tasks.py"
+      }
+    },
+    {
+      "description": "final_submission_schema: a submit_final_output tool call seals a candidate directly (no tool dispatch) -> verified.",
+      "id": "final_submission_schema_tool",
+      "input": {
+        "final_submission_schema": "object{answer}",
+        "model_script": [
+          "tool_calls(submit_final_output)"
+        ]
+      },
+      "normalized_output": {
+        "artifact_ref_count": 0,
+        "background_command_count": 0,
+        "child_run_id_count": 0,
+        "continuations": 0,
+        "descendant_model_calls": 0,
+        "descendant_tool_calls": 0,
+        "event_kinds": [
+          "run.started",
+          "run.phase_changed",
+          "effect.prepared",
+          "effect.received",
+          "usage.unavailable",
+          "effect.prepared",
+          "effect.received",
+          "run.finalizing",
+          "text.completed",
+          "run.completed"
+        ],
+        "final_text": "{\"value\":42}",
+        "model_calls": 1,
+        "model_errors": 0,
+        "outcome": "verified",
+        "output_restarts": 0,
+        "pending_intent_present": false,
+        "phase": "completed",
+        "phase_paused_from": null,
+        "provider_errors": 0,
+        "reason": "required_acceptance_verified",
+        "repair_attempts": 0,
+        "tool_calls": 0,
+        "verification": {
+          "item_statuses": [
+            "passed"
+          ],
+          "reason": null,
+          "status": null
+        },
+        "verifier_calls": 1,
+        "workspace_changed_paths": [],
+        "workspace_modified_paths": []
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/machine.py::reduce_model (final_submission)",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_kernel_review.py"
+      }
+    },
+    {
+      "description": "MemoryRunStore.enqueue dedups by command_id+payload (duplicate); distinct ids are both admitted and sorted by priority.",
+      "id": "store_command_dedup",
+      "input": {
+        "commands": [
+          "pause(cmd-1) x2",
+          "cancel(cmd-2)"
+        ]
+      },
+      "normalized_output": {
+        "first_receipt_status": "accepted",
+        "pending_command_kinds": [
+          "cancel",
+          "pause"
+        ],
+        "second_receipt_status": "duplicate",
+        "third_receipt_status": "accepted"
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/stores/native_memory.py::MemoryRunStore.enqueue",
+        "repo": "ksadk-python",
+        "test": "ksadk/harness/stores/native_contract.py::check_command"
+      }
+    },
+    {
+      "description": "MemoryRunStore.commit is idempotent by commit_id+payload: replaying the same batch returns the archived snapshot without re-applying.",
+      "id": "store_commit_idempotent",
+      "input": {
+        "batch": "phase_changed -> preparing_context",
+        "commit_id": "commit-1"
+      },
+      "normalized_output": {
+        "again_phase": "preparing_context",
+        "again_revision": 1,
+        "event_count": 1,
+        "first_phase": "preparing_context",
+        "first_revision": 1
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/stores/native_memory.py::MemoryRunStore._commit",
+        "repo": "ksadk-python",
+        "test": "ksadk/harness/stores/native_contract.py::check_commit"
+      }
+    },
+    {
+      "description": "Pure classify of one sealed attempt into ModelResponseKind (no merge, no inference).",
+      "id": "normalize_response_classification",
+      "input": {
+        "finish_reasons": [
+          "stop",
+          "tool_calls",
+          "tool_calls(dup)",
+          "length",
+          "context_length_exceeded",
+          "provider_retryable_error",
+          "stop(blank)",
+          "cancelled",
+          "content_filter"
+        ]
+      },
+      "normalized_output": {
+        "context_overflow": "context_overflow",
+        "empty_response": "empty_response",
+        "final_candidate": "final_candidate",
+        "malformed_duplicate_call_id": "malformed_tool_call",
+        "output_limit": "output_limit",
+        "policy_abort": "policy_abort",
+        "provider_retryable_error": "provider_retryable_error",
+        "tool_calls": "tool_calls",
+        "user_abort": "user_abort"
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/model.py::normalize_response",
+        "repo": "ksadk-python",
+        "test": "ksadk/harness/native/model.py (validator unit tests)"
+      }
+    },
+    {
+      "description": "retry_delay pure backoff: non-retryable -> 0; rate_limit without Retry-After -> jittered cooldown; explicit server wait preserved exactly.",
+      "id": "retry_delay_pure",
+      "input": {
+        "profile": "initial=0, max=0, rate_limit_cooldown=0 -> reconfigured below"
+      },
+      "normalized_output": {
+        "explicit_server_wait_preserved": 12.0,
+        "non_retryable_delay": 0.0,
+        "rate_limit_with_cooldown": 5.625
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/model_runtime.py::retry_delay",
+        "repo": "ksadk-python",
+        "test": "tests/harness/native/test_retry_jitter.py"
+      }
+    },
+    {
+      "description": "RunCommand.priority ordering (cancel highest, steer/guide lowest); advance consumes the highest-priority pending command first.",
+      "id": "command_priority_ordering",
+      "input": {
+        "kinds": [
+          "cancel",
+          "policy_revoked",
+          "submit_interaction",
+          "cancel_child",
+          "pause",
+          "resume",
+          "promote_child",
+          "message_child",
+          "steer",
+          "guide"
+        ]
+      },
+      "normalized_output": {
+        "priorities": {
+          "cancel": 100,
+          "cancel_child": 85,
+          "guide": 60,
+          "message_child": 70,
+          "pause": 80,
+          "policy_revoked": 95,
+          "promote_child": 70,
+          "resume": 80,
+          "steer": 60,
+          "submit_interaction": 90
+        },
+        "sorted_desc": [
+          "cancel",
+          "policy_revoked",
+          "submit_interaction",
+          "cancel_child",
+          "pause",
+          "resume",
+          "promote_child",
+          "message_child",
+          "steer",
+          "guide"
+        ]
+      },
+      "source": {
+        "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+        "module": "ksadk/harness/native/state.py::RunCommand.priority",
+        "repo": "ksadk-python",
+        "test": "ksadk/harness/native/command_runtime.py::resolve_command_batch"
+      }
+    }
+  ],
+  "schema": "native-reference-oracle/v1",
+  "source": {
+    "branch": "feat-ksadk-harness-2",
+    "commit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+    "engine": "ksadk.harness.native.engine.NativeKernel",
+    "note": "Normalized outputs captured from real Python runs; no expected value hand-written.",
+    "repo": "ksadk-python",
+    "store": "ksadk.harness.stores.native_memory.MemoryRunStore"
+  }
+}
