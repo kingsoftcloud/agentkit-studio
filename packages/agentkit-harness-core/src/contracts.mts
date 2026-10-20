@@ -124,10 +124,16 @@ export interface BackgroundCommand {
 export interface ToolErrorStreak {
   signature: string; count: number; modelCall: number; goalRevision: number; workspaceRevision: string | null;
 }
+export interface PreparedContext {
+  messages: Message[];
+  /** Binds this disposable model view to the immutable transcript and environment. */
+  sourceDigest: string;
+}
 export interface RunSnapshot extends RunIdentity {
   schemaVersion: typeof NATIVE_SCHEMA; configDigest: string; revision: number; eventSeq: number;
   phase: Phase; resumePhase: Phase | null; goal: string; goalRevision: number;
-  messages: Message[]; pendingTools: ToolCall[]; pendingIntent: string | null;
+  messages: Message[]; preparedContext: PreparedContext | null; queuedGuidance: Message[];
+  pendingTools: ToolCall[]; pendingIntent: string | null;
   pendingInteraction: PendingInteraction | null; interaction: ObjectValue | null;
   usage: Usage; descendantUsage: Usage; modelErrors: number; providerErrors: number;
   continuations: number; outputRestarts: number; repairs: number;
@@ -192,6 +198,7 @@ export interface ToolPort { execute(request: ToolRequest): Promise<ToolResult> }
 export interface WorkspaceObservation { revision: string | null; changedPaths: string[]; status: 'ok' | 'unavailable'; reason: string | null }
 export interface WorkspacePort { observe(request: PortContext): Promise<WorkspaceObservation> }
 export interface ContextPort {
+  /** context is adapter state, persisted under snapshot.context.adapter. Original messages are never replaced. */
   prepare(request: PortContext & { snapshot: RunSnapshot; configuration: RunConfiguration; forceCompaction: boolean }): Promise<{ messages: Message[]; context: ObjectValue }>;
 }
 export interface VerificationPort {

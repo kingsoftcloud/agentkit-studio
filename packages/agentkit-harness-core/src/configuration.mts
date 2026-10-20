@@ -94,7 +94,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     messages: [
       ...(configuration.instructions ? [{ role: 'system' as const, content: configuration.instructions, persistent: true }] : []),
       { role: 'user' as const, content: configuration.contract.objective },
-    ], pendingTools: [], pendingIntent: null, pendingInteraction: null, interaction: null,
+    ], preparedContext: null, queuedGuidance: [], pendingTools: [], pendingIntent: null, pendingInteraction: null, interaction: null,
     usage: emptyUsage(), descendantUsage: emptyUsage(), modelErrors: 0, providerErrors: 0,
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,

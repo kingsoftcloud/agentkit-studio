@@ -1,6 +1,6 @@
-import type { CommitBatch, EffectIntent, EffectKind, EffectReceipt, NativeEvent, ObjectValue, Phase, RunCommand, RunSnapshot } from './contracts.mjs';
+import type { CommitBatch, EffectIntent, EffectKind, EffectReceipt, Message, NativeEvent, ObjectValue, Phase, RunCommand, RunSnapshot } from './contracts.mjs';
 import { terminal } from './contracts.mjs';
-import { copy, invariant, runKey } from './values.mjs';
+import { canonical, copy, invariant, runKey } from './values.mjs';
 
 export function transition(snapshot: RunSnapshot, changes: Partial<RunSnapshot>, facts: { kind: string; payload: ObjectValue }[] = [],
   options: { intents?: EffectIntent[]; receipts?: EffectReceipt[]; commandId?: string; requireNoPendingCommands?: boolean } = {}): CommitBatch {
@@ -58,16 +58,30 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand): Commi
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
         changes = { goal: command.payload.text, goalRevision: snapshot.goalRevision + 1, phase: 'preparing_context',
+          preparedContext: null, queuedGuidance: [], finalText: '', outcome: null, reason: null,
           pendingTools: [], pendingInteraction: null, interaction: null, candidate: null, verification: null,
-          messages: [...snapshot.messages, { role: 'user', content: command.payload.text, kind: 'steering', persistent: true }],
+          messages: [...snapshot.messages, ...snapshot.pendingTools.map(call => ({ role: 'tool' as const, callId: call.callId, name: call.name,
+            content: canonical({ status: 'not_dispatched', reason: 'goal_steered', executed: false }) })),
+          ...snapshot.queuedGuidance, { role: 'user', content: command.payload.text, kind: 'steering', persistent: true }],
           context: { ...snapshot.context, preparedCursor: null } };
+        for (const call of snapshot.pendingTools) facts.push({ kind: 'tool.not_dispatched', payload: {
+          callId: call.callId, name: call.name, reason: 'goal_steered' } });
       }
       break;
     case 'guide':
       if (typeof command.payload.text !== 'string' || !command.payload.text.trim()) reason = 'invalid_guidance';
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
-      else changes = { messages: [...snapshot.messages, { role: 'user', content: command.payload.text, kind: 'guidance', persistent: true }],
-        context: { ...snapshot.context, preparedCursor: null } };
+      else {
+        const guidance: Message = { role: 'user', content: command.payload.text, kind: 'guidance', persistent: true };
+        changes = { preparedContext: null, context: { ...snapshot.context, preparedCursor: null } };
+        if (snapshot.pendingTools.length) changes.queuedGuidance = [...snapshot.queuedGuidance, guidance];
+        else {
+          changes.messages = [...snapshot.messages, guidance];
+          if (['verifying', 'finalizing'].includes(snapshot.phase)) Object.assign(changes, {
+            phase: 'preparing_context', candidate: null, verification: null, finalText: '', outcome: null, reason: null,
+          });
+        }
+      }
       break;
     default:
       reason = 'child_lifecycle_command_pending';

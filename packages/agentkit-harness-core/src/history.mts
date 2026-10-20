@@ -22,7 +22,7 @@ export function projectSessionHistory(parent: StoredRun | null, configuration: R
         instruction: 'No committed result is available. Check actual state before assuming success or repeating a side effect.' }) });
     pending.clear();
   };
-  for (const [index, original] of snapshot.messages.entries()) {
+  for (const [index, original] of [...snapshot.messages, ...snapshot.queuedGuidance].entries()) {
     if (original.role === 'system' || original.kind && !inheritedKinds.has(original.kind) && original.role !== 'tool') continue;
     const message = copy(original);
     const source = message.history ?? { sourceRunId: snapshot.runId, sourceIndex: index };

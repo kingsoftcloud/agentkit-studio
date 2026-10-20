@@ -53,6 +53,9 @@ export interface PlanCapabilities { context: boolean; workspace: boolean; verifi
 export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabilities: PlanCapabilities): CommitBatch | null {
   if (snapshot.phase === 'paused' || snapshot.phase === 'awaiting_interaction') return null;
   invariant(snapshot.pendingIntent === null, 'pending_effect_requires_dispatch');
+  if (!snapshot.pendingTools.length && snapshot.queuedGuidance.length) return transition(snapshot, {
+    messages: [...snapshot.messages, ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null,
+  });
   if (snapshot.phase === 'finalizing') {
     if (snapshot.candidate && snapshot.verification && snapshot.verification.workspaceDependency !== 'none'
       && capabilities.workspace && snapshot.context.terminalWorkspaceCursor !== snapshot.candidate.candidateId) {
@@ -77,7 +80,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
   }
   if (snapshot.phase === 'preparing_context' || snapshot.phase === 'compacting') {
     if (snapshot.phase === 'compacting' && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_compaction_unavailable');
-    if (capabilities.context && snapshot.context.preparedCursor !== cursor) {
+    if (capabilities.context && (snapshot.preparedContext === null || snapshot.context.preparedCursor !== cursor)) {
       return prepareEffect(snapshot, 'context', snapshot.phase, { cursor, forceCompaction: snapshot.phase === 'compacting' });
     }
     const streak = snapshot.toolErrorStreak;
@@ -89,7 +92,8 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
       { usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls + 1 } });
   }
   if (snapshot.phase === 'executing_tools') {
-    if (!snapshot.pendingTools.length) return transition(snapshot, { phase: 'preparing_context', interaction: null });
+    if (!snapshot.pendingTools.length) return transition(snapshot, { phase: 'preparing_context', interaction: null,
+      messages: [...snapshot.messages, ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null });
     const first = snapshot.pendingTools[0]!;
     const definition = config.tools.find(tool => tool.name === first.name);
     if (!definition || config.contract.allowedToolNames !== null && !config.contract.allowedToolNames.includes(first.name)) {
@@ -151,7 +155,7 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
   const result = validateModelResult(input);
   const replay = boundReplay(result, config);
   const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
-  const base: Partial<RunSnapshot> = { pendingIntent: null, usage,
+  const base: Partial<RunSnapshot> = { pendingIntent: null, preparedContext: null, usage,
     ...(result.usageReported === false ? { diagnostics: { ...snapshot.diagnostics, providerUsageIncomplete: true } } : {}) };
   const message: Message = { role: 'assistant', content: result.text,
     ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) };

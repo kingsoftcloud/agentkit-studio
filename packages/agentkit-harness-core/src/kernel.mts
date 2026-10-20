@@ -10,6 +10,7 @@ import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { recoverClaimed } from './recovery.mjs';
 import { toolInputRejection } from './tool-input.mjs';
+import { contextSourceDigest, modelContextMessages, validateContextMessages } from './context-view.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -188,6 +189,7 @@ export class NativeKernel {
           const observation = raw as unknown as WorkspaceObservation;
           invariant(['ok', 'unavailable'].includes(observation.status) && Array.isArray(observation.changedPaths), 'invalid_workspace_observation');
           changes = { pendingIntent: null, workspaceRevision: observation.revision,
+            ...(snapshot.workspaceRevision !== observation.revision ? { preparedContext: null } : {}),
             context: { ...snapshot.context, [intent.payload.purpose === 'terminal' ? 'terminalWorkspaceCursor' : 'workspaceCursor']: intent.payload.cursor ?? null },
             workspaceModifiedPaths: [...new Set([...snapshot.workspaceModifiedPaths, ...observation.changedPaths])] };
           if (snapshot.candidate && ['verifying', 'finalizing'].includes(snapshot.phase)
@@ -204,16 +206,21 @@ export class NativeKernel {
           break;
         }
         case 'context':
-          invariant(Array.isArray(raw.messages), 'invalid_prepared_context');
-          changes = { pendingIntent: null, phase: 'preparing_context', messages: raw.messages as unknown as RunSnapshot['messages'],
-            context: { ...snapshot.context, ...objectValue(raw.context), preparedCursor: intent.payload.cursor ?? null } };
+          changes = { pendingIntent: null, phase: 'preparing_context',
+            preparedContext: { messages: validateContextMessages(raw.messages), sourceDigest: contextSourceDigest(snapshot, this.digest) },
+            context: { ...snapshot.context, adapter: objectValue(raw.context), preparedCursor: intent.payload.cursor ?? null } };
+          facts.push({ kind: 'context.prepared', payload: { sourceDigest: changes.preparedContext!.sourceDigest,
+            messageCount: changes.preparedContext!.messages.length, forceCompaction: intent.payload.forceCompaction === true } });
           break;
         case 'verify': changes = reduceVerification(snapshot, raw as unknown as VerificationReport, configuration); break;
         default: throw new NativeError('effect_port_not_implemented');
       }
     } catch (error) {
       const code = error instanceof NativeError ? error.code : 'effect_port_error';
-      if (intent.kind === 'model' && !signal.aborted && ['effect_timeout', 'effect_port_error'].includes(code)) {
+      if (['invalid_context_messages', 'invalid_context_tool_pairing', 'context_binding_mismatch'].includes(code)) {
+        raw = { code }; status = 'failed';
+        changes = { pendingIntent: null, preparedContext: null, phase: 'finalizing', outcome: 'blocked', reason: code };
+      } else if (intent.kind === 'model' && !signal.aborted && ['effect_timeout', 'effect_port_error'].includes(code)) {
         const result: ModelResult = { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false,
           failureKind: code === 'effect_timeout' ? 'request_timeout' : 'host_error' };
         raw = objectValue(result);
@@ -234,7 +241,7 @@ export class NativeKernel {
     switch (intent.kind) {
       case 'model': {
         const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
-        const request: ModelRequest = { ...context, profile: copy(configuration.profile), messages: copy(snapshot.messages),
+        const request: ModelRequest = { ...context, profile: copy(configuration.profile), messages: modelContextMessages(snapshot, this.digest),
           tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
           maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
         return this.ports.model.generate(request, event => { if (!context.signal.aborted) this.onStream(context, event); });
