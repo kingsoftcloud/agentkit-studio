@@ -13,7 +13,7 @@ const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
 
-export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, validatePrevious, assistant, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
+export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, validatePrevious, assistant, hosted, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
   if (!agentId || !/^build_[0-9a-f]{20}$/.test(buildId || '') || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const declaredPolicy = readExecutionPolicy(executionPolicy);
   const tokenHash = hash(token);
@@ -65,8 +65,10 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
         target.abort.abort(fail('RUNTIME_CANCELLED', 409));
         json(res, 202, { runId: targetId, ...(cancelResponse ? { id: cancelResponse[1] } : {}), cancellationRequested: true }); return;
       }
-      const isResponses = url.pathname === '/v1/responses';
-      if (req.method !== 'POST' || (!isResponses && url.pathname !== '/runs')) throw fail('RUNTIME_ROUTE_NOT_FOUND', 404);
+      const action = /^\/agentengine\/api\/v1\/([A-Za-z]+)$/.exec(url.pathname)?.[1];
+      const isHostedRun = action === 'RunAgent' && hosted;
+      const isResponses = url.pathname === '/v1/responses' || isHostedRun;
+      if (req.method !== 'POST' || (!isResponses && url.pathname !== '/runs' && !(action && hosted))) throw fail('RUNTIME_ROUTE_NOT_FOUND', 404);
       if (isResponses && req.headers['last-event-id']) throw fail('RESPONSES_STREAM_REPLAY_UNSUPPORTED');
       if (!String(req.headers['content-type'] || '').startsWith('application/json')) throw fail('RUNTIME_JSON_REQUIRED', 415);
       const chunks = []; let bytes = 0;
@@ -77,11 +79,16 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
       }
       let input;
       try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fail('RUNTIME_INVALID_JSON'); }
+      if (action && hosted && !isHostedRun) {
+        const data = await hosted.dispatch(action, input, req.headers, AbortSignal.timeout(15000));
+        json(res, 200, { Code: 0, Message: 'Success', Action: action, Data: data }); return;
+      }
       if (!isResponses && (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['input', 'sessionId', 'requestId', 'stream'].includes(key))
         || typeof input.input !== 'string' || !input.input.trim() || typeof input.requestId !== 'string' || !identity(input.requestId)
         || (input.sessionId !== undefined && (typeof input.sessionId !== 'string' || !identity(input.sessionId)))
         || (input.stream !== undefined && typeof input.stream !== 'boolean'))) throw fail('RUNTIME_INPUT_INVALID');
-      if (isResponses) input = responses.parse(input, req.headers);
+      if (isResponses) input = isHostedRun ? hosted.responsesInput(input, req.headers) : responses.parse(input, req.headers);
+      if (input.hosted) await hosted.prepareRun(input);
       const sessionId = isResponses ? input.sessionId : `runtime-${hash(`${agentId}\0${buildId}\0${input.sessionId || input.requestId}`).toString('hex').slice(0, 32)}`;
       runId = isResponses ? input.runId : `run_${hash(`${sessionId}\0${input.requestId}`).toString('hex').slice(0, 32)}`;
       if (active.has(runId)) throw fail('RUNTIME_RUN_ACTIVE', 409);
@@ -111,6 +118,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
       if (abort.signal.aborted) throw abort.signal.reason;
       const value = { ...result, requestId: input.requestId, runtimeRunId: runId, buildId };
       if (projection) {
+        if (input.hosted) await hosted.flushRun(input);
         const response = projection.complete(result);
         if (input.stream) res.end('data: [DONE]\n\n'); else json(res, 200, response);
       } else if (input.stream) { emit('run.completed', value); res.end(); } else json(res, 200, value);

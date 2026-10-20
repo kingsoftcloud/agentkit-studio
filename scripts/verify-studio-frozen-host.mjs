@@ -43,7 +43,7 @@ const deadline = async (promise, ms = 15000) => {
 };
 const frame = value => `data: ${JSON.stringify(value)}\n\n`;
 const requests = [];
-const businessInputs = new Set(['tool-and-freeze', 'continue-context', 'alternate-model', 'check-model-after-replay', 'cancel-me', 'unload-me']);
+const businessInputs = new Set(['hosted-first', 'hosted-second', 'tool-and-freeze', 'continue-context', 'alternate-model', 'check-model-after-replay', 'cancel-me', 'unload-me']);
 let auxiliaryModelCalls = 0;
 let toolCalls = 0, pending;
 const modelServer = createServer(async (request, response) => {
@@ -60,6 +60,12 @@ const modelServer = createServer(async (request, response) => {
       auxiliaryModelCalls++;
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end(frame({ choices: [{ delta: { content: 'Frozen runtime verification' }, finish_reason: 'stop' }] }) + 'data: [DONE]\n\n');
+      return;
+    }
+    if (input === 'hosted-first' || input === 'hosted-second') {
+      if (input === 'hosted-second') assert.ok(JSON.stringify(body.messages).includes('HOSTED_FIRST_OK'), 'Hosted follow-up must restore the prior native conversation');
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(frame({ choices: [{ delta: { content: input === 'hosted-first' ? 'HOSTED_FIRST_OK' : 'HOSTED_SECOND_OK' }, finish_reason: 'stop' }] }) + 'data: [DONE]\n\n');
       return;
     }
     const withTool = body.messages.some(item => item.role === 'tool' && JSON.stringify(item.content).includes('FROZEN_TOOL_OK'));
@@ -256,6 +262,34 @@ try {
   assert.equal(events.filter(item => item.type === 'studio/runtime-model').length, 0);
   assert.ok(events.filter(item => item.type === 'user/message' && item.data.source?.rpcId).every(item => /^[a-f0-9]{64}$/.test(item.data.source.requestFingerprint)));
   check('durable-session-tool-result-and-run-identities', { completedTurns: 2, toolCalls: 1, model: 'model-a' });
+  stage = 'generic-hosted-native-history';
+  const hostedHeaders = { ...headers, 'x-agentengine-identity-namespace': 'kscloud-iam',
+    'x-agentengine-business-tenant-id': 'fixture-tenant', 'x-agentengine-subject-type': 'user', 'x-agentengine-subject-id': 'fixture-owner' };
+  const hostedAction = (action, payload = {}, extraHeaders = {}) => fetch(`${runtimeOrigin}/agentengine/api/v1/${action}`, {
+    method: 'POST', headers: { ...hostedHeaders, ...extraHeaders }, body: JSON.stringify(payload), signal: AbortSignal.timeout(30000) });
+  const hostedSession = 'sess-hosted-real-dsh';
+  const create = await hostedAction('CreateSession', { SessionId: hostedSession });
+  assert.equal(create.status, 200, await create.clone().text());
+  const invoke = async (input, invocation) => {
+    const response = await hostedAction('RunAgent', { SessionId: hostedSession, InvocationId: invocation, ResponsesInput: input, Stream: true, Model: 'model-a' });
+    const stream = await response.text();
+    assert.equal(response.status, 200, stream); assert.ok(stream.includes('response.completed'), stream);
+    assert.ok(stream.includes(input === 'hosted-first' ? 'HOSTED_FIRST_OK' : 'HOSTED_SECOND_OK'), stream);
+    return stream;
+  };
+  await invoke('hosted-first', 'hosted-one');
+  const firstPage = await (await hostedAction('ListSessionMessages', { SessionId: hostedSession })).json();
+  assert.deepEqual(firstPage.Data.Messages.map(message => message.Content.text), ['hosted-first', 'HOSTED_FIRST_OK']);
+  await fiber.dispose(); fiber = undefined; await running.shutdown.shutdown(0); running = undefined;
+  await boot(); await mount(runtime);
+  const coldPage = await (await hostedAction('ListSessionMessages', { SessionId: hostedSession })).json();
+  assert.deepEqual(coldPage.Data, firstPage.Data, 'A cold Host restores exact native messages and epoch');
+  await invoke('hosted-second', 'hosted-two');
+  const nextPage = await (await hostedAction('ListSessionMessages', { SessionId: hostedSession })).json();
+  assert.deepEqual(nextPage.Data.Messages.map(message => message.Content.text), ['hosted-first', 'HOSTED_FIRST_OK', 'hosted-second', 'HOSTED_SECOND_OK']);
+  assert.equal(nextPage.Data.Messages.at(-1).InvocationId, 'hosted-two');
+  assert.equal((await hostedAction('ListSessionMessages', { SessionId: hostedSession }, { 'x-agentengine-subject-id': 'foreign' })).status, 404);
+  check('generic-hosted-responses-and-native-history-after-cold-host-restart', { turns: 2, messages: 4, principalIsolation: true, epoch: nextPage.Data.HistoryEpoch });
   const unbound = await post({ input: 'unbound', request_id: 'unbound', model: 'model-outside-build' });
   assert.equal(unbound.status, 400); assert.equal((await unbound.json()).error.code, 'RESPONSES_FROZEN_MODEL_MISMATCH');
   check('unbound-model-cannot-enter-old-build');
