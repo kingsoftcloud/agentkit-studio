@@ -54,17 +54,22 @@ function readBoundFile(root, path, maxBytes) {
   } finally { closeSync(fd); }
 }
 
-export async function createBrowserWorkspaceServer({ root, path, maxFileBytes = 32 * 1024 * 1024,
-  maxFiles = 4096, signal } = {}) {
-  signal?.throwIfAborted();
+export function resolveBrowserWorkspaceEntry(root, path) {
   if (typeof root !== 'string' || !isAbsolute(root)) fail('workspace_root_invalid');
-  if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1 || maxFileBytes > 2 ** 30
-    || !Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 65536) fail('browser_server_limits_invalid');
   const workspace = realpathSync(root);
   let entry = bound(workspace, resolve(workspace, safeRelative(path)));
   if (statSync(entry).isDirectory()) entry = bound(workspace, join(entry, 'index.html'));
   if (!statSync(entry).isFile() || !['.html', '.htm'].includes(extname(entry).toLowerCase())) fail('browser_entry_not_found');
-  const servedRoot = dirname(entry), prefix = `/${randomBytes(24).toString('hex')}/`, generated = new Map();
+  return { workspace, entry, servedRoot: dirname(entry) };
+}
+
+export async function createBrowserWorkspaceServer({ root, path, maxFileBytes = 32 * 1024 * 1024,
+  maxFiles = 4096, signal } = {}) {
+  signal?.throwIfAborted();
+  if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1 || maxFileBytes > 2 ** 30
+    || !Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 65536) fail('browser_server_limits_invalid');
+  const { workspace, entry, servedRoot } = resolveBrowserWorkspaceEntry(root, path);
+  const prefix = `/${randomBytes(24).toString('hex')}/`, generated = new Map();
   let origin, closed = false, closing;
 
   function revision() {
