@@ -47,13 +47,21 @@ export function createFrozenHostedActions({ ctx, agentId, buildId, token, frozen
     try {
       const epoch = createHmac('sha256', token).update(JSON.stringify([buildId, nativeId, observation.header.createdAt])).digest('hex');
       const mappings = new Map(observation.events.filter(event => event.type === 'studio/hosted-request').map(event => [event.data.runId, event.data.invocationId]));
+      const requestsByStart = new Map(); let start;
+      for (const event of observation.events) {
+        if (event.type === 'turn/start') start = event.seq + 1;
+        if (start !== undefined && event.type === 'user/message' && event.data?.source?.rpcId && !requestsByStart.has(start)) requestsByStart.set(start, event.data.source.rpcId);
+      }
       const safeEvents = displayEvents(observation.events);
       // Preserve native seq positions: hidden internal facts remain empty entries in a bounded slice.
       const safe = new Map(safeEvents.map(event => [event.seq, event]));
       const handle = { read: async (offset, length) => ({ events: observation.events.slice(offset, offset + length).map(event => safe.get(event.seq) || { seq: event.seq, type: 'internal', data: {} }) }) };
       return await (events ? readFrozenSessionEvents : readFrozenSessionMessages)({ handle,
         session: { sessionId: request.SessionId, nativeSessionId: nativeId, epoch }, latestSeq: observation.cursor + 1,
-        request, signal, invocationId: async (_id, run) => mappings.get(run) || run });
+        request, signal, invocationId: async (_id, run, start) => {
+          const nativeRun = run || requestsByStart.get(start);
+          return nativeRun ? mappings.get(nativeRun) || nativeRun : null;
+        } });
     } finally { observation[Symbol.dispose](); }
   }
   return {

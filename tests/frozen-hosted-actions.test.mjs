@@ -78,8 +78,12 @@ test('cold Hosted history reads only native persisted facts, with owner/build is
   assert.deepEqual(restored, first);
   const events = await hosted.dispatch('ListSessionEvents', { ...request, Offset: 0, EventOrder: 'session_seq' }, headers, signal);
   assert.deepEqual(events.Events.map(x => x.EventType), ['run_status', 'user_message', 'assistant_message', 'run_status']);
+  const suffix = await hosted.dispatch('ListSessionEvents', { ...request, Limit: 3 }, headers, signal);
+  const prefix = await hosted.dispatch('ListSessionEvents', { ...request, Limit: 3, BeforeSeqId: suffix.NextCursor,
+    HistoryEpoch: suffix.HistoryEpoch, SnapshotSeqId: suffix.SnapshotSeqId }, headers, signal);
+  assert.deepEqual([...prefix.Events, ...suffix.Events].map(x => x.SeqId), events.Events.map(x => x.SeqId), 'small backward pages must retain the run-start before its user header');
   await assert.rejects(hosted.dispatch('ListSessionMessages', request, { ...headers, 'x-agentengine-subject-id': 'foreign' }, signal));
   assert.throws(() => hosted.responsesInput({ SessionId: 'sess-cold', InvocationId: 'same', ResponsesInput: 'hello', UserId: 'owner' }, headers), { code: 'RUNTIME_RUN_INPUT_UNSUPPORTED' });
   await assert.rejects(hosted.dispatch('ListSessionMessages', { ...request, HistoryEpoch: 'foreign' }, headers, signal), { code: 'HISTORY_RELOAD_REQUIRED' });
-  assert.ok(flushes > 0); assert.equal(disposals, 4);
+  assert.ok(flushes > 0); assert.equal(disposals, 6);
 });

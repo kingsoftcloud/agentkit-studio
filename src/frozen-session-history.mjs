@@ -34,8 +34,10 @@ function selectGroups(groups, limit, forward) {
 
 async function projectGroup(group, session, invocationId, options) {
   const request = group.events.find(event => event.type === 'user/message' && event.data?.source?.rpcId)?.data.source.rpcId;
-  if (!request) return [];
-  const invocation = await invocationId(session.nativeSessionId, request);
+  // An event page may cut immediately after turn/start. Resolve its identity
+  // from the caller's same native observation, without emitting later events.
+  const invocation = await invocationId(session.nativeSessionId, request, group.start);
+  if (!invocation) return [];
   if (options.kind === 'events') return group.events.filter(event => publicEventTypes.has(event.type)).map(event => {
     const data = event.data || {}, message = event.type === 'user/message' ? data : data.message;
     const value = text(content(message?.content));
