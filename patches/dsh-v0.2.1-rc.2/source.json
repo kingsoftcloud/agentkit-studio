@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
+  "headCommit": "058b3247e21649c31db1b28dc813f8117aa38ecf",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-11",
-  "tree": "0331b5810698a91b459a1a6f70aade3691ef0392",
-  "sourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
+  "tree": "02c3a9d4836d41283ea90a205ce2a0bbf749af0d",
+  "sourceSha256": "8fa282c5d6cafe75aeed562eab52f719a3685412a34367cf3ef2f79a607ea0ea",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "035164e7cc34c39d0326cd4eef11e6a2c9c64afc7a3f798275a092e9620dc3b2"
+    "sha256": "a1fb6a9e8cdc2557e123d22b37123ae109e455d737ecad19e7cbfcb13b2042c4"
   },
   "commits": [
     {
@@ -238,6 +238,12 @@
       "file": "045-tool-dispatch-definition.patch",
       "commit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
       "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+    },
+    {
+      "id": "046",
+      "file": "046-macos-studio-identity.patch",
+      "commit": "058b3247e21649c31db1b28dc813f8117aa38ecf",
+      "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1"
     }
   ]
 }

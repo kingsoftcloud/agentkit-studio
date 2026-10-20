@@ -1868,12 +1868,58 @@
         "packages/core/tools/tests/scoped.spec.ts"
       ],
       "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+    },
+    {
+      "id": "046",
+      "file": "046-macos-studio-identity.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1",
+      "dependsOn": [
+        "032",
+        "039",
+        "040",
+        "041"
+      ],
+      "affectedFiles": [
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/src/paths.ts",
+        "apps/desktop/tests/product-branding.spec.ts",
+        "apps/desktop/tests/studio-paths.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-desktop-host"
+      ],
+      "contracts": [
+        "macOS Studio 与官方 DSH 并行运行：产品独立 Electron 名称、单实例锁、用户数据目录与插件 profile；会话、凭证与工作区保留共享 DSH Home"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游桌面产品身份配置提供等价的多产品并行锁、用户数据目录与产品 profile 合同",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/product-branding.spec.ts",
+          "apps/desktop/tests/studio-paths.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos"
+        ]
+      }
     }
   ],
-  "patchedTree": "0331b5810698a91b459a1a6f70aade3691ef0392",
-  "patchedSourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
+  "patchedTree": "02c3a9d4836d41283ea90a205ce2a0bbf749af0d",
+  "patchedSourceSha256": "8fa282c5d6cafe75aeed562eab52f719a3685412a34367cf3ef2f79a607ea0ea",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "9ef4079d985adc9494ec8fa90b0795a242f737d5c163e70d74f1f84eb942dc83"
+    "sha256": "7fa5c2752afc11fb4938f8e561d8246af789fa84ff94a0caebbc16879f016f8b"
   }
 }
