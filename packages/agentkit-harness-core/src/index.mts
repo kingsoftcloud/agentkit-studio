@@ -8,3 +8,5 @@ export * from './kernel.mjs';
 export * from './history.mjs';
 export * from './verification.mjs';
 export * from './retry.mjs';
+export * from './final-submission.mjs';
+export * from './model-json.mjs';

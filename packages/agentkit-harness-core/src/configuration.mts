@@ -1,6 +1,7 @@
 import { emptyUsage, NATIVE_ENGINE, NATIVE_SCHEMA } from './contracts.mjs';
 import type { ModelProfile, RunConfiguration, RunIdentity, RunLimits, RunSnapshot, TaskContract, ToolDefinition } from './contracts.mjs';
 import { canonical, copy, invariant, scopeKey } from './values.mjs';
+import { validateSubmissionContract } from './final-submission.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -28,7 +29,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
     stopHookContinuationLimit: input.stopHookContinuationLimit ?? 0, delegationDepth: input.delegationDepth ?? 0,
     contract: { revision: '1', constraints: [], acceptance: [], allowedToolNames: null,
-      finalSubmissionSchema: null, finalSubmissionPayloadKey: null, ...input.contract },
+      finalSubmissionSchema: null, finalSubmissionPayloadKey: null, finalOutputFormat: 'text', ...input.contract },
   };
   canonical(config);
   invariant(config.contract.objective.trim() && config.hostBindingDigest.trim()
@@ -71,6 +72,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(new Set(config.contextSources.map(source => source.sourceId)).size === config.contextSources.length, 'duplicate_context_source');
   invariant(config.hooks.every(hook => hook.timeoutMs > 0 && hook.timeoutMs < limits.effectTimeoutMs), 'invalid_hook_timeout');
   invariant(!config.hooks.some(hook => hook.events.includes('Stop')) || config.stopHookContinuationLimit > 0, 'stop_hook_requires_limit');
+  invariant(['text', 'json_object', 'json_value'].includes(config.contract.finalOutputFormat), 'invalid_final_output_format');
+  validateSubmissionContract(config);
   return copy(config);
 }
 export function initialSnapshot(identity: RunIdentity, configuration: RunConfiguration, configDigest: string): RunSnapshot {

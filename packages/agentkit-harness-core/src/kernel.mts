@@ -167,7 +167,9 @@ export class NativeKernel {
           const result = normalizeToolIdentities(snapshot, raw as unknown as ModelResult, this.digest);
           changes = reduceModel(snapshot, result, configuration, this.now(), this.random());
           if (changes.candidate) changes.candidate = sealCandidate(changes.candidate, { ...snapshot, ...changes }, configuration, this.digest);
-          facts.push({ kind: 'model.completed', payload: { kind: result.kind, text: result.text,
+          const rejectedDraft = configuration.contract.finalSubmissionSchema !== null && result.kind === 'final_candidate';
+          facts.push({ kind: 'model.completed', payload: { kind: result.kind, text: rejectedDraft ? '' : result.text,
+            ...(rejectedDraft ? { candidateStatus: 'rejected' } : {}),
             toolCalls: result.toolCalls.map(objectValue), usage: objectValue(result.usage) } });
           break;
         }

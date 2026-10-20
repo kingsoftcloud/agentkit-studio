@@ -59,6 +59,7 @@ export interface TaskContract {
   objective: string; revision: string; constraints: string[]; acceptance: AcceptanceItem[];
   allowedToolNames: string[] | null; finalSubmissionSchema: ObjectValue | null;
   finalSubmissionPayloadKey: string | null;
+  finalOutputFormat: 'text' | 'json_object' | 'json_value';
 }
 export interface HookDefinition {
   hookId: string; events: ('PreToolUse' | 'PostToolUse' | 'PreCompact' | 'Stop')[]; timeoutMs: number;

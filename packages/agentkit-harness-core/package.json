@@ -6,5 +6,6 @@
   "description": "Host-independent Native Harness contracts, transitions and durable execution.",
   "exports": { ".": { "types": "./dist/index.d.mts", "default": "./dist/index.mjs" } },
   "files": ["dist", "src"],
+  "dependencies": { "ajv": "8.17.1" },
   "scripts": { "build": "node ../../scripts/build-native-harness.mjs", "test": "node --test test/*.test.mjs" }
 }

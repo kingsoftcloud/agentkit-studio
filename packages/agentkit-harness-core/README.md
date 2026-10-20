@@ -14,6 +14,8 @@
 
 `verified` 要求当前候选、契约版本、上下文、环境及 verifier 身份匹配，并且所有必需验收项都具有合格的非模型辅助证据。缺失证据保持 `unverified`，部分通过保留 `partial`。终态提交前重新观察工作区；变更会使旧报告失效。没有可交付文本的耗尽运行进入 `failed`，未知副作用进入 `interrupted`。
 
+契约可固定 `finalOutputFormat` 和 `finalSubmissionSchema`。有 schema 时，模型必须通过内部 `submit_final_output` 提交；Ajv 按 Draft 2020-12 验证参数，禁止引用、过深或超长 schema。提交工具在最终预算保留阶段仍可用，不产生工作区副作用。混合批次、无效提交和虚构工具有明确拒绝与重试上限。普通答案的 JSON 格式归验证端判断，核心只解包完整、无歧义的 JSON 围栏。
+
 事件序号与投影确认游标支持有序重放。跨数据库投影还需消费方按照事件身份幂等写入；单独更新游标不能消除“写入成功、确认前崩溃”的重复窗口。供应商私有回放只存于运行历史，不进入公开事件。
 
 在仓库根目录执行 `node scripts/build-native-harness.mjs` 构建，再执行 `node --test packages/agentkit-harness-core/test/*.test.mjs` 验证核心。测试包含内存和 SQLite、事务回滚、数据库重开、真实进程退出、取消和迟到回执。项目最低 Node 版本的独立验证记录在迁移说明中。

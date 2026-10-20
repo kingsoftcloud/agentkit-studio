@@ -3,6 +3,7 @@ import type { CommitBatch, EffectIntent, EffectReceipt, Message, ModelResult, Ob
 import { copy, invariant, canonical } from './values.mjs';
 import { prepareEffect, transition } from './transitions.mjs';
 import { retryDelay } from './retry.mjs';
+import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normalizedFinalText } from './final-submission.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -34,8 +35,10 @@ export function finalizationOnly(snapshot: RunSnapshot, config: RunConfiguration
     || config.limits.maxWallMs !== null && config.limits.maxWallMs - snapshot.activeElapsedMs <= config.limits.finalizationReserveWallMs;
 }
 export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration) {
-  if (finalizationOnly(snapshot, config) || toolRoom(snapshot, config) <= 0) return [];
-  return config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name));
+  const submission = finalSubmissionTool(config);
+  const tools = finalizationOnly(snapshot, config) || toolRoom(snapshot, config) <= 0 ? []
+    : config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name));
+  return [...tools, ...(submission ? [submission] : [])];
 }
 export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean }
 /** Pure next action. Dispatch is impossible until its intent has been committed and claimed. */
@@ -137,19 +140,50 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
     ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) };
   switch (result.kind) {
     case 'tool_calls':
+      if (config.contract.finalSubmissionSchema && result.toolCalls.some(call => call.name === FINAL_SUBMISSION_TOOL)) {
+        const text = result.toolCalls.length === 1 ? submittedFinalText(result.toolCalls[0]!, config) : null;
+        const messages: Message[] = [...snapshot.messages, { ...message, toolCalls: result.toolCalls },
+          ...result.toolCalls.map(call => ({ role: 'tool' as const, callId: call.callId, name: call.name,
+            content: canonical({ status: text === null ? 'not_dispatched' : 'accepted',
+              reason: text === null ? 'final_submission_schema_or_batch_invalid' : 'final_submission_candidate' }) }))];
+        if (text !== null) return { ...base, phase: 'verifying', messages, pendingTools: [], modelErrors: 0, continuations: 0,
+          candidate: { candidateId: `${snapshot.runId}:candidate:${snapshot.usage.modelCalls}`, text,
+            goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision } };
+        const errors = snapshot.modelErrors + 1, exhausted = errors > config.profile.maxRetries;
+        return { ...base, messages, pendingTools: [], modelErrors: errors, phase: exhausted ? 'finalizing' : 'preparing_context',
+          outcome: exhausted ? 'unverified' : null, reason: exhausted ? 'final_submission_retry_exhausted' : null };
+      }
+      if (toolRoom(snapshot, config) <= 0) return { ...base, phase: 'finalizing', outcome: 'budget_exhausted', reason: 'tool_call_after_budget_exhaustion' };
+      if (finalizationOnly({ ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } }, config)) {
+        return { ...base, phase: 'finalizing', outcome: 'budget_exhausted', reason: 'tool_call_after_finalization_reserve' };
+      }
       if (result.toolCalls.some(call => !advertisedTools({ ...snapshot,
         usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } }, config).some(tool => tool.name === call.name))) {
-        return { ...base, phase: 'preparing_context', pendingTools: [], messages: [...snapshot.messages,
+        const unbound = result.toolCalls.some(call => !config.tools.some(tool => tool.name === call.name));
+        const errors = snapshot.modelErrors + Number(unbound), exhausted = errors > config.profile.maxRetries;
+        return { ...base, phase: exhausted ? 'finalizing' : 'preparing_context', pendingTools: [], modelErrors: errors,
+          outcome: exhausted ? 'blocked' : null, reason: exhausted ? 'tool_call_not_advertised_retry_exhausted' : null, messages: [...snapshot.messages,
           { ...message, toolCalls: result.toolCalls }, ...result.toolCalls.map(call => ({ role: 'tool' as const,
             callId: call.callId, name: call.name, content: canonical({ status: 'error', code: 'tool_not_advertised' }) }))] };
       }
       return { ...base, phase: 'executing_tools', pendingTools: result.toolCalls,
         messages: [...snapshot.messages, { ...message, toolCalls: result.toolCalls }],
         continuations: 0, modelErrors: 0 };
-    case 'final_candidate':
+    case 'final_candidate': {
+      const text = normalizedFinalText(result.text, config.contract.finalOutputFormat);
+      if (config.contract.finalSubmissionSchema) {
+        const errors = snapshot.modelErrors + 1;
+        const exhausted = errors > config.profile.maxRetries || modelRoom(snapshot, config) <= 0;
+        const reason = 'final_submission_missing';
+        return { ...base, phase: exhausted ? 'finalizing' : 'preparing_context', modelErrors: errors,
+          outcome: exhausted ? 'unverified' : null, reason: exhausted ? reason : null,
+          messages: [...snapshot.messages, { ...message, kind: 'unstructured_final_draft' },
+            { role: 'user', kind: 'final_submission_required', content: 'Submit the complete final answer through submit_final_output.' }] };
+      }
       return { ...base, phase: 'verifying', modelErrors: 0, candidate: { candidateId: `${snapshot.runId}:candidate:${snapshot.usage.modelCalls}`,
-        text: result.text, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision },
-        messages: [...snapshot.messages, { ...message, kind: 'final_candidate' }] };
+        text, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision },
+        messages: [...snapshot.messages, { ...message, content: text, kind: 'final_candidate' }] };
+    }
     case 'output_limit': {
       if (snapshot.continuations >= config.profile.maxContinuations) return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'continuation_budget_exhausted' };
       return { ...base, phase: 'preparing_context', continuations: snapshot.continuations + 1,

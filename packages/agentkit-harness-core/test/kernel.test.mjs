@@ -123,7 +123,7 @@ test('no-tool budget finalization cannot dispatch unadvertised tools', async t =
     tools: async () => { tools++; return { status: 'ok', content: '' }; },
   });
   const result = await kernel.runUntilIdle(scope, 'run');
-  assert.equal(result.reason, 'model_budget_exhausted'); assert.equal(result.outcome, 'budget_exhausted'); assert.equal(tools, 0);
+  assert.equal(result.reason, 'tool_call_after_finalization_reserve'); assert.equal(result.outcome, 'budget_exhausted'); assert.equal(tools, 0);
   assert.equal(result.phase, 'failed');
 });
 test('failed verification repairs through another model turn before reporting verified', async t => {
