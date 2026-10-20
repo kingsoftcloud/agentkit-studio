@@ -36,6 +36,7 @@ const O_RDONLY = fsConstants.O_RDONLY;
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import {
   assertNonEmptyString, buildArtifactUri, canonicalStringify, decodeUtf8Fatal,
   encodeUtf8, identityDigest, jsonEquals, parseArtifactUri, runDigest,
@@ -59,10 +60,17 @@ const TMP_INFIX = '.tmp.';
 const HEX64 = /^[0-9a-f]{64}$/;
 const HOST = hostname();
 
-// Heartbeat interval while waiting for a stale lock, and the staleness
-// threshold for a lock whose owner appears to have died.
+// Async retry interval while waiting for a busy SQLite lock. This is never a
+// synchronous wait (see acquireRunLock): busy_timeout is 0 so a contending
+// taker throws immediately and retries via setTimeout, leaving the event loop
+// free for a same-process owner's pending filesystem await to proceed.
 const LOCK_POLL_MS = 50;
-const LOCK_STALE_MS = 30000;
+// Safety bound only. A crashed holder releases immediately — the OS reclaims the
+// connection's file descriptors and SQLite drops the write lock — so this bounds
+// only the wait for a live but slow holder. It is NOT a staleness threshold and
+// there is no stale-lock takeover.
+const LOCK_TIMEOUT_MS = 120000;
+const SQLITE_BUSY = 5;
 
 function err(code, message) {
   return Object.assign(new Error(message || code), { code });
@@ -81,6 +89,43 @@ function checkSignal(signal) {
 function crashHook(point) {
   if (point !== undefined && point !== null && process.env.NATIVE_ARTIFACT_CRASH_AFTER === point) {
     process.exit(0);
+  }
+}
+
+/** Test-only hold hook: pause at a controlled publish position while still
+ * holding the run lock, so a deterministic boundary-scheduling test can prove a
+ * concurrent taker waits (SQLITE_BUSY retry) rather than split-braining. Inert
+ * unless NATIVE_ARTIFACT_HOLD_AT matches the point AND NATIVE_ARTIFACT_HOLD_MS
+ * is a positive number. Never affects production (env unset). */
+async function holdHook(point) {
+  if (point !== undefined && point !== null && process.env.NATIVE_ARTIFACT_HOLD_AT === point) {
+    const ms = Number(process.env.NATIVE_ARTIFACT_HOLD_MS);
+    if (Number.isFinite(ms) && ms > 0) await new Promise((r) => setTimeout(r, ms));
+  }
+}
+
+/** Test-only signal: atomically drop a sentinel file once the run lock is held,
+ * so a boundary-scheduling test can deterministically start a competing taker
+ * AFTER the holder has acquired (no spawn-timing race). Inert unless
+ * NATIVE_ARTIFACT_SIGNAL_LOCK_FILE is set. Never affects production. */
+async function signalLockAcquired() {
+  const f = process.env.NATIVE_ARTIFACT_SIGNAL_LOCK_FILE;
+  if (!f) return;
+  const tmp = f + '.tmp.' + tempNonce();
+  let fh;
+  try {
+    fh = await fs.open(tmp, 'wx', 0o600);
+    await fh.writeFile(String(process.pid));
+    await fh.sync();
+  } finally {
+    try { if (fh) await fh.close(); } catch { /* ignore */ }
+  }
+  try {
+    await fs.link(tmp, f);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  } finally {
+    await safeUnlink(tmp);
   }
 }
 
@@ -418,197 +463,127 @@ async function cleanupStaleTempsIn(dir, root, maxAgeMs) {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-process per-run lock
+// Cross-process per-run lock (SQLite transaction)
 //
-// A `.lock` file in the run directory records the writer's pid, host, and a
-// monotonic heartbeat timestamp. Acquisition is O_EXCL (atomic across
-// processes). A would-be taker waits for the lock or, if the holder's
-// heartbeat is older than LOCK_STALE_MS, takes over: it renames the stale
-// lock aside and creates its own (both atomic in the run directory, so no
-// two takers can both succeed). Before publishing anything new, a taker
-// completes the interrupted publication the dead holder started, so there
-// is never a window with two active writers producing different results.
+// A per-run SQLite database at {root}/artifacts/.locks/{scopeDigest}/{runDigest}.sqlite
+// is the real exclusion primitive. Acquisition is `BEGIN IMMEDIATE`, which the
+// SQLite library serializes atomically across processes AND connections: the
+// first taker gets a RESERVED write lock, every concurrent taker gets SQLITE_BUSY.
+// The lock is owned by the LIVE database connection — it is held across the
+// writer's filesystem operations and released only when that connection commits
+// and closes. When the owning process dies (crash, kill, abort mid-write) the OS
+// reclaims the file descriptors and SQLite releases the lock automatically, so
+// there is no stale lock to "take over" and no split-brain window in which two
+// writers both believe they hold the lock. A would-be taker that finds the lock
+// busy retries asynchronously; with busy_timeout = 0 the retry never blocks the
+// event loop synchronously, so a same-process owner with a pending filesystem
+// await can still make progress (no deadlock).
+//
+// Owner identity (a per-acquire token, pid, host, bornAt) is recorded in a
+// single-row table inside the same transaction, so release is owner-bound: only
+// the holder's own connection can delete its row and commit — release is never
+// an unconditional unlink of a shared path. An uncommitted owner row left by a
+// crash is rolled back by SQLite journal recovery on the next open, so it never
+// persists as a stale owner; a partial database left by a creator crash is
+// likewise recovered by the rollback journal, so a missing/partial lock never
+// permanently prevents recovery.
 
-function lockPath(dir) {
-  return join(dir, LOCK_NAME);
+function lockDirPath(root, scopeDigestValue) {
+  return join(root, 'artifacts', '.locks', scopeDigestValue);
+}
+function lockDbPath(root, scopeDigestValue, runDigestValue) {
+  return join(lockDirPath(root, scopeDigestValue), runDigestValue + '.sqlite');
 }
 
-function lockPayload(pid, bornAt, heartbeatAt) {
-  return { pid, host: HOST, bornAt, heartbeatAt };
+function isSqliteBusy(error) {
+  return !!error && (
+    error.errcode === SQLITE_BUSY
+    || /locked|busy/i.test(String(error.errstr || error.message || ''))
+  );
 }
 
-async function tryAcquireLock(dir, root, pid) {
-  const path = lockPath(dir);
-  const payload = lockPayload(pid, nowIso(), Date.now());
-  let fh;
+/**
+ * Open the lock database and acquire the write transaction atomically. The
+ * schema is created INSIDE the transaction (after BEGIN IMMEDIATE) so a second
+ * connection that finds the lock busy never contends on DDL. Owner identity is
+ * recorded in a single-row table. Returns the open connection (transaction
+ * held). Throws a busy error (errcode 5) if another connection holds the lock;
+ * the caller retries asynchronously. Any other SQLite error (corruption) is a
+ * hard failure — a partial database is recovered by the journal, not here.
+ */
+function openAndAcquireLock(path, token, pid) {
+  const db = new DatabaseSync(path, { timeout: 0 });
   try {
-    fh = await fs.open(path, 'wx', 0o600);
+    db.exec('PRAGMA busy_timeout = 0');
+    db.exec('BEGIN IMMEDIATE');
+    db.exec(
+      'CREATE TABLE IF NOT EXISTS lock_owner ('
+      + 'id INTEGER PRIMARY KEY CHECK (id = 1), '
+      + 'token TEXT NOT NULL, pid INTEGER NOT NULL, host TEXT NOT NULL, born_at TEXT NOT NULL)'
+    );
+    db.prepare(
+      'INSERT INTO lock_owner (id, token, pid, host, born_at) VALUES (1, ?, ?, ?, ?) '
+      + 'ON CONFLICT(id) DO UPDATE SET token = excluded.token, pid = excluded.pid, '
+      + 'host = excluded.host, born_at = excluded.born_at'
+    ).run(token, pid, HOST, nowIso());
+    return db;
   } catch (error) {
-    if (error.code === 'EEXIST') return { acquired: false };
+    try { db.close(); } catch { /* best effort before rethrowing */ }
     throw error;
-  }
-  try {
-    await fh.writeFile(canonicalStringify(payload));
-    await fh.sync();
-  } finally {
-    await fh.close();
-  }
-  return { acquired: true };
-}
-
-async function readLock(path) {
-  let bytes;
-  try {
-    bytes = await fs.readFile(path, 'utf8');
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    if (error.code === 'EISDIR' || error.code === 'ELOOP') return { corrupt: true };
-    return null;
-  }
-  // A lock file may be observed empty or partially written while the holder
-  // is still fsyncing it (the file is created with O_EXCL, then written).
-  // Treat an empty/partial file as "busy" so the waiter retries, and only
-  // treat a fully-formed but structurally invalid record as corrupt.
-  if (bytes.length === 0) return { busy: true };
-  try {
-    const obj = safeJsonParse(bytes, 'artifact_lock_corrupt');
-    if (!obj || typeof obj.pid !== 'number' || typeof obj.heartbeatAt !== 'number') return { corrupt: true };
-    return obj;
-  } catch {
-    // A partial write that is not yet valid JSON is transient, not corrupt.
-    return { busy: true };
   }
 }
 
 /**
- * Decide whether a recorded lock holder is plausibly still alive. A holder
- * on the same host is checked directly via kill(pid,0): if the pid is gone
- * (ESRCH) the lock is stale and may be taken over immediately, even if the
- * recorded heartbeat is fresh (a crash leaves a fresh timestamp behind).
- * For a remote host we cannot check the pid, so we fall back to the
- * heartbeat age: older than LOCK_STALE_MS is treated as stale.
+ * Acquire the per-run cross-process lock, retrying asynchronously on busy.
+ * Resolves to a handle whose release() commits and closes the owner's OWN
+ * connection (owner-bound). Throws artifact_lock_timeout after a safety bound,
+ * artifact_aborted on signal, or a SQLite error on unrecoverable corruption.
  */
-async function holderAlive(lock, root) {
-  if (!lock || lock.corrupt) return false;
-  if (lock.host === HOST) {
-    try {
-      process.kill(lock.pid, 0);
-      return true; // process exists; respect the lock
-    } catch (error) {
-      if (error.code === 'ESRCH') return false; // pid is gone → stale
-      if (error.code === 'EPERM') return true; // alive, not ours
-      return true; // unknown; be conservative
-    }
-  }
-  // Remote host: cannot probe the pid; trust the heartbeat age.
-  return Date.now() - lock.heartbeatAt < LOCK_STALE_MS;
-}
-
-/**
- * Take over a stale lock: rename the stale lock aside (atomic in the dir)
- * and create a fresh one. The rename uses link+unlink (cross-device safe
- * within one dir; rename would also work but link is consistent with the
- * publish path). Only one taker succeeds: the link is O_EXCL on the fresh
- * name, and the rename of the stale lock is best-effort (the winner is the
- * one that links the fresh lock). On success returns true.
- */
-async function takeoverLock(dir, root, stalePath, pid) {
-  const takenPath = dir + '.lock.taken-' + tempNonce();
-  try {
-    await fs.link(stalePath, takenPath);
-  } catch (error) {
-    if (error.code === 'ENOENT') return { acquired: false }; // someone else took it
-    throw error;
-  }
-  // We captured the stale lock's contents; remove the original so another
-  // taker sees it gone, then create our own.
-  await safeUnlink(stalePath);
-  const payload = lockPayload(pid, nowIso(), Date.now());
-  let fh;
-  try {
-    fh = await fs.open(stalePath, 'wx', 0o600);
-  } catch (error) {
-    if (error.code === 'EEXIST') {
-      await safeUnlink(takenPath);
-      return { acquired: false }; // someone else won
-    }
-    await safeUnlink(takenPath);
-    throw error;
-  }
-  try {
-    await fh.writeFile(canonicalStringify(payload));
-    await fh.sync();
-  } finally {
-    await fh.close();
-  }
-  await safeUnlink(takenPath);
-  return { acquired: true };
-}
-
-async function heartbeatLock(path, pid) {
-  // Rewrite atomically via temp+rename to avoid a torn write.
-  const tmp = path + TMP_INFIX + tempNonce();
-  let fh;
-  try {
-    fh = await fs.open(tmp, 'wx', 0o600);
-  } catch (error) {
-    if (error.code === 'EEXIST') throw err('artifact_temp_collision', 'artifact_temp_collision');
-    throw error;
-  }
-  try {
-    await fh.writeFile(canonicalStringify(lockPayload(pid, nowIso(), Date.now())));
-    await fh.sync();
-  } finally {
-    await fh.close();
-  }
-  try {
-    await fs.rename(tmp, path);
-  } catch (error) {
-    await safeUnlink(tmp);
-    throw error;
-  }
-}
-
-async function releaseLock(path) {
-  await safeUnlink(path);
-}
-
-/**
- * Acquire the per-run lock, completing any interrupted publication left by a
- * dead holder first. Resolves to a handle with release(); throws on abort or
- * unrecoverable lock corruption.
- */
-async function acquireRunLock(dir, root, expectedScopeDigest, expectedRunDigest, signal) {
+async function acquireRunLock(root, rootReal, scopeDigestValue, runDigestValue, signal) {
   const pid = process.pid;
-  const path = lockPath(dir);
+  const path = lockDbPath(root, scopeDigestValue, runDigestValue);
+  const ldir = lockDirPath(root, scopeDigestValue);
+  // The lock directory is a sibling of the scope's run directories, inside the
+  // pinned artifacts root; create it contained so a symlinked ancestor that
+  // escapes is rejected before any database file is opened.
+  await ensureDirSafe(ldir, rootReal);
+  const token = tempNonce();
   const start = Date.now();
-  // The run directory must exist to host a lock. Create it contained first.
-  await ensureDirSafe(dir, root);
+  let db;
   while (true) {
     checkSignal(signal);
-    const got = await tryAcquireLock(dir, root, pid);
-    if (got.acquired) return { dir, path, pid };
-    const existing = await readLock(path);
-    if (existing && existing.corrupt) {
-      // A structurally invalid lock file blocks all writers; do not take over.
-      throw err('artifact_lock_corrupt', 'artifact_lock_corrupt');
-    }
-    if (existing && existing.busy) {
-      // The holder is still writing the lock file; retry shortly.
-      if (Date.now() - start > LOCK_STALE_MS * 4) throw err('artifact_lock_timeout', 'artifact_lock_timeout');
+    try {
+      db = openAndAcquireLock(path, token, pid);
+      break;
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error;
+      if (Date.now() - start > LOCK_TIMEOUT_MS) {
+        throw err('artifact_lock_timeout', 'artifact_lock_timeout');
+      }
+      // setTimeout yields the event loop so a same-process owner's pending
+      // filesystem await can proceed; no synchronous busy-wait.
       await new Promise((r) => setTimeout(r, LOCK_POLL_MS, undefined));
-      continue;
     }
-    if (!(await holderAlive(existing, root))) {
-      const taken = await takeoverLock(dir, root, path, pid);
-      if (taken.acquired) return { dir, path, pid };
-      continue; // lost the takeover race; retry
-    }
-    if (Date.now() - start > LOCK_STALE_MS * 4) {
-      throw err('artifact_lock_timeout', 'artifact_lock_timeout');
-    }
-    await new Promise((r) => setTimeout(r, LOCK_POLL_MS, undefined));
   }
+  return {
+    path,
+    token,
+    pid,
+    async release() {
+      try {
+        // Owner-bound release: clear only our own row, then commit and close
+        // our own connection. Another process cannot reach this connection,
+        // so it cannot release a lock it does not own.
+        db.prepare('DELETE FROM lock_owner WHERE id = 1 AND token = ?').run(token);
+        db.exec('COMMIT');
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch { /* best effort */ }
+        throw error;
+      } finally {
+        try { db.close(); } catch { /* ignore */ }
+      }
+    },
+  };
 }
 
 /**
@@ -719,10 +694,14 @@ export async function createNativeArtifactStore(options) {
 
     if (sizeBytes > maxItemBytes) throw err('artifact_too_large', 'artifact_too_large');
 
-    const lock = await acquireRunLock(dir, rootReal, scopeDigestValue, rd, request.signal);
+    const lock = await acquireRunLock(root, rootReal, scopeDigestValue, rd, request.signal);
     try {
-      // Finish any publication a dead predecessor left interrupted, so a
-      // takeover never races a brand-new write for the same run.
+      await signalLockAcquired();
+      // The run directory hosts the content/meta/intent files; create it
+      // contained under the lock so two writers never race on mkdir.
+      await ensureDirSafe(dir, rootReal);
+      // Finish any publication a dead predecessor left interrupted, so the
+      // successor never races a brand-new write for the same run.
       await finishInterruptedPublications(dir, rootReal, scopeDigestValue, rd);
       checkSignal(request.signal);
 
@@ -799,6 +778,7 @@ export async function createNativeArtifactStore(options) {
           throw err('artifact_budget_exceeded', 'artifact_budget_exceeded');
         }
         crashHook('before-content');
+        await holdHook('before-content');
         const contentResult = await atomicPublish(contentPath, contentBytes, rootReal, { afterTmp: 'content-tmp', afterLink: 'content' });
         if (contentResult === 'exists') {
           const existing = await safeReadFile(contentPath, rootReal);
@@ -828,7 +808,11 @@ export async function createNativeArtifactStore(options) {
       await safeUnlink(intentPath);
       return ref;
     } finally {
-      await releaseLock(lock.path);
+      // Owner-bound release: commit + close this holder's own connection. If
+      // the write threw, the finally still commits the (empty) lock-owner
+      // transaction and closes the connection, releasing the SQLite lock so
+      // the next writer can proceed; filesystem orphans are reconciled later.
+      await lock.release();
     }
   }
 
