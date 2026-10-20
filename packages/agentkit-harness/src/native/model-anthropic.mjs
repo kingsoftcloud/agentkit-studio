@@ -1,0 +1,609 @@
+// Anthropic Messages wire adapter.
+//
+// Ports ksadk.studio.model_client._stream_anthropic / model_buffered_wire /
+// model_wire_tools / model_request_projection.anthropic_messages: one HTTP
+// request per attempt over the Anthropic Messages SSE protocol, with sealed
+// content-block termination, signed-thinking + tool_use assembly, usage
+// accumulation and refusal normalization. The adapter never retries and never
+// executes tools; it emits text/thinking/tool_delta display deltas and returns
+// one sealed ModelResult with optional anthropic_content replay.
+//
+// The signed-thinking signature is private replay material: it is captured for
+// the sealed providerReplay but never emitted in a public stream event's
+// metadata, and never concatenated to visible text.
+
+import {
+  normalizeResponse, parseAnthropicUsageFragment, parseRetryAfterMs,
+  ProtocolError, resolveUrl, emptyUsage,
+} from './model-normalize.mjs';
+import { sealAnthropicReplay, anthropicReplayContent, profileFingerprint } from './model-replay.mjs';
+import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-media.mjs';
+
+const ANTHROPIC_VERSION = '2023-06-01';
+const DEFAULT_MAX_TOKENS = 8192;
+
+const FORBIDDEN_BODY_KEYS = new Set([
+  'model', 'messages', 'tools', 'stream', 'system', 'tool_choice',
+]);
+
+const CLIENT_ITEM_TYPES = new Set([
+  'text', 'thinking', 'redacted_thinking', 'tool_use',
+]);
+
+// In-stream error.type → retryable/terminal classification. A 2xx stream that
+// emits an error event is a provider rejection, not a final; unknown types
+// stay terminal so a foreign payload cannot become a silent retry or final.
+const RETRYABLE_ERROR_TYPES = new Set([
+  'rate_limit_error', 'overloaded_error', 'api_error', 'service_unavailable_error',
+]);
+const TERMINAL_ERROR_TYPES = new Set([
+  'invalid_request_error', 'authentication_error', 'permission_error', 'not_found_error',
+  'request_too_large', 'billing_error',
+]);
+
+function securityHeaders() {
+  return new Set(['authorization', 'x-api-key', 'anthropic-version', 'content-type', 'accept']);
+}
+
+export function validateAnthropicBinding(binding) {
+  if (!binding || typeof binding !== 'object') throw new ProtocolError('anthropic binding missing');
+  if (binding.protocol !== 'anthropic-messages') throw new ProtocolError('binding is not anthropic-messages');
+  if (typeof binding.baseUrl !== 'string' || !binding.baseUrl) throw new ProtocolError('anthropic binding requires baseUrl');
+  if (typeof binding.apiKey !== 'string' || !binding.apiKey) throw new ProtocolError('anthropic binding requires apiKey');
+  if (typeof binding.model !== 'string' || !binding.model.trim()) throw new ProtocolError('anthropic binding requires model');
+  try { new URL(binding.baseUrl); } catch { throw new ProtocolError('anthropic binding baseUrl is not a URL'); }
+}
+
+export function buildAnthropicRequest(binding, request) {
+  validateAnthropicBinding(binding);
+  const profile = request.profile;
+  const url = resolveUrl(binding.baseUrl, 'messages');
+
+  const headers = { Accept: 'text/event-stream' };
+  const skip = securityHeaders();
+  for (const [name, value] of Object.entries(binding.headers || {})) {
+    if (skip.has(name.toLowerCase())) continue;
+    if (typeof value !== 'string') continue;
+    headers[name] = value;
+  }
+  headers['Content-Type'] = 'application/json';
+  headers['x-api-key'] = binding.apiKey;
+  headers['anthropic-version'] = ANTHROPIC_VERSION;
+  // Preserve a host-selected thinking block-binding beta header if provided.
+  const beta = (binding.headers && binding.headers['anthropic-beta']) || binding.headers?.['Anthropic-Beta'];
+  if (beta && !('anthropic-beta' in headers)) headers['anthropic-beta'] = beta;
+
+  const { system, items } = projectMessagesAnthropic(request);
+  const payload = {
+    model: binding.model,
+    messages: items,
+    stream: true,
+    max_tokens: profile.maxOutputTokens || DEFAULT_MAX_TOKENS,
+  };
+  if (system) payload.system = system;
+
+  const parameters = binding.parameters || {};
+  for (const [key, value] of Object.entries(parameters)) {
+    if (FORBIDDEN_BODY_KEYS.has(key)) continue;
+    payload[key] = value;
+  }
+  if ('max_tokens' in parameters) payload.max_tokens = parameters.max_tokens;
+
+  const tools = request.tools || [];
+  if (tools.length && !request.finalizationOnly) {
+    payload.tools = tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.parameters || { type: 'object', properties: {} },
+    }));
+    payload.tool_choice = { type: 'auto' };
+  }
+
+  return { url, headers, body: JSON.stringify(payload) };
+}
+
+// Project host messages onto the Anthropic Messages wire. System messages are
+// lifted to the top-level `system` field; user/assistant alternate (consecutive
+// same-role content is concatenated); tool receipts become user tool_result
+// blocks. Assistant anthropic_content replay replaces the projected blocks so
+// the model sees its signed thinking and tool_use exactly.
+export function projectMessagesAnthropic(request) {
+  const systemParts = [];
+  const items = [];
+  for (const message of request.messages || []) {
+    const role = message.role;
+    if (role === 'system' || role === 'developer') {
+      systemParts.push(message.content || '');
+      continue;
+    }
+    let item;
+    if (role === 'tool') {
+      const media = message.media ? message.media.map(validateMediaBlock) : null;
+      const content = media && media.length
+        ? [{ type: 'text', text: message.content || '' }, ...projectMediaAnthropic(media)]
+        : (message.content || '');
+      item = {
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: String(message.callId ?? ''),
+          content,
+        }],
+      };
+    } else {
+      const replayContent = anthropicReplayContent(message, request.profile);
+      let blocks;
+      if (replayContent) {
+        blocks = replayContent;
+      } else {
+        blocks = [];
+        const media = message.media ? message.media.map(validateMediaBlock) : null;
+        if ((message.content || '').length) blocks.push({ type: 'text', text: message.content });
+        if (media && media.length) {
+          if (role !== 'user') throw new MediaError('image observations require user or tool content');
+          blocks.push(...projectMediaAnthropic(media));
+        }
+        if (role === 'assistant' && message.toolCalls && message.toolCalls.length) {
+          validateAssistantToolIds(message.toolCalls);
+          for (const call of message.toolCalls) {
+            blocks.push({ type: 'tool_use', id: call.callId, name: call.name, input: call.arguments || {} });
+          }
+        }
+        if (!blocks.length) blocks.push({ type: 'text', text: '' });
+      }
+      item = { role, content: blocks };
+    }
+    const previous = items[items.length - 1];
+    if (previous && previous.role === item.role) {
+      previous.content = mergeAnthropicContent(previous.content, item.content);
+    } else {
+      items.push(item);
+    }
+  }
+  return { system: systemParts.join('\n\n'), items };
+}
+
+function mergeAnthropicContent(first, second) {
+  const a = Array.isArray(first) ? first : [{ type: 'text', text: first }];
+  const b = Array.isArray(second) ? second : [{ type: 'text', text: second }];
+  return [...a, ...b];
+}
+
+function validateAssistantToolIds(calls) {
+  const ids = [];
+  for (const call of calls) {
+    const id = String(call?.callId ?? '');
+    if (!id.trim()) throw new ProtocolError('assistant tool calls require stable IDs');
+    ids.push(id);
+  }
+  if (new Set(ids).size !== ids.length) throw new ProtocolError('duplicate assistant tool IDs');
+}
+
+// Parse a buffered 2xx Anthropic Messages body into a sealed result.
+export function parseAnthropicBuffered(bodyText, request, { captureReplay = false } = {}) {
+  let payload;
+  try { payload = JSON.parse(bodyText); } catch { throw new ProtocolError('invalid response json'); }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new ProtocolError('invalid response envelope');
+  }
+  if ('type' in payload && payload.type !== 'message') throw new ProtocolError('invalid response envelope');
+  if ('error' in payload) throw new ProtocolError('invalid response envelope');
+  if (typeof payload.stop_sequence !== 'undefined' && payload.stop_sequence !== null && typeof payload.stop_sequence !== 'string') {
+    throw new ProtocolError('invalid stop_sequence');
+  }
+  const blocks = payload.content;
+  if (!Array.isArray(blocks)) throw new ProtocolError('anthropic content must be an array');
+  let text = '';
+  const reasoningBlocks = [];
+  const replayBlocks = [];
+  const calls = [];
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object') throw new ProtocolError('anthropic content requires typed blocks');
+    const kind = String(block.type);
+    if (!CLIENT_ITEM_TYPES.has(kind)) throw new ProtocolError('unsupported anthropic block type');
+    if (kind === 'text') {
+      if (typeof block.text !== 'string') throw new ProtocolError('invalid text block');
+      text += block.text;
+      replayBlocks.push({ ...block });
+    } else if (kind === 'thinking') {
+      if (typeof block.thinking !== 'string') throw new ProtocolError('invalid thinking block');
+      if ('signature' in block && typeof block.signature !== 'string') throw new ProtocolError('invalid thinking signature');
+      reasoningBlocks.push(block);
+      replayBlocks.push({ ...block });
+    } else if (kind === 'redacted_thinking') {
+      if (typeof block.data !== 'string') throw new ProtocolError('invalid redacted thinking block');
+      replayBlocks.push({ ...block });
+    } else if (kind === 'tool_use') {
+      if (typeof block.id !== 'string' || !block.id.trim()) throw new ProtocolError('invalid tool block id');
+      if (typeof block.name !== 'string' || !block.name.trim()) throw new ProtocolError('invalid tool block name');
+      if (block.input == null || typeof block.input !== 'object' || Array.isArray(block.input)) {
+        throw new ProtocolError('invalid tool block input');
+      }
+      calls.push({ callId: block.id, name: block.name, arguments: block.input });
+      replayBlocks.push({ ...block });
+    }
+  }
+  let stopReason = payload.stop_reason;
+  if (stopReason != null && typeof stopReason !== 'string') throw new ProtocolError('invalid stop_reason');
+  if (anthropicRefusal(payload.stop_details)) {
+    stopReason = 'refusal';
+    calls.length = 0;
+  }
+  const finish = mapStopReason(stopReason);
+  let usage = emptyUsage();
+  let usageSeen = false;
+  if (payload.usage != null) {
+    const fragment = parseAnthropicUsageFragment(payload.usage);
+    if (fragment.inputTokens != null) { usage.inputTokens = fragment.inputTokens; usageSeen = true; }
+    if (fragment.outputTokens != null) { usage.outputTokens = fragment.outputTokens; usageSeen = true; }
+  }
+  const normalized = normalizeResponse({ text, toolCalls: calls, finishReason: finish, streamComplete: true });
+  const result = { ...normalized, usage: usageSeen ? usage : emptyUsage() };
+  return captureReplay ? sealAnthropicReplay(result, request.profile, replayBlocks) : result;
+}
+
+function mapStopReason(stopReason) {
+  return ({
+    end_turn: 'stop', stop_sequence: 'stop', max_tokens: 'length',
+    tool_use: 'tool_calls', refusal: 'content_filter',
+  })[stopReason] || stopReason || null;
+}
+
+function anthropicRefusal(details) {
+  if (details == null) return false;
+  if (typeof details !== 'object' || Array.isArray(details) || details.type !== 'refusal') {
+    throw new ProtocolError('unsupported model stop details');
+  }
+  for (const field of ['category', 'explanation']) {
+    if (details[field] != null && typeof details[field] !== 'string') {
+      throw new ProtocolError('invalid model stop details field');
+    }
+  }
+  return true;
+}
+
+// Accumulate Anthropic usage across message_start (input_tokens) and
+// message_delta (output_tokens). The state tracks the two counters and a
+// `seen` flag so a report of genuine zeroes stays distinct from no report.
+function buildAnthropicUsage(state) {
+  if (!state.usageSeen) return emptyUsage();
+  return {
+    inputTokens: state.inputTokens ?? 0,
+    outputTokens: state.outputTokens ?? 0,
+    modelCalls: 0, toolCalls: 0, cost: 0,
+  };
+}
+
+// Classify an in-stream `error` event into a retryable/terminal result.
+export function classifyAnthropicStreamError(errorObj) {
+  const type = errorObj && typeof errorObj === 'object' ? String(errorObj.type || '') : '';
+  if (RETRYABLE_ERROR_TYPES.has(type)) {
+    return { kind: 'provider_retryable_error', failureKind: type === 'rate_limit_error' ? 'rate_limit' : 'server_error' };
+  }
+  if (TERMINAL_ERROR_TYPES.has(type)) {
+    return { kind: 'provider_terminal_error', failureKind: 'client_error' };
+  }
+  return { kind: 'provider_terminal_error', failureKind: 'invalid_response' };
+}
+
+// Streaming state for the Anthropic Messages SSE protocol. Accumulates text,
+// thinking (with signatures), an assembled tool batch and usage across
+// content_block_* and message_* events. Frame errors throw ProtocolError.
+export function createAnthropicStreamState(profile) {
+  const captureReplay = profile.providerReplayMode !== 'none';
+  const emitThinking = profile.providerReplayMode !== 'none';
+  return {
+    text: '',
+    reasoning: '',
+    blockTypes: new Map(),   // index -> type
+    closed: new Set(),       // closed block indexes
+    values: new Map(),       // index -> accumulated text/thinking string
+    signatures: new Map(),   // index -> accumulated signature (thinking)
+    originals: new Map(),     // index -> original content block (for replay)
+    tools: new Map(),        // index -> { callId, name, arguments, closed, argumentsDone, initialInput }
+    initialInputs: new Set(),
+    implicitIndexes: new Set(),
+    stopReason: null,
+    refused: false,
+    inputTokens: null,
+    outputTokens: null,
+    usageSeen: false,
+    done: false,
+    model: null,
+    responseId: null,
+
+    consume(frame, emit) {
+      const data = frame.data;
+      if (!data.trim()) return;
+      if (data.trim() === '[DONE]') { this.done = true; return; }
+      let event;
+      try { event = JSON.parse(data); } catch { throw new ProtocolError('invalid stream json'); }
+      if (!event || typeof event !== 'object' || Array.isArray(event)) {
+        throw new ProtocolError('invalid stream envelope');
+      }
+      const type = String(event.type || '');
+      if (type === 'error') {
+        throw Object.assign(new ProtocolError('anthropic stream error'), {
+          streamError: classifyAnthropicStreamError(event.error),
+        });
+      }
+      if (type === 'ping') return;
+      if (type === 'message_start') this.handleMessageStart(event);
+      else if (type === 'content_block_start') this.handleBlockStart(event, emit);
+      else if (type === 'content_block_delta') this.handleBlockDelta(event, emit);
+      else if (type === 'content_block_stop') this.handleBlockStop(event);
+      else if (type === 'message_delta') this.handleMessageDelta(event);
+      else if (type === 'message_stop') { this.done = true; }
+      // Unknown event types are ignored: the adapter validates the blocks it
+      // assembles rather than rejecting foreign extensions terminally.
+    },
+
+    handleMessageStart(event) {
+      const message = event.message;
+      if (!message || typeof message !== 'object') throw new ProtocolError('invalid message_start');
+      const role = message.role;
+      if (role != null && role !== 'assistant') throw new ProtocolError('invalid message role');
+      this.pinIdentity(message.id, message.model);
+      if (message.usage != null) {
+        const fragment = parseAnthropicUsageFragment(message.usage);
+        if (fragment.inputTokens != null) { this.inputTokens = fragment.inputTokens; this.usageSeen = true; }
+        if (fragment.outputTokens != null) { this.outputTokens = fragment.outputTokens; this.usageSeen = true; }
+      }
+    },
+
+    handleMessageDelta(event) {
+      const delta = event.delta;
+      if (!delta || typeof delta !== 'object') throw new ProtocolError('invalid message_delta');
+      if (delta.stop_reason != null) {
+        if (typeof delta.stop_reason !== 'string') throw new ProtocolError('invalid stop_reason');
+        if (this.stopReason != null && delta.stop_reason !== this.stopReason) {
+          throw new ProtocolError('conflicting stop reasons');
+        }
+        this.stopReason = delta.stop_reason;
+      }
+      if (delta.stop_sequence != null && typeof delta.stop_sequence !== 'string') {
+        throw new ProtocolError('invalid stop_sequence');
+      }
+      if (delta.stop_details != null) {
+        if (anthropicRefusal(delta.stop_details)) this.refused = true;
+      }
+      if (event.usage != null) {
+        const fragment = parseAnthropicUsageFragment(event.usage);
+        if (fragment.inputTokens != null) { this.inputTokens = fragment.inputTokens; this.usageSeen = true; }
+        if (fragment.outputTokens != null) { this.outputTokens = fragment.outputTokens; this.usageSeen = true; }
+      }
+    },
+
+    handleBlockStart(event, emit) {
+      const block = event.content_block;
+      if (!block || typeof block !== 'object') throw new ProtocolError('invalid content_block');
+      const blockType = String(block.type);
+      if (!CLIENT_ITEM_TYPES.has(block.type)) {
+        if (blockType === 'server_tool_use' || blockType.endsWith('_tool_result')) {
+          throw new ProtocolError('unsupported hosted tool block');
+        }
+        throw new ProtocolError('unsupported content block type');
+      }
+      const index = event.index;
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+        throw new ProtocolError('invalid block index');
+      }
+      if (this.blockTypes.has(index) || this.closed.has(index)) {
+        throw new ProtocolError('duplicate content block index');
+      }
+      this.blockTypes.set(index, blockType);
+      this.originals.set(index, deepCopy(block));
+      for (const field of ['text', 'thinking', 'signature']) {
+        if (field in block && typeof block[field] !== 'string') throw new ProtocolError('invalid block field');
+      }
+      if (blockType === 'text' || blockType === 'thinking') {
+        if (block[blockType] != null && typeof block[blockType] !== 'string') {
+          throw new ProtocolError(`invalid ${blockType} block`);
+        }
+        this.values.set(index, String(block[blockType] || ''));
+      } else if (blockType === 'redacted_thinking') {
+        if (typeof block.data !== 'string') throw new ProtocolError('invalid redacted thinking block');
+      } else if (blockType === 'tool_use') {
+        const tool = { callId: '', name: '', arguments: '', closed: false, argumentsDone: false, initialInput: false };
+        if (block.id != null) {
+          if (typeof block.id !== 'string' || !block.id.trim()) throw new ProtocolError('invalid tool block id');
+          tool.callId = block.id;
+        }
+        if (block.name != null) {
+          if (typeof block.name !== 'string' || !block.name.trim()) throw new ProtocolError('invalid tool block name');
+          tool.name = block.name;
+        }
+        if ('input' in block) {
+          if (block.input == null || typeof block.input !== 'object' || Array.isArray(block.input)) {
+            throw new ProtocolError('invalid tool block input');
+          }
+          // Only a non-empty initial input pins the block; an empty `input: {}`
+          // is the usual placeholder and still allows input_json_delta fragments.
+          if (Object.keys(block.input).length > 0) {
+            tool.arguments = JSON.stringify(block.input);
+            tool.initialInput = true;
+            this.initialInputs.add(index);
+          }
+        }
+        this.tools.set(index, tool);
+      }
+    },
+
+    handleBlockDelta(event, emit) {
+      const delta = event.delta;
+      if (!delta || typeof delta !== 'object') throw new ProtocolError('invalid content_block_delta');
+      const deltaType = String(delta.type);
+      let index = event.index;
+      if (index == null && deltaType !== 'input_json_delta') index = 0;
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+        throw new ProtocolError('invalid block index');
+      }
+      if (this.closed.has(index)) throw new ProtocolError('delta after closed block');
+      const expected = ({
+        text_delta: 'text', thinking_delta: 'thinking', signature_delta: 'thinking',
+        citations_delta: 'text', input_json_delta: 'tool_use',
+      })[deltaType];
+      const previous = this.blockTypes.get(index);
+      if (expected != null && previous != null && previous !== expected) {
+        throw new ProtocolError('delta type does not match block type');
+      }
+      if (expected != null && previous == null && (expected === 'text' || expected === 'thinking')) {
+        // Legacy proxy omitting block_start: pin the slot from the first delta.
+        this.blockTypes.set(index, expected);
+        this.implicitIndexes.add(index);
+        this.originals.set(index, { type: expected });
+        this.values.set(index, '');
+      }
+      if (deltaType === 'text_delta') {
+        if (typeof delta.text !== 'string') throw new ProtocolError('invalid text delta');
+        this.values.set(index, (this.values.get(index) || '') + delta.text);
+        this.text += delta.text;
+        if (delta.text) emit({ kind: 'text', text: delta.text });
+      } else if (deltaType === 'thinking_delta') {
+        if (typeof delta.thinking !== 'string') throw new ProtocolError('invalid thinking delta');
+        this.values.set(index, (this.values.get(index) || '') + delta.thinking);
+        if (captureReplay) this.reasoning += delta.thinking;
+        if (delta.thinking && emitThinking) emit({ kind: 'thinking', text: delta.thinking });
+      } else if (deltaType === 'signature_delta') {
+        if (typeof delta.signature !== 'string') throw new ProtocolError('invalid signature delta');
+        const original = this.originals.get(index) || { type: 'thinking' };
+        original.signature = (original.signature || '') + delta.signature;
+        this.originals.set(index, original);
+      } else if (deltaType === 'input_json_delta') {
+        if (typeof delta.partial_json !== 'string') throw new ProtocolError('invalid input_json delta');
+        const tool = this.tools.get(index);
+        if (!tool || this.initialInputs.has(index)) throw new ProtocolError('tool delta without an open block');
+        tool.arguments += delta.partial_json;
+        if (delta.partial_json) {
+          emit({ kind: 'tool_delta', text: delta.partial_json, metadata: { index, ...(tool.callId ? { callId: tool.callId } : {}) } });
+        }
+      } else if (deltaType === 'citations_delta') {
+        // Citations attach to text; their content is not visible model text.
+      } else {
+        throw new ProtocolError('unsupported delta type');
+      }
+    },
+
+    handleBlockStop(event) {
+      const index = event.index;
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+        throw new ProtocolError('invalid block index');
+      }
+      if (this.closed.has(index) || !this.blockTypes.has(index)) {
+        throw new ProtocolError('invalid content_block_stop');
+      }
+      const tool = this.tools.get(index);
+      if (tool) {
+        if (!tool.callId.trim() || !tool.name.trim()) throw new ProtocolError('tool block missing identity');
+        tool.closed = true;
+      }
+      this.closed.add(index);
+    },
+
+    finalize({ errorKind = null, failureKind = null } = {}) {
+      const usage = buildAnthropicUsage(this);
+      let finish = this.refused ? 'content_filter' : mapStopReason(this.stopReason);
+      if (errorKind && errorKind !== 'provider_retryable_error') {
+        return { kind: errorKind, text: this.text, toolCalls: [], usage, ...(failureKind ? { failureKind } : {}) };
+      }
+      if (errorKind === 'provider_retryable_error' || !this.done) {
+        const normalized = normalizeResponse({ text: this.text, toolCalls: [], finishReason: finish, streamComplete: false });
+        if (normalized.kind === 'provider_retryable_error') {
+          return { ...normalized, usage, failureKind: failureKind || 'incomplete_response' };
+        }
+        return this.seal({ ...normalized, usage });
+      }
+      // done, no error: assemble the full response.
+      let calls = [];
+      let malformed = false;
+      try {
+        calls = this.buildCalls();
+      } catch {
+        malformed = true;
+        calls = [{}];
+      }
+      if (this.refused) { finish = 'content_filter'; calls = []; }
+      if (!this.text.trim() && !calls.length && finish !== 'content_filter' && !malformed) {
+        return { kind: 'empty_response', text: '', toolCalls: [], usage };
+      }
+      const normalized = normalizeResponse({ text: this.text, toolCalls: malformed ? [{}] : calls, finishReason: finish, streamComplete: true });
+      return this.seal({ ...normalized, usage });
+    },
+
+    buildCalls() {
+      const calls = [];
+      const indexes = [...this.tools.keys()].sort((a, b) => a - b);
+      for (const index of indexes) {
+        const tool = this.tools.get(index);
+        if (!tool.closed) throw new ProtocolError('tool block not closed');
+        let arguments_;
+        let invalid = false;
+        try {
+          arguments_ = JSON.parse(tool.arguments || '{}');
+          if (arguments_ == null || typeof arguments_ !== 'object' || Array.isArray(arguments_)) throw new Error();
+        } catch {
+          arguments_ = {}; invalid = true;
+        }
+        calls.push({
+          callId: tool.callId, name: tool.name, arguments: arguments_,
+          ...(invalid ? { wireArgumentsInvalid: true } : {}),
+        });
+      }
+      return calls;
+    },
+
+    seal(result) {
+      if (!captureReplay) return result;
+      const replayBlocks = this.replayContent();
+      return sealAnthropicReplay(result, profile, replayBlocks);
+    },
+
+    // Rebuild the original content blocks (text, signed thinking, tool_use with
+    // parsed input) for anthropic_content replay. The order follows block index.
+    replayContent() {
+      const blocks = [];
+      const indexes = [...this.blockTypes.keys()].sort((a, b) => a - b);
+      for (const index of indexes) {
+        const kind = this.blockTypes.get(index);
+        const original = deepCopy(this.originals.get(index) || { type: kind });
+        if (kind === 'text') {
+          original.text = this.values.get(index) || '';
+        } else if (kind === 'thinking') {
+          original.thinking = this.values.get(index) || '';
+        } else if (kind === 'tool_use') {
+          const tool = this.tools.get(index);
+          try {
+            original.input = JSON.parse(tool.arguments || '{}');
+            if (original.input == null || typeof original.input !== 'object' || Array.isArray(original.input)) throw new Error();
+          } catch {
+            // Invalid JSON has no complete content to replay; retain the block
+            // without fabricating original input (mirrors AnthropicContent).
+            return null;
+          }
+        }
+        blocks.push(original);
+      }
+      return blocks;
+    },
+
+    pinIdentity(id, model) {
+      if (id != null) {
+        if (typeof id !== 'string' || !id.trim()) throw new ProtocolError('invalid message id');
+        if (this.responseId != null && id !== this.responseId) throw new ProtocolError('mixed message identities');
+        this.responseId = id;
+      }
+      if (model != null) {
+        if (typeof model !== 'string' || !model.trim()) throw new ProtocolError('invalid model');
+        if (this.model != null && model !== this.model) throw new ProtocolError('mixed model identities');
+        this.model = model;
+      }
+    },
+  };
+}
+
+function deepCopy(value) {
+  if (value == null || typeof value !== 'object') return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+export { ANTHROPIC_VERSION, parseRetryAfterMs };
