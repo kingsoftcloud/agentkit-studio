@@ -288,6 +288,16 @@ try {
   const nextPage = await (await hostedAction('ListSessionMessages', { SessionId: hostedSession })).json();
   assert.deepEqual(nextPage.Data.Messages.map(message => message.Content.text), ['hosted-first', 'HOSTED_FIRST_OK', 'hosted-second', 'HOSTED_SECOND_OK']);
   assert.equal(nextPage.Data.Messages.at(-1).InvocationId, 'hosted-two');
+  const allEvents = (await (await hostedAction('ListSessionEvents', { SessionId: hostedSession, Limit: 1000 })).json()).Data;
+  let eventPage = (await (await hostedAction('ListSessionEvents', { SessionId: hostedSession, Limit: 3 })).json()).Data;
+  let pagedEvents = eventPage.Events;
+  for (let page = 0; eventPage.HasMore && page < 20; page++) {
+    assert.ok(eventPage.NextCursor);
+    eventPage = (await (await hostedAction('ListSessionEvents', { SessionId: hostedSession, Limit: 3,
+      BeforeSeqId: eventPage.NextCursor, HistoryEpoch: eventPage.HistoryEpoch, SnapshotSeqId: eventPage.SnapshotSeqId })).json()).Data;
+    pagedEvents = [...eventPage.Events, ...pagedEvents];
+  }
+  assert.deepEqual(pagedEvents.map(event => event.SeqId), allEvents.Events.map(event => event.SeqId), 'Small reverse event pages preserve every native run boundary');
   assert.equal((await hostedAction('ListSessionMessages', { SessionId: hostedSession }, { 'x-agentengine-subject-id': 'foreign' })).status, 404);
   check('generic-hosted-responses-and-native-history-after-cold-host-restart', { turns: 2, messages: 4, principalIsolation: true, epoch: nextPage.Data.HistoryEpoch });
   const unbound = await post({ input: 'unbound', request_id: 'unbound', model: 'model-outside-build' });
