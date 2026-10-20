@@ -262,3 +262,44 @@ test('guidance before a prepared PostTool hook re-admits the hook and preserves 
   assert.equal(result.phase, 'completed'); assert.equal(hooks, 1);
   assert.ok(run.store.load(scope, 'run').receipts.some(receipt => receipt.status === 'not_dispatched'));
 });
+
+test('unacknowledged hook feedback survives provider retries and cannot be omitted by a prepared context view', async t => {
+  const run = setup(t, { hooks: [definition({ events: ['PostToolUse'] })],
+    profile: { profileId: 'test', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'fixture/v1', retryInitialDelayMs: 0 } });
+  let models = 0;
+  run.ports.hooks.invoke = async request => hookResult(request, 'ok', output({ additionalContext: ['Pending input'] }));
+  run.ports.model.generate = async request => {
+    if (++models === 1) return toolsResult([call()]);
+    assert.equal(request.messages.filter(message => message.kind === 'hook_context').length, 1);
+    assert.equal(currentHookState(run.store.load(scope, 'run').snapshot).feedback.length, 1);
+    if (models === 2) return { ...finish(), kind: 'provider_retryable_error', text: '', usageReported: false };
+    return finish();
+  };
+  let prepares = 0;
+  run.ports.context = { prepare: async request => {
+    prepares++;
+    return { messages: prepares === 3 ? request.snapshot.messages.filter(message => message.kind !== 'hook_context') : request.snapshot.messages,
+      context: {} };
+  } };
+  const result = await run.worker().runUntilIdle(scope, 'run');
+  assert.equal(models, 2); assert.equal(result.reason, 'context_hook_feedback_missing');
+  assert.equal(result.outcome, 'blocked'); assert.equal(currentHookState(result).feedback.length, 1);
+});
+
+test('Stop repair feedback is pending until a meaningful task response and then releases its retention debt', async t => {
+  const run = setup(t, { hooks: [definition({ events: ['Stop'] })], stopHookContinuationLimit: 1 });
+  let hooks = 0, models = 0;
+  run.ports.model.generate = async request => {
+    if (++models === 2) {
+      assert.ok(request.messages.some(message => message.kind === 'hook_context'));
+      assert.equal(currentHookState(run.store.load(scope, 'run').snapshot).feedback.length, 1);
+    }
+    return finish();
+  };
+  run.ports.hooks.invoke = async request => hookResult(request, 'ok', output(++hooks === 1
+    ? { action: 'repair', additionalContext: ['Complete missing evidence'] } : {}));
+  const result = await run.worker().runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.equal(models, 2);
+  assert.equal(currentHookState(result).feedback.length, 0);
+  assert.equal(result.messages.filter(message => message.kind === 'hook_context').length, 1);
+});

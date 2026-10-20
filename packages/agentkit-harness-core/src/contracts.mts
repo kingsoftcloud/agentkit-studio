@@ -230,6 +230,7 @@ export interface WorkspaceObservation { revision: string | null; changedPaths: s
 export interface WorkspacePort { observe(request: PortContext): Promise<WorkspaceObservation> }
 export interface ContextPort {
   /** context is adapter state, persisted under snapshot.context.adapter. Original messages are never replaced. */
+  /** A prepared view must retain unacknowledged snapshot.hookState.feedback before budgeting. */
   prepare(request: PortContext & { snapshot: RunSnapshot; configuration: RunConfiguration; forceCompaction: boolean }): Promise<{ messages: Message[]; context: ObjectValue }>;
 }
 export interface VerificationPort {

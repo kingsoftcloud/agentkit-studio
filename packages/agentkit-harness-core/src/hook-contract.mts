@@ -1,5 +1,5 @@
 import type { HookDefinition, HookEvent, HookFailure, HookInvocation, HookInvocationResult, HookOutput, ObjectValue, RunIdentity } from './contracts.mjs';
-import { canonical, copy, invariant } from './values.mjs';
+import { canonical, copy, invariant, scopeKey } from './values.mjs';
 
 const events: HookEvent[] = ['PreToolUse', 'PostToolUse', 'Stop', 'PreCompact'];
 const failures: HookFailure[] = ['producer_failed', 'producer_invalid', 'input_budget_exceeded', 'output_budget_exceeded',
@@ -41,9 +41,14 @@ export function hookIdentity(request: RunIdentity): RunIdentity {
 }
 export function validateHookInvocation(input: HookInvocation, digest: (value: unknown) => string): HookInvocation {
   const request = copy(input), definition = validateHookDefinition(request.definition), subject = request.input;
+  scopeKey(request.scope);
+  invariant([request.runId, request.sessionId, request.turnId, request.buildId, request.taskChainId].every(value => typeof value === 'string' && value.trim())
+    && (request.parentRunId === null || typeof request.parentRunId === 'string' && request.parentRunId.trim()), 'invalid_hook_identity');
   invariant(request.schemaVersion === 'agentkit.native-hook/v1' && typeof request.operationKey === 'string' && request.operationKey.trim()
     && Number.isSafeInteger(request.goalRevision) && request.goalRevision >= 0
-    && subject && typeof subject.goal === 'string' && subject.goal.trim()
+    && subject && Object.keys(subject).length === 7 && Object.keys(subject).every(key => ['goal', 'toolCallCount',
+      'stopContinuationCount', 'call', 'toolResult', 'candidate', 'compaction'].includes(key))
+    && typeof subject.goal === 'string' && subject.goal.trim()
     && Number.isSafeInteger(subject.toolCallCount) && subject.toolCallCount >= 0
     && Number.isSafeInteger(subject.stopContinuationCount) && subject.stopContinuationCount >= 0
     && hookMatches(definition, request.event, subject.call?.name)

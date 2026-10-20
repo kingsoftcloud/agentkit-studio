@@ -79,9 +79,14 @@ export function stagePostHooks(snapshot: RunSnapshot, changes: Partial<RunSnapsh
   }
   return { ...changes, hookState: state };
 }
-export function pendingHookFeedback(snapshot: RunSnapshot): Message[] {
+export function pendingHookFeedback(snapshot: RunSnapshot, messages = snapshot.messages): Message[] {
   const state = currentHookState(snapshot);
-  return snapshot.pendingTools.length || state.post.length ? [] : state.feedback;
+  if (snapshot.pendingTools.length || state.post.length) return [];
+  const seen = new Set(messages.map(canonical));
+  return state.feedback.filter(message => !seen.has(canonical(message)));
+}
+export function assertHookFeedbackRetained(snapshot: RunSnapshot, messages: Message[]): void {
+  invariant(pendingHookFeedback(snapshot, messages).length === 0, 'context_hook_feedback_missing');
 }
 export function reduceHook(snapshot: RunSnapshot, intent: EffectIntent, input: HookInvocationResult,
   config: RunConfiguration): Partial<RunSnapshot> {
@@ -125,8 +130,8 @@ export function reduceHook(snapshot: RunSnapshot, intent: EffectIntent, input: H
       action: output.action, data: output.additionalContext, ...(request.input.call ? { callId: request.input.call.callId } : {}),
       ...(output.updatedArguments === null ? {} : { effectiveArguments: output.updatedArguments }),
     }) };
+    state.feedback.push(feedback);
     if (request.event === 'Stop') changes.messages = [...snapshot.messages, feedback];
-    else state.feedback.push(feedback);
   }
   if (output && !request.definition.readOnly) changes.context = { ...snapshot.context, workspaceCursor: null, terminalWorkspaceCursor: null };
   if (output?.action === 'repair') {

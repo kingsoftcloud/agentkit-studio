@@ -101,7 +101,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     if (post) return post;
     if (!snapshot.pendingTools.length) return transition(snapshot, { phase: 'preparing_context', interaction: null,
       messages: [...snapshot.messages, ...pendingHookFeedback(snapshot), ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null,
-      ...(snapshot.hookState ? { hookState: { ...currentHookState(snapshot), feedback: [] } } : {}) });
+    });
     const first = snapshot.pendingTools[0]!;
     const definition = config.tools.find(tool => tool.name === first.name);
     if (!definition || config.contract.allowedToolNames !== null && !config.contract.allowedToolNames.includes(first.name)) {
@@ -167,6 +167,10 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
   const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
   const base: Partial<RunSnapshot> = { pendingIntent: null, preparedContext: null, usage,
     ...(result.usageReported === false ? { diagnostics: { ...snapshot.diagnostics, providerUsageIncomplete: true } } : {}) };
+  // Only a meaningful sealed task response acknowledges delivery. Provider
+  // errors, malformed calls and context-overflow retries keep this input debt.
+  if (snapshot.hookState && ['tool_calls', 'final_candidate', 'output_limit'].includes(result.kind)
+    && (result.toolCalls.length > 0 || result.text.trim())) base.hookState = { ...currentHookState(snapshot), feedback: [] };
   const message: Message = { role: 'assistant', content: result.text,
     ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) };
   switch (result.kind) {

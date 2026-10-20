@@ -12,7 +12,7 @@ import { reduceVerification, sealCandidate } from './verification.mjs';
 import { recoverClaimed } from './recovery.mjs';
 import { toolInputRejection } from './tool-input.mjs';
 import { contextSourceDigest, modelContextMessages, validateContextMessages } from './context-view.mjs';
-import { deniedByHook, reduceHook, stagePostHooks } from './hook-runtime.mjs';
+import { assertHookFeedbackRetained, deniedByHook, reduceHook, stagePostHooks } from './hook-runtime.mjs';
 import { hookBytes, hookResult } from './hook-contract.mjs';
 
 export interface KernelOptions {
@@ -237,6 +237,7 @@ export class NativeKernel {
           break;
         }
         case 'context':
+          assertHookFeedbackRetained(snapshot, validateContextMessages(raw.messages));
           changes = { pendingIntent: null, phase: 'preparing_context',
             preparedContext: { messages: validateContextMessages(raw.messages), sourceDigest: contextSourceDigest(snapshot, this.digest) },
             context: { ...snapshot.context, adapter: objectValue(raw.context), preparedCursor: intent.payload.cursor ?? null } };
@@ -259,7 +260,7 @@ export class NativeKernel {
       }
     } catch (error) {
       const code = error instanceof NativeError ? error.code : 'effect_port_error';
-      if (['invalid_context_messages', 'invalid_context_tool_pairing', 'context_binding_mismatch'].includes(code)) {
+      if (['invalid_context_messages', 'invalid_context_tool_pairing', 'context_binding_mismatch', 'context_hook_feedback_missing'].includes(code)) {
         raw = { code }; status = 'failed';
         changes = { pendingIntent: null, preparedContext: null, phase: 'finalizing', outcome: 'blocked', reason: code };
       } else if (intent.kind === 'model' && !signal.aborted && ['effect_timeout', 'effect_port_error'].includes(code)) {
