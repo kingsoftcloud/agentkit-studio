@@ -349,6 +349,102 @@ test('browserObservationDigest identifies images by their content block, not the
     browserObservationDigest(withImage, digest));
 });
 
+test('String length bounds count Unicode code points, not UTF-16 code units (Pydantic parity)', () => {
+  // '😀' is one code point but two UTF-16 code units; the pinned Python max_length counts code points.
+  const emoji = '😀';
+  assert.strictEqual([...emoji].length, 1);
+  assert.strictEqual(emoji.length, 2);
+  // actionId max 256 code points: 256 emoji admitted, 257 rejected (would be 512/514 UTF-16 units).
+  assert.strictEqual(act({ actionId: emoji.repeat(256), kind: 'screenshot' }).actionId.length, 512);
+  rejects(() => act({ actionId: emoji.repeat(257), kind: 'screenshot' }), /invalid_browser_action/);
+  // value max 65536 code points, key max 128, selector max 2048, elementRef max 64.
+  assert.strictEqual(act({ kind: 'fill', selector: '#x', value: emoji.repeat(65536) }).value.length, 131072);
+  rejects(() => act({ kind: 'fill', selector: '#x', value: emoji.repeat(65537) }), /invalid_browser_action/);
+  assert.strictEqual(act({ kind: 'press', selector: 'body', key: emoji.repeat(128) }).key.length, 256);
+  rejects(() => act({ kind: 'press', selector: 'body', key: emoji.repeat(129) }), /invalid_browser_action/);
+  assert.strictEqual(act({ kind: 'click', selector: emoji.repeat(2048) }).selector.length, 4096);
+  rejects(() => act({ kind: 'click', selector: emoji.repeat(2049) }), /invalid_browser_action/);
+  assert.strictEqual(act({ kind: 'click', elementRef: emoji.repeat(64) }).elementRef.length, 128);
+  rejects(() => act({ kind: 'click', elementRef: emoji.repeat(65) }), /invalid_browser_action/);
+  // Control bounds: tag 1-32, role max 80, label max 160, selector 1-512, elementRef 1-64.
+  assert.strictEqual(validateBrowserControl({ tag: emoji.repeat(32) }).tag.length, 64);
+  rejects(() => validateBrowserControl({ tag: emoji.repeat(33) }), /invalid_browser_control/);
+  assert.strictEqual(validateBrowserControl({ tag: 'b', role: emoji.repeat(80) }).role.length, 160);
+  rejects(() => validateBrowserControl({ tag: 'b', role: emoji.repeat(81) }), /invalid_browser_control/);
+  assert.strictEqual(validateBrowserControl({ tag: 'b', label: emoji.repeat(160) }).label.length, 320);
+  rejects(() => validateBrowserControl({ tag: 'b', label: emoji.repeat(161) }), /invalid_browser_control/);
+  assert.strictEqual(validateBrowserControl({ tag: 'b', selector: emoji.repeat(512) }).selector.length, 1024);
+  rejects(() => validateBrowserControl({ tag: 'b', selector: emoji.repeat(513) }), /invalid_browser_control/);
+  // A BMP character that is one code unit is unaffected; the boundary is astral code points.
+  assert.strictEqual(act({ actionId: 'x'.repeat(256), kind: 'screenshot' }).actionId.length, 256);
+  rejects(() => act({ actionId: 'x'.repeat(257), kind: 'screenshot' }), /invalid_browser_action/);
+});
+
+test('BrowserImage contentBlock is recursively validated and snapshotted, not a caller reference', () => {
+  const base = { contentRef: 'r', width: 1, height: 1, contentBlock: { type: 'image_url', image_url: { url: 'data:image/png;base64,QQ==' } } };
+  // Plain nested JSON is admitted and returned as an independent snapshot.
+  const src = { contentRef: 'r', width: 1, height: 1, contentBlock: { type: 't', nested: { v: 1 } } };
+  const image = validateBrowserImage(src);
+  src.contentBlock.nested.v = 999;
+  assert.strictEqual(image.contentBlock.nested.v, 1);
+  assert.notStrictEqual(image.contentBlock, src.contentBlock);
+  assert.notStrictEqual(image.contentBlock.nested, src.contentBlock.nested);
+  // Recursively reject non-JSON values, non-finite numbers, bigint, functions, symbols, cycles
+  // and inappropriate prototypes — all with a stable NativeError code, never a raw TypeError.
+  const rejectBlock = block => assert.throws(() => validateBrowserImage({ ...base, contentBlock: block }),
+    err => err instanceof Error && err.code === 'invalid_browser_image' && !(err instanceof TypeError) && !(err instanceof RangeError));
+  rejectBlock({ nested: { invalid: undefined } });
+  rejectBlock({ ...base.contentBlock, callback() {} });
+  rejectBlock({ ...base.contentBlock, method: function () {} });
+  rejectBlock({ ...base.contentBlock, arrow: () => {} });
+  rejectBlock({ ...base.contentBlock, s: Symbol('x') });
+  rejectBlock({ ...base.contentBlock, b: BigInt(5) });
+  rejectBlock({ ...base.contentBlock, n: Infinity });
+  rejectBlock({ ...base.contentBlock, n: -Infinity });
+  rejectBlock({ ...base.contentBlock, n: NaN });
+  const cyclic = { type: 'image_url' }; cyclic.self = cyclic;
+  rejectBlock(cyclic);
+  rejectBlock(new Map());
+  rejectBlock(new Set([1]));
+  rejectBlock({ ...base.contentBlock, d: new Date() });
+  // Top-level contentBlock must be a dict (object), not an array or scalar.
+  rejectBlock(['not', 'a', 'dict']);
+  rejectBlock('data:image/png;base64,QQ==');
+  rejectBlock(null);
+  // Nested arrays must be dense; sparse holes are rejected, not silently dropped to null.
+  rejectBlock({ list: ['x', , 'y'] });
+  rejectBlock({ list: [, 'y'] });
+  // Nested arrays of plain JSON values are admitted.
+  assert.deepStrictEqual(validateBrowserImage({ ...base, contentBlock: { list: [1, 'a', true, null, { k: [2, 3] }] } }).contentBlock.list,
+    [1, 'a', true, null, { k: [2, 3] }]);
+});
+
+test('BrowserObservation rejects sparse arrays for logs and controls, not silently coercing holes', () => {
+  const minimal = { sessionRef: ref(), actionId: 'a', actionSeq: 0, status: 'ok', complete: true, retryability: 'safe', viewport: [1, 1] };
+  const ctrl = controlInput();
+  // A sparse string list is not a valid tuple; Array#every would skip the hole, so each index is checked.
+  rejects(() => validateBrowserObservation({ ...minimal, console: ['ok', ,] }), /invalid_browser_observation/);
+  rejects(() => validateBrowserObservation({ ...minimal, pageErrors: [, 'err'] }), /invalid_browser_observation/);
+  rejects(() => validateBrowserObservation({ ...minimal, pageErrorLocations: ['loc', ,] }), /invalid_browser_observation/);
+  rejects(() => validateBrowserObservation({ ...minimal, networkFailures: ['fail', ,] }), /invalid_browser_observation/);
+  // A sparse controls tuple is rejected; Array#map would skip the hole and shrink the result.
+  rejects(() => validateBrowserObservation({ ...minimal, controls: [ctrl, ,] }), /invalid_browser_observation/);
+  rejects(() => validateBrowserObservation({ ...minimal, controls: [, ctrl] }), /invalid_browser_observation/);
+  // Non-string entries are rejected (not coerced), and dense arrays are admitted and snapshotted.
+  rejects(() => validateBrowserObservation({ ...minimal, console: ['a', 1] }), /invalid_browser_observation/);
+  const dense = validateBrowserObservation({ ...minimal, console: ['a', 'b'], controls: [ctrl, { tag: 'input' }] });
+  assert.deepStrictEqual(dense.console, ['a', 'b']);
+  assert.strictEqual(dense.controls.length, 2);
+  // The validated arrays are independent of the caller's arrays.
+  const srcControls = [ctrl];
+  const observed = validateBrowserObservation({ ...minimal, controls: srcControls });
+  srcControls.push({ tag: 'injected' });
+  assert.strictEqual(observed.controls.length, 1);
+  // A sparse-nested array inside an image content block is also rejected (covered by the image test);
+  // here the observation-level screenshot path is checked end to end.
+  rejects(() => validateBrowserObservation({ ...minimal, screenshot: { contentRef: 'r', width: 1, height: 1, contentBlock: { list: ['x', ,] } } }), /invalid_browser_image/);
+});
+
 test('BrowserSessionError carries a stable code without page contents or diagnostics', () => {
   const error = new BrowserSessionError('network_denied');
   assert.ok(error instanceof Error);

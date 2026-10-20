@@ -26,7 +26,7 @@
  *    payload, so hex values differ from the Python reference. The semantic invariants
  *    (excluded identity/timing fields, elementRef stripping, image identification) are preserved.
  */
-import type { ObjectValue, RunScope } from './contracts.mjs';
+import type { Json, ObjectValue, RunScope } from './contracts.mjs';
 import { invariant, NativeError, scopeKey } from './values.mjs';
 
 export const BROWSER_SESSION_SCHEMA = 'agentkit.browser-session/v1' as const;
@@ -166,8 +166,20 @@ function isRecord(value: unknown): value is ObjectValue {
 function isInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value);
 }
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === 'string');
+/** Count Unicode code points, matching Pydantic's string length bounds. JS .length counts
+ *  UTF-16 code units, so an astral character (e.g. '😀') would count as 2; this counts it as 1.
+ *  A lone surrogate also counts as 1, matching Python len() over a surrogate string. */
+function codePointLength(value: string): number {
+  let count = 0;
+  for (let i = 0; i < value.length;) {
+    const unit = value.charCodeAt(i);
+    if (unit >= 0xD800 && unit <= 0xDBFF) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xDC00 && next <= 0xDFFF) { count++; i += 2; continue; }
+    }
+    count++; i++;
+  }
+  return count;
 }
 function get(input: ObjectValue, key: string): unknown {
   return Object.prototype.hasOwnProperty.call(input, key) ? input[key] : undefined;
@@ -176,17 +188,21 @@ function hasOnlyKeys(input: ObjectValue, allowed: readonly string[], code: strin
   for (const key of Object.keys(input)) if (!allowed.includes(key)) invariant(false, code);
 }
 function reqString(value: unknown, min: number, max: number, code: string): string {
-  if (typeof value !== 'string' || value.length < min || value.length > max) invariant(false, code);
+  if (typeof value !== 'string') invariant(false, code);
+  const length = codePointLength(value);
+  if (length < min || length > max) invariant(false, code);
   return value;
 }
 function optString(value: unknown, max: number, code: string): string | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string' || value.length > max) invariant(false, code);
+  if (typeof value !== 'string' || codePointLength(value) > max) invariant(false, code);
   return value;
 }
 function optStringBounded(value: unknown, min: number, max: number, code: string): string | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string' || value.length < min || value.length > max) invariant(false, code);
+  if (typeof value !== 'string') invariant(false, code);
+  const length = codePointLength(value);
+  if (length < min || length > max) invariant(false, code);
   return value;
 }
 function reqInt(value: unknown, min: number, max: number, code: string): number {
@@ -216,9 +232,19 @@ function optLiteral<T extends string>(value: unknown, allowed: readonly T[], cod
   if (typeof value !== 'string' || !allowed.includes(value as T)) invariant(false, code);
   return value as T;
 }
+/** Validate a dense tuple/list of strings. Array#every/map skip sparse holes, so each index is
+ *  checked with hasOwnProperty; a hole or non-string is rejected, never silently coerced to null
+ *  or dropped. Returns a fresh dense array (no caller-controlled references). */
 function reqStringArray(value: unknown, code: string): string[] {
-  if (!isStringArray(value)) invariant(false, code);
-  return value;
+  invariant(Array.isArray(value), code);
+  const result: string[] = [];
+  for (let i = 0; i < value.length; i++) {
+    invariant(Object.prototype.hasOwnProperty.call(value, i), code);
+    const item = (value as unknown[])[i];
+    invariant(typeof item === 'string', code);
+    result.push(item);
+  }
+  return result;
 }
 function validateRunScope(value: unknown): RunScope {
   invariant(isRecord(value), 'invalid_scope');
@@ -262,7 +288,7 @@ function normalizeNumericText(field: 'value' | 'key', raw: unknown): unknown {
 function normalizeOptionalText(field: 'value' | 'key', raw: unknown, max: number, code: string): string | null {
   if (raw === undefined || raw === null) return null;
   const normalized = normalizeNumericText(field, raw);
-  if (typeof normalized !== 'string' || normalized.length > max) invariant(false, code);
+  if (typeof normalized !== 'string' || codePointLength(normalized) > max) invariant(false, code);
   return normalized;
 }
 
@@ -346,21 +372,6 @@ function validateBrowserActionArguments(action: BrowserAction): void {
   }
 }
 
-/** Validate and normalize a BrowserImage. The content block is a trusted host object, not text. */
-export function validateBrowserImage(input: unknown): BrowserImage {
-  const code = 'invalid_browser_image';
-  invariant(isRecord(input), code);
-  hasOnlyKeys(input, IMAGE_KEYS, code);
-  const contentRef = reqString(get(input, 'contentRef'), 1, Number.MAX_SAFE_INTEGER, code);
-  const mimeType = get(input, 'mimeType');
-  if (mimeType !== undefined && mimeType !== 'image/png') invariant(false, code);
-  const width = reqInt(get(input, 'width'), 1, Number.MAX_SAFE_INTEGER, code);
-  const height = reqInt(get(input, 'height'), 1, Number.MAX_SAFE_INTEGER, code);
-  const contentBlock = get(input, 'contentBlock');
-  invariant(isRecord(contentBlock), code);
-  return { contentRef, mimeType: 'image/png', width, height, contentBlock };
-}
-
 /** Validate and normalize a BrowserControl, applying defaults and rejecting extra fields. */
 export function validateBrowserControl(input: unknown): BrowserControl {
   const code = 'invalid_browser_control';
@@ -383,7 +394,73 @@ export function validateBrowserControl(input: unknown): BrowserControl {
 
 function validateControls(value: unknown): BrowserControl[] {
   invariant(Array.isArray(value) && value.length <= 40, 'invalid_browser_observation');
-  return (value as unknown[]).map(validateBrowserControl);
+  // Array#map skips sparse holes; require every index present so a malformed tuple is rejected,
+  // not silently truncated. Returns fresh controls (no caller-controlled references).
+  const result: BrowserControl[] = [];
+  for (let i = 0; i < value.length; i++) {
+    invariant(Object.prototype.hasOwnProperty.call(value, i), 'invalid_browser_observation');
+    result.push(validateBrowserControl((value as unknown[])[i]));
+  }
+  return result;
+}
+
+/** Recursively validate and snapshot a plain JSON value for an image content block.
+ *  Rejects non-JSON values (functions, symbols, bigint, undefined), non-finite numbers, cycles,
+ *  inappropriate prototypes and sparse array holes; returns an independent clone so later mutation
+ *  of the caller's object cannot corrupt the validated observation. Throws NativeError(code) for
+ *  every failure, never a raw TypeError/RangeError/SyntaxError (e.g. from a getter or Proxy trap). */
+function cloneJson(input: unknown, active: Set<object>, code: string): Json {
+  if (input === null) return null;
+  if (typeof input === 'boolean') return input;
+  if (typeof input === 'string') return input;
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input)) invariant(false, code);
+    return input;
+  }
+  if (typeof input !== 'object') invariant(false, code); // function, symbol, bigint, undefined
+  if (active.has(input)) invariant(false, code); // cycle
+  active.add(input);
+  let result: Json;
+  if (Array.isArray(input)) {
+    const array: Json[] = [];
+    for (let i = 0; i < input.length; i++) {
+      if (!Object.prototype.hasOwnProperty.call(input, i)) { active.delete(input); invariant(false, code); }
+      array.push(cloneJson(input[i], active, code));
+    }
+    result = array;
+  } else {
+    if (Object.getPrototypeOf(input) !== Object.prototype && Object.getPrototypeOf(input) !== null) {
+      active.delete(input);
+      invariant(false, code);
+    }
+    const object: ObjectValue = {};
+    for (const key of Object.keys(input)) object[key] = cloneJson((input as ObjectValue)[key], active, code);
+    result = object;
+  }
+  active.delete(input);
+  return result;
+}
+
+/** Validate and normalize a BrowserImage. The content block is a trusted host object, not text. */
+export function validateBrowserImage(input: unknown): BrowserImage {
+  const code = 'invalid_browser_image';
+  invariant(isRecord(input), code);
+  hasOnlyKeys(input, IMAGE_KEYS, code);
+  const contentRef = reqString(get(input, 'contentRef'), 1, Number.MAX_SAFE_INTEGER, code);
+  const mimeType = get(input, 'mimeType');
+  if (mimeType !== undefined && mimeType !== 'image/png') invariant(false, code);
+  const width = reqInt(get(input, 'width'), 1, Number.MAX_SAFE_INTEGER, code);
+  const height = reqInt(get(input, 'height'), 1, Number.MAX_SAFE_INTEGER, code);
+  const contentBlockRaw = get(input, 'contentBlock');
+  invariant(isRecord(contentBlockRaw), code); // dict[str, JsonValue]: top-level must be an object
+  let contentBlock: ObjectValue;
+  try {
+    contentBlock = cloneJson(contentBlockRaw, new Set(), code) as ObjectValue;
+  } catch (error) {
+    if (error instanceof NativeError) throw error;
+    throw new NativeError(code);
+  }
+  return { contentRef, mimeType: 'image/png', width, height, contentBlock };
 }
 
 /** Validate and normalize a BrowserObservation, applying defaults and rejecting extra fields. */
