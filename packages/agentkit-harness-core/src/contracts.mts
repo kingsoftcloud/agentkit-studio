@@ -224,7 +224,7 @@ export interface RunSnapshot extends RunIdentity {
   toolErrorStreak: ToolErrorStreak | null;
 }
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
-export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child';
+export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child' | 'input';
 export interface EffectIntent { operationKey: string; kind: EffectKind; payload: ObjectValue; status: 'prepared' | 'running'; claimedAtMs?: number }
 export interface EffectReceipt { operationKey: string; status: 'committed' | 'failed' | 'uncertain' | 'not_dispatched'; result: ObjectValue }
 export type CommandKind = 'cancel' | 'policy_revoked' | 'pause' | 'resume' | 'submit_interaction'
@@ -275,6 +275,13 @@ export interface ToolRequest extends PortContext {
 export interface ToolPort { execute(request: ToolRequest): Promise<ToolResult> }
 export interface WorkspaceObservation { revision: string | null; changedPaths: string[]; status: 'ok' | 'unavailable'; reason: string | null }
 export interface WorkspacePort { observe(request: PortContext): Promise<WorkspaceObservation> }
+/** Claim Host-admitted input only after its Native intent has been persisted. */
+export interface TurnInputMessage extends ToolContextMessage { retention?: 'persistent' | 'normal' }
+export interface TurnInputPort {
+  prepare(request: PortContext & { step: number }): Promise<{
+    status: 'admitted' | 'rejected'; messages: TurnInputMessage[];
+  }>;
+}
 export interface ContextPort {
   /** context is adapter state, persisted under snapshot.context.adapter. Original messages are never replaced. */
   /** A prepared view must retain unacknowledged snapshot.hookState.feedback before budgeting. */
@@ -305,6 +312,7 @@ export interface BackgroundCommandPort {
 }
 export interface NativePorts {
   model: ModelPort; tools: ToolPort; workspace?: WorkspacePort; context?: ContextPort;
+  input?: TurnInputPort;
   verification?: VerificationPort; hooks?: HookPort; artifacts?: ArtifactPort;
   children?: ChildLifecyclePort; background?: BackgroundCommandPort;
 }

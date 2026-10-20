@@ -83,6 +83,10 @@ export async function apply(ctx, options) {
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
     if (exec.agent.session.id !== 'native-studio-session' || result.isError) return next();
+    // This really enters the Host's next-step inbox. The Native loop must claim
+    // it through prepareInput after the complete tool batch, including policy.
+    exec.agent.steer({ id: `live-steer-${exec.arguments.path}`, role: 'user', source: { kind: 'user' },
+      content: [{ type: 'text', text: `Live instruction for ${exec.arguments.path}` }] });
     return { kind: 'accept', content: [{ type: 'text', text: `Published ${exec.arguments.path} (policy view)` }],
       additionalContexts: [{ id: `context-${exec.callId}`, role: 'user', source: { kind: 'tool', callId: exec.callId },
         content: [{ type: 'text', text: `Loaded context for ${exec.arguments.path}` }] }] };

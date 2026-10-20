@@ -79,7 +79,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
         // Requiring reconciliation prevents a new turn from racing that work.
         const unknownEffect = previous.receipts.some(receipt => receipt.status === 'uncertain'
           && !(receipt.result.recoveryPolicy === 'safe-read/v1' && receipt.result.retryScheduled === true)
-          && ['tool', 'hook', 'child'].includes(previous.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind));
+          && ['tool', 'hook', 'child', 'input'].includes(previous.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind));
         if (!terminal(head.phase) || head.phase === 'interrupted' || unknownEffect) {
           throw failure('NATIVE_RUN_RECOVERY_REQUIRED', previous.snapshot);
         }
@@ -124,6 +124,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
         throw error;
       }
       if (snapshot.phase === 'canceled') { signal.throwIfAborted(); throw failure('NATIVE_TURN_CANCELED', snapshot); }
+      if (snapshot.reason === 'host_input_rejected' && snapshot.outcome === 'blocked') return { reason: { kind: 'blocked' } };
       if (snapshot.phase !== 'completed') throw failure('NATIVE_TURN_FAILED', snapshot);
       return { reason: { kind: snapshot.outcome === 'blocked' ? 'blocked' : 'completed' } };
     } finally { active.delete(key); }

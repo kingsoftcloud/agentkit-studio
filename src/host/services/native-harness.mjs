@@ -5,7 +5,7 @@ import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sq
 import { createNativeModelPort } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
 import { createNativeDshTurnExecutor, NATIVE_DSH_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
-import { projectNativeDshInput } from '../../providers/native-input.mjs';
+import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -60,25 +60,50 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       invariant(selected, 'studio_native_bound_model_unavailable');
       const description = profileDescription(selected), compatibilityDigest = hash(description);
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
-      const admission = await projectNativeDshInput(input.messages, { signal, attachments: () => ctx.get('attachments'),
-        fileRequestText: typeof llm?.fileRequestText === 'function' ? ref => llm.fileRequestText(ref) : undefined });
+      const inputServices = { attachments: () => ctx.get('attachments'),
+        fileRequestText: typeof llm?.fileRequestText === 'function' ? ref => llm.fileRequestText(ref) : undefined };
+      const admission = await projectNativeDshInput(input.messages, { ...inputServices, signal });
       const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
       const materialized = await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
         toolAdapter: {}, agent, agentId: binding.agentId, userId: 'local-user', resourceMode: 'context-only' });
       // A memory write is an external effect and must get its own Native intent.
       // Refuse that composition until its durable port is installed.
       invariant(!materialized.memoryWrite, 'studio_native_memory_write_port_unavailable');
-      const instructions = [renderPrompt(input.assembly), materialized.resourceContext].filter(Boolean).join('\n\n');
+      const systemPrompt = renderPrompt(input.assembly);
+      const instructions = [systemPrompt, materialized.resourceContext].filter(Boolean).join('\n\n');
       const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
       return { scope: { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId }, buildId, source,
         configuration: { profile: { profileId: selected.id || selectedId || 'default', profileVersion: compatibilityDigest,
           providerFamily: description.protocol, compatibilityDigest, contextWindow: description.contextWindow,
           maxOutputTokens: selection.maxTokens ?? description.maxOutputTokens, requestTimeoutMs: description.requestTimeoutMs,
           providerReplayMode: description.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
-        hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId }),
+        hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
+          inputContract: 'agentkit.native-host-input/v1' }),
         contract: { objective: admission.objective }, instructions, inputMessages: admission.messages,
         tools, limits: { effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000) } },
-        ports: { ...binding.nativeTools.forAgent(agent), model: createNativeModelPort({ fetchImpl,
+        ports: { ...binding.nativeTools.forAgent(agent), input: { prepare: async request => {
+          request.signal.throwIfAborted();
+          const next = await prepareInput(request.step);
+          request.signal.throwIfAborted();
+          invariant(next && ['enter', 'reject'].includes(next.kind), 'studio_native_prepared_input_invalid');
+          if (next.kind === 'reject') return { status: 'rejected', messages: [] };
+          // A changing model/tool series needs an explicit Native rebind, not
+          // an unlogged change to the frozen execution contract.
+          invariant(next.startsRequestSeries !== true, 'studio_native_request_series_rebind_required');
+          invariant(renderPrompt(next.assembly) === systemPrompt
+            && canonical(binding.nativeTools.definitions(agent, next.assembly.tools)) === canonical(tools),
+          'studio_native_input_binding_changed');
+          invariant(Array.isArray(next.messages), 'studio_native_prepared_input_invalid');
+          const messages = [], images = new Map();
+          for (const message of next.messages) {
+            invariant(message?.role === 'user' && Array.isArray(message.content), 'studio_native_prepared_input_invalid');
+            const context = await projectNativeDshContent(message.content, { ...inputServices, signal: request.signal }, images);
+            if (message.source !== undefined) context.presentation.source = structuredClone(message.source);
+            messages.push({ ...context, retention: !message.source || ['user', 'schedule'].includes(message.source.kind) ? 'persistent' : 'normal' });
+          }
+          request.signal.throwIfAborted();
+          return { status: 'admitted', messages };
+        } }, model: createNativeModelPort({ fetchImpl,
           resolveProfile: async () => {
             const current = { ...await models.profile(selectedId), modelName: selected.modelName };
             invariant(hash(profileDescription(current)) === compatibilityDigest, 'studio_native_model_binding_changed');

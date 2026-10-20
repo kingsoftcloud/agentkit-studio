@@ -15,6 +15,7 @@ import { contextSourceDigest, modelContextMessages, validateContextMessages } fr
 import { assertHookFeedbackRetained, deniedByHook, reduceHook, stagePostHooks } from './hook-runtime.mjs';
 import { hookBytes, hookResult } from './hook-contract.mjs';
 import { planNativeContext, reduceContextModel } from './context-planning.mjs';
+import { reduceTurnInput } from './turn-input.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -155,7 +156,8 @@ export class NativeKernel {
           this.commit(claimedSnapshot, lease, batch);
           continue;
         }
-        const next = plan(snapshot, config, { context: !!this.ports.context, workspace: !!this.ports.workspace, verification: !!this.ports.verification }, this.digest);
+        const next = plan(snapshot, config, { context: !!this.ports.context, workspace: !!this.ports.workspace,
+          verification: !!this.ports.verification, input: !!this.ports.input }, this.digest);
         if (!next) return snapshot;
         try { this.commit(snapshot, lease, next); }
         catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
@@ -216,6 +218,11 @@ export class NativeKernel {
             toolCalls: result.toolCalls.map(objectValue), usage: objectValue(result.usage) } });
           break;
         }
+        case 'input':
+          changes = reduceTurnInput(snapshot, raw);
+          facts.push({ kind: 'input.completed', payload: { step: intent.payload.step!, status: raw.status!,
+            messageCursor: changes.messages?.length ?? snapshot.messages.length } });
+          break;
         case 'tool': {
           const calls = intent.payload.calls as unknown as ToolCall[];
           const results = raw.results as unknown as ToolResult[];
@@ -372,6 +379,9 @@ export class NativeKernel {
         }));
         return { results };
       }
+      case 'input':
+        invariant(this.ports.input && Number.isSafeInteger(intent.payload.step) && Number(intent.payload.step) > 1, 'input_port_missing');
+        return this.ports.input.prepare({ ...context, step: Number(intent.payload.step) });
       case 'workspace': invariant(this.ports.workspace, 'workspace_port_missing'); return this.ports.workspace.observe(context);
       case 'context': {
         invariant(this.ports.context, 'context_port_missing');

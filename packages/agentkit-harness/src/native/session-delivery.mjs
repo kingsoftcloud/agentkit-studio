@@ -149,13 +149,14 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
         if (message.role === 'user') {
           // Human steering and Host-admitted tool context keep distinct sources.
           // Model, verification and Hook feedback remain private execution context.
-          if (message.kind === 'tool_context' && message.presentation?.format === NATIVE_DSH_CONTENT_FORMAT) {
+          if (['tool_context', 'host_input'].includes(message.kind) && message.presentation?.format === NATIVE_DSH_CONTENT_FORMAT) {
             const original = message.presentation.source;
-            const contextSource = original?.kind === 'tool' ? { ...original, callId: projectedCallId(original.callId) }
-              : original || { kind: 'agentkit-native-tool-context', form: 'notice', summary: 'Tool-provided context' };
+            const contextSource = message.kind === 'tool_context' && original?.kind === 'tool' ? { ...original, callId: projectedCallId(original.callId) }
+              : original || (message.kind === 'host_input' ? { kind: 'user' }
+                : { kind: 'agentkit-native-tool-context', form: 'notice', summary: 'Tool-provided context' });
             append('user/message', { id: id(`transcript:${index}`), role: 'user', source: contextSource,
               content: blocks(message) }, { surfaceOp: 'append' });
-          } else if (['guidance', 'steering'].includes(message.kind)) append('user/message', {
+          } else if (['guidance', 'steering', 'host_input'].includes(message.kind)) append('user/message', {
             id: id(`transcript:${index}`), role: 'user', source: { kind: 'user' },
             content: [{ type: 'text', text: message.content }] }, { surfaceOp: 'append' });
         }

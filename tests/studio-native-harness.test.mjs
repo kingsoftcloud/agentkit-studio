@@ -36,7 +36,7 @@ async function setup(t) {
   t.after(async () => { await host.close(); await rm(root, { recursive: true, force: true }); });
   const payload = { agent: { session, options: { provider: 'agentkit-studio-fixture', model: 'pinned' } },
     input: { kind: 'enter', messages: [{ id: 'input-1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Finish' }] }], assembly: { tools: [] } },
-    turn: 1, signal: new AbortController().signal, prepareInput: async () => undefined,
+    turn: 1, signal: new AbortController().signal, prepareInput: async () => ({ kind: 'enter', messages: [], assembly: payload.input.assembly }),
     binding: { agentId: record.metadata.id, agentRevision: 1, runtime: 'harness', local: true,
       nativeEngineContract: 'agentkit.native-dsh-turn/v1',
       nativeTools: { definitions: () => [], forAgent: () => ({ tools: { execute: async () => assert.fail('No tool dispatched') } }) } } };
@@ -47,7 +47,7 @@ async function setup(t) {
   // The workspace identity is public deterministic configuration, not a path
   // read from user input. Keep the hash identical to production's scope key.
   const ledgerScope = () => createHash('sha256').update(JSON.stringify(root)).digest('hex');
-  return { host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events,
+  return { host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
 test('Studio Native Host pins revision/input/model while refreshing credentials outside its ledger', async t => {
@@ -103,4 +103,63 @@ test('Studio Native close is idempotent and retires its projection exactly once'
   assert.equal(first, second); await first;
   assert.equal(fixture.unregisters(), 1);
   assert.throws(() => fixture.host.executeTurn(fixture.payload), /studio_native_host_closed/);
+});
+test('Studio Native admits live typed input through Host policy and trusted attachment resolution', async t => {
+  const fixture = await setup(t), steps = [], reads = [];
+  fixture.services.attachments = { readImageRequest: async ref => {
+    reads.push(ref); return { mediaType: 'image/png', data: Uint8Array.of(1, 2) };
+  } };
+  const content = [{ type: 'text', text: 'Use the new image' }, { type: 'image', attachment: { attachmentId: 'host-admitted-image' } }];
+  fixture.payload.prepareInput = async step => {
+    steps.push(step);
+    const run = fixture.head(), record = fixture.ledger.load(run.scope, run.runId);
+    assert.equal(record.intents.find(intent => intent.operationKey === run.pendingIntent)?.kind, 'input');
+    assert.equal(record.intents.find(intent => intent.operationKey === run.pendingIntent)?.status, 'running');
+    return { kind: 'enter', assembly: fixture.payload.input.assembly, messages: step === 2
+      ? [{ id: 'steering-image', role: 'user', source: { kind: 'user' }, content },
+        { id: 'host-context', role: 'user', source: { kind: 'tool', callId: 'already-host-owned' }, content: [{ type: 'text', text: 'Host-owned context' }] }] : [] };
+  };
+  await fixture.host.executeTurn(fixture.payload);
+  assert.deepEqual(steps, [2, 3]); assert.equal(fixture.requests.length, 2); assert.equal(reads.length, 1);
+  const messages = JSON.parse(fixture.requests[1].options.body).messages;
+  assert.deepEqual(messages.at(-2).content, [{ type: 'text', text: 'Use the new image' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,AQI=', detail: 'auto' } }]);
+  const delivered = fixture.events.filter(event => event.type === 'user/message' && event.data.content[0]?.text === 'Use the new image');
+  assert.equal(delivered.length, 1); assert.deepEqual(delivered[0].data.content, content);
+  const context = fixture.events.find(event => event.type === 'user/message' && event.data.content[0]?.text === 'Host-owned context');
+  assert.deepEqual(context.data.source, { kind: 'tool', callId: 'already-host-owned' });
+  assert.equal(fixture.head().goal, 'Finish');
+});
+test('Studio Native respects a pre-step rejection without reporting the stale candidate as completion', async t => {
+  const fixture = await setup(t);
+  fixture.payload.prepareInput = async () => ({ kind: 'reject' });
+  assert.deepEqual(await fixture.host.executeTurn(fixture.payload), { reason: { kind: 'blocked' } });
+  assert.equal(fixture.requests.length, 1);
+  assert.equal(fixture.head().outcome, 'blocked'); assert.equal(fixture.head().reason, 'host_input_rejected');
+  assert.equal(fixture.head().finalText, '');
+});
+for (const series of [false, true]) test(`Studio Native refuses a changed ${series ? 'request series' : 'tool binding'} during input admission`, async t => {
+  const fixture = await setup(t);
+  fixture.payload.binding.nativeTools.definitions = (_agent, tools) => tools;
+  fixture.payload.prepareInput = async () => ({ kind: 'enter', messages: [],
+    ...(series ? { startsRequestSeries: true } : {}), assembly: { tools: series ? [] : [{ name: 'unexpected' }] } });
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'NATIVE_TURN_FAILED', nativeReason: 'effect_outcome_unknown' });
+  assert.equal(fixture.requests.length, 1); assert.equal(fixture.head().phase, 'interrupted');
+  const run = fixture.head();
+  assert.equal(fixture.ledger.load(run.scope, run.runId).receipts.at(-1).result.code,
+    series ? 'studio_native_request_series_rebind_required' : 'studio_native_input_binding_changed');
+});
+test('Studio Native close during a stalled input claim fences late admission', async t => {
+  const fixture = await setup(t);
+  let enter, finish;
+  const entered = new Promise(resolve => { enter = resolve; }), late = new Promise(resolve => { finish = resolve; });
+  fixture.payload.prepareInput = async () => { enter(); await late; return { kind: 'enter', messages: [], assembly: fixture.payload.input.assembly }; };
+  const running = fixture.host.executeTurn(fixture.payload);
+  const rejected = assert.rejects(running, /Studio Native host closed/);
+  await entered; await fixture.host.close(); await rejected;
+  assert.equal(fixture.head().phase, 'canceled'); assert.equal(fixture.requests.length, 1);
+  const run = fixture.head(), before = fixture.ledger.load(run.scope, run.runId);
+  assert.ok(before.receipts.some(receipt => receipt.status === 'uncertain'));
+  finish(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(fixture.ledger.load(run.scope, run.runId), before);
 });

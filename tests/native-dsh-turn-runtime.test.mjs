@@ -232,3 +232,29 @@ test('whole-turn binding must explicitly provide the admitted Native messages', 
   await assert.rejects(host.execute(host.payload), { code: 'native_dsh_turn_binding_invalid' });
   assert.equal(host.head(), null); assert.deepEqual(host.calls, { model: 0, write: 0 });
 });
+test('a canceled Host input claim fences the next turn and a late receipt', async t => {
+  const entered = gate(), late = gate(), host = setup(t, true);
+  host.binding.ports.input = { prepare: async () => { entered.resolve(); await late.promise; return { status: 'admitted', messages: [] }; } };
+  const running = host.execute(host.payload);
+  const rejected = assert.rejects(running, /Canceled input claim/);
+  await entered.promise; host.controller.abort(new Error('Canceled input claim')); await rejected;
+  const run = host.head(); assert.equal(run.phase, 'canceled');
+  const record = host.store.load(scope, run.runId);
+  assert.ok(record.receipts.some(receipt => receipt.status === 'uncertain'
+    && record.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind === 'input'));
+  await assert.rejects(host.execute({ ...host.payload, turn: 2, signal: new AbortController().signal }),
+    { code: 'NATIVE_RUN_RECOVERY_REQUIRED', nativeRunId: run.runId });
+  late.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(host.store.load(scope, run.runId), record);
+});
+test('plain Host-admitted guidance is delivered once when no display envelope is provided', async t => {
+  const host = setup(t, false);
+  host.binding.ports.input = { prepare: async ({ step }) => ({ status: 'admitted',
+    messages: step === 2 ? [{ content: 'Plain live guidance' }] : [] }) };
+  await host.execute(host.payload);
+  assert.deepEqual(host.calls, { model: 2, write: 1 });
+  const delivered = host.sink.events.filter(event => event.type === 'user/message' && event.data.content[0]?.text === 'Plain live guidance');
+  assert.equal(delivered.length, 1); assert.deepEqual(delivered[0].data.source, { kind: 'user' });
+  const before = structuredClone(host.sink.events);
+  await host.execute(host.payload); assert.deepEqual(host.sink.events, before);
+});

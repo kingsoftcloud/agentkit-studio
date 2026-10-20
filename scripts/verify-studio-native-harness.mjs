@@ -22,11 +22,13 @@ const server = createServer(async (request, response) => {
     if (count === 2 || count === 4) {
       assert.equal(body.messages.filter(message => message.role === 'tool').at(-1).content, `Published published-${turn}.txt (policy view)`);
       assert.equal(body.messages.at(-1).role, 'user');
-      assert.equal(body.messages.at(-1).content, `Loaded context for published-${turn}.txt`);
+      assert.equal(body.messages.at(-1).content, `Live instruction for published-${turn}.txt`);
+      assert.ok(body.messages.some(message => message.role === 'user' && message.content === `Loaded context for published-${turn}.txt`));
     }
     if (count === 3) {
       assert.ok(body.messages.some(message => message.role === 'user' && message.content === 'Publish marker 1 and report completion.'));
       assert.ok(body.messages.some(message => message.role === 'user' && message.content === 'Loaded context for published-1.txt'));
+      assert.ok(body.messages.some(message => message.role === 'user' && message.content === 'Live instruction for published-1.txt'));
     }
     if (count === 6) assert.match(JSON.stringify(body.messages.filter(message => message.role === 'tool').at(-1)), /Verification policy denied this write/);
     const delta = count % 2 ? { tool_calls: [{ index: 0, id: 'reused-provider-id', type: 'function',
@@ -90,6 +92,9 @@ try {
     const context = result.events.filter(event => event.type === 'user/message').find(event => event.data.source.kind === 'tool');
     assert.deepEqual(context.data.content, [{ type: 'text', text: `Loaded context for published-${turn}.txt` }]);
     assert.equal(context.data.source.callId, receipt.toolCallId);
+    assert.equal(result.events.filter(event => event.type === 'user/message'
+      && event.data.source.kind === 'user' && event.data.content.some(block => block.type === 'text'
+        && block.text === `Live instruction for published-${turn}.txt`)).length, 1);
     if (turn === 1) { await harness.close(); harness = new DeepSeekHarness(options); session = await harness.resumeSession('native-studio-session'); }
   }
   const denied = await session.run('Attempt the denied write and report its denial.');
@@ -113,7 +118,7 @@ try {
   assert.equal(stored.filter(event => event.type === 'turn/end').length, 4);
   assert.equal(JSON.stringify(stored).includes('sk-studio-fixture-secret'), false);
   assert.equal((await readFile(join(root, 'studio/native-harness/runs.sqlite'))).includes(Buffer.from('sk-studio-fixture-secret')), false);
-  console.log('Studio Native Host PASS: actual packed Studio files, public Host prompt import, Node-only PATH, selected production preset, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual HTTP requests, 2 Node workspace writes, authoritative post-policy text and deferred contexts in model/Session/history, no denied write and 1 separate default DSH turn.');
+  console.log('Studio Native Host PASS: actual packed Studio files, public Host prompt import, Node-only PATH, selected production preset, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual HTTP requests, 2 Node workspace writes, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.');
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });

@@ -50,7 +50,7 @@ export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration)
     : config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name));
   return [...tools, ...(submission ? [submission] : [])];
 }
-export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean }
+export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean; input?: boolean }
 /** Pure next action. Dispatch is impossible until its intent has been committed and claimed. */
 export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabilities: PlanCapabilities,
   digest: (value: unknown) => string = canonical): CommitBatch | null {
@@ -77,6 +77,15 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     return finalizing(snapshot, 'budget_exhausted', 'execution_budget_exhausted');
   }
   if (snapshot.phase === 'created') return transition(snapshot, { phase: 'preparing_context' }, [{ kind: 'run.started', payload: { buildId: snapshot.buildId } }]);
+  // The first input was admitted before start. Later boundaries drain Host
+  // steering only after every result in the previous tool batch is committed.
+  // Check candidates too, so input received during the final request is not
+  // silently left behind when the delegated engine settles the whole turn.
+  if (capabilities.input && snapshot.usage.modelCalls > 0
+    && ['preparing_context', 'verifying'].includes(snapshot.phase)
+    && snapshot.context.inputModelCursor !== snapshot.usage.modelCalls) {
+    return prepareEffect(snapshot, 'input', snapshot.phase, { step: snapshot.usage.modelCalls + 1 });
+  }
   if (snapshot.phase === 'verifying') {
     const hook = planHook(snapshot, config, 'Stop', digest);
     if (hook) return hook;
