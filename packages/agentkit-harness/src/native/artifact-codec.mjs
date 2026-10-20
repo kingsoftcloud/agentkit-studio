@@ -371,3 +371,47 @@ export function jsonEquals(a, b) {
 export function tempNonce() {
   return randomBytes(9).toString('hex') + process.pid.toString(36);
 }
+
+/**
+ * Strict validator for a durable sidecar record read back from disk. Every
+ * field is type-checked without coercion (no Number()/String()), and the
+ * uri/digest/mediaType/sizeBytes/metadata shape must match the contract.
+ * The caller additionally asserts that the uri's scope/run/identity match
+ * the on-disk path. Returns the validated, plain-prototype record.
+ *
+ * @param {string} text  Raw sidecar text.
+ * @param {string} code  Error code to throw on any failure.
+ * @returns {{ uri: string, digest: string, mediaType: string, sizeBytes: number, metadata: object, createdAt?: string }}
+ */
+export function validateDurableRecord(text, code = 'invalid_artifact_record') {
+  const meta = safeJsonParse(text, code);
+  if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) {
+    throw Object.assign(new Error(code), { code });
+  }
+  const { uri, digest, mediaType, sizeBytes, metadata, createdAt } = meta;
+  if (typeof uri !== 'string') {
+    throw Object.assign(new Error(code), { code });
+  }
+  const m = /^artifact:\/\/([0-9a-f]{64})\/([0-9a-f]{64})\/([0-9a-f]{64})$/.exec(uri);
+  if (!m) throw Object.assign(new Error(code), { code });
+  if (typeof digest !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(digest)) {
+    throw Object.assign(new Error(code), { code });
+  }
+  if (typeof mediaType !== 'string' || mediaType.length === 0 || mediaType.length > 160 || /[\r\n]/.test(mediaType)) {
+    throw Object.assign(new Error(code), { code });
+  }
+  if (typeof sizeBytes !== 'number' || !Number.isInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > Number.MAX_SAFE_INTEGER) {
+    throw Object.assign(new Error(code), { code });
+  }
+  if (metadata === undefined || metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw Object.assign(new Error(code), { code });
+  }
+  // Reject prototype-polluting / non-plain metadata in a stored record.
+  validateMetadataObject(metadata, code);
+  if (createdAt !== undefined && (typeof createdAt !== 'string' || createdAt.length === 0 || createdAt.length > 64)) {
+    throw Object.assign(new Error(code), { code });
+  }
+  return { uri, digest, mediaType, sizeBytes, metadata, createdAt };
+}
+
+/** True when two JSON values are structurally equal under canonical form. */
