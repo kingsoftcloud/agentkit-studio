@@ -112,8 +112,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir }) {
               ? { ...structuredClone(message.source), callId: request.call.callId } : structuredClone(message.source);
             additionalContexts.push(projected);
           }
-          return { ...invocation.outcome, status, content: result?.additionalContexts?.length
-            ? { content: result.content, additionalContexts: result.additionalContexts } : result.content,
+          // Host facts (including browser interaction diagnostics) need their
+          // original typed receipt. Model/display views still use the complete
+          // post-policy DSH output above; native context cannot bypass it.
+          const content = invocation.outcome ? structuredClone(invocation.outcome.content) : result?.additionalContexts?.length
+            ? { content: result.content, additionalContexts: result.additionalContexts } : result.content;
+          return { ...invocation.outcome, status, content,
           context, ...(additionalContexts.length ? { additionalContexts } : {}) };
         } finally { calls.delete(callId); }
       } } };

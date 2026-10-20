@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
-import { scope } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { NativeKernel, MemoryRunStore, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
 function setup(t, names = ['write_workspace_file'], contracts = []) {
   const root = mkdtempSync(join(tmpdir(), 'studio-native-tools-')), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -38,6 +39,8 @@ test('Native builtin effects require ledger authority and pass through the regis
   assert.equal(existsSync(join(host.workspaceRoot, 'escape.txt')), false);
   const result = await host.gateway.forAgent(host.agent).tools.execute(host.request());
   assert.equal(result.status, 'ok'); assert.deepEqual(result.workspaceChangedPaths, ['file.txt']);
+  assert.equal(result.content.ok, true); assert.equal(result.content.path, 'file.txt');
+  assert.equal(result.content.size, 5);
   assert.equal(readFileSync(join(host.workspaceRoot, 'file.txt'), 'utf8'), 'value');
   assert.match(host.calls[0].callId, /^ak-native-/);
 });
@@ -110,8 +113,48 @@ test('Native model and display views use the authoritative post-policy receipt',
   };
   const result = await host.gateway.forAgent(host.agent).tools.execute(host.request());
   assert.equal(result.context.content, 'Policy-redacted result');
+  assert.equal(result.content.ok, true); assert.equal(result.content.path, 'file.txt');
+  assert.equal(result.context.content.includes(host.workspaceRoot), false);
   assert.deepEqual(result.context.presentation.content, [{ type: 'text', text: 'Policy-redacted result' }]);
   assert.deepEqual(result.workspaceChangedPaths, ['file.txt']);
+});
+
+test('post-policy display cannot replace the canonical builtin error diagnostics', async t => {
+  const host = setup(t);
+  host.ctx.tools.execute = async input => {
+    await host.registry.get(input.name).execute(input.arguments, input);
+    return { isError: false, content: [{ type: 'text', text: 'Host display replaced' }],
+      additionalContexts: [{ role: 'user', content: [{ type: 'text', text: 'Host follow-up' }] }] };
+  };
+  const result = await host.gateway.forAgent(host.agent).tools.execute(host.request({ path: '../outside', content: 'no write' }));
+  assert.equal(result.status, 'error'); assert.equal(result.content.error_type, 'path_escape');
+  assert.equal(result.context.content, 'Host display replaced');
+  assert.equal(result.additionalContexts[0].content, 'Host follow-up');
+  assert.equal(existsSync(join(host.workspaceRoot, '..', 'outside')), false);
+});
+
+test('Native ledger keeps the typed builtin receipt while the next model sees only post-policy context', async t => {
+  const host = setup(t), request = host.request(), ports = host.gateway.forAgent(host.agent);
+  host.ctx.tools.execute = async input => {
+    await host.registry.get(input.name).execute(input.arguments, input);
+    return { isError: false, content: [{ type: 'text', text: 'Policy-approved view' }] };
+  };
+  const { config, snapshot } = fixture({ tools: [request.definition] }), store = new MemoryRunStore();
+  let models = 0;
+  const kernel = new NativeKernel({ store, digest, owner: 'worker', ports: { ...ports, model: { generate: async input => {
+    models++;
+    if (models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [request.call] };
+    assert.equal(input.messages.find(message => message.role === 'tool').content, 'Policy-approved view');
+    return { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] };
+  } } } });
+  kernel.start(snapshot, config);
+  const done = await kernel.runUntilIdle(scope, 'run');
+  assert.equal(done.phase, 'completed'); assert.equal(done.outcome, 'unverified');
+  const record = store.load(scope, 'run'), intent = record.intents.find(intent => intent.kind === 'tool');
+  const receipt = record.receipts.find(receipt => receipt.operationKey === intent.operationKey);
+  assert.equal(receipt.result.results[0].content.ok, true);
+  assert.equal(receipt.result.results[0].content.path, 'file.txt');
+  assert.equal(done.messages.find(message => message.role === 'tool').content, 'Policy-approved view');
 });
 test('tool image observations use Host-owned bytes and retain their structured display receipts', async t => {
   const host = setup(t, ['external']), ref = { attachmentId: 'owned-image', name: 'observation.png' };
