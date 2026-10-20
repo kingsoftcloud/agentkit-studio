@@ -53,6 +53,16 @@ class CaptureError extends Error {
   constructor(reason) { super(reason); this.code = reason; this.name = 'CaptureError'; }
 }
 
+/** Raised when the workspace root symlink is swapped to point outside its
+ *  creation-time boundary. Pinned at factory construction; never re-resolved. */
+class RootBoundaryError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'RootBoundaryError';
+    this.code = 'workspace_root_changed';
+  }
+}
+
 export function createNativeWorkspaceTools({
   workspaceRoot, stateDir, sessionId, authorize,
 } = {}) {
@@ -62,35 +72,73 @@ export function createNativeWorkspaceTools({
   const store = new WorkspaceStateStore(stateDir, sessionId);
   const authorizeFn = authorize || defaultAuthorize;
 
-  function getRootReal() {
+  // Pin the authorized root boundary at factory creation. The caller passes a
+  // trusted workspaceRoot; resolving its realpath once here establishes the
+  // directory this port is allowed to touch. We never re-resolve `root` later,
+  // so swapping the root path (or a parent) for a symlink that points outside
+  // cannot widen the boundary mid-life: execute and observe compare the live
+  // realpath against this pinned value and refuse on mismatch.
+  const pinnedRootReal = resolvePinnedRoot(root);
+
+  function resolvePinnedRoot(r) {
+    // If the root exists, lock its realpath. If not yet created, lock the
+    // lexical path so it can be created later but is still boundary-checked.
     try {
-      if (existsSync(root)) return realpathSync(root);
-    } catch { /* fall back to lexical root */ }
-    return root;
+      if (existsSync(r)) {
+        const real = realpathSync(r);
+        if (!lstatSync(r).isSymbolicLink()) return real;
+        // A symlinked root at creation is allowed but pinned to its target;
+        // a later swap to a different target is rejected by checkRootBoundary.
+        return real;
+      }
+    } catch { /* fall through to lexical */ }
+    return r;
   }
 
+  function checkRootBoundary() {
+    // The live root must still resolve to the same real path it was pinned to.
+    // A symlink swap (or a parent rewrite) that changes the realpath is refused
+    // for both execute and observe, regardless of authorization outcome.
+    if (!existsSync(root)) {
+      const err = new RootBoundaryError('workspace root no longer exists');
+      err.code = 'workspace_missing';
+      throw err;
+    }
+    let live;
+    try { live = realpathSync(root); }
+    catch {
+      const err = new RootBoundaryError('workspace root is not resolvable');
+      err.code = 'workspace_missing';
+      throw err;
+    }
+    if (live !== pinnedRootReal) {
+      throw new RootBoundaryError('workspace root was replaced or repointed');
+    }
+  }
+
+
   function resolvePath(relativePath) {
-    return resolveWorkspacePath(root, getRootReal(), relativePath);
+    return resolveWorkspacePath(root, pinnedRootReal, relativePath);
   }
 
   function relativeOf(target) {
-    return workspaceRelative(getRootReal(), target);
+    return workspaceRelative(pinnedRootReal, target);
   }
 
   // ---- tool implementations -------------------------------------------------
 
   function workspaceStatus() {
-    const rootReal = getRootReal();
-    mkdirSync(rootReal, { recursive: true });
+    const real = pinnedRootReal;
+    mkdirSync(real, { recursive: true });
     const all = [];
-    collectFiles(rootReal, '', all);
+    collectFiles(real, '', all);
     all.sort();
     const files = all.slice(0, 50).map((rel) => {
       let size = 0;
-      try { size = Number(lstatSync(join(rootReal, rel), { bigint: true }).size); } catch { /* gone */ }
+      try { size = Number(lstatSync(join(real, rel), { bigint: true }).size); } catch { /* gone */ }
       return { path: rel, size };
     });
-    return { ok: true, workspace_root: rootReal, file_count_sampled: files.length, files };
+    return { ok: true, workspace_root: real, file_count_sampled: files.length, files };
   }
 
   function collectFiles(base, rel, out) {
@@ -257,9 +305,9 @@ export function createNativeWorkspaceTools({
       path: rel,
       mtimeNs: stat.mtimeNs,
       sizeBytes: Number(stat.size),
-      start_line: start,
-      end_line: returnedEnd !== null ? returnedEnd : start,
-      total_lines: totalLines,
+      startLine: start,
+      endLine: returnedEnd !== null ? returnedEnd : start,
+      totalLines,
       partial,
       canonicalPath: target,
       contentSha256: sha256(Buffer.from(text, 'utf-8')),
@@ -488,9 +536,9 @@ export function createNativeWorkspaceTools({
       path: rel,
       mtimeNs: stat.mtimeNs,
       sizeBytes: Number(stat.size),
-      start_line: 1,
-      end_line: lines.length,
-      total_lines: lines.length,
+      startLine: 1,
+      endLine: lines.length,
+      totalLines: lines.length,
       partial: false,
       canonicalPath: target,
       contentSha256: sha256(Buffer.from(text, 'utf-8')),
@@ -651,8 +699,8 @@ export function createNativeWorkspaceTools({
   function deleteWorkspaceFile(args) {
     const path = String(args.path ?? '');
     const target = resolvePath(path);
-    const rootReal = getRootReal();
-    if (target === rootReal) return { ok: false, error_message: 'refuse to delete workspace root' };
+    const real = pinnedRootReal;
+    if (target === real) return { ok: false, error_message: 'refuse to delete workspace root' };
     if (!existsSync(target)) return { ok: false, error_message: `workspace path not found: ${path}` };
     const info = lstatSync(target, { bigint: true });
     try {
@@ -700,6 +748,18 @@ export function createNativeWorkspaceTools({
     const signal = request.signal;
     const mutating = MUTATING.has(name);
 
+    // The root boundary is pinned at factory creation. Re-check it on every
+    // execute: a symlink swap (or parent rewrite) that changes the live
+    // realpath is refused before authorization, so a swapped root can never
+    // authorize a write even if the caller later approves.
+    try { checkRootBoundary(); }
+    catch (e) {
+      if (e instanceof RootBoundaryError) {
+        return { status: 'error', content: { code: e.code, message: e.message } };
+      }
+      throw e;
+    }
+
     if (mutating) {
       if (signal?.aborted) return canceled();
       if (request.interaction != null) {
@@ -709,6 +769,15 @@ export function createNativeWorkspaceTools({
         let decision;
         try { decision = await authorizeFn(request); } catch (e) {
           return { status: 'error', content: { code: 'authorize_failed', message: e.message } };
+        }
+        // Re-check the boundary after the authorization await: the root could
+        // have been swapped while the caller was deciding approval.
+        try { checkRootBoundary(); }
+        catch (e) {
+          if (e instanceof RootBoundaryError) {
+            return { status: 'error', content: { code: e.code, message: e.message } };
+          }
+          throw e;
         }
         if (decision === 'deny') return { status: 'error', content: { code: 'policy_denied' } };
         if (decision === 'approval_required') {
@@ -793,12 +862,21 @@ export function createNativeWorkspaceTools({
     if (!request || typeof request !== 'object') {
       return { revision: null, changedPaths: [], status: 'unavailable', reason: 'invalid_request' };
     }
-    const rootReal = getRootReal();
-    if (!existsSync(rootReal)) {
+    // The root boundary is pinned at factory creation; a swapped root is not
+    // observed even if it still exists at a new real path.
+    try { checkRootBoundary(); }
+    catch (e) {
+      if (e instanceof RootBoundaryError) {
+        return { revision: null, changedPaths: [], status: 'unavailable', reason: e.code };
+      }
+      throw e;
+    }
+    const real = pinnedRootReal;
+    if (!existsSync(real)) {
       return { revision: null, changedPaths: [], status: 'unavailable', reason: 'workspace_missing' };
     }
     try {
-      const revision = computeRevision(rootReal);
+      const revision = computeRevision(real);
       return { revision, changedPaths: [], status: 'ok', reason: null };
     } catch (e) {
       if (e instanceof CaptureError) {
@@ -808,16 +886,51 @@ export function createNativeWorkspaceTools({
     }
   }
 
-  function computeRevision(rootReal) {
-    const hash = createHash('sha256');
-    hash.update('ksadk.directory-workspace/v1\0');
-    const state = { entries: 0, hashedBytes: 0 };
-    scanDir(rootReal, '', hash, state);
-    return 'sha256:' + hash.digest('hex');
+  /**
+   * Compute a workspace revision by scanning the directory tree twice and
+   * requiring the two captures to agree. A single scan would treat a file
+   * truncated or rewritten mid-scan as a stable revision; the double capture
+   * mirrors ksadk.harness.workspace_adapters.native_directory, which rejects a
+   * capture whose two passes differ in digest, entry list or per-entry
+   * identity. A short read (fewer bytes than lstat reported) is a change and
+   * makes the capture unavailable.
+   *
+   * Remaining non-atomic limit: two captures are sequential, not a single
+   * filesystem transaction. A change that happens entirely between the two
+   * scans, or within a single scan with no carry-over, can still produce a
+   * stable but momentary revision. The Host's effect/receipt layer, not this
+   * port, owns the authoritative mutation ledger; observe is a best-effort
+   * snapshot that refuses to confirm a workspace it saw changing.
+   */
+  function computeRevision(real) {
+    const first = captureInventory(real);
+    const second = captureInventory(real);
+    if (first.digest !== second.digest
+      || first.entryCount !== second.entryCount
+      || !entriesEqual(first.entries, second.entries)) {
+      throw new CaptureError('workspace_changed_during_capture');
+    }
+    return 'sha256:' + first.digest;
   }
 
-  function scanDir(rootReal, rel, hash, state) {
-    const dir = rel ? join(rootReal, rel) : rootReal;
+  function captureInventory(real) {
+    const hash = createHash('sha256');
+    hash.update('ksadk.directory-workspace/v1\0');
+    const state = { entries: 0, hashedBytes: 0, list: [] };
+    scanDir(real, '', hash, state);
+    state.list.sort();
+    return { digest: hash.digest('hex'), entryCount: state.entries, entries: state.list };
+  }
+
+  /** Compare two sorted entry-identity lists for exact equality. */
+  function entriesEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function scanDir(real, rel, hash, state) {
+    const dir = rel ? join(real, rel) : real;
     let dirents;
     try { dirents = readdirSync(dir, { withFileTypes: true }); } catch { throw new CaptureError('capture_failed'); }
     dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -826,14 +939,17 @@ export function createNativeWorkspaceTools({
       if (entryRel.includes('\\') || entryRel.includes('\0')) throw new CaptureError('unsupported_workspace_path');
       state.entries += 1;
       if (state.entries > OBSERVE_MAX_ENTRIES) throw new CaptureError('capture_limit_exceeded');
-      const abs = join(rootReal, entryRel);
+      const abs = join(real, entryRel);
       let info;
       try { info = lstatSync(abs, { bigint: true }); } catch { throw new CaptureError('capture_failed'); }
+      // Re-stat after opening files below would race; record the pre-read identity
+      // and verify it again at the end of the entry so a mid-entry change is caught.
+      const before = entryIdentity(info);
       hash.update(`\0path\0${entryRel}`);
       hash.update(`\0mode:${Number(info.mode & 0o777n).toString(8)}`);
       if (info.isDirectory() && !info.isSymbolicLink()) {
         hash.update('\0directory');
-        scanDir(rootReal, entryRel, hash, state);
+        scanDir(real, entryRel, hash, state);
       } else if (info.isSymbolicLink()) {
         let target;
         try { target = readlinkSync(abs); } catch { throw new CaptureError('capture_failed'); }
@@ -842,29 +958,50 @@ export function createNativeWorkspaceTools({
         if (state.hashedBytes > OBSERVE_MAX_HASHED) throw new CaptureError('capture_limit_exceeded');
         hash.update('\0symlink\0');
         hash.update(tb);
+        state.list.push(`${entryRel}\tsymlink\t${before}`);
       } else if (info.isFile()) {
         if (state.hashedBytes + Number(info.size) > OBSERVE_MAX_HASHED) throw new CaptureError('capture_limit_exceeded');
         const fileHash = createHash('sha256');
         const fd = openSync(abs, 'r');
+        let readBytes = 0;
         try {
           let remaining = Number(info.size);
           const buf = Buffer.alloc(1024 * 1024);
           while (remaining > 0) {
             const n = readSync(fd, buf, 0, Math.min(buf.length, remaining), null);
-            if (n === 0) break;
+            if (n === 0) break; // short read: file shrank under us
+            readBytes += n;
             state.hashedBytes += n;
             if (state.hashedBytes > OBSERVE_MAX_HASHED) throw new CaptureError('capture_limit_exceeded');
             fileHash.update(buf.subarray(0, n));
             remaining -= n;
           }
         } finally { closeSync(fd); }
+        // A short read (fewer bytes than lstat reported) means the file changed
+        // during the read; treat the capture as changing rather than locking
+        // in a truncated digest as if it were the whole file.
+        if (readBytes !== Number(info.size)) throw new CaptureError('workspace_changed_during_capture');
+        // Compute the file digest once; Hash.digest() finalizes the hash and a
+        // second call throws "Digest already called".
+        const fileDigest = fileHash.digest();
         hash.update('\0file\0');
-        hash.update(fileHash.digest());
+        hash.update(fileDigest);
+        state.list.push(`${entryRel}\tfile\t${before}\t${fileDigest.toString('hex')}`);
       } else {
         throw new CaptureError('unsupported_workspace_entry');
       }
+      // Verify the entry's identity is unchanged since the start of this entry;
+      // a rename/replace/truncate that landed during the read is a change.
+      let after;
+      try { after = entryIdentity(lstatSync(abs, { bigint: true })); } catch { throw new CaptureError('capture_failed'); }
+      if (after !== before) throw new CaptureError('workspace_changed_during_capture');
       if (state.hashedBytes > OBSERVE_MAX_HASHED) throw new CaptureError('capture_limit_exceeded');
     }
+  }
+
+  /** Stable identity tuple for an entry: mode, size, mtimeNs, ctimeNs, ino. */
+  function entryIdentity(info) {
+    return `${info.mode}|${info.size}|${info.mtimeNs}|${info.ctimeNs}|${info.ino}`;
   }
 
   return { definitions, execute, observe };

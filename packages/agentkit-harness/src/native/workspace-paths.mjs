@@ -98,10 +98,15 @@ export function publishWorkspaceBytes(target, payload, { createOnly = false } = 
     if (!info.isFile()) throw new WorkspaceMutationError('workspace mutation requires a regular file');
     mode = info.mode & 0o777;
   } catch (error) {
+    if (error instanceof WorkspaceMutationError) throw error;
     if (error.code !== 'ENOENT') throw error;
   }
   const temporary = join(parent, `.${target.split(sep).pop()}.native-${randomHex(12)}`);
+  // Capture the original bytes so a failed publication can be verified to have
+  // left the target untouched. We do not restore them — atomic publication
+  // means a failure happens before the target is ever linked/renamed.
   const fd = openSync(temporary, 'wx', 0o666);
+  let linked = false;
   try {
     writeAll(fd, payload);
     closeSync(fd);
@@ -111,15 +116,24 @@ export function publishWorkspaceBytes(target, payload, { createOnly = false } = 
     } else {
       renameSync(temporary, target); // atomic replace of the directory entry
     }
+    linked = true;
   } catch (error) {
+    // writeAll/close/chmod/link/rename failed: ensure the fd is closed and the
+    // temp sibling is removed. The original target is never touched on this
+    // path (link/rename are the only steps that affect it), so its content and
+    // the read-state the caller recorded remain intact.
+    try { closeSync(fd); } catch { /* already closed or never opened */ }
     safeUnlink(temporary);
     throw error;
   } finally {
-    safeUnlink(temporary);
+    if (!linked) safeUnlink(temporary);
   }
 }
 
 function writeAll(fd, payload) {
+  // The caller owns closing fd on success; on failure the caller's catch
+  // closes it. fsync before returning so the bytes are durable before the
+  // atomic link/rename.
   const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf-8');
   let offset = 0;
   while (offset < buffer.length) {

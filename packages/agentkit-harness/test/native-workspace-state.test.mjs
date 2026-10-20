@@ -4,6 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeWorkspaceTools } from '../src/native/workspace-tools.mjs';
+import { sessionKeyFor } from '../src/native/workspace-state.mjs';
+import { createHash } from 'node:crypto';
 
 function baseSetup() {
   const base = mkdtempSync(join(tmpdir(), 'nws-state-'));
@@ -34,7 +36,7 @@ test('read state is persisted and survives an instance restart', async () => {
     // read records the revision to disk
     const read = await call1('read_workspace_file', { path: 'a.txt' });
     assert.equal(read.status, 'ok');
-    assert.ok(existsSync(join(stateDir, 's1', 'read-state.json')));
+    assert.ok(existsSync(join(stateDir, sessionKeyFor('s1'), 'read-state.json')));
     // simulate a restart: a brand new instance with the same stateDir + sessionId
     const tools2 = createNativeWorkspaceTools({ workspaceRoot, stateDir, sessionId: 's1', authorize: async () => 'allow' });
     const call2 = makeCall(tools2, 's1');
@@ -74,9 +76,12 @@ test('read state is isolated per session', async () => {
     const editA = await callA('edit_workspace_file', { path: 'a.txt', old_text: 'orig', new_text: 'A' });
     assert.equal(editA.status, 'ok');
     assert.equal(readFileSync(join(workspaceRoot, 'a.txt'), 'utf-8'), 'A\n');
-    // state files live in separate per-session directories
-    assert.ok(existsSync(join(stateDir, 'A', 'read-state.json')));
-    assert.ok(!existsSync(join(stateDir, 'B', 'read-state.json')));
+    // state files live in separate per-session directories keyed by a sha256
+    // digest of the session id, so neither session's directory can collide
+    // with or traverse into the other's.
+    assert.ok(existsSync(join(stateDir, sessionKeyFor('A'), 'read-state.json')));
+    assert.ok(!existsSync(join(stateDir, sessionKeyFor('B'), 'read-state.json')));
+    assert.notEqual(sessionKeyFor('A'), sessionKeyFor('B'));
   } finally { cleanup(); }
 });
 
@@ -92,7 +97,7 @@ test('pending approvals are persisted and can be approved after a restart', asyn
     });
     assert.equal(wreq.status, 'approval_required');
     assert.ok(wreq.interactionId);
-    assert.ok(existsSync(join(stateDir, 's1', 'pending-approvals.json')));
+    assert.ok(existsSync(join(stateDir, sessionKeyFor('s1'), 'pending-approvals.json')));
     // restart: a new instance loads the persisted pending approval
     const tools2 = createNativeWorkspaceTools({ workspaceRoot, stateDir, sessionId: 's1' });
     const approved = await tools2.execute({
@@ -129,22 +134,39 @@ test('pending approvals are isolated per session and cannot be cross-approved', 
   } finally { cleanup(); }
 });
 
-test('persisted read state is keyed by relative path and round-trips mtime/size/sha', async () => {
+test('persisted read state is keyed by relative path and round-trips mtime/size/sha with correct numeric window fields', async () => {
   const { workspaceRoot, stateDir, cleanup } = baseSetup();
   try {
-    writeFileSync(join(workspaceRoot, 'a.txt'), 'content\n');
+    writeFileSync(join(workspaceRoot, 'a.txt'), 'line1\nline2\nline3\nline4\n');
     const tools = createNativeWorkspaceTools({ workspaceRoot, stateDir, sessionId: 's1', authorize: async () => 'allow' });
     const call = makeCall(tools, 's1');
-    await call('read_workspace_file', { path: 'a.txt' });
-    const raw = JSON.parse(readFileSync(join(stateDir, 's1', 'read-state.json'), 'utf-8'));
+    // a partial read exercises the startLine/endLine/totalLines fields that were
+    // previously serialized as null due to a snake_case/camelCase mismatch
+    await call('read_workspace_file', { path: 'a.txt', start_line: 2, end_line: 3 });
+    const raw = JSON.parse(readFileSync(join(stateDir, sessionKeyFor('s1'), 'read-state.json'), 'utf-8'));
     assert.equal(raw.version, 'native-workspace-read-state/v1');
     assert.equal(raw.sessionId, 's1');
     const entry = raw.entries['a.txt'];
     assert.ok(entry);
     assert.equal(entry.path, 'a.txt');
     assert.equal(entry.canonicalPath, realpathSync(join(workspaceRoot, 'a.txt')));
-    assert.equal(entry.partial, false);
+    assert.equal(entry.partial, true);
     assert.equal(typeof entry.mtimeNs, 'string'); // BigInt serialized as string
     assert.match(entry.contentSha256, /^[0-9a-f]{64}$/);
+    // the read window must round-trip as real numbers, not null/NaN
+    assert.equal(entry.startLine, 2);
+    assert.equal(entry.endLine, 3);
+    assert.equal(entry.totalLines, 4);
+    // after a restart, the persisted window is still correct and a full re-read
+    // (which overwrites the partial state) reports partial=false end-to-end
+    const tools2 = createNativeWorkspaceTools({ workspaceRoot, stateDir, sessionId: 's1', authorize: async () => 'allow' });
+    const call2 = makeCall(tools2, 's1');
+    await call2('read_workspace_file', { path: 'a.txt' });
+    const raw2 = JSON.parse(readFileSync(join(stateDir, sessionKeyFor('s1'), 'read-state.json'), 'utf-8'));
+    const entry2 = raw2.entries['a.txt'];
+    assert.equal(entry2.partial, false);
+    assert.equal(entry2.startLine, 1);
+    assert.equal(entry2.endLine, 4);
+    assert.equal(entry2.totalLines, 4);
   } finally { cleanup(); }
 });

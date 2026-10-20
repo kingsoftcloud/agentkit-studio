@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeWorkspaceTools } from '../src/native/workspace-tools.mjs';
+import { sessionKeyFor } from '../src/native/workspace-state.mjs';
 import { WorkspaceStateStore } from '../src/native/workspace-state.mjs';
 
 function baseSetup() {
@@ -182,7 +183,7 @@ test('an expired pending approval is rejected after a restart', async () => {
     const tools1 = createNativeWorkspaceTools({ workspaceRoot, stateDir, sessionId: 's1' });
     const w = await req(tools1, 'write_workspace_file', { path: 'x.txt', content: 'y\n' });
     // tamper the persisted pending to be already expired
-    const pendingPath = join(stateDir, 's1', 'pending-approvals.json');
+    const pendingPath = join(stateDir, sessionKeyFor('s1'), 'pending-approvals.json');
     const data = JSON.parse(readFileSync(pendingPath, 'utf-8'));
     for (const key of Object.keys(data.entries)) data.entries[key].expiresAt = 1;
     writeFileSync(pendingPath, JSON.stringify(data));
