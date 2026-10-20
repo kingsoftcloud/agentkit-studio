@@ -25,6 +25,9 @@ import {
 import {
   buildAnthropicRequest, parseAnthropicBuffered, createAnthropicStreamState,
 } from './model-anthropic.mjs';
+import {
+  buildResponsesRequest, parseResponsesBuffered, createResponsesStreamState,
+} from './model-responses.mjs';
 import { MediaError, projectRequestMedia } from './model-media.mjs';
 // parseModelJson is the kernel's strict finite JSON parser; used here for the
 // 400 context-length error heuristic so a malformed error body is never parsed
@@ -150,6 +153,7 @@ function buildRequest(binding, request) {
   const dispatchView = projectRequestMedia(request);
   if (binding.protocol === 'anthropic-messages') return buildAnthropicRequest(binding, dispatchView);
   if (binding.protocol === 'openai-chat') return buildOpenAIRequest(binding, dispatchView);
+  if (binding.protocol === 'openai-responses') return buildResponsesRequest(binding, dispatchView);
   throw new ProtocolError('unsupported binding protocol');
 }
 
@@ -157,7 +161,9 @@ async function streamResponse(response, request, binding, emit, internal, maxByt
   const profile = request.profile;
   const state = binding.protocol === 'anthropic-messages'
     ? createAnthropicStreamState(profile)
-    : createOpenAIStreamTurn(profile);
+    : binding.protocol === 'openai-responses'
+      ? createResponsesStreamState(profile)
+      : createOpenAIStreamTurn(profile);
   // Idle silence aborts the fetch via the internal controller so the pending
   // body read rejects cleanly instead of leaving an orphaned read to cancel.
   const abort = (reason) => internal.abort(reason);
@@ -197,6 +203,9 @@ async function bufferedResponse(response, request, binding, maxBytes) {
   try {
     if (binding.protocol === 'anthropic-messages') {
       return parseAnthropicBuffered(bodyText, request, { captureReplay });
+    }
+    if (binding.protocol === 'openai-responses') {
+      return parseResponsesBuffered(bodyText, request, { captureReplay });
     }
     return parseOpenAIBuffered(bodyText, request, { captureReplay });
   } catch {
