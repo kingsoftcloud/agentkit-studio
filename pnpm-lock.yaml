@@ -32,6 +32,9 @@ importers:
       aws4:
         specifier: 1.13.2
         version: 1.13.2
+      playwright-core:
+        specifier: 1.58.2
+        version: 1.58.2
       undici:
         specifier: 8.11.2
         version: 8.11.2
