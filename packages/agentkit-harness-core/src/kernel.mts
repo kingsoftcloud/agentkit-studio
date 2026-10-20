@@ -228,7 +228,11 @@ export class NativeKernel {
         status = 'failed';
       } else {
         raw = { code };
-        changes = { phase: 'finalizing', pendingIntent: null, outcome: 'unverified', reason: 'effect_outcome_unknown' };
+        changes = { phase: 'finalizing', pendingIntent: null, outcome: 'unverified', reason: 'effect_outcome_unknown',
+          // A claimed tool batch has spent its attempt even when cancellation
+          // wins the outer effect race before reduceTools receives results.
+          ...(intent.kind === 'tool' ? { usage: { ...snapshot.usage,
+            toolCalls: snapshot.usage.toolCalls + (intent.payload.calls as unknown as ToolCall[]).length } } : {}) };
         status = 'uncertain';
       }
     } finally {

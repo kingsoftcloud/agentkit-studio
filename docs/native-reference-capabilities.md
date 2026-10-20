@@ -4,8 +4,8 @@ This document is a **reference inventory** of the existing Python Native Harness
 capabilities, assembled from the real source in `ksadk-python` (branch
 `feat-ksadk-harness-2`). It is deliberately a *reference list*, not a claim that
 the TypeScript port in `packages/agentkit-harness-core` has migrated any
-particular item. The TS core contract is read-only at
-`.artifacts/native-migration/contracts-v1.mts`; the two languages are allowed
+particular item. The implemented TS core contracts are in
+`packages/agentkit-harness-core/src/contracts.mts`; the two languages are allowed
 to differ in serialized field names, so the mapping is organized by **key
 semantics and user-visible behavior**, not by field spelling.
 

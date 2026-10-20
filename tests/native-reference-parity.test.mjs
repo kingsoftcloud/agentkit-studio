@@ -16,20 +16,15 @@
 //
 // Allowed language/format differences (not asserted byte-identical): event
 // names, receipt serialization, field naming (snake_case vs camelCase), the
-// verification-report object shape, and Python-only final_output_format
-// normalization. We assert the semantic fields the task names: phase, outcome,
+// verification-report object shape and insignificant serialization whitespace.
+// We assert the semantic fields covered by these scenarios: phase, outcome,
 // reason, counts (model/tool/descendant), continuations, restarts, repairs,
 // provider/model errors, final text, workspace-modified paths, and the
 // scenario-specific tool/control effects.
 //
-// KNOWN GAPS under the main implementation (honest failing regressions):
-//   - final_submission_schema_tool: the TS has not implemented the
-//     submit_final_output submission-protocol interception yet, so the
-//     submitted candidate is not sealed/delivered.
-//   - cancel_priority_over_inflight_tool: the TS cancel-during-tool path routes
-//     the aborted tool through the effect-error catch (not reduceTools), so the
-//     aborted tool call is not counted in usage.toolCalls (Python counts it via
-//     loop_attempts in _commit_receipt).
+// This covers a bounded selection from the oracle, not the full Native feature
+// set. Crash recovery here uses deterministic lease takeover; separate core
+// process tests cover actual exit and SQLite reopen.
 //
 // Run:  node --test tests/native-reference-parity.test.mjs
 // No Python runtime is required.
@@ -39,7 +34,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   NativeKernel, MemoryRunStore, configure, initialSnapshot, emptyUsage,
-  prepareEffect, commandPriority, canonical,
+  prepareEffect, plan, commandPriority, canonical,
 } from '../packages/agentkit-harness-core/dist/index.mjs';
 
 const fixture = JSON.parse(
@@ -74,7 +69,7 @@ function cfg(o = {}) {
       acceptance: ACCEPTANCE,
       ...(o.finalSubmissionSchema ? { finalSubmissionSchema: o.finalSubmissionSchema } : {}),
       ...(o.finalSubmissionPayloadKey ? { finalSubmissionPayloadKey: o.finalSubmissionPayloadKey } : {}),
-      ...(o.finalOutputFormat ? { finalOutputFormat: o.finalOutputFormat } : {}),
+      finalOutputFormat: o.finalOutputFormat ?? 'json_object',
     },
     hostBindingDigest: 'fix-host/v1',
     tools: o.tools || [],
@@ -118,7 +113,11 @@ function verifyReport(request, { evidenceRefs = ['fixture://verified-result'], c
     }],
   };
 }
-const withTimeout = (p, ms) => Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`drive timeout ${ms}`)), ms))]);
+async function withTimeout(p, ms) {
+  let timer;
+  try { return await Promise.race([p, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`drive timeout ${ms}`)), ms); })]); }
+  finally { clearTimeout(timer); }
+}
 
 // --------------------------------------------------------------------------- //
 test('closed_loop_verified: no-tool verified turn matches oracle', async () => {
@@ -226,7 +225,7 @@ test('serial_write_workspace_paths: non-readonly writer is serial and records pa
   assert.equal(toolIntents[0].payload.calls.length, 1);
 });
 
-test('cancel_priority_over_inflight_tool: cancel wins and cancels the in-flight tool [REGRESSION: tool_calls accounting]', async () => {
+test('cancel_priority_over_inflight_tool: cancel wins and counts the aborted attempt', async () => {
   const expected = scenario('cancel_priority_over_inflight_tool');
   let cancelled = 0, entered;
   const ready = new Promise((r) => { entered = r; });
@@ -255,9 +254,7 @@ test('cancel_priority_over_inflight_tool: cancel wins and cancels the in-flight 
   assert.equal(result.outcome, expected.outcome);
   assert.equal(result.reason, expected.reason);
   assert.equal(result.usage.modelCalls, expected.model_calls);
-  // HONEST REGRESSION: Python counts the aborted tool attempt (tool_calls=1);
-  // the TS cancel path routes the aborted tool through the effect-error catch
-  // (not reduceTools), so usage.toolCalls stays 0. Asserted against the oracle.
+  // An aborted claimed attempt still consumes the tool allowance.
   assert.equal(result.usage.toolCalls, expected.tool_calls);
 });
 
@@ -265,19 +262,23 @@ test('pause_resume: pause then resume completes verified', async () => {
   const expected = scenario('pause_resume');
   const model = scriptedModel([resp('final_candidate')]);
   let vcalls = 0;
+  const store = new MemoryRunStore(), config = cfg();
   const kernel = new NativeKernel({
-    store: new MemoryRunStore(), owner: 'w', digest,
+    store, owner: 'w', digest,
     ports: { model, verification: { verify: async (req) => { vcalls += 1; return verifyReport(req); } } },
   });
-  startRun(kernel, cfg());
-  // The TS exposes runUntilIdle (not a single-step advance), so pause is
-  // admitted before the first plan step and lands at the initial phase; resume
-  // then drives the run to completion. The core pause/resume semantics (state
-  // preserved, resume completes verified) match the oracle.
+  let before = startRun(kernel, config);
+  const lease = store.acquire(SCOPE, 'run', 'preparer', 0, 30000);
+  for (let step = 0; step < 2; step++) before = store.commit(SCOPE, 'run', lease, 0, before.revision,
+    plan(before, config, { workspace: false, context: false, verification: true }));
+  store.release(SCOPE, 'run', lease);
+  assert.equal(before.phase, expected.phase_before_pause);
+  assert.equal(store.load(SCOPE, 'run').intents.at(-1).status, 'prepared');
   const pause = kernel.submit(SCOPE, 'run', { commandId: 'pause-1', kind: 'pause', payload: {} });
   assert.equal(pause.status, expected.pause_receipt_status);
   const paused = await withTimeout(kernel.runUntilIdle(SCOPE, 'run'), 5000);
   assert.equal(paused.phase, expected.paused_phase);
+  assert.equal(paused.resumePhase, expected.paused_from);
   const resume = kernel.submit(SCOPE, 'run', { commandId: 'resume-1', kind: 'resume', payload: {} });
   assert.equal(resume.status, expected.resume_receipt_status);
   const result = await withTimeout(kernel.runUntilIdle(SCOPE, 'run'), 5000);
@@ -331,35 +332,39 @@ test('approval_match_allow: matching submit_interaction re-dispatches with inter
 
 test('lost_effect_not_rerun: lost tool effect is not re-executed and run interrupts', async () => {
   const expected = scenario('lost_effect_not_rerun');
-  let execs = 0;
+  let execs = 0, entered, release;
+  const ready = new Promise(resolve => { entered = resolve; });
   const store = new MemoryRunStore();
   const model = scriptedModel([resp('tool_calls', { toolCalls: [call('w1', 'write')] })]);
   const kernel = new NativeKernel({
-    store, owner: 'w', digest,
+    store, owner: 'w', digest, now: () => 0,
     ports: {
       model,
-      tools: { execute: async () => { execs += 1; return new Promise(() => {}); } }, // blocks until the tool deadline
+      tools: { execute: async () => { execs += 1; entered(); await new Promise(resolve => { release = resolve; }); return { status: 'ok', content: {} }; } },
     },
   });
-  // A short tool deadline turns the in-flight tool into an uncertain receipt,
-  // mirroring the Python "crash mid-tool" lost effect (one dispatch, no result).
-  startRun(kernel, cfg({ tools: [writeTool({ timeoutMs: 5 })] }));
-  const result = await withTimeout(kernel.runUntilIdle(SCOPE, 'run'), 5000);
+  startRun(kernel, cfg({ tools: [writeTool()] }));
+  const drive = kernel.runUntilIdle(SCOPE, 'run');
+  // Observe a claimed intent with no result, then advance the replacement's
+  // lease clock past the original expiry. No timeout result is manufactured.
+  await ready;
+  const crashed = store.load(SCOPE, 'run');
+  assert.equal(crashed.intents.find(intent => intent.operationKey === crashed.snapshot.pendingIntent).status, expected.crashed_intent_status);
+  assert.equal(crashed.receipts.some(receipt => receipt.operationKey === crashed.snapshot.pendingIntent), false);
+  let execsB = 0;
+  const kernelB = new NativeKernel({
+    store, owner: 'w2', digest, now: () => 40000,
+    ports: { model: scriptedModel([resp('final_candidate')]), tools: { execute: async () => { execsB += 1; return { status: 'ok', content: {} }; } } },
+  });
+  let result;
+  try { result = await withTimeout(kernelB.runUntilIdle(SCOPE, 'run'), 5000); }
+  finally { release(); await assert.rejects(drive, { code: 'stale_fence' }); }
   assert.equal(result.phase, expected.phase);
   assert.equal(result.outcome, expected.outcome);
   assert.equal(result.reason, expected.reason);
   assert.equal(result.usage.modelCalls, expected.model_calls);
   assert.equal(result.usage.toolCalls, expected.tool_calls);
   assert.equal(execs, expected.tool_a_calls);
-  // Reattach a fresh kernel with a different tool instance: the terminal run
-  // is not re-driven and the recovery tool is never called (no re-execution).
-  let execsB = 0;
-  const kernelB = new NativeKernel({
-    store, owner: 'w2', digest,
-    ports: { model: scriptedModel([resp('final_candidate')]), tools: { execute: async () => { execsB += 1; return { status: 'ok', content: {} }; } } },
-  });
-  const reattached = await withTimeout(kernelB.runUntilIdle(SCOPE, 'run'), 5000);
-  assert.equal(reattached.phase, expected.phase);
   assert.equal(execsB, expected.tool_b_calls);
 });
 
