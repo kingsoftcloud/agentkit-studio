@@ -63,7 +63,7 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
     }
     case 'steer':
       if (typeof command.payload.text !== 'string' || !command.payload.text.trim()) reason = 'invalid_steering';
-      else if (snapshot.reason === 'effect_outcome_unknown' || snapshot.reason === 'recovery_retry_exhausted') reason = 'recovery_required';
+      else if (['effect_outcome_unknown', 'recovery_retry_exhausted', 'browser_session_unavailable'].includes(snapshot.reason ?? '')) reason = 'recovery_required';
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
         changes = { goal: command.payload.text, goalRevision: snapshot.goalRevision + 1, phase: 'preparing_context',
@@ -81,7 +81,7 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       break;
     case 'guide':
       if (typeof command.payload.text !== 'string' || !command.payload.text.trim()) reason = 'invalid_guidance';
-      else if (snapshot.reason === 'effect_outcome_unknown' || snapshot.reason === 'recovery_retry_exhausted') reason = 'recovery_required';
+      else if (['effect_outcome_unknown', 'recovery_retry_exhausted', 'browser_session_unavailable'].includes(snapshot.reason ?? '')) reason = 'recovery_required';
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
         const guidance: Message = { role: 'user', content: command.payload.text, kind: 'guidance', persistent: true };

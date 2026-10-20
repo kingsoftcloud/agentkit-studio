@@ -136,12 +136,18 @@ export class TransactionalRunStore implements RunStore {
       for (const receipt of batch.receipts) {
         const intent = record.intents.find(item => item.operationKey === receipt.operationKey);
         const command = record.commands.find(row => !row.consumed && row.command.commandId === batch.consumedCommandId)?.command;
-        const undispatched = receipt.status === 'not_dispatched' && intent?.status === 'prepared'
-          && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null
-          && command && ['guide', 'steer'].includes(command.kind)
+        const steeringRetired = command && ['guide', 'steer'].includes(command.kind)
           && typeof command.payload.text === 'string' && command.payload.text.trim()
           && receipt.result.commandId === command.commandId && receipt.result.code === 'superseded_before_dispatch'
           && receipt.result.executed === false;
+        const browserRetired = receipt.result.code === 'browser_session_unavailable' && receipt.result.executed === false
+          && next.phase === 'finalizing' && next.reason === 'browser_session_unavailable' && next.outcome === 'unverified'
+          && next.candidate === null && next.lastBrowserObservation === null
+          && (previous.browserSessionRefs?.length || previous.lastBrowserObservation)
+          && batch.events.some(event => event.kind === 'browser.recovered' && ['lost', 'restarted'].includes(String(event.payload.status)))
+          && batch.requireNoPendingCommands;
+        const undispatched = receipt.status === 'not_dispatched' && intent?.status === 'prepared'
+          && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null && (steeringRetired || browserRetired);
         invariant((receipt.status === 'not_dispatched' ? undispatched : intent?.status === 'running')
           && !record.receipts.some(item => item.operationKey === receipt.operationKey), 'receipt_without_claim');
       }

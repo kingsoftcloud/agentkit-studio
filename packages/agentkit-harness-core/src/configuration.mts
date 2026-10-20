@@ -130,5 +130,6 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
     context: {}, diagnostics: {}, stopHookContinuations: 0, hookState: null, contextState: null, recoveryRetriesUsed: 0, toolErrorStreak: null,
+    browserSessionRefs: [], browserReobservationRefs: [], lastBrowserObservation: null, lastBrowserAttemptToolCall: null,
   });
 }

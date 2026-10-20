@@ -6,6 +6,7 @@ import { retryDelay } from './retry.mjs';
 import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normalizedFinalText } from './final-submission.mjs';
 import { currentHookState, pendingHookFeedback, planHook } from './hook-runtime.mjs';
 import { toolContext, deferredToolContexts } from './tool-context.mjs';
+import { reduceBrowserReceipt } from './browser-runtime.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -77,6 +78,12 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     return finalizing(snapshot, 'budget_exhausted', 'execution_budget_exhausted');
   }
   if (snapshot.phase === 'created') return transition(snapshot, { phase: 'preparing_context' }, [{ kind: 'run.started', payload: { buildId: snapshot.buildId } }]);
+  if (snapshot.phase === 'verifying' && snapshot.browserReobservationRefs?.length) {
+    return transition(snapshot, { phase: 'preparing_context', candidate: null, verification: null, preparedContext: null,
+      messages: [...snapshot.messages, { role: 'user', kind: 'browser_recovery_observation',
+        content: canonical({ freshObservationRequired: true, candidateAccepted: false }) }],
+    }, [{ kind: 'browser.candidate_rejected', payload: { reason: 'fresh_observation_required' } }]);
+  }
   // The first input was admitted before start. Later boundaries drain Host
   // steering only after every result in the previous tool batch is committed.
   // Check candidates too, so input received during the final request is not
@@ -274,12 +281,15 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   digest: (value: unknown) => string = canonical): Partial<RunSnapshot> {
   invariant(results.length === calls.length && calls.length > 0
     && canonical(snapshot.pendingTools.slice(0, calls.length)) === canonical(calls), 'tool_receipt_mismatch');
-  let updated = copy(snapshot);
+  let updated = { ...copy(snapshot), browserSessionRefs: copy(snapshot.browserSessionRefs ?? []),
+    browserReobservationRefs: copy(snapshot.browserReobservationRefs ?? []), lastBrowserObservation: snapshot.lastBrowserObservation ?? null,
+    lastBrowserAttemptToolCall: snapshot.lastBrowserAttemptToolCall ?? null };
   for (const [index, call] of calls.entries()) {
     const result = copy(results[index]!);
     invariant(['ok', 'error', 'approval_required', 'uncertain'].includes(result.status), 'invalid_tool_result');
     if (calls.length > 1 && (result.status === 'approval_required' || result.status === 'uncertain'
-      || result.workspaceChangedPaths?.length || result.childRunIds?.length || (result.resourceUsage?.modelCalls ?? 0) > 0)) {
+      || result.workspaceChangedPaths?.length || result.childRunIds?.length || result.browserSessionRef || result.browserObservation
+      || (result.resourceUsage?.modelCalls ?? 0) > 0)) {
       return { pendingIntent: null, phase: 'finalizing', outcome: 'blocked', reason: 'parallel_readonly_contract_violation',
         usage: { ...snapshot.usage, toolCalls: snapshot.usage.toolCalls + calls.length } };
     }
@@ -289,7 +299,14 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
         interactionId: `${intent.operationKey}:approval`, hostInteractionId: result.interactionId, callId: call.callId, operationKey: intent.operationKey } };
     }
     updated.usage.toolCalls += 1;
-    if (result.status === 'uncertain') return { pendingIntent: null, phase: 'finalizing', outcome: 'unverified', reason: 'effect_outcome_unknown', usage: updated.usage };
+    const definition = config.tools.find(tool => tool.name === call.name);
+    if (definition) Object.assign(updated, reduceBrowserReceipt(updated, result, definition, call, digest));
+    const browserFields = { browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
+      lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall };
+    if (updated.phase === 'finalizing') return { ...browserFields, pendingIntent: null, phase: 'finalizing',
+      outcome: updated.outcome, reason: updated.reason, preparedContext: updated.preparedContext, contextState: updated.contextState,
+      candidate: updated.candidate, verification: updated.verification, finalText: updated.finalText, usage: updated.usage };
+    if (result.status === 'uncertain') return { ...browserFields, pendingIntent: null, phase: 'finalizing', outcome: 'unverified', reason: 'effect_outcome_unknown', usage: updated.usage };
     if (result.status === 'error') {
       const definition = config.tools.find(tool => tool.name === call.name);
       const signature = digest([call.name, result.status, result.content,
@@ -300,7 +317,6 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
         modelCall: snapshot.usage.modelCalls, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision };
     }
     if (result.resourceUsage) updated.descendantUsage = addUsage(updated.descendantUsage, result.resourceUsage);
-    const definition = config.tools.find(tool => tool.name === call.name);
     updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
       role: 'tool', callId: call.callId, name: call.name,
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
@@ -327,6 +343,8 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     context: updated.context,
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
     queuedGuidance: updated.queuedGuidance,
+    browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
+    lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall,
     workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null, toolErrorStreak: updated.toolErrorStreak };
 }
 export function settle(snapshot: RunSnapshot, intent: EffectIntent, receipt: EffectReceipt, changes: Partial<RunSnapshot>, elapsedMs: number, facts: { kind: string; payload: ObjectValue }[] = []): CommitBatch {

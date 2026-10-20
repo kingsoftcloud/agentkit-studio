@@ -452,3 +452,13 @@ test('BrowserSessionError carries a stable code without page contents or diagnos
   assert.strictEqual(error.message, 'network_denied');
   assert.strictEqual(error.name, 'BrowserSessionError');
 });
+test('image JSON preserves __proto__ data keys without changing the snapshot prototype', () => {
+  const contentBlock = JSON.parse('{"__proto__":{"inherited":true},"nested":{"__proto__":"data"}}');
+  const result = validateBrowserImage({ contentRef: 'host:png', width: 1, height: 1, contentBlock });
+  assert.equal(Object.getPrototypeOf(result.contentBlock), Object.prototype);
+  assert.equal(Object.hasOwn(result.contentBlock, '__proto__'), true);
+  assert.equal(result.contentBlock.inherited, undefined);
+  assert.deepEqual(result.contentBlock, contentBlock);
+  result.contentBlock.__proto__.inherited = false;
+  assert.equal(contentBlock.__proto__.inherited, true);
+});

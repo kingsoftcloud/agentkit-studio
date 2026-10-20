@@ -7,7 +7,10 @@ export function sealCandidate(candidate: CompletionCandidate, snapshot: RunSnaps
   return { ...candidate, binding: {
     subjectDigest: digest({ text: candidate.text, workspaceRevision: candidate.workspaceRevision }),
     subjectContextDigest: digest({ messages: snapshot.messages, goalRevision: candidate.goalRevision,
-      configDigest: snapshot.configDigest, artifactRefs: snapshot.artifactRefs }),
+      configDigest: snapshot.configDigest, artifactRefs: snapshot.artifactRefs,
+      ...(snapshot.browserSessionRefs?.length || snapshot.lastBrowserObservation ? {
+        browserSessionRefs: snapshot.browserSessionRefs, browserObservation: snapshot.lastBrowserObservation,
+      } : {}) }),
     environmentDigest: configuration.hostBindingDigest,
   } };
 }

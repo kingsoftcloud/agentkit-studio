@@ -17,6 +17,9 @@ import { hookBytes, hookResult } from './hook-contract.mjs';
 import { planNativeContext, reduceContextModel } from './context-planning.mjs';
 import { reduceTurnInput } from './turn-input.mjs';
 import { modelStreamCapture } from './model-stream.mjs';
+import { browserRecoveryTransition } from './browser-runtime.mjs';
+import { validateBrowserSessionRef } from './browser-contract.mjs';
+import type { BrowserRecovery } from './browser-contract.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -111,6 +114,7 @@ export class NativeKernel {
       } catch (error) { leaseError = error; controller.abort(new NativeError('lease_lost')); }
     }, Math.max(10, Math.floor(initial.configuration.limits.leaseMs / 3)));
     let deliveredRevision = -1;
+    let browserChecked = !(initial.snapshot.browserSessionRefs?.length || initial.snapshot.lastBrowserObservation);
     try {
       while (true) {
         if (leaseError) throw leaseError;
@@ -136,6 +140,29 @@ export class NativeKernel {
           }
           this.commit(snapshot, lease, reduceCommand(snapshot, command, intent));
           continue;
+        }
+        if (!browserChecked) {
+          const pending = record.intents.find(item => item.operationKey === snapshot.pendingIntent) ?? null;
+          // Resource loss must not conceal an already claimed effect. Classify
+          // its uncertainty before any continuity report can stop the run.
+          if (pending?.status === 'running') {
+            this.commit(snapshot, lease, recoverClaimed(snapshot, config, pending, this.now()));
+            continue;
+          }
+          const probeStarted = this.now();
+          const reports = await this.inspectBrowserResources(snapshot, config, controller.signal);
+          if (leaseError) throw leaseError;
+          if (controller.signal.aborted || pendingCommands(this.store.load(scope, runId)).length) continue;
+          const batch = browserRecoveryTransition(snapshot, reports, pending, Math.max(0, this.now() - probeStarted));
+          browserChecked = true;
+          if (batch) {
+            try { this.commit(snapshot, lease, batch); }
+            catch (error) {
+              if (error instanceof NativeError && error.code === 'pending_command_conflict') { browserChecked = false; continue; }
+              throw error;
+            }
+            continue;
+          }
         }
         if (snapshot.phase === 'paused' || snapshot.phase === 'awaiting_interaction') return snapshot;
         if (snapshot.retryNotBefore > this.now()) {
@@ -172,6 +199,32 @@ export class NativeKernel {
   }
   private commit(snapshot: RunSnapshot, lease: Lease, batch: CommitBatch): RunSnapshot {
     return this.store.commit(snapshot.scope, snapshot.runId, lease, this.now(), snapshot.revision, batch);
+  }
+  private async inspectBrowserResources(snapshot: RunSnapshot, configuration: RunConfiguration, signal: AbortSignal): Promise<BrowserRecovery[]> {
+    const refs = (snapshot.browserSessionRefs ?? []).map(validateBrowserSessionRef);
+    invariant(refs.every(ref => canonical(ref.scope) === canonical(snapshot.scope) && ref.runId === snapshot.runId), 'persisted_browser_scope_mismatch');
+    if (!refs.length) return [];
+    const unavailable = (reason: string): BrowserRecovery[] => refs.map(sessionRef => ({ status: 'lost', sessionRef,
+      lastActionSeq: 0, reason, reobserveAvailable: false }));
+    if (!this.ports.browser) return unavailable('browser_port_unbound');
+    const deadline = new AbortController(), probeSignal = AbortSignal.any([signal, deadline.signal]);
+    const remainingWall = configuration.limits.maxWallMs === null ? Infinity : Math.max(1, configuration.limits.maxWallMs - snapshot.activeElapsedMs);
+    const timer = setTimeout(() => deadline.abort(new NativeError('browser_recovery_timeout')), Math.min(configuration.limits.effectTimeoutMs, remainingWall));
+    let onAbort = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(probeSignal.reason);
+      if (probeSignal.aborted) onAbort(); else probeSignal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      const reports = await Promise.race([this.ports.browser.recoverSessions({
+        scope: copy(snapshot.scope), runId: snapshot.runId, sessionId: snapshot.sessionId, turnId: snapshot.turnId,
+        buildId: snapshot.buildId, parentRunId: snapshot.parentRunId, taskChainId: snapshot.taskChainId,
+        operationKey: `${runKey(snapshot.scope, snapshot.runId)}:browser-probe:${snapshot.revision}`, signal: probeSignal, refs: copy(refs),
+      }), aborted]);
+      probeSignal.throwIfAborted();
+      return reports;
+    } catch { return unavailable('browser_recovery_probe_failed'); }
+    finally { clearTimeout(timer); probeSignal.removeEventListener('abort', onAbort); }
   }
   private async execute(snapshot: RunSnapshot, configuration: RunConfiguration, intent: EffectIntent, signal: AbortSignal): Promise<CommitBatch> {
     const started = this.now(), abort = new AbortController();

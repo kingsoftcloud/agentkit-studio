@@ -434,7 +434,9 @@ function cloneJson(input: unknown, active: Set<object>, code: string): Json {
       invariant(false, code);
     }
     const object: ObjectValue = {};
-    for (const key of Object.keys(input)) object[key] = cloneJson((input as ObjectValue)[key], active, code);
+    for (const key of Object.keys(input)) Object.defineProperty(object, key, {
+      value: cloneJson((input as ObjectValue)[key], active, code), enumerable: true, writable: true, configurable: true,
+    });
     result = object;
   }
   active.delete(input);

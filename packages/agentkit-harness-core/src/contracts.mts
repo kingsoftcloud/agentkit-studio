@@ -1,3 +1,5 @@
+import type { BrowserObservation, BrowserRecovery, BrowserSessionRef } from './browser-contract.mjs';
+
 /** Serializable contracts. No Host services, filesystem handles or credentials. */
 export const NATIVE_SCHEMA = 'agentkit.native-run/v1' as const;
 export const NATIVE_ENGINE = 'agentkit.native/v1' as const;
@@ -160,6 +162,9 @@ export interface ToolResult {
   additionalContexts?: ToolContextMessage[];
   interactionId?: string; workspaceChangedPaths?: string[]; artifactRefs?: ArtifactRef[];
   resourceUsage?: Usage; childRunIds?: string[]; metadata?: ObjectValue;
+  /** Only a tool pinned with observationRole=browser can admit these host capabilities. */
+  browserSessionRef?: BrowserSessionRef; browserSessionClosed?: boolean;
+  browserObservation?: BrowserObservation;
 }
 export type ModelResponseKind = 'tool_calls' | 'final_candidate' | 'output_limit' | 'context_overflow'
   | 'empty_response' | 'malformed_tool_call' | 'provider_retryable_error' | 'provider_terminal_error'
@@ -225,6 +230,12 @@ export interface RunSnapshot extends RunIdentity {
   contextState: ContextPlanningState | null;
   recoveryRetriesUsed: number;
   toolErrorStreak: ToolErrorStreak | null;
+  browserSessionRefs: BrowserSessionRef[]; browserReobservationRefs: BrowserSessionRef[];
+  lastBrowserObservation: BrowserEvidence | null; lastBrowserAttemptToolCall: number | null;
+}
+export interface BrowserEvidence {
+  sessionRef: BrowserSessionRef; actionId: string; actionSeq: number; digest: string; callId: string;
+  toolCall: number; goalRevision: number; workspaceRevision: string | null;
 }
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
 export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child' | 'input';
@@ -319,6 +330,12 @@ export interface NativePorts {
   input?: TurnInputPort;
   verification?: VerificationPort; hooks?: HookPort; artifacts?: ArtifactPort;
   children?: ChildLifecyclePort; background?: BackgroundCommandPort;
+  browser?: BrowserRecoveryPort;
+}
+/** Read-only continuity probe. It must never restart a page or replay an action.
+ * A replacement observation is a separately admitted, durable tool effect. */
+export interface BrowserRecoveryPort {
+  recoverSessions(request: PortContext & { refs: BrowserSessionRef[] }): Promise<BrowserRecovery[]>;
 }
 export const terminal = (phase: Phase): boolean => ['completed', 'failed', 'canceled', 'interrupted'].includes(phase);
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, modelCalls: 0, toolCalls: 0, cost: 0 });
