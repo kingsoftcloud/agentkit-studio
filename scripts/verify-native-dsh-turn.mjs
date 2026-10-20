@@ -27,7 +27,11 @@ const server = createServer(async (request, response) => {
       : { content: `Native turn ${turn} completed.` };
     const result = { id: `response-${count}`, choices: [{ index: 0, delta, finish_reason: !summary && taskRequests % 2 ? 'tool_calls' : 'stop' }],
       usage: { prompt_tokens: 5, completion_tokens: 7 } };
-    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    // This no-fault proof counts one successful HTTP request per Native model
+    // attempt. Close each fixture connection explicitly so an idle keep-alive
+    // socket cannot race the next call while large summaries are assembled.
+    // Retry/error paths are exercised separately by the model/core suites.
+    response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     response.end(`data: ${JSON.stringify(result)}\n\ndata: [DONE]\n\n`);
   } catch (error) { failures.push(error); response.writeHead(500); response.end('verification failed'); }
 });
@@ -65,7 +69,13 @@ try {
       assert.equal(events.filter(event => event.type === kind).length, 1, `${kind} count for turn ${turn}`);
     }
     for (const kind of ['step/start', 'step/end', 'assistant/message']) {
-      assert.equal(events.filter(event => event.type === kind).length, requests.length - requestStart, `${kind} count for turn ${turn}`);
+      const count = events.filter(event => event.type === kind).length;
+      const diagnostics = count === requests.length - requestStart ? '' : JSON.stringify({
+        positions: events.filter(event => ['step/start', 'step/end', 'assistant/message'].includes(event.type))
+          .map(event => ({ type: event.type, turn: event.data.turn, step: event.data.step })),
+        native: JSON.parse(await readFile(join(root, `native-turn-${turn}-diagnostics.json`), 'utf8')),
+      });
+      assert.equal(count, requests.length - requestStart, `${kind} count for turn ${turn} ${diagnostics}`);
     }
     assert.equal(events.some(event => event.type === 'request/header' || event.type === 'request/context'), false);
     const assistant = events.filter(event => event.type === 'assistant/message');

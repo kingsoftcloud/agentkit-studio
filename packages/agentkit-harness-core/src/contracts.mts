@@ -135,6 +135,8 @@ export interface ContextSourceDefinition { sourceId: string; priority: number; t
 export interface RunConfiguration {
   engine: typeof NATIVE_ENGINE; profile: ModelProfile; limits: RunLimits; tools: ToolDefinition[];
   contract: TaskContract; instructions: string; hostBindingDigest: string;
+  /** Admitted user input, bound with the configuration; null uses the objective alone. */
+  inputMessages: Message[] | null;
   contextSources: ContextSourceDefinition[]; hooks: HookDefinition[];
   contextPolicy: ContextPlanningPolicy | null;
   stopHookContinuationLimit: number; delegationDepth: number;

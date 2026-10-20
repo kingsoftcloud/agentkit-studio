@@ -112,7 +112,11 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     }
 
     const messages = snapshot.messages, events = record.events.filter(event => event.seq <= snapshot.eventSeq);
-    const firstUser = messages.findIndex(message => message.role === 'user' && !message.history);
+    // Admission can contain multiple user/context messages and attachments.
+    // They have already been published above, with their original host source
+    // and content blocks. Never publish a flattened second copy from Native.
+    const admittedUsers = new Set(messages.flatMap((message, index) => message.role === 'user' && !message.history ? [index] : [])
+      .slice(0, record.configuration.inputMessages?.length ?? 1));
     const completed = new Map(events.filter(event => event.kind === 'tool.completed')
       .map(event => [event.payload.callId, event.payload.status]));
     const pending = new Map();
@@ -138,9 +142,14 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       invariant(Number.isSafeInteger(through) && through >= cursor && through <= messages.length, 'native_delivery_transcript_cursor_invalid');
       while (cursor < through) {
         const index = cursor++, message = messages[index];
-        if (message.history || message.role === 'system' || index === firstUser) continue;
-        if (message.role === 'user') append('user/message', { id: id(`transcript:${index}`), role: 'user',
-          content: [{ type: 'text', text: message.content }] }, { surfaceOp: 'append' });
+        if (message.history || message.role === 'system' || admittedUsers.has(index)) continue;
+        if (message.role === 'user') {
+          // Only admitted human steering is a new public user message. Model,
+          // verification and Hook feedback are private execution context.
+          if (['guidance', 'steering'].includes(message.kind)) append('user/message', {
+            id: id(`transcript:${index}`), role: 'user', source: { kind: 'user' },
+            content: [{ type: 'text', text: message.content }] }, { surfaceOp: 'append' });
+        }
         else if (message.role === 'tool') {
           let status = completed.get(message.callId);
           if (status === undefined) {

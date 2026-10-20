@@ -1,5 +1,5 @@
 import { emptyUsage, NATIVE_ENGINE, NATIVE_SCHEMA } from './contracts.mjs';
-import type { ModelProfile, RunConfiguration, RunIdentity, RunLimits, RunSnapshot, TaskContract, ToolDefinition } from './contracts.mjs';
+import type { Message, ModelProfile, RunConfiguration, RunIdentity, RunLimits, RunSnapshot, TaskContract, ToolDefinition } from './contracts.mjs';
 import { canonical, copy, invariant, scopeKey } from './values.mjs';
 import { validateSubmissionContract } from './final-submission.mjs';
 import { compileToolInput } from './tool-input.mjs';
@@ -13,6 +13,7 @@ export interface ConfigurationInput {
   stopHookContinuationLimit?: number; delegationDepth?: number;
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
   contextPolicy?: RunConfiguration['contextPolicy'];
+  inputMessages?: Message[];
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
   const profile: ModelProfile = {
@@ -30,6 +31,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   const config: RunConfiguration = {
     engine: NATIVE_ENGINE, profile, limits,
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
+    inputMessages: input.inputMessages ?? null,
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
     contextPolicy: input.contextPolicy ?? null,
     stopHookContinuationLimit: input.stopHookContinuationLimit ?? 0, delegationDepth: input.delegationDepth ?? 0,
@@ -41,6 +43,16 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(config.contract.objective.trim() && config.hostBindingDigest.trim()
     && profile.profileId.trim() && profile.profileVersion.trim() && profile.providerFamily.trim()
     && profile.compatibilityDigest.trim(), 'configuration_identity_missing');
+  if (config.inputMessages !== null) {
+    invariant(Array.isArray(config.inputMessages) && config.inputMessages.length > 0
+      && config.inputMessages.every(message => message && message.role === 'user'
+        && Object.keys(message).every(key => ['role', 'content', 'media', 'kind', 'persistent'].includes(key))
+        && typeof message.content === 'string'
+        && (message.media === undefined || Array.isArray(message.media))
+        && (message.kind === undefined || typeof message.kind === 'string' && message.kind.trim().length > 0)
+        && (message.persistent === undefined || typeof message.persistent === 'boolean'))
+      && config.inputMessages.some(message => message.content === config.contract.objective), 'invalid_task_input_messages');
+  }
   for (const [key, value] of Object.entries(limits)) {
     invariant(value === null || Number.isSafeInteger(value) && value >= 0, `invalid_limit:${key}`);
   }
@@ -108,7 +120,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     phase: 'created', resumePhase: null, goal: configuration.contract.objective, goalRevision: 0,
     messages: [
       ...(configuration.instructions ? [{ role: 'system' as const, content: configuration.instructions, persistent: true }] : []),
-      { role: 'user' as const, content: configuration.contract.objective },
+      ...(configuration.inputMessages ?? [{ role: 'user' as const, content: configuration.contract.objective }]),
     ], preparedContext: null, queuedGuidance: [], pendingTools: [], pendingIntent: null, pendingInteraction: null, interaction: null,
     usage: emptyUsage(), descendantUsage: emptyUsage(), modelErrors: 0, providerErrors: 0,
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,

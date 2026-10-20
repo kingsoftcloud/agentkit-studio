@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto';
 import { appendFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { NativeKernel, configure, canonical } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { configure, canonical } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeModelPort } from '../../packages/agentkit-harness/src/native/model-port.mjs';
-import { createNativeSessionDelivery, nativeDeliveryProjection } from '../../packages/agentkit-harness/src/native/session-delivery.mjs';
+import { nativeDeliveryProjection } from '../../packages/agentkit-harness/src/native/session-delivery.mjs';
+import { createNativeDshTurnExecutor } from '../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 
 export const name = 'studio-native-turn-verification';
 export const inject = ['llm', 'sessions', 'sessionProjections'];
@@ -36,19 +37,34 @@ export async function apply(ctx, options) {
       } };
     },
   });
-  ctx.on('agent/execute-turn', async ({ agent, input, turn, signal }, next) => {
-    if (turn === 3) { delegate = true; return next(); }
+  const executeTurn = createNativeDshTurnExecutor({ store, projections: ctx.sessionProjections,
+    flush: session => ctx.sessions.flush(session), owner: `sdk-${process.pid}`,
+    onCheckpoint: async ({ turn }, snapshot) => {
+      if (!['completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase)) return;
+      await writeFile(join(options.directory, `native-turn-${turn}-diagnostics.json`), JSON.stringify({
+        phase: snapshot.phase, outcome: snapshot.outcome, reason: snapshot.reason,
+        modelCalls: snapshot.usage.modelCalls, providerErrors: snapshot.providerErrors,
+        responses: store.events(snapshot.scope, snapshot.runId).filter(event => event.kind === 'model.completed').map(event => ({
+          kind: event.payload.kind, usageReported: event.payload.usageReported,
+        })),
+        failures: store.load(snapshot.scope, snapshot.runId).receipts.filter(receipt => receipt.result.failureKind).map(receipt => ({
+          status: receipt.status, kind: receipt.result.kind, failureKind: receipt.result.failureKind,
+        })),
+      }));
+    },
+    resolveTurn: async ({ agent, input, turn }) => {
+    if (turn === 3) { delegate = true; return null; }
     const scope = { tenantId: 'local', workspaceId: digest(options.directory), userId: 'fixture', agentId: String(agent.id) };
-    const runId = `native-${agent.id}-${turn}`;
-    const objective = input.messages.map(message => message.content.map(block => {
+    const inputMessages = input.messages.map(message => ({ role: 'user', content: message.content.map(block => {
       if (block.type !== 'text') throw Error('This verification owns text input only');
       return block.text;
-    }).join('')).join('\n\n');
+    }).join('') }));
+    const objective = inputMessages.at(-1).content;
     const instructions = renderPrompt(input.assembly);
     const configuration = configure({
       profile: { profileId: 'fixture', profileVersion: '1', providerFamily: 'openai', compatibilityDigest: 'fixture/v1', maxRetries: 0,
         ...(options.contextPlanning ? { contextWindow: Math.max(16384, Math.ceil(instructions.length / 4) + 4096), maxOutputTokens: 128 } : {}) },
-      contract: { objective }, instructions,
+      contract: { objective }, instructions, inputMessages,
       ...(options.contextPlanning ? { contextPolicy: { tokenizerId: 'sdk-fixture', tokenizerDigest: 'sdk-fixture-counter/v1', enabled: true,
         triggerRatio: .72, targetRatio: .45, summaryMaxTokens: 80, maxCompactions: null, maxCompactionsWithoutProgress: 4,
         minModelTurnsBetween: 2, maxSummaryRetries: 1 } } : {}),
@@ -60,10 +76,8 @@ export async function apply(ctx, options) {
         readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 1000,
         contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' }],
     });
-    const onCheckpoint = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn,
-      projections: ctx.sessionProjections, flush: session => ctx.sessions.flush(session),
-      systemText: configuration.instructions, inputMessages: input.messages, source: { provider: 'native-fixture', model: 'pinned' } });
-    const kernel = new NativeKernel({ store, digest, owner: `sdk-${process.pid}`, onCheckpoint,
+    return { scope, buildId: 'sdk-verification', configuration, taskChainId: String(agent.id),
+      source: { provider: 'native-fixture', model: 'pinned' },
       ports: {
         ...(options.contextPlanning ? { context: { tokens: { tokenizerId: 'sdk-fixture', tokenizerDigest: 'sdk-fixture-counter/v1',
           countRequest: async request => Math.ceil(canonical({ messages: request.messages, tools: request.tools }).length / 4),
@@ -78,15 +92,14 @@ export async function apply(ctx, options) {
             ...(options.contextPlanning ? { historicalEvidence: 'Observed evidence '.repeat(7000) } : {}) } };
         } },
       },
-    });
-    kernel.start({ scope, runId, sessionId: String(agent.session.id), turnId: String(turn), buildId: 'sdk-verification',
-      parentRunId: null, taskChainId: String(agent.id) }, configuration);
-    const result = await kernel.runUntilIdle(scope, runId, { signal });
-    if (result.phase !== 'completed') throw Error(`Native verification stopped: ${result.phase}/${result.reason}`);
-    // Re-deliver committed events in the same real Session. Both invocations
-    // must be no-ops for append and must never dispatch another external call.
-    await onCheckpoint(result);
-    await kernel.runUntilIdle(scope, runId);
-    return { reason: { kind: 'completed' } };
+    };
+  } });
+  ctx.on('agent/execute-turn', async (payload, next) => {
+    const result = await executeTurn(payload);
+    if (result === undefined) return next();
+    // Replay through the production executor as well as the real Session.
+    // It must append nothing and must dispatch no external call a second time.
+    await executeTurn(payload);
+    return result;
   });
 }

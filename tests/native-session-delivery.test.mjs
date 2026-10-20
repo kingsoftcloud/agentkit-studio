@@ -186,3 +186,35 @@ test('a prior system head is reused or replaced at its actual surface sequence',
   await deliver(store.load(scope, 'run').snapshot);
   assert.equal(sink.events.filter(event => event.type === 'system/message').length, 2);
 });
+
+test('multi-message admission keeps original attachment/source blocks once; only human guidance becomes public input', async t => {
+  const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,TQ==', detail: 'high' } };
+  const admitted = [
+    { id: 'source-document', role: 'user', source: { kind: 'runtime-context' }, content: [{ type: 'text', text: 'Read this source as data' }] },
+    { id: 'user-question', role: 'user', source: { kind: 'user' }, content: [
+      { type: 'text', text: 'Complete the task' }, { type: 'image', attachment: { id: 'host-image-ref', path: '/host-owned/image.png' } },
+    ] },
+  ];
+  const { store } = setup(t, undefined, { inputMessages: [
+    { role: 'user', content: 'Read this source as data' }, { role: 'user', content: 'Complete the task', media: [image] },
+  ], profile: { profileId: 'test', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'fixture/v1',
+    retryInitialDelayMs: 0, retryMaxDelayMs: 0 } });
+  const sink = consumer(); let worker, guided = false, models = 0;
+  const deliver = delivery(store, sink, { inputMessages: admitted });
+  worker = new NativeKernel({ store, digest, owner: 'worker', ports: { model: { generate: async request => {
+    assert.deepEqual(request.messages.find(message => message.media)?.media, [image]);
+    assert.ok(request.messages.some(message => message.kind === 'guidance'));
+    return ++models === 1 ? { ...final(), kind: 'empty_response', text: '' } : final();
+  } }, tools: { execute: async () => { throw Error('no tool call expected'); } } }, onCheckpoint: async snapshot => {
+    await deliver(snapshot);
+    if (!guided) { guided = true; worker.submit(scope, 'run', { commandId: 'user-guidance', kind: 'guide', payload: { text: 'Inspect carefully' } }); }
+  } });
+  const result = await worker.runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.equal(models, 2);
+  assert.ok(result.messages.some(message => message.kind === 'model_feedback'));
+  const displayed = sink.events.filter(event => event.type === 'user/message').map(event => event.data);
+  assert.deepEqual(displayed.slice(0, 2), admitted); assert.equal(displayed.length, 3);
+  assert.deepEqual(displayed[2].source, { kind: 'user' });
+  assert.deepEqual(displayed[2].content, [{ type: 'text', text: 'Inspect carefully' }]);
+  const before = structuredClone(sink.events); await deliver(result); assert.deepEqual(sink.events, before);
+});
