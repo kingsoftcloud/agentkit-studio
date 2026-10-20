@@ -1,0 +1,217 @@
+import { emptyUsage } from './contracts.mjs';
+import type { CommitBatch, EffectIntent, EffectReceipt, Message, ModelResult, ObjectValue, RunConfiguration, RunSnapshot, ToolCall, ToolResult, Usage } from './contracts.mjs';
+import { copy, invariant, canonical } from './values.mjs';
+import { prepareEffect, transition } from './transitions.mjs';
+import { retryDelay } from './retry.mjs';
+
+export function objectValue(value: unknown): ObjectValue {
+  invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
+  return copy(value) as ObjectValue;
+}
+export function addUsage(left: Usage, right: Usage): Usage {
+  const result = emptyUsage();
+  for (const key of Object.keys(result) as (keyof Usage)[]) {
+    invariant(Number.isFinite(right[key]) && right[key] >= 0, 'invalid_usage');
+    result[key] = left[key] + right[key];
+    invariant(Number.isFinite(result[key]), 'usage_overflow');
+  }
+  return result;
+}
+export function modelRoom(snapshot: RunSnapshot, config: RunConfiguration): number {
+  return config.limits.maxModelCalls === null ? Infinity
+    : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls;
+}
+export function toolRoom(snapshot: RunSnapshot, config: RunConfiguration): number {
+  return config.limits.maxToolCalls === null ? Infinity
+    : config.limits.maxToolCalls - snapshot.usage.toolCalls - snapshot.descendantUsage.toolCalls;
+}
+function finalizing(snapshot: RunSnapshot, outcome: RunSnapshot['outcome'], reason: string): CommitBatch {
+  return transition(snapshot, { phase: 'finalizing', outcome, reason, pendingIntent: null }, [{ kind: 'run.finalizing', payload: { outcome, reason } }]);
+}
+export function finalizationOnly(snapshot: RunSnapshot, config: RunConfiguration): boolean {
+  const calls = modelRoom(snapshot, config);
+  return calls <= config.limits.finalizationReserveModelCalls
+    || config.limits.maxWallMs !== null && config.limits.maxWallMs - snapshot.activeElapsedMs <= config.limits.finalizationReserveWallMs;
+}
+export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration) {
+  if (finalizationOnly(snapshot, config) || toolRoom(snapshot, config) <= 0) return [];
+  return config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name));
+}
+export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean }
+/** Pure next action. Dispatch is impossible until its intent has been committed and claimed. */
+export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabilities: PlanCapabilities): CommitBatch | null {
+  if (snapshot.phase === 'paused' || snapshot.phase === 'awaiting_interaction') return null;
+  invariant(snapshot.pendingIntent === null, 'pending_effect_requires_dispatch');
+  if (snapshot.phase === 'finalizing') {
+    if (snapshot.candidate && snapshot.verification && snapshot.verification.workspaceDependency !== 'none'
+      && capabilities.workspace && snapshot.context.terminalWorkspaceCursor !== snapshot.candidate.candidateId) {
+      return prepareEffect(snapshot, 'workspace', 'finalizing', { cursor: snapshot.candidate.candidateId, purpose: 'terminal' });
+    }
+    const outcome = snapshot.outcome ?? 'unverified';
+    const text = snapshot.candidate?.text ?? snapshot.finalText;
+    const phase = ['effect_outcome_unknown', 'browser_session_unavailable'].includes(snapshot.reason ?? '') ? 'interrupted'
+      : outcome === 'failed' || !text.trim() ? 'failed' : 'completed';
+    return transition(snapshot, { phase, finalText: snapshot.candidate?.text ?? snapshot.finalText, pendingTools: [] }, [{ kind: 'run.terminal', payload: {
+      phase, outcome, reason: snapshot.reason, finalText: snapshot.candidate?.text ?? snapshot.finalText, usage: objectValue(snapshot.usage),
+    } }]);
+  }
+  if (config.limits.maxWallMs !== null && snapshot.activeElapsedMs >= config.limits.maxWallMs) {
+    return finalizing(snapshot, 'budget_exhausted', 'execution_budget_exhausted');
+  }
+  if (snapshot.phase === 'created') return transition(snapshot, { phase: 'preparing_context' }, [{ kind: 'run.started', payload: { buildId: snapshot.buildId } }]);
+  const cursor = `${snapshot.goalRevision}:${snapshot.usage.modelCalls}:${snapshot.usage.toolCalls}:${snapshot.candidate?.candidateId ?? ''}`;
+  if (capabilities.workspace && snapshot.context.workspaceCursor !== cursor && ['preparing_context', 'verifying'].includes(snapshot.phase)) {
+    return prepareEffect(snapshot, 'workspace', snapshot.phase, { cursor });
+  }
+  if (snapshot.phase === 'preparing_context' || snapshot.phase === 'compacting') {
+    if (snapshot.phase === 'compacting' && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_compaction_unavailable');
+    if (capabilities.context && snapshot.context.preparedCursor !== cursor) {
+      return prepareEffect(snapshot, 'context', snapshot.phase, { cursor, forceCompaction: snapshot.phase === 'compacting' });
+    }
+    if (modelRoom(snapshot, config) <= 0) return finalizing(snapshot, 'budget_exhausted', 'model_budget_exhausted');
+    return prepareEffect(snapshot, 'model', 'requesting_model', { finalizationOnly: finalizationOnly(snapshot, config) },
+      { usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls + 1 } });
+  }
+  if (snapshot.phase === 'executing_tools') {
+    if (!snapshot.pendingTools.length) return transition(snapshot, { phase: 'preparing_context', interaction: null });
+    const first = snapshot.pendingTools[0]!;
+    const definition = config.tools.find(tool => tool.name === first.name);
+    if (!definition || config.contract.allowedToolNames !== null && !config.contract.allowedToolNames.includes(first.name)) {
+      return transition(snapshot, { pendingTools: snapshot.pendingTools.slice(1), messages: [...snapshot.messages,
+        { role: 'tool', content: canonical({ status: 'error', code: 'tool_not_advertised' }), callId: first.callId, name: first.name }] },
+      [{ kind: 'tool.rejected', payload: { callId: first.callId, name: first.name, reason: 'tool_not_advertised' } }]);
+    }
+    if (toolRoom(snapshot, config) <= 0) {
+      const messages: Message[] = snapshot.pendingTools.map(call => ({ role: 'tool', callId: call.callId, name: call.name,
+        content: canonical({ status: 'error', code: 'tool_budget_exhausted' }) }));
+      return transition(snapshot, { phase: 'preparing_context', pendingTools: [], messages: [...snapshot.messages, ...messages] },
+        [{ kind: 'tools.budget_exhausted', payload: {} }]);
+    }
+    let calls: ToolCall[] = [first];
+    if (definition.readOnly && definition.concurrentSafe && !definition.delegatedReadOnly) {
+      calls = [];
+      for (const call of snapshot.pendingTools.slice(0, Math.min(config.limits.maxParallelTools, toolRoom(snapshot, config)))) {
+        const tool = config.tools.find(item => item.name === call.name);
+        if (!tool?.readOnly || !tool.concurrentSafe || tool.delegatedReadOnly || tool.observationRole !== 'none') break;
+        calls.push(call);
+      }
+    }
+    return prepareEffect(snapshot, 'tool', 'executing_tools', { calls: calls.map(objectValue), interaction: snapshot.interaction },
+      { interaction: null });
+  }
+  if (snapshot.phase === 'verifying') {
+    invariant(snapshot.candidate, 'verification_candidate_missing');
+    if (!capabilities.verification) return finalizing(snapshot, 'unverified', 'verification_report_missing');
+    return prepareEffect(snapshot, 'verify', 'verifying', { candidate: objectValue(snapshot.candidate) });
+  }
+  invariant(false, 'unsupported_phase');
+}
+function boundReplay(result: ModelResult, config: RunConfiguration): ObjectValue | undefined {
+  if (result.providerReplay === undefined) return undefined;
+  invariant(config.profile.providerReplayMode !== 'none'
+    && result.providerReplay.compatibilityDigest === config.profile.compatibilityDigest, 'provider_replay_binding_mismatch');
+  return result.providerReplay;
+}
+export function validateModelResult(input: ModelResult): ModelResult {
+  const result = copy(input);
+  invariant(['tool_calls', 'final_candidate', 'output_limit', 'context_overflow', 'empty_response', 'malformed_tool_call',
+    'provider_retryable_error', 'provider_terminal_error', 'policy_abort', 'user_abort'].includes(result.kind)
+    && typeof result.text === 'string' && Array.isArray(result.toolCalls), 'invalid_model_result');
+  addUsage(emptyUsage(), result.usage);
+  const ids = new Set<string>();
+  for (const call of result.toolCalls) {
+    invariant(typeof call.callId === 'string' && call.callId.trim() && typeof call.name === 'string' && call.name.trim()
+      && !ids.has(call.callId), 'invalid_tool_call');
+    ids.add(call.callId); objectValue(call.arguments);
+  }
+  invariant(result.kind !== 'tool_calls' || result.toolCalls.length > 0, 'empty_tool_batch');
+  invariant(result.kind !== 'final_candidate' || result.text.trim(), 'empty_final_candidate');
+  return result;
+}
+export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: RunConfiguration, now: number, random: number): Partial<RunSnapshot> {
+  const result = validateModelResult(input);
+  const replay = boundReplay(result, config);
+  const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
+  const base: Partial<RunSnapshot> = { pendingIntent: null, usage };
+  const message: Message = { role: 'assistant', content: result.text,
+    ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) };
+  switch (result.kind) {
+    case 'tool_calls':
+      if (result.toolCalls.some(call => !advertisedTools({ ...snapshot,
+        usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } }, config).some(tool => tool.name === call.name))) {
+        return { ...base, phase: 'preparing_context', pendingTools: [], messages: [...snapshot.messages,
+          { ...message, toolCalls: result.toolCalls }, ...result.toolCalls.map(call => ({ role: 'tool' as const,
+            callId: call.callId, name: call.name, content: canonical({ status: 'error', code: 'tool_not_advertised' }) }))] };
+      }
+      return { ...base, phase: 'executing_tools', pendingTools: result.toolCalls,
+        messages: [...snapshot.messages, { ...message, toolCalls: result.toolCalls }],
+        continuations: 0, modelErrors: 0 };
+    case 'final_candidate':
+      return { ...base, phase: 'verifying', modelErrors: 0, candidate: { candidateId: `${snapshot.runId}:candidate:${snapshot.usage.modelCalls}`,
+        text: result.text, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision },
+        messages: [...snapshot.messages, { ...message, kind: 'final_candidate' }] };
+    case 'output_limit': {
+      if (snapshot.continuations >= config.profile.maxContinuations) return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'continuation_budget_exhausted' };
+      return { ...base, phase: 'preparing_context', continuations: snapshot.continuations + 1,
+        messages: [...snapshot.messages, ...(result.text ? [{ ...message, kind: 'continuation_fragment' }] : []),
+          { role: 'user', kind: 'continuation_observation', content: 'The previous output was interrupted. Incomplete tool calls were not executed. Continue from the last committed state and finish only when the task is complete.' }] };
+    }
+    case 'context_overflow':
+      return { ...base, phase: 'compacting', context: { ...snapshot.context, preparedCursor: null } };
+    case 'empty_response':
+    case 'malformed_tool_call':
+    case 'provider_retryable_error': {
+      const provider = result.kind === 'provider_retryable_error';
+      const attempts = (provider ? snapshot.providerErrors : snapshot.modelErrors) + 1;
+      const exhausted = attempts > (provider ? config.profile.maxProviderRetries : config.profile.maxRetries);
+      const delay = retryDelay(result, attempts, config, random);
+      return { ...base, phase: exhausted ? 'finalizing' : 'preparing_context', outcome: exhausted ? 'failed' : null,
+        reason: exhausted ? `${result.kind}_retry_exhausted` : null,
+        providerErrors: provider ? attempts : snapshot.providerErrors,
+        modelErrors: provider ? snapshot.modelErrors : attempts, retryNotBefore: exhausted ? 0 : now + delay,
+        messages: provider ? snapshot.messages : [...snapshot.messages, { role: 'user', kind: 'model_feedback',
+          content: result.kind === 'empty_response' ? 'The last response was empty. Continue the task or provide a complete answer.' : 'The last tool call was malformed and was not executed. Return complete valid tool arguments.' }] };
+    }
+    case 'policy_abort': return { ...base, phase: 'finalizing', outcome: 'blocked', reason: 'model_policy_abort' };
+    case 'user_abort': return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'model_user_abort' };
+    case 'provider_terminal_error': return { ...base, phase: 'finalizing', outcome: 'failed', reason: 'provider_terminal_error' };
+  }
+}
+export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls: ToolCall[], intent: EffectIntent, config: RunConfiguration): Partial<RunSnapshot> {
+  invariant(results.length === calls.length && calls.length > 0
+    && canonical(snapshot.pendingTools.slice(0, calls.length)) === canonical(calls), 'tool_receipt_mismatch');
+  let updated = copy(snapshot);
+  for (const [index, call] of calls.entries()) {
+    const result = copy(results[index]!);
+    invariant(['ok', 'error', 'approval_required', 'uncertain'].includes(result.status), 'invalid_tool_result');
+    if (calls.length > 1 && (result.status === 'approval_required' || result.status === 'uncertain'
+      || result.workspaceChangedPaths?.length || result.childRunIds?.length || (result.resourceUsage?.modelCalls ?? 0) > 0)) {
+      return { pendingIntent: null, phase: 'finalizing', outcome: 'blocked', reason: 'parallel_readonly_contract_violation',
+        usage: { ...snapshot.usage, toolCalls: snapshot.usage.toolCalls + calls.length } };
+    }
+    if (result.status === 'approval_required') {
+      invariant(typeof result.interactionId === 'string' && result.interactionId.trim(), 'approval_identity_missing');
+      return { pendingIntent: null, phase: 'awaiting_interaction', pendingInteraction: {
+        interactionId: `${intent.operationKey}:approval`, hostInteractionId: result.interactionId, callId: call.callId, operationKey: intent.operationKey } };
+    }
+    updated.usage.toolCalls += 1;
+    if (result.status === 'uncertain') return { pendingIntent: null, phase: 'finalizing', outcome: 'unverified', reason: 'effect_outcome_unknown', usage: updated.usage };
+    if (result.resourceUsage) updated.descendantUsage = addUsage(updated.descendantUsage, result.resourceUsage);
+    updated.messages.push({ role: 'tool', callId: call.callId, name: call.name, content: canonical(result.content) });
+    updated.workspaceModifiedPaths = [...new Set([...updated.workspaceModifiedPaths, ...(result.workspaceChangedPaths ?? [])])];
+    for (const artifact of result.artifactRefs ?? []) {
+      const previous = updated.artifactRefs.find(item => item.uri === artifact.uri);
+      invariant(!previous || canonical(previous) === canonical(artifact), 'artifact_reference_conflict');
+      if (!previous) updated.artifactRefs.push(artifact);
+    }
+  }
+  return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
+    descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
+    workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null };
+}
+export function settle(snapshot: RunSnapshot, intent: EffectIntent, receipt: EffectReceipt, changes: Partial<RunSnapshot>, elapsedMs: number, facts: { kind: string; payload: ObjectValue }[] = []): CommitBatch {
+  invariant(receipt.operationKey === intent.operationKey && snapshot.pendingIntent === intent.operationKey, 'effect_receipt_mismatch');
+  return transition(snapshot, { ...changes, activeElapsedMs: snapshot.activeElapsedMs + elapsedMs }, [
+    { kind: 'effect.settled', payload: { operationKey: intent.operationKey, kind: intent.kind, status: receipt.status } }, ...facts,
+  ], { receipts: [receipt] });
+}

@@ -62,6 +62,7 @@ typings/
 # AgentKit Studio generated tarballs and artifacts
 .artifacts/
 /dist/
+packages/agentkit-harness-core/dist/
 .DS_Store
 
 # Browser acceptance artifacts
