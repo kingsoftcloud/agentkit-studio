@@ -1979,12 +1979,63 @@
         "scripts/gen-cordis-catalog.ts"
       ],
       "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458"
+    },
+    {
+      "id": "048",
+      "file": "048-sdk-external-turn.patch",
+      "category": "lifecycle",
+      "risk": "medium",
+      "dependsOn": [
+        "047"
+      ],
+      "removeWhen": "The pinned upstream includes first-turn whole-engine SDK coverage for both language clients.",
+      "contracts": [
+        "A fresh SDK session admits its first turn through the external engine without a default model request.",
+        "The engine admits a structured system head, user input, assistant source and usage; a later default turn reuses the head.",
+        "Expected transcripts and requests are captured through shipped SDK profiles and replay without rewriting baselines."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-sdk-client",
+        "@deepseek-ai/dsh-sdk-app",
+        "@deepseek-ai/dsh-agent-loop"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Locally reviewed maintenance commit; no upstream submission or merge receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn-loader.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "frozen"
+        ]
+      },
+      "affectedFiles": [
+        "scripts/fixtures/python-sdk-external-turn.mjs",
+        "scripts/smoke-python-runtime.py",
+        "scripts/snapshots/python-sdk-single-exe/external-turn/model-visible.json",
+        "snapshots/sdk/external-turn/cordis.snapshot.yml",
+        "snapshots/sdk/external-turn/cordis.yml",
+        "snapshots/sdk/external-turn/engine.mjs",
+        "snapshots/sdk/external-turn/mock-model.mjs",
+        "snapshots/sdk/external-turn/session.v4.jsonl",
+        "snapshots/sdk/external-turn/snapshot.yml",
+        "snapshots/sdk/external-turn/system-prompt.expected.md",
+        "snapshots/sdk/external-turn/tool-schemas.expected.json",
+        "snapshots/sdk/sdk.snapshot.ts"
+      ],
+      "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f"
     }
   ],
-  "patchedTree": "09637fcadf2de3e157183a115bffe359cc4ccd54",
-  "patchedSourceSha256": "a7c7ede65950014528d3f49883c7c940cdb9f3ae4428c4e462775f514de6bf98",
+  "patchedTree": "07df4f297635c2bb3a5342cb4b6d92e7b97d87ef",
+  "patchedSourceSha256": "9b8d5720a51f1bf9ccdc83651bc8fca08fcd9ef348c10c48d3f635e7dc22255e",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "936659255b69c19dd99531ab48fe9876b6476a1308a033836bc9e88758a8a6cf"
+    "sha256": "bf2c2a297c3651fcdfe81058c430b916d5405f96cf2a23efb85c97d650882961"
   }
 }

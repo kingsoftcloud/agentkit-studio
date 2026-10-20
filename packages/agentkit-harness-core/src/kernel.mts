@@ -17,6 +17,8 @@ export interface KernelOptions {
   digest: (value: unknown) => string;
   now?: () => number; random?: () => number;
   onStream?: (identity: RunIdentity, event: ModelStreamEvent) => void;
+  /** Await durable event delivery before dispatching another effect. Failure leaves the ledger resumable. */
+  onCheckpoint?: (snapshot: RunSnapshot) => Promise<void>;
 }
 /** Durable, single-owner driver. Host ports receive no writable ledger capability. */
 export class NativeKernel {
@@ -27,12 +29,14 @@ export class NativeKernel {
   private readonly now: () => number;
   private readonly random: () => number;
   private readonly onStream: NonNullable<KernelOptions['onStream']>;
+  private readonly onCheckpoint: KernelOptions['onCheckpoint'];
   private readonly active = new Map<string, AbortController>();
   constructor(options: KernelOptions) {
     invariant(options.owner.trim(), 'worker_identity_missing');
     this.store = options.store; this.ports = options.ports; this.owner = options.owner;
     this.digest = options.digest; this.now = options.now ?? Date.now; this.random = options.random ?? Math.random;
     this.onStream = options.onStream ?? (() => {});
+    this.onCheckpoint = options.onCheckpoint;
   }
   start(identity: RunIdentity, configuration: RunConfiguration,
     options: { expectedParentRunId?: string | null } = {}): RunSnapshot {
@@ -78,7 +82,10 @@ export class NativeKernel {
   async runUntilIdle(scope: RunScope, runId: string, { signal, waitForRetry = true }: { signal?: AbortSignal; waitForRetry?: boolean } = {}): Promise<RunSnapshot> {
     const initial = this.store.load(scope, runId);
     invariant(this.digest(initial.configuration) === initial.snapshot.configDigest, 'stored_configuration_mismatch');
-    if (terminal(initial.snapshot.phase)) return initial.snapshot;
+    if (terminal(initial.snapshot.phase)) {
+      await this.onCheckpoint?.(copy(initial.snapshot));
+      return initial.snapshot;
+    }
     const key = runKey(scope, runId);
     invariant(!this.active.has(key), 'worker_already_driving');
     const controller = new AbortController();
@@ -97,9 +104,18 @@ export class NativeKernel {
         if (command && ['cancel', 'policy_revoked'].includes(command.kind)) controller.abort(new NativeError('command_interrupt'));
       } catch (error) { leaseError = error; controller.abort(new NativeError('lease_lost')); }
     }, Math.max(10, Math.floor(initial.configuration.limits.leaseMs / 3)));
+    let deliveredRevision = -1;
     try {
       while (true) {
         if (leaseError) throw leaseError;
+        if (this.onCheckpoint) {
+          const checkpoint = this.store.load(scope, runId).snapshot;
+          if (checkpoint.revision !== deliveredRevision) {
+            await this.onCheckpoint(copy(checkpoint));
+            deliveredRevision = checkpoint.revision;
+          }
+          if (leaseError) throw leaseError;
+        }
         const record = this.store.load(scope, runId), snapshot = record.snapshot, config = record.configuration;
         if (terminal(snapshot.phase)) return snapshot;
         const commands = pendingCommands(record);
@@ -177,8 +193,12 @@ export class NativeKernel {
           changes = reduceModel(snapshot, result, configuration, this.now(), this.random());
           if (changes.candidate) changes.candidate = sealCandidate(changes.candidate, { ...snapshot, ...changes }, configuration, this.digest);
           const rejectedDraft = configuration.contract.finalSubmissionSchema !== null && result.kind === 'final_candidate';
+          const appended = changes.messages?.slice(snapshot.messages.length) ?? [];
+          const assistantOffset = appended.findIndex(message => message.role === 'assistant');
           facts.push({ kind: 'model.completed', payload: { kind: result.kind, text: rejectedDraft ? '' : result.text,
             ...(rejectedDraft ? { candidateStatus: 'rejected' } : {}),
+            messageIndex: assistantOffset < 0 ? null : snapshot.messages.length + assistantOffset,
+            messageCursor: changes.messages?.length ?? snapshot.messages.length,
             usageReported: result.usageReported !== false,
             toolCalls: result.toolCalls.map(objectValue), usage: objectValue(result.usage) } });
           break;

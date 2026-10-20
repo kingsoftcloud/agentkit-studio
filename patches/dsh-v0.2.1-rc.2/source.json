@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "e764cd215dec2998ff3f58e0613a0d09d8a06f7d",
+  "headCommit": "4d4f6d195cc5bb2871387c810e29482465247f27",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-11",
-  "tree": "09637fcadf2de3e157183a115bffe359cc4ccd54",
-  "sourceSha256": "a7c7ede65950014528d3f49883c7c940cdb9f3ae4428c4e462775f514de6bf98",
+  "tree": "07df4f297635c2bb3a5342cb4b6d92e7b97d87ef",
+  "sourceSha256": "9b8d5720a51f1bf9ccdc83651bc8fca08fcd9ef348c10c48d3f635e7dc22255e",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "4af9ab9c2d126c07e9e68de8e8a7397c6b7a111bd7431b3e079c317168b64fb7"
+    "sha256": "a93b7a2485d3d0fa1b22a0e894ac6f44f7bf7e9a49856d47a3d6ac29c2edbdc3"
   },
   "commits": [
     {
@@ -250,6 +250,12 @@
       "file": "047-execute-turn-engine.patch",
       "commit": "e764cd215dec2998ff3f58e0613a0d09d8a06f7d",
       "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458"
+    },
+    {
+      "id": "048",
+      "file": "048-sdk-external-turn.patch",
+      "commit": "4d4f6d195cc5bb2871387c810e29482465247f27",
+      "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f"
     }
   ]
 }
