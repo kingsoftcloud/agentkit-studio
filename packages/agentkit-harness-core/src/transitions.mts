@@ -68,6 +68,7 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       else {
         changes = { goal: command.payload.text, goalRevision: snapshot.goalRevision + 1, phase: 'preparing_context',
           hookState: null, stopHookContinuations: 0,
+          contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null } : null,
           preparedContext: null, queuedGuidance: [], finalText: '', outcome: null, reason: null,
           pendingTools: [], pendingInteraction: null, interaction: null, candidate: null, verification: null,
           messages: [...snapshot.messages, ...snapshot.pendingTools.map(call => ({ role: 'tool' as const, callId: call.callId, name: call.name,

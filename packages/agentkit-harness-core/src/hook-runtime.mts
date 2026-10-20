@@ -17,6 +17,17 @@ function validCall(config: RunConfiguration, call: ToolCall): boolean {
 function matching(config: RunConfiguration, event: HookEvent, call?: ToolCall): HookDefinition[] {
   return config.hooks.filter(hook => hookMatches(hook, event, call?.name));
 }
+function compactionSubject(snapshot: RunSnapshot, definition: HookDefinition): ObjectValue {
+  const subject = copy(snapshot.contextState!.compaction!.hookSubject);
+  if (definition.compactionSourceProjection === 'canonical_user') {
+    const messages = subject.messages as unknown as Message[], refs = subject.messageRefs as string[];
+    const indexes = messages.flatMap((message, index) => message.role === 'user' && !message.kind ? [index] : []);
+    subject.messages = indexes.map(index => messages[index]!) as unknown as ObjectValue[];
+    subject.messageRefs = indexes.map(index => refs[index]!);
+    subject.sourceProjection = 'canonical_user';
+  }
+  return subject;
+}
 function callState(state: HookState, call: ToolCall): HookState['pre'][number] {
   let record = state.pre.find(item => item.original.callId === call.callId);
   if (!record) { record = { original: copy(call), effective: copy(call), nextIndex: 0, denied: false }; state.pre.push(record); }
@@ -47,10 +58,20 @@ export function planHook(snapshot: RunSnapshot, config: RunConfiguration, event:
     if (state.stop?.candidateId !== snapshot.candidate.candidateId) state.stop = { candidateId: snapshot.candidate.candidateId, nextIndex: 0 };
     hook = matching(config, event)[state.stop.nextIndex];
     if (!hook) return null;
-  } else return null; // PreCompact must be bound to the context planner's admitted source, not an arbitrary transcript.
+  } else {
+    const compaction = snapshot.contextState?.compaction;
+    if (!compaction || compaction.hooksComplete) return null;
+    const subjectDigest = digest(compaction.hookSubject);
+    if (state.precompact?.subjectDigest !== subjectDigest) state.precompact = { subjectDigest, nextIndex: 0 };
+    hook = matching(config, event)[state.precompact.nextIndex];
+    invariant(hook, 'precompact_hook_cursor_mismatch');
+  }
   const input: HookInvocation['input'] = { goal: snapshot.goal, toolCallCount: snapshot.usage.toolCalls,
     stopContinuationCount: snapshot.stopHookContinuations, call, toolResult: result,
     candidate: event === 'Stop' ? snapshot.candidate : null, compaction: null };
+  if (event === 'PreCompact') {
+    input.compaction = compactionSubject(snapshot, hook!);
+  }
   const batch = prepareEffect(snapshot, 'hook', snapshot.phase, {}, { hookState: state });
   const request: HookInvocation = { ...hookIdentity(snapshot), schemaVersion: 'agentkit.native-hook/v1',
     operationKey: batch.snapshot.pendingIntent!, goalRevision: snapshot.goalRevision, event, definition: copy(hook!), input,
@@ -122,16 +143,25 @@ export function reduceHook(snapshot: RunSnapshot, intent: EffectIntent, input: H
       && canonical(request.input.candidate) === canonical(snapshot.candidate), 'stop_hook_subject_mismatch');
     state.stop.nextIndex++;
     if (output?.action === 'deny') return close(snapshot, state, 'blocked', 'stop_hook_denied');
-  } else invariant(false, 'precompact_requires_admitted_source');
+  } else {
+    const contextState = copy(snapshot.contextState), compaction = contextState?.compaction;
+    invariant(compaction && state.precompact, 'precompact_hook_subject_missing');
+    invariant(canonical(request.input.compaction) === canonical(compactionSubject(snapshot, request.definition)), 'precompact_hook_subject_changed');
+    if (output?.action === 'deny') return close(snapshot, state, 'blocked', 'precompact_hook_denied');
+    state.precompact.nextIndex++;
+    compaction.hooksComplete = state.precompact.nextIndex >= matching(config, request.event).length;
+    compaction.chunk = null;
+    changes.contextState = contextState;
+  }
   if (output && (output.additionalContext.length || output.updatedArguments !== null)) {
-    const feedback: Message = { role: 'user', kind: 'hook_context', persistent: true, content: canonical({
+    const feedback: Message = { role: 'user', kind: 'hook_context', content: canonical({
       event: request.event, hookId: request.definition.hookId, sourceRef: request.definition.sourceRef,
       bindingDigest: request.definition.bindingDigest, operationKey: request.operationKey, trustLevel: 'untrusted',
       action: output.action, data: output.additionalContext, ...(request.input.call ? { callId: request.input.call.callId } : {}),
       ...(output.updatedArguments === null ? {} : { effectiveArguments: output.updatedArguments }),
     }) };
     state.feedback.push(feedback);
-    if (request.event === 'Stop') changes.messages = [...snapshot.messages, feedback];
+    if (request.event === 'Stop' || request.event === 'PreCompact') changes.messages = [...snapshot.messages, feedback];
   }
   if (output && !request.definition.readOnly) changes.context = { ...snapshot.context, workspaceCursor: null, terminalWorkspaceCursor: null };
   if (output?.action === 'repair') {

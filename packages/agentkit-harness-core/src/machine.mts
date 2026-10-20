@@ -81,13 +81,27 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     if (hook) return hook;
   }
   const cursor = `${snapshot.goalRevision}:${snapshot.usage.modelCalls}:${snapshot.usage.toolCalls}:${snapshot.candidate?.candidateId ?? ''}`;
-  if (capabilities.workspace && snapshot.context.workspaceCursor !== cursor && ['preparing_context', 'verifying'].includes(snapshot.phase)) {
+  if (capabilities.workspace && snapshot.context.workspaceCursor !== cursor
+    && (['preparing_context', 'verifying'].includes(snapshot.phase) || snapshot.phase === 'compacting' && config.contextPolicy !== null)) {
     return prepareEffect(snapshot, 'workspace', snapshot.phase, { cursor });
   }
   if (snapshot.phase === 'preparing_context' || snapshot.phase === 'compacting') {
+    if (config.contextPolicy && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_port_missing');
     if (snapshot.phase === 'compacting' && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_compaction_unavailable');
+    const compaction = config.contextPolicy ? snapshot.contextState?.compaction : null;
+    if (snapshot.phase === 'compacting' && compaction) {
+      const hook = planHook(snapshot, config, 'PreCompact', digest);
+      if (hook) return hook;
+      if (compaction.proposal !== null || !compaction.chunk || finalizationOnly(snapshot, config)) {
+        return prepareEffect(snapshot, 'context', 'compacting', { cursor, forceCompaction: false,
+          allowCompaction: !finalizationOnly(snapshot, config) });
+      }
+      if (modelRoom(snapshot, config) <= 0) return finalizing(snapshot, 'budget_exhausted', 'model_budget_exhausted');
+      return prepareEffect(snapshot, 'model', 'compacting', { purpose: 'compaction', finalizationOnly: false });
+    }
     if (capabilities.context && (snapshot.preparedContext === null || snapshot.context.preparedCursor !== cursor)) {
-      return prepareEffect(snapshot, 'context', snapshot.phase, { cursor, forceCompaction: snapshot.phase === 'compacting' });
+      return prepareEffect(snapshot, 'context', snapshot.phase, { cursor, forceCompaction: snapshot.phase === 'compacting',
+        allowCompaction: !finalizationOnly(snapshot, config) });
     }
     const streak = snapshot.toolErrorStreak;
     if (streak && streak.count >= 6 && streak.goalRevision === snapshot.goalRevision && streak.workspaceRevision === snapshot.workspaceRevision) {
@@ -276,7 +290,20 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
         modelCall: snapshot.usage.modelCalls, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision };
     }
     if (result.resourceUsage) updated.descendantUsage = addUsage(updated.descendantUsage, result.resourceUsage);
-    updated.messages.push({ role: 'tool', callId: call.callId, name: call.name, content: canonical(result.content) });
+    const definition = config.tools.find(tool => tool.name === call.name);
+    updated.messages.push({ role: 'tool', callId: call.callId, name: call.name, content: canonical(result.content),
+      ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
+    if (result.status === 'ok' && definition && ['workspace_read', 'workspace_search', 'workspace_list', 'artifact_read'].includes(definition.contextRole)) {
+      const prior = updated.context.observedSourceDigests;
+      const observed: ObjectValue = prior && typeof prior === 'object' && !Array.isArray(prior) ? copy(prior) : {};
+      const key = digest({ name: call.name, arguments: call.arguments }), value = digest({ content: result.content, artifacts: result.artifactRefs ?? [] });
+      if (observed[key] !== value) {
+        observed[key] = value;
+        if (Object.keys(observed).length > 128) delete observed[Object.keys(observed)[0]!];
+        updated.context = { ...updated.context, observedSourceDigests: observed,
+          observedSourceRevision: Number(updated.context.observedSourceRevision ?? 0) + 1 };
+      }
+    }
     updated.workspaceModifiedPaths = [...new Set([...updated.workspaceModifiedPaths, ...(result.workspaceChangedPaths ?? [])])];
     for (const artifact of result.artifactRefs ?? []) {
       const previous = updated.artifactRefs.find(item => item.uri === artifact.uri);
@@ -285,6 +312,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     }
   }
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
+    context: updated.context,
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
     workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null, toolErrorStreak: updated.toolErrorStreak };
 }

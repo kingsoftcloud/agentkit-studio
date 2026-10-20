@@ -12,6 +12,7 @@ export interface ConfigurationInput {
   hostBindingDigest: string; contextSources?: RunConfiguration['contextSources']; hooks?: RunConfiguration['hooks'];
   stopHookContinuationLimit?: number; delegationDepth?: number;
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
+  contextPolicy?: RunConfiguration['contextPolicy'];
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
   const profile: ModelProfile = {
@@ -30,6 +31,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     engine: NATIVE_ENGINE, profile, limits,
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
+    contextPolicy: input.contextPolicy ?? null,
     stopHookContinuationLimit: input.stopHookContinuationLimit ?? 0, delegationDepth: input.delegationDepth ?? 0,
     modelRecoveryPolicy: input.modelRecoveryPolicy ?? 'manual',
     contract: { revision: '1', constraints: [], acceptance: [], allowedToolNames: null,
@@ -84,6 +86,16 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(!config.hooks.some(hook => hook.events.includes('Stop')) || config.stopHookContinuationLimit > 0, 'stop_hook_requires_limit');
   invariant(['text', 'json_object', 'json_value'].includes(config.contract.finalOutputFormat), 'invalid_final_output_format');
   invariant(['manual', 'pure-inference/v1'].includes(config.modelRecoveryPolicy), 'invalid_model_recovery_policy');
+  if (config.contextPolicy) {
+    const policy = config.contextPolicy;
+    invariant(typeof policy.tokenizerId === 'string' && policy.tokenizerId.trim() && typeof policy.tokenizerDigest === 'string' && policy.tokenizerDigest.trim()
+      && typeof policy.enabled === 'boolean' && Number.isFinite(policy.triggerRatio) && Number.isFinite(policy.targetRatio)
+      && policy.targetRatio > 0 && policy.targetRatio < policy.triggerRatio && policy.triggerRatio <= 1
+      && Number.isSafeInteger(policy.summaryMaxTokens) && policy.summaryMaxTokens > 0
+      && (policy.maxCompactions === null || Number.isSafeInteger(policy.maxCompactions) && policy.maxCompactions >= 0)
+      && [policy.maxCompactionsWithoutProgress, policy.minModelTurnsBetween, policy.maxSummaryRetries].every(value => Number.isSafeInteger(value) && value >= 0),
+    'invalid_context_policy');
+  }
   validateSubmissionContract(config);
   return copy(config);
 }
@@ -102,6 +114,6 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
-    context: {}, diagnostics: {}, stopHookContinuations: 0, hookState: null, recoveryRetriesUsed: 0, toolErrorStreak: null,
+    context: {}, diagnostics: {}, stopHookContinuations: 0, hookState: null, contextState: null, recoveryRetriesUsed: 0, toolErrorStreak: null,
   });
 }

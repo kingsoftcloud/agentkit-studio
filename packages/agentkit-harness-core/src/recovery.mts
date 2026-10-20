@@ -24,7 +24,7 @@ export function recoverClaimed(snapshot: RunSnapshot, configuration: RunConfigur
   const uncertainModelCalls = Number(snapshot.diagnostics.uncertainModelCalls ?? 0) + Number(intent.kind === 'model');
   const changes: Partial<RunSnapshot> = {
     pendingIntent: null,
-    phase: retry ? intent.kind === 'model' ? 'preparing_context' : snapshot.phase : 'finalizing',
+    phase: retry ? intent.kind === 'model' ? intent.payload.purpose === 'compaction' ? 'compacting' : 'preparing_context' : snapshot.phase : 'finalizing',
     outcome: retry ? null : 'unverified', reason: retry ? null : exhausted ? 'recovery_retry_exhausted' : 'effect_outcome_unknown',
     recoveryRetriesUsed: snapshot.recoveryRetriesUsed + Number(retry),
     // A read whose result was lost still spent an attempt. Inference was charged before dispatch.

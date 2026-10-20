@@ -44,11 +44,17 @@ export async function apply(ctx, options) {
       if (block.type !== 'text') throw Error('This verification owns text input only');
       return block.text;
     }).join('')).join('\n\n');
+    const instructions = renderPrompt(input.assembly);
     const configuration = configure({
-      profile: { profileId: 'fixture', profileVersion: '1', providerFamily: 'openai', compatibilityDigest: 'fixture/v1', maxRetries: 0 },
-      contract: { objective }, instructions: renderPrompt(input.assembly),
+      profile: { profileId: 'fixture', profileVersion: '1', providerFamily: 'openai', compatibilityDigest: 'fixture/v1', maxRetries: 0,
+        ...(options.contextPlanning ? { contextWindow: Math.max(16384, Math.ceil(instructions.length / 4) + 4096), maxOutputTokens: 128 } : {}) },
+      contract: { objective }, instructions,
+      ...(options.contextPlanning ? { contextPolicy: { tokenizerId: 'sdk-fixture', tokenizerDigest: 'sdk-fixture-counter/v1', enabled: true,
+        triggerRatio: .72, targetRatio: .45, summaryMaxTokens: 80, maxCompactions: null, maxCompactionsWithoutProgress: 4,
+        minModelTurnsBetween: 2, maxSummaryRetries: 1 } } : {}),
       hostBindingDigest: digest({ input: input.messages, model: 'native-fixture', turn }),
-      limits: { maxModelCalls: 4, maxToolCalls: 2 },
+      limits: { maxModelCalls: options.contextPlanning ? 100 : 4, maxToolCalls: 2,
+        ...(options.contextPlanning ? { maxToolResultBytes: 256000 } : {}) },
       tools: [{ name: 'publish', description: 'Publish the verification marker',
         parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false },
         readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 1000,
@@ -59,12 +65,17 @@ export async function apply(ctx, options) {
       systemText: configuration.instructions, inputMessages: input.messages, source: { provider: 'native-fixture', model: 'pinned' } });
     const kernel = new NativeKernel({ store, digest, owner: `sdk-${process.pid}`, onCheckpoint,
       ports: {
+        ...(options.contextPlanning ? { context: { tokens: { tokenizerId: 'sdk-fixture', tokenizerDigest: 'sdk-fixture-counter/v1',
+          countRequest: async request => Math.ceil(canonical({ messages: request.messages, tools: request.tools }).length / 4),
+          countText: async request => Math.ceil(request.text.length / 4),
+        } } } : {}),
         model: createNativeModelPort({ resolveProfile: async () => ({ protocol: 'openai-chat',
           baseUrl: options.modelUrl, apiKey: 'sk-keyless-native-test', model: 'pinned' }) }),
         tools: { execute: async request => {
           await writeFile(join(options.directory, 'published.txt'), request.call.arguments.value);
           await appendFile(join(options.directory, 'writes.jsonl'), JSON.stringify({ key: request.operationKey, value: request.call.arguments.value }) + '\n');
-          return { status: 'ok', content: { published: request.call.arguments.value } };
+          return { status: 'ok', content: { published: request.call.arguments.value,
+            ...(options.contextPlanning ? { historicalEvidence: 'Observed evidence '.repeat(7000) } : {}) } };
         } },
       },
     });

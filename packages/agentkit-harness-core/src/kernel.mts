@@ -1,12 +1,12 @@
 import { emptyUsage, terminal } from './contracts.mjs';
 import type { CommitBatch, EffectIntent, EffectReceipt, Lease, ModelRequest, ModelResult, ModelStreamEvent, NativePorts, ObjectValue, PortContext,
   RunCommand, RunConfiguration, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation,
-  HookInvocation, HookInvocationResult } from './contracts.mjs';
+  HookInvocation, HookInvocationResult, ContextPlanningResult } from './contracts.mjs';
 import { initialSnapshot } from './configuration.mjs';
 import { pendingCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
-import { advertisedTools, objectValue, plan, reduceModel, reduceTools, settle } from './machine.mjs';
+import { addUsage, advertisedTools, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { recoverClaimed } from './recovery.mjs';
@@ -14,6 +14,7 @@ import { toolInputRejection } from './tool-input.mjs';
 import { contextSourceDigest, modelContextMessages, validateContextMessages } from './context-view.mjs';
 import { assertHookFeedbackRetained, deniedByHook, reduceHook, stagePostHooks } from './hook-runtime.mjs';
 import { hookBytes, hookResult } from './hook-contract.mjs';
+import { planNativeContext, reduceContextModel } from './context-planning.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -192,6 +193,15 @@ export class NativeKernel {
       invariant(this.now() - started < timeoutMs, 'effect_timeout');
       switch (intent.kind) {
         case 'model': {
+          if (intent.payload.purpose === 'compaction') {
+            const result = validateModelResult(raw as unknown as ModelResult);
+            changes = reduceContextModel(snapshot, result, configuration,
+              addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 }), this.now(), this.random());
+            facts.push({ kind: 'context.summary_completed', payload: { kind: result.kind, usage: objectValue(result.usage),
+              messageCursor: snapshot.messages.length, usageReported: result.usageReported !== false,
+              proposalAvailable: !!changes.contextState?.compaction?.proposal } });
+            break;
+          }
           const result = normalizeToolIdentities(snapshot, raw as unknown as ModelResult, this.digest);
           changes = reduceModel(snapshot, result, configuration, this.now(), this.random());
           if (changes.candidate) changes.candidate = sealCandidate(changes.candidate, { ...snapshot, ...changes }, configuration, this.digest);
@@ -237,6 +247,24 @@ export class NativeKernel {
           break;
         }
         case 'context':
+          if (configuration.contextPolicy) {
+            const result = raw as unknown as ContextPlanningResult;
+            invariant(['ready', 'compact', 'blocked'].includes(result.action), 'invalid_context_plan');
+            changes = { pendingIntent: null, contextState: result.state, preparedContext: null,
+              phase: result.action === 'compact' ? 'compacting' : result.action === 'blocked' ? 'finalizing' : 'preparing_context',
+              ...(result.action === 'blocked' ? { outcome: 'blocked' as const, reason: result.reason } : {}),
+              context: { ...snapshot.context, preparedCursor: intent.payload.cursor ?? null } };
+            if (result.action === 'ready') {
+              invariant(result.admission && result.admission.sourceDigest === contextSourceDigest(snapshot, this.digest)
+                && result.admission.countedInputTokens + result.admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
+              changes.preparedContext = { messages: validateContextMessages(result.messages), sourceDigest: result.admission.sourceDigest,
+                admission: result.admission };
+              assertHookFeedbackRetained(snapshot, changes.preparedContext.messages);
+            }
+            facts.push({ kind: 'context.planned', payload: { action: result.action, reason: result.reason,
+              admission: result.admission as unknown as ObjectValue | null, compactions: result.state.compactions } });
+            break;
+          }
           assertHookFeedbackRetained(snapshot, validateContextMessages(raw.messages));
           changes = { pendingIntent: null, phase: 'preparing_context',
             preparedContext: { messages: validateContextMessages(raw.messages), sourceDigest: contextSourceDigest(snapshot, this.digest) },
@@ -260,14 +288,16 @@ export class NativeKernel {
       }
     } catch (error) {
       const code = error instanceof NativeError ? error.code : 'effect_port_error';
-      if (['invalid_context_messages', 'invalid_context_tool_pairing', 'context_binding_mismatch', 'context_hook_feedback_missing'].includes(code)) {
+      if (intent.kind === 'context' && configuration.contextPolicy || ['invalid_context_messages', 'invalid_context_tool_pairing', 'context_binding_mismatch', 'context_hook_feedback_missing'].includes(code)) {
         raw = { code }; status = 'failed';
         changes = { pendingIntent: null, preparedContext: null, phase: 'finalizing', outcome: 'blocked', reason: code };
       } else if (intent.kind === 'model' && !signal.aborted && ['effect_timeout', 'effect_port_error'].includes(code)) {
         const result: ModelResult = { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false,
           failureKind: code === 'effect_timeout' ? 'request_timeout' : 'host_error' };
         raw = objectValue(result);
-        changes = reduceModel(snapshot, result, configuration, this.now(), this.random());
+        changes = intent.payload.purpose === 'compaction' ? reduceContextModel(snapshot, result, configuration,
+          addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 }), this.now(), this.random())
+          : reduceModel(snapshot, result, configuration, this.now(), this.random());
         status = 'failed';
       } else {
         raw = { code };
@@ -287,7 +317,24 @@ export class NativeKernel {
     context.signal.throwIfAborted();
     switch (intent.kind) {
       case 'model': {
+        if (configuration.contextPolicy) {
+          invariant(this.ports.context?.tokens?.tokenizerId === configuration.contextPolicy.tokenizerId
+            && this.ports.context.tokens.tokenizerDigest === configuration.contextPolicy.tokenizerDigest, 'context_tokenizer_binding_mismatch');
+        }
+        if (intent.payload.purpose === 'compaction') {
+          const chunk = snapshot.contextState?.compaction?.chunk;
+          invariant(chunk && chunk.projectionDigest === this.digest(chunk.messages), 'context_summary_quote_changed');
+          return this.ports.model.generate({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens: chunk.maxOutputTokens },
+            messages: copy(chunk.messages), tools: [], finalizationOnly: false, maxInlineImageBytes: configuration.limits.maxInlineImageBytes }, () => {});
+        }
         const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
+        if (configuration.contextPolicy) {
+          const admission = snapshot.preparedContext?.admission;
+          invariant(admission && admission.toolsDigest === this.digest(advertisedTools(beforeCall, configuration))
+            && admission.tokenizerDigest === configuration.contextPolicy.tokenizerDigest
+            && admission.maxOutputTokens === configuration.profile.maxOutputTokens
+            && admission.countedInputTokens + admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
+        }
         const request: ModelRequest = { ...context, profile: copy(configuration.profile), messages: modelContextMessages(snapshot, this.digest),
           tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
           maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
@@ -326,8 +373,27 @@ export class NativeKernel {
         return { results };
       }
       case 'workspace': invariant(this.ports.workspace, 'workspace_port_missing'); return this.ports.workspace.observe(context);
-      case 'context': invariant(this.ports.context, 'context_port_missing'); return this.ports.context.prepare({ ...context,
-        snapshot: copy(snapshot), configuration: copy(configuration), forceCompaction: intent.payload.forceCompaction === true });
+      case 'context': {
+        invariant(this.ports.context, 'context_port_missing');
+        if (configuration.contextPolicy) {
+          const counter = this.ports.context.tokens, policy = configuration.contextPolicy;
+          const assertBinding = () => invariant(counter && counter.tokenizerId === policy.tokenizerId && counter.tokenizerDigest === policy.tokenizerDigest, 'context_tokenizer_binding_mismatch');
+          assertBinding();
+          invariant(counter, 'context_tokenizer_binding_mismatch');
+          return planNativeContext(snapshot, configuration, advertisedTools(snapshot, configuration), {
+            countRequest: async (messages, tools, purpose, maxOutputTokens) => {
+              context.signal.throwIfAborted(); assertBinding();
+              const count = await counter.countRequest({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens }, messages, tools, purpose, maxOutputTokens,
+                maxInlineImageBytes: configuration.limits.maxInlineImageBytes });
+              context.signal.throwIfAborted(); assertBinding(); return count;
+            },
+            countText: async text => { context.signal.throwIfAborted(); assertBinding(); const count = await counter.countText({ ...context, text });
+              context.signal.throwIfAborted(); assertBinding(); return count; },
+          }, this.digest, intent.payload.forceCompaction === true, intent.payload.allowCompaction !== false);
+        }
+        invariant(this.ports.context.prepare, 'context_prepare_port_missing');
+        return this.ports.context.prepare({ ...context, snapshot: copy(snapshot), configuration: copy(configuration), forceCompaction: intent.payload.forceCompaction === true });
+      }
       case 'verify': invariant(this.ports.verification && snapshot.candidate, 'verification_port_missing'); return this.ports.verification.verify({ ...context,
         snapshot: copy(snapshot), contract: copy(configuration.contract), candidate: copy(snapshot.candidate) });
       case 'hook': {

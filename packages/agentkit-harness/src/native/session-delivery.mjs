@@ -151,21 +151,22 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       }
     };
     for (const event of events) {
-      if (event.kind !== 'model.completed') continue;
+      if (!['model.completed', 'context.summary_completed'].includes(event.kind)) continue;
       const payload = event.payload, index = payload.messageIndex;
-      invariant(index === null || Number.isSafeInteger(index) && index >= cursor && messages[index]?.role === 'assistant',
+      const summary = event.kind === 'context.summary_completed';
+      invariant(summary || index === null || Number.isSafeInteger(index) && index >= cursor && messages[index]?.role === 'assistant',
         'native_delivery_model_binding_missing');
-      drain(index === null ? payload.messageCursor : index);
+      drain(summary || index === null ? payload.messageCursor : index);
       if (modelCount++ > 0) { append('step/end', { turn, step }); step++; append('step/start', { turn, step }); }
-      const message = index === null ? null : messages[index];
+      const message = summary || index === null ? null : messages[index];
       const usage = payload.usageReported === false ? null : {
         inputTokens: payload.usage.inputTokens, outputTokens: payload.usage.outputTokens,
         ...(payload.usage.cachedInputTokens === undefined ? {} : { cacheReadTokens: payload.usage.cachedInputTokens }),
         ...(payload.usage.reasoningTokens === undefined ? {} : { reasoningTokens: payload.usage.reasoningTokens }),
       };
-      assistant(`response:${event.eventId}`, payload.candidateStatus === 'rejected' ? '' : message?.content ?? payload.text,
+      assistant(`response:${event.eventId}`, summary || payload.candidateStatus === 'rejected' ? '' : message?.content ?? payload.text,
         message?.toolCalls ?? [], usage);
-      if (index !== null) cursor = index + 1;
+      if (!summary && index !== null) cursor = index + 1;
       drain(payload.messageCursor);
     }
     drain(messages.length);

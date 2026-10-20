@@ -94,13 +94,49 @@ export interface HookState {
   pre: { original: ToolCall; effective: ToolCall; nextIndex: number; denied: boolean }[];
   post: { call: ToolCall; result: ToolResult; nextIndex: number }[];
   stop: { candidateId: string; nextIndex: number } | null;
+  precompact?: { subjectDigest: string; nextIndex: number };
   feedback: Message[];
+}
+export interface ContextPlanningPolicy {
+  tokenizerId: string; tokenizerDigest: string; enabled: boolean;
+  triggerRatio: number; targetRatio: number; summaryMaxTokens: number;
+  maxCompactions: number | null; maxCompactionsWithoutProgress: number; minModelTurnsBetween: number;
+  maxSummaryRetries: number;
+}
+export interface ContextHistory {
+  prefixCount: number; prefixDigest: string; contractDigest: string; tokenizerDigest: string;
+  retainedRefs: string[]; summary: string;
+}
+export interface ContextChunk {
+  start: number; stop: number; sourceDigest: string; projectionDigest: string;
+  messages: Message[]; countedInputTokens: number; maxOutputTokens: number;
+}
+export interface ContextCompaction {
+  sourceRevision: number; prefixCount: number; prefixDigest: string; goalRevision: number;
+  contractDigest: string; retainedRefs: string[]; removedRefs: string[];
+  sourceText: string; sourceDigest: string; offset: number; summary: string;
+  coverage: { start: number; stop: number; projectionDigest: string }[];
+  chunk: ContextChunk | null; proposal: string | null; errors: number; quoteLimit: number | null;
+  hookSubject: ObjectValue; hooksComplete: boolean;
+}
+export interface ContextPlanningState {
+  history: ContextHistory | null; compaction: ContextCompaction | null;
+  compactions: number; compactionsWithoutProgress: number; progressDigest: string | null; lastModelCall: number;
+}
+export interface ContextAdmission {
+  sourceDigest: string; toolsDigest: string; tokenizerId: string; tokenizerDigest: string;
+  countedInputTokens: number; maxOutputTokens: number; contextWindow: number;
+}
+export interface ContextPlanningResult {
+  action: 'ready' | 'compact' | 'blocked'; reason: string; state: ContextPlanningState;
+  messages: Message[]; admission: ContextAdmission | null;
 }
 export interface ContextSourceDefinition { sourceId: string; priority: number; timeoutMs: number; required: boolean }
 export interface RunConfiguration {
   engine: typeof NATIVE_ENGINE; profile: ModelProfile; limits: RunLimits; tools: ToolDefinition[];
   contract: TaskContract; instructions: string; hostBindingDigest: string;
   contextSources: ContextSourceDefinition[]; hooks: HookDefinition[];
+  contextPolicy: ContextPlanningPolicy | null;
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
 }
@@ -157,6 +193,7 @@ export interface PreparedContext {
   messages: Message[];
   /** Binds this disposable model view to the immutable transcript and environment. */
   sourceDigest: string;
+  admission?: ContextAdmission;
 }
 export interface RunSnapshot extends RunIdentity {
   schemaVersion: typeof NATIVE_SCHEMA; configDigest: string; revision: number; eventSeq: number;
@@ -173,6 +210,7 @@ export interface RunSnapshot extends RunIdentity {
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
   hookState: HookState | null;
+  contextState: ContextPlanningState | null;
   recoveryRetriesUsed: number;
   toolErrorStreak: ToolErrorStreak | null;
 }
@@ -231,7 +269,13 @@ export interface WorkspacePort { observe(request: PortContext): Promise<Workspac
 export interface ContextPort {
   /** context is adapter state, persisted under snapshot.context.adapter. Original messages are never replaced. */
   /** A prepared view must retain unacknowledged snapshot.hookState.feedback before budgeting. */
-  prepare(request: PortContext & { snapshot: RunSnapshot; configuration: RunConfiguration; forceCompaction: boolean }): Promise<{ messages: Message[]; context: ObjectValue }>;
+  prepare?(request: PortContext & { snapshot: RunSnapshot; configuration: RunConfiguration; forceCompaction: boolean }): Promise<{ messages: Message[]; context: ObjectValue }>;
+  tokens?: {
+    tokenizerId: string; tokenizerDigest: string;
+    countRequest(request: PortContext & { profile: ModelProfile; messages: Message[]; tools: ToolDefinition[];
+      purpose: 'task' | 'compaction'; maxOutputTokens: number; maxInlineImageBytes: number }): Promise<number>;
+    countText(request: PortContext & { text: string }): Promise<number>;
+  };
 }
 export interface VerificationPort {
   verify(request: PortContext & { candidate: CompletionCandidate; contract: TaskContract; snapshot: RunSnapshot }): Promise<VerificationReport>;

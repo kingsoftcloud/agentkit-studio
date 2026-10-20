@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NativeKernel, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, canonical, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeSessionDelivery, nativeDeliveryProjection } from '../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { fixture, tool, scope, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
@@ -27,12 +27,12 @@ function consumer(seed = [{ type: 'turn/start', data: { turn: 1 }, seq: 1 }]) {
 const source = { provider: 'fixture', model: 'native-model' };
 const inputMessages = [{ id: 'user-input', role: 'user', content: [{ type: 'text', text: 'Complete the task' }] }];
 const final = () => ({ kind: 'final_candidate', text: 'Delivered', toolCalls: [], usage: { ...emptyUsage(), inputTokens: 3, outputTokens: 4 } });
-function setup(t, options) {
+function setup(t, options, configuration = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'native-delivery-')), filename = join(directory, 'run.sqlite');
   let store = new SqliteRunStore(filename, options);
   const value = { get store() { return store; }, reopen() { store.close(); store = new SqliteRunStore(filename); return store; } };
   t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
-  const { config, snapshot } = fixture({ tools: [tool({ readOnly: false, concurrentSafe: false })] });
+  const { config, snapshot } = fixture({ tools: [tool({ readOnly: false, concurrentSafe: false })], ...configuration });
   store.create(config, { ...snapshot, turnId: '1' });
   return value;
 }
@@ -65,6 +65,35 @@ test('committed transcript, usage and step boundaries replay without duplicate a
   assert.equal(JSON.stringify(sink.events).includes('never-export-this'), false);
   assert.equal(JSON.stringify(sink.events).includes('replayState'), false);
   assert.equal(Object.values(store.load(scope, 'run').projections)[0], result.eventSeq);
+});
+
+test('context summary usage is delivered once without publishing private summary prose', async t => {
+  const { store } = setup(t, undefined, { contextPolicy: { tokenizerId: 'fixture', tokenizerDigest: 'fixture/v1', enabled: true,
+    triggerRatio: .72, targetRatio: .45, summaryMaxTokens: 80, maxCompactions: null,
+    maxCompactionsWithoutProgress: 4, minModelTurnsBetween: 2, maxSummaryRetries: 1 },
+  profile: { profileId: 'test', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'fixture/v1',
+    contextWindow: 2400, maxOutputTokens: 128 } });
+  const sink = consumer(); let taskModels = 0, summaries = 0;
+  const adapters = { model: { generate: async request => {
+    if (request.messages[0]?.kind === 'compaction_instructions') {
+      summaries++; return { ...final(), text: 'PRIVATE SUMMARY PROSE', usage: { ...emptyUsage(), inputTokens: 7, outputTokens: 2 } };
+    }
+    return ++taskModels === 1 ? { ...final(), kind: 'tool_calls', toolCalls: [{ callId: 'call', name: 'read', arguments: {} }] } : final();
+  } }, tools: { execute: async () => ({ status: 'ok', content: 'Observed '.repeat(1300) }) },
+  context: { tokens: { tokenizerId: 'fixture', tokenizerDigest: 'fixture/v1',
+    countRequest: async request => Math.ceil(canonical({ messages: request.messages, tools: request.tools }).length / 4),
+    countText: async request => Math.ceil(request.text.length / 4) } } };
+  const onCheckpoint = delivery(store, sink);
+  const worker = new NativeKernel({ store, digest, owner: 'worker', ports: adapters, onCheckpoint });
+  const result = await worker.runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.ok(summaries > 1);
+  const assistants = sink.events.filter(event => event.type === 'assistant/message');
+  assert.equal(assistants.length, summaries + 2);
+  assert.equal(assistants.reduce((total, event) => total + (event.data.usage?.inputTokens ?? 0), 0), result.usage.inputTokens);
+  assert.equal(assistants.reduce((total, event) => total + (event.data.usage?.outputTokens ?? 0), 0), result.usage.outputTokens);
+  assert.equal(JSON.stringify(sink.events).includes('PRIVATE SUMMARY PROSE'), false);
+  const before = structuredClone(sink.events); await onCheckpoint(result); await worker.runUntilIdle(scope, 'run');
+  assert.deepEqual(sink.events, before);
 });
 
 for (const boundary of ['before-flush', 'after-flush-before-ack']) {
