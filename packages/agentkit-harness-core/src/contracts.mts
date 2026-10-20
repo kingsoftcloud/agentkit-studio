@@ -54,6 +54,7 @@ export interface RunLimits {
   maxWallMs: number | null; maxModelCalls: number | null; maxToolCalls: number | null;
   maxParallelTools: number; maxRepairs: number; maxOutputRestarts: number;
   finalizationReserveModelCalls: number; finalizationReserveWallMs: number;
+  verificationReserveModelCalls: number; browserObservationIntervalToolCalls: number;
   effectTimeoutMs: number; leaseMs: number; maxSubagentDepth: number;
   maxToolResultBytes: number; maxInlineImageBytes: number; maxModelStreamBytes: number;
   maxRecoveryRetries: number;
@@ -146,6 +147,7 @@ export interface RunConfiguration {
   inputMessages: Message[] | null;
   contextSources: ContextSourceDefinition[]; hooks: HookDefinition[];
   contextPolicy: ContextPlanningPolicy | null;
+  workspaceObservationPolicy: { role: 'browser'; pathSuffixes: string[] } | null;
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
 }
@@ -232,6 +234,10 @@ export interface RunSnapshot extends RunIdentity {
   toolErrorStreak: ToolErrorStreak | null;
   browserSessionRefs: BrowserSessionRef[]; browserReobservationRefs: BrowserSessionRef[];
   lastBrowserObservation: BrowserEvidence | null; lastBrowserAttemptToolCall: number | null;
+  lastWebMutationToolCall: number | null; unresolvedInteractionObservation: BrowserInteractionObservation | null;
+}
+export interface BrowserInteractionObservation {
+  toolName: string; entryPath: string; toolCall: number; error: string; digest: string;
 }
 export interface BrowserEvidence {
   sessionRef: BrowserSessionRef; actionId: string; actionSeq: number; digest: string; callId: string;

@@ -7,6 +7,7 @@ import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normali
 import { currentHookState, pendingHookFeedback, planHook } from './hook-runtime.mjs';
 import { toolContext, deferredToolContexts } from './tool-context.mjs';
 import { reduceBrowserReceipt } from './browser-runtime.mjs';
+import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObservation } from './task-policy.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -48,7 +49,8 @@ export function finalizationOnly(snapshot: RunSnapshot, config: RunConfiguration
 export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration) {
   const submission = finalSubmissionTool(config);
   const tools = finalizationOnly(snapshot, config) || toolRoom(snapshot, config) <= 0 ? []
-    : config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name));
+    : browserTaskTools(snapshot, config, config.tools).filter(tool => config.contract.allowedToolNames === null
+      || config.contract.allowedToolNames.includes(tool.name));
   return [...tools, ...(submission ? [submission] : [])];
 }
 export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean; input?: boolean }
@@ -283,7 +285,9 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     && canonical(snapshot.pendingTools.slice(0, calls.length)) === canonical(calls), 'tool_receipt_mismatch');
   let updated = { ...copy(snapshot), browserSessionRefs: copy(snapshot.browserSessionRefs ?? []),
     browserReobservationRefs: copy(snapshot.browserReobservationRefs ?? []), lastBrowserObservation: snapshot.lastBrowserObservation ?? null,
-    lastBrowserAttemptToolCall: snapshot.lastBrowserAttemptToolCall ?? null };
+    lastBrowserAttemptToolCall: snapshot.lastBrowserAttemptToolCall ?? null,
+    lastWebMutationToolCall: snapshot.lastWebMutationToolCall ?? null,
+    unresolvedInteractionObservation: snapshot.unresolvedInteractionObservation ?? null };
   for (const [index, call] of calls.entries()) {
     const result = copy(results[index]!);
     invariant(['ok', 'error', 'approval_required', 'uncertain'].includes(result.status), 'invalid_tool_result');
@@ -300,9 +304,15 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     }
     updated.usage.toolCalls += 1;
     const definition = config.tools.find(tool => tool.name === call.name);
-    if (definition) Object.assign(updated, reduceBrowserReceipt(updated, result, definition, call, digest));
+    if (invalidatesBrowserObservation(result, config)) updated.lastWebMutationToolCall = updated.usage.toolCalls;
+    if (definition) {
+      updated.unresolvedInteractionObservation = advanceInteractionObservation(updated.unresolvedInteractionObservation,
+        definition, updated.usage.toolCalls, result, digest);
+      Object.assign(updated, reduceBrowserReceipt(updated, result, definition, call, digest));
+    }
     const browserFields = { browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
-      lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall };
+      lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall,
+      lastWebMutationToolCall: updated.lastWebMutationToolCall, unresolvedInteractionObservation: updated.unresolvedInteractionObservation };
     if (updated.phase === 'finalizing') return { ...browserFields, pendingIntent: null, phase: 'finalizing',
       outcome: updated.outcome, reason: updated.reason, preparedContext: updated.preparedContext, contextState: updated.contextState,
       candidate: updated.candidate, verification: updated.verification, finalText: updated.finalText, usage: updated.usage };
@@ -345,6 +355,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     queuedGuidance: updated.queuedGuidance,
     browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
     lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall,
+    lastWebMutationToolCall: updated.lastWebMutationToolCall, unresolvedInteractionObservation: updated.unresolvedInteractionObservation,
     workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null, toolErrorStreak: updated.toolErrorStreak };
 }
 export function settle(snapshot: RunSnapshot, intent: EffectIntent, receipt: EffectReceipt, changes: Partial<RunSnapshot>, elapsedMs: number, facts: { kind: string; payload: ObjectValue }[] = []): CommitBatch {

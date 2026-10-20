@@ -7,6 +7,7 @@ import { pendingCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
 import { addUsage, advertisedTools, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
+import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { recoverClaimed } from './recovery.mjs';
@@ -419,7 +420,8 @@ export class NativeKernel {
             && admission.maxOutputTokens === configuration.profile.maxOutputTokens
             && admission.countedInputTokens + admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
         }
-        const request: ModelRequest = { ...context, profile: copy(configuration.profile), messages: modelContextMessages(snapshot, this.digest),
+        const request: ModelRequest = { ...context, profile: copy(configuration.profile),
+          messages: browserTaskMessages(beforeCall, configuration, modelContextMessages(snapshot, this.digest)),
           tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
           maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
         return this.ports.model.generate(request, emit);
@@ -470,7 +472,8 @@ export class NativeKernel {
           return planNativeContext(snapshot, configuration, advertisedTools(snapshot, configuration), {
             countRequest: async (messages, tools, purpose, maxOutputTokens) => {
               context.signal.throwIfAborted(); assertBinding();
-              const count = await counter.countRequest({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens }, messages, tools, purpose, maxOutputTokens,
+              const count = await counter.countRequest({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens },
+                messages: purpose === 'task' ? browserTaskMessages(snapshot, configuration, messages) : messages, tools, purpose, maxOutputTokens,
                 maxInlineImageBytes: configuration.limits.maxInlineImageBytes });
               context.signal.throwIfAborted(); assertBinding(); return count;
             },

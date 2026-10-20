@@ -67,6 +67,7 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
         changes = { goal: command.payload.text, goalRevision: snapshot.goalRevision + 1, phase: 'preparing_context',
+          lastBrowserObservation: null, unresolvedInteractionObservation: null,
           hookState: null, stopHookContinuations: 0,
           contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null } : null,
           preparedContext: null, queuedGuidance: [], finalText: '', outcome: null, reason: null,

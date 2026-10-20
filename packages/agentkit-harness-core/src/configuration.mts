@@ -13,6 +13,7 @@ export interface ConfigurationInput {
   stopHookContinuationLimit?: number; delegationDepth?: number;
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
   contextPolicy?: RunConfiguration['contextPolicy'];
+  workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
   inputMessages?: Message[];
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
@@ -25,6 +26,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   const limits: RunLimits = {
     maxWallMs: null, maxModelCalls: null, maxToolCalls: null, maxParallelTools: 4, maxRepairs: 3,
     maxOutputRestarts: 0, finalizationReserveModelCalls: 1, finalizationReserveWallMs: 0,
+    verificationReserveModelCalls: 0, browserObservationIntervalToolCalls: 0,
     effectTimeoutMs: 120_000, leaseMs: 30_000, maxSubagentDepth: 3,
     maxToolResultBytes: 65536, maxInlineImageBytes: 40 * 1024 * 1024, maxModelStreamBytes: 1024 * 1024,
     maxRecoveryRetries: 3, ...input.limits,
@@ -35,6 +37,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     inputMessages: input.inputMessages ?? null,
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
     contextPolicy: input.contextPolicy ?? null,
+    workspaceObservationPolicy: input.workspaceObservationPolicy ?? null,
     stopHookContinuationLimit: input.stopHookContinuationLimit ?? 0, delegationDepth: input.delegationDepth ?? 0,
     modelRecoveryPolicy: input.modelRecoveryPolicy ?? 'manual',
     contract: { revision: '1', constraints: [], acceptance: [], allowedToolNames: null,
@@ -112,6 +115,14 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     'invalid_context_policy');
   }
   validateSubmissionContract(config);
+  if (config.workspaceObservationPolicy) {
+    const policy = config.workspaceObservationPolicy;
+    invariant(policy.role === 'browser' && Array.isArray(policy.pathSuffixes)
+      && policy.pathSuffixes.length >= 1 && policy.pathSuffixes.length <= 64
+      && Array.from(policy.pathSuffixes).every(suffix => typeof suffix === 'string'
+        && suffix.startsWith('.') && suffix === suffix.toLowerCase() && !suffix.includes('/')),
+    'invalid_workspace_observation_policy');
+  }
   return copy(config);
 }
 export function initialSnapshot(identity: RunIdentity, configuration: RunConfiguration, configDigest: string): RunSnapshot {
@@ -131,5 +142,6 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
     context: {}, diagnostics: {}, stopHookContinuations: 0, hookState: null, contextState: null, recoveryRetriesUsed: 0, toolErrorStreak: null,
     browserSessionRefs: [], browserReobservationRefs: [], lastBrowserObservation: null, lastBrowserAttemptToolCall: null,
+    lastWebMutationToolCall: null, unresolvedInteractionObservation: null,
   });
 }
