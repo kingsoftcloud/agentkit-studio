@@ -187,9 +187,17 @@ test('openai: length truncation never executes partial tool calls', async () => 
   });
   const { result } = await collect(0, 'openai-chat', handler, makeRequest());
   assert.equal(result.kind, 'output_limit');
+  assert.equal(result.textCommitVersion, 'provider-finished-text/v1');
   assert.equal(result.text, 'partial');
   assert.deepEqual(result.toolCalls, []);
   assert.equal(result.usage.inputTokens, 5);
+});
+
+test('openai: length followed by EOF without DONE is uncommitted transport text', async () => {
+  const { result } = await collect(0, 'openai-chat', () => ({ status: 200, headers: SSE_HEADERS,
+    body: [sse(ochunk({ content: 'Partial summary' }, 'length'))] }), makeRequest());
+  assert.equal(result.kind, 'provider_retryable_error'); assert.equal(result.textCommitVersion, undefined);
+  assert.equal(result.providerReplay, undefined); assert.deepEqual(result.toolCalls, []);
 });
 
 test('openai: refusal becomes policy_abort with no tools', async () => {
@@ -551,7 +559,15 @@ test('anthropic: refusal stop_details becomes policy_abort', async () => {
 test('anthropic: max_tokens stop_reason is output_limit', async () => {
   const { result } = await collect(0, 'anthropic-messages', () => ({ status: 200, headers: SSE_HEADERS, body: anthropicFinalText('partial', { stop: 'max_tokens' }) }), makeRequest());
   assert.equal(result.kind, 'output_limit');
+  assert.equal(result.textCommitVersion, 'provider-finished-text/v1');
   assert.equal(result.text, 'partial');
+});
+
+test('anthropic: max_tokens without message_stop remains uncommitted transport text', async () => {
+  const body = anthropicFinalText('Partial summary', { stop: 'max_tokens' }).slice(0, -1);
+  const { result } = await collect(0, 'anthropic-messages', () => ({ status: 200, headers: SSE_HEADERS, body }), makeRequest());
+  assert.equal(result.kind, 'provider_retryable_error'); assert.equal(result.textCommitVersion, undefined);
+  assert.deepEqual(result.toolCalls, []);
 });
 
 test('anthropic: in-stream rate_limit error is retryable', async () => {

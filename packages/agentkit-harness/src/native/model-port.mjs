@@ -20,15 +20,16 @@ import {
   readModelSse, SseFramingError, IdleTimeout,
 } from './model-sse.mjs';
 import {
-  buildOpenAIRequest, parseOpenAIBuffered, createOpenAIStreamTurn,
+  parseOpenAIBuffered, createOpenAIStreamTurn,
 } from './model-openai-chat.mjs';
 import {
-  buildAnthropicRequest, parseAnthropicBuffered, createAnthropicStreamState,
+  parseAnthropicBuffered, createAnthropicStreamState,
 } from './model-anthropic.mjs';
 import {
-  buildResponsesRequest, parseResponsesBuffered, createResponsesStreamState,
+  parseResponsesBuffered, createResponsesStreamState,
 } from './model-responses.mjs';
-import { MediaError, projectRequestMedia } from './model-media.mjs';
+import { MediaError } from './model-media.mjs';
+import { buildNativeModelRequest } from './model-request.mjs';
 // parseModelJson is the kernel's strict finite JSON parser; used here for the
 // 400 context-length error heuristic so a malformed error body is never parsed
 // as a lenient ambiguity.
@@ -79,7 +80,7 @@ export function createNativeModelPort({
       // or media is terminal; the adapter never calls HTTP with a bad binding.
       let built;
       try {
-        built = buildRequest(binding, request);
+        built = buildNativeModelRequest(binding, request);
       } catch (error) {
         const failureKind = (error instanceof ProtocolError || error instanceof MediaError)
           ? 'invalid_response' : 'client_error';
@@ -146,15 +147,6 @@ export function createNativeModelPort({
       }
     },
   };
-}
-
-function buildRequest(binding, request) {
-  if (!binding || typeof binding !== 'object') throw new ProtocolError('binding missing');
-  const dispatchView = projectRequestMedia(request);
-  if (binding.protocol === 'anthropic-messages') return buildAnthropicRequest(binding, dispatchView);
-  if (binding.protocol === 'openai-chat') return buildOpenAIRequest(binding, dispatchView);
-  if (binding.protocol === 'openai-responses') return buildResponsesRequest(binding, dispatchView);
-  throw new ProtocolError('unsupported binding protocol');
 }
 
 async function streamResponse(response, request, binding, emit, internal, maxBytes, idleTimeoutMs) {

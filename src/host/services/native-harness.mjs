@@ -6,6 +6,7 @@ import { createNativeModelPort } from '../../../packages/agentkit-harness/src/na
 import { createNativeDshTurnExecutor, NATIVE_DSH_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
+import { bindNativeContext } from '../../providers/native-context.mjs';
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -59,6 +60,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       }
       invariant(selected, 'studio_native_bound_model_unavailable');
       const description = profileDescription(selected), compatibilityDigest = hash(description);
+      const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens });
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
       const inputServices = { attachments: () => ctx.get('attachments'),
         fileRequestText: typeof llm?.fileRequestText === 'function' ? ref => llm.fileRequestText(ref) : undefined };
@@ -74,14 +76,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
       return { scope: { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId }, buildId, source,
         configuration: { profile: { profileId: selected.id || selectedId || 'default', profileVersion: compatibilityDigest,
-          providerFamily: description.protocol, compatibilityDigest, contextWindow: description.contextWindow,
-          maxOutputTokens: selection.maxTokens ?? description.maxOutputTokens, requestTimeoutMs: description.requestTimeoutMs,
+          providerFamily: description.protocol, compatibilityDigest, ...context.profile, requestTimeoutMs: description.requestTimeoutMs,
           providerReplayMode: description.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
-          inputContract: 'agentkit.native-host-input/v1' }),
+          inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy }),
+        contextPolicy: context.policy,
         contract: { objective: admission.objective }, instructions, inputMessages: admission.messages,
         tools, limits: { effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000) } },
-        ports: { ...binding.nativeTools.forAgent(agent), input: { prepare: async request => {
+        ports: { ...binding.nativeTools.forAgent(agent), context: context.port, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);
           request.signal.throwIfAborted();

@@ -475,6 +475,7 @@ test('responses: incomplete with max_output_tokens and no tools is output_limit'
   ] });
   const { result } = await collect(handler, makeRequest());
   assert.equal(result.kind, 'output_limit');
+  assert.equal(result.textCommitVersion, 'provider-finished-text/v1');
   assert.equal(result.text, 'partial');
   assert.deepEqual(result.toolCalls, []);
 });

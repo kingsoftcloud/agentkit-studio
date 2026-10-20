@@ -74,7 +74,7 @@ function groupsOf(messages: Message[], indexes: number[]): number[][] {
   invariant(group === null, 'context_pending_tool_protocol');
   return groups;
 }
-function mandatoryIndexes(snapshot: RunSnapshot, groups: number[][]): Set<number> {
+function mandatoryIndexes(snapshot: RunSnapshot, groups: number[][], config: RunConfiguration): Set<number> {
   const mandatory = new Set<number>(), messages = snapshot.messages;
   const pendingFeedback = new Set((snapshot.hookState?.goalRevision === snapshot.goalRevision ? snapshot.hookState.feedback : []).map(canonical));
   for (const group of groups) if (group.some(index => {
@@ -84,6 +84,16 @@ function mandatoryIndexes(snapshot: RunSnapshot, groups: number[][]): Set<number
   })) for (const index of group) mandatory.add(index);
   let goal = -1;
   for (let index = messages.length - 1; index >= 0; index--) if (messages[index]!.role === 'user' && messages[index]!.content === snapshot.goal) { goal = index; break; }
+  // An attachment-only or independently worded Host objective need not be
+  // verbatim input text. Keep its admitted input in full; execution_continuity
+  // separately carries the bound goal. Imported history cannot supply it.
+  if (goal < 0 && snapshot.goalRevision === 0 && config.inputMessages !== null) {
+    const admitted = messages.flatMap((message, index) => message.role === 'user' && !message.history ? [index] : [])
+      .slice(0, config.inputMessages.length);
+    invariant(admitted.length === config.inputMessages.length, 'context_goal_input_missing');
+    for (const index of admitted) mandatory.add(index);
+    return mandatory;
+  }
   invariant(goal >= 0, 'context_goal_missing'); mandatory.add(goal);
   return mandatory;
 }
@@ -169,13 +179,33 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     if (compaction.proposal !== null) {
       invariant(compaction.chunk && compaction.chunk.start === compaction.offset && compaction.chunk.projectionDigest === digest(compaction.chunk.messages), 'context_summary_quote_changed');
       const tokens = checkedCount(await counters.countText(compaction.proposal));
-      if (!compaction.proposal.trim() || tokens > policy.summaryMaxTokens) {
+      const estimated = policy.summaryBudgetMode === 'context_bounded_estimate';
+      let valid = !!compaction.proposal.trim() && tokens <= (estimated
+        ? config.profile.contextWindow - config.profile.maxOutputTokens : policy.summaryMaxTokens);
+      let nextChunk: ContextCompaction['chunk'] = null;
+      if (valid && estimated) {
+        if (compaction.chunk.stop === compaction.sourceText.length) {
+          const retained = new Set(compaction.retainedRefs), refs = refsOf(snapshot.messages, digest);
+          const messages = withSummary(snapshot.messages.filter((_, index) => index >= compaction!.prefixCount || retained.has(refs[index]!)),
+            compaction.proposal, contextContinuity(snapshot, config));
+          const counted = checkedCount(await counters.countRequest(copy(messages), copy(tools), 'task', config.profile.maxOutputTokens));
+          valid = counted + config.profile.maxOutputTokens <= config.profile.contextWindow;
+        } else {
+          const next = { ...copy(compaction), offset: compaction.chunk.stop, summary: compaction.proposal, chunk: null };
+          try { await quoteChunk(snapshot, next, config, counters, digest); nextChunk = next.chunk; }
+          catch (error) {
+            if ((error as { code?: string }).code !== 'context_summary_quote_over_budget') throw error;
+            valid = false;
+          }
+        }
+      }
+      if (!valid) {
         compaction.errors++; compaction.proposal = null; compaction.chunk = null;
         if (compaction.errors > policy.maxSummaryRetries) return result('blocked', 'context_summary_validation_exhausted');
       } else {
         compaction.coverage.push({ start: compaction.chunk.start, stop: compaction.chunk.stop, projectionDigest: compaction.chunk.projectionDigest });
         compaction.offset = compaction.chunk.stop; compaction.summary = compaction.proposal;
-        compaction.proposal = null; compaction.chunk = null; compaction.errors = 0;
+        compaction.proposal = null; compaction.chunk = nextChunk; compaction.errors = 0;
         if (compaction.offset === compaction.sourceText.length) {
           verifyCoverage(compaction, true);
           state.history = { prefixCount: compaction.prefixCount, prefixDigest: compaction.prefixDigest,
@@ -213,11 +243,16 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     || state.compactions > 0 && snapshot.usage.modelCalls - state.lastModelCall < policy.minModelTurnsBetween)) return result('ready', 'context_within_budget', messages, admission);
   if (policy.maxCompactions !== null && state.compactions >= policy.maxCompactions) return result('blocked', 'context_compaction_limit');
   if (state.compactionsWithoutProgress >= policy.maxCompactionsWithoutProgress) return result('blocked', 'context_compaction_no_progress');
-  const mandatory = mandatoryIndexes(snapshot, groups);
+  const mandatory = mandatoryIndexes(snapshot, groups, config);
   const placeholder = 'x'.repeat(Math.min(policy.summaryMaxTokens, config.profile.maxOutputTokens, 65536));
   let retained = indexes.filter(index => mandatory.has(index));
   const minimum = checkedCount(await counters.countRequest(view(retained, placeholder), copy(tools), 'task', config.profile.maxOutputTokens));
-  if (minimum + config.profile.maxOutputTokens > config.profile.contextWindow) return result('blocked', 'context_mandatory_state_over_budget');
+  if (minimum + config.profile.maxOutputTokens > config.profile.contextWindow) {
+    // Estimated targets may be reduced; never omit mandatory state or reserve less task output.
+    const smaller = policy.summaryBudgetMode === 'context_bounded_estimate'
+      ? checkedCount(await counters.countRequest(view(retained, 'x'), copy(tools), 'task', config.profile.maxOutputTokens)) : minimum;
+    if (smaller + config.profile.maxOutputTokens > config.profile.contextWindow) return result('blocked', 'context_mandatory_state_over_budget');
+  }
   const target = (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.targetRatio;
   // Retain complete recent groups. A partial live call/result group is never a model view.
   for (const group of [...groups].reverse()) {
@@ -250,6 +285,9 @@ export function reduceContextModel(snapshot: RunSnapshot, result: ModelResult, c
   invariant(compaction?.chunk, 'context_summary_quote_missing');
   const base: Partial<RunSnapshot> = { pendingIntent: null, contextState: state, preparedContext: null, usage,
     phase: 'compacting', ...(result.usageReported === false ? { diagnostics: { ...snapshot.diagnostics, providerUsageIncomplete: true } } : {}) };
+  if (result.kind === 'output_limit' && result.text.trim() && result.textCommitVersion !== 'provider-finished-text/v1') {
+    return { ...base, phase: 'finalizing', outcome: 'blocked', reason: 'context_summary_provider_commit_missing' };
+  }
   if (['final_candidate', 'output_limit'].includes(result.kind) && result.text.trim() && !result.toolCalls.length) {
     compaction.proposal = result.text; return base;
   }

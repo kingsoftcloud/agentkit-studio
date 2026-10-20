@@ -44,11 +44,11 @@ export function normalizeResponse({
   if (USER_ABORTS.has(finishReason)) return out('user_abort');
   if (POLICY_ABORTS.has(finishReason)) return out('policy_abort');
   if (CONTEXT_LIMITS.has(finishReason)) return out('context_overflow');
-  if (OUTPUT_LIMITS.has(finishReason)) return out('output_limit');
   if (finishReason === 'provider_terminal_error') return out('provider_terminal_error');
   if (!streamComplete || finishReason === 'provider_retryable_error') {
     return out('provider_retryable_error');
   }
+  if (OUTPUT_LIMITS.has(finishReason)) return { ...out('output_limit'), textCommitVersion: 'provider-finished-text/v1' };
   if (finishReason === 'malformed_tool_call') return out('malformed_tool_call');
   if (finishReason === 'empty_response') return out('empty_response');
   if (!COMPLETE_FINISHES.has(finishReason)) return out('provider_terminal_error');

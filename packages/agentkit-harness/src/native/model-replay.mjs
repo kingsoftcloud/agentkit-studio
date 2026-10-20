@@ -62,6 +62,7 @@ export function sealAnthropicReplay(result, profile, contentBlocks) {
 // is dropped — cross-profile private reasoning never leaks onto another wire.
 // Returns { reasoning_content } to merge into the assistant message, or {}.
 export function openAIReplayFields(message, profile) {
+  if (profile?.providerReplayMode !== 'reasoning_content') return {};
   const replay = message?.providerReplay;
   if (!replay || replay.version !== 'model-replay/v1') return {};
   if (replay.profileFingerprint !== profileFingerprint(profile)) return {};
@@ -78,6 +79,7 @@ export function openAIReplayFields(message, profile) {
 // inconsistent and dropped (never allowed to inject extra tools or replace a
 // sealed call). The original providerReplay object is never mutated.
 export function anthropicReplayContent(message, profile) {
+  if (profile?.providerReplayMode !== 'anthropic_content') return null;
   const replay = message?.providerReplay;
   if (!replay || replay.version !== 'model-replay/v2') return null;
   if (replay.profileFingerprint !== profileFingerprint(profile)) return null;

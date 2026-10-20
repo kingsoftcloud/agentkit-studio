@@ -104,6 +104,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       && typeof policy.enabled === 'boolean' && Number.isFinite(policy.triggerRatio) && Number.isFinite(policy.targetRatio)
       && policy.targetRatio > 0 && policy.targetRatio < policy.triggerRatio && policy.triggerRatio <= 1
       && Number.isSafeInteger(policy.summaryMaxTokens) && policy.summaryMaxTokens > 0
+      && ['strict', 'context_bounded_estimate'].includes(policy.summaryBudgetMode ?? 'strict')
       && (policy.maxCompactions === null || Number.isSafeInteger(policy.maxCompactions) && policy.maxCompactions >= 0)
       && [policy.maxCompactionsWithoutProgress, policy.minModelTurnsBetween, policy.maxSummaryRetries].every(value => Number.isSafeInteger(value) && value >= 0),
     'invalid_context_policy');

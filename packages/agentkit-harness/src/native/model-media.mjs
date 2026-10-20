@@ -101,7 +101,9 @@ export function projectRequestMedia(request) {
     if (media.length && message.role !== 'user' && message.role !== 'tool') throw new MediaError('image observations require user or tool content');
     return { ...message, media };
   });
-  const actualUser = messages.findLastIndex((message) => message.role === 'user' && message.kind == null);
+  const actualUser = messages.findLastIndex(message => message.role === 'user' && !message.history
+    && (message.kind == null || ['user_input', 'guidance', 'steering'].includes(message.kind)
+      || message.kind === 'host_input' && message.persistent === true));
   const inline = [];
   for (const [i, message] of messages.entries()) {
     for (const [j, block] of (message.media || []).entries()) {

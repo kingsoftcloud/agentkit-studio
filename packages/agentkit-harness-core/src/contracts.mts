@@ -102,6 +102,8 @@ export interface HookState {
 }
 export interface ContextPlanningPolicy {
   tokenizerId: string; tokenizerDigest: string; enabled: boolean;
+  /** Estimates bound complete requests; exact counters keep the strict summary ceiling. */
+  summaryBudgetMode?: 'strict' | 'context_bounded_estimate';
   triggerRatio: number; targetRatio: number; summaryMaxTokens: number;
   maxCompactions: number | null; maxCompactionsWithoutProgress: number; minModelTurnsBetween: number;
   maxSummaryRetries: number;
@@ -164,6 +166,7 @@ export type ModelResponseKind = 'tool_calls' | 'final_candidate' | 'output_limit
   | 'policy_abort' | 'user_abort';
 export interface ModelResult {
   kind: ModelResponseKind; text: string; toolCalls: ToolCall[]; usage: Usage;
+  textCommitVersion?: 'provider-finished-text/v1';
   /** False means counters are partial/absent; zero must not imply known free usage. */
   usageReported?: boolean;
   providerReplay?: ObjectValue; retryAfterMs?: number; failureKind?: string;

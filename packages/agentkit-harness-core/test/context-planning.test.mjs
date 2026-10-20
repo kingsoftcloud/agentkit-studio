@@ -31,6 +31,21 @@ function setup(t, { sqlite = false, contextPolicy = {}, ...overrides } = {}) {
 }
 const toolResponse = () => ({ ...final(''), kind: 'tool_calls', toolCalls: [{ callId: 'read-source', name: 'read', arguments: {} }] });
 
+for (const sqlite of [false, true]) test(`${sqlite ? 'sqlite' : 'memory'}: independent Host objective retains attachment-only input under context pressure`, async t => {
+  const media = [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQ==' } }];
+  const run = setup(t, { sqlite, contract: { objective: 'Host image objective' },
+    inputMessages: [{ role: 'user', content: '', kind: 'user_input', media }], contextPolicy: { triggerRatio: .1, targetRatio: .05 } });
+  let calls = 0;
+  run.ports.model.generate = async request => {
+    calls++;
+    assert.ok(request.messages.some(message => message.role === 'user' && message.content === '' && message.media?.length === 1));
+    return final('Image described');
+  };
+  const result = await run.worker().runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.equal(calls, 1);
+  assert.deepEqual(result.messages[0].media, media);
+});
+
 for (const sqlite of [false, true]) test(`${sqlite ? 'sqlite' : 'memory'}: Kernel owns every bounded summary request and seals complete contiguous source coverage`, async t => {
   const run = setup(t, { sqlite }); let tasks = 0, summaries = 0;
   const fragments = [], streamed = [];
@@ -130,6 +145,39 @@ test('invalid or oversized summary proposals never replace the original transcri
   assert.equal(result.reason, 'context_summary_validation_exhausted'); assert.equal(summaries, 2);
   assert.equal(result.contextState.history, null); assert.equal(result.contextState.compaction.offset, 0);
   assert.ok(result.messages.some(message => message.role === 'tool' && message.content.includes('Observed')));
+});
+
+for (const sqlite of [false, true]) test(`${sqlite ? 'sqlite' : 'memory'}: an estimated summary may exceed its target when complete requests fit`, async t => {
+  const run = setup(t, { sqlite, contextPolicy: { summaryBudgetMode: 'context_bounded_estimate' } });
+  let tasks = 0, summaries = 0;
+  const notes = 'X'.repeat(400); // 100 estimated units exceeds the 80-unit summary target.
+  run.ports.model.generate = async request => {
+    assert.ok(count(request.messages, request.tools) + request.profile.maxOutputTokens <= request.profile.contextWindow);
+    if (request.messages[0]?.kind === 'compaction_instructions') { summaries++; return final(notes); }
+    return ++tasks === 1 ? toolResponse() : final();
+  };
+  const result = await run.worker().runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.ok(summaries > 1);
+  assert.equal(result.contextState.history.summary, notes); assert.equal(result.contextState.compactions, 1);
+  assert.equal(result.messages.some(message => message.content === notes), false);
+});
+
+for (const fragmented of [false, true]) test(`estimated summary checks the complete ${fragmented ? 'continuation' : 'sealed task'} envelope before advancing coverage`, async t => {
+  const run = setup(t, { contextPolicy: { summaryBudgetMode: 'context_bounded_estimate', maxSummaryRetries: 1 } });
+  let tasks = 0, summaries = 0;
+  if (!fragmented) run.ports.tools.execute = async () => ({ status: 'ok', content: 'Short source' });
+  // An independently small text count must not authorize an oversized wire envelope.
+  run.ports.context.tokens.countText = async () => 1;
+  run.ports.model.generate = async request => {
+    if (request.messages[0]?.kind === 'compaction_instructions') { summaries++; return final('Y'.repeat(12000)); }
+    if (++tasks === 1) return toolResponse();
+    return { ...final(''), kind: 'context_overflow' };
+  };
+  const result = await run.worker().runUntilIdle(scope, 'run');
+  assert.equal(result.reason, 'context_summary_validation_exhausted'); assert.equal(summaries, 2);
+  assert.equal(result.contextState.history, null); assert.equal(result.contextState.compaction.offset, 0);
+  assert.deepEqual(result.contextState.compaction.coverage, []);
+  assert.ok(result.messages.some(message => message.role === 'tool'));
 });
 
 test('summary tool calls are rejected data and never dispatched as task tools', async t => {
@@ -243,12 +291,21 @@ test('a provider context overflow reduces the same uncommitted quote and never a
 test('bounded output-limit summaries remain context only and do not spend task continuation counters', async t => {
   const run = setup(t); let tasks = 0, summaries = 0;
   run.ports.model.generate = async request => {
-    if (request.messages[0]?.kind === 'compaction_instructions') { summaries++; return { ...final('Bounded historical notes'), kind: 'output_limit' }; }
+    if (request.messages[0]?.kind === 'compaction_instructions') { summaries++; return { ...final('Bounded historical notes'), kind: 'output_limit', textCommitVersion: 'provider-finished-text/v1' }; }
     return ++tasks === 1 ? toolResponse() : final();
   };
   const result = await run.worker().runUntilIdle(scope, 'run');
   assert.equal(result.phase, 'completed'); assert.ok(summaries > 1); assert.equal(result.continuations, 0);
   assert.equal(result.messages.some(message => message.content === 'Bounded historical notes'), false);
+});
+
+test('an output-limit summary without provider completion cannot become historical notes', async t => {
+  const run = setup(t); let tasks = 0;
+  run.ports.model.generate = async request => request.messages[0]?.kind === 'compaction_instructions'
+    ? { ...final('Uncommitted transport text'), kind: 'output_limit' } : ++tasks === 1 ? toolResponse() : final();
+  const result = await run.worker().runUntilIdle(scope, 'run');
+  assert.equal(result.reason, 'context_summary_provider_commit_missing');
+  assert.equal(result.contextState.history, null); assert.equal(result.contextState.compaction.offset, 0);
 });
 
 test('summary timeout retries the frozen quote under the provider cap and discards a late result', async t => {

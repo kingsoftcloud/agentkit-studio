@@ -9,13 +9,13 @@ import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
 
-async function setup(t) {
+async function setup(t, { spec = {}, profile = {} } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
   const agents = createAgentStore({ storeDir: root }), ledger = new MemoryRunStore();
-  const record = await agents.create({ name: 'Native', runtimeType: 'harness', bindings: { modelProfileIds: ['fixture'] } });
+  const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: { ...spec, bindings: { modelProfileIds: ['fixture'] } } });
   const events = [], definitions = new Map(), requests = [];
   let apiKey = 'secret-one', unregisters = 0;
-  const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned', baseUrl: 'https://model.invalid/v1' }] };
+  const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned', baseUrl: 'https://model.invalid/v1', ...profile }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: apiKey }) } });
   const session = { id: 'session', append: (type, data, options) => events.push({ type, data, ...options, seq: events.length + 1 }) };
   session.append('turn/start', { turn: 1 });
@@ -94,8 +94,9 @@ test('a changed Frozen revision and a mid-run model binding cannot dispatch an H
   };
   await assert.rejects(changed.host.executeTurn(changed.payload), { code: 'NATIVE_TURN_FAILED', nativeReason: 'provider_terminal_error' });
   assert.equal(changed.requests.length, 0);
-  const snapshot = changed.head(), receipts = changed.ledger.load(snapshot.scope, snapshot.runId).receipts;
-  assert.equal(receipts[0].result.failureKind, 'host_error');
+  const snapshot = changed.head(), record = changed.ledger.load(snapshot.scope, snapshot.runId);
+  const receipts = record.receipts.filter(receipt => record.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind === 'model');
+  assert.equal(receipts.length, 1); assert.equal(receipts[0].result.failureKind, 'host_error');
 });
 test('Studio Native close is idempotent and retires its projection exactly once', async t => {
   const fixture = await setup(t);
@@ -162,4 +163,44 @@ test('Studio Native close during a stalled input claim fences late admission', a
   assert.ok(before.receipts.some(receipt => receipt.status === 'uncertain'));
   finish(); await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(fixture.ledger.load(run.scope, run.runId), before);
+});
+test('Studio Native binds context/output budgets and the production counter from the Frozen Build', async t => {
+  const fixture = await setup(t, { spec: { context: { maxInputTokens: 5000, reserveOutputTokens: 1000,
+    compaction: { enabled: false, thresholdRatio: .6 } } }, profile: { contextWindow: 4000, maxOutputTokens: 2000 } });
+  fixture.payload.binding.buildId = 'fixed-context-build';
+  fixture.agents.getRevision = async () => assert.fail('Read the Frozen Build, not the mutable draft');
+  await fixture.host.executeTurn(fixture.payload);
+  const run = fixture.head(), configuration = fixture.ledger.load(run.scope, run.runId).configuration;
+  assert.equal(configuration.profile.contextWindow, 4000); assert.equal(configuration.profile.maxOutputTokens, 1000);
+  assert.equal(configuration.contextPolicy.enabled, false); assert.equal(configuration.contextPolicy.triggerRatio, .6);
+  assert.match(configuration.contextPolicy.tokenizerId, /cjk-ascii-estimate-125-wire-image/);
+  assert.equal(JSON.parse(fixture.requests[0].options.body).max_tokens, 1000);
+  assert.ok(fixture.ledger.load(run.scope, run.runId).receipts.some(receipt => receipt.result.admission?.countedInputTokens > 0));
+});
+test('Studio Native refuses an over-budget request before HTTP when compaction is disabled', async t => {
+  const fixture = await setup(t, { spec: { context: { maxInputTokens: 3000, reserveOutputTokens: 128, compaction: { enabled: false } } } });
+  fixture.payload.input.messages[0].content[0].text = '中文上下文'.repeat(1000);
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'NATIVE_TURN_FAILED', nativeReason: 'context_compaction_disabled' });
+  assert.equal(fixture.requests.length, 0);
+  assert.equal(fixture.head().usage.modelCalls, 0);
+});
+test('Studio Native keeps an image-only admission with its independent objective through context planning', async t => {
+  const fixture = await setup(t, { spec: { context: { compaction: { thresholdRatio: .001 } } } });
+  fixture.services.attachments = { readImageRequest: async () => ({ mediaType: 'image/png', data: Uint8Array.of(1) }) };
+  fixture.payload.input.messages[0].content = [{ type: 'image', attachment: { attachmentId: 'image-only' } }];
+  await fixture.host.executeTurn(fixture.payload);
+  assert.equal(fixture.requests.length, 1);
+  assert.ok(JSON.parse(fixture.requests[0].options.body).messages.some(message => Array.isArray(message.content)
+    && message.content.some(block => block.type === 'image_url')));
+  assert.equal(fixture.head().goal, 'Inspect the attached input and respond to the user.');
+});
+for (const [context, code] of [
+  [{ maxInputTokens: 1000, reserveOutputTokens: 1000 }, 'studio_native_context_budget_conflict'],
+  [{ maxInputTokens: '4000' }, 'studio_native_context_budget_invalid'],
+  [{ compaction: { thresholdRatio: 0 } }, 'invalid_context_policy'],
+  [{ compaction: { pruneToolResults: true } }, 'studio_native_compaction_option_unsupported'],
+]) test(`Studio Native rejects an invalid or unsupported context contract: ${JSON.stringify(context)}`, async t => {
+  const fixture = await setup(t, { spec: { context } });
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code });
+  assert.equal(fixture.requests.length, 0); assert.equal(fixture.head(), null);
 });
