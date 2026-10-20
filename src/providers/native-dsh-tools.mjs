@@ -5,11 +5,12 @@ import { canonical, invariant } from '../../packages/agentkit-harness-core/dist/
 import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/native/workspace-tools.mjs';
 import { projectNativeDshContent } from './native-input.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
+import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
-export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir }) {
+export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
   const pinnedRoot = realpathSync(workspace), hasSkills = Boolean(config.skillDefinitions?.length);
@@ -24,6 +25,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir }) {
   };
   const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions' });
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
+  const browserTools = createNativeDshBrowserTools({ workspaceRoot: workspace, createBrowser, browserExecutablePath });
+  const browserName = browserTools.definition.name;
+  formal.set(browserName, browserTools.definition);
   const declared = config.toolContracts ?? [];
   const contracts = new Map(declared.filter(contract => contract.enabled !== false).map(contract => [contract.name, contract]));
   const boundNames = names(config.toolBindings).flatMap(ref => {
@@ -34,29 +38,45 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir }) {
   const builtin = [...allowed].filter(name => contracts.get(name)?.executor === 'builtin'
     || formal.has(name) && contracts.get(name)?.executor !== 'mcp');
   const builtinNames = new Set(builtin);
+  let closed = false, closing, disposers = [];
+  const close = () => {
+    if (closing) return closing;
+    closed = true;
+    const unregistering = disposers.map(dispose => {
+      try { return Promise.resolve(dispose?.()); } catch (error) { return Promise.reject(error); }
+    });
+    disposers = [];
+    return closing = Promise.allSettled([...unregistering, browserTools.close()]).then(results => {
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed) throw failed.reason;
+    });
+  };
   const install = () => {
-    const disposers = builtin.map(name => {
+    disposers = builtin.map(name => {
       const definition = formal.get(name) ?? contracts.get(name);
       return ctx.tools.register({ name, description: definition.description, parameters: definition.parameters,
         output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
         execute: async (args, exec) => {
           const invocation = calls.get(String(exec.callId));
+          invariant(!closed, 'studio_native_tools_closed');
           invariant(invocation && invocation.agent === exec.agent && invocation.request.call.name === name
             && canonical(args) === canonical(invocation.request.call.arguments), 'studio_native_tool_authority_missing');
           exec.signal.throwIfAborted();
           invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
           invocation.dispatched = true;
-          const outcome = formal.has(name) ? await state(exec.agent).execute({ ...invocation.request, signal: exec.signal })
+          const outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
+            : formal.has(name) ? await state(exec.agent).execute({ ...invocation.request, signal: exec.signal })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
           invocation.outcome = structuredClone(outcome);
           return nativeDshBuiltinOutput(outcome, { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
         },
       });
     });
-    return () => disposers.forEach(dispose => dispose?.());
+    return close;
   };
-  ctx.effect(install, 'agentkit-studio: Native workspace tool bindings');
+  ctx.effect(install, 'agentkit-studio: Native builtin tool bindings');
   return {
+    close,
     definitions(agent, assemblyTools) {
       const schemas = new Map((assemblyTools ?? []).map(schema => [schema.name, schema]));
       const selected = new Set(allowed);
@@ -78,7 +98,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir }) {
     },
     forAgent(agent) {
       const sessionId = String(agent.session.id);
-      return { workspace: { observe: request => state(agent).observe(request) }, tools: { execute: async request => {
+      return { workspace: { observe: request => state(agent).observe(request) },
+        ...(builtinNames.has(browserName) ? { browser: { recoverSessions: request => browserTools.forSession(sessionId).recoverSessions(request) } } : {}),
+        tools: { execute: async request => {
+        invariant(!closed, 'studio_native_tools_closed');
         invariant(request.sessionId === sessionId && (allowed.has(request.call.name)
           || hasSkills && ['skill', 'bash', 'pwsh'].includes(request.call.name)),
         'studio_native_tool_not_bound');

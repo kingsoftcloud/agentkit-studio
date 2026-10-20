@@ -106,17 +106,21 @@ Node 的 `browser-workspace-server.mjs` 为后续 Studio 页面所有者提供�
 
 `browser-workspace-protocol.mjs` 与 `browser-workspace.mjs` 已实现 Studio 页面所有者组件。公开参数保留 `path/actions/wait_ms/screenshot_path` 和既有 snake_case 动作字段；整批最多 20 个动作、显式等待合计最多 30 秒，在启动浏览器前全部校验。各 Run 有独立页面与文件服务，同 Run 的动作和恢复检查串行；文件修订变化会重新导航，生成截图不会被当成应用编辑。只有显式 reload 且不夹带旧输入时，失联页面才可新建 generation/lease。错误和未知动作保留资源引用；未知结果与取消会撤销该代页面的后续网络和截图权限，不被新截图洗成成功。端口返回显式模型图片上下文与类型化观察；默认工具超时 110 秒，可放入现有 120 秒 Native 效果上限。
 
-可信 VerificationPort 可调用 `verifyPage`，每次使用新的隔离上下文，把截图写到工作区外的 Host 目录，保留观察期间的错误，并最多点击一个没有歧义的启动控件；重复启动 ID 会被拒绝。这里返回浏览器观察，不能证明完整用户目标或视觉质量通过。端口组件、真实 loopback 文件服务与 Memory/SQLite 核心恢复的早期组合在 Node 26/22 各通过 59 项检查，其中浏览器驱动使用故障注入替身。后续实际 Chromium 验证见下文；DSH 权限与附件展示的生产组装仍需完成。
+可信 VerificationPort 可调用 `verifyPage`，每次使用新的隔离上下文，把截图写到工作区外的 Host 目录，保留观察期间的错误，并最多点击一个没有歧义的启动控件；重复启动 ID 会被拒绝。这里返回浏览器观察，不能证明完整用户目标或视觉质量通过。端口组件、真实 loopback 文件服务与 Memory/SQLite 核心恢复的早期组合在 Node 26/22 各通过 59 项检查，其中浏览器驱动使用故障注入替身。后续实际 Chromium 和 DSH 绑定验证见下文；UI 展示与独立验收的产品组装仍需完成。
 
 Node `NativePlaywrightBrowser` 与 DOM 元素引用管理现已导入。真实 Claude Code 在独立 worktree 提交后，主负责人独立复现并修复了取消后迟到派发、派发后错误误标安全重试、可变引用污染、清理阻塞取消，以及通用浏览器图片未进入模型上下文等问题。动作先记录未知结果，重复 actionId 不会再次输入；取消或超时后资源立即撤销，清理可以继续，但旧引用不再接收输入。仅显式 restart 递增 generation 与 lease 后才能新建页面。排队动作超时不会撤销另一个仍健康的在执行动作。
 
-浏览器后端、页面所有者、HTTP 服务及核心契约与恢复的 136 项定向检查在 Node 26/22 均通过；两版本另各通过 11 项真实 Chromium 检查，无跳过。真实检查覆盖输入、元素替换、网络约束、密码遮蔽、借用/自有浏览器清理、工作区资源重载、每次独立的冷验证，以及 Chromium 页面丢失后 SQLite 重开、拒绝旧候选结果、显式重新观察且不重复旧点击。生产依赖固定 `playwright-core@1.58.2`，驱动本身不安装浏览器二进制；实际 Host 浏览器启动配置、正式工具注册和无 Python 安装验证仍需补齐。这些证据不能代替 Studio 全路径验收。
+浏览器后端、页面所有者、HTTP 服务及核心契约与恢复的 136 项定向检查在 Node 26/22 均通过；两版本另各通过 11 项真实 Chromium 检查，无跳过。真实检查覆盖输入、元素替换、网络约束、密码遮蔽、借用/自有浏览器清理、工作区资源重载、每次独立的冷验证，以及 Chromium 页面丢失后 SQLite 重开、拒绝旧候选结果、显式重新观察且不重复旧点击。生产依赖固定 `playwright-core@1.58.2`，驱动本身不安装浏览器二进制；无 Python 的安装与分发验证仍需补齐。这些证据不能代替 Studio 全路径验收。
 
 核心已加入显式 `workspaceObservationPolicy`，由 Host 固定需要浏览器观察的文件后缀；未配置时不启用，不在 Kernel 内猜测网页类型。工具回执即使报错，只要记录了相关文件改动，就推进网页修改游标。观察间隔与模型验证预算共同决定后续可用工具：到期先观察，失败尝试可留出修复机会，但不会生成成功截图证据；最后的工具窗口禁止继续修改，只有新鲜观察且没有未解决交互错误时才开放读取。子任务用量计入剩余模型预算，目标允许的工具范围保持生效，结构化最终提交仍按原契约开放。
 
 浏览器交互错误按工具和入口页面持久化。后续截图、宿主自动重载、移动、滚动或另一页面的操作不能清除它；只有同工具、同页面的显式交互成功才清除。真实 steer 清除旧目标的观察和交互错误，guide 保留它们。模型的临时观察指令参与与实际请求一致的 token 计数，工具或结束预算耗尽时不再提示浏览器可用。相关组合在 Node 26/22 各通过 153 项定向检查，最后增加预算优先级检查后，策略模块各通过 28 项；Memory/SQLite 场景验证了错误回执交付中断、数据库重开、修复窗口、拒绝夹带禁用工具及成功观察。这些是核心策略和状态证据；Studio 生产配置及交互错误的最终验收消费仍需接入。
 
-Native builtin 图片输出现先通过 Host 的 `attachments.saveImages` 校验并持久化，再把附件引用交给 DSH 渲染与输出策略；模型图片只从策略处理后的引用经 `readImageRequest` 获取。远端 URL、文件路径、非规范 base64、超出部署图片预算的整批输入在存储前拒绝，取消后不发布迟到引用；纯文本工具不需要附件服务。`verify-native-dsh-output --source <built maintained DSH checkout>` 已在 Node 26/22 验证实际 DSH 附件的图片解码、持久化、服务重建后读取、策略省略和 Native 下一轮模型接收；29 项输入/输出/工具定向测试也在两版本通过。这里仍未证明浏览器工具已在 Studio 注册或 UI 已实际渲染截图。
+Native builtin 图片输出现先通过 Host 的 `attachments.saveImages` 校验并持久化，再把附件引用交给 DSH 渲染与输出策略；模型图片只从策略处理后的引用经 `readImageRequest` 获取。远端 URL、文件路径、非规范 base64、超出部署图片预算的整批输入在存储前拒绝，取消后不发布迟到引用；纯文本工具不需要附件服务。`verify-native-dsh-output --source <built maintained DSH checkout>` 已在 Node 26/22 验证实际 DSH 附件的图片解码、持久化、服务重建后读取、策略省略和 Native 下一轮模型接收；29 项输入/输出/工具定向测试也在两版本通过。UI 实际渲染截图仍需验证。
+
+`NativeDshTools` 现正式注册已绑定的 `browser_inspect_workspace` builtin，固定 Native 浏览器角色和参数；同名 MCP 工具不获此角色或恢复权限。所有输入先通过实际 DSH 注册器的 pre/guard/around/post/result 流程，模型无法自行绕过注册器调用后端。`native-dsh-browser.mjs` 按 ledger scope、会话及固定工作区延迟创建所有者；同会话更换 Agent 对象仍保留页面，不同会话或租户隔离。进程替换保留稳定所有者身份，恢复只探测，失联后必须显式 reload。preset 关闭会取消在途调用并释放页面、HTTP 服务和自有浏览器，即使注册器注销报错也继续释放资源。
+
+开发入口的 Host 配置可通过绝对路径 `AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE` 指定 Chromium；省略时使用 Playwright 预期的已安装浏览器，模型参数不能指定可执行文件。`verify-native-dsh-browser --source <built maintained DSH checkout> --chromium <executable>` 在 Node 26/22 通过真实 DSH ToolRuntime、附件服务及生产浏览器绑定的联测，覆盖 pre 和单调 guard 拒绝、策略省略图片、下一轮模型图片，以及所有者重建后拒绝旧输入并仅由显式 reload 建立新代页面。相关绑定、输入输出及 Host 组合两版本各通过 55 项检查；补充注销失败场景后，最终绑定模块各通过 22 项。这是工具和核心边界联测，尚未覆盖完整 UI、自动化或 Frozen Build。
 
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
 

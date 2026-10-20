@@ -138,6 +138,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     const { createNativeDshTools } = await import('../providers/native-dsh-tools.mjs');
     ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config }) => createNativeDshTools({ ctx: toolsCtx, config,
       workspaceRoot, stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),
+      browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
     })), 'agentkit-studio: Native tool environment');
   }
   let nativeHostPromise;

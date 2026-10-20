@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { NativeKernel, MemoryRunStore, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
-function setup(t, names = ['write_workspace_file'], contracts = []) {
+function setup(t, names = ['write_workspace_file'], contracts = [], options = {}) {
   const root = mkdtempSync(join(tmpdir(), 'studio-native-tools-')), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
   const registry = new Map(), calls = [];
@@ -21,7 +21,8 @@ function setup(t, names = ['write_workspace_file'], contracts = []) {
       return { isError: false, value, content: registered.output.render(input.arguments, value) };
     },
   } };
-  const gateway = createNativeDshTools({ ctx, config: { toolBindings: names, toolContracts: contracts }, workspaceRoot, stateDir: join(root, 'state') });
+  const gateway = createNativeDshTools({ ctx, config: { toolBindings: names, toolContracts: contracts }, workspaceRoot, stateDir: join(root, 'state'), ...options });
+  t.after(() => gateway.close());
   const agent = { session: { id: 'session' } };
   const definitions = () => gateway.definitions(agent, [...registry.values()]);
   const request = (arguments_ = { path: 'file.txt', content: 'value' }, name = names[0]) => ({
@@ -32,6 +33,42 @@ function setup(t, names = ['write_workspace_file'], contracts = []) {
   return { gateway, agent, request, registry, workspaceRoot, calls, ctx,
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
+test('workspace browser metadata is pinned and DSH denial cannot start its backend', async t => {
+  let created = 0;
+  const host = setup(t, ['browser_inspect_workspace'], [], { createBrowser: () => { created++; throw new Error('must not start'); } });
+  const request = host.request({ path: 'app', wait_ms: 0 });
+  assert.equal(request.definition.observationRole, 'browser');
+  assert.equal(request.definition.readOnly, false);
+  assert.equal(request.definition.timeoutMs, 110000);
+  assert.equal(typeof host.gateway.forAgent(host.agent).browser.recoverSessions, 'function');
+  const registered = host.registry.get('browser_inspect_workspace');
+  await assert.rejects(registered.execute(request.call.arguments, { agent: host.agent,
+    callId: 'invented', signal: request.signal }), /studio_native_tool_authority_missing/);
+  host.deny();
+  const result = await host.gateway.forAgent(host.agent).tools.execute(request);
+  assert.equal(result.status, 'error'); assert.equal(result.browserSessionRef, undefined);
+  assert.equal(created, 0);
+});
+test('an MCP tool with the browser name receives no owned browser role or recovery authority', t => {
+  const host = setup(t, ['browser_inspect_workspace'], [{ name: 'browser_inspect_workspace', executor: 'mcp' }]);
+  assert.equal(host.registry.has('browser_inspect_workspace'), false);
+  const [definition] = host.gateway.definitions(host.agent, [{ name: 'browser_inspect_workspace', parameters: { type: 'object' } }]);
+  assert.equal(definition.observationRole, 'none');
+  assert.equal(host.gateway.forAgent(host.agent).browser, undefined);
+});
+test('a registry disposal failure still closes all browser resources', async t => {
+  const host = setup(t, ['browser_inspect_workspace']); let disposed = 0;
+  host.ctx.tools.register = () => () => { throw new Error('registry disposal failed'); };
+  const gateway = createNativeDshTools({ ctx: host.ctx, config: { toolBindings: ['browser_inspect_workspace'] },
+    workspaceRoot: host.workspaceRoot, stateDir: join(host.workspaceRoot, 'state'), createBrowser: () => ({
+      open() {}, act() {}, recover() {}, restart() {}, close() {}, async dispose() { disposed++; },
+    }) });
+  await gateway.forAgent(host.agent).browser.recoverSessions({ ...host.request({ path: 'app' }), refs: [] });
+  const closing = gateway.close();
+  assert.equal(gateway.close(), closing);
+  await assert.rejects(closing, /registry disposal failed/);
+  assert.equal(disposed, 1);
+});
 test('Native builtin effects require ledger authority and pass through the registry before real writes', async t => {
   const host = setup(t), registered = host.registry.get('write_workspace_file');
   await assert.rejects(registered.execute({ path: 'escape.txt', content: 'not authorized' },
