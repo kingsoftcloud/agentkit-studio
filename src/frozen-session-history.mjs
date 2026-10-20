@@ -90,9 +90,13 @@ async function projectGroup(group, session, invocationId, options) {
 }
 
 async function readFrozenHistoryPage({ handle, session, latestSeq, request, invocationId, signal, kind = 'messages' }) {
-  const limit = request.Limit ?? 50, before = request.BeforeSeqId, after = request.AfterSeqId;
+  const limit = request.Limit ?? 50, before = request.BeforeSeqId;
+  const ordered = kind === 'events' && request.EventOrder === 'session_seq';
+  const after = request.AfterSeqId ?? (ordered ? 0 : undefined);
   if (!integer(limit, 1) || limit > (kind === 'events' ? 1000 : 200) || (before !== undefined && !integer(before, 1))
-    || (after !== undefined && !integer(after)) || (before !== undefined && after !== undefined)) throw runtimeError('RUNTIME_HISTORY_CURSOR_INVALID');
+    || (after !== undefined && !integer(after)) || (before !== undefined && after !== undefined)
+    || (request.Offset !== undefined && !integer(request.Offset))
+    || ((request.Offset ?? 0) > 0 && (before !== undefined || after !== undefined))) throw runtimeError('RUNTIME_HISTORY_CURSOR_INVALID');
   for (const key of ['IncludeReasoning', 'IncludeToolEvents', 'IncludeAttachments']) {
     if (request[key] !== undefined && typeof request[key] !== 'boolean') throw runtimeError('RUNTIME_HISTORY_INPUT_INVALID');
   }
@@ -101,7 +105,29 @@ async function readFrozenHistoryPage({ handle, session, latestSeq, request, invo
   if (!integer(snapshot) || snapshot > latestSeq) throw runtimeError('HISTORY_RELOAD_REQUIRED', 409);
   // Stable cursors from this producer are invocation boundaries. Do not mix
   // another snapshot or source with a continuation page.
-  if ((before !== undefined || (after ?? 0) > 0) && (!request.HistoryEpoch || request.SnapshotSeqId === undefined)) throw runtimeError('HISTORY_RELOAD_REQUIRED', 409);
+  if ((before !== undefined || (after ?? 0) > 0 || (request.Offset ?? 0) > 0) && (!request.HistoryEpoch || request.SnapshotSeqId === undefined)) throw runtimeError('HISTORY_RELOAD_REQUIRED', 409);
+  const metadata = { DataSource: 'runtime', CursorSource: 'runtime', HistoryEpoch: session.epoch, SnapshotSeqId: snapshot,
+    PersistenceDegraded: false, Degraded: false, CursorCompatibleWithRuntime: true, SessionContractVersion: 2 };
+  if (kind === 'events' && request.Offset !== undefined && before === undefined && after === undefined) {
+    // Hosted UI's legacy contract pages backwards by a public-event offset.
+    // Count and page the same fixed native observation, never a second store.
+    const native = []; let bytes = 0;
+    for (let offset = 0; offset < snapshot; offset += 256) {
+      signal.throwIfAborted();
+      const length = Math.min(256, snapshot - offset);
+      const batch = (await handle.read(offset, length, { signal })).events;
+      if (batch.length !== length || batch.some((event, index) => event.seq !== offset + index)) throw runtimeError('RUNTIME_HISTORY_PREFIX_UNAVAILABLE', 503);
+      bytes += Buffer.byteLength(JSON.stringify(batch));
+      if (offset + length > 8192 || bytes > 16 * 1024 * 1024) throw runtimeError('HISTORY_PROJECTION_BUDGET_EXCEEDED', 429);
+      native.push(...batch);
+    }
+    const projected = (await Promise.all(groupEvents(native, kind).map(group => projectGroup(group, session, invocationId, { ...request, kind })))).flat();
+    const end = Math.max(0, projected.length - request.Offset);
+    const start = Math.max(0, end - limit);
+    const page = projected.slice(start, end);
+    return { SessionId: session.sessionId, Events: page, Total: projected.length, Offset: request.Offset, Limit: limit,
+      LatestSeqId: page.at(-1)?.SeqId ?? 0, HasMore: start > 0, NextCursor: start > 0 ? page[0].SeqId : null, ...metadata };
+  }
   const forward = after !== undefined;
   let position = forward ? Math.min(after, snapshot) : Math.min(snapshot, before === undefined ? snapshot : before - 1);
   let events = [], bytes = 0, count = 0, groups = [], selected = [];
@@ -146,9 +172,8 @@ async function readFrozenHistoryPage({ handle, session, latestSeq, request, invo
   const latest = kind === 'events' && messages.length ? messages.at(-1).SeqId
     : selected.length ? selected.at(-1).events.at(-1).seq + 1 : forward ? position : Math.min(snapshot, after || 0);
   return { SessionId: session.sessionId, [kind === 'events' ? 'Events' : 'Messages']: messages, LatestSeqId: latest,
-    HasMore: hasMore, NextCursor: !forward && hasMore && selected.length ? kind === 'events' ? messages[0]?.SeqId ?? selected[0].start : selected[0].start : null,
-    DataSource: 'runtime', CursorSource: 'runtime', HistoryEpoch: session.epoch, SnapshotSeqId: snapshot,
-    PersistenceDegraded: false, Degraded: false, CursorCompatibleWithRuntime: true, SessionContractVersion: 2 };
+    HasMore: hasMore, ...(ordered ? { EventOrder: 'session_seq' } : {}), NextCursor: forward ? latest : hasMore && selected.length ? kind === 'events' ? messages[0]?.SeqId ?? selected[0].start : selected[0].start : null,
+    ...metadata };
 }
 
 export const readFrozenSessionMessages = options => readFrozenHistoryPage(options);

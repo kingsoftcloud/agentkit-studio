@@ -87,3 +87,39 @@ test('cold Hosted history reads only native persisted facts, with owner/build is
   await assert.rejects(hosted.dispatch('ListSessionMessages', { ...request, HistoryEpoch: 'foreign' }, headers, signal), { code: 'HISTORY_RELOAD_REQUIRED' });
   assert.ok(flushes > 0); assert.equal(disposals, 6);
 });
+
+import { readFrozenSessionEvents } from '../src/frozen-session-history.mjs';
+test('Hosted UI Offset pages and forward session_seq acknowledgements cover every native event once', async () => {
+  // One long invocation exceeds Hosted UI's 64-event initial page.
+  const types = ['turn/start', 'user/message', ...Array(70).fill('assistant/message'), 'turn/end'];
+  const events = types.map((type, seq) => ({ type, seq, time: 1700000000000 + seq,
+    data: type === 'user/message' ? { source: { rpcId: 'native-run' }, content: [{ type: 'text', text: 'hello' }] }
+      : type === 'assistant/message' ? { message: { content: [{ type: 'text', text: `answer-${seq}` }] } }
+        : { reason: { kind: 'completed' } } }));
+  const options = { handle: { read: async (offset, length) => ({ events: events.slice(offset, offset + length) }) },
+    session: { sessionId: 'public', nativeSessionId: 'native', epoch: 'epoch-one' }, latestSeq: events.length,
+    invocationId: async () => 'public-invocation', signal: AbortSignal.timeout(10000) };
+  const read = request => readFrozenSessionEvents({ ...options, request });
+  const newest = await read({ Offset: 0, Limit: 64 });
+  assert.equal(newest.Total, 73);
+  assert.deepEqual(newest.Events.map(x => x.SeqId), Array.from({ length: 64 }, (_, i) => i + 10));
+  const oldest = await read({ Offset: newest.Events.length, Limit: 64, HistoryEpoch: newest.HistoryEpoch, SnapshotSeqId: newest.SnapshotSeqId });
+  assert.equal(oldest.Total, 73);
+  assert.deepEqual([...oldest.Events, ...newest.Events].map(x => x.SeqId), events.map(x => x.seq + 1));
+  assert.equal(oldest.HasMore, false);
+  const first = await read({ EventOrder: 'session_seq', Limit: 3 });
+  assert.equal(first.EventOrder, 'session_seq');
+  assert.equal(first.NextCursor, 3);
+  assert.equal(first.HasMore, true);
+  let page = first, all = [...first.Events];
+  while (page.HasMore) {
+    page = await read({ EventOrder: 'session_seq', Limit: 3, AfterSeqId: page.NextCursor,
+      HistoryEpoch: page.HistoryEpoch, SnapshotSeqId: page.SnapshotSeqId });
+    assert.ok(Number.isSafeInteger(page.NextCursor)); all.push(...page.Events);
+  }
+  assert.deepEqual(all.map(x => x.SeqId), events.map(x => x.seq + 1));
+  const empty = await read({ EventOrder: 'session_seq', AfterSeqId: page.NextCursor,
+    HistoryEpoch: page.HistoryEpoch, SnapshotSeqId: page.SnapshotSeqId });
+  assert.equal(empty.NextCursor, 73);
+  assert.equal(empty.HasMore, false);
+});

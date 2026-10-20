@@ -298,6 +298,25 @@ try {
     pagedEvents = [...eventPage.Events, ...pagedEvents];
   }
   assert.deepEqual(pagedEvents.map(event => event.SeqId), allEvents.Events.map(event => event.SeqId), 'Small reverse event pages preserve every native run boundary');
+  let offset = 0, offsetEvents = [];
+  do {
+    const page = (await (await hostedAction('ListSessionEvents', { SessionId: hostedSession, Offset: offset, Limit: 3,
+      HistoryEpoch: allEvents.HistoryEpoch, SnapshotSeqId: allEvents.SnapshotSeqId })).json()).Data;
+    assert.equal(page.Total, allEvents.Events.length);
+    offsetEvents = [...page.Events, ...offsetEvents]; offset += page.Events.length;
+    if (!page.HasMore) break;
+    assert.ok(page.Events.length);
+  } while (offset <= allEvents.Events.length);
+  assert.deepEqual(offsetEvents, allEvents.Events, 'Hosted UI offset pages must restore all native events once');
+  let after = 0, forwardEvents = [], forwardPage;
+  do {
+    forwardPage = (await (await hostedAction('ListSessionEvents', { SessionId: hostedSession, EventOrder: 'session_seq', AfterSeqId: after, Limit: 3,
+      HistoryEpoch: allEvents.HistoryEpoch, SnapshotSeqId: allEvents.SnapshotSeqId })).json()).Data;
+    assert.equal(forwardPage.EventOrder, 'session_seq'); assert.ok(Number.isSafeInteger(forwardPage.NextCursor));
+    forwardEvents.push(...forwardPage.Events);
+    assert.ok(!forwardPage.HasMore || forwardPage.NextCursor > after); after = forwardPage.NextCursor;
+  } while (forwardPage.HasMore);
+  assert.deepEqual(forwardEvents, allEvents.Events, 'session_seq pages acknowledge each native event once');
   assert.equal((await hostedAction('ListSessionMessages', { SessionId: hostedSession }, { 'x-agentengine-subject-id': 'foreign' })).status, 404);
   check('generic-hosted-responses-and-native-history-after-cold-host-restart', { turns: 2, messages: 4, principalIsolation: true, epoch: nextPage.Data.HistoryEpoch });
   const unbound = await post({ input: 'unbound', request_id: 'unbound', model: 'model-outside-build' });
