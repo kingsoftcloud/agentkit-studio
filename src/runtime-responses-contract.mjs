@@ -78,7 +78,7 @@ export function runtimeResponse(request, result = {}, status = 'in_progress', ou
   const input = Number(result.tokenUsage?.inputTokens || 0), generated = Number(result.tokenUsage?.outputTokens || 0);
   const text = status === 'completed' ? String(result.output || '') : '';
   return { id: request.responseId, object: 'response', created_at: request.createdAt, status, model: request.model,
-    session_id: request.conversationId, conversation: { id: request.conversationId }, metadata: Array.isArray(result.resourceChecks)
+    session_id: request.publicSessionId || request.conversationId, conversation: { id: request.conversationId }, metadata: Array.isArray(result.resourceChecks)
       ? { ...request.metadata, agentkit: { ...request.metadata?.agentkit, resourceChecks: result.resourceChecks.map(sanitizeResourceCheck).filter(Boolean) } } : request.metadata,
     output, output_text: text, error: result.error || null,
     ...(result.tokenUsage ? { usage: { input_tokens: input, output_tokens: generated, total_tokens: input + generated } } : {}) };

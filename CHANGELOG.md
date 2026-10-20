@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Adapt generic Hosted UI Actions to frozen Studio runtimes with verified account isolation, native DSH history recovery, and explicit stream failures; retain existing personal assistant data and permissions.
+
 - Fix normal portable assistant cold startup and process-restart scheduling through profile-owned plugin resolution and native runtime readiness dependencies; add an installed CLI startup/restart CI smoke.
 
 - Connect personal assistants to an isolated native cloud conversation with durable submission, scoped retry and cancellation, paginated tool history, and verified image and file attachments.
