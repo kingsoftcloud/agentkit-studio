@@ -68,6 +68,18 @@ export function canonicalStringify(value) {
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /**
+ * JSON number grammar per RFC 8259: [ minus ] int [ frac ] [ exp ], where int
+ * is a single 0 or a non-zero digit followed by digits, frac is a dot followed
+ * by one or more digits, and exp is e/E, an optional sign, and one or more
+ * digits. This rejects what Number() silently coerces but JSON does not allow:
+ * hex (0x10), a leading plus (+1), leading zeros (01), a trailing dot (1.),
+ * a leading dot (.1), and an empty exponent (1e). Number() is still applied
+ * afterward so an oversized but grammatically valid exponent (1e400) that
+ * overflows to Infinity is rejected rather than admitted as non-finite.
+ */
+const JSON_NUMBER = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/;
+
+/**
  * Validate that a value is a plain JSON object (ObjectValue). Rejects
  * arrays, null, prototype-polluting keys and objects whose prototype was
  * tampered (e.g. via an object literal `__proto__` setter). Used for
@@ -185,7 +197,15 @@ export function safeJsonParse(text, code = 'invalid_artifact_record') {
     if (end >= text.length) fail();
     const token = text.slice(pos, end + 1);
     pos = end + 1;
-    return JSON.parse(token);
+    // Delegate unescaping to JSON.parse on the raw quoted token (surrogate
+    // pairs in \uXXXX stay correct), but coerce any escape it rejects (e.g.
+    // \z, \x41, a truncated \u00) into the stable `code` rather than letting
+    // a bare SyntaxError escape this parser without an error code.
+    try {
+      return JSON.parse(token);
+    } catch {
+      fail();
+    }
   };
   const parseLiteral = () => {
     const start = pos;
@@ -194,9 +214,10 @@ export function safeJsonParse(text, code = 'invalid_artifact_record') {
     if (chunk === 'true') return true;
     if (chunk === 'false') return false;
     if (chunk === 'null') return null;
-    const num = Number(chunk);
-    if (chunk === '' || !Number.isFinite(num)) fail();
-    return num;
+    // Enforce the JSON number grammar (see JSON_NUMBER) instead of trusting
+    // Number(), which coerces 0x10/+1/01/1./.1 into numbers JSON.parse rejects.
+    if (chunk === '' || !JSON_NUMBER.test(chunk) || !Number.isFinite(Number(chunk))) fail();
+    return Number(chunk);
   };
   const root = parseValue();
   skipWs();
@@ -296,18 +317,52 @@ export function buildArtifactUri(scopeDigestValue, runDigestValue, identityDiges
   return `artifact://${scopeDigestValue}/${runDigestValue}/${identityDigestValue}`;
 }
 
-/** UTF-8 encode without truncation or replacement. */
+/**
+ * True when text contains an unpaired UTF-16 surrogate: a high surrogate
+ * (U+D800–U+DBFF) not followed by a low surrogate, or a low surrogate
+ * (U+DC00–U+DFFF) not preceded by a high surrogate. Buffer.from(text,'utf8')
+ * silently replaces every unpaired surrogate with U+FFFD, so a store
+ * write/read would change the user's bytes without any error. Detecting this
+ * before encoding lets us reject the content rather than corrupt it. Valid
+ * surrogate pairs (astral characters such as U+1D400) pass untouched.
+ */
+function hasUnpairedSurrogate(text) {
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    if (c >= 0xD800 && c <= 0xDBFF) {
+      // High surrogate must be immediately followed by a low surrogate.
+      if (i + 1 >= text.length) return true; // high at end of string
+      const next = text.charCodeAt(i + 1);
+      if (next < 0xDC00 || next > 0xDFFF) return true; // high without low
+      i += 1; // consume the paired low surrogate
+    } else if (c >= 0xDC00 && c <= 0xDFFF) {
+      return true; // low surrogate without a preceding high
+    }
+  }
+  return false;
+}
+
+/** UTF-8 encode without truncation or replacement; reject unpaired surrogates. */
 export function encodeUtf8(text) {
   if (typeof text !== 'string') {
+    throw Object.assign(new Error('invalid_artifact_content'), { code: 'invalid_artifact_content' });
+  }
+  if (hasUnpairedSurrogate(text)) {
     throw Object.assign(new Error('invalid_artifact_content'), { code: 'invalid_artifact_content' });
   }
   return Buffer.from(text, 'utf8');
 }
 
-/** UTF-8 decode in fatal mode: never substitute replacement characters. */
+/**
+ * UTF-8 decode in fatal mode (never substitute replacement characters) while
+ * preserving a leading BOM. The default TextDecoder consumes a leading U+FEFF,
+ * so a stored BOM would not round-trip; ignoreBOM keeps it in the output,
+ * matching Python's strict payload.decode('utf-8') and the workspace-editing
+ * reader. Invalid byte sequences still throw artifact_content_not_utf8.
+ */
 export function decodeUtf8Fatal(bytes) {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch (error) {
     throw Object.assign(new Error('artifact_content_not_utf8'), { code: 'artifact_content_not_utf8' });
   }

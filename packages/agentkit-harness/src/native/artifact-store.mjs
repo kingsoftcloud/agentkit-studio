@@ -14,20 +14,24 @@
  * not assume they exist here.
  *
  * Cross-process publication discipline: every write to a run directory is
- * serialized by a per-run advisory lock file (`.lock`) acquired with
- * O_EXCL, so two writers across separate processes/instances never publish
- * to the same run concurrently. Under the lock the writer (a) reconciles an
- * existing sealed record for the identity (idempotent / conflict), else (b)
- * writes a pending-intent sidecar pinning the *complete* write identity
- * (content digest + size + mediaType + metadata) before publishing content,
- * then (c) enforces the per-run byte quota atomically, (d) publishes
- * content, (e) seals with the meta sidecar, (f) deletes the intent. A crash
- * leaves an orphan content + intent pair; the next same-identity write
- * reconciles it against the locked intent (rejecting changed type/metadata).
- * A crash after sealing leaves a sealed artifact the caller may not have
- * received, which usageBytes still counts. Stale lock takeover completes the
- * interrupted publication rather than racing a new one, so there is never a
- * window with two active writers for the same run.
+ * serialized by a per-run SQLite database acquired with BEGIN IMMEDIATE (see
+ * the lock section below), so two writers across separate processes/instances
+ * never publish to the same run concurrently. Under the lock the writer (a)
+ * reconciles an existing sealed record for the identity (idempotent /
+ * conflict), else (b) writes a pending-intent sidecar pinning the *complete*
+ * write identity (content digest + size + mediaType + metadata) before
+ * publishing content, then (c) enforces the per-run byte quota atomically,
+ * (d) publishes content, (e) seals with the meta sidecar, (f) deletes the
+ * intent. A crash leaves an orphan content + intent pair; the next
+ * same-identity write reconciles it against the locked intent (rejecting
+ * changed type/metadata). A crash after sealing leaves a sealed artifact the
+ * caller may not have received, which usageBytes still counts. The lock is
+ * owned by the holder's LIVE database connection: when the owning process
+ * dies the OS reclaims its file descriptors and SQLite drops the write lock
+ * automatically, so there is NO stale-lock takeover and NO window in which
+ * two writers both believe they hold the lock — the next writer simply
+ * acquires fresh and finishes any interrupted publication under its own
+ * transaction.
  */
 
 import { promises as fs, constants as fsConstants, realpathSync } from 'node:fs';
@@ -533,24 +537,34 @@ async function cleanupStaleTempsIn(dir, root, maxAgeMs) {
 //      non-regular file, a hardlink (nlink > 1), or a realpath escaping the
 //      root; re-resolve the lock directory's realpath. This defeats a
 //      statically-placed trap. It is an existence check, NOT a race-free guard.
-//   3. openAndAcquireLock post-open guard: realpath the file DatabaseSync
-//      actually opened; if it escaped the root, close BEFORE BEGIN IMMEDIATE so
-//      the lock_owner schema is never written outside the root. This catches a
-//      concurrent swap of the path (final component OR ancestor) between the
-//      pre-open check and the open — the boundary a pure existence check cannot
-//      cover.
+//   3. openAndAcquireLock post-open guard: AFTER `new DatabaseSync(path)`,
+//      re-resolve the CURRENT path string with realpathSync(path) and assert
+//      it is still within the root; if not, close BEFORE BEGIN IMMEDIATE so the
+//      lock_owner schema is never written outside the root. NOTE: this
+//      re-resolves the path STRING, not the file descriptor SQLite actually
+//      opened — node:sqlite exposes no way to read back that fd's identity, so
+//      this guard does NOT prove what DatabaseSync opened, and it does NOT
+//      close arbitrary concurrent swaps. It is a bounded single-swap check: it
+//      catches a swap whose effect is visible at the path string by the time
+//      realpathSync runs (a swap at or before that instant). A swap that
+//      happens AFTER realpathSync is not observed here, and SQLite continues
+//      holding whatever fd it opened at construction time.
 // RESIDUAL (not promised closed): node:sqlite has no O_NOFOLLOW, so a swap to a
 // symlink whose target does not yet exist can create an EMPTY file at that
 // outside target during DatabaseSync construction; the post-open guard then
-// detects the escape and closes before any schema write, so no existing outside
-// database is ever corrupted and the lock_owner schema never leaves the root.
-// This residual requires an attacker who can concurrently mutate
-// artifacts/.locks between the checks and the open. Under the
-// trusted-directory assumption — the artifacts root and its .locks subtree are
-// provided by the host and not concurrently mutated by untrusted code — the
-// static checks are complete and the residual does not arise. We fail closed on
-// every static signal we can detect; we do not promise a guarantee that the
-// node:sqlite API cannot provide.
+// re-resolves the path, detects the escape, and closes before any schema
+// write, so no existing outside database is ever corrupted and the lock_owner
+// schema never leaves the root. A swap that lands AFTER the post-open
+// realpathSync is not caught here (SQLite already holds its in-root fd from
+// construction, but the path string now points elsewhere; subsequent opens by
+// other takers re-validate independently). This residual requires an attacker
+// who can concurrently mutate artifacts/.locks between the checks and the
+// open. Under the trusted-directory assumption — the artifacts root and its
+// .locks subtree are Host-provided and not concurrently mutated by untrusted
+// code — the static checks (ensureDirSafe + validateLockDbSurface) and the
+// bounded post-open single-swap check are complete and the residual does not
+// arise. We fail closed on every static signal we can detect; we do not
+// promise a guarantee the node:sqlite API cannot provide.
 
 function lockDirPath(root, scopeDigestValue) {
   return join(root, 'artifacts', '.locks', scopeDigestValue);
@@ -676,12 +690,23 @@ async function validateLockPathEntry(p, rootReal, doRealpath) {
  * the caller retries asynchronously. Any other SQLite error (corruption) is a
  * hard failure — a partial database is recovered by the journal, not here.
  *
- * POST-OPEN GUARD: node:sqlite's DatabaseSync opens by path and follows symlinks
- * (no O_NOFOLLOW option is exposed), so a concurrent swap of the path between
- * validateLockDbSurface and this open cannot be closed in userspace. Resolve
- * the file SQLite actually opened; if it escaped the pinned root, close BEFORE
- * BEGIN IMMEDIATE so the lock_owner schema is never written outside the root.
- * See the trusted-directory assumption above for the bounded residual.
+ * POST-OPEN GUARD: node:sqlite's DatabaseSync opens by path and follows
+ * symlinks (no O_NOFOLLOW option is exposed), so a concurrent swap of the
+ * path between validateLockDbSurface and this open cannot be fully closed in
+ * userspace. After `new DatabaseSync(path)` we call realpathSync(path) and
+ * assertWithin against the pinned root. This re-resolves the CURRENT path
+ * STRING — NOT the file descriptor SQLite actually opened (node:sqlite
+ * exposes no way to read that fd back), so the guard does NOT prove the
+ * identity of the fd DatabaseSync holds and does NOT close arbitrary
+ * concurrent swaps. It is a bounded single-swap check: it catches a swap
+ * whose effect is visible at the path string by the time realpathSync runs.
+ * If the path now resolves outside the root we close BEFORE BEGIN IMMEDIATE
+ * so the lock_owner schema is never written outside the root. A swap landing
+ * after this realpathSync is not caught here. Under the trusted-directory
+ * assumption above (the artifacts root and .locks subtree are Host-provided
+ * and not concurrently mutated by untrusted code) the static checks plus
+ * this bounded single-swap check are complete; the residual requires a
+ * concurrent attacker inside .locks.
  */
 function openAndAcquireLock(path, token, pid, rootReal) {
   const db = new DatabaseSync(path, { timeout: 0 });
