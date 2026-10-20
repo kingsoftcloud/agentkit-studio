@@ -23,9 +23,17 @@ export function prepareEffect(snapshot: RunSnapshot, kind: EffectKind, phase: Ph
     [{ kind: 'effect.prepared', payload: { operationKey, kind } }],
     { intents: [{ operationKey, kind, payload: copy(payload), status: 'prepared' }] });
 }
-export function reduceCommand(snapshot: RunSnapshot, command: RunCommand): CommitBatch {
+export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pending: EffectIntent | null = null): CommitBatch {
+  const original = snapshot;
+  const retiring = ['guide', 'steer'].includes(command.kind) && typeof command.payload.text === 'string'
+    && command.payload.text.trim().length > 0 && pending?.status === 'prepared' && pending.operationKey === snapshot.pendingIntent;
+  if (retiring) snapshot = { ...snapshot, pendingIntent: null };
   let changes: Partial<RunSnapshot> = {}, reason = 'applied';
   const facts: { kind: string; payload: ObjectValue }[] = [];
+  const receipts: EffectReceipt[] = retiring ? [{ operationKey: pending!.operationKey, status: 'not_dispatched',
+    result: { code: 'superseded_before_dispatch', commandId: command.commandId, executed: false } }] : [];
+  if (retiring) facts.push({ kind: 'effect.not_dispatched', payload: {
+    operationKey: pending!.operationKey, kind: pending!.kind, commandId: command.commandId } });
   switch (command.kind) {
     case 'cancel':
     case 'policy_revoked':
@@ -55,6 +63,7 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand): Commi
     }
     case 'steer':
       if (typeof command.payload.text !== 'string' || !command.payload.text.trim()) reason = 'invalid_steering';
+      else if (snapshot.reason === 'effect_outcome_unknown' || snapshot.reason === 'recovery_retry_exhausted') reason = 'recovery_required';
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
         changes = { goal: command.payload.text, goalRevision: snapshot.goalRevision + 1, phase: 'preparing_context',
@@ -70,15 +79,24 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand): Commi
       break;
     case 'guide':
       if (typeof command.payload.text !== 'string' || !command.payload.text.trim()) reason = 'invalid_guidance';
+      else if (snapshot.reason === 'effect_outcome_unknown' || snapshot.reason === 'recovery_retry_exhausted') reason = 'recovery_required';
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
         const guidance: Message = { role: 'user', content: command.payload.text, kind: 'guidance', persistent: true };
-        changes = { preparedContext: null, context: { ...snapshot.context, preparedCursor: null } };
+        changes = { preparedContext: null, context: { ...snapshot.context, preparedCursor: null },
+          ...(retiring ? { pendingIntent: null, phase: snapshot.phase === 'paused' ? 'paused' as const
+            : snapshot.pendingTools.length ? 'executing_tools' as const : snapshot.phase === 'compacting' ? 'compacting' as const : 'preparing_context' as const,
+            ...(snapshot.phase === 'paused' ? { resumePhase: snapshot.pendingTools.length ? 'executing_tools' as const
+              : snapshot.resumePhase === 'compacting' ? 'compacting' as const : 'preparing_context' as const } : {}) } : {}) };
+        if (retiring && pending!.kind === 'tool') {
+          const interaction = pending!.payload.interaction;
+          if (interaction && typeof interaction === 'object' && !Array.isArray(interaction)) changes.interaction = copy(interaction);
+        }
         if (snapshot.pendingTools.length) changes.queuedGuidance = [...snapshot.queuedGuidance, guidance];
         else {
           changes.messages = [...snapshot.messages, guidance];
-          if (['verifying', 'finalizing'].includes(snapshot.phase)) Object.assign(changes, {
-            phase: 'preparing_context', candidate: null, verification: null, finalText: '', outcome: null, reason: null,
+          if (['verifying', 'finalizing'].includes(snapshot.phase) || retiring && snapshot.candidate !== null) Object.assign(changes, {
+            phase: snapshot.phase === 'paused' ? 'paused' : 'preparing_context', candidate: null, verification: null, finalText: '', outcome: null, reason: null,
           });
         }
       }
@@ -89,5 +107,6 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand): Commi
   facts.push({ kind: 'command.applied', payload: { commandId: command.commandId, kind: command.kind, reason } });
   if (changes.phase && terminal(changes.phase)) facts.push({ kind: 'run.terminal', payload: {
     phase: changes.phase, outcome: changes.outcome ?? null, reason: changes.reason ?? null } });
-  return transition(snapshot, changes, facts, { commandId: command.commandId, requireNoPendingCommands: false });
+  return transition(original, { ...changes, ...(retiring ? { pendingIntent: null } : {}) }, facts,
+    { commandId: command.commandId, requireNoPendingCommands: false, receipts });
 }

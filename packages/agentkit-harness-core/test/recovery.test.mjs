@@ -14,8 +14,7 @@ function claimed(store, configuration, kind = 'tool', calls = [call()]) {
   const lease = store.acquire(scope, 'run', 'lost-worker', 1, 1);
   const batch = kind === 'tool' ? prepareEffect(snapshot, kind, 'executing_tools', { calls, interaction: null }, {
     pendingTools: calls, messages: [...snapshot.messages, { role: 'assistant', content: '', toolCalls: calls }],
-  }) : prepareEffect(snapshot, kind, kind === 'model' ? 'requesting_model' : 'preparing_context', {},
-    kind === 'model' ? { usage: { ...emptyUsage(), modelCalls: 1 } } : {});
+  }) : prepareEffect(snapshot, kind, kind === 'model' ? 'requesting_model' : 'preparing_context', {});
   store.commit(scope, 'run', lease, 1, 0, batch); store.claim(scope, 'run', lease, 1, batch.snapshot.pendingIntent);
   return { config, snapshot, oldKey: batch.snapshot.pendingIntent };
 }

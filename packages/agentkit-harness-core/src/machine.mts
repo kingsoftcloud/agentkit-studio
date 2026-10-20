@@ -88,8 +88,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
       return finalizing(snapshot, 'blocked', 'repeated_tool_error_no_progress');
     }
     if (modelRoom(snapshot, config) <= 0) return finalizing(snapshot, 'budget_exhausted', 'model_budget_exhausted');
-    return prepareEffect(snapshot, 'model', 'requesting_model', { finalizationOnly: finalizationOnly(snapshot, config) },
-      { usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls + 1 } });
+    return prepareEffect(snapshot, 'model', 'requesting_model', { finalizationOnly: finalizationOnly(snapshot, config) });
   }
   if (snapshot.phase === 'executing_tools') {
     if (!snapshot.pendingTools.length) return transition(snapshot, { phase: 'preparing_context', interaction: null,

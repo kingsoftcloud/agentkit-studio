@@ -149,7 +149,7 @@ export interface RunSnapshot extends RunIdentity {
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
 export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child';
 export interface EffectIntent { operationKey: string; kind: EffectKind; payload: ObjectValue; status: 'prepared' | 'running'; claimedAtMs?: number }
-export interface EffectReceipt { operationKey: string; status: 'committed' | 'failed' | 'uncertain'; result: ObjectValue }
+export interface EffectReceipt { operationKey: string; status: 'committed' | 'failed' | 'uncertain' | 'not_dispatched'; result: ObjectValue }
 export type CommandKind = 'cancel' | 'policy_revoked' | 'pause' | 'resume' | 'submit_interaction'
   | 'steer' | 'guide' | 'promote_child' | 'message_child' | 'cancel_child';
 export interface RunCommand { commandId: string; kind: CommandKind; payload: ObjectValue }
@@ -177,6 +177,7 @@ export interface RunStore {
   renew(scope: RunScope, runId: string, lease: Lease, now: number, ttlMs: number): Lease;
   release(scope: RunScope, runId: string, lease: Lease): void;
   commit(scope: RunScope, runId: string, lease: Lease, now: number, expectedRevision: number, batch: CommitBatch): RunSnapshot;
+  /** Claim once; atomically charges a model attempt. Load the updated snapshot before reducing its result. */
   claim(scope: RunScope, runId: string, lease: Lease, now: number, operationKey: string): EffectIntent;
   enqueue(scope: RunScope, runId: string, command: RunCommand): CommandReceipt;
   events(scope: RunScope, runId: string, after?: number): NativeEvent[];

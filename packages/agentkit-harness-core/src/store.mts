@@ -134,7 +134,15 @@ export class TransactionalRunStore implements RunStore {
           && !record.intents.some(item => item.operationKey === intent.operationKey), 'intent_immutable');
       }
       for (const receipt of batch.receipts) {
-        invariant(record.intents.some(item => item.operationKey === receipt.operationKey && item.status === 'running')
+        const intent = record.intents.find(item => item.operationKey === receipt.operationKey);
+        const command = record.commands.find(row => !row.consumed && row.command.commandId === batch.consumedCommandId)?.command;
+        const undispatched = receipt.status === 'not_dispatched' && intent?.status === 'prepared'
+          && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null
+          && command && ['guide', 'steer'].includes(command.kind)
+          && typeof command.payload.text === 'string' && command.payload.text.trim()
+          && receipt.result.commandId === command.commandId && receipt.result.code === 'superseded_before_dispatch'
+          && receipt.result.executed === false;
+        invariant((receipt.status === 'not_dispatched' ? undispatched : intent?.status === 'running')
           && !record.receipts.some(item => item.operationKey === receipt.operationKey), 'receipt_without_claim');
       }
       const unsettled = [...record.intents, ...batch.intents].filter(intent =>
@@ -162,7 +170,15 @@ export class TransactionalRunStore implements RunStore {
         && !record.receipts.some(receipt => receipt.operationKey === operationKey), 'effect_already_claimed');
       invariant(pendingCommands(record).length === 0, 'pending_command_conflict');
       const running = { ...intent, status: 'running' as const, claimedAtMs: now };
-      return { record: { ...record, intents: record.intents.map(item => item === intent ? running : item) }, value: copy(running) };
+      // A prepared request reserves execution order, not provider usage. Charge
+      // its attempt atomically with the claim, including claims lost in a crash.
+      const snapshot = intent.kind === 'model' ? { ...record.snapshot, usage: {
+        ...record.snapshot.usage, modelCalls: record.snapshot.usage.modelCalls + 1,
+      } } : record.snapshot;
+      invariant(Number.isSafeInteger(snapshot.usage.modelCalls), 'usage_overflow');
+      if (intent.kind === 'model') invariant(record.configuration.limits.maxModelCalls === null
+        || snapshot.usage.modelCalls + snapshot.descendantUsage.modelCalls <= record.configuration.limits.maxModelCalls, 'model_budget_exhausted');
+      return { record: { ...record, snapshot, intents: record.intents.map(item => item === intent ? running : item) }, value: copy(running) };
     });
   }
   enqueue(scope: RunScope, runId: string, input: RunCommand): CommandReceipt {

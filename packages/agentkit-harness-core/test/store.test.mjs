@@ -34,8 +34,11 @@ for (const backend of ['memory', 'sqlite']) {
     const { store, snapshot, lease } = setup(t);
     const intent = prepareEffect(snapshot, 'model', 'requesting_model', {});
     const started = store.commit(scope, 'run', lease, 20, 0, intent);
+    assert.equal(started.usage.modelCalls, 0);
     store.claim(scope, 'run', lease, 21, started.pendingIntent);
-    const done = transition(started, { phase: 'verifying', pendingIntent: null }, [{ kind: 'model.completed', payload: { text: 'done' } }],
+    const claimed = store.load(scope, 'run').snapshot;
+    assert.equal(claimed.usage.modelCalls, 1);
+    const done = transition(claimed, { phase: 'verifying', pendingIntent: null }, [{ kind: 'model.completed', payload: { text: 'done' } }],
       { receipts: [{ operationKey: started.pendingIntent, status: 'committed', result: { kind: 'final_candidate' } }] });
     const saved = store.commit(scope, 'run', lease, 22, 1, done);
     assert.deepEqual(store.commit(scope, 'run', lease, 23, 1, done), saved);

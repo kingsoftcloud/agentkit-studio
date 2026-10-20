@@ -105,7 +105,14 @@ export class NativeKernel {
         const commands = pendingCommands(record);
         const command = commands[0];
         if (command) {
-          this.commit(snapshot, lease, reduceCommand(snapshot, command));
+          const intent = record.intents.find(item => item.operationKey === snapshot.pendingIntent) ?? null;
+          // A lost claim must be classified before steering can invalidate any
+          // request. An undispatched intent can instead be retired definitively.
+          if (intent?.status === 'running' && ['guide', 'steer'].includes(command.kind)) {
+            this.commit(snapshot, lease, recoverClaimed(snapshot, config, intent, this.now()));
+            continue;
+          }
+          this.commit(snapshot, lease, reduceCommand(snapshot, command, intent));
           continue;
         }
         if (snapshot.phase === 'paused' || snapshot.phase === 'awaiting_interaction') return snapshot;
@@ -123,8 +130,9 @@ export class NativeKernel {
           }
           try { this.store.claim(scope, runId, lease, this.now(), intent.operationKey); }
           catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
-          const batch = await this.execute(snapshot, config, intent, controller.signal);
-          this.commit(snapshot, lease, batch);
+          const claimedSnapshot = this.store.load(scope, runId).snapshot;
+          const batch = await this.execute(claimedSnapshot, config, intent, controller.signal);
+          this.commit(claimedSnapshot, lease, batch);
           continue;
         }
         const next = plan(snapshot, config, { context: !!this.ports.context, workspace: !!this.ports.workspace, verification: !!this.ports.verification });
