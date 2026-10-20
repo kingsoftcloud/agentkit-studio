@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
+  'mount-host': { type: 'boolean', default: false } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
@@ -57,22 +58,39 @@ try {
     if (entry === '@deepseek-ai' || entry.startsWith('.')) continue;
     await symlink(join(repository, 'node_modules', entry), join(dependencies, entry));
   }
-  for (const entry of await readdir(join(repository, 'node_modules/@deepseek-ai'))) {
-    await symlink(join(repository, 'node_modules/@deepseek-ai', entry), join(dependencies, '@deepseek-ai', entry));
+  const dshDependencies = values['mount-host'] ? join(source, 'apps/cli/node_modules/@deepseek-ai') : join(repository, 'node_modules/@deepseek-ai');
+  for (const entry of await readdir(dshDependencies)) {
+    await symlink(join(dshDependencies, entry), join(dependencies, '@deepseek-ai', entry));
   }
-  await symlink(join(source, 'packages/core/system-prompt'), join(dependencies, '@deepseek-ai/dsh-system-prompt'));
+  if (!values['mount-host']) await symlink(join(source, 'packages/core/system-prompt'), join(dependencies, '@deepseek-ai/dsh-system-prompt'));
+  if (values['mount-host']) {
+    const profilePackages = join(root, 'home/profiles/sdk/node_modules/@kingsoftcloud');
+    await mkdir(profilePackages, { recursive: true });
+    await symlink(installed, join(profilePackages, 'agentkit-studio'));
+  }
   const nodeOnlyBin = join(root, 'node-only-bin');
   await mkdir(nodeOnlyBin); await symlink(process.execPath, join(nodeOnlyBin, 'node'));
   const patch = join(root, 'native.patch.yml'), sessions = join(root, 'sessions');
+  const mountedRows = values['mount-host'] ? [
+    '    - id: studio-proof-webserver', "      name: '@deepseek-ai/dsh-host-webserver'", '      config:',
+    "        host: '127.0.0.1'", '        port: 0',
+    '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
+    '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
+  ] : [];
+  const fixture = values['mount-host'] ? 'studio-native-mounted-harness.mjs' : 'studio-native-harness.mjs';
   await writeFile(patch, [
     '- id: session-persistence-jsonl', '  config:', `    root: ${JSON.stringify(sessions)}`, '    compression: none',
     '- insert:',
-    '    - id: studio-proof-preset-registry', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:', '        default: studio-native-proof',
-    '    - id: studio-native-host-proof', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-native-harness.mjs')).href)}`,
+    ...mountedRows,
+    '    - id: studio-proof-preset-registry', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:',
+    `        default: ${values['mount-host'] ? 'standard' : 'studio-native-proof'}`,
+    '    - id: studio-native-host-proof', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures', fixture)).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`, `        repository: ${JSON.stringify(installed)}`,
+    `        mountHost: ${values['mount-host']}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`, '',
   ].join('\n'));
-  const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches: [patch], dshHome: join(root, 'home'),
+  const patches = values['mount-host'] ? [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch] : [patch];
+  const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches, dshHome: join(root, 'home'),
     cwd: root, processCwd: root, provider: 'agentkit-studio-fixture', model: 'pinned', initializeTimeoutMs: 30_000, requestTimeoutMs: 30_000,
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_PYTHON: '/unavailable/python', AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
@@ -118,7 +136,12 @@ try {
   assert.equal(stored.filter(event => event.type === 'turn/end').length, 4);
   assert.equal(JSON.stringify(stored).includes('sk-studio-fixture-secret'), false);
   assert.equal((await readFile(join(root, 'studio/native-harness/runs.sqlite'))).includes(Buffer.from('sk-studio-fixture-secret')), false);
-  console.log('Studio Native Host PASS: actual packed Studio files, public Host prompt import, Node-only PATH, selected production preset, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual HTTP requests, 2 Node workspace writes, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.');
+  if (values['mount-host']) {
+    const probes = (await readFile(join(root, 'mounted-host-http.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(probes.length, 2); assert.ok(probes.some(probe => probe.source === 'resume'));
+    assert.ok(probes.every(probe => probe.unauthorizedStatus === 401 && probe.compatible));
+  }
+  console.log(`Studio Native Host PASS: ${values['mount-host'] ? 'full mountStudioHost with real authenticated HTTP control RPC, production preset admission and startup restoration' : 'production Host factory and runtime plugin'}, actual packed Studio files, public Host prompt import, Node-only PATH, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual model HTTP requests, 2 Node workspace writes, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.`);
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });
