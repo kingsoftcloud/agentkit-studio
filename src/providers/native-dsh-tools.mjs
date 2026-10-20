@@ -4,8 +4,8 @@ import { realpathSync } from 'node:fs';
 import { canonical, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/native/workspace-tools.mjs';
 import { projectNativeDshContent } from './native-input.mjs';
+import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
-const OUTPUT = { type: 'object', properties: { result: { type: 'string' } }, required: ['result'], additionalProperties: false };
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
@@ -38,7 +38,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir }) {
     const disposers = builtin.map(name => {
       const definition = formal.get(name) ?? contracts.get(name);
       return ctx.tools.register({ name, description: definition.description, parameters: definition.parameters,
-        output: { schema: OUTPUT, render: (_args, value) => [{ type: 'text', text: value.result }] },
+        output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
         execute: async (args, exec) => {
           const invocation = calls.get(String(exec.callId));
           invariant(invocation && invocation.agent === exec.agent && invocation.request.call.name === name
@@ -49,7 +49,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir }) {
           const outcome = formal.has(name) ? await state(exec.agent).execute({ ...invocation.request, signal: exec.signal })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
           invocation.outcome = structuredClone(outcome);
-          return { result: typeof outcome.content === 'string' ? outcome.content : canonical(outcome.content) };
+          return nativeDshBuiltinOutput(outcome, { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
         },
       });
     });
