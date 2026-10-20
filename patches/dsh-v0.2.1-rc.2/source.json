@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-11",
-  "tree": "0331b5810698a91b459a1a6f70aade3691ef0392",
-  "sourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
+  "headCommit": "1c1382f45ec3aa66a98dc695eb181dac9f412146",
+  "branchRef": "refs/heads/codex/studio-dsh-native-polish-verified",
+  "tree": "9446122dbf21d699713b9b19f9db3f9d0b4e4ecc",
+  "sourceSha256": "2345b4fd749e16d6847d6d869908aa8fec82620e379903cc179a234ff151c135",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "035164e7cc34c39d0326cd4eef11e6a2c9c64afc7a3f798275a092e9620dc3b2"
+    "sha256": "88f47d6ac4f918f1acdfc7e9250cb3c73ef903efca59ce1eed5ae5e4e3e22f5c"
   },
   "commits": [
     {
@@ -238,6 +238,18 @@
       "file": "045-tool-dispatch-definition.patch",
       "commit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
       "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+    },
+    {
+      "id": "046",
+      "file": "046-native-schedule-manager.patch",
+      "commit": "5abaa77f096751d94104b207ed703bf038cc2d7c",
+      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be"
+    },
+    {
+      "id": "047",
+      "file": "047-isolated-native-browser.patch",
+      "commit": "1c1382f45ec3aa66a98dc695eb181dac9f412146",
+      "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611"
     }
   ]
 }

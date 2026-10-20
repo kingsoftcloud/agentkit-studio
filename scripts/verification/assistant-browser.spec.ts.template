@@ -1,0 +1,73 @@
+// @vitest-environment jsdom
+/** Studio link interaction with the real root-scoped native Browser composition. */
+import * as React from 'react';
+import { Context } from '@deepseek-ai/cordis';
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store';
+import * as renderer from '@deepseek-ai/dsh-client-ui-renderer/client';
+import * as locale from '@deepseek-ai/dsh-client-locale/client';
+import * as browser from '@deepseek-ai/dsh-client-ui-sidebar-browser/client';
+import { Button, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives';
+import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createAssistantBrowser } from '@studio/src/client/components/assistant-browser.mjs';
+import { createAssistantTranscript } from '@studio/src/client/components/assistant-transcript.mjs';
+import { createAssistantBrowserGraph } from '@studio/src/client/dsh/assistant-browser-graph.mjs';
+
+const h = React.createElement;
+const modules = { React, Context, renderer, locale, browser, createSnapshotStore };
+const BRAND = { border: '#888', surface: '#fff', inkMuted: '#555', danger: '#900' };
+const ui = { React, BRAND, Button, MarkdownText, MarkdownDelegateProvider };
+const Browser = createAssistantBrowser({ ui, nativeModules: () => modules, window });
+const Transcript = createAssistantTranscript({ ui, hostRemote: {}, assistantConversation: { assemble: () => [] }, window });
+const tree = (agentId: string, url: string) => h(Browser, { agentId }, h(Transcript, { agentId, messages: [{ id: 'reply', role: 'assistant', text: `[Read report](${url})` }] }));
+afterEach(async () => { cleanup(); await act(async () => { await Promise.resolve(); }); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+describe('assistant native browser', () => {
+  it('opens modified Markdown clicks internally, keeps two instances separate, and releases on close or assistant switch', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const first = render(tree('one', 'https://one.example/report'));
+    const second = render(tree('two', 'https://two.example/report'));
+    fireEvent.click(within(first.container).getByRole('link', { name: 'Read report' }), { ctrlKey: true });
+    fireEvent.click(within(second.container).getByRole('link', { name: 'Read report' }));
+    await waitFor(() => { expect(first.container.querySelector('iframe')?.src).toBe('https://one.example/report'); expect(second.container.querySelector('iframe')?.src).toBe('https://two.example/report'); });
+    const firstFrame = first.container.querySelector('iframe')!;
+    const secondFrame = second.container.querySelector('iframe')!;
+    expect(open).not.toHaveBeenCalled();
+    fireEvent.click(within(first.container).getByRole('button', { name: '关闭浏览器' }));
+    await waitFor(() => { expect(firstFrame.isConnected).toBe(false); });
+    expect(secondFrame.isConnected).toBe(true);
+    second.rerender(tree('different', 'https://different.example/'));
+    await waitFor(() => { expect(secondFrame.isConnected).toBe(false); });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('retains opaque sandbox after uncontrolled navigation and only opens externally from the explicit native action', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const view = render(tree('one', 'https://docs.example/report'));
+    fireEvent.click(view.getByRole('link', { name: 'Read report' }));
+    await waitFor(() => { expect(view.container.querySelector('iframe')).not.toBeNull(); });
+    const frame = view.container.querySelector('iframe')!;
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
+    expect(view.container.querySelector('[aria-pressed]')).toBeNull();
+    const external = view.container.querySelector('button[title="Open in system browser"]') || view.container.querySelector('button[title="在系统浏览器中打开"]');
+    expect(external).not.toBeNull();
+    fireEvent.click(external!); expect(open).toHaveBeenCalledExactlyOnceWith('https://docs.example/report', '_blank', 'noopener,noreferrer');
+    fireEvent.load(frame); fireEvent.load(frame);
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
+    expect(external).toHaveProperty('disabled', true);
+    fireEvent.click(external!); expect(open).toHaveBeenCalledTimes(1);
+    view.unmount(); await waitFor(() => { expect(frame.isConnected).toBe(false); });
+  });
+
+  it('refuses Studio-origin links and unavailable old hosts without opening an external browser', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const view = render(tree('one', `${window.location.origin}/api`));
+    fireEvent.click(view.getByRole('link', { name: 'Read report' }));
+    expect(view.getByRole('alert').textContent).toContain('不能');
+    expect(view.container.querySelector('iframe')).toBeNull();
+    const container = document.createElement('div'); document.body.append(container);
+    try { await expect(createAssistantBrowserGraph({ modules: { ...modules, browser: { apply() {}, inject: ['sidebarRight'] } }, window, container, url: 'https://example.test/' })).rejects.toThrow('更新 Studio'); }
+    finally { container.remove(); }
+    expect(open).not.toHaveBeenCalled();
+  });
+})

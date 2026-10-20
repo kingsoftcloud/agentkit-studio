@@ -76,6 +76,22 @@ jobs:
           digest="$(sha256sum "$archive" | cut -d ' ' -f 1)"
           node scripts/verify-assistant-automatic-startup.mjs "$installation" "$archive" \
             .artifacts/assistant-automatic-startup.json "$digest" --profile-migration --source-commit "$GITHUB_SHA"
+      - name: Install Chromium for assistant acceptance
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Verify native assistant surfaces in the browser
+        shell: bash
+        env:
+          STUDIO_VERIFY_UI: '1'
+          STUDIO_VERIFY_PROFILE: automatic-startup
+        run: |
+          set -euo pipefail
+          export DSH_HOME="$RUNNER_TEMP/assistant-automatic-startup/dsh"
+          export AGENTKIT_HOME="$RUNNER_TEMP/assistant-automatic-startup/agentkit"
+          export CODEX_HOME="$RUNNER_TEMP/assistant-automatic-startup/codex"
+          export DSH_TELEMETRY_DISABLED=1
+          export AGENTKIT_DSH_ROOT="$(node -p "JSON.parse(require('fs').readFileSync('.artifacts/patched-host-acceptance.json')).checkout")"
+          export STUDIO_VERIFY_CHROME="$(node --input-type=module -e 'import {chromium} from "@playwright/test"; console.log(chromium.executablePath())')"
+          node scripts/verify-personal-assistant-host.mjs .artifacts/assistant-native-web/assistant.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -85,5 +101,6 @@ jobs:
             .artifacts/patched-host/host-tests.json
             .artifacts/patched-host/host-dependency-lifecycle.json
             .artifacts/assistant-automatic-startup.json
+            .artifacts/assistant-native-web/
           if-no-files-found: error
           retention-days: 7

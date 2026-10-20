@@ -3,6 +3,30 @@ import { ASSISTANT_ATTACHMENT_LIMITS, readAssistantAttachment } from '../state/a
 const allowed = new Set(['session/follow', 'session/projections', 'session/page', 'session/prompt', 'fileUploads/upload']);
 const bytesBase64 = bytes => { let value = ''; for (let offset = 0; offset < bytes.length; offset += 0x8000) value += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)); return btoa(value); };
 
+/** Minimal command face for the cloud-only composer; no command menus or Host hooks. */
+export function createAssistantNativeCommandUi({ sessionId, sessions, createSnapshotStore }) {
+  const file = createSnapshotStore(null), popups = new WeakMap();
+  const inScope = scope => {
+    const session = sessions.sessionOf(scope), binding = sessions.binding(sessionId);
+    if (!session || session.sessionId !== sessionId || binding?.session !== session) throw new Error('Cloud commands require the retained cloud Session scope');
+  };
+  return { file, commandUi: {
+    register(command) {
+      if (command.name !== 'file' || command.ui?.kind !== 'action') throw new Error('Cloud composer only supports the native file action');
+      if (file.getSnapshot()) throw new Error('Cloud file action already registered');
+      file.set(command);
+      return () => { if (file.getSnapshot() === command) file.set(null); };
+    },
+    popupFor(scope) {
+      inScope(scope);
+      // InputHub invokes dismissal during normal Send and Escape even though
+      // this isolated graph never mounts a command popup.
+      if (!popups.has(scope)) popups.set(scope, Object.freeze({ dismiss() {} }));
+      return popups.get(scope);
+    },
+  } };
+}
+
 /** Retain accepts discovered identities, not a Host-authenticated id on its own. */
 function waitForCloudSession(sessions, sessionId, signal) {
   signal.throwIfAborted();
@@ -96,10 +120,40 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
       });
     const EmptyView = () => null;
     ctx.slots.register({ name: 'studio.assistant.cloud-composer' }, function NativeComposer({ renderFactorySlot }) {
-      return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: { views: EmptyView, widthControls: EmptyView } });
+      return React.createElement('div', { 'data-assistant-cloud-composer': true },
+        React.createElement('style', null, '[data-assistant-cloud-composer] [data-composer-card] button[aria-haspopup="listbox"]:disabled { display: none; }'),
+        renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: { views: EmptyView, widthControls: EmptyView } }));
     });
+    const commands = createAssistantNativeCommandUi({ sessionId: transport.sessionId, sessions: ctx.sessions, createSnapshotStore });
+    ctx.provide('commandUi', commands.commandUi);
     await ctx.plugin(conversation, { hostPathPolicy: 'upload-only', draftPersistence: 'memory-only', submissionActions: 'queue-only' }).await();
     await ctx.plugin(attachment).await();
+    const inputState = createSnapshotStore(transport.getState());
+    ctx.effect(() => transport.subscribe(() => inputState.set(transport.getState())));
+    const uploadAccess = ctx.remoteAccess.source('session', transport.sessionId, 'fileUploads/upload');
+    const canPickFiles = () => {
+      const state = transport.getState(), command = commands.file.getSnapshot();
+      return !disposed && !state.invalid && !state.pending && !state.busy && !state.disconnected
+        && uploadAccess.getSnapshot() && command?.available({ sessionId: transport.sessionId }) === true;
+    };
+    ctx.slots.register({ name: 'conversation.input.left', id: 'studio.assistant.attachment',
+      inject: () => ({ hooks: { cloudInputState: inputState, cloudFileCommand: commands.file, cloudUploadAccess: uploadAccess } }),
+    }, function CloudAttachment({ sessionId, useInput, useCloudInputState, useCloudFileCommand, useCloudUploadAccess }) {
+      // Subscribe to native intake and transport gates without introducing a
+      // parallel draft or picker. The Host file command owns both.
+      useInput(value => value); useCloudInputState(value => value); useCloudUploadAccess(value => value);
+      const command = useCloudFileCommand(value => value);
+      const [mounted, setMounted] = React.useState(false);
+      React.useEffect(() => { setMounted(true); }, []);
+      const disabled = !mounted || sessionId !== transport.sessionId || !canPickFiles();
+      return React.createElement('button', { type: 'button', 'aria-label': '添加附件', title: '添加附件', disabled,
+        'data-assistant-native-attachment': true,
+        onMouseDown: event => event.preventDefault(),
+        onClick: () => { if (sessionId === transport.sessionId && canPickFiles()) commands.file.getSnapshot()?.ui.run({ sessionId }); },
+        style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', padding: 0,
+          border: 0, borderRadius: '8px', background: 'transparent', color: 'inherit', opacity: disabled ? 0.4 : 1, cursor: disabled ? 'default' : 'pointer' },
+      }, command?.icon ? React.createElement(command.icon, { size: 16 }) : '＋');
+    });
     // Existing product history already renders the safe Queue and plan facts.
     for (const id of ['queue', 'todo']) ctx.slots.register({ name: 'conversation.input.dock', id, priority: 1000 }, () => null);
     const updateBlock = () => {
@@ -119,16 +173,6 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
     if (ctx.sessions.binding(transport.sessionId) !== reference.binding) throw new Error('Cloud session binding changed');
     if (container) unmount = ctx.get('uiRenderer').mount(container);
     return { ctx, reference, transport, dispose,
-      addFiles(files) {
-        if (disposed || ctx.sessions.binding(transport.sessionId) !== reference.binding) return '云端输入连接已关闭，请重新连接';
-        const pending = transport.getState();
-        if (pending.invalid || pending.pending || pending.busy || pending.disconnected) return '请先确认上一条消息的保存结果';
-        // Public ComposerBarInjected owns native browser intake, draft allocation
-        // and upload cancellation; this picker never creates a parallel draft.
-        const bar = ctx.slots.entries('conversation.composer.bar')[0];
-        const intake = bar?.inject(transport.sessionId)?.addFiles;
-        return typeof intake === 'function' ? intake(files) : '当前原生输入未提供文件选择，请重新连接';
-      },
       async confirm() {
         if (disposed) return { accepted: false, reset: false };
         const input = ctx.conversation.input.for(reference.binding.ctx), before = input.state.getSnapshot();

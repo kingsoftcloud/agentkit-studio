@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep the assistant conversation quiet: one native attachment picker, concise errors and on-demand connection diagnostics.
+- Open assistant links in an instance-scoped native Studio browser pane with explicit external opening and cleanup on close or assistant change.
+- Replace the one-shot delay form with the native DSH task manager, recurring rules, complete-record editing and delivery history; admit only trusted native schedule tools scoped to the current assistant Session.
+- Add a secret-free Ubuntu PR browser acceptance stage. Full-access cloud execution still requires a separately isolated executor; current deployment and existing Session permissions are unchanged.
+
 - Fix normal portable assistant cold startup and process-restart scheduling through profile-owned plugin resolution and native runtime readiness dependencies; add an installed CLI startup/restart CI smoke.
 
 - Connect personal assistants to an isolated native cloud conversation with durable submission, scoped retry and cancellation, paginated tool history, and verified image and file attachments.

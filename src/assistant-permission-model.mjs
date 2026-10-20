@@ -8,6 +8,7 @@ import { createAssistantWorkspaceAttachmentCopies } from './assistant-workspace-
 
 export const ASSISTANT_PERMISSION_PROFILE = 'workspace-managed/v1';
 const ROUTINE = Object.freeze(['read', 'read_image', 'write', 'edit', 'glob', 'grep']);
+const SESSION_TOOLS = Object.freeze(['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']);
 const liveGuards = new WeakMap();
 const SENSITIVE = new Set(['external-send', 'payment', 'destructive-delete', 'account-permission']);
 const fail = message => Object.assign(new Error(message), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE', status: 503 });
@@ -127,7 +128,7 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
   const catalog = new Map();
   for (const item of sensitiveTools) {
     if (!item || typeof item.name !== 'string' || !SENSITIVE.has(item.category) || typeof item.describe !== 'function'
-      || item.definition?.name !== item.name || typeof item.definition?.execute !== 'function' || ROUTINE.includes(item.name) || ['bash', 'run_code', 'pwsh', 'terminal'].includes(item.name) || catalog.has(item.name)) throw fail('Invalid sensitive tool catalog');
+      || item.definition?.name !== item.name || typeof item.definition?.execute !== 'function' || ROUTINE.includes(item.name) || SESSION_TOOLS.includes(item.name) || ['bash', 'run_code', 'pwsh', 'terminal'].includes(item.name) || catalog.has(item.name)) throw fail('Invalid sensitive tool catalog');
     catalog.set(item.name, { ...item });
   }
   function location(sessionId) {
@@ -212,6 +213,15 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     catch (error) { state.ready = false; throw error; }
     finally { state.pending = undefined; }
   }
+  // The native service owns the official definitions and their original bodies.
+  // Resolve on every read/call so late native readiness, scoped replacements and
+  // plugin disposal cannot leave a cached name-based grant behind.
+  function sessionTool(agent, name) {
+    if (!SESSION_TOOLS.includes(name)) return false;
+    const tools = agent.ctx?.get('tools'), schedule = agent.ctx?.get('schedule');
+    const definition = tools?.get(name, agent);
+    return Boolean(definition && typeof schedule?.isToolDefinition === 'function' && schedule.isToolDefinition(definition));
+  }
   async function initialize(agent, state) {
     const cwd = await owned(agent?.session?.id);
     lifetime.signal.throwIfAborted();
@@ -230,8 +240,9 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     const grants = new WeakSet(); let disposed = false;
     function decision(exec) {
       if (disposed || exec.agent !== agent || exec.signal?.aborted || directory.get(agent.session) !== cwd || agent.session.header.cwd !== cwd) return 'Assistant workspace ownership changed';
-      if (!admitted.has(exec.name) || tools.get(exec.name, agent) !== admitted.get(exec.name)) return 'This tool is not admitted by the assistant workspace policy';
       if (exec.arguments?.sandbox_permissions !== undefined) return 'Sandbox escalation requires a separate supported capability';
+      if (sessionTool(agent, exec.name)) return undefined;
+      if (!admitted.has(exec.name) || tools.get(exec.name, agent) !== admitted.get(exec.name)) return 'This tool is not admitted by the assistant workspace policy';
       if (sensitiveCatalog.has(exec.name)) return approval.effectivePolicy(agent.session) === 'ask' ? undefined : 'Sensitive approvals are disabled for this session';
       const field = ['glob', 'grep'].includes(exec.name) ? 'path' : 'file_path';
       try {
@@ -269,6 +280,7 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     const approval = ctx.get('approval')?.effectivePolicy(agent.session);
     return { profile: ASSISTANT_PERMISSION_PROFILE, managed: true, permission, approval,
       execution: 'fixed-tool-operations', arbitraryShell: false, network: false,
+      sessionTools: staged.get(agent)?.ready ? SESSION_TOOLS.filter(name => sessionTool(agent, name)) : [],
       sensitiveTools: [...states.get(agent).sensitiveCatalog.keys()].filter(name => agent.ctx.get('tools').get(name, agent)),
       isolation: 'private-runtime-workspace' };
   }

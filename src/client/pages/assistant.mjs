@@ -4,7 +4,7 @@ import { createAssistantApprovals } from '../components/assistant-approvals.mjs'
 import { createAssistantNativeComposer } from '../components/assistant-native-composer.mjs';
 import { readAssistantAttachment } from '../state/assistant-attachments.mjs';
 export function createAssistantPage({ ui, hostRemote, actions, window, nativeModules }) {
-  const { React: { createElement: h, useState, useEffect, useRef }, BRAND, buttonStyle, inputStyle, ComputerConnection, AssistantTranscript, Button, FileTypeIcon, StateDot } = ui;
+  const { React: { createElement: h, useState, useEffect, useRef }, BRAND, buttonStyle, inputStyle, ComputerConnection, AssistantTranscript, AssistantBrowser, Button, FileTypeIcon, StateDot } = ui;
   const NativeComposer = nativeModules ? createAssistantNativeComposer({ ui, hostRemote, nativeModules, window }) : null;
   const Action = Button || 'button';
   const AssistantApprovals = createAssistantApprovals({ ui, window });
@@ -144,7 +144,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
         h('div', { style: { maxWidth: '440px', width: '100%', textAlign: 'center' } },
           preparing || setupBusy ? h('div', { 'data-studio-assistant-spinner': true, 'aria-hidden': true, style: { width: '32px', height: '32px', border: `3px solid ${BRAND.border}`, borderTopColor: BRAND.primaryFill, borderRadius: '50%', margin: '0 auto 24px', animation: 'assistant-setup-spin 1s linear infinite' } }) : null,
           h('h1', { style: { fontSize: '26px', fontWeight: 500, margin: '0 0 14px' } }, setupError ? '助理连接暂不可用' : preparing || setupBusy ? '你的助理正在准备中' : '7×24 的个人助理'),
-          h('p', { style: { color: BRAND.inkMuted, lineHeight: 1.8, margin: '0 0 24px' } }, preparing || setupBusy ? '准备好后，我们就在这里聊。你也可以先离开，回来会继续显示进度。' : '交代任务、安排提醒，慢慢记住你的偏好。关闭 Studio 后，助理仍能在云端继续工作。'),
+          h('p', { style: { color: BRAND.inkMuted, lineHeight: 1.8, margin: '0 0 24px' } }, preparing || setupBusy ? '正在准备，请稍候。' : '交代任务、安排提醒，记住你的偏好。'),
           preparing ? h('p', { role: 'status', style: { fontSize: '14px' } }, setup.message) : null,
           setupError ? h('p', { role: 'alert', style: { color: BRAND.danger, lineHeight: 1.7 } }, setupError) : null,
           ['NOT_STARTED', 'DELETED'].includes(setup?.state) && setupOptions ? h('div', null,
@@ -158,7 +158,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
           setupError ? h('div', { style: { display: 'flex', gap: '12px', justifyContent: 'center' } },
             button('检查云端设置', openSettings), button('查看运行中心', () => onNavigate?.('operations'))) : null));
     }
-    return h('section', { 'data-studio-assistant': true, style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: BRAND.surface } },
+    return h(AssistantBrowser || ui.React.Fragment, AssistantBrowser ? { key: connectedAgentId || agentId, agentId: connectedAgentId || agentId } : null, h('section', { 'data-studio-assistant': true, style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: BRAND.surface } },
       h('style', null, `[data-studio-assistant] .studio-assistant-composer:focus-within { outline: 1px solid ${BRAND.border}; outline-offset: 2px; } [data-studio-assistant] textarea[aria-label="发给助理"]::placeholder { color: ${BRAND.inkMuted}; opacity: 1; }`),
       h('header', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', gap: '12px' } },
         h('div', null, h('h1', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, assistantName),
@@ -170,7 +170,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
           (olderHasMore ?? view?.hasMore) ? h('div', { style: { textAlign: 'center' } }, button(loadingOlder ? '正在加载…' : '加载更早记录', () => { followLatest.current = false; void session.loadOlder(); }, loadingOlder)) : null,
           !hasConversation && !historyUnavailable ? h('div', { style: { textAlign: 'center', paddingBottom: '40px' } },
             h('h2', { style: { fontSize: '26px', fontWeight: 500, letterSpacing: '-0.04em', margin: '0 0 12px' } }, chosen && !view ? '正在恢复云端会话…' : '有什么想一起完成的？'),
-            h('p', { style: { color: BRAND.inkMuted, fontSize: '14px', lineHeight: 1.8 } }, chosen ? !view ? '已有任务会继续执行，连接恢复后会显示进度。' : '交代一件事，或告诉我你希望记住的偏好。' : catalogReady ? '先连接你的助理，之后我们就在这里继续。' : '正在连接你的助理…'),
+            !chosen ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '14px', lineHeight: 1.8 } }, catalogReady ? '先连接你的助理。' : '正在连接…') : null,
             catalogReady && !chosen ? button('在系统设置中连接助理', openSettings) : null) : null,
           h(AssistantTranscript, { messages, view, pending, assistantName, agentId }))),
       h('div', { style: { padding: '8px 24px 20px', flexShrink: 0 } }, h('div', { style: { maxWidth: '760px', margin: '0 auto' } },
@@ -180,8 +180,8 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
           sessionMatches && sessionState.errorKind === 'attachment-expired' ? button('重新选择附件', () => { if (session.replaceExpiredAttachments()) filePicker.current?.click(); }) : null,
           historyUnavailable ? button('检查云端设置', openSettings) : sessionMatches && (sessionState.readError || pendingInvalid) ? button('重新连接', () => void session.refresh()) : null,
           !pending && assistantRetryAvailable(view) ? button('重试任务', () => { followLatest.current = true; void session.retry(); }) : null) : null,
-        running && !canCancel ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, '请更新云端运行环境后使用按任务停止，避免影响后续任务。') : null,
-        pending ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, pending.observed ? '消息已出现在云端，保存结果仍待确认。确认提交不会重复执行。' : '还在确认上一条消息，重试不会重复执行。') : null,
+        running && !canCancel ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, '更新云端助理后可停止当前任务。') : null,
+        pending ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, pending.observed ? '消息已收到，保存待确认。' : '上一条消息的保存结果待确认。') : null,
         nativeComposerAvailable ? h(NativeComposer, { key: agentId, agentId, hiddenComposer: !useNativeComposer, onAccepted: () => session.refresh() }) : null,
         useNativeComposer ? h('div', null,
           running ? button(!canCancel ? '停止（需更新云端）' : stopping ? '正在停止…' : '停止当前任务', () => void session.cancel(() => actions.confirm({ title: '停止当前任务', detail: '停止助理正在处理的任务？停止请求受理后，仍需等待云端确认。', confirmLabel: '停止' })), stopping || !canCancel) : null) : h('form', { className: 'studio-assistant-composer',
@@ -202,17 +202,16 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
               ['reading', 'uploading'].includes(row.status) ? button('取消上传', () => session.cancelUpload(row.id), Boolean(pending)) : null,
               h(Action, { type: 'button', 'aria-label': `移除附件：${row.name}`, disabled: busy || Boolean(pending), onClick: () => session.removeAttachment(row.id), ...(Button ? { size: 'sm', variant: 'ghost' } : { style: buttonStyle() }) }, '移除')))) : null,
           attachmentError ? h('p', { role: 'alert', style: { margin: '4px 0 8px', color: BRAND.danger, fontSize: '12px' } }, attachmentError) : null,
-          h('textarea', { ref: composer, 'aria-label': '发给助理', value: draft, maxLength: 32000, disabled: busy || Boolean(pending), rows: 3,
+          h('textarea', { ref: composer, 'aria-label': '发给助理', value: draft, title: 'Shift + Enter 换行', maxLength: 32000, disabled: busy || Boolean(pending), rows: 3,
             style: { ...inputStyle(), border: 0, outline: 'none', height: 'auto', minHeight: '72px', padding: '4px 2px', background: 'transparent', boxShadow: 'none', width: '100%', resize: 'none', boxSizing: 'border-box', lineHeight: 1.6 },
             onChange: event => session.setDraft(event.target.value),
             onPaste: event => { if (event.clipboardData?.files?.length) { if (!event.clipboardData.getData('text/plain')) event.preventDefault(); session.addAttachments(Array.from(event.clipboardData.files)); } }, placeholder: '有什么想让我帮你做的？',
             onKeyDown: event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!busy && view && !historyUnavailable) void submit(); } } }),
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } },
             h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
-              canUpload ? button('添加附件', () => filePicker.current?.click(), Boolean(pending) || historyUnavailable) : null,
-              h('span', { style: { fontSize: '11px', color: BRAND.inkMuted } }, chosen ? canUpload ? '可粘贴或拖入附件 · Shift + Enter 换行' : 'Shift + Enter 换行' : '连接后即可发送，草稿会保留')),
+              canUpload ? button('添加附件', () => filePicker.current?.click(), Boolean(pending) || historyUnavailable) : null),
             h('div', { style: { display: 'flex', gap: '8px' } }, running ? button(!canCancel ? '停止（需更新云端）' : stopping ? '正在停止…' : '停止', () => void session.cancel(() => actions.confirm({ title: '停止当前任务', detail: '停止助理正在处理的任务？停止请求受理后，仍需等待云端确认。', confirmLabel: '停止' })), stopping || !canCancel) : null,
               h(Action, { type: 'submit', disabled: busy || !view || historyUnavailable || pendingInvalid || (!pending && (!attachmentsReady || !draft.trim() && !attachments.length)), ...(Button ? { variant: 'primary' } : { style: { ...buttonStyle(), borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }) }, pending ? pending.observed ? '确认提交' : '重试上一条' : '发送')))),
-        h('p', { role: 'status', style: { margin: '8px 0 0', minHeight: '16px', fontSize: '11px', color: BRAND.inkMuted, textAlign: 'center' } }, notice || (chosen ? '离开也没关系，回来可以接着聊。' : '')))));
+        notice ? h('p', { role: 'status', style: { margin: '8px 0 0', fontSize: '11px', color: BRAND.inkMuted, textAlign: 'center' } }, notice) : null))));
   };
 }

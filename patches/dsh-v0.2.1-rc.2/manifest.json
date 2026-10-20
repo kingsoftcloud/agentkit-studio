@@ -1868,12 +1868,175 @@
         "packages/core/tools/tests/scoped.spec.ts"
       ],
       "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+    },
+    {
+      "id": "046",
+      "file": "046-native-schedule-manager.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "session-contract",
+      "risk": "medium",
+      "maintainerRole": "Studio native assistant integration owner",
+      "removeWhen": "The pinned upstream supplies the same instance-scoped native-schedule-manager contracts and their regression coverage.",
+      "contracts": [
+        "Native schedule.manager factory mounts the existing task manager without acquiring local Session or workspace authority.",
+        "ScheduleService authenticates registered native tool definition and execution identities; replacements and disposed registrations are rejected.",
+        "Existing task manager navigation, rule editing, complete-record CAS and delivery history preserve their native semantics."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-schedule",
+        "@deepseek-ai/dsh-tool-schedule",
+        "@deepseek-ai/dsh-client-ui-schedule"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local native component and tool regressions; no upstream submission or merge receipt."
+      },
+      "dependsOn": [
+        "038"
+      ],
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-schedule/tests/browser-plugin.client.spec.ts",
+          "packages/client/ui-schedule/tests/catalog-source.client.spec.ts",
+          "packages/client/ui-schedule/tests/definition.client.spec.ts",
+          "packages/client/ui-schedule/tests/delete-toast.client.spec.tsx",
+          "packages/client/ui-schedule/tests/delivery-history.client.spec.tsx",
+          "packages/client/ui-schedule/tests/embedded-manager.client.spec.tsx",
+          "packages/client/ui-schedule/tests/recent-time-zones.client.spec.ts",
+          "packages/client/ui-schedule/tests/schedule-catalog-action.client.spec.tsx",
+          "packages/client/ui-schedule/tests/schedule-create-card.client.spec.tsx",
+          "packages/client/ui-schedule/tests/schedule-format.client.spec.ts",
+          "packages/client/ui-schedule/tests/schedule-task-tab.client.spec.tsx",
+          "packages/client/ui-schedule/tests/schedule-turn-card.client.spec.tsx",
+          "packages/client/ui-schedule/tests/session-link.client.spec.ts",
+          "packages/client/ui-schedule/tests/session-schedule-hover.client.spec.tsx",
+          "packages/client/ui-schedule/tests/session-schedule-mark.client.spec.tsx",
+          "packages/client/ui-schedule/tests/session-schedule-shared.client.spec.tsx",
+          "packages/client/ui-schedule/tests/session-schedule-state.client.spec.ts",
+          "packages/client/ui-schedule/tests/task-cron.client.spec.ts",
+          "packages/client/ui-schedule/tests/task-detail.client.spec.tsx",
+          "packages/client/ui-schedule/tests/task-manager-page.client.spec.tsx",
+          "packages/client/ui-schedule/tests/task-menu.client.spec.tsx",
+          "packages/client/ui-schedule/tests/task-tab-bindings.client.spec.ts",
+          "packages/client/ui-schedule/tests/task-timing.client.spec.tsx",
+          "packages/schedule/schedule/tests/cron.spec.ts",
+          "packages/schedule/schedule/tests/daily.spec.ts",
+          "packages/schedule/schedule/tests/delivery-history.spec.ts",
+          "packages/schedule/schedule/tests/delivery.spec.ts",
+          "packages/schedule/schedule/tests/domain-restart.spec.ts",
+          "packages/schedule/schedule/tests/domain.spec.ts",
+          "packages/schedule/schedule/tests/legacy-history.spec.ts",
+          "packages/schedule/schedule/tests/malformed-unit.spec.ts",
+          "packages/schedule/schedule/tests/plugin.spec.ts",
+          "packages/schedule/schedule/tests/recovery.spec.ts",
+          "packages/schedule/schedule/tests/recurrence.spec.ts",
+          "packages/schedule/schedule/tests/runtime.spec.ts",
+          "packages/schedule/schedule/tests/serial-delivery.spec.ts",
+          "packages/schedule/schedule/tests/subagent-ownership.spec.ts",
+          "packages/schedule/schedule/tests/update-restart.spec.ts",
+          "packages/schedule/schedule/tests/update-service.spec.ts",
+          "packages/schedule/schedule/tests/update.spec.ts",
+          "packages/schedule/schedule/tests/weekly.spec.ts",
+          "packages/schedule/tool-schedule/tests/tool-schedule.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/schedule.md",
+        "docs/subsystems/schedule.zh.md",
+        "packages/client/ui-schedule/README.i18n.yaml",
+        "packages/client/ui-schedule/README.md",
+        "packages/client/ui-schedule/README.zh.md",
+        "packages/client/ui-schedule/src/client/TaskManagerPage.tsx",
+        "packages/client/ui-schedule/src/client/index.ts",
+        "packages/client/ui-schedule/tests/browser-plugin.client.spec.ts",
+        "packages/client/ui-schedule/tests/embedded-manager.client.spec.tsx",
+        "packages/client/ui-schedule/tests/task-detail.client.spec.tsx",
+        "packages/client/ui-schedule/tests/task-manager-page.client.spec.tsx",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "packages/schedule/schedule/README.i18n.yaml",
+        "packages/schedule/schedule/README.md",
+        "packages/schedule/schedule/README.zh.md",
+        "packages/schedule/schedule/src/index.ts",
+        "packages/schedule/tool-schedule/README.i18n.yaml",
+        "packages/schedule/tool-schedule/README.md",
+        "packages/schedule/tool-schedule/README.zh.md",
+        "packages/schedule/tool-schedule/src/index.ts",
+        "packages/schedule/tool-schedule/tests/tool-schedule.spec.ts"
+      ],
+      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be"
+    },
+    {
+      "id": "047",
+      "file": "047-isolated-native-browser.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "session-contract",
+      "risk": "medium",
+      "maintainerRole": "Studio native assistant integration owner",
+      "removeWhen": "The pinned upstream supplies the same instance-scoped isolated-native-browser contracts and their regression coverage.",
+      "contracts": [
+        "Native browser.content reuses the browser controller and chrome without acquiring a local Session or persistent browser identity.",
+        "Embedded iframe navigation retains an opaque-origin sandbox without popup or top-level-navigation permissions, including after unobserved redirects.",
+        "Explicit external opening and disposal preserve separate Web and Desktop lifecycle semantics; existing sidebar behavior remains compatible."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-sidebar-browser"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local native component and tool regressions; no upstream submission or merge receipt."
+      },
+      "dependsOn": [],
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-sidebar-browser/tests/apply.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/apply.host.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/browser-body.client.spec.tsx",
+          "packages/client/ui-sidebar-browser/tests/browser-controller.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/browser-frame.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/browser-navigation.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/browser-title.client.spec.tsx",
+          "packages/client/ui-sidebar-browser/tests/electron-frame.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/electron-lifecycle.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/embedded-browser.client.spec.tsx",
+          "packages/client/ui-sidebar-browser/tests/store.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/url.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/workspace.client.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-sidebar-browser/README.i18n.yaml",
+        "packages/client/ui-sidebar-browser/README.md",
+        "packages/client/ui-sidebar-browser/README.zh.md",
+        "packages/client/ui-sidebar-browser/package.json",
+        "packages/client/ui-sidebar-browser/src/client/browser/IframeImpl.ts",
+        "packages/client/ui-sidebar-browser/src/client/index.ts",
+        "packages/client/ui-sidebar-browser/src/client/pages.ts",
+        "packages/client/ui-sidebar-browser/src/client/view/BrowserBody.tsx",
+        "packages/client/ui-sidebar-browser/src/client/view/BrowserChrome.tsx",
+        "packages/client/ui-sidebar-browser/src/client/view/EmbeddedBrowserBody.tsx",
+        "packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts",
+        "packages/client/ui-sidebar-browser/tests/apply.client.spec.ts",
+        "packages/client/ui-sidebar-browser/tests/embedded-browser.client.spec.tsx",
+        "packages/client/ui-sidebar-browser/tsconfig.client.json",
+        "pnpm-lock.yaml"
+      ],
+      "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611"
     }
   ],
-  "patchedTree": "0331b5810698a91b459a1a6f70aade3691ef0392",
-  "patchedSourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
+  "patchedTree": "9446122dbf21d699713b9b19f9db3f9d0b4e4ecc",
+  "patchedSourceSha256": "2345b4fd749e16d6847d6d869908aa8fec82620e379903cc179a234ff151c135",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "9ef4079d985adc9494ec8fa90b0795a242f737d5c163e70d74f1f84eb942dc83"
+    "sha256": "ae194ff406db655d62f5852d4350d95139045742f9692f73d03844ff67318e1f"
   }
 }

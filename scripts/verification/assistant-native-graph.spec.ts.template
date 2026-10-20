@@ -9,13 +9,15 @@ import * as layout from '@deepseek-ai/dsh-client-ui-layout/client';
 import * as sidebar from '@deepseek-ai/dsh-client-ui-sidebar/client';
 import * as pluginManager from '@deepseek-ai/dsh-client-ui-plugin-manager/client';
 import * as workspace from '@deepseek-ai/dsh-client-ui-workspace/client';
+import * as browser from '@deepseek-ai/dsh-client-ui-sidebar-browser/client';
+import * as schedule from '@deepseek-ai/dsh-client-ui-schedule/client';
 import { createAssistantNativeTransport } from '@studio/src/client/dsh/assistant-native-transport.mjs';
 import { act, render, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { createAssistantNativeComposer } from '@studio/src/client/components/assistant-native-composer.mjs';
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
 import * as attachment from '@deepseek-ai/dsh-client-ui-attachment/client';
 import { createAssistantNativeGraph } from '@studio/src/client/dsh/assistant-native-graph.mjs';
-import { Context } from '@deepseek-ai/cordis';
+import { Context, Service } from '@deepseek-ai/cordis';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installConnection } from '@deepseek-ai/dsh-client-connection/client';
 import * as typert from '@deepseek-ai/dsh-typert-registry/client';
@@ -42,7 +44,7 @@ afterEach(async () => {
   vi.unstubAllGlobals(); vi.restoreAllMocks();
 });
 
-function carrier(sessionId = 'cloud-session', home = '/cloud') {
+function carrier(sessionId = 'cloud-session', home = '/cloud', writable = false) {
   const mock = RemoteMock.create({ host: { home } });
   mock.load({
     unary: {
@@ -62,7 +64,7 @@ function carrier(sessionId = 'cloud-session', home = '/cloud') {
           ...(input.assistantStream ? { assistantStream: { revision: 0 } } : {}) });
       },
       'remoteAccess/follow': (_args, stream) => { stream.push({ type: 'baseline', owner: false, grants: [
-        { resource: { kind: 'session', id: sessionId }, actions: ['session/follow', 'session/projections'] },
+        { resource: { kind: 'session', id: sessionId }, actions: ['session/follow', 'session/projections', ...(writable ? ['session/prompt', 'fileUploads/upload'] : [])] },
       ] }); },
     },
   });
@@ -468,7 +470,8 @@ describe('Isolated native Client graph feasibility, with only its external carri
       nativeModules: () => ({ Context, React, connection: { installConnection }, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore }),
       window: { localStorage: b.storage, crypto: webcrypto, FileReader, Blob } });
     const view = render(React.createElement(Component, { agentId: 'agent-one', hiddenComposer: true }));
-    await view.findByText('云端原生连接已建立。先处理下面的已有草稿，再使用原生输入。');
+    await waitFor(() => expect(view.container.querySelector('[contenteditable]')).not.toBeNull());
+    expect(view.container.textContent).not.toContain('云端原生连接已建立');
     expect(view.container.querySelector('[contenteditable]')?.closest('[hidden]')).not.toBeNull();
     expect(b.calls.some(call => call.operation === 'native-stream-open' && call.value.endpoint === 'session/follow')).toBe(true);
     expect(b.calls.some(call => call.operation === 'native-close')).toBe(false);
@@ -476,24 +479,88 @@ describe('Isolated native Client graph feasibility, with only its external carri
     await waitFor(() => expect(b.calls.some(call => call.operation === 'native-close')).toBe(true));
   });
 
-  it('offers an actual file-picker button without enabling the unavailable native command menu', async () => {
+  it('offers exactly one native paperclip and picker, preserves native upload intake, and closes the graph on unmount', async () => {
     Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
-    const b = pollingCarrier(carrier());
+    const mock = carrier('cloud-session', '/cloud', true), b = pollingCarrier(mock);
     const Component = createAssistantNativeComposer({ ui: { React, Button, BRAND: {} }, hostRemote: { assistantExecute: b.execute },
       nativeModules: () => ({ Context, React, connection: { installConnection }, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore }),
       window: { localStorage: b.storage, crypto: webcrypto, FileReader, Blob } });
     const view = render(React.createElement(Component, { agentId: 'agent-one' }));
-    await view.findByText('原生输入已绑定云端会话；附件保存后提交，关闭页面也会继续执行。');
-    const picker = view.getByLabelText('选择助理附件') as HTMLInputElement;
-    const button = view.getByRole('button', { name: '添加附件' }) as HTMLButtonElement;
-    expect(button.disabled).toBe(false);
+    const button = await view.findByRole('button', { name: '添加附件' }) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    const picker = view.container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(view.container.querySelectorAll('input[type="file"]')).toHaveLength(1);
+    expect(view.getAllByRole('button', { name: '添加附件' })).toHaveLength(1);
+    expect(button.closest('[data-composer-card]')).toBe(picker.closest('[data-composer-card]'));
+    expect(view.container.textContent).not.toContain('原生输入已绑定');
     const click = vi.spyOn(picker, 'click'); fireEvent.click(button); expect(click).toHaveBeenCalledOnce();
     fireEvent.change(picker, { target: { files: [new File(['data'], 'report.txt', { type: 'text/plain' })] } });
     await waitFor(() => expect(b.calls.filter(call => call.operation === 'attachment-upload')).toHaveLength(1));
     expect(view.container.textContent).toContain('report.txt');
+    mock.streams.push('remoteAccess/follow', { type: 'baseline', owner: false, grants: [] });
+    await waitFor(() => expect(button.disabled).toBe(true));
+    fireEvent.click(button); expect(click).toHaveBeenCalledOnce();
+    expect(b.calls.filter(call => call.operation === 'attachment-upload')).toHaveLength(1);
     expect(b.calls.some(call => /commands|settings\/write/.test(call.value.endpoint || ''))).toBe(false);
     view.unmount();
-    await waitFor(() => expect(b.calls.some(call => call.operation === 'native-close')).toBe(true));
+    await waitFor(() => expect(b.calls.filter(call => call.operation === 'native-close')).toHaveLength(1));
+    expect(b.calls.some(call => /cancel-turn|session\/cancel|session\/steer/.test(call.value.endpoint || call.operation))).toBe(false);
+  });
+
+  it('actual native text Send and Escape dismiss the scoped command face without errors or draft loss', async () => {
+    Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect() });
+    Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [] });
+    disposers.push(async () => { Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect'); Reflect.deleteProperty(Range.prototype, 'getClientRects'); });
+    const mock = carrier('cloud-session', '/cloud', true), ack = Promise.withResolvers<void>(), b = pollingCarrier(mock);
+    mock.unary('session/prompt', async () => { await ack.promise; return ok({ accepted: true }); });
+    const transport = await createAssistantNativeTransport({ execute: b.execute, agentId: 'cloud-agent', storage: b.storage, crypto: webcrypto });
+    const container = document.createElement('div'); document.body.append(container);
+    let cloud: Awaited<ReturnType<typeof createAssistantNativeGraph>>;
+    await act(async () => { cloud = await createAssistantNativeGraph({ modules: { Context, React, connection: { installConnection }, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore }, transport, window, container }); });
+    disposers.push(async () => { ack.resolve(); await act(async () => { await cloud.dispose(); }); container.remove(); });
+    const input = cloud!.ctx.conversation.input.for(cloud!.reference.binding.ctx);
+    expect(typeof cloud!.ctx.commandUi.popupFor(cloud!.reference.binding.ctx).dismiss).toBe('function');
+    await act(async () => { input.setDraft('Keep this native text'); });
+    const editor = container.querySelector('[data-composer-input][role="textbox"]')!;
+    fireEvent.keyDown(editor, { key: 'Escape', code: 'Escape' });
+    expect(input.state.getSnapshot().draft).toBe('Keep this native text');
+    const send = container.querySelector('button[aria-label="发送消息"], button[aria-label="Send message"]') as HTMLButtonElement;
+    expect(send).not.toBeNull(); expect(send.disabled).toBe(false);
+    fireEvent.click(send);
+    await waitFor(() => expect(b.calls.filter(call => call.operation === 'native-call' && call.value.endpoint === 'session/prompt')).toHaveLength(1));
+    const request = b.calls.find(call => call.operation === 'native-call' && call.value.endpoint === 'session/prompt')!.value.payload.args.request;
+    expect(request.content).toEqual([{ type: 'text', text: 'Keep this native text' }]);
+    const attachmentButton = container.querySelector('[data-assistant-native-attachment]') as HTMLButtonElement;
+    expect(attachmentButton.disabled).toBe(true);
+    expect(b.memory.size).toBe(1);
+    await act(async () => { ack.resolve(); });
+    await waitFor(() => expect(b.memory.size).toBe(0));
+    await waitFor(() => expect(attachmentButton.disabled).toBe(false));
+    expect(input.state.getSnapshot().draft).toBe('');
+  });
+
+  it('switches an already mounted assistant by disposing its native graph and replacing its sole picker', async () => {
+    Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
+    const old = pollingCarrier(carrier('cloud-session', '/old', true)), next = pollingCarrier(carrier('cloud-session', '/next', true));
+    const Component = createAssistantNativeComposer({ ui: { React, Button, BRAND: {} }, hostRemote: {
+      assistantExecute: (agent: string, ...args: any[]) => (agent === 'old' ? old : next).execute(agent, ...args),
+    }, nativeModules: () => ({ Context, React, connection: { installConnection }, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore }),
+      window: { localStorage: next.storage, crypto: webcrypto, FileReader, Blob } });
+    const view = render(React.createElement(Component, { agentId: 'old' }));
+    await waitFor(() => expect((view.getByRole('button', { name: '添加附件' }) as HTMLButtonElement).disabled).toBe(false));
+    const oldPicker = view.container.querySelector('input[type="file"]');
+    view.rerender(React.createElement(Component, { agentId: 'next' }));
+    await waitFor(() => expect(old.calls.filter(call => call.operation === 'native-close')).toHaveLength(1));
+    await waitFor(() => expect((view.getByRole('button', { name: '添加附件' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(view.container.querySelectorAll('[contenteditable]')).toHaveLength(1);
+    expect(view.container.querySelectorAll('input[type="file"]')).toHaveLength(1);
+    expect(view.container.querySelector('input[type="file"]')).not.toBe(oldPicker);
+    expect(oldPicker?.isConnected).toBe(false);
+    expect(next.calls.some(call => call.operation === 'native-close')).toBe(false);
+    view.unmount();
+    await waitFor(() => expect(next.calls.filter(call => call.operation === 'native-close')).toHaveLength(1));
+    expect([...old.calls, ...next.calls].some(call => /cancel-turn|session\/cancel|session\/steer/.test(call.value.endpoint || call.operation))).toBe(false);
   });
 
   it('isolates a late native-open result after switching assistants and closes the old carrier', async () => {
@@ -509,7 +576,8 @@ describe('Isolated native Client graph feasibility, with only its external carri
     const view = render(React.createElement(Component, { agentId: 'old' }));
     await waitFor(() => expect(old.calls).toHaveLength(1));
     view.rerender(React.createElement(Component, { agentId: 'next' }));
-    await view.findByText('原生输入已绑定云端会话；附件保存后提交，关闭页面也会继续执行。');
+    await waitFor(() => expect(view.container.querySelector('[contenteditable]')).not.toBeNull());
+    expect(view.container.textContent).not.toContain('原生输入已绑定');
     await act(async () => { late.resolve(undefined); });
     await waitFor(() => expect(old.calls.some(call => call.operation === 'native-close')).toBe(true));
     expect(old.calls.some(call => call.operation === 'native-stream-open')).toBe(false);
@@ -569,7 +637,7 @@ describe('Isolated native Client graph feasibility, with only its external carri
     const meta = JSON.parse(readFileSync('@studio/.artifacts/client/metafile.json', 'utf8'));
     expect(Object.keys(meta.inputs).some(path => path === 'src/index.mjs' || path.startsWith('src/providers/') || path.startsWith('src/host/'))).toBe(false);
     const staticModules = {
-      react: React, '@deepseek-ai/cordis': { Context }, '@deepseek-ai/dsh-client-store': { createSnapshotStore },
+      react: React, '@deepseek-ai/cordis': { Context, Service }, '@deepseek-ai/dsh-client-store': { createSnapshotStore },
       '@deepseek-ai/dsh-client-ui-primitives': primitives, '@deepseek-ai/dsh-client-connection': { installConnection },
       '@deepseek-ai/dsh-typert-registry': typert, '@deepseek-ai/dsh-api-gateway': gateway, '@deepseek-ai/dsh-api-remotes': remotes,
       '@deepseek-ai/dsh-api-session-controller': sessions, '@deepseek-ai/dsh-client-ui-renderer': renderer,
@@ -577,7 +645,7 @@ describe('Isolated native Client graph feasibility, with only its external carri
       '@deepseek-ai/dsh-client-locale': locale, '@deepseek-ai/dsh-client-ui-conversation': conversation,
       '@deepseek-ai/dsh-client-ui-attachment': attachment, '@deepseek-ai/dsh-client-ui-layout': layout,
       '@deepseek-ai/dsh-client-ui-sidebar': sidebar, '@deepseek-ai/dsh-client-ui-plugin-manager': pluginManager,
-      '@deepseek-ai/dsh-client-ui-workspace': workspace,
+      '@deepseek-ai/dsh-client-ui-workspace': workspace, '@deepseek-ai/dsh-client-ui-sidebar-browser': browser, '@deepseek-ai/dsh-client-ui-schedule': schedule,
     };
     const url = `plugins/??${pkg.name}/client.js&rev=controlled-package`, fetched: string[] = [];
     const target: any = { mode: 'queue', pendingQueue: [], load(registration: unknown) { this.pendingQueue.push(registration); }, create() { throw new Error('already bootstrapped'); } };

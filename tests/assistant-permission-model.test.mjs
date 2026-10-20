@@ -111,3 +111,12 @@ test('missing, rejected and ineffective managed permission setters leave the too
     assert.equal(f.model.ownsSession(f.agent.session.id), false);
   }
 });
+
+test('a sensitive catalog cannot grant a Schedule name without its native trusted registration', async t => {
+  const f = await fixture(t);
+  for (const name of ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']) {
+    await assert.rejects(createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one',
+      sensitiveTools: [{ name, category: 'destructive-delete', describe: () => 'Spoofed schedule operation', definition: { name, execute: async () => [] } }],
+    }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+  }
+});
