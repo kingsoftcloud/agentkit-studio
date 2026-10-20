@@ -1868,12 +1868,123 @@
         "packages/core/tools/tests/scoped.spec.ts"
       ],
       "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+    },
+    {
+      "id": "046",
+      "file": "046-maintained-doc-refresh.patch",
+      "category": "generated-docs",
+      "risk": "low",
+      "dependsOn": [
+        "045"
+      ],
+      "removeWhen": "The pinned upstream contains the maintained approval signature, language links and synchronized translation records.",
+      "contracts": [
+        "Generated approval references reflect the maintained automation actor option.",
+        "Existing paired documentation retains matching language switchers and section records."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-user-approval",
+        "@deepseek-ai/dsh-client-ui-permission-presets",
+        "@deepseek-ai/dsh-experimental-inspector"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Locally maintained source commits; no upstream submission or merge receipt."
+      },
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "frozen",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/approval.md",
+        "docs/subsystems/approval.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md",
+        "packages/client/ui-permission-presets/README.i18n.yaml",
+        "packages/experimental/inspector/README.i18n.yaml",
+        "packages/interaction/user-approval/README.i18n.yaml"
+      ],
+      "sha256": "682658045d41930146acb9639e77b026efc76675f957ca530822e751b4d306d4"
+    },
+    {
+      "id": "047",
+      "file": "047-execute-turn-engine.patch",
+      "category": "lifecycle",
+      "risk": "high",
+      "dependsOn": [
+        "036",
+        "038",
+        "046"
+      ],
+      "removeWhen": "The pinned upstream offers an equivalent typed whole-turn execution boundary with input admission and host-owned cancellation/teardown.",
+      "contracts": [
+        "A scoped agent/execute-turn handler owns model, tools, retries, stopping and transcript admission for the complete turn.",
+        "Calling next() preserves the default loop; a handled turn never also dispatches the default model/tool loop.",
+        "The host retains durable turn boundaries, cancellation, follow-up scheduling and teardown; prepareInput is scoped to the unsettled turn."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent",
+        "@deepseek-ai/dsh-agent-loop",
+        "@deepseek-ai/dsh-tool-cordis"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Locally maintained source commits; no upstream submission or merge receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn-loader.spec.ts",
+          "packages/core/agent-loop/tests/interception.spec.ts",
+          "packages/core/agent-loop/tests/cancel.spec.ts",
+          "packages/core/agent-loop/tests/resume.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "frozen",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "docs/architecture.md",
+        "docs/architecture.zh.md",
+        "docs/subsystems/core.i18n.yaml",
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/core/agent-loop/README.i18n.yaml",
+        "packages/core/agent-loop/README.md",
+        "packages/core/agent-loop/README.zh.md",
+        "packages/core/agent-loop/src/agent.ts",
+        "packages/core/agent-loop/tests/execute-turn-loader.spec.ts",
+        "packages/core/agent-loop/tests/execute-turn.spec.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/cordis.yml",
+        "packages/core/agent-loop/tests/fixtures/external-turn/driver.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/engine.ts",
+        "packages/core/agent/README.i18n.yaml",
+        "packages/core/agent/README.md",
+        "packages/core/agent/README.zh.md",
+        "packages/core/agent/src/runtime-types.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "scripts/gen-cordis-catalog.ts"
+      ],
+      "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458"
     }
   ],
-  "patchedTree": "0331b5810698a91b459a1a6f70aade3691ef0392",
-  "patchedSourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
+  "patchedTree": "09637fcadf2de3e157183a115bffe359cc4ccd54",
+  "patchedSourceSha256": "a7c7ede65950014528d3f49883c7c940cdb9f3ae4428c4e462775f514de6bf98",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "9ef4079d985adc9494ec8fa90b0795a242f737d5c163e70d74f1f84eb942dc83"
+    "sha256": "936659255b69c19dd99531ab48fe9876b6476a1308a033836bc9e88758a8a6cf"
   }
 }

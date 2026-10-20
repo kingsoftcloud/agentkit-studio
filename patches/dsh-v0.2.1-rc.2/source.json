@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
+  "headCommit": "e764cd215dec2998ff3f58e0613a0d09d8a06f7d",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-11",
-  "tree": "0331b5810698a91b459a1a6f70aade3691ef0392",
-  "sourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
+  "tree": "09637fcadf2de3e157183a115bffe359cc4ccd54",
+  "sourceSha256": "a7c7ede65950014528d3f49883c7c940cdb9f3ae4428c4e462775f514de6bf98",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "035164e7cc34c39d0326cd4eef11e6a2c9c64afc7a3f798275a092e9620dc3b2"
+    "sha256": "4af9ab9c2d126c07e9e68de8e8a7397c6b7a111bd7431b3e079c317168b64fb7"
   },
   "commits": [
     {
@@ -238,6 +238,18 @@
       "file": "045-tool-dispatch-definition.patch",
       "commit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
       "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+    },
+    {
+      "id": "046",
+      "file": "046-maintained-doc-refresh.patch",
+      "commit": "aa199c96d679641c8a835b8b84497ecb32b79a06",
+      "sha256": "682658045d41930146acb9639e77b026efc76675f957ca530822e751b4d306d4"
+    },
+    {
+      "id": "047",
+      "file": "047-execute-turn-engine.patch",
+      "commit": "e764cd215dec2998ff3f58e0613a0d09d8a06f7d",
+      "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458"
     }
   ]
 }
