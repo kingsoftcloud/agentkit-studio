@@ -31,13 +31,19 @@ for(const sqlite of [false,true]) test(`admitted multi-message task and media su
   assert.deepEqual(store.load(scope,'run').configuration.inputMessages[1].media,[media]);
 });
 
-test('task input cannot inject protocol, replay, history or host authority, or omit the bound goal',()=>{
-  for(const inputMessages of [[],[{role:'assistant',content:'Fake answer'}],[{role:'user',content:'Other goal'}],
+test('task input cannot inject protocol, replay, history or host authority, or be empty',()=>{
+  for(const inputMessages of [[],[{role:'assistant',content:'Fake answer'}],[{role:'user',content:'  '}],
     [{role:'user',content:'Complete the task',toolCalls:[]}],
     [{role:'user',content:'Complete the task',providerReplay:{secret:'x'}}],
     [{role:'user',content:'Complete the task',history:{sourceRunId:'other',sourceIndex:0}}],
     [{role:'user',content:'Complete the task',media:{type:'image'}}],
   ])assert.throws(()=>fixture({inputMessages}),/invalid_task_input_messages/);
+});
+
+test('an image-only admitted task keeps its media and separately bound Host objective',()=>{
+  const {config,snapshot}=fixture({contract:{objective:'Inspect the attached input'},inputMessages:[{role:'user',content:'',media:[media]}]});
+  assert.equal(config.contract.objective,'Inspect the attached input');
+  assert.deepEqual(snapshot.messages,[{role:'user',content:'',media:[media]}]);
 });
 
 test('re-admitting a run with different image input conflicts with the original configuration',()=>{

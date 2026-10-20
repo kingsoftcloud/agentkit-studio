@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { NativeKernel, canonical, configure, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
 import { createNativeSessionDelivery } from './session-delivery.mjs';
+import { NATIVE_DSH_TURN_CONTRACT } from './dsh-turn-contract.mjs';
 
-export const NATIVE_DSH_TURN_CONTRACT = 'agentkit.native-dsh-turn/v1';
+export { NATIVE_DSH_TURN_CONTRACT };
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const failure = (code, snapshot) => Object.assign(new Error(code), { code,
   ...(snapshot ? { nativeRunId: snapshot.runId, nativePhase: snapshot.phase, nativeReason: snapshot.reason } : {}),
@@ -71,7 +72,18 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
     try {
       signal.throwIfAborted();
       const head = store.sessionHead(scope, sessionId);
-      if (head && head.runId !== runId && !terminal(head.phase)) throw failure('NATIVE_RUN_RECOVERY_REQUIRED', store.load(scope, head.runId).snapshot);
+      if (head && head.runId !== runId) {
+        const previous = store.load(scope, head.runId);
+        // Interrupted is a terminal phase for the worker, not proof that its
+        // effects finished. Cancellation can also leave an unknown write.
+        // Requiring reconciliation prevents a new turn from racing that work.
+        const unknownEffect = previous.receipts.some(receipt => receipt.status === 'uncertain'
+          && !(receipt.result.recoveryPolicy === 'safe-read/v1' && receipt.result.retryScheduled === true)
+          && ['tool', 'hook', 'child'].includes(previous.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind));
+        if (!terminal(head.phase) || head.phase === 'interrupted' || unknownEffect) {
+          throw failure('NATIVE_RUN_RECOVERY_REQUIRED', previous.snapshot);
+        }
+      }
       const delivery = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn, projections, flush,
         inputMessages: input.messages, systemText: configuration.instructions, source: binding.source });
       const kernel = new NativeKernel({ store, ports: binding.ports, digest: hash, owner,

@@ -176,6 +176,19 @@ test('the bridge preset forwards AgentEngine builtin Tool contracts for native r
   assert.deepEqual(registered[0].plugins[0].config.toolContracts, [{ resourceId: 'component_status', name: 'component_status', executor: 'builtin', parameters: { type: 'object', properties: {} } }]);
 });
 
+test('whole-turn Native activation is explicit and applies only to local Harness revisions', async () => {
+  for (const runtime of ['harness', 'dsh-native', 'codex']) {
+    const registered = [], revision = agent({ metadata: { id: 'demo', revision: 1, local: true }, spec: { runtime: { type: runtime }, bindings: {} } });
+    const admission = new DshPresetAdmission({ nativeEngineContract: 'agentkit.native-dsh-turn/v1',
+      registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+      getAgent: async () => revision });
+    await admission.ensure('demo');
+    const config = registered[0].plugins.find(plugin => plugin.id === 'studio-runtime')?.config;
+    assert.equal(config?.nativeEngineContract, runtime === 'harness' ? 'agentkit.native-dsh-turn/v1' : undefined);
+  }
+  assert.throws(() => new DshPresetAdmission({ nativeEngineContract: 'unknown' }), /Unsupported Native Harness/);
+});
+
 test('recovery keeps the preset registered when bound resources are temporarily unavailable', async () => {
   const registered = [];
   const revision = agent({

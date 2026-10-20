@@ -23,16 +23,23 @@ export function createRuntimeBridge() {
   let generation = 0;
   let adapter;
   let executor;
+  let nativeTurnExecutor;
+  let nativeToolsFactory;
   const assertOpen = () => { if (lifetime.signal.aborted) throw unavailable(); };
 
   function register(slot, value) {
     assertOpen();
     const record = { value, controller: new AbortController() };
-    if (slot === 'adapter') adapter = record; else executor = record;
+    if (slot === 'adapter') adapter = record;
+    else if (slot === 'native-turn') nativeTurnExecutor = record;
+    else if (slot === 'native-tools') nativeToolsFactory = record;
+    else executor = record;
     return () => {
       record.controller.abort(unavailable('STUDIO_RUNTIME_REGISTRATION_RETIRED'));
       if (slot === 'adapter' && adapter === record) adapter = undefined;
       if (slot === 'executor' && executor === record) executor = undefined;
+      if (slot === 'native-turn' && nativeTurnExecutor === record) nativeTurnExecutor = undefined;
+      if (slot === 'native-tools' && nativeToolsFactory === record) nativeToolsFactory = undefined;
     };
   }
 
@@ -51,6 +58,33 @@ export function createRuntimeBridge() {
     setResourceToolExecutor(value) {
       if (typeof value !== 'function') throw new TypeError('Runtime tool executor must be a function');
       return register('executor', value);
+    },
+    setNativeTurnExecutor(value) {
+      if (typeof value !== 'function') throw new TypeError('Native turn executor must be a function');
+      return register('native-turn', value);
+    },
+    setNativeToolsFactory(value) {
+      if (typeof value !== 'function') throw new TypeError('Native tools factory must be a function');
+      return register('native-tools', value);
+    },
+    createNativeTools(input) {
+      assertOpen();
+      if (!nativeToolsFactory) throw unavailable('STUDIO_NATIVE_TOOLS_FACTORY_UNAVAILABLE');
+      return nativeToolsFactory.value(input);
+    },
+    async executeNativeTurn(input) {
+      assertOpen();
+      const registration = nativeTurnExecutor;
+      if (!registration) throw unavailable('STUDIO_NATIVE_TURN_EXECUTOR_UNAVAILABLE');
+      const task = request(input, registration);
+      try {
+        task.signal.throwIfAborted();
+        // The Native worker owns cancellation and durable receipts. DSH must
+        // not begin another turn until that worker has stopped driving effects.
+        const result = await registration.value({ ...input, signal: task.signal });
+        task.signal.throwIfAborted();
+        return result;
+      } finally { task.finish(); }
     },
     createRouteScope() {
       assertOpen();
@@ -115,6 +149,8 @@ export function createRuntimeBridge() {
       lifetime.abort(unavailable());
       adapter = undefined;
       executor = undefined;
+      nativeTurnExecutor = undefined;
+      nativeToolsFactory = undefined;
       routes.clear();
     },
   };

@@ -1,0 +1,107 @@
+import { createHash } from 'node:crypto';
+import { join, resolve } from 'node:path';
+import { canonical, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sqlite-store.mjs';
+import { createNativeModelPort } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
+import { createNativeDshTurnExecutor, NATIVE_DSH_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
+import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
+import { projectNativeDshInput } from '../../providers/native-input.mjs';
+import { dshModelRoute } from '../../agent-preset-admission.mjs';
+import { prepareLocalResourceContext } from '../../local-runtime.mjs';
+const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
+const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
+  baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
+  contextWindow: profile.contextWindow ?? 128000, maxOutputTokens: profile.maxOutputTokens ?? 8192,
+  parameters: profile.parameters ?? {}, requestTimeoutMs: profile.requestTimeoutMs ?? 110000 });
+const profileIds = record => {
+  const bindings = record.spec?.bindings ?? {};
+  return [...new Set([bindings.modelProfileId, ...(bindings.modelProfileIds ?? []).map(value => typeof value === 'string' ? value : value?.resourceId)].filter(Boolean))];
+};
+
+/** Host services and credentials stay outside the serializable Native core. */
+export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
+  fetchImpl, renderPrompt, ledger } = {}) {
+  const sessions = ctx.get('sessions'), projections = ctx.get('sessionProjections'), llm = ctx.get('llm');
+  invariant(typeof sessions?.flush === 'function' && typeof projections?.register === 'function'
+    && typeof renderPrompt === 'function', 'studio_native_host_services_unavailable');
+  const store = ledger ?? new SqliteRunStore(join(storeDir, 'native-harness', 'runs.sqlite'));
+  let unregister;
+  try { unregister = projections.register(nativeDeliveryProjection()); }
+  catch (error) { if (!ledger) store.close(); throw error; }
+  const lifetime = new AbortController(), active = new Set();
+  let closed = false, closing;
+  const workspaceId = hash(resolve(workspaceRoot));
+  const execute = createNativeDshTurnExecutor({ store, projections, flush: session => sessions.flush(session),
+    resolveTurn: async ({ agent, input, binding, signal, prepareInput }) => {
+      if (binding?.runtime !== 'harness' || binding.local !== true) return null;
+      invariant(binding.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT, 'studio_native_engine_contract_unsupported');
+      invariant(typeof prepareInput === 'function', 'studio_native_whole_turn_host_required');
+      invariant(binding.agentId && Number.isSafeInteger(binding.agentRevision) && binding.agentRevision > 0
+        && binding.nativeTools, 'studio_native_revision_binding_missing');
+      invariant(!binding.buildId || typeof builds?.resolve === 'function', 'studio_native_build_service_unavailable');
+      const record = binding.buildId ? await builds.resolve(binding.agentId, binding.buildId)
+        : await agents.getRevision(binding.agentId, binding.agentRevision);
+      signal.throwIfAborted();
+      invariant(record?.metadata?.id === binding.agentId && record.metadata.local === true
+        && record.metadata.revision === binding.agentRevision && record.spec?.runtime?.type === 'harness', 'studio_native_revision_binding_changed');
+      const ids = profileIds(record), profiles = await Promise.all((ids.length ? ids : ['']).map(id => models.profile(id)));
+      signal.throwIfAborted();
+      const selection = agent.options ?? {};
+      let selected, selectedId;
+      for (let index = 0; index < profiles.length; index++) {
+        const profile = profiles[index], id = ids[index] || '';
+        if (selection.provider && dshModelRoute(profile) !== selection.provider) continue;
+        if (!selection.model || profile.modelName === selection.model) { selected = profile; selectedId = id; break; }
+        if (!binding.buildId && typeof models.catalog === 'function') {
+          const catalog = await models.catalog(id);
+          if (catalog.items?.some(item => item.id === selection.model)) { selected = { ...profile, modelName: selection.model }; selectedId = id; break; }
+        }
+      }
+      invariant(selected, 'studio_native_bound_model_unavailable');
+      const description = profileDescription(selected), compatibilityDigest = hash(description);
+      const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
+      const admission = await projectNativeDshInput(input.messages, { signal, attachments: () => ctx.get('attachments'),
+        fileRequestText: typeof llm?.fileRequestText === 'function' ? ref => llm.fileRequestText(ref) : undefined });
+      const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
+      const materialized = await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
+        toolAdapter: {}, agent, agentId: binding.agentId, userId: 'local-user', resourceMode: 'context-only' });
+      // A memory write is an external effect and must get its own Native intent.
+      // Refuse that composition until its durable port is installed.
+      invariant(!materialized.memoryWrite, 'studio_native_memory_write_port_unavailable');
+      const instructions = [renderPrompt(input.assembly), materialized.resourceContext].filter(Boolean).join('\n\n');
+      const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
+      return { scope: { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId }, buildId, source,
+        configuration: { profile: { profileId: selected.id || selectedId || 'default', profileVersion: compatibilityDigest,
+          providerFamily: description.protocol, compatibilityDigest, contextWindow: description.contextWindow,
+          maxOutputTokens: selection.maxTokens ?? description.maxOutputTokens, requestTimeoutMs: description.requestTimeoutMs,
+          providerReplayMode: description.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
+        hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId }),
+        contract: { objective: admission.objective }, instructions, inputMessages: admission.messages,
+        tools, limits: { effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000) } },
+        ports: { ...binding.nativeTools.forAgent(agent), model: createNativeModelPort({ fetchImpl,
+          resolveProfile: async () => {
+            const current = { ...await models.profile(selectedId), modelName: selected.modelName };
+            invariant(hash(profileDescription(current)) === compatibilityDigest, 'studio_native_model_binding_changed');
+            return { protocol: description.protocol, baseUrl: current.baseUrl, apiKey: current.apiKey,
+              model: selected.modelName, parameters: description.parameters };
+          } }) },
+      };
+    },
+  });
+  return {
+    executeTurn(input) {
+      invariant(!closed, 'studio_native_host_closed');
+      const promise = execute({ ...input, signal: AbortSignal.any([input.signal, lifetime.signal]) });
+      active.add(promise); void promise.finally(() => active.delete(promise)).catch(() => {});
+      return promise;
+    },
+    close() {
+      if (closing) return closing;
+      closed = true; lifetime.abort(new Error('Studio Native host closed'));
+      return closing = (async () => {
+        await Promise.allSettled([...active]);
+        try { unregister(); } finally { if (!ledger) store.close(); }
+      })();
+    },
+  };
+}

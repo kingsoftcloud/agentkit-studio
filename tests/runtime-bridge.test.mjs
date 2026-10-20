@@ -8,6 +8,52 @@ import { spawnSync } from 'node:child_process';
 
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
 
+test('Native turn retirement waits for the worker to drain and rejects late completion', async () => {
+  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred();
+  let workerSignal, settled = false;
+  bridge.setNativeTurnExecutor(async ({ signal }) => {
+    workerSignal = signal; started.resolve(); await drained.promise;
+    return { reason: { kind: 'completed' } };
+  });
+  const pending = bridge.executeNativeTurn({ signal: new AbortController().signal });
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  await started.promise; bridge.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(workerSignal.aborted, true); assert.equal(settled, false);
+  assert.equal(bridge.diagnostics().requests, 1);
+  drained.resolve(); await assert.rejects(pending, { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
+  assert.equal(bridge.diagnostics().requests, 0);
+});
+
+test('retiring old Native registrations cannot remove their replacements', async () => {
+  const bridge = createRuntimeBridge();
+  const oldTurn = bridge.setNativeTurnExecutor(async () => 'old');
+  const oldTools = bridge.setNativeToolsFactory(() => 'old-tools');
+  bridge.setNativeTurnExecutor(async () => 'new'); bridge.setNativeToolsFactory(() => 'new-tools');
+  oldTurn(); oldTools();
+  assert.equal(await bridge.executeNativeTurn({}), 'new');
+  assert.equal(bridge.createNativeTools({}), 'new-tools');
+  bridge.close();
+});
+
+test('a Harness preset claims the whole turn and rejects model-step fallback', async () => {
+  const bridge = createRuntimeBridge(), listeners = new Map(), disposers = [];
+  const nativeTools = {};
+  bridge.setNativeToolsFactory(() => nativeTools);
+  bridge.setNativeTurnExecutor(async payload => {
+    assert.equal(payload.binding.nativeTools, nativeTools);
+    assert.equal(payload.binding.agentRevision, 7);
+    return { reason: { kind: 'completed' } };
+  });
+  const ctx = { get: () => bridge, tools: { schemas: () => [] },
+    effect: install => disposers.push(install()), on: (name, listener) => listeners.set(name, listener) };
+  applyPreset(ctx, { agentId: 'native', agentRevision: 7, runtime: 'harness', local: true, nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
+  assert.deepEqual(await listeners.get('agent/execute-turn')({}), { reason: { kind: 'completed' } });
+  await assert.rejects(listeners.get('agent/request')({}, async () => assert.fail('Cannot delegate the Native loop')),
+    { code: 'STUDIO_NATIVE_WHOLE_TURN_REQUIRED' });
+  disposers.reverse().forEach(dispose => dispose?.()); bridge.close();
+});
+
 test('older registration and route cleanup cannot withdraw their replacements', async () => {
   const bridge = createRuntimeBridge();
   const old = bridge.setAdapter({ async *stream() { yield 'old'; } });

@@ -51,7 +51,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
         && (message.media === undefined || Array.isArray(message.media))
         && (message.kind === undefined || typeof message.kind === 'string' && message.kind.trim().length > 0)
         && (message.persistent === undefined || typeof message.persistent === 'boolean'))
-      && config.inputMessages.some(message => message.content === config.contract.objective), 'invalid_task_input_messages');
+      && config.inputMessages.some(message => message.content.trim() || message.media?.length), 'invalid_task_input_messages');
   }
   for (const [key, value] of Object.entries(limits)) {
     invariant(value === null || Number.isSafeInteger(value) && value >= 0, `invalid_limit:${key}`);

@@ -62,6 +62,7 @@
     "verify-desktop-installed-update": "node scripts/verify-desktop-installed-update.mjs",
     "verify-dsh-sdk": "node scripts/verify-dsh-sdk-node-store.mjs",
     "verify-native-dsh-turn": "node scripts/verify-native-dsh-turn.mjs",
+    "verify-studio-native-harness": "node scripts/verify-studio-native-harness.mjs",
     "verify-dsh-plugin-market": "node scripts/verify-dsh-plugin-market.mjs",
     "check:contracts": "tsc -p tsconfig.contracts.json",
     "verify-studio-frozen-host": "node scripts/verify-studio-frozen-host.mjs",

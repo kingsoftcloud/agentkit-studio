@@ -7,8 +7,10 @@
  * declarations, so silently putting them in an empty preset would produce a
  * successful looking chat that runs the wrong composition. Those resource
  * bindings are routed through the Studio DSH provider bridge, which keeps the
- * native Session UI and loop while delegating the model turn to Studio.
+ * native Session UI while delegating runtime work to Studio. The explicit
+ * Native contract replaces the whole turn; legacy bindings retain the loop.
  */
+import { NATIVE_DSH_TURN_CONTRACT } from '../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 
 function encodedId(value) {
   return encodeURIComponent(String(value))
@@ -139,7 +141,9 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, nativeEngineContract } = {}) {
+    if (nativeEngineContract !== undefined && nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT) throw new TypeError('Unsupported Native Harness engine contract');
+    this.nativeEngineContract = nativeEngineContract;
     this.assertHostCompatible = assertHostCompatible;
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
@@ -271,6 +275,8 @@ export class DshPresetAdmission {
           local: eligibility.local,
           ...(resourcesUnavailable ? { resourcesUnavailable: true } : {}),
           ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
+          ...(eligibility.local && eligibility.runtime === 'harness' && this.nativeEngineContract
+            ? { nativeEngineContract: this.nativeEngineContract } : {}),
           ...(!eligibility.local ? { cloudVersionId: agent.deployment?.versionId || 'initial' } : {}),
           ...(buildId ? { buildId } : {}),
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),
@@ -290,9 +296,9 @@ export class DshPresetAdmission {
       id: eligibility.presetId,
       name: `${String(agent?.metadata?.name || agent?.name || eligibility.agentId)}${buildId ? ` · Revision ${eligibility.revision} · ${buildId.slice(-8)}` : ''}`,
       description: buildId ? `AgentKit Studio 冻结版本 ${buildId}` : 'AgentKit Studio Agent',
-      // The persona row is optional. Resource-bearing Harness/Codex revisions
-      // add the Studio runtime listener, which changes only the provider route;
-      // DSH still owns the Session Controller, durable loop and renderer.
+      // The persona row is optional. Runtime listeners own their selected
+      // contract; opted-in Harness replaces the turn, while legacy bindings
+      // change only the provider route. DSH retains Session and rendering.
       plugins,
     });
     // A newer revision must not remove a preset still referenced by an older

@@ -3,12 +3,13 @@ import { hostFetch } from '../http-fetch.mjs';
  * own their stores; route modules own RPC and HTTP transport adapters.
  */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { registerAuthoringTools } from '../authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from '../agent-preset-admission.mjs';
 import { createStartupReconciler } from '../preset-recovery.mjs';
 import { bindPresetRegistry } from '../preset-registry-binding.mjs';
-import { mountRuntimeBridge } from './runtime-bridge.mjs';
+import { mountRuntimeBridge, ownAsyncResource } from './runtime-bridge.mjs';
 import { createStudioServices } from './services/index.mjs';
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
@@ -132,6 +133,20 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // apply context used by the DSH loader.
   const credentials = credentialsService;
   const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
+  const workspaceRoot = resolve(runtimeEnv.AGENTKIT_STUDIO_WORKSPACE || process.cwd());
+  if (runtimeEnv.AGENTKIT_STUDIO_NATIVE_HARNESS) {
+    const { createNativeDshTools } = await import('../providers/native-dsh-tools.mjs');
+    ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config }) => createNativeDshTools({ ctx: toolsCtx, config,
+      workspaceRoot, stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),
+    })), 'agentkit-studio: Native tool environment');
+  }
+  let nativeHostPromise;
+  const nativeHost = () => nativeHostPromise ||= ownAsyncResource(ctx,
+    Promise.all([import('./services/native-harness.mjs'), import('@deepseek-ai/dsh-system-prompt'), agentStorePromise, studioBuildPromise, resourceAdaptersPromise])
+      .then(([{ createStudioNativeHarness }, { renderPrompt }, agents, studio, resources]) => createStudioNativeHarness({
+        ctx, storeDir: studioStoreDir, workspaceRoot, agents, builds: studio.build, models, resources, fetchImpl: hostFetch, renderPrompt,
+      })), 'agentkit-studio: Native Harness lifetime');
+  ctx.effect(() => bridge.setNativeTurnExecutor(async payload => (await nativeHost()).executeTurn(payload)), 'agentkit-studio: Native whole-turn registration');
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
@@ -160,6 +175,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const createPresetAdmission = registry => new DshPresetAdmission({
     registry,
+    // Explicit development opt-in until the full capability matrix closes.
+    nativeEngineContract: runtimeEnv.AGENTKIT_STUDIO_NATIVE_HARNESS || undefined,
     assertHostCompatible: () => hostCompatibility.require('agent-presets'),
     getBasePlugins: async agent => {
       if (typeof registry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });

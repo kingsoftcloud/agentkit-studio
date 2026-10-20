@@ -1,7 +1,7 @@
 /**
- * Preset-scoped DSH runner bridge. A selected Studio revision keeps the DSH
- * loop, Session Controller and native composer, while this listener routes
- * the loop's model request into the Studio runtime provider.
+ * Preset-scoped runtime bindings. Opted-in AgentKit Harness owns the complete
+ * Native turn; DSH supplies its Session and admitted ToolRegistry pipeline.
+ * Other runtime bindings retain the existing DSH model-request bridge.
  */
 
 export const name = 'agentkit-studio-dsh-runtime';
@@ -14,6 +14,7 @@ import { bindDshAgentRoute, executeDshResourceTool } from '@kingsoftcloud/agentk
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { migrateLegacyCodexObservations } from './codex-observation.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
+import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 
 // Keep the builtin executor in the Studio host. The Python toolset remains
 // the source of truth for AgentEngine tool semantics (workspace confinement,
@@ -285,6 +286,10 @@ function createToolAdapter(ctx, bindings) {
 export function apply(ctx, config = {}) {
   const agentId = String(config.agentId || '').trim();
   if (!agentId) throw new Error('agentkit-studio-dsh-runtime: agentId is required');
+  if (config.nativeEngineContract !== undefined && (config.nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT
+    || config.runtime !== 'harness' || config.local !== true)) {
+    throw Object.assign(new Error('Unsupported Native Harness engine contract'), { code: 'STUDIO_NATIVE_ENGINE_CONTRACT_UNSUPPORTED' });
+  }
   const bridge = resolveRuntimeBridge(typeof ctx.get === 'function' ? ctx : undefined);
   const routeScope = bridge.createRouteScope();
   const routes = new Map();
@@ -304,20 +309,29 @@ export function apply(ctx, config = {}) {
     if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: bound skills');
     else install();
   }
-  registerBuiltinTools(ctx, config.toolContracts, config);
+  const wholeNativeTurn = config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT;
+  const nativeToolBindings = wholeNativeTurn ? bridge.createNativeTools({ ctx, config }) : null;
+  if (!wholeNativeTurn) registerBuiltinTools(ctx, config.toolContracts, config);
   registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, config.toolBindings);
   const toolAdapter = config.runtime === 'codex'
     ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) } : boundToolAdapter;
-  // Every local Harness request is one DSH-managed model step, including
-  // text-only Agents. Resource count must not switch loop/retry ownership.
+  // Legacy resource adapters retain their existing per-model-step ownership.
+  // Local AgentKit Harness is claimed above at the whole-turn boundary.
   const nativeTools = config.local === true && config.runtime !== 'codex';
+  if (wholeNativeTurn) ctx.on('agent/execute-turn', async payload => {
+    if (config.resourcesUnavailable) throw Object.assign(new Error('Native Harness 资源恢复失败，请修复绑定后重试'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    return bridge.executeNativeTurn({ ...payload, binding: { agentId, runtime: config.runtime, local: true,
+      buildId: config.buildId, agentRevision: config.agentRevision, nativeEngineContract: config.nativeEngineContract, nativeTools: nativeToolBindings } });
+  });
   // The Agent loop dispatches its request waterfall through the selected Agent
   // scope, then invokes `llm.stream` from the root loop context. Bind the
   // Studio provider at the scoped request boundary so the root adapter can
   // recover this Agent's runtime and Tool adapter by session id.
   ctx.on(AGENT_REQUEST_EVENT, async (payload, next) => {
     if (config.resourcesUnavailable) throw Object.assign(new Error('此会话的 Agent 资源恢复失败。请检查资源配置后重新选择 Agent 或重新打开应用。'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+    if (wholeNativeTurn) throw Object.assign(new Error('此 Harness 必须通过整轮执行接口运行，请安装兼容的 Studio Host'), { code: 'STUDIO_NATIVE_WHOLE_TURN_REQUIRED' });
     const resolved = await next();
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     if (config.runtime === 'codex' && config.local === true) migrateLegacyCodexObservations(payload?.agent?.session);

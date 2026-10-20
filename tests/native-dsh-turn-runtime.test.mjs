@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MemoryRunStore, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
-import { fixture, scope, tool } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { MemoryRunStore, NativeKernel, prepareEffect, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { fixture, scope, tool, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeDshTurnExecutor } from '../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { nativeDeliveryProjection } from '../packages/agentkit-harness/src/native/session-delivery.mjs';
@@ -133,6 +133,20 @@ for (const sqlite of [false, true]) {
     late.resolve(); await new Promise(resolve => setImmediate(resolve));
     await assert.rejects(host.execute({ ...host.payload, signal: new AbortController().signal }), { code: 'NATIVE_TURN_CANCELED' });
     assert.deepEqual(host.calls, { model: 1, write: 1 }); assert.deepEqual(host.sink.events, before);
+    await assert.rejects(host.execute({ ...host.payload, turn: 2, signal: new AbortController().signal }),
+      { code: 'NATIVE_RUN_RECOVERY_REQUIRED', nativeRunId: record.snapshot.runId });
+    assert.deepEqual(host.calls, { model: 1, write: 1 });
+  });
+  test(`${kind}: an interrupted write must be reconciled before a new DSH turn`, async t => {
+    const host = setup(t, sqlite);
+    host.binding.ports.tools.execute = async () => {
+      host.calls.write++; return { status: 'uncertain', content: 'Write acknowledgment lost' };
+    };
+    await assert.rejects(host.execute(host.payload), { code: 'NATIVE_TURN_FAILED', nativePhase: 'interrupted' });
+    const head = host.head();
+    await assert.rejects(host.execute({ ...host.payload, turn: 2 }),
+      { code: 'NATIVE_RUN_RECOVERY_REQUIRED', nativeRunId: head.runId });
+    assert.deepEqual(host.calls, { model: 1, write: 1 });
   });
   test(`${kind}: canceling a stalled host checkpoint persists cancellation before any model`, async t => {
     const entered = gate(), late = gate();
@@ -151,6 +165,28 @@ for (const sqlite of [false, true]) {
     host.payload.turn = 2; host.sink.session.append('turn/start', { turn: 2 });
     await assert.rejects(host.execute(host.payload), { code: 'NATIVE_RUN_RECOVERY_REQUIRED', nativeRunId: head.runId });
     assert.equal(host.head().runId, head.runId); assert.equal(host.calls.model, 1);
+  });
+  test(`${kind}: a completed safe-read recovery permits the next DSH turn without repeating the read`, async t => {
+    const host = setup(t, sqlite), recovered = fixture({ tools: [tool({ recoveryPolicy: 'safe-read/v1' })] });
+    host.store.create(recovered.config, recovered.snapshot);
+    const lease = host.store.acquire(scope, 'run', 'lost-reader', 1, 1);
+    const read = { callId: 'read', name: 'read', arguments: {} };
+    const prepared = prepareEffect(recovered.snapshot, 'tool', 'executing_tools', { calls: [read], interaction: null }, {
+      pendingTools: [read], messages: [...recovered.snapshot.messages, { role: 'assistant', content: '', toolCalls: [read] }],
+    });
+    host.store.commit(scope, 'run', lease, 1, 0, prepared);
+    host.store.claim(scope, 'run', lease, 1, prepared.snapshot.pendingIntent);
+    let reads = 0;
+    const worker = new NativeKernel({ store: host.store, owner: 'replacement', digest, now: () => 100,
+      ports: { model: { generate: async () => final() }, tools: { execute: async () => { reads++; return { status: 'ok', content: 'Read safely' }; } } } });
+    const completed = await worker.runUntilIdle(scope, 'run');
+    assert.equal(completed.phase, 'completed'); assert.equal(completed.recoveryRetriesUsed, 1);
+    assert.equal(host.store.load(scope, 'run').receipts[0].status, 'uncertain');
+    host.binding.ports.model.generate = async () => { host.calls.model++; return final(); };
+    host.sink.session.append('turn/start', { turn: 2 });
+    await host.execute({ ...host.payload, turn: 2 });
+    assert.equal(reads, 1); assert.equal(host.head().parentRunId, 'run');
+    assert.deepEqual(host.calls, { model: 1, write: 0 });
   });
   test(`${kind}: repeating an already consumed interaction cannot spin indefinitely`, async t => {
     let prompts = 0;
