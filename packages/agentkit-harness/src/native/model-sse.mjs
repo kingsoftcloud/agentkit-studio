@@ -103,7 +103,7 @@ class SseFramer {
  *   SseFramingError (terminal) or propagates transport/abort errors.
  */
 export async function* readModelSse(body, { maxBytes = 8 * 1024 * 1024, idleTimeoutMs, abort } = {}) {
-  if (typeof maxBytes !== 'number' || maxBytes <= 0) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new SseFramingError('model SSE needs a positive byte budget');
   }
   const iter = toAsyncIterator(body);
@@ -130,7 +130,7 @@ export async function* readModelSse(body, { maxBytes = 8 * 1024 * 1024, idleTime
       if (!(chunk instanceof Uint8Array) && !(chunk instanceof ArrayBuffer)) {
         throw new SseFramingError('model SSE requires byte chunks');
       }
-      total += chunk.length;
+      total += chunk.byteLength;
       if (total > maxBytes) throw new SseFramingError('model SSE byte budget exceeded');
       let text;
       try {

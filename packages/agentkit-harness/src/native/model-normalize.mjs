@@ -33,7 +33,7 @@ const COMPLETE_FINISHES = new Set([
  * terminal: [DONE], message_stop, or a buffered 2xx body), not just socket EOF.
  * Partial tool payloads never reach toolCalls; the caller keeps raw evidence for
  * repair separately. Tool calls with undecodable argument bytes keep their
- * identity but carry arguments={} and a non-contract `wireArgumentsInvalid`
+ * identity but carry arguments={} and the contract's `wireArgumentsInvalid`
  * flag so the kernel can emit one bounded tool-error receipt without executing.
  */
 export function normalizeResponse({
@@ -83,8 +83,8 @@ function validateToolCall(call) {
 }
 
 // Parse the OpenAI chat usage envelope. Both primary counters must be present;
-// an incomplete report is a protocol error, not fabricated zero usage. Returns
-// null when no usage was reported. Optional cached/reasoning subdivisions are
+// an incomplete report stays unknown, never fabricated zero usage. All supplied
+// fields are validated even in a partial report. Optional subdivisions are
 // retained by source meaning: prompt_tokens_details.cached_tokens ->
 // cachedInputTokens, completion_tokens_details.reasoning_tokens -> reasoningTokens.
 export function parseOpenAIUsage(value) {
@@ -92,12 +92,9 @@ export function parseOpenAIUsage(value) {
   if (typeof value !== 'object' || Array.isArray(value)) {
     throw new ProtocolError('invalid usage report');
   }
-  if (Object.keys(value).length === 0) return null;
-  if (value.prompt_tokens == null || value.completion_tokens == null) {
-    throw new ProtocolError('incomplete usage report');
+  for (const field of ['prompt_tokens', 'completion_tokens', 'total_tokens']) {
+    if (Object.hasOwn(value, field)) toNonNegInt(value[field], field);
   }
-  const inputTokens = toNonNegInt(value.prompt_tokens, 'prompt_tokens');
-  const outputTokens = toNonNegInt(value.completion_tokens, 'completion_tokens');
   const details = value.prompt_tokens_details;
   const completionDetails = value.completion_tokens_details;
   if (details != null && (typeof details !== 'object' || Array.isArray(details))) {
@@ -106,11 +103,14 @@ export function parseOpenAIUsage(value) {
   if (completionDetails != null && (typeof completionDetails !== 'object' || Array.isArray(completionDetails))) {
     throw new ProtocolError('invalid usage details');
   }
-  const usage = { ...emptyUsage(), inputTokens, outputTokens };
-  const cached = details && details.cached_tokens;
-  if (cached != null) usage.cachedInputTokens = toNonNegInt(cached, 'cached_tokens');
-  const reasoning = completionDetails && completionDetails.reasoning_tokens;
-  if (reasoning != null) usage.reasoningTokens = toNonNegInt(reasoning, 'reasoning_tokens');
+  const cached = details && Object.hasOwn(details, 'cached_tokens')
+    ? toNonNegInt(details.cached_tokens, 'cached_tokens') : undefined;
+  const reasoning = completionDetails && Object.hasOwn(completionDetails, 'reasoning_tokens')
+    ? toNonNegInt(completionDetails.reasoning_tokens, 'reasoning_tokens') : undefined;
+  if (!Object.hasOwn(value, 'prompt_tokens') || !Object.hasOwn(value, 'completion_tokens')) return null;
+  const usage = { ...emptyUsage(), inputTokens: value.prompt_tokens, outputTokens: value.completion_tokens };
+  if (cached != null) usage.cachedInputTokens = cached;
+  if (reasoning != null) usage.reasoningTokens = reasoning;
   return usage;
 }
 
@@ -123,14 +123,17 @@ export function parseAnthropicUsageFragment(value) {
     throw new ProtocolError('invalid anthropic usage');
   }
   const fragment = {};
-  if (value.input_tokens != null) {
+  if (Object.hasOwn(value, 'input_tokens')) {
     fragment.inputTokens = toNonNegInt(value.input_tokens, 'input_tokens');
   }
-  if (value.output_tokens != null) {
+  if (Object.hasOwn(value, 'output_tokens')) {
     fragment.outputTokens = toNonNegInt(value.output_tokens, 'output_tokens');
   }
   if (value.cache_read_input_tokens != null) {
     fragment.cachedInputTokens = toNonNegInt(value.cache_read_input_tokens, 'cache_read_input_tokens');
+  }
+  if (value.cache_creation_input_tokens != null) {
+    fragment.cacheCreationInputTokens = toNonNegInt(value.cache_creation_input_tokens, 'cache_creation_input_tokens');
   }
   if (value.reasoning_tokens != null) {
     fragment.reasoningTokens = toNonNegInt(value.reasoning_tokens, 'reasoning_tokens');
@@ -156,6 +159,15 @@ function toNonNegInt(value, field) {
     throw new ProtocolError(`invalid ${field} counter`);
   }
   return value;
+}
+
+// Host generation options may select a smaller output budget, but cannot
+// increase the limit pinned in the run configuration.
+export function boundOutputTokens(value, profileLimit) {
+  if (!Number.isSafeInteger(profileLimit) || profileLimit <= 0) throw new ProtocolError('invalid pinned output limit');
+  if (value === undefined) return profileLimit;
+  if (!Number.isSafeInteger(value) || value <= 0) throw new ProtocolError('invalid output limit');
+  return Math.min(value, profileLimit);
 }
 
 // Parse a Retry-After header into milliseconds. Accepts delta-seconds or an

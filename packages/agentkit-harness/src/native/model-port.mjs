@@ -25,7 +25,7 @@ import {
 import {
   buildAnthropicRequest, parseAnthropicBuffered, createAnthropicStreamState,
 } from './model-anthropic.mjs';
-import { MediaError } from './model-media.mjs';
+import { MediaError, projectRequestMedia } from './model-media.mjs';
 // parseModelJson is the kernel's strict finite JSON parser; used here for the
 // 400 context-length error heuristic so a malformed error body is never parsed
 // as a lenient ambiguity.
@@ -51,9 +51,10 @@ export function createNativeModelPort({
   if (typeof fetchImpl !== 'function') {
     throw new TypeError('createNativeModelPort requires a fetchImpl function');
   }
-  const maxBytes = Math.max(1, Math.floor(Number(maxResponseBytes) || DEFAULT_MAX_BYTES));
-  const idleMs = Number(idleTimeoutMs);
-  const idleTimeout = Number.isFinite(idleMs) && idleMs > 0 ? idleMs : DEFAULT_IDLE_MS;
+  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0) throw new RangeError('maxResponseBytes must be a positive safe integer');
+  if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) throw new RangeError('idleTimeoutMs must be positive and finite');
+  const maxBytes = maxResponseBytes;
+  const idleTimeout = idleTimeoutMs;
 
   return {
     async generate(request, emit) {
@@ -119,7 +120,9 @@ export function createNativeModelPort({
       // (e.g. a 429 whose body was never read).
       try {
         if (!response.ok) {
-          return await classifyHttpError(response, { maxBytes });
+          const result = await classifyHttpError(response, { maxBytes });
+          request.signal?.throwIfAborted();
+          return result;
         }
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('text/event-stream')) {
@@ -144,8 +147,9 @@ export function createNativeModelPort({
 
 function buildRequest(binding, request) {
   if (!binding || typeof binding !== 'object') throw new ProtocolError('binding missing');
-  if (binding.protocol === 'anthropic-messages') return buildAnthropicRequest(binding, request);
-  if (binding.protocol === 'openai-chat') return buildOpenAIRequest(binding, request);
+  const dispatchView = projectRequestMedia(request);
+  if (binding.protocol === 'anthropic-messages') return buildAnthropicRequest(binding, dispatchView);
+  if (binding.protocol === 'openai-chat') return buildOpenAIRequest(binding, dispatchView);
   throw new ProtocolError('unsupported binding protocol');
 }
 
@@ -160,6 +164,7 @@ async function streamResponse(response, request, binding, emit, internal, maxByt
   try {
     for await (const frame of readModelSse(response.body, { maxBytes, idleTimeoutMs, abort })) {
       state.consume(frame, emit);
+      if (state.done) break;
     }
   } catch (error) {
     if (request.signal?.aborted) throw error; // caller cancel propagates
@@ -280,7 +285,8 @@ async function readBoundedText(response, maxBytes) {
         const { value, done } = await reader.read();
         if (done) break;
         if (!value) continue;
-        total += value.length;
+        if (!(value instanceof Uint8Array) && !(value instanceof ArrayBuffer)) throw new ProtocolError('body requires bytes');
+        total += value.byteLength;
         if (total > maxBytes) throw new OverflowError();
         chunks.push(decoder.decode(value, { stream: true }));
       }
@@ -293,7 +299,8 @@ async function readBoundedText(response, maxBytes) {
   // Async-iterable fallback.
   for await (const value of body) {
     if (!value) continue;
-    total += value.length;
+    if (!(value instanceof Uint8Array) && !(value instanceof ArrayBuffer)) throw new ProtocolError('body requires bytes');
+    total += value.byteLength;
     if (total > maxBytes) throw new OverflowError();
     chunks.push(decoder.decode(value, { stream: true }));
   }

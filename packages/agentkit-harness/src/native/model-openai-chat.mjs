@@ -15,7 +15,7 @@
 // claim of complete fidelity.
 
 import {
-  normalizeResponse, parseOpenAIUsage, sealUsage, ProtocolError, resolveUrl,
+  normalizeResponse, parseOpenAIUsage, sealUsage, ProtocolError, resolveUrl, boundOutputTokens,
 } from './model-normalize.mjs';
 import { sealModelReplay, openAIReplayFields } from './model-replay.mjs';
 import { validateMediaBlock, projectMediaOpenAI, MediaError } from './model-media.mjs';
@@ -36,7 +36,7 @@ function strictParseJson(text) {
 // model and stream are request/adapter owned; the rest are security-sensitive
 // transport values that belong to the adapter, not the binding parameters.
 const FORBIDDEN_BODY_KEYS = new Set([
-  'model', 'messages', 'tools', 'stream', 'n', 'tool_choice', 'parallel_tool_calls',
+  'model', 'messages', 'tools', 'stream', 'n', 'tool_choice', 'parallel_tool_calls', 'max_tokens', 'max_completion_tokens',
 ]);
 
 // Validate the host binding shape before any HTTP attempt.
@@ -77,9 +77,7 @@ export function buildOpenAIRequest(binding, request) {
     stream: true,
     n: 1,
   };
-  // Default the output limit from the pinned profile; parameters may override
-  // generation fields but never the forbidden keys.
-  payload.max_tokens = profile.maxOutputTokens;
+  payload.max_tokens = boundOutputTokens(undefined, profile.maxOutputTokens);
 
   const parameters = binding.parameters || {};
   for (const [key, value] of Object.entries(parameters)) {
@@ -89,10 +87,10 @@ export function buildOpenAIRequest(binding, request) {
   // max_completion_tokens replaces max_tokens; a binding that selects the newer
   // chat parameter must not send both.
   if ('max_completion_tokens' in parameters) {
-    payload.max_completion_tokens = parameters.max_completion_tokens;
+    payload.max_completion_tokens = boundOutputTokens(parameters.max_completion_tokens, profile.maxOutputTokens);
     delete payload.max_tokens;
   } else if ('max_tokens' in parameters) {
-    payload.max_tokens = parameters.max_tokens;
+    payload.max_tokens = boundOutputTokens(parameters.max_tokens, profile.maxOutputTokens);
   }
 
   // Advertise tools: during a finalization-only turn the kernel has already
@@ -117,7 +115,7 @@ export function buildOpenAIRequest(binding, request) {
 // Project host messages onto the chat wire, admitting media only on user/tool
 // content and collecting tool-receipt images into a following user message.
 // Assistant tool batches require stable, unique IDs and matching receipts.
-// maxInlineImageBytes bounds decoded image bytes; a cross-profile replay is
+// maxInlineImageBytes bounds encoded inline URLs; a cross-profile replay is
 // dropped before it reaches the wire.
 export function projectMessagesOpenAI(request, maxInlineImageBytes) {
   const profile = request.profile;

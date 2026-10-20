@@ -13,8 +13,8 @@
 // metadata, and never concatenated to visible text.
 
 import {
-  normalizeResponse, parseAnthropicUsageFragment, parseRetryAfterMs, sealUsage,
-  ProtocolError, resolveUrl, emptyUsage,
+  normalizeResponse, parseAnthropicUsageFragment, parseRetryAfterMs,
+  ProtocolError, resolveUrl, boundOutputTokens,
 } from './model-normalize.mjs';
 import { sealAnthropicReplay, anthropicReplayContent, profileFingerprint } from './model-replay.mjs';
 import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-media.mjs';
@@ -29,10 +29,9 @@ function strictParseJson(text) {
 }
 
 const ANTHROPIC_VERSION = '2023-06-01';
-const DEFAULT_MAX_TOKENS = 8192;
 
 const FORBIDDEN_BODY_KEYS = new Set([
-  'model', 'messages', 'tools', 'stream', 'system', 'tool_choice',
+  'model', 'messages', 'tools', 'stream', 'system', 'tool_choice', 'max_tokens',
 ]);
 
 const CLIENT_ITEM_TYPES = new Set([
@@ -87,7 +86,7 @@ export function buildAnthropicRequest(binding, request) {
     model: binding.model,
     messages: items,
     stream: true,
-    max_tokens: profile.maxOutputTokens || DEFAULT_MAX_TOKENS,
+    max_tokens: boundOutputTokens(binding.parameters?.max_tokens, profile.maxOutputTokens),
   };
   if (system) payload.system = system;
 
@@ -96,7 +95,6 @@ export function buildAnthropicRequest(binding, request) {
     if (FORBIDDEN_BODY_KEYS.has(key)) continue;
     payload[key] = value;
   }
-  if ('max_tokens' in parameters) payload.max_tokens = parameters.max_tokens;
 
   // Advertise tools: during a finalization-only turn the kernel has already
   // stripped normal workspace tools, but the adapter filters defensively and
@@ -127,8 +125,17 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
   const profile = request.profile;
   const systemParts = [];
   const items = [];
+  const pending = new Set();
   for (const message of request.messages || []) {
     const role = message.role;
+    if (role !== 'tool' && pending.size) throw new ProtocolError('incomplete assistant tool batch before next message');
+    if (role === 'assistant' && message.toolCalls?.length) {
+      validateAssistantToolIds(message.toolCalls);
+      for (const call of message.toolCalls) pending.add(call.callId);
+    }
+    if (role === 'tool') {
+      if (!pending.delete(message.callId)) throw new ProtocolError('tool receipt does not match the pending assistant batch');
+    }
     if (role === 'system' || role === 'developer') {
       systemParts.push(message.content || '');
       continue;
@@ -180,6 +187,7 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
       items.push(item);
     }
   }
+  if (pending.size) throw new ProtocolError('assistant tool batch is missing receipts');
   return { system: systemParts.join('\n\n'), items };
 }
 
@@ -250,17 +258,9 @@ export function parseAnthropicBuffered(bodyText, request, { captureReplay = fals
     calls.length = 0;
   }
   const finish = mapStopReason(stopReason);
-  let usage = emptyUsage();
-  let usageSeen = false;
-  if (payload.usage != null) {
-    const fragment = parseAnthropicUsageFragment(payload.usage);
-    if (fragment.inputTokens != null) { usage.inputTokens = fragment.inputTokens; usageSeen = true; }
-    if (fragment.outputTokens != null) { usage.outputTokens = fragment.outputTokens; usageSeen = true; }
-    if (fragment.cachedInputTokens != null) { usage.cachedInputTokens = fragment.cachedInputTokens; usageSeen = true; }
-    if (fragment.reasoningTokens != null) { usage.reasoningTokens = fragment.reasoningTokens; usageSeen = true; }
-  }
+  const counters = payload.usage == null ? {} : parseAnthropicUsageFragment(payload.usage);
   const normalized = normalizeResponse({ text, toolCalls: calls, finishReason: finish, streamComplete: true });
-  const result = { ...normalized, usage: usageSeen ? usage : emptyUsage(), usageReported: usageSeen };
+  const result = { ...normalized, usage: buildAnthropicUsage(counters), usageReported: hasCompleteUsage(counters) };
   return captureReplay ? sealAnthropicReplay(result, request.profile, replayBlocks) : result;
 }
 
@@ -286,17 +286,28 @@ function anthropicRefusal(details) {
 
 // Accumulate Anthropic usage across message_start (input_tokens) and
 // message_delta (output_tokens). The state tracks the two counters and a
-// `seen` flag so a report of genuine zeroes stays distinct from no report.
+// pair of primary counters so genuine zeroes stay distinct from a partial report.
 function buildAnthropicUsage(state) {
-  if (!state.usageSeen) return emptyUsage();
+  const inputTokens = (state.inputTokens ?? 0) + (state.cachedInputTokens ?? 0) + (state.cacheCreationInputTokens ?? 0);
+  if (!Number.isSafeInteger(inputTokens)) throw new ProtocolError('unsafe inclusive input token counter');
   const usage = {
-    inputTokens: state.inputTokens ?? 0,
+    inputTokens,
     outputTokens: state.outputTokens ?? 0,
     modelCalls: 0, toolCalls: 0, cost: 0,
   };
   if (state.cachedInputTokens != null) usage.cachedInputTokens = state.cachedInputTokens;
   if (state.reasoningTokens != null) usage.reasoningTokens = state.reasoningTokens;
   return usage;
+}
+
+function hasCompleteUsage(state) {
+  return state.inputTokens != null && state.outputTokens != null;
+}
+
+function mergeUsage(state, value) {
+  const fragment = parseAnthropicUsageFragment(value);
+  buildAnthropicUsage({ ...state, ...fragment });
+  Object.assign(state, fragment);
 }
 
 // Classify an in-stream `error` event into a retryable/terminal result.
@@ -333,22 +344,26 @@ export function createAnthropicStreamState(profile) {
     inputTokens: null,
     outputTokens: null,
     cachedInputTokens: null,
+    cacheCreationInputTokens: null,
     reasoningTokens: null,
-    usageSeen: false,
     done: false,
+    contentFinished: false,
     model: null,
     responseId: null,
 
     consume(frame, emit) {
       const data = frame.data;
       if (!data.trim()) return;
-      if (data.trim() === '[DONE]') { this.done = true; return; }
+      if (data.trim() === '[DONE]') return;
       let event;
       try { event = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json'); }
       if (!event || typeof event !== 'object' || Array.isArray(event)) {
         throw new ProtocolError('invalid stream envelope');
       }
       const type = String(event.type || '');
+      if (this.contentFinished && (type === 'content_block_start' || type === 'content_block_delta')) {
+        throw new ProtocolError('content after finish reason');
+      }
       if (type === 'error') {
         throw Object.assign(new ProtocolError('anthropic stream error'), {
           streamError: classifyAnthropicStreamError(event.error),
@@ -358,9 +373,14 @@ export function createAnthropicStreamState(profile) {
       if (type === 'message_start') this.handleMessageStart(event);
       else if (type === 'content_block_start') this.handleBlockStart(event, emit);
       else if (type === 'content_block_delta') this.handleBlockDelta(event, emit);
-      else if (type === 'content_block_stop') this.handleBlockStop(event);
+      else if (type === 'content_block_stop') this.handleBlockStop(event, emit);
       else if (type === 'message_delta') this.handleMessageDelta(event);
-      else if (type === 'message_stop') { this.done = true; }
+      else if (type === 'message_stop') {
+        this.validateFinishedBlocks();
+        this.drainContent(emit);
+        this.done = true;
+        this.contentFinished = true;
+      }
       // Unknown event types are ignored: the adapter validates the blocks it
       // assembles rather than rejecting foreign extensions terminally.
     },
@@ -372,11 +392,7 @@ export function createAnthropicStreamState(profile) {
       if (role != null && role !== 'assistant') throw new ProtocolError('invalid message role');
       this.pinIdentity(message.id, message.model);
       if (message.usage != null) {
-        const fragment = parseAnthropicUsageFragment(message.usage);
-        if (fragment.inputTokens != null) { this.inputTokens = fragment.inputTokens; this.usageSeen = true; }
-        if (fragment.outputTokens != null) { this.outputTokens = fragment.outputTokens; this.usageSeen = true; }
-        if (fragment.cachedInputTokens != null) { this.cachedInputTokens = fragment.cachedInputTokens; this.usageSeen = true; }
-        if (fragment.reasoningTokens != null) { this.reasoningTokens = fragment.reasoningTokens; this.usageSeen = true; }
+        mergeUsage(this, message.usage);
       }
     },
 
@@ -389,6 +405,7 @@ export function createAnthropicStreamState(profile) {
           throw new ProtocolError('conflicting stop reasons');
         }
         this.stopReason = delta.stop_reason;
+        this.contentFinished = true;
       }
       if (delta.stop_sequence != null && typeof delta.stop_sequence !== 'string') {
         throw new ProtocolError('invalid stop_sequence');
@@ -397,11 +414,7 @@ export function createAnthropicStreamState(profile) {
         if (anthropicRefusal(delta.stop_details)) this.refused = true;
       }
       if (event.usage != null) {
-        const fragment = parseAnthropicUsageFragment(event.usage);
-        if (fragment.inputTokens != null) { this.inputTokens = fragment.inputTokens; this.usageSeen = true; }
-        if (fragment.outputTokens != null) { this.outputTokens = fragment.outputTokens; this.usageSeen = true; }
-        if (fragment.cachedInputTokens != null) { this.cachedInputTokens = fragment.cachedInputTokens; this.usageSeen = true; }
-        if (fragment.reasoningTokens != null) { this.reasoningTokens = fragment.reasoningTokens; this.usageSeen = true; }
+        mergeUsage(this, event.usage);
       }
     },
 
@@ -458,6 +471,7 @@ export function createAnthropicStreamState(profile) {
         }
         this.tools.set(index, tool);
       }
+      this.drainContent(emit);
     },
 
     handleBlockDelta(event, emit) {
@@ -488,13 +502,9 @@ export function createAnthropicStreamState(profile) {
       if (deltaType === 'text_delta') {
         if (typeof delta.text !== 'string') throw new ProtocolError('invalid text delta');
         this.values.set(index, (this.values.get(index) || '') + delta.text);
-        this.text += delta.text;
-        if (delta.text) emit({ kind: 'text', text: delta.text });
       } else if (deltaType === 'thinking_delta') {
         if (typeof delta.thinking !== 'string') throw new ProtocolError('invalid thinking delta');
         this.values.set(index, (this.values.get(index) || '') + delta.thinking);
-        if (captureReplay) this.reasoning += delta.thinking;
-        if (delta.thinking && emitThinking) emit({ kind: 'thinking', text: delta.thinking });
       } else if (deltaType === 'signature_delta') {
         if (typeof delta.signature !== 'string') throw new ProtocolError('invalid signature delta');
         const original = this.originals.get(index) || { type: 'thinking' };
@@ -513,9 +523,10 @@ export function createAnthropicStreamState(profile) {
       } else {
         throw new ProtocolError('unsupported delta type');
       }
+      this.drainContent(emit);
     },
 
-    handleBlockStop(event) {
+    handleBlockStop(event, emit) {
       const index = event.index;
       if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
         throw new ProtocolError('invalid block index');
@@ -529,11 +540,44 @@ export function createAnthropicStreamState(profile) {
         tool.closed = true;
       }
       this.closed.add(index);
+      this.drainContent(emit);
+    },
+
+    drainContent(emit) {
+      const prefix = (kind) => {
+        const pieces = [];
+        let expected = 0;
+        for (const [index, type] of [...this.blockTypes.entries()].sort((a, b) => a[0] - b[0])) {
+          if (index !== expected++) break;
+          if (type !== kind) continue;
+          pieces.push(this.values.get(index) || '');
+          if (!this.closed.has(index)) break;
+        }
+        return pieces.join('');
+      };
+      const text = prefix('text');
+      const reasoning = prefix('thinking');
+      if (!text.startsWith(this.text) || !reasoning.startsWith(this.reasoning)) throw new ProtocolError('non-monotonic content');
+      const textDelta = text.slice(this.text.length);
+      const thinkingDelta = reasoning.slice(this.reasoning.length);
+      this.text = text;
+      this.reasoning = reasoning;
+      if (textDelta) emit({ kind: 'text', text: textDelta });
+      if (thinkingDelta && emitThinking) emit({ kind: 'thinking', text: thinkingDelta });
+    },
+
+    validateFinishedBlocks() {
+      let expected = 0;
+      for (const index of [...this.blockTypes.keys()].sort((a, b) => a - b)) {
+        if (index !== expected++) throw new ProtocolError('non-contiguous content block indexes');
+        if (!this.closed.has(index) && !this.implicitIndexes.has(index)) throw new ProtocolError('unclosed content block');
+      }
+      for (const index of this.implicitIndexes) this.closed.add(index);
     },
 
     finalize({ errorKind = null, failureKind = null } = {}) {
       const usage = buildAnthropicUsage(this);
-      const usageReported = this.usageSeen;
+      const usageReported = hasCompleteUsage(this);
       let finish = this.refused ? 'content_filter' : mapStopReason(this.stopReason);
       if (errorKind && errorKind !== 'provider_retryable_error') {
         return { kind: errorKind, text: this.text, toolCalls: [], usage, usageReported, ...(failureKind ? { failureKind } : {}) };
