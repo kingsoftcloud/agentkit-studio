@@ -13,11 +13,20 @@
 // metadata, and never concatenated to visible text.
 
 import {
-  normalizeResponse, parseAnthropicUsageFragment, parseRetryAfterMs,
+  normalizeResponse, parseAnthropicUsageFragment, parseRetryAfterMs, sealUsage,
   ProtocolError, resolveUrl, emptyUsage,
 } from './model-normalize.mjs';
 import { sealAnthropicReplay, anthropicReplayContent, profileFingerprint } from './model-replay.mjs';
 import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-media.mjs';
+// parseModelJson is the kernel's strict finite JSON parser (rejects duplicate
+// keys and non-finite numbers); using it keeps provider-envelope and tool-input
+// decoding consistent with the kernel's own validation.
+import { parseModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+
+function strictParseJson(text) {
+  try { return parseModelJson(text); }
+  catch (error) { throw new ProtocolError(error?.code || 'invalid_model_json'); }
+}
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_MAX_TOKENS = 8192;
@@ -73,7 +82,7 @@ export function buildAnthropicRequest(binding, request) {
   const beta = (binding.headers && binding.headers['anthropic-beta']) || binding.headers?.['Anthropic-Beta'];
   if (beta && !('anthropic-beta' in headers)) headers['anthropic-beta'] = beta;
 
-  const { system, items } = projectMessagesAnthropic(request);
+  const { system, items } = projectMessagesAnthropic(request, request.maxInlineImageBytes);
   const payload = {
     model: binding.model,
     messages: items,
@@ -89,9 +98,16 @@ export function buildAnthropicRequest(binding, request) {
   }
   if ('max_tokens' in parameters) payload.max_tokens = parameters.max_tokens;
 
+  // Advertise tools: during a finalization-only turn the kernel has already
+  // stripped normal workspace tools, but the adapter filters defensively and
+  // keeps the internal submit_final_output tool so the model can submit its
+  // final answer. Normal tools are never sent during finalization.
   const tools = request.tools || [];
-  if (tools.length && !request.finalizationOnly) {
-    payload.tools = tools.map((tool) => ({
+  const advertised = request.finalizationOnly
+    ? tools.filter((tool) => tool.name === FINAL_SUBMISSION_TOOL)
+    : tools;
+  if (advertised.length) {
+    payload.tools = advertised.map((tool) => ({
       name: tool.name,
       description: tool.description,
       input_schema: tool.parameters || { type: 'object', properties: {} },
@@ -107,7 +123,8 @@ export function buildAnthropicRequest(binding, request) {
 // same-role content is concatenated); tool receipts become user tool_result
 // blocks. Assistant anthropic_content replay replaces the projected blocks so
 // the model sees its signed thinking and tool_use exactly.
-export function projectMessagesAnthropic(request) {
+export function projectMessagesAnthropic(request, maxInlineImageBytes) {
+  const profile = request.profile;
   const systemParts = [];
   const items = [];
   for (const message of request.messages || []) {
@@ -118,7 +135,7 @@ export function projectMessagesAnthropic(request) {
     }
     let item;
     if (role === 'tool') {
-      const media = message.media ? message.media.map(validateMediaBlock) : null;
+      const media = message.media ? message.media.map((b) => validateMediaBlock(b, maxInlineImageBytes)) : null;
       const content = media && media.length
         ? [{ type: 'text', text: message.content || '' }, ...projectMediaAnthropic(media)]
         : (message.content || '');
@@ -131,13 +148,16 @@ export function projectMessagesAnthropic(request) {
         }],
       };
     } else {
-      const replayContent = anthropicReplayContent(message, request.profile);
+      // anthropicReplayContent applies message.replayToolIds to the original
+      // tool_use ids and validates the blocks pair exactly with the sealed
+      // toolCalls/text; a cross-profile or inconsistent replay is dropped.
+      const replayContent = anthropicReplayContent(message, profile);
       let blocks;
       if (replayContent) {
         blocks = replayContent;
       } else {
         blocks = [];
-        const media = message.media ? message.media.map(validateMediaBlock) : null;
+        const media = message.media ? message.media.map((b) => validateMediaBlock(b, maxInlineImageBytes)) : null;
         if ((message.content || '').length) blocks.push({ type: 'text', text: message.content });
         if (media && media.length) {
           if (role !== 'user') throw new MediaError('image observations require user or tool content');
@@ -182,7 +202,7 @@ function validateAssistantToolIds(calls) {
 // Parse a buffered 2xx Anthropic Messages body into a sealed result.
 export function parseAnthropicBuffered(bodyText, request, { captureReplay = false } = {}) {
   let payload;
-  try { payload = JSON.parse(bodyText); } catch { throw new ProtocolError('invalid response json'); }
+  try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new ProtocolError('invalid response envelope');
   }
@@ -236,9 +256,11 @@ export function parseAnthropicBuffered(bodyText, request, { captureReplay = fals
     const fragment = parseAnthropicUsageFragment(payload.usage);
     if (fragment.inputTokens != null) { usage.inputTokens = fragment.inputTokens; usageSeen = true; }
     if (fragment.outputTokens != null) { usage.outputTokens = fragment.outputTokens; usageSeen = true; }
+    if (fragment.cachedInputTokens != null) { usage.cachedInputTokens = fragment.cachedInputTokens; usageSeen = true; }
+    if (fragment.reasoningTokens != null) { usage.reasoningTokens = fragment.reasoningTokens; usageSeen = true; }
   }
   const normalized = normalizeResponse({ text, toolCalls: calls, finishReason: finish, streamComplete: true });
-  const result = { ...normalized, usage: usageSeen ? usage : emptyUsage() };
+  const result = { ...normalized, usage: usageSeen ? usage : emptyUsage(), usageReported: usageSeen };
   return captureReplay ? sealAnthropicReplay(result, request.profile, replayBlocks) : result;
 }
 
@@ -267,11 +289,14 @@ function anthropicRefusal(details) {
 // `seen` flag so a report of genuine zeroes stays distinct from no report.
 function buildAnthropicUsage(state) {
   if (!state.usageSeen) return emptyUsage();
-  return {
+  const usage = {
     inputTokens: state.inputTokens ?? 0,
     outputTokens: state.outputTokens ?? 0,
     modelCalls: 0, toolCalls: 0, cost: 0,
   };
+  if (state.cachedInputTokens != null) usage.cachedInputTokens = state.cachedInputTokens;
+  if (state.reasoningTokens != null) usage.reasoningTokens = state.reasoningTokens;
+  return usage;
 }
 
 // Classify an in-stream `error` event into a retryable/terminal result.
@@ -307,6 +332,8 @@ export function createAnthropicStreamState(profile) {
     refused: false,
     inputTokens: null,
     outputTokens: null,
+    cachedInputTokens: null,
+    reasoningTokens: null,
     usageSeen: false,
     done: false,
     model: null,
@@ -317,7 +344,7 @@ export function createAnthropicStreamState(profile) {
       if (!data.trim()) return;
       if (data.trim() === '[DONE]') { this.done = true; return; }
       let event;
-      try { event = JSON.parse(data); } catch { throw new ProtocolError('invalid stream json'); }
+      try { event = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json'); }
       if (!event || typeof event !== 'object' || Array.isArray(event)) {
         throw new ProtocolError('invalid stream envelope');
       }
@@ -348,6 +375,8 @@ export function createAnthropicStreamState(profile) {
         const fragment = parseAnthropicUsageFragment(message.usage);
         if (fragment.inputTokens != null) { this.inputTokens = fragment.inputTokens; this.usageSeen = true; }
         if (fragment.outputTokens != null) { this.outputTokens = fragment.outputTokens; this.usageSeen = true; }
+        if (fragment.cachedInputTokens != null) { this.cachedInputTokens = fragment.cachedInputTokens; this.usageSeen = true; }
+        if (fragment.reasoningTokens != null) { this.reasoningTokens = fragment.reasoningTokens; this.usageSeen = true; }
       }
     },
 
@@ -371,6 +400,8 @@ export function createAnthropicStreamState(profile) {
         const fragment = parseAnthropicUsageFragment(event.usage);
         if (fragment.inputTokens != null) { this.inputTokens = fragment.inputTokens; this.usageSeen = true; }
         if (fragment.outputTokens != null) { this.outputTokens = fragment.outputTokens; this.usageSeen = true; }
+        if (fragment.cachedInputTokens != null) { this.cachedInputTokens = fragment.cachedInputTokens; this.usageSeen = true; }
+        if (fragment.reasoningTokens != null) { this.reasoningTokens = fragment.reasoningTokens; this.usageSeen = true; }
       }
     },
 
@@ -502,16 +533,17 @@ export function createAnthropicStreamState(profile) {
 
     finalize({ errorKind = null, failureKind = null } = {}) {
       const usage = buildAnthropicUsage(this);
+      const usageReported = this.usageSeen;
       let finish = this.refused ? 'content_filter' : mapStopReason(this.stopReason);
       if (errorKind && errorKind !== 'provider_retryable_error') {
-        return { kind: errorKind, text: this.text, toolCalls: [], usage, ...(failureKind ? { failureKind } : {}) };
+        return { kind: errorKind, text: this.text, toolCalls: [], usage, usageReported, ...(failureKind ? { failureKind } : {}) };
       }
       if (errorKind === 'provider_retryable_error' || !this.done) {
         const normalized = normalizeResponse({ text: this.text, toolCalls: [], finishReason: finish, streamComplete: false });
         if (normalized.kind === 'provider_retryable_error') {
-          return { ...normalized, usage, failureKind: failureKind || 'incomplete_response' };
+          return { ...normalized, usage, usageReported, failureKind: failureKind || 'incomplete_response' };
         }
-        return this.seal({ ...normalized, usage });
+        return this.seal({ ...normalized, usage, usageReported });
       }
       // done, no error: assemble the full response.
       let calls = [];
@@ -524,10 +556,10 @@ export function createAnthropicStreamState(profile) {
       }
       if (this.refused) { finish = 'content_filter'; calls = []; }
       if (!this.text.trim() && !calls.length && finish !== 'content_filter' && !malformed) {
-        return { kind: 'empty_response', text: '', toolCalls: [], usage };
+        return { kind: 'empty_response', text: '', toolCalls: [], usage, usageReported };
       }
       const normalized = normalizeResponse({ text: this.text, toolCalls: malformed ? [{}] : calls, finishReason: finish, streamComplete: true });
-      return this.seal({ ...normalized, usage });
+      return this.seal({ ...normalized, usage, usageReported });
     },
 
     buildCalls() {
@@ -539,7 +571,7 @@ export function createAnthropicStreamState(profile) {
         let arguments_;
         let invalid = false;
         try {
-          arguments_ = JSON.parse(tool.arguments || '{}');
+          arguments_ = strictParseJson(tool.arguments || '{}');
           if (arguments_ == null || typeof arguments_ !== 'object' || Array.isArray(arguments_)) throw new Error();
         } catch {
           arguments_ = {}; invalid = true;
@@ -573,7 +605,7 @@ export function createAnthropicStreamState(profile) {
         } else if (kind === 'tool_use') {
           const tool = this.tools.get(index);
           try {
-            original.input = JSON.parse(tool.arguments || '{}');
+            original.input = strictParseJson(tool.arguments || '{}');
             if (original.input == null || typeof original.input !== 'object' || Array.isArray(original.input)) throw new Error();
           } catch {
             // Invalid JSON has no complete content to replay; retain the block

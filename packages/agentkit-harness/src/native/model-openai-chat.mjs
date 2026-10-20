@@ -6,16 +6,31 @@
 // and never executes tools; it emits text/thinking/tool_delta display deltas and
 // returns one sealed ModelResult. Kernel policy owns backoff and call budgets.
 //
-// Inline reasoning projection (GLM <think></think> stripping) is NOT replicated
-// here: the JS contract's compatibilityDigest is opaque and the compat rule
-// engine lives in core. Content deltas are emitted verbatim as text. See the
-// final report's semantic-gap notes.
+// Inline reasoning projection (the GLM source-compat rule that strips a
+// visible thinking block from content) is NOT migrated here. That rule lives
+// in the Python reference provider-compat layer and has no counterpart in the
+// JS contract compatibilityDigest (an opaque binding fingerprint, not a rule
+// selector). Content deltas are emitted verbatim as text; a provider embedding
+// reasoning in content will surface it. This is a known, unfilled gap, not a
+// claim of complete fidelity.
 
 import {
-  normalizeResponse, parseOpenAIUsage, ProtocolError, resolveUrl,
+  normalizeResponse, parseOpenAIUsage, sealUsage, ProtocolError, resolveUrl,
 } from './model-normalize.mjs';
 import { sealModelReplay, openAIReplayFields } from './model-replay.mjs';
 import { validateMediaBlock, projectMediaOpenAI, MediaError } from './model-media.mjs';
+// parseModelJson is the kernel's strict finite JSON parser: it rejects
+// duplicate object keys and non-finite numbers (e.g. 1e400). Using it here keeps
+// provider-envelope and tool-argument decoding consistent with the kernel's
+// own validation, so a malformed provider payload is a terminal protocol error
+// rather than a silently-accepted ambiguity.
+import { parseModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+
+// Wrap parseModelJson so its NativeError codes become the adapter's ProtocolError.
+function strictParseJson(text) {
+  try { return parseModelJson(text); }
+  catch (error) { throw new ProtocolError(error?.code || 'invalid_model_json'); }
+}
 
 // Body keys the host binding parameters may never override: messages, tools,
 // model and stream are request/adapter owned; the rest are security-sensitive
@@ -58,7 +73,7 @@ export function buildOpenAIRequest(binding, request) {
 
   const payload = {
     model: binding.model,
-    messages: projectMessagesOpenAI(request),
+    messages: projectMessagesOpenAI(request, request.maxInlineImageBytes),
     stream: true,
     n: 1,
   };
@@ -80,9 +95,16 @@ export function buildOpenAIRequest(binding, request) {
     payload.max_tokens = parameters.max_tokens;
   }
 
+  // Advertise tools: during a finalization-only turn the kernel has already
+  // stripped normal workspace tools, but the adapter filters defensively and
+  // keeps the internal submit_final_output tool so the model can submit its
+  // final answer. Normal tools are never sent during finalization.
   const tools = request.tools || [];
-  if (tools.length && !request.finalizationOnly) {
-    payload.tools = tools.map((tool) => ({
+  const advertised = request.finalizationOnly
+    ? tools.filter((tool) => tool.name === FINAL_SUBMISSION_TOOL)
+    : tools;
+  if (advertised.length) {
+    payload.tools = advertised.map((tool) => ({
       type: 'function',
       function: { name: tool.name, description: tool.description, parameters: tool.parameters || { type: 'object', properties: {} } },
     }));
@@ -95,7 +117,10 @@ export function buildOpenAIRequest(binding, request) {
 // Project host messages onto the chat wire, admitting media only on user/tool
 // content and collecting tool-receipt images into a following user message.
 // Assistant tool batches require stable, unique IDs and matching receipts.
-export function projectMessagesOpenAI(request) {
+// maxInlineImageBytes bounds decoded image bytes; a cross-profile replay is
+// dropped before it reaches the wire.
+export function projectMessagesOpenAI(request, maxInlineImageBytes) {
+  const profile = request.profile;
   const projected = [];
   const pending = new Set();
   let images = [];
@@ -114,7 +139,7 @@ export function projectMessagesOpenAI(request) {
       }
       pending.delete(message.callId);
     }
-    const media = message.media ? message.media.map(validateMediaBlock) : null;
+    const media = message.media ? message.media.map((b) => validateMediaBlock(b, maxInlineImageBytes)) : null;
     const hasMedia = media && media.length;
     if (hasMedia && role !== 'user' && role !== 'tool') {
       throw new MediaError('image observations require user or tool content');
@@ -139,7 +164,7 @@ export function projectMessagesOpenAI(request) {
           function: { name: call.name, arguments: safeStringifyArguments(call.arguments) },
         }));
       }
-      Object.assign(msg, openAIReplayFields(message));
+      Object.assign(msg, openAIReplayFields(message, profile));
       projected.push(msg);
     } else if (role === 'tool') {
       projected.push({ role: 'tool', tool_call_id: message.callId, content: message.content || '' });
@@ -177,7 +202,7 @@ function validateAssistantToolIds(calls) {
 // validation. Throws ProtocolError on a malformed envelope.
 export function parseOpenAIBuffered(bodyText, request, { captureReplay = false } = {}) {
   let payload;
-  try { payload = JSON.parse(bodyText); } catch { throw new ProtocolError('invalid response json'); }
+  try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new ProtocolError('invalid response envelope');
   }
@@ -186,10 +211,11 @@ export function parseOpenAIBuffered(bodyText, request, { captureReplay = false }
   if (!Array.isArray(choices) || choices.length > 1) {
     throw new ProtocolError('expected one completion choice');
   }
-  let usage = null;
-  usage = parseOpenAIUsage(payload.usage);
+  // parseOpenAIUsage returns null when no usage was reported; an invalid report
+  // throws a protocol error (terminal), never a fabricated zero-cost claim.
+  const reportedUsage = parseOpenAIUsage(payload.usage);
   if (!choices.length) {
-    return finalizeResult({ kind: 'empty_response', text: '', toolCalls: [], usage, request, reasoning: '', captureReplay });
+    return finalizeResult({ kind: 'empty_response', text: '', toolCalls: [], reportedUsage, request, reasoning: '', captureReplay });
   }
   const choice = choices[0];
   if (!choice || typeof choice !== 'object') throw new ProtocolError('invalid completion choice');
@@ -217,39 +243,36 @@ export function parseOpenAIBuffered(bodyText, request, { captureReplay = false }
   }
   if (finish == null && (text.trim() || rawCalls || calls.length)) {
     return finalizeResult({
-      kind: 'provider_retryable_error', text, toolCalls: [], usage, request,
+      kind: 'provider_retryable_error', text, toolCalls: [], reportedUsage, request,
       failureKind: 'incomplete_response', reasoning: '', captureReplay,
     });
   }
   const reasoning = captureReplay ? chatReasoning(message) : '';
   return finalizeResult({
-    kind: null, text, toolCalls: calls, usage, request, finishReason: finish,
+    kind: null, text, toolCalls: calls, reportedUsage, request, finishReason: finish,
     streamComplete: true, reasoning, captureReplay,
   });
 }
 
 function finalizeResult({
-  kind, text, toolCalls, usage, request, finishReason = null, streamComplete = true,
+  kind, text, toolCalls, reportedUsage, request, finishReason = null, streamComplete = true,
   failureKind = null, retryAfterMs = null, reasoning = '', captureReplay = false,
 }) {
+  const { usage, usageReported } = sealUsage(reportedUsage);
   if (kind) {
     return {
-      kind, text, toolCalls, usage: usage || emptyUsage(),
+      kind, text, toolCalls, usage, usageReported,
       ...(failureKind ? { failureKind } : {}),
       ...(retryAfterMs != null ? { retryAfterMs } : {}),
     };
   }
   const normalized = normalizeResponse({ text, toolCalls, finishReason, streamComplete });
   const result = {
-    ...normalized, usage: usage || emptyUsage(),
+    ...normalized, usage, usageReported,
     ...(normalized.kind === 'provider_retryable_error' && failureKind ? { failureKind } : {}),
     ...(retryAfterMs != null ? { retryAfterMs } : {}),
   };
   return captureReplay ? sealModelReplay(result, request.profile, reasoning) : result;
-}
-
-function emptyUsage() {
-  return { inputTokens: 0, outputTokens: 0, modelCalls: 0, toolCalls: 0, cost: 0 };
 }
 
 // Assemble a tool batch from accumulated stream fragments. Invalid argument
@@ -270,9 +293,13 @@ function parseToolCalls(raw) {
     let arguments_;
     let invalid = false;
     try {
-      arguments_ = JSON.parse(fn.arguments);
+      arguments_ = strictParseJson(fn.arguments);
       if (arguments_ == null || typeof arguments_ !== 'object' || Array.isArray(arguments_)) throw new Error();
     } catch {
+      // Invalid or non-finite argument bytes become a non-executable tool call:
+      // arguments={} with wireArgumentsInvalid=true. The kernel rejects
+      // execution and emits one bounded tool-error receipt; the flag is never
+      // silently cleared here.
       arguments_ = {}; invalid = true;
     }
     calls.push({
@@ -323,7 +350,7 @@ export function createOpenAIStreamTurn(profile) {
       const data = frame.data;
       if (data.trim() === '[DONE]') { this.done = true; return; }
       let payload;
-      try { payload = JSON.parse(data); } catch { throw new ProtocolError('invalid stream json'); }
+      try { payload = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json'); }
       if (!payload || typeof payload !== 'object' || Array.isArray(payload) || 'error' in payload) {
         throw new ProtocolError('invalid stream envelope');
       }
@@ -334,16 +361,12 @@ export function createOpenAIStreamTurn(profile) {
         }
         this.completionId = payload.id;
       }
-      try {
-        const reported = parseOpenAIUsage(payload.usage);
-        if (reported != null) {
-          if (this.usage != null && !usageEquals(this.usage, reported)) {
-            throw new ProtocolError('conflicting usage reports in one attempt');
-          }
-          this.usage = reported;
+      const reported = parseOpenAIUsage(payload.usage);
+      if (reported != null) {
+        if (this.usage != null && !usageEquals(this.usage, reported)) {
+          throw new ProtocolError('conflicting usage reports in one attempt');
         }
-      } catch (e) {
-        throw e;
+        this.usage = reported;
       }
       const choices = payload.choices;
       if (!Array.isArray(choices) || choices.length > 1) throw new ProtocolError('stream requires one choice');
@@ -426,24 +449,25 @@ export function createOpenAIStreamTurn(profile) {
 
     finalize({ errorKind = null, failureKind = null } = {}) {
       const finish = this.refused ? 'content_filter' : this.finish;
+      const { usage, usageReported } = sealUsage(this.usage);
       if (errorKind && errorKind !== 'provider_retryable_error') {
         return {
-          kind: errorKind, text: this.text, toolCalls: [], usage: this.usage || emptyUsage(),
+          kind: errorKind, text: this.text, toolCalls: [], usage, usageReported,
           ...(failureKind ? { failureKind } : {}),
         };
       }
       if (errorKind === 'provider_retryable_error' || !this.done) {
         const normalized = normalizeResponse({ text: this.text, toolCalls: [], finishReason: finish, streamComplete: false });
         if (normalized.kind === 'provider_retryable_error') {
-          return { ...normalized, usage: this.usage || emptyUsage(), failureKind: failureKind || 'incomplete_response' };
+          return { ...normalized, usage, usageReported, failureKind: failureKind || 'incomplete_response' };
         }
-        return sealModelReplay({ ...normalized, usage: this.usage || emptyUsage() }, profile, this.reasoning);
+        return sealModelReplay({ ...normalized, usage, usageReported }, profile, this.reasoning);
       }
       // done with no error
       if (!this.refused && this.finish == null && (this.text.trim() || this.tools.size || this.malformedTools)) {
         return {
           kind: 'provider_retryable_error', text: this.text, toolCalls: [],
-          usage: this.usage || emptyUsage(), failureKind: 'incomplete_response',
+          usage, usageReported, failureKind: 'incomplete_response',
         };
       }
       let calls;
@@ -454,7 +478,7 @@ export function createOpenAIStreamTurn(profile) {
         calls = [{}];
       }
       const normalized = normalizeResponse({ text: this.text, toolCalls: calls, finishReason: finish, streamComplete: true });
-      return sealModelReplay({ ...normalized, usage: this.usage || emptyUsage() }, profile, this.reasoning);
+      return sealModelReplay({ ...normalized, usage, usageReported }, profile, this.reasoning);
     },
 
     buildCalls() {
@@ -466,7 +490,7 @@ export function createOpenAIStreamTurn(profile) {
         let arguments_;
         let invalid = false;
         try {
-          arguments_ = JSON.parse(tool.function.arguments);
+          arguments_ = strictParseJson(tool.function.arguments);
           if (arguments_ == null || typeof arguments_ !== 'object' || Array.isArray(arguments_)) throw new Error();
         } catch {
           arguments_ = {}; invalid = true;

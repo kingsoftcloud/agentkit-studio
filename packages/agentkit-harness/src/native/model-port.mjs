@@ -26,9 +26,18 @@ import {
   buildAnthropicRequest, parseAnthropicBuffered, createAnthropicStreamState,
 } from './model-anthropic.mjs';
 import { MediaError } from './model-media.mjs';
+// parseModelJson is the kernel's strict finite JSON parser; used here for the
+// 400 context-length error heuristic so a malformed error body is never parsed
+// as a lenient ambiguity.
+import { parseModelJson } from '../../../agentkit-harness-core/dist/index.mjs';
 
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 const DEFAULT_IDLE_MS = 180000;
+
+// A response body exceeded maxResponseBytes: terminal, never a truncated final.
+class OverflowError extends Error {
+  constructor() { super('response body exceeded maxResponseBytes'); this.name = 'OverflowError'; }
+}
 
 export function createNativeModelPort({
   resolveProfile,
@@ -100,28 +109,34 @@ export function createNativeModelPort({
         clearTimer(overallTimer);
         // Honor a caller-initiated abort by propagating it.
         if (request.signal?.aborted) throw error;
-        if (internal.signal.aborted) {
-          return retryableResult('request_timeout');
-        }
+        if (internal.signal.aborted) return retryableResult('request_timeout');
         return retryableResult(sanitizeFailureKind(error, 'network_error'));
       }
 
-      // 4. Non-2xx: classify by status, parse Retry-After, never leak the body.
-      if (!response.ok) {
-        clearTimer(overallTimer);
-        return classifyHttpError(response, { maxBytes });
-      }
-
-      // 5. 2xx: dispatch on content type. SSE streams deltas; a non-SSE body is
-      // parsed as a buffered completion.
-      const contentType = response.headers.get('content-type') || '';
+      // 4. Dispatch. The overall timer stays armed through body reads so a
+      // server that sends headers then hangs the body is bounded; the finally
+      // clears the timer and cancels any unconsumed body so no connection leaks
+      // (e.g. a 429 whose body was never read).
       try {
+        if (!response.ok) {
+          return await classifyHttpError(response, { maxBytes });
+        }
+        const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('text/event-stream')) {
           return await streamResponse(response, request, binding, emitEvent, internal, maxBytes, idleTimeout);
         }
         return await bufferedResponse(response, request, binding, maxBytes);
+      } catch (error) {
+        if (request.signal?.aborted) throw error;
+        if (error instanceof IdleTimeout || internal.signal.aborted) {
+          return retryableResult('request_timeout');
+        }
+        // Overflow, bad UTF-8, or a transport error mid-body: a partial body is
+        // never sealed as a final; the attempt is terminal invalid_response.
+        return terminalResult('invalid_response');
       } finally {
         clearTimer(overallTimer);
+        cancelBody(response);
       }
     },
   };
@@ -186,19 +201,23 @@ async function bufferedResponse(response, request, binding, maxBytes) {
 
 // Classify a non-2xx HTTP response into a sealed ModelResult. The body is read
 // only for a 400 to detect a context_length_exceeded code; otherwise the
-// status and Retry-After header are the only facts that leave the adapter.
+// status and Retry-After header are the only facts that leave the adapter. A
+// body that cannot be read (timeout/overflow/bad utf-8) cannot erase the HTTP
+// failure fact — the status-based classification still stands.
 async function classifyHttpError(response, { maxBytes }) {
   const status = response.status;
   const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
   if (status === 408) return retryableResult('request_timeout', retryAfterMs);
   if (status === 429) return retryableResult('rate_limit', retryAfterMs);
   if (status >= 500 && status <= 599) return retryableResult('server_error', retryAfterMs);
-  if (status === 403) return { kind: 'policy_abort', text: '', toolCalls: [], usage: emptyUsage() };
+  if (status === 403) return { kind: 'policy_abort', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false };
   if (status === 400) {
-    const bodyText = await readBoundedText(response, maxBytes);
-    if (hasContextLengthExceeded(bodyText)) {
-      return { kind: 'context_overflow', text: '', toolCalls: [], usage: emptyUsage() };
-    }
+    try {
+      const bodyText = await readBoundedText(response, maxBytes);
+      if (hasContextLengthExceeded(bodyText)) {
+        return { kind: 'context_overflow', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false };
+      }
+    } catch { /* an unreadable 400 body cannot erase the 400 failure fact */ }
     return terminalResult('client_error');
   }
   return terminalResult('client_error');
@@ -206,7 +225,7 @@ async function classifyHttpError(response, { maxBytes }) {
 
 function hasContextLengthExceeded(bodyText) {
   try {
-    const payload = JSON.parse(bodyText);
+    const payload = parseModelJson(bodyText);
     const error = payload && typeof payload === 'object' ? payload.error : null;
     if (error && typeof error === 'object') {
       const code = String(error.code || '');
@@ -218,11 +237,11 @@ function hasContextLengthExceeded(bodyText) {
 }
 
 function terminalResult(failureKind) {
-  return { kind: 'provider_terminal_error', text: '', toolCalls: [], usage: emptyUsage(), failureKind };
+  return { kind: 'provider_terminal_error', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false, failureKind };
 }
 
 function retryableResult(failureKind, retryAfterMs = null) {
-  const result = { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage(), failureKind };
+  const result = { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false, failureKind };
   if (Number.isFinite(retryAfterMs) && retryAfterMs != null && retryAfterMs >= 0) {
     result.retryAfterMs = retryAfterMs;
   }
@@ -233,27 +252,36 @@ function clearTimer(timer) {
   if (timer) clearTimeout(timer);
 }
 
-// Read up to maxBytes from a response body as UTF-8 text. A truncated body is
-// returned; the caller only inspects small error/envelope prefixes.
+// Cancel an unconsumed response body so the underlying connection is released
+// (e.g. a 429 whose body was never read). Safe to call on a consumed/locked/
+// errored body: a cancel that cannot proceed, or rejects because the stream
+// was aborted, is swallowed so it never surfaces as an unhandled rejection.
+function cancelBody(response) {
+  try {
+    const result = response?.body?.cancel?.();
+    if (result && typeof result.then === 'function') result.catch(() => {});
+  } catch { /* already locked/consumed */ }
+}
+
+// Read a response body as strict UTF-8 text, failing on overflow rather than
+// truncating a prefix (a JSON prefix + overflow suffix must not masquerade as a
+// complete response). Reads to EOF before sealing. Throws OverflowError on
+// overflow; propagates abort and bad-UTF-8 errors for the caller to classify.
 async function readBoundedText(response, maxBytes) {
   const body = response.body;
   if (body == null) return '';
-  let total = 0;
-  let chunks = [];
   const reader = body.getReader ? body.getReader() : null;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let total = 0;
+  const chunks = [];
   if (reader) {
     try {
-      const decoder = new TextDecoder('utf-8', { fatal: false });
-      while (total < maxBytes) {
+      while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         if (!value) continue;
         total += value.length;
-        if (total > maxBytes) {
-          const keep = value.subarray(0, Math.max(0, value.length - (total - maxBytes)));
-          chunks.push(decoder.decode(keep, { stream: true }));
-          break;
-        }
+        if (total > maxBytes) throw new OverflowError();
         chunks.push(decoder.decode(value, { stream: true }));
       }
       chunks.push(decoder.decode());
@@ -263,17 +291,11 @@ async function readBoundedText(response, maxBytes) {
     }
   }
   // Async-iterable fallback.
-  const decoder = new TextDecoder('utf-8', { fatal: false });
   for await (const value of body) {
     if (!value) continue;
     total += value.length;
-    if (total > maxBytes) {
-      const keep = value.subarray(0, Math.max(0, value.length - (total - maxBytes)));
-      chunks.push(decoder.decode(keep, { stream: true }));
-      break;
-    }
+    if (total > maxBytes) throw new OverflowError();
     chunks.push(decoder.decode(value, { stream: true }));
-    if (total >= maxBytes) break;
   }
   chunks.push(decoder.decode());
   return chunks.join('');

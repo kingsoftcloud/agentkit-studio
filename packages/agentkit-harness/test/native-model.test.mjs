@@ -6,6 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { deepEqual as looseEqual } from 'node:assert';
 import http from 'node:http';
 import { createNativeModelPort } from '../src/native/model-port.mjs';
 
@@ -173,7 +174,7 @@ test('openai: tool fragments assemble into a sealed batch with tool_delta deltas
   assert.equal(result.kind, 'tool_calls');
   assert.equal(result.toolCalls.length, 1);
   assert.equal(result.toolCalls[0].name, 'read');
-  assert.deepEqual(result.toolCalls[0].arguments, { path: 'a.py' });
+  looseEqual(result.toolCalls[0].arguments, { path: 'a.py' });
   assert.ok(events.some((e) => e.kind === 'tool_delta'));
 });
 
@@ -221,7 +222,7 @@ test('openai: invalid argument JSON becomes a non-executable tool call', async (
   const { result } = await collect(0, 'openai-chat', handler, makeRequest());
   assert.equal(result.kind, 'tool_calls');
   assert.equal(result.toolCalls.length, 1);
-  assert.deepEqual(result.toolCalls[0].arguments, {});
+  looseEqual(result.toolCalls[0].arguments, {});
   assert.equal(result.toolCalls[0].wireArgumentsInvalid, true);
 });
 
@@ -495,7 +496,7 @@ test('anthropic: tool_use assembles from input_json_delta', async () => {
   assert.equal(result.toolCalls.length, 1);
   assert.equal(result.toolCalls[0].callId, 'tool-1');
   assert.equal(result.toolCalls[0].name, 'read');
-  assert.deepEqual(result.toolCalls[0].arguments, { path: 'a.py' });
+  looseEqual(result.toolCalls[0].arguments, { path: 'a.py' });
   assert.ok(events.some((e) => e.kind === 'tool_delta'));
 });
 
@@ -599,7 +600,7 @@ test('anthropic: invalid input_json becomes a non-executable tool call', async (
   const { result } = await collect(0, 'anthropic-messages', handler, makeRequest());
   assert.equal(result.kind, 'tool_calls');
   assert.equal(result.toolCalls[0].wireArgumentsInvalid, true);
-  assert.deepEqual(result.toolCalls[0].arguments, {});
+  looseEqual(result.toolCalls[0].arguments, {});
 });
 
 test('anthropic: partial EOF without message_stop is retryable', async () => {
@@ -750,3 +751,270 @@ test('resolveProfile failure is a terminal host_error without leaking the except
     assert.equal(server.requests.length, 0);
   } finally { await server.close(); }
 });
+
+// ===== Fix 1: replay profile binding + replayToolIds ======================
+
+test('openai: cross-profile replay is dropped (no reasoning_content on the wire)', async () => {
+  const digestA = 'a'.repeat(64), digestB = 'b'.repeat(64);
+  const handler = () => ({ status: 200, headers: SSE_HEADERS, body: [sse(ochunk({ reasoning_content: 'PRIVATE_A' })), sse(ochunk({ content: '42' }, 'stop')), sseDone()] });
+  // Seal replay under profile A.
+  const profileA = makeProfile({ providerReplayMode: 'reasoning_content', compatibilityDigest: digestA });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest({ profile: profileA }));
+  assert.equal(result.providerReplay.reasoningContent, 'PRIVATE_A');
+  assert.equal(result.providerReplay.compatibilityDigest, digestA);
+  // Re-project under profile B (different compatibilityDigest): the replay must
+  // be dropped so private material never leaks onto another model's wire.
+  const profileB = makeProfile({ providerReplayMode: 'reasoning_content', compatibilityDigest: digestB });
+  const assistant = { role: 'assistant', content: '42', toolCalls: [], providerReplay: result.providerReplay };
+  const handler2 = () => ({ status: 200, headers: SSE_HEADERS, body: [sse(ochunk({ content: 'ok' }, 'stop')), sseDone()] });
+  const { requests } = await collect(0, 'openai-chat', handler2, makeRequest({ profile: profileB, messages: [assistant, { role: 'user', content: 'again' }] }));
+  const body = JSON.parse(requests[0].body);
+  assert.equal(body.messages[0].reasoning_content, undefined);
+});
+
+test('anthropic: replayToolIds map the original tool_use id to the canonical id', async () => {
+  const digest = 'c'.repeat(64);
+  const handler = () => ({
+    status: 200, headers: SSE_HEADERS,
+    body: [
+      ae('message_start', { type: 'message_start', message: { id: 'm1', model: 'fake-model', role: 'assistant', usage: { input_tokens: 2, output_tokens: 0 } } }),
+      ae('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'orig-1', name: 'read', input: {} } }),
+      ae('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path":"f"}' } }),
+      ae('content_block_stop', { type: 'content_block_stop', index: 0 }),
+      ae('message_delta', { type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: 3 } }),
+      ae('message_stop', { type: 'message_stop' }),
+    ],
+  });
+  const profile = makeProfile({ providerReplayMode: 'anthropic_content', compatibilityDigest: digest });
+  const { result } = await collect(0, 'anthropic-messages', handler, makeRequest({ profile }));
+  assert.equal(result.kind, 'tool_calls');
+  assert.equal(result.providerReplay.compatibilityDigest, digest);
+  // The kernel remaps orig-1 -> canonical-1 and sets replayToolIds on the result.
+  const assistant = {
+    role: 'assistant', content: '', toolCalls: [{ callId: 'canonical-1', name: 'read', arguments: { path: 'f' } }],
+    providerReplay: result.providerReplay, replayToolIds: { 'orig-1': 'canonical-1' },
+  };
+  const handler2 = () => ({ status: 200, headers: SSE_HEADERS, body: anthropicFinalText('ok') });
+  const { requests } = await collect(0, 'anthropic-messages', handler2, makeRequest({ profile, messages: [assistant, { role: 'user', content: 'again' }] }));
+  const body = JSON.parse(requests[0].body);
+  const tu = body.messages[0].content.find((b) => b.type === 'tool_use');
+  assert.equal(tu.id, 'canonical-1');
+  assert.equal(tu.name, 'read');
+});
+
+test('anthropic: replay whose tool_use does not pair with toolCalls is dropped', async () => {
+  const digest = 'd'.repeat(64);
+  const handler = () => ({
+    status: 200, headers: SSE_HEADERS,
+    body: [
+      ae('message_start', { type: 'message_start', message: { id: 'm1', model: 'fake-model', role: 'assistant', usage: { input_tokens: 2, output_tokens: 0 } } }),
+      ae('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'orig-1', name: 'read', input: {} } }),
+      ae('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path":"f"}' } }),
+      ae('content_block_stop', { type: 'content_block_stop', index: 0 }),
+      ae('message_delta', { type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: 3 } }),
+      ae('message_stop', { type: 'message_stop' }),
+    ],
+  });
+  const profile = makeProfile({ providerReplayMode: 'anthropic_content', compatibilityDigest: digest });
+  const { result } = await collect(0, 'anthropic-messages', handler, makeRequest({ profile }));
+  // The replay claims tool_use id orig-1, but the message's toolCalls say
+  // canonical-9 with no matching replayToolIds -> pairing fails -> replay dropped
+  // and blocks derived from toolCalls (id canonical-9), not injected from replay.
+  const assistant = {
+    role: 'assistant', content: '', toolCalls: [{ callId: 'canonical-9', name: 'read', arguments: { path: 'f' } }],
+    providerReplay: result.providerReplay,
+  };
+  const handler2 = () => ({ status: 200, headers: SSE_HEADERS, body: anthropicFinalText('ok') });
+  const { requests } = await collect(0, 'anthropic-messages', handler2, makeRequest({ profile, messages: [assistant, { role: 'user', content: 'again' }] }));
+  const body = JSON.parse(requests[0].body);
+  const tu = body.messages[0].content.find((b) => b.type === 'tool_use');
+  assert.equal(tu.id, 'canonical-9');
+  // The original (unmapped) replay id never reaches the wire.
+  assert.ok(!body.messages[0].content.some((b) => b.id === 'orig-1'));
+});
+
+// ===== Fix 2: finalizationOnly keeps submit_final_output ==================
+
+test('openai: finalizationOnly keeps submit_final_output, drops normal tools', async () => {
+  const handler = () => ({ status: 200, headers: SSE_HEADERS, body: [sse(ochunk({ content: 'done' }, 'stop')), sseDone()] });
+  const submit = { ...makeTool('submit_final_output'), description: 'Submit final answer' };
+  const { requests } = await collect(0, 'openai-chat', handler,
+    makeRequest({ finalizationOnly: true, tools: [makeTool('read'), submit] }));
+  const body = JSON.parse(requests[0].body);
+  const names = body.tools.map((t) => t.function.name);
+  assert.deepEqual(names, ['submit_final_output']);
+});
+
+test('anthropic: finalizationOnly keeps submit_final_output, drops normal tools', async () => {
+  const handler = () => ({ status: 200, headers: SSE_HEADERS, body: anthropicFinalText('done') });
+  const submit = { ...makeTool('submit_final_output'), description: 'Submit final answer' };
+  const { requests } = await collect(0, 'anthropic-messages', handler,
+    makeRequest({ finalizationOnly: true, tools: [makeTool('read'), submit] }));
+  const body = JSON.parse(requests[0].body);
+  assert.deepEqual(body.tools.map((t) => t.name), ['submit_final_output']);
+});
+
+// ===== Fix 3: readBoundedText overflow + HTTP body/timer cleanup ==========
+
+test('openai: buffered body exceeding maxResponseBytes is terminal, not a truncated final', async () => {
+  const big = JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: 'x'.repeat(2000) }, finish_reason: 'stop' }] });
+  const handler = () => ({ status: 200, headers: JSON_HEADERS, body: big });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest(), { maxResponseBytes: 256 });
+  assert.equal(result.kind, 'provider_terminal_error');
+  assert.equal(result.failureKind, 'invalid_response');
+});
+
+test('openai: 400 headers then hanging body is bounded by requestTimeoutMs', async () => {
+  async function* hang() { await new Promise(() => {}); }
+  const handler = () => ({ status: 400, headers: JSON_HEADERS, body: hang() });
+  await withServer(handler, async (server) => {
+    const port = createNativeModelPort({
+      resolveProfile: async () => ({ protocol: 'openai-chat', baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fake-key', model: 'fake-model' }),
+      fetchImpl: fetch, maxResponseBytes: 4096, idleTimeoutMs: 4000,
+    });
+    const profile = makeProfile({ requestTimeoutMs: 80 });
+    const result = await port.generate(makeRequest({ profile }), () => {});
+    // The 400 status is authoritative; an unreadable body cannot change it, and
+    // the overall timer bounds the hang so this never waits forever.
+    assert.ok(['provider_terminal_error', 'provider_retryable_error'].includes(result.kind));
+  });
+});
+
+test('openai: 429 with a hanging body returns rate_limit and does not hang', async () => {
+  async function* hang() { await new Promise(() => {}); }
+  const handler = () => ({ status: 429, headers: { 'retry-after': '2' }, body: hang() });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest({ profile: makeProfile({ requestTimeoutMs: 80 }) }));
+  assert.equal(result.kind, 'provider_retryable_error');
+  assert.equal(result.failureKind, 'rate_limit');
+  assert.equal(result.retryAfterMs, 2000);
+});
+
+test('openai: buffered invalid UTF-8 body is terminal invalid_response', async () => {
+  const handler = () => ({ status: 200, headers: JSON_HEADERS, body: Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0xff, 0x7d]) });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest());
+  assert.equal(result.kind, 'provider_terminal_error');
+  assert.equal(result.failureKind, 'invalid_response');
+});
+
+// ===== Fix 4: strict parseModelJson + wireArgumentsInvalid ================
+
+test('openai: duplicate keys in streamed tool args become non-executable', async () => {
+  const handler = () => ({ status: 200, headers: SSE_HEADERS, body: [sse(ochunk({ tool_calls: [{ index: 0, id: 'c', type: 'function', function: { name: 'read', arguments: '{"path":"a","path":"b"}' } }] }, 'tool_calls')), sseDone()] });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest());
+  assert.equal(result.kind, 'tool_calls');
+  assert.equal(result.toolCalls[0].wireArgumentsInvalid, true);
+  looseEqual(result.toolCalls[0].arguments, {});
+});
+
+test('openai: non-finite number in buffered tool args becomes non-executable', async () => {
+  const handler = () => ({ status: 200, headers: JSON_HEADERS, body: JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: '', tool_calls: [{ id: 'c', type: 'function', function: { name: 'read', arguments: '{"x":1e400}' } }] }, finish_reason: 'tool_calls' }] }) });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest());
+  assert.equal(result.kind, 'tool_calls');
+  assert.equal(result.toolCalls[0].wireArgumentsInvalid, true);
+});
+
+test('anthropic: duplicate keys in input_json_delta become non-executable', async () => {
+  const handler = () => ({
+    status: 200, headers: SSE_HEADERS,
+    body: [
+      ae('message_start', { type: 'message_start', message: { id: 'm1', model: 'fake-model', role: 'assistant', usage: { input_tokens: 2, output_tokens: 0 } } }),
+      ae('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu', name: 'read', input: {} } }),
+      ae('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path":"a","path":"b"}' } }),
+      ae('content_block_stop', { type: 'content_block_stop', index: 0 }),
+      ae('message_delta', { type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: 2 } }),
+      ae('message_stop', { type: 'message_stop' }),
+    ],
+  });
+  const { result } = await collect(0, 'anthropic-messages', handler, makeRequest());
+  assert.equal(result.kind, 'tool_calls');
+  assert.equal(result.toolCalls[0].wireArgumentsInvalid, true);
+  looseEqual(result.toolCalls[0].arguments, {});
+});
+
+test('openai: nested duplicate keys in a buffered response envelope are terminal', async () => {
+  // Duplicate keys in the top-level envelope -> strict parse rejects -> terminal.
+  const handler = () => ({ status: 200, headers: JSON_HEADERS, body: '{"choices":[{"index":0,"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}],"choices":[]}' });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest());
+  assert.equal(result.kind, 'provider_terminal_error');
+  assert.equal(result.failureKind, 'invalid_response');
+});
+
+// ===== Fix 5: maxInlineImageBytes + base64 byte count + userinfo URLs =====
+
+test('openai: image over request.maxInlineImageBytes is rejected before HTTP', async () => {
+  // "ZmFrZQ==" decodes to 4 bytes ("fake"); a 3-byte budget rejects it before any request.
+  const server = await startServer(() => ({ status: 200, headers: SSE_HEADERS, body: [sse(ochunk({ content: 'ok' }, 'stop')), sseDone()] }));
+  try {
+    const port = createNativeModelPort({
+      resolveProfile: async () => ({ protocol: 'openai-chat', baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fake-key', model: 'fake-model' }),
+      fetchImpl: fetch, maxResponseBytes: 4096, idleTimeoutMs: 4000,
+    });
+    const messages = [{ role: 'user', content: 'See', media: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,ZmFrZQ==' } }] }];
+    const req = makeRequest({ messages, tools: [] });
+    req.maxInlineImageBytes = 3;
+    const r = await port.generate(req, () => {});
+    assert.equal(r.kind, 'provider_terminal_error');
+    assert.equal(r.failureKind, 'invalid_response');
+    assert.equal(server.requests.length, 0);
+  } finally { await server.close(); }
+});
+
+test('openai: image URL with userinfo credentials is rejected before HTTP', async () => {
+  const server = await startServer(() => ({ status: 200, headers: SSE_HEADERS, body: [sse(ochunk({ content: 'ok' }, 'stop')), sseDone()] }));
+  try {
+    const port = createNativeModelPort({
+      resolveProfile: async () => ({ protocol: 'openai-chat', baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fake-key', model: 'fake-model' }),
+      fetchImpl: fetch, maxResponseBytes: 4096, idleTimeoutMs: 4000,
+    });
+    const messages = [{ role: 'user', content: 'See', media: [{ type: 'image_url', image_url: { url: 'https://user:pass@127.0.0.1/x.png' } }] }];
+    const req = makeRequest({ messages, tools: [] });
+    req.maxInlineImageBytes = 40 * 1024 * 1024;
+    const r = await port.generate(req, () => {});
+    assert.equal(r.kind, 'provider_terminal_error');
+    assert.equal(r.failureKind, 'invalid_response');
+    assert.equal(server.requests.length, 0);
+  } finally { await server.close(); }
+});
+
+// ===== Fix 6: usage cached/reasoning tokens + usageReported ===============
+
+test('openai: cached and reasoning tokens are retained and usageReported is true', async () => {
+  const handler = () => ({ status: 200, headers: SSE_HEADERS, body: [
+    sse(ochunk({ content: 'Hello' }, 'stop')),
+    sse({ id: 'c1', choices: [], usage: { prompt_tokens: 12, completion_tokens: 7, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens_details: { reasoning_tokens: 3 } } }),
+    sseDone(),
+  ] });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest());
+  assert.equal(result.usageReported, true);
+  assert.equal(result.usage.cachedInputTokens, 5);
+  assert.equal(result.usage.reasoningTokens, 3);
+});
+
+test('openai: unreported usage yields usageReported false, not a known-zero cost claim', async () => {
+  // Stream ends at finish with no usage tail frame.
+  const handler = () => ({ status: 200, headers: SSE_HEADERS, body: [sse(ochunk({ content: 'done' }, 'stop')), sseDone()] });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest());
+  assert.equal(result.kind, 'final_candidate');
+  assert.equal(result.usageReported, false);
+  assert.equal(result.usage.inputTokens, 0);
+});
+
+test('anthropic: cache_read_input_tokens retained as cachedInputTokens', async () => {
+  const handler = () => ({
+    status: 200, headers: SSE_HEADERS,
+    body: [
+      ae('message_start', { type: 'message_start', message: { id: 'm1', model: 'fake-model', role: 'assistant', usage: { input_tokens: 10, output_tokens: 0, cache_read_input_tokens: 4 } } }),
+      ae('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }),
+      ae('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }),
+      ae('content_block_stop', { type: 'content_block_stop', index: 0 }),
+      ae('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 2 } }),
+      ae('message_stop', { type: 'message_stop' }),
+    ],
+  });
+  const { result } = await collect(0, 'anthropic-messages', handler, makeRequest());
+  assert.equal(result.usageReported, true);
+  assert.equal(result.usage.cachedInputTokens, 4);
+  assert.equal(result.usage.inputTokens, 10);
+  assert.equal(result.usage.outputTokens, 2);
+});
+

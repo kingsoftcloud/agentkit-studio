@@ -84,7 +84,9 @@ function validateToolCall(call) {
 
 // Parse the OpenAI chat usage envelope. Both primary counters must be present;
 // an incomplete report is a protocol error, not fabricated zero usage. Returns
-// null when no usage was reported. Details are optional.
+// null when no usage was reported. Optional cached/reasoning subdivisions are
+// retained by source meaning: prompt_tokens_details.cached_tokens ->
+// cachedInputTokens, completion_tokens_details.reasoning_tokens -> reasoningTokens.
 export function parseOpenAIUsage(value) {
   if (value == null) return null;
   if (typeof value !== 'object' || Array.isArray(value)) {
@@ -104,12 +106,18 @@ export function parseOpenAIUsage(value) {
   if (completionDetails != null && (typeof completionDetails !== 'object' || Array.isArray(completionDetails))) {
     throw new ProtocolError('invalid usage details');
   }
-  return { ...emptyUsage(), inputTokens, outputTokens };
+  const usage = { ...emptyUsage(), inputTokens, outputTokens };
+  const cached = details && details.cached_tokens;
+  if (cached != null) usage.cachedInputTokens = toNonNegInt(cached, 'cached_tokens');
+  const reasoning = completionDetails && completionDetails.reasoning_tokens;
+  if (reasoning != null) usage.reasoningTokens = toNonNegInt(reasoning, 'reasoning_tokens');
+  return usage;
 }
 
-// Parse an Anthropic usage fragment (message_start or message_delta). Both
-// counters are accumulated across the stream; the accumulator reports null when
-// no usage event was observed. See model-anthropic.mjs for the accumulator.
+// Parse an Anthropic usage fragment (message_start or message_delta). Counters
+// are accumulated across the stream. Cache fields are retained by source
+// meaning: cache_read_input_tokens -> cachedInputTokens (tokens served from the
+// cache). reasoning_tokens, when a provider reports it, -> reasoningTokens.
 export function parseAnthropicUsageFragment(value) {
   if (value == null || typeof value !== 'object' || Array.isArray(value)) {
     throw new ProtocolError('invalid anthropic usage');
@@ -121,12 +129,30 @@ export function parseAnthropicUsageFragment(value) {
   if (value.output_tokens != null) {
     fragment.outputTokens = toNonNegInt(value.output_tokens, 'output_tokens');
   }
+  if (value.cache_read_input_tokens != null) {
+    fragment.cachedInputTokens = toNonNegInt(value.cache_read_input_tokens, 'cache_read_input_tokens');
+  }
+  if (value.reasoning_tokens != null) {
+    fragment.reasoningTokens = toNonNegInt(value.reasoning_tokens, 'reasoning_tokens');
+  }
   return fragment;
 }
 
+// Build a sealed Usage plus usageReported flag. When the provider reported
+// usage, usageReported is true and the counters are the provider's (including
+// cached/reasoning). When it did not, usage is emptyUsage() and usageReported
+// is false — the kernel records providerUsageIncomplete so a zero counter is
+// never mistaken for known free usage.
+export function sealUsage(reportedUsage) {
+  if (reportedUsage == null) return { usage: emptyUsage(), usageReported: false };
+  return { usage: reportedUsage, usageReported: true };
+}
+
 function toNonNegInt(value, field) {
-  // Reject NaN/-0/booleans/strings; the provider must report genuine integers.
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+  // The kernel's addUsage validates Number.isSafeInteger for token counters;
+  // reject NaN/booleans/strings/unsafe integers so a bad report is a protocol
+  // error here, not an invalid_usage crash in the kernel.
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new ProtocolError(`invalid ${field} counter`);
   }
   return value;
