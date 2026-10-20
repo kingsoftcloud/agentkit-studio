@@ -1,4 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createAgentStore } from '../../src/agent-store.mjs';
@@ -22,6 +23,12 @@ export async function apply(ctx, options) {
 async function applyProof(ctx, options) {
   // Match bootstrap's public Host import, including portable loader resolution.
   const { renderPrompt } = await import('@deepseek-ai/dsh-system-prompt');
+  const { emitAgentEvent } = await import('@deepseek-ai/dsh-agent');
+  ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+    // Synchronous observation lets the HTTP peer prove a prefix is public
+    // before it sends the provider's terminal response.
+    appendFileSync(join(options.directory, 'assistant-stream.jsonl'), JSON.stringify({ session: agent.session.id, frame }) + '\n');
+  });
   const workspaceRoot = join(options.directory, 'workspace');
   await mkdir(workspaceRoot, { recursive: true });
   const agents = createAgentStore({ storeDir: options.mountHost ? join(options.directory, 'studio/agents') : join(options.directory, 'studio') });
@@ -59,7 +66,8 @@ async function applyProof(ctx, options) {
       credentials: { resolve: async () => ({ value: 'sk-studio-fixture-secret' }) },
     });
     const native = await createStudioNativeHarness({ ctx, storeDir: join(options.directory, 'studio'),
-      workspaceRoot, agents, models, renderPrompt });
+      workspaceRoot, agents, models, renderPrompt,
+      publishStreamFrame: ({ agent }, frame) => emitAgentEvent(ctx, agent, 'agent/assistant-stream', { frame }) });
     ctx.effect(() => () => native.close(), 'Studio Native Host lifetime');
     ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config }) => createNativeDshTools({
       ctx: toolsCtx, config, workspaceRoot, stateDir: join(options.directory, 'workspace-state'),

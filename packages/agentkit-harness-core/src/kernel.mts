@@ -1,5 +1,5 @@
 import { emptyUsage, terminal } from './contracts.mjs';
-import type { CommitBatch, EffectIntent, EffectReceipt, Lease, ModelRequest, ModelResult, ModelStreamEvent, NativePorts, ObjectValue, PortContext,
+import type { CommitBatch, EffectIntent, EffectReceipt, Lease, ModelRequest, ModelResult, ModelStreamEvent, ModelStreamRecord, NativePorts, ObjectValue, PortContext,
   RunCommand, RunConfiguration, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation,
   HookInvocation, HookInvocationResult, ContextPlanningResult } from './contracts.mjs';
 import { initialSnapshot } from './configuration.mjs';
@@ -16,12 +16,13 @@ import { assertHookFeedbackRetained, deniedByHook, reduceHook, stagePostHooks } 
 import { hookBytes, hookResult } from './hook-contract.mjs';
 import { planNativeContext, reduceContextModel } from './context-planning.mjs';
 import { reduceTurnInput } from './turn-input.mjs';
+import { modelStreamCapture } from './model-stream.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
   digest: (value: unknown) => string;
   now?: () => number; random?: () => number;
-  onStream?: (identity: RunIdentity, event: ModelStreamEvent) => void;
+  onStream?: (identity: PortContext, event: ModelStreamEvent, record: ModelStreamRecord) => void;
   /** Await durable event delivery before dispatching another effect. Failure leaves the ledger resumable. */
   onCheckpoint?: (snapshot: RunSnapshot) => Promise<void>;
 }
@@ -188,8 +189,15 @@ export class NativeKernel {
     });
     let raw: ObjectValue, status: EffectReceipt['status'] = 'committed', changes: Partial<RunSnapshot>;
     const facts: { kind: string; payload: ObjectValue }[] = [];
+    const capture = intent.kind === 'model' && intent.payload.purpose !== 'compaction'
+      && configuration.contract.finalSubmissionSchema === null
+      ? modelStreamCapture(configuration.limits.maxModelStreamBytes ?? 1024 * 1024, this.now,
+        (event, record) => this.onStream({ ...context, scope: copy(context.scope) }, event, record)) : null;
+    let receiving = true;
     try {
-      const operation = this.dispatch(context, snapshot, configuration, intent);
+      const operation = this.dispatch(context, snapshot, configuration, intent, event => {
+        if (receiving && !effectSignal.aborted) capture?.emit(event);
+      });
       raw = objectValue(await Promise.race([operation, aborted]));
       effectSignal.throwIfAborted();
       invariant(this.now() - started < timeoutMs, 'effect_timeout');
@@ -316,11 +324,27 @@ export class NativeKernel {
         status = 'uncertain';
       }
     } finally {
+      receiving = false;
       clearTimeout(timer); effectSignal.removeEventListener('abort', abortListener);
+    }
+    if (intent.kind === 'model') {
+      // Port-supplied display envelopes are never trusted. Only this driver's
+      // accepted prefix is bound to the durable effect receipt and event.
+      delete raw.displayStream;
+      const display = capture?.close();
+      if (display) {
+        raw.displayStream = objectValue(display);
+        const completed = facts.find(fact => fact.kind === 'model.completed');
+        if (completed) Object.assign(completed.payload, { operationKey: intent.operationKey, displayStream: objectValue(display) });
+        else if (display.records.length || display.truncated || display.discarded) facts.push({ kind: 'model.stream_interrupted', payload: {
+          operationKey: intent.operationKey, messageCursor: snapshot.messages.length, displayStream: objectValue(display),
+        } });
+      }
     }
     return settle(snapshot, intent, { operationKey: intent.operationKey, status, result: raw }, changes, Math.max(0, this.now() - started), facts);
   }
-  private async dispatch(context: PortContext, snapshot: RunSnapshot, configuration: RunConfiguration, intent: EffectIntent): Promise<unknown> {
+  private async dispatch(context: PortContext, snapshot: RunSnapshot, configuration: RunConfiguration, intent: EffectIntent,
+    emit: (event: ModelStreamEvent) => void): Promise<unknown> {
     context.signal.throwIfAborted();
     switch (intent.kind) {
       case 'model': {
@@ -345,7 +369,7 @@ export class NativeKernel {
         const request: ModelRequest = { ...context, profile: copy(configuration.profile), messages: modelContextMessages(snapshot, this.digest),
           tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
           maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
-        return this.ports.model.generate(request, event => { if (!context.signal.aborted) this.onStream(context, event); });
+        return this.ports.model.generate(request, emit);
       }
       case 'tool': {
         const calls = intent.payload.calls as unknown as ToolCall[];

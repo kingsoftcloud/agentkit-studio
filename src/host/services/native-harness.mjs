@@ -21,7 +21,7 @@ const profileIds = record => {
 
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
-  fetchImpl, renderPrompt, ledger } = {}) {
+  fetchImpl, renderPrompt, publishStreamFrame, ledger } = {}) {
   const sessions = ctx.get('sessions'), projections = ctx.get('sessionProjections'), llm = ctx.get('llm');
   invariant(typeof sessions?.flush === 'function' && typeof projections?.register === 'function'
     && typeof renderPrompt === 'function', 'studio_native_host_services_unavailable');
@@ -33,6 +33,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   let closed = false, closing;
   const workspaceId = hash(resolve(workspaceRoot));
   const execute = createNativeDshTurnExecutor({ store, projections, flush: session => sessions.flush(session),
+    publishStreamFrame,
     resolveTurn: async ({ agent, input, binding, signal, prepareInput }) => {
       if (binding?.runtime !== 'harness' || binding.local !== true) return null;
       invariant(binding.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT, 'studio_native_engine_contract_unsupported');

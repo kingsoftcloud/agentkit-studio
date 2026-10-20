@@ -516,7 +516,8 @@ export function createAnthropicStreamState(profile) {
         if (!tool || this.initialInputs.has(index)) throw new ProtocolError('tool delta without an open block');
         tool.arguments += delta.partial_json;
         if (delta.partial_json) {
-          emit({ kind: 'tool_delta', text: delta.partial_json, metadata: { index, ...(tool.callId ? { callId: tool.callId } : {}) } });
+          emit({ kind: 'tool_delta', text: delta.partial_json, metadata: { index,
+            ...(tool.callId ? { callId: tool.callId } : {}), ...(tool.name ? { name: tool.name } : {}) } });
         }
       } else if (deltaType === 'citations_delta') {
         // Citations attach to text; their content is not visible model text.

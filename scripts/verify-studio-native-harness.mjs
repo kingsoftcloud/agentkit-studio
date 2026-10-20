@@ -13,6 +13,28 @@ assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
 console.log(`Studio Native Host evidence: ${root}`);
+const jsonRows = async path => (await readFile(path, 'utf8').catch(error => {
+  if (error.code === 'ENOENT') return ''; throw error;
+})).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+async function waitForPublicPrefix(count, expected) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const rows = await jsonRows(join(root, 'assistant-stream.jsonl'));
+    const native = rows.filter(row => row.frame.attemptId.startsWith('native-dsh-'));
+    const current = native.filter(row => row.frame.type === 'start')[count - 1]?.frame.attemptId;
+    if (current && native.some(row => row.frame.attemptId === current
+      && (row.frame.chunk?.text === expected || row.frame.chunk?.argumentsDelta === expected))) {
+      assert.equal(native.filter(row => row.frame.type === 'start').length, count);
+      assert.equal(native.filter(row => row.frame.type === 'end').length, count - 1,
+        'Public prefix must precede durable model settlement');
+      if (count % 2) assert.equal((await jsonRows(join(root, 'tool-admissions.jsonl'))).length, (count - 1) / 2,
+        'An unsealed streamed tool preview cannot dispatch the tool');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.fail(`No public Native stream prefix before provider completion ${count}`);
+}
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
@@ -36,9 +58,19 @@ const server = createServer(async (request, response) => {
       function: { name: 'write_workspace_file', arguments: JSON.stringify({ path: turn === 3 ? 'denied.txt' : `published-${turn}.txt`, content: `publication-${turn}` }) } }] }
       : { content: turn === 3 ? 'Policy denied the write.' : `Native turn ${turn} completed.` };
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
-    response.end(`data: ${JSON.stringify({ id: `response-${count}`, choices: [{ index: 0, delta,
+    const complete = delta.content;
+    const prefix = complete ? complete.slice(0, 7) : delta.tool_calls[0].function.arguments;
+    const first = complete ? { content: prefix } : delta;
+    response.write(`data: ${JSON.stringify({ id: `response-${count}`, choices: [{ index: 0, delta: first, finish_reason: null }] })}\n\n`);
+    await waitForPublicPrefix(count, prefix);
+    const rest = complete ? { content: complete.slice(7) } : {};
+    response.end(`data: ${JSON.stringify({ id: `response-${count}`, choices: [{ index: 0, delta: rest,
       finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
-  } catch (error) { failures.push(error); response.writeHead(500); response.end('verification failed'); }
+  } catch (error) {
+    failures.push(error);
+    if (!response.headersSent) response.writeHead(500);
+    response.end('verification failed');
+  }
 });
 let harness;
 try {
@@ -62,7 +94,10 @@ try {
   for (const entry of await readdir(dshDependencies)) {
     await symlink(join(dshDependencies, entry), join(dependencies, '@deepseek-ai', entry));
   }
-  if (!values['mount-host']) await symlink(join(source, 'packages/core/system-prompt'), join(dependencies, '@deepseek-ai/dsh-system-prompt'));
+  if (!values['mount-host']) {
+    await symlink(join(source, 'packages/core/system-prompt'), join(dependencies, '@deepseek-ai/dsh-system-prompt'));
+    await symlink(join(source, 'packages/core/agent'), join(dependencies, '@deepseek-ai/dsh-agent'));
+  }
   if (values['mount-host']) {
     const profilePackages = join(root, 'home/profiles/sdk/node_modules/@kingsoftcloud');
     await mkdir(profilePackages, { recursive: true });
@@ -133,6 +168,21 @@ try {
   const stored = (await Promise.all(logs.map(file => readFile(join(sessions, file), 'utf8')))).flatMap(text => text.trim().split('\n').map(line => JSON.parse(line)));
   assert.equal(stored.filter(event => event.type === 'assistant/message').length, 7);
   assert.equal(stored.filter(event => event.type === 'tool/result').length, 3);
+  const live = (await jsonRows(join(root, 'assistant-stream.jsonl'))).filter(row => row.frame.attemptId.startsWith('native-dsh-'));
+  const starts = live.filter(row => row.frame.type === 'start');
+  assert.equal(starts.length, 6);
+  for (const { frame: start } of starts) {
+    const frames = live.filter(row => row.frame.attemptId === start.attemptId).map(row => row.frame);
+    const chunks = frames.filter(frame => frame.type === 'chunk'), end = frames.at(-1);
+    assert.equal(end.type, 'end'); assert.equal(end.outcome.kind, 'committed');
+    assert.equal(end.outcome.eventType, 'assistant/message'); assert.equal(end.index, chunks.length);
+    assert.deepEqual(chunks.map(frame => frame.index), chunks.map((_, index) => index));
+    assert.ok(frames.every(frame => frame.revision === start.revision));
+    const matches = stored.filter(event => event.seq === end.outcome.seq
+      && event.type === end.outcome.eventType && event.data.turn === start.turn && event.data.step === start.step
+      && JSON.stringify(event.data.stream) === JSON.stringify(chunks.map(({ time, chunk }) => ({ type: 'chunk', time, chunk }))));
+    assert.equal(matches.length, 1, 'Every public stream must settle to its exact durable Session stream');
+  }
   assert.equal(stored.filter(event => event.type === 'turn/end').length, 4);
   assert.equal(JSON.stringify(stored).includes('sk-studio-fixture-secret'), false);
   assert.equal((await readFile(join(root, 'studio/native-harness/runs.sqlite'))).includes(Buffer.from('sk-studio-fixture-secret')), false);
@@ -141,7 +191,7 @@ try {
     assert.equal(probes.length, 2); assert.ok(probes.some(probe => probe.source === 'resume'));
     assert.ok(probes.every(probe => probe.unauthorizedStatus === 401 && probe.compatible));
   }
-  console.log(`Studio Native Host PASS: ${values['mount-host'] ? 'full mountStudioHost with real authenticated HTTP control RPC, production preset admission and startup restoration' : 'production Host factory and runtime plugin'}, actual packed Studio files, public Host prompt import, Node-only PATH, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual model HTTP requests, 2 Node workspace writes, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.`);
+  console.log(`Studio Native Host PASS: ${values['mount-host'] ? 'full mountStudioHost with real authenticated HTTP control RPC, production preset admission and startup restoration' : 'production Host factory and runtime plugin'}, actual packed Studio files, public Host prompt import, Node-only PATH, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual model HTTP requests, 6 public live streams before provider completion with exact durable Session stream settlement, 2 Node workspace writes, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.`);
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });

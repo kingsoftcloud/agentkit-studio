@@ -26,7 +26,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     maxWallMs: null, maxModelCalls: null, maxToolCalls: null, maxParallelTools: 4, maxRepairs: 3,
     maxOutputRestarts: 0, finalizationReserveModelCalls: 1, finalizationReserveWallMs: 0,
     effectTimeoutMs: 120_000, leaseMs: 30_000, maxSubagentDepth: 3,
-    maxToolResultBytes: 65536, maxInlineImageBytes: 40 * 1024 * 1024, maxRecoveryRetries: 3, ...input.limits,
+    maxToolResultBytes: 65536, maxInlineImageBytes: 40 * 1024 * 1024, maxModelStreamBytes: 1024 * 1024,
+    maxRecoveryRetries: 3, ...input.limits,
   };
   const config: RunConfiguration = {
     engine: NATIVE_ENGINE, profile, limits,
@@ -56,6 +57,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   for (const [key, value] of Object.entries(limits)) {
     invariant(value === null || Number.isSafeInteger(value) && value >= 0, `invalid_limit:${key}`);
   }
+  invariant(Number.isSafeInteger(limits.maxModelStreamBytes) && limits.maxModelStreamBytes >= 0, 'invalid_limit:maxModelStreamBytes');
   invariant(limits.maxModelCalls === null || limits.maxModelCalls > 0, 'invalid_model_budget');
   invariant(limits.maxWallMs === null || limits.maxWallMs > 0, 'invalid_wall_budget');
   invariant(limits.effectTimeoutMs > 0 && limits.leaseMs >= 30 && limits.maxParallelTools >= 1

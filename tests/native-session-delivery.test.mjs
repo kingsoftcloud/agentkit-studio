@@ -27,6 +27,16 @@ function consumer(seed = [{ type: 'turn/start', data: { turn: 1 }, seq: 1 }]) {
 const source = { provider: 'fixture', model: 'native-model' };
 const inputMessages = [{ id: 'user-input', role: 'user', content: [{ type: 'text', text: 'Complete the task' }] }];
 const final = () => ({ kind: 'final_candidate', text: 'Delivered', toolCalls: [], usage: { ...emptyUsage(), inputTokens: 3, outputTokens: 4 } });
+test('host-wide delivery projection admits multiple standard DSH attempts within one step', () => {
+  const projection = nativeDeliveryProjection();
+  let state = projection.init();
+  for (let seq = 1; seq <= 2; seq++) state = projection.apply(state, { seq, type: 'assistant/attempt',
+    data: { turn: 1, step: 1, stream: [{ type: 'chunk', time: seq,
+      chunk: { type: 'text-delta', index: 0, text: `Failed attempt ${seq}` } }] } });
+  assert.equal(Object.keys(state.atoms).length, 2);
+  assert.equal(projection.stateSchema.parse(state), state);
+  assert.throws(() => projection.stateSchema.parse({ ...state, seqs: {} }), { code: 'native_delivery_state_invalid' });
+});
 function setup(t, options, configuration = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'native-delivery-')), filename = join(directory, 'run.sqlite');
   let store = new SqliteRunStore(filename, options);
@@ -42,8 +52,12 @@ function delivery(store, sink, overrides = {}) {
 }
 function ports() {
   const calls = { model: 0, write: 0 };
-  return { calls, model: { generate: async () => ++calls.model === 1
-    ? { ...final(), kind: 'tool_calls', text: 'Publishing', toolCalls: [{ callId: 'publish-1', name: 'read', arguments: {} }] } : final() },
+  return { calls, model: { generate: async (_, emit) => {
+    const first = ++calls.model === 1;
+    emit({ kind: 'text', text: first ? 'Publishing' : 'Delivered' });
+    if (first) emit({ kind: 'tool_delta', text: '{}', metadata: { index: 0, callId: 'publish-1', name: 'read' } });
+    return first ? { ...final(), kind: 'tool_calls', text: 'Publishing', toolCalls: [{ callId: 'publish-1', name: 'read', arguments: {} }] } : final();
+  } },
   tools: { execute: async () => { calls.write++; return { status: 'ok', content: 'Published once' }; } } };
 }
 
@@ -93,9 +107,10 @@ test('context summary usage is delivered once without publishing private summary
     maxCompactionsWithoutProgress: 4, minModelTurnsBetween: 2, maxSummaryRetries: 1 },
   profile: { profileId: 'test', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'fixture/v1',
     contextWindow: 2400, maxOutputTokens: 128 } });
-  const sink = consumer(); let taskModels = 0, summaries = 0;
-  const adapters = { model: { generate: async request => {
+  const sink = consumer(), live = []; let taskModels = 0, summaries = 0;
+  const adapters = { model: { generate: async (request, emit) => {
     if (request.messages[0]?.kind === 'compaction_instructions') {
+      emit({ kind: 'text', text: 'PRIVATE SUMMARY PROSE' });
       summaries++; return { ...final(), text: 'PRIVATE SUMMARY PROSE', usage: { ...emptyUsage(), inputTokens: 7, outputTokens: 2 } };
     }
     return ++taskModels === 1 ? { ...final(), kind: 'tool_calls', toolCalls: [{ callId: 'call', name: 'read', arguments: {} }] } : final();
@@ -104,7 +119,8 @@ test('context summary usage is delivered once without publishing private summary
     countRequest: async request => Math.ceil(canonical({ messages: request.messages, tools: request.tools }).length / 4),
     countText: async request => Math.ceil(request.text.length / 4) } } };
   const onCheckpoint = delivery(store, sink);
-  const worker = new NativeKernel({ store, digest, owner: 'worker', ports: adapters, onCheckpoint });
+  const worker = new NativeKernel({ store, digest, owner: 'worker', ports: adapters, onCheckpoint,
+    onStream: (_, event) => live.push(event) });
   const result = await worker.runUntilIdle(scope, 'run');
   assert.equal(result.phase, 'completed'); assert.ok(summaries > 1);
   const assistants = sink.events.filter(event => event.type === 'assistant/message');
@@ -112,6 +128,8 @@ test('context summary usage is delivered once without publishing private summary
   assert.equal(assistants.reduce((total, event) => total + (event.data.usage?.inputTokens ?? 0), 0), result.usage.inputTokens);
   assert.equal(assistants.reduce((total, event) => total + (event.data.usage?.outputTokens ?? 0), 0), result.usage.outputTokens);
   assert.equal(JSON.stringify(sink.events).includes('PRIVATE SUMMARY PROSE'), false);
+  assert.equal(JSON.stringify(live).includes('PRIVATE SUMMARY PROSE'), false);
+  assert.equal(JSON.stringify(store.load(scope, 'run').receipts.map(receipt => receipt.result.displayStream)).includes('PRIVATE SUMMARY PROSE'), false);
   const before = structuredClone(sink.events); await onCheckpoint(result); await worker.runUntilIdle(scope, 'run');
   assert.deepEqual(sink.events, before);
 });
@@ -135,6 +153,8 @@ for (const boundary of ['before-flush', 'after-flush-before-ack']) {
     await assert.rejects(new NativeKernel({ store: storage.store, digest, owner: 'before', ports: adapters, onCheckpoint })
       .runUntilIdle(scope, 'run'), /interrupted/);
     assert.equal(tripped, true); assert.equal(adapters.calls.write, 1); assert.equal(adapters.calls.model, 1);
+    const beforeStream = sink.events.find(event => event.type === 'assistant/message').data.stream;
+    assert.ok(beforeStream.some(record => record.chunk.type === 'tool-call-delta'));
     rejectAck = false;
     const store = storage.reopen(), restored = consumer(sink.durable);
     const result = await new NativeKernel({ store, digest, owner: 'after', ports: adapters,
@@ -142,6 +162,7 @@ for (const boundary of ['before-flush', 'after-flush-before-ack']) {
     assert.equal(result.phase, 'completed'); assert.equal(adapters.calls.write, 1); assert.equal(adapters.calls.model, 2);
     assert.equal(restored.events.filter(event => event.type === 'tool/result').length, 1);
     assert.equal(restored.events.filter(event => event.type === 'assistant/message').length, 2);
+    assert.deepEqual(restored.events.find(event => event.type === 'assistant/message').data.stream, beforeStream);
   });
 }
 

@@ -53,7 +53,7 @@ export interface RunLimits {
   maxParallelTools: number; maxRepairs: number; maxOutputRestarts: number;
   finalizationReserveModelCalls: number; finalizationReserveWallMs: number;
   effectTimeoutMs: number; leaseMs: number; maxSubagentDepth: number;
-  maxToolResultBytes: number; maxInlineImageBytes: number;
+  maxToolResultBytes: number; maxInlineImageBytes: number; maxModelStreamBytes: number;
   maxRecoveryRetries: number;
 }
 export type VerificationMethod = 'deterministic' | 'human' | 'model_assisted';
@@ -271,6 +271,7 @@ export interface ModelRequest extends PortContext {
   maxInlineImageBytes: number;
 }
 export interface ModelStreamEvent { kind: 'text' | 'thinking' | 'tool_delta'; text: string; metadata?: ObjectValue }
+export interface ModelStreamRecord { time: number; event: ModelStreamEvent }
 export interface ModelPort { generate(request: ModelRequest, emit: (event: ModelStreamEvent) => void): Promise<ModelResult> }
 export interface ToolRequest extends PortContext {
   call: ToolCall; definition: ToolDefinition; interaction: ObjectValue | null;

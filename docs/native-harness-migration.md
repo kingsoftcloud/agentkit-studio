@@ -26,7 +26,7 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时保持原有 Harness 路径。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`，长期记忆写入会显式拒绝组装；这些缺口尚未解决。
 
-`node scripts/verify-studio-native-harness.mjs --source <已构建的维护源码>` 验证实际打包的 Studio 文件、公开 Host prompt 模块解析、生产 Native Host 工厂及 runtime plugin。它在真实 SDK profile 中选择 preset，执行两轮 Native 对话并在轮间重启进程，另外运行一轮策略拒绝写入，核对六次真实 HTTP 请求、两次经过实际 DSH 工具管线的 Node 文件写入、被拒绝的文件未落盘、会话持久化、用量和一个独立的默认 DSH 会话。Node 26 与最低 Node 22.19.0 均通过。运行子进程的 PATH 仅含 Node，Python 配置指向不存在的位置。该验证的 DSH 公共包及 Studio 依赖来自固定的本地 Host 图，不能替代全新环境安装、完整 `mountStudioHost` 启动或所有 runtime 的无 Python 验收。实时流式展示、审批界面、源读取工作集等剩余上下文策略、输入的显式重绑与未知领取恢复操作、其他正式端口和自动化/部署入口仍待完成。
+`node scripts/verify-studio-native-harness.mjs --source <已构建的维护源码>` 验证实际打包的 Studio 文件、公开 Host prompt 模块解析、生产 Native Host 工厂及 runtime plugin。它在真实 SDK profile 中选择 preset，执行两轮 Native 对话并在轮间重启进程，另外运行一轮策略拒绝写入，核对六次真实 HTTP 请求、两次经过实际 DSH 工具管线的 Node 文件写入、被拒绝的文件未落盘、会话持久化、用量和一个独立的默认 DSH 会话。Node 26 与最低 Node 22.19.0 均通过。运行子进程的 PATH 仅含 Node，Python 配置指向不存在的位置。该验证的 DSH 公共包及 Studio 依赖来自固定的本地 Host 图，不能替代全新环境安装、完整 `mountStudioHost` 启动或所有 runtime 的无 Python 验收。完整流式界面消费、审批界面、源读取工作集等剩余上下文策略、输入的显式重绑与未知领取恢复操作、其他正式端口和自动化/部署入口仍待完成。
 
 已执行核心构建和 195 项核心测试，全部通过，涵盖模型/工具闭环、审批、取消、暂停、并行限制、预算、私有回放隔离、会话历史、验证证据绑定、结构化最终提交、工具参数校验、上下文规划、Hooks、SQLite 及真实进程恢复。同一组 195 项也已在最低支持的 Node 22.19.0 执行通过。单项证据只能支持其覆盖的行为。
 
@@ -68,7 +68,7 @@ Node `hook-executor.mjs` 根据固定范围、完整回调定义和执行策略�
 
 输入定向验证包含 19 项核心行为与实际进程退出测试（prepared、claimed、领取后、回执后），以及生产 Host 的图片解析、来源映射、策略拒绝、绑定变化和关闭竞态。Native 核心与相关输入/整轮适配器曾联合运行 255 项，Node 26/22 均通过；之后针对新增保留策略和展示回退，又在两个版本各执行相关 93 项，包含 19 项输入核心测试和 12 项 Session 交付测试，全部通过。真实打包 SDK 在 Node 26/22 均验证了实际 Host 收件箱追加指令进入下一次模型请求、Session 与重启后的历史，仍是六次实际 HTTP 请求。`startsRequestSeries` 或模型/工具组装变化当前显式要求重绑，领取未知结果仍需产品恢复工作流；不能将这一阶段称为全部输入恢复能力已完成。
 
-`node scripts/verify-native-dsh-turn.mjs --source <已构建的维护源码>` 通过真实 `dsh --profile sdk` 使用上述整轮适配器运行 Native 核心、SQLite、HTTP 模型端口和文件写工具。已验证两轮 Native 对话、轮间进程重启和会话恢复、四次 HTTP 模型请求、两次真实写入、工具配对、用量、持久会话与整轮重复执行，随后成功委派给默认 DSH 循环。Native 轮次中若调用默认模型执行器，验证会立即失败。该验证证明了实际宿主执行边界与消息交付；Studio 产品资源组装、实时流式展示、审批和运行中断后的产品恢复流程仍需继续接入。
+`node scripts/verify-native-dsh-turn.mjs --source <已构建的维护源码>` 通过真实 `dsh --profile sdk` 使用上述整轮适配器运行 Native 核心、SQLite、HTTP 模型端口和文件写工具。已验证两轮 Native 对话、轮间进程重启和会话恢复、四次 HTTP 模型请求、两次真实写入、工具配对、用量、持久会话与整轮重复执行，随后成功委派给默认 DSH 循环。Native 轮次中若调用默认模型执行器，验证会立即失败。该通用 SDK 验证证明了实际宿主执行边界与消息交付；生产 Host 资源组装与实时流事件的后续证据见下文，审批和运行中断后的产品恢复流程仍需继续接入。
 
 真实 SDK 的普通与压缩模式已通过，压缩模式在 Node 26 和最低 Node 22 均完成 13 次 HTTP 请求（其中 9 次摘要），使用整轮重放确认没有额外请求或写入。无故障验证服务器现在显式关闭每个连接，以隔离空闲连接复用时序，并保持 HTTP 次数、模型步、用量和事件数的严格对应断言。早期 Node 22 运行曾多出一次未到达服务器的可重试错误，原日志保留；新增终态诊断会记录模型结果与回执失败类型，模型重试及缺失用量另有独立故障测试。
 
@@ -89,6 +89,12 @@ Responses 端口按输出序号组装文本、推理和工具参数，完整事�
 Artifacts 文件存储适配器已由真实 Claude Code 交付，经主线程独立审查和验证后合入。跨进程写入由 SQLite 活连接事务串行化，进程死亡由系统释放锁，不通过失效锁抢占判断所有权。完整写入身份先于内容发布，恢复时拒绝改写类型或元数据；字节配额在持锁期间核算。读取校验范围、引用、摘要和字节数，Unicode 分页保留 BOM 与完整字符，非法 JSON 和不完整 Unicode 内容显式拒绝。存储目录及锁目录必须由 Host 管理、位于不受工具直接修改的区域；Node SQLite 按路径打开，当前路径复核不能证明已打开文件描述符的身份，不能声称防住任意并发目录替换。
 
 81 项适配器测试已在合入后的主仓库用 Node 26/22 重跑通过。另有两项实际 Native 核心、SQLite 和文件系统联测，覆盖工具回执提交后交付中断，以及文件已发布但工具结果未知：重开账本均不重复写入，只有已确认的引用进入运行状态。此处使用测试 Host 转发端口，不代表生产 overflow 调度、`ArtifactRead`/搜索工具、可用引用授权、页面预算、来源工作集或 Studio 下载消费已经接通。
+
+Native 的实时文本、可见推理和工具参数预览现通过公开 `emitAgentEvent` 发布 `agent/assistant-stream`，使用递增 attempt revision、连续 chunk index 和实际 turn/step。预览工具 ID 不具备执行权限，完整模型回执提交后仍以 Native 的规范工具调用为准。Host 不再需要等待整次模型响应完成才看到内容；Session flush 与 Native 投影确认后，结束帧指向真实 `assistant/message` 或 `assistant/attempt` 的序号。标准 DSH 在同一步产生多次失败 attempt，也可以共存于宿主投影。
+
+核心将公开片段封装为 `agentkit.model-display/v1`，与模型回执和对应事件一起提交；Session 重放用同一份片段和时间戳恢复，投影不依赖进程内缓存。默认只记录最多 1 MiB 的片段数组，超限保留前缀并记录 truncated，完整模型结果仍正常提交；`maxModelStreamBytes: 0` 可关闭展示记录。供应商签名和私有回放字段不进入展示；摘要调用不公开流式内容。当前结构化最终提交契约的模型流全部隐藏，以保护被拒绝的普通草稿，结构化任务的细分实时展示仍需后续完善。断流、超时及取消留下的未封存片段记为 attempt，不据此派发工具；结果提交前进程退出的实时片段仍可能丢失，恢复依照已有未知执行结果规则处理。
+
+本阶段对流式输出、checkpoint、Session 交付、整轮适配器、Host 和三种模型协议执行了 Node 26/22 定向验证（原组合各 237 项通过，审查后新增两项分别在受影响模块复验，当前共 239 项相关用例）。SQLite 重开测试核对 flush 前、flush 后确认前的同一流式记录和工具不重复执行。实际打包 SDK 的完整挂载与普通 Host factory 场景均已在两个 Node 版本通过：六次 HTTP 模型请求都等待公开片段出现后才发送终止帧，工具预览期间没有执行工具，最终公开片段逐项匹配 Session 落盘记录，并保留跨进程会话、策略拒绝和独立默认 DSH 轮次的断言。测试脚本使用维护源码的既有依赖图，仍未证明干净安装、浏览器 UI 渲染或完整 SessionController 消费；本阶段没有运行全量测试。
 
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
 

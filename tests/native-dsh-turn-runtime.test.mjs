@@ -46,6 +46,78 @@ function setup(t, sqlite, overrides = {}) {
 }
 for (const sqlite of [false, true]) {
   const kind = sqlite ? 'SQLite' : 'memory';
+  test(`${kind}: public frames precede completion and settle to the exact durable stream`, async t => {
+    const frames = [], entered = gate(), finish = gate();
+    const host = setup(t, sqlite, { publishStreamFrame: (_, frame) => frames.push(frame) });
+    host.binding.ports.model.generate = async (_, emit) => {
+      host.calls.model++;
+      emit({ kind: 'thinking', text: 'Checking' }); emit({ kind: 'text', text: 'Live ' });
+      entered.resolve(); await finish.promise;
+      emit({ kind: 'text', text: 'result' }); return { ...final(), text: 'Live result' };
+    };
+    const running = host.execute(host.payload); await entered.promise;
+    assert.equal(frames[0].type, 'start'); assert.equal(frames[0].step, 1);
+    assert.equal(frames.some(frame => frame.type === 'end'), false);
+    assert.equal(host.sink.events.some(event => event.type === 'assistant/message'), false);
+    finish.resolve(); await running;
+    const chunks = frames.filter(frame => frame.type === 'chunk'), end = frames.at(-1);
+    assert.deepEqual(chunks.map(frame => frame.index), chunks.map((_, i) => i));
+    const committed = host.sink.events.find(event => event.seq === end.outcome.seq);
+    assert.equal(end.outcome.eventType, 'assistant/message'); assert.equal(end.outcome.kind, 'committed');
+    assert.equal(end.index, chunks.length);
+    assert.deepEqual(committed.data.stream, chunks.map(({ time, chunk }) => ({ type: 'chunk', time, chunk })));
+    const before = structuredClone(frames); await host.execute(host.payload); assert.deepEqual(frames, before);
+    assert.equal(host.calls.model, 1);
+    host.sink.session.append('turn/start', { turn: 2 });
+    await host.execute({ ...host.payload, turn: 2 });
+    assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => frame.revision), [1, 2]);
+  });
+  test(`${kind}: failed streamed tool fragments settle as an attempt and never dispatch`, async t => {
+    const frames = [];
+    const host = setup(t, sqlite, { publishStreamFrame: (_, frame) => frames.push(frame) });
+    host.binding.configuration.profile.retryInitialDelayMs = 0;
+    host.binding.ports.model.generate = async (_, emit) => {
+      if (++host.calls.model === 1) {
+        emit({ kind: 'tool_delta', text: '{"path":', metadata: { index: 0, name: 'write', callId: 'incomplete-provider-id' } });
+        return { ...final(), kind: 'provider_retryable_error', text: 'Unsealed private prefix', usageReported: false };
+      }
+      emit({ kind: 'text', text: 'Recovered' }); return { ...final(), text: 'Recovered' };
+    };
+    await host.execute(host.payload);
+    assert.equal(host.calls.write, 0); assert.equal(host.sink.events.some(event => event.type === 'tool/call'), false);
+    const ends = frames.filter(frame => frame.type === 'end');
+    assert.deepEqual(ends.map(frame => frame.outcome.eventType), ['assistant/attempt', 'assistant/message']);
+    assert.equal(host.sink.events.find(event => event.seq === ends[0].outcome.seq).type, 'assistant/attempt');
+    assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => frame.step), [1, 2]);
+    assert.equal(JSON.stringify(host.sink.events).includes('Unsealed private prefix'), false);
+  });
+  test(`${kind}: cancel closes a durable prefix and fences late streamed callbacks`, async t => {
+    const frames = [], entered = gate(); let lateEmit;
+    const host = setup(t, sqlite, { publishStreamFrame: (_, frame) => frames.push(frame) });
+    host.binding.ports.model.generate = async (_, emit) => {
+      lateEmit = emit; emit({ kind: 'text', text: 'Before cancellation' }); entered.resolve(); await new Promise(() => {});
+    };
+    const running = host.execute(host.payload); await entered.promise;
+    host.controller.abort(Error('cancel live stream')); await assert.rejects(running, /cancel live stream/);
+    assert.equal(host.head().phase, 'canceled');
+    assert.equal(frames.at(-1).outcome.eventType, 'assistant/attempt');
+    assert.equal(frames.at(-1).outcome.kind, 'committed');
+    const count = frames.length; lateEmit({ kind: 'text', text: 'late' }); assert.equal(frames.length, count);
+  });
+  test(`${kind}: failed durable flush abandons live frames and replay delivers once without another model`, async t => {
+    const frames = []; let failFlush = true, host;
+    host = setup(t, sqlite, { publishStreamFrame: (_, frame) => frames.push(frame), flush: async () => {
+      if (failFlush && host.sink.events.some(event => event.type === 'assistant/message')) throw Error('stream flush failed');
+      return true;
+    } });
+    host.binding.ports.model.generate = async (_, emit) => { host.calls.model++; emit({ kind: 'text', text: 'Committed' }); return final(); };
+    await assert.rejects(host.execute(host.payload), /stream flush failed/);
+    assert.equal(frames.at(-1).outcome.kind, 'abandoned');
+    const before = structuredClone(host.sink.events), frameCount = frames.length;
+    failFlush = false; await host.execute(host.payload);
+    assert.equal(host.calls.model, 1); assert.equal(frames.length, frameCount);
+    assert.deepEqual(host.sink.events.filter(event => event.type !== 'step/end'), before.filter(event => event.type !== 'step/end'));
+  });
   test(`${kind}: full Native turn and same-turn replay do not repeat tools or Session atoms`, async t => {
     const host = setup(t, sqlite);
     assert.deepEqual(await host.execute(host.payload), { reason: { kind: 'completed' } });

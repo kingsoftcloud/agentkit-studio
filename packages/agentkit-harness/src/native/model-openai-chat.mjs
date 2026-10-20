@@ -440,7 +440,8 @@ export function createOpenAIStreamTurn(profile) {
         // Emit a display-only tool_delta for the argument fragment. The sealed
         // batch in ModelResult is authoritative; this never executes a tool.
         if (fn && 'arguments' in fn && typeof fn.arguments === 'string' && fn.arguments) {
-          emit({ kind: 'tool_delta', text: fn.arguments, metadata: { index: fragment.index, ...(call.id ? { callId: call.id } : {}) } });
+          emit({ kind: 'tool_delta', text: fn.arguments, metadata: { index: fragment.index,
+            ...(call.id ? { callId: call.id } : {}), ...(call.function.name ? { name: call.function.name } : {}) } });
         }
       }
     },

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { nativeDurableStream } from './assistant-stream.mjs';
 import { canonical, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
 import { NATIVE_DSH_CONTENT_FORMAT } from './dsh-turn-contract.mjs';
 
@@ -12,6 +13,9 @@ function atomKey(event) {
     return `message:${message.id}`;
   }
   if (event.type === 'tool/call') return `call:${event.data.callId}`;
+  // Standard DSH may produce several failed attempts in the same step. Their
+  // streams must coexist in this host-wide fold without claiming a Native ID.
+  if (event.type === 'assistant/attempt') return `attempt:${hash(event.data)}`;
   if (event.type === 'step/start' || event.type === 'step/end') return `${event.type}:${event.data.turn}:${event.data.step}`;
   return null;
 }
@@ -25,16 +29,18 @@ function atomDigest(event) {
 /** Host-only fold of actual Session events; it grants no Native execution authority. */
 export function nativeDeliveryProjection() {
   return {
-    key: NATIVE_DELIVERY_PROJECTION, stateVersion: 1,
+    key: NATIVE_DELIVERY_PROJECTION, stateVersion: 2,
     stateSchema: { parse(value) {
-      invariant(ownObject(value) && ownObject(value.atoms) && Number.isSafeInteger(value.turn) && value.turn >= 0
+      invariant(ownObject(value) && ownObject(value.atoms) && ownObject(value.seqs) && Number.isSafeInteger(value.turn) && value.turn >= 0
         && typeof value.hasSurface === 'boolean' && Object.values(value.atoms).every(item => /^[a-f0-9]{64}$/.test(item)), 'native_delivery_state_invalid');
+      invariant(Object.keys(value.atoms).length === Object.keys(value.seqs).length
+        && Object.keys(value.atoms).every(key => Number.isSafeInteger(value.seqs[key]) && value.seqs[key] > 0), 'native_delivery_state_invalid');
       if (value.head !== null) invariant(ownObject(value.head) && Number.isSafeInteger(value.head.seq)
         && typeof value.head.id === 'string' && Array.isArray(value.head.content), 'native_delivery_state_invalid');
       canonical(value);
       return value;
     } },
-    init: () => ({ atoms: {}, turn: 0, hasSurface: false, head: null }),
+    init: () => ({ atoms: {}, seqs: {}, turn: 0, hasSurface: false, head: null }),
     apply(state, event) {
       if (event.type === 'turn/start') return { ...state, turn: event.data.turn };
       const key = atomKey(event);
@@ -43,7 +49,7 @@ export function nativeDeliveryProjection() {
       invariant(!Object.hasOwn(state.atoms, key) || state.atoms[key] === fingerprint, 'native_delivery_atom_conflict');
       const head = event.type === 'system/message' && event.surfaceOp
         ? { id: event.data.message.id, seq: event.seq, content: event.data.message.content } : state.head;
-      return { ...state, atoms: { ...state.atoms, [key]: fingerprint }, head,
+      return { ...state, atoms: { ...state.atoms, [key]: fingerprint }, seqs: { ...state.seqs, [key]: event.seq }, head,
         hasSurface: state.hasSurface || Boolean(event.surfaceOp) };
     },
   };
@@ -56,7 +62,7 @@ export function nativeDeliveryProjection() {
  * complete plan deduplicates an append that succeeded before acknowledgment.
  */
 export function createNativeSessionDelivery({ store, scope, runId, session, turn, projections,
-  flush, systemText, inputMessages, source, flushTimeoutMs = 30_000 } = {}) {
+  flush, systemText, inputMessages, source, onStreamSettled, flushTimeoutMs = 30_000 } = {}) {
   invariant(typeof flush === 'function' && typeof systemText === 'string' && Array.isArray(inputMessages)
     && Number.isSafeInteger(turn) && turn > 0 && typeof source?.provider === 'string' && source.provider
     && typeof source?.model === 'string' && source.model, 'native_delivery_binding_invalid');
@@ -81,9 +87,10 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     const event = { type, data, ...options }, key = atomKey(event);
     invariant(key !== null, 'native_delivery_event_invalid');
     const fingerprint = atomDigest(event), previous = state().atoms[key];
-    if (previous !== undefined) { invariant(previous === fingerprint, 'native_delivery_atom_conflict'); return; }
+    if (previous !== undefined) { invariant(previous === fingerprint, 'native_delivery_atom_conflict'); return state().seqs[key]; }
     session.append(type, data, options);
     invariant(state().atoms[key] === fingerprint, 'native_delivery_projection_not_advanced');
+    return state().seqs[key];
   };
 
   async function deliver(snapshot) {
@@ -122,16 +129,18 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       .map(event => [event.payload.callId, event.payload.status]));
     const pending = new Map();
     let cursor = 0, step = 1, modelCount = 0, lastAssistant = null;
-    const assistant = (key, text, calls, usage) => {
+    const settlements = [];
+    const assistant = (key, text, calls, usage, stream = []) => {
       const content = [...(text ? [{ type: 'text', text }] : []),
         ...calls.map(call => ({ type: 'tool-call', id: projectedCallId(call.callId), name: call.name, arguments: canonical(call.arguments) }))];
-      append('assistant/message', { turn, step, message: { id: id(key), role: 'assistant', content, source: { kind: 'model', ...source } },
-        stream: [], ...(usage ? { usage } : {}) }, { surfaceOp: 'append' });
+      const seq = append('assistant/message', { turn, step, message: { id: id(key), role: 'assistant', content, source: { kind: 'model', ...source } },
+        stream, ...(usage ? { usage } : {}) }, { surfaceOp: 'append' });
       lastAssistant = { text, calls };
       for (const call of calls) {
         pending.set(call.callId, call);
         append('tool/call', { turn, step, callId: projectedCallId(call.callId), name: call.name, arguments: canonical(call.arguments) });
       }
+      return seq;
     };
     const blocks = message => message.presentation?.format === NATIVE_DSH_CONTENT_FORMAT
       ? structuredClone(message.presentation.content) : [{ type: 'text', text: message.content }];
@@ -170,9 +179,17 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       }
     };
     for (const event of events) {
-      if (!['model.completed', 'context.summary_completed'].includes(event.kind)) continue;
+      if (!['model.completed', 'context.summary_completed', 'model.stream_interrupted'].includes(event.kind)) continue;
       const payload = event.payload, index = payload.messageIndex;
       const summary = event.kind === 'context.summary_completed';
+      const interrupted = event.kind === 'model.stream_interrupted';
+      if (interrupted) {
+        drain(payload.messageCursor);
+        if (modelCount++ > 0) { append('step/end', { turn, step }); step++; append('step/start', { turn, step }); }
+        const seq = append('assistant/attempt', { turn, step, stream: nativeDurableStream(payload.operationKey, payload.displayStream) });
+        settlements.push([payload.operationKey, 'assistant/attempt', seq]);
+        continue;
+      }
       invariant(summary || index === null || Number.isSafeInteger(index) && index >= cursor && messages[index]?.role === 'assistant',
         'native_delivery_model_binding_missing');
       drain(summary || index === null ? payload.messageCursor : index);
@@ -183,8 +200,18 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
         ...(payload.usage.cachedInputTokens === undefined ? {} : { cacheReadTokens: payload.usage.cachedInputTokens }),
         ...(payload.usage.reasoningTokens === undefined ? {} : { reasoningTokens: payload.usage.reasoningTokens }),
       };
-      assistant(`response:${event.eventId}`, summary || payload.candidateStatus === 'rejected' ? '' : message?.content ?? payload.text,
-        message?.toolCalls ?? [], usage);
+      const stream = nativeDurableStream(payload.operationKey, payload.displayStream);
+      // An uncommitted provider prefix is an attempt, never a tool batch or
+      // final candidate. Keep any reported usage on its existing empty message.
+      if (!summary && index === null && stream.length) {
+        const seq = append('assistant/attempt', { turn, step, stream });
+        settlements.push([payload.operationKey, 'assistant/attempt', seq]);
+        assistant(`response:${event.eventId}`, '', [], usage);
+      } else {
+        const seq = assistant(`response:${event.eventId}`, summary || payload.candidateStatus === 'rejected' ? '' : message?.content ?? payload.text,
+          message?.toolCalls ?? [], usage, stream);
+        if (payload.operationKey) settlements.push([payload.operationKey, 'assistant/message', seq]);
+      }
       if (!summary && index !== null) cursor = index + 1;
       drain(payload.messageCursor);
     }
@@ -210,10 +237,19 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       invariant(persisted === true, 'native_delivery_not_durable');
     } finally { clearTimeout(timer); }
     store.acknowledge(scope, runId, projectionName, snapshot.eventSeq);
+    for (const settlement of settlements) onStreamSettled?.(...settlement);
   }
-  return snapshot => {
+  const delivery = snapshot => {
     const next = chain.then(() => deliver(snapshot));
     chain = next.catch(() => {});
     return next;
   };
+  delivery.beginStream = () => {
+    const record = store.load(scope, runId);
+    const step = 1 + record.events.filter(event => ['model.completed', 'context.summary_completed', 'model.stream_interrupted'].includes(event.kind)).length;
+    if (step > 1) append('step/end', { turn, step: step - 1 });
+    append('step/start', { turn, step });
+    return step;
+  };
+  return delivery;
 }

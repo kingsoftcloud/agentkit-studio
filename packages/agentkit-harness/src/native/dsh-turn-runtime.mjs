@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { NativeKernel, canonical, configure, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
 import { createNativeSessionDelivery } from './session-delivery.mjs';
+import { nativeLiveStream } from './assistant-stream.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from './dsh-turn-contract.mjs';
 
 export { NATIVE_DSH_TURN_CONTRACT };
@@ -42,10 +43,10 @@ async function resolveWhileLive(resolve, payload) {
  * adoption of interrupted work requires an explicit host recovery workflow.
  */
 export function createNativeDshTurnExecutor({ store, resolveTurn, projections, flush,
-  owner = `native-dsh-${randomUUID()}`, onStream, onIdle, onCheckpoint } = {}) {
+  owner = `native-dsh-${randomUUID()}`, onStream, publishStreamFrame, onIdle, onCheckpoint } = {}) {
   invariant(store && typeof resolveTurn === 'function' && typeof flush === 'function'
     && typeof projections?.stateOf === 'function' && typeof owner === 'string' && owner.trim(), 'native_dsh_host_binding_invalid');
-  const active = new Set();
+  const active = new Set(), revisions = new WeakMap();
   return async payload => {
     const { agent, input, turn, signal } = payload;
     invariant(agent?.session && typeof agent.session.id === 'string' && agent.session.id.trim()
@@ -69,6 +70,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
     const key = canonical({ scope, sessionId });
     invariant(!active.has(key), 'native_dsh_session_already_driving');
     active.add(key);
+    let live;
     try {
       signal.throwIfAborted();
       const head = store.sessionHead(scope, sessionId);
@@ -85,9 +87,15 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
         }
       }
       const delivery = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn, projections, flush,
-        inputMessages: input.messages, systemText: configuration.instructions, source: binding.source });
+        inputMessages: input.messages, systemText: configuration.instructions, source: binding.source,
+        onStreamSettled: (...args) => live.settled(...args) });
+      live = nativeLiveStream({ agent, runId, turn, revisions, beginStep: delivery.beginStream,
+        publish: publishStreamFrame ? frame => publishStreamFrame(payload, frame) : undefined });
       const kernel = new NativeKernel({ store, ports: binding.ports, digest: hash, owner,
-        ...(onStream ? { onStream: (identity, event) => onStream(payload, identity, event) } : {}),
+        onStream: (identity, event, record) => {
+          live.accept(identity, record);
+          onStream?.(payload, identity, event);
+        },
         onCheckpoint: async snapshot => {
           await delivery(snapshot);
           if (onCheckpoint && !signal.aborted) await resolveWhileLive(
@@ -127,6 +135,6 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
       if (snapshot.reason === 'host_input_rejected' && snapshot.outcome === 'blocked') return { reason: { kind: 'blocked' } };
       if (snapshot.phase !== 'completed') throw failure('NATIVE_TURN_FAILED', snapshot);
       return { reason: { kind: snapshot.outcome === 'blocked' ? 'blocked' : 'completed' } };
-    } finally { active.delete(key); }
+    } finally { live?.abandon(); active.delete(key); }
   };
 }

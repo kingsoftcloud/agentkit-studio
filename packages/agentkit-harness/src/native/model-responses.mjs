@@ -1004,8 +1004,10 @@ export function createResponsesStreamState(profile) {
       // Emit display-only tool argument fragments. The sealed batch in the
       // ModelResult is authoritative; this never executes a tool.
       if (type === 'response.function_call_arguments.delta' && event.delta) {
+        const index = event.output_index ?? toolItems.items.itemIndexes.get(event.item_id);
+        const name = toolItems.calls.get(event.item_id)?.name;
         emit({ kind: 'tool_delta', text: event.delta,
-               metadata: { ...(event.output_index != null ? { index: event.output_index } : {}),
+               metadata: { ...(index != null ? { index } : {}), ...(name ? { name } : {}),
                            ...(event.item_id ? { callId: event.item_id } : {}) } });
       }
     },
