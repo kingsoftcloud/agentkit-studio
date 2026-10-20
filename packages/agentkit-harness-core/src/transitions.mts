@@ -67,6 +67,7 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
         changes = { goal: command.payload.text, goalRevision: snapshot.goalRevision + 1, phase: 'preparing_context',
+          hookState: null, stopHookContinuations: 0,
           preparedContext: null, queuedGuidance: [], finalText: '', outcome: null, reason: null,
           pendingTools: [], pendingInteraction: null, interaction: null, candidate: null, verification: null,
           messages: [...snapshot.messages, ...snapshot.pendingTools.map(call => ({ role: 'tool' as const, callId: call.callId, name: call.name,
@@ -83,10 +84,12 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
         const guidance: Message = { role: 'user', content: command.payload.text, kind: 'guidance', persistent: true };
+        const postHook = retiring && pending!.kind === 'hook'
+          && (pending!.payload.request as ObjectValue | undefined)?.event === 'PostToolUse';
         changes = { preparedContext: null, context: { ...snapshot.context, preparedCursor: null },
           ...(retiring ? { pendingIntent: null, phase: snapshot.phase === 'paused' ? 'paused' as const
-            : snapshot.pendingTools.length ? 'executing_tools' as const : snapshot.phase === 'compacting' ? 'compacting' as const : 'preparing_context' as const,
-            ...(snapshot.phase === 'paused' ? { resumePhase: snapshot.pendingTools.length ? 'executing_tools' as const
+            : snapshot.pendingTools.length || postHook ? 'executing_tools' as const : snapshot.phase === 'compacting' ? 'compacting' as const : 'preparing_context' as const,
+            ...(snapshot.phase === 'paused' ? { resumePhase: snapshot.pendingTools.length || postHook ? 'executing_tools' as const
               : snapshot.resumePhase === 'compacting' ? 'compacting' as const : 'preparing_context' as const } : {}) } : {}) };
         if (retiring && pending!.kind === 'tool') {
           const interaction = pending!.payload.interaction;

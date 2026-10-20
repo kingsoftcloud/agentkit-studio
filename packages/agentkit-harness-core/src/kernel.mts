@@ -1,6 +1,7 @@
 import { emptyUsage, terminal } from './contracts.mjs';
 import type { CommitBatch, EffectIntent, EffectReceipt, Lease, ModelRequest, ModelResult, ModelStreamEvent, NativePorts, ObjectValue, PortContext,
-  RunCommand, RunConfiguration, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation } from './contracts.mjs';
+  RunCommand, RunConfiguration, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation,
+  HookInvocation, HookInvocationResult } from './contracts.mjs';
 import { initialSnapshot } from './configuration.mjs';
 import { pendingCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
@@ -11,6 +12,8 @@ import { reduceVerification, sealCandidate } from './verification.mjs';
 import { recoverClaimed } from './recovery.mjs';
 import { toolInputRejection } from './tool-input.mjs';
 import { contextSourceDigest, modelContextMessages, validateContextMessages } from './context-view.mjs';
+import { deniedByHook, reduceHook, stagePostHooks } from './hook-runtime.mjs';
+import { hookBytes, hookResult } from './hook-contract.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -151,7 +154,7 @@ export class NativeKernel {
           this.commit(claimedSnapshot, lease, batch);
           continue;
         }
-        const next = plan(snapshot, config, { context: !!this.ports.context, workspace: !!this.ports.workspace, verification: !!this.ports.verification });
+        const next = plan(snapshot, config, { context: !!this.ports.context, workspace: !!this.ports.workspace, verification: !!this.ports.verification }, this.digest);
         if (!next) return snapshot;
         try { this.commit(snapshot, lease, next); }
         catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
@@ -206,7 +209,7 @@ export class NativeKernel {
         case 'tool': {
           const calls = intent.payload.calls as unknown as ToolCall[];
           const results = raw.results as unknown as ToolResult[];
-          changes = reduceTools(snapshot, results, calls, intent, configuration, this.digest);
+          changes = stagePostHooks(snapshot, reduceTools(snapshot, results, calls, intent, configuration, this.digest), configuration, calls, results);
           for (const [index, result] of results.entries()) facts.push({ kind: result.status === 'approval_required' ? 'approval.requested' : 'tool.completed',
             payload: { callId: calls[index]!.callId, name: calls[index]!.name, status: result.status,
               ...(result.status === 'uncertain' ? {} : { content: result.content }),
@@ -241,6 +244,17 @@ export class NativeKernel {
             messageCount: changes.preparedContext!.messages.length, forceCompaction: intent.payload.forceCompaction === true } });
           break;
         case 'verify': changes = reduceVerification(snapshot, raw as unknown as VerificationReport, configuration); break;
+        case 'hook': {
+          const result = raw as unknown as HookInvocationResult;
+          changes = reduceHook(snapshot, intent, result, configuration);
+          if (changes.messages && snapshot.candidate && changes.phase !== 'finalizing' && changes.phase !== 'preparing_context') {
+            changes.candidate = sealCandidate(snapshot.candidate, { ...snapshot, ...changes }, configuration, this.digest);
+          }
+          if (result.status !== 'ok') status = result.status === 'uncertain' ? 'uncertain' : 'failed';
+          facts.push({ kind: 'hook.completed', payload: { event: result.event, hookId: result.hookId,
+            status: result.status, reason: result.reason, action: result.output?.action ?? null } });
+          break;
+        }
         default: throw new NativeError('effect_port_not_implemented');
       }
     } catch (error) {
@@ -285,6 +299,8 @@ export class NativeKernel {
           invariant(definition, 'unbound_tool');
           const rejection = toolInputRejection(definition, call);
           if (rejection) return { status: 'error' as const, content: rejection };
+          if (deniedByHook(snapshot, call)) return { status: 'error' as const,
+            content: { code: 'pre_tool_hook_denied', executed: false } };
           const deadline = new AbortController(), started = this.now();
           const toolSignal = AbortSignal.any([context.signal, deadline.signal]);
           const timer = setTimeout(() => deadline.abort(new NativeError('tool_timeout')), definition.timeoutMs);
@@ -313,6 +329,12 @@ export class NativeKernel {
         snapshot: copy(snapshot), configuration: copy(configuration), forceCompaction: intent.payload.forceCompaction === true });
       case 'verify': invariant(this.ports.verification && snapshot.candidate, 'verification_port_missing'); return this.ports.verification.verify({ ...context,
         snapshot: copy(snapshot), contract: copy(configuration.contract), candidate: copy(snapshot.candidate) });
+      case 'hook': {
+        const request = copy(intent.payload.request) as unknown as HookInvocation;
+        if (hookBytes(request.input) > request.definition.maxInputBytes) return hookResult(request, 'failed', null, 'input_budget_exceeded');
+        if (!this.ports.hooks) return hookResult(request, 'failed', null, 'binding_unavailable');
+        return this.ports.hooks.invoke({ ...request, signal: context.signal });
+      }
       default: throw new NativeError('effect_port_not_implemented');
     }
   }

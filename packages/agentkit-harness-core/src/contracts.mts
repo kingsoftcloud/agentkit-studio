@@ -64,8 +64,37 @@ export interface TaskContract {
   finalSubmissionPayloadKey: string | null;
   finalOutputFormat: 'text' | 'json_object' | 'json_value';
 }
+export type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PreCompact' | 'Stop';
 export interface HookDefinition {
-  hookId: string; events: ('PreToolUse' | 'PostToolUse' | 'PreCompact' | 'Stop')[]; timeoutMs: number;
+  hookId: string; sourceRef: string; bindingDigest: string; executionPolicyDigest: string;
+  /** Host assertion, never a callback-provided replay or permission grant. */
+  readOnly: boolean; events: HookEvent[]; toolNames?: string[];
+  timeoutMs: number; maxInputBytes: number; maxOutputBytes: number; failureMode: 'warn' | 'block';
+  compactionSourceProjection?: 'canonical_user';
+}
+export interface HookOutput {
+  action: 'continue' | 'deny' | 'repair'; additionalContext: string[]; updatedArguments: ObjectValue | null;
+}
+export type HookFailure = 'producer_failed' | 'producer_invalid' | 'input_budget_exceeded' | 'output_budget_exceeded'
+  | 'producer_timeout' | 'binding_unavailable' | 'policy_denied' | 'policy_error';
+export interface HookInvocation extends RunIdentity {
+  schemaVersion: 'agentkit.native-hook/v1'; operationKey: string; goalRevision: number;
+  event: HookEvent; definition: HookDefinition; inputDigest: string;
+  input: { goal: string; toolCallCount: number; stopContinuationCount: number;
+    call: ToolCall | null; toolResult: ToolResult | null; candidate: CompletionCandidate | null;
+    compaction: ObjectValue | null };
+}
+export interface HookInvocationResult {
+  schemaVersion: 'agentkit.native-hook-result/v1'; identity: RunIdentity; operationKey: string; goalRevision: number;
+  event: HookEvent; hookId: string; sourceRef: string; bindingDigest: string; executionPolicyDigest: string; inputDigest: string;
+  status: 'ok' | 'failed' | 'uncertain'; output: HookOutput | null; reason: HookFailure | null;
+}
+export interface HookState {
+  goalRevision: number;
+  pre: { original: ToolCall; effective: ToolCall; nextIndex: number; denied: boolean }[];
+  post: { call: ToolCall; result: ToolResult; nextIndex: number }[];
+  stop: { candidateId: string; nextIndex: number } | null;
+  feedback: Message[];
 }
 export interface ContextSourceDefinition { sourceId: string; priority: number; timeoutMs: number; required: boolean }
 export interface RunConfiguration {
@@ -143,6 +172,7 @@ export interface RunSnapshot extends RunIdentity {
   workspaceRevision: string | null; workspaceModifiedPaths: string[]; artifactRefs: ArtifactRef[];
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
+  hookState: HookState | null;
   recoveryRetriesUsed: number;
   toolErrorStreak: ToolErrorStreak | null;
 }
@@ -206,7 +236,7 @@ export interface VerificationPort {
   verify(request: PortContext & { candidate: CompletionCandidate; contract: TaskContract; snapshot: RunSnapshot }): Promise<VerificationReport>;
 }
 export interface HookPort {
-  invoke(request: PortContext & { hook: HookDefinition; event: HookDefinition['events'][number]; input: ObjectValue }): Promise<{ decision: 'allow' | 'deny' | 'continue'; content: Json }>;
+  invoke(request: HookInvocation & { signal: AbortSignal }): Promise<HookInvocationResult>;
 }
 export interface ArtifactPort {
   write(request: PortContext & { content: string; mediaType: string; metadata: ObjectValue }): Promise<ArtifactRef>;

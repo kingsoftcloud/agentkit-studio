@@ -4,6 +4,7 @@ import { copy, invariant, canonical } from './values.mjs';
 import { prepareEffect, transition } from './transitions.mjs';
 import { retryDelay } from './retry.mjs';
 import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normalizedFinalText } from './final-submission.mjs';
+import { currentHookState, pendingHookFeedback, planHook } from './hook-runtime.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -50,7 +51,8 @@ export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration)
 }
 export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean }
 /** Pure next action. Dispatch is impossible until its intent has been committed and claimed. */
-export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabilities: PlanCapabilities): CommitBatch | null {
+export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabilities: PlanCapabilities,
+  digest: (value: unknown) => string = canonical): CommitBatch | null {
   if (snapshot.phase === 'paused' || snapshot.phase === 'awaiting_interaction') return null;
   invariant(snapshot.pendingIntent === null, 'pending_effect_requires_dispatch');
   if (!snapshot.pendingTools.length && snapshot.queuedGuidance.length) return transition(snapshot, {
@@ -74,6 +76,10 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     return finalizing(snapshot, 'budget_exhausted', 'execution_budget_exhausted');
   }
   if (snapshot.phase === 'created') return transition(snapshot, { phase: 'preparing_context' }, [{ kind: 'run.started', payload: { buildId: snapshot.buildId } }]);
+  if (snapshot.phase === 'verifying') {
+    const hook = planHook(snapshot, config, 'Stop', digest);
+    if (hook) return hook;
+  }
   const cursor = `${snapshot.goalRevision}:${snapshot.usage.modelCalls}:${snapshot.usage.toolCalls}:${snapshot.candidate?.candidateId ?? ''}`;
   if (capabilities.workspace && snapshot.context.workspaceCursor !== cursor && ['preparing_context', 'verifying'].includes(snapshot.phase)) {
     return prepareEffect(snapshot, 'workspace', snapshot.phase, { cursor });
@@ -91,8 +97,11 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     return prepareEffect(snapshot, 'model', 'requesting_model', { finalizationOnly: finalizationOnly(snapshot, config) });
   }
   if (snapshot.phase === 'executing_tools') {
+    const post = planHook(snapshot, config, 'PostToolUse', digest);
+    if (post) return post;
     if (!snapshot.pendingTools.length) return transition(snapshot, { phase: 'preparing_context', interaction: null,
-      messages: [...snapshot.messages, ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null });
+      messages: [...snapshot.messages, ...pendingHookFeedback(snapshot), ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null,
+      ...(snapshot.hookState ? { hookState: { ...currentHookState(snapshot), feedback: [] } } : {}) });
     const first = snapshot.pendingTools[0]!;
     const definition = config.tools.find(tool => tool.name === first.name);
     if (!definition || config.contract.allowedToolNames !== null && !config.contract.allowedToolNames.includes(first.name)) {
@@ -115,6 +124,8 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
         calls.push(call);
       }
     }
+    const pre = planHook(snapshot, config, 'PreToolUse', digest, calls);
+    if (pre) return pre;
     return prepareEffect(snapshot, 'tool', 'executing_tools', { calls: calls.map(objectValue), interaction: snapshot.interaction },
       { interaction: null });
   }

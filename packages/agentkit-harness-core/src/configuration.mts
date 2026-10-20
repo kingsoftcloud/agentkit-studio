@@ -3,6 +3,7 @@ import type { ModelProfile, RunConfiguration, RunIdentity, RunLimits, RunSnapsho
 import { canonical, copy, invariant, scopeKey } from './values.mjs';
 import { validateSubmissionContract } from './final-submission.mjs';
 import { compileToolInput } from './tool-input.mjs';
+import { validateHookDefinition } from './hook-contract.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -78,6 +79,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(new Set(config.hooks.map(hook => hook.hookId)).size === config.hooks.length, 'duplicate_hook');
   invariant(new Set(config.contextSources.map(source => source.sourceId)).size === config.contextSources.length, 'duplicate_context_source');
   invariant(config.hooks.every(hook => hook.timeoutMs > 0 && hook.timeoutMs < limits.effectTimeoutMs), 'invalid_hook_timeout');
+  for (const hook of config.hooks) validateHookDefinition(hook);
+  invariant(Number.isSafeInteger(config.stopHookContinuationLimit) && config.stopHookContinuationLimit >= 0, 'invalid_stop_hook_limit');
   invariant(!config.hooks.some(hook => hook.events.includes('Stop')) || config.stopHookContinuationLimit > 0, 'stop_hook_requires_limit');
   invariant(['text', 'json_object', 'json_value'].includes(config.contract.finalOutputFormat), 'invalid_final_output_format');
   invariant(['manual', 'pure-inference/v1'].includes(config.modelRecoveryPolicy), 'invalid_model_recovery_policy');
@@ -99,6 +102,6 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
-    context: {}, diagnostics: {}, stopHookContinuations: 0, recoveryRetriesUsed: 0, toolErrorStreak: null,
+    context: {}, diagnostics: {}, stopHookContinuations: 0, hookState: null, recoveryRetriesUsed: 0, toolErrorStreak: null,
   });
 }
