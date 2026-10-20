@@ -7,6 +7,7 @@ import { createNativeDshTurnExecutor, NATIVE_DSH_TURN_CONTRACT } from '../../../
 import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
+import { bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -67,6 +68,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         fileRequestText: typeof llm?.fileRequestText === 'function' ? ref => llm.fileRequestText(ref) : undefined };
       const admission = await projectNativeDshInput(input.messages, { ...inputServices, signal });
       const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
+      const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits });
       const materialized = await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
         toolAdapter: {}, agent, agentId: binding.agentId, userId: 'local-user', resourceMode: 'context-only' });
       // A memory write is an external effect and must get its own Native intent.
@@ -80,10 +82,12 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           providerFamily: description.protocol, compatibilityDigest, ...context.profile, requestTimeoutMs: description.requestTimeoutMs,
           providerReplayMode: description.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
-          inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy }),
+          inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
+          taskPolicyContract: STUDIO_NATIVE_TASK_POLICY_CONTRACT, taskPolicy }),
         contextPolicy: context.policy,
+        workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy,
         contract: { objective: admission.objective }, instructions, inputMessages: admission.messages,
-        tools, limits: { effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000) } },
+        tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000) } },
         ports: { ...binding.nativeTools.forAgent(agent), context: context.port, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);

@@ -22,8 +22,8 @@ const [{ default: SystemPrompt }, { default: ToolRuntime }, { LocalAttachmentSto
 const root = await mkdtemp(join(tmpdir(), 'native-dsh-browser-')), workspaceRoot = join(root, 'workspace');
 const ctx = new Context(), scope = { tenantId: 'test', workspaceId: 'test', userId: 'test', agentId: 'test' };
 const agent = { session: { id: 'session' } }, definition = studioBrowserDefinition();
-let gateway, deny = false, guardDeny = false, omitImage = false;
-const trace = [], results = [];
+let gateway, deny = false, guardDeny = false, denyStart = false, omitImage = false;
+const trace = [], results = [], dispatchedActions = [], guardedActions = [];
 const binding = () => createNativeDshTools({ ctx, workspaceRoot, stateDir: join(root, 'state'),
   browserExecutablePath: resolve(values.chromium), config: { toolBindings: [definition.name] } });
 const request = (operationKey, actions = [], runId = 'direct') => ({ scope, runId, sessionId: 'session',
@@ -32,15 +32,19 @@ const request = (operationKey, actions = [], runId = 'direct') => ({ scope, runI
   signal: new AbortController().signal, interaction: null });
 try {
   await mkdir(join(workspaceRoot, 'app'), { recursive: true });
-  await writeFile(join(workspaceRoot, 'app/index.html'), '<!doctype html><button id="count">Clicked 0</button><script>let n=0; document.querySelector("#count").onclick=e=>e.target.textContent="Clicked "+(++n)</script>');
+  await writeFile(join(workspaceRoot, 'app/index.html'), '<!doctype html><button id="count">Clicked 0</button><button id="start">Start</button><script>let n=0; document.querySelector("#count").onclick=e=>e.target.textContent="Clicked "+(++n); document.querySelector("#start").onclick=()=>document.querySelector("#count").textContent="Started"</script>');
   await ctx.plugin(SystemPrompt);
   await ctx.plugin(ToolRuntime);
   new LocalAttachmentStore(ctx, { dshHome: join(root, 'attachments') });
   ctx.on('tools/pre-execute', async (_exec, next) => {
     trace.push('pre'); return deny ? { kind: 'deny', reason: 'Browser denied by Host policy' } : next();
   });
-  ctx.on('tools/execute', async (_exec, next) => { trace.push('around'); return next(); });
-  ctx.tools.guard(() => guardDeny ? 'Browser denied by Host guard' : undefined);
+  ctx.on('tools/execute', async (exec, next) => { trace.push('around'); dispatchedActions.push(exec.arguments.actions); return next(); });
+  ctx.tools.guard(exec => {
+    guardedActions.push(exec.arguments.actions);
+    return guardDeny || denyStart && exec.arguments.actions.some(action => action.type === 'click' && action.selector === '#start')
+      ? 'Browser denied by Host guard' : undefined;
+  });
   ctx.on('tools/post-execute', async (_exec, _result, next) => {
     trace.push('post'); return omitImage ? { kind: 'accept', content: [{ type: 'text', text: 'Host omitted the screenshot' }] } : next();
   });
@@ -78,6 +82,18 @@ try {
   assert.equal(redacted.context.content, 'Host omitted the screenshot');
   assert.deepEqual(redacted.browserSessionRef, observed.browserSessionRef);
   omitImage = false;
+  const verificationRequest = { ...request('cold-check'), entryPath: 'app/index.html', candidateId: 'candidate' };
+  const cold = await gateway.verifyBrowserPage(agent, verificationRequest);
+  assert.equal(cold.status, 'ok'); assert.match(cold.text, /Started/);
+  assert.ok(dispatchedActions.some(actions => actions.some(action => action.selector === '#start')));
+  const live = await gateway.forAgent(agent).tools.execute(request('still-live'));
+  assert.match(canonical(live.content), /Clicked 1/);
+  denyStart = true; dispatchedActions.length = 0; guardedActions.length = 0;
+  await assert.rejects(gateway.verifyBrowserPage(agent, { ...verificationRequest, operationKey: 'cold-denied' }),
+    /studio_native_browser_verification_policy_blocked/);
+  assert.ok(guardedActions.some(actions => actions.some(action => action.selector === '#start')));
+  assert.equal(dispatchedActions.some(actions => actions.some(action => action.selector === '#start')), false);
+  denyStart = false;
 
   const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
   const configuration = configure({ profile: { profileId: 'proof', profileVersion: '1', providerFamily: 'proof', compatibilityDigest: 'proof/v1' },
@@ -97,6 +113,7 @@ try {
   const done = await kernel.runUntilIdle(scope, 'kernel');
   assert.equal(done.phase, 'completed'); assert.equal(done.outcome, 'unverified'); assert.equal(models, 2);
   assert.equal(store.load(scope, 'kernel').snapshot.browserSessionRefs.length, 1);
+  assert.equal(store.load(scope, 'kernel').snapshot.lastBrowserObservation.entryPath, 'app/index.html');
 
   await gateway.close(); gateway = binding();
   const restored = gateway.forAgent({ session: { id: 'session' } });
@@ -109,5 +126,5 @@ try {
   assert.equal(fresh.browserSessionRef.generation, observed.browserSessionRef.generation + 1);
   assert.equal(fresh.browserSessionRef.leaseEpoch, observed.browserSessionRef.leaseEpoch + 1);
   assert.match(canonical(fresh.content), /Clicked 0/);
-  process.stdout.write('PASS: actual DSH registry pre/guard/around/post/result policy, Node browser launch, persisted attachments, policy omission, Native next-model image, and restored owner requiring explicit reload\n');
+  process.stdout.write('PASS: actual DSH registry pre/guard/around/post/result policy, persisted browser attachments, cold verification with per-action guard denial and isolated live page, Native next-model image, and restored owner requiring explicit reload\n');
 } finally { await gateway?.close(); await rm(root, { recursive: true, force: true }); }

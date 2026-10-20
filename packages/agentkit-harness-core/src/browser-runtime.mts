@@ -41,9 +41,11 @@ export function reduceBrowserReceipt(snapshot: RunSnapshot, result: ToolResult, 
   // Failed/incomplete capture can record ownership, but cannot replace evidence
   // or pay resource debt. The full typed capture stays in the tool receipt.
   if (result.status !== 'ok' || observation.status !== 'ok' || !observation.complete || !observation.screenshot) return changes;
+  const entryPath = result.content !== null && typeof result.content === 'object' && !Array.isArray(result.content)
+    && typeof result.content.entry_path === 'string' && result.content.entry_path ? result.content.entry_path : null;
   changes.lastBrowserObservation = { sessionRef: ref, actionId: observation.actionId, actionSeq: observation.actionSeq,
     digest: browserObservationDigest(observation, digest), toolCall: snapshot.usage.toolCalls, callId: call.callId,
-    goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision };
+    goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision, ...(entryPath ? { entryPath } : {}) };
   changes.browserReobservationRefs = debt.filter(previous => !same({ ...previous,
     generation: previous.generation + 1, leaseEpoch: previous.leaseEpoch + 1 }, ref));
   return changes;

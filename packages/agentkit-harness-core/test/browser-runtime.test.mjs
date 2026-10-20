@@ -9,6 +9,15 @@ import { SqliteRunStore } from '../../agentkit-harness/src/native/sqlite-store.m
 import { fixture, tool, scope, digest } from './fixtures.mjs';
 const browser = tool({ name: 'browser', readOnly: false, concurrentSafe: false, observationRole: 'browser' });
 const call = { callId: 'browser-call', name: 'browser', arguments: {} };
+test('browser evidence binds the canonical Host entry and ignores projected model/display paths', () => {
+  const { snapshot } = fixture(), ref = reference();
+  const result = { status: 'ok', content: { entry_path: 'app/index.html' },
+    context: { content: '{"entry_path":"other/index.html"}' },
+    browserSessionRef: ref, browserObservation: observation(ref) };
+  assert.equal(reduceBrowserReceipt(snapshot, result, browser, call, digest).lastBrowserObservation.entryPath, 'app/index.html');
+  const projectedOnly = { ...result, content: 'Host policy view without a typed path' };
+  assert.equal(reduceBrowserReceipt(snapshot, projectedOnly, browser, call, digest).lastBrowserObservation.entryPath, undefined);
+});
 const reference = changes => validateBrowserSessionRef({ sessionId: 'page', scope, runId: 'run', runtimeId: 'browser-owner',
   workspaceRevision: 'workspace-1', ...changes });
 const observation = (ref, changes = {}) => validateBrowserObservation({ sessionRef: ref, actionId: 'observe-new', actionSeq: 1,

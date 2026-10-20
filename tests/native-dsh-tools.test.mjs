@@ -60,7 +60,7 @@ test('a registry disposal failure still closes all browser resources', async t =
   const host = setup(t, ['browser_inspect_workspace']); let disposed = 0;
   host.ctx.tools.register = () => () => { throw new Error('registry disposal failed'); };
   const gateway = createNativeDshTools({ ctx: host.ctx, config: { toolBindings: ['browser_inspect_workspace'] },
-    workspaceRoot: host.workspaceRoot, stateDir: join(host.workspaceRoot, 'state'), createBrowser: () => ({
+    workspaceRoot: host.workspaceRoot, stateDir: join(host.workspaceRoot, '..', 'state-disposal'), createBrowser: () => ({
       open() {}, act() {}, recover() {}, restart() {}, close() {}, async dispose() { disposed++; },
     }) });
   await gateway.forAgent(host.agent).browser.recoverSessions({ ...host.request({ path: 'app' }), refs: [] });

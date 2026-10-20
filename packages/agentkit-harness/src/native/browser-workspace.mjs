@@ -95,12 +95,15 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
       pages.set(runId, page); return page;
     } catch (error) { await server.close(); throw error; }
   }
-  async function act(page, operationKey, index, kind, signal, arguments_ = {}) {
+  async function act(page, operationKey, index, kind, signal, arguments_ = {}, executeAction) {
     signal.throwIfAborted();
     const action = validateBrowserAction({ actionId: `${operationKey}:${index}`, kind,
       timeoutMs: ['navigate', 'click', 'fill', 'press', 'move'].includes(kind) ? 30000 : 20000,
       ...(kind === 'navigate' ? { url: page.server.url } : {}), ...arguments_ });
-    const observation = validateBrowserObservation(await browser.act(page.ref, action, { signal }));
+    const dispatch = actionSignal => browser.act(page.ref, action, { signal: actionSignal ? AbortSignal.any([signal, actionSignal]) : signal });
+    const observation = validateBrowserObservation(await (executeAction ? executeAction({
+      entryPath: relative(workspace, page.server.entry).split(sep).join('/'), action: structuredClone(action),
+    }, dispatch) : dispatch()));
     if (!same(observation.sessionRef, page.ref) || observation.actionId !== action.actionId) fail('browser_backend_identity_mismatch');
     return observation;
   }
@@ -218,9 +221,10 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
     },
     /** Trusted VerificationPort only. Fresh context and external image are observations,
      * never a verdict that the complete user objective or visual quality passed. */
-    async verifyPage({ runId, entryPath, candidateId, signal: rawSignal }) {
+    async verifyPage({ runId, entryPath, candidateId, signal: rawSignal, executeAction }) {
       if (!evidence) fail('browser_verification_evidence_unavailable');
       if (typeof candidateId !== 'string' || !candidateId.trim()) fail('browser_candidate_identity_invalid');
+      if (executeAction !== undefined && typeof executeAction !== 'function') fail('browser_verification_authority_invalid');
       const input = parseWorkspaceBrowserInput({ path: entryPath, wait_ms: 0 }, `verify:${candidateId}`);
       resolveBrowserWorkspaceEntry(workspace, input.path);
       const signal = combine(rawSignal);
@@ -231,16 +235,17 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
         try {
           page = await openPage(verificationRunId, input, operationKey, signal);
           targets.set(verificationRunId, { path: join(evidence, `${hash(`${runId}\0${candidateId}\0${verificationAttempt}`)}.png`), evidence: true, signal });
-          const first = await act(page, operationKey, 0, 'navigate', signal);
+          const verifyAct = (index, kind, args = {}) => act(page, operationKey, index, kind, signal, args, executeAction);
+          const first = await verifyAct(0, 'navigate');
           if (first.status !== 'ok') return first;
           await sleep(1000, signal);
-          const settled = await act(page, operationKey, 1, 'screenshot', signal), observations = [first, settled];
+          const settled = await verifyAct(1, 'screenshot'), observations = [first, settled];
           if (settled.controls.some(control => control.clickable && control.duplicateId && launchLabel(control.label))) return {
             ...settled, status: 'error', errorCode: 'browser_launch_control_ambiguous' };
           const launch = settled.controls.filter(control => control.clickable && control.selector && launchLabel(control.label));
           if (settled.status === 'ok' && launch.length === 1) {
-            const launched = await act(page, operationKey, 2, 'click', signal, { selector: launch[0].selector }); observations.push(launched);
-            if (launched.status === 'ok') { await sleep(1000, signal); observations.push(await act(page, operationKey, 3, 'screenshot', signal)); }
+            const launched = await verifyAct(2, 'click', { selector: launch[0].selector }); observations.push(launched);
+            if (launched.status === 'ok') { await sleep(1000, signal); observations.push(await verifyAct(3, 'screenshot')); }
           }
           return { ...observations.at(-1), ...Object.fromEntries(['console', 'pageErrors', 'pageErrorLocations', 'networkFailures']
             .map(key => [key, observations.flatMap(row => row[key])])) };

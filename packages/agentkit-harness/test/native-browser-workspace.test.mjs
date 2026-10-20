@@ -75,6 +75,19 @@ test('the public schema and parser agree on the complete Studio action protocol'
     hostBindingDigest: 'host', contract: { objective: 'check page' }, tools: [definition] }));
   assert.equal(parse([]).screenshotPath, '.artifacts/browser-check.png');
 });
+test('cold verification submits concrete navigation/capture/click actions to Host authority and always closes a denied page', async t => {
+  const fixture = await owner(t), accepted = [];
+  fixture.hooks({ observation: () => ({ controls: [{ tag: 'button', label: 'Start', selector: '#start', clickable: true }] }) });
+  await assert.rejects(fixture.port.verifyPage({ runId: 'run', entryPath: 'app', candidateId: 'candidate',
+    signal: new AbortController().signal, executeAction: async ({ entryPath, action }, dispatch) => {
+      assert.equal(entryPath, 'app/index.html'); accepted.push(action.kind);
+      if (action.kind === 'click') throw new Error('Host denied click');
+      return dispatch(new AbortController().signal);
+    } }), /Host denied click/);
+  assert.deepEqual(accepted, ['navigate', 'screenshot', 'click']);
+  assert.equal(fixture.trace.filter(row => row.kind === 'act').some(row => row.action.kind === 'click'), false);
+  assert.equal(fixture.trace.filter(row => row.kind === 'close').length, 1);
+});
 
 test('malformed later actions, ambiguous targets, sparse batches and invalid numeric values are rejected as one batch', () => {
   const invalid = [{ type: 'click' }, { type: 'click', selector: '#s', element_ref: 'e1' }, { type: 'fill', selector: '#s', value: 12 },

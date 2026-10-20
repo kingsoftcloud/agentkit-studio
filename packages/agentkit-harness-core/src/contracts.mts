@@ -242,6 +242,8 @@ export interface BrowserInteractionObservation {
 export interface BrowserEvidence {
   sessionRef: BrowserSessionRef; actionId: string; actionSeq: number; digest: string; callId: string;
   toolCall: number; goalRevision: number; workspaceRevision: string | null;
+  /** Canonical Host receipt path; model/display text cannot supply this binding. */
+  entryPath?: string;
 }
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
 export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child' | 'input';

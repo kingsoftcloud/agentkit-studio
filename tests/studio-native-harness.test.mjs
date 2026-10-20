@@ -8,6 +8,7 @@ import { MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
+import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 
 async function setup(t, { spec = {}, profile = {} } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
@@ -64,6 +65,17 @@ test('Studio Native Host pins revision/input/model while refreshing credentials 
   assert.equal(new Headers(fixture.requests[1].options.headers).get('authorization'), 'Bearer secret-two');
   assert.equal(fixture.head().parentRunId, run.runId);
   assert.equal(JSON.stringify(fixture.ledger.load(run.scope, fixture.head().runId)).includes('secret-two'), false);
+});
+test('Studio Native pins its browser task policy and explicit execution limits in the Run configuration', async t => {
+  const fixture = await setup(t, { spec: { execution: { nativeLimits: { maxModelCalls: 20, maxToolCalls: 0 } } } });
+  fixture.payload.binding.nativeTools.definitions = () => [studioBrowserDefinition()];
+  await fixture.host.executeTurn(fixture.payload);
+  const run = fixture.head(), config = fixture.ledger.load(run.scope, run.runId).configuration;
+  assert.equal(config.workspaceObservationPolicy.role, 'browser');
+  assert.ok(config.workspaceObservationPolicy.pathSuffixes.includes('.tsx'));
+  assert.equal(config.limits.maxModelCalls, 20); assert.equal(config.limits.maxToolCalls, 0);
+  assert.equal(config.limits.verificationReserveModelCalls, 4);
+  assert.equal(config.limits.browserObservationIntervalToolCalls, 12);
 });
 test('Studio Native rejects missing public turn capability and unbound models before creating a run', async t => {
   const fixture = await setup(t);

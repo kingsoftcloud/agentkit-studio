@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, resolve, join } from 'node:path';
 import { canonical, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createStudioBrowserWorkspacePort } from '../../packages/agentkit-harness/src/native/browser-workspace.mjs';
 import { NativePlaywrightBrowser } from '../../packages/agentkit-harness/src/native/browser-playwright.mjs';
 import { studioBrowserDefinition } from '../../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 
 /** Preset-owned resources; session and ledger scope, never model arguments, select the owner. */
-export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, browserExecutablePath,
+export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, browserExecutablePath, evidenceRoot,
   createOwner = createStudioBrowserWorkspacePort } = {}) {
   const workspace = resolve(workspaceRoot), pinnedRoot = realpathSync(workspace);
   invariant(browserExecutablePath === undefined || typeof browserExecutablePath === 'string'
@@ -29,7 +29,7 @@ export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, brow
       const pending = Promise.resolve().then(() => {
         invariant(!closed, 'studio_native_browser_closed');
         return createOwner({ scope: structuredClone(scope), root: workspace, runtimeId,
-          reobserveAfterLoss: true, createBrowser: backend });
+          reobserveAfterLoss: true, createBrowser: backend, ...(evidenceRoot ? { evidenceRoot: join(evidenceRoot, runtimeId) } : {}) });
       });
       owners.set(runtimeId, pending);
       void pending.catch(() => { if (owners.get(runtimeId) === pending) owners.delete(runtimeId); });
@@ -50,7 +50,7 @@ export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, brow
         return port[method]({ ...request, signal });
       };
       return { execute: request => invoke(request, 'execute'),
-        recoverSessions: request => invoke(request, 'recoverSessions') };
+        recoverSessions: request => invoke(request, 'recoverSessions'), verifyPage: request => invoke(request, 'verifyPage') };
     },
     close() {
       if (closing) return closing;

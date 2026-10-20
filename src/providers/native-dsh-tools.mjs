@@ -25,7 +25,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   };
   const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions' });
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
-  const browserTools = createNativeDshBrowserTools({ workspaceRoot: workspace, createBrowser, browserExecutablePath });
+  const browserTools = createNativeDshBrowserTools({ workspaceRoot: workspace, createBrowser, browserExecutablePath,
+    evidenceRoot: join(stateDir, 'browser-evidence') });
   const browserName = browserTools.definition.name;
   formal.set(browserName, browserTools.definition);
   const declared = config.toolContracts ?? [];
@@ -64,7 +65,16 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           exec.signal.throwIfAborted();
           invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
           invocation.dispatched = true;
-          const outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
+          let outcome;
+          if (invocation.verificationDispatch) {
+            const observation = await invocation.verificationDispatch(exec.signal);
+            invocation.observation = structuredClone(observation);
+            const content = { entry_path: args.path, status: observation.status, status_code: observation.statusCode,
+              body_text_preview: Array.from(observation.text).slice(0, 2000).join(''),
+              page_errors: observation.pageErrors, console: observation.console, request_failures: observation.networkFailures };
+            outcome = { status: observation.status, content, context: { content: canonical(content),
+              ...(observation.screenshot ? { media: [observation.screenshot.contentBlock] } : {}) } };
+          } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
             : formal.has(name) ? await state(exec.agent).execute({ ...invocation.request, signal: exec.signal })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
           invocation.outcome = structuredClone(outcome);
@@ -77,6 +87,30 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   ctx.effect(install, 'agentkit-studio: Native builtin tool bindings');
   return {
     close,
+    /** Trusted verifier only: every concrete cold action still runs the DSH permission pipeline. */
+    async verifyBrowserPage(agent, request) {
+      invariant(!closed && builtinNames.has(browserName), 'studio_native_browser_verification_unavailable');
+      const sessionId = String(agent.session.id);
+      invariant(request.sessionId === sessionId, 'studio_native_tool_not_bound');
+      return browserTools.forSession(sessionId).verifyPage({ ...request, executeAction: async ({ entryPath, action }, dispatch) => {
+        request.signal.throwIfAborted();
+        invariant(['navigate', 'screenshot', 'click'].includes(action.kind), 'studio_native_browser_verification_action_unavailable');
+        const arguments_ = { path: entryPath, wait_ms: 0, actions: action.kind === 'click'
+          ? [{ type: 'click', selector: action.selector }] : [] };
+        const callId = `ak-native-verify-${hash({ scope: request.scope, runId: request.runId,
+          operationKey: request.operationKey, candidateId: request.candidateId, actionId: action.actionId })}`;
+        invariant(!calls.has(callId), 'studio_native_tool_already_executing');
+        const invocation = { agent, request: { ...request, call: { callId, name: browserName, arguments: arguments_ } }, verificationDispatch: dispatch };
+        calls.set(callId, invocation);
+        try {
+          const result = await ctx.tools.execute({ callId, name: browserName, arguments: arguments_, signal: request.signal, agent });
+          request.signal.throwIfAborted();
+          invariant(result?.isError === false && !result.concludesTurn && invocation.dispatched && invocation.observation,
+            'studio_native_browser_verification_policy_blocked');
+          return invocation.observation;
+        } finally { calls.delete(callId); }
+      } });
+    },
     definitions(agent, assemblyTools) {
       const schemas = new Map((assemblyTools ?? []).map(schema => [schema.name, schema]));
       const selected = new Set(allowed);
