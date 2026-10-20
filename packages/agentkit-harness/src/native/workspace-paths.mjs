@@ -102,11 +102,7 @@ export function publishWorkspaceBytes(target, payload, { createOnly = false } = 
     if (error.code !== 'ENOENT') throw error;
   }
   const temporary = join(parent, `.${target.split(sep).pop()}.native-${randomHex(12)}`);
-  // Capture the original bytes so a failed publication can be verified to have
-  // left the target untouched. We do not restore them — atomic publication
-  // means a failure happens before the target is ever linked/renamed.
   const fd = openSync(temporary, 'wx', 0o666);
-  let linked = false;
   try {
     writeAll(fd, payload);
     closeSync(fd);
@@ -116,7 +112,6 @@ export function publishWorkspaceBytes(target, payload, { createOnly = false } = 
     } else {
       renameSync(temporary, target); // atomic replace of the directory entry
     }
-    linked = true;
   } catch (error) {
     // writeAll/close/chmod/link/rename failed: ensure the fd is closed and the
     // temp sibling is removed. The original target is never touched on this
@@ -126,7 +121,9 @@ export function publishWorkspaceBytes(target, payload, { createOnly = false } = 
     safeUnlink(temporary);
     throw error;
   } finally {
-    if (!linked) safeUnlink(temporary);
+    // A successful create-only publication leaves the temporary hard link in
+    // place until it is unlinked here. Rename has already removed its name.
+    safeUnlink(temporary);
   }
 }
 

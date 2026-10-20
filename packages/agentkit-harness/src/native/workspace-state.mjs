@@ -17,11 +17,11 @@
  * into the filesystem path verbatim, because a value like "../x" or "a/b"
  * would escape stateDir or collide with another session's directory. The
  * on-disk directory is keyed by a sha256 hex digest of the normalized id, which
- * is traversal-proof and collision-free; the original id is stored inside the
+ * contains no path separators; the original id is stored inside the
  * JSON files for audit/inspection only.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
 const READ_STATE_VERSION = 'native-workspace-read-state/v1';
@@ -61,34 +61,23 @@ export function serializeReadState(state) {
 
 /** Deserialize a JSON-stored read state back to a BigInt-mtimeNs object. */
 export function deserializeReadState(raw) {
-  // Tolerate legacy/corrupt persisted entries that are missing numeric fields
-  // or carry null (JSON has no NaN). A malformed record is dropped by the
-  // caller; here we coerce defensively so one bad field cannot throw a
-  // RangeError (BigInt(NaN)) and crash a restart.
-  return makeReadState({
-    path: raw.path,
-    mtimeNs: sanitizeMtime(raw.mtimeNs),
-    sizeBytes: raw.sizeBytes ?? 0,
-    startLine: raw.startLine ?? 0,
-    endLine: raw.endLine ?? 0,
-    totalLines: raw.totalLines ?? 0,
-    partial: raw.partial ?? false,
-    canonicalPath: raw.canonicalPath,
-    contentSha256: raw.contentSha256,
-  });
-}
-
-/** Accept a BigInt, number, or decimal string; reject anything else with null. */
-function sanitizeMtime(value) {
-  if (value === null || value === undefined) return null;
-  const s = String(value);
-  if (/^-?\d+$/.test(s)) return BigInt(s);
-  return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || typeof raw.path !== 'string' || !raw.path || isAbsolute(raw.path) || raw.path.includes('\0')
+    || raw.path.split('/').includes('..') || typeof raw.canonicalPath !== 'string' || !isAbsolute(raw.canonicalPath)
+    || typeof raw.contentSha256 !== 'string' || !HEX.test(raw.contentSha256)
+    || typeof raw.mtimeNs !== 'string' || !/^-?\d+$/.test(raw.mtimeNs)
+    || typeof raw.partial !== 'boolean') return null;
+  if (!['sizeBytes', 'startLine', 'endLine', 'totalLines'].every(key => Number.isSafeInteger(raw[key]))
+    || raw.sizeBytes < 0 || raw.startLine < 1 || raw.endLine < 0 || raw.totalLines < 0
+    || raw.endLine > raw.totalLines
+    || (raw.totalLines > 0 && (raw.startLine > raw.endLine || raw.endLine === 0))
+    || (!raw.partial && (raw.startLine !== 1 || raw.endLine !== raw.totalLines))) return null;
+  return makeReadState(raw);
 }
 
 export class WorkspaceStateStore {
   constructor(stateDir, sessionId) {
-    this.sessionId = String(sessionId || 'default');
+    this.sessionId = normalizeSessionId(sessionId);
     // The on-disk directory is a sha256 hex of the normalized id, so a caller
     // cannot traverse out of stateDir ("../x") or collide with another session
     // by embedding a path separator. The original id is kept in the JSON files
@@ -114,14 +103,15 @@ export class WorkspaceStateStore {
   _loadReadState() {
     try {
       const raw = JSON.parse(readFileSync(this._readStatePath, 'utf-8'));
-      if (raw && raw.version === READ_STATE_VERSION && raw.entries) {
+      if (raw && raw.version === READ_STATE_VERSION && raw.sessionId === this.sessionId
+        && raw.entries && typeof raw.entries === 'object' && !Array.isArray(raw.entries)) {
         const map = new Map();
         for (const [key, value] of Object.entries(raw.entries)) {
           const state = deserializeReadState(value);
           // Drop entries missing the fields validateReadState needs; an edit
           // against a dropped entry is correctly re-rejected as file_not_read
           // rather than crashing the restart on a BigInt/NaN coercion.
-          if (state && state.mtimeNs !== null && state.canonicalPath && state.contentSha256) {
+          if (state && state.path === key) {
             map.set(key, state);
           }
         }
@@ -134,8 +124,13 @@ export class WorkspaceStateStore {
   _loadPending() {
     try {
       const raw = JSON.parse(readFileSync(this._pendingPath, 'utf-8'));
-      if (raw && raw.version === PENDING_VERSION && raw.entries) {
-        return new Map(Object.entries(raw.entries));
+      if (raw && raw.version === PENDING_VERSION && raw.sessionId === this.sessionId
+        && raw.entries && typeof raw.entries === 'object' && !Array.isArray(raw.entries)) {
+        return new Map(Object.entries(raw.entries).filter(([id, pending]) => pending && pending.interactionId === id
+          && typeof pending.callId === 'string' && pending.callId.trim() && typeof pending.name === 'string' && pending.name.trim()
+          && typeof pending.argumentsDigest === 'string' && HEX.test(pending.argumentsDigest)
+          && Number.isSafeInteger(pending.createdAt) && pending.createdAt >= 0
+          && Number.isSafeInteger(pending.expiresAt) && pending.expiresAt >= pending.createdAt));
       }
     } catch { /* missing or corrupt: start clean */ }
     return new Map();
@@ -234,13 +229,18 @@ export function atomicWriteJson(dest, value) {
 }
 
 /**
- * Non-traversable, collision-free on-disk key for a sessionId. A sha256 hex
- * digest contains no path separators, so neither "../" nor "/" in the id can
- * escape stateDir or collide with another session's directory.
+ * The sha256 directory key contains no path separators, so identifiers cannot
+ * traverse out of stateDir. Stored records also carry the original identity.
  */
 export function sessionKeyFor(sessionId) {
-  const digest = createHash('sha256').update(String(sessionId ?? 'default'), 'utf-8').digest('hex');
+  const digest = createHash('sha256').update(normalizeSessionId(sessionId), 'utf-8').digest('hex');
   return HEX.test(digest) ? digest : 'default';
+}
+
+function normalizeSessionId(sessionId) {
+  if (sessionId === undefined) return 'default';
+  if (typeof sessionId !== 'string' || !sessionId.trim()) throw new TypeError('workspace sessionId must be a nonempty string');
+  return sessionId;
 }
 
 /** sha256 hex digest of a JSON-serializable value (stable key order). */

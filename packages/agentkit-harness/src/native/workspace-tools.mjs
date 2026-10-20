@@ -71,6 +71,14 @@ export function createNativeWorkspaceTools({
   const root = workspaceRoot;
   const store = new WorkspaceStateStore(stateDir, sessionId);
   const authorizeFn = authorize || defaultAuthorize;
+  // Implementations below are synchronous. Track publications within the
+  // current invocation so a later state-write failure cannot masquerade as a
+  // definite failure before execution. No tracking state crosses an await.
+  let activeMutations = null;
+  function publish(target, bytes, options) {
+    publishWorkspaceBytes(target, bytes, options);
+    activeMutations?.add(relativeOf(target));
+  }
 
   // Pin the authorized root boundary at factory creation. The caller passes a
   // trusted workspaceRoot; resolving its realpath once here establishes the
@@ -373,7 +381,7 @@ export function createNativeWorkspaceTools({
     const { target: t, rel, error, previous } = writePrecondition(path, overwrite);
     if (error) return error;
     try {
-      publishWorkspaceBytes(t, Buffer.from(content, 'utf-8'), { createOnly });
+      publish(t, Buffer.from(content, 'utf-8'), { createOnly });
     } catch (e) {
       if (e.code === 'EEXIST') {
         return { ok: false, path: rel, error_type: 'file_exists', error_message: 'workspace file was created before publication', suggested_action: 'Read the new file before proposing an overwrite.' };
@@ -403,7 +411,7 @@ export function createNativeWorkspaceTools({
     const written = [];
     for (const { path, content } of prepared) {
       const result = writeWorkspaceFile({ path, content, overwrite });
-      if (!result.ok) return result;
+      if (!result.ok) return { ...result, written, partial: written.length > 0, failed_path: path };
       written.push({
         path: result.path,
         size: result.size,
@@ -521,7 +529,7 @@ export function createNativeWorkspaceTools({
     const err = validateReadState(target, rel, { state: pinned, content: current });
     if (err) return { stat: null, error: err };
     try {
-      publishWorkspaceBytes(target, Buffer.from(updated, 'utf-8'));
+      publish(target, Buffer.from(updated, 'utf-8'));
     } catch (e) {
       return { stat: null, error: { ok: false, path: rel, error_type: 'publish_failed', error_message: e.message } };
     }
@@ -709,6 +717,7 @@ export function createNativeWorkspaceTools({
       } else {
         unlinkSync(target);
       }
+      activeMutations?.add(relativeOf(target));
     } catch (e) {
       return { ok: false, error_message: `workspace delete failed: ${e.message}` };
     }
@@ -738,6 +747,7 @@ export function createNativeWorkspaceTools({
     if (!request || typeof request !== 'object') {
       return { status: 'error', content: { code: 'invalid_request', message: 'request object required' } };
     }
+    if (request.sessionId !== store.sessionId) return { status: 'error', content: { code: 'workspace_session_mismatch' } };
     const call = request.call;
     if (!call || !call.name) {
       return { status: 'error', content: { code: 'invalid_request', message: 'request.call.name required' } };
@@ -805,14 +815,18 @@ export function createNativeWorkspaceTools({
     if (signal?.aborted) return canceled();
 
     let result;
+    const mutations = new Set(), previousMutations = activeMutations;
+    activeMutations = mutations;
     try {
       result = impl(call.arguments ?? {}, { signal, request });
     } catch (e) {
       if (e instanceof WorkspacePathError) {
         return { status: 'error', content: { ok: false, error_type: 'path_escape', error_message: e.message } };
       }
+      if (mutations.size) return { status: 'uncertain', workspaceChangedPaths: [...mutations],
+        content: { ok: false, error_type: 'state_persist_failed', executed: true, paths: [...mutations] } };
       return { status: 'error', content: { ok: false, error_type: 'internal_error', error_message: e.message } };
-    }
+    } finally { activeMutations = previousMutations; }
     if (signal?.aborted && !(result && result.ok)) return canceled();
 
     if (result && result.ok === true) {
@@ -824,7 +838,7 @@ export function createNativeWorkspaceTools({
       }
       return out;
     }
-    return { status: 'error', content: result };
+    return { status: 'error', content: result, ...(mutations.size ? { workspaceChangedPaths: [...mutations] } : {}) };
   }
 
   function handleApprovalReply(request) {
@@ -862,6 +876,7 @@ export function createNativeWorkspaceTools({
     if (!request || typeof request !== 'object') {
       return { revision: null, changedPaths: [], status: 'unavailable', reason: 'invalid_request' };
     }
+    if (request.sessionId !== store.sessionId) return { revision: null, changedPaths: [], status: 'unavailable', reason: 'workspace_session_mismatch' };
     // The root boundary is pinned at factory creation; a swapped root is not
     // observed even if it still exists at a new real path.
     try { checkRootBoundary(); }
