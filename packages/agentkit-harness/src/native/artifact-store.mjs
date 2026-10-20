@@ -30,7 +30,7 @@
  * window with two active writers for the same run.
  */
 
-import { promises as fs, constants as fsConstants } from 'node:fs';
+import { promises as fs, constants as fsConstants, realpathSync } from 'node:fs';
 const O_NOFOLLOW = fsConstants.O_NOFOLLOW;
 const O_RDONLY = fsConstants.O_RDONLY;
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
@@ -70,7 +70,22 @@ const LOCK_POLL_MS = 50;
 // only the wait for a live but slow holder. It is NOT a staleness threshold and
 // there is no stale-lock takeover.
 const LOCK_TIMEOUT_MS = 120000;
+// Safety bound for the LIVE release commit only. COMMIT may briefly get
+// SQLITE_BUSY when a concurrent taker is opening the lock database (a transient
+// SHARED lock during its schema read); the transient reader releases in
+// milliseconds, so this only bounds a pathologically stuck contender. Process
+// death never reaches release() — the OS reclaims the fd and SQLite drops the
+// lock — so this does not affect crash release.
+const LOCK_RELEASE_TIMEOUT_MS = 10000;
 const SQLITE_BUSY = 5;
+
+// SQLite auxiliary files that may be created beside the lock database. The
+// rollback journal (-journal) is created and removed per transaction in the
+// default journal mode; -wal/-shm exist only under WAL (never enabled here).
+// An attacker who can write the lock directory could pre-create any of them as
+// a symlink/hardlink trap so SQLite writes journal contents outside the root,
+// so every path SQLite may touch is validated before the database is opened.
+const SQLITE_AUX_SUFFIXES = ['-journal', '-wal', '-shm'];
 
 function err(code, message) {
   return Object.assign(new Error(message || code), { code });
@@ -127,6 +142,20 @@ async function signalLockAcquired() {
   } finally {
     await safeUnlink(tmp);
   }
+}
+
+/** Test-only TOCTOU hook: after the static pre-open validation passes and before
+ * the database is opened, replace the lock DB file at `path` with a symlink to
+ * NATIVE_ARTIFACT_SWAP_LOCK_DB_TO, deterministically simulating a concurrent swap
+ * of the path between the existence check and the open. This lets a regression
+ * prove the post-open realpath guard in openAndAcquireLock rejects the escape
+ * BEFORE the lock_owner schema is written outside the root. Inert unless the env
+ * var is set. Never affects production. */
+async function swapHookForLockDb(path) {
+  const target = process.env.NATIVE_ARTIFACT_SWAP_LOCK_DB_TO;
+  if (!target) return;
+  try { await fs.unlink(path); } catch { /* may not exist yet */ }
+  await fs.symlink(target, path);
 }
 
 function nowIso() {
@@ -487,6 +516,41 @@ async function cleanupStaleTempsIn(dir, root, maxAgeMs) {
 // persists as a stale owner; a partial database left by a creator crash is
 // likewise recovered by the rollback journal, so a missing/partial lock never
 // permanently prevents recovery.
+//
+// PATH CONTAINMENT AND TRUSTED-DIRECTORY ASSUMPTION
+// The lock DB and its SQLite auxiliary files (-journal/-wal/-shm) live under
+// {root}/artifacts/.locks/{scopeDigest}/, whose path components are hex digests
+// (no path separators, no '..'); the only writer is this store. SQLite's
+// DatabaseSync opens by PATH and follows symlinks, and node:sqlite exposes no
+// O_NOFOLLOW option, so a symlinked final component or a symlinked ancestor
+// would otherwise redirect the lock_owner schema write (and the journal) to a
+// file outside the pinned root — the demonstrated vulnerability. We defend in
+// layers, and we do NOT claim a race-free guarantee the API cannot deliver:
+//   1. ensureDirSafe: the lock directory is created contained, rejecting a
+//      statically-symlinked ancestor at creation time.
+//   2. validateLockDbSurface (pre-open): lstat every path SQLite may touch (the
+//      DB plus -journal/-wal/-shm) — reject a symlink final component, a
+//      non-regular file, a hardlink (nlink > 1), or a realpath escaping the
+//      root; re-resolve the lock directory's realpath. This defeats a
+//      statically-placed trap. It is an existence check, NOT a race-free guard.
+//   3. openAndAcquireLock post-open guard: realpath the file DatabaseSync
+//      actually opened; if it escaped the root, close BEFORE BEGIN IMMEDIATE so
+//      the lock_owner schema is never written outside the root. This catches a
+//      concurrent swap of the path (final component OR ancestor) between the
+//      pre-open check and the open — the boundary a pure existence check cannot
+//      cover.
+// RESIDUAL (not promised closed): node:sqlite has no O_NOFOLLOW, so a swap to a
+// symlink whose target does not yet exist can create an EMPTY file at that
+// outside target during DatabaseSync construction; the post-open guard then
+// detects the escape and closes before any schema write, so no existing outside
+// database is ever corrupted and the lock_owner schema never leaves the root.
+// This residual requires an attacker who can concurrently mutate
+// artifacts/.locks between the checks and the open. Under the
+// trusted-directory assumption — the artifacts root and its .locks subtree are
+// provided by the host and not concurrently mutated by untrusted code — the
+// static checks are complete and the residual does not arise. We fail closed on
+// every static signal we can detect; we do not promise a guarantee that the
+// node:sqlite API cannot provide.
 
 function lockDirPath(root, scopeDigestValue) {
   return join(root, 'artifacts', '.locks', scopeDigestValue);
@@ -503,6 +567,107 @@ function isSqliteBusy(error) {
 }
 
 /**
+ * Commit the holder's transaction, retrying asynchronously on SQLITE_BUSY.
+ * COMMIT upgrades the RESERVED write lock to EXCLUSIVE to flush the journal; a
+ * concurrent taker opening the database briefly holds a SHARED lock (schema
+ * read) and can make COMMIT get SQLITE_BUSY even though this connection is the
+ * sole writer. busy_timeout is 0 (so the write-ACQUIRE path never synchronously
+ * busy-waits and block a same-process owner's pending filesystem await), so we
+ * retry COMMIT the same way the acquire does — via setTimeout, keeping the
+ * event loop free. The transient reader releases in milliseconds. This is the
+ * LIVE release path only; a crashed holder never reaches here (the OS reclaims
+ * the connection's fd and SQLite drops the lock), so crash release is
+ * unaffected. A non-busy error, or busy past LOCK_RELEASE_TIMEOUT_MS, propagates
+ * (the caller rolls back and closes, releasing the lock).
+ */
+async function commitWithBusyRetry(db) {
+  const start = Date.now();
+  while (true) {
+    try {
+      db.exec('COMMIT');
+      return;
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error;
+      if (Date.now() - start > LOCK_RELEASE_TIMEOUT_MS) throw error;
+      await new Promise((r) => setTimeout(r, LOCK_POLL_MS, undefined));
+    }
+  }
+}
+
+/**
+ * Pre-open validation of the lock database path and every SQLite auxiliary file
+ * SQLite may touch beside it. Rejects a statically-placed symlink (final
+ * component), a non-regular file, a hardlink (nlink > 1), or any path whose
+ * realpath escapes the pinned root; re-resolves the lock directory's realpath.
+ * This defeats the demonstrated attack where the lock DB's final component is a
+ * symlink to an outside SQLite file.
+ *
+ * LIMIT: fs.lstat rejects only a symlink FINAL component; an intermediate
+ * ancestor symlink is detected via realpath of the existing file and of the
+ * parent directory. This is an existence check, not a race-free guarantee — a
+ * concurrent swap between this check and the open is caught by the post-open
+ * realpath guard in openAndAcquireLock, and the trusted-directory assumption
+ * (see above) bounds the residual.
+ */
+async function validateLockDbSurface(dbPath, rootReal) {
+  const parent = dirname(dbPath);
+  // The lock directory must still be contained right before we touch the DB.
+  // ensureDirSafe created it contained, but an ancestor swap since then is
+  // caught here (realpath resolves ancestor symlinks) before any file is
+  // created. If the parent vanished (TOCTOU), fail closed.
+  let parentReal;
+  try {
+    parentReal = await fs.realpath(parent);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw err('artifact_path_escape', 'artifact_path_escape');
+    throw error;
+  }
+  assertWithin(parentReal, rootReal);
+  // The lock DB is persistent (never deleted in normal operation), so a
+  // vanished-after-lstat DB is a real signal — validate it with realpath too.
+  await validateLockPathEntry(dbPath, rootReal, true);
+  // SQLite auxiliary files (-journal/-wal/-shm) are TRANSIENT: the rollback
+  // journal is created at BEGIN and deleted at COMMIT by a concurrent holder,
+  // so it may appear and disappear between our lstat and any realpath. We
+  // therefore validate aux files with lstat only (symlink / non-regular /
+  // hardlink) — the parent realpath already pinned the directory, and the DB
+  // post-open realpath guard catches an ancestor swap. realpath-ing a transient
+  // aux file would fire spuriously on a concurrent committer deleting its own
+  // journal.
+  for (const sfx of SQLITE_AUX_SUFFIXES) {
+    await validateLockPathEntry(dbPath + sfx, rootReal, false);
+  }
+}
+
+/**
+ * Validate one lock-path entry (the DB or one aux file). lstat-based checks
+ * (symlink / non-regular / hardlink) defeat a statically-placed trap. When
+ * `doRealpath` is true (the persistent DB only), also resolve the realpath and
+ * assert containment; a vanished-after-lstat DB fails closed.
+ */
+async function validateLockPathEntry(p, rootReal, doRealpath) {
+  let st;
+  try {
+    st = await fs.lstat(p);
+  } catch (error) {
+    if (error.code === 'ENOENT') return; // not present yet: nothing to validate
+    throw error;
+  }
+  if (st.isSymbolicLink()) throw err('artifact_symlink_rejected', 'artifact_symlink_rejected');
+  if (!st.isFile()) throw err('artifact_record_corrupt', 'artifact_record_corrupt');
+  if (st.nlink > 1) throw err('artifact_path_escape', 'artifact_path_escape'); // hardlink to outside
+  if (!doRealpath) return;
+  let real;
+  try {
+    real = await fs.realpath(p);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw err('artifact_path_escape', 'artifact_path_escape');
+    throw error;
+  }
+  assertWithin(real, rootReal);
+}
+
+/**
  * Open the lock database and acquire the write transaction atomically. The
  * schema is created INSIDE the transaction (after BEGIN IMMEDIATE) so a second
  * connection that finds the lock busy never contends on DDL. Owner identity is
@@ -510,9 +675,22 @@ function isSqliteBusy(error) {
  * held). Throws a busy error (errcode 5) if another connection holds the lock;
  * the caller retries asynchronously. Any other SQLite error (corruption) is a
  * hard failure — a partial database is recovered by the journal, not here.
+ *
+ * POST-OPEN GUARD: node:sqlite's DatabaseSync opens by path and follows symlinks
+ * (no O_NOFOLLOW option is exposed), so a concurrent swap of the path between
+ * validateLockDbSurface and this open cannot be closed in userspace. Resolve
+ * the file SQLite actually opened; if it escaped the pinned root, close BEFORE
+ * BEGIN IMMEDIATE so the lock_owner schema is never written outside the root.
+ * See the trusted-directory assumption above for the bounded residual.
  */
-function openAndAcquireLock(path, token, pid) {
+function openAndAcquireLock(path, token, pid, rootReal) {
   const db = new DatabaseSync(path, { timeout: 0 });
+  try {
+    assertWithin(realpathSync(path), rootReal);
+  } catch (error) {
+    try { db.close(); } catch { /* best effort before rethrowing */ }
+    throw err('artifact_path_escape', 'artifact_path_escape');
+  }
   try {
     db.exec('PRAGMA busy_timeout = 0');
     db.exec('BEGIN IMMEDIATE');
@@ -553,7 +731,15 @@ async function acquireRunLock(root, rootReal, scopeDigestValue, runDigestValue, 
   while (true) {
     checkSignal(signal);
     try {
-      db = openAndAcquireLock(path, token, pid);
+      // Static pre-open validation of the lock DB path and every SQLite
+      // auxiliary file (-journal/-wal/-shm) SQLite may touch beside it: reject a
+      // symlink final component, a non-regular file, a hardlink (nlink > 1), or
+      // a realpath that escapes the pinned root. This defeats a statically-
+      // placed trap. It is NOT a race-free guarantee — see the post-open guard
+      // in openAndAcquireLock and the trusted-directory assumption above.
+      await validateLockDbSurface(path, rootReal);
+      await swapHookForLockDb(path); // test-only TOCTOU simulation; inert in production
+      db = openAndAcquireLock(path, token, pid, rootReal);
       break;
     } catch (error) {
       if (!isSqliteBusy(error)) throw error;
@@ -573,9 +759,12 @@ async function acquireRunLock(root, rootReal, scopeDigestValue, runDigestValue, 
       try {
         // Owner-bound release: clear only our own row, then commit and close
         // our own connection. Another process cannot reach this connection,
-        // so it cannot release a lock it does not own.
+        // so it cannot release a lock it does not own. COMMIT is retried on
+        // transient SQLITE_BUSY (a concurrent opener's brief SHARED lock); see
+        // commitWithBusyRetry. The finally still closes our connection on any
+        // failure, releasing the SQLite lock so the next writer can proceed.
         db.prepare('DELETE FROM lock_owner WHERE id = 1 AND token = ?').run(token);
-        db.exec('COMMIT');
+        await commitWithBusyRetry(db);
       } catch (error) {
         try { db.exec('ROLLBACK'); } catch { /* best effort */ }
         throw error;
