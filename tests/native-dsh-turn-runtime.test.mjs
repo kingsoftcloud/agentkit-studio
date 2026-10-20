@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryRunStore, NativeKernel, prepareEffect, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
-import { fixture, scope, tool, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { acceptance, fixture, scope, tool, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeDshTurnExecutor } from '../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { nativeDeliveryProjection } from '../packages/agentkit-harness/src/native/session-delivery.mjs';
@@ -25,6 +25,10 @@ function consumer() {
 const final = () => ({ kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() });
 const call = () => ({ ...final(), kind: 'tool_calls', toolCalls: [{ callId: 'write-1', name: 'write', arguments: {} }] });
 const gate = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { resolve, promise }; };
+// This adapter accepts a trusted Host factory without depending on Studio's
+// product compiler. Product contract compilation is covered by its own tests.
+const taskContractFor = ({ sessionId, parentRunId, goal }) => ({ objective: goal,
+  revision: digest({ sessionId, parentRunId, goal }), acceptance: [acceptance()] });
 function setup(t, sqlite, overrides = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'native-dsh-driver-'));
   const store = sqlite ? new SqliteRunStore(join(directory, 'runs.sqlite')) : new MemoryRunStore();
@@ -43,6 +47,57 @@ function setup(t, sqlite, overrides = {}) {
   const execute = createNativeDshTurnExecutor({ store, ...sink, resolveTurn: async () => binding, ...overrides });
   const head = () => store.sessionHead(scope, 'session');
   return { store, binding, calls, sink, controller, payload, execute, head };
+}
+for (const sqlite of [false, true]) {
+  const backend = sqlite ? 'SQLite' : 'memory';
+  test(`${backend}: goal contracts pin parent facts without recompiling a superseded turn against a later parent`, async t => {
+    const host = setup(t, sqlite), facts = [], firstConfig = structuredClone(host.binding.configuration);
+    host.binding.taskContractFactory = input => {
+      facts.push(structuredClone({ ...input, signal: null }));
+      if (input.parentContract) input.parentContract.acceptance.push({ id: 'mutated-host-copy' });
+      return taskContractFor(input);
+    };
+    await host.execute(host.payload); const first = host.head(), firstStored = host.store.load(scope, first.runId);
+    host.sink.session.append('turn/start', { turn: 2 });
+    await host.execute({ ...host.payload, turn: 2 }); const second = host.head();
+    assert.equal(facts[0].parentRunId, null); assert.equal(facts[1].parentRunId, first.runId);
+    assert.equal(facts[1].parentGoal, first.goal);
+    assert.equal(host.store.load(scope, first.runId).configuration.contract.acceptance.length, 1);
+    assert.equal(host.store.load(scope, second.runId).configuration.contract.revision,
+      taskContractFor({ sessionId: 'session', parentRunId: first.runId, goal: first.goal }).revision);
+    assert.equal(host.store.load(scope, second.runId).snapshot.parentRunId, first.runId);
+    assert.notEqual(firstStored.configuration.contract.revision, host.store.load(scope, second.runId).configuration.contract.revision);
+    const calls = structuredClone(host.calls);
+    host.binding.configuration = firstConfig;
+    await assert.rejects(host.execute(host.payload), /native_delivery_run_superseded/);
+    assert.deepEqual(host.calls, calls); assert.equal(facts.at(-1).parentRunId, null);
+    assert.equal(host.head().runId, second.runId);
+  });
+  test(`${backend}: asynchronous contract compilation cannot attach a new goal to a changed session head`, async t => {
+    const host = setup(t, sqlite), entered = gate(), release = gate();
+    host.binding.taskContractFactory = async input => { entered.resolve(); await release.promise; return taskContractFor(input); };
+    const first = host.execute(host.payload);
+    await entered.promise;
+    const other = createNativeDshTurnExecutor({ store: host.store, ...host.sink,
+      resolveTurn: async () => ({ ...host.binding, taskContractFactory: undefined }) });
+    host.sink.session.append('turn/start', { turn: 2 });
+    await other({ ...host.payload, turn: 2 }); const winner = host.head().runId;
+    const calls = structuredClone(host.calls);
+    release.resolve(); await assert.rejects(first, /session_head_conflict/);
+    assert.equal(host.head().runId, winner); assert.deepEqual(host.calls, calls);
+    assert.equal(host.store.list(scope).length, 1);
+  });
+  test(`${backend}: canceled or invalid contract compilation cannot create a Run`, async t => {
+    const host = setup(t, sqlite), entered = gate(), release = gate();
+    host.binding.taskContractFactory = async input => { entered.resolve(); await release.promise; return taskContractFor(input); };
+    const execution = host.execute(host.payload);
+    await entered.promise; host.controller.abort(new Error('canceled contract compilation'));
+    await assert.rejects(execution, /canceled contract compilation/); release.resolve();
+    assert.equal(host.head(), null); assert.equal(host.calls.model, 0);
+    const invalid = setup(t, sqlite); invalid.binding.taskContractFactory = () => null;
+    await assert.rejects(invalid.execute(invalid.payload), /native_dsh_task_contract_invalid/);
+    assert.equal(invalid.head(), null); assert.equal(invalid.calls.model, 0);
+  });
 }
 for (const sqlite of [false, true]) {
   const kind = sqlite ? 'SQLite' : 'memory';

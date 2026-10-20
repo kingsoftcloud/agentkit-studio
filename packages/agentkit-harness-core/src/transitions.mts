@@ -1,6 +1,8 @@
 import type { CommitBatch, EffectIntent, EffectKind, EffectReceipt, Message, NativeEvent, ObjectValue, Phase, RunCommand, RunSnapshot } from './contracts.mjs';
 import { terminal } from './contracts.mjs';
 import { canonical, copy, invariant, runKey } from './values.mjs';
+import { admitSteering } from './task-contract.mjs';
+import type { SteeringBindings } from './task-contract.mjs';
 
 export function transition(snapshot: RunSnapshot, changes: Partial<RunSnapshot>, facts: { kind: string; payload: ObjectValue }[] = [],
   options: { intents?: EffectIntent[]; receipts?: EffectReceipt[]; commandId?: string; requireNoPendingCommands?: boolean } = {}): CommitBatch {
@@ -23,8 +25,31 @@ export function prepareEffect(snapshot: RunSnapshot, kind: EffectKind, phase: Ph
     [{ kind: 'effect.prepared', payload: { operationKey, kind } }],
     { intents: [{ operationKey, kind, payload: copy(payload), status: 'prepared' }] });
 }
-export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pending: EffectIntent | null = null): CommitBatch {
+export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pending: EffectIntent | null = null,
+  bindings: SteeringBindings = {}): CommitBatch {
   const original = snapshot;
+  if (command.kind === 'steer' && ['effect_outcome_unknown', 'recovery_retry_exhausted', 'browser_session_unavailable'].includes(snapshot.reason ?? '')) {
+    return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
+      kind: command.kind, reason: 'recovery_required' } }], { commandId: command.commandId, requireNoPendingCommands: false });
+  }
+  const steering = command.kind === 'steer' ? admitSteering(snapshot, command, bindings) : null;
+  if (steering && (steering.reason !== 'applied' || snapshot.pendingIntent !== null && pending?.status !== 'prepared')) {
+    const inFlight = snapshot.pendingIntent !== null && pending?.status !== 'prepared';
+    const reason = inFlight ? 'effect_in_flight' : steering.reason;
+    const blocked = !inFlight && !Object.hasOwn(command.payload, 'expectedGoalRevision');
+    const retire = blocked && pending?.status === 'prepared' && pending.operationKey === snapshot.pendingIntent;
+    const changes: Partial<RunSnapshot> = blocked ? { phase: 'finalizing', outcome: 'blocked', reason,
+      pendingIntent: null, pendingTools: [], pendingInteraction: null, interaction: null,
+      candidate: null, verification: null, finalText: '', preparedContext: null,
+      messages: [...snapshot.messages, ...snapshot.pendingTools.map(call => ({ role: 'tool' as const,
+        callId: call.callId, name: call.name, content: canonical({ status: 'not_dispatched', reason, executed: false }) }))] } : {};
+    return transition(snapshot, changes, [
+      ...(retire ? [{ kind: 'effect.not_dispatched', payload: { operationKey: pending!.operationKey, kind: pending!.kind, commandId: command.commandId } }] : []),
+      { kind: 'command.applied', payload: { commandId: command.commandId, kind: command.kind, reason } },
+    ], { commandId: command.commandId, requireNoPendingCommands: false,
+      receipts: retire ? [{ operationKey: pending!.operationKey, status: 'not_dispatched',
+        result: { code: 'contract_revision_required', commandId: command.commandId, executed: false } }] : [] });
+  }
   const retiring = ['guide', 'steer'].includes(command.kind) && typeof command.payload.text === 'string'
     && command.payload.text.trim().length > 0 && pending?.status === 'prepared' && pending.operationKey === snapshot.pendingIntent;
   if (retiring) snapshot = { ...snapshot, pendingIntent: null };
@@ -66,10 +91,15 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       else if (['effect_outcome_unknown', 'recovery_retry_exhausted', 'browser_session_unavailable'].includes(snapshot.reason ?? '')) reason = 'recovery_required';
       else if (snapshot.pendingIntent !== null) reason = 'effect_in_flight';
       else {
-        changes = { goal: command.payload.text, goalRevision: snapshot.goalRevision + 1, phase: 'preparing_context',
+        changes = { goal: command.payload.text, goalRevision: snapshot.goalRevision + 1,
+          phase: snapshot.phase === 'paused' ? 'paused' : 'preparing_context',
+          resumePhase: snapshot.phase === 'paused' ? 'preparing_context' : null,
+          ...(steering?.contract ? { taskContract: steering.contract, taskContractDigest: steering.contractDigest } : {}),
           lastBrowserObservation: null, unresolvedInteractionObservation: null,
           hookState: null, stopHookContinuations: 0,
-          contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null } : null,
+          continuations: 0, retryNotBefore: 0, toolErrorStreak: null, workspaceRevision: null,
+          contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null,
+            ...(steering?.contract ? { history: null, compactionsWithoutProgress: 0, progressDigest: null } : {}) } : null,
           preparedContext: null, queuedGuidance: [], finalText: '', outcome: null, reason: null,
           pendingTools: [], pendingInteraction: null, interaction: null, candidate: null, verification: null,
           messages: [...snapshot.messages, ...snapshot.pendingTools.map(call => ({ role: 'tool' as const, callId: call.callId, name: call.name,

@@ -10,6 +10,7 @@ import { addUsage, advertisedTools, objectValue, plan, reduceModel, reduceTools,
 import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
+import { effectiveRunConfiguration } from './task-contract.mjs';
 import { recoverClaimed } from './recovery.mjs';
 import { toolInputRejection } from './tool-input.mjs';
 import { contextSourceDigest, modelContextMessages, validateContextMessages } from './context-view.mjs';
@@ -80,6 +81,7 @@ export class NativeKernel {
     const record = this.store.load(scope, runId);
     invariant(!configuration || this.digest(configuration) === record.snapshot.configDigest, 'configuration_mismatch');
     invariant(this.digest(record.configuration) === record.snapshot.configDigest, 'stored_configuration_mismatch');
+    effectiveRunConfiguration(record.snapshot, record.configuration, this.digest);
     return record.snapshot;
   }
   submit(scope: RunScope, runId: string, command: RunCommand) {
@@ -92,6 +94,7 @@ export class NativeKernel {
   async runUntilIdle(scope: RunScope, runId: string, { signal, waitForRetry = true }: { signal?: AbortSignal; waitForRetry?: boolean } = {}): Promise<RunSnapshot> {
     const initial = this.store.load(scope, runId);
     invariant(this.digest(initial.configuration) === initial.snapshot.configDigest, 'stored_configuration_mismatch');
+    effectiveRunConfiguration(initial.snapshot, initial.configuration, this.digest);
     if (terminal(initial.snapshot.phase)) {
       await this.onCheckpoint?.(copy(initial.snapshot));
       return initial.snapshot;
@@ -127,7 +130,8 @@ export class NativeKernel {
           }
           if (leaseError) throw leaseError;
         }
-        const record = this.store.load(scope, runId), snapshot = record.snapshot, config = record.configuration;
+        const record = this.store.load(scope, runId), snapshot = record.snapshot;
+        const config = effectiveRunConfiguration(snapshot, record.configuration, this.digest);
         if (terminal(snapshot.phase)) return snapshot;
         const commands = pendingCommands(record);
         const command = commands[0];
@@ -139,7 +143,7 @@ export class NativeKernel {
             this.commit(snapshot, lease, recoverClaimed(snapshot, config, intent, this.now()));
             continue;
           }
-          this.commit(snapshot, lease, reduceCommand(snapshot, command, intent));
+          this.commit(snapshot, lease, reduceCommand(snapshot, command, intent, { configuration: config, digest: this.digest }));
           continue;
         }
         if (!browserChecked) {

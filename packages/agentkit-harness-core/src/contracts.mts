@@ -217,6 +217,7 @@ export interface PreparedContext {
 export interface RunSnapshot extends RunIdentity {
   schemaVersion: typeof NATIVE_SCHEMA; configDigest: string; revision: number; eventSeq: number;
   phase: Phase; resumePhase: Phase | null; goal: string; goalRevision: number;
+  taskContract: TaskContract | null; taskContractDigest: string | null;
   messages: Message[]; preparedContext: PreparedContext | null; queuedGuidance: Message[];
   pendingTools: ToolCall[]; pendingIntent: string | null;
   pendingInteraction: PendingInteraction | null; interaction: ObjectValue | null;

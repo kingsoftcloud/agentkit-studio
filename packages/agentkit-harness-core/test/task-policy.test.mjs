@@ -161,7 +161,7 @@ for (const type of ['click', 'fill', 'press', 'reload']) test(`successful same-p
 test('a real steer invalidates goal evidence, while guidance retains interaction failures', () => {
   const { snapshot } = configured(), current = { ...snapshot, unresolvedInteractionObservation: sticky,
     lastBrowserObservation: { toolCall: 4 }, browserSessionRefs: [ref] };
-  const steered = reduceCommand(current, { commandId: 'steer', kind: 'steer', payload: { text: 'New goal' } }).snapshot;
+  const steered = reduceCommand(current, { commandId: 'steer', kind: 'steer', payload: { text: 'New goal', expectedGoalRevision: current.goalRevision } }).snapshot;
   assert.equal(steered.unresolvedInteractionObservation, null); assert.equal(steered.lastBrowserObservation, null);
   assert.deepEqual(steered.browserSessionRefs, [ref]);
   const guided = reduceCommand(current, { commandId: 'guide', kind: 'guide', payload: { text: 'More context' } }).snapshot;

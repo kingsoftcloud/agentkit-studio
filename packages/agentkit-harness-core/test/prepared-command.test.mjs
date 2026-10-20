@@ -9,7 +9,8 @@ import { fixture, scope, digest, tool } from './fixtures.mjs';
 
 const final = () => ({ kind: 'final_candidate', text: 'Current answer', toolCalls: [], usage: emptyUsage() });
 const newText = 'Use the new requirement';
-const command = (kind, text = newText) => ({ commandId: `control-${kind}`, kind, payload: { text } });
+const command = (kind, text = newText) => ({ commandId: `control-${kind}`, kind,
+  payload: { text, ...(kind === 'steer' ? { expectedGoalRevision: 0 } : {}) } });
 
 for (const backend of ['memory', 'sqlite']) {
   const setup = t => {

@@ -14,7 +14,7 @@ export interface ConfigurationInput {
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
   contextPolicy?: RunConfiguration['contextPolicy'];
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
-  inputMessages?: Message[];
+  inputMessages?: Message[] | null;
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
   const profile: ModelProfile = {
@@ -132,6 +132,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
   }
   return copy({ ...identity, schemaVersion: NATIVE_SCHEMA, configDigest, revision: 0, eventSeq: 0,
     phase: 'created', resumePhase: null, goal: configuration.contract.objective, goalRevision: 0,
+    taskContract: null, taskContractDigest: null,
     messages: [
       ...(configuration.instructions ? [{ role: 'system' as const, content: configuration.instructions, persistent: true }] : []),
       ...(configuration.inputMessages ?? [{ role: 'user' as const, content: configuration.contract.objective }]),

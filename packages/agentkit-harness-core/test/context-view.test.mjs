@@ -87,7 +87,8 @@ for (const backend of ['memory', 'sqlite']) {
         return final();
       } }, tools: { execute: async request => {
         executions.push(request.call.callId);
-        if (request.call.callId === 'one') kernel.submit(scope, 'run', { commandId: command, kind: command, payload: { text: 'New direction' } });
+        if (request.call.callId === 'one') kernel.submit(scope, 'run', { commandId: command, kind: command,
+          payload: { text: 'New direction', ...(command === 'steer' ? { expectedGoalRevision: 0 } : {}) } });
         return { status: 'ok', content: request.call.callId };
       } },
     } });

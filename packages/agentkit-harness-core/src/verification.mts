@@ -8,6 +8,7 @@ export function sealCandidate(candidate: CompletionCandidate, snapshot: RunSnaps
     subjectDigest: digest({ text: candidate.text, workspaceRevision: candidate.workspaceRevision }),
     subjectContextDigest: digest({ messages: snapshot.messages, goalRevision: candidate.goalRevision,
       configDigest: snapshot.configDigest, artifactRefs: snapshot.artifactRefs,
+      ...(snapshot.taskContract ? { taskContractDigest: snapshot.taskContractDigest } : {}),
       ...(snapshot.browserSessionRefs?.length || snapshot.lastBrowserObservation ? {
         browserSessionRefs: snapshot.browserSessionRefs, browserObservation: snapshot.lastBrowserObservation,
       } : {}) }),

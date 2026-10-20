@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { NativeKernel, canonical, configure, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, NativeError, NATIVE_GOAL_CONTRACT_BINDING, canonical, configure, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
 import { createNativeSessionDelivery } from './session-delivery.mjs';
 import { nativeLiveStream } from './assistant-stream.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from './dsh-turn-contract.mjs';
@@ -31,7 +31,9 @@ async function resolveWhileLive(resolve, payload) {
  * Bind the actual Native loop to DSH's public whole-turn boundary.
  *
  * resolveTurn(payload) returns null to delegate an unrelated runtime, or
- * {scope, buildId, configuration, ports, source:{provider,model}, taskChainId?}.
+ * {scope, buildId, configuration, ports, source:{provider,model}, taskChainId?, taskContractFactory?}.
+ * An optional trusted taskContractFactory receives the pinned parent facts.
+ * Its result is frozen in the new Run configuration, with session-head CAS.
  * The resolver must project all admitted input, including attachment bytes
  * resolved by the host, into configuration.inputMessages. It owns that trusted
  * projection; this adapter never reads attachment paths supplied in messages.
@@ -63,10 +65,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
       && typeof binding.ports.tools?.execute === 'function', 'native_dsh_turn_binding_invalid');
     const sessionId = String(agent.session.id), scope = structuredClone(binding.scope);
     const runId = `native-dsh-${hash({ contract: NATIVE_DSH_TURN_CONTRACT, scope, sessionId, turn })}`;
-    const configuration = configure({ ...binding.configuration, hostBindingDigest: hash({
-      contract: NATIVE_DSH_TURN_CONTRACT, declared: binding.configuration.hostBindingDigest,
-      input: input.messages, source: binding.source,
-    }) });
+    invariant(binding.taskContractFactory === undefined || typeof binding.taskContractFactory === 'function', 'native_dsh_contract_factory_invalid');
     const key = canonical({ scope, sessionId });
     invariant(!active.has(key), 'native_dsh_session_already_driving');
     active.add(key);
@@ -86,6 +85,27 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
           throw failure('NATIVE_RUN_RECOVERY_REQUIRED', previous.snapshot);
         }
       }
+      let existing = null;
+      try { existing = store.load(scope, runId).snapshot; }
+      catch (error) { if (!(error instanceof NativeError && error.code === 'run_not_found')) throw error; }
+      // Redelivery compiles against the original parent, even after later
+      // turns have advanced this Session. A new turn pins the current head.
+      const parentRunId = existing ? existing.parentRunId : head?.runId ?? null;
+      const parent = parentRunId ? store.load(scope, parentRunId) : null;
+      const contract = binding.taskContractFactory ? await resolveWhileLive(() => binding.taskContractFactory({
+        scope: structuredClone(scope), sessionId, runId, parentRunId,
+        parentGoal: parent?.snapshot.goal ?? null,
+        parentContract: structuredClone(parent?.snapshot.taskContract ?? parent?.configuration.contract ?? null),
+        goal: binding.configuration.contract.objective, signal,
+      }), payload) : binding.configuration.contract;
+      signal.throwIfAborted();
+      invariant(contract && typeof contract === 'object' && !Array.isArray(contract)
+        && contract.objective === binding.configuration.contract.objective, 'native_dsh_task_contract_invalid');
+      const configuration = configure({ ...binding.configuration, contract, hostBindingDigest: hash({
+        contract: NATIVE_DSH_TURN_CONTRACT, declared: binding.configuration.hostBindingDigest,
+        goalContractBinding: NATIVE_GOAL_CONTRACT_BINDING,
+        input: input.messages, source: binding.source,
+      }) });
       const delivery = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn, projections, flush,
         inputMessages: input.messages, systemText: configuration.instructions, source: binding.source,
         onStreamSettled: (...args) => live.settled(...args) });
@@ -103,7 +123,8 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
         },
       });
       kernel.start({ scope, runId, sessionId, turnId: String(turn), buildId: binding.buildId, parentRunId: null,
-        taskChainId: binding.taskChainId ?? sessionId }, configuration);
+        taskChainId: binding.taskChainId ?? sessionId }, configuration,
+      binding.taskContractFactory ? { expectedParentRunId: parentRunId } : {});
       let snapshot;
       try {
         snapshot = await kernel.runUntilIdle(scope, runId, { signal });
