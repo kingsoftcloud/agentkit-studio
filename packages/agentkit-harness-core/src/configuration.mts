@@ -9,6 +9,7 @@ export interface ConfigurationInput {
   tools?: ToolDefinition[]; limits?: Partial<RunLimits>; instructions?: string;
   hostBindingDigest: string; contextSources?: RunConfiguration['contextSources']; hooks?: RunConfiguration['hooks'];
   stopHookContinuationLimit?: number; delegationDepth?: number;
+  modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
   const profile: ModelProfile = {
@@ -21,13 +22,14 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     maxWallMs: null, maxModelCalls: null, maxToolCalls: null, maxParallelTools: 4, maxRepairs: 3,
     maxOutputRestarts: 0, finalizationReserveModelCalls: 1, finalizationReserveWallMs: 0,
     effectTimeoutMs: 120_000, leaseMs: 30_000, maxSubagentDepth: 3,
-    maxToolResultBytes: 65536, maxInlineImageBytes: 40 * 1024 * 1024, ...input.limits,
+    maxToolResultBytes: 65536, maxInlineImageBytes: 40 * 1024 * 1024, maxRecoveryRetries: 3, ...input.limits,
   };
   const config: RunConfiguration = {
     engine: NATIVE_ENGINE, profile, limits,
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
     stopHookContinuationLimit: input.stopHookContinuationLimit ?? 0, delegationDepth: input.delegationDepth ?? 0,
+    modelRecoveryPolicy: input.modelRecoveryPolicy ?? 'manual',
     contract: { revision: '1', constraints: [], acceptance: [], allowedToolNames: null,
       finalSubmissionSchema: null, finalSubmissionPayloadKey: null, finalOutputFormat: 'text', ...input.contract },
   };
@@ -58,6 +60,9 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(!tool.concurrentSafe || tool.readOnly && tool.observationRole === 'none', 'invalid_tool_concurrency');
     invariant(!tool.delegatedReadOnly || tool.concurrentSafe, 'invalid_delegated_reader');
     invariant(!tool.backgroundCommandPolicy || !tool.readOnly && !tool.concurrentSafe, 'invalid_background_launcher');
+    invariant(tool.recoveryPolicy === undefined || ['manual', 'safe-read/v1'].includes(tool.recoveryPolicy), 'invalid_tool_recovery_policy');
+    invariant(tool.recoveryPolicy !== 'safe-read/v1' || tool.readOnly && tool.observationRole === 'none'
+      && !tool.delegatedReadOnly && !tool.childBudgetPolicy && !tool.backgroundCommandPolicy, 'invalid_safe_read_recovery');
     invariant(!['workspace_read', 'workspace_search', 'artifact_read'].includes(tool.contextRole) || tool.readOnly, 'invalid_context_reader');
   }
   invariant(config.contract.allowedToolNames === null || config.contract.allowedToolNames.every(name => names.has(name)), 'unbound_allowed_tool');
@@ -73,6 +78,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(config.hooks.every(hook => hook.timeoutMs > 0 && hook.timeoutMs < limits.effectTimeoutMs), 'invalid_hook_timeout');
   invariant(!config.hooks.some(hook => hook.events.includes('Stop')) || config.stopHookContinuationLimit > 0, 'stop_hook_requires_limit');
   invariant(['text', 'json_object', 'json_value'].includes(config.contract.finalOutputFormat), 'invalid_final_output_format');
+  invariant(['manual', 'pure-inference/v1'].includes(config.modelRecoveryPolicy), 'invalid_model_recovery_policy');
   validateSubmissionContract(config);
   return copy(config);
 }
@@ -91,6 +97,6 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
-    context: {}, diagnostics: {}, stopHookContinuations: 0,
+    context: {}, diagnostics: {}, stopHookContinuations: 0, recoveryRetriesUsed: 0,
   });
 }

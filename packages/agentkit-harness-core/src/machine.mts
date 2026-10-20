@@ -52,7 +52,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     }
     const outcome = snapshot.outcome ?? 'unverified';
     const text = snapshot.candidate?.text ?? snapshot.finalText;
-    const phase = ['effect_outcome_unknown', 'browser_session_unavailable'].includes(snapshot.reason ?? '') ? 'interrupted'
+    const phase = ['effect_outcome_unknown', 'browser_session_unavailable', 'recovery_retry_exhausted'].includes(snapshot.reason ?? '') ? 'interrupted'
       : outcome === 'failed' || !text.trim() ? 'failed' : 'completed';
     return transition(snapshot, { phase, finalText: snapshot.candidate?.text ?? snapshot.finalText, pendingTools: [] }, [{ kind: 'run.terminal', payload: {
       phase, outcome, reason: snapshot.reason, finalText: snapshot.candidate?.text ?? snapshot.finalText, usage: objectValue(snapshot.usage),

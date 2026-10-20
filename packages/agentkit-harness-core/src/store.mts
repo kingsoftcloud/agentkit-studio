@@ -110,6 +110,8 @@ export class TransactionalRunStore implements RunStore {
           && Number.isFinite(next.descendantUsage[key]) && next.descendantUsage[key] >= previous.descendantUsage[key], 'usage_cannot_decrease');
       }
       invariant(Number.isFinite(next.activeElapsedMs) && next.activeElapsedMs >= previous.activeElapsedMs, 'execution_clock_cannot_decrease');
+      invariant(Number.isSafeInteger(next.recoveryRetriesUsed) && next.recoveryRetriesUsed >= previous.recoveryRetriesUsed,
+        'recovery_retries_cannot_decrease');
       invariant(batch.commitId.trim(), 'invalid_commit_id');
       unique(batch.events, event => event.eventId);
       unique(batch.intents, intent => intent.operationKey);
@@ -152,7 +154,7 @@ export class TransactionalRunStore implements RunStore {
       invariant(intent?.status === 'prepared' && record.snapshot.pendingIntent === operationKey
         && !record.receipts.some(receipt => receipt.operationKey === operationKey), 'effect_already_claimed');
       invariant(pendingCommands(record).length === 0, 'pending_command_conflict');
-      const running = { ...intent, status: 'running' as const };
+      const running = { ...intent, status: 'running' as const, claimedAtMs: now };
       return { record: { ...record, intents: record.intents.map(item => item === intent ? running : item) }, value: copy(running) };
     });
   }

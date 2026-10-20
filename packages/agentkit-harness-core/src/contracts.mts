@@ -34,6 +34,8 @@ export interface ToolDefinition {
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';
   delegatedReadOnly?: boolean; deliveryWrite?: boolean;
+  /** Explicit Host guarantee of repeatable reads; readOnly alone never grants replay. */
+  recoveryPolicy?: 'manual' | 'safe-read/v1';
 }
 export interface ModelProfile {
   profileId: string; profileVersion: string; providerFamily: string;
@@ -49,6 +51,7 @@ export interface RunLimits {
   finalizationReserveModelCalls: number; finalizationReserveWallMs: number;
   effectTimeoutMs: number; leaseMs: number; maxSubagentDepth: number;
   maxToolResultBytes: number; maxInlineImageBytes: number;
+  maxRecoveryRetries: number;
 }
 export type VerificationMethod = 'deterministic' | 'human' | 'model_assisted';
 export interface AcceptanceItem {
@@ -70,6 +73,7 @@ export interface RunConfiguration {
   contract: TaskContract; instructions: string; hostBindingDigest: string;
   contextSources: ContextSourceDefinition[]; hooks: HookDefinition[];
   stopHookContinuationLimit: number; delegationDepth: number;
+  modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
 }
 export interface Usage { inputTokens: number; outputTokens: number; modelCalls: number; toolCalls: number; cost: number }
 export interface ArtifactRef { uri: string; digest: string; mediaType: string; sizeBytes: number; metadata: ObjectValue }
@@ -125,10 +129,11 @@ export interface RunSnapshot extends RunIdentity {
   workspaceRevision: string | null; workspaceModifiedPaths: string[]; artifactRefs: ArtifactRef[];
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
+  recoveryRetriesUsed: number;
 }
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
 export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child';
-export interface EffectIntent { operationKey: string; kind: EffectKind; payload: ObjectValue; status: 'prepared' | 'running' }
+export interface EffectIntent { operationKey: string; kind: EffectKind; payload: ObjectValue; status: 'prepared' | 'running'; claimedAtMs?: number }
 export interface EffectReceipt { operationKey: string; status: 'committed' | 'failed' | 'uncertain'; result: ObjectValue }
 export type CommandKind = 'cancel' | 'policy_revoked' | 'pause' | 'resume' | 'submit_interaction'
   | 'steer' | 'guide' | 'promote_child' | 'message_child' | 'cancel_child';

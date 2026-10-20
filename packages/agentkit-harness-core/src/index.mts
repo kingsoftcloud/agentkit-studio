@@ -10,3 +10,4 @@ export * from './verification.mjs';
 export * from './retry.mjs';
 export * from './final-submission.mjs';
 export * from './model-json.mjs';
+export * from './recovery.mjs';

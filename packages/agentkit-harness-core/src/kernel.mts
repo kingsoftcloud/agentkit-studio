@@ -8,6 +8,7 @@ import { reduceCommand, transition } from './transitions.mjs';
 import { advertisedTools, objectValue, plan, reduceModel, reduceTools, settle } from './machine.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
+import { recoverClaimed } from './recovery.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -115,9 +116,7 @@ export class NativeKernel {
           const intent = record.intents.find(item => item.operationKey === snapshot.pendingIntent);
           invariant(intent, 'pending_intent_missing');
           if (intent.status === 'running') {
-            const receipt: EffectReceipt = { operationKey: intent.operationKey, status: 'uncertain', result: { code: 'effect_outcome_unknown' } };
-            this.commit(snapshot, lease, settle(snapshot, intent, receipt,
-              { phase: 'finalizing', outcome: 'unverified', reason: 'effect_outcome_unknown', pendingIntent: null }, 0));
+            this.commit(snapshot, lease, recoverClaimed(snapshot, config, intent, this.now()));
             continue;
           }
           try { this.store.claim(scope, runId, lease, this.now(), intent.operationKey); }
