@@ -2,6 +2,7 @@ import { emptyUsage, NATIVE_ENGINE, NATIVE_SCHEMA } from './contracts.mjs';
 import type { ModelProfile, RunConfiguration, RunIdentity, RunLimits, RunSnapshot, TaskContract, ToolDefinition } from './contracts.mjs';
 import { canonical, copy, invariant, scopeKey } from './values.mjs';
 import { validateSubmissionContract } from './final-submission.mjs';
+import { compileToolInput } from './tool-input.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -56,6 +57,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   for (const tool of config.tools) {
     invariant(tool.name.trim() && !names.has(tool.name), 'duplicate_or_invalid_tool');
     names.add(tool.name);
+    compileToolInput(tool.parameters);
     invariant(Number.isFinite(tool.timeoutMs) && tool.timeoutMs > 0 && tool.timeoutMs < limits.effectTimeoutMs, 'invalid_tool_timeout');
     invariant(!tool.concurrentSafe || tool.readOnly && tool.observationRole === 'none', 'invalid_tool_concurrency');
     invariant(!tool.delegatedReadOnly || tool.concurrentSafe, 'invalid_delegated_reader');
@@ -97,6 +99,6 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
-    context: {}, diagnostics: {}, stopHookContinuations: 0, recoveryRetriesUsed: 0,
+    context: {}, diagnostics: {}, stopHookContinuations: 0, recoveryRetriesUsed: 0, toolErrorStreak: null,
   });
 }

@@ -109,6 +109,11 @@ export class TransactionalRunStore implements RunStore {
         invariant(Number.isFinite(next.usage[key]) && next.usage[key] >= previous.usage[key]
           && Number.isFinite(next.descendantUsage[key]) && next.descendantUsage[key] >= previous.descendantUsage[key], 'usage_cannot_decrease');
       }
+      for (const group of ['usage', 'descendantUsage'] as const) for (const key of ['cachedInputTokens', 'reasoningTokens'] as const) {
+        if (next[group][key] === undefined && previous[group][key] === undefined) continue;
+        const current = next[group][key] ?? 0, before = previous[group][key] ?? 0;
+        invariant(Number.isSafeInteger(current) && current >= before, 'usage_cannot_decrease');
+      }
       invariant(Number.isFinite(next.activeElapsedMs) && next.activeElapsedMs >= previous.activeElapsedMs, 'execution_clock_cannot_decrease');
       invariant(Number.isSafeInteger(next.recoveryRetriesUsed) && next.recoveryRetriesUsed >= previous.recoveryRetriesUsed,
         'recovery_retries_cannot_decrease');

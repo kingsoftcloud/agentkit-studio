@@ -111,6 +111,8 @@
     "@modelcontextprotocol/sdk": "1.31.0",
     "@openai/codex": "0.159.2",
     "ajv": "8.17.1",
+    "ajv-draft-04": "1.0.0",
+    "ajv-formats": "3.0.1",
     "aws4": "1.13.2",
     "undici": "8.11.2",
     "ws": "8.21.0",

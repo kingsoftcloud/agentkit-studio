@@ -12,7 +12,7 @@ export interface RunIdentity {
   scope: RunScope; runId: string; sessionId: string; turnId: string; buildId: string;
   parentRunId: string | null; taskChainId: string;
 }
-export interface ToolCall { callId: string; name: string; arguments: ObjectValue }
+export interface ToolCall { callId: string; name: string; arguments: ObjectValue; wireArgumentsInvalid?: boolean }
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool'; content: string;
   kind?: string; callId?: string; name?: string; toolCalls?: ToolCall[];
@@ -75,7 +75,10 @@ export interface RunConfiguration {
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
 }
-export interface Usage { inputTokens: number; outputTokens: number; modelCalls: number; toolCalls: number; cost: number }
+export interface Usage {
+  inputTokens: number; outputTokens: number; modelCalls: number; toolCalls: number; cost: number;
+  cachedInputTokens?: number; reasoningTokens?: number;
+}
 export interface ArtifactRef { uri: string; digest: string; mediaType: string; sizeBytes: number; metadata: ObjectValue }
 export interface ToolResult {
   status: 'ok' | 'error' | 'approval_required' | 'uncertain'; content: Json;
@@ -87,6 +90,8 @@ export type ModelResponseKind = 'tool_calls' | 'final_candidate' | 'output_limit
   | 'policy_abort' | 'user_abort';
 export interface ModelResult {
   kind: ModelResponseKind; text: string; toolCalls: ToolCall[]; usage: Usage;
+  /** False means counters are partial/absent; zero must not imply known free usage. */
+  usageReported?: boolean;
   providerReplay?: ObjectValue; retryAfterMs?: number; failureKind?: string;
   replayToolIds?: Record<string, string>;
 }
@@ -116,6 +121,9 @@ export interface BackgroundCommand {
   commandId: string; operationKey: string; state: 'running' | 'completed' | 'failed' | 'canceled';
   notified: boolean; metadata: ObjectValue;
 }
+export interface ToolErrorStreak {
+  signature: string; count: number; modelCall: number; goalRevision: number; workspaceRevision: string | null;
+}
 export interface RunSnapshot extends RunIdentity {
   schemaVersion: typeof NATIVE_SCHEMA; configDigest: string; revision: number; eventSeq: number;
   phase: Phase; resumePhase: Phase | null; goal: string; goalRevision: number;
@@ -130,6 +138,7 @@ export interface RunSnapshot extends RunIdentity {
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
   recoveryRetriesUsed: number;
+  toolErrorStreak: ToolErrorStreak | null;
 }
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
 export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child';
@@ -172,6 +181,7 @@ export interface PortContext extends RunIdentity {
 }
 export interface ModelRequest extends PortContext {
   profile: ModelProfile; messages: Message[]; tools: ToolDefinition[]; finalizationOnly: boolean;
+  maxInlineImageBytes: number;
 }
 export interface ModelStreamEvent { kind: 'text' | 'thinking' | 'tool_delta'; text: string; metadata?: ObjectValue }
 export interface ModelPort { generate(request: ModelRequest, emit: (event: ModelStreamEvent) => void): Promise<ModelResult> }

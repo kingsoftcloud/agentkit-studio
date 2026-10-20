@@ -11,10 +11,18 @@ export function objectValue(value: unknown): ObjectValue {
 }
 export function addUsage(left: Usage, right: Usage): Usage {
   const result = emptyUsage();
-  for (const key of Object.keys(result) as (keyof Usage)[]) {
-    invariant(Number.isFinite(right[key]) && right[key] >= 0, 'invalid_usage');
+  for (const key of ['inputTokens', 'outputTokens', 'modelCalls', 'toolCalls', 'cost'] as const) {
+    invariant(Number.isFinite(right[key]) && right[key] >= 0
+      && (key === 'cost' || Number.isSafeInteger(right[key])), 'invalid_usage');
     result[key] = left[key] + right[key];
-    invariant(Number.isFinite(result[key]), 'usage_overflow');
+    invariant(Number.isFinite(result[key]) && (key === 'cost' || Number.isSafeInteger(result[key])), 'usage_overflow');
+  }
+  for (const key of ['cachedInputTokens', 'reasoningTokens'] as const) {
+    if (left[key] === undefined && right[key] === undefined) continue;
+    const current = left[key] ?? 0, added = right[key] ?? 0;
+    invariant(Number.isSafeInteger(current) && current >= 0 && Number.isSafeInteger(added) && added >= 0
+      && Number.isSafeInteger(current + added), 'invalid_usage');
+    result[key] = current + added;
   }
   return result;
 }
@@ -56,6 +64,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
       : outcome === 'failed' || !text.trim() ? 'failed' : 'completed';
     return transition(snapshot, { phase, finalText: snapshot.candidate?.text ?? snapshot.finalText, pendingTools: [] }, [{ kind: 'run.terminal', payload: {
       phase, outcome, reason: snapshot.reason, finalText: snapshot.candidate?.text ?? snapshot.finalText, usage: objectValue(snapshot.usage),
+      usageComplete: snapshot.diagnostics.providerUsageIncomplete !== true,
     } }]);
   }
   if (config.limits.maxWallMs !== null && snapshot.activeElapsedMs >= config.limits.maxWallMs) {
@@ -70,6 +79,10 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     if (snapshot.phase === 'compacting' && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_compaction_unavailable');
     if (capabilities.context && snapshot.context.preparedCursor !== cursor) {
       return prepareEffect(snapshot, 'context', snapshot.phase, { cursor, forceCompaction: snapshot.phase === 'compacting' });
+    }
+    const streak = snapshot.toolErrorStreak;
+    if (streak && streak.count >= 6 && streak.goalRevision === snapshot.goalRevision && streak.workspaceRevision === snapshot.workspaceRevision) {
+      return finalizing(snapshot, 'blocked', 'repeated_tool_error_no_progress');
     }
     if (modelRoom(snapshot, config) <= 0) return finalizing(snapshot, 'budget_exhausted', 'model_budget_exhausted');
     return prepareEffect(snapshot, 'model', 'requesting_model', { finalizationOnly: finalizationOnly(snapshot, config) },
@@ -121,11 +134,14 @@ export function validateModelResult(input: ModelResult): ModelResult {
     'provider_retryable_error', 'provider_terminal_error', 'policy_abort', 'user_abort'].includes(result.kind)
     && typeof result.text === 'string' && Array.isArray(result.toolCalls), 'invalid_model_result');
   addUsage(emptyUsage(), result.usage);
+  invariant(result.usageReported === undefined || typeof result.usageReported === 'boolean', 'invalid_usage_report_status');
   const ids = new Set<string>();
   for (const call of result.toolCalls) {
     invariant(typeof call.callId === 'string' && call.callId.trim() && typeof call.name === 'string' && call.name.trim()
       && !ids.has(call.callId), 'invalid_tool_call');
     ids.add(call.callId); objectValue(call.arguments);
+    invariant(call.wireArgumentsInvalid === undefined || typeof call.wireArgumentsInvalid === 'boolean', 'invalid_tool_call');
+    invariant(!call.wireArgumentsInvalid || canonical(call.arguments) === '{}', 'invalid_wire_arguments_must_be_empty');
   }
   invariant(result.kind !== 'tool_calls' || result.toolCalls.length > 0, 'empty_tool_batch');
   invariant(result.kind !== 'final_candidate' || result.text.trim(), 'empty_final_candidate');
@@ -135,7 +151,8 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
   const result = validateModelResult(input);
   const replay = boundReplay(result, config);
   const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
-  const base: Partial<RunSnapshot> = { pendingIntent: null, usage };
+  const base: Partial<RunSnapshot> = { pendingIntent: null, usage,
+    ...(result.usageReported === false ? { diagnostics: { ...snapshot.diagnostics, providerUsageIncomplete: true } } : {}) };
   const message: Message = { role: 'assistant', content: result.text,
     ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) };
   switch (result.kind) {
@@ -211,7 +228,8 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
     case 'provider_terminal_error': return { ...base, phase: 'finalizing', outcome: 'failed', reason: 'provider_terminal_error' };
   }
 }
-export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls: ToolCall[], intent: EffectIntent, config: RunConfiguration): Partial<RunSnapshot> {
+export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls: ToolCall[], intent: EffectIntent, config: RunConfiguration,
+  digest: (value: unknown) => string = canonical): Partial<RunSnapshot> {
   invariant(results.length === calls.length && calls.length > 0
     && canonical(snapshot.pendingTools.slice(0, calls.length)) === canonical(calls), 'tool_receipt_mismatch');
   let updated = copy(snapshot);
@@ -230,6 +248,15 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     }
     updated.usage.toolCalls += 1;
     if (result.status === 'uncertain') return { pendingIntent: null, phase: 'finalizing', outcome: 'unverified', reason: 'effect_outcome_unknown', usage: updated.usage };
+    if (result.status === 'error') {
+      const definition = config.tools.find(tool => tool.name === call.name);
+      const signature = digest([call.name, result.status, result.content,
+        ...(definition?.readOnly && definition.observationRole === 'none' ? [call.arguments] : [])]);
+      const prior = updated.toolErrorStreak;
+      const same = prior?.signature === signature && prior.goalRevision === snapshot.goalRevision && prior.workspaceRevision === snapshot.workspaceRevision;
+      updated.toolErrorStreak = { signature, count: same ? prior.count + Number(prior.modelCall !== snapshot.usage.modelCalls) : 1,
+        modelCall: snapshot.usage.modelCalls, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision };
+    }
     if (result.resourceUsage) updated.descendantUsage = addUsage(updated.descendantUsage, result.resourceUsage);
     updated.messages.push({ role: 'tool', callId: call.callId, name: call.name, content: canonical(result.content) });
     updated.workspaceModifiedPaths = [...new Set([...updated.workspaceModifiedPaths, ...(result.workspaceChangedPaths ?? [])])];
@@ -241,7 +268,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   }
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
-    workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null };
+    workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null, toolErrorStreak: updated.toolErrorStreak };
 }
 export function settle(snapshot: RunSnapshot, intent: EffectIntent, receipt: EffectReceipt, changes: Partial<RunSnapshot>, elapsedMs: number, facts: { kind: string; payload: ObjectValue }[] = []): CommitBatch {
   invariant(receipt.operationKey === intent.operationKey && snapshot.pendingIntent === intent.operationKey, 'effect_receipt_mismatch');

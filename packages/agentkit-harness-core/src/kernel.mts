@@ -9,6 +9,7 @@ import { advertisedTools, objectValue, plan, reduceModel, reduceTools, settle } 
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { recoverClaimed } from './recovery.mjs';
+import { toolInputRejection } from './tool-input.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -169,13 +170,14 @@ export class NativeKernel {
           const rejectedDraft = configuration.contract.finalSubmissionSchema !== null && result.kind === 'final_candidate';
           facts.push({ kind: 'model.completed', payload: { kind: result.kind, text: rejectedDraft ? '' : result.text,
             ...(rejectedDraft ? { candidateStatus: 'rejected' } : {}),
+            usageReported: result.usageReported !== false,
             toolCalls: result.toolCalls.map(objectValue), usage: objectValue(result.usage) } });
           break;
         }
         case 'tool': {
           const calls = intent.payload.calls as unknown as ToolCall[];
           const results = raw.results as unknown as ToolResult[];
-          changes = reduceTools(snapshot, results, calls, intent, configuration);
+          changes = reduceTools(snapshot, results, calls, intent, configuration, this.digest);
           for (const [index, result] of results.entries()) facts.push({ kind: result.status === 'approval_required' ? 'approval.requested' : 'tool.completed',
             payload: { callId: calls[index]!.callId, name: calls[index]!.name, status: result.status,
               ...(result.status === 'uncertain' ? {} : { content: result.content }),
@@ -212,7 +214,8 @@ export class NativeKernel {
     } catch (error) {
       const code = error instanceof NativeError ? error.code : 'effect_port_error';
       if (intent.kind === 'model' && !signal.aborted && ['effect_timeout', 'effect_port_error'].includes(code)) {
-        const result: ModelResult = { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage(), failureKind: code === 'effect_timeout' ? 'request_timeout' : 'host_error' };
+        const result: ModelResult = { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false,
+          failureKind: code === 'effect_timeout' ? 'request_timeout' : 'host_error' };
         raw = objectValue(result);
         changes = reduceModel(snapshot, result, configuration, this.now(), this.random());
         status = 'failed';
@@ -232,7 +235,8 @@ export class NativeKernel {
       case 'model': {
         const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
         const request: ModelRequest = { ...context, profile: copy(configuration.profile), messages: copy(snapshot.messages),
-          tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true };
+          tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
+          maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
         return this.ports.model.generate(request, event => { if (!context.signal.aborted) this.onStream(context, event); });
       }
       case 'tool': {
@@ -240,6 +244,8 @@ export class NativeKernel {
         const results = await Promise.all(calls.map(async call => {
           const definition = configuration.tools.find(tool => tool.name === call.name);
           invariant(definition, 'unbound_tool');
+          const rejection = toolInputRejection(definition, call);
+          if (rejection) return { status: 'error' as const, content: rejection };
           const deadline = new AbortController(), started = this.now();
           const toolSignal = AbortSignal.any([context.signal, deadline.signal]);
           const timer = setTimeout(() => deadline.abort(new NativeError('tool_timeout')), definition.timeoutMs);

@@ -1,7 +1,7 @@
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
 import type { Json, ObjectValue, RunConfiguration, ToolCall, ToolDefinition } from './contracts.mjs';
-import { canonical, invariant } from './values.mjs';
+import { canonical, copy, invariant } from './values.mjs';
 import { parseModelJson } from './model-json.mjs';
 
 export const FINAL_SUBMISSION_TOOL = 'submit_final_output';
@@ -18,6 +18,7 @@ function bounded(value: Json, depth = 0): boolean {
 function compile(schema: ObjectValue): ValidateFunction {
   const key = canonical(schema), cached = compiled.get(key);
   if (cached) return cached.validate;
+  schema = copy(schema);
   // Match the reference's bounded, ASCII-escaped JSON including separator spaces.
   let length = 0, quoted = false, escaped = false;
   for (const character of key.split('')) {
@@ -65,7 +66,7 @@ export function finalSubmissionTool(config: RunConfiguration): ToolDefinition | 
 }
 export function submittedFinalText(call: ToolCall, config: RunConfiguration): string | null {
   const { finalSubmissionSchema: schema, finalSubmissionPayloadKey: key, finalOutputFormat: format } = config.contract;
-  if (!schema || call.name !== FINAL_SUBMISSION_TOOL || !compile(schema)(call.arguments)) return null;
+  if (!schema || call.name !== FINAL_SUBMISSION_TOOL || call.wireArgumentsInvalid || !compile(schema)(call.arguments)) return null;
   const output = key === null ? call.arguments : call.arguments[key];
   if (format === 'text') return typeof output === 'string' ? output : null;
   return output === undefined ? null : canonical(output);
