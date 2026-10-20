@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonical, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
+import { NATIVE_DSH_CONTENT_FORMAT } from './dsh-turn-contract.mjs';
 
 export const NATIVE_DELIVERY_PROJECTION = 'agentkitNativeDelivery';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -132,10 +133,12 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
         append('tool/call', { turn, step, callId: projectedCallId(call.callId), name: call.name, arguments: canonical(call.arguments) });
       }
     };
-    const result = (key, callId, text, isError) => {
+    const blocks = message => message.presentation?.format === NATIVE_DSH_CONTENT_FORMAT
+      ? structuredClone(message.presentation.content) : [{ type: 'text', text: message.content }];
+    const result = (key, callId, message, isError) => {
       const projected = projectedCallId(callId);
       append('tool/result', { turn, step, message: { id: id(key), role: 'tool', source: { kind: 'tool', callId: projected },
-        toolCallId: projected, content: [{ type: 'text', text }], isError } }, { surfaceOp: 'append' });
+        toolCallId: projected, content: blocks(message), isError } }, { surfaceOp: 'append' });
       pending.delete(callId);
     };
     const drain = through => {
@@ -144,9 +147,15 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
         const index = cursor++, message = messages[index];
         if (message.history || message.role === 'system' || admittedUsers.has(index)) continue;
         if (message.role === 'user') {
-          // Only admitted human steering is a new public user message. Model,
-          // verification and Hook feedback are private execution context.
-          if (['guidance', 'steering'].includes(message.kind)) append('user/message', {
+          // Human steering and Host-admitted tool context keep distinct sources.
+          // Model, verification and Hook feedback remain private execution context.
+          if (message.kind === 'tool_context' && message.presentation?.format === NATIVE_DSH_CONTENT_FORMAT) {
+            const original = message.presentation.source;
+            const contextSource = original?.kind === 'tool' ? { ...original, callId: projectedCallId(original.callId) }
+              : original || { kind: 'agentkit-native-tool-context', form: 'notice', summary: 'Tool-provided context' };
+            append('user/message', { id: id(`transcript:${index}`), role: 'user', source: contextSource,
+              content: blocks(message) }, { surfaceOp: 'append' });
+          } else if (['guidance', 'steering'].includes(message.kind)) append('user/message', {
             id: id(`transcript:${index}`), role: 'user', source: { kind: 'user' },
             content: [{ type: 'text', text: message.content }] }, { surfaceOp: 'append' });
         }
@@ -155,7 +164,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
           if (status === undefined) {
             try { status = JSON.parse(message.content)?.status; } catch { status = undefined; }
           }
-          result(`transcript:${index}`, message.callId, message.content, ['error', 'uncertain', 'not_dispatched'].includes(status));
+          result(`transcript:${index}`, message.callId, message, ['error', 'uncertain', 'not_dispatched'].includes(status));
         } else invariant(false, 'native_delivery_assistant_binding_missing');
       }
     };
@@ -184,8 +193,8 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
         const intent = record.intents.find(item => item.kind === 'tool' && item.payload.calls?.some(call => call.callId === callId));
         const receipt = intent && record.receipts.find(item => item.operationKey === intent.operationKey);
         const unknown = intent?.status === 'running' && (!receipt || receipt.status === 'uncertain');
-        result(`closure:${callId}`, callId, canonical({ status: unknown ? 'uncertain' : 'not_dispatched',
-          reason: unknown ? 'effect_outcome_unknown' : snapshot.reason ?? 'run_ended' }), true);
+        result(`closure:${callId}`, callId, { content: canonical({ status: unknown ? 'uncertain' : 'not_dispatched',
+          reason: unknown ? 'effect_outcome_unknown' : snapshot.reason ?? 'run_ended' }) }, true);
       }
       if (snapshot.finalText && (lastAssistant?.text !== snapshot.finalText || lastAssistant.calls.length)) {
         assistant('final-delivery', snapshot.finalText, [], null);

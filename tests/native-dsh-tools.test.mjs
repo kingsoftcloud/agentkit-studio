@@ -97,4 +97,34 @@ test('external tool additional contexts are retained in the Native receipt', asy
   host.ctx.tools.execute = async () => ({ isError: false, content: [{ type: 'text', text: 'Loaded' }], additionalContexts: contexts });
   const result = await host.gateway.forAgent(host.agent).tools.execute(host.request({}, 'external'));
   assert.equal(result.status, 'ok'); assert.deepEqual(result.content.additionalContexts, contexts);
+  assert.equal(result.context.content, 'Loaded');
+  assert.equal(result.additionalContexts[0].content, 'Skill body');
+  assert.deepEqual(result.context.presentation.content, [{ type: 'text', text: 'Loaded' }]);
+  assert.deepEqual(result.additionalContexts[0].presentation.source, { kind: 'tool', callId: 'provider-id' });
+});
+test('Native model and display views use the authoritative post-policy receipt', async t => {
+  const host = setup(t);
+  host.ctx.tools.execute = async input => {
+    await host.registry.get(input.name).execute(input.arguments, input);
+    return { isError: false, content: [{ type: 'text', text: 'Policy-redacted result' }] };
+  };
+  const result = await host.gateway.forAgent(host.agent).tools.execute(host.request());
+  assert.equal(result.context.content, 'Policy-redacted result');
+  assert.deepEqual(result.context.presentation.content, [{ type: 'text', text: 'Policy-redacted result' }]);
+  assert.deepEqual(result.workspaceChangedPaths, ['file.txt']);
+});
+test('tool image observations use Host-owned bytes and retain their structured display receipts', async t => {
+  const host = setup(t, ['external']), ref = { attachmentId: 'owned-image', name: 'observation.png' };
+  host.registry.set('external', { name: 'external', parameters: { type: 'object' } });
+  const blocks = [{ type: 'text', text: 'Image observation' }, { type: 'image', attachment: ref }];
+  let reads = 0;
+  host.ctx.get = name => name === 'attachments' ? { readImageRequest: async receipt => {
+    assert.deepEqual(receipt, ref); reads++; return { mediaType: 'image/png', data: new Uint8Array([1, 2, 3]) };
+  } } : undefined;
+  host.ctx.tools.execute = async () => ({ isError: false, content: blocks });
+  const result = await host.gateway.forAgent(host.agent).tools.execute(host.request({}, 'external'));
+  assert.equal(reads, 1); assert.equal(result.context.content, 'Image observation');
+  assert.equal(result.context.media[0].image_url.url, 'data:image/png;base64,AQID');
+  assert.deepEqual(result.context.presentation.content, blocks);
+  assert.notEqual(result.context.presentation.content, blocks);
 });

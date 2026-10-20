@@ -47,6 +47,26 @@ function ports() {
   tools: { execute: async () => { calls.write++; return { status: 'ok', content: 'Published once' }; } } };
 }
 
+test('typed Host tool blocks and deferred context replay to Session without JSON envelopes', async t => {
+  const { store } = setup(t), sink = consumer(), adapters = ports();
+  const toolBlocks = [{ type: 'text', text: 'Visible tool receipt' }], extraBlocks = [{ type: 'text', text: 'Loaded skill instructions' }];
+  adapters.tools.execute = async () => ({ status: 'ok', content: { privateReceipt: 'not display text' },
+    context: { content: 'Visible tool receipt', presentation: { format: 'agentkit.dsh-content/v1', content: toolBlocks } },
+    additionalContexts: [{ content: 'Loaded skill instructions', presentation: { format: 'agentkit.dsh-content/v1',
+      content: extraBlocks, source: { kind: 'tool', callId: 'publish-1' } } }] });
+  const onCheckpoint = delivery(store, sink), worker = new NativeKernel({ store, digest, owner: 'worker', ports: adapters, onCheckpoint });
+  const completed = await worker.runUntilIdle(scope, 'run');
+  const receipt = sink.events.find(event => event.type === 'tool/result').data.message;
+  assert.deepEqual(receipt.content, toolBlocks);
+  const extra = sink.events.find(event => event.type === 'user/message' && event.data.source?.kind === 'tool');
+  assert.deepEqual(extra.data.content, extraBlocks); assert.equal(extra.data.source.callId, receipt.toolCallId);
+  assert.ok(sink.events.indexOf(extra) > sink.events.findIndex(event => event.type === 'tool/result'));
+  assert.equal(JSON.stringify(sink.events).includes('privateReceipt'), false);
+  const before = structuredClone(sink.events);
+  await onCheckpoint(completed); await worker.runUntilIdle(scope, 'run');
+  assert.deepEqual(sink.events, before);
+});
+
 test('committed transcript, usage and step boundaries replay without duplicate appends', async t => {
   const { store } = setup(t), sink = consumer(), adapters = ports();
   const onCheckpoint = delivery(store, sink, { source: { ...source, apiKey: 'never-export-this', replayState: { secret: true } } });

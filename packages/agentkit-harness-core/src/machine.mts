@@ -5,6 +5,7 @@ import { prepareEffect, transition } from './transitions.mjs';
 import { retryDelay } from './retry.mjs';
 import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normalizedFinalText } from './final-submission.mjs';
 import { currentHookState, pendingHookFeedback, planHook } from './hook-runtime.mjs';
+import { toolContext, deferredToolContexts } from './tool-context.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -291,8 +292,10 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     }
     if (result.resourceUsage) updated.descendantUsage = addUsage(updated.descendantUsage, result.resourceUsage);
     const definition = config.tools.find(tool => tool.name === call.name);
-    updated.messages.push({ role: 'tool', callId: call.callId, name: call.name, content: canonical(result.content),
+    updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
+      role: 'tool', callId: call.callId, name: call.name,
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
+    updated.queuedGuidance.push(...deferredToolContexts(result.additionalContexts));
     if (result.status === 'ok' && definition && ['workspace_read', 'workspace_search', 'workspace_list', 'artifact_read'].includes(definition.contextRole)) {
       const prior = updated.context.observedSourceDigests;
       const observed: ObjectValue = prior && typeof prior === 'object' && !Array.isArray(prior) ? copy(prior) : {};
@@ -314,6 +317,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
     context: updated.context,
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
+    queuedGuidance: updated.queuedGuidance,
     workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null, toolErrorStreak: updated.toolErrorStreak };
 }
 export function settle(snapshot: RunSnapshot, intent: EffectIntent, receipt: EffectReceipt, changes: Partial<RunSnapshot>, elapsedMs: number, facts: { kind: string; payload: ObjectValue }[] = []): CommitBatch {

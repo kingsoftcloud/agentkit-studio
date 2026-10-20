@@ -3,6 +3,7 @@ import { resolve, join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { canonical, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/native/workspace-tools.mjs';
+import { projectNativeDshContent } from './native-input.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const OUTPUT = { type: 'object', properties: { result: { type: 'string' } }, required: ['result'], additionalProperties: false };
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
@@ -97,8 +98,23 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir }) {
           const externalFailure = result?.isError && !builtinNames.has(request.call.name);
           const status = invocation.outcome?.status === 'uncertain' || afterWriteFailure || externalFailure || result?.concludesTurn ? 'uncertain'
             : invocation.outcome?.status === 'error' || result?.isError ? 'error' : 'ok';
+          const options = { signal: request.signal, attachments: () => ctx.get?.('attachments'),
+            fileRequestText: async ref => {
+              const llm = ctx.get?.('llm');
+              invariant(typeof llm?.fileRequestText === 'function', 'STUDIO_FILE_ATTACHMENT_UNAVAILABLE');
+              return llm.fileRequestText(ref);
+            } };
+          const context = await projectNativeDshContent(result.content, options), additionalContexts = [];
+          for (const message of result.additionalContexts ?? []) {
+            invariant(message?.role === 'user', 'studio_native_tool_context_invalid');
+            const projected = await projectNativeDshContent(message.content, options);
+            if (message.source) projected.presentation.source = message.source.kind === 'tool'
+              ? { ...structuredClone(message.source), callId: request.call.callId } : structuredClone(message.source);
+            additionalContexts.push(projected);
+          }
           return { ...invocation.outcome, status, content: result?.additionalContexts?.length
-            ? { content: result.content, additionalContexts: result.additionalContexts } : result?.content ?? result?.value ?? null };
+            ? { content: result.content, additionalContexts: result.additionalContexts } : result.content,
+          context, ...(additionalContexts.length ? { additionalContexts } : {}) };
         } finally { calls.delete(callId); }
       } } };
     },

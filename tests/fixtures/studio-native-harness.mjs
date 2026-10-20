@@ -81,4 +81,10 @@ export async function apply(ctx, options) {
     }
     return next();
   });
+  ctx.on('tools/post-execute', async (exec, result, next) => {
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError) return next();
+    return { kind: 'accept', content: [{ type: 'text', text: `Published ${exec.arguments.path} (policy view)` }],
+      additionalContexts: [{ id: `context-${exec.callId}`, role: 'user', source: { kind: 'tool', callId: exec.callId },
+        content: [{ type: 'text', text: `Loaded context for ${exec.arguments.path}` }] }] };
+  });
 }

@@ -13,7 +13,10 @@ export interface RunIdentity {
   parentRunId: string | null; taskChainId: string;
 }
 export interface ToolCall { callId: string; name: string; arguments: ObjectValue; wireArgumentsInvalid?: boolean }
-export interface Message {
+/** Host-owned display data is opaque to the model protocol and grants no authority. */
+export interface MessagePresentation { format: string; content: Json[]; source?: ObjectValue }
+export interface ToolContextMessage { content: string; media?: Json[]; presentation?: MessagePresentation }
+export interface Message extends ToolContextMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'; content: string;
   kind?: string; callId?: string; name?: string; toolCalls?: ToolCall[];
   /** Private provider protocol data; never part of a public event's payload. */
@@ -149,6 +152,10 @@ export interface Usage {
 export interface ArtifactRef { uri: string; digest: string; mediaType: string; sizeBytes: number; metadata: ObjectValue }
 export interface ToolResult {
   status: 'ok' | 'error' | 'approval_required' | 'uncertain'; content: Json;
+  /** Explicit model view of the committed receipt; absent keeps legacy JSON encoding. */
+  context?: ToolContextMessage;
+  /** Deferred until every call in the model's tool batch has a result. */
+  additionalContexts?: ToolContextMessage[];
   interactionId?: string; workspaceChangedPaths?: string[]; artifactRefs?: ArtifactRef[];
   resourceUsage?: Usage; childRunIds?: string[]; metadata?: ObjectValue;
 }
