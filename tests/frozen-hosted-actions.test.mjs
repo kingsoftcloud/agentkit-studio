@@ -123,3 +123,18 @@ test('Hosted UI Offset pages and forward session_seq acknowledgements cover ever
   assert.equal(empty.NextCursor, 73);
   assert.equal(empty.HasMore, false);
 });
+
+
+test('session_seq honors an exclusive BeforeSeqId with or without a lower bound', async () => {
+  const events = ['turn/start', 'user/message', ...Array(8).fill('assistant/message'), 'turn/end'].map((type, seq) => ({ type, seq, time: 1700000000000 + seq,
+    data: type === 'user/message' ? { source: { rpcId: 'native-run' }, content: [] } : { message: { content: [] }, reason: { kind: 'completed' } } }));
+  const options = { handle: { read: async (offset, length) => ({ events: events.slice(offset, offset + length) }) },
+    session: { sessionId: 'public', nativeSessionId: 'native', epoch: 'fixed-epoch' }, latestSeq: events.length,
+    invocationId: async () => 'invocation', signal: AbortSignal.timeout(10000) };
+  for (const after of [undefined, 3]) {
+    const page = await readFrozenSessionEvents({ ...options, request: { EventOrder: 'session_seq', BeforeSeqId: 7,
+      ...(after === undefined ? {} : { AfterSeqId: after }), HistoryEpoch: 'fixed-epoch', SnapshotSeqId: events.length, Limit: 20 } });
+    assert.deepEqual(page.Events.map(x => x.SeqId), Array.from({ length: 6 - (after ?? 0) }, (_, i) => i + 1 + (after ?? 0)));
+    assert.equal(page.NextCursor, 6); assert.equal(page.HasMore, false); assert.equal(page.SnapshotSeqId, events.length);
+  }
+});
