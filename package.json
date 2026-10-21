@@ -6,6 +6,15 @@
   "packageManager": "pnpm@10.33.2",
   "icon": "./assets/agentkit-studio.svg",
   "description": "AgentKit Studio product plugin with an independent TypeScript provider for the official DSH host.",
+  "homepage": "https://kingsoftcloud.github.io/agentkit-studio/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kingsoftcloud/agentkit-studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kingsoftcloud/agentkit-studio/issues"
+  },
+  "license": "Apache-2.0",
   "exports": {
     ".": "./src/index.mjs",
     "./client": "./dist/client.js",
