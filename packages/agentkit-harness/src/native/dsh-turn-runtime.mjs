@@ -82,7 +82,8 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
         const unknownEffect = previous.receipts.some(receipt => receipt.status === 'uncertain'
           && !(receipt.result.recoveryPolicy === 'safe-read/v1' && receipt.result.retryScheduled === true)
           && ['tool', 'hook', 'child', 'input'].includes(previous.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind));
-        if (!terminal(head.phase) || head.phase === 'interrupted' || unknownEffect) {
+        const unsettledChildren = (previous.snapshot.childBudgetReservations ?? []).some(item => item.settledUsageDigest === null);
+        if (!terminal(head.phase) || head.phase === 'interrupted' || unknownEffect || unsettledChildren) {
           throw failure('NATIVE_RUN_RECOVERY_REQUIRED', previous.snapshot);
         }
       }

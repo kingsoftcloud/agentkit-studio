@@ -4,6 +4,7 @@ import { canonical, copy, invariant, runKey, scopeKey } from './values.mjs';
 import { outstandingChildCalls, validateChildBudgetTransition } from './child-budget.mjs';
 import { transcriptExtends } from './context-view.mjs';
 import { isCommandObservationBatch } from './background-runtime.mjs';
+import { isChildReadyBatch } from './child-runtime.mjs';
 
 /** The backend must serialize read/modify/write atomically, including failures. */
 export interface LedgerBackend {
@@ -151,8 +152,17 @@ export class TransactionalRunStore implements RunStore {
           && batch.requireNoPendingCommands;
         const backgroundRetired = intent?.kind === 'model' && receipt.result.code === 'superseded_by_background_observation'
           && receipt.result.executed === false && isCommandObservationBatch(previous, record.configuration, batch, intent);
+        const childRetired = intent?.kind === 'model' && receipt.result.code === 'superseded_by_child_observation'
+          && receipt.result.executed === false && isChildReadyBatch(previous, record.configuration, batch, intent);
+        const childCancelRetired = command && ['cancel', 'policy_revoked'].includes(command.kind)
+          && record.configuration.childLifecyclePolicy === 'owned-background/v2'
+          && (previous.childBudgetReservations ?? []).some(item => item.settledUsageDigest === null)
+          && next.phase === 'finalizing' && next.childTerminalPhase === (command.kind === 'cancel' ? 'canceled' : 'failed')
+          && receipt.result.commandId === command.commandId && receipt.result.code === 'superseded_before_dispatch'
+          && receipt.result.executed === false;
         const undispatched = receipt.status === 'not_dispatched' && intent?.status === 'prepared'
-          && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null && (steeringRetired || browserRetired || backgroundRetired);
+          && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null
+          && (steeringRetired || browserRetired || backgroundRetired || childRetired || childCancelRetired);
         invariant((receipt.status === 'not_dispatched' ? undispatched : intent?.status === 'running')
           && !record.receipts.some(item => item.operationKey === receipt.operationKey), 'receipt_without_claim');
       }
@@ -180,7 +190,7 @@ export class TransactionalRunStore implements RunStore {
       invariant(intent?.status === 'prepared' && record.snapshot.pendingIntent === operationKey
         && !record.receipts.some(receipt => receipt.operationKey === operationKey), 'effect_already_claimed');
       invariant(pendingCommands(record).length === 0, 'pending_command_conflict');
-      const running = { ...intent, status: 'running' as const, claimedAtMs: now };
+      const running = { ...intent, status: 'running' as const, claimedAtMs: now, claimedFence: lease.fence };
       // A prepared request reserves execution order, not provider usage. Charge
       // its attempt atomically with the claim, including claims lost in a crash.
       const snapshot = intent.kind === 'model' ? { ...record.snapshot, usage: {

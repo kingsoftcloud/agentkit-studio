@@ -293,6 +293,19 @@ for (const sqlite of [false, true]) {
     await assert.rejects(host.execute(host.payload), { code: 'NATIVE_RUN_RECOVERY_REQUIRED', nativeRunId: head.runId });
     assert.equal(host.head().runId, head.runId); assert.equal(host.calls.model, 1);
   });
+  test(`${kind}: a canceled parent with unsettled children cannot start a new DSH turn`, async t => {
+    const host = setup(t, sqlite), held = fixture();
+    held.snapshot.childBudgetReservations = [{ childRunId: 'unsettled-child', childScope: scope,
+      parentOperationKey: 'original-start', parentToolCallId: 'start-call', childRequestDigest: digest('request'),
+      configurationDigest: digest('configuration'), maxModelCalls: 2, maxToolCalls: 1, settledUsageDigest: null }];
+    held.snapshot.childRunIds = ['unsettled-child'];
+    host.store.create(held.config, held.snapshot);
+    const worker = new NativeKernel({ store: host.store, owner: 'cancel-held-parent', digest, ports: host.binding.ports });
+    worker.submit(scope, 'run', { commandId: 'cancel', kind: 'cancel', payload: {} });
+    assert.equal((await worker.runUntilIdle(scope, 'run')).phase, 'canceled');
+    await assert.rejects(host.execute(host.payload), { code: 'NATIVE_RUN_RECOVERY_REQUIRED', nativeRunId: 'run' });
+    assert.deepEqual(host.calls, { model: 0, write: 0 });
+  });
   test(`${kind}: a completed safe-read recovery permits the next DSH turn without repeating the read`, async t => {
     const host = setup(t, sqlite), recovered = fixture({ tools: [tool({ recoveryPolicy: 'safe-read/v1' })] });
     host.store.create(recovered.config, recovered.snapshot);

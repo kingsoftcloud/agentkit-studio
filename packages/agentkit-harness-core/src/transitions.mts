@@ -3,6 +3,7 @@ import { terminal } from './contracts.mjs';
 import { canonical, copy, invariant, runKey } from './values.mjs';
 import { admitSteering } from './task-contract.mjs';
 import type { SteeringBindings } from './task-contract.mjs';
+import { unsettledChildren } from './child-runtime.mjs';
 
 export function transition(snapshot: RunSnapshot, changes: Partial<RunSnapshot>, facts: { kind: string; payload: ObjectValue }[] = [],
   options: { intents?: EffectIntent[]; receipts?: EffectReceipt[]; commandId?: string; requireNoPendingCommands?: boolean } = {}): CommitBatch {
@@ -28,6 +29,10 @@ export function prepareEffect(snapshot: RunSnapshot, kind: EffectKind, phase: Ph
 export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pending: EffectIntent | null = null,
   bindings: SteeringBindings = {}): CommitBatch {
   const original = snapshot;
+  if (snapshot.childTerminalPhase && !['cancel', 'policy_revoked'].includes(command.kind)) {
+    return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
+      kind: command.kind, reason: 'run_stopping' } }], { commandId: command.commandId, requireNoPendingCommands: false });
+  }
   if (command.kind === 'steer' && ['effect_outcome_unknown', 'recovery_retry_exhausted', 'browser_session_unavailable'].includes(snapshot.reason ?? '')) {
     return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
       kind: command.kind, reason: 'recovery_required' } }], { commandId: command.commandId, requireNoPendingCommands: false });
@@ -50,8 +55,11 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       receipts: retire ? [{ operationKey: pending!.operationKey, status: 'not_dispatched',
         result: { code: 'contract_revision_required', commandId: command.commandId, executed: false } }] : [] });
   }
-  const retiring = ['guide', 'steer'].includes(command.kind) && typeof command.payload.text === 'string'
-    && command.payload.text.trim().length > 0 && pending?.status === 'prepared' && pending.operationKey === snapshot.pendingIntent;
+  const deferredChildCancel = ['cancel', 'policy_revoked'].includes(command.kind)
+    && bindings.configuration?.childLifecyclePolicy === 'owned-background/v2' && unsettledChildren(snapshot).length > 0;
+  const retiring = (['guide', 'steer'].includes(command.kind) && typeof command.payload.text === 'string'
+    && command.payload.text.trim().length > 0 || deferredChildCancel)
+    && pending?.status === 'prepared' && pending.operationKey === snapshot.pendingIntent;
   if (retiring) snapshot = { ...snapshot, pendingIntent: null };
   let changes: Partial<RunSnapshot> = {}, reason = 'applied';
   const facts: { kind: string; payload: ObjectValue }[] = [];
@@ -66,6 +74,8 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
         outcome: command.kind === 'cancel' ? 'unverified' : 'blocked',
         reason: command.kind === 'cancel' ? 'user_canceled' : 'policy_revoked', finalText: '',
         pendingIntent: null, pendingTools: [], pendingInteraction: null, interaction: null };
+      if (deferredChildCancel) Object.assign(changes, { phase: 'finalizing', childLifecycleFailure: null,
+        childTerminalPhase: command.kind === 'cancel' ? 'canceled' : 'failed', childApproval: null, candidate: null, verification: null });
       break;
     case 'pause':
       if (snapshot.phase === 'paused') reason = 'already_paused';
@@ -80,7 +90,8 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       if (snapshot.phase !== 'awaiting_interaction' || !pending || command.payload.interactionId !== pending.interactionId
         || command.payload.decision !== 'allow' && command.payload.decision !== 'deny') reason = 'interaction_mismatch';
       else {
-        changes = { phase: 'executing_tools', pendingInteraction: null,
+        changes = { phase: snapshot.childApproval ? snapshot.resumePhase ?? 'preparing_context' : 'executing_tools',
+          ...(snapshot.childApproval ? { resumePhase: null, childLifecycleCursor: null } : {}), pendingInteraction: null,
           interaction: { interactionId: pending.hostInteractionId, callId: pending.callId, decision: command.payload.decision } };
         facts.push({ kind: 'approval.resolved', payload: { interactionId: pending.interactionId, callId: pending.callId, decision: command.payload.decision } });
       }

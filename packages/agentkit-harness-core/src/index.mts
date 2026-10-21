@@ -23,3 +23,5 @@ export * from './task-policy.mjs';
 export * from './background-contract.mjs';
 export * from './background-runtime.mjs';
 export * from './child-budget.mjs';
+export * from './child-contract.mjs';
+export * from './child-runtime.mjs';

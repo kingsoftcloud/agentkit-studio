@@ -16,6 +16,9 @@ export interface ConfigurationInput {
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
   inputMessages?: Message[] | null;
   backgroundNotificationPolicy?: RunConfiguration['backgroundNotificationPolicy'];
+  childLifecyclePolicy?: RunConfiguration['childLifecyclePolicy'];
+  childApprovalPolicy?: RunConfiguration['childApprovalPolicy'];
+  childOwnerBinding?: RunConfiguration['childOwnerBinding'];
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
   const profile: ModelProfile = {
@@ -38,6 +41,9 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     inputMessages: input.inputMessages ?? null,
     ...(input.backgroundNotificationPolicy === undefined ? {} : { backgroundNotificationPolicy: input.backgroundNotificationPolicy }),
+    ...(input.childLifecyclePolicy === undefined ? {} : { childLifecyclePolicy: input.childLifecyclePolicy }),
+    ...(input.childApprovalPolicy === undefined ? {} : { childApprovalPolicy: input.childApprovalPolicy }),
+    ...(input.childOwnerBinding === undefined ? {} : { childOwnerBinding: input.childOwnerBinding }),
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
     contextPolicy: input.contextPolicy ?? null,
     workspaceObservationPolicy: input.workspaceObservationPolicy ?? null,
@@ -47,6 +53,22 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       finalSubmissionSchema: null, finalSubmissionPayloadKey: null, finalOutputFormat: 'text', ...input.contract },
   };
   canonical(config);
+  invariant(config.childLifecyclePolicy == null || config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_lifecycle_policy');
+  invariant(config.childApprovalPolicy == null || config.childApprovalPolicy === 'owned-child-approval/v1'
+    && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_approval_policy');
+  if (config.childOwnerBinding) {
+    const binding = config.childOwnerBinding;
+    scopeKey(binding.parent.scope);
+    invariant(binding.contract === 'agentkit.native-child-owner/v1'
+      && [binding.parent.runId, binding.parent.sessionId, binding.parent.turnId, binding.parent.buildId, binding.parent.taskChainId,
+        binding.parentOperationKey, binding.parentToolCallId, binding.role].every(value => typeof value === 'string' && value.trim())
+      && /^[0-9a-f]{64}$/.test(binding.childRequestDigest)
+      && Number.isSafeInteger(binding.parentExecutionFence) && binding.parentExecutionFence > 0
+      && Number.isSafeInteger(binding.maxModelCalls) && binding.maxModelCalls >= 1
+      && Number.isSafeInteger(binding.maxToolCalls) && binding.maxToolCalls >= 0
+      && limits.maxModelCalls === binding.maxModelCalls && limits.maxToolCalls === binding.maxToolCalls,
+    'invalid_child_owner_binding');
+  }
   invariant(config.contract.objective.trim() && config.hostBindingDigest.trim()
     && profile.profileId.trim() && profile.profileVersion.trim() && profile.providerFamily.trim()
     && profile.compatibilityDigest.trim(), 'configuration_identity_missing');
@@ -151,6 +173,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
     childBudgetReservations: [], childRunIds: [],
+    childLifecycleCursor: null, childLifecycleFailure: null, childApproval: null, childTerminalPhase: null,
     workspaceDirtySinceCheckpoint: false, lastWorkspaceMutationToolCall: null,
     checkpointWorkspaceRevision: null, checkpointWebMutationToolCall: null, verificationToolCalls: null,
     failureFingerprint: null, failureEvidenceDigest: null,

@@ -11,6 +11,7 @@ import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObse
 import { checkpointCandidate, finishCheckpoint } from './verification.mjs';
 import { rememberCommand } from './background-runtime.mjs';
 import { admittedToolBudget, outstandingChildCalls, reduceChildBudget } from './child-budget.mjs';
+import { prepareChildLifecycle, unsettledChildren } from './child-runtime.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -62,6 +63,14 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
   digest: (value: unknown) => string = canonical): CommitBatch | null {
   if (snapshot.phase === 'paused' || snapshot.phase === 'awaiting_interaction') return null;
   invariant(snapshot.pendingIntent === null, 'pending_effect_requires_dispatch');
+  if (snapshot.phase !== 'finalizing' && config.limits.maxWallMs !== null && snapshot.activeElapsedMs >= config.limits.maxWallMs) {
+    return finalizing(snapshot, 'budget_exhausted', 'execution_budget_exhausted');
+  }
+  const childLifecycle = prepareChildLifecycle(snapshot, config);
+  if (childLifecycle) return childLifecycle;
+  if (snapshot.phase === 'verifying' && config.childLifecyclePolicy !== 'owned-background/v2' && unsettledChildren(snapshot).length) {
+    return finalizing(snapshot, 'unverified', 'child_owner_unavailable');
+  }
   if (!snapshot.pendingTools.length && snapshot.queuedGuidance.length) return transition(snapshot, {
     messages: [...snapshot.messages, ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null,
   });
@@ -77,11 +86,12 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     }
     const outcome = snapshot.outcome ?? 'unverified';
     const text = snapshot.candidate?.text ?? snapshot.finalText;
-    const phase = ['effect_outcome_unknown', 'browser_session_unavailable', 'recovery_retry_exhausted'].includes(snapshot.reason ?? '') ? 'interrupted'
-      : outcome === 'failed' || !text.trim() ? 'failed' : 'completed';
+    const phase = snapshot.childTerminalPhase ?? (['effect_outcome_unknown', 'browser_session_unavailable', 'recovery_retry_exhausted',
+      'child_owner_unavailable', 'child_receipt_unavailable', 'background_children_unsettled'].includes(snapshot.reason ?? '') ? 'interrupted'
+      : outcome === 'failed' || !text.trim() ? 'failed' : 'completed');
     return transition(snapshot, { phase, finalText: snapshot.candidate?.text ?? snapshot.finalText, pendingTools: [] }, [{ kind: 'run.terminal', payload: {
       phase, outcome, reason: snapshot.reason, finalText: snapshot.candidate?.text ?? snapshot.finalText, usage: objectValue(snapshot.usage),
-      usageComplete: snapshot.diagnostics.providerUsageIncomplete !== true,
+      usageComplete: snapshot.diagnostics.providerUsageIncomplete !== true && snapshot.diagnostics.descendantUsageIncomplete !== true,
     } }]);
   }
   if (config.limits.maxWallMs !== null && snapshot.activeElapsedMs >= config.limits.maxWallMs) {

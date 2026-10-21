@@ -1,5 +1,7 @@
 import type { BrowserObservation, BrowserRecovery, BrowserSessionRef } from './browser-contract.mjs';
 import type { BackgroundCommandPort, BackgroundCommandRef, BackgroundCommandState } from './background-contract.mjs';
+import type { ChildApproval, ChildLifecyclePort, ChildOwnerBinding } from './child-contract.mjs';
+export type { ChildLifecyclePort } from './child-contract.mjs';
 export type { BackgroundCommandPort } from './background-contract.mjs';
 
 /** Serializable contracts. No Host services, filesystem handles or credentials. */
@@ -155,6 +157,9 @@ export interface RunConfiguration {
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
   backgroundNotificationPolicy?: 'completed-before-model/v1' | null;
+  childLifecyclePolicy?: 'owned-background/v2' | null;
+  childApprovalPolicy?: 'owned-child-approval/v1' | null;
+  childOwnerBinding?: ChildOwnerBinding;
 }
 export interface Usage {
   inputTokens: number; outputTokens: number; modelCalls: number; toolCalls: number; cost: number;
@@ -218,7 +223,7 @@ export interface CompletionCandidate {
 }
 export interface ChildState {
   runId: string; sessionId: string; operationKey: string; callId: string;
-  state: 'prepared' | 'running' | 'awaiting_interaction' | 'completed' | 'failed' | 'canceled';
+  state: 'prepared' | 'running' | 'awaiting_interaction' | 'completed' | 'failed' | 'canceled' | 'interrupted';
   reservedModelCalls: number | null; reservedToolCalls: number | null; usage: Usage;
   notified: boolean; metadata: ObjectValue;
 }
@@ -251,6 +256,8 @@ export interface RunSnapshot extends RunIdentity {
   failureFingerprint: string | null; failureEvidenceDigest: string | null;
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
   childBudgetReservations: ChildBudgetReservation[]; childRunIds: string[];
+  childLifecycleCursor?: string | null; childLifecycleFailure?: 'poll' | 'wait' | 'cancel' | null;
+  childApproval?: ChildApproval | null; childTerminalPhase?: 'canceled' | 'failed' | null;
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
   hookState: HookState | null;
   contextState: ContextPlanningState | null;
@@ -271,7 +278,7 @@ export interface BrowserEvidence {
 }
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
 export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child' | 'input';
-export interface EffectIntent { operationKey: string; kind: EffectKind; payload: ObjectValue; status: 'prepared' | 'running'; claimedAtMs?: number }
+export interface EffectIntent { operationKey: string; kind: EffectKind; payload: ObjectValue; status: 'prepared' | 'running'; claimedAtMs?: number; claimedFence?: number }
 export interface EffectReceipt { operationKey: string; status: 'committed' | 'failed' | 'uncertain' | 'not_dispatched'; result: ObjectValue }
 export type CommandKind = 'cancel' | 'policy_revoked' | 'pause' | 'resume' | 'submit_interaction'
   | 'steer' | 'guide' | 'promote_child' | 'message_child' | 'cancel_child';
@@ -308,6 +315,8 @@ export interface RunStore {
 }
 export interface PortContext extends RunIdentity {
   operationKey: string; signal: AbortSignal;
+  /** Generation that claimed this effect; never taken from current store state after dispatch. */
+  executionFence?: number;
 }
 export interface ModelRequest extends PortContext {
   profile: ModelProfile; messages: Message[]; tools: ToolDefinition[]; finalizationOnly: boolean;
@@ -352,9 +361,6 @@ export interface ArtifactPort {
   write(request: PortContext & { content: string; mediaType: string; metadata: ObjectValue }): Promise<ArtifactRef>;
   read(request: PortContext & { ref: ArtifactRef; offset: number; limit: number }): Promise<{ content: string; nextOffset: number | null }>;
   search(request: PortContext & { query: string; limit: number }): Promise<ArtifactRef[]>;
-}
-export interface ChildLifecyclePort {
-  invoke(request: PortContext & { action: 'start' | 'resume' | 'cancel' | 'message' | 'promote' | 'release' | 'observe'; input: ObjectValue }): Promise<ObjectValue>;
 }
 export interface NativePorts {
   model: ModelPort; tools: ToolPort; workspace?: WorkspacePort; context?: ContextPort;
