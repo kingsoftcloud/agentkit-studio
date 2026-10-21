@@ -69,7 +69,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ? control.kernel.childTasks(scope, runId) : [];
     } });
   };
-  const execute = createNativeDshTurnExecutor({ store, projections, flush: session => sessions.flush(session),
+  const execute = createNativeDshTurnExecutor({ store, projections, durableOwnership: true, flush: session => sessions.flush(session),
     publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),
     onActive: (_payload, control) => {
       const key = controlKey(control.scope.agentId, control.sessionId);

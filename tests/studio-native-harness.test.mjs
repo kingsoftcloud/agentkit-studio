@@ -8,6 +8,7 @@ import { MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
+import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 import { buildExecutionEngine } from '../src/build-engine.mjs';
 
@@ -40,7 +41,7 @@ async function setup(t, { spec = {}, profile = {}, respond } = {}) {
         usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
     } });
   t.after(async () => { await host.close(); await rm(root, { recursive: true, force: true }); });
-  const payload = { agent: { session, options: { provider: 'agentkit-studio-fixture', model: 'pinned' } },
+  const payload = { agent: { session, externalTurns: nativeOwnershipHost(session, events), options: { provider: 'agentkit-studio-fixture', model: 'pinned' } },
     input: { kind: 'enter', messages: [{ id: 'input-1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Finish' }] }], assembly: { tools: [] } },
     turn: 1, signal: new AbortController().signal, prepareInput: async () => ({ kind: 'enter', messages: [], assembly: payload.input.assembly }),
     binding: { agentId: record.metadata.id, agentRevision: 1, runtime: 'harness', local: true,
@@ -121,7 +122,7 @@ test('Studio Native cancellation during a Host approval rejects its late grant',
   const controller = new AbortController(); fixture.payload.signal = controller.signal;
   const execution = fixture.host.executeTurn(fixture.payload);
   await asked; controller.abort(new Error('user canceled approval'));
-  await assert.rejects(execution, /user canceled approval/);
+  assert.deepEqual(await execution, { reason: { kind: 'aborted', reason: { kind: 'disposed' } } });
   grant('allowed-once');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(writes, 0); assert.equal(fixture.head().phase, 'canceled');
@@ -202,7 +203,9 @@ test('a changed Frozen revision and a mid-run model binding cannot dispatch an H
   changed.models.profile = async id => {
     const profile = await original(id); return ++lookups > 1 ? { ...profile, baseUrl: 'https://changed.invalid/v1' } : profile;
   };
-  await assert.rejects(changed.host.executeTurn(changed.payload), { code: 'NATIVE_TURN_FAILED', nativeReason: 'provider_terminal_error' });
+  assert.deepEqual(await changed.host.executeTurn(changed.payload), { reason: { kind: 'error',
+    error: { code: 'NATIVE_TURN_FAILED', message: 'provider_terminal_error' } } });
+  assert.equal(changed.head().phase, 'failed');
   assert.equal(changed.requests.length, 0);
   const snapshot = changed.head(), record = changed.ledger.load(snapshot.scope, snapshot.runId);
   const receipts = record.receipts.filter(receipt => record.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind === 'model');
@@ -269,8 +272,8 @@ test('Studio Native close during a stalled input claim fences late admission', a
   const entered = new Promise(resolve => { enter = resolve; }), late = new Promise(resolve => { finish = resolve; });
   fixture.payload.prepareInput = async () => { enter(); await late; return { kind: 'enter', messages: [], assembly: fixture.payload.input.assembly }; };
   const running = fixture.host.executeTurn(fixture.payload);
-  const rejected = assert.rejects(running, /Studio Native host closed/);
-  await entered; await fixture.host.close(); await rejected;
+  await entered; await fixture.host.close();
+  assert.deepEqual(await running, { reason: { kind: 'aborted', reason: { kind: 'disposed' } } });
   assert.equal(fixture.head().phase, 'canceled'); assert.equal(fixture.requests.length, 1);
   const run = fixture.head(), before = fixture.ledger.load(run.scope, run.runId);
   assert.ok(before.receipts.some(receipt => receipt.status === 'uncertain'));
@@ -293,7 +296,9 @@ test('Studio Native binds context/output budgets and the production counter from
 test('Studio Native refuses an over-budget request before HTTP when compaction is disabled', async t => {
   const fixture = await setup(t, { spec: { context: { maxInputTokens: 3000, reserveOutputTokens: 128, compaction: { enabled: false } } } });
   fixture.payload.input.messages[0].content[0].text = '中文上下文'.repeat(1000);
-  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'NATIVE_TURN_FAILED', nativeReason: 'context_compaction_disabled' });
+  assert.deepEqual(await fixture.host.executeTurn(fixture.payload), { reason: { kind: 'error',
+    error: { code: 'NATIVE_TURN_FAILED', message: 'context_compaction_disabled' } } });
+  assert.equal(fixture.head().phase, 'failed');
   assert.equal(fixture.requests.length, 0);
   assert.equal(fixture.head().usage.modelCalls, 0);
 });

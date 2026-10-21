@@ -72,6 +72,7 @@
     "verify-desktop-installed-update": "node scripts/verify-desktop-installed-update.mjs",
     "verify-dsh-sdk": "node scripts/verify-dsh-sdk-node-store.mjs",
     "verify-native-dsh-turn": "node scripts/verify-native-dsh-turn.mjs",
+    "verify-native-owned-recovery": "node scripts/verify-native-owned-recovery.mjs",
     "verify-native-dsh-output": "node scripts/verify-native-dsh-output.mjs",
     "verify-native-dsh-browser": "node scripts/verify-native-dsh-browser.mjs",
     "verify-native-dsh-numeric": "node scripts/verify-native-dsh-numeric.mjs",

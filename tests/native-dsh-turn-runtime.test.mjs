@@ -365,6 +365,25 @@ for (const sqlite of [false, true]) {
     assert.equal(reads, 1); assert.equal(host.head().parentRunId, 'run');
     assert.deepEqual(host.calls, { model: 1, write: 0 });
   });
+  test(`${kind}: a canceled crashed write without any receipt still requires reconciliation before a new turn`, async t => {
+    const host = setup(t, sqlite), lost = fixture({ tools: [tool({ name: 'write', readOnly: false, concurrentSafe: false })] });
+    host.store.create(lost.config, lost.snapshot);
+    const lease = host.store.acquire(scope, 'run', 'lost-writer', 1, 1);
+    const write = { callId: 'write-lost', name: 'write', arguments: {} };
+    const prepared = prepareEffect(lost.snapshot, 'tool', 'executing_tools', { calls: [write], interaction: null }, {
+      pendingTools: [write], messages: [...lost.snapshot.messages, { role: 'assistant', content: '', toolCalls: [write] }],
+    });
+    host.store.commit(scope, 'run', lease, 1, 0, prepared);
+    host.store.claim(scope, 'run', lease, 1, prepared.snapshot.pendingIntent);
+    const worker = new NativeKernel({ store: host.store, owner: 'cancel-lost-writer', digest, now: () => 100, ports: host.binding.ports });
+    worker.submit(scope, 'run', { commandId: 'cancel', kind: 'cancel', payload: {} });
+    assert.equal((await worker.runUntilIdle(scope, 'run')).phase, 'canceled');
+    const record = host.store.load(scope, 'run');
+    assert.ok(record.intents.some(intent => intent.kind === 'tool' && intent.status === 'running'));
+    assert.equal(record.receipts.length, 0, 'Cancellation is not proof of the write result');
+    await assert.rejects(host.execute(host.payload), { code: 'NATIVE_RUN_RECOVERY_REQUIRED', nativeRunId: 'run' });
+    assert.deepEqual(host.calls, { model: 0, write: 0 });
+  });
   test(`${kind}: repeating an already consumed interaction cannot spin indefinitely`, async t => {
     let prompts = 0;
     const host = setup(t, sqlite, { onIdle: async () => {

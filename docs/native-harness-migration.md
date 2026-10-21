@@ -1,6 +1,6 @@
 # Native Harness TypeScript 迁移
 
-宿主维护源码提供显式 `Agent.externalTurns` 生命周期：执行器可在副作用前持久记录版本化 `turn/owner`，重建 Agent 保留其原未结束轮次；可信 Host 显式恢复时独占该轮次，失败保持开放并停放后续输入，成功只关闭一次。普通 DSH 轮次与 fork 继续原修复路径，旧版读取器会拒绝不支持的必读事件。Native 消费投影同步记录轮次开放状态，已关闭轮次不能继续投递，刷新等待期间关闭也不推进消费游标。这些接口和保护已实现，但 Studio 尚未写入该归属标记，也尚未接通父 Run 冷恢复控制入口；当前生产路径不能据此宣称已支持重启续跑。
+Studio 的 Native 整轮执行现在先通过 `Agent.externalTurns` 写入版本化 `turn/owner`，等待会话持久刷新，再创建 Native Run。归属记录包含原 scope、Session、轮次、Run、Build、前序 Run、任务链、完整冻结配置及摘要、原始输入和模型来源，不包含端口或模型凭证。刷新失败或超时不会执行模型和工具；取消发生在此窗口时，先保存原 Run 的取消命令。重建 Agent 保留原未结束轮次；Node 执行适配器已提供显式 `resume()`，由可信 Host 重新绑定端口并核对完整配置后独占同一轮次、推进同一 Run。普通 DSH 轮次与 fork 继续原修复路径。生产 Host 的恢复控制入口及 UI 尚未接通，不能据此宣称产品冷恢复已完成。
 
 当前迁移尚未完成，Studio 的默认 Harness 仍沿用既有执行路径。生产 Host 已加入可显式启用的 Native 整轮执行与 Node 工作区工具组装；这不代表全部 Python 正式能力、各产品入口或安装方式已通过验收。
 
@@ -358,7 +358,9 @@ Memory 与 SQLite 都执行上述事务边界；真实独立 Node 进程在事�
 
 新建的 Studio 父 Run 还保存 `agentkit.studio-native-recovery-binding/v1`：原 Agent 修订、可选 Frozen Build、模型路由、输出预算、原始 DSH 输入及原系统提示。它属于参与配置摘要的 Host 数据；核心只保存和校验 JSON 对象，不解释 DSH 对象或授予权限，不保存模型凭证和工具执行句柄。`readNativeRecoveryBinding` 核对配置摘要与原 Agent/Session/Run 身份，`assertNativeRecoveryPreset` 拒绝 preset、修订、Build 或 runtime 变化。`rebindNativeDshConfiguration` 再核对原 scope、Session、轮次、Build 及完整冻结配置；重新编译时使用原任务契约，不能重新授予预算或改成新任务。模型、工具、权限契约、输入、提示或预算变化都会在启动 worker 前拒绝。旧 Run 没有该字段仍可读取，但不能根据当前默认值猜测恢复绑定。
 
-这些是冷恢复的绑定与校验基础，尚未接通冷恢复控制入口。维护宿主现通过 `dsh.external-turn-host/v1` 保留带 `turn/owner` 的原未结束轮次，并提供显式独占恢复；普通中断轮次仍追加 `interruptedTurnClosers`。Native 投影已区分开放与关闭轮次，禁止向已关闭轮次继续投递。整轮 preset 还提供仅进程内有效的 `agentkit/native-recovery-binding` 查询，可信 Host 通过官方 `agentEvents` 取得该 Agent 作用域已有的工具绑定，查询本身不启动执行。Studio 仍需在首次执行前写入完整归属、处理 Session 与 Native 账本之间的中断窗口、重绑原 preset 并接管原 Run，再贯通控制与展示；不能把这些接口或同轮重放称为冷恢复完成。
+维护宿主通过 `dsh.external-turn-host/v1` 保留带 `turn/owner` 的原未结束轮次，并提供显式独占恢复；普通中断轮次仍追加 `interruptedTurnClosers`。Native 投影区分开放与关闭轮次，禁止向已关闭轮次继续投递。整轮 preset 提供仅进程内有效的 `agentkit/native-recovery-binding` 查询，可信 Host 通过官方 `agentEvents` 取得该 Agent 作用域已有的工具绑定，查询本身不启动执行。Studio 首次执行已写入完整归属并处理 Session 与 Native 两个存储之间的启动和取消窗口；Node 适配器可重建尚未创建的原 Run，或推进已存在的原 Run，恢复不会重编译原任务契约或重置预算。仍需生产 Host 重绑原 preset、恢复端点及 UI，不能将底层接口验收等同于全部产品恢复完成。
+
+`node scripts/verify-native-owned-recovery.mjs --source <维护宿主构建目录>` 使用真实公开 Agent、JSONL 与 Native SQLite，在独立 Node 进程中直接退出，不执行清理或释放租约，再由新进程重开。五个故障点是归属刷新后且 Run 创建前、首个模型回执提交后、真实文件写入后但回执提交前、Native 终态投递后但 DSH 结束前，以及归属刷新期间取消。验证保留原日志前缀和完整执行身份、等待原租约到期、取得新 fence、模型回执不重复执行、未知写入不重跑、终态仅结束一次，以及持久取消恢复后零模型/工具调用。未知写入保持 `interrupted` 和开放归属，要求显式核对。端口为确定性测试实现；此验证覆盖实际进程和持久化边界，尚不覆盖生产 Host 冷恢复或浏览器 UI。
 
 绑定阶段的三个相关模块在 Node 26 / 22 各通过 88 项。随后补充 Session/轮次拒绝及旧 Run 的同轮次重放兼容，只复验两个直接相关模块；兼容重放不向旧 Run 追加元数据，其他执行配置漂移或已有恢复绑定被替换仍会拒绝。打包后的实际 `mountStudioHost` 两轮子任务验证另核实这份绑定在 Host 重启和 SQLite 重开后仍保留原模型、修订与输入，且不含模型密钥。验证运行在仅有 Node 的 PATH 下，复用固定本地依赖图；不等于全新安装或冷恢复端到端验收。
 

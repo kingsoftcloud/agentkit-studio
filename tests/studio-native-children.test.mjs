@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
+import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { nativeChildRoles } from '../src/providers/native-subagents.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
@@ -93,7 +94,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
       { headers: { 'content-type': 'text/event-stream' } });
     } });
   t.after(async () => { await host.close(); await gateway.close(); ledger.close?.(); await rm(root, { recursive: true, force: true }); });
-  const payload = { agent: { session, options: { provider: 'agentkit-studio-parent-profile', model: 'parent-model' } },
+  const payload = { agent: { session, externalTurns: nativeOwnershipHost(session, events), options: { provider: 'agentkit-studio-parent-profile', model: 'parent-model' } },
     signal: new AbortController().signal, turn: 1,
     input: { kind: 'enter', messages: [{ id: 'user', role: 'user', source: { kind: 'user' }, content: inputParts ?? [{ type: 'text', text: goal }] }],
       assembly: { tools: [...registered.values()] } },

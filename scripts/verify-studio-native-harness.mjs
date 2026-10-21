@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { respondToAutomationProof, runAutomationProof, verifyAutomationLedger } from './native-automation-proof.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
@@ -193,7 +194,11 @@ try {
   for (let turn = 1; turn <= 2; turn++) {
     const result = await session.run(`Publish marker ${turn} and report completion.`);
     assert.equal(result.finalResponse, `Native turn ${turn} completed.`, JSON.stringify(result.events.filter(event => event.type === 'turn/end')));
-    for (const kind of ['turn/start', 'turn/end', 'tool/call', 'tool/result']) assert.equal(result.events.filter(event => event.type === kind).length, 1, kind);
+    for (const kind of ['turn/start', 'turn/owner', 'turn/end', 'tool/call', 'tool/result']) assert.equal(result.events.filter(event => event.type === kind).length, 1, kind);
+    const owner = result.events.find(event => event.type === 'turn/owner');
+    const admission = readNativeDshOwnership(owner.data, { sessionId: 'native-studio-session', turn });
+    assert.ok(owner.seq < result.events.find(event => event.type === 'step/start').seq);
+    assert.equal(admission.configuration.hostRecoveryBinding.source.model, 'pinned');
     for (const kind of ['step/start', 'step/end', 'assistant/message']) assert.equal(result.events.filter(event => event.type === kind).length, 2, kind);
     assert.equal(result.events.some(event => ['request/header', 'request/context'].includes(event.type)), false);
     assert.deepEqual(result.events.filter(event => event.type === 'assistant/message').map(event => event.data.usage),
@@ -217,6 +222,7 @@ try {
   if (values.automation) automationProof = await runAutomationProof(root);
   const delegated = await harness.session('default-session').run('Use the default engine.');
   assert.equal(delegated.finalResponse, 'Default engine completed.');
+  assert.equal(delegated.events.some(event => event.type === 'turn/owner'), false);
   await harness.close(); harness = null;
   assert.deepEqual(failures, []); assert.equal(requests.length, 6);
   if (values['mcp-schema']) assert.deepEqual(mcpEffects, ['published-1.txt', 'published-2.txt']);
