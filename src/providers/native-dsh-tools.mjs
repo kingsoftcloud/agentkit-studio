@@ -6,11 +6,12 @@ import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/
 import { projectNativeDshContent } from './native-input.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
+import { nativeMcpOutcome } from './native-mcp-output.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
-export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath }) {
+export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
@@ -40,6 +41,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const builtin = [...allowed].filter(name => contracts.get(name)?.executor === 'builtin'
     || formal.has(name) && contracts.get(name)?.executor !== 'mcp');
   const builtinNames = new Set(builtin);
+  const mcpContracts = new Map([...contracts].filter(([name, contract]) => allowed.has(name) && contract.executor === 'mcp'
+    && String(contract.mcpResourceId || contract.resourceId || '').trim()));
+  invariant(!mcpContracts.size || typeof executeMcpTool === 'function', 'studio_native_mcp_executor_unavailable');
   let closed = false, closing, disposers = [];
   const close = () => {
     if (closing) return closing;
@@ -54,9 +58,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     });
   };
   const install = () => {
-    disposers = builtin.map(name => {
-      const definition = formal.get(name) ?? contracts.get(name);
-      return ctx.tools.register({ name, description: definition.description, parameters: definition.parameters,
+    disposers = [...builtin, ...mcpContracts.keys()].map(name => {
+      const definition = mcpContracts.has(name) ? mcpContracts.get(name) : formal.get(name) ?? contracts.get(name);
+      return ctx.tools.register({ name, description: definition.description ?? '',
+        parameters: definition.parameters ?? { type: 'object', properties: {} },
         output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
         execute: async (args, exec) => {
           const invocation = calls.get(String(exec.callId));
@@ -76,11 +81,17 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
               page_errors: observation.pageErrors, console: observation.console, request_failures: observation.networkFailures };
             outcome = { status: observation.status, content, context: { content: canonical(content),
               ...(observation.screenshot ? { media: [observation.screenshot.contentBlock] } : {}) } };
+          } else if (mcpContracts.has(name)) {
+            const contract = mcpContracts.get(name);
+            outcome = nativeMcpOutcome(await executeMcpTool({ agentId: config.agentId,
+              resourceId: String(contract.mcpResourceId || contract.resourceId).trim(), name,
+              arguments: args, signal: exec.signal, callId: exec.callId, agent: exec.agent, resultFormat: 'mcp-result/v1' }));
           } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
             : formal.has(name) ? await state(exec.agent).execute({ ...invocation.request, signal: exec.signal })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
           invocation.outcome = structuredClone(outcome);
-          return nativeDshBuiltinOutput(outcome, { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
+          return nativeDshBuiltinOutput(mcpContracts.has(name) ? { ...outcome, content: outcome.context.content } : outcome,
+            { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
         },
       });
     });
@@ -90,6 +101,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   return {
     close,
     argumentEncoding,
+    mcpResultContract: mcpContracts.size ? 'mcp-result/v1' : null,
     releaseSession: request => browserTools.releaseSession(request),
     /** Trusted verifier only: every concrete cold action still runs the DSH permission pipeline. */
     async verifyBrowserPage(agent, request) {
@@ -165,10 +177,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             arguments: args, ...(exactNumbers ? { argumentEncoding } : {}), signal: request.signal, agent });
           request.signal.throwIfAborted();
           invariant(typeof result?.isError === 'boolean' && Array.isArray(result.content), 'studio_native_tool_result_invalid');
-          const afterWriteFailure = result?.isError && invocation.outcome?.status === 'ok' && !formal.get(request.call.name)?.readOnly;
+          const readOnlyBuiltin = builtinNames.has(request.call.name) && formal.get(request.call.name)?.readOnly;
+          const afterWriteFailure = result?.isError && invocation.outcome?.status === 'ok' && !readOnlyBuiltin;
           // Without an owned builtin receipt an external failure cannot prove
           // whether its effect ran. Never infer safe retry from isError alone.
-          const externalFailure = result?.isError && !builtinNames.has(request.call.name);
+          const externalFailure = result?.isError && !builtinNames.has(request.call.name) && !invocation.outcome
+            && (!mcpContracts.has(request.call.name) || invocation.dispatched);
           const status = invocation.outcome?.status === 'uncertain' || afterWriteFailure || externalFailure || result?.concludesTurn ? 'uncertain'
             : invocation.outcome?.status === 'error' || result?.isError ? 'error' : 'ok';
           const options = { signal: request.signal, attachments: () => ctx.get?.('attachments'),

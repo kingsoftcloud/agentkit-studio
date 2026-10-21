@@ -8,11 +8,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 
-const { values } = parseArgs({ options: { source: { type: 'string' } } });
+const { values } = parseArgs({ options: { source: { type: 'string' }, 'studio-mcp': { type: 'boolean', default: false } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 const source = resolve(values.source), root = await mkdtemp(join(tmpdir(), 'native-dsh-numeric-'));
 const exact = '{"id":9007199254740993,"zero":-0.0,"float":1.0000000000000001e+18,"ordinary":7,"record":{"rawJSON":"9007199254740993"}}';
 const expected = parseNativeJson(exact), failures = [], modelRequests = [], mcpEffects = [];
+const toolName = values['studio-mcp'] ? 'echo' : 'mcp__exact__echo';
 let harness;
 const server = createServer(async (request, response) => {
   try {
@@ -42,6 +43,7 @@ const server = createServer(async (request, response) => {
         assert.equal(Object.is(received.zero, -0), true);
         mcpEffects.push(body);
         result = { content: [{ type: 'text', text: canonical(received) }] };
+        if (values['studio-mcp']) Object.assign(result, { structuredContent: { count: 7 }, _meta: { privateAudit: 'private-mcp-audit' } });
       } else throw Error(`Unexpected MCP method ${input.method}`);
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ jsonrpc: '2.0', id: input.id, result }));
@@ -50,9 +52,13 @@ const server = createServer(async (request, response) => {
     assert.equal(request.url, '/v1/chat/completions');
     modelRequests.push(input);
     const delta = modelRequests.length === 1 ? { role: 'assistant', tool_calls: [{ index: 0, id: 'exact-call', type: 'function',
-      function: { name: 'mcp__exact__echo', arguments: exact } }] } : { role: 'assistant', content: 'Exact numeric turn completed.' };
+      function: { name: toolName, arguments: exact } }] } : { role: 'assistant', content: 'Exact numeric turn completed.' };
     if (modelRequests.length > 1) assert.ok(input.messages.some(message => message.role === 'tool'
       && message.content.includes('9007199254740993') && message.content.includes('-0.0')));
+    if (values['studio-mcp'] && modelRequests.length > 1) {
+      assert.ok(input.messages.some(message => message.role === 'tool' && message.content.includes('"structuredContent":{"count":7}')));
+      assert.equal(JSON.stringify(input.messages).includes('private-mcp-audit'), false);
+    }
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: modelRequests.length === 1 ? 'tool_calls' : 'stop' }],
       usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
@@ -68,10 +74,13 @@ try {
   await writeFile(patch, [
     '- id: session-persistence-jsonl', "  name: '@deepseek-ai/dsh-session-persistence-jsonl'", '  config:',
     `    root: ${JSON.stringify(join(root, 'sessions'))}`, '    compression: none', '- insert:',
-    '    - id: exact-mcp', "      name: '@deepseek-ai/dsh-mcp-client'", '      config:', '        transport: streamable-http',
-    '        serverName: exact', `        url: ${JSON.stringify(`${origin}/mcp`)}`, '        failOnStartupError: true',
+    ...values['studio-mcp'] ? [] : [
+      '    - id: exact-mcp', "      name: '@deepseek-ai/dsh-mcp-client'", '      config:', '        transport: streamable-http',
+      '        serverName: exact', `        url: ${JSON.stringify(`${origin}/mcp`)}`, '        failOnStartupError: true',
+    ],
     '    - id: numeric-verification', `      name: ${JSON.stringify(pathToFileURL(fixture).href)}`, '      config:',
     `        directory: ${JSON.stringify(root)}`, `        modelUrl: ${JSON.stringify(`${origin}/v1`)}`,
+    `        studioMcpUrl: ${JSON.stringify(values['studio-mcp'] ? `${origin}/mcp` : '')}`,
     `        promptModule: ${JSON.stringify(join(source, 'packages/core/system-prompt/lib/index.js'))}`, '',
   ].join('\n'));
   harness = new DeepSeekHarness({ dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches: [patch],
@@ -96,6 +105,7 @@ try {
   assert.equal(canonical(parseNativeJson(policies[0].arguments)), canonical(expected));
   const receipts = await readFile(join(root, 'native-receipts.json'), 'utf8');
   assert.ok(receipts.includes('9007199254740993')); assert.deepEqual(failures, []);
+  if (values['studio-mcp']) assert.ok(receipts.includes('structuredContent'));
   await harness.close(); harness = null;
   console.log('PASS: shipped SDK profile; Native exact model arguments → DSH policy → MCP HTTP → ledger receipt → model continuation; replay dispatched no second effect.');
 } finally {

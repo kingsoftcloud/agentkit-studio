@@ -501,6 +501,17 @@ trusted session and ledger scope; cleanup drains before the driver admits
 another activation. Cleanup failure fences that owner and preserves the
 original error and durable Run state. Reattachment probes the old reference
 and requires explicit reload after loss, rather than replaying old inputs.
+The production Studio resource adapter now supports an explicit `mcp-result/v1`
+reply mode for Native-owned registrations. It retains structured content and
+known remote errors in the Run receipt, while the model consumes only the
+post-policy text and admitted attachment references. The reference text-mirror
+rule, binary omission and no-fetch handling for embedded URIs are projected
+separately from raw receipt data. Ordinary DSH and Codex callers retain their
+existing content-list format. A real SDK profile covers the Studio preset,
+runtime bridge, resource adapter and model continuation; HTTP, stdio and legacy
+SSE have targeted result-format checks. Incoming structured numeric tokens
+still pass through ordinary MCP JSON decoding, so exact numeric result fidelity
+remains open for both Studio's client and the alternate DSH MCP plugin.
 Final repair feedback also excludes audit locations and raw evidence. Durable
 failure fingerprints and subject/environment/diagnostic digests prevent a new
 artifact URI from creating false progress after reattachment. Repairs reset

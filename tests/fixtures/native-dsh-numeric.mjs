@@ -8,6 +8,9 @@ import { createNativeModelPort } from '../../packages/agentkit-harness/src/nativ
 import { nativeDeliveryProjection } from '../../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { createNativeDshTurnExecutor } from '../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
+import { mountRuntimeBridge } from '../../src/host/runtime-bridge.mjs';
+import * as studioRuntime from '../../src/providers/dsh-runtime-plugin.mjs';
 
 export const name = 'studio-native-numeric-verification';
 export const inject = ['tools', 'llm', 'sessions', 'sessionProjections'];
@@ -19,11 +22,23 @@ export async function apply(ctx, options) {
   const store = new SqliteRunStore(join(options.directory, 'native.sqlite'));
   ctx.effect(() => () => store.close(), 'Native numeric verification ledger');
   ctx.effect(() => ctx.sessionProjections.register(nativeDeliveryProjection()), 'Native delivery fold');
+  const toolName = options.studioMcpUrl ? 'echo' : 'mcp__exact__echo';
+  const contract = { name: toolName, executor: 'mcp', ...(options.studioMcpUrl ? { resourceId: 'exact',
+    parameters: { type: 'object' }, description: 'Echo exact numbers and structured content.' } : {}) };
+  const resources = options.studioMcpUrl ? createLocalResourceAdapters({
+    resourceStore: { get: async id => id === 'exact' ? { endpointUrl: options.studioMcpUrl } : null },
+  }) : null;
+  if (resources) ctx.effect(() => () => resources.close(), 'Studio MCP production resources');
+  const bridge = resources ? mountRuntimeBridge(ctx) : null;
+  if (bridge) ctx.effect(() => bridge.setResourceToolExecutor(({ resourceId, name, arguments: args, signal, resultFormat }) =>
+    resources.callMcpTool(resourceId, name, args, { signal, resultFormat })), 'Studio MCP resource execution');
   const gateway = createNativeDshTools({ ctx, workspaceRoot: join(options.directory, 'workspace'), stateDir: join(options.directory, 'tools'),
-    config: { toolBindings: ['mcp__exact__echo'], toolContracts: [{ name: 'mcp__exact__echo', executor: 'mcp' }] } });
+    config: { toolBindings: [toolName], toolContracts: [contract] }, ...(resources ? {
+      executeMcpTool: request => bridge.executeResourceTool(request),
+    } : {}) });
   if (gateway.argumentEncoding !== 'dsh.raw-json-number/v1') throw Error('SDK exact-number capability missing');
   ctx.tools.guard(exec => {
-    if (exec.name !== 'mcp__exact__echo') return undefined;
+    if (exec.name !== toolName) return undefined;
     if (exec.argumentEncoding !== gateway.argumentEncoding) return 'Missing exact numeric argument encoding';
     if (exec.arguments.ordinary !== 7) return 'Ordinary numbers must retain their primitive representation';
     return undefined;
@@ -67,10 +82,16 @@ export async function apply(ctx, options) {
       };
     },
   });
-  ctx.on('agent/execute-turn', async (payload, next) => {
+  const drive = async (payload, next = () => { throw Error('Native turn was not claimed'); }) => {
     const result = await executeTurn(payload);
     if (result === undefined) return next();
     await executeTurn(payload);
     return result;
-  });
+  };
+  if (resources) {
+    ctx.effect(() => bridge.setNativeToolsFactory(() => gateway), 'Studio MCP Native tool composition');
+    ctx.effect(() => bridge.setNativeTurnExecutor(drive), 'Studio MCP Native turn composition');
+    await ctx.plugin(studioRuntime, { agentId: 'numeric-studio', agentRevision: 1, runtime: 'harness', local: true,
+      nativeEngineContract: 'agentkit.native-dsh-turn/v1', toolBindings: [toolName], toolContracts: [contract] });
+  } else ctx.on('agent/execute-turn', drive);
 }

@@ -192,7 +192,9 @@ test('inline MCP descriptors resolve env credentials and execute through Streama
       if (message.method === 'initialize') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'test', version: '1' } } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'test-session' } });
       if (message.method === 'notifications/initialized') return new Response(null, { status: 202 });
       if (message.method === 'tools/list') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'search', inputSchema: { type: 'object' } }] } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'test-session' } });
-      if (message.method === 'tools/call') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'ok' }] } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'test-session' } });
+      if (message.method === 'tools/call') return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {
+        content: [{ type: 'text', text: 'ok' }], structuredContent: { count: 7 }, isError: Boolean(message.params.arguments.fail),
+      } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'test-session' } });
     }
     return new Response(null, { status: 405 });
   };
@@ -204,6 +206,14 @@ test('inline MCP descriptors resolve env credentials and execute through Streama
   const binding = { resourceId: 'metaso-inner', endpointUrl: 'https://example.test/mcp', credentialRef: 'env://KSC_AIPRO_API_KEY' };
   assert.deepEqual(await adapters.listMcpTools(binding), [{ name: 'search', inputSchema: { type: 'object' } }]);
   assert.deepEqual(await adapters.callMcpTool(binding, 'search', { query: 'hello' }), [{ type: 'text', text: 'ok' }]);
+  assert.deepEqual(await adapters.callMcpTool(binding, 'search', {}, { resultFormat: 'mcp-result/v1' }), {
+    content: [{ type: 'text', text: 'ok' }], structuredContent: { count: 7 }, isError: false,
+  });
+  assert.equal((await adapters.callMcpTool(binding, 'search', { fail: true }, { resultFormat: 'mcp-result/v1' })).isError, true);
+  await assert.rejects(adapters.callMcpTool(binding, 'search', { fail: true }), { code: 'MCP_TOOL_FAILED' });
+  const calls = requests.length;
+  await assert.rejects(adapters.callMcpTool(binding, 'search', {}, { resultFormat: 'unsupported' }), { code: 'MCP_RESULT_FORMAT_INVALID' });
+  assert.equal(requests.length, calls);
   assert.ok(requests.filter(item => item.method === 'initialize').every(item => item.authorization === 'Bearer secret-from-credential-service'));
   await adapters.close();
 });

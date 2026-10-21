@@ -178,6 +178,14 @@ DSH 维护补丁 `049` 提供显式协商的 `dsh.raw-json-number/v1` 工具参�
 
 MCP 的结构化返回值仍经过现有客户端的普通 JSON 解码；发送参数和文本返回的证据不能证明结构化数字也已保真。该接收方向及特殊 schema 引用仍是待闭环项目，不能把本阶段视为整个工具链已无损。
 
+## Studio MCP 完整结果接入
+
+实际 Studio 产品路径使用 `local-resource-adapters.mjs` 的 MCP SDK 1.31.0，而上述 DSH MCP 插件联测使用维护源码中的客户端。原产品适配器只返回 `content`，会丢失 `structuredContent`。Native 现通过 Host 私有的 `mcp-result/v1` 返回模式取得完整协议结果；该版本进入宿主绑定摘要。普通 DSH 与 Codex 调用继续使用原有内容列表。完整结果模式在 HTTP、stdio 和旧 SSE 的相关测试中保留结构化对象及已知错误；非法返回模式在连接前拒绝。
+
+Native 自己注册 revision 绑定的 MCP 工具，经过同一 DSH pre/guard/around/post/result 管线后才调用 Host 资源执行器；preset 不再为这些名字重复注册旧桥。完整结果作为 Native 原始回执，已知 `isError` 保持工具错误；传输中断没有回执时进入结果未知处理，不据此重跑。与 builtin 同名的 MCP 工具使用远端 schema，不能取得本地文件读取或浏览器观察权限。模型只看到后策略的投影：纯文本及唯一 FastMCP 字符串镜像可展开，其他结构化数据保留；`_meta` 不进模型，媒体不作为 base64 文本重复暴露，嵌入 URI 不会被抓取。支持的图片经过既有附件服务校验和发布，策略删去图片时 Native 不能从原始回执补回。
+
+`verify-native-dsh-numeric --source <built maintained DSH checkout> --studio-mcp` 在真实 SDK profile 中组装 Studio preset 插件、运行桥、生产资源适配器、Native SQLite 回执与整轮执行器，验证完整结果到后续模型及重复投递不重复执行。Node 26/22 均通过，Node 22 使用 `PATH=/no-programs`；原 DSH MCP 插件模式也通过相关回归。6 个受影响模块两版本各通过 96 项，随后只复验新增图片和同名权限用例所在模块；Host 绑定模块两版本各通过 19 项。结构化结果丢失已补齐，但 MCP 客户端解析入站数字的精度仍未闭环；这些结果不能替代完整 UI、全部 MCP 语义或全新无 Python 安装验收。
+
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
 
 安装配置、默认切换和完整恢复操作说明将在对应产品路径实际验证后补充，当前不可将本说明作为已完成迁移的运行手册。

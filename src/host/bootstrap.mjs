@@ -106,14 +106,14 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   ctx.effect(() => bridge.setAdapter(dshRuntimeAdapter), 'agentkit-studio: runtime transport registration');
   const routeDshRuntime = (options, next) => routeRuntime(options, next, bridge, request => hostCompatibility.isAgentLoopRequest(request));
   ctx.on('llm/stream', routeDshRuntime);
-  ctx.effect(() => bridge.setResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal } = {}) => {
+  ctx.effect(() => bridge.setResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal, resultFormat } = {}) => {
     const adapters = await resourceAdaptersPromise;
     if (typeof adapters?.callMcpTool !== 'function') {
       const error = new Error('AgentKit Studio MCP 资源适配器不可用');
       error.code = 'MCP_RESOURCE_ADAPTER_MISSING';
       throw error;
     }
-    return adapters.callMcpTool(resourceId, name, args, { signal });
+    return adapters.callMcpTool(resourceId, name, args, { signal, resultFormat });
   }), 'agentkit-studio: resource tool registration');
   ctx.inject(['llm'], llmCtx => {
     // registerAdapter already returns a disposer. Put the registration call
@@ -139,6 +139,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config }) => createNativeDshTools({ ctx: toolsCtx, config,
       workspaceRoot, stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
+      executeMcpTool: request => bridge.executeResourceTool(request),
     })), 'agentkit-studio: Native tool environment');
   }
   let nativeHostPromise;

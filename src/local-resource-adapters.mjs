@@ -206,8 +206,9 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     }
   }
 
-  async function callMcpTool(id, name, args = {}, { signal } = {}) {
+  async function callMcpTool(id, name, args = {}, { signal, resultFormat = 'content' } = {}) {
     signal?.throwIfAborted();
+    if (!['content', 'mcp-result/v1'].includes(resultFormat)) throw new LocalResourceError('MCP_RESULT_FORMAT_INVALID', 'MCP 结果格式无效');
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
     const key = resourceId(id);
     const entry = await mcp(id);
@@ -218,6 +219,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       if (mcpClients.get(key) === entry) mcpClients.delete(key);
       throw mcpFailure(error, key, 'call', name);
     }
+    if (resultFormat === 'mcp-result/v1') return result;
     if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: key, name });
     return result?.content || result;
   }

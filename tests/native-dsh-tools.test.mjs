@@ -35,6 +35,76 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
 
+test('Native owns revision-bound MCP receipts while post-policy output controls the model view', async t => {
+  const invoked = [], reply = { content: [{ type: 'text', text: 'known answer' }], structuredContent: { count: 7 }, isError: false };
+  const host = setup(t, ['lookup'], [{ name: 'lookup', executor: 'mcp', mcpResourceId: 'catalog' }], {
+    executeMcpTool: async input => { invoked.push(input); return reply; },
+  });
+  const port = host.gateway.forAgent(host.agent).tools;
+  const output = await port.execute(host.request({}, 'lookup'));
+  assert.equal(output.status, 'ok'); assert.deepEqual(output.content, reply);
+  assert.match(output.context.content, /"structuredContent":\{"count":7\}/);
+  assert.equal(invoked[0].resultFormat, 'mcp-result/v1'); assert.equal(invoked[0].resourceId, 'catalog');
+  const execute = host.ctx.tools.execute;
+  host.ctx.tools.execute = async input => ({ ...await execute(input), content: [{ type: 'text', text: 'Host redacted result' }] });
+  const redacted = await port.execute(host.request({}, 'lookup'));
+  assert.equal(redacted.context.content, 'Host redacted result'); assert.deepEqual(redacted.content, reply);
+  host.deny(); const denied = await port.execute(host.request({}, 'lookup'));
+  assert.equal(denied.status, 'error'); assert.equal(invoked.length, 2);
+});
+test('a known MCP error is an error receipt while a transport failure requires reconciliation', async t => {
+  let failed = false;
+  const host = setup(t, ['lookup'], [{ name: 'lookup', executor: 'mcp', resourceId: 'catalog' }], {
+    executeMcpTool: async () => {
+      if (failed) throw new Error('transport lost');
+      return { content: [{ type: 'text', text: 'remote refused' }], isError: true };
+    },
+  });
+  const execute = host.ctx.tools.execute;
+  host.ctx.tools.execute = async input => {
+    try { return await execute(input); } catch { return { isError: true, content: [{ type: 'text', text: 'transport lost' }] }; }
+  };
+  const port = host.gateway.forAgent(host.agent).tools;
+  assert.equal((await port.execute(host.request({}, 'lookup'))).status, 'error');
+  failed = true;
+  assert.equal((await port.execute(host.request({}, 'lookup'))).status, 'uncertain');
+});
+test('MCP images enter the attachment policy while its public omission cannot expose raw receipt media', async t => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
+  const host = setup(t, ['lookup'], [{ name: 'lookup', executor: 'mcp', resourceId: 'catalog' }], {
+    executeMcpTool: async () => ({ content: [{ type: 'image', data: png, mimeType: 'image/png' }], structuredContent: { screenshot: png } }),
+  });
+  let saves = 0;
+  const ref = { attachmentId: 'fixture', mediaType: 'image/png', width: 1, height: 1, bytes: Buffer.from(png, 'base64').length };
+  host.ctx.get = name => name === 'attachments' ? {
+    imageLimits: { mediaTypes: ['image/png'], maxImageBytes: 1024, maxMessageImageBytes: 1024, maxImagesPerMessage: 1 },
+    saveImages: async images => { saves++; assert.equal(images[0].data.toString('base64'), png); return [ref]; },
+  } : undefined;
+  const execute = host.ctx.tools.execute;
+  host.ctx.tools.execute = async input => {
+    const result = await execute(input);
+    assert.equal(result.content.some(block => block.type === 'image'), true);
+    return { ...result, content: [{ type: 'text', text: 'Host omitted MCP image' }] };
+  };
+  const output = await host.gateway.forAgent(host.agent).tools.execute(host.request({}, 'lookup'));
+  assert.equal(output.status, 'ok'); assert.equal(saves, 1);
+  assert.equal(output.context.content, 'Host omitted MCP image'); assert.equal(output.context.media, undefined);
+  assert.equal(output.content.content[0].data, png);
+});
+test('a bound MCP name cannot acquire a same-named workspace builtin schema or safe-read authority', async t => {
+  const parameters = { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] };
+  let calls = 0;
+  const host = setup(t, ['read_workspace_file'], [{ name: 'read_workspace_file', executor: 'mcp', resourceId: 'catalog', parameters }], {
+    executeMcpTool: async () => { calls++; return { content: [{ type: 'text', text: 'external result' }] }; },
+  });
+  const definition = host.gateway.definitions(host.agent, [...host.registry.values()])[0];
+  assert.deepEqual(definition.parameters, parameters); assert.equal(definition.readOnly, false);
+  assert.equal(definition.observationRole, 'none');
+  host.postFailure();
+  const result = await host.gateway.forAgent(host.agent).tools.execute(host.request({ query: 'hello' }));
+  assert.equal(calls, 1); assert.equal(result.status, 'uncertain');
+});
+
 test('an unsupported exact integer is rejected before the DSH pipeline can execute an effect', async t => {
   const host = setup(t), port = host.gateway.forAgent(host.agent).tools;
   for (const numeric of [9007199254740993n, -0, 1000000000000000100.0]) {

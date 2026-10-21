@@ -312,7 +312,7 @@ export function apply(ctx, config = {}) {
   const wholeNativeTurn = config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT;
   const nativeToolBindings = wholeNativeTurn ? bridge.createNativeTools({ ctx, config }) : null;
   if (!wholeNativeTurn) registerBuiltinTools(ctx, config.toolContracts, config);
-  registerMcpTools(ctx, config.toolContracts, config, bridge);
+  if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, config.toolBindings);
   const toolAdapter = config.runtime === 'codex'
     ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) } : boundToolAdapter;
