@@ -13,7 +13,7 @@ export async function createTemplateCatalogSource({ studioStoreDir, env = proces
   try { settings = JSON.parse(await readFile(join(studioStoreDir,'template-source.json'),'utf8')); } catch(error) { if (error.code !== 'ENOENT') throw error; }
   const origin = env.AGENTKIT_TEMPLATE_SERVER_URL || settings?.origin;
   if (!origin && (env.AGENTKIT_TEMPLATE_CATALOG_FILE || settings?.source==='local')) return loadExpertCatalog(env.AGENTKIT_TEMPLATE_CATALOG_FILE || join(studioStoreDir,'template-catalog','catalog.json'), { optional:!env.AGENTKIT_TEMPLATE_CATALOG_FILE, personalLocal:true });
-  const environment=env.AGENTKIT_TEMPLATE_ENVIRONMENT||settings?.environment||'pre-online';
+  const environment=env.AGENTKIT_TEMPLATE_ENVIRONMENT||settings?.environment||'online';
   const fallback = createExpertCatalog(), direct = createTemplateCatalogClient({ origin, environment, configuration, serverClient, fetchImpl }), mirror=createPublicTemplateCatalogClient({environment,fetchImpl});
   let retryServerAt=0;
   const client={async action(name,payload={},options={}){
