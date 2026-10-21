@@ -1,13 +1,11 @@
 import { hostFetch } from './http-fetch.mjs';
 /** Host-owned adapters for resources bound to a local Agent revision. */
 import { createHash, randomUUID } from 'node:crypto';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client, StreamableHTTPClientTransport, SSEClientTransport, StdioClientTransport, getDefaultEnvironment } from '../dist/native-mcp-client.mjs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { materializeCloudSkill, runtimeSkill } from './skill-files.mjs';
+import { MCP_JSON_PARSER_CONTRACT, NATIVE_MCP_JSON_CODEC, nativeMcpJsonParser, nativeMcpSchemaValidator } from './providers/native-mcp-json.mjs';
 
 export class LocalResourceError extends Error {
   constructor(code, message, details = {}) { super(message); this.name = 'LocalResourceError'; this.code = code; this.details = details; }
@@ -152,8 +150,10 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       credentialRef: detail.credentialRef || config.credentialRef, apiKey: detail.api_key || detail.apiKey };
   }
 
-  async function mcp(binding) {
+  async function mcp(binding, jsonCodec) {
     assertOpen();
+    if (jsonCodec !== undefined && jsonCodec !== NATIVE_MCP_JSON_CODEC) throw new LocalResourceError('MCP_JSON_CODEC_INVALID', 'MCP JSON 解析契约无效');
+    const exact = jsonCodec === NATIVE_MCP_JSON_CODEC;
     const detail = await describeMcp(binding), stdio = detail.transport === 'stdio';
     const { resourceId: key, endpoint, headers } = stdio ? detail : await resolveMcpConnection(detail, credentials);
     const environment = { ...getDefaultEnvironment(), ...detail.env };
@@ -167,17 +167,23 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     // replace a cached client when the effective auth material changes. The
     // fingerprint is one-way and never leaves this process.
     const fingerprint = createHash('sha256').update(JSON.stringify({ endpoint, transport: detail.transport, command: detail.command, args: detail.args, ...(stdio ? { environment } : { headers: Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)) }) })).digest('hex');
-    const cached = mcpClients.get(key);
+    // Native and ordinary callers may use the same resource concurrently.
+    // Keep their parser/schema contracts on separate connections.
+    const cacheKey = JSON.stringify([key, jsonCodec ?? null]);
+    const cached = mcpClients.get(cacheKey);
     if (cached?.fingerprint === fingerprint) return cached;
     if (cached) {
       await Promise.resolve(cached.client.close?.()).catch(() => {});
-      mcpClients.delete(key);
+      mcpClients.delete(cacheKey);
     }
-    const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' });
+    const Transport = stdio ? StdioClientTransport : detail.transport === 'sse' ? SSEClientTransport : StreamableHTTPClientTransport;
+    if (exact && Transport.jsonParserContract !== MCP_JSON_PARSER_CONTRACT) throw new LocalResourceError('MCP_JSON_CODEC_UNAVAILABLE', 'MCP 客户端缺少精确 JSON 解析接口');
+    const jsonOptions = exact ? { jsonParser: nativeMcpJsonParser } : {};
+    const transport = stdio ? new Transport({ command: detail.command, args: detail.args, env: environment, stderr: 'pipe', ...jsonOptions })
+      : new Transport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl, ...jsonOptions });
+    const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' },
+      exact ? { jsonSchemaValidator: nativeMcpSchemaValidator } : undefined);
     connectingClients.add(client);
-    const transport = stdio ? new StdioClientTransport({ command: detail.command, args: detail.args, env: environment, stderr: 'pipe' })
-      : detail.transport === 'sse' ? new SSEClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl })
-        : new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl });
     if (stdio) transport.stderr?.resume();
     try {
       await client.connect(transport, { timeout: 20000 });
@@ -187,21 +193,21 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       await Promise.resolve(transport.close?.()).catch(() => {});
       throw mcpFailure(error, key);
     } finally { connectingClients.delete(client); }
-    const entry = { client, transport, fingerprint };
-    const displaced = mcpClients.get(key);
+    const entry = { client, transport, fingerprint, cacheKey };
+    const displaced = mcpClients.get(cacheKey);
     if (displaced && displaced !== entry) await displaced.client.close().catch(() => {});
     if (closed) { await client.close().catch(() => {}); assertOpen(); }
-    mcpClients.set(key, entry);
+    mcpClients.set(cacheKey, entry);
     return entry;
   }
 
-  async function listMcpTools(id) {
+  async function listMcpTools(id, { jsonCodec } = {}) {
     const key = resourceId(id);
-    const entry = await mcp(id);
+    const entry = await mcp(id, jsonCodec);
     try { return (await entry.client.listTools()).tools || []; }
     catch (error) {
       await Promise.resolve(entry.client.close?.()).catch(() => {});
-      if (mcpClients.get(key) === entry) mcpClients.delete(key);
+      if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
       throw mcpFailure(error, key, 'list');
     }
   }
@@ -211,12 +217,12 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     if (!['content', 'mcp-result/v1'].includes(resultFormat)) throw new LocalResourceError('MCP_RESULT_FORMAT_INVALID', 'MCP 结果格式无效');
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
     const key = resourceId(id);
-    const entry = await mcp(id);
+    const entry = await mcp(id, resultFormat === 'mcp-result/v1' ? NATIVE_MCP_JSON_CODEC : undefined);
     let result;
     try { result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal }); }
     catch (error) {
       await Promise.resolve(entry.client.close?.()).catch(() => {});
-      if (mcpClients.get(key) === entry) mcpClients.delete(key);
+      if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
       throw mcpFailure(error, key, 'call', name);
     }
     if (resultFormat === 'mcp-result/v1') return result;

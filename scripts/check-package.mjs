@@ -19,6 +19,7 @@ const expected = [
   'package.json', 'studio.plugin.json', 'README.md', 'CHANGELOG.md',
   'LICENSE',
   'src/index.mjs', 'src/product.json', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
+  'dist/native-mcp-client.mjs', 'dist/native-mcp-client.json', 'dist/native-mcp-client.LICENSE.txt',
   'packages/agentkit-harness/package.json', 'packages/agentkit-harness/agentkit-harness.plugin.json',
   'packages/agentkit-harness/src/index.mjs', 'packages/agentkit-harness/src/core.mjs',
   'packages/agentkit-harness/src/contract.mjs', 'packages/agentkit-harness/src/dsh-adapter.mjs',

@@ -184,7 +184,15 @@ MCP 的结构化返回值仍经过现有客户端的普通 JSON 解码；发送�
 
 Native 自己注册 revision 绑定的 MCP 工具，经过同一 DSH pre/guard/around/post/result 管线后才调用 Host 资源执行器；preset 不再为这些名字重复注册旧桥。完整结果作为 Native 原始回执，已知 `isError` 保持工具错误；传输中断没有回执时进入结果未知处理，不据此重跑。与 builtin 同名的 MCP 工具使用远端 schema，不能取得本地文件读取或浏览器观察权限。模型只看到后策略的投影：纯文本及唯一 FastMCP 字符串镜像可展开，其他结构化数据保留；`_meta` 不进模型，媒体不作为 base64 文本重复暴露，嵌入 URI 不会被抓取。支持的图片经过既有附件服务校验和发布，策略删去图片时 Native 不能从原始回执补回。
 
-`verify-native-dsh-numeric --source <built maintained DSH checkout> --studio-mcp` 在真实 SDK profile 中组装 Studio preset 插件、运行桥、生产资源适配器、Native SQLite 回执与整轮执行器，验证完整结果到后续模型及重复投递不重复执行。Node 26/22 均通过，Node 22 使用 `PATH=/no-programs`；原 DSH MCP 插件模式也通过相关回归。6 个受影响模块两版本各通过 96 项，随后只复验新增图片和同名权限用例所在模块；Host 绑定模块两版本各通过 19 项。结构化结果丢失已补齐，但 MCP 客户端解析入站数字的精度仍未闭环；这些结果不能替代完整 UI、全部 MCP 语义或全新无 Python 安装验收。
+`verify-native-dsh-numeric --source <built maintained DSH checkout> --studio-mcp` 在真实 SDK profile 中组装 Studio preset 插件、运行桥、生产资源适配器、Native SQLite 回执与整轮执行器，验证完整结果到后续模型及重复投递不重复执行。Node 26/22 均通过，Node 22 使用 `PATH=/no-programs`；原 DSH MCP 插件模式也通过相关回归。最初的结构化回包只含安全数字，后续精确 JSON 验证已增加大整数、负零、浮点数及精确输出 Schema 边界；这些结果不能替代完整 UI、全部 MCP 语义或全新无 Python 安装验收。
+
+生产 MCP SDK 1.31.0 现通过根 `pnpm-workspace.yaml` 的补丁引入显式 `mcp.json-parser/v1`，覆盖 stdio、旧 SSE、Streamable HTTP 的 JSON/SSE 入站消息；协议验证、认证、取消和重连仍由原客户端处理。Native 的完整结果模式选择 `agentkit.native-json-integer/v1`，并使用正式 `jsonSchemaValidator` 接口精确校验输出。它与普通调用分别缓存连接，避免混用解析器；凭证轮换仍在每次操作时重新检查。重复对象键、非有限数字及超出 Native 编码限额的消息显式拒绝。该解析契约进入宿主绑定摘要。
+
+源码安装使用 `pnpm install --frozen-lockfile` 应用补丁。`build:mcp` 及既有 prepack/pretest/precheck 会把修补后的客户端和完整依赖许可构建为 `dist/native-mcp-client.*`，随 Studio 发布；桌面 npm 安装使用这个产物，不依赖消费者传播 pnpm 补丁。构建时缺少补丁会报错，不能静默退回有损解析。真实四种传输测试验证数值 token、分片、Schema、普通/Native 连接隔离和现有 stdio/SSE 凭证行为。
+
+仍待闭环的是远端输入/输出 Schema 在 Studio 资源目录、预设配置和 DSH schema 投影间的精确传递。Host 的 `listMcpTools(binding, {jsonCodec: 'agentkit.native-json-integer/v1'})` 可取得精确 Schema，但尚未替换产品预设的普通目录读取；DSH 自带的另一套 MCP 插件也仍使用普通数字解析。因此本阶段只关闭生产完整结果路径的数字精度缺口，不能称为整个 MCP 工具链已无损。
+
+本阶段定向运行 `native-mcp-json`、`local-resource-adapters`、`mcp-transports`、`native-dsh-tools`、`studio-native-harness` 五个测试模块，Node 26/22 各 68 项通过；追加连接/凭证断言后只复验对应两个模块，各 8 项通过。两个版本的真实 `verify-native-dsh-numeric --studio-mcp` 也通过。`pnpm pack` 和 `check-package.mjs` 检查了实际发布包；`node scripts/verify-native-mcp-package.mjs <Studio tarball>` 在仓库外解包运行，两个 Node 版本均确认没有安装依赖且 `PATH=/no-programs` 时保留精确 HTTP 回包。此隔离证据仅针对发布包里的 MCP 客户端模块，完整 Studio 全新安装验收仍未完成。
 
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
 

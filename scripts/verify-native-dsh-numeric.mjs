@@ -32,6 +32,8 @@ const server = createServer(async (request, response) => {
       if (input.method === 'initialize') result = { protocolVersion: input.params.protocolVersion,
         serverInfo: { name: 'exact-numeric-fixture', version: '1' }, capabilities: { tools: {} } };
       else if (input.method === 'tools/list') result = { tools: [{ name: 'echo', description: 'Echo exact JSON numbers.',
+        ...(values['studio-mcp'] ? { outputSchema: { type: 'object', required: ['id'],
+          properties: { id: { type: 'integer', minimum: expected.id, maximum: expected.id } } } } : {}),
         inputSchema: { type: 'object', properties: { id: { type: 'integer' }, zero: { type: 'number' }, float: { type: 'number' }, ordinary: { type: 'number' },
           record: { type: 'object', properties: { rawJSON: { type: 'string' } }, required: ['rawJSON'], additionalProperties: false } },
         required: ['id', 'zero', 'float', 'ordinary', 'record'], additionalProperties: false } }] };
@@ -43,10 +45,10 @@ const server = createServer(async (request, response) => {
         assert.equal(Object.is(received.zero, -0), true);
         mcpEffects.push(body);
         result = { content: [{ type: 'text', text: canonical(received) }] };
-        if (values['studio-mcp']) Object.assign(result, { structuredContent: { count: 7 }, _meta: { privateAudit: 'private-mcp-audit' } });
+        if (values['studio-mcp']) Object.assign(result, { structuredContent: { count: 7, ...received }, _meta: { privateAudit: 'private-mcp-audit' } });
       } else throw Error(`Unexpected MCP method ${input.method}`);
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ jsonrpc: '2.0', id: input.id, result }));
+      response.end(values['studio-mcp'] ? canonical({ jsonrpc: '2.0', id: input.id, result }) : JSON.stringify({ jsonrpc: '2.0', id: input.id, result }));
       return;
     }
     assert.equal(request.url, '/v1/chat/completions');
@@ -56,7 +58,8 @@ const server = createServer(async (request, response) => {
     if (modelRequests.length > 1) assert.ok(input.messages.some(message => message.role === 'tool'
       && message.content.includes('9007199254740993') && message.content.includes('-0.0')));
     if (values['studio-mcp'] && modelRequests.length > 1) {
-      assert.ok(input.messages.some(message => message.role === 'tool' && message.content.includes('"structuredContent":{"count":7}')));
+      assert.ok(input.messages.some(message => message.role === 'tool'
+        && message.content.includes(`"structuredContent":${canonical({ count: 7, ...expected })}`)));
       assert.equal(JSON.stringify(input.messages).includes('private-mcp-audit'), false);
     }
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });

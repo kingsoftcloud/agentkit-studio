@@ -7,6 +7,7 @@ import { projectNativeDshContent } from './native-input.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 import { nativeMcpOutcome } from './native-mcp-output.mjs';
+import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -102,6 +103,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     close,
     argumentEncoding,
     mcpResultContract: mcpContracts.size ? 'mcp-result/v1' : null,
+    mcpJsonCodec: mcpContracts.size ? NATIVE_MCP_JSON_CODEC : null,
     releaseSession: request => browserTools.releaseSession(request),
     /** Trusted verifier only: every concrete cold action still runs the DSH permission pipeline. */
     async verifyBrowserPage(agent, request) {

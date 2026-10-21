@@ -509,9 +509,22 @@ rule, binary omission and no-fetch handling for embedded URIs are projected
 separately from raw receipt data. Ordinary DSH and Codex callers retain their
 existing content-list format. A real SDK profile covers the Studio preset,
 runtime bridge, resource adapter and model continuation; HTTP, stdio and legacy
-SSE have targeted result-format checks. Incoming structured numeric tokens
-still pass through ordinary MCP JSON decoding, so exact numeric result fidelity
-remains open for both Studio's client and the alternate DSH MCP plugin.
+SSE have targeted result-format checks. Studio's Native complete-result mode
+now decodes numeric tokens with `agentkit.native-json-integer/v1` before MCP
+protocol validation. The maintained SDK 1.31.0 patch adds an opt-in parser to
+stdio, legacy SSE and Streamable HTTP (JSON and SSE responses), retaining the
+official authentication, cancellation, reconnect and protocol validation paths.
+Native and ordinary callers have separate authenticated connection caches;
+ordinary callers retain standard JSON parsing. Exact output-schema validation
+uses the Native validator through the official client interface. A real SDK
+profile verifies unsafe structured numbers through the production resource
+adapter, ledger and next model request, without a second effect on replay.
+The patched client and dependency licenses are bundled into the Studio package
+at build time, so npm consumers do not have to apply a pnpm workspace patch.
+Duplicate object keys, nonfinite values and Native codec limits fail explicitly.
+Exact schema discovery is available through the Host's opt-in list API, but
+remote schema precision across the catalog/preset/DSH schema projection path
+is still open; the alternate DSH MCP plugin also retains its ordinary decoder.
 Final repair feedback also excludes audit locations and raw evidence. Durable
 failure fingerprints and subject/environment/diagnostic digests prevent a new
 artifact URI from creating false progress after reattachment. Repairs reset

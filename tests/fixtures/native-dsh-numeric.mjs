@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { configure, canonical } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { configure, canonical, NATIVE_JSON_CODEC } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeModelPort } from '../../packages/agentkit-harness/src/native/model-port.mjs';
 import { nativeDeliveryProjection } from '../../packages/agentkit-harness/src/native/session-delivery.mjs';
@@ -29,6 +29,9 @@ export async function apply(ctx, options) {
     resourceStore: { get: async id => id === 'exact' ? { endpointUrl: options.studioMcpUrl } : null },
   }) : null;
   if (resources) ctx.effect(() => () => resources.close(), 'Studio MCP production resources');
+  // Populate the production client's output-schema cache using the same
+  // exact parser as its subsequent complete-result calls.
+  if (resources) await resources.listMcpTools('exact', { jsonCodec: NATIVE_JSON_CODEC });
   const bridge = resources ? mountRuntimeBridge(ctx) : null;
   if (bridge) ctx.effect(() => bridge.setResourceToolExecutor(({ resourceId, name, arguments: args, signal, resultFormat }) =>
     resources.callMcpTool(resourceId, name, args, { signal, resultFormat })), 'Studio MCP resource execution');
