@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync, openSync, fsyncSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createAgentStore } from '../../src/agent-store.mjs';
@@ -131,7 +131,7 @@ async function applyProof(ctx, options) {
         const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });
         if (login.status !== 302) throw Error('Mounted Host connection authentication failed');
         const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
-        if (options.automation) await writeFile(join(options.directory, 'mounted-host-connection.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
+        if (options.automation || options.recovery) await writeFile(join(options.directory, 'mounted-host-connection.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
         const rpc = async (method, payload = {}) => {
           const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
             body: JSON.stringify({ method, payload, rpcId: method }), signal: AbortSignal.timeout(10000) });
@@ -193,4 +193,29 @@ async function applyProof(ctx, options) {
       additionalContexts: [{ id: `context-${exec.callId}`, role: 'user', source: { kind: 'tool', callId: exec.callId },
         content: [{ type: 'text', text: `Loaded context for ${path}` }] }] };
   });
+  if (options.recovery) {
+    const origin = ctx.webServer.getOrigin();
+    const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });
+    if (login.status !== 302) throw Error('Recovery proof authentication failed');
+    const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+    await writeFile(join(options.directory, 'mounted-host-connection.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
+    const marker = join(options.directory, 'recovery-crash.json');
+    const originalFlush = ctx.sessions.flush.bind(ctx.sessions);
+    const { SqliteRunStore } = await import('../../packages/agentkit-harness/src/native/sqlite-store.mjs');
+    const { parseNativeJson } = await import('../../packages/agentkit-harness-core/dist/index.mjs');
+    ctx.sessions.flush = async session => {
+      const durable = await originalFlush(session);
+      const events = session.snapshotEvents(), owner = events.findLast(event => event.type === 'turn/owner');
+      if (durable === true && session.id === 'native-studio-session' && owner && !existsSync(marker)) {
+        const admission = parseNativeJson(owner.data.binding);
+        const ledger = new SqliteRunStore(join(options.directory, 'studio/native-harness/runs.sqlite'));
+        const runs = ledger.list(admission.identity.scope); ledger.close();
+        writeFileSync(marker, JSON.stringify({ pid: process.pid, owner: owner.data, events, runs }));
+        const fd = openSync(marker, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
+        process.exit(37); // No turn/end, Host cleanup or Native Run creation.
+      }
+      return durable;
+    };
+    ctx.effect(() => () => { ctx.sessions.flush = originalFlush; }, 'Recovery proof flush injection');
+  }
 }

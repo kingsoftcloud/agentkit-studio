@@ -152,12 +152,16 @@ test('the actual header panel renders saved history, reads results and exposes o
   // Hook calls delegate at invocation time so each mounted component has its own scope.
   const dispatcher = {}, React = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity).filter(Boolean) }),
     useState: (...args) => dispatcher.useState(...args), useEffect: (...args) => dispatcher.useEffect(...args) };
-  const calls = [], controls = [], active = { ...task, canSendInput: true, canCancel: true, goalRevision: 2 };
+  const calls = [], controls = [], recoveries = [], active = { ...task, canSendInput: true, canCancel: true, goalRevision: 2 };
+  const recovery = { contract: 'agentkit.studio-native-recovery/v1', agentId: 'local-agent', sessionId: 'session', runId: 'original-run',
+    state: 'available', canResume: true };
   const historic = { ...task, childRunId: 'old-child', parentRunId: 'old-parent', canPromote: false, resultAvailable: true, phase: 'completed' };
   const Panel = createNativeChildPanel({ ui: { React, ResourceDialog: 'dialog', buttonStyle: () => ({}) },
     setInterval: () => 1, clearInterval() {}, hostRemote: {
       agents: async () => ({ items: [{ metadata: { id: 'local-agent', local: true }, spec: { runtime: { type: 'harness' } } }] }),
       nativeChildHistory: async () => page({ tasks: [active, historic], nextOffset: 2, totalTasks: 2 }),
+      nativeRecoveryStatus: async () => recovery,
+      resumeNativeRun: async input => { recoveries.push(input); return { ...recovery, state: 'recovering', canResume: false }; },
       sendNativeChildInput: async input => { controls.push(['send', input]); return { commandId: input.commandId, status: 'accepted' }; },
       cancelNativeChild: async input => { controls.push(['cancel', input]); return { commandId: input.commandId, status: 'accepted' }; },
       nativeChildResult: async input => { calls.push(input); return { contract, sessionId: 'session', runId: 'parent', task: historic,
@@ -169,6 +173,9 @@ test('the actual header panel renders saved history, reads results and exposes o
   const child = hooks(mounted.type, dispatcher); child.render(mounted.props);
   let tree = child.render(mounted.props); walk(tree).find(node => node.type === 'button' && node.children.includes('子任务')).props.onClick();
   child.render(mounted.props); await tick(); tree = child.render(mounted.props);
+  assert.equal(recoveries.length, 0, 'opening and refreshing a panel never resumes a Run');
+  walk(tree).find(node => node.type === 'button' && node.children.includes('恢复原运行')).props.onClick(); await tick(); tree = child.render(mounted.props);
+  assert.deepEqual(recoveries, [{ agentId: 'local-agent', sessionId: 'session', runId: 'original-run' }]);
   assert.equal(walk(tree).filter(node => node.type === 'button' && node.children.includes('转为后台')).length, 1);
   assert.ok(walk(tree).some(node => node.children.includes(' · 历史轮次')));
   walk(tree).find(node => node.type === 'button' && node.children.includes('查看结果')).props.onClick(); await tick(); tree = child.render(mounted.props);

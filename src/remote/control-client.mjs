@@ -471,6 +471,8 @@ export function createProductClient(connection, { window = globalThis.window } =
         traceOtlp: id => directServer() ? studioBridgeOperation('traces/otlp', { traceId: id }) : request('/api/v1/traces/' + encodeURIComponent(id) + '/otlp'),
         exportSessionLog: (id, query = '') => directServer() ? studioBridgeOperation('sessions/export-log', { sessionId: id }) : request('/api/v1/sessions/' + encodeURIComponent(id) + ':export' + (query ? '?' + query : '')),
         nativeChildHistory: (payload, signal) => studioBridgeOperation('sessions/native-child-history', payload, signal),
+        nativeRecoveryStatus: (payload, signal) => studioBridgeOperation('sessions/native-recovery-status', payload, signal),
+        resumeNativeRun: (payload, signal) => studioBridgeOperation('sessions/native-recovery-resume', payload, signal),
         nativeChildResult: (payload, signal) => studioBridgeOperation('sessions/native-child-result', payload, signal),
         promoteNativeChild: (payload, signal) => studioBridgeOperation('sessions/native-child-promote', payload, signal),
         sendNativeChildInput: (payload, signal) => studioBridgeOperation('sessions/native-child-send', payload, signal),

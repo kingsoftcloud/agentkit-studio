@@ -1,0 +1,43 @@
+const check = (value, message) => { if (!value) throw Error(message); };
+
+/** Reads never resume work. A lost response retains the original Run identity. */
+export function createNativeRecoveryState({ hostRemote, agentId, sessionId }) {
+  const identity = { agentId, sessionId }, lifetime = new AbortController(), listeners = new Set();
+  let disposed = false, state = { status: null, loading: false, sending: false, pending: null, error: '' };
+  const set = change => { if (!disposed) { state = { ...state, ...change }; for (const listener of listeners) listener(state); } };
+  const validate = (value, runId) => {
+    check(value?.contract === 'agentkit.studio-native-recovery/v1' && value.agentId === agentId && value.sessionId === sessionId
+      && ['available', 'recovering', 'reconciliation_required', 'failed', 'closed'].includes(value.state)
+      && typeof value.canResume === 'boolean' && (!value.canResume || typeof value.runId === 'string' && value.runId.trim())
+      && (!runId || value.runId === runId), '恢复记录与原会话或运行不一致，请刷新核对。');
+    return value;
+  };
+  async function refresh() {
+    if (disposed || state.loading) return;
+    set({ loading: true });
+    try {
+      const status = validate(await hostRemote.nativeRecoveryStatus(identity, lifetime.signal));
+      set({ status, error: '' });
+    } catch { set({ error: '恢复状态读取失败，请刷新。' }); }
+    finally { set({ loading: false }); }
+  }
+  async function send() {
+    if (disposed || state.sending || !state.pending) return;
+    const pending = state.pending;
+    set({ sending: true, error: '' });
+    try {
+      const status = validate(await hostRemote.resumeNativeRun(pending, lifetime.signal), pending.runId);
+      set({ status, pending: null });
+      await refresh();
+    } catch { set({ error: '恢复请求尚未确认。可确认原运行的请求，请勿创建替代任务。' }); }
+    finally { set({ sending: false }); }
+  }
+  return { getSnapshot: () => state, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    refresh, retry: send,
+    resume() {
+      if (disposed || state.pending || !state.status?.canResume) return;
+      set({ pending: { ...identity, runId: state.status.runId } }); return send();
+    },
+    dispose() { disposed = true; lifetime.abort(); listeners.clear(); },
+  };
+}

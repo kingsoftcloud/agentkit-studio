@@ -1,5 +1,6 @@
 import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
 import { createNativeChildrenState } from '../state/native-children.mjs';
+import { createNativeRecoveryState } from '../state/native-recovery.mjs';
 
 const phases = { created: '已准备', preparing: '准备中', requesting_model: '推理中', requesting_context: '整理上下文',
   requesting_input: '读取输入', executing_tools: '执行工具', awaiting_interaction: '等待审批', paused: '已暂停',
@@ -10,6 +11,12 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
   function TaskPanel({ agentId, sessionId }) {
     const [controller, setController] = useState(null), [state, setState] = useState({ page: null, detail: null }), [open, setOpen] = useState(false);
     const [drafts, setDrafts] = useState({});
+    const [recovery, setRecovery] = useState(null), [recoveryState, setRecoveryState] = useState({ status: null });
+    useEffect(() => {
+      const next = createNativeRecoveryState({ hostRemote, agentId, sessionId });
+      setRecovery(next); setRecoveryState(next.getSnapshot()); const stop = next.subscribe(setRecoveryState);
+      return () => { stop(); next.dispose(); };
+    }, [agentId, sessionId]);
     useEffect(() => {
       const next = createNativeChildrenState({ hostRemote, agentId, sessionId });
       setController(next); setState(next.getSnapshot()); const stop = next.subscribe(setState);
@@ -18,14 +25,24 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
     useEffect(() => {
       if (!open || !controller) return;
       void controller.refresh();
-      const timer = setInterval(() => { if ((controller.getSnapshot().page?.offset ?? 0) === 0) void controller.refresh(); }, 2500);
+      void recovery?.refresh();
+      const timer = setInterval(() => { if ((controller.getSnapshot().page?.offset ?? 0) === 0) void controller.refresh(); void recovery?.refresh(); }, 2500);
       return () => clearInterval(timer);
-    }, [open, controller]);
+    }, [open, controller, recovery]);
     const page = state.page, detail = state.detail;
     return h(Fragment, null,
       h('button', { type: 'button', style: buttonStyle(), onClick: () => setOpen(true) }, '子任务'),
       open ? h(ResourceDialog, { title: '本会话的子任务', detail: '显示当前轮和历史轮次；子任务结果是证据，不代表父任务验收通过。', wide: true, onClose: () => setOpen(false) },
-        h('button', { type: 'button', style: buttonStyle(), disabled: !controller || state.loading, onClick: () => void controller?.refresh() }, state.loading ? '读取中…' : '刷新'),
+        h('button', { type: 'button', style: buttonStyle(), disabled: !controller || state.loading, onClick: () => { void controller?.refresh(); void recovery?.refresh(); } }, state.loading ? '读取中…' : '刷新'),
+        recoveryState.error ? h('p', { role: 'alert' }, recoveryState.error) : null,
+        recoveryState.status && recoveryState.status.state !== 'closed' ? h('section', { 'aria-label': '原运行恢复' },
+          h('p', null, recoveryState.status.state === 'recovering' ? '原运行已接管，正在继续。'
+            : recoveryState.status.state === 'reconciliation_required' ? '有执行结果未知的操作，需要核对；不会自动重跑。'
+              : recoveryState.status.state === 'failed' ? '恢复未完成，请核对原配置后重试。' : '检测到尚未结束的原运行，可继续原任务。'),
+          recoveryState.status.canResume && !recoveryState.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: recoveryState.sending,
+            onClick: () => void recovery.resume() }, '恢复原运行') : null) : null,
+        recoveryState.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: recoveryState.sending,
+          onClick: () => void recovery.retry() }, recoveryState.sending ? '正在确认…' : '确认原运行恢复请求') : null,
         state.error ? h('p', { role: 'alert' }, state.error) : null,
         state.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: state.sending, onClick: () => void controller.retryControl() }, state.sending ? '正在确认…' : '重试原子任务请求') : null,
         page && !page.tasks.length ? h('p', null, '本会话还没有子任务。') : null,

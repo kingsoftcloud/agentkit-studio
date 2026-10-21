@@ -1,6 +1,19 @@
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-recovery-status' || endpoint === 'sessions/native-recovery-resume') {
+            const resume = endpoint === 'sessions/native-recovery-resume';
+            if (!payload || Array.isArray(payload) || Object.keys(payload).some(key => !['agentId', 'sessionId', 'runId'].includes(key))
+                || ['agentId', 'sessionId', ...(resume ? ['runId'] : [])].some(key => typeof payload[key] !== 'string' || !payload[key].trim() || payload[key].length > 256)
+                || payload.runId !== undefined && (typeof payload.runId !== 'string' || !payload.runId.trim() || payload.runId.length > 256))
+                throw Object.assign(new Error('Invalid Native recovery request'), { code: 'STUDIO_NATIVE_RECOVERY_INVALID' });
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native recovery unavailable'), { code: 'STUDIO_NATIVE_RECOVERY_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: await (resume ? host.resumeTurn(payload, signal) : host.recoveryStatus(payload, signal)) };
+        }
         if (endpoint === 'sessions/native-child-history' || endpoint === 'sessions/native-child-result') {
             const result = endpoint === 'sessions/native-child-result';
             const allowed = ['agentId', 'sessionId', 'runId', 'offset', 'limit', ...(result ? ['childRunId'] : ['inventoryDigest'])];

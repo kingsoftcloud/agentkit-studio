@@ -16,7 +16,8 @@ import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
 import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
 import { modelInput } from '../../model-service.mjs';
-import { nativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
+import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
+import { createStudioNativeRecovery } from './native-recovery.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -37,10 +38,15 @@ const admittedModelSelection = (agent, assembly) => {
   }
   return selection;
 };
+// A cold Session without a DSH request/header inherits the current picker
+// default. Native already owns a durable route; interpolate that route while
+// retaining every current prompt/tool contribution and checking later changes.
+const recoveredPromptAssembly = (assembly, source) => ({ ...assembly,
+  variables: { ...assembly.variables, provider: source.provider, model: source.model } });
 
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
-  fetchImpl, renderPrompt, publishStreamFrame, ledger } = {}) {
+  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor } = {}) {
   const sessions = ctx.get('sessions'), projections = ctx.get('sessionProjections'), llm = ctx.get('llm');
   invariant(typeof sessions?.flush === 'function' && typeof projections?.register === 'function'
     && typeof renderPrompt === 'function', 'studio_native_host_services_unavailable');
@@ -69,15 +75,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ? control.kernel.childTasks(scope, runId) : [];
     } });
   };
-  const execute = createNativeDshTurnExecutor({ store, projections, durableOwnership: true, flush: session => sessions.flush(session),
-    publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),
-    onActive: (_payload, control) => {
-      const key = controlKey(control.scope.agentId, control.sessionId);
-      invariant(!controls.has(key), 'studio_native_child_control_already_active');
-      controls.set(key, control);
-      return () => { if (controls.get(key) === control) controls.delete(key); };
-    },
-    resolveTurn: async ({ agent, input, binding, signal, prepareInput }) => {
+  const resolveBinding = async ({ agent, input, binding, signal, prepareInput }, original) => {
       if (binding?.runtime !== 'harness' || binding.local !== true) return null;
       invariant(binding.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT, 'studio_native_engine_contract_unsupported');
       invariant(typeof prepareInput === 'function', 'studio_native_whole_turn_host_required');
@@ -93,7 +91,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         'studio_native_build_engine_mismatch');
       const ids = profileIds(record), profiles = await Promise.all((ids.length ? ids : ['']).map(id => models.profile(id)));
       signal.throwIfAborted();
-      const selection = admittedModelSelection(agent, input.assembly);
+      const selection = original ? { ...original.capsule.source,
+        ...(original.capsule.maxTokens === null ? {} : { maxTokens: original.capsule.maxTokens }) }
+        : admittedModelSelection(agent, input.assembly);
       let selected, selectedId;
       for (let index = 0; index < profiles.length; index++) {
         const profile = profiles[index], id = ids[index] || '';
@@ -108,9 +108,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const description = profileDescription(selected);
       const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens });
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
+      const inputSelection = original ? admittedModelSelection(agent, input.assembly) : { ...selection, ...source };
       const inputServices = { attachments: () => ctx.get('attachments'),
         fileRequestText: typeof llm?.fileRequestText === 'function' ? ref => llm.fileRequestText(ref) : undefined };
-      const admission = await projectNativeDshInput(input.messages, { ...inputServices, signal });
+      // Replay the already-admitted bytes and resource context. Mutable files,
+      // attachments and memory are not a substitute for the original input.
+      const admission = original ? { objective: original.configuration.contract.objective,
+        messages: structuredClone(original.configuration.inputMessages) }
+        : await projectNativeDshInput(input.messages, { ...inputServices, signal });
       // Preserve original content-part indices: a text or omitted image must
       // never shift a model's reference onto a different admitted image.
       let childMediaSources = new Map();
@@ -123,13 +128,15 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       });
       const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
       const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits });
-      const materialized = await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
+      const materialized = original ? { memoryWrite: false } : await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
         toolAdapter: {}, agent, agentId: binding.agentId, userId: 'local-user', resourceMode: 'context-only' });
       // A memory write is an external effect and must get its own Native intent.
       // Refuse that composition until its durable port is installed.
       invariant(!materialized.memoryWrite, 'studio_native_memory_write_port_unavailable');
-      const systemPrompt = renderPrompt(input.assembly);
-      const instructions = [systemPrompt, materialized.resourceContext].filter(Boolean).join('\n\n');
+      const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
+      if (original) invariant(renderPrompt(recoveredPromptAssembly(input.assembly, source)) === systemPrompt,
+        'studio_native_recovery_prompt_changed');
+      const instructions = original ? original.configuration.instructions : [systemPrompt, materialized.resourceContext].filter(Boolean).join('\n\n');
       const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
       const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
       const verification = await createNativeVerification({ scope, sessionId: String(agent.session.id), workspaceRoot,
@@ -216,12 +223,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           // A changing model/tool series needs an explicit Native rebind, not
           // an unlogged change to the frozen execution contract.
           invariant(next.startsRequestSeries !== true, 'studio_native_request_series_rebind_required');
-          const nextSelection = admittedModelSelection(agent, next.assembly);
-          invariant(nextSelection.provider === selection.provider && nextSelection.model === selection.model,
-            'studio_native_input_binding_changed');
-          invariant(renderPrompt(next.assembly) === systemPrompt
-            && canonical(binding.nativeTools.definitions(agent, next.assembly.tools)) === canonical(tools),
-          'studio_native_input_binding_changed');
+          const nextSelection = admittedModelSelection({ options: inputSelection }, next.assembly);
+          invariant(nextSelection.provider === inputSelection.provider && nextSelection.model === inputSelection.model,
+            'studio_native_input_model_binding_changed');
+          invariant(renderPrompt(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly) === systemPrompt,
+            'studio_native_input_prompt_binding_changed');
+          invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools)) === canonical(tools),
+            'studio_native_input_tool_binding_changed');
           invariant(Array.isArray(next.messages), 'studio_native_prepared_input_invalid');
           const messages = [], images = new Map();
           for (const message of next.messages) {
@@ -234,9 +242,42 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           return { status: 'admitted', messages };
         } }, model: parentModel.model },
       };
+  };
+  const execute = createNativeDshTurnExecutor({ store, projections, durableOwnership: true, flush: session => sessions.flush(session),
+    publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),
+    onActive: (payload, control) => {
+      const key = controlKey(control.scope.agentId, control.sessionId);
+      invariant(!controls.has(key), 'studio_native_child_control_already_active');
+      controls.set(key, control);
+      try { payload.recoveryStarted?.(control); }
+      catch (error) { controls.delete(key); throw error; }
+      return () => { if (controls.get(key) === control) controls.delete(key); };
+    },
+    resolveTurn: payload => resolveBinding(payload),
+    resolveRecoveryTurn: async (payload, original) => {
+      invariant(typeof agentEvents === 'function' && typeof assembleContextFor === 'function', 'studio_native_recovery_dispatch_unavailable');
+      const capsule = readNativeRecoveryBinding({ configuration: original.configuration,
+        snapshot: { ...original.identity, configDigest: original.configDigest } }, {
+        agentId: original.identity.scope.agentId, sessionId: original.identity.sessionId, runId: original.identity.runId });
+      invariant(canonical(capsule.messages) === canonical(original.messages)
+        && canonical(capsule.source) === canonical(original.source), 'studio_native_recovery_admission_mismatch');
+      const binding = await agentEvents(ctx, payload.agent).serial('agentkit/native-recovery-binding', {});
+      payload.signal.throwIfAborted();
+      assertNativeRecoveryPreset(capsule, binding);
+      const pendingSelection = projections.stateOf(payload.agent.session, 'modelSelection')?.pending;
+      invariant(!pendingSelection || pendingSelection.provider === capsule.source.provider && pendingSelection.model === capsule.source.model,
+        'studio_native_recovery_model_selection_changed');
+      const prompt = ctx.get('systemPrompt');
+      invariant(typeof prompt?.assemble === 'function', 'studio_native_recovery_prompt_unavailable');
+      const assembly = await prompt.assemble(assembleContextFor(payload.agent, payload.signal));
+      payload.signal.throwIfAborted();
+      return resolveBinding({ ...payload, binding, input: { ...payload.input, assembly } }, { ...original, capsule });
     },
   });
+  const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute });
   return {
+    recoveryStatus: recovery.status,
+    resumeTurn: recovery.resume,
     childHistory(request) { return childHistory(request).list(request); },
     childResult(request) { return childHistory(request).result(request); },
     childTasks(request) {

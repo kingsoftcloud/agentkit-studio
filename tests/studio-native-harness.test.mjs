@@ -264,7 +264,8 @@ for (const changed of ['tool binding', 'request series', 'model selection']) tes
   assert.equal(fixture.requests.length, 1); assert.equal(fixture.head().phase, 'interrupted');
   const run = fixture.head();
   assert.equal(fixture.ledger.load(run.scope, run.runId).receipts.at(-1).result.code,
-    changed === 'request series' ? 'studio_native_request_series_rebind_required' : 'studio_native_input_binding_changed');
+    changed === 'request series' ? 'studio_native_request_series_rebind_required'
+      : changed === 'model selection' ? 'studio_native_input_model_binding_changed' : 'studio_native_input_tool_binding_changed');
 });
 test('Studio Native close during a stalled input claim fences late admission', async t => {
   const fixture = await setup(t);

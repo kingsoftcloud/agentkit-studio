@@ -14,12 +14,13 @@ import { respondToAutomationProof, runAutomationProof, verifyAutomationLedger } 
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
-  automation: { type: 'boolean', default: false }, archive: { type: 'string' } } });
+  automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false }, archive: { type: 'string' } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
 assert.ok(!values.frozen || values['mount-host'], '--frozen requires --mount-host');
 assert.ok(!values.automation || values['mount-host'] && values.commands && !values.frozen, '--automation requires --mount-host --commands without --frozen');
+assert.ok(!values.recovery || values['mount-host'] && !values.automation, '--recovery requires --mount-host without --automation');
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
@@ -163,7 +164,7 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
-    ...values.automation ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
+    ...values.automation || values.recovery ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
       '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
       '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'"] : [],
   ] : [];
@@ -180,6 +181,7 @@ try {
     `        commands: ${values.commands}`,
     `        frozen: ${values.frozen}`,
     `        automation: ${values.automation}`,
+    `        recovery: ${values.recovery}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -192,7 +194,52 @@ try {
   harness = new DeepSeekHarness(options);
   let session = harness.session('native-studio-session');
   for (let turn = 1; turn <= 2; turn++) {
-    const result = await session.run(`Publish marker ${turn} and report completion.`);
+    let result;
+    if (values.recovery && turn === 1) {
+      await assert.rejects(session.run('Publish marker 1 and report completion.'), /exit code: 37/);
+      const crash = JSON.parse(await readFile(join(root, 'recovery-crash.json'), 'utf8'));
+      assert.deepEqual(crash.runs, []); assert.equal(requests.length, 0);
+      assert.equal(crash.events.some(event => event.type === 'turn/end'), false);
+      await harness.close(); harness = new DeepSeekHarness(options); await harness.start();
+      const { origin, cookie } = JSON.parse(await readFile(join(root, 'mounted-host-connection.json'), 'utf8'));
+      const rpc = async (method, payload) => {
+        const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
+          body: JSON.stringify({ method, payload }), signal: AbortSignal.timeout(15000) });
+        return (await response.json()).result;
+      };
+      const { id: agentId } = JSON.parse(await readFile(join(root, 'agent-id.json'), 'utf8'));
+      const identity = { agentId, sessionId: 'native-studio-session' };
+      const status = await rpc('sessions/native-recovery-status', identity);
+      assert.equal(status.ok, true, JSON.stringify(status)); assert.equal(status.value.state, 'available');
+      assert.equal(status.value.runId, parseNativeJson(crash.owner.binding).identity.runId);
+      assert.equal(requests.length, 0, 'Status cannot execute the model');
+      const wrong = await rpc('sessions/native-recovery-resume', { ...identity, runId: 'other-run' });
+      assert.equal(wrong.ok, false); assert.equal(wrong.error.code, 'studio_native_recovery_identity_mismatch');
+      const request = { ...identity, runId: status.value.runId };
+      const acks = await Promise.all([rpc('sessions/native-recovery-resume', request), rpc('sessions/native-recovery-resume', request)]);
+      assert.ok(acks.every(ack => ack.ok && ack.value.runId === request.runId && ack.value.state === 'recovering'), JSON.stringify(acks));
+      const deadline = Date.now() + 20000;
+      let settled;
+      while (Date.now() < deadline) {
+        settled = await rpc('sessions/native-recovery-status', request);
+        if (settled.value?.state !== 'recovering') break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(settled?.value?.state, 'closed', JSON.stringify(settled));
+      const requestCount = requests.length, confirmed = await rpc('sessions/native-recovery-resume', request);
+      assert.equal(confirmed.ok, true, JSON.stringify(confirmed)); assert.equal(confirmed.value.state, 'closed');
+      assert.equal(confirmed.value.runId, request.runId); assert.equal(requests.length, requestCount,
+        'Confirming a recovery reply after completion cannot execute another model call');
+      await harness.close();
+      const logs = (await readdir(sessions, { recursive: true })).filter(file => file.endsWith('.jsonl'));
+      const events = (await Promise.all(logs.map(file => readFile(join(sessions, file), 'utf8')))).flatMap(text => text.trim().split('\n').map(line => JSON.parse(line))).filter(item => item.type !== 'header' && item.type !== 'session');
+      assert.deepEqual(events.slice(0, crash.events.length), crash.events);
+      assert.equal(events.filter(event => event.type === 'turn/start').length, 1);
+      assert.equal(events.filter(event => event.type === 'turn/owner').length, 1);
+      const last = events.findLast(event => event.type === 'assistant/message');
+      result = { events, finalResponse: last.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('') };
+      console.log('Studio Native recovery PASS: real exit37 before Run creation; real SessionController cold resume; authenticated status/identity rejection/duplicate recovery; one original turn/owner/Run, no replacement prompt.');
+    } else result = await session.run(`Publish marker ${turn} and report completion.`);
     assert.equal(result.finalResponse, `Native turn ${turn} completed.`, JSON.stringify(result.events.filter(event => event.type === 'turn/end')));
     for (const kind of ['turn/start', 'turn/owner', 'turn/end', 'tool/call', 'tool/result']) assert.equal(result.events.filter(event => event.type === kind).length, 1, kind);
     const owner = result.events.find(event => event.type === 'turn/owner');
@@ -313,7 +360,7 @@ try {
   } finally { reopened.close(); }
   if (values['mount-host']) {
     const probes = (await readFile(join(root, 'mounted-host-http.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-    assert.equal(probes.length, 2); assert.ok(probes.some(probe => probe.source === 'resume'));
+    assert.equal(probes.length, values.recovery ? 3 : 2); assert.ok(probes.some(probe => probe.source === 'resume'));
     assert.ok(probes.every(probe => probe.unauthorizedStatus === 401 && probe.compatible));
   }
   if (automationProof) console.log('Studio Native automation PASS: authenticated Build operation, latest Revision schedule and frozen Build evaluation, actual unattended permission denial with no file effect, real model HTTP and durable independent Native ledgers.');

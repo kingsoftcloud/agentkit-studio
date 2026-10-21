@@ -306,6 +306,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
     return host.resume(NATIVE_DSH_TURN_CONTRACT, resumed => {
       const admission = readNativeDshOwnership(resumed.ownership, { sessionId: agent.session.id, turn: resumed.turn });
       return run({ ...request, ...resumed, agent,
+        signal: request.signal ? AbortSignal.any([request.signal, resumed.signal]) : resumed.signal,
         input: { kind: 'enter', messages: structuredClone(admission.messages) } }, admission);
     });
   };
