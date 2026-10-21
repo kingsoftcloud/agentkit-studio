@@ -168,7 +168,11 @@ Node 26/22 的相关 139 项定向组合通过；补充漂移、损坏报告及�
 
 本批在 Node 26/22 各执行 328 项相关检查，没有执行全量。覆盖真实 HTTP 协议、schema、存储、流、DSH 桥及 Session 交付。新增真正的 Node 子进程在工具回执提交后退出，替换执行者重开 SQLite 后交付 `9007199254740993`，不重复已执行工具；子进程 PATH 中没有 Python。补充进程、封装深度和 schema 边界后，仅复验三个直接受影响模块，两个版本各 36 项通过。
 
-当前 DSH ToolRuntime 的严格 JSON snapshot 尚不支持 bigint，普通序列化也不能保留浮点负零和大型整数形态浮点值的 token 类型。Studio 对这些输入在分派前返回 `STUDIO_NATIVE_EXACT_NUMBER_UNSUPPORTED`，明确标记未执行，避免舍入和误报未知副作用。这仍是需要补齐的 Host 能力，不能把核心和模型端口完成当成整个工具链已无损。
+DSH 维护补丁 `049` 提供显式协商的 `dsh.raw-json-number/v1` 工具参数编码。Native 在进入 SDK 时只把需要精确传递的数值转换为内建 `JSON.rawJSON`，普通数字保持原语；SDK 复制、冻结及权限管线保留真实数字 token，普通同名字段不能伪造该权限。内置工具核对解码后的参数后仍使用原 Native 请求，MCP 使用原数字发送 JSON。编码版本进入宿主绑定摘要。普通 SDK Session JSON 和类型化工具输出没有扩展；旧 SDK 对不支持的输入仍在分派前返回 `STUDIO_NATIVE_EXACT_NUMBER_UNSUPPORTED` 和 `executed:false`。
+
+`verify-native-dsh-numeric` 在正式 SDK profile 中验证模型 HTTP → Native 整轮 → 实际 DSH guard → 实际 MCP HTTP → 回执 → 后续模型。大整数、浮点负零、大型整数形态浮点数及伪造包装字段均经过实际线格式检查；重复交付不再执行工具。Node 26 与 Node 22 均通过，其中 Node 22 的父进程和 SDK 子进程使用不含外部程序的 PATH。SDK 四个相关模块各 168 项定向测试通过，Studio 工具和宿主两个模块各 18 项通过；未执行全量测试，也不以这些证据代替全新无 Python 安装验收。
+
+MCP 的结构化返回值仍经过现有客户端的普通 JSON 解码；发送参数和文本返回的证据不能证明结构化数字也已保真。该接收方向及特殊 schema 引用仍是待闭环项目，不能把本阶段视为整个工具链已无损。
 
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
 

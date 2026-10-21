@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { realpathSync } from 'node:fs';
-import { canonical, invariant, requiresExactJsonWire } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, invariant, parseNativeJson, requiresExactJsonWire, stringifyModelJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/native/workspace-tools.mjs';
 import { projectNativeDshContent } from './native-input.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
@@ -12,6 +12,7 @@ const names = values => (values ?? []).map(value => typeof value === 'string' ? 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
 export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
+  const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
   const pinnedRoot = realpathSync(workspace), hasSkills = Boolean(config.skillDefinitions?.length);
   // DSH's complete pre/guard/around/post pipeline owns authorization. This
@@ -61,7 +62,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           const invocation = calls.get(String(exec.callId));
           invariant(!closed, 'studio_native_tools_closed');
           invariant(invocation && invocation.agent === exec.agent && invocation.request.call.name === name
-            && canonical(args) === canonical(invocation.request.call.arguments), 'studio_native_tool_authority_missing');
+            && canonical(invocation.argumentEncoding ? parseNativeJson(JSON.stringify(args)) : args)
+              === canonical(invocation.request.call.arguments), 'studio_native_tool_authority_missing');
           exec.signal.throwIfAborted();
           invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
           invocation.dispatched = true;
@@ -87,6 +89,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   ctx.effect(install, 'agentkit-studio: Native builtin tool bindings');
   return {
     close,
+    argumentEncoding,
     /** Trusted verifier only: every concrete cold action still runs the DSH permission pipeline. */
     async verifyBrowserPage(agent, request) {
       invariant(!closed && builtinNames.has(browserName), 'studio_native_browser_verification_unavailable');
@@ -140,17 +143,25 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           || hasSkills && ['skill', 'bash', 'pwsh'].includes(request.call.name)),
         'studio_native_tool_not_bound');
         request.signal.throwIfAborted();
-        if (requiresExactJsonWire(request.call.arguments)) return { status: 'error', content: {
+        const exactNumbers = requiresExactJsonWire(request.call.arguments);
+        if (exactNumbers && !argumentEncoding) return { status: 'error', content: {
           code: 'STUDIO_NATIVE_EXACT_NUMBER_UNSUPPORTED', executed: false,
           message: 'The current DSH tool boundary cannot preserve this exact numeric value. The tool was not executed.',
         } };
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
-        const invocation = { agent, request };
+        const invocation = { agent, request, argumentEncoding: exactNumbers ? argumentEncoding : null };
         calls.set(callId, invocation);
         try {
+          // Numeric raw tokens retain their intrinsic brand through the negotiated
+          // SDK snapshot. The Native request remains the owned builtin's source.
+          const args = exactNumbers ? JSON.parse(stringifyModelJson(request.call.arguments), (_key, value, context) => {
+            if (typeof value !== 'number' || Number.isFinite(value) && !requiresExactJsonWire(value)) return value;
+            invariant(typeof context?.source === 'string', 'studio_native_raw_number_source_missing');
+            return JSON.rawJSON(context.source);
+          }) : structuredClone(request.call.arguments);
           const result = await ctx.tools.execute({ callId, name: request.call.name,
-            arguments: structuredClone(request.call.arguments), signal: request.signal, agent });
+            arguments: args, ...(exactNumbers ? { argumentEncoding } : {}), signal: request.signal, agent });
           request.signal.throwIfAborted();
           invariant(typeof result?.isError === 'boolean' && Array.isArray(result.content), 'studio_native_tool_result_invalid');
           const afterWriteFailure = result?.isError && invocation.outcome?.status === 'ok' && !formal.get(request.call.name)?.readOnly;

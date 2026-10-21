@@ -317,6 +317,12 @@ Evidence: `tests/harness/native/test_kernel.py`,
   structured data and explicit media without granting URLs/payloads host
   authority.
 
+TS integration evidence: `scripts/verify-native-dsh-numeric.mjs` exercises the
+shipped SDK profile and real MCP HTTP transport with exact numeric arguments,
+DSH policy, durable receipts, and a subsequent model request. Inbound MCP
+`structuredContent` numbers still require lossless decoding; the text-result
+fixture does not prove that direction complete.
+
 Evidence: `tests/harness/native/test_openai_stream.py`,
 `tests/harness/native/test_retry_jitter.py`,
 `tests/harness/native/test_review_continuation_boundaries.py`,

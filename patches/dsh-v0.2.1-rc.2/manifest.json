@@ -2030,12 +2030,70 @@
         "snapshots/sdk/sdk.snapshot.ts"
       ],
       "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f"
+    },
+    {
+      "id": "049",
+      "file": "049-exact-numeric-arguments.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "045",
+        "047"
+      ],
+      "removeWhen": "The pinned upstream offers equivalent versioned execution-local raw numeric arguments through tool policy without widening ordinary JSON persistence.",
+      "contracts": [
+        "Hosts explicitly negotiate dsh.raw-json-number/v1; omission retains ordinary lossless JSON argument validation.",
+        "Intrinsic JSON.rawJSON numeric tokens retain their numeric brand through argument detachment, freezing and policy; similarly shaped records remain data.",
+        "Unsupported encodings and nonnumeric raw values fail before policy or body invocation; every policy stage retains the snapshotted encoding.",
+        "Callers and consumers own exact numeric decoding; Session JSON and typed tool-output validation remain unchanged."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools",
+        "@deepseek-ai/dsh-util-values",
+        "@deepseek-ai/dsh-repeat-tool-reminder",
+        "@deepseek-ai/dsh-tool-cordis"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Locally reviewed maintenance source and keyless SDK/MCP profile proof; no upstream submission receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/raw-number.spec.ts",
+          "packages/core/tools/tests/tools.spec.ts",
+          "packages/util/values/tests/raw-number.spec.ts",
+          "packages/guard/repeat-tool-reminder/tests/repeat-tool-reminder.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/tools.md",
+        "docs/subsystems/tools.zh.md",
+        "packages/core/tools/README.i18n.yaml",
+        "packages/core/tools/README.md",
+        "packages/core/tools/README.zh.md",
+        "packages/core/tools/src/index.ts",
+        "packages/core/tools/tests/raw-number.spec.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "packages/guard/repeat-tool-reminder/src/index.ts",
+        "packages/guard/repeat-tool-reminder/tests/repeat-tool-reminder.spec.ts",
+        "packages/util/values/README.i18n.yaml",
+        "packages/util/values/README.md",
+        "packages/util/values/README.zh.md",
+        "packages/util/values/src/index.ts",
+        "packages/util/values/tests/raw-number.spec.ts"
+      ],
+      "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e"
     }
   ],
-  "patchedTree": "07df4f297635c2bb3a5342cb4b6d92e7b97d87ef",
-  "patchedSourceSha256": "9b8d5720a51f1bf9ccdc83651bc8fca08fcd9ef348c10c48d3f635e7dc22255e",
+  "patchedTree": "1602800c40282ef0058ba90d873e4e47a2fdb035",
+  "patchedSourceSha256": "0eac393f1f27f206487bfaa3c9c9963140488e924195f30eadd5e0be67a95c23",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "bf2c2a297c3651fcdfe81058c430b916d5405f96cf2a23efb85c97d650882961"
+    "sha256": "9975dad02b7aca9dd8a94bad6dfc04146e252cb3b09f139dd8733798c07a91ed"
   }
 }

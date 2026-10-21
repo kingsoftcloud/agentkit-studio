@@ -64,6 +64,7 @@
     "verify-native-dsh-turn": "node scripts/verify-native-dsh-turn.mjs",
     "verify-native-dsh-output": "node scripts/verify-native-dsh-output.mjs",
     "verify-native-dsh-browser": "node scripts/verify-native-dsh-browser.mjs",
+    "verify-native-dsh-numeric": "node scripts/verify-native-dsh-numeric.mjs",
     "verify-studio-native-harness": "node scripts/verify-studio-native-harness.mjs",
     "verify-dsh-plugin-market": "node scripts/verify-dsh-plugin-market.mjs",
     "check:contracts": "tsc -p tsconfig.contracts.json",

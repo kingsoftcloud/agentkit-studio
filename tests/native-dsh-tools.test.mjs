@@ -21,6 +21,7 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
       return { isError: false, value, content: registered.output.render(input.arguments, value) };
     },
   } };
+  if (options.argumentEncodings) ctx.tools.argumentEncodings = options.argumentEncodings;
   const gateway = createNativeDshTools({ ctx, config: { toolBindings: names, toolContracts: contracts }, workspaceRoot, stateDir: join(root, 'state'), ...options });
   t.after(() => gateway.close());
   const agent = { session: { id: 'session' } };
@@ -42,6 +43,31 @@ test('an unsupported exact integer is rejected before the DSH pipeline can execu
     assert.equal(result.content.executed, false); assert.equal(host.calls.length, 0);
   }
   assert.equal(existsSync(join(host.workspaceRoot, 'integer.txt')), false);
+});
+test('negotiated numeric arguments cross the external tool boundary without rounding or wrapper authority', async t => {
+  const name = 'mcp__fixture__echo', host = setup(t, [name], [{ name, executor: 'mcp' }],
+    { argumentEncodings: ['dsh.raw-json-number/v1'] });
+  let effects = 0;
+  host.registry.set(name, { name, parameters: { type: 'object' }, execute: async args => { effects++; return JSON.stringify(args); },
+    output: { render: (_args, value) => [{ type: 'text', text: value }] } });
+  const input = { id: 9007199254740993n, zero: -0, float: 1000000000000000100.0, ordinary: 7, record: { rawJSON: '9007199254740993' } };
+  const result = await host.gateway.forAgent(host.agent).tools.execute(host.request(input, name));
+  assert.equal(host.gateway.argumentEncoding, 'dsh.raw-json-number/v1');
+  assert.equal(host.calls[0].argumentEncoding, 'dsh.raw-json-number/v1');
+  assert.equal(JSON.isRawJSON(host.calls[0].arguments.id), true);
+  assert.equal(JSON.isRawJSON(host.calls[0].arguments.record), false);
+  assert.equal(host.calls[0].arguments.ordinary, 7);
+  assert.equal(result.status, 'ok');
+  assert.equal(result.content[0].text, '{"id":9007199254740993,"zero":-0.0,"float":1.0000000000000001e+18,"ordinary":7,"record":{"rawJSON":"9007199254740993"}}');
+  host.deny();
+  assert.equal((await host.gateway.forAgent(host.agent).tools.execute(host.request(input, name))).status, 'uncertain');
+  assert.equal(effects, 1);
+});
+test('owned builtins compare the decoded negotiated arguments against the original Native authority', async t => {
+  const host = setup(t, ['write_workspace_file'], [], { argumentEncodings: ['dsh.raw-json-number/v1'] });
+  const result = await host.gateway.forAgent(host.agent).tools.execute(host.request({ path: 'exact.txt', content: 'written', id: 9007199254740993n }));
+  assert.equal(result.status, 'ok');
+  assert.equal(readFileSync(join(host.workspaceRoot, 'exact.txt'), 'utf8'), 'written');
 });
 test('workspace browser metadata is pinned and DSH denial cannot start its backend', async t => {
   let created = 0;

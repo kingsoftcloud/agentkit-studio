@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "4d4f6d195cc5bb2871387c810e29482465247f27",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-11",
-  "tree": "07df4f297635c2bb3a5342cb4b6d92e7b97d87ef",
-  "sourceSha256": "9b8d5720a51f1bf9ccdc83651bc8fca08fcd9ef348c10c48d3f635e7dc22255e",
+  "headCommit": "ef3e02863a3268d46ac2c4c14d4873343168c2fa",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-numeric",
+  "tree": "1602800c40282ef0058ba90d873e4e47a2fdb035",
+  "sourceSha256": "0eac393f1f27f206487bfaa3c9c9963140488e924195f30eadd5e0be67a95c23",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "a93b7a2485d3d0fa1b22a0e894ac6f44f7bf7e9a49856d47a3d6ac29c2edbdc3"
+    "sha256": "0f23fc221481608929b976d8892e0fa567dd6e0a8de5d7dd672ce7a06077ee42"
   },
   "commits": [
     {
@@ -256,6 +256,12 @@
       "file": "048-sdk-external-turn.patch",
       "commit": "4d4f6d195cc5bb2871387c810e29482465247f27",
       "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f"
+    },
+    {
+      "id": "049",
+      "file": "049-exact-numeric-arguments.patch",
+      "commit": "ef3e02863a3268d46ac2c4c14d4873343168c2fa",
+      "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e"
     }
   ]
 }
