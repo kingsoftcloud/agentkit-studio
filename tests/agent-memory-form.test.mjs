@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentForm } from '../src/client/pages/agent-form.mjs';
+import { createExpertCatalog } from '../packages/expert-catalog/src/catalog.mjs';
+import { createTemplateAuthoring } from '../src/template-authoring.mjs';
 import {
   readAgentMemoryConfig, writeAgentMemoryConfig, validateAgentMemoryConfig,
   memorySourceContext, memoryRequiresCloudBinding, clampInt, clampFloat,
@@ -16,11 +18,14 @@ const byButtonText = text => node => node.type === 'button' && node.children.inc
 // ---------------------------------------------------------------------------
 // Pure helper: source gating per runtime / path
 // ---------------------------------------------------------------------------
-test('memorySourceContext: local-default is harness-only and excludes cloudEditing + template seeds', () => {
+test('memorySourceContext: local-default is harness-only; template seeds now allowed, cloudEditing excluded', () => {
   assert.deepEqual(memorySourceContext({ runtime: 'harness', cloudEditing: false, creationSeed: null }), { canLocal: true, canCloud: true });
   assert.deepEqual(memorySourceContext({ runtime: 'dsh-native', cloudEditing: false, creationSeed: null }), { canLocal: false, canCloud: true });
   assert.deepEqual(memorySourceContext({ runtime: 'codex', cloudEditing: false, creationSeed: null }), { canLocal: false, canCloud: true });
-  assert.deepEqual(memorySourceContext({ runtime: 'harness', cloudEditing: false, creationSeed: {} }), { canLocal: false, canCloud: true });
+  // A harness template seed may now use local-default memory (the template
+  // authoring service accepts it); local is still harness-only, never widened.
+  assert.deepEqual(memorySourceContext({ runtime: 'harness', cloudEditing: false, creationSeed: {} }), { canLocal: true, canCloud: true });
+  assert.deepEqual(memorySourceContext({ runtime: 'dsh-native', cloudEditing: false, creationSeed: {} }), { canLocal: false, canCloud: true });
   assert.deepEqual(memorySourceContext({ runtime: 'harness', cloudEditing: true, creationSeed: null }), { canLocal: false, canCloud: false });
 });
 
@@ -130,7 +135,52 @@ test('writeAgentMemoryConfig: cloud path keeps providerRef cloud with a binding 
   assert.deepEqual(built.plugins, [memoryInstance]);      // cloud keeps the memory-instance binding
 });
 
-test('memoryRequiresCloudBinding: local needs no binding; dsh-native/template-seed do', () => {
+// ---------------------------------------------------------------------------
+// Pure helper: disabled memory preserves everything (no silent source switch)
+// ---------------------------------------------------------------------------
+test('writeAgentMemoryConfig: disabled preserves provider/scopes/recall/write/rollout and keeps a cloud binding', () => {
+  const memoryInstance = { ecosystem: 'dsh', pluginRef: 'p', components: ['c'], enabled: true, config: { schemaVersion: 1, binding: { id: 'platform-memory-instance', connectionRef: 'conn', resource: { kind: 'memory-instance', id: 'mem-1', name: 'Mem', region: 'cn' }, required: true } } };
+  const originalSpec = {
+    memory: { enabled: true, providerRef: MEMORY_PROVIDER_CLOUD, scopes: ['user'],
+      recall: { enabled: false, maxTokens: 2048, topK: 12, minScore: 0.5 },
+      write: { mode: 'candidate', flushBeforeCompaction: false, flushAfterTurn: true } },
+    context: { rollout: { memoryWrite: 'enabled' }, contributors: { memoryRecall: true } },
+  };
+  const state = { ...readAgentMemoryConfig({ spec: originalSpec, runtime: 'harness', editing: true }), enabled: false };
+  const built = writeAgentMemoryConfig({ state, originalSpec, platformBindings: [memoryInstance], runtime: 'harness', cloudEditing: false, creationSeed: null });
+  assert.equal(built.useLocal, false);
+  assert.equal(built.memory.enabled, false);
+  assert.equal(built.memory.providerRef, MEMORY_PROVIDER_CLOUD, 'disabling does not switch the cloud provider to local');
+  assert.deepEqual(built.memory.scopes, ['user'], 'scopes preserved');
+  assert.equal(built.memory.recall.enabled, false, 'recall preserved');
+  assert.equal(built.memory.recall.maxTokens, 2048);
+  assert.equal(built.memory.write.mode, 'candidate', 'write preserved');
+  assert.equal(built.rollout, 'enabled', 'rollout preserved');
+  assert.deepEqual(built.plugins, [memoryInstance], 'cloud binding kept, not stripped');
+});
+
+test('writeAgentMemoryConfig: an explicit scopes:[] survives instead of being widened to defaults', () => {
+  const originalSpec = { memory: { enabled: true, providerRef: MEMORY_PROVIDER_LOCAL, scopes: [],
+    recall: { enabled: true, maxTokens: 500, topK: 4, minScore: 0.3 }, write: { mode: 'off' } },
+    context: { rollout: { memoryWrite: 'shadow' } } };
+  const state = readAgentMemoryConfig({ spec: originalSpec, runtime: 'harness', editing: true });
+  assert.deepEqual(state.scopes, [], 'read preserves the empty scopes array');
+  const built = writeAgentMemoryConfig({ state, originalSpec, platformBindings: [], runtime: 'harness', cloudEditing: false, creationSeed: null });
+  assert.deepEqual(built.memory.scopes, [], 'empty scopes not widened to defaults');
+  assert.equal(built.memory.write.mode, 'off');
+  assert.equal(built.memory.recall.enabled, true);
+  assert.equal(built.useLocal, true);
+});
+
+test('writeAgentMemoryConfig: disabled preserves an explicit scopes:[] and the local provider', () => {
+  const originalSpec = { memory: { enabled: true, providerRef: MEMORY_PROVIDER_LOCAL, scopes: [], recall: { enabled: true }, write: { mode: 'candidate' } }, context: { rollout: { memoryWrite: 'shadow' } } };
+  const state = { ...readAgentMemoryConfig({ spec: originalSpec, runtime: 'harness', editing: true }), enabled: false };
+  const built = writeAgentMemoryConfig({ state, originalSpec, platformBindings: [], runtime: 'harness', cloudEditing: false, creationSeed: null });
+  assert.deepEqual(built.memory.scopes, [], 'disabled preserves empty scopes');
+  assert.equal(built.memory.providerRef, MEMORY_PROVIDER_LOCAL, 'disabled preserves local provider');
+});
+
+test('memoryRequiresCloudBinding: local needs no binding; dsh-native does', () => {
   const harnessLocal = { enabled: true, source: 'local' };
   const harnessCloud = { enabled: true, source: 'cloud' };
   const harnessCtx = memorySourceContext({ runtime: 'harness', cloudEditing: false, creationSeed: null });
@@ -322,7 +372,9 @@ test('form create(): disabling memory does not fabricate a rollout or a cloud bi
   await findBy(tree, byButtonText('创建 Agent')).props.onClick();
   const spec = captured.create.spec;
   assert.equal(spec.memory.enabled, false);
-  assert.equal(spec.memory.providerRef, MEMORY_PROVIDER_LOCAL);
+  // Disabled memory preserves the original (empty) memory block; it does not
+  // fabricate a providerRef, a rollout, or a cloud binding.
+  assert.equal(spec.memory.providerRef, undefined, 'disabled blank create does not fabricate a providerRef');
   assert.equal(spec.context?.rollout?.memoryWrite, undefined, 'disabled memory does not synthesize a rollout');
   assert.equal((spec.bindings.plugins || []).some(b => b?.config?.binding?.resource?.kind === 'memory-instance'), false);
 });
@@ -340,4 +392,97 @@ test('form create(): local memory with shadow rollout never claims a write', asy
   await findBy(tree, byButtonText('创建 Agent')).props.onClick();
   assert.equal(captured.create.spec.context.rollout.memoryWrite, 'shadow');
   assert.equal(captured.create.spec.memory.write.mode, 'explicit_only');
+});
+
+const memoryInstanceBinding = (id = 'mem-1') => ({ ecosystem: 'dsh', pluginRef: 'p', components: ['c'], enabled: true,
+  config: { schemaVersion: 1, binding: { id: 'platform-memory-instance', connectionRef: 'conn', resource: { kind: 'memory-instance', id, name: 'Mem', region: 'cn' }, required: true } } });
+
+test('form edit save: disabling a cloud memory Agent preserves provider/scopes/recall/write/rollout and the binding', async () => {
+  const initialAgent = { metadata: { id: 'a1', name: 'Agent', revision: 2 }, source: 'local', spec: {
+    runtime: { type: 'harness' },
+    bindings: { modelProfileId: 'model-1', plugins: [memoryInstanceBinding()] },
+    memory: { enabled: true, providerRef: MEMORY_PROVIDER_CLOUD, scopes: ['user'],
+      recall: { enabled: false, maxTokens: 2048, topK: 12, minScore: 0.5 },
+      write: { mode: 'candidate', flushBeforeCompaction: false, flushAfterTurn: true } },
+    context: { rollout: { memoryWrite: 'enabled' }, contributors: { memoryRecall: true } },
+  } };
+  const captured = {};
+  const harness = formHarness({ initialAgent, onBack: () => {}, onCreated: () => {} }, { captured });
+  let tree = harness.render(); await harness.flush(); tree = harness.render();
+  tree = advance(harness, tree); tree = advance(harness, tree);   // -> step 2
+  findBy(tree, byAria('启用跨会话记忆')).props.onChange({ target: { checked: false } });
+  tree = harness.render();
+  tree = advance(harness, tree);   // -> step 3
+  await findBy(tree, byButtonText('保存 Agent')).props.onClick();
+  const spec = captured.update.spec;
+  assert.equal(spec.memory.enabled, false);
+  assert.equal(spec.memory.providerRef, MEMORY_PROVIDER_CLOUD, 'disabling does not switch the cloud provider');
+  assert.deepEqual(spec.memory.scopes, ['user'], 'scopes preserved');
+  assert.equal(spec.memory.recall.enabled, false, 'recall preserved');
+  assert.equal(spec.memory.recall.maxTokens, 2048);
+  assert.equal(spec.memory.write.mode, 'candidate', 'write preserved');
+  assert.equal(spec.context.rollout.memoryWrite, 'enabled', 'rollout preserved');
+  assert.equal(spec.context.contributors.memoryRecall, true, 'other context contributors preserved');
+  assert.ok((spec.bindings.plugins || []).some(b => b?.config?.binding?.resource?.kind === 'memory-instance'), 'cloud binding kept');
+});
+
+test('form edit save: an explicit scopes:[] survives a local memory edit', async () => {
+  const initialAgent = { metadata: { id: 'a1', name: 'Agent', revision: 2 }, source: 'local', spec: {
+    runtime: { type: 'harness' },
+    bindings: { modelProfileId: 'model-1', plugins: [] },
+    memory: { enabled: true, providerRef: MEMORY_PROVIDER_LOCAL, scopes: [],
+      recall: { enabled: true, maxTokens: 500, topK: 4, minScore: 0.3 }, write: { mode: 'off' } },
+    context: { rollout: { memoryWrite: 'shadow' } },
+  } };
+  const captured = {};
+  const harness = formHarness({ initialAgent, onBack: () => {}, onCreated: () => {} }, { captured });
+  let tree = harness.render(); await harness.flush(); tree = harness.render();
+  tree = advance(harness, tree); tree = advance(harness, tree);   // -> step 2 (memory already enabled + local)
+  tree = advance(harness, tree);   // -> step 3, no changes
+  await findBy(tree, byButtonText('保存 Agent')).props.onClick();
+  const spec = captured.update.spec;
+  assert.deepEqual(spec.memory.scopes, [], 'empty scopes not widened to defaults');
+  assert.equal(spec.memory.providerRef, MEMORY_PROVIDER_LOCAL);
+  assert.equal(spec.memory.write.mode, 'off');
+  assert.equal(spec.memory.recall.enabled, true);
+  assert.equal(spec.memory.recall.maxTokens, 500);
+  assert.equal(spec.context.rollout.memoryWrite, 'shadow');
+});
+
+// Real form -> template authoring service -> store roundtrip for a harness
+// memory template seed using local-default memory without a cloud binding.
+test('form seed roundtrip: a harness memory template seed supports local-default without a cloud binding through the real authoring service', async () => {
+  const catalog = createExpertCatalog();
+  const seed = catalog.prepare('personal-writer');   // memory template, requires memory-instance
+  seed.spec.runtime.type = 'harness';
+  seed.spec.bindings.modelProfileId = 'model-1';
+  seed.spec.memory = { enabled: true, providerRef: MEMORY_PROVIDER_LOCAL, scopes: [],
+    recall: { enabled: false, maxTokens: 500, topK: 4, minScore: 0.3 }, write: { mode: 'off', flushBeforeCompaction: true, flushAfterTurn: false } };
+  seed.spec.context = { rollout: { memoryWrite: 'enabled' } };
+  const captured = {};
+  const store = { create: async value => { captured.store = value; return { metadata: { id: value.slug || 'seed-agent', name: value.name, revision: 1 }, spec: value.spec }; } };
+  const service = createTemplateAuthoring({ catalog, store,
+    resources: async () => ({ items: [{ resourceId: 'model-1' }] }),
+    platformResources: async kind => ({ connectionRef: 'conn', pluginRef: 'p', componentId: kind, pluginSnapshotDigest: 's', items: [] }) });
+  const hostRemote = {
+    resources: kind => Promise.resolve(kind === 'model' ? { items: [{ resourceId: 'model-1', displayName: 'Model 1' }], defaultModel: 'model-1' } : { items: [] }),
+    codexModels: () => Promise.resolve({ items: [{ resourceId: 'model-1' }], defaultModel: 'model-1' }),
+    quickAuthorAgent: async payload => service.create({ templateSource: payload.templateSource, name: payload.name, runtimeType: payload.runtimeType, description: payload.description, spec: payload.spec, bindings: payload.spec?.bindings || {} }),
+    updateAgent: async (id, spec, revision, name) => ({ metadata: { id, name, revision: (revision || 1) + 1 } }),
+  };
+  const harness = formHarness({ creationSeed: seed, onBack: () => {}, onCreated: () => {} }, { hostRemote, captured });
+  let tree = harness.render(); await harness.flush(); tree = harness.render();
+  tree = advance(harness, tree); tree = advance(harness, tree);   // -> step 2
+  assert.ok(findBy(tree, byAria('记忆来源-本地记忆')), 'harness memory seed offers local source without a binding');
+  tree = advance(harness, tree);   // -> step 3
+  await findBy(tree, byButtonText('创建 Agent')).props.onClick();
+  assert.ok(captured.store, 'template authoring service created the Agent');
+  const spec = captured.store.spec;
+  assert.equal(spec.memory.enabled, true);
+  assert.equal(spec.memory.providerRef, MEMORY_PROVIDER_LOCAL, 'local-default preserved through the service');
+  assert.deepEqual(spec.memory.scopes, [], 'empty scopes preserved through the service');
+  assert.equal(spec.memory.write.mode, 'off', 'write.mode off preserved');
+  assert.equal(spec.memory.recall.enabled, false, 'recall.enabled independent of memory.enabled');
+  assert.equal(spec.context.rollout.memoryWrite, 'enabled', 'rollout preserved');
+  assert.equal((spec.bindings.plugins || []).some(b => b?.config?.binding?.resource?.kind === 'memory-instance'), false, 'no cloud binding required');
 });

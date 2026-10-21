@@ -34,17 +34,25 @@ export function createTemplateAuthoring({ catalog, store, resources, platformRes
         seen.add(resource.kind);
         plugins.push(platformBinding(resource.kind, resource.id, await platformResources(resource.kind)));
       }
+      const hasMemory = seen.has('memory-instance'), enabled = spec.memory?.enabled === true;
+      // A harness Agent may use local-default Native memory without a cloud
+      // memory-instance binding; every other enabled path still requires one.
+      const usesLocalDefault = enabled && spec.memory?.providerRef === 'local-default' && runtimeType === 'harness' && !hasMemory;
       for (const required of item.requirements.filter(value => value.required)) {
         const counts = { model: modelIds.length, mcp: bindings.mcpServers?.length || 0, skill: bindings.skills?.length || 0, tool: bindings.tools?.length || 0 };
+        // A harness local-default Agent satisfies a memory-instance requirement
+        // through the local store, not a cloud binding.
+        if (required.kind === 'memory-instance' && usesLocalDefault) continue;
         if (!seen.has(required.kind) && !(counts[required.kind] >= (required.count || 1))) fail('TEMPLATE_BINDING_REQUIRED', required.label || `请绑定 ${required.kind} 资源`);
       }
-      const hasMemory = seen.has('memory-instance'), enabled = spec.memory?.enabled === true;
-      if (enabled && !hasMemory) fail('TEMPLATE_MEMORY_REQUIRED', '启用长期记忆前请选择记忆库');
+      if (enabled && !hasMemory && !usesLocalDefault) fail('TEMPLATE_MEMORY_REQUIRED', '启用长期记忆前请选择记忆库');
       const mode = spec.memory?.write?.mode || 'explicit_only';
-      if (!['candidate', 'explicit_only'].includes(mode)) fail('TEMPLATE_MEMORY_POLICY_INVALID', '记忆写入策略无效');
+      const validWriteModes = usesLocalDefault ? ['off', 'explicit_only', 'candidate'] : ['candidate', 'explicit_only'];
+      if (!validWriteModes.includes(mode)) fail('TEMPLATE_MEMORY_POLICY_INVALID', '记忆写入策略无效');
       spec.bindings = { ...bindings, modelProfileIds: modelIds, plugins };
-      spec.memory = { ...spec.memory, enabled, providerRef: hasMemory ? 'binding://platform-memory-instance' : 'local-default',
-        recall: { ...spec.memory?.recall, enabled: enabled && spec.memory?.recall?.enabled !== false }, write: { ...spec.memory?.write, mode } };
+      spec.memory = { ...spec.memory, enabled,
+        providerRef: hasMemory ? 'binding://platform-memory-instance' : (spec.memory?.providerRef ?? 'local-default'),
+        recall: { ...spec.memory?.recall, enabled: spec.memory?.recall?.enabled ?? true }, write: { ...spec.memory?.write, mode } };
       spec.security = { toolPolicy: 'deny-by-default', allowedPermissions: runtimeType === 'harness'
         ? ['process:host-user', ...((bindings.mcpServers || []).length ? ['network:mcp'] : [])] : [] };
       const catalogId = catalog.prepare(ref).templateSource.catalogId;

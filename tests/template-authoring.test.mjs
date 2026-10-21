@@ -92,3 +92,41 @@ test('platform catalog uses paged Server data and exposes selectable metadata on
   assert.equal(platformBinding('knowledge-base', 'kb-1', result).config.retrieval.mode, 'tool');
   await assert.rejects(() => listPlatformResources({}, 'unsupported'), { code: 'INVALID_RESOURCE_KIND' });
 });
+
+test('a harness template seed supports local-default Native memory without a cloud binding and preserves write.mode off, recall independence, scopes and rollout', async () => {
+  const catalog = createExpertCatalog();
+  let created;
+  const service = createTemplateAuthoring({ catalog, store: { create: value => { created = value; return value; } }, resources, platformResources: async kind => platformCatalog(kind) });
+  const draft = payload(catalog, 'personal-writer', 'harness');
+  // Drop the auto-bound memory-instance and switch to local-default memory.
+  draft.spec.bindings.plugins = [];
+  draft.spec.memory = { enabled: true, providerRef: 'local-default', scopes: [],
+    recall: { enabled: false, maxTokens: 500, topK: 4, minScore: 0.3 }, write: { mode: 'off', flushBeforeCompaction: true, flushAfterTurn: false } };
+  draft.spec.context = { rollout: { memoryWrite: 'enabled' } };
+  const record = await service.create(draft);
+  assert.equal(record.spec.memory.enabled, true);
+  assert.equal(record.spec.memory.providerRef, 'local-default');
+  assert.deepEqual(record.spec.memory.scopes, [], 'empty scopes preserved');
+  assert.equal(record.spec.memory.write.mode, 'off');
+  assert.equal(record.spec.memory.write.flushBeforeCompaction, true);
+  assert.equal(record.spec.memory.write.flushAfterTurn, false);
+  assert.equal(record.spec.memory.recall.enabled, false, 'recall.enabled independent of memory.enabled');
+  assert.equal(record.spec.context.rollout.memoryWrite, 'enabled');
+  assert.equal((record.spec.bindings.plugins || []).some(b => b?.config?.binding?.resource?.kind === 'memory-instance'), false, 'no cloud binding required');
+  assert.equal(created.runtimeType, 'harness');
+});
+
+test('non-harness runtimes and cloud-bound harness seeds keep the original memory requirements', async () => {
+  const catalog = createExpertCatalog();
+  const service = createTemplateAuthoring({ catalog, store: { create: () => { throw new Error('should not create'); } }, resources, platformResources: async kind => platformCatalog(kind) });
+  // dsh-native + local-default + enabled + no binding: the memory-instance
+  // requirement is NOT waived (local stays harness-only), so creation is rejected.
+  const dsh = payload(catalog, 'personal-writer', 'dsh-native');
+  dsh.spec.bindings.plugins = [];
+  dsh.spec.memory = { ...dsh.spec.memory, providerRef: 'local-default' };
+  await assert.rejects(() => service.create(dsh), { code: 'TEMPLATE_BINDING_REQUIRED' });
+  // harness + cloud binding still rejects write.mode 'off' (cloud path keeps candidate/explicit_only).
+  const harnessCloud = payload(catalog, 'personal-writer', 'harness');
+  harnessCloud.spec.memory.write.mode = 'off';
+  await assert.rejects(() => service.create(harnessCloud), { code: 'TEMPLATE_MEMORY_POLICY_INVALID' });
+});

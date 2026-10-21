@@ -89,9 +89,12 @@ export function createAgentForm({
 
     const boundKinds = platformBindings.filter(item => item.enabled !== false).map(item => item?.config?.binding?.resource?.kind);
     const selectedCounts = { model: selectedModel ? 1 : 0, tool: selectedTools.length, mcp: selectedMcp.length, skill: selectedSkills.length };
-    const missingRequirements = requirements.filter(item => item.required && !(boundKinds.includes(item.kind) || selectedCounts[item.kind] >= (item.count || 1)));
     const memoryCtx = memorySourceContext({ runtime: form.runtime, cloudEditing, creationSeed });
     const effectiveMemorySource = memoryCtx.canLocal ? memoryConfig.source : 'cloud';
+    // A harness Agent using local-default memory satisfies a template's
+    // memory-instance requirement through the local store, not a cloud binding.
+    const localMemorySatisfiesMemoryRequirement = memoryCtx.canLocal && memoryConfig.enabled && effectiveMemorySource !== 'cloud';
+    const missingRequirements = requirements.filter(item => item.required && !(boundKinds.includes(item.kind) || selectedCounts[item.kind] >= (item.count || 1) || (item.kind === 'memory-instance' && localMemorySatisfiesMemoryRequirement)));
     const memoryInstanceBound = boundKinds.includes('memory-instance');
     const requiresCloudBinding = memoryRequiresCloudBinding({ state: { ...memoryConfig, source: effectiveMemorySource }, ctx: memoryCtx, memoryInstanceBound });
     const memoryBindingOk = !memoryEnabled || !requiresCloudBinding || memoryInstanceBound;
@@ -199,7 +202,7 @@ export function createAgentForm({
             h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' } },
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: BRAND.ink, fontSize: '12px' } }, h('input', { type: 'checkbox', 'aria-label': '压缩前刷新记忆', checked: memoryConfig.writeFlushBeforeCompaction, onChange: event => updateMemory({ writeFlushBeforeCompaction: event.target.checked }) }), '压缩前刷新'),
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: BRAND.ink, fontSize: '12px' } }, h('input', { type: 'checkbox', 'aria-label': '轮次后刷新记忆', checked: memoryConfig.writeFlushAfterTurn, onChange: event => updateMemory({ writeFlushAfterTurn: event.target.checked }) }), '轮次后刷新')),
-            h('p', { style: { margin: '8px 0 0', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '「轮次后刷新」的消费者正在并行实现，当前仅作为配置保留，不会自动在轮次后保存记忆。')),
+            h('p', { style: { margin: '8px 0 0', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '压缩前刷新会在上下文压缩前提取并保存记忆候选；轮次后刷新当前暂不可用（Host 尚未接通），仅作为配置保留。')),
           h('div', { style: divider },
             h('label', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '记忆写入开关', h('select', { 'aria-label': '记忆写入开关', value: memoryConfig.rollout, onChange: event => updateMemory({ rollout: event.target.value }), style: inputStyle() }, h('option', { value: 'off' }, '关闭写入'), h('option', { value: 'shadow' }, '仅评估（shadow）'), h('option', { value: 'enabled' }, '实际写入'))),
             h('p', { style: { margin: '6px 0 0', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, memoryConfig.rollout === 'shadow' ? 'shadow 仅评估候选策略，不写入记忆库。' : memoryConfig.rollout === 'enabled' ? 'enabled 实际写入本地记忆库；请确认后再开启。' : '关闭后不写入记忆库，已写入事实仍可召回。'))) : h(Fragment, null,

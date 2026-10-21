@@ -36,13 +36,13 @@ export const MEMORY_ROLLOUTS = Object.freeze(['off', 'shadow', 'enabled']);
 
 const isMemoryInstanceBinding = binding => binding?.config?.binding?.resource?.kind === 'memory-instance';
 
-/** Which memory sources the form may offer. The local provider is Harness-only
- *  and the template authoring service rejects enabled-without-cloud-binding,
- *  so local-default is only offered for a harness Agent that is not a cloud
- *  edit and not a template seed. Cloud memory-instance binding stays available
- *  for every non-cloudEditing authoring path. */
+/** Which memory sources the form may offer. The local provider is Harness-only;
+ *  cloud memory-instance binding stays available for every non-cloudEditing
+ *  authoring path. Template seeds are no longer excluded now that the template
+ *  authoring service accepts a harness local-default seed without a cloud
+ *  binding — but local stays harness-only, never widened to other runtimes. */
 export function memorySourceContext({ runtime, cloudEditing, creationSeed } = {}) {
-  const canLocal = runtime === 'harness' && !cloudEditing && !creationSeed;
+  const canLocal = runtime === 'harness' && !cloudEditing;
   const canCloud = !cloudEditing;
   return { canLocal, canCloud };
 }
@@ -119,25 +119,43 @@ export function validateAgentMemoryConfig(state) {
 }
 
 /** Build the memory spec block + context rollout + filtered platform plugins
- *  for saving. Preserves every original field the user did not change, keeps
- *  recall.enabled independent of memory.enabled, routes providerRef by source,
- *  and writes context.rollout.memoryWrite only on the local path (cloud keeps
- *  its original rollout untouched, matching prior behavior). */
+ *  for saving. Disabled memory preserves the existing provider/scopes/recall/
+ *  write/rollout exactly — disabling never silently switches the source or
+ *  drops config. When enabled, recall.enabled stays independent of
+ *  memory.enabled, providerRef routes by source, and context.rollout.memoryWrite
+ *  is written only on the local path (cloud keeps its original rollout). An
+ *  explicit scopes:[] survives instead of being widened to the defaults. */
 export function writeAgentMemoryConfig({ state, originalSpec = {}, platformBindings = [], runtime, cloudEditing, creationSeed }) {
   const ctx = memorySourceContext({ runtime, cloudEditing, creationSeed });
   const memoryInstanceBound = (platformBindings || []).some(isMemoryInstanceBinding);
-  const useLocal = state.enabled && ctx.canLocal && state.source !== 'cloud';
-  const providerRef = state.enabled && state.source === 'cloud' && memoryInstanceBound
-    ? MEMORY_PROVIDER_CLOUD
-    : MEMORY_PROVIDER_LOCAL;
   const originalMemory = originalSpec.memory || {};
   const originalRecall = originalMemory.recall || {};
   const originalWrite = originalMemory.write || {};
+  const originalRollout = originalSpec.context?.rollout?.memoryWrite ?? MEMORY_ROLLOUT_DEFAULT;
+  // Disabled: only the enabled flag moves. Preserve provider, scopes, recall,
+  // write and rollout exactly as the original spec carried them so disabling
+  // never silently switches the source or drops config the user did not touch.
+  if (!state.enabled) {
+    return {
+      memory: { ...originalMemory, enabled: false },
+      rollout: originalRollout,
+      plugins: platformBindings || [],
+      useLocal: false,
+      providerRef: originalMemory.providerRef ?? MEMORY_PROVIDER_LOCAL,
+      memoryInstanceBound,
+    };
+  }
+  const useLocal = ctx.canLocal && state.source !== 'cloud';
+  const providerRef = useLocal
+    ? MEMORY_PROVIDER_LOCAL
+    : (memoryInstanceBound ? MEMORY_PROVIDER_CLOUD : (originalMemory.providerRef ?? MEMORY_PROVIDER_LOCAL));
   const memory = {
     ...originalMemory,
+    enabled: true,
     providerRef,
-    enabled: state.enabled,
-    scopes: Array.isArray(originalMemory.scopes) && originalMemory.scopes.length ? originalMemory.scopes : [...MEMORY_SCOPES_DEFAULT],
+    // state.scopes mirrors the original (read preserves an empty array); use it
+    // so an explicit scopes:[] survives instead of being widened to defaults.
+    scopes: Array.isArray(state.scopes) ? state.scopes : (Array.isArray(originalMemory.scopes) ? originalMemory.scopes : [...MEMORY_SCOPES_DEFAULT]),
   };
   if (useLocal) {
     memory.recall = {
@@ -154,9 +172,9 @@ export function writeAgentMemoryConfig({ state, originalSpec = {}, platformBindi
       flushAfterTurn: Boolean(state.writeFlushAfterTurn),
     };
   } else {
-    // Cloud / non-local path preserves the original recall/write shape; only the
-    // enabled flag, providerRef, independent recall.enabled and write.mode move
-    // with the form. rollout stays whatever the original spec carried.
+    // Cloud / non-local path preserves the original recall/write shape; only
+    // recall.enabled and write.mode move with the form. rollout stays whatever
+    // the original spec carried.
     memory.recall = { ...originalRecall, enabled: Boolean(state.recallEnabled) };
     memory.write = { ...originalWrite, mode: state.writeMode };
   }
@@ -165,6 +183,6 @@ export function writeAgentMemoryConfig({ state, originalSpec = {}, platformBindi
   const plugins = useLocal
     ? (platformBindings || []).filter(binding => !isMemoryInstanceBinding(binding))
     : (platformBindings || []);
-  const rollout = useLocal ? state.rollout : (originalSpec.context?.rollout?.memoryWrite ?? MEMORY_ROLLOUT_DEFAULT);
+  const rollout = useLocal ? state.rollout : originalRollout;
   return { memory, rollout, plugins, useLocal, providerRef, memoryInstanceBound };
 }
