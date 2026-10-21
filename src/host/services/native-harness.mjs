@@ -21,6 +21,7 @@ import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryP
 import { createStudioNativeRecovery } from './native-recovery.mjs';
 import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../providers/native-hooks.mjs';
 import { bindStudioNativeMemoryFlush, composeStudioNativeHooks } from '../../providers/native-memory.mjs';
+import { bindStudioNativeMemoryHost, extendNativeMemoryGoal } from '../../providers/native-memory-host.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -129,6 +130,31 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           if (part.type === 'image' && part.offloaded !== true) childMediaSources.set(partIndex, admission.messages[index].media?.[image++]);
         });
       });
+      const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
+      const sessionId = String(agent.session.id);
+      const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
+      // Lock the non-memory tool bundle before Memory tools are bound so the
+      // Memory locked digest can bind it without a circular dependency. The
+      // profile/plugin digests pin the Build's model and non-hook bindings.
+      const baseTools = binding.nativeTools.definitions(agent, input.assembly.tools);
+      const bundleDigest = hash(baseTools);
+      const profileDigest = hash(description);
+      const pluginLockDigest = hash({ mcpBindingDigest: binding.nativeTools.mcpBindingDigest ?? null,
+        commandBinding: binding.nativeTools.commandBinding ?? null,
+        workspaceSyntax: binding.nativeTools.workspaceSyntax ?? null });
+      // Compose the local-default Memory owner for this Build (Revision or
+      // Frozen) and bind its tools into the real DSH pipeline. Returns null for
+      // a non-local provider so the cloud Memory path stays unchanged. The
+      // verification wrapper is always produced for local-default so an explicit
+      // Memory task fails closed when the owner is not installed.
+      const memoryHost = bindStudioNativeMemoryHost({ record, scope, sessionId, store, storeDir,
+        buildId: binding.buildId ?? null, context, ctx, bundleDigest, profileDigest, pluginLockDigest });
+      let memoryDispose;
+      try {
+        if (memoryHost?.port && typeof binding.nativeTools.bindMemory === 'function')
+          memoryDispose = binding.nativeTools.bindMemory(memoryHost);
+      } catch (error) { memoryHost?.close(); throw error; }
+      try {
       const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
       const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits });
       const materialized = original ? { memoryWrite: false } : await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
@@ -140,12 +166,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       if (original) invariant(renderPrompt(recoveredPromptAssembly(input.assembly, source)) === systemPrompt,
         'studio_native_recovery_prompt_changed');
       const instructions = original ? original.configuration.instructions : [systemPrompt, materialized.resourceContext].filter(Boolean).join('\n\n');
-      const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
-      const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
-      const verification = await createNativeVerification({ scope, sessionId: String(agent.session.id), workspaceRoot,
+      const verification = await createNativeVerification({ scope, sessionId, workspaceRoot,
         evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence'),
         verifyBrowserPage: taskPolicy.workspaceObservationPolicy && typeof binding.nativeTools.verifyBrowserPage === 'function'
           ? request => binding.nativeTools.verifyBrowserPage(agent, request) : undefined });
+      // Combine the baseline delivery verifier with the Memory owner verifier.
+      // The wrapper is always present for a local-default Build (fail-closed for
+      // explicit Memory tasks) and delegates to the baseline otherwise.
+      const memoryVerification = memoryHost ? memoryHost.wrapVerification(verification) : null;
       const modelBinding = (profile, id, boundContext) => {
         const desc = profileDescription(profile), digest = hash(desc);
         const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context });
@@ -178,27 +206,56 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const ownedChildren = children && { scope, owner: children.owner, runIds: new Set() };
       if (ownedChildren) childOwners.add(ownedChildren);
       signal.throwIfAborted();
-      const hookOptions = { scope, sessionId: String(agent.session.id), record, buildId: binding.buildId ?? null, store };
+      const hookOptions = { scope, sessionId, record, buildId: binding.buildId ?? null, store };
       const memoryRecall = bindStudioNativeMemoryRecall({ ...hookOptions, storeDir });
       const memoryHooks = bindStudioNativeMemoryFlush({ ...hookOptions, storeDir, contextWindow: context.profile.contextWindow });
       let registeredHooks, hooks;
       try { registeredHooks = hookRegistry?.bind(hookOptions); hooks = composeStudioNativeHooks(registeredHooks, memoryHooks); }
       catch (error) { await registeredHooks?.close(); await memoryHooks?.close(); throw error; }
+      const memoryProviderRef = memoryHost?.policy.providerRef ?? 'local-default';
       return { scope, buildId, source,
+        // Optional completed-Turn consumption: the Memory owner consumes only
+        // original current-Run human inputs after the committed terminal. It
+        // never rewrites the main answer/usage/verification; the executor wraps
+        // it so a failure cannot replace the task terminal.
+        consumeCompletedTurn: memoryHost?.memoryTurn ? async (snapshot, { signal } = {}) => {
+          // The completed-Turn consumer passes the full call context
+          // ({scope, runId, operationKey, call, definition, toolResultContent,
+          // signal}); forward all of it to the locked tool port so the bound
+          // definition and principal stay on the receipt. The owner receipt the
+          // port returns is the raw sealed result, deep-equal to the ledger tool
+          // result content — never a forged JSON body.
+          const directWriteReceipt = memoryHost.port ? async ({ call, definition, operationKey, signal }) => {
+            const result = await memoryHost.port.reconcile({ call, definition, operationKey, signal });
+            if (result.status === 'ok' && result.content.receipt?.committed === true) return result.content.receipt;
+            return null;
+          } : undefined;
+          return memoryHost.memoryTurn.consume(snapshot, { signal, directWriteReceipt });
+        } : undefined,
         releaseResources: async request => {
-          await hooks?.close();
-          if (ownedChildren) {
-            ownedChildren.runIds.add(request.runId);
-            let phase;
-            try { phase = store.load(scope, request.runId).snapshot.phase; }
-            catch (error) { if (error.code !== 'run_not_found') throw error; }
-            if (!phase || signal.aborted || ['completed', 'failed', 'canceled', 'interrupted'].includes(phase)) {
-              await children.owner.releaseRun(request); childOwners.delete(ownedChildren);
+          // The Memory consumer/tool owner and its database are released in a
+          // finally so a failure in hooks/children/nativeTools release cannot
+          // leak the Memory provider. The committed terminal and the
+          // completed-Turn consumer have already finished before this runs.
+          try {
+            await hooks?.close();
+            if (ownedChildren) {
+              ownedChildren.runIds.add(request.runId);
+              let phase;
+              try { phase = store.load(scope, request.runId).snapshot.phase; }
+              catch (error) { if (error.code !== 'run_not_found') throw error; }
+              if (!phase || signal.aborted || ['completed', 'failed', 'canceled', 'interrupted'].includes(phase)) {
+                await children.owner.releaseRun(request); childOwners.delete(ownedChildren);
+              }
             }
+            await binding.nativeTools.releaseSession?.(request);
+          } finally {
+            memoryDispose?.(); memoryHost?.close();
           }
-          await binding.nativeTools.releaseSession?.(request);
         },
-        taskContractFactory: facts => nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
+        taskContractFactory: facts => extendNativeMemoryGoal(facts.goal,
+          nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
+          { providerRef: memoryProviderRef }),
         configuration: { profile: parentModel.profile,
         ...(memoryRecall ? { contextSources: [memoryRecall.source] } : {}),
         ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
@@ -210,6 +267,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(hooks ? { hookContract: STUDIO_NATIVE_HOOK_CONTRACT, hooks: hooks.definitions,
             stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
           ...(children ? { childContract: STUDIO_NATIVE_CHILD_CONTRACT, childRoles: roles } : {}),
+          ...(memoryHost ? { memoryHostContract: memoryHost.contract,
+            memoryHostBinding: memoryHost.hostBindingDigest, memoryVerification: memoryHost.verificationDigest } : {}),
           toolArgumentEncoding: binding.nativeTools.argumentEncoding ?? null,
           toolPermissionContract: binding.nativeTools.permissionContract ?? null,
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),
@@ -225,13 +284,15 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           childPromotionPolicy: 'owned-child-promotion/v1', childInputPolicy: 'owned-child-input/v1' } : {}),
         workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy,
         ...(binding.nativeTools.commandBinding ? { backgroundNotificationPolicy: 'completed-before-model/v1' } : {}),
-        contract: nativeGoalContract({ sessionId: String(agent.session.id), goal: admission.objective }), instructions, inputMessages: admission.messages,
+        contract: extendNativeMemoryGoal(admission.objective,
+          nativeGoalContract({ sessionId, goal: admission.objective }), { providerRef: memoryProviderRef }),
+        instructions, inputMessages: admission.messages,
         tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000,
           (hooks?.requiredEffectTimeoutMs ?? 0) + 1,
           ...roles.map(role => role.timeoutSeconds * 1000 + 15000), ...tools.map(tool => tool.timeoutMs + 10000)) } },
         ports: { ...binding.nativeTools.forAgent(agent, { scope, store, ...(children ? { children } : {}) }),
           ...(hooks ? { hooks } : {}),
-          ...(children ? { children: children.owner } : {}), verification,
+          ...(children ? { children: children.owner } : {}), verification: memoryVerification ?? verification,
           context: { ...context.port, ...(memoryRecall ? { readSource: memoryRecall.readSource } : {}) }, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);
@@ -260,6 +321,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           return { status: 'admitted', messages };
         } }, model: parentModel.model },
       };
+      } catch (error) { memoryDispose?.(); memoryHost?.close(); throw error; }
   };
   const execute = createNativeDshTurnExecutor({ store, projections, durableOwnership: true, flush: session => sessions.flush(session),
     publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),

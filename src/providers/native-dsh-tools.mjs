@@ -73,6 +73,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   invariant(!mcpContracts.size || typeof executeMcpTool === 'function', 'studio_native_mcp_executor_unavailable');
   const mcpSchemas = new Map([...mcpContracts].filter(([, contract]) => contract.nativeMcpSchema !== undefined)
     .map(([name, contract]) => [name, bindNativeMcpSchema(contract.nativeMcpSchema)]));
+  const memoryNames = new Set();
+  let memoryBinding = null;
   let closed = false, closing, disposers = [];
   const close = () => {
     if (closing) return closing;
@@ -81,7 +83,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       try { return Promise.resolve(dispose?.()); } catch (error) { return Promise.reject(error); }
     });
     disposers = [];
-    return closing = Promise.allSettled([...unregistering, browserTools.close()]).then(results => {
+    // Dispose the bound Memory owner's own registrations; the provider lifetime
+    // is released by the Host's releaseResources, not here.
+    const memoryDispose = memoryBinding?._dispose;
+    memoryBinding = null;
+    const memoryUnregistering = memoryDispose ? [Promise.resolve(memoryDispose())] : [];
+    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, browserTools.close()]).then(results => {
       const failed = results.find(result => result.status === 'rejected');
       if (failed) throw failed.reason;
     });
@@ -142,8 +149,89 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     return close;
   };
   ctx.effect(install, 'agentkit-studio: Native builtin tool bindings');
+  /** Trusted Memory binding entry. The parent composes the per-Build Memory
+   * owner (definitions + provider + consent + planner) and binds it here so
+   * the Memory tools enter the real DSH pre/guard/around/post pipeline. The
+   * Host never executes Memory directly: every call still goes through
+   * ``ctx.tools.execute``, the standing Node builtin policy runs, and the
+   * Memory tool body owns its own exact-call consent. Returns a disposer the
+   * caller runs from ``releaseResources``; it unregisters only the names this
+   * binding registered (an older owner's disposer cannot delete a newer
+   * owner's Memory tools) and leaves the provider lifetime to the caller's
+   * ``close``. */
+  const bindMemory = memoryHost => {
+    invariant(!closed && memoryHost?.port && Array.isArray(memoryHost.port.definitions)
+      && memoryHost.dispatchRef, 'studio_native_memory_binding_invalid');
+    // Each binding owns its own names and registrations; a disposer only ever
+    // removes what its binding added, so rebinding a new owner cannot let the
+    // old owner's disposer delete the new owner's Memory tools.
+    const ownedNames = [];
+    let ownedDisposers = [];
+    const dispose = () => {
+      for (const name of ownedNames) { formal.delete(name); allowed.delete(name); builtinNames.delete(name); memoryNames.delete(name); }
+      ownedNames.length = 0;
+      for (const dispose of ownedDisposers) { try { dispose?.(); } catch { /* best-effort unregister */ } }
+      ownedDisposers = [];
+      if (memoryBinding === memoryHost) memoryBinding = null;
+    };
+    // Rebinding replaces a prior owner: dispose it first so its names are free
+    // and its provider is released by the caller, before registering the new.
+    if (memoryBinding) memoryBinding._dispose?.();
+    for (const definition of memoryHost.port.definitions) {
+      invariant(!formal.has(definition.name) && !contracts.has(definition.name) && !childNames.has(definition.name),
+        'studio_native_memory_tool_collision');
+      formal.set(definition.name, definition);
+      allowed.add(definition.name);
+      builtinNames.add(definition.name);
+      memoryNames.add(definition.name);
+      ownedNames.push(definition.name);
+    }
+    memoryBinding = memoryHost;
+    memoryBinding._dispose = dispose;
+    ownedDisposers = memoryHost.port.definitions.map(definition => ctx.tools.register({
+      name: definition.name, description: definition.description ?? '',
+      parameters: structuredClone(definition.parameters),
+      output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
+      execute: async (args, exec) => {
+        const invocation = calls.get(String(exec.callId));
+        invariant(!closed, 'studio_native_tools_closed');
+        invariant(invocation && invocation.agent === exec.agent && invocation.request.call.name === definition.name
+          && canonical(invocation.argumentEncoding ? parseNativeJson(JSON.stringify(args)) : args)
+            === canonical(invocation.request.call.arguments), 'studio_native_tool_authority_missing');
+        exec.signal.throwIfAborted();
+        invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
+        // The complete DSH pre/guard/around/post pipeline already authorized
+        // this call. Enforce the standing Node builtin policy (memory:write is
+        // not a workspace write; the Memory tool's own consent runs below).
+        try { await authorizeNativeBuiltin(ctx, exec, formal.get(definition.name)); }
+        catch (error) {
+          invocation.outcome = { status: 'error', content: { code: error.code || 'STUDIO_NATIVE_PERMISSION_DENIED', executed: false } };
+          throw error;
+        }
+        exec.signal.throwIfAborted();
+        invocation.dispatched = true;
+        // Per-call dispatch context: read-only Memory tools (read_memory /
+        // search_memory) are concurrentSafe and may run in parallel, so the
+        // consent and token planner must observe THIS call's agent/signal, not
+        // a shared mutable ref overwritten by a sibling call. Save and restore
+        // so a parallel call cannot leave a stale agent/signal for the next.
+        const priorAgent = memoryHost.dispatchRef.agent, priorSignal = memoryHost.dispatchRef.signal;
+        memoryHost.dispatchRef.agent = exec.agent;
+        memoryHost.dispatchRef.signal = exec.signal;
+        try {
+          const outcome = await memoryHost.port.execute({ ...invocation.request, signal: exec.signal });
+          invocation.outcome = structuredClone(outcome);
+          return nativeDshBuiltinOutput(outcome, { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
+        } finally {
+          memoryHost.dispatchRef.agent = priorAgent;
+          memoryHost.dispatchRef.signal = priorSignal;
+        }
+      } }));
+    return dispose;
+  };
   return {
     close,
+    bindMemory,
     argumentEncoding,
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     childBinding: childRoles.length ? { contract: NATIVE_CHILD_TOOLS_CONTRACT, roles: structuredClone(childRoles) } : null,
@@ -192,12 +280,17 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         for (const name of ['skill', 'bash', 'pwsh']) if (schemas.has(name)) selected.add(name);
       }
       return [...selected].map(name => {
+        // A locked builtin (workspace, browser, Memory) pins its own formal
+        // definition; it does not borrow a schema from the prompt assembly.
+        // Memory tools are registered for the Build during turn binding, after
+        // the assembly is built, so they may be absent from ``assemblyTools``.
+        const exact = builtinNames.has(name) ? formal.get(name) : null;
+        if (exact) return structuredClone(exact);
         const schema = schemas.get(name);
         invariant(schema, `studio_native_tool_schema_missing:${name}`);
         const mcpSchema = mcpSchemas.get(name);
         if (mcpSchema) invariant(canonical(schema.parameters) === canonical(mcpSchema.registryParameters), 'studio_native_mcp_schema_binding_changed');
-        const exact = builtinNames.has(name) ? formal.get(name) : null;
-        return exact ? structuredClone(exact) : {
+        return {
           name, description: schema.description || '', parameters: structuredClone(mcpSchema?.input ?? schema.parameters),
           // Unknown external effects are serialized and never granted safe-read
           // recovery from a catalog hint. Actual permissions remain in DSH.
@@ -210,7 +303,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       invariant(authority?.scope && authority.store && typeof authority.sessionId === 'string' && authority.sessionId,
         'studio_native_child_tool_binding_missing');
       invariant(Array.isArray(authority.toolNames) && authority.toolNames.every(name => allowed.has(name)
-        && formal.get(name)?.readOnly === true && !mcpContracts.has(name)), 'studio_native_child_tools_not_bound');
+        && formal.get(name)?.readOnly === true && !mcpContracts.has(name) && !memoryNames.has(name)),
+        'studio_native_child_tools_not_bound');
       const bound = this.forAgent(agent, { ...authority, childSessionId: authority.sessionId });
       return { tools: bound.tools, workspace: bound.workspace };
     },

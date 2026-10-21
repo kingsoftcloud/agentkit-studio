@@ -402,3 +402,140 @@ test('tool image observations use Host-owned bytes and retain their structured d
   assert.deepEqual(result.context.presentation.content, blocks);
   assert.notEqual(result.context.presentation.content, blocks);
 });
+
+// Memory tools enter the production DSH pipeline through the trusted bindMemory
+// entry. These tests isolate the gateway-level binding: registration, the
+// memory:write standing-policy skip (a Memory write is not a workspace write),
+// the real approval consent, and the child-scope leak rejection.
+import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
+import { SqliteNativeMemoryProvider } from '../packages/agentkit-harness/src/native/memory-store.mjs';
+import { bindStudioNativeMemoryHost } from '../src/providers/native-memory-host.mjs';
+import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { authorizeNativeBuiltin } from '../src/providers/native-tool-policy.mjs';
+
+function memorySetup(t, { mode = 'workspace-write', approvalOutcome = 'allowed-once' } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'studio-native-memory-gateway-'));
+  const workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot);
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const toolRegistry = new Map();
+  const approvalService = { request: async () => approvalOutcome };
+  const ctx = { effect: install => install(),
+    sandboxPolicy: { resolve: () => ({ mode }) },
+    approval: approvalService,
+    tools: { register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
+      execute: async input => { const registered = toolRegistry.get(input.name);
+        const value = await registered.execute(input.arguments, input);
+        return { isError: false, value, content: registered.output.render(input.arguments, value) }; } },
+    get: id => id === 'approval' ? approvalService : id === 'sandboxPolicy' ? ctx.sandboxPolicy : undefined };
+  const gateway = createNativeDshTools({ ctx, config: { toolBindings: [], toolContracts: [] },
+    workspaceRoot, stateDir: join(root, 'state') });
+  t.after(() => gateway.close());
+  const record = { metadata: { id: scope.agentId, local: true, revision: 1 },
+    spec: { runtime: { type: 'harness' }, memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+      write: { mode: 'candidate', flushAfterTurn: false }, recall: { enabled: true, maxTokens: 1600 } },
+      context: { rollout: { memoryWrite: 'enabled' } } } };
+  const store = new SqliteRunStore(join(root, 'runs.sqlite'));
+  t.after(() => store.close());
+  const context = bindNativeContext({ description: { protocol: 'openai-chat', modelName: 'pinned',
+    parameters: {}, contextWindow: 16000, maxOutputTokens: 1024 }, context: record.spec.context });
+  const memoryHost = bindStudioNativeMemoryHost({ record, scope, sessionId: 'session', store,
+    storeDir: root, buildId: null, context, ctx });
+  return { root, gateway, memoryHost, store, toolRegistry, ctx, record };
+}
+
+test('bindMemory registers the locked Memory tools into the DSH pipeline and definitions', t => {
+  const h = memorySetup(t);
+  assert.ok(h.memoryHost.port.definitions.some(d => d.name === 'manage_memory'));
+  const dispose = h.gateway.bindMemory(h.memoryHost);
+  t.after(dispose);
+  const definitions = h.gateway.definitions(h.agent = { session: { id: 'session' } }, []);
+  const names = definitions.map(d => d.name);
+  assert.ok(names.includes('read_memory'));
+  assert.ok(names.includes('search_memory'));
+  assert.ok(names.includes('manage_memory'));
+  // The locked formal definition (with executionPolicyDigest) is pinned, not a
+  // borrowed assembly schema.
+  const manage = definitions.find(d => d.name === 'manage_memory');
+  assert.equal(manage.readOnly, false);
+  assert.ok(/^sha256:[a-f0-9]{64}$/.test(manage.executionPolicyDigest));
+});
+
+test('a memory:write tool is not gated by the read-only workspace standing policy', async t => {
+  // A memory:write builtin skips the workspace standing policy entirely. A
+  // plain workspace write (permissions: []) under read-only must be denied by
+  // the standing policy unless the real approval service grants an escalation.
+  const h = memorySetup(t, { mode: 'read-only', approvalOutcome: 'rejected' });
+  const dispose = h.gateway.bindMemory(h.memoryHost);
+  t.after(dispose);
+  const agent = { session: { id: 'session' } };
+  const definitions = h.gateway.definitions(agent, []);
+  const manage = definitions.find(d => d.name === 'manage_memory');
+  // memory:write builtin: the standing policy does not gate it, so it passes
+  // authorizeNativeBuiltin regardless of the read-only workspace mode.
+  await assert.doesNotReject(authorizeNativeBuiltin(h.ctx,
+    { signal: new AbortController().signal, agent, name: 'manage_memory' }, manage));
+  // A plain workspace write (permissions: []) IS gated by read-only: with a
+  // denied approval it is rejected, proving the memory skip is memory-only.
+  const workspaceWrite = { name: 'write_workspace_file', readOnly: false, permissions: [] };
+  await assert.rejects(authorizeNativeBuiltin(h.ctx,
+    { signal: new AbortController().signal, agent, name: 'write_workspace_file' }, workspaceWrite),
+    { code: 'STUDIO_NATIVE_PERMISSION_DENIED' });
+});
+
+test('Memory tools never leak to a child tool binding', t => {
+  const h = memorySetup(t);
+  const dispose = h.gateway.bindMemory(h.memoryHost);
+  t.after(dispose);
+  const childScope = { ...scope, agentId: 'child' };
+  // read_memory is readOnly, but it is a Memory tool and must not bind to a child.
+  assert.throws(() => h.gateway.forChild({ session: { id: 'session' } },
+    { scope: childScope, store: new MemoryRunStore(), sessionId: 'child-session', toolNames: ['read_memory'] }),
+    /child_tools_not_bound/);
+});
+
+test('rebinding a Memory owner disposes only the prior owner registrations', t => {
+  // bindMemory scopes each disposer to the names IT registered. A prior owner's
+  // dispose must not delete a newer owner's Memory tools, and rebinding must
+  // not throw 'studio_native_memory_tool_collision' because the prior names are freed.
+  const h = memorySetup(t);
+  const first = h.gateway.bindMemory(h.memoryHost);
+  const agent = { session: { id: 'session' } };
+  assert.ok(h.gateway.definitions(agent, []).some(d => d.name === 'manage_memory'));
+  // A second owner (same tool names) binds after the first is disposed.
+  first();
+  const context2 = bindNativeContext({ description: { protocol: 'openai-chat', modelName: 'pinned',
+    parameters: {}, contextWindow: 16000, maxOutputTokens: 1024 }, context: h.record.spec.context });
+  const memoryHost2 = bindStudioNativeMemoryHost({ record: h.record, scope, sessionId: 'session',
+    store: h.store, storeDir: h.root, buildId: null, context: context2, ctx: h.ctx });
+  const second = h.gateway.bindMemory(memoryHost2);
+  t.after(second);
+  assert.ok(h.gateway.definitions(agent, []).some(d => d.name === 'manage_memory'));
+  // Disposing the FIRST owner again (already disposed) must not remove the
+  // second owner's tools: each disposer owns only its registrations.
+  first();
+  assert.ok(h.gateway.definitions(agent, []).some(d => d.name === 'manage_memory'),
+    'first owner dispose did not remove the second owner tools');
+});
+
+test('gateway close disposes a bound Memory owner registration without leaking', async t => {
+  const h = memorySetup(t);
+  h.gateway.bindMemory(h.memoryHost);
+  assert.ok(h.gateway.definitions({ session: { id: 'session' } }, []).some(d => d.name === 'read_memory'));
+  await h.gateway.close();
+  // After close the Memory registration is gone; a fresh gateway can bind again.
+  const toolRegistry2 = new Map();
+  const ctx2 = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
+    approval: { request: async () => 'allowed-once' }, tools: { register: tool => { toolRegistry2.set(tool.name, tool); return () => toolRegistry2.delete(tool.name); },
+      execute: async input => { const r = toolRegistry2.get(input.name); return { isError: false, value: await r.execute(input.arguments, input), content: r.output.render(input.arguments, undefined) }; } },
+    get: id => id === 'approval' ? ctx2.approval : undefined };
+  const gateway2 = createNativeDshTools({ ctx: ctx2, config: { toolBindings: [], toolContracts: [] },
+    workspaceRoot: join(h.root, 'workspace'), stateDir: join(h.root, 'state2') });
+  const memoryHost2 = bindStudioNativeMemoryHost({ record: h.record, scope, sessionId: 'session', store: h.store,
+    storeDir: h.root, buildId: null, context: bindNativeContext({ description: { protocol: 'openai-chat',
+      modelName: 'pinned', parameters: {}, contextWindow: 16000, maxOutputTokens: 1024 }, context: h.record.spec.context }), ctx: ctx2 });
+  gateway2.bindMemory(memoryHost2);
+  assert.ok(gateway2.definitions({ session: { id: 'session' } }, []).some(d => d.name === 'read_memory'));
+  await gateway2.close();
+  memoryHost2.close();
+});
+
