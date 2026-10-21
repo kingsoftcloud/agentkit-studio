@@ -41,8 +41,18 @@ function waitForCloudSession(sessions, sessionId, signal) {
     const check = () => {
       if (signal.aborted) { aborted(); return; }
       const catalog = sessions.list.getSnapshot();
-      if (catalog.phase !== 'ready') return;
-      finish(catalog.ids.includes(sessionId) && catalog.byId[sessionId] ? undefined : new Error('云端会话尚未出现在当前目录，请重新连接输入'));
+      // A real Host publishes the ready marker before the first session
+      // snapshot.  Treat that as an intermediate state: rejecting here loses
+      // the graph during module/session delivery and leaves the Web composer
+      // waiting forever for its textbox.  Only a terminal catalog failure is
+      // fatal; otherwise keep listening until the retained session appears or
+      // the bounded timeout expires.
+      if (catalog.phase === 'error' || catalog.phase === 'failed') {
+        finish(new Error('读取云端会话目录失败，请重新连接输入'));
+        return;
+      }
+      if (catalog.phase !== 'ready' || !catalog.ids.includes(sessionId) || !catalog.byId[sessionId]) return;
+      finish();
     };
     const timer = setTimeout(() => finish(new Error('读取云端会话目录超时，请重新连接输入')), 30000);
     signal.addEventListener('abort', aborted, { once: true });

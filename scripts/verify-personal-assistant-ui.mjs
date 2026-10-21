@@ -116,7 +116,12 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('agentkit.assistant.agent')) === 'cloud-fixture');
     assert.equal(await page.getByRole('tablist', { name: '助理功能' }).count(), 0, 'conversation opens without configuration tabs');
     assert.equal(await page.getByLabel('云端助理', { exact: true }).isVisible(), false, 'connection selector belongs in secondary settings');
-    await input().waitFor();
+    // The maintained Host can deliver the session catalog and its UI modules
+    // in separate turns. Wait on the actual native editor with a bounded
+    // acceptance timeout instead of assuming the localStorage agent marker
+    // means the graph has already mounted.
+    await composer().waitFor({ timeout: 60000 });
+    await input().waitFor({ timeout: 60000, state: 'visible' });
     assert.equal(await input().count(), 1, 'exactly one native DSH editor must be mounted');
     assert.equal(await input().getAttribute('contenteditable'), 'true');
     assert.equal(await page.getByLabel('发给助理', { exact: true }).count(), 0);
@@ -215,7 +220,8 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     await until(async () => nativeLifecycle.filter(call => call.operation === 'native-close' && call.accepted).length === closesBeforeSwitch + 1, 'deselecting the assistant closes its native carrier');
     assert.equal(await composer().count(), 0, 'old native composer is released when its assistant is deselected');
     await page.getByLabel('云端助理', { exact: true }).selectOption('cloud-fixture');
-    await input().waitFor();
+    await composer().waitFor({ timeout: 60000 });
+    await input().waitFor({ timeout: 60000, state: 'visible' });
     await until(async () => nativeLifecycle.filter(call => call.operation === 'native-open' && call.accepted).length === opensBeforeSwitch + 1, 'reselecting the assistant opens a fresh native carrier');
     assert.equal((await input().textContent()).trim(), '', 'memory-only native drafts are released with their graph');
     assert.equal(await composer().locator('input[type="file"]').count(), 1);
