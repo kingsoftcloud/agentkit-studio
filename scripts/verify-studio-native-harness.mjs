@@ -1,5 +1,6 @@
 /** Actual Studio Native Host through a selected preset and the shipped DSH SDK. */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
@@ -186,6 +187,36 @@ try {
   assert.equal(stored.filter(event => event.type === 'turn/end').length, 4);
   assert.equal(JSON.stringify(stored).includes('sk-studio-fixture-secret'), false);
   assert.equal((await readFile(join(root, 'studio/native-harness/runs.sqlite'))).includes(Buffer.from('sk-studio-fixture-secret')), false);
+  // Inspect the packed Host's independent, durable verdict after both process
+  // lifetimes have ended. Successful text delivery cannot manufacture a pass.
+  const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
+  const { createNativeArtifactStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/artifact-store.mjs')).href);
+  const { id: agentId } = JSON.parse(await readFile(join(root, 'agent-id.json'), 'utf8'));
+  const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(resolve(root, 'workspace'))).digest('hex'),
+    userId: 'local-user', agentId };
+  const reopened = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
+  try {
+    const runs = reopened.list(scope, 'native-studio-session');
+    assert.equal(runs.length, 3);
+    assert.equal(runs.filter(run => run.parentRunId === null).length, 1);
+    assert.ok(runs.every(run => run.parentRunId === null || runs.some(parent => parent.runId === run.parentRunId)));
+    assert.equal(new Set(runs.map(run => reopened.load(scope, run.runId).configuration.contract.revision)).size, 3);
+    const evidence = await createNativeArtifactStore({ directory: join(root, 'studio/native-harness/verification-evidence'), scope });
+    for (const run of runs) {
+      assert.equal(run.outcome, 'unverified');
+      assert.equal(run.verification.checks[0].verifierId, 'studio.delivery-evidence-rejection');
+      assert.equal(run.verification.checks[0].status, 'not_run');
+      const content = await evidence.read({ scope, runId: run.runId, operationKey: 'inspect', signal: new AbortController().signal,
+        ref: run.verification.checks[0].evidence.artifact, offset: 0, limit: 32000 });
+      const proof = JSON.parse(content.content);
+      assert.equal(proof.candidate.candidateId, run.candidate.candidateId);
+      assert.deepEqual(proof.candidate.binding, run.candidate.binding);
+      assert.deepEqual(proof.contract, reopened.load(scope, run.runId).configuration.contract);
+      assert.equal(proof.contract.objective, run.goal);
+      assert.equal(proof.contract.revision, run.verification.contractRevision);
+      assert.equal(proof.results[0].status, 'not_run');
+    }
+  } finally { reopened.close(); }
   if (values['mount-host']) {
     const probes = (await readFile(join(root, 'mounted-host-http.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.equal(probes.length, 2); assert.ok(probes.some(probe => probe.source === 'resume'));

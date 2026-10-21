@@ -8,6 +8,7 @@ import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
 import { bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
+import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATION_CONTRACT } from '../../providers/native-verification.mjs';
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -77,18 +78,26 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const systemPrompt = renderPrompt(input.assembly);
       const instructions = [systemPrompt, materialized.resourceContext].filter(Boolean).join('\n\n');
       const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
-      return { scope: { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId }, buildId, source,
+      const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
+      const verification = await createNativeVerification({ scope, sessionId: String(agent.session.id), workspaceRoot,
+        evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence'),
+        verifyBrowserPage: taskPolicy.workspaceObservationPolicy && typeof binding.nativeTools.verifyBrowserPage === 'function'
+          ? request => binding.nativeTools.verifyBrowserPage(agent, request) : undefined });
+      signal.throwIfAborted();
+      return { scope, buildId, source,
+        taskContractFactory: facts => nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
         configuration: { profile: { profileId: selected.id || selectedId || 'default', profileVersion: compatibilityDigest,
           providerFamily: description.protocol, compatibilityDigest, ...context.profile, requestTimeoutMs: description.requestTimeoutMs,
           providerReplayMode: description.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
-          taskPolicyContract: STUDIO_NATIVE_TASK_POLICY_CONTRACT, taskPolicy }),
+          taskPolicyContract: STUDIO_NATIVE_TASK_POLICY_CONTRACT, taskPolicy,
+          verificationContract: STUDIO_NATIVE_VERIFICATION_CONTRACT }),
         contextPolicy: context.policy,
         workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy,
-        contract: { objective: admission.objective }, instructions, inputMessages: admission.messages,
+        contract: nativeGoalContract({ sessionId: String(agent.session.id), goal: admission.objective }), instructions, inputMessages: admission.messages,
         tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000) } },
-        ports: { ...binding.nativeTools.forAgent(agent), context: context.port, input: { prepare: async request => {
+        ports: { ...binding.nativeTools.forAgent(agent), verification, context: context.port, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);
           request.signal.throwIfAborted();

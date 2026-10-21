@@ -8,6 +8,9 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeVerification, nativeGoalContract } from '../src/providers/native-verification.mjs';
+import { bindNativeTaskPolicy } from '../src/providers/native-task-policy.mjs';
+import { createNativeArtifactStore } from '../packages/agentkit-harness/src/native/artifact-store.mjs';
 import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 import { NativeKernel, MemoryRunStore, canonical, configure, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
 
@@ -24,8 +27,8 @@ const ctx = new Context(), scope = { tenantId: 'test', workspaceId: 'test', user
 const agent = { session: { id: 'session' } }, definition = studioBrowserDefinition();
 let gateway, deny = false, guardDeny = false, denyStart = false, omitImage = false;
 const trace = [], results = [], dispatchedActions = [], guardedActions = [];
-const binding = () => createNativeDshTools({ ctx, workspaceRoot, stateDir: join(root, 'state'),
-  browserExecutablePath: resolve(values.chromium), config: { toolBindings: [definition.name] } });
+const binding = (extra = []) => createNativeDshTools({ ctx, workspaceRoot, stateDir: join(root, 'state'),
+  browserExecutablePath: resolve(values.chromium), config: { toolBindings: [definition.name, ...extra] } });
 const request = (operationKey, actions = [], runId = 'direct') => ({ scope, runId, sessionId: 'session',
   turnId: '1', buildId: 'proof', parentRunId: null, taskChainId: 'proof', operationKey,
   definition, call: { callId: operationKey, name: definition.name, arguments: { path: 'app', wait_ms: 0, actions } },
@@ -126,5 +129,47 @@ try {
   assert.equal(fresh.browserSessionRef.generation, observed.browserSessionRef.generation + 1);
   assert.equal(fresh.browserSessionRef.leaseEpoch, observed.browserSessionRef.leaseEpoch + 1);
   assert.match(canonical(fresh.content), /Clicked 0/);
+  await gateway.close(); gateway = binding(['write_workspace_file']);
+  const formalTools = gateway.definitions(agent, [definition.name, 'write_workspace_file'].map(name => {
+    const registered = ctx.tools.get(name, agent); assert.ok(registered, name); return registered;
+  })), taskPolicy = bindNativeTaskPolicy({ tools: formalTools });
+  const goal = 'Deliver a page, inspect it and report the observed result.';
+  const formalConfig = configure({ profile: configuration.profile, hostBindingDigest: 'studio-independent-verification/v1',
+    contract: nativeGoalContract({ sessionId: 'session', goal }), tools: formalTools,
+    workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy, limits: taskPolicy.limits });
+  const evidenceDirectory = join(root, 'verification-evidence'); let coldChecks = 0;
+  const verifier = await createNativeVerification({ scope, sessionId: 'session', workspaceRoot, evidenceDirectory,
+    verifyBrowserPage: input => { coldChecks++; return gateway.verifyBrowserPage(agent, input); } });
+  const formalStore = new MemoryRunStore(); let formalModels = 0;
+  const formalKernel = new NativeKernel({ store: formalStore, digest, owner: 'studio-verification-proof', ports: {
+    ...gateway.forAgent(agent), verification: verifier, model: { generate: async () => {
+      formalModels++;
+      if (formalModels === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'write',
+        name: 'write_workspace_file', arguments: { path: 'app/verify.html', content:
+          '<!doctype html><button id="start">Start</button><p id="state">Ready</p><script>document.querySelector("#start").onclick=()=>document.querySelector("#state").textContent="Started"</script>' } }] };
+      if (formalModels === 2) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'inspect',
+        name: definition.name, arguments: { path: 'app/verify.html', wait_ms: 0, actions: [] } }] };
+      assert.equal(formalModels, 3, 'A clean smoke test must not invent a repair or semantic pass');
+      return { kind: 'final_candidate', text: 'The delivered page was inspected.', toolCalls: [], usage: emptyUsage() };
+    } },
+  } });
+  formalKernel.start({ scope, runId: 'verified-delivery', sessionId: 'session', turnId: '2', buildId: 'proof', taskChainId: 'proof', parentRunId: null }, formalConfig);
+  const delivery = await formalKernel.runUntilIdle(scope, 'verified-delivery');
+  assert.equal(delivery.phase, 'completed', delivery.reason); assert.equal(delivery.outcome, 'unverified');
+  assert.equal(delivery.verification.checks[0].status, 'not_run'); assert.equal(coldChecks, 1); assert.equal(formalModels, 3);
+  assert.equal(delivery.lastBrowserObservation.entryPath, 'app/verify.html');
+  const sealed = delivery.verification.checks[0].evidence.artifact;
+  const evidence = await createNativeArtifactStore({ directory: evidenceDirectory, scope });
+  const persisted = JSON.parse((await evidence.read({ ...delivery, operationKey: 'read-proof', signal: new AbortController().signal,
+    ref: sealed, offset: 0, limit: 32000 })).content);
+  assert.equal(persisted.facts.entryPath, 'app/verify.html'); assert.match(persisted.facts.browserObservation.text, /Started/);
+  assert.equal(persisted.facts.browserObservation.complete, true);
+  assert.equal(persisted.facts.modelObservation.actionId, delivery.lastBrowserObservation.actionId);
+  denyStart = true;
+  const blocked = await verifier.verify({ ...delivery, operationKey: 'verification-policy-denied', signal: new AbortController().signal,
+    candidate: delivery.candidate, contract: formalConfig.contract, snapshot: delivery });
+  assert.equal(blocked.checks[0].status, 'blocked'); assert.equal(blocked.repairable, false);
+  assert.match(blocked.checks[0].safeSummary, /Restore the host browser/);
+  denyStart = false;
   process.stdout.write('PASS: actual DSH registry pre/guard/around/post/result policy, persisted browser attachments, cold verification with per-action guard denial and isolated live page, Native next-model image, and restored owner requiring explicit reload\n');
 } finally { await gateway?.close(); await rm(root, { recursive: true, force: true }); }

@@ -114,11 +114,11 @@ Node `NativePlaywrightBrowser` 与 DOM 元素引用管理现已导入。真实 C
 
 核心已加入显式 `workspaceObservationPolicy`，由 Host 固定需要浏览器观察的文件后缀；未配置时不启用，不在 Kernel 内猜测网页类型。工具回执即使报错，只要记录了相关文件改动，就推进网页修改游标。观察间隔与模型验证预算共同决定后续可用工具：到期先观察，失败尝试可留出修复机会，但不会生成成功截图证据；最后的工具窗口禁止继续修改，只有新鲜观察且没有未解决交互错误时才开放读取。子任务用量计入剩余模型预算，目标允许的工具范围保持生效，结构化最终提交仍按原契约开放。
 
-浏览器交互错误按工具和入口页面持久化。后续截图、宿主自动重载、移动、滚动或另一页面的操作不能清除它；只有同工具、同页面的显式交互成功才清除。真实 steer 清除旧目标的观察和交互错误，guide 保留它们。模型的临时观察指令参与与实际请求一致的 token 计数，工具或结束预算耗尽时不再提示浏览器可用。相关组合在 Node 26/22 各通过 153 项定向检查，最后增加预算优先级检查后，策略模块各通过 28 项；Memory/SQLite 场景验证了错误回执交付中断、数据库重开、修复窗口、拒绝夹带禁用工具及成功观察。交互错误的最终验收消费仍需接入。
+浏览器交互错误按工具和入口页面持久化。后续截图、宿主自动重载、移动、滚动或另一页面的操作不能清除它；只有同工具、同页面的显式交互成功才清除。真实 steer 清除旧目标的观察和交互错误，guide 保留它们。模型的临时观察指令参与与实际请求一致的 token 计数，工具或结束预算耗尽时不再提示浏览器可用。相关组合在 Node 26/22 各通过 153 项定向检查，最后增加预算优先级检查后，策略模块各通过 28 项；Memory/SQLite 场景验证了错误回执交付中断、数据库重开、修复窗口、拒绝夹带禁用工具及成功观察。交互错误现由下述独立验收器消费。
 
 Host 现通过 `agentkit.studio-native-task-policy/v1` 固定 Studio 网页后缀、每 12 次工具调用的观察间隔，以及最多 6 次模型调用的验证保留预算；仅已绑定的正式浏览器 builtin 激活此策略，同名 MCP 不激活。Agent Revision/Frozen Build 的 `spec.execution.nativeLimits` 可显式设置 `maxModelCalls`（正整数或 null）和 `maxToolCalls`（非负整数或 null）；新 TS 配置省略时均不限制次数，0 次工具禁止工具执行。策略及预算进入 Host 绑定摘要和运行配置。Host/绑定的 21 项检查与核心策略的 28 项在 Node 26/22 通过。
 
-核心浏览器证据新增可选 `entryPath`，只从正式工具的 canonical `entry_path` 回执固定；DSH 策略渲染出的模型或展示文本不能替代它。Node `writtenNativeWebEntry` 据已提交的工作区变更与此路径选择交付页面，拒绝越界、已删除页面、多页面歧义，以及没有明确引用的无关根页面。保留源实现对 HTML/HTM/JS/JSX/CSS 的交付入口识别；TS/TSX 仍参与观察策略，但单独的源码修改不会推断 HTML 入口。HTML 使用固定 `parse5@7.3.0`，最多读取 4 MiB UTF-8 前缀并解析首 1 Mi Unicode 字符；显式拒绝重复属性的引用绑定，避免源 HTMLParser 对重复属性取最后值、实际浏览器取首值的歧义。相关浏览器证据及入口选择 36 项检查在两版本通过。入口选择尚需连接最终验收器。
+核心浏览器证据新增可选 `entryPath`，只从正式工具的 canonical `entry_path` 回执固定；DSH 策略渲染出的模型或展示文本不能替代它。Node `writtenNativeWebEntry` 据已提交的工作区变更与此路径选择交付页面，拒绝越界、已删除页面、多页面歧义，以及没有明确引用的无关根页面。保留源实现对 HTML/HTM/JS/JSX/CSS 的交付入口识别；TS/TSX 仍参与观察策略，但单独的源码修改不会推断 HTML 入口。HTML 使用固定 `parse5@7.3.0`，最多读取 4 MiB UTF-8 前缀并解析首 1 Mi Unicode 字符；显式拒绝重复属性的引用绑定，避免源 HTMLParser 对重复属性取最后值、实际浏览器取首值的歧义。相关浏览器证据及入口选择 36 项检查在两版本通过。入口选择现由下述独立验收器使用。
 
 Native builtin 图片输出现先通过 Host 的 `attachments.saveImages` 校验并持久化，再把附件引用交给 DSH 渲染与输出策略；模型图片只从策略处理后的引用经 `readImageRequest` 获取。远端 URL、文件路径、非规范 base64、超出部署图片预算的整批输入在存储前拒绝，取消后不发布迟到引用；纯文本工具不需要附件服务。`verify-native-dsh-output --source <built maintained DSH checkout>` 已在 Node 26/22 验证实际 DSH 附件的图片解码、持久化、服务重建后读取、策略省略和 Native 下一轮模型接收；29 项输入/输出/工具定向测试也在两版本通过。UI 实际渲染截图仍需验证。
 
@@ -126,7 +126,17 @@ Native builtin 图片输出现先通过 Host 的 `attachments.saveImages` 校验
 
 开发入口的 Host 配置可通过绝对路径 `AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE` 指定 Chromium；省略时使用 Playwright 预期的已安装浏览器，模型参数不能指定可执行文件。`verify-native-dsh-browser --source <built maintained DSH checkout> --chromium <executable>` 在 Node 26/22 通过真实 DSH ToolRuntime、附件服务及生产浏览器绑定的联测，覆盖 pre 和单调 guard 拒绝、策略省略图片、下一轮模型图片，以及所有者重建后拒绝旧输入并仅由显式 reload 建立新代页面。相关绑定、输入输出及 Host 组合两版本各通过 55 项检查；补充注销失败场景后，最终绑定模块各通过 22 项。这是工具和核心边界联测，尚未覆盖完整 UI、自动化或 Frozen Build。
 
-可信 `verifyBrowserPage` 已接入逐动作授权：冷页面的导航、截图及实际选中的 Start 点击分别经过同一 DSH 注册器，模型不能指定此私有分派方式。拒绝其中一个动作会关闭冷页面；正常会话页面保持独立。冷截图写在 Host 工作区外，并通过 DSH 附件服务处理，策略省略图片不会被直接模型上下文绕过。42 项相关端口和绑定检查在 Node 26/22 通过，实际 DSH+Chromium 联测也验证了允许加载而拒绝 Start 点击的 guard；Node 22 同一实际链在 `PATH=/no-programs` 通过。这仍是供独立验收使用的观察边界，最终验收报告尚未组装。
+可信 `verifyBrowserPage` 已接入逐动作授权：冷页面的导航、截图及实际选中的 Start 点击分别经过同一 DSH 注册器，模型不能指定此私有分派方式。拒绝其中一个动作会关闭冷页面；正常会话页面保持独立。冷截图写在 Host 工作区外，并通过 DSH 附件服务处理，策略省略图片不会被直接模型上下文绕过。42 项相关端口和绑定检查在 Node 26/22 通过，实际 DSH+Chromium 联测也验证了允许加载而拒绝 Start 点击的 guard；Node 22 同一实际链在 `PATH=/no-programs` 通过。这一观察边界现已接入下述独立验收报告。
+
+## 独立验收与交付证据
+
+生产 Native Host 通过 `agentkit.studio-native-verification/v1` 编译当前目标的验收契约，将候选、上下文绑定、工作区版本、观察事实和逐项结果写入工作区外的持久 artifact 后才返回报告。最终报告仍由核心核对候选和契约版本，并在结束前重新观察工作区；验收后工作区变化会撤销旧候选。证据服务或浏览器权限不可用时明确阻塞，不能将环境失败作为要求模型改代码的依据。
+
+`native-verification.mjs` 固定两个 Host verifier：通用交付检查可以拒绝格式错误、浏览器加载/脚本错误和未重新验证的交互错误；精确文件检查只对源实现支持的明确字面内容验证真实文件字节。冷浏览器通过正式 DSH 工具注册器执行导航、截图和唯一 Start 点击，其成功不能代替模型在最后一次网页修改后的正式观察。普通格式或浏览器 smoke 成功仍为 `not_run`，不独立证明任务语义；精确文件通过只授予该项证据，因此综合结果可以是 `partial`。可修复失败进入已有的持久修复预算；未知、缺证据或被拒绝的观察不授予通过。
+
+输出格式助手移植源实现的显式数字、句子、JSON、Python 列表及精确文件指令，不从任意描述推断答案。Python 列表用离线 Node tokenizer/parser 校验，不执行用户内容或 Python；Unicode 命名转义数据固定为 CPython 3.11 基线的 Unicode 14.0.0，生成器验证官方输入 SHA-256，随包附来源与许可。十进制整数字面量上限固定为该基线默认的 4300 位；其他解释器 Unicode 版本或可配置整数上限属于明确的平台差异。不可哈希的 set/dict 键在 Node 中作为有界格式拒绝，源 Python 会抛出未捕获 TypeError。结构化 JSON 中超过 JavaScript 安全整数范围的数值仍有精度缺口，尚未完成无损验收。
+
+本批仅对输出助手、verifier 和 Host 执行 Node 26/22 定向组合，各 123 项通过。包含真实子进程在 artifact 持久化后、外层 verify 回执提交前退出，SQLite 重开后保留证据但拒绝重跑未知验收或凭孤立证据授予通过。实际 DSH+Chromium 链验证生产工具写网页、模型观察、独立冷观察、证据重开和 Start guard 拒绝；Node 22 在 `PATH=/no-programs` 下通过。打包完整 Host 在两个 Node 版本验证跨进程会话与证据契约匹配。上述链使用维护 SDK 的既有依赖，尚非干净安装、完整 UI、所有产品入口或可选视觉语义验收的证明。工具间周期 checkpoint 验收仍需移植。
 
 ## 目标契约和运行中更正
 

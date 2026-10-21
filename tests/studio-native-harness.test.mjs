@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -12,6 +12,8 @@ import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native
 
 async function setup(t, { spec = {}, profile = {} } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
+  const workspaceRoot = join(root, 'workspace');
+  await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root }), ledger = new MemoryRunStore();
   const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: { ...spec, bindings: { modelProfileIds: ['fixture'] } } });
   const events = [], definitions = new Map(), requests = [];
@@ -28,7 +30,7 @@ async function setup(t, { spec = {}, profile = {} } = {}) {
   const resolutions = [], builds = { resolve: async (agentId, buildId) => {
     resolutions.push({ agentId, buildId }); return structuredClone(record);
   } };
-  const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot: root, agents, builds, models, ledger,
+  const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
       requests.push({ url, options });
       return new Response(`data: ${JSON.stringify({ id: `response-${requests.length}`, choices: [{ index: 0, delta: { content: 'Complete' }, finish_reason: 'stop' }],
@@ -47,7 +49,7 @@ async function setup(t, { spec = {}, profile = {} } = {}) {
   };
   // The workspace identity is public deterministic configuration, not a path
   // read from user input. Keep the hash identical to production's scope key.
-  const ledgerScope = () => createHash('sha256').update(JSON.stringify(root)).digest('hex');
+  const ledgerScope = () => createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex');
   return { host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
@@ -58,6 +60,10 @@ test('Studio Native Host pins revision/input/model while refreshing credentials 
   assert.equal(new Headers(fixture.requests[0].options.headers).get('authorization'), 'Bearer secret-one');
   const run = fixture.head();
   assert.equal(run.phase, 'completed');
+  assert.equal(run.verification.checks[0].verifierId, 'studio.delivery-evidence-rejection');
+  assert.equal(run.verification.checks[0].status, 'not_run');
+  assert.match(run.verification.checks[0].evidenceRefs[0], /^artifact:/);
+  assert.equal(run.outcome, 'unverified');
   assert.equal(JSON.stringify(fixture.ledger.load(run.scope, run.runId)).includes('secret-one'), false);
   fixture.rotate('secret-two');
   fixture.payload.agent.session.append('turn/start', { turn: 2 });
