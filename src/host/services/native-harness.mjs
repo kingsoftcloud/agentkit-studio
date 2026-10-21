@@ -198,7 +198,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           verificationContract: STUDIO_NATIVE_VERIFICATION_CONTRACT }),
         contextPolicy: context.policy,
         ...(children ? { childLifecyclePolicy: 'owned-background/v2', childApprovalPolicy: 'owned-child-approval/v1',
-          childPromotionPolicy: 'owned-child-promotion/v1' } : {}),
+          childPromotionPolicy: 'owned-child-promotion/v1', childInputPolicy: 'owned-child-input/v1' } : {}),
         workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy,
         ...(binding.nativeTools.commandBinding ? { backgroundNotificationPolicy: 'completed-before-model/v1' } : {}),
         contract: nativeGoalContract({ sessionId: String(agent.session.id), goal: admission.objective }), instructions, inputMessages: admission.messages,
@@ -245,6 +245,21 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       invariant(typeof request?.runId === 'string' && request.runId.trim(), 'studio_native_child_control_invalid');
       const { kernel, scope, runId } = controlFor(request);
       return kernel.promoteChild(scope, runId, request.childRunId, request.commandId);
+    },
+    sendChildInput(request) {
+      const control = controlFor(request);
+      invariant(request.runId === control.runId, 'studio_native_child_control_run_unavailable');
+      const receipt = control.kernel.sendChildInput(control.scope, control.runId, request.childRunId,
+        request.text, request.expectedGoalRevision, request.commandId);
+      if (receipt.status === 'accepted') control.wake();
+      return receipt;
+    },
+    cancelChild(request) {
+      const control = controlFor(request);
+      invariant(request.runId === control.runId, 'studio_native_child_control_run_unavailable');
+      const receipt = control.kernel.cancelChild(control.scope, control.runId, request.childRunId, request.commandId);
+      if (receipt.status === 'accepted') control.wake();
+      return receipt;
     },
     executeTurn(input) {
       invariant(!closed, 'studio_native_host_closed');

@@ -61,6 +61,23 @@ export class SqliteRunStore extends TransactionalRunStore {
       }
       return record;
     };
+    const persist = (key, previous, record) => {
+      const { events, intents, receipts, commands, commits, ...metadata } = record;
+      db.prepare('INSERT INTO native_runs(key,data) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data').run(key, canonical(metadata));
+      invariant(events.length >= (previous?.events.length ?? 0), 'events_immutable');
+      for (const event of events.slice(previous?.events.length ?? 0))
+        db.prepare('INSERT INTO native_events VALUES (?,?,?,?)').run(key, event.seq, event.eventId, canonical(event));
+      for (const [collection, identify] of Object.entries(collections)) {
+        const old = new Map((previous?.[collection] ?? []).map(item => [identify(item), canonical(item)]));
+        invariant(record[collection].length >= old.size, 'ledger_items_immutable');
+        for (const item of record[collection]) {
+          const id = identify(item), data = canonical(item);
+          if (old.get(id) !== data) db.prepare('INSERT INTO native_items VALUES (?,?,?,?) ON CONFLICT(run_key,collection,item_key) DO UPDATE SET data=excluded.data')
+            .run(key, collection, id, data);
+        }
+      }
+      beforeCommit?.({ key, record });
+    };
     super({
       sessionHead,
       get: key => {
@@ -80,22 +97,15 @@ export class SqliteRunStore extends TransactionalRunStore {
         try {
           const previous = read(key);
           const { record, value } = change(previous, sessionHead);
-          const { events, intents, receipts, commands, commits, ...metadata } = record;
-          db.prepare('INSERT INTO native_runs(key,data) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data').run(key, canonical(metadata));
-          invariant(events.length >= (previous?.events.length ?? 0), 'events_immutable');
-          for (const event of events.slice(previous?.events.length ?? 0)) {
-            db.prepare('INSERT INTO native_events VALUES (?,?,?,?)').run(key, event.seq, event.eventId, canonical(event));
-          }
-          for (const [collection, identify] of Object.entries(collections)) {
-            const old = new Map((previous?.[collection] ?? []).map(item => [identify(item), canonical(item)]));
-            invariant(record[collection].length >= old.size, 'ledger_items_immutable');
-            for (const item of record[collection]) {
-              const id = identify(item), data = canonical(item);
-              if (old.get(id) === data) continue;
-              db.prepare('INSERT INTO native_items VALUES (?,?,?,?) ON CONFLICT(run_key,collection,item_key) DO UPDATE SET data=excluded.data').run(key, collection, id, data);
-            }
-          }
-          beforeCommit?.({ key, record });
+          persist(key, previous, record);
+          db.exec('COMMIT'); return value;
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+      },
+      updatePair: (keys, change) => {
+        open(); db.exec('BEGIN IMMEDIATE');
+        try {
+          const previous = keys.map(read), { records, value } = change(previous);
+          keys.forEach((key, index) => persist(key, previous[index], records[index]));
           db.exec('COMMIT'); return value;
         } catch (error) { db.exec('ROLLBACK'); throw error; }
       },

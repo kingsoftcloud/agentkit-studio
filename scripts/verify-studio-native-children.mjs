@@ -10,8 +10,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
-  promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' } } });
+  promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
+if (values['child-controls']) assert.ok(values.promote && values.history && values['continue-child'], '--child-controls requires --promote --history --continue-child');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-'));
 console.log(`Studio child evidence: ${root}`);
@@ -40,10 +41,30 @@ const server = createServer(async (request, response) => {
       assert.deepEqual(body.tools.map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), ['read_workspace_file']);
       assert.match(body.messages[0].content, /CHILD_WORKSPACE_READER/);
       const results = body.messages.filter(message => message.role === 'tool');
+      if (values['child-controls'] && childStep > 0 && turn === 1) assert.match(JSON.stringify(body.messages), /SDK child guidance/);
       if (childStep++ === 0) {
         if (values['continue-child'] && turn === 2) {
           assert.ok(results.length, 'follow-up must carry the original child protocol history');
           assert.match(JSON.stringify(body.messages), /Child evidence 1/);
+        }
+        if (values['child-controls']) {
+          const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
+          const identity = { agentId, sessionId: 'native-child-parent' };
+          const current = await control('sessions/native-child-history', identity), task = current.tasks[0], send = turn === 1;
+          assert.equal(task.canSendInput, true); assert.equal(task.canCancel, true);
+          const command = { ...identity, runId: current.runId, childRunId: task.childRunId, commandId: `sdk-child-${send ? 'send' : 'cancel'}`,
+            ...(send ? { text: 'SDK child guidance: verify the original file.', expectedGoalRevision: task.goalRevision } : {}) };
+          const method = `sessions/native-child-${send ? 'send' : 'cancel'}`;
+          assert.equal((await control(method, command)).status, 'accepted'); assert.equal((await control(method, command)).status, 'duplicate');
+          if (!send) {
+            let canceled = false;
+            for (let index = 0; index < 400; index++) {
+              const history = await control('sessions/native-child-history', identity);
+              if (history.tasks[0].phase === 'canceled') { canceled = true; break; }
+              await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            assert.equal(canceled, true, 'the original child must cancel before its model response can dispatch a tool');
+          }
         }
         if (values.promote && turn === 1) {
           const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
@@ -173,7 +194,7 @@ try {
     }
   }
   await harness.close(); harness = null;
-  assert.deepEqual(failures, []); assert.equal(requests.filter(body => body.model === 'child-proof').length, 4);
+  assert.deepEqual(failures, []); assert.equal(requests.filter(body => body.model === 'child-proof').length, values['child-controls'] ? 3 : 4);
   const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
   const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
   const store = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
@@ -182,15 +203,16 @@ try {
     const parents = store.list(scope, 'native-child-parent'); assert.equal(parents.length, 2);
     const childIds = new Set();
     for (const parent of parents) {
+      const canceled = values['child-controls'] && !parent.childRunIds.includes(firstChildId);
       assert.equal(parent.phase, 'completed'); assert.equal(parent.childBudgetReservations.length, 1);
-      assert.equal(parent.descendantUsage.modelCalls, 2); assert.equal(parent.descendantUsage.toolCalls, 1);
+      assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : 2); assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : 1);
       const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
       if (reservation.deliveryMode === 'foreground') {
         assert.equal(parent.messages.filter(message => message.kind === 'background_child_observation').length, 0);
       }
       childIds.add(reservation.childRunId);
       const child = store.load(reservation.childScope, reservation.childRunId);
-      assert.equal(child.snapshot.phase, 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
+      assert.equal(child.snapshot.phase, canceled ? 'canceled' : 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
       assert.equal(child.configuration.childOwnerBinding.parent.runId, parent.runId);
       if (values['continue-child'] && child.snapshot.runId !== firstChildId) {
         const firstParent = parents.find(item => item.childRunIds.includes(firstChildId));
@@ -202,15 +224,20 @@ try {
         assert.equal(original.snapshot.usage.toolCalls, 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
         assert.equal(store.sessionHead(reservation.childScope, original.snapshot.sessionId).runId, child.snapshot.runId);
       } else assert.equal(child.snapshot.parentRunId, null);
-      assert.equal(child.snapshot.usage.toolCalls, 1);
+      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : 1);
+      if (values['child-controls']) {
+        const commandKind = canceled ? 'cancel' : 'guide';
+        assert.equal(child.commands.filter(row => row.command.kind === commandKind).length, 1);
+        assert.equal(store.events(scope, parent.runId).filter(event => event.kind === (canceled ? 'child.cancel_requested' : 'child.input_queued')).length, 1);
+      }
       const parentConfiguration = store.load(scope, parent.runId).configuration;
       if (parentConfiguration.contract.finalSubmissionSchema) {
         assert.deepEqual(child.configuration.contract.finalSubmissionSchema.properties.output,
           parentConfiguration.contract.finalSubmissionSchema.properties.output);
         assert.notEqual(child.configuration.contract.objective, parentConfiguration.contract.objective);
-        assert.equal(child.snapshot.finalText, '{"count":2}');
+        assert.equal(child.snapshot.finalText, canceled ? '' : '{"count":2}');
       }
-      assert.equal(store.events(scope, parent.runId).filter(event => event.kind === 'usage.reported' && event.payload.source === 'descendant_runs').length, 1);
+      assert.equal(store.events(scope, parent.runId).filter(event => event.kind === (canceled ? 'usage.unavailable' : 'usage.reported') && event.payload.source === 'descendant_runs').length, 1);
     }
     assert.equal(childIds.size, 2);
     assert.equal(parents.filter(parent => parent.childBudgetReservations[0].deliveryMode === 'foreground').length, 1);
@@ -220,7 +247,7 @@ try {
     }
     assert.equal(JSON.stringify(parents).includes('child-proof-secret'), false);
   } finally { store.close(); }
-  console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
+  console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}${values['child-controls'] ? 'authenticated same-ID guidance and child cancellation, no tool after cancellation, one original child inbox command, ' : ''}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
 } finally {
   releaseChild();
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

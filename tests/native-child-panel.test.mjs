@@ -30,6 +30,25 @@ test('a lost promotion reply retains the exact original command across parent ad
   client.dispose();
 });
 
+for (const action of ['send', 'cancel']) test(`a lost ${action} reply retains its original child, revision, text and command on retry`, async () => {
+  const commands = []; let current = page(), lost = true;
+  const active = { ...task, canCancel: true, canSendInput: true, goalRevision: 2 };
+  current = page({ tasks: [active] });
+  const method = action === 'send' ? 'sendNativeChildInput' : 'cancelNativeChild';
+  const client = createNativeChildrenState({ agentId: 'agent', sessionId: 'session', commandId: () => `${action}-one-command`, hostRemote: {
+    nativeChildHistory: async () => current,
+    [method]: async payload => { commands.push(structuredClone(payload)); if (lost) { lost = false; throw Error('lost reply'); }
+      return { commandId: payload.commandId, status: 'duplicate' }; },
+  } });
+  await client.refresh(); await (action === 'send' ? client.sendInput(active, '核对 😀 原文件') : client.cancel(active));
+  assert.equal(commands.length, 1); assert.equal(client.getSnapshot().pendingAction, action);
+  current = page({ runId: 'next-parent', tasks: [{ ...active, canPromote: false, canCancel: false, canSendInput: false, goalRevision: 3 }] });
+  await client.refresh(); assert.equal(commands.length, 1);
+  await client.retryControl(); assert.deepEqual(commands[1], commands[0]); assert.equal(commands[1].runId, 'parent');
+  if (action === 'send') { assert.equal(commands[1].expectedGoalRevision, 2); assert.equal(commands[1].text, '核对 😀 原文件'); }
+  assert.equal(client.getSnapshot().pending, null); client.dispose();
+});
+
 test('history and result paging reject changed inventories and payload identities without replacing accepted data', async () => {
   let invalid = false; const calls = [];
   const delivered = { ...task, canPromote: false, resultAvailable: true, phase: 'completed' };
@@ -109,7 +128,9 @@ for (const [name, create] of [
   const input = { agentId: 'agent', sessionId: 'session' };
   await remote.nativeChildHistory(input, signal); await remote.nativeChildResult({ ...input, childRunId: 'child' }, signal);
   await remote.promoteNativeChild({ ...input, runId: 'parent', childRunId: 'child', commandId: 'one' }, signal);
-  assert.deepEqual(calls.map(call => call[1]), ['sessions/native-child-history', 'sessions/native-child-result', 'sessions/native-child-promote']);
+  await remote.sendNativeChildInput({ ...input, runId: 'parent', childRunId: 'child', commandId: 'two', text: 'guide', expectedGoalRevision: 0 }, signal);
+  await remote.cancelNativeChild({ ...input, runId: 'parent', childRunId: 'child', commandId: 'three' }, signal);
+  assert.deepEqual(calls.map(call => call[1]), ['sessions/native-child-history', 'sessions/native-child-result', 'sessions/native-child-promote', 'sessions/native-child-send', 'sessions/native-child-cancel']);
   assert.ok(calls.every(call => call[0] === '/agentkit' && call[3] === signal));
 });
 
@@ -131,11 +152,14 @@ test('the actual header panel renders saved history, reads results and exposes o
   // Hook calls delegate at invocation time so each mounted component has its own scope.
   const dispatcher = {}, React = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity).filter(Boolean) }),
     useState: (...args) => dispatcher.useState(...args), useEffect: (...args) => dispatcher.useEffect(...args) };
-  const calls = [], historic = { ...task, childRunId: 'old-child', parentRunId: 'old-parent', canPromote: false, resultAvailable: true, phase: 'completed' };
+  const calls = [], controls = [], active = { ...task, canSendInput: true, canCancel: true, goalRevision: 2 };
+  const historic = { ...task, childRunId: 'old-child', parentRunId: 'old-parent', canPromote: false, resultAvailable: true, phase: 'completed' };
   const Panel = createNativeChildPanel({ ui: { React, ResourceDialog: 'dialog', buttonStyle: () => ({}) },
     setInterval: () => 1, clearInterval() {}, hostRemote: {
       agents: async () => ({ items: [{ metadata: { id: 'local-agent', local: true }, spec: { runtime: { type: 'harness' } } }] }),
-      nativeChildHistory: async () => page({ tasks: [task, historic], nextOffset: 2, totalTasks: 2 }),
+      nativeChildHistory: async () => page({ tasks: [active, historic], nextOffset: 2, totalTasks: 2 }),
+      sendNativeChildInput: async input => { controls.push(['send', input]); return { commandId: input.commandId, status: 'accepted' }; },
+      cancelNativeChild: async input => { controls.push(['cancel', input]); return { commandId: input.commandId, status: 'accepted' }; },
       nativeChildResult: async input => { calls.push(input); return { contract, sessionId: 'session', runId: 'parent', task: historic,
         text: '<script>untrusted task prose</script>', complete: true, offset: 0,
         nextOffset: [...'<script>untrusted task prose</script>'].length, totalChars: [...'<script>untrusted task prose</script>'].length, resultDigest: 'c'.repeat(64) }; },
@@ -151,6 +175,12 @@ test('the actual header panel renders saved history, reads results and exposes o
   assert.equal(calls[0].childRunId, 'old-child');
   assert.ok(walk(tree).some(node => node.type === 'pre' && node.children.includes('<script>untrusted task prose</script>')));
   assert.equal(walk(tree).some(node => node.type === 'script' || node.props.dangerouslySetInnerHTML), false);
+  assert.equal(walk(tree).filter(node => node.type === 'button' && node.children.includes('停止子任务')).length, 1);
+  walk(tree).find(node => node.type === 'textarea').props.onChange({ target: { value: 'Inspect the source 😀' } }); tree = child.render(mounted.props);
+  walk(tree).find(node => node.type === 'button' && node.children.includes('发送指导')).props.onClick(); await tick(); tree = child.render(mounted.props);
+  assert.equal(controls[0][0], 'send'); assert.equal(controls[0][1].text, 'Inspect the source 😀'); assert.equal(controls[0][1].expectedGoalRevision, 2);
+  walk(tree).find(node => node.type === 'button' && node.children.includes('停止子任务')).props.onClick(); await tick();
+  assert.equal(controls[1][0], 'cancel'); assert.equal(controls[1][1].childRunId, 'child');
   const changed = { sessionId: 'another', useSessions: props.useSessions };
   assert.equal(outer.render(changed), null, 'never render an old Agent binding in a newly selected Session');
   await tick();

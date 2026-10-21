@@ -1,4 +1,4 @@
-import type { ChildBudgetReservation, ChildState, ObjectValue, PortContext, RunIdentity, RunScope, ToolCall, ToolResult } from './contracts.mjs';
+import type { ChildBudgetReservation, ChildState, ObjectValue, PortContext, RunCommand, RunIdentity, RunScope, ToolCall, ToolResult } from './contracts.mjs';
 
 export const CHILD_OWNER_CONTRACT = 'agentkit.native-child-owner/v1' as const;
 /** Immutable causal binding; session parentRunId continues to mean session ancestry. */
@@ -29,11 +29,20 @@ export interface ChildReadyRequest extends RunIdentity {
 }
 export interface ChildTaskControlState {
   childRunId: string; sessionId: string; role: string; phase: string;
+  goalRevision: number;
   delivery: 'foreground' | 'background'; canPromote: boolean; canCancel: boolean; canSendInput: boolean;
 }
+export interface ChildControlTarget {
+  scope: RunScope; runId: string; configurationDigest: string; parentOperationKey: string; parentToolCallId: string;
+}
+export interface ChildControlDelivery { target: ChildControlTarget; command: RunCommand }
 export interface ChildLifecyclePort {
   /** Scope-bound control metadata, including an owned start whose receipt is still in flight. */
   tasks?(request: RunIdentity): ChildTaskControlState[];
+  /** Read-only locator. The Store revalidates both ledgers in the delivery transaction. */
+  controlTarget?(request: RunIdentity, childRunId: string): ChildControlTarget | null;
+  /** Wake an already committed inbox command; never creates a command or a child. */
+  wakeControl?(request: RunIdentity, delivery: ChildControlDelivery): Promise<void>;
   /** Aborting a poll/wait removes its waiter, never cancels or relaunches children. */
   collect(request: ChildLifecycleRequest): Promise<ChildLifecycleResult>;
   /** Read already sealed child facts after a lost parent claim. Never starts, approves or cancels execution. */

@@ -4,7 +4,7 @@ const check = (value, message) => { if (!value) throw new Error(message); };
 /** Own only product reads and explicit controls; execution stays in the Host. */
 export function createNativeChildrenState({ hostRemote, agentId, sessionId, commandId = () => globalThis.crypto.randomUUID() }) {
   const identity = { agentId, sessionId }, lifetime = new AbortController(), listeners = new Set();
-  let state = { page: null, detail: null, loading: false, reading: false, pending: null, sending: false, error: '' };
+  let state = { page: null, detail: null, loading: false, reading: false, pending: null, pendingAction: null, sending: false, error: '' };
   let disposed = false, reading = 0;
   const set = changes => { if (!disposed) { state = { ...state, ...changes }; for (const listener of listeners) listener(state); } };
   const valid = value => check(value?.contract === contract && value.sessionId === sessionId, '子任务记录与当前会话不一致，请刷新。');
@@ -20,7 +20,9 @@ export function createNativeChildrenState({ hostRemote, agentId, sessionId, comm
         ...(next ? { offset: previous.nextOffset, inventoryDigest: previous.inventoryDigest } : {}) }, lifetime.signal);
       if (disposed) return;
       valid(page);
-      check(Array.isArray(page.tasks) && page.tasks.every(task => validTask(task) && (!task.canPromote || task.parentRunId === page.runId))
+      check(Array.isArray(page.tasks) && page.tasks.every(task => validTask(task)
+        && (!(task.canPromote || task.canCancel || task.canSendInput) || task.parentRunId === page.runId)
+        && (!task.canSendInput || Number.isSafeInteger(task.goalRevision) && task.goalRevision >= 0))
         && new Set(page.tasks.map(task => task.childRunId)).size === page.tasks.length
         && Number.isSafeInteger(page.offset) && page.offset >= 0 && page.nextOffset === page.offset + page.tasks.length
         && Number.isSafeInteger(page.totalTasks) && page.totalTasks >= page.nextOffset
@@ -52,28 +54,35 @@ export function createNativeChildrenState({ hostRemote, agentId, sessionId, comm
     } catch { if (token === reading) set({ error: '子任务结果读取失败，请重新读取。' }); }
     finally { if (token === reading) set({ reading: false }); }
   }
-  async function sendPromotion() {
+  async function sendControl() {
     if (disposed || !state.pending || state.sending) return;
     const pending = state.pending;
     set({ sending: true, error: '' });
     try {
-      const receipt = await hostRemote.promoteNativeChild(pending, lifetime.signal);
+      const method = { promote: 'promoteNativeChild', send: 'sendNativeChildInput', cancel: 'cancelNativeChild' }[state.pendingAction];
+      const receipt = await hostRemote[method](pending, lifetime.signal);
       check(receipt?.commandId === pending.commandId && ['accepted', 'duplicate'].includes(receipt.status), '子任务操作回执未确认。');
       if (disposed) return;
-      set({ pending: null }); await load();
-    } catch { set({ error: '转后台的接收结果尚未确认。请重试原请求；不会重新启动子任务。' }); }
+      set({ pending: null, pendingAction: null }); await load();
+    } catch { set({ error: '子任务操作的接收结果尚未确认。请重试原请求；不会重新启动子任务。' }); }
     finally { set({ sending: false }); }
+  }
+  function control(action, task, extra = {}) {
+    const allowed = { promote: task.canPromote, send: task.canSendInput, cancel: task.canCancel }[action];
+    if (disposed || state.pending || !allowed || task.parentRunId !== state.page?.runId) return;
+    if (action === 'send' && (typeof extra.text !== 'string' || !extra.text.trim() || extra.text.length > 32768
+      || !Number.isSafeInteger(task.goalRevision) || task.goalRevision < 0)) return;
+    set({ pendingAction: action, pending: { ...identity, runId: task.parentRunId, childRunId: task.childRunId,
+      commandId: commandId(), ...extra } });
+    return sendControl();
   }
   return {
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     refresh: () => load(), next: () => load(true), read,
-    promote(task) {
-      if (disposed || state.pending || !task.canPromote || task.parentRunId !== state.page?.runId) return;
-      set({ pending: { ...identity, runId: task.parentRunId, childRunId: task.childRunId, commandId: commandId() } });
-      return sendPromotion();
-    },
-    retryPromotion: sendPromotion,
+    promote: task => control('promote', task), cancel: task => control('cancel', task),
+    sendInput: (task, text) => control('send', task, { text, expectedGoalRevision: task.goalRevision }),
+    retryControl: sendControl, retryPromotion: sendControl,
     dispose() { if (disposed) return; disposed = true; lifetime.abort(); reading++; listeners.clear(); },
   };
 }

@@ -22,13 +22,14 @@ const childConfig = () => configure({ profile: fixture().config.profile, contrac
   hostBindingDigest: 'child-fixture', limits: { maxModelCalls: 3, maxToolCalls: 2 } });
 
 function setup(t, backend, { approval = false, uncertain = false, hold = false, control = null, foreground = false, delegate = false,
-  promotion = false, onContinuation, checkpoint } = {}) {
+  promotion = false, input = false, holdModel = false, leaseMs = 30000, onChildModel, onContinuation, checkpoint } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'native-child-owner-'));
   const store = backend === 'sqlite' ? new SqliteRunStore(join(dir, 'runs.sqlite')) : new MemoryRunStore();
   let writes = 0, starts = 0, release;
   const gate = new Promise(resolve => { release = resolve; });
   const childPorts = { model: { generate: async request => {
-    if (control === 'stop') { await gate; request.signal.throwIfAborted(); }
+    await onChildModel?.(request);
+    if (control === 'stop' || holdModel) { await gate; request.signal.throwIfAborted(); }
     return request.messages.some(message => message.role === 'tool')
       ? response('Child evidence') : response('', [{ callId: 'child-write', name: childDefinition.name, arguments: {} }]);
   } },
@@ -48,9 +49,10 @@ function setup(t, backend, { approval = false, uncertain = false, hold = false, 
   const definition = delegate ? nativeChildToolDefinitions(['worker'])[2] : startDefinition;
   const startCall = { ...call, name: definition.name, arguments: { ...call.arguments, ...(foreground ? { background: false } : {}) } };
   const { config, snapshot } = fixture({ tools: [definition, ...(control ? [controlDefinition] : [])],
-    limits: { maxModelCalls: 20, maxToolCalls: 20, effectTimeoutMs: 130000 },
+    limits: { maxModelCalls: 20, maxToolCalls: 20, effectTimeoutMs: 130000, leaseMs },
     childLifecyclePolicy: 'owned-background/v2', childApprovalPolicy: 'owned-child-approval/v1',
-    ...(promotion ? { childPromotionPolicy: 'owned-child-promotion/v1' } : {}) });
+    ...(promotion ? { childPromotionPolicy: 'owned-child-promotion/v1' } : {}),
+    ...(input ? { childInputPolicy: 'owned-child-input/v1' } : {}) });
   let rounds = 0, observed = false;
   const kernel = new NativeKernel({ store, digest, owner: 'parent', ports: { children: owner,
     tools: { execute: async request => {
@@ -86,7 +88,118 @@ async function childStarted(store) {
   assert.fail('child never entered its real tool effect');
 }
 
+for (const position of ['inside', 'after']) test(`SQLite process exit ${position} child control commit preserves one atomic delivery`, async t => {
+  const requests = [];
+  const f = setup(t, 'sqlite', { foreground: true, hold: true, approval: true, input: true, leaseMs: 5000, onChildModel: request => requests.push(request) });
+  const waiting = await f.kernel.runUntilIdle(scope, 'run'); assert.equal(waiting.phase, 'awaiting_interaction');
+  const childId = waiting.childApproval.childRunId;
+  f.kernel.sendChildInput(scope, 'run', childId, 'Guidance across a real process crash', 0, 'crash-input');
+  const worker = fileURLToPath(new URL('./fixtures/native-child-control-crash-worker.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [worker, join(f.dir, 'runs.sqlite'), position], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, position === 'inside' ? 77 : 78, result.stderr);
+  const reopened = new SqliteRunStore(join(f.dir, 'runs.sqlite'));
+  try {
+    assert.equal(reopened.load(scope, 'run').commands.find(row => row.command.commandId === 'crash-input').consumed, position === 'after');
+    assert.equal(reopened.load(childScope, childId).commands.filter(row => row.command.kind === 'guide').length, position === 'after' ? 1 : 0);
+  } finally { reopened.close(); }
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, f.store.load(scope, 'run').lease.expiresAt - Date.now() + 20)));
+  assert.ok(f.store.load(scope, 'run').lease.expiresAt <= Date.now(), 'recovery waits for the real crashed lease to expire');
+  f.release();
+  f.kernel.submit(scope, 'run', { commandId: 'allow-after-control-crash', kind: 'submit_interaction', payload: {
+    interactionId: waiting.pendingInteraction.interactionId, decision: 'allow' } });
+  const final = await f.kernel.runUntilIdle(scope, 'run');
+  assert.equal(final.phase, 'completed'); assert.equal(f.writes(), 1); assert.equal(f.starts(), 1);
+  assert.equal(f.store.load(childScope, childId).commands.filter(row => row.command.kind === 'guide').length, 1);
+  assert.equal(f.store.events(scope, 'run').filter(event => event.kind === 'child.input_queued').length, 1);
+  assert.equal(requests.filter(request => request.messages.some(message => message.content === 'Guidance across a real process crash')).length, 1);
+  assert.ok(final.childBudgetReservations[0].settledUsageDigest);
+});
+
 for (const backend of ['memory', 'sqlite']) {
+  for (const target of ['parent', 'child']) test(`${backend}: pending ${target} steering preempts child guidance in the delivery transaction`, async t => {
+    let rejecting = false;
+    const f = setup(t, backend, { foreground: true, hold: true, approval: true, input: true, checkpoint: snapshot => {
+      if (target === 'parent' && f.store.events(scope, 'run').some(event => event.payload.reason === 'parent_control_preempts_child_control')) {
+        rejecting = true; f.kernel.submit(scope, 'run', { commandId: 'end-after-preemption', kind: 'cancel', payload: {} });
+      }
+    } });
+    const waiting = await f.kernel.runUntilIdle(scope, 'run'), childId = waiting.childApproval.childRunId;
+    f.store.enqueue(target === 'parent' ? scope : childScope, target === 'parent' ? 'run' : childId,
+      { commandId: 'steer-before-child-input', kind: 'steer', payload: { text: 'New approved objective', expectedGoalRevision: 0 } });
+    f.kernel.sendChildInput(scope, 'run', childId, 'obsolete guidance', 0, 'preempted-input');
+    const result = await f.kernel.runUntilIdle(scope, 'run');
+    assert.equal(result.phase, target === 'parent' ? 'canceled' : 'awaiting_interaction');
+    assert.equal(f.store.events(scope, 'run').find(event => event.payload.commandId === 'preempted-input').payload.reason,
+      target === 'parent' ? 'parent_control_preempts_child_control' : 'child_control_preempts_input');
+    assert.equal(f.store.load(childScope, childId).commands.filter(row => row.command.kind === 'guide').length, 0);
+    assert.equal(f.writes(), 0); if (target === 'parent') assert.equal(rejecting, true);
+  });
+  test(`${backend}: child input needs its explicit policy and foreign locators grant no controls`, async t => {
+    const f = setup(t, backend, { foreground: true, hold: true });
+    const running = f.kernel.runUntilIdle(scope, 'run'), child = await childStarted(f.store);
+    assert.equal(f.kernel.childTasks(scope, 'run')[0].canSendInput, false);
+    assert.throws(() => f.kernel.sendChildInput(scope, 'run', child.runId, 'unsupported', 0, 'no-policy'), /child_controls_unavailable/);
+    assert.throws(() => f.kernel.cancelChild(scope, 'run', 'guessed-child', 'foreign-stop'), /child_control_not_owned/);
+    assert.equal(f.store.load(scope, 'run').commands.length, 0); f.release(); assert.equal((await running).phase, 'completed');
+  });
+  test(`${backend}: Host guidance before the startup receipt reaches the same child exactly once`, async t => {
+    const requests = [];
+    const f = setup(t, backend, { foreground: true, hold: true, input: true, onChildModel: request => requests.push(request) });
+    const running = f.kernel.runUntilIdle(scope, 'run'), child = await childStarted(f.store);
+    assert.equal(f.store.load(scope, 'run').snapshot.childRunIds.length, 0, 'start receipt is still pending');
+    assert.equal(f.kernel.childTasks(scope, 'run')[0].goalRevision, 0);
+    const args = [scope, 'run', child.runId, 'Inspect the actual write', 0, 'host-guidance'];
+    assert.equal(f.kernel.sendChildInput(...args).status, 'accepted');
+    assert.equal(f.kernel.sendChildInput(...args).status, 'duplicate');
+    assert.throws(() => f.kernel.sendChildInput(scope, 'run', child.runId, 'changed payload', 0, 'host-guidance'), /command_replay_conflict/);
+    for (let tries = 0; tries < 500 && !f.store.load(childScope, child.runId).commands.some(row => row.command.kind === 'guide'); tries++)
+      await new Promise(resolve => setTimeout(resolve, 2));
+    assert.equal(f.store.load(childScope, child.runId).commands.filter(row => row.command.kind === 'guide').length, 1);
+    assert.equal(f.rounds(), 1); f.release();
+    const result = await running; assert.equal(result.phase, 'completed'); assert.equal(f.writes(), 1); assert.equal(f.starts(), 1);
+    assert.equal(requests.filter(request => request.messages.some(message => message.kind === 'guidance'
+      && message.content === 'Inspect the actual write')).length, 1);
+    assert.equal(f.store.events(scope, 'run').filter(event => event.kind === 'child.input_queued').length, 1);
+    assert.equal(f.kernel.sendChildInput(...args).status, 'duplicate');
+  });
+
+  test(`${backend}: a stale child revision is a known refusal without a child inbox write`, async t => {
+    const f = setup(t, backend, { foreground: true, hold: true, input: true });
+    const running = f.kernel.runUntilIdle(scope, 'run'), child = await childStarted(f.store);
+    f.kernel.sendChildInput(scope, 'run', child.runId, 'stale guidance', 1, 'stale-input');
+    for (let tries = 0; tries < 500 && !f.store.load(scope, 'run').commands.some(row => row.command.commandId === 'stale-input' && row.consumed); tries++)
+      await new Promise(resolve => setTimeout(resolve, 2));
+    assert.equal(f.store.events(scope, 'run').find(event => event.payload.commandId === 'stale-input').payload.reason, 'stale_child_goal_revision');
+    assert.equal(f.store.load(childScope, child.runId).commands.some(row => row.command.kind === 'guide'), false);
+    f.release(); assert.equal((await running).phase, 'completed'); assert.equal(f.writes(), 1);
+  });
+
+  test(`${backend}: Host cancellation before startup settlement interrupts the original child without stopping its parent`, async t => {
+    const f = setup(t, backend, { foreground: true, hold: true, holdModel: true, input: true });
+    const running = f.kernel.runUntilIdle(scope, 'run'); let child;
+    for (let tries = 0; tries < 500 && !child; tries++) {
+      child = f.store.list(childScope).find(row => row.phase === 'requesting_model');
+      if (!child) await new Promise(resolve => setTimeout(resolve, 2));
+    }
+    assert.ok(child); assert.equal(f.kernel.cancelChild(scope, 'run', child.runId, 'host-stop').status, 'accepted');
+    assert.equal(f.kernel.cancelChild(scope, 'run', child.runId, 'host-stop').status, 'duplicate');
+    const result = await running;
+    assert.equal(result.phase, 'completed'); assert.equal(f.store.load(childScope, child.runId).snapshot.phase, 'canceled');
+    assert.equal(f.starts(), 1); assert.equal(f.writes(), 0); assert.ok(result.childBudgetReservations[0].settledUsageDigest);
+    assert.equal(f.store.events(scope, 'run').filter(event => event.kind === 'child.cancel_requested').length, 1);
+  });
+
+  test(`${backend}: canceling an approval-waiting child withdraws its original approval without granting the tool`, async t => {
+    const f = setup(t, backend, { foreground: true, hold: true, approval: true, input: true });
+    const waiting = await f.kernel.runUntilIdle(scope, 'run'); assert.equal(waiting.phase, 'awaiting_interaction');
+    const childRunId = waiting.childApproval.childRunId;
+    f.kernel.cancelChild(scope, 'run', childRunId, 'cancel-pending-approval');
+    const result = await f.kernel.runUntilIdle(scope, 'run');
+    assert.equal(result.phase, 'completed'); assert.equal(result.pendingInteraction, null); assert.equal(result.childApproval, null);
+    assert.equal(f.store.load(childScope, childRunId).snapshot.phase, 'canceled'); assert.equal(f.writes(), 0);
+    assert.equal(f.store.load(childScope, childRunId).commands.some(row => row.command.kind === 'submit_interaction'), false);
+    assert.ok(f.store.events(scope, 'run').some(event => event.kind === 'approval.resolved' && event.payload.decision === 'canceled'));
+  });
   test(`${backend}: foreground promotion is unavailable without its explicit policy`, async t => {
     const f = setup(t, backend, { foreground: true, hold: true });
     const running = f.kernel.runUntilIdle(scope, 'run'), child = await childStarted(f.store);

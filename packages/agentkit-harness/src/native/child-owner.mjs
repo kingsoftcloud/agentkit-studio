@@ -178,7 +178,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       if (entry && !terminal(record.snapshot.phase)) drive(entry);
       while (!terminal(record.snapshot.phase) && record.snapshot.phase !== 'awaiting_interaction') {
         request.signal.throwIfAborted(); const parent = toolInvocation(request);
-        if (parent.commands.some(row => !row.consumed && ['pause', 'promote_child'].includes(row.command.kind))
+        if (parent.commands.some(row => !row.consumed && ['pause', 'promote_child', 'message_child', 'cancel_child'].includes(row.command.kind))
           || entry?.error && entry.error.code !== 'lease_busy') return startup();
         await observeWhileLive(new Promise(resolve => setTimeout(resolve, 25)), request.signal);
         record = ownedChild(request, reservation);
@@ -222,11 +222,41 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         const live = !terminal(snapshot.phase) && snapshot.phase !== 'finalizing' && !snapshot.childTerminalPhase
           && !parent.commands.some(row => !row.consumed && ['cancel', 'policy_revoked'].includes(row.command.kind))
           && !terminal(child.phase) && !unsafeReceipt(record) && reservation.settledUsageDigest === null;
-        rows.push({ childRunId: child.runId, sessionId: child.sessionId, role: binding.role, phase: child.phase, delivery,
+        rows.push({ childRunId: child.runId, sessionId: child.sessionId, role: binding.role, phase: child.phase, goalRevision: child.goalRevision, delivery,
           canPromote: live && delivery === 'foreground' && effective(parent).childPromotionPolicy === 'owned-child-promotion/v1',
           canCancel: live, canSendInput: live });
       }
       return rows;
+    },
+    controlTarget(request, childRunId) {
+      const row = this.tasks(request).find(task => task.childRunId === childRunId);
+      if (!row) return null;
+      for (const childScope of scopes) {
+        let record;
+        try { record = store.load(childScope, childRunId); }
+        catch (error) { if (error.code === 'run_not_found') continue; throw error; }
+        if (!same(record.configuration.childOwnerBinding?.parent, identity(request))) continue;
+        const reservation = makeReservation(record, childScope);
+        ownedChild(request, reservation);
+        return { scope: copy(childScope), runId: childRunId, configurationDigest: record.snapshot.configDigest,
+          parentOperationKey: reservation.parentOperationKey, parentToolCallId: reservation.parentToolCallId };
+      }
+      return null;
+    },
+    async wakeControl(request, delivery) {
+      const parent = parentRecord(request), target = delivery.target;
+      const reservation = parent.snapshot.childBudgetReservations.find(item => item.childRunId === target.runId);
+      check(reservation && reservation.settledUsageDigest === null, 'child_control_not_owned');
+      const record = ownedChild(request, reservation);
+      check(same(record.snapshot.scope, target.scope) && record.snapshot.configDigest === target.configurationDigest
+        && record.commands.some(row => same(row.command, delivery.command)), 'child_control_delivery_missing');
+      if (terminal(record.snapshot.phase)) return;
+      const entry = await liveEntry({ ...request, signal: new AbortController().signal }, reservation, record);
+      check(entry, 'child_owner_unavailable');
+      // Only an exact duplicate of the transactionally admitted command may
+      // notify an active Kernel. Cancellation interrupts its existing effect.
+      check(entry.kernel.submit(entry.scope, entry.runId, delivery.command).status === 'duplicate', 'child_control_delivery_missing');
+      if (record.snapshot.phase !== 'awaiting_interaction' || delivery.command.kind === 'cancel') drive(entry);
     },
     async start(request) {
       try {

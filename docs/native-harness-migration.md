@@ -332,11 +332,15 @@ Node 的 `createNativeChildOwner` 运行真实子 Kernel，每个子任务有独
 
 前台转后台必须显式启用 `childPromotionPolicy=owned-child-promotion/v1`，并使用提供控制元数据的已拥有子任务端口。Studio 已批准子角色的配置启用该策略。提升保留原 Run、Session、配置摘要和预约；独立的 `promotedChildRunIds` 只追加，不改原预约的 `deliveryMode`。`child.promoted`、命令消费与父状态在同一事务提交，父模型在提交后才能继续。重复命令返回原命令身份，错误子任务 ID、终态子任务或未启用策略都不能产生提升事件。父取消仍停止原子任务；未知副作用仍保持预约、要求恢复核对。
 
-Studio 的现有认证控制通道增加 `sessions/native-child-tasks` 与 `sessions/native-child-promote`，返回契约 `agentkit.studio-native-child-control/v1`。查询指定 `agentId/sessionId`，提升还必须携带当前 `runId/childRunId/commandId`；过期父 Run 和其他 Agent 的控制句柄会被拒绝。控制句柄只在当前 Native turn 激活期间有效，结束或卸载时释放。面板转后台如未收到确定回执，保存原 Run、子任务和 commandId，只允许明确重试同一请求；刷新历史不会重发操作，也不会把请求绑定到新的父 Run。独立发送指导、停止及非活动父 Run 的控制恢复界面仍待接入。
+Studio 的现有认证控制通道增加 `sessions/native-child-tasks`、`sessions/native-child-promote`、`sessions/native-child-send` 与 `sessions/native-child-cancel`，返回契约 `agentkit.studio-native-child-control/v1`。查询指定 `agentId/sessionId`，操作还必须携带当前 `runId/childRunId/commandId`；发送指导额外提供 `text/expectedGoalRevision`。过期父 Run 和其他 Agent 的控制句柄会被拒绝。控制句柄只在当前 Native turn 激活期间有效，结束或卸载时释放。操作如未收到确定回执，保存原 Run、子任务、commandId 及原指导文本/修订号，只允许明确重试同一请求；刷新历史不会重发操作，也不会把请求绑定到新的父 Run。非活动父 Run 的控制恢复界面仍待接入。
+
+指导须显式启用 `childInputPolicy=owned-child-input/v1`；停止需要已拥有子任务端口提供目标与唤醒能力。操作先入父任务持久命令队列，在父执行者的有效租约下核对原启动回执、完整因果归属、冻结配置与未结算预约，再把父命令消费和原子任务收件箱入队写入同一事务。目标修订号过期或父/子取消、策略撤销、改目标命令抢先时，指导不会投递。子任务应用指导时再次核对目标修订号。HTTP 接收回执只证明父命令已入队；面板随后显示等待投递、已投递或明确拒绝的状态。
+
+Memory 与 SQLite 都执行上述事务边界；真实独立 Node 进程在事务内退出会回滚两边，提交后退出则保留同一子命令，恢复不重复投递或启动。停止仍由原子任务 Kernel 中断现有执行、封存结果并由原父任务结算，不伪造终态或用量。停止等待审批的子任务会撤销父任务中的对应审批，不能向受保护工具发送允许决定；Host 驱动会唤醒并中止过期的审批等待，迟到回复无权执行工具。
 
 历史查询使用独立的 `sessions/native-child-history` 与 `sessions/native-child-result`，契约为 `agentkit.studio-native-child-history/v1`。Host 固定本地 scope，遍历同一父 Session 的终态祖先，按原冻结工具角色、启动回执、因果归属及预算凭据验证子任务。当前启动回执尚未提交时，活动拥有者可提供已认证的状态和转后台元数据，但不能据此公开交付结果。只有原父任务已提交安全终态结算凭据的结果才可读取；历史查询不需要活动执行句柄，不组装模型、执行工具或改变用量。分页固定任务身份清单，结果按 Unicode 字符分页并提供摘要。
 
-本地 Harness 的会话头部增加“子任务”面板，绑定实际会话 preset 对应的本地 Agent；其他 runtime 和云会话不显示此入口。面板展示当前和历史轮次、续接标识、独立用量及结算状态，仅对当前拥有者允许的任务显示转后台操作。子任务结果按普通文本展示，不能执行其中的 HTML，也不代表父任务验收通过。面板状态和组件级验证已覆盖分页变化、切换会话、卸载取消及丢失回执；完整浏览器端到端验收尚未完成。
+本地 Harness 的会话头部增加“子任务”面板，绑定实际会话 preset 对应的本地 Agent；其他 runtime 和云会话不显示此入口。面板展示当前和历史轮次、续接标识、独立用量及结算状态，仅对当前拥有者允许的任务显示转后台、发送指导和停止操作。子任务结果按普通文本展示，不能执行其中的 HTML，也不代表父任务验收通过。面板状态和组件级验证已覆盖分页变化、切换会话、卸载取消、指导的原文本/修订号及三种操作丢失回执；完整浏览器端到端验收尚未完成。
 
 提升可以打断审批决定已经送达后的父观察等待，不取消子任务。审批交付使用稳定的命令身份；重新观察时必须核对同一个已持久化的决定，不能从子任务阶段推断批准或再次发送审批。提升前已准备的前台等待会根据已提交的提升状态转为后台轮询，不能继续阻塞父任务。独立 Node 进程在提升事务后退出的测试验证：重开 SQLite 后恢复原子会话，仅在明确允许纯推理恢复时重试丢失的模型调用，实际子工具只执行一次，后代用量只结算一次。
 

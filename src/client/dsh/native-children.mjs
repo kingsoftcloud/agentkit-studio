@@ -9,6 +9,7 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
   hostRemote, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
   function TaskPanel({ agentId, sessionId }) {
     const [controller, setController] = useState(null), [state, setState] = useState({ page: null, detail: null }), [open, setOpen] = useState(false);
+    const [drafts, setDrafts] = useState({});
     useEffect(() => {
       const next = createNativeChildrenState({ hostRemote, agentId, sessionId });
       setController(next); setState(next.getSnapshot()); const stop = next.subscribe(setState);
@@ -26,16 +27,25 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
       open ? h(ResourceDialog, { title: '本会话的子任务', detail: '显示当前轮和历史轮次；子任务结果是证据，不代表父任务验收通过。', wide: true, onClose: () => setOpen(false) },
         h('button', { type: 'button', style: buttonStyle(), disabled: !controller || state.loading, onClick: () => void controller?.refresh() }, state.loading ? '读取中…' : '刷新'),
         state.error ? h('p', { role: 'alert' }, state.error) : null,
-        state.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: state.sending, onClick: () => void controller.retryPromotion() }, state.sending ? '正在确认…' : '重试原转后台请求') : null,
+        state.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: state.sending, onClick: () => void controller.retryControl() }, state.sending ? '正在确认…' : '重试原子任务请求') : null,
         page && !page.tasks.length ? h('p', null, '本会话还没有子任务。') : null,
         ...(page?.tasks ?? []).map(task => h('article', { key: task.childRunId, style: { borderTop: '1px solid var(--border, #ddd)', padding: '14px 0', overflowWrap: 'anywhere' }, 'aria-label': `子任务：${task.role}` },
           h('strong', null, task.role), ' · ', phases[task.phase] || '运行中', ' · ', task.delivery === 'foreground' ? '前台等待' : '后台',
           task.parentRunId !== page.runId ? h('span', null, ' · 历史轮次') : null,
           task.continuationOf ? h('span', null, ' · 续接任务') : null,
+          task.lastControl ? h('p', { role: task.lastControl.status === 'rejected' ? 'alert' : 'status' },
+            task.lastControl.status === 'pending' ? '操作已接收，等待投递。' : task.lastControl.status === 'delivered' ? '操作已投递至原子任务。'
+              : `操作未投递：${task.lastControl.reason === 'stale_child_goal_revision' ? '子任务目标已变化，请刷新后核对指导。' : task.lastControl.reason}`) : null,
           h('p', { style: { whiteSpace: 'pre-wrap' } }, task.goalPreview, task.goalComplete ? '' : '…'),
           h('p', { style: { fontSize: '12px' } }, `子任务用量${task.usageComplete ? '' : '（可能未完整）'}：模型 ${task.usage.modelCalls} 次 · 工具 ${task.usage.toolCalls} 次 · 输入 ${task.usage.inputTokens} / 输出 ${task.usage.outputTokens} tokens；${task.usageIncludedInParent ? '已计入父任务' : '结算后计入父任务'}。`),
           h('button', { type: 'button', disabled: state.reading, style: buttonStyle(), onClick: () => void controller.read(task) }, task.resultAvailable ? '查看结果' : '查看状态'),
           task.canPromote ? h('button', { type: 'button', disabled: Boolean(state.pending), style: buttonStyle(), onClick: () => void controller.promote(task) }, '转为后台') : null,
+          task.canCancel ? h('button', { type: 'button', disabled: Boolean(state.pending), style: buttonStyle(), onClick: () => void controller.cancel(task) }, '停止子任务') : null,
+          task.canSendInput ? h('div', null,
+            h('textarea', { 'aria-label': `给 ${task.role} 补充指导`, maxLength: 32768, rows: 2, value: drafts[task.childRunId] ?? '',
+              disabled: Boolean(state.pending), onChange: event => setDrafts({ ...drafts, [task.childRunId]: event.target.value }) }),
+            h('button', { type: 'button', disabled: Boolean(state.pending) || !drafts[task.childRunId]?.trim(), style: buttonStyle(),
+              onClick: () => void controller.sendInput(task, drafts[task.childRunId]) }, '发送指导')) : null,
           h('details', null, h('summary', null, '任务标识'), h('p', null, task.childRunId), h('p', null, `会话：${task.sessionId}`), h('p', null, `父任务：${task.parentRunId}`)))),
         page && !page.complete ? h('button', { type: 'button', disabled: state.loading, style: buttonStyle(), onClick: () => void controller.next() }, '加载更多子任务') : null,
         detail ? h('section', { 'aria-label': '子任务结果', style: { marginTop: '16px' } }, h('h4', null, detail.task.role),

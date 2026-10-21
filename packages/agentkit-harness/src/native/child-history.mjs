@@ -68,11 +68,19 @@ export function createNativeChildHistory({ scope, store, liveTasks = () => [] })
   const taskRow = ({ parent, child, control }) => {
     const snapshot = child.snapshot, binding = child.configuration.childOwnerBinding;
     const accounted = Boolean(accountedChildDelivery(parent, child));
+    const command = parent.commands.filter(row => ['message_child', 'cancel_child', 'promote_child'].includes(row.command.kind)
+      && row.command.payload.childRunId === snapshot.runId).at(-1);
+    const applied = command && parent.events.find(event => event.kind === 'command.applied' && event.payload.commandId === command.command.commandId);
+    const lastControl = command ? { commandId: command.command.commandId, action: command.command.kind,
+      status: !command.consumed ? 'pending' : ['queued', 'applied'].includes(applied?.payload.reason) ? 'delivered' : 'rejected',
+      reason: applied?.payload.reason ?? (command.consumed ? 'parent_run_ended' : null) } : null;
     return { childRunId: snapshot.runId, sessionId: snapshot.sessionId, parentRunId: parent.snapshot.runId,
       role: binding.role, phase: snapshot.phase, outcome: snapshot.outcome, reason: snapshot.reason,
       delivery: control?.delivery ?? (binding.deliveryMode === 'foreground'
         && !(parent.snapshot.promotedChildRunIds ?? []).includes(snapshot.runId) ? 'foreground' : 'background'),
-      canPromote: control?.canPromote === true, canCancel: false, canSendInput: false,
+      canPromote: control?.canPromote === true, canCancel: control?.canCancel === true, canSendInput: control?.canSendInput === true,
+      goalRevision: snapshot.goalRevision,
+      lastControl,
       goalPreview: [...snapshot.goal].slice(0, 256).join(''), goalComplete: [...snapshot.goal].length <= 256,
       snapshotRevision: snapshot.revision, resultAvailable: accounted,
       usage: addUsage(snapshot.usage, snapshot.descendantUsage),

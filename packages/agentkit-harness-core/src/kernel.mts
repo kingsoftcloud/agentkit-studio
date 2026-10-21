@@ -27,6 +27,7 @@ import { BACKGROUND_COMMAND_CONTRACT } from './background-contract.mjs';
 import { admittedToolBudget } from './child-budget.mjs';
 import { admitChildPromotion, childLifecycleRequest, childReadyProbe, childUsageFacts, reduceChildLifecycle, stageChildReady, unsettledChildren } from './child-runtime.mjs';
 import type { ChildLifecycleResult, ChildTaskControlState } from './child-contract.mjs';
+import { childControlDelivery } from './child-control.mjs';
 import type { BackgroundCommandRequest } from './background-contract.mjs';
 
 export interface KernelOptions {
@@ -93,13 +94,13 @@ export class NativeKernel {
   }
   submit(scope: RunScope, runId: string, command: RunCommand) {
     const result = this.store.enqueue(scope, runId, command);
-    if (result.status === 'accepted' && ['cancel', 'policy_revoked'].includes(command.kind)) {
+    if (result.status !== 'rejected' && ['cancel', 'policy_revoked'].includes(command.kind)) {
       this.active.get(runKey(scope, runId))?.abort(new NativeError('command_interrupt'));
     }
-    if (result.status === 'accepted' && ['pause', 'promote_child'].includes(command.kind)) {
+    if (result.status === 'accepted' && ['pause', 'promote_child', 'message_child', 'cancel_child'].includes(command.kind)) {
       const observer = this.childObservers.get(runKey(scope, runId));
-      if (observer && (command.kind === 'promote_child' || observer.canPause)) observer.controller.abort(
-        new NativeError(command.kind === 'promote_child' ? 'child_observation_promoted' : 'child_observation_paused'));
+      if (observer && (command.kind !== 'pause' || observer.canPause)) observer.controller.abort(
+        new NativeError(command.kind === 'pause' ? 'child_observation_paused' : 'child_observation_promoted'));
     }
     return result;
   }
@@ -112,9 +113,66 @@ export class NativeKernel {
     invariant(this.store.load(scope, runId).configuration.childPromotionPolicy === 'owned-child-promotion/v1', 'child_promotion_unavailable');
     return this.submit(scope, runId, { commandId, kind: 'promote_child', payload: { childRunId } });
   }
+  sendChildInput(scope: RunScope, runId: string, childRunId: string, text: string, expectedGoalRevision: number, commandId: string) {
+    return this.submitChildControl(scope, runId, { commandId, kind: 'message_child', payload: { childRunId, text, expectedGoalRevision } });
+  }
+  cancelChild(scope: RunScope, runId: string, childRunId: string, commandId: string) {
+    return this.submitChildControl(scope, runId, { commandId, kind: 'cancel_child', payload: { childRunId } });
+  }
+  private submitChildControl(scope: RunScope, runId: string, command: RunCommand) {
+    const record = this.store.load(scope, runId), send = command.kind === 'message_child';
+    // Stable retries retain the original target, even after it becomes terminal.
+    if (record.commands.some(row => row.command.commandId === command.commandId)) return this.submit(scope, runId, command);
+    invariant(record.configuration.childLifecyclePolicy === 'owned-background/v2' && this.ports.children?.controlTarget
+      && this.ports.children.wakeControl && (!send || record.configuration.childInputPolicy === 'owned-child-input/v1'), 'child_controls_unavailable');
+    const target = this.ports.children.controlTarget(record.snapshot, String(command.payload.childRunId));
+    invariant(target, 'child_control_not_owned');
+    childControlDelivery(record.snapshot, command, target);
+    const task = this.childTaskStates(record.snapshot).find(task => task.childRunId === target.runId);
+    invariant(task && (send ? task.canSendInput : task.canCancel), 'child_control_unavailable');
+    return this.submit(scope, runId, command);
+  }
   private childTaskStates(snapshot: RunSnapshot): ChildTaskControlState[] {
+    const config = this.store.load(snapshot.scope, snapshot.runId).configuration;
+    const controls = Boolean(this.ports.children?.controlTarget && this.ports.children.wakeControl);
     return copy(this.ports.children?.tasks?.({ scope: copy(snapshot.scope), runId: snapshot.runId, sessionId: snapshot.sessionId,
-      turnId: snapshot.turnId, buildId: snapshot.buildId, parentRunId: snapshot.parentRunId, taskChainId: snapshot.taskChainId }) ?? []);
+      turnId: snapshot.turnId, buildId: snapshot.buildId, parentRunId: snapshot.parentRunId, taskChainId: snapshot.taskChainId }) ?? [])
+      .map(task => ({ ...task, canCancel: task.canCancel && controls,
+        canSendInput: task.canSendInput && controls && config.childInputPolicy === 'owned-child-input/v1' }));
+  }
+  private async consumeChildControl(snapshot: RunSnapshot, config: RunConfiguration, command: RunCommand, lease: Lease): Promise<void> {
+    const port = this.ports.children, id = String(command.payload.childRunId), send = command.kind === 'message_child';
+    let batch: CommitBatch;
+    try {
+      invariant(config.childLifecyclePolicy === 'owned-background/v2' && port?.controlTarget && port.wakeControl
+        && (!send || config.childInputPolicy === 'owned-child-input/v1'), 'child_controls_unavailable');
+      const target = port.controlTarget(snapshot, id);
+      invariant(target, 'child_control_not_owned');
+      const delivery = childControlDelivery(snapshot, command, target), changes: Partial<RunSnapshot> = { childLifecycleCursor: null };
+      const facts: { kind: string; payload: ObjectValue }[] = [{ kind: send ? 'child.input_queued' : 'child.cancel_requested',
+        payload: { childRunId: id, commandId: command.commandId } }];
+      if (!send && snapshot.childApproval?.childRunId === id) {
+        facts.push({ kind: 'approval.resolved', payload: { interactionId: snapshot.pendingInteraction?.interactionId ?? '',
+          callId: snapshot.childApproval.toolCall.callId, decision: 'canceled', reason: 'child_cancel_requested' } });
+        Object.assign(changes, { childApproval: null, pendingInteraction: null, interaction: null,
+          ...(snapshot.phase === 'awaiting_interaction' ? { phase: snapshot.resumePhase ?? 'preparing_context', resumePhase: null }
+            : snapshot.phase === 'paused' && snapshot.resumePhase === 'awaiting_interaction' ? { resumePhase: 'preparing_context' } : {}) });
+      }
+      facts.push({ kind: 'command.applied', payload: { kind: command.kind, commandId: command.commandId, reason: 'queued' } });
+      batch = { ...transition(snapshot, changes, facts, { commandId: command.commandId, requireNoPendingCommands: false }), childControlDelivery: delivery };
+      this.commit(snapshot, lease, batch);
+    } catch (error) {
+      const code = error instanceof NativeError ? error.code : '';
+      if (!['child_controls_unavailable', 'child_control_not_owned', 'invalid_child_control', 'child_control_unavailable',
+        'child_control_origin_changed', 'child_control_delivery_changed', 'child_control_result_unknown',
+        'parent_control_preempts_child_control', 'child_control_preempts_input', 'stale_child_goal_revision'].includes(code)) throw error;
+      this.commit(snapshot, lease, transition(snapshot, {}, [{ kind: 'command.applied', payload: {
+        kind: command.kind, commandId: command.commandId, reason: code } }], { commandId: command.commandId, requireNoPendingCommands: false }));
+      return;
+    }
+    // The child inbox is already durable. A failed wake leaves it for the
+    // original owner's ordinary recovery/collection path; never re-enqueue it.
+    await port!.wakeControl!(this.store.load(snapshot.scope, snapshot.runId).snapshot, batch.childControlDelivery!);
   }
   private startupPromotion(snapshot: RunSnapshot, config: RunConfiguration, results: ToolResult[], changes: Partial<RunSnapshot>) {
     const command = pendingCommands(this.store.load(snapshot.scope, snapshot.runId))[0];
@@ -168,10 +226,15 @@ export class NativeKernel {
         const commands = pendingCommands(record);
         const command = commands[0];
         if (command) {
+          if (['message_child', 'cancel_child'].includes(command.kind)) {
+            await this.consumeChildControl(snapshot, config, command, lease);
+            continue;
+          }
           const intent = record.intents.find(item => item.operationKey === snapshot.pendingIntent) ?? null;
           // A lost claim must be classified before steering can invalidate any
           // request. An undispatched intent can instead be retired definitively.
-          if (intent?.status === 'running' && (['guide', 'steer'].includes(command.kind)
+          if (intent?.status === 'running' && (command.kind === 'steer'
+            || command.kind === 'guide' && (command.payload.expectedGoalRevision === undefined || command.payload.expectedGoalRevision === snapshot.goalRevision)
             || ['cancel', 'policy_revoked'].includes(command.kind) && config.childLifecyclePolicy === 'owned-background/v2' && unsettledChildren(snapshot).length)) {
             this.commit(snapshot, lease, await this.recoverEffect(snapshot, config, intent));
             continue;

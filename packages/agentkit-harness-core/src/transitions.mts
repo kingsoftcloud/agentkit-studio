@@ -29,6 +29,11 @@ export function prepareEffect(snapshot: RunSnapshot, kind: EffectKind, phase: Ph
 export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pending: EffectIntent | null = null,
   bindings: SteeringBindings = {}): CommitBatch {
   const original = snapshot;
+  if (command.kind === 'guide' && Object.hasOwn(command.payload, 'expectedGoalRevision')
+    && (!Number.isSafeInteger(command.payload.expectedGoalRevision) || command.payload.expectedGoalRevision !== snapshot.goalRevision)) {
+    return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
+      kind: command.kind, reason: 'stale_goal_revision' } }], { commandId: command.commandId, requireNoPendingCommands: false });
+  }
   if (snapshot.childTerminalPhase && !['cancel', 'policy_revoked'].includes(command.kind)) {
     return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
       kind: command.kind, reason: 'run_stopping' } }], { commandId: command.commandId, requireNoPendingCommands: false });

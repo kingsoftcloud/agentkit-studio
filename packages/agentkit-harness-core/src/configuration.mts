@@ -19,6 +19,7 @@ export interface ConfigurationInput {
   childLifecyclePolicy?: RunConfiguration['childLifecyclePolicy'];
   childApprovalPolicy?: RunConfiguration['childApprovalPolicy'];
   childPromotionPolicy?: RunConfiguration['childPromotionPolicy'];
+  childInputPolicy?: RunConfiguration['childInputPolicy'];
   childOwnerBinding?: RunConfiguration['childOwnerBinding'];
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
@@ -45,6 +46,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     ...(input.childLifecyclePolicy === undefined ? {} : { childLifecyclePolicy: input.childLifecyclePolicy }),
     ...(input.childApprovalPolicy === undefined ? {} : { childApprovalPolicy: input.childApprovalPolicy }),
     ...(input.childPromotionPolicy === undefined ? {} : { childPromotionPolicy: input.childPromotionPolicy }),
+    ...(input.childInputPolicy === undefined ? {} : { childInputPolicy: input.childInputPolicy }),
     ...(input.childOwnerBinding === undefined ? {} : { childOwnerBinding: input.childOwnerBinding }),
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
     contextPolicy: input.contextPolicy ?? null,
@@ -60,6 +62,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_approval_policy');
   invariant(config.childPromotionPolicy == null || config.childPromotionPolicy === 'owned-child-promotion/v1'
     && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_promotion_policy');
+  invariant(config.childInputPolicy == null || config.childInputPolicy === 'owned-child-input/v1'
+    && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_input_policy');
   if (config.childOwnerBinding) {
     const binding = config.childOwnerBinding;
     scopeKey(binding.parent.scope);

@@ -473,6 +473,8 @@ export function createProductClient(connection, { window = globalThis.window } =
         nativeChildHistory: (payload, signal) => studioBridgeOperation('sessions/native-child-history', payload, signal),
         nativeChildResult: (payload, signal) => studioBridgeOperation('sessions/native-child-result', payload, signal),
         promoteNativeChild: (payload, signal) => studioBridgeOperation('sessions/native-child-promote', payload, signal),
+        sendNativeChildInput: (payload, signal) => studioBridgeOperation('sessions/native-child-send', payload, signal),
+        cancelNativeChild: (payload, signal) => studioBridgeOperation('sessions/native-child-cancel', payload, signal),
         channelConnection: () => directServer() ? studioBridgeOperation('channels/connection', {}) : request('/api/v1/channels/connection'),
         updateChannelConnection: payload => directServer() ? studioBridgeOperation('channels/update', payload) : request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
         updateAgentChannelConnection: (id, payload) => directServer() ? studioBridgeOperation('channels/agent-update', { ...payload, agentId: id }) : request('/api/v1/channels/agents/' + encodeURIComponent(id) + '/connection', { method: 'PUT', body: JSON.stringify(payload) }),

@@ -42,6 +42,18 @@ for (const backend of ['memory', 'sqlite']) {
   }
   const worker = (store, ports) => new NativeKernel({ store, ports, digest, owner: 'replacement', now: () => 10 });
 
+  test(`${backend}: stale revision guidance cannot retire the prepared original request`, async t => {
+    const state = setup(t), { key, lease } = prepared(state.store, 'model', { limits: { maxModelCalls: 1 } });
+    state.store.release(scope, 'run', lease); const store = state.reopen(); let requests = 0;
+    const kernel = worker(store, { model: { generate: async request => {
+      requests++; assert.equal(request.operationKey, key); assert.equal(request.messages.some(message => message.kind === 'guidance'), false);
+      return final();
+    } }, tools: { execute: async () => assert.fail('no tool authorized') } });
+    kernel.submit(scope, 'run', { commandId: 'stale-guidance', kind: 'guide', payload: { text: 'obsolete', expectedGoalRevision: 2 } });
+    const result = await kernel.runUntilIdle(scope, 'run'); assert.equal(result.phase, 'completed'); assert.equal(requests, 1);
+    assert.equal(store.events(scope, 'run').find(event => event.payload.commandId === 'stale-guidance').payload.reason, 'stale_goal_revision');
+  });
+
   for (const kind of ['guide', 'steer']) test(`${backend}: ${kind} retires a prepared model without spending the only model attempt`, async t => {
     const state = setup(t);
     const { key, lease } = prepared(state.store, 'model', { limits: { maxModelCalls: 1 } });

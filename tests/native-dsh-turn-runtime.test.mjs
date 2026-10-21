@@ -221,6 +221,20 @@ for (const sqlite of [false, true]) {
     assert.equal(host.head().phase, 'canceled'); assert.deepEqual(host.calls, { model: 1, write: 0 });
     assert.equal(host.store.load(scope, host.head().runId).commands.some(row => row.command.commandId === 'late-allow'), false);
   });
+  test(`${kind}: a Host control wakes the idle driver and withdraws its stale approval waiter`, async t => {
+    const entered = gate(), late = gate(); let control, approvalSignal;
+    const host = setup(t, sqlite, { onActive: (_payload, active) => { control = active; }, onIdle: async ({ signal }, snapshot) => {
+      approvalSignal = signal; entered.resolve(); await late.promise;
+      return { commandId: 'late-after-wake', kind: 'submit_interaction', payload: { interactionId: snapshot.pendingInteraction.interactionId, decision: 'allow' } };
+    } });
+    host.binding.ports.tools.execute = async () => ({ status: 'approval_required', content: null, interactionId: 'wake-approval' });
+    const running = host.execute(host.payload); await entered.promise;
+    control.kernel.submit(scope, control.runId, { commandId: 'cancel-from-control', kind: 'cancel', payload: {} }); control.wake();
+    await assert.rejects(running, { code: 'NATIVE_TURN_CANCELED' });
+    assert.equal(approvalSignal.aborted, true); assert.equal(host.head().phase, 'canceled'); assert.equal(host.calls.write, 0);
+    late.resolve(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(host.store.load(scope, control.runId).commands.some(row => row.command.commandId === 'late-after-wake'), false);
+  });
   test(`${kind}: failed delivery dispatches nothing and the same turn can recover`, async t => {
     let durable = false;
     const host = setup(t, sqlite, { flush: async () => durable });

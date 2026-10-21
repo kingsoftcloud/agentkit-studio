@@ -53,7 +53,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
       let call, text;
       if (child) {
         childModels++;
-        await beforeChildModel?.(childModels);
+        await beforeChildModel?.(childModels, body);
         assert.equal(url, 'https://child.invalid/v1/chat/completions');
         assert.deepEqual(body.tools.map(item => item.function.name).filter(name => name !== 'submit_final_output'), ['read_workspace_file']);
         if (childModels === 1) call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
@@ -105,6 +105,41 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   return { host, payload, ledger, gateway, roles, requests, dispatches, record, scope, modelValues: values, childModels: () => childModels };
 }
 for (const sqlite of [false, true]) {
+  for (const action of ['send', 'cancel']) test(`${sqlite ? 'sqlite' : 'memory'}: Host control route ${action} targets the original active child`, async t => {
+    let entered, release;
+    const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    const f = await setup(t, { sqlite, childTool: 'native_delegate', beforeChildModel: async index => {
+      if (index === 1) { entered(); await gate; }
+    } });
+    t.after(() => release());
+    const running = f.host.executeTurn(f.payload); await started;
+    const input = { agentId: f.record.metadata.id, sessionId: 'parent-session' }, history = f.host.childHistory(input), task = history.tasks[0];
+    assert.equal(task.canSendInput, true); assert.equal(task.canCancel, true); assert.equal(task.goalRevision, 0);
+    const route = createSessionRoutes({ getNativeHost: async () => f.host });
+    const command = { ...input, runId: history.runId, childRunId: task.childRunId, commandId: `host-${action}`,
+      ...(action === 'send' ? { text: 'Check the actual file with this extra guidance', expectedGoalRevision: task.goalRevision } : {}) };
+    assert.equal((await route(`sessions/native-child-${action}`, command)).value.status, 'accepted');
+    assert.equal((await route(`sessions/native-child-${action}`, command)).value.status, 'duplicate');
+    await assert.rejects(route(`sessions/native-child-${action}`, { ...command, runId: 'stale' }), /control_run_unavailable/);
+    if (action === 'send') {
+      const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+      for (let tries = 0; tries < 500 && !f.ledger.load(childScope, task.childRunId).commands.some(row => row.command.kind === 'guide'); tries++)
+        await new Promise(resolve => setTimeout(resolve, 2));
+      assert.equal(f.ledger.load(childScope, task.childRunId).commands.filter(row => row.command.kind === 'guide').length, 1);
+      release();
+    }
+    await running;
+    const after = f.host.childHistory(input); assert.equal(after.tasks.length, 1); assert.equal(after.tasks[0].childRunId, task.childRunId);
+    assert.equal(after.tasks[0].phase, action === 'cancel' ? 'canceled' : 'completed');
+    assert.equal(after.tasks[0].usageIncludedInParent, true); assert.equal(after.tasks[0].canCancel, false);
+    assert.equal(after.tasks[0].lastControl.commandId, command.commandId); assert.equal(after.tasks[0].lastControl.status, 'delivered');
+    const parent = f.ledger.load(f.scope, history.runId); assert.equal(parent.snapshot.phase, 'completed');
+    assert.equal(parent.events.filter(event => event.kind === (action === 'send' ? 'child.input_queued' : 'child.cancel_requested')).length, 1);
+    if (action === 'send') assert.match(JSON.stringify(f.requests.filter(item => item.body.model === 'child-model').at(-1).body.messages), /this extra guidance/);
+    else assert.equal(f.dispatches.filter(item => item.name === 'read_workspace_file').length, 0);
+    release();
+  });
+
   test(`${sqlite ? 'sqlite' : 'memory'}: Host child history spans only its parent Session and reads original settled pages without execution`, async t => {
     const text = '首段😀子任务证据';
     const f = await setup(t, { sqlite, childTool: 'native_delegate', childResult: text });

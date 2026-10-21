@@ -18,6 +18,12 @@ test('Native child routes reject malformed or canceled requests before loading t
     assert.equal((await host.dispatch('sessions/native-child-tasks', payload)).error.code, 'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
   assert.equal((await host.dispatch('sessions/native-child-promote', { agentId: 'a', sessionId: 's', childRunId: 'c', commandId: 'p' })).error.code,
     'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
+  const child = { agentId: 'a', sessionId: 's', runId: 'r', childRunId: 'c', commandId: 'control' };
+  for (const payload of [child, { ...child, text: 'guide', expectedGoalRevision: -1 }, { ...child, text: '', expectedGoalRevision: 0 },
+    { ...child, text: 'guide', expectedGoalRevision: 0, scope: {} }])
+    assert.equal((await host.dispatch('sessions/native-child-send', payload)).error.code, 'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
+  assert.equal((await host.dispatch('sessions/native-child-cancel', { ...child, expectedGoalRevision: 0 })).error.code,
+    'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
   host.owner.abort();
   assert.equal((await host.dispatch('sessions/native-child-tasks', { agentId: 'a', sessionId: 's' })).error.code, 'gateway/cancelled');
   assert.equal(loaded, 0);

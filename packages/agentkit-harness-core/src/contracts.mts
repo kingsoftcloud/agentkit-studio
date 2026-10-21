@@ -1,6 +1,6 @@
 import type { BrowserObservation, BrowserRecovery, BrowserSessionRef } from './browser-contract.mjs';
 import type { BackgroundCommandPort, BackgroundCommandRef, BackgroundCommandState } from './background-contract.mjs';
-import type { ChildApproval, ChildLifecyclePort, ChildOwnerBinding } from './child-contract.mjs';
+import type { ChildApproval, ChildControlDelivery, ChildLifecyclePort, ChildOwnerBinding } from './child-contract.mjs';
 export type { ChildLifecyclePort } from './child-contract.mjs';
 export type { BackgroundCommandPort } from './background-contract.mjs';
 
@@ -160,6 +160,7 @@ export interface RunConfiguration {
   childLifecyclePolicy?: 'owned-background/v2' | null;
   childApprovalPolicy?: 'owned-child-approval/v1' | null;
   childPromotionPolicy?: 'owned-child-promotion/v1' | null;
+  childInputPolicy?: 'owned-child-input/v1' | null;
   childOwnerBinding?: ChildOwnerBinding;
 }
 export interface Usage {
@@ -292,6 +293,8 @@ export interface CommitBatch {
   commitId: string; snapshot: RunSnapshot; events: NativeEvent[];
   intents: EffectIntent[]; receipts: EffectReceipt[]; consumedCommandId: string | null;
   requireNoPendingCommands: boolean;
+  /** Parent command consumption and original child inbox admission share one transaction. */
+  childControlDelivery?: ChildControlDelivery;
 }
 export interface StoredRun {
   configuration: RunConfiguration; snapshot: RunSnapshot; lease: Lease | null; fence: number;

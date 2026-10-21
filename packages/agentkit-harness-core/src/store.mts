@@ -5,6 +5,7 @@ import { outstandingChildCalls, validateChildBudgetTransition } from './child-bu
 import { transcriptExtends } from './context-view.mjs';
 import { isCommandObservationBatch } from './background-runtime.mjs';
 import { isChildReadyBatch } from './child-runtime.mjs';
+import { validateChildControlDelivery } from './child-control.mjs';
 
 /** The backend must serialize read/modify/write atomically, including failures. */
 export interface LedgerBackend {
@@ -13,6 +14,9 @@ export interface LedgerBackend {
   sessionHead(scope: RunScope, sessionId: string): RunSnapshot | null;
   update<T>(key: string, change: (current: StoredRun | null,
     sessionHead: LedgerBackend['sessionHead']) => { record: StoredRun; value: T }): T;
+  updatePair<T>(keys: [string, string], change: (records: [StoredRun | null, StoredRun | null]) => {
+    records: [StoredRun, StoredRun]; value: T;
+  }): T;
 }
 function found(record: StoredRun | null): StoredRun {
   invariant(record, 'run_not_found');
@@ -98,7 +102,7 @@ export class TransactionalRunStore implements RunStore {
   }
   commit(scope: RunScope, runId: string, lease: Lease, now: number, expectedRevision: number, input: CommitBatch): RunSnapshot {
     const batch = copy(input), fingerprint = canonical(batch);
-    return this.backend.update(runKey(scope, runId), current => {
+    const apply = (current: StoredRun | null) => {
       const record = found(current); fenced(record, lease, now);
       const duplicate = record.commits.find(item => item.commitId === batch.commitId);
       if (duplicate) {
@@ -190,6 +194,27 @@ export class TransactionalRunStore implements RunStore {
         events: [...record.events, ...batch.events], intents: [...record.intents, ...batch.intents],
         receipts: [...record.receipts, ...batch.receipts], commits: [...record.commits, { commitId: batch.commitId, fingerprint }] };
       return { record: updated, value: copy(next) };
+    };
+    const delivery = batch.childControlDelivery;
+    if (!delivery) return this.backend.update(runKey(scope, runId), apply);
+    const target = delivery.target;
+    const keys: [string, string] = [runKey(scope, runId), runKey(target.scope, target.runId)];
+    invariant(keys[0] !== keys[1], 'child_control_origin_changed');
+    return this.backend.updatePair(keys, ([current, child]) => {
+      const parent = found(current), childRecord = found(child), updated = apply(parent);
+      const previous = childRecord.commands.find(row => row.command.commandId === delivery.command.commandId);
+      if (parent.commits.some(item => item.commitId === batch.commitId)) {
+        invariant(previous && canonical(previous.command) === canonical(delivery.command), 'child_control_delivery_missing');
+        return { records: [updated.record, childRecord], value: updated.value };
+      }
+      const command = parent.commands.find(row => !row.consumed && row.command.commandId === batch.consumedCommandId)?.command;
+      invariant(command, 'child_control_command_missing');
+      validateChildControlDelivery(parent, childRecord, command, delivery);
+      invariant(batch.events.some(event => event.kind === (command.kind === 'message_child' ? 'child.input_queued' : 'child.cancel_requested')
+        && event.payload.commandId === command.commandId && event.payload.childRunId === target.runId), 'child_control_event_missing');
+      invariant(!previous || canonical(previous.command) === canonical(delivery.command), 'command_replay_conflict');
+      return { records: [updated.record, previous ? childRecord : { ...childRecord,
+        commands: [...childRecord.commands, { command: copy(delivery.command), consumed: false }] }], value: updated.value };
     });
   }
   claim(scope: RunScope, runId: string, lease: Lease, now: number, operationKey: string): EffectIntent {
@@ -256,6 +281,12 @@ export class MemoryRunStore extends TransactionalRunStore {
       update: (key, change) => {
         const result = change(copy(records.get(key) ?? null), sessionHead);
         records.set(key, copy(result.record));
+        return result.value;
+      },
+      updatePair: (keys, change) => {
+        const result = change([copy(records.get(keys[0]) ?? null), copy(records.get(keys[1]) ?? null)]);
+        const next = result.records.map(record => copy(record));
+        records.set(keys[0], next[0]!); records.set(keys[1], next[1]!);
         return result.value;
       },
     });

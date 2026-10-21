@@ -19,20 +19,25 @@ export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost 
             signal?.throwIfAborted();
             return { ok: true, value: result ? host.childResult(payload) : host.childHistory(payload) };
         }
-        if (endpoint === 'sessions/native-child-tasks' || endpoint === 'sessions/native-child-promote') {
+        if (['sessions/native-child-tasks', 'sessions/native-child-promote', 'sessions/native-child-send', 'sessions/native-child-cancel'].includes(endpoint)) {
             const promote = endpoint === 'sessions/native-child-promote';
-            const allowed = promote ? ['agentId', 'sessionId', 'runId', 'childRunId', 'commandId'] : ['agentId', 'sessionId', 'runId'];
-            const required = promote ? allowed : ['agentId', 'sessionId'];
+            const send = endpoint === 'sessions/native-child-send', cancel = endpoint === 'sessions/native-child-cancel';
+            const mutate = promote || send || cancel;
+            const allowed = mutate ? ['agentId', 'sessionId', 'runId', 'childRunId', 'commandId', ...(send ? ['text', 'expectedGoalRevision'] : [])] : ['agentId', 'sessionId', 'runId'];
+            const required = mutate ? ['agentId', 'sessionId', 'runId', 'childRunId', 'commandId'] : ['agentId', 'sessionId'];
             if (!payload || Object.keys(payload).some(key => !allowed.includes(key))
                 || required.some(key => typeof payload[key] !== 'string' || !payload[key].trim() || payload[key].length > 256)
-                || payload.runId !== undefined && (typeof payload.runId !== 'string' || !payload.runId.trim() || payload.runId.length > 256))
+                || payload.runId !== undefined && (typeof payload.runId !== 'string' || !payload.runId.trim() || payload.runId.length > 256)
+                || send && (typeof payload.text !== 'string' || !payload.text.trim() || payload.text.length > 32768
+                  || !Number.isSafeInteger(payload.expectedGoalRevision) || payload.expectedGoalRevision < 0))
                 throw Object.assign(new Error('Invalid Native child control request'), { code: 'STUDIO_NATIVE_CHILD_CONTROL_INVALID' });
             if (typeof getNativeHost !== 'function')
                 throw Object.assign(new Error('Native child controls unavailable'), { code: 'STUDIO_NATIVE_CHILD_CONTROL_UNAVAILABLE' });
             signal?.throwIfAborted();
             const host = await getNativeHost();
             signal?.throwIfAborted();
-            return { ok: true, value: promote ? host.promoteChild(payload) : host.childTasks(payload) };
+            return { ok: true, value: promote ? host.promoteChild(payload) : send ? host.sendChildInput(payload)
+                : cancel ? host.cancelChild(payload) : host.childTasks(payload) };
         }
         if (endpoint === 'sessions/export-log') {
             const sessionId = String(payload?.sessionId || '').trim();

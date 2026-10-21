@@ -128,7 +128,8 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
       kernel.start({ scope, runId, sessionId, turnId: String(turn), buildId: binding.buildId, parentRunId: null,
         taskChainId: binding.taskChainId ?? sessionId }, configuration,
       binding.taskContractFactory ? { expectedParentRunId: parentRunId } : {});
-      releaseControls = onActive?.(payload, { kernel, scope: structuredClone(scope), sessionId, runId });
+      let wakeIdle = () => {};
+      releaseControls = onActive?.(payload, { kernel, scope: structuredClone(scope), sessionId, runId, wake: () => wakeIdle() });
       invariant(releaseControls === undefined || typeof releaseControls === 'function', 'native_dsh_controls_cleanup_invalid');
       let snapshot;
       try {
@@ -136,7 +137,17 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
         while (!terminal(snapshot.phase)) {
           signal.throwIfAborted();
           if (!onIdle) throw failure('NATIVE_TURN_SUSPENDED', snapshot);
-          const command = await resolveWhileLive(() => onIdle(payload, structuredClone(snapshot)), payload);
+          const idle = new AbortController(), idlePayload = { ...payload, signal: AbortSignal.any([signal, idle.signal]) };
+          let command, woken = false;
+          wakeIdle = () => { woken = true; idle.abort(new NativeError('native_idle_woken')); };
+          try {
+            if (store.load(scope, runId).commands.some(row => !row.consumed)) wakeIdle();
+            command = await resolveWhileLive(() => onIdle(idlePayload, structuredClone(snapshot)), idlePayload);
+          } catch (error) {
+            if (!woken || signal.aborted) throw error;
+            snapshot = await kernel.runUntilIdle(scope, runId, { signal });
+            continue;
+          } finally { wakeIdle = () => {}; idle.abort(); }
           if (!command) throw failure('NATIVE_TURN_SUSPENDED', snapshot);
           const revision = snapshot.revision;
           const receipt = kernel.submit(scope, runId, command);
