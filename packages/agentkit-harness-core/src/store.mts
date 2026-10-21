@@ -1,6 +1,7 @@
 import { commandPriority, terminal } from './contracts.mjs';
 import type { CommandReceipt, CommitBatch, EffectIntent, Lease, RunCommand, RunConfiguration, RunScope, RunSnapshot, RunStore, StoredRun } from './contracts.mjs';
 import { canonical, copy, invariant, runKey, scopeKey } from './values.mjs';
+import { outstandingChildCalls, validateChildBudgetTransition } from './child-budget.mjs';
 import { transcriptExtends } from './context-view.mjs';
 import { isCommandObservationBatch } from './background-runtime.mjs';
 
@@ -118,6 +119,7 @@ export class TransactionalRunStore implements RunStore {
         invariant(Number.isSafeInteger(current) && current >= before, 'usage_cannot_decrease');
       }
       invariant(Number.isFinite(next.activeElapsedMs) && next.activeElapsedMs >= previous.activeElapsedMs, 'execution_clock_cannot_decrease');
+      validateChildBudgetTransition(previous, next);
       invariant(Number.isSafeInteger(next.recoveryRetriesUsed) && next.recoveryRetriesUsed >= previous.recoveryRetriesUsed,
         'recovery_retries_cannot_decrease');
       invariant(batch.commitId.trim(), 'invalid_commit_id');
@@ -186,7 +188,7 @@ export class TransactionalRunStore implements RunStore {
       } } : record.snapshot;
       invariant(Number.isSafeInteger(snapshot.usage.modelCalls), 'usage_overflow');
       if (intent.kind === 'model') invariant(record.configuration.limits.maxModelCalls === null
-        || snapshot.usage.modelCalls + snapshot.descendantUsage.modelCalls <= record.configuration.limits.maxModelCalls, 'model_budget_exhausted');
+        || snapshot.usage.modelCalls + snapshot.descendantUsage.modelCalls + outstandingChildCalls(snapshot, 'model') <= record.configuration.limits.maxModelCalls, 'model_budget_exhausted');
       return { record: { ...record, snapshot, intents: record.intents.map(item => item === intent ? running : item) }, value: copy(running) };
     });
   }

@@ -160,6 +160,19 @@ export interface Usage {
   inputTokens: number; outputTokens: number; modelCalls: number; toolCalls: number; cost: number;
   cachedInputTokens?: number; reasoningTokens?: number;
 }
+/** Parent-owned allocation. A child cannot release it by reporting model-visible JSON. */
+export interface ChildBudgetReservation {
+  childRunId: string; childScope: RunScope; parentOperationKey: string; parentToolCallId: string;
+  childRequestDigest: string; configurationDigest: string;
+  maxModelCalls: number; maxToolCalls: number; settledUsageDigest: string | null;
+}
+export interface ChildBudgetSettlement {
+  childRunId: string; parentOperationKey: string; childRequestDigest: string; terminalSnapshotDigest: string;
+}
+export interface ToolBudget {
+  maxModelCallsRemaining: number | null; parentFinalizationReserved: true;
+  maxToolCallsRemaining: number | null; depth: number; maxDepth: number;
+}
 export interface ArtifactRef { uri: string; digest: string; mediaType: string; sizeBytes: number; metadata: ObjectValue }
 export interface ToolResult {
   status: 'ok' | 'error' | 'approval_required' | 'uncertain'; content: Json;
@@ -169,6 +182,7 @@ export interface ToolResult {
   additionalContexts?: ToolContextMessage[];
   interactionId?: string; workspaceChangedPaths?: string[]; artifactRefs?: ArtifactRef[];
   resourceUsage?: Usage; childRunIds?: string[]; metadata?: ObjectValue;
+  childBudgetReservation?: ChildBudgetReservation; childBudgetSettlement?: ChildBudgetSettlement;
   /** Only a tool pinned with observationRole=browser can admit these host capabilities. */
   browserSessionRef?: BrowserSessionRef; browserSessionClosed?: boolean;
   browserObservation?: BrowserObservation;
@@ -236,6 +250,7 @@ export interface RunSnapshot extends RunIdentity {
   verificationToolCalls: number | null;
   failureFingerprint: string | null; failureEvidenceDigest: string | null;
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
+  childBudgetReservations: ChildBudgetReservation[]; childRunIds: string[];
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
   hookState: HookState | null;
   contextState: ContextPlanningState | null;
@@ -303,6 +318,8 @@ export interface ModelStreamRecord { time: number; event: ModelStreamEvent }
 export interface ModelPort { generate(request: ModelRequest, emit: (event: ModelStreamEvent) => void): Promise<ModelResult> }
 export interface ToolRequest extends PortContext {
   call: ToolCall; definition: ToolDefinition; interaction: ObjectValue | null;
+  /** Host-derived allowance after the invoking call and parent finalization reserve. */
+  budget: ToolBudget;
 }
 export interface ToolPort { execute(request: ToolRequest): Promise<ToolResult> }
 export interface WorkspaceObservation { revision: string | null; changedPaths: string[]; status: 'ok' | 'unavailable'; reason: string | null }

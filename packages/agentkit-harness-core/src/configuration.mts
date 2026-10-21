@@ -85,6 +85,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(Number.isFinite(tool.timeoutMs) && tool.timeoutMs > 0 && tool.timeoutMs < limits.effectTimeoutMs, 'invalid_tool_timeout');
     invariant(!tool.concurrentSafe || tool.readOnly && tool.observationRole === 'none', 'invalid_tool_concurrency');
     invariant(!tool.delegatedReadOnly || tool.concurrentSafe, 'invalid_delegated_reader');
+    invariant(tool.childBudgetPolicy === undefined || ['start/v1', 'settle/v1', 'delegate/v1'].includes(tool.childBudgetPolicy), 'invalid_child_budget_policy');
+    invariant(!tool.childBudgetPolicy || !tool.concurrentSafe, 'invalid_child_budget_concurrency');
     invariant(!tool.backgroundCommandPolicy || !tool.readOnly && !tool.concurrentSafe, 'invalid_background_launcher');
     invariant(tool.backgroundCommandPolicy === undefined || tool.backgroundCommandPolicy === 'owned-command-launch/v1', 'invalid_background_launcher_policy');
     invariant(tool.recoveryPolicy === undefined || ['manual', 'safe-read/v1'].includes(tool.recoveryPolicy), 'invalid_tool_recovery_policy');
@@ -148,6 +150,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
+    childBudgetReservations: [], childRunIds: [],
     workspaceDirtySinceCheckpoint: false, lastWorkspaceMutationToolCall: null,
     checkpointWorkspaceRevision: null, checkpointWebMutationToolCall: null, verificationToolCalls: null,
     failureFingerprint: null, failureEvidenceDigest: null,

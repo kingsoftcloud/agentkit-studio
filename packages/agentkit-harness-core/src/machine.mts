@@ -10,6 +10,7 @@ import { reduceBrowserReceipt } from './browser-runtime.mjs';
 import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObservation } from './task-policy.mjs';
 import { checkpointCandidate, finishCheckpoint } from './verification.mjs';
 import { rememberCommand } from './background-runtime.mjs';
+import { admittedToolBudget, outstandingChildCalls, reduceChildBudget } from './child-budget.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -34,11 +35,11 @@ export function addUsage(left: Usage, right: Usage): Usage {
 }
 export function modelRoom(snapshot: RunSnapshot, config: RunConfiguration): number {
   return config.limits.maxModelCalls === null ? Infinity
-    : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls;
+    : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls - outstandingChildCalls(snapshot, 'model');
 }
 export function toolRoom(snapshot: RunSnapshot, config: RunConfiguration): number {
   return config.limits.maxToolCalls === null ? Infinity
-    : config.limits.maxToolCalls - snapshot.usage.toolCalls - snapshot.descendantUsage.toolCalls;
+    : config.limits.maxToolCalls - snapshot.usage.toolCalls - snapshot.descendantUsage.toolCalls - outstandingChildCalls(snapshot, 'tool');
 }
 function finalizing(snapshot: RunSnapshot, outcome: RunSnapshot['outcome'], reason: string): CommitBatch {
   return transition(snapshot, { phase: 'finalizing', outcome, reason, pendingIntent: null }, [{ kind: 'run.finalizing', payload: { outcome, reason } }]);
@@ -307,13 +308,14 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     const result = copy(results[index]!);
     invariant(['ok', 'error', 'approval_required', 'uncertain'].includes(result.status), 'invalid_tool_result');
     if (calls.length > 1 && (result.status === 'approval_required' || result.status === 'uncertain'
-      || result.workspaceChangedPaths?.length || result.childRunIds?.length || result.browserSessionRef || result.browserObservation || result.backgroundCommandRef
+      || result.workspaceChangedPaths?.length || result.childRunIds?.length || result.childBudgetReservation || result.childBudgetSettlement || result.browserSessionRef || result.browserObservation || result.backgroundCommandRef
       || (result.resourceUsage?.modelCalls ?? 0) > 0)) {
       return { pendingIntent: null, phase: 'finalizing', outcome: 'blocked', reason: 'parallel_readonly_contract_violation',
         usage: { ...snapshot.usage, toolCalls: snapshot.usage.toolCalls + calls.length } };
     }
     if (result.status === 'approval_required') {
       invariant(result.backgroundCommandRef === undefined, 'background_command_before_approval');
+      invariant(!result.childBudgetReservation && !result.childBudgetSettlement, 'child_budget_before_approval');
       invariant(typeof result.interactionId === 'string' && result.interactionId.trim(), 'approval_identity_missing');
       return { pendingIntent: null, phase: 'awaiting_interaction', pendingInteraction: {
         interactionId: `${intent.operationKey}:approval`, hostInteractionId: result.interactionId, callId: call.callId, operationKey: intent.operationKey } };
@@ -324,6 +326,10 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       updated.lastWorkspaceMutationToolCall = updated.usage.toolCalls;
     }
     const definition = config.tools.find(tool => tool.name === call.name);
+    const childBudget = reduceChildBudget(updated, result, definition, intent.operationKey, call,
+      admittedToolBudget(snapshot, config, calls.length), digest);
+    updated.childBudgetReservations = childBudget.childBudgetReservations;
+    updated.childRunIds = childBudget.childRunIds;
     updated.backgroundCommands = rememberCommand(updated, result, definition);
     if (invalidatesBrowserObservation(result, config)) updated.lastWebMutationToolCall = updated.usage.toolCalls;
     if (definition) {
@@ -348,7 +354,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       updated.toolErrorStreak = { signature, count: same ? prior.count + Number(prior.modelCall !== snapshot.usage.modelCalls) : 1,
         modelCall: snapshot.usage.modelCalls, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision };
     }
-    if (result.resourceUsage) updated.descendantUsage = addUsage(updated.descendantUsage, result.resourceUsage);
+    updated.descendantUsage = addUsage(updated.descendantUsage, childBudget.usage);
     updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
       role: 'tool', callId: call.callId, name: call.name,
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
@@ -374,6 +380,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
     context: updated.context,
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
+    childBudgetReservations: updated.childBudgetReservations, childRunIds: updated.childRunIds,
     backgroundCommands: updated.backgroundCommands,
     queuedGuidance: updated.queuedGuidance,
     browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,

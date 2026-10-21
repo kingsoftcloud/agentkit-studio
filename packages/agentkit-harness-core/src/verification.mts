@@ -1,5 +1,6 @@
 import type { CompletionCandidate, RunConfiguration, RunSnapshot, VerificationReport } from './contracts.mjs';
 import { canonical, invariant } from './values.mjs';
+import { outstandingChildCalls } from './child-budget.mjs';
 
 function modelFeedbackItem(check: VerificationReport['checks'][number]) {
   return { id: check.id, status: check.status, safeSummary: check.safeSummary ?? '', repairable: check.repairable === true };
@@ -9,7 +10,7 @@ function modelFeedbackItem(check: VerificationReport['checks'][number]) {
 export function checkpointCandidate(snapshot: RunSnapshot, config: RunConfiguration,
   digest: (value: unknown) => string): CompletionCandidate | null {
   const remaining = config.limits.maxModelCalls === null ? Infinity
-    : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls;
+    : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls - outstandingChildCalls(snapshot, 'model');
   const reserve = config.limits.verificationReserveModelCalls, idle = config.limits.verificationIdleToolCalls ?? 0;
   const budgetBoundary = reserve > 0 && Number.isFinite(remaining) && remaining <= reserve;
   const idleBoundary = idle > 0 && snapshot.lastWorkspaceMutationToolCall != null

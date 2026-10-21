@@ -6,7 +6,7 @@ import { initialSnapshot } from './configuration.mjs';
 import { pendingCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
-import { addUsage, advertisedTools, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
+import { addUsage, advertisedTools, modelRoom, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
 import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
@@ -24,6 +24,7 @@ import { validateBrowserSessionRef } from './browser-contract.mjs';
 import type { BrowserRecovery } from './browser-contract.mjs';
 import { commandProbe, stageCommandObservations, unavailableCommands } from './background-runtime.mjs';
 import { BACKGROUND_COMMAND_CONTRACT } from './background-contract.mjs';
+import { admittedToolBudget } from './child-budget.mjs';
 import type { BackgroundCommandRequest } from './background-contract.mjs';
 
 export interface KernelOptions {
@@ -354,7 +355,7 @@ export class NativeKernel {
             && (observation.status !== 'ok' || snapshot.candidate.workspaceRevision !== observation.revision)) {
             const repair = snapshot.repairs < configuration.limits.maxRepairs
               && (configuration.limits.maxModelCalls === null
-                || snapshot.usage.modelCalls + snapshot.descendantUsage.modelCalls < configuration.limits.maxModelCalls);
+                || modelRoom(snapshot, configuration) > 0);
             changes = { ...changes, phase: repair ? 'preparing_context' : 'finalizing', candidate: null,
               verification: null, outcome: repair ? null : 'unverified', reason: repair ? null : 'candidate_workspace_changed',
               repairs: snapshot.repairs + (repair ? 1 : 0), finalText: repair ? '' : snapshot.candidate.text,
@@ -495,7 +496,8 @@ export class NativeKernel {
             toolSignal.throwIfAborted();
             const result = await Promise.race([this.ports.tools.execute({ ...context, signal: toolSignal,
               operationKey: calls.length > 1 ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey,
-              call: copy(call), definition: copy(definition), interaction: intent.payload.interaction as ObjectValue | null }), aborted]);
+              call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
+              interaction: intent.payload.interaction as ObjectValue | null }), aborted]);
             toolSignal.throwIfAborted();
             invariant(this.now() - started < definition.timeoutMs, 'tool_timeout');
             return result;

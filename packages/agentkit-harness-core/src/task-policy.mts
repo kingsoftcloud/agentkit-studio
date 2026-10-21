@@ -1,4 +1,5 @@
 import type { BrowserInteractionObservation, Message, RunConfiguration, RunSnapshot, ToolDefinition, ToolResult } from './contracts.mjs';
+import { outstandingChildCalls } from './child-budget.mjs';
 
 // This table belongs to the host configuration, never to the Kernel or a model.
 export function invalidatesBrowserObservation(result: ToolResult, config: RunConfiguration): boolean {
@@ -12,7 +13,7 @@ export function browserObservationAvailable(config: RunConfiguration): boolean {
 }
 function remainingCalls(snapshot: RunSnapshot, config: RunConfiguration): number {
   return config.limits.maxModelCalls === null ? Infinity
-    : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls;
+    : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls - outstandingChildCalls(snapshot, 'model');
 }
 export function webVerificationOnly(snapshot: RunSnapshot, config: RunConfiguration): boolean {
   if (!config.workspaceObservationPolicy || config.limits.maxModelCalls === null) return false;
@@ -48,7 +49,7 @@ export function browserTaskTools(snapshot: RunSnapshot, config: RunConfiguration
 /** Ephemeral host instructions are counted with, and added to, the same model view. */
 export function browserTaskMessages(snapshot: RunSnapshot, config: RunConfiguration, messages: Message[]): Message[] {
   const limits = config.limits;
-  if (limits.maxToolCalls !== null && snapshot.usage.toolCalls + snapshot.descendantUsage.toolCalls >= limits.maxToolCalls
+  if (limits.maxToolCalls !== null && snapshot.usage.toolCalls + snapshot.descendantUsage.toolCalls + outstandingChildCalls(snapshot, 'tool') >= limits.maxToolCalls
     || remainingCalls(snapshot, config) <= limits.finalizationReserveModelCalls
     || limits.maxWallMs !== null && limits.maxWallMs - snapshot.activeElapsedMs <= limits.finalizationReserveWallMs) return messages;
   const content = webObservationDue(snapshot, config)
