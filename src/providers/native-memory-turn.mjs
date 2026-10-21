@@ -4,6 +4,7 @@ import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate, eva
   NATIVE_USER_EXTRACTION_POLICY, isExplicitMemoryInstruction } from '../../packages/agentkit-harness/src/native/memory-candidate.mjs';
 import { SqliteNativeMemoryProvider } from '../../packages/agentkit-harness/src/native/memory-store.mjs';
 import { studioNativeMemoryPolicy, studioOriginalUserMemorySources } from './native-memory.mjs';
+import { readNativeRecoveryBinding } from './native-recovery-binding.mjs';
 
 /** Optional completed-Turn consumption by the selected DSH Memory owner.
 
@@ -31,6 +32,17 @@ export const DEFAULT_MANAGE_MEMORY_TOOL_NAMES = Object.freeze(['manage_memory'])
 
 const user = message => message?.role === 'user' && (message.kind === undefined || message.kind === 'user_input');
 const bytes = value => Buffer.byteLength(value, 'utf8');
+const toolDefinition = (record, name) => (record.configuration?.tools ?? []).find(tool => tool.name === name) ?? null;
+
+/** The per-call effect key the Native tool dispatcher hands to a tool port.
+
+ * For a single-call batch the batch parent key is the call key. For a multi-call
+ * batch the dispatcher derives ``<parent>:call:<1-based index>`` per call
+ * (packages/agentkit-harness-core/dist/kernel.mjs). The direct-write receipt port
+ * must speak the same key the tool port actually used, never the bare batch key. */
+export function perCallOperationKey(intent, callIndex) {
+  return intent.payload.calls.length > 1 ? `${intent.operationKey}:call:${callIndex + 1}` : intent.operationKey;
+}
 
 /** Original user observations do not require semantic proof of the answer.
 
@@ -64,9 +76,16 @@ export function explicitMemoryTaskOwned(snapshot, { explicitMemoryVerifiers = DE
 
 /** Confirm the canonical completed snapshot for the bound Build.
 
- * Every consume re-checks the current canonical snapshot, the bound Build
- * revision and the principal/session. The consumer never relies on a model
- * declaration of completion. A stale, re-entered or non-completed snapshot is
+ * Every consume re-checks the current canonical snapshot against the frozen
+ * Host recovery binding capsule AND the bound Build identity. The consumer
+ * never relies on a model declaration of completion, and never accepts a stale
+ * Revision/Build. ``buildId`` is the bound capsule buildId (null for a Revision
+ * run, an actual Build id for a Frozen run), matching how the Host binds recall
+ * and PreCompact consumers. For a Frozen run the snapshot buildId must equal
+ * the bound buildId; for a Revision run the snapshot buildId is the Host's
+ * ``revision-<hash>`` form and is NOT required to be null. The capsule's
+ * agentRevision must equal the record revision, and the capsule buildId must
+ * equal the bound buildId. A stale, re-entered or non-completed snapshot is
  * unbound; the caller treats that as an unknown outcome (no write). */
 function currentSnapshot(store, scope, runId, snapshot, { sessionId, buildId, record }) {
   const loaded = store.load(scope, runId);
@@ -74,6 +93,9 @@ function currentSnapshot(store, scope, runId, snapshot, { sessionId, buildId, re
   invariant(Number.isSafeInteger(record.metadata?.revision) && record.metadata.revision > 0
     && record.metadata?.id === scope.agentId && record.metadata.local === true
     && record.spec?.runtime?.type === 'harness', 'native_memory_turn_build_unbound');
+  const capsule = readNativeRecoveryBinding(loaded, { agentId: scope.agentId, sessionId, runId });
+  invariant(capsule.agentRevision === record.metadata.revision, 'native_memory_turn_capsule_revision_unbound');
+  invariant((capsule.buildId ?? null) === (buildId ?? null), 'native_memory_turn_capsule_build_unbound');
   invariant(canonical(loaded.snapshot.scope) === canonical(scope)
     && loaded.snapshot.sessionId === sessionId && loaded.snapshot.phase === 'completed'
     && (buildId === null || loaded.snapshot.buildId === buildId)
@@ -83,12 +105,15 @@ function currentSnapshot(store, scope, runId, snapshot, { sessionId, buildId, re
 
 /** Detect and verify a direct manage_memory write in this Run.
 
- * A tool body or a JSON ``committed`` claim is not proof. The exact scoped
- * call, its ledger receipt and the actual owner receipt must agree. A denied
- * or failed manual operation is never permission to save the same original
- * input through automatic candidate extraction. ``directWriteReceipt`` is the
- * parent-injected trusted owner verification port; when it is missing the
- * consumer cannot confirm a manual write and skips auto-consumption. */
+ * A tool body or a JSON ``committed`` claim is not proof. The exact scoped call,
+ * its locked formal definition, its ledger receipt and the actual owner receipt
+ * must all agree. A denied or failed manual operation is never permission to
+ * save the same original input through automatic candidate extraction.
+ * ``directWriteReceipt`` is the parent-injected trusted owner verification port;
+ * when it is missing the consumer cannot confirm a manual write and skips
+ * auto-consumption. The owner receipt must equal the ledger tool result content
+ * (a deep match), not merely carry a ``committed: true`` field — a forged JSON
+ * body is never accepted as confirmation. */
 async function directWriteOutcome(snapshot, record, { manageMemoryToolNames, directWriteReceipt, scope, runId, signal }) {
   if (!Array.isArray(manageMemoryToolNames) || !manageMemoryToolNames.length) return null;
   const names = new Set(manageMemoryToolNames);
@@ -99,18 +124,28 @@ async function directWriteOutcome(snapshot, record, { manageMemoryToolNames, dir
     if (!intent) continue;
     const callIndex = intent.payload.calls.findIndex(call => call.callId === message.callId);
     const call = intent.payload.calls[callIndex];
+    const definition = toolDefinition(record, call.name);
+    // The locked formal definition bound at configuration time. A tool name alone
+    // is not the definition; mismatched definitions cannot be confirmed.
+    if (!definition) return 'memory_mutation_not_confirmed';
     const receipt = record.receipts.find(item => item.operationKey === intent.operationKey);
     const toolResult = Array.isArray(receipt?.result?.results) ? receipt.result.results[callIndex] : null;
     // A denied/failed manual operation is not permission to save the same input.
     if (!receipt || receipt.status !== 'committed' || !toolResult || toolResult.status !== 'ok')
       return 'memory_mutation_not_confirmed';
     // A tool name or a JSON "committed" claim is insufficient. Confirm the exact
-    // scoped call and locked definition with its actual owner.
+    // scoped call (per-call key, matching the Native tool dispatcher), its locked
+    // definition and its actual owner receipt with the provider.
     if (typeof directWriteReceipt !== 'function') return 'direct_write_verification_missing';
     signal.throwIfAborted();
-    const ownerReceipt = await directWriteReceipt({ scope, runId, operationKey: intent.operationKey, call, signal });
-    if (ownerReceipt && ownerReceipt.committed === true) return 'direct_write_already_committed';
-    return 'memory_mutation_not_confirmed';
+    const operationKey = perCallOperationKey(intent, callIndex);
+    const ownerReceipt = await directWriteReceipt({ scope, runId, operationKey, call, definition,
+      toolResultContent: toolResult.content, signal });
+    // The owner receipt must equal the ledger tool result content — a deep match,
+    // not merely a committed:true field. A forged body is never confirmation.
+    if (!ownerReceipt || ownerReceipt.committed !== true || canonical(ownerReceipt) !== canonical(toolResult.content))
+      return 'memory_mutation_not_confirmed';
+    return 'direct_write_already_committed';
   }
   return null;
 }
@@ -149,9 +184,20 @@ function abortPromise(signal) {
  * (exception, deadline, abort, closed, or a stale/non-completed snapshot). An
  * unknown outcome is never retried blindly and never asserts that nothing wrote.
  *
+ * Lifecycle: ``close()`` cancels every in-flight consume via a binding-level
+ * AbortController. A consume whose async port (``directWriteReceipt`` or the
+ * provider) resolves after close/deadline re-checks the signal and the closed
+ * flag once it returns, so a late callback never opens a provider or writes.
+ *
  * ``directWriteReceipt`` is the optional parent-injected trusted owner receipt
- * port: ``async ({ scope, runId, operationKey, call, signal }) -> { committed:
- * boolean, ... } | null``. It is consulted only when this Run carries a
+ * port: ``async ({ scope, runId, operationKey, call, definition, toolResultContent,
+ * signal }) -> { committed: boolean, ... } | null``. ``operationKey`` is the
+ * per-call key the Native tool dispatcher used (``<batch>:call:<n>`` for a
+ * multi-call batch); ``call`` is the exact tool call; ``definition`` is the
+ * locked formal tool definition from the configuration; ``toolResultContent`` is
+ * the ledger tool result content the owner receipt must reproduce. The returned
+ * receipt must deep-equal ``toolResultContent``, not merely carry
+ * ``committed: true``. It is consulted only when this Run carries a
  * manage_memory tool record; missing or non-confirming verification skips
  * auto-consumption. ``manageMemoryToolNames`` (default ``['manage_memory']``)
  * and ``explicitMemoryVerifiers`` (default the reference identity) are the
@@ -173,7 +219,11 @@ export function bindStudioNativeMemoryTurn({ record, buildId = null, scope, sess
     revision: record.metadata.revision, spec: record.spec, policy, extraction: NATIVE_USER_EXTRACTION_POLICY,
     deadlineMs, maxInputBytes, explicitMemoryVerifiers, manageMemoryToolNames }));
   const filename = join(storeDir, 'native-harness', 'memory-v1', memoryDigest(scope.tenantId).slice(7), 'memory.sqlite');
+  // Binding-level abort: close() cancels every in-flight consume. Each consume
+  // also arms its own deadline controller; both feed the combined signal the
+  // async ports receive and re-check after they resolve.
   let closed = false;
+  const bindingAbort = new AbortController();
 
   async function runConsume(snapshot, { signal, directWriteReceipt }) {
     signal.throwIfAborted();
@@ -187,8 +237,12 @@ export function bindStudioNativeMemoryTurn({ record, buildId = null, scope, sess
     // A direct manage_memory write in this Run is checked before candidate
     // filtering: a manual operation (confirmed or not) always skips automatic
     // extraction of the same original input, even when the write mode would
-    // otherwise drop the candidate.
+    // otherwise drop the candidate. After the async owner port returns, the
+    // signal/closed flag is re-checked so a late callback after close/deadline
+    // never proceeds.
     const directWrite = await directWriteOutcome(snapshot, loaded, { manageMemoryToolNames, directWriteReceipt, scope, runId: snapshot.runId, signal });
+    signal.throwIfAborted();
+    if (closed) return undefined;
     if (directWrite) return { status: directWrite };
     const [business] = nativeMemoryScopeBindings(scope);
     const candidates = sources.observations.flatMap(observation => {
@@ -206,11 +260,13 @@ export function bindStudioNativeMemoryTurn({ record, buildId = null, scope, sess
       return { status: 'shadow', proposed: candidates.length, decisions, sourceUnavailable: sources.unavailable };
     }
     signal.throwIfAborted();
+    if (closed) return undefined;
     const provider = providerFactory(filename, { principal: scope, scopes: policy.scopes });
-    let decisions = {}, proposed = candidates.length;
+    let decisions = {}, proposed = candidates.length, wrote = false;
     try {
       for (const { observation, candidate } of candidates) {
         signal.throwIfAborted();
+        if (closed) return undefined;
         // Reuse the original source identity and the storage idempotent receipt:
         // the operation key is derived from the source identity, not the trigger,
         // so a PreCompact flush and this turn consumer cannot manufacture a second
@@ -219,21 +275,26 @@ export function bindStudioNativeMemoryTurn({ record, buildId = null, scope, sess
           extraction: NATIVE_USER_EXTRACTION_POLICY, sourceEventId: observation.sourceEventId })).slice(7);
         const result = provider.applyCandidate({ candidate, operationKey,
           sourceSessionId: observation.sourceSessionId, sourceDigest: observation.sourceDigest });
+        wrote = true;
         decisions[result.decision] = (decisions[result.decision] ?? 0) + 1;
       }
+      // After the flush, re-check the signal/closed flag and the canonical terminal
+      // snapshot. A close or deadline that landed during the SQLite commits must
+      // not be treated as a clean evaluated result even if the writes succeeded.
+      signal.throwIfAborted();
+      if (closed) return undefined;
+      currentSnapshot(store, scope, snapshot.runId, snapshot, { sessionId, buildId, record });
     }
     finally { provider.close(); }
-    // Re-verify the canonical terminal snapshot is unchanged after the flush.
-    currentSnapshot(store, scope, snapshot.runId, snapshot, { sessionId, buildId, record });
-    return { status: 'evaluated', proposed, decisions, sourceUnavailable: sources.unavailable };
+    return { status: 'evaluated', proposed, decisions, sourceUnavailable: sources.unavailable, wrote };
   }
 
   async function consume(snapshot, { signal, directWriteReceipt } = {}) {
     if (closed) return undefined;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error('native_memory_turn_deadline')), deadlineMs);
-    if (signal?.aborted) controller.abort(signal.reason);
-    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new Error('native_memory_turn_deadline')), deadlineMs);
+    if (signal?.aborted) deadline.abort(signal.reason);
+    const combined = AbortSignal.any([bindingAbort.signal, deadline.signal, ...(signal ? [signal] : [])]);
     try {
       return await Promise.race([runConsume(snapshot, { signal: combined, directWriteReceipt }), abortPromise(combined)]);
     }
@@ -247,5 +308,6 @@ export function bindStudioNativeMemoryTurn({ record, buildId = null, scope, sess
     }
   }
 
-  return { bindingDigest, consume, close: () => { closed = true; } };
+  return { bindingDigest, consume,
+    close: () => { closed = true; bindingAbort.abort(new Error('native_memory_turn_closed')); } };
 }
