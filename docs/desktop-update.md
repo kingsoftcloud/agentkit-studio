@@ -106,3 +106,35 @@ again. Never lower the feed version or disable signature validation to roll back
 
 See [Windows releases](windows-release.md) for the independent NSIS/signature and
 installed App checks. A working macOS update does not prove Windows update support.
+
+## Public download alias
+
+The public site links to fixed `studio/latest/` URLs instead of a versioned folder;
+`latest.json` carries the current versions and checksums:
+
+```sh
+node scripts/publish-download-alias.mjs \
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --channel preview
+```
+
+The command reads the published update feeds, copies the current ZIP/EXE/DMG/blockmap
+inside KS3 (no release bytes cross the operator machine) and rewrites `latest.json`
+with `no-cache`. Run it after a feed publication; the site needs no edit.
+
+`studio/latest/` only serves the public download page. Update checks keep reading
+`studio/feeds/<target>/<channel>.yml`, so the alias never affects hot updates,
+feed version comparison or the automatic upgrade path.
+
+## Version naming
+
+Desktop builds are named `<dsh version>.<YYYYMMDD>.<build ordinal of the day>`,
+for example `0.2.1-rc.2.20261021.1`:
+
+- `0.2.1-rc.2` — the DSH runtime version the build embeds (tracks DSH releases)
+- `20261021` — the packaging date
+- `1` — the first build packaged that day; the ordinal keeps increasing
+
+Because the suffix always advances, the feed version is greater than the
+previous release and the updater sees a normal upgrade. `build_version` is an
+explicit workflow input for `release-desktop.yml` / `release-windows.yml`; when
+omitted the desktop version falls back to the bare DSH version.

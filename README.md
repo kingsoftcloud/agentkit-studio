@@ -7,7 +7,7 @@ The Studio plugin is designed to run with the pinned DSH host version declared i
 ## What it provides
 
 - Agent creation and revision-based editing with model, MCP, Skill, knowledge, and memory bindings.
-- Native DSH conversations for Studio, Codex, and AgentKit Harness runtimes.
+- Native DSH conversations for Studio, Codex, and Star Harness runtimes.
 - Host-owned resource discovery and lifecycle operations.
 - Build, deployment, automation, channel, and operational surfaces through typed Host APIs.
 - DSH plugin discovery with curated official bundles and post-install capability checks.
