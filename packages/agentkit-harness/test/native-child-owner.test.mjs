@@ -9,23 +9,28 @@ import { NativeKernel, MemoryRunStore, configure, emptyUsage } from '../../agent
 import { fixture, scope, digest, tool } from '../../agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
 import { createNativeChildOwner } from '../src/native/child-owner.mjs';
+import { nativeChildToolDefinitions } from '../src/native/child-tools.mjs';
 
 const childScope = { ...scope, agentId: 'child-agent' };
 const startDefinition = tool({ name: 'native_start_child', readOnly: false, concurrentSafe: false, childBudgetPolicy: 'start/v1',
   parameters: { type: 'object', required: ['role', 'task'], properties: { role: { type: 'string' }, task: { type: 'string' } } } });
 const childDefinition = tool({ name: 'write_proof', readOnly: false, concurrentSafe: false });
+const controlDefinition = nativeChildToolDefinitions(['worker'])[1];
 const call = { callId: 'start-1', name: startDefinition.name, arguments: { role: 'worker', task: 'Write the child proof' } };
 const response = (text, toolCalls = []) => ({ kind: toolCalls.length ? 'tool_calls' : 'final_candidate', text, toolCalls, usage: emptyUsage() });
 const childConfig = () => configure({ profile: fixture().config.profile, contract: { objective: call.arguments.task }, tools: [childDefinition],
   hostBindingDigest: 'child-fixture', limits: { maxModelCalls: 3, maxToolCalls: 2 } });
 
-function setup(t, backend, { approval = false, uncertain = false, hold = false } = {}) {
+function setup(t, backend, { approval = false, uncertain = false, hold = false, control = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'native-child-owner-'));
   const store = backend === 'sqlite' ? new SqliteRunStore(join(dir, 'runs.sqlite')) : new MemoryRunStore();
   let writes = 0, starts = 0, release;
   const gate = new Promise(resolve => { release = resolve; });
-  const childPorts = { model: { generate: async request => request.messages.some(message => message.role === 'tool')
-    ? response('Child evidence') : response('', [{ callId: 'child-write', name: childDefinition.name, arguments: {} }]) },
+  const childPorts = { model: { generate: async request => {
+    if (control === 'stop') { await gate; request.signal.throwIfAborted(); }
+    return request.messages.some(message => message.role === 'tool')
+      ? response('Child evidence') : response('', [{ callId: 'child-write', name: childDefinition.name, arguments: {} }]);
+  } },
   tools: { execute: async request => {
     if (approval && !request.interaction) return { status: 'approval_required', content: {}, interactionId: 'child-host-approval' };
     if (approval) assert.equal(request.interaction.decision, 'allow');
@@ -39,13 +44,22 @@ function setup(t, backend, { approval = false, uncertain = false, hold = false }
     resolveChild: async () => { starts++; return { scope: childScope, configuration: childConfig(), ports: childPorts }; },
     restoreChild: async () => childPorts });
   t.after(async () => { release(); await owner.releaseRun({ scope, runId: 'run' }); store.close?.(); rmSync(dir, { recursive: true, force: true }); });
-  const { config, snapshot } = fixture({ tools: [startDefinition], limits: { maxModelCalls: 20, maxToolCalls: 20 },
+  const { config, snapshot } = fixture({ tools: [startDefinition, ...(control ? [controlDefinition] : [])],
+    limits: { maxModelCalls: 20, maxToolCalls: 20, effectTimeoutMs: 130000 },
     childLifecyclePolicy: 'owned-background/v2', childApprovalPolicy: 'owned-child-approval/v1' });
   let rounds = 0, observed = false;
   const kernel = new NativeKernel({ store, digest, owner: 'parent', ports: { children: owner,
-    tools: { execute: request => owner.start(request) }, model: { generate: async request => {
+    tools: { execute: async request => {
+      if (request.call.name === startDefinition.name) return owner.start(request);
+      const result = await owner.control(request);
+      if (control === 'send') release();
+      return result;
+    } }, model: { generate: async request => {
       rounds++;
       if (rounds === 1) return response('', [call]);
+      if (control && rounds === 2) return response('', [{ callId: 'control-1', name: controlDefinition.name,
+        arguments: { child_run_id: store.load(scope, 'run').snapshot.childRunIds[0], action: control,
+          ...(control === 'send' ? { message: 'Use this additional child guidance' } : { wait_seconds: 1 }) } }]);
       observed = request.messages.some(message => message.kind === 'background_child_observation');
       return response(observed ? 'Parent used child evidence' : 'Premature parent draft');
     } } }, onCheckpoint: async current => {
@@ -57,6 +71,22 @@ function setup(t, backend, { approval = false, uncertain = false, hold = false }
 }
 
 for (const backend of ['memory', 'sqlite']) {
+  for (const action of ['send', 'stop']) test(`${backend}: model-visible child control ${action} acts on the original owned child`, { timeout: 10000 }, async t => {
+    const { store, kernel, writes, starts, release } = setup(t, backend, { control: action, hold: true });
+    const result = await kernel.runUntilIdle(scope, 'run');
+    assert.equal(result.phase, 'completed'); assert.equal(starts(), 1);
+    const reservation = result.childBudgetReservations[0], child = store.load(reservation.childScope, reservation.childRunId);
+    assert.ok(reservation.settledUsageDigest);
+    if (action === 'send') {
+      assert.equal(writes(), 1); assert.equal(child.snapshot.phase, 'completed');
+      assert.ok(child.snapshot.messages.some(message => message.kind === 'guidance' && message.content === 'Use this additional child guidance'));
+    } else {
+      assert.equal(writes(), 0); assert.equal(child.snapshot.phase, 'canceled');
+      assert.equal(result.diagnostics.descendantUsageIncomplete, true);
+      assert.equal(store.events(scope, 'run').findLast(event => event.kind === 'run.terminal').payload.usageComplete, false);
+      release(); await new Promise(resolve => setImmediate(resolve)); assert.equal(writes(), 0);
+    }
+  });
   test(`${backend}: a real child Kernel executes its tool once; parent waits and reconsiders its premature candidate`, { timeout: 10000 }, async t => {
     const { store, kernel, dir, writes, starts, observed } = setup(t, backend);
     const result = await kernel.runUntilIdle(scope, 'run');

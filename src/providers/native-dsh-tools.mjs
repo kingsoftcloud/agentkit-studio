@@ -17,6 +17,8 @@ import { nativeMcpOutcome } from './native-mcp-output.mjs';
 import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
 import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
 import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from './native-tool-policy.mjs';
+import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/child-tools.mjs';
+import { nativeChildRoles } from './native-subagents.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -29,12 +31,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const pinnedRoot = realpathSync(workspace), hasSkills = Boolean(config.skillDefinitions?.length);
   // DSH's complete pre/guard/around/post pipeline owns authorization. This
   // callback runs only inside an accepted registry invocation bound below.
-  const state = agent => {
+  const state = (agent, sessionId = String(agent.session.id)) => {
     invariant(agent?.session?.id, 'studio_native_tool_agent_missing');
     invariant(realpathSync(workspace) === pinnedRoot, 'workspace_root_changed');
-    if (!states.has(agent)) states.set(agent, createNativeWorkspaceTools({ workspaceRoot: workspace,
-      stateDir, sessionId: String(agent.session.id), authorize: async () => 'allow' }));
-    return states.get(agent);
+    if (!states.has(agent)) states.set(agent, new Map());
+    const sessions = states.get(agent);
+    if (!sessions.has(sessionId)) sessions.set(sessionId, createNativeWorkspaceTools({ workspaceRoot: workspace,
+      stateDir, sessionId, authorize: async () => 'allow' }));
+    return sessions.get(sessionId);
   };
   const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions' });
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
@@ -46,13 +50,18 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     evidenceRoot: join(stateDir, 'browser-evidence') });
   const browserName = browserTools.definition.name;
   formal.set(browserName, browserTools.definition);
+  const childRoles = nativeChildRoles({ subAgents: config.subAgents ?? [] });
+  const childNames = new Set(childRoles.length ? nativeChildToolDefinitions(childRoles.map(role => role.name)).map(definition => {
+    formal.set(definition.name, definition); return definition.name;
+  }) : []);
   const declared = structuredClone(config.toolContracts ?? []);
   const contracts = new Map(declared.filter(contract => contract.enabled !== false).map(contract => [contract.name, contract]));
   const boundNames = names(config.toolBindings).flatMap(ref => {
     const matching = declared.filter(contract => contract.name === ref || contract.resourceId === ref);
     return matching.length ? matching.filter(contract => contract.enabled !== false).map(contract => contract.name) : [ref];
   });
-  const allowed = new Set([...boundNames, ...contracts.keys()]);
+  const allowed = new Set([...boundNames, ...contracts.keys(), ...childNames]);
+  invariant([...childNames].every(name => !contracts.has(name)), 'studio_native_child_tool_collision');
   const builtin = [...allowed].filter(name => contracts.get(name)?.executor === 'builtin'
     || formal.has(name) && contracts.get(name)?.executor !== 'mcp');
   const builtinNames = new Set(builtin);
@@ -112,11 +121,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
               resourceId: String(contract.mcpResourceId || contract.resourceId).trim(), name,
               arguments: args, signal: exec.signal, callId: exec.callId, agent: exec.agent, resultFormat: 'mcp-result/v1' }),
               { validateOutput: mcpSchemas.get(name)?.validateOutput });
+          } else if (childNames.has(name)) {
+            invariant(typeof invocation.children?.execute === 'function', 'studio_native_child_ledger_unavailable');
+            outcome = await invocation.children.execute({ ...invocation.request, signal: exec.signal });
           } else if (commandNames.has(name)) {
             invariant(typeof invocation.commands === 'function', 'studio_native_command_ledger_unavailable');
             outcome = await (await invocation.commands()).execute({ ...invocation.request, signal: exec.signal });
           } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
-            : formal.has(name) ? await state(exec.agent).execute({ ...invocation.request, signal: exec.signal })
+            : formal.has(name) ? await invocation.workspaceTools.execute({ ...invocation.request, signal: exec.signal })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
           invocation.outcome = structuredClone(outcome);
           return nativeDshBuiltinOutput(mcpContracts.has(name) ? { ...outcome, content: outcome.context.content } : outcome,
@@ -131,6 +143,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     close,
     argumentEncoding,
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
+    childBinding: childRoles.length ? { contract: NATIVE_CHILD_TOOLS_CONTRACT, roles: structuredClone(childRoles) } : null,
+    childCapabilities: { skills: hasSkills, mcp: mcpContracts.size > 0 },
     workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
     commandBinding: [...commandNames].some(name => builtinNames.has(name)) ? {
       contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },
@@ -189,8 +203,17 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         };
       });
     },
+    forChild(agent, authority) {
+      invariant(authority?.scope && authority.store && typeof authority.sessionId === 'string' && authority.sessionId,
+        'studio_native_child_tool_binding_missing');
+      invariant(Array.isArray(authority.toolNames) && authority.toolNames.every(name => allowed.has(name)
+        && formal.get(name)?.readOnly === true && !mcpContracts.has(name)), 'studio_native_child_tools_not_bound');
+      const bound = this.forAgent(agent, { ...authority, childSessionId: authority.sessionId });
+      return { tools: bound.tools, workspace: bound.workspace };
+    },
     forAgent(agent, commandAuthority) {
-      const sessionId = String(agent.session.id);
+      const sessionId = commandAuthority?.childSessionId ?? String(agent.session.id);
+      const workspaceTools = state(agent, sessionId);
       let commandsPromise;
       const commands = () => commandsPromise ||= (async () => {
         invariant(commandAuthority?.scope && commandAuthority?.store, 'studio_native_command_ledger_unavailable');
@@ -200,7 +223,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           captureWorkspace: request => state(agent).capture(request),
           resolveOwnedCommand: createOwnedCommandResolver(commandAuthority) });
       })();
-      return { workspace: { observe: request => state(agent).observe(request) },
+      return { workspace: { observe: request => workspaceTools.observe(request) },
+        ...(commandAuthority?.children ? { children: commandAuthority.children.owner } : {}),
         ...(commandAuthority && [...commandNames].some(name => builtinNames.has(name)) ? {
           background: createBackgroundCommandPort({ ...commandAuthority,
             readers: { local_process: async request => (await commands()).reader(request) } }),
@@ -211,6 +235,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         invariant(request.sessionId === sessionId && (allowed.has(request.call.name)
           || hasSkills && ['skill', 'bash', 'pwsh'].includes(request.call.name)),
         'studio_native_tool_not_bound');
+        if (commandAuthority?.childSessionId) invariant(canonical(request.scope) === canonical(commandAuthority.scope)
+          && commandAuthority.toolNames.includes(request.call.name), 'studio_native_child_tool_not_bound');
         request.signal.throwIfAborted();
         const exactNumbers = requiresExactJsonWire(request.call.arguments);
         if (exactNumbers && !argumentEncoding) return { status: 'error', content: {
@@ -219,7 +245,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } };
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
-        const invocation = { agent, request, argumentEncoding: exactNumbers ? argumentEncoding : null, commands };
+        const invocation = { agent, request, workspaceTools, children: commandAuthority?.children,
+          argumentEncoding: exactNumbers ? argumentEncoding : null, commands };
         calls.set(callId, invocation);
         try {
           // Numeric raw tokens retain their intrinsic brand through the negotiated

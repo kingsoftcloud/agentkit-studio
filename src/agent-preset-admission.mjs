@@ -12,6 +12,7 @@
  */
 import { NATIVE_DSH_TURN_CONTRACT } from '../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 import { selectedNativeBuildContract } from './build-engine.mjs';
+import { nativeChildRoles } from './providers/native-subagents.mjs';
 
 function encodedId(value) {
   return encodeURIComponent(String(value))
@@ -284,6 +285,7 @@ export class DshPresetAdmission {
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),
           ...(toolContracts.length ? { toolContracts } : {}),
           ...(skillDefinitions.length ? { skillDefinitions } : {}),
+          ...(nativeEngineContract && eligibility.runtime === 'harness' ? { subAgents: nativeChildRoles(agent.spec) } : {}),
         },
       });
     }

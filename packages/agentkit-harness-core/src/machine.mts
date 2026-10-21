@@ -365,6 +365,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
         modelCall: snapshot.usage.modelCalls, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision };
     }
     updated.descendantUsage = addUsage(updated.descendantUsage, childBudget.usage);
+    if (result.childBudgetSettlement && result.metadata?.usageReported === false) updated.diagnostics.descendantUsageIncomplete = true;
     updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
       role: 'tool', callId: call.callId, name: call.name,
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
@@ -391,6 +392,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     context: updated.context,
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
     childBudgetReservations: updated.childBudgetReservations, childRunIds: updated.childRunIds,
+    diagnostics: updated.diagnostics,
     backgroundCommands: updated.backgroundCommands,
     queuedGuidance: updated.queuedGuidance,
     browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,

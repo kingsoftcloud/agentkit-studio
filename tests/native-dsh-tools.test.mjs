@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
@@ -42,6 +42,28 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   return { gateway, agent, request, registry, workspaceRoot, calls, ctx,
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
+
+test('child reads use independent workspace state and cannot grant writes to either child or parent', async t => {
+  const host = setup(t, ['read_workspace_file', 'write_workspace_file']);
+  writeFileSync(join(host.workspaceRoot, 'proof.txt'), 'Original');
+  const childScope = { ...scope, agentId: 'child' };
+  const child = host.gateway.forChild(host.agent, { scope: childScope, store: new MemoryRunStore(),
+    sessionId: 'child-session', toolNames: ['read_workspace_file'] });
+  assert.deepEqual(Object.keys(child).sort(), ['tools', 'workspace']);
+  const request = { ...host.request({ path: 'proof.txt' }, 'read_workspace_file'), scope: childScope, sessionId: 'child-session' };
+  assert.equal((await child.tools.execute(request)).status, 'ok');
+  const before = host.calls.length;
+  await assert.rejects(child.tools.execute({ ...request, scope: { ...childScope, workspaceId: 'foreign' } }), /child_tool_not_bound/);
+  await assert.rejects(child.tools.execute({ ...request, call: { ...request.call, name: 'write_workspace_file', arguments: { path: 'proof.txt', content: 'Forged' } } }), /child_tool_not_bound/);
+  assert.equal(host.calls.length, before);
+  assert.throws(() => host.gateway.forChild(host.agent, { scope: childScope, store: new MemoryRunStore(), sessionId: 'child-session',
+    toolNames: ['write_workspace_file'] }), /child_tools_not_bound/);
+  const parent = host.gateway.forAgent(host.agent).tools;
+  assert.equal((await parent.execute(host.request({ path: 'proof.txt', content: 'Replacement' }, 'write_workspace_file'))).status, 'error');
+  assert.equal(readFileSync(join(host.workspaceRoot, 'proof.txt'), 'utf8'), 'Original');
+  await parent.execute(host.request({ path: 'proof.txt' }, 'read_workspace_file'));
+  assert.equal((await parent.execute(host.request({ path: 'proof.txt', content: 'Replacement' }, 'write_workspace_file'))).status, 'ok');
+});
 
 test('an allowed registry pipeline cannot bypass read-only Native writes or reuse a one-shot approval', async t => {
   const host = setup(t), requests = [];

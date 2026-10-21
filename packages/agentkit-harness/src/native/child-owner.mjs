@@ -185,7 +185,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         ownedChild(request, reservation);
         return startupReceipt(reservation, saved.role);
       }
-      const bound = await observeWhileLive(Promise.resolve().then(() => resolveChild({ parent: identity(request), call: copy(request.call),
+      const bound = await observeWhileLive(Promise.resolve().then(() => resolveChild({ parent: identity(request), call: copy(request.call), childRunId: runId,
         role: args.role, task: args.task, maxModelCalls, maxToolCalls, depth: request.budget.depth + 1, signal: request.signal })), request.signal);
       request.signal.throwIfAborted(); toolInvocation(request);
       check(bound?.scope && scopes.some(item => same(item, bound.scope))
@@ -203,6 +203,42 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       const entry = attachKernel(record, bound.ports);
       drive(entry);
       return startupReceipt(reservation, binding.role);
+    },
+    async control(request) {
+      request.signal.throwIfAborted();
+      let parent = toolInvocation(request);
+      check(request.definition.childBudgetPolicy === 'settle/v1', 'child_control_not_admitted');
+      const args = request.call.arguments, waitSeconds = args.wait_seconds ?? 15;
+      check(typeof args.child_run_id === 'string' && ['wait', 'send', 'stop'].includes(args.action)
+        && typeof waitSeconds === 'number' && Number.isFinite(waitSeconds) && waitSeconds >= 0 && waitSeconds <= 30
+        && (args.action === 'send' ? typeof args.message === 'string' && args.message.trim() && args.message.length <= 32000
+          : args.message === undefined), 'child_control_arguments_invalid');
+      const reservation = parent.snapshot.childBudgetReservations.find(item => item.childRunId === args.child_run_id);
+      check(reservation && parent.snapshot.childRunIds.includes(args.child_run_id), 'child_control_not_owned');
+      let record = ownedChild(request, reservation);
+      if (terminal(record.snapshot.phase)) return terminalReceipt(record, reservation);
+      check(reservation.settledUsageDigest === null, 'child_control_terminal_conflict');
+      const entry = await liveEntry(request, reservation, record);
+      parent = toolInvocation(request); request.signal.throwIfAborted();
+      check(entry, 'child_owner_unavailable');
+      if (args.action !== 'wait') {
+        entry.kernel.submit(entry.scope, entry.runId, { commandId: `parent-control-${hash({ parent: request.runId,
+          operationKey: request.operationKey, callId: request.call.callId })}`, kind: args.action === 'send' ? 'guide' : 'cancel',
+        payload: args.action === 'send' ? { text: args.message } : {} });
+      }
+      if (record.snapshot.phase !== 'awaiting_interaction' || args.action === 'stop') drive(entry);
+      const deadline = performance.now() + waitSeconds * 1000;
+      while (waitSeconds > 0 && args.action !== 'send') {
+        record = ownedChild(request, reservation);
+        if (terminal(record.snapshot.phase) || record.snapshot.phase === 'awaiting_interaction' && args.action !== 'stop' || performance.now() >= deadline) break;
+        await observeWhileLive(new Promise(resolve => setTimeout(resolve, 25)), request.signal);
+        if (entry.error?.code === 'lease_busy' || !entry.promise && record.commands.some(row => !row.consumed)) drive(entry);
+      }
+      request.signal.throwIfAborted(); toolInvocation(request);
+      record = ownedChild(request, reservation);
+      if (terminal(record.snapshot.phase)) return terminalReceipt(record, reservation);
+      return { status: 'ok', content: { child_run_id: record.snapshot.runId, status: record.snapshot.phase,
+        action: args.action, parent_acceptance: 'not_evaluated', result_available: false } };
     },
     async collect(request) {
       request.signal.throwIfAborted();

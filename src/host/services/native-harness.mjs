@@ -13,6 +13,7 @@ import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATIO
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
+import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -44,7 +45,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   let unregister;
   try { unregister = projections.register(nativeDeliveryProjection()); }
   catch (error) { if (!ledger) store.close(); throw error; }
-  const lifetime = new AbortController(), active = new Set();
+  const lifetime = new AbortController(), active = new Set(), childOwners = new Set();
   let closed = false, closing;
   const workspaceId = hash(resolve(workspaceRoot));
   const execute = createNativeDshTurnExecutor({ store, projections, flush: session => sessions.flush(session),
@@ -77,7 +78,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         }
       }
       invariant(selected, 'studio_native_bound_model_unavailable');
-      const description = profileDescription(selected), compatibilityDigest = hash(description);
+      const description = profileDescription(selected);
       const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens });
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
       const inputServices = { attachments: () => ctx.get('attachments'),
@@ -98,16 +99,57 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence'),
         verifyBrowserPage: taskPolicy.workspaceObservationPolicy && typeof binding.nativeTools.verifyBrowserPage === 'function'
           ? request => binding.nativeTools.verifyBrowserPage(agent, request) : undefined });
+      const modelBinding = (profile, id, boundContext) => {
+        const desc = profileDescription(profile), digest = hash(desc);
+        const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context });
+        return { profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
+          compatibilityDigest: digest, ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
+          providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
+        context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,
+          resolveProfile: async () => {
+            const current = { ...await models.profile(id), modelName: profile.modelName };
+            invariant(hash(profileDescription(current)) === digest, 'studio_native_model_binding_changed');
+            return { protocol: desc.protocol, baseUrl: current.baseUrl, apiKey: current.apiKey,
+              model: profile.modelName, parameters: desc.parameters };
+          } }) };
+      };
+      const parentModel = modelBinding(selected, selectedId, context), roles = nativeChildRoles(record.spec);
+      invariant(!roles.length || canonical(binding.nativeTools.childBinding?.roles) === canonical(roles), 'studio_native_child_revision_binding_changed');
+      const children = await createStudioNativeChildren({ roles, scope, store, tools,
+        hasSkills: Boolean(record.spec.bindings?.skills?.length || binding.nativeTools.childCapabilities?.skills),
+        hasMcp: Boolean(record.spec.bindings?.mcpServers?.length || binding.nativeTools.childCapabilities?.mcp),
+        resolveModel: async id => {
+          if (id === null) return parentModel;
+          const index = ids.indexOf(id);
+          invariant(index >= 0, 'studio_native_child_model_unbound');
+          return modelBinding(profiles[index], id);
+        },
+        bindTools: authority => binding.nativeTools.forChild(agent, authority),
+        verificationFactory: child => createNativeVerification({ ...child, workspaceRoot,
+          evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence') }),
+      });
+      const ownedChildren = children && { scope, owner: children.owner, runIds: new Set() };
+      if (ownedChildren) childOwners.add(ownedChildren);
       signal.throwIfAborted();
       return { scope, buildId, source,
-        releaseResources: request => binding.nativeTools.releaseSession?.(request),
+        releaseResources: async request => {
+          if (ownedChildren) {
+            ownedChildren.runIds.add(request.runId);
+            let phase;
+            try { phase = store.load(scope, request.runId).snapshot.phase; }
+            catch (error) { if (error.code !== 'run_not_found') throw error; }
+            if (!phase || signal.aborted || ['completed', 'failed', 'canceled', 'interrupted'].includes(phase)) {
+              await children.owner.releaseRun(request); childOwners.delete(ownedChildren);
+            }
+          }
+          await binding.nativeTools.releaseSession?.(request);
+        },
         taskContractFactory: facts => nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
-        configuration: { profile: { profileId: selected.id || selectedId || 'default', profileVersion: compatibilityDigest,
-          providerFamily: description.protocol, compatibilityDigest, ...context.profile, requestTimeoutMs: description.requestTimeoutMs,
-          providerReplayMode: description.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
+        configuration: { profile: parentModel.profile,
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
           interactionContract: STUDIO_NATIVE_INTERACTION_CONTRACT,
+          ...(children ? { childContract: STUDIO_NATIVE_CHILD_CONTRACT, childRoles: roles } : {}),
           toolArgumentEncoding: binding.nativeTools.argumentEncoding ?? null,
           toolPermissionContract: binding.nativeTools.permissionContract ?? null,
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),
@@ -119,12 +161,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           taskPolicyContract: STUDIO_NATIVE_TASK_POLICY_CONTRACT, taskPolicy,
           verificationContract: STUDIO_NATIVE_VERIFICATION_CONTRACT }),
         contextPolicy: context.policy,
+        ...(children ? { childLifecyclePolicy: 'owned-background/v2', childApprovalPolicy: 'owned-child-approval/v1' } : {}),
         workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy,
         ...(binding.nativeTools.commandBinding ? { backgroundNotificationPolicy: 'completed-before-model/v1' } : {}),
         contract: nativeGoalContract({ sessionId: String(agent.session.id), goal: admission.objective }), instructions, inputMessages: admission.messages,
         tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000,
-          ...tools.map(tool => tool.timeoutMs + 10000)) } },
-        ports: { ...binding.nativeTools.forAgent(agent, { scope, store }), verification, context: context.port, input: { prepare: async request => {
+          ...roles.map(role => role.timeoutSeconds * 1000 + 15000), ...tools.map(tool => tool.timeoutMs + 10000)) } },
+        ports: { ...binding.nativeTools.forAgent(agent, { scope, store, ...(children ? { children } : {}) }),
+          ...(children ? { children: children.owner } : {}), verification, context: context.port, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);
           request.signal.throwIfAborted();
@@ -149,13 +193,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           }
           request.signal.throwIfAborted();
           return { status: 'admitted', messages };
-        } }, model: createNativeModelPort({ fetchImpl,
-          resolveProfile: async () => {
-            const current = { ...await models.profile(selectedId), modelName: selected.modelName };
-            invariant(hash(profileDescription(current)) === compatibilityDigest, 'studio_native_model_binding_changed');
-            return { protocol: description.protocol, baseUrl: current.baseUrl, apiKey: current.apiKey,
-              model: selected.modelName, parameters: description.parameters };
-          } }) },
+        } }, model: parentModel.model },
       };
     },
   });
@@ -171,7 +209,12 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       closed = true; lifetime.abort(new Error('Studio Native host closed'));
       return closing = (async () => {
         await Promise.allSettled([...active]);
+        const children = await Promise.allSettled([...childOwners].flatMap(item => [...item.runIds]
+          .map(runId => item.owner.releaseRun({ scope: item.scope, runId }))));
+        childOwners.clear();
         try { unregister(); } finally { if (!ledger) store.close(); }
+        const failures = children.filter(result => result.status === 'rejected').map(result => result.reason);
+        if (failures.length) throw new AggregateError(failures, 'Studio child cleanup requires recovery');
       })();
     },
   };
