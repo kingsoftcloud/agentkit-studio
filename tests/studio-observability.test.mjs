@@ -76,3 +76,14 @@ test('real trace rows expose measured duration, Run/Session search and completio
     const overview = await obs.overview({}); assert.equal(overview.successRate, 1); assert.equal(overview.avgDurationMs, 4000);
   } finally { await rm(store, { recursive: true, force: true }); }
 });
+
+test('retains only recent traces within the configured count', async () => {
+  const store = await makeStore(); const obs = createStudioObservability({ storeDir: store, retentionDays: 1, maxTraces: 1 });
+  try {
+    await obs.syncTrace({ traceId: 'old', startedAt: new Date(Date.now() - 2 * 86400000).toISOString(), completedAt: new Date(Date.now() - 2 * 86400000 + 1000).toISOString(), events: [] });
+    await obs.syncTrace({ traceId: 'newest', startedAt: new Date(Date.now() - 1000).toISOString(), completedAt: new Date().toISOString(), events: [] });
+    assert.equal((await obs.list({ range: '30d' })).items.length, 1);
+    assert.equal((await obs.get('old')), null);
+    assert.ok(await obs.get('newest'));
+  } finally { await rm(store, { recursive: true, force: true }); }
+});

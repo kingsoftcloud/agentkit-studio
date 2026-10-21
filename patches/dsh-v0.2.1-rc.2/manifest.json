@@ -155,7 +155,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 1
     },
     {
       "id": "006",
@@ -189,7 +190,8 @@
           "windows",
           "product-profiles"
         ]
-      }
+      },
+      "sequence": 2
     },
     {
       "id": "008",
@@ -223,7 +225,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 3
     },
     {
       "id": "009",
@@ -282,7 +285,8 @@
           "windows",
           "product-profiles"
         ]
-      }
+      },
+      "sequence": 4
     },
     {
       "id": "010",
@@ -320,7 +324,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 5
     },
     {
       "id": "011",
@@ -362,7 +367,8 @@
           "web",
           "electron"
         ]
-      }
+      },
+      "sequence": 6
     },
     {
       "id": "012",
@@ -413,7 +419,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 7
     },
     {
       "id": "013",
@@ -454,7 +461,8 @@
           "windows",
           "product-profiles"
         ]
-      }
+      },
+      "sequence": 8
     },
     {
       "id": "014",
@@ -503,7 +511,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 9
     },
     {
       "id": "015",
@@ -538,7 +547,8 @@
           "web",
           "electron"
         ]
-      }
+      },
+      "sequence": 10
     },
     {
       "id": "016",
@@ -586,7 +596,8 @@
           "frozen",
           "persistence"
         ]
-      }
+      },
+      "sequence": 11
     },
     {
       "id": "017",
@@ -658,7 +669,8 @@
           "source",
           "web"
         ]
-      }
+      },
+      "sequence": 12
     },
     {
       "id": "019",
@@ -713,7 +725,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 13
     },
     {
       "id": "020",
@@ -751,7 +764,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 14
     },
     {
       "id": "022",
@@ -790,7 +804,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 15
     },
     {
       "id": "023",
@@ -824,7 +839,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 16
     },
     {
       "id": "024",
@@ -858,7 +874,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 17
     },
     {
       "id": "025",
@@ -906,7 +923,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 18
     },
     {
       "id": "026",
@@ -946,7 +964,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 19
     },
     {
       "id": "027",
@@ -982,7 +1001,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 20
     },
     {
       "id": "028",
@@ -1014,7 +1034,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 21
     },
     {
       "id": "029",
@@ -1050,7 +1071,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 22
     },
     {
       "id": "030",
@@ -1085,7 +1107,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 23
     },
     {
       "id": "031",
@@ -1121,7 +1144,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 24
     },
     {
       "id": "032",
@@ -1170,7 +1194,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 25
     },
     {
       "id": "033",
@@ -1218,7 +1243,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 26
     },
     {
       "id": "034",
@@ -1255,7 +1281,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 27
     },
     {
       "id": "035",
@@ -1315,7 +1342,8 @@
           "dsh-web",
           "product-profiles"
         ]
-      }
+      },
+      "sequence": 28
     },
     {
       "id": "036",
@@ -1355,7 +1383,8 @@
         "integrations": [
           "source"
         ]
-      }
+      },
+      "sequence": 29
     },
     {
       "id": "037",
@@ -1389,7 +1418,8 @@
           "source",
           "dsh-web"
         ]
-      }
+      },
+      "sequence": 30
     },
     {
       "id": "038",
@@ -1447,7 +1477,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 31
     },
     {
       "id": "039",
@@ -1510,7 +1541,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 32
     },
     {
       "id": "040",
@@ -1555,7 +1587,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 33
     },
     {
       "id": "041",
@@ -1652,7 +1685,8 @@
         "packages/extensions/cordis-client-runner/src/client/api-catalog.ts",
         "packages/preset/agent-preset-registry/README.i18n.yaml"
       ],
-      "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b"
+      "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b",
+      "sequence": 34
     },
     {
       "id": "042",
@@ -1693,7 +1727,8 @@
         "packages/experimental/inspector/src/shared/cordis/publisher.ts",
         "packages/experimental/inspector/tests/cordis-frame-budget.host.spec.ts"
       ],
-      "sha256": "ef2592ef7edb77b28b60e2ff5c6332415656121b05c52de337c8c481fcb2094d"
+      "sha256": "ef2592ef7edb77b28b60e2ff5c6332415656121b05c52de337c8c481fcb2094d",
+      "sequence": 35
     },
     {
       "id": "043",
@@ -1764,7 +1799,8 @@
         "packages/shell/tool-pwsh/tests/tools.spec.ts",
         "packages/subagent/subagent/tests/activation-policy.spec.ts"
       ],
-      "sha256": "88554732149613ffd5c0d9113285369d1f966bf17b072f1737b80d9493917615"
+      "sha256": "88554732149613ffd5c0d9113285369d1f966bf17b072f1737b80d9493917615",
+      "sequence": 36
     },
     {
       "id": "044",
@@ -1822,7 +1858,8 @@
         "packages/client/ui-conversation/tests/conversation-store.client.spec.ts",
         "packages/client/ui-conversation/tests/input-bar.client.spec.tsx"
       ],
-      "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3"
+      "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3",
+      "sequence": 37
     },
     {
       "id": "045",
@@ -1867,7 +1904,8 @@
         "packages/core/tools/src/index.ts",
         "packages/core/tools/tests/scoped.spec.ts"
       ],
-      "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+      "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709",
+      "sequence": 38
     },
     {
       "id": "046",
@@ -1913,7 +1951,8 @@
           "source",
           "macos"
         ]
-      }
+      },
+      "sequence": 39
     },
     {
       "id": "047",
@@ -2014,7 +2053,8 @@
         "packages/schedule/tool-schedule/src/index.ts",
         "packages/schedule/tool-schedule/tests/tool-schedule.spec.ts"
       ],
-      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be"
+      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be",
+      "sequence": 40
     },
     {
       "id": "048",
@@ -2076,7 +2116,8 @@
         "packages/client/ui-sidebar-browser/tsconfig.client.json",
         "pnpm-lock.yaml"
       ],
-      "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611"
+      "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611",
+      "sequence": 41
     }
   ],
   "patchedTree": "dcd76e7d2845c1629596790cf785dd93542af388",
