@@ -30,6 +30,7 @@ const expected = [
   'packages/agentkit-harness-core/dist/child-contract.mjs',
   'packages/agentkit-harness-core/dist/child-runtime.mjs',
   'src/providers/native-tool-policy.mjs',
+  'src/providers/native-host-interaction.mjs',
   'packages/agentkit-harness/src/native/owned-command.mjs',
   'packages/agentkit-harness/src/native/local-command-policy-worker.mjs',
   'packages/agentkit-harness/src/native/ruff-ast.mjs',

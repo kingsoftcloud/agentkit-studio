@@ -288,6 +288,8 @@ Harness Build 在内容寻址的 manifest 中固定 `agentkit.build-engine/v1`�
 
 ## 自动化入口与会话权限
 
+`agentkit.native-host-interaction/v1` 将 Native 已持久暂停的工具审批接入 Host ApprovalService。普通调用复用会话中已展示的 callId；子任务审批通过父账本的预算预约、完整因果身份、冻结配置与工具摘要核实，再使用父桥接的不透明 ID。只接受 `allowed-once`，其他答复形成持久拒绝；服务缺失保留等待状态。取消和审批期间状态变化使迟到答复失效。相关测试覆盖真实 Native 父/子 Kernel、内存及 SQLite，以及生产 Host 工厂的允许、拒绝、缺服务和取消。它尚不等于子任务角色、工作区、媒体与全部 Studio 入口的组装验收。
+
 Native 从已接纳的公开 prompt assembly 读取 SessionController 选择的模型，再对照 Agent 或 Frozen Build 的模型绑定核验；创建时的 Agent options 只作为未提供选择时的默认值。中途改变模型仍要求显式重绑，不能在同一冻结的 Run 内静默换模型。
 
 Node builtin 直接操作文件或进程，不能仅凭进入 ToolRegistry 推断已获得 DSH 文件权限。当前正式 builtin 在自身实际派发前读取 Host sandbox policy；只读工具可执行，有潜在修改的工具在 read-only 模式下必须通过真实 ApprovalService 的 allowed-once。拒绝、服务缺失、非法答复、取消和审批后服务丢失或策略失效都不派发。该契约 agentkit.native-tool-permission/v1 纳入 Host binding digest；它只授予本次工具调用，不改变会话模式，也不跨调用缓存授权。

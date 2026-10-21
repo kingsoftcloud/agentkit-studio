@@ -12,6 +12,7 @@ import { bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../
 import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATION_CONTRACT } from '../../providers/native-verification.mjs';
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
+import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -47,7 +48,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   let closed = false, closing;
   const workspaceId = hash(resolve(workspaceRoot));
   const execute = createNativeDshTurnExecutor({ store, projections, flush: session => sessions.flush(session),
-    publishStreamFrame,
+    publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),
     resolveTurn: async ({ agent, input, binding, signal, prepareInput }) => {
       if (binding?.runtime !== 'harness' || binding.local !== true) return null;
       invariant(binding.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT, 'studio_native_engine_contract_unsupported');
@@ -106,6 +107,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           providerReplayMode: description.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
+          interactionContract: STUDIO_NATIVE_INTERACTION_CONTRACT,
           toolArgumentEncoding: binding.nativeTools.argumentEncoding ?? null,
           toolPermissionContract: binding.nativeTools.permissionContract ?? null,
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),

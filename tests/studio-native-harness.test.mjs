@@ -11,7 +11,7 @@ import { createStudioNativeHarness } from '../src/host/services/native-harness.m
 import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 import { buildExecutionEngine } from '../src/build-engine.mjs';
 
-async function setup(t, { spec = {}, profile = {} } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
   const workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
@@ -35,7 +35,8 @@ async function setup(t, { spec = {}, profile = {} } = {}) {
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
       requests.push({ url, options });
-      return new Response(`data: ${JSON.stringify({ id: `response-${requests.length}`, choices: [{ index: 0, delta: { content: 'Complete' }, finish_reason: 'stop' }],
+      const response = respond ? respond(requests.length) : { choices: [{ index: 0, delta: { content: 'Complete' }, finish_reason: 'stop' }] };
+      return new Response(`data: ${JSON.stringify({ id: `response-${requests.length}`, ...response,
         usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
     } });
   t.after(async () => { await host.close(); await rm(root, { recursive: true, force: true }); });
@@ -73,6 +74,64 @@ test('Studio Native Host pins revision/input/model while refreshing credentials 
   assert.equal(new Headers(fixture.requests[1].options.headers).get('authorization'), 'Bearer secret-two');
   assert.equal(fixture.head().parentRunId, run.runId);
   assert.equal(JSON.stringify(fixture.ledger.load(run.scope, fixture.head().runId)).includes('secret-two'), false);
+});
+
+const approvalTool = { name: 'guarded_write', description: 'A tool requiring a persisted approval',
+  parameters: { type: 'object', properties: {} }, readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 1000,
+  contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' };
+const approvalResponse = count => ({ choices: [{ index: 0, delta: count === 1
+  ? { tool_calls: [{ index: 0, id: 'guarded-1', type: 'function', function: { name: approvalTool.name, arguments: '{}' } }] }
+  : { content: 'Complete' }, finish_reason: count === 1 ? 'tool_calls' : 'stop' }] });
+function bindApprovalTool(fixture, dispatch) {
+  fixture.payload.binding.nativeTools.definitions = () => [approvalTool];
+  fixture.payload.binding.nativeTools.forAgent = () => ({ tools: { execute: async request => {
+    if (!request.interaction) return { status: 'approval_required', interactionId: 'guarded-host-id', content: null };
+    return dispatch(request);
+  } } });
+}
+for (const outcome of ['allowed-once', 'rejected', 'unavailable', 'unexpected']) {
+  test(`Studio Native routes persisted tool approval through the Host: ${outcome}`, async t => {
+    const fixture = await setup(t, { respond: approvalResponse });
+    let writes = 0, asks = 0;
+    bindApprovalTool(fixture, async request => {
+      assert.equal(request.interaction.interactionId, 'guarded-host-id');
+      if (request.interaction.decision === 'deny') return { status: 'error', content: 'Denied' };
+      writes++; return { status: 'ok', content: 'Written' };
+    });
+    fixture.services.approval = { request: async request => {
+      asks++; assert.equal(request.agent, fixture.payload.agent); assert.equal(request.toolName, approvalTool.name);
+      const displayed = fixture.events.find(event => event.type === 'tool/call');
+      assert.equal(request.callId, displayed.data.callId);
+      assert.equal(fixture.head().phase, 'awaiting_interaction');
+      return outcome;
+    } };
+    await fixture.host.executeTurn(fixture.payload);
+    assert.equal(asks, 1); assert.equal(writes, outcome === 'allowed-once' ? 1 : 0);
+    assert.equal(fixture.head().phase, 'completed');
+    const resolved = fixture.ledger.events(fixture.head().scope, fixture.head().runId).filter(event => event.kind === 'approval.resolved');
+    assert.equal(resolved.length, 1);
+  });
+}
+test('Studio Native cancellation during a Host approval rejects its late grant', async t => {
+  const fixture = await setup(t, { respond: approvalResponse });
+  let writes = 0, grant, entered;
+  const asked = new Promise(resolve => { entered = resolve; });
+  bindApprovalTool(fixture, async () => { writes++; return { status: 'ok', content: 'Written' }; });
+  fixture.services.approval = { request: () => { entered(); return new Promise(resolve => { grant = resolve; }); } };
+  const controller = new AbortController(); fixture.payload.signal = controller.signal;
+  const execution = fixture.host.executeTurn(fixture.payload);
+  await asked; controller.abort(new Error('user canceled approval'));
+  await assert.rejects(execution, /user canceled approval/);
+  grant('allowed-once');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes, 0); assert.equal(fixture.head().phase, 'canceled');
+});
+test('Studio Native retains a pending decision when the Host approval service is absent', async t => {
+  const fixture = await setup(t, { respond: approvalResponse });
+  bindApprovalTool(fixture, async () => assert.fail('No decision was authorized'));
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'NATIVE_TURN_SUSPENDED' });
+  assert.equal(fixture.head().phase, 'awaiting_interaction');
+  assert.equal(fixture.requests.length, 1);
 });
 test('Studio Host releases the revision-bound resources with the settled Run identity', async t => {
   const fixture = await setup(t), releases = [];
