@@ -41,7 +41,6 @@
     "studio.plugin.json",
     "CHANGELOG.md",
     "docs",
-    "!docs/_site",
     "examples",
     "tests",
     "scripts",

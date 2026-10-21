@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 // Renders the Committed Markdown guides in docs/ into a small static site.
-// GitHub Pages publishes docs/_site, so the landing page keeps working while
-// every guide becomes navigable HTML instead of a raw .md download.
+// GitHub Pages publishes the generated .artifacts/docs-site tree, so the landing
+// page keeps working while every guide becomes navigable HTML instead of a raw .md
+// download. The output stays out of docs/ so plugin tarballs never pick it up.
 //
 // Deterministic by construction: sources are sorted, links are rewritten from
 // the file layout only, and no network access or clock is involved.
@@ -16,7 +17,7 @@ export const REPOSITORY_URL = 'https://github.com/kingsoftcloud/agentkit-studio'
 const REPOSITORY_BRANCH = 'main';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS_ROOT = join(REPO_ROOT, 'docs');
-const DEFAULT_OUTPUT = join(DOCS_ROOT, '_site');
+const DEFAULT_OUTPUT = join(REPO_ROOT, '.artifacts', 'docs-site');
 export const DOCS_INDEX_LABEL = '文档总览';
 
 // Used only if the landing page stops exposing its :root palette.
