@@ -1,6 +1,6 @@
 # Native 本地记忆迁移状态
 
-参考 `ksadk-python` 的 `feat-ksadk-harness-2` / `355059d78e47ed764bbdb3606304cdf34e9838a3`。当前已实现本地候选提取、SQLite 候选消费与纠正/遗忘存储事务、压缩前 Hook，以及模型请求前的本地召回和上下文刷新。**完整记忆能力尚未迁移完成**：显式管理工具的权限/审批和核对、记忆验收、轮次完成后的候选消费、配置界面及全新安装验收仍待补齐。
+参考 `ksadk-python` 的 `feat-ksadk-harness-2` / `355059d78e47ed764bbdb3606304cdf34e9838a3`。当前已实现本地候选提取、SQLite 候选消费与纠正/遗忘存储事务、压缩前 Hook，以及模型请求前的本地召回和上下文刷新。独立的轮次完成消费器与显式记忆验收器也已实现，但尚未接入生产 Host。**完整记忆能力尚未迁移完成**：管理工具的权限/审批和核对、消费与验收的 Host 接入、配置界面及完整产品安装运行验收仍待补齐。
 
 现有绑定 `memory-instance` 的云记忆是另一个路径：它通过 AICP 召回并在轮次后提交对话。此实现没有用云端对话写入替代 Python 的本地候选语义，Native 的云写入拒绝保护仍保留，等待独立的持久化副作用接入。
 
@@ -21,7 +21,7 @@
 }
 ```
 
-`write.mode` 支持 `off`、`explicit_only`、`candidate`。`memoryWrite` 支持 `off`、`shadow`、`enabled`，缺省为 `shadow`；shadow 只在 Hook 结果中报告候选策略判定，不打开记忆数据库、不累加观察次数。关闭记忆、关闭压缩前消费、不含 user scope、write off 或 rollout off 都不安装此 Hook。`flushAfterTurn` 已纳入策略绑定，但其消费者尚未实现；目前请勿据此认为轮次后会自动保存。
+`write.mode` 支持 `off`、`explicit_only`、`candidate`。`memoryWrite` 支持 `off`、`shadow`、`enabled`，缺省为 `shadow`；shadow 只在 Hook 结果中报告候选策略判定，不打开记忆数据库、不累加观察次数。关闭记忆、关闭压缩前消费、不含 user scope、write off 或 rollout off 都不安装此 Hook。`flushAfterTurn` 已纳入策略绑定，独立消费器已实现，生产 Host 尚未安装它；目前请勿据此认为轮次后会自动保存。
 
 Hook 与受信任宿主注册的其他 Hooks 合并，保留显式 Stop 继续次数上限，重复 ID 或冲突策略拒绝组装。其绑定包含原 Agent 修订/Build/spec 和来源契约；恢复时重新派生，不接受漂移后的来源。它使用已有的密封 Hook 意图、回执、租约与取消机制，不参与工具授权或任务验收。
 
@@ -58,3 +58,13 @@ Hook 与受信任宿主注册的其他 Hooks 合并，保留显式 Stop 继续�
 开启召回后，第三、第四轮实际模型 HTTP 请求均含当前 v1 事实及其不可信来源封装；这同时验证摘要与 Hook 前后的重新查询。普通 Revision 在 Node 26、固定 Build 在 Node 22 均通过。首次打包验证发现压缩阶段被错误排除，修复后补回归并通过重验。
 
 此场景运行子进程的 PATH 仅含 Node，Python 配置指向不存在的位置。它使用固定的本地依赖图与真实 HTTP 模型模拟端，不代表全新依赖安装、真实外部模型或浏览器界面已经验收。
+
+## 独立轮次消费与显式验收
+
+`bindStudioNativeMemoryTurn` 只消费当前 canonical completed Run 中经原始 Host 准入确认的人类输入，复核原 Revision/Build、scope 和 Session。资格沿用参考的 verified/unverified 条件，失败或阻塞的验收不进入消费。显式记忆任务及已执行的管理操作走各自所有者，不从自动候选路径补写；原始 source 身份与压缩前 Hook 共用，不能重复累计观察。
+
+整轮适配器提供受资源生命周期约束的 `consumeCompletedTurn`：主终态提交之后、资源释放之前执行，取消或截止撤销消费能力，消费异常不替换主结果。消费器关闭会取消在途调用，迟到回调不能开启新数据库写入；已提交但丢失结果的效果仍视为未知。消费器与压缩前模块的定向测试在 Node 22、26 各通过 36 项，生产 Host 接入仍由后续联测验证。
+
+`studio.explicit-durable-memory/v2` 只读验收器为已识别的单一显式记忆目标固定验收身份。它重新读取当前 scoped fact，管理写入还须取得与原完整调用、正式工具定义及操作键一致的真实 owner receipt。承诺、伪造工具 JSON 和事实已变化的历史回执不能通过；已持久存在并被当前召回或显式读取的 add 目标不要求重复写入。证据服务失败仍阻塞，验收器不会写入或授予审批。相关验收与既有 verifier 的定向测试在两个 Node 版本各通过 40 项，尚未证明生产工具审批及完整 Host 路径。
+
+安装包组件可使用 `node scripts/verify-native-studio-install.mjs --archive <Studio.tgz> --keep` 独立验证。它在仓库外以新 npm 缓存安装完整包的生产依赖，禁用安装脚本，PATH 仅含 Node，再加载 Studio/Native Host 工厂并执行真实 SQLite、记忆和 WASM 源码解析。Node 26、22 的新目录安装均成功；此检查不启动完整 DSH Host，也不执行 Codex，不能代替完整产品安装运行验收。
