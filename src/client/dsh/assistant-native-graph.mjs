@@ -66,7 +66,7 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
   const { Context, React, connection, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore } = modules;
   const policy = conversation.Config?.({});
   if (policy?.hostPathPolicy !== 'host-paths' || policy.draftPersistence !== 'session-local' || policy.submissionActions !== 'native') { await transport.dispose(); throw new Error('请更新 Studio 宿主后使用安全的云端原生输入'); }
-  const ctx = new Context(); let reference, unmount, disposed = false;
+  const ctx = new Context(); let reference, unmount, disposed = false; let mountedElement = null;
   const lifetime = new AbortController();
   const dispose = async () => {
     if (disposed) return; disposed = true; signal?.removeEventListener('abort', aborted); lifetime.abort();
@@ -140,18 +140,25 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
     await ctx.plugin(attachment).await();
     const inputState = createSnapshotStore(transport.getState());
     ctx.effect(() => transport.subscribe(() => inputState.set(transport.getState())));
-    const uploadAccess = ctx.remoteAccess.source('session', transport.sessionId, 'fileUploads/upload');
+    // The cloud graph owns the attachment entry. The DSH command registry is
+    // not mounted in this isolated graph, so the entry drives the mounted DSH
+    // file input directly; uploads still flow through the graph's fileUpload
+    // service and the dedicated attachment-upload ingress.
+    const composerFileInput = () => mountedElement?.querySelector('input[type="file"]') ?? null;
     const canPickFiles = () => {
-      const state = transport.getState(), command = commands.file.getSnapshot();
-      return !disposed && !state.invalid && !state.pending && !state.busy && !state.disconnected
-        && uploadAccess.getSnapshot() && command?.available({ sessionId: transport.sessionId }) === true;
+      if (disposed) return false;
+      const state = transport.getState();
+      if (state.invalid || state.pending || state.busy || state.disconnected) return false;
+      const input = composerFileInput();
+      return input !== null && !input.disabled;
     };
     ctx.slots.register({ name: 'conversation.input.left', id: 'studio.assistant.attachment',
-      inject: () => ({ hooks: { cloudInputState: inputState, cloudFileCommand: commands.file, cloudUploadAccess: uploadAccess } }),
-    }, function CloudAttachment({ sessionId, useInput, useCloudInputState, useCloudFileCommand, useCloudUploadAccess }) {
+      inject: () => ({ hooks: { cloudInputState: inputState, cloudFileCommand: commands.file } }),
+    }, function CloudAttachment({ sessionId, useInput, useCloudInputState, useCloudFileCommand }) {
       // Subscribe to native intake and transport gates without introducing a
-      // parallel draft or picker. The Host file command owns both.
-      useInput(value => value); useCloudInputState(value => value); useCloudUploadAccess(value => value);
+      // parallel draft or picker. The mounted DSH input owns intake; the
+      // registered command only contributes the icon while it is available.
+      useInput(value => value); useCloudInputState(value => value);
       const command = useCloudFileCommand(value => value);
       const [mounted, setMounted] = React.useState(false);
       React.useEffect(() => { setMounted(true); }, []);
@@ -159,7 +166,7 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
       return React.createElement('button', { type: 'button', 'aria-label': '添加附件', title: '添加附件', disabled,
         'data-assistant-native-attachment': true,
         onMouseDown: event => event.preventDefault(),
-        onClick: () => { if (sessionId === transport.sessionId && canPickFiles()) commands.file.getSnapshot()?.ui.run({ sessionId }); },
+        onClick: () => { if (sessionId === transport.sessionId && canPickFiles()) composerFileInput()?.click(); },
         style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', padding: 0,
           border: 0, borderRadius: '8px', background: 'transparent', color: 'inherit', opacity: disabled ? 0.4 : 1, cursor: disabled ? 'default' : 'pointer' },
       }, command?.icon ? React.createElement(command.icon, { size: 16 }) : '＋');
@@ -181,7 +188,7 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
     const snapshot = reference.binding.session.getSnapshot();
     if (snapshot.openState !== 'open' || snapshot.openError) throw new Error('云端原生会话未能打开');
     if (ctx.sessions.binding(transport.sessionId) !== reference.binding) throw new Error('Cloud session binding changed');
-    if (container) unmount = ctx.get('uiRenderer').mount(container);
+    if (container) { mountedElement = container; unmount = ctx.get('uiRenderer').mount(container); }
     return { ctx, reference, transport, dispose,
       async confirm() {
         if (disposed) return { accepted: false, reset: false };
@@ -198,6 +205,6 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
         // attachments stay in the same memory-only graph, including its undo state.
         return { accepted: true, reset: matches && before.draftRev === after.draftRev
           && before.attachmentIds.length === after.attachmentIds.length && before.attachmentIds.every((id, index) => id === after.attachmentIds[index]) };
-      }, mount(element) { if (disposed || unmount) throw new Error('Cloud composer already mounted or released'); unmount = ctx.get('uiRenderer').mount(element); } };
+      }, mount(element) { if (disposed || unmount) throw new Error('Cloud composer already mounted or released'); mountedElement = element; unmount = ctx.get('uiRenderer').mount(element); } };
   } catch (error) { await dispose(); throw error; }
 }

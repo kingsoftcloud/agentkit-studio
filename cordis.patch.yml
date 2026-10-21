@@ -31,10 +31,13 @@
   # Enable the official durable Schedule service; Studio owns the product UI.
   disabled: false
 - id: ui-schedule
-  # Studio owns the product automation page. Keep the durable schedule
-  # service above enabled, but do not mount DSH's global panel: its late
-  # sidebar registration races the Studio panel catalog during boot.
-  disabled: true
+  # The module table only carries packages whose boot row is enabled, and the
+  # cloud graph mounts the root-scoped schedule.manager factory from this
+  # package (assistant 计划任务 panel) plus the composer module table, so the
+  # row must stay loaded. Patch 046 already guards every sidebar, panel and
+  # session-header registration behind the navigation services, so mounting
+  # this row no longer races the Studio panel catalog during boot.
+  disabled: false
 - id: ui-agent-preset
   # Keep the official remote/client seam mounted. Studio replaces its chip
   # through the public slot below, while the underlying Remote remains the

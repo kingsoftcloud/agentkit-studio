@@ -237,9 +237,15 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     promptAttempts.length = 0;
     await input().fill('browser task survives Studio Host exit');
     const uploadResponse = page.waitForResponse(response => response.request().postDataJSON()?.payload?.operation === 'attachment-upload');
+    // A lost upload or chooser must surface as this step's own assertion with
+    // its real cause; an unhandled waiter rejection would kill the process
+    // before the failure screenshot is captured.
+    uploadResponse.catch(() => {});
     const picking = page.waitForEvent('filechooser');
+    picking.catch(() => {});
     await composer().getByRole('button', { name: '添加附件', exact: true }).click();
-    await (await picking).setFiles({ name: attachmentFixture.name, mimeType: 'text/plain', buffer: attachmentFixture.bytes });
+    const chooser = await picking;
+    await chooser.setFiles({ name: attachmentFixture.name, mimeType: 'text/plain', buffer: attachmentFixture.bytes });
     const uploadedResponse = await uploadResponse;
     assert.equal(new URL(uploadedResponse.url()).pathname, ASSISTANT_UPLOAD_RPC_PATH, 'attachments must use the dedicated authenticated upload ingress');
     const uploaded = await uploadedResponse.json();
