@@ -55,9 +55,13 @@ async function applyProof(ctx, options) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
-      ...(options.frozen || options.automation ? { spec: { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } } : {}),
+      spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
+        ...(options.memory ? { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+          recall: { enabled: false }, write: { mode: 'candidate', flushBeforeCompaction: true, flushAfterTurn: false } },
+          context: { maxInputTokens: 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
+            compaction: { thresholdRatio: .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
-        ? { mcpServers: ['native-schema-fixture'] } : { tools: [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
+        ? { mcpServers: ['native-schema-fixture'] } : { tools: options.memory ? [] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
   if (options.frozen) {
@@ -68,7 +72,9 @@ async function applyProof(ctx, options) {
         revision: record.metadata.revision, metadata: record.metadata, spec: record.spec, bindings: record.spec.bindings });
       savedIdentity = { id: record.metadata.id, buildId: built.id };
       await writeFile(identity, JSON.stringify(savedIdentity));
-      await agents.update(record.metadata.id, { spec: { ...record.spec, instructions: { system: 'LATEST_NATIVE_SYSTEM_B' } } });
+      await agents.update(record.metadata.id, { spec: { ...record.spec, instructions: { system: 'LATEST_NATIVE_SYSTEM_B' },
+        ...(options.memory ? { memory: { ...record.spec.memory, enabled: false },
+          context: { ...record.spec.context, rollout: { memoryWrite: 'off' } } } : {}) } });
     }
     record = await builds.resolve(savedIdentity.id, savedIdentity.buildId);
   }

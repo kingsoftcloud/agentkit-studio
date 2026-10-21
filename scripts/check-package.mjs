@@ -39,6 +39,7 @@ const expected = [
   'packages/agentkit-harness/src/native/memory-candidate.mjs',
   'packages/agentkit-harness/src/native/memory-store.mjs',
   'packages/agentkit-harness/test/native-memory.test.mjs', 'tests/fixtures/native-memory-provider.mjs',
+  'scripts/native-memory-proof.mjs',
   'host-source/dsh-v0.2.1-rc.2/maintenance.bundle',
   'host-source/dsh-v0.2.1-rc.2/LICENSE',
   'scripts/verify-native-recovery-capability.mjs',

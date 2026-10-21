@@ -1,6 +1,6 @@
 # Native 本地记忆迁移状态
 
-参考 `ksadk-python` 的 `feat-ksadk-harness-2` / `355059d78e47ed764bbdb3606304cdf34e9838a3`。当前已实现本地候选提取、SQLite 候选消费与纠正/遗忘存储事务，并接通 Studio Native 的压缩前 Hook。**完整记忆能力尚未迁移完成**：召回与上下文刷新、显式管理工具的权限/审批和核对、记忆验收、轮次完成后的候选消费、配置界面，以及实际打包 Host 中的本地记忆端到端验收仍待补齐。
+参考 `ksadk-python` 的 `feat-ksadk-harness-2` / `355059d78e47ed764bbdb3606304cdf34e9838a3`。当前已实现本地候选提取、SQLite 候选消费与纠正/遗忘存储事务，并接通 Studio Native 的压缩前 Hook。**完整记忆能力尚未迁移完成**：召回与上下文刷新、显式管理工具的权限/审批和核对、记忆验收、轮次完成后的候选消费、配置界面及全新安装验收仍待补齐。
 
 现有绑定 `memory-instance` 的云记忆是另一个路径：它通过 AICP 召回并在轮次后提交对话。此实现没有用云端对话写入替代 Python 的本地候选语义，Native 的云写入拒绝保护仍保留，等待独立的持久化副作用接入。
 
@@ -45,4 +45,8 @@ Hook 与受信任宿主注册的其他 Hooks 合并，保留显式 Stop 继续�
 
 `node --test packages/agentkit-harness/test/native-memory.test.mjs tests/studio-native-memory.test.mjs tests/studio-native-harness.test.mjs`
 
-覆盖确定性 Python 行为样例、原始来源校验、真实 Kernel 压缩与生产 Host 工厂组装、真实 SQLite 事务回滚、两个独立 Node writer、提交前后实际进程退出及数据库重开、遗忘/纠正/重投，以及提交后回调结果丢失时不派发摘要且不重复写入。Host 工厂测试使用受限的 Host/HTTP response doubles；它们不是完整 DSH CLI、浏览器或全新安装的记忆验收，后者仍是未完成项。
+覆盖确定性 Python 行为样例、原始来源校验、真实 Kernel 压缩与生产 Host 工厂组装、真实 SQLite 事务回滚、两个独立 Node writer、提交前后实际进程退出及数据库重开、遗忘/纠正/重投，以及提交后回调结果丢失时不派发摘要且不重复写入。Host 工厂测试使用受限的 Host/HTTP response doubles。
+
+`node scripts/verify-studio-native-harness.mjs --source <已构建的维护源码> --mount-host --memory --archive <Studio打包文件> --keep` 另通过实际打包的完整 Host、真实认证 HTTP、标准 preset 和公开 SDK 连续运行四轮，在第二轮后关闭并重启 Host。普通用户输入通过真实 tokenizer/context planner 触发压缩；摘要通过实际模型 HTTP 返回。两条独立原始偏好形成一个 v1 SQLite 事实，后续重复压缩复用原始来源回执；另一 Agent 不能读取该事实。公开任务流在模型响应完成前可见，并与持久化 Session 字节一致；内部摘要不作为公开回复流或回复正文展示。独立默认 DSH 会话继续可用。加 `--frozen` 会在创建 Build 后关闭最新 Revision 的记忆，再核对执行遵循原 Build。
+
+此场景运行子进程的 PATH 仅含 Node，Python 配置指向不存在的位置。它使用固定的本地依赖图与真实 HTTP 模型模拟端，不代表全新依赖安装、真实外部模型或浏览器界面已经验收。

@@ -11,11 +11,12 @@ import { parseArgs } from 'node:util';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { respondToAutomationProof, runAutomationProof, verifyAutomationLedger } from './native-automation-proof.mjs';
+import { respondToMemoryProof, runMemoryProof } from './native-memory-proof.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
   automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
-  hooks: { type: 'boolean', default: false }, archive: { type: 'string' } } });
+  hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false }, archive: { type: 'string' } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
@@ -24,6 +25,8 @@ assert.ok(!values.automation || values['mount-host'] && values.commands && !valu
 assert.ok(!values.recovery || values['mount-host'] && !values.automation, '--recovery requires --mount-host without --automation');
 assert.ok(!values.hooks || values['mount-host'] && !values.automation && !values.commands && !values['mcp-schema'],
   '--hooks exercises mounted Host workspace tools without automation/commands/MCP');
+assert.ok(!values.memory || values['mount-host'] && !values.automation && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery,
+  '--memory exercises mounted Host original-user Memory without the other proof scenarios; --frozen is supported');
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
@@ -44,7 +47,7 @@ async function waitForPublicPrefix(count, expected) {
       assert.equal(native.filter(row => row.frame.type === 'start').length, count);
       assert.equal(native.filter(row => row.frame.type === 'end').length, count - 1,
         'Public prefix must precede durable model settlement');
-      if (count % 2) assert.equal((await jsonRows(join(root, 'tool-admissions.jsonl'))).length, (count - 1) / 2,
+      if (!values.memory && count % 2) assert.equal((await jsonRows(join(root, 'tool-admissions.jsonl'))).length, (count - 1) / 2,
         'An unsealed streamed tool preview cannot dispatch the tool');
       return;
     }
@@ -79,6 +82,9 @@ const server = createServer(async (request, response) => {
       response.end(canonical({ jsonrpc: '2.0', id: body.id, result })); return;
     }
     const body = JSON.parse(raw);
+    if (values.memory) {
+      await respondToMemoryProof({ request, response, body, requests, frozen: values.frozen, waitForPublicPrefix }); return;
+    }
     if (values.automation && respondToAutomationProof(body, response, automationCalls)) return;
     requests.push(body);
     assert.equal(request.url, '/v1/chat/completions'); assert.equal(body.model, 'pinned');
@@ -122,6 +128,7 @@ const server = createServer(async (request, response) => {
       finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) {
     failures.push(error);
+    if (values.memory) await writeFile(join(root, 'memory-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (values.automation) await writeFile(join(root, 'automation-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (!response.headersSent) response.writeHead(500);
     response.end('verification failed');
@@ -186,6 +193,7 @@ try {
     `        automation: ${values.automation}`,
     `        recovery: ${values.recovery}`,
     `        hooks: ${values.hooks}`,
+    `        memory: ${values.memory}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -196,6 +204,10 @@ try {
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_PYTHON: '/unavailable/python', AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
+  if (values.memory) {
+    await runMemoryProof({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures, frozen: values.frozen });
+    harness = null;
+  } else {
   let session = harness.session('native-studio-session');
   for (let turn = 1; turn <= 2; turn++) {
     let result;
@@ -383,6 +395,7 @@ try {
     assert.equal(callbacks.length, 9); assert.equal(new Set(callbacks.map(row => row.operationKey + ':' + row.runId)).size, 9);
     assert.ok(callbacks.every(row => row.agentId === agentId && row.sessionId === 'native-studio-session'));
     console.log('Studio Native Hooks PASS: trusted exact-Agent registration; durable Pre/Post/Stop intents and receipts; actual rewritten workspace bytes; no denied write; original provider arguments retained; no callbacks on default DSH.');
+  }
   }
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
