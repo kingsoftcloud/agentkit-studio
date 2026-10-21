@@ -64,7 +64,7 @@ export function createDeliveryPages({
         } catch (reason) { if (!stopped) setError(reason?.message || '部署记录读取失败'); }
         finally { running = false; }
       };
-      void poll(); const timer = setInterval(poll, 5000);
+      void poll(); const timer = setInterval(() => { if (!document.hidden) void poll(); }, 5000);
       return () => { stopped = true; clearInterval(timer); };
     }, []);
     const inspect = async () => {

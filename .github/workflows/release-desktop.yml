@@ -8,9 +8,9 @@ on:
         required: true
         type: string
       studio_checkout_ref:
-        description: "Private Studio branch or tag that contains studio_ref (checkout transport only)"
+        description: "Branch or tag that contains studio_ref (checkout transport only; must contain the immutable SHA)"
         required: true
-        default: codex/agentkit-studio-p1-1
+        default: main
         type: string
       dsh_ref:
         description: "DSH tag or commit used by the Studio release"
