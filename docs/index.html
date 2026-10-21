@@ -121,6 +121,14 @@ section.band{position:relative;z-index:1;padding:104px 0}
 .band-head.center .lead{margin-left:auto;margin-right:auto}
 
 .grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:44px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:44px}
+.grid3 .card{display:flex;flex-direction:column}
+.grid3 .card .demo{margin-top:auto}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:44px}
+.rt-tag{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border-radius:999px;font-size:11.5px;font-family:var(--mono);color:#bcd0ff;background:rgba(77,124,255,.12);border:1px solid rgba(77,124,255,.28)}
+.res{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.res span{padding:6px 11px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:12px;color:#c9d3e6}
+.res span b{color:var(--cyan);font-weight:600;margin-left:6px}
 .card{position:relative;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));padding:26px;overflow:hidden;transition:transform .45s var(--ease),border-color .3s,box-shadow .45s}
 .card:hover{transform:translateY(-4px);border-color:var(--line-strong);box-shadow:0 30px 70px rgba(0,0,0,.55)}
 .card h3{margin:0 0 8px;font-size:19px;font-weight:620;letter-spacing:-.01em}
@@ -196,7 +204,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--line);padding:34px
 .reveal[data-delay="3"]{transition-delay:.24s}
 
 @media(max-width:960px){
-  .grid4,.steps,.dev,.dl-grid{grid-template-columns:1fr}
+  .grid4,.grid3,.grid2,.steps,.dev,.dl-grid{grid-template-columns:1fr}
   .steps::before{display:none}
   .app-body{grid-template-columns:1fr}
   .app-side{display:none}
@@ -222,7 +230,8 @@ footer{position:relative;z-index:1;border-top:1px solid var(--line);padding:34px
     </a>
     <nav class="links" aria-label="主导航">
       <a href="#capabilities">能力</a>
-      <a href="#workflow">工作流</a>
+      <a href="#runtimes">运行时</a>
+      <a href="#cloud">云端</a>
       <a href="#developers">开发者</a>
       <a href="#download">下载</a>
     </nav>
@@ -237,7 +246,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--line);padding:34px
   <section class="wrap hero">
     <span class="badge"><span class="dot"></span>开放预览 · DSH 运行时 0.2.1-rc.2</span>
     <h1>把想法交给 Agent<br /><span class="glow">结果直接可交付</span></h1>
-    <p class="sub">整理资料、分析数据、编写代码、运行自动化任务。<strong>以插件为积木</strong>，把每一次对话沉淀成可复用的工作流。</p>
+    <p class="sub">在 <strong>三种运行时</strong>里构建 Agent，<strong>一键部署到云端 7×24 常驻</strong>，并直接绑定星源 AgentKit 的知识库、记忆库、MCP 与 Skill 中心。</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/AgentKit-Studio-mac-arm64.zip">↓ 下载 macOS 版</a>
       <a class="btn btn-ghost" href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/AgentKit-Studio-win-x64.exe">↓ 下载 Windows 版</a>
@@ -268,7 +277,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--line);padding:34px
                 <li>整理资料 —— 汇总文档、生成简报、导出成果</li>
                 <li>分析数据 —— 读取表格、计算指标、画图说明</li>
                 <li>编写代码 —— 读仓库、改实现、跑测试</li>
-                <li>自动化任务 —— 定时执行、失败重试、留存记录</li>
+                <li>部署上云 —— 三种运行时，7×24 常驻</li>
               </ul>
             </div>
             <div class="msg user" style="animation-delay:.9s">可以介绍一下你能做什么吗？</div>
@@ -343,6 +352,76 @@ footer{position:relative;z-index:1;border-top:1px solid var(--line);padding:34px
               <div class="tl"><span class="ico2">●</span><span class="name">test · 全量通过</span><span class="track"><i style="width:96%;background:linear-gradient(90deg,#4be08f,#7ee7f2)"></i></span><span class="ms">6.4s</span></div>
             </div>
           </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="runtimes">
+    <div class="wrap">
+      <div class="band-head center reveal">
+        <span class="eyebrow">RUNTIMES</span>
+        <h2>三种运行时，同一个工作台</h2>
+        <p class="lead">同一个 Agent 定义，可以跑在三种运行时上：DSH 原生、自研 AgentKit Harness，或 Codex。按任务挑运行时，不必换工具、不必重写编排。</p>
+      </div>
+      <div class="grid3">
+        <article class="card reveal">
+          <span class="rt-tag">dsh-native</span>
+          <h3 style="margin-top:14px">DSH Native Harness</h3>
+          <p>DSH 原生运行时。内置工具、会话与补丁体系完整，适合日常研发、长上下文与需要精细控制的任务。</p>
+          <div class="demo"><div class="code">runtime: <span class="s">"dsh-native"</span>
+tools:   内置工具集
+loop:    可审阅 · 可回放</div></div>
+        </article>
+        <article class="card reveal" data-delay="1">
+          <span class="rt-tag">harness</span>
+          <h3 style="margin-top:14px">AgentKit Harness</h3>
+          <p>自研 Harness 运行时。可插拔的 Agent 循环，工具集、上下文策略与运行环境都能按团队口径定制。</p>
+          <div class="demo"><div class="code">runtime: <span class="s">"harness"</span>
+plugins: 可插拔
+deploy:  本地 / 云端一致</div></div>
+        </article>
+        <article class="card reveal" data-delay="2">
+          <span class="rt-tag">codex</span>
+          <h3 style="margin-top:14px">Codex Agent</h3>
+          <p>Codex 运行时。面向代码任务，直接接入仓库、测试与工具调用，把改动留在可审阅的轨迹里。</p>
+          <div class="demo"><div class="code">runtime: <span class="s">"codex"</span>
+scope:   仓库 · 测试
+trace:   工具调用可查</div></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="cloud">
+    <div class="wrap">
+      <div class="band-head center reveal">
+        <span class="eyebrow">CLOUD</span>
+        <h2>部署到云端，7×24 常驻</h2>
+        <p class="lead">本地跑通的 Agent 一键部署到云端持续运行，按计划触发、随时调用；同时直接绑定星源 AgentKit 上的各项资源。</p>
+      </div>
+      <div class="grid2">
+        <article class="card reveal">
+          <h3>一键上云，长期在线</h3>
+          <p>把 Agent 部署为云上服务：7×24 常驻、定时调度、失败可回滚，本地与云端用同一份定义。</p>
+          <div class="demo">
+            <div class="demo-row"><span class="ico">●</span>research-agent<span class="ok">运行中</span></div>
+            <div class="code">region   cn-beijing-6
+replicas 1
+schedule 每 6 小时
+status   7×24 常驻</div>
+          </div>
+        </article>
+        <article class="card reveal" data-delay="1">
+          <h3>绑定星源 AgentKit 资源</h3>
+          <p>知识库、记忆库、MCP 与 Skill 中心统一在星源 AgentKit 控制台管理，Studio 里直接选、直接绑。</p>
+          <div class="res">
+            <span>知识库<b>RAG</b></span>
+            <span>记忆库<b>长期</b></span>
+            <span>MCP<b>工具</b></span>
+            <span>Skill 中心<b>复用</b></span>
+          </div>
+          <a class="btn btn-ghost" style="margin-top:18px" href="https://agentkit.console.ksyun.com/">打开星源 AgentKit 控制台 ↗</a>
         </article>
       </div>
     </div>
@@ -428,7 +507,7 @@ $ npm install && npm test</pre>
 <footer>
   <div class="wrap foot">
     <span class="brand-min"><span class="mark" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none"><path d="M32 18v10M26 36l-9 5M38 36l9 5" stroke="#06101f" stroke-width="4" stroke-linecap="round"/><circle cx="32" cy="32" r="8" fill="#06101f"/></svg></span>© 2026 AgentKit Studio · 开放、可组合、可审阅</span>
-    <span><a href="https://github.com/kingsoftcloud/agentkit-studio">GitHub</a> · <a href="https://www.deepseek.com/harness/">设计参考：DeepSeek Harness</a></span>
+    <span><a href="https://agentkit.console.ksyun.com/">星源 AgentKit 控制台</a> · <a href="https://github.com/kingsoftcloud/agentkit-studio">GitHub</a></span>
   </div>
 </footer>
 
