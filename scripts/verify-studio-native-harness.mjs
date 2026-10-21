@@ -8,11 +8,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
-  'mount-host': { type: 'boolean', default: false } } });
+  'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
+assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
+const exactInteger = 9007199254740993n, mcpEffects = [];
 console.log(`Studio Native Host evidence: ${root}`);
 const jsonRows = async path => (await readFile(path, 'utf8').catch(error => {
   if (error.code === 'ENOENT') return ''; throw error;
@@ -39,9 +42,37 @@ async function waitForPublicPrefix(count, expected) {
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
+    if (values['mcp-schema'] && request.url === '/mcp') {
+      if (request.method !== 'POST') { response.writeHead(405); response.end(); return; }
+      const body = parseNativeJson(raw);
+      if (body.id === undefined) { response.writeHead(202); response.end(); return; }
+      let result;
+      const exactId = { type: 'integer', minimum: exactInteger, maximum: exactInteger };
+      if (body.method === 'initialize') result = { protocolVersion: body.params.protocolVersion,
+        serverInfo: { name: 'studio-native-schema', version: '1' }, capabilities: { tools: {} } };
+      else if (body.method === 'tools/list') result = { tools: [{ name: 'write_workspace_file', description: 'Publish the requested marker.',
+        inputSchema: { type: 'object', properties: { id: exactId, path: { type: 'string' }, content: { type: 'string' } },
+          required: ['id', 'path', 'content'], additionalProperties: false },
+        outputSchema: { type: 'object', properties: { id: exactId }, required: ['id'] } }] };
+      else if (body.method === 'tools/call') {
+        const args = body.params.arguments;
+        assert.equal(body.params.name, 'write_workspace_file'); assert.equal(args.id, exactInteger);
+        assert.match(args.path, /^published-[12]\.txt$/);
+        mcpEffects.push(args.path);
+        await writeFile(join(root, 'workspace', args.path), args.content);
+        result = { content: [{ type: 'text', text: 'Marker published.' }], structuredContent: { id: exactInteger }, _meta: { audit: 'private-mcp-schema-audit' } };
+      } else throw Error(`Unexpected MCP method ${body.method}`);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(canonical({ jsonrpc: '2.0', id: body.id, result })); return;
+    }
     const body = JSON.parse(raw); requests.push(body);
     assert.equal(request.url, '/v1/chat/completions'); assert.equal(body.model, 'pinned');
     assert.deepEqual(body.tools.map(tool => tool.function.name), ['write_workspace_file']);
+    if (values['mcp-schema']) {
+      const parameters = parseNativeJson(raw).tools[0].function.parameters;
+      assert.equal(parameters.properties.id.minimum, exactInteger); assert.equal(parameters.properties.id.maximum, exactInteger);
+      assert.equal(JSON.stringify(body.messages).includes('private-mcp-schema-audit'), false);
+    }
     const count = requests.length, turn = Math.ceil(count / 2);
     if (count === 2 || count === 4) {
       assert.equal(body.messages.filter(message => message.role === 'tool').at(-1).content, `Published published-${turn}.txt (policy view)`);
@@ -55,8 +86,10 @@ const server = createServer(async (request, response) => {
       assert.ok(body.messages.some(message => message.role === 'user' && message.content === 'Live instruction for published-1.txt'));
     }
     if (count === 6) assert.match(JSON.stringify(body.messages.filter(message => message.role === 'tool').at(-1)), /Verification policy denied this write/);
+    const args = { path: turn === 3 ? 'denied.txt' : `published-${turn}.txt`, content: `publication-${turn}`,
+      ...(values['mcp-schema'] ? { id: exactInteger } : {}) };
     const delta = count % 2 ? { tool_calls: [{ index: 0, id: 'reused-provider-id', type: 'function',
-      function: { name: 'write_workspace_file', arguments: JSON.stringify({ path: turn === 3 ? 'denied.txt' : `published-${turn}.txt`, content: `publication-${turn}` }) } }] }
+      function: { name: 'write_workspace_file', arguments: values['mcp-schema'] ? canonical(args) : JSON.stringify(args) } }] }
       : { content: turn === 3 ? 'Policy denied the write.' : `Native turn ${turn} completed.` };
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     const complete = delta.content;
@@ -123,7 +156,9 @@ try {
     '    - id: studio-native-host-proof', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures', fixture)).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`, `        repository: ${JSON.stringify(installed)}`,
     `        mountHost: ${values['mount-host']}`,
-    `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`, '',
+    `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
+    ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
+    '',
   ].join('\n'));
   const patches = values['mount-host'] ? [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch] : [patch];
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches, dshHome: join(root, 'home'),
@@ -160,6 +195,7 @@ try {
   assert.equal(delegated.finalResponse, 'Default engine completed.');
   await harness.close(); harness = null;
   assert.deepEqual(failures, []); assert.equal(requests.length, 6);
+  if (values['mcp-schema']) assert.deepEqual(mcpEffects, ['published-1.txt', 'published-2.txt']);
   const admissions = (await readFile(join(root, 'tool-admissions.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   assert.equal(admissions.length, 3); assert.equal(new Set(admissions.map(row => row.callId)).size, 3);
   assert.deepEqual(admissions.map(row => row.name), ['write_workspace_file', 'write_workspace_file', 'write_workspace_file']);
@@ -203,6 +239,17 @@ try {
     assert.equal(new Set(runs.map(run => reopened.load(scope, run.runId).configuration.contract.revision)).size, 3);
     const evidence = await createNativeArtifactStore({ directory: join(root, 'studio/native-harness/verification-evidence'), scope });
     for (const run of runs) {
+      if (values['mcp-schema']) {
+        const record = reopened.load(scope, run.runId);
+        assert.equal(record.configuration.tools[0].parameters.properties.id.minimum, exactInteger);
+        const receipt = record.receipts.flatMap(receipt => receipt.result.results ?? []).find(result => result.content?.structuredContent);
+        if (receipt) assert.equal(receipt.content.structuredContent.id, exactInteger);
+        else {
+          assert.equal(run.goal, 'Attempt the denied write and report its denial.');
+          assert.ok(record.receipts.some(receipt => receipt.result.results?.some(result => result.status === 'error')),
+            'only the policy-denied Run may omit a remote receipt');
+        }
+      }
       assert.equal(run.outcome, 'unverified');
       assert.equal(run.verification.checks[0].verifierId, 'studio.delivery-evidence-rejection');
       assert.equal(run.verification.checks[0].status, 'not_run');
@@ -222,7 +269,7 @@ try {
     assert.equal(probes.length, 2); assert.ok(probes.some(probe => probe.source === 'resume'));
     assert.ok(probes.every(probe => probe.unauthorizedStatus === 401 && probe.compatible));
   }
-  console.log(`Studio Native Host PASS: ${values['mount-host'] ? 'full mountStudioHost with real authenticated HTTP control RPC, production preset admission and startup restoration' : 'production Host factory and runtime plugin'}, actual packed Studio files, public Host prompt import, Node-only PATH, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual model HTTP requests, 6 public live streams before provider completion with exact durable Session stream settlement, 2 Node workspace writes, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.`);
+  console.log(`Studio Native Host PASS: ${values['mount-host'] ? 'full mountStudioHost with real authenticated HTTP control RPC, production preset admission and startup restoration' : 'production Host factory and runtime plugin'}, actual packed Studio files, public Host prompt import, Node-only PATH, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual model HTTP requests, 6 public live streams before provider completion with exact durable Session stream settlement, ${values['mcp-schema'] ? '2 MCP marker effects with exact model/input/output schemas and persisted numeric receipts' : '2 Node workspace writes'}, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.`);
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });

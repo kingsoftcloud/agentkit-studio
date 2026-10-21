@@ -8,6 +8,7 @@ import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuilti
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 import { nativeMcpOutcome } from './native-mcp-output.mjs';
 import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
+import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -32,7 +33,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     evidenceRoot: join(stateDir, 'browser-evidence') });
   const browserName = browserTools.definition.name;
   formal.set(browserName, browserTools.definition);
-  const declared = config.toolContracts ?? [];
+  const declared = structuredClone(config.toolContracts ?? []);
   const contracts = new Map(declared.filter(contract => contract.enabled !== false).map(contract => [contract.name, contract]));
   const boundNames = names(config.toolBindings).flatMap(ref => {
     const matching = declared.filter(contract => contract.name === ref || contract.resourceId === ref);
@@ -45,6 +46,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const mcpContracts = new Map([...contracts].filter(([name, contract]) => allowed.has(name) && contract.executor === 'mcp'
     && String(contract.mcpResourceId || contract.resourceId || '').trim()));
   invariant(!mcpContracts.size || typeof executeMcpTool === 'function', 'studio_native_mcp_executor_unavailable');
+  const mcpSchemas = new Map([...mcpContracts].filter(([, contract]) => contract.nativeMcpSchema !== undefined)
+    .map(([name, contract]) => [name, bindNativeMcpSchema(contract.nativeMcpSchema)]));
   let closed = false, closing, disposers = [];
   const close = () => {
     if (closing) return closing;
@@ -62,7 +65,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     disposers = [...builtin, ...mcpContracts.keys()].map(name => {
       const definition = mcpContracts.has(name) ? mcpContracts.get(name) : formal.get(name) ?? contracts.get(name);
       return ctx.tools.register({ name, description: definition.description ?? '',
-        parameters: definition.parameters ?? { type: 'object', properties: {} },
+        parameters: structuredClone(mcpSchemas.get(name)?.registryParameters ?? definition.parameters ?? { type: 'object', properties: {} }),
         output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
         execute: async (args, exec) => {
           const invocation = calls.get(String(exec.callId));
@@ -86,7 +89,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             const contract = mcpContracts.get(name);
             outcome = nativeMcpOutcome(await executeMcpTool({ agentId: config.agentId,
               resourceId: String(contract.mcpResourceId || contract.resourceId).trim(), name,
-              arguments: args, signal: exec.signal, callId: exec.callId, agent: exec.agent, resultFormat: 'mcp-result/v1' }));
+              arguments: args, signal: exec.signal, callId: exec.callId, agent: exec.agent, resultFormat: 'mcp-result/v1' }),
+              { validateOutput: mcpSchemas.get(name)?.validateOutput });
           } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
             : formal.has(name) ? await state(exec.agent).execute({ ...invocation.request, signal: exec.signal })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
@@ -104,6 +108,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     argumentEncoding,
     mcpResultContract: mcpContracts.size ? 'mcp-result/v1' : null,
     mcpJsonCodec: mcpContracts.size ? NATIVE_MCP_JSON_CODEC : null,
+    mcpSchemaContract: mcpSchemas.size ? NATIVE_MCP_SCHEMA_CONTRACT : null,
+    mcpBindingDigest: mcpContracts.size ? hash([...mcpContracts].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([name, contract]) => ({
+      name, resourceId: String(contract.mcpResourceId || contract.resourceId).trim(),
+      schema: contract.nativeMcpSchema ?? { parameters: contract.parameters ?? { type: 'object', properties: {} } },
+    }))) : null,
     releaseSession: request => browserTools.releaseSession(request),
     /** Trusted verifier only: every concrete cold action still runs the DSH permission pipeline. */
     async verifyBrowserPage(agent, request) {
@@ -138,9 +147,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       return [...selected].map(name => {
         const schema = schemas.get(name);
         invariant(schema, `studio_native_tool_schema_missing:${name}`);
+        const mcpSchema = mcpSchemas.get(name);
+        if (mcpSchema) invariant(canonical(schema.parameters) === canonical(mcpSchema.registryParameters), 'studio_native_mcp_schema_binding_changed');
         const exact = builtinNames.has(name) ? formal.get(name) : null;
         return exact ? structuredClone(exact) : {
-          name, description: schema.description || '', parameters: structuredClone(schema.parameters),
+          name, description: schema.description || '', parameters: structuredClone(mcpSchema?.input ?? schema.parameters),
           // Unknown external effects are serialized and never granted safe-read
           // recovery from a catalog hint. Actual permissions remain in DSH.
           readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 60_000,

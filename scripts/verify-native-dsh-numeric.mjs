@@ -34,7 +34,8 @@ const server = createServer(async (request, response) => {
       else if (input.method === 'tools/list') result = { tools: [{ name: 'echo', description: 'Echo exact JSON numbers.',
         ...(values['studio-mcp'] ? { outputSchema: { type: 'object', required: ['id'],
           properties: { id: { type: 'integer', minimum: expected.id, maximum: expected.id } } } } : {}),
-        inputSchema: { type: 'object', properties: { id: { type: 'integer' }, zero: { type: 'number' }, float: { type: 'number' }, ordinary: { type: 'number' },
+        inputSchema: { type: 'object', properties: { id: { type: 'integer',
+          ...(values['studio-mcp'] ? { minimum: expected.id, maximum: expected.id } : {}) }, zero: { type: 'number' }, float: { type: 'number' }, ordinary: { type: 'number' },
           record: { type: 'object', properties: { rawJSON: { type: 'string' } }, required: ['rawJSON'], additionalProperties: false } },
         required: ['id', 'zero', 'float', 'ordinary', 'record'], additionalProperties: false } }] };
       else if (input.method === 'tools/call') {
@@ -52,6 +53,11 @@ const server = createServer(async (request, response) => {
       return;
     }
     assert.equal(request.url, '/v1/chat/completions');
+    if (values['studio-mcp']) {
+      const parameters = parseNativeJson(body).tools.find(tool => tool.function.name === toolName).function.parameters;
+      assert.equal(parameters.properties.id.minimum, expected.id); assert.equal(parameters.properties.id.maximum, expected.id);
+      assert.equal(Object.hasOwn(parameters, 'x-agentkit-native-input-schema-json'), false);
+    }
     modelRequests.push(input);
     const delta = modelRequests.length === 1 ? { role: 'assistant', tool_calls: [{ index: 0, id: 'exact-call', type: 'function',
       function: { name: toolName, arguments: exact } }] } : { role: 'assistant', content: 'Exact numeric turn completed.' };

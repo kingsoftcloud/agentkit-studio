@@ -8,6 +8,7 @@ import { createStudioNativeHarness } from '../../src/host/services/native-harnes
 import { mountRuntimeBridge } from '../../src/host/runtime-bridge.mjs';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';
+import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
 
 export const name = 'studio-native-host-verification';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets'];
@@ -38,7 +39,8 @@ async function applyProof(ctx, options) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
-      bindings: { modelProfileIds: ['fixture'], tools: ['write_workspace_file'] } });
+      bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
+        ? { mcpServers: ['native-schema-fixture'] } : { tools: ['write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
   let presetId = 'studio-native-proof';
@@ -55,7 +57,10 @@ async function applyProof(ctx, options) {
       modelName: 'pinned', baseUrl: options.modelUrl, default: true, credentialName: 'STUDIO_NATIVE_FIXTURE_KEY' }],
       modelProfileKeys: { STUDIO_NATIVE_FIXTURE_KEY: 'sk-studio-fixture-secret' } }), { mode: 0o600 });
     const { mountStudioHost } = await import('../../src/host/bootstrap.mjs');
-    await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home,
+    await mountStudioHost(ctx, { configurationHome: home, ...(options.mcpUrl ? {
+      resourceAdapterFactory: deps => createLocalResourceAdapters({ ...deps, resourceStore: { get: id => id === 'native-schema-fixture'
+        ? { resourceId: id, endpointUrl: options.mcpUrl } : deps.resourceStore?.get(id) } }),
+    } : {}), env: { AGENTKIT_HOME: home,
       AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } });
     presetId = dshPresetId(record.metadata.id, record.metadata.revision);
   } else {

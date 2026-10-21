@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { NativeKernel, MemoryRunStore, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
 function setup(t, names = ['write_workspace_file'], contracts = [], options = {}) {
   const root = mkdtempSync(join(tmpdir(), 'studio-native-tools-')), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -34,6 +35,47 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   return { gateway, agent, request, registry, workspaceRoot, calls, ctx,
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
+
+for (const invalidOutput of [false, true]) test(`Native MCP pins exact input/output schemas through the ledger (invalid output: ${invalidOutput})`, async t => {
+  const integer = 9007199254740993n;
+  const parameters = { type: 'object', required: ['id'], properties: { id: { type: 'integer', minimum: integer, maximum: integer } } };
+  const nativeMcpSchema = JSON.parse(JSON.stringify(snapshotNativeMcpSchema({ inputSchema: parameters, outputSchema: parameters })));
+  let effects = 0, models = 0;
+  const reply = { content: [], structuredContent: { id: invalidOutput ? integer - 1n : integer }, _meta: { private: 'do-not-send' } };
+  const contract = { name: 'exact', executor: 'mcp', resourceId: 'remote', nativeMcpSchema };
+  const host = setup(t, ['exact'], [contract], {
+    argumentEncodings: ['dsh.raw-json-number/v1'], executeMcpTool: async request => {
+      effects++; assert.equal(request.resourceId, 'remote');
+      assert.equal(JSON.stringify(request.arguments), '{"id":9007199254740993}'); return reply;
+    },
+  });
+  contract.resourceId = 'changed-after-binding';
+  contract.nativeMcpSchema.outputJson = '{"not":{}}';
+  const request = host.request({ id: integer }, 'exact');
+  assert.deepEqual(request.definition.parameters, parameters);
+  const { config, snapshot } = fixture({ tools: [request.definition] }), store = new MemoryRunStore();
+  const kernel = new NativeKernel({ store, digest, owner: 'worker', ports: { ...host.gateway.forAgent(host.agent), model: {
+    generate: async input => {
+      models++;
+      if (models <= 2) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ ...request.call,
+        callId: `schema-${models}`, arguments: { id: models === 1 ? integer - 1n : integer } }] };
+      const results = input.messages.filter(message => message.role === 'tool');
+      assert.match(results[0].content, /invalid_arguments/);
+      assert.equal(results[1].content.includes('mcp_output_schema_invalid'), invalidOutput);
+      assert.equal(results[1].content.includes('do-not-send'), false);
+      return { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] };
+    },
+  } } });
+  kernel.start(snapshot, config);
+  const done = await kernel.runUntilIdle(scope, 'run');
+  assert.equal(done.phase, 'completed'); assert.equal(effects, 1); assert.equal(host.calls.length, 1);
+  const receipts = store.load(scope, 'run').receipts.flatMap(receipt => receipt.result.results ?? []);
+  const receipt = receipts.find(result => result.content?.structuredContent);
+  assert.deepEqual(receipt.content, reply);
+  assert.equal(receipt.status, invalidOutput ? 'error' : 'ok');
+  await kernel.runUntilIdle(scope, 'run'); assert.equal(effects, 1); assert.equal(models, 3);
+  assert.throws(() => host.gateway.definitions(host.agent, [{ name: 'exact', parameters: { type: 'object' } }]), /studio_native_mcp_schema_binding_changed/);
+});
 
 test('Native owns revision-bound MCP receipts while post-policy output controls the model view', async t => {
   const invoked = [], reply = { content: [{ type: 'text', text: 'known answer' }], structuredContent: { count: 7 }, isError: false };

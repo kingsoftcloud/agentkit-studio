@@ -1,8 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { nativeMcpOutcome } from '../src/providers/native-mcp-output.mjs';
+import { nativeMcpSchemaValidator } from '../src/providers/native-mcp-json.mjs';
 
 const text = value => ({ type: 'text', text: value });
+test('a missing required structured result stays a known error receipt while declared remote errors remain usable', () => {
+  const validateOutput = nativeMcpSchemaValidator.getValidator({ type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] });
+  const reply = { content: [text('Unvalidated remote assertion')], _meta: { privateAudit: 'hidden' } };
+  const outcome = nativeMcpOutcome(reply, { validateOutput });
+  assert.equal(outcome.status, 'error'); assert.deepEqual(outcome.content, reply);
+  assert.match(outcome.context.content, /mcp_output_schema_invalid/);
+  assert.equal(outcome.context.content.includes('Unvalidated remote assertion'), false);
+  assert.equal(outcome.context.content.includes('hidden'), false);
+  const known = nativeMcpOutcome({ ...reply, isError: true }, { validateOutput });
+  assert.equal(known.status, 'error'); assert.equal(known.context.content, 'Unvalidated remote assertion');
+});
 test('plain MCP text and only the exact FastMCP string mirror flatten without discarding the receipt', () => {
   const reply = { content: [text('hello')], structuredContent: { result: 'hello' }, isError: false };
   const outcome = nativeMcpOutcome(reply);

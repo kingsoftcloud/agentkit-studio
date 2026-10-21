@@ -131,7 +131,12 @@ for await(const line of createInterface({input:process.stdin})) {
   assert.deepEqual(await adapters.callMcpTool(binding, 'exact'), [{ type: 'text', text: 'exact' }]);
   assertExact((await adapters.callMcpTool(binding, 'exact', {}, { resultFormat: 'mcp-result/v1' })).structuredContent);
   if (mode !== 'stdio') assert.equal(initializations, 2, 'ordinary and Native connections are independently reused');
+  const snapshot = await adapters.listMcpTools(binding, { jsonCodec: NATIVE_MCP_JSON_CODEC, snapshot: true });
+  assert.equal(snapshot[0].inputSchema.properties.id.minimum, integer);
+  assertExact((await adapters.callMcpTool(binding, 'exact', {}, { resultFormat: 'mcp-result/v1' })).structuredContent);
+  if (mode !== 'stdio') assert.equal(initializations, 3, 'catalog snapshots cannot close either active caller');
   await assert.rejects(adapters.callMcpTool(binding, 'exact', { invalid: true }, { resultFormat: 'mcp-result/v1' }),
     error => error.code === 'MCP_TOOL_FAILED' && /output schema/.test(error.details.cause));
   await assert.rejects(adapters.listMcpTools(binding, { jsonCodec: 'unknown' }), { code: 'MCP_JSON_CODEC_INVALID' });
+  await assert.rejects(adapters.listMcpTools(binding, { snapshot: 'yes' }), { code: 'MCP_SNAPSHOT_INVALID' });
 });

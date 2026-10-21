@@ -290,6 +290,10 @@ export function apply(ctx, config = {}) {
     || config.runtime !== 'harness' || config.local !== true)) {
     throw Object.assign(new Error('Unsupported Native Harness engine contract'), { code: 'STUDIO_NATIVE_ENGINE_CONTRACT_UNSUPPORTED' });
   }
+  if (config.nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT
+    && config.toolContracts?.some(contract => contract.nativeMcpSchema !== undefined)) {
+    throw Object.assign(new Error('Native MCP schemas require the Native turn engine'), { code: 'STUDIO_NATIVE_MCP_SCHEMA_ENGINE_REQUIRED' });
+  }
   const bridge = resolveRuntimeBridge(typeof ctx.get === 'function' ? ctx : undefined);
   const routeScope = bridge.createRouteScope();
   const routes = new Map();

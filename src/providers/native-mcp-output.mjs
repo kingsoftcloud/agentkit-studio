@@ -1,11 +1,17 @@
 import { canonical, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 
 /** Project a known MCP receipt without fetching resource URIs or exposing binary data as text. */
-export function nativeMcpOutcome(result) {
+export function nativeMcpOutcome(result, { validateOutput } = {}) {
   invariant(result && typeof result === 'object' && !Array.isArray(result) && Array.isArray(result.content)
     && (result.isError === undefined || typeof result.isError === 'boolean'), 'studio_native_mcp_result_invalid');
   canonical(result);
   const content = structuredClone(result), structured = result.structuredContent, blocks = result.content;
+  const validation = !validateOutput ? null : structured === undefined
+    ? result.isError ? null : { valid: false, errorMessage: 'The tool did not return the required structured content.' }
+    : validateOutput(structured);
+  if (validation && !validation.valid) return { status: 'error', content,
+    context: { content: canonical({ code: 'mcp_output_schema_invalid',
+      message: String(validation.errorMessage || 'The tool output did not match its bound schema.').slice(0, 1000) }) } };
   const textOnly = blocks.length > 0 && blocks.every(block => block?.type === 'text' && typeof block.text === 'string');
   const empty = structured == null || Array.isArray(structured) && !structured.length
     || structured && typeof structured === 'object' && !Array.isArray(structured) && !Object.keys(structured).length;

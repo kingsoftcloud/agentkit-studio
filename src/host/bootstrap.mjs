@@ -5,6 +5,9 @@ import { hostFetch } from '../http-fetch.mjs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { NATIVE_MCP_JSON_CODEC } from '../providers/native-mcp-json.mjs';
+import { snapshotNativeMcpSchema } from '../providers/native-mcp-schema.mjs';
+import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 import { registerAuthoringTools } from '../authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from '../agent-preset-admission.mjs';
 import { createStartupReconciler } from '../preset-recovery.mjs';
@@ -216,7 +219,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
           page = await (await serverClientPromise).listCatalogResources({ kind: 'tool', limit: 200 });
         } catch (error) {
           // A local Agent can still be admitted when the optional catalog
-          // process is temporarily unavailable. The Python builtin executor
+          // process is temporarily unavailable. The bound runtime executor
           // remains the final authority and will fail closed for unknown names;
           // this avoids turning a valid binding into “暂不可读取”.
           if (error?.code !== 'CATALOG_UNAVAILABLE' && error?.code !== 'SERVER_UNAVAILABLE') throw error;
@@ -263,6 +266,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         }
       }
       const mcpContracts = [];
+      const nativeMcp = runtimeEnv.AGENTKIT_STUDIO_NATIVE_HARNESS === NATIVE_DSH_TURN_CONTRACT
+        && agent?.spec?.runtime?.type === 'harness';
       const seenNames = new Set(builtinContracts.map(contract => String(contract?.name || '')));
       const adapters = mcpBindings.length ? await resourceAdaptersPromise : null;
       for (const binding of mcpBindings) {
@@ -272,7 +277,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
           error.code = 'MCP_ID_MISSING';
           throw error;
         }
-        const listed = await adapters.listMcpTools(binding);
+        const listed = await adapters.listMcpTools(binding,
+          nativeMcp ? { jsonCodec: NATIVE_MCP_JSON_CODEC, snapshot: true } : undefined);
         for (const tool of listed || []) {
           const name = String(tool?.name || '').trim();
           if (!name) continue;
@@ -288,7 +294,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
             mcpResourceId: resourceId,
             name,
             description: String(tool.description || ''),
-            parameters: tool.inputSchema || tool.parameters || { type: 'object', properties: {} },
+            ...(nativeMcp ? { nativeMcpSchema: snapshotNativeMcpSchema(tool) }
+              : { parameters: tool.inputSchema || tool.parameters || { type: 'object', properties: {} } }),
             executor: 'mcp',
             timeoutSeconds: 120,
             sideEffect: 'unknown',

@@ -190,9 +190,13 @@ Native 自己注册 revision 绑定的 MCP 工具，经过同一 DSH pre/guard/a
 
 源码安装使用 `pnpm install --frozen-lockfile` 应用补丁。`build:mcp` 及既有 prepack/pretest/precheck 会把修补后的客户端和完整依赖许可构建为 `dist/native-mcp-client.*`，随 Studio 发布；桌面 npm 安装使用这个产物，不依赖消费者传播 pnpm 补丁。构建时缺少补丁会报错，不能静默退回有损解析。真实四种传输测试验证数值 token、分片、Schema、普通/Native 连接隔离和现有 stdio/SSE 凭证行为。
 
-仍待闭环的是远端输入/输出 Schema 在 Studio 资源目录、预设配置和 DSH schema 投影间的精确传递。Host 的 `listMcpTools(binding, {jsonCodec: 'agentkit.native-json-integer/v1'})` 可取得精确 Schema，但尚未替换产品预设的普通目录读取；DSH 自带的另一套 MCP 插件也仍使用普通数字解析。因此本阶段只关闭生产完整结果路径的数字精度缺口，不能称为整个 MCP 工具链已无损。
+Native 产品预设现使用 `listMcpTools(binding, {jsonCodec: 'agentkit.native-json-integer/v1', snapshot: true})` 取得精确 Schema。目录查询使用独立连接，完成后关闭，既不关闭正在调用的连接，也不把远端可变的输出校验缓存带入固定版本执行。输入/输出 Schema 以带版本的 `agentkit.native-mcp-schema/v1` JSON 文本存入工具绑定，经过普通预设序列化后由 Native 解码。Native 使用完整输入 Schema 构造模型请求并在分发前校验参数；固定的输出校验器直接消费已返回的结果，错误回包保留原始回执并记为工具错误，不被误当成未确认的传输结果。
+
+DSH 继续负责权限和执行。对于它无法以普通 JSON 快照表达的数值约束，注册表参数携带完整 Schema 文本注解；Native 模型和校验器使用解码后的原始 Schema。该载体变化会显式拒绝，不支持 Native 引擎的配置也不能退回默认循环。工具绑定在创建时复制，资源 ID 与输入/输出 Schema 的摘要进入宿主绑定摘要，后续修改原配置不能替换已准入的绑定。DSH 自带另一套外部 MCP 插件仍使用普通数字解析，不属于这条固定版本 Schema 路径，不能据此宣称所有 MCP 插件都已完成数字精度迁移。
 
 本阶段定向运行 `native-mcp-json`、`local-resource-adapters`、`mcp-transports`、`native-dsh-tools`、`studio-native-harness` 五个测试模块，Node 26/22 各 68 项通过；追加连接/凭证断言后只复验对应两个模块，各 8 项通过。两个版本的真实 `verify-native-dsh-numeric --studio-mcp` 也通过。`pnpm pack` 和 `check-package.mjs` 检查了实际发布包；`node scripts/verify-native-mcp-package.mjs <Studio tarball>` 在仓库外解包运行，两个 Node 版本均确认没有安装依赖且 `PATH=/no-programs` 时保留精确 HTTP 回包。此隔离证据仅针对发布包里的 MCP 客户端模块，完整 Studio 全新安装验收仍未完成。
+
+固定版本 Schema 的后续验证包含七个相关模块，Node 26/22 各 104 项通过；追加绑定复制与摘要后只复验工具和 Host 两个模块，各 43 项通过。真实 SDK profile 已检查模型请求中的大整数上下界、精确工具参数和输出。`verify-studio-native-harness --mount-host --mcp-schema` 进一步使用实际打包文件挂载完整 Studio Host，经认证 HTTP 控制接口准入 MCP 预设；它验证两轮真实 MCP 文件发布、进程重启和 SQLite 回执恢复、一轮权限拒绝、六次模型请求及其公开流、输入收件箱、后置策略和独立默认 DSH 轮次。固定 Schema 的传递与回执检查覆盖实际产品组装，完整 UI、审批恢复、所有自动化入口及全新无 Python 安装仍需验收。
 
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
 

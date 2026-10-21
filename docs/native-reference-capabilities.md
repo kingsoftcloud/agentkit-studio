@@ -522,9 +522,22 @@ adapter, ledger and next model request, without a second effect on replay.
 The patched client and dependency licenses are bundled into the Studio package
 at build time, so npm consumers do not have to apply a pnpm workspace patch.
 Duplicate object keys, nonfinite values and Native codec limits fail explicitly.
-Exact schema discovery is available through the Host's opt-in list API, but
-remote schema precision across the catalog/preset/DSH schema projection path
-is still open; the alternate DSH MCP plugin also retains its ordinary decoder.
+Production Native admission now discovers schemas with the exact codec on a
+separate snapshot connection and pins both input and output JSON text under
+`agentkit.native-mcp-schema/v1`. Plugin configuration can serialize those strings
+without converting their numbers. Native supplies the decoded input schema to
+its model and validates inputs before dispatch; its pinned output validator
+retains a known invalid result in an error receipt. Discovery cannot populate
+the execution client's mutable output-validator cache or close active callers.
+For numeric constraints DSH cannot represent, its permission/execution registry
+carries the full schema text in an annotation; that carrier is not the Native
+model or validation schema. A changed carrier or incompatible engine fails
+explicitly. Cloned bindings and a digest of resource identities and both
+schemas prevent late configuration mutation from replacing an admitted schema.
+A packed, fully mounted Studio Host proof covers authenticated preset admission,
+exact model schemas, actual MCP effects, policy denial and process restart.
+The alternate external DSH MCP plugin retains its ordinary decoder and does
+not use this revision-bound Native schema path.
 Final repair feedback also excludes audit locations and raw evidence. Durable
 failure fingerprints and subject/environment/diagnostic digests prevent a new
 artifact URI from creating false progress after reattachment. Repairs reset

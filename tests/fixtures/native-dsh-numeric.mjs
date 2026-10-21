@@ -9,6 +9,7 @@ import { nativeDeliveryProjection } from '../../packages/agentkit-harness/src/na
 import { createNativeDshTurnExecutor } from '../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
 import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
+import { snapshotNativeMcpSchema } from '../../src/providers/native-mcp-schema.mjs';
 import { mountRuntimeBridge } from '../../src/host/runtime-bridge.mjs';
 import * as studioRuntime from '../../src/providers/dsh-runtime-plugin.mjs';
 
@@ -23,15 +24,17 @@ export async function apply(ctx, options) {
   ctx.effect(() => () => store.close(), 'Native numeric verification ledger');
   ctx.effect(() => ctx.sessionProjections.register(nativeDeliveryProjection()), 'Native delivery fold');
   const toolName = options.studioMcpUrl ? 'echo' : 'mcp__exact__echo';
-  const contract = { name: toolName, executor: 'mcp', ...(options.studioMcpUrl ? { resourceId: 'exact',
-    parameters: { type: 'object' }, description: 'Echo exact numbers and structured content.' } : {}) };
+  let contract = { name: toolName, executor: 'mcp' };
   const resources = options.studioMcpUrl ? createLocalResourceAdapters({
     resourceStore: { get: async id => id === 'exact' ? { endpointUrl: options.studioMcpUrl } : null },
   }) : null;
   if (resources) ctx.effect(() => () => resources.close(), 'Studio MCP production resources');
-  // Populate the production client's output-schema cache using the same
-  // exact parser as its subsequent complete-result calls.
-  if (resources) await resources.listMcpTools('exact', { jsonCodec: NATIVE_JSON_CODEC });
+  if (resources) {
+    const [tool] = await resources.listMcpTools('exact', { jsonCodec: NATIVE_JSON_CODEC, snapshot: true });
+    // Match production admission's serializable, revision-bound schema carrier.
+    contract = JSON.parse(JSON.stringify({ ...contract, resourceId: 'exact', description: tool.description,
+      nativeMcpSchema: snapshotNativeMcpSchema(tool) }));
+  }
   const bridge = resources ? mountRuntimeBridge(ctx) : null;
   if (bridge) ctx.effect(() => bridge.setResourceToolExecutor(({ resourceId, name, arguments: args, signal, resultFormat }) =>
     resources.callMcpTool(resourceId, name, args, { signal, resultFormat })), 'Studio MCP resource execution');

@@ -150,7 +150,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       credentialRef: detail.credentialRef || config.credentialRef, apiKey: detail.api_key || detail.apiKey };
   }
 
-  async function mcp(binding, jsonCodec) {
+  async function mcp(binding, jsonCodec, cacheId) {
     assertOpen();
     if (jsonCodec !== undefined && jsonCodec !== NATIVE_MCP_JSON_CODEC) throw new LocalResourceError('MCP_JSON_CODEC_INVALID', 'MCP JSON 解析契约无效');
     const exact = jsonCodec === NATIVE_MCP_JSON_CODEC;
@@ -169,7 +169,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const fingerprint = createHash('sha256').update(JSON.stringify({ endpoint, transport: detail.transport, command: detail.command, args: detail.args, ...(stdio ? { environment } : { headers: Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)) }) })).digest('hex');
     // Native and ordinary callers may use the same resource concurrently.
     // Keep their parser/schema contracts on separate connections.
-    const cacheKey = JSON.stringify([key, jsonCodec ?? null]);
+    const cacheKey = cacheId ?? JSON.stringify([key, jsonCodec ?? null]);
     const cached = mcpClients.get(cacheKey);
     if (cached?.fingerprint === fingerprint) return cached;
     if (cached) {
@@ -201,14 +201,22 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     return entry;
   }
 
-  async function listMcpTools(id, { jsonCodec } = {}) {
+  async function listMcpTools(id, { jsonCodec, snapshot = false } = {}) {
+    if (typeof snapshot !== 'boolean') throw new LocalResourceError('MCP_SNAPSHOT_INVALID', 'MCP 目录快照选项无效');
     const key = resourceId(id);
-    const entry = await mcp(id, jsonCodec);
+    // A revision's schema discovery must not replace an active caller's
+    // connection or populate that caller's mutable output-validator cache.
+    const entry = await mcp(id, jsonCodec, snapshot ? Symbol('MCP catalog snapshot') : undefined);
     try { return (await entry.client.listTools()).tools || []; }
     catch (error) {
       await Promise.resolve(entry.client.close?.()).catch(() => {});
       if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
       throw mcpFailure(error, key, 'list');
+    } finally {
+      if (snapshot) {
+        await Promise.resolve(entry.client.close?.()).catch(() => {});
+        if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
+      }
     }
   }
 
