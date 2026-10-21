@@ -106,3 +106,17 @@ again. Never lower the feed version or disable signature validation to roll back
 
 See [Windows releases](windows-release.md) for the independent NSIS/signature and
 installed App checks. A working macOS update does not prove Windows update support.
+
+## Public download alias
+
+The public site links to fixed `studio/latest/` URLs instead of a versioned folder;
+`latest.json` carries the current versions and checksums:
+
+```sh
+node scripts/publish-download-alias.mjs \
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --channel preview
+```
+
+The command reads the published update feeds, copies the current ZIP/EXE/DMG/blockmap
+inside KS3 (no release bytes cross the operator machine) and rewrites `latest.json`
+with `no-cache`. Run it after a feed publication; the site needs no edit.
