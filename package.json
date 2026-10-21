@@ -3,6 +3,14 @@
   "version": "0.0.2",
   "private": true,
   "type": "module",
+  "publishConfig": {
+    "executableFiles": [
+      "packages/agentkit-harness/src/native/local-process-bin/darwin-arm64/launcher",
+      "packages/agentkit-harness/src/native/local-process-bin/darwin-x64/launcher",
+      "packages/agentkit-harness/src/native/local-process-bin/linux-arm64/launcher",
+      "packages/agentkit-harness/src/native/local-process-bin/linux-x64/launcher"
+    ]
+  },
   "packageManager": "pnpm@10.33.2",
   "icon": "./assets/agentkit-studio.svg",
   "description": "AgentKit Studio product plugin with an independent TypeScript provider for the official DSH host.",

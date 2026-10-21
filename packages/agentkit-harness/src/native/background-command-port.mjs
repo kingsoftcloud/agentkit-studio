@@ -3,6 +3,7 @@
 // durable tool/Host operations. Backend selection never falls back to the env.
 import { BACKGROUND_COMMAND_CONTRACT, backgroundCommandObservation, backgroundCommandRef,
   commandProbe, canonical, copy, NativeError } from '../../../agentkit-harness-core/dist/index.mjs';
+import { ownedCommandReceipt } from './owned-command.mjs';
 
 const backends = new Set(['local_process', 'e2b']);
 const check = (value, code) => { if (!value) throw new NativeError(code); };
@@ -26,20 +27,7 @@ export function createBackgroundCommandPort({ scope, store, readers = {} }) {
       check(new Set(request.refs.map(ref => ref.taskId)).size === request.refs.length, 'background_command_owner_mismatch');
       // Verify the entire request before touching any external handle.
       const owned = request.refs.map(candidate => {
-        const ref = backgroundCommandRef(candidate), source = store.load(pinnedScope, ref.sourceRunId);
-        const receipt = source.receipts.find(item => item.operationKey === ref.operationKey);
-        const launch = source.intents.find(item => item.operationKey === ref.operationKey);
-        const calls = launch?.payload.calls, results = receipt?.result.results;
-        const result = Array.isArray(results) && results.length === 1 ? results[0] : null;
-        const definition = Array.isArray(calls) && calls.length === 1
-          ? source.configuration.tools.find(tool => tool.name === calls[0].name) : null;
-        check(same(source.snapshot.scope, pinnedScope) && source.snapshot.sessionId === current.snapshot.sessionId
-          && receipt?.status === 'committed' && launch?.kind === 'tool'
-          && definition?.backgroundCommandPolicy === 'owned-command-launch/v1' && result?.status === 'ok'
-          && same(result.backgroundCommandRef ?? null, ref), 'background_command_launcher_receipt_mismatch');
-        const backend = typeof result.content?.backend === 'string' && result.content.backend.startsWith('sandbox/')
-          ? result.content.backend.slice('sandbox/'.length) : null;
-        return { ref, backend: backends.has(backend) ? backend : null };
+        return ownedCommandReceipt({ scope: pinnedScope, store, current, ref: backgroundCommandRef(candidate) });
       });
       const observations = [];
       for (const { ref, backend } of owned) {

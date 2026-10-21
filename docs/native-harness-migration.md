@@ -22,7 +22,7 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 日常小步修改和模块合入只执行受影响的定向验证；全量回归留到一批能力接通后的阶段验收，或出现明确跨模块回归迹象时执行，不按每次提交或合入重复运行。
 
-生产 Host 的 `createStudioNativeHarness` 从 Studio Agent 修订或 Frozen Build 解析可信配置，绑定已选模型与工作区身份，通过宿主 attachment 服务解析用户图片和文件引用。凭证只在模型端口调用时重新读取，不进入 Native 配置或账本。`createNativeDshTools` 将 Native 工具意图交给实际 DSH ToolRegistry，保留其权限管线；被允许的十种工作区工具使用 Node 实现。工具名与资源 ID 分开处理，停用契约不能重新获得 builtin 执行权限。写入成功后管线报错时保留未知结果状态，新轮次不能绕过未知写或中断状态继续执行。
+生产 Host 的 `createStudioNativeHarness` 从 Studio Agent 修订或 Frozen Build 解析可信配置，绑定已选模型与工作区身份，通过宿主 attachment 服务解析用户图片和文件引用。凭证只在模型端口调用时重新读取，不进入 Native 配置或账本。`createNativeDshTools` 将 Native 工具意图交给实际 DSH ToolRegistry，保留其权限管线；被允许的十种工作区工具及本地命令工具使用 Node 实现。工具名与资源 ID 分开处理，停用契约不能重新获得 builtin 执行权限。写入成功后管线报错时保留未知结果状态，新轮次不能绕过未知写或中断状态继续执行。
 
 开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时保持原有 Harness 路径。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`，长期记忆写入会显式拒绝组装；这些缺口尚未解决。
 
@@ -256,7 +256,25 @@ Python 分析使用已固定版本的 Ruff Rust/WASM 解析器。工作线程解
 
 Python 语法目标与前述文件语法检查一样固定为 3.12。AST 中间结构和错误文案可与 CPython 不同；多处违规的首项报告顺序可能随 AST 结构不同，但不得因此漏检规则。行为用例从固定源和其 phase-one 测试逐项提取，没有运行参考 Python。组件验收覆盖每条正式风险规则、允许的数据、直接脚本、真实路径、取消和超时；实际包的冷安装验证同时执行语法检查与命令 AST 检查，仅 Node 在 PATH，安装脚本关闭。
 
-这仍是独立风险策略组件。宿主必须在正式工具中完成审批、所属工作区检查、输入捕获和执行前绑定；低层 `LocalCommandStore` 仍只接受宿主已授权请求，不会自动将此组件接入产品。未据此宣称命令工具或 Studio 的 Python builtin bridge 已完成替换。
+上述策略本身是独立组件；低层 `LocalCommandStore` 只接受宿主已授权请求。正式本地命令工具按下一节将策略接入产品；其余 Python builtin bridge 的替换仍须逐项验收。
+
+## 正式本地命令工具与 Studio 组装
+
+`agentkit.local-command-tools/v1` 提供 `sandbox_status`、`run_command`、`read_command_output` 和 `stop_command`。Native 持久化并领取工具意图后，生产 `createNativeDshTools` 通过真实 DSH 工具权限管线调用 Node 实现；模型提交的 `approval` 字段不能授权执行。`run_command` 和停止操作串行调度；读取显式绑定 `safe-read/v1`，可安全重复。工作目录固定在所属工作区内，目录组件不允许符号链接，执行环境仅含宿主许可变量。该后端共享宿主文件系统和网络，工作目录边界与静态命令检查不构成 OS 隔离。
+
+正式命令先执行 `agentkit.governed-command-policy/v1`，对应固定参考 `ksadk/tools/gateway.py` 的默认命令策略，然后执行本地进程风险策略。保留源中两层检查的区别：上层默认策略会拒绝递归删除、sudo/kubectl/docker、特定 git 写操作及元数据地址，并保留其 shlex 分词和只读 git 提前返回语义。审批通过也不会隐式绕过它。
+
+前台命令返回实际退出码；普通非零退出仍是一次已知执行结果，超时和输出上限分别报告 124、122，监督或清理证据缺失则返回 `uncertain`。执行之后的异常和 DSH 后置管线失败都不能变成“未执行”，不能自动重跑。实际工作区捕获产生修改路径。较大结果以完整 JSON 写入持久 Artifact，模型只收到有界 UTF-8 预览及类型化引用；分页读取能恢复完整内容。超出安全整数范围的模型超时值在转换前按宿主上限钳制；字节游标显式限制为安全整数。
+
+后台启动使用 Native 操作键幂等登记，回执保存原始 Run 与操作键。读/停必须先从当前已领取的工具操作、当前 Session 的继承句柄和原始已提交启动回执共同核实所属关系；仅有 task_id、模型声明或环境变量不能选择后端或授权访问。生产 Host 绑定 `completed-before-model/v1`，在上下文和模型调度边界调用正式只读观察端口。失去 supervisor 后的未知结果停止继续推理，不重新启动命令。读取等待独立于后台进程超时，停止返回取消请求，后续读取才确认终态。
+
+命令契约、进程上限、风险策略版本、实际许可环境摘要进入 Host 配置摘要；工具超时也纳入 Native 效果超时。生产权限仅给绑定的 builtin，同名 MCP 工具保留 MCP 路径。宿主重启后沿用 SQLite 账本和原启动回执读取命令。
+
+定向验证包含真实进程、SQLite 重开、继承句柄、伪造访问拒绝、停止与进程组回收、真实 supervisor 丢失、Artifact 全文分页、超时/输出上限及后置策略失败。Node 26 的新增命令与策略模块 21 项通过；既有受影响模块分别 119、26 项通过。最低 Node 22.19.0 的这些受影响模块合计 166 项通过，没有运行仓库全量。`node scripts/verify-studio-native-harness.mjs --source <维护源码> --mount-host --commands --archive <实际 Studio.tgz>` 在两版 Node 上均通过真实 Host 权限管线的命令写入、两轮跨进程重启、第三轮拒绝、六次流式模型调用及独立默认 DSH 轮次。仅 Node 位于 Host PATH；命令依然可以执行显式授权的系统程序。这是正式本地命令路径的验证，不能替代全新安装或所有入口验收。
+
+发布配置显式登记四个平台启动器为可执行文件，包完整性检查从真实 tarball 解压并检查权限，不能用 checkout 权限代替发布证据。一次真实 Host 验证发现 pack 规范化丢失权限，修正后重新打包并通过 Host 验证及包内前台/后台冷执行；没有在测试中补 chmod。
+
+剩余命令能力包括 E2B/其他正式后端的产品选择和恢复、源 sandbox registry/TTL 状态字段、前台输出增量展示，以及后台持续写入与验收/工作集的完整联动。这批实现不等于所有 sandbox 能力或全部 builtin bridge 迁移完成。
 
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
 

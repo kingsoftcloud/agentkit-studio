@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { readFileSync, lstatSync, mkdtempSync, rmSync } from 'node:fs';
+import { basename, resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const archive = process.argv[2];
 if (!archive) {
@@ -23,6 +24,8 @@ const expected = [
   'packages/agentkit-harness/src/native/python-syntax.mjs',
   'packages/agentkit-harness/src/native/python-syntax-worker.mjs',
   'packages/agentkit-harness/src/native/local-command-policy.mjs',
+  'packages/agentkit-harness/src/native/local-command-tools.mjs',
+  'packages/agentkit-harness/src/native/owned-command.mjs',
   'packages/agentkit-harness/src/native/local-command-policy-worker.mjs',
   'packages/agentkit-harness/src/native/ruff-ast.mjs',
   'packages/agentkit-harness/src/native/local-process.mjs',
@@ -44,6 +47,18 @@ const expected = [
 ];
 const missing = expected.filter(path => !files.has(path));
 if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);
+// Source modes alone do not prove tarball modes: packers may normalize every
+// non-bin file to 0644. Check the shipped executables without repairing them.
+const launchers = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64']
+  .map(target => `packages/agentkit-harness/src/native/local-process-bin/${target}/launcher`);
+const extracted = mkdtempSync(join(tmpdir(), 'studio-package-modes-'));
+try {
+  execFileSync('tar', ['-xzf', tarball, '-C', extracted, ...launchers.map(path => `package/${path}`)]);
+  for (const path of launchers) {
+    const stat = lstatSync(join(extracted, 'package', path));
+    if (!stat.isFile() || !(stat.mode & 0o111)) throw new Error(`package launcher is not executable: ${path}`);
+  }
+} finally { rmSync(extracted, { recursive: true, force: true }); }
 if (packageJson.name !== '@kingsoftcloud/agentkit-studio') throw new Error(`unexpected package name: ${String(packageJson.name)}`);
 if (packageJson.dependencies?.['@astral-sh/ruff-wasm-nodejs'] !== '0.16.8') throw new Error('Python-source syntax parser must be an exact production dependency');
 if (!/^\d+\.\d+\.\d+$/.test(String(packageJson.version))) throw new Error(`package version must be stable semver: ${String(packageJson.version)}`);

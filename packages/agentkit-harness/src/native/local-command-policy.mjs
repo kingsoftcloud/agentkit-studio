@@ -1,13 +1,16 @@
 import { Worker } from 'node:worker_threads';
 
 export const LOCAL_COMMAND_POLICY = 'agentkit.local-command-policy/v1';
+export const GOVERNED_COMMAND_POLICY = 'agentkit.governed-command-policy/v1';
 const failure = code => Object.assign(new Error(code), { code });
 
 /** Same-container risk checks, not an OS sandbox. Approval and workspace
  * ownership are Host duties. Source is parsed/read in a bounded Node worker;
  * no Python interpreter or workspace module is imported or executed.
  */
-export async function checkLocalCommand(command, { cwd, allowedRoots, signal, timeoutMs = 10000 } = {}) {
+export const checkLocalCommand = (command, options) => checkCommand(command, options, false);
+export const checkGovernedCommand = (command, options) => checkCommand(command, options, true);
+async function checkCommand(command, { cwd, allowedRoots, signal, timeoutMs = 10000 } = {}, governed) {
   signal?.throwIfAborted();
   if (!(typeof command === 'string' || Array.isArray(command) && command.every(item => typeof item === 'string'))
     || Buffer.byteLength(JSON.stringify(command)) > 2 * 1024 * 1024 || typeof cwd !== 'string'
@@ -16,7 +19,7 @@ export async function checkLocalCommand(command, { cwd, allowedRoots, signal, ti
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) throw failure('invalid_command_policy_deadline');
   let worker;
   try { worker = new Worker(new URL('./local-command-policy-worker.mjs', import.meta.url), {
-    workerData: { command, cwd, allowedRoots }, execArgv: [],
+    workerData: { command, cwd, allowedRoots, governed }, execArgv: [],
     resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 },
   }); } catch { throw failure('command_policy_unavailable'); }
   return await new Promise((resolve, reject) => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkLocalCommand } from '../src/native/local-command-policy.mjs';
+import { checkLocalCommand, checkGovernedCommand } from '../src/native/local-command-policy.mjs';
 import { decodeRuffAst } from '../src/native/ruff-ast.mjs';
 
 // Deterministic behavior cases transcribed from pinned 355059d local_controls.py
@@ -15,6 +15,15 @@ function fixture(t) {
   return { root, cwd, check: (command, extra = {}) => checkLocalCommand(command, { ...options, ...extra }),
     py: (source, extra = {}) => checkLocalCommand(['python', '-c', source], { ...options, ...extra }) };
 }
+test('governed command policy preserves the separate gateway shlex rules before local risk checks', async t => {
+  const f = fixture(t), check = command => checkGovernedCommand(command, { cwd: f.cwd, allowedRoots: [f.cwd] });
+  for (const command of ['sudo true', 'printf docker', 'kubectl get pods', 'rm -r scratch', 'git push', 'git checkout main',
+    'printf metadata.google.internal', 'curl http://169.254.169.254']) assert.equal((await check(command)).rule, 'command_rejected', command);
+  for (const command of ['echo "unclosed', 'echo trailing\\']) assert.equal((await check(command)).rule, 'invalid_command');
+  for (const command of ['printf "%s" "sudo value"', 'printf sudo\u00a0value', 'git status metadata.google.internal', 'printf "# data"'])
+    assert.equal(await check(command), null, command);
+  assert.equal((await check('sh -c "setsid sleep 5"')).rule, 'shell.blocked_command.setsid');
+});
 test('shell control operators, executable basenames and recursive-force flags match source policy', async t => {
   const f = fixture(t);
   for (const command of ['kill', 'killall', 'nohup', 'pkill', 'setsid']) {

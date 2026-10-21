@@ -40,7 +40,7 @@ async function applyProof(ctx, options) {
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
-        ? { mcpServers: ['native-schema-fixture'] } : { tools: ['write_workspace_file'] }) } });
+        ? { mcpServers: ['native-schema-fixture'] } : { tools: [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
   let presetId = 'studio-native-proof';
@@ -100,7 +100,7 @@ async function applyProof(ctx, options) {
       name: pathToFileURL(join(options.repository, 'src/providers/dsh-runtime-plugin.mjs')).href,
       config: { agentId: record.metadata.id, agentRevision: 1, runtime: 'harness', local: true,
         nativeEngineContract: 'agentkit.native-dsh-turn/v1',
-        toolBindings: ['write_workspace_file'], toolContracts: [{ name: 'write_workspace_file', executor: 'builtin',
+        toolBindings: [options.commands ? 'run_command' : 'write_workspace_file'], toolContracts: [{ name: options.commands ? 'run_command' : 'write_workspace_file', executor: 'builtin',
           description: 'Write the verification marker', parameters: { type: 'object' } }] },
     }] });
     ctx.effect(() => disposePreset, 'Studio verification preset');
@@ -160,18 +160,20 @@ async function applyProof(ctx, options) {
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (exec.agent.session.id === 'native-studio-session') {
       await appendFile(join(options.directory, 'tool-admissions.jsonl'), JSON.stringify({ callId: exec.callId, name: exec.name }) + '\n');
-      if (exec.arguments.path === 'denied.txt') return { kind: 'deny', reason: 'Verification policy denied this write' };
+      if (exec.arguments.path === 'denied.txt' || options.commands && exec.arguments.command.endsWith('> denied.txt'))
+        return { kind: 'deny', reason: 'Verification policy denied this write' };
     }
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
     if (exec.agent.session.id !== 'native-studio-session' || result.isError) return next();
+    const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.
-    exec.agent.steer({ id: `live-steer-${exec.arguments.path}`, role: 'user', source: { kind: 'user' },
-      content: [{ type: 'text', text: `Live instruction for ${exec.arguments.path}` }] });
-    return { kind: 'accept', content: [{ type: 'text', text: `Published ${exec.arguments.path} (policy view)` }],
+    exec.agent.steer({ id: `live-steer-${path}`, role: 'user', source: { kind: 'user' },
+      content: [{ type: 'text', text: `Live instruction for ${path}` }] });
+    return { kind: 'accept', content: [{ type: 'text', text: `Published ${path} (policy view)` }],
       additionalContexts: [{ id: `context-${exec.callId}`, role: 'user', source: { kind: 'tool', callId: exec.callId },
-        content: [{ type: 'text', text: `Loaded context for ${exec.arguments.path}` }] }] };
+        content: [{ type: 'text', text: `Loaded context for ${path}` }] }] };
   });
 }

@@ -40,7 +40,7 @@ function inside(path) {
 
 // POSIX shlex rules used by the source risk checker, not a shell executor.
 // Adjacent punctuation is grouped; quoted arguments remain data.
-function tokens(text) {
+function tokens(text, { punctuation = true, comments = true, strict = false } = {}) {
   const result = []; let word = '', active = false, quote = '';
   const flush = () => { if (active) result.push(word); word = ''; active = false; };
   for (let i = 0; i < text.length; i++) {
@@ -52,17 +52,38 @@ function tokens(text) {
       continue;
     }
     if (char === '"' || char === "'") { active = true; quote = char; continue; }
-    if (char === '\\') { if (++i === text.length) return []; word += text[i]; active = true; continue; }
-    if (char === '#') { while (i < text.length && text[i] !== '\n') i++; flush(); continue; }
-    if (/\s/.test(char)) { flush(); continue; }
-    if ('();<>|&'.includes(char)) {
+    if (char === '\\') { if (++i === text.length) return strict ? null : []; word += text[i]; active = true; continue; }
+    if (char === '#' && comments) { while (i < text.length && text[i] !== '\n') i++; flush(); continue; }
+    if (' \t\r\n'.includes(char)) { flush(); continue; }
+    if (punctuation && '();<>|&'.includes(char)) {
       flush(); let punctuation = char;
       while ('();<>|&'.includes(text[i + 1] ?? '\0')) punctuation += text[++i];
       result.push(punctuation); continue;
     }
     active = true; word += char;
   }
-  if (quote) return []; flush(); return result;
+  if (quote) return strict ? null : []; flush(); return result;
+}
+// The tool gateway's separate, unconditional default policy runs even after
+// approval. Preserve its shlex.split (no punctuation/comment mode) semantics.
+function gatewayPolicy(command) {
+  if (typeof command !== 'string' || !command.trim()) return finding('command_required', 'command is required');
+  const args = tokens(command.trim(), { punctuation: false, comments: false, strict: true });
+  if (args === null) return finding('invalid_command', 'unclosed quote or escape in command');
+  if (!args.length) return finding('command_required', 'command is required');
+  for (let i = 0; i + 1 < args.length; i++) if (args[i] === 'rm'
+    && args.slice(i + 1, i + 3).some(flag => flag.startsWith('-') && /[rR]/.test(flag)))
+    return finding('command_rejected', 'recursive rm is not allowed without explicit approval');
+  if (args.some(arg => ['sudo', 'kubectl', 'docker'].includes(arg)))
+    return finding('command_rejected', `${args[0]} command is not allowed by default policy`);
+  if (args[0] === 'git' && args.length > 1) {
+    if (['status', 'diff', 'log', 'show', 'branch', 'ls-files'].includes(args[1])) return null;
+    if (['reset', 'clean', 'push', 'checkout'].includes(args[1]))
+      return finding('command_rejected', `git ${args[1]} is not allowed without explicit approval`);
+  }
+  if (args.join(' ').includes('169.254.169.254') || args.join(' ').includes('metadata.google.internal'))
+    return finding('command_rejected', 'metadata/private endpoint access is not allowed by default policy');
+  return null;
 }
 function background(line) {
   let quote = '', escaped = false;
@@ -214,8 +235,9 @@ function scanScripts(args) {
 }
 try {
   const { command } = workerData;
-  const result = typeof command === 'string' ? checkShell(command, '', 0) : null;
+  const result = workerData.governed ? gatewayPolicy(command) : null;
+  const shellResult = result ?? (typeof command === 'string' ? checkShell(command, '', 0) : null);
   const args = typeof command === 'string' ? tokens(command) : command;
   parentPort.postMessage({ contract: LOCAL_COMMAND_POLICY,
-    finding: result ?? checkTokens(args, '', null, 0) ?? scanScripts(args) });
+    finding: shellResult ?? checkTokens(args, '', null, 0) ?? scanScripts(args) });
 } finally { parser.free(); parentPort.close(); }

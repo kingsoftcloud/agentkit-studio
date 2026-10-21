@@ -94,6 +94,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
           toolArgumentEncoding: binding.nativeTools.argumentEncoding ?? null,
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),
+          ...(binding.nativeTools.commandBinding ? { commandBinding: binding.nativeTools.commandBinding } : {}),
           mcpResultContract: binding.nativeTools.mcpResultContract ?? null,
           mcpJsonCodec: binding.nativeTools.mcpJsonCodec ?? null,
           mcpSchemaContract: binding.nativeTools.mcpSchemaContract ?? null,
@@ -102,9 +103,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           verificationContract: STUDIO_NATIVE_VERIFICATION_CONTRACT }),
         contextPolicy: context.policy,
         workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy,
+        ...(binding.nativeTools.commandBinding ? { backgroundNotificationPolicy: 'completed-before-model/v1' } : {}),
         contract: nativeGoalContract({ sessionId: String(agent.session.id), goal: admission.objective }), instructions, inputMessages: admission.messages,
-        tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000) } },
-        ports: { ...binding.nativeTools.forAgent(agent), verification, context: context.port, input: { prepare: async request => {
+        tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000,
+          ...tools.map(tool => tool.timeoutMs + 10000)) } },
+        ports: { ...binding.nativeTools.forAgent(agent, { scope, store }), verification, context: context.port, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);
           request.signal.throwIfAborted();

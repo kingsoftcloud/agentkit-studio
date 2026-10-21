@@ -933,6 +933,10 @@ export function createNativeWorkspaceTools({
    * snapshot that refuses to confirm a workspace it saw changing.
    */
   function computeRevision(real) {
+    return 'sha256:' + captureStable(real).digest;
+  }
+
+  function captureStable(real) {
     const first = captureInventory(real);
     const second = captureInventory(real);
     if (first.digest !== second.digest
@@ -940,16 +944,16 @@ export function createNativeWorkspaceTools({
       || !entriesEqual(first.entries, second.entries)) {
       throw new CaptureError('workspace_changed_during_capture');
     }
-    return 'sha256:' + first.digest;
+    return second;
   }
 
   function captureInventory(real) {
     const hash = createHash('sha256');
     hash.update('ksadk.directory-workspace/v1\0');
-    const state = { entries: 0, hashedBytes: 0, list: [] };
+    const state = { entries: 0, hashedBytes: 0, list: [], byPath: Object.create(null) };
     scanDir(real, '', hash, state);
     state.list.sort();
-    return { digest: hash.digest('hex'), entryCount: state.entries, entries: state.list };
+    return { digest: hash.digest('hex'), entryCount: state.entries, entries: state.list, byPath: state.byPath };
   }
 
   /** Compare two sorted entry-identity lists for exact equality. */
@@ -1025,6 +1029,7 @@ export function createNativeWorkspaceTools({
       let after;
       try { after = entryIdentity(lstatSync(abs, { bigint: true })); } catch { throw new CaptureError('capture_failed'); }
       if (after !== before) throw new CaptureError('workspace_changed_during_capture');
+      state.byPath[entryRel] = info.isDirectory() ? `directory:${before}` : state.list.at(-1);
       if (state.hashedBytes > OBSERVE_MAX_HASHED) throw new CaptureError('capture_limit_exceeded');
     }
   }
@@ -1034,7 +1039,15 @@ export function createNativeWorkspaceTools({
     return `${info.mode}|${info.size}|${info.mtimeNs}|${info.ctimeNs}|${info.ino}`;
   }
 
-  return { definitions, execute, observe };
+  return { definitions, execute, observe,
+    // Host-only change capture for a governed command. It shares the bounded,
+    // stable observer; paths remain structured even when names contain tabs.
+    capture(request) {
+      if (request.sessionId !== store.sessionId) throw new CaptureError('workspace_session_mismatch');
+      checkRootBoundary(); const captured = captureStable(pinnedRootReal);
+      return { revision: 'sha256:' + captured.digest, entries: { ...captured.byPath } };
+    },
+  };
 }
 
 function canceled() {

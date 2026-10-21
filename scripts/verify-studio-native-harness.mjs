@@ -10,9 +10,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
-  'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false } } });
+  'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
+  commands: { type: 'boolean', default: false }, archive: { type: 'string' } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
+assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
+const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
 const exactInteger = 9007199254740993n, mcpEffects = [];
@@ -67,7 +70,7 @@ const server = createServer(async (request, response) => {
     }
     const body = JSON.parse(raw); requests.push(body);
     assert.equal(request.url, '/v1/chat/completions'); assert.equal(body.model, 'pinned');
-    assert.deepEqual(body.tools.map(tool => tool.function.name), ['write_workspace_file']);
+    assert.deepEqual(body.tools.map(tool => tool.function.name), [toolName]);
     if (values['mcp-schema']) {
       const parameters = parseNativeJson(raw).tools[0].function.parameters;
       assert.equal(parameters.properties.id.minimum, exactInteger); assert.equal(parameters.properties.id.maximum, exactInteger);
@@ -86,10 +89,11 @@ const server = createServer(async (request, response) => {
       assert.ok(body.messages.some(message => message.role === 'user' && message.content === 'Live instruction for published-1.txt'));
     }
     if (count === 6) assert.match(JSON.stringify(body.messages.filter(message => message.role === 'tool').at(-1)), /Verification policy denied this write/);
-    const args = { path: turn === 3 ? 'denied.txt' : `published-${turn}.txt`, content: `publication-${turn}`,
-      ...(values['mcp-schema'] ? { id: exactInteger } : {}) };
+    const args = values.commands ? { command: `printf publication-${turn} > ${turn === 3 ? 'denied.txt' : `published-${turn}.txt`}`, timeout: 2 }
+      : { path: turn === 3 ? 'denied.txt' : `published-${turn}.txt`, content: `publication-${turn}`,
+        ...(values['mcp-schema'] ? { id: exactInteger } : {}) };
     const delta = count % 2 ? { tool_calls: [{ index: 0, id: 'reused-provider-id', type: 'function',
-      function: { name: 'write_workspace_file', arguments: values['mcp-schema'] ? canonical(args) : JSON.stringify(args) } }] }
+      function: { name: toolName, arguments: values['mcp-schema'] ? canonical(args) : JSON.stringify(args) } }] }
       : { content: turn === 3 ? 'Policy denied the write.' : `Native turn ${turn} completed.` };
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     const complete = delta.content;
@@ -113,12 +117,13 @@ try {
   // Install the actual packed Studio files into an isolated Host graph. DSH
   // owns its public packages; ordinary Studio dependencies use the installed
   // versions in this checkout. Nothing is installed into the developer's home.
-  execFileSync('pnpm', ['pack', '--pack-destination', root], { cwd: repository, stdio: 'pipe' });
-  const archive = (await readdir(root)).find(name => name.endsWith('.tgz'));
-  assert.ok(archive, 'Studio package was produced');
+  if (!values.archive) execFileSync('pnpm', ['pack', '--pack-destination', root], { cwd: repository, stdio: 'pipe' });
+  const packedName = values.archive || (await readdir(root)).find(name => name.endsWith('.tgz'));
+  assert.ok(packedName, 'Studio package was produced');
+  const archive = values.archive ? resolve(packedName) : join(root, packedName);
   const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
   await mkdir(graph);
-  execFileSync('tar', ['-xzf', join(root, archive), '-C', graph]);
+  execFileSync('tar', ['-xzf', archive, '-C', graph]);
   await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
   for (const entry of await readdir(join(repository, 'node_modules'))) {
     if (entry === '@deepseek-ai' || entry.startsWith('.')) continue;
@@ -156,6 +161,7 @@ try {
     '    - id: studio-native-host-proof', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures', fixture)).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`, `        repository: ${JSON.stringify(installed)}`,
     `        mountHost: ${values['mount-host']}`,
+    `        commands: ${values.commands}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -198,7 +204,7 @@ try {
   if (values['mcp-schema']) assert.deepEqual(mcpEffects, ['published-1.txt', 'published-2.txt']);
   const admissions = (await readFile(join(root, 'tool-admissions.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   assert.equal(admissions.length, 3); assert.equal(new Set(admissions.map(row => row.callId)).size, 3);
-  assert.deepEqual(admissions.map(row => row.name), ['write_workspace_file', 'write_workspace_file', 'write_workspace_file']);
+  assert.deepEqual(admissions.map(row => row.name), [toolName, toolName, toolName]);
   assert.equal((await readFile(join(root, 'default-invocations.jsonl'), 'utf8')).trim().split('\n').length, 1);
   const logs = (await readdir(sessions, { recursive: true })).filter(file => file.endsWith('.jsonl'));
   assert.equal(logs.length, 2);
@@ -239,6 +245,21 @@ try {
     assert.equal(new Set(runs.map(run => reopened.load(scope, run.runId).configuration.contract.revision)).size, 3);
     const evidence = await createNativeArtifactStore({ directory: join(root, 'studio/native-harness/verification-evidence'), scope });
     for (const run of runs) {
+      if (values.commands) {
+        const record = reopened.load(scope, run.runId);
+        assert.equal(record.configuration.backgroundNotificationPolicy, 'completed-before-model/v1');
+        assert.equal(record.configuration.tools[0].backgroundCommandPolicy, 'owned-command-launch/v1');
+        const results = record.receipts.flatMap(receipt => receipt.result.results ?? []);
+        assert.equal(results.length, 1);
+        if (run.goal === 'Attempt the denied write and report its denial.') assert.equal(results[0].status, 'error');
+        else {
+          assert.equal(results[0].status, 'ok'); assert.equal(results[0].content.backend, 'sandbox/local_process');
+          assert.equal(results[0].content.exit_code, 0); assert.equal(results[0].content.evidence_incomplete, false);
+          assert.equal(results[0].content.controls.schemaVersion, 'agentkit.local-process-control/v1');
+          assert.match(results[0].content.command, /^printf publication-[12] > published-[12]\.txt$/);
+          assert.equal(record.snapshot.workspaceModifiedPaths.filter(path => /^published-[12]\.txt$/.test(path)).length >= 1, true);
+        }
+      }
       if (values['mcp-schema']) {
         const record = reopened.load(scope, run.runId);
         assert.equal(record.configuration.tools[0].parameters.properties.id.minimum, exactInteger);

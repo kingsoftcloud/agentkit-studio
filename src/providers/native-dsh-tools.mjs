@@ -4,6 +4,12 @@ import { realpathSync } from 'node:fs';
 import { canonical, invariant, parseNativeJson, requiresExactJsonWire, stringifyModelJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/native/workspace-tools.mjs';
 import { NATIVE_PYTHON_SYNTAX } from '../../packages/agentkit-harness/src/native/python-syntax.mjs';
+import { createNativeLocalCommandTools, localCommandToolDefinitions, LOCAL_COMMAND_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/local-command-tools.mjs';
+import { createOwnedCommandResolver } from '../../packages/agentkit-harness/src/native/owned-command.mjs';
+import { createBackgroundCommandPort } from '../../packages/agentkit-harness/src/native/background-command-port.mjs';
+import { createNativeArtifactStore } from '../../packages/agentkit-harness/src/native/artifact-store.mjs';
+import { buildScriptEnvironment, localControlSettings, LOCAL_PROCESS_CONTRACT } from '../../packages/agentkit-harness/src/native/local-process.mjs';
+import { LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY } from '../../packages/agentkit-harness/src/native/local-command-policy.mjs';
 import { projectNativeDshContent } from './native-input.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
@@ -14,7 +20,8 @@ const hash = value => createHash('sha256').update(canonical(value)).digest('hex'
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
-export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool }) {
+export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
+  commandSettings = {}, commandEnvironment = process.env }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
@@ -30,6 +37,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   };
   const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions' });
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
+  const controls = localControlSettings(commandSettings), commandEnv = buildScriptEnvironment(commandEnvironment, { settings: controls });
+  const commandNames = new Set(localCommandToolDefinitions(controls).map(definition => {
+    formal.set(definition.name, definition); return definition.name;
+  }));
   const browserTools = createNativeDshBrowserTools({ workspaceRoot: workspace, createBrowser, browserExecutablePath,
     evidenceRoot: join(stateDir, 'browser-evidence') });
   const browserName = browserTools.definition.name;
@@ -92,6 +103,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
               resourceId: String(contract.mcpResourceId || contract.resourceId).trim(), name,
               arguments: args, signal: exec.signal, callId: exec.callId, agent: exec.agent, resultFormat: 'mcp-result/v1' }),
               { validateOutput: mcpSchemas.get(name)?.validateOutput });
+          } else if (commandNames.has(name)) {
+            invariant(typeof invocation.commands === 'function', 'studio_native_command_ledger_unavailable');
+            outcome = await (await invocation.commands()).execute({ ...invocation.request, signal: exec.signal });
           } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
             : formal.has(name) ? await state(exec.agent).execute({ ...invocation.request, signal: exec.signal })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
@@ -108,6 +122,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     close,
     argumentEncoding,
     workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
+    commandBinding: [...commandNames].some(name => builtinNames.has(name)) ? {
+      contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },
+      risk: [LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY], backend: 'local_process', environmentDigest: hash(commandEnv),
+    } : null,
     mcpResultContract: mcpContracts.size ? 'mcp-result/v1' : null,
     mcpJsonCodec: mcpContracts.size ? NATIVE_MCP_JSON_CODEC : null,
     mcpSchemaContract: mcpSchemas.size ? NATIVE_MCP_SCHEMA_CONTRACT : null,
@@ -161,9 +179,22 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         };
       });
     },
-    forAgent(agent) {
+    forAgent(agent, commandAuthority) {
       const sessionId = String(agent.session.id);
+      let commandsPromise;
+      const commands = () => commandsPromise ||= (async () => {
+        invariant(commandAuthority?.scope && commandAuthority?.store, 'studio_native_command_ledger_unavailable');
+        const artifacts = await createNativeArtifactStore({ directory: join(stateDir, 'command-artifacts'), scope: commandAuthority.scope });
+        return createNativeLocalCommandTools({ workspaceRoot: workspace, stateRoot: join(stateDir, 'background-commands'), sessionId,
+          settings: controls, sourceEnv: commandEnv, artifacts, authorize: async () => 'allow',
+          captureWorkspace: request => state(agent).capture(request),
+          resolveOwnedCommand: createOwnedCommandResolver(commandAuthority) });
+      })();
       return { workspace: { observe: request => state(agent).observe(request) },
+        ...(commandAuthority && [...commandNames].some(name => builtinNames.has(name)) ? {
+          background: createBackgroundCommandPort({ ...commandAuthority,
+            readers: { local_process: async request => (await commands()).reader(request) } }),
+        } : {}),
         ...(builtinNames.has(browserName) ? { browser: { recoverSessions: request => browserTools.forSession(sessionId).recoverSessions(request) } } : {}),
         tools: { execute: async request => {
         invariant(!closed, 'studio_native_tools_closed');
@@ -178,7 +209,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } };
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
-        const invocation = { agent, request, argumentEncoding: exactNumbers ? argumentEncoding : null };
+        const invocation = { agent, request, argumentEncoding: exactNumbers ? argumentEncoding : null, commands };
         calls.set(callId, invocation);
         try {
           // Numeric raw tokens retain their intrinsic brand through the negotiated
