@@ -232,6 +232,7 @@ export interface RunSnapshot extends RunIdentity {
   workspaceDirtySinceCheckpoint: boolean; lastWorkspaceMutationToolCall: number | null;
   checkpointWorkspaceRevision: string | null; checkpointWebMutationToolCall: number | null;
   verificationToolCalls: number | null;
+  failureFingerprint: string | null; failureEvidenceDigest: string | null;
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
   hookState: HookState | null;

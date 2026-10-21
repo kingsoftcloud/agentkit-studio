@@ -1,6 +1,10 @@
 import type { CompletionCandidate, RunConfiguration, RunSnapshot, VerificationReport } from './contracts.mjs';
 import { canonical, invariant } from './values.mjs';
 
+function modelFeedbackItem(check: VerificationReport['checks'][number]) {
+  return { id: check.id, status: check.status, safeSummary: check.safeSummary ?? '', repairable: check.repairable === true };
+}
+
 /** Verify changed work while there is still model room to consume the observation. */
 export function checkpointCandidate(snapshot: RunSnapshot, config: RunConfiguration,
   digest: (value: unknown) => string): CompletionCandidate | null {
@@ -24,8 +28,6 @@ export function checkpointCandidate(snapshot: RunSnapshot, config: RunConfigurat
 /** A checkpoint only gives bounded repair feedback; even a pass cannot finish the Run. */
 export function finishCheckpoint(snapshot: RunSnapshot): Partial<RunSnapshot> {
   invariant(snapshot.candidate?.purpose === 'checkpoint' && snapshot.verification, 'checkpoint_report_missing');
-  const item = (check: VerificationReport['checks'][number]) => ({ id: check.id, status: check.status,
-    safeSummary: check.safeSummary ?? '', repairable: check.repairable === true });
   const checks = snapshot.verification.checks;
   return { phase: 'preparing_context', candidate: null, preparedContext: null, outcome: null, reason: null,
     checkpointWorkspaceRevision: snapshot.workspaceRevision, checkpointWebMutationToolCall: snapshot.lastWebMutationToolCall,
@@ -33,8 +35,8 @@ export function finishCheckpoint(snapshot: RunSnapshot): Partial<RunSnapshot> {
     messages: checks.length ? [...snapshot.messages, { role: 'user', kind: 'verification_observation', content: canonical({
       instruction: 'Repair observed failures and complete remaining acceptance checks before final delivery. Blocked checks were not verified; inspect their reported cause before treating them as passed.',
       contractRevision: snapshot.verification.contractRevision,
-      failed: checks.filter(check => check.status === 'failed').map(item), blocked: checks.filter(check => check.status === 'blocked').map(item),
-      notRun: checks.filter(check => check.status === 'not_run').map(item),
+      failed: checks.filter(check => check.status === 'failed').map(modelFeedbackItem), blocked: checks.filter(check => check.status === 'blocked').map(modelFeedbackItem),
+      notRun: checks.filter(check => check.status === 'not_run').map(modelFeedbackItem),
     }) }] : snapshot.messages };
 }
 
@@ -55,12 +57,15 @@ export function sealCandidate(candidate: CompletionCandidate, snapshot: RunSnaps
 }
 
 /** Only a pinned required check with host-owned evidence can qualify completion. */
-export function reduceVerification(snapshot: RunSnapshot, report: VerificationReport, config: RunConfiguration): Partial<RunSnapshot> {
+export function reduceVerification(snapshot: RunSnapshot, report: VerificationReport, config: RunConfiguration,
+  digest: (value: unknown) => string = canonical): Partial<RunSnapshot> {
   invariant(['passed', 'failed', 'unverified'].includes(report.status) && Array.isArray(report.checks), 'invalid_verification_report');
   invariant(new Set(report.checks.map(check => check.id)).size === report.checks.length
     && report.checks.every(check => ['passed', 'failed', 'not_run', 'blocked', 'unverified'].includes(check.status)), 'invalid_verification_checks');
+  let reportBound = false;
   const finish = (outcome: RunSnapshot['outcome'], reason: string): Partial<RunSnapshot> => ({
     pendingIntent: null, phase: 'finalizing', verification: report, outcome,
+    verificationToolCalls: reportBound ? snapshot.usage.toolCalls : null,
     reason: snapshot.candidate?.purpose === 'checkpoint' ? `checkpoint_${reason}` : reason,
   });
   const candidate = snapshot.candidate;
@@ -81,6 +86,7 @@ export function reduceVerification(snapshot: RunSnapshot, report: VerificationRe
     invariant(check.evidenceRefs === undefined || Array.isArray(check.evidenceRefs)
       && check.evidenceRefs.every(ref => typeof ref === 'string' && ref.trim()), 'invalid_verification_evidence');
   }
+  reportBound = true;
   if (candidate.purpose === 'checkpoint') return { pendingIntent: null, phase: 'finalizing', verification: report,
     verificationToolCalls: snapshot.usage.toolCalls, outcome: null, reason: null };
   const required = config.contract.acceptance.filter(item => item.required);
@@ -101,7 +107,22 @@ export function reduceVerification(snapshot: RunSnapshot, report: VerificationRe
     ? 'required_verification_incomplete' : 'required_acceptance_failed');
   if (snapshot.repairs >= config.limits.maxRepairs) return finish(outcome, 'repair_budget_exhausted');
   if (!report.failureFingerprint?.trim()) return finish(outcome, 'failure_fingerprint_missing');
+  // Changing an artifact locator is not progress on the verified subject.
+  const evidenceDigest = digest({ subject: report.binding.subjectDigest, environment: report.binding.environmentDigest,
+    items: report.checks.map(check => ({ id: check.id, status: check.status, verifierId: check.verifierId ?? '',
+      verifierVersion: check.verifierVersion ?? '', safeSummary: check.safeSummary ?? '' }))
+      .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0) });
+  if (snapshot.failureFingerprint === report.failureFingerprint && snapshot.failureEvidenceDigest === evidenceDigest) {
+    return finish(outcome, 'repeated_verification_failure');
+  }
   return { pendingIntent: null, phase: 'preparing_context', verification: report, repairs: snapshot.repairs + 1,
-    candidate: null, outcome: null, reason: null,
-    messages: [...snapshot.messages, { role: 'user', kind: 'verification_feedback', content: canonical(report) }] };
+    verificationToolCalls: snapshot.usage.toolCalls,
+    candidate: null, preparedContext: null, outcome: null, reason: null, continuations: 0,
+    failureFingerprint: report.failureFingerprint, failureEvidenceDigest: evidenceDigest,
+    messages: [...snapshot.messages, { role: 'user', kind: 'verification_feedback', content: canonical({
+      instruction: 'Repair failed required items and host-marked actionable unobserved items, then verify again. Unobserved is not passed.',
+      contractRevision: config.contract.revision, candidateStatus: 'rejected',
+      failed: report.checks.filter(check => check.status === 'failed').map(modelFeedbackItem),
+      notRun: report.checks.filter(check => check.status === 'not_run').map(modelFeedbackItem),
+    }) }] };
 }

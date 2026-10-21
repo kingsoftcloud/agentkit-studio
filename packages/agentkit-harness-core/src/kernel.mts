@@ -353,7 +353,7 @@ export class NativeKernel {
           facts.push({ kind: 'context.prepared', payload: { sourceDigest: changes.preparedContext!.sourceDigest,
             messageCount: changes.preparedContext!.messages.length, forceCompaction: intent.payload.forceCompaction === true } });
           break;
-        case 'verify': changes = reduceVerification(snapshot, raw as unknown as VerificationReport, configuration); break;
+        case 'verify': changes = reduceVerification(snapshot, raw as unknown as VerificationReport, configuration, this.digest); break;
         case 'hook': {
           const result = raw as unknown as HookInvocationResult;
           changes = reduceHook(snapshot, intent, result, configuration);

@@ -21,6 +21,7 @@ test('verified completion requires a pinned required check and nonempty evidence
   assert.equal(result.outcome, 'verified');
   assert.equal(result.reason, 'required_acceptance_verified');
   assert.equal(result.verification.binding.subjectContextDigest, result.candidate.binding.subjectContextDigest);
+  assert.equal(result.verificationToolCalls, 0);
   const missing = await run({ report: request => {
     const report = verificationReport(request); report.checks[0].evidenceRefs = []; return report;
   } });
@@ -43,6 +44,7 @@ for (const [field, replacement, reason] of [
 ]) test(`stale ${field} cannot verify the current candidate`, async () => {
   const { result } = await run({ report: request => verificationReport(request, { [field]: replacement }) });
   assert.equal(result.outcome, 'unverified'); assert.equal(result.reason, reason); assert.equal(result.repairs, 0);
+  assert.equal(result.verificationToolCalls, null);
 });
 
 test('partially qualified acceptance retains a partial outcome and never becomes a full pass', async () => {

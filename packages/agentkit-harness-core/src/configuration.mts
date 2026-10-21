@@ -145,6 +145,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
     workspaceDirtySinceCheckpoint: false, lastWorkspaceMutationToolCall: null,
     checkpointWorkspaceRevision: null, checkpointWebMutationToolCall: null, verificationToolCalls: null,
+    failureFingerprint: null, failureEvidenceDigest: null,
     context: {}, diagnostics: {}, stopHookContinuations: 0, hookState: null, contextState: null, recoveryRetriesUsed: 0, toolErrorStreak: null,
     browserSessionRefs: [], browserReobservationRefs: [], lastBrowserObservation: null, lastBrowserAttemptToolCall: null,
     lastWebMutationToolCall: null, unresolvedInteractionObservation: null,

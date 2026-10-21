@@ -186,7 +186,12 @@ test('the real Native loop repairs malformed final text, persists evidence and t
   const kernel = new NativeKernel({ store, digest, owner: 'owner', ports: { verification: f.verification,
     model: { generate: async request => {
       calls++;
-      if (calls === 2) assert.ok(request.messages.some(message => message.kind === 'verification_feedback' && message.content.includes('studio.delivery-evidence-rejection')));
+      if (calls === 2) {
+        const feedback = request.messages.find(message => message.kind === 'verification_feedback');
+        assert.ok(feedback); assert.equal(JSON.parse(feedback.content).failed[0].id, 'current_user_goal');
+        assert.equal(JSON.parse(feedback.content).failed[0].repairable, true);
+        assert.equal(feedback.content.includes('native-artifact:'), false);
+      }
       return { kind: 'final_candidate', text: calls === 1 ? 'Here is [1]' : '[1]', toolCalls: [], usage: emptyUsage() };
     } } } });
   kernel.start({ scope, runId: 'kernel', sessionId: 'session', turnId: '1', buildId: 'build', parentRunId: null, taskChainId: 'chain' }, config);

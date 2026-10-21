@@ -97,6 +97,7 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
           ...(steering?.contract ? { taskContract: steering.contract, taskContractDigest: steering.contractDigest } : {}),
           lastBrowserObservation: null, unresolvedInteractionObservation: null,
           verificationToolCalls: null, checkpointWebMutationToolCall: null,
+          failureFingerprint: null, failureEvidenceDigest: null,
           hookState: null, stopHookContinuations: 0,
           continuations: 0, retryNotBefore: 0, toolErrorStreak: null, workspaceRevision: null,
           contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null,

@@ -22,6 +22,7 @@ const steering = (overrides = {}) => ({ commandId: 'steer', kind: 'steer', paylo
 test('contract replacement changes acceptance and tool scope while preserving aggregate budgets', () => {
   const { config, snapshot, contract } = configured();
   const current = { ...snapshot, continuations: 2, repairs: 2, outputRestarts: 1, retryNotBefore: 123,
+    failureFingerprint: 'old-failure', failureEvidenceDigest: 'old-evidence',
     usage: { ...snapshot.usage, modelCalls: 4, toolCalls: 9 }, lastBrowserObservation: { toolCall: 9 },
     unresolvedInteractionObservation: { error: 'old interaction' }, preparedContext: { messages: [], sourceDigest: 'old' } };
   const batch = reduceCommand(current, steering({ taskContract: contract }), null, { configuration: config, digest });
@@ -29,6 +30,7 @@ test('contract replacement changes acceptance and tool scope while preserving ag
   assert.equal(batch.snapshot.repairs, 2); assert.equal(batch.snapshot.outputRestarts, 1);
   assert.deepEqual(batch.snapshot.usage, current.usage); assert.equal(batch.snapshot.continuations, 0);
   assert.equal(batch.snapshot.retryNotBefore, 0); assert.equal(batch.snapshot.lastBrowserObservation, null);
+  assert.equal(batch.snapshot.failureFingerprint, null); assert.equal(batch.snapshot.failureEvidenceDigest, null);
   assert.equal(batch.snapshot.unresolvedInteractionObservation, null); assert.equal(batch.snapshot.preparedContext, null);
   const effective = effectiveRunConfiguration(batch.snapshot, config, digest);
   assert.deepEqual(advertisedTools(batch.snapshot, effective).map(tool => tool.name), ['write', 'submit_final_output']);

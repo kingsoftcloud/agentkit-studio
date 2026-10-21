@@ -488,6 +488,12 @@ Run or invoke Stop. Memory/SQLite reattachment and real verifier process loss
 are covered; the actual DSH+Chromium chain also checks checkpoint feedback.
 This does not close optional vision feedback, all product consumers or clean
 installation without Python.
+Final repair feedback also excludes audit locations and raw evidence. Durable
+failure fingerprints and subject/environment/diagnostic digests prevent a new
+artifact URI from creating false progress after reattachment. Repairs reset
+the response continuation chain without replenishing aggregate budgets;
+mismatched reports clear the previous verification cursor. Targeted
+Memory/SQLite and Host tests cover these boundaries.
 The Python-list parser pins Unicode 14.0.0 and the CPython 3.11 default decimal
 integer limit of 4300 digits; an unhashable literal becomes a bounded rejection
 instead of the source's uncaught TypeError. Structured model JSON still needs
