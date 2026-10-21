@@ -248,7 +248,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--line);padding:34px
     <h1>把想法交给 Agent<br /><span class="glow">结果直接可交付</span></h1>
     <p class="sub">在 <strong>三种运行时</strong>里构建 Agent，<strong>一键部署到云端 7×24 常驻</strong>，并直接绑定星源 AgentKit 的知识库、记忆库、MCP 与 Skill 中心。</p>
     <div class="cta-row">
-      <a class="btn btn-primary" href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/AgentKit-Studio-mac-arm64.zip">↓ 下载 macOS 版</a>
+      <a class="btn btn-primary" href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/AgentKit-Studio-mac-arm64.dmg">↓ 下载 macOS 版</a>
       <a class="btn btn-ghost" href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/AgentKit-Studio-win-x64.exe">↓ 下载 Windows 版</a>
     </div>
     <p class="hint">固定地址始终指向最新构建 · 版本与校验值见 <a href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/latest.json">latest.json</a></p>
@@ -362,7 +362,7 @@ footer{position:relative;z-index:1;border-top:1px solid var(--line);padding:34px
       <div class="band-head center reveal">
         <span class="eyebrow">RUNTIMES</span>
         <h2>三种运行时，同一个工作台</h2>
-        <p class="lead">同一个 Agent 定义，可以跑在三种运行时上：DSH 原生、自研 AgentKit Harness，或 Codex。按任务挑运行时，不必换工具、不必重写编排。</p>
+        <p class="lead">同一个 Agent 定义，可以跑在三种运行时上：DSH 原生、自研 Star Harness，或 Codex。按任务挑运行时，不必换工具、不必重写编排。</p>
       </div>
       <div class="grid3">
         <article class="card reveal">
@@ -375,8 +375,8 @@ loop:    可审阅 · 可回放</div></div>
         </article>
         <article class="card reveal" data-delay="1">
           <span class="rt-tag">harness</span>
-          <h3 style="margin-top:14px">AgentKit Harness</h3>
-          <p>自研 Harness 运行时。可插拔的 Agent 循环，工具集、上下文策略与运行环境都能按团队口径定制。</p>
+          <h3 style="margin-top:14px">Star Harness</h3>
+          <p>Star Harness（自研运行时）。可插拔的 Agent 循环，工具集、上下文策略与运行环境都能按团队口径定制。</p>
           <div class="demo"><div class="code">runtime: <span class="s">"harness"</span>
 plugins: 可插拔
 deploy:  本地 / 云端一致</div></div>
@@ -483,9 +483,10 @@ $ npm install && npm test</pre>
       <div class="dl-grid">
         <article class="dl reveal">
           <span class="tag">● 预览版 · macOS</span>
-          <strong>Apple 芯片</strong>
-          <small>AgentKit-Studio-mac-arm64.zip · 始终为最新构建</small>
-          <a class="btn btn-primary" href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/AgentKit-Studio-mac-arm64.zip">下载 macOS</a>
+          <strong>Apple 芯片 · DMG</strong>
+          <small>AgentKit-Studio-mac-arm64.dmg · 始终为最新构建</small>
+          <a class="btn btn-primary" href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/AgentKit-Studio-mac-arm64.dmg">下载 macOS</a>
+          <small style="color:var(--dim)">也提供 <a href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/AgentKit-Studio-mac-arm64.zip" style="border-bottom:1px dotted rgba(255,255,255,.22)">zip 包</a></small>
         </article>
         <article class="dl reveal" data-delay="1">
           <span class="tag">● 预览版 · Windows</span>
@@ -500,7 +501,7 @@ $ npm install && npm test</pre>
           <a class="btn btn-ghost" href="https://github.com/kingsoftcloud/agentkit-studio">访问 GitHub</a>
         </article>
       </div>
-      <p class="note">macOS 需 Apple 芯片与 macOS 12+；Windows 需 Windows 10/11 64 位 · <a href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/latest.json">latest.json</a></p>
+      <p class="note">macOS 提供 DMG 安装包（Apple 芯片，macOS 12+）；Windows 提供 EXE 安装包（Windows 10/11 64 位） · <a href="https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/latest/latest.json">latest.json</a></p>
     </div>
   </section>
 </main>

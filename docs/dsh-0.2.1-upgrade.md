@@ -11,7 +11,7 @@ Studio 直接使用官方 `dsh-v0.2.1-rc.2`，固定提交 `687f282e8625c6b8d11f
 | 范围 | 新版变化与 Studio 处理 |
 | --- | --- |
 | 插件分发 | 插件索引、可选官方组合包按需安装、依赖同步和 HMR 交给官方插件管理器；缺失项按 Host 的 installTarget 精确安装，不再直接切换启用；保留单一插件中心。Studio 专家、Skill、MCP 模板仍由 Server 目录和 KS3 资源包提供，模板不是 DSH 插件索引的替代品。 |
-| 插件兼容声明 | Studio 使用精确 `engines.dsh: 0.2.1-rc.2`，对应 AgentKit Harness peer 依赖和 Host 清单同步更新。Cordis 依赖同步到 4.0.5。不使用版本豁免加载不兼容插件。 |
+| 插件兼容声明 | Studio 使用精确 `engines.dsh: 0.2.1-rc.2`，对应 Star Harness peer 依赖和 Host 清单同步更新。Cordis 依赖同步到 4.0.5。不使用版本豁免加载不兼容插件。 |
 | 元信息与扩展位 | 子路径插件的图标、文案按 exports 提供，移除 invariant 的扩展不再可用；输入统计改为 activity/usage。Studio 当前不注册旧 stats 行，也不导入 invariant；现有独立彩色资源图标继续由目录资源提供。 |
 | Agent 与会话 | 保留新版预设、未发送草稿及附件传递；工作区清空适配新的 StartSessionOptions，同时保留 Agent、模型和权限。补丁中的请求指纹仍约束重试，避免取消、恢复后重复提交。 |
 | 专家团 | 官方 agent-teams 升到 0.2.1-rc.2；消息直接投递 Inbox，Studio 转发来源同步为 agent-message/relay 和 subagent-settled/notice，删除过时的 maxPendingMessagesPerMember 配置。Studio 继续负责团队模板、成员选择和运行快照，协作生命周期由官方 Teams 服务负责。 |

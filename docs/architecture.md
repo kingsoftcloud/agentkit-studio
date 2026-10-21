@@ -10,7 +10,7 @@ Studio adds Agent editing, resource bindings, product settings and release wirin
 | --- | --- |
 | `src/` | Studio Host services, API adapters and product plugin |
 | `src/client/` | Browser modules, per-apply composition and DSH UI extensions |
-| `src/providers/` | DSH Native, AgentKit Harness and Codex runtime integration |
+| `src/providers/` | DSH Native, Star Harness and Codex runtime integration |
 | `packages/agentkit-harness/` | Independently packed DSH runtime plugin |
 | `patches/` | Reviewed changes against the pinned public DSH host |
 | `tests/` | Unit, contracts and packaging regressions |
@@ -20,7 +20,7 @@ Studio adds Agent editing, resource bindings, product settings and release wirin
 ## Runtime ownership
 
 `src/runtime-contract.mjs` freezes runtime identity, Build, Session and Run bindings.
-DSH Native uses upstream execution directly. AgentKit Harness uses DSH's Agent,
+DSH Native uses upstream execution directly. Star Harness uses DSH's Agent,
 Session, LLM and streaming protocol; it does not introduce another persistence
 format. Codex requires an adapter for its child process and tool protocol, while
 native file delivery still goes through the DSH Session's tools.

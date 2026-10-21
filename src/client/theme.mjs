@@ -28,6 +28,6 @@ export const ALLOWED_RUNTIME_TYPES = ['dsh-native', 'harness', 'codex'];
 
 export const RUNTIME_LABELS = {
   'dsh-native': 'DSH Native Harness',
-  harness: 'AgentKit Harness',
+  harness: 'Star Harness',
   codex: 'Codex Agent',
 };

@@ -10,4 +10,4 @@ This optional check is separate from first-use onboarding. Missing model credent
 
 Each read has an eight-second limit. A later refresh supersedes earlier results. The check retains status fields only; API keys, full settings documents and raw Host errors are not displayed. It does not call a model, create a session or change any configuration.
 
-DSH Native, AgentKit Harness and Codex still use their existing session and runtime contracts. Verify model requests, file delivery and tools through an actual conversation before relying on a runtime for work.
+DSH Native, Star Harness and Codex still use their existing session and runtime contracts. Verify model requests, file delivery and tools through an actual conversation before relying on a runtime for work.

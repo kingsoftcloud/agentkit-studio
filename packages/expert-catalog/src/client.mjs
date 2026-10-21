@@ -13,7 +13,7 @@ export function createExpertCatalogPage(React, { remote, initialCatalog, CreateP
     }, [item.id, url]);
     return h('span', { ref: node, style: { flex: 'none', width: size, height: size } }, url ? h('img', { src: url, alt: '', width: size, height: size, className: 'ec-portrait', style: { objectFit: 'cover' } }) : h(Avatar, { id: item.id, size }));
   }
-  const labels = { 'dsh-native': 'DSH Native', harness: 'AgentKit Harness', codex: 'Codex' };
+  const labels = { 'dsh-native': 'DSH Native', harness: 'Star Harness', codex: 'Codex' };
   const icons = {
     expert: ['M9 4h6l5 4v7l-5 5H9l-5-5V8l5-4Z', 'M8 10h3v3H8zM14 10h3v3h-3zM10 16h4'],
     skill: ['m14 3 7 7-4 4-3-3-9 10-3-3 10-9-3-3 5-3Z'],
