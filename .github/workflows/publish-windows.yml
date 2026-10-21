@@ -69,6 +69,14 @@ jobs:
           test "${#releases[@]}" = 1
           test "${#proofs[@]}" = 1
           node scripts/publish-windows-candidate.mjs --candidate "${releases[0]}" --proof "${proofs[0]}" --source "$SOURCE_SHA" --version "$BUILD_VERSION" --previous "$PREVIOUS" --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --channel preview
+      - name: Refresh the stable studio/latest download alias
+        env:
+          STUDIO_DOWNLOAD_PROD_KS3_BUCKET: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_BUCKET }}
+          STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY }}
+          STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          node scripts/publish-download-alias.mjs --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --channel preview
       - uses: actions/upload-artifact@v4
         with:
           name: windows-feed-publication-${{ inputs.build_version }}

@@ -119,7 +119,16 @@ node scripts/publish-download-alias.mjs \
 
 The command reads the published update feeds, copies the current ZIP/EXE/DMG/blockmap
 inside KS3 (no release bytes cross the operator machine) and rewrites `latest.json`
-with `no-cache`. Run it after a feed publication; the site needs no edit.
+with `no-cache`. Existing alias objects are deleted before the copy because KS3
+answers `ObjectAlreayExists` instead of overwriting a server-side copy.
+
+Both publish paths run it automatically once the feed advance is verified:
+`release-desktop.yml` publishes the macOS feed and `publish-windows.yml` publishes
+the Windows feed, so the site follows a release without any manual step. The
+workflows pass `STUDIO_DOWNLOAD_PROD_KS3_BUCKET/ACCESS_KEY/SECRET_KEY`, while a
+local run keeps reading the Host configuration. The command stays runnable by hand
+to repair the alias:
+
 
 `studio/latest/` only serves the public download page. Update checks keep reading
 `studio/feeds/<target>/<channel>.yml`, so the alias never affects hot updates,
