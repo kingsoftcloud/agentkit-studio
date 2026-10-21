@@ -46,13 +46,16 @@ export function composeStudioNativeMemoryTools({ record, scope, store, storeDir,
   // resolveAuthority and resolveMutationSource. studioOriginalUserMemorySources
   // validates that each message resolves to a real admitted original human
   // statement; it intentionally supports history projections (for PreCompact
-  // consumption). A projection's sourceSessionId is the ORIGINAL run's session,
-  // so an observation with sourceSessionId === the current snapshot's session is
-  // a current-Run original human message; a different session is a history
-  // projection from an older run. resolveAuthority uses ONLY current-Run
-  // originals; resolveMutationSource's consumption horizon keeps all of them
-  // (including history) per the original requirement. A corrupt/mismatched
-  // projection fails closed here; non-human context is never wrapped into a source.
+  // consumption). A projection's sourceEventId is
+  // `native-message://${sourceRunId}#message=${sourceIndex}`; for a current-Run
+  // original (no history) sourceRunId === request.runId, while a history projection
+  // carries an older run's id. resolveAuthority uses ONLY current-Run originals;
+  // resolveMutationSource's consumption horizon keeps all of them (including
+  // history) per the original requirement. A corrupt/mismatched projection fails
+  // closed here; non-human context is never wrapped into a source. NOTE: a Studio
+  // Session spans multiple Runs, so sourceSessionId === snapshot.sessionId is NOT
+  // a reliable current-Run test — the sourceEventId's runId is.
+  const runIdOf = sourceEventId => /^native-message:\/\/([^#]+)#message=/u.exec(sourceEventId ?? '')?.[1] ?? null;
   const provenanceCache = new WeakMap();
   const provenance = request => {
     if (provenanceCache.has(request)) return provenanceCache.get(request);
@@ -69,18 +72,22 @@ export function composeStudioNativeMemoryTools({ record, scope, store, storeDir,
         try {
           const sources = studioOriginalUserMemorySources({ store, scope, runId: request.runId, messages, messageRefs });
           const [binding] = nativeMemoryScopeBindings(scope, ['user']);
-          const currentSession = loaded.snapshot.sessionId;
+          // Build the set of current-Run no-history sourceEventIds directly from the
+          // snapshot's own messages: a current original has no message.history, so
+          // studioOriginalUserMemorySources derives its sourceRunId as request.runId.
+          // We trust the runId embedded in each observation's sourceEventId.
           const horizon = sources.observations.map(observation => {
             const candidate = nativeUserMemoryCandidate({ text: observation.content,
               sourceEventId: observation.sourceEventId, ...binding });
             if (!candidate) return null;
             // currentOriginal excludes history projections (PreCompact) and any
             // non-current-Run original: authority comes only from the CURRENT run's
-            // original human statement, not an older run a projection dragged in.
-            const currentOriginal = observation.sourceSessionId === currentSession;
+            // original human statement, identified by the sourceEventId's runId,
+            // not the session (which is shared across runs in a Studio Session).
+            const currentOriginal = runIdOf(observation.sourceEventId) === request.runId;
             return { candidate, sourceDigest: observation.sourceDigest, currentOriginal };
           }).filter(Boolean);
-          result = { ok: true, snapshot: loaded.snapshot, origin, horizon, currentSession };
+          result = { ok: true, snapshot: loaded.snapshot, origin, horizon };
         } catch (error) {
           // Corrupt/mismatched source projection: fail closed, never an empty horizon.
           result = { ok: false, code: 'memory_source_unavailable', reason: error?.code ?? 'provenance_failed' };

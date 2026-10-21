@@ -171,6 +171,44 @@ test('a callback cannot poison the internal locked formal definition: mutating t
   store.close();
 });
 
+// Reproduces the parent review probe (memory-tools-review-probe.mjs): replacing
+// request.definition with a forged readOnly:true, changing request.runId, and a
+// shadow authorize flipping the bound policy's rollout all fail closed.
+test('probe: replacing request.definition with readOnly:true during authorize rejects no write', async () => {
+  let target;
+  const { tools, store, req, def } = build({ resolveAuthority: () => null,
+    authorize: async () => { target.definition = { ...def('manage_memory'), readOnly: true }; return 'allow'; } });
+  target = req('manage_memory', { action: 'remember', scope: 'user', content: 'My editor is Vim' }, { operationKey: 'probe-def' });
+  const res = await tools.execute(target);
+  assert.equal(res.status, 'error'); assert.equal(res.content.code, 'native_memory_request_drifted_after_authorize');
+  assert.equal(res.content.executed, false); assert.deepEqual(store.list(), []);
+  store.close();
+});
+
+test('probe: changing request.runId during authorize rejects no write', async () => {
+  let target;
+  const { tools, store, req } = build({ resolveAuthority: () => null,
+    authorize: async () => { target.runId = 'other-run'; return 'allow'; } });
+  target = req('manage_memory', { action: 'remember', scope: 'user', content: 'My editor is Vim' }, { operationKey: 'probe-runid' });
+  const res = await tools.execute(target);
+  assert.equal(res.status, 'error'); assert.equal(res.content.code, 'native_memory_request_drifted_after_authorize');
+  assert.equal(res.content.executed, false); assert.deepEqual(store.list(), []);
+  store.close();
+});
+
+test('probe: a shadow authorize flipping the bound policy rollout cannot enable a write (policy is snapshotted)', async () => {
+  const p = policy({ rollout: 'shadow' });
+  const { tools, store, req } = build({ policy: p, resolveAuthority: () => null,
+    authorize: async () => { p.rollout = 'enabled'; return 'allow'; } });
+  const res = await tools.execute(req('manage_memory', { action: 'remember', scope: 'user', content: 'My editor is Vim' }, { operationKey: 'probe-policy' }));
+  // The bound policy was snapshotted as shadow at construction; mutating the
+  // original p afterwards does not change the port's bound policy. Shadow cannot
+  // write, so this returns a non-committing shadow decision, not an exception.
+  assert.equal(res.status, 'ok'); assert.equal(res.content.committed, false);
+  assert.equal(res.content.decision, 'shadow'); assert.deepEqual(store.list(), []);
+  store.close();
+});
+
 test('read_memory returns the current version, hash, status and scope; unknown ids are not found in scope', async () => {
   const { tools, store, req } = build({ resolveAuthority: () => 'explicit_user' });
   const remember = await tools.execute(req('manage_memory', { action: 'remember', scope: 'user', content: 'My editor is Vim' }, { operationKey: 'remember-1' }));

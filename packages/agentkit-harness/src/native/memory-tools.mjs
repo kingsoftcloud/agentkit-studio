@@ -78,11 +78,15 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     // async; planner.countMessage may be sync OR async and is always awaited.
     && (policy.recall.maxTokens ? planner && typeof planner.countMessage === 'function' : true),
     'native_memory_tools_capabilities_missing');
-  const definitions = nativeMemoryToolDefinitions({ policy, lockedDigest });
+  // Snapshot the bound policy and principal at construction. A callback or caller
+  // that later mutates the original policy/principal object cannot change what this
+  // port considers bound (e.g. a shadow authorize flipping rollout to 'enabled').
+  const boundPolicy = copy(policy), boundPrincipal = copy(principal);
+  const definitions = nativeMemoryToolDefinitions({ policy: boundPolicy, lockedDigest });
   const formal = new Map(definitions.map(definition => [definition.name, definition]));
   const manage = formal.get('manage_memory');
   const bindingFor = scopeName => {
-    const [binding] = nativeMemoryScopeBindings(principal, [scopeName]);
+    const [binding] = nativeMemoryScopeBindings(boundPrincipal, [scopeName]);
     return binding || null;
   };
 
@@ -101,7 +105,7 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     if (!locked) return { status: 'error', content: { code: 'native_memory_tool_unbound', executed: false } };
     if (!(request.definition && canonical(request.definition) === canonical(locked)))
       return { status: 'error', content: { code: 'native_memory_definition_unbound', executed: false } };
-    if (!(request.scope && canonical(request.scope) === canonical(principal)))
+    if (!(request.scope && canonical(request.scope) === canonical(boundPrincipal)))
       return { status: 'error', content: { code: 'native_memory_scope_unbound', executed: false } };
     if (request.call.name !== locked.name)
       return { status: 'error', content: { code: 'native_memory_call_name_unbound', executed: false } };
@@ -110,45 +114,53 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     return copy(locked);
   }
 
-  // Freeze the complete pending request identity at authorize time. The
-  // authorizer/consent callbacks receive isolated copies (never the internal
-  // locked formal). After every await we verify the caller's request identity
-  // did NOT drift (call arguments, callId, operationKey, definition, scope): a
-  // mutation during deferred authorization rejects with no write rather than
-  // silently recomputing a changed digest and continuing. Host current-intent /
-  // fence guards are the parent's concern; here we only guarantee the approved
-  // call itself did not drift between approval and dispatch.
-  function pendingIdentity(request, locked) {
+  // Freeze the complete pending request identity at authorize time. The pending
+  // identity binds the CURRENT request.definition (not the isolated locked copy),
+  // the runId, and the exact signal instance — so replacing request.definition
+  // with a forged readOnly:true, changing runId, or swapping the signal after an
+  // abort is detected as drift. The authorizer/consent callbacks receive isolated
+  // copies (never the internal locked formal); after every await we verify the
+  // caller's live request identity did NOT drift (call, callId, operationKey,
+  // the request's CURRENT definition vs the locked formal, scope, runId, signal
+  // instance): a mutation during deferred authorization rejects with no write
+  // rather than silently recomputing a changed digest and continuing.
+  function pendingIdentity(request) {
     return { call: canonical(request.call), callId: request.call.callId,
-      operationKey: request.operationKey, definition: canonical(locked),
-      scope: canonical(request.scope) };
+      operationKey: request.operationKey, definition: canonical(request.definition),
+      scope: canonical(request.scope), runId: request.runId, signal: request.signal };
   }
-  function drifted(request, locked, pending) {
+  function drifted(request, pending) {
     return pending.call !== canonical(request.call) || pending.callId !== request.call.callId
-      || pending.operationKey !== request.operationKey || pending.definition !== canonical(locked)
-      || pending.scope !== canonical(request.scope);
+      || pending.operationKey !== request.operationKey || pending.definition !== canonical(request.definition)
+      || pending.scope !== canonical(request.scope) || pending.runId !== request.runId
+      || pending.signal !== request.signal;
   }
 
   async function checkedAuthorize(request, locked) {
     // Isolated copies for the callbacks; the internal formal map is untouched.
-    const effective = { call: copy(request.call), definition: copy(locked),
+    // authorize and consent each get their OWN copy so a mutation by the first
+    // callback cannot influence the second.
+    const pending = pendingIdentity(request);
+    const authorizeCopy = { call: copy(request.call), definition: copy(locked),
       operationKey: request.operationKey, runId: request.runId, scope: copy(request.scope),
       signal: request.signal };
-    const pending = pendingIdentity(request, locked);
-    const decision = await authorize(effective);
+    const decision = await authorize(authorizeCopy);
     request.signal.throwIfAborted();
-    if (drifted(request, locked, pending))
+    if (drifted(request, pending))
       return { status: 'error', content: { code: 'native_memory_request_drifted_after_authorize', executed: false } };
     if (decision !== 'allow') return approvalOrDenied(decision);
-    if (request.call.name !== 'manage_memory' || policy.rollout === 'shadow') return 'allow';
+    if (request.call.name !== 'manage_memory' || boundPolicy.rollout === 'shadow') return 'allow';
     // Only a recognized exact explicit user command narrowly skips the second
     // approval. forget never skips via model interpretation; a tool name or
     // committed text is not authorization. Missing authority routes to consent.
     const authority = resolveAuthority(request);
     if (authority === 'explicit_user') return 'allow';
-    const consented = await consent(effective);
+    const consentCopy = { call: copy(request.call), definition: copy(locked),
+      operationKey: request.operationKey, runId: request.runId, scope: copy(request.scope),
+      signal: request.signal };
+    const consented = await consent(consentCopy);
     request.signal.throwIfAborted();
-    if (drifted(request, locked, pending))
+    if (drifted(request, pending))
       return { status: 'error', content: { code: 'native_memory_request_drifted_after_consent', executed: false } };
     return consented === 'allow' ? 'allow' : approvalOrDenied(consented);
   }
@@ -163,17 +175,17 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     const query = request.call.arguments.query;
     if (!query.trim()) return { status: 'error', content: { code: 'memory_search_query_missing' } };
     let result;
-    try { result = provider.search({ query, topK: policy.recall.topK, minScore: policy.recall.minScore }); }
+    try { result = provider.search({ query, topK: boundPolicy.recall.topK, minScore: boundPolicy.recall.minScore }); }
     catch { return { status: 'error', content: { code: 'memory_search_failed' } }; }
     if (result.status !== 'ok' || !Array.isArray(result.records))
       return { status: 'error', content: { code: 'memory_search_failed' } };
     // Re-admit at the tool boundary: a storage namespace or historical receipt
     // does not prove current data. This explicit search is independent of the
     // automatic recall toggle and is not closed when recall is disabled.
-    const candidates = admitNativeMemoryRecords(result.records, { principal, scopes: policy.scopes });
+    const candidates = admitNativeMemoryRecords(result.records, { principal: boundPrincipal, scopes: boundPolicy.scopes });
     const records = [];
     let skipped = 0;
-    const envelope = (items, omitted) => ({ format: 'ksadk.memory-search/v1', providerRef: policy.providerRef,
+    const envelope = (items, omitted) => ({ format: 'ksadk.memory-search/v1', providerRef: boundPolicy.providerRef,
       query, records: items, trustLevel: 'untrusted', retrievalStrategy: result.retrievalStrategy,
       truncated: !!result.truncated || omitted > 0, budgetSkipped: omitted });
     // Count the whole provenance envelope with the bound Host counter
@@ -181,7 +193,7 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     // sync or async and is always awaited. The parent never substitutes its own
     // character estimator for the real model tool-result counter.
     const fits = async value => await planner.countMessage({ role: 'tool', tool_call_id: request.call.callId,
-      content: JSON.stringify({ status: 'ok', content: value }) }) <= policy.recall.maxTokens;
+      content: JSON.stringify({ status: 'ok', content: value }) }) <= boundPolicy.recall.maxTokens;
     for (const record of candidates) {
       const data = copy(record);
       if (await fits(envelope([...records, data], skipped))) records.push(data);
@@ -211,7 +223,7 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
       && nativeMemorySensitiveLabels(args.content).length)
       return invalidArgs('invalid_memory_action_arguments');
     // Shadow rollout cannot write: observe the intent, persist nothing.
-    if (policy.rollout === 'shadow')
+    if (boundPolicy.rollout === 'shadow')
       return { status: 'ok', content: { committed: false, decision: 'shadow', action: args.action, scope: args.scope,
         contentHash: args.content ? memoryDigest(args.content) : '', reason: 'shadow_rollout_no_write' } };
     // Source provenance was resolved and fail-closed in execute before consent;
@@ -253,7 +265,7 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     // unavailable source fails closed with a stable error and never reaches the
     // consent prompt. Shadow observes intent without a source or a write.
     let source = null;
-    if (request.call.name === 'manage_memory' && policy.rollout !== 'shadow') {
+    if (request.call.name === 'manage_memory' && boundPolicy.rollout !== 'shadow') {
       try { source = resolveMutationSource(request); }
       catch (error) { return { status: 'error', content: { code: 'memory_source_unavailable', executed: false,
         reason: error?.code ?? 'provenance_failed' } }; }
@@ -263,7 +275,7 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     // Capture the complete pending identity before any await so a drift during
     // deferred authorization rejects with no write (checkedAuthorize also guards
     // its own awaits; this guards the read/search/mutate dispatch paths).
-    const pending = pendingIdentity(request, locked);
+    const pending = pendingIdentity(request);
     const auth = await checkedAuthorize(request, locked);
     // A late allowance arriving after cancellation must not trigger the mutation.
     request.signal.throwIfAborted();
@@ -272,7 +284,7 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     // drift the authorizer path did not exercise (e.g. read/search after allow).
     if (auth && typeof auth === 'object' && auth.status === 'error') return auth;
     if (auth !== 'allow') return auth;
-    if (drifted(request, locked, pending))
+    if (drifted(request, pending))
       return { status: 'error', content: { code: 'native_memory_request_drifted_after_authorize', executed: false } };
     request.signal.throwIfAborted();
     if (request.call.name === 'read_memory') return readRecord(request);
