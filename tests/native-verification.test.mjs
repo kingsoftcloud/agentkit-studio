@@ -25,7 +25,7 @@ async function fixture(t, { goal = 'Finish the requested work.', text = 'Done', 
   const identity = { scope, runId: 'run', sessionId: 'session', turnId: '1', buildId: 'build', parentRunId: null, taskChainId: 'chain' };
   const candidate = { candidateId: 'candidate', text, goalRevision: 1, workspaceRevision: 'revision',
     binding: { subjectDigest: digest(text), subjectContextDigest: 'context', environmentDigest: 'host' } };
-  const snapshot = { ...identity, candidate, goalRevision: 1, repairs: 0, messages: [],
+  const snapshot = { ...identity, candidate, goalRevision: 1, repairs: 0, messages: [], usage: emptyUsage(),
     workspaceModifiedPaths: web ? ['index.html'] : [], lastWebMutationToolCall: web ? 3 : null,
     lastBrowserObservation: web ? { entryPath: 'index.html', toolCall: 3, goalRevision: 1 } : null,
     unresolvedInteractionObservation: null };
