@@ -35,9 +35,13 @@ export function createTemplateAuthoring({ catalog, store, resources, platformRes
         plugins.push(platformBinding(resource.kind, resource.id, await platformResources(resource.kind)));
       }
       const hasMemory = seen.has('memory-instance'), enabled = spec.memory?.enabled === true;
-      // A harness Agent may use local-default Native memory without a cloud
-      // memory-instance binding; every other enabled path still requires one.
-      const usesLocalDefault = enabled && spec.memory?.providerRef === 'local-default' && runtimeType === 'harness' && !hasMemory;
+      // The local Native provider (harness + local-default, no cloud binding)
+      // allows write.mode 'off' whether memory is enabled or disabled — it is a
+      // property of the provider, not of the enabled flag.
+      const localProvider = spec.memory?.providerRef === 'local-default' && runtimeType === 'harness' && !hasMemory;
+      // Only ENABLED local memory satisfies a template's memory-instance
+      // requirement; disabled local memory must not bypass that binding.
+      const usesLocalDefault = enabled && localProvider;
       for (const required of item.requirements.filter(value => value.required)) {
         const counts = { model: modelIds.length, mcp: bindings.mcpServers?.length || 0, skill: bindings.skills?.length || 0, tool: bindings.tools?.length || 0 };
         // A harness local-default Agent satisfies a memory-instance requirement
@@ -47,12 +51,18 @@ export function createTemplateAuthoring({ catalog, store, resources, platformRes
       }
       if (enabled && !hasMemory && !usesLocalDefault) fail('TEMPLATE_MEMORY_REQUIRED', '启用长期记忆前请选择记忆库');
       const mode = spec.memory?.write?.mode || 'explicit_only';
-      const validWriteModes = usesLocalDefault ? ['off', 'explicit_only', 'candidate'] : ['candidate', 'explicit_only'];
+      const validWriteModes = localProvider ? ['off', 'explicit_only', 'candidate'] : ['candidate', 'explicit_only'];
       if (!validWriteModes.includes(mode)) fail('TEMPLATE_MEMORY_POLICY_INVALID', '记忆写入策略无效');
       spec.bindings = { ...bindings, modelProfileIds: modelIds, plugins };
-      spec.memory = { ...spec.memory, enabled,
-        providerRef: hasMemory ? 'binding://platform-memory-instance' : (spec.memory?.providerRef ?? 'local-default'),
-        recall: { ...spec.memory?.recall, enabled: spec.memory?.recall?.enabled ?? true }, write: { ...spec.memory?.write, mode } };
+      // Disabled memory preserves the original block exactly (only the enabled
+      // flag is normalized to false); enabled memory normalizes providerRef,
+      // recall and write.mode. An explicit scopes:[] and an independent
+      // recall.enabled survive in both branches.
+      spec.memory = enabled
+        ? { ...spec.memory, enabled,
+            providerRef: hasMemory ? 'binding://platform-memory-instance' : (spec.memory?.providerRef ?? 'local-default'),
+            recall: { ...spec.memory?.recall, enabled: spec.memory?.recall?.enabled ?? true }, write: { ...spec.memory?.write, mode } }
+        : { ...spec.memory, enabled: false };
       spec.security = { toolPolicy: 'deny-by-default', allowedPermissions: runtimeType === 'harness'
         ? ['process:host-user', ...((bindings.mcpServers || []).length ? ['network:mcp'] : [])] : [] };
       const catalogId = catalog.prepare(ref).templateSource.catalogId;
