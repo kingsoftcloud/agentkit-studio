@@ -481,8 +481,13 @@ process exit before the verifier receipt commit are covered by targeted tests.
 The Studio factory also pins each new goal to its original parent Run, while
 core steering uses goal-revision CAS and persists replacement contracts.
 
-This does not close checkpoint verification between tool batches, optional
-vision feedback, all product consumers or clean installation without Python.
+Changed work can now trigger a durable checkpoint at the source's budget,
+idle-tool and fresh-browser boundaries. It reobserves the workspace after the
+report, sends only safe diagnosis to the next model turn, and cannot finish the
+Run or invoke Stop. Memory/SQLite reattachment and real verifier process loss
+are covered; the actual DSH+Chromium chain also checks checkpoint feedback.
+This does not close optional vision feedback, all product consumers or clean
+installation without Python.
 The Python-list parser pins Unicode 14.0.0 and the CPython 3.11 default decimal
 integer limit of 4300 digits; an unhashable literal becomes a bounded rejection
 instead of the source's uncaught TypeError. Structured model JSON still needs

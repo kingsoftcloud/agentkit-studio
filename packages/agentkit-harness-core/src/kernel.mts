@@ -302,7 +302,15 @@ export class NativeKernel {
         case 'workspace': {
           const observation = raw as unknown as WorkspaceObservation;
           invariant(['ok', 'unavailable'].includes(observation.status) && Array.isArray(observation.changedPaths), 'invalid_workspace_observation');
+          const revisionChanged = snapshot.usage.toolCalls > 0 && snapshot.workspaceRevision !== null
+            && observation.revision !== null && observation.revision !== snapshot.workspaceRevision;
+          const browserArtifactOnly = !observation.changedPaths.length
+            && snapshot.lastBrowserObservation?.toolCall === snapshot.usage.toolCalls
+            && snapshot.lastWorkspaceMutationToolCall !== snapshot.usage.toolCalls;
           changes = { pendingIntent: null, workspaceRevision: observation.revision,
+            workspaceDirtySinceCheckpoint: snapshot.workspaceDirtySinceCheckpoint || observation.changedPaths.length > 0
+              || revisionChanged && !browserArtifactOnly,
+            lastWorkspaceMutationToolCall: revisionChanged && !browserArtifactOnly ? snapshot.usage.toolCalls : snapshot.lastWorkspaceMutationToolCall,
             ...(snapshot.workspaceRevision !== observation.revision ? { preparedContext: null } : {}),
             context: { ...snapshot.context, [intent.payload.purpose === 'terminal' ? 'terminalWorkspaceCursor' : 'workspaceCursor']: intent.payload.cursor ?? null },
             workspaceModifiedPaths: [...new Set([...snapshot.workspaceModifiedPaths, ...observation.changedPaths])] };

@@ -142,7 +142,7 @@ try {
     verifyBrowserPage: input => { coldChecks++; return gateway.verifyBrowserPage(agent, input); } });
   const formalStore = new MemoryRunStore(); let formalModels = 0;
   const formalKernel = new NativeKernel({ store: formalStore, digest, owner: 'studio-verification-proof', ports: {
-    ...gateway.forAgent(agent), verification: verifier, model: { generate: async () => {
+    ...gateway.forAgent(agent), verification: verifier, model: { generate: async input => {
       formalModels++;
       if (formalModels === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'write',
         name: 'write_workspace_file', arguments: { path: 'app/verify.html', content:
@@ -150,13 +150,20 @@ try {
       if (formalModels === 2) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'inspect',
         name: definition.name, arguments: { path: 'app/verify.html', wait_ms: 0, actions: [] } }] };
       assert.equal(formalModels, 3, 'A clean smoke test must not invent a repair or semantic pass');
+      const feedback = input.messages.find(message => message.kind === 'verification_observation');
+      assert.ok(feedback, 'The browser checkpoint must precede the next model call');
+      assert.equal(JSON.parse(feedback.content).notRun[0].id, 'current_user_goal');
+      assert.equal(feedback.content.includes('native-artifact:'), false);
       return { kind: 'final_candidate', text: 'The delivered page was inspected.', toolCalls: [], usage: emptyUsage() };
     } },
   } });
   formalKernel.start({ scope, runId: 'verified-delivery', sessionId: 'session', turnId: '2', buildId: 'proof', taskChainId: 'proof', parentRunId: null }, formalConfig);
   const delivery = await formalKernel.runUntilIdle(scope, 'verified-delivery');
   assert.equal(delivery.phase, 'completed', delivery.reason); assert.equal(delivery.outcome, 'unverified');
-  assert.equal(delivery.verification.checks[0].status, 'not_run'); assert.equal(coldChecks, 1); assert.equal(formalModels, 3);
+  assert.equal(delivery.verification.checks[0].status, 'not_run'); assert.equal(coldChecks, 2); assert.equal(formalModels, 3);
+  const firstVerification = formalStore.load(scope, 'verified-delivery').intents.find(intent => intent.kind === 'verify');
+  assert.equal(firstVerification.payload.candidate.purpose, 'checkpoint');
+  assert.equal(formalStore.events(scope, 'verified-delivery').filter(event => event.kind === 'verification.checkpoint_started').length, 1);
   assert.equal(delivery.lastBrowserObservation.entryPath, 'app/verify.html');
   const sealed = delivery.verification.checks[0].evidence.artifact;
   const evidence = await createNativeArtifactStore({ directory: evidenceDirectory, scope });
@@ -171,5 +178,5 @@ try {
   assert.equal(blocked.checks[0].status, 'blocked'); assert.equal(blocked.repairable, false);
   assert.match(blocked.checks[0].safeSummary, /Restore the host browser/);
   denyStart = false;
-  process.stdout.write('PASS: actual DSH registry pre/guard/around/post/result policy, persisted browser attachments, cold verification with per-action guard denial and isolated live page, Native next-model image, and restored owner requiring explicit reload\n');
+  process.stdout.write('PASS: actual DSH registry policy, persisted attachments, Native next-model image, restored browser continuity, checkpoint feedback before the next model call, separate final evidence, and cold Start guard denial\n');
 } finally { await gateway?.close(); await rm(root, { recursive: true, force: true }); }

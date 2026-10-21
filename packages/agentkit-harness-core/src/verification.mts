@@ -1,11 +1,49 @@
 import type { CompletionCandidate, RunConfiguration, RunSnapshot, VerificationReport } from './contracts.mjs';
 import { canonical, invariant } from './values.mjs';
 
+/** Verify changed work while there is still model room to consume the observation. */
+export function checkpointCandidate(snapshot: RunSnapshot, config: RunConfiguration,
+  digest: (value: unknown) => string): CompletionCandidate | null {
+  const remaining = config.limits.maxModelCalls === null ? Infinity
+    : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls;
+  const reserve = config.limits.verificationReserveModelCalls, idle = config.limits.verificationIdleToolCalls ?? 0;
+  const budgetBoundary = reserve > 0 && Number.isFinite(remaining) && remaining <= reserve;
+  const idleBoundary = idle > 0 && snapshot.lastWorkspaceMutationToolCall != null
+    && snapshot.usage.toolCalls - snapshot.lastWorkspaceMutationToolCall >= idle;
+  const browserBoundary = !!config.workspaceObservationPolicy && snapshot.lastWebMutationToolCall != null
+    && snapshot.lastWebMutationToolCall > (snapshot.checkpointWebMutationToolCall ?? 0)
+    && snapshot.lastBrowserObservation?.toolCall === snapshot.usage.toolCalls
+    && snapshot.usage.toolCalls >= snapshot.lastWebMutationToolCall;
+  if (remaining <= 0 || snapshot.browserReobservationRefs?.length || !snapshot.usage.toolCalls || !snapshot.workspaceDirtySinceCheckpoint
+    || snapshot.workspaceRevision === null || snapshot.workspaceRevision === snapshot.checkpointWorkspaceRevision
+    || !(budgetBoundary || idleBoundary || browserBoundary)) return null;
+  return sealCandidate({ candidateId: `${snapshot.runId}:checkpoint:${snapshot.goalRevision}:${snapshot.usage.modelCalls}:${snapshot.usage.toolCalls}`,
+    text: '', purpose: 'checkpoint', goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision }, snapshot, config, digest);
+}
+
+/** A checkpoint only gives bounded repair feedback; even a pass cannot finish the Run. */
+export function finishCheckpoint(snapshot: RunSnapshot): Partial<RunSnapshot> {
+  invariant(snapshot.candidate?.purpose === 'checkpoint' && snapshot.verification, 'checkpoint_report_missing');
+  const item = (check: VerificationReport['checks'][number]) => ({ id: check.id, status: check.status,
+    safeSummary: check.safeSummary ?? '', repairable: check.repairable === true });
+  const checks = snapshot.verification.checks;
+  return { phase: 'preparing_context', candidate: null, preparedContext: null, outcome: null, reason: null,
+    checkpointWorkspaceRevision: snapshot.workspaceRevision, checkpointWebMutationToolCall: snapshot.lastWebMutationToolCall,
+    workspaceDirtySinceCheckpoint: false,
+    messages: checks.length ? [...snapshot.messages, { role: 'user', kind: 'verification_observation', content: canonical({
+      instruction: 'Repair observed failures and complete remaining acceptance checks before final delivery. Blocked checks were not verified; inspect their reported cause before treating them as passed.',
+      contractRevision: snapshot.verification.contractRevision,
+      failed: checks.filter(check => check.status === 'failed').map(item), blocked: checks.filter(check => check.status === 'blocked').map(item),
+      notRun: checks.filter(check => check.status === 'not_run').map(item),
+    }) }] : snapshot.messages };
+}
+
 /** Bind verification to the candidate, committed model context and host environment. */
 export function sealCandidate(candidate: CompletionCandidate, snapshot: RunSnapshot, configuration: RunConfiguration,
   digest: (value: unknown) => string): CompletionCandidate {
   return { ...candidate, binding: {
-    subjectDigest: digest({ text: candidate.text, workspaceRevision: candidate.workspaceRevision }),
+    subjectDigest: digest({ text: candidate.text, workspaceRevision: candidate.workspaceRevision,
+      ...(candidate.purpose === 'checkpoint' ? { purpose: 'checkpoint' } : {}) }),
     subjectContextDigest: digest({ messages: snapshot.messages, goalRevision: candidate.goalRevision,
       configDigest: snapshot.configDigest, artifactRefs: snapshot.artifactRefs,
       ...(snapshot.taskContract ? { taskContractDigest: snapshot.taskContractDigest } : {}),
@@ -22,7 +60,8 @@ export function reduceVerification(snapshot: RunSnapshot, report: VerificationRe
   invariant(new Set(report.checks.map(check => check.id)).size === report.checks.length
     && report.checks.every(check => ['passed', 'failed', 'not_run', 'blocked', 'unverified'].includes(check.status)), 'invalid_verification_checks');
   const finish = (outcome: RunSnapshot['outcome'], reason: string): Partial<RunSnapshot> => ({
-    pendingIntent: null, phase: 'finalizing', verification: report, outcome, reason,
+    pendingIntent: null, phase: 'finalizing', verification: report, outcome,
+    reason: snapshot.candidate?.purpose === 'checkpoint' ? `checkpoint_${reason}` : reason,
   });
   const candidate = snapshot.candidate;
   invariant(candidate, 'verification_candidate_missing');
@@ -42,6 +81,8 @@ export function reduceVerification(snapshot: RunSnapshot, report: VerificationRe
     invariant(check.evidenceRefs === undefined || Array.isArray(check.evidenceRefs)
       && check.evidenceRefs.every(ref => typeof ref === 'string' && ref.trim()), 'invalid_verification_evidence');
   }
+  if (candidate.purpose === 'checkpoint') return { pendingIntent: null, phase: 'finalizing', verification: report,
+    verificationToolCalls: snapshot.usage.toolCalls, outcome: null, reason: null };
   const required = config.contract.acceptance.filter(item => item.required);
   if (!required.length) return finish('unverified', 'required_acceptance_empty');
   const results = new Map(report.checks.map(check => [check.id, check]));

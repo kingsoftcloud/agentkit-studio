@@ -20,6 +20,7 @@ export function bindNativeTaskPolicy({ tools, nativeLimits } = {}) {
       maxModelCalls, maxToolCalls,
       verificationReserveModelCalls: browser ? maxModelCalls === null ? 6 : Math.min(6, Math.max(1, Math.floor(maxModelCalls / 5))) : 0,
       browserObservationIntervalToolCalls: browser ? 12 : 0,
+      verificationIdleToolCalls: browser ? 4 : 0,
       finalizationReserveModelCalls: maxModelCalls === null ? 1 : Math.min(1, maxModelCalls),
       maxOutputRestarts: maxModelCalls === null || maxModelCalls >= 20 ? 1 : 0,
     },

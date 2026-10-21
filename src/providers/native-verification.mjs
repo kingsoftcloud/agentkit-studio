@@ -116,7 +116,7 @@ export async function createNativeVerification({ scope, sessionId, workspaceRoot
       && (!exactItem || requirement && exactItem.id === 'exact_workspace_file' && exactItem.required
         && exactItem.verifierRef === ARTIFACT_VERIFIER_REF && exactItem.verifierVersion === VERSION
         && exactItem.verificationMethod === 'deterministic'), 'studio_native_verification_contract_unsupported');
-    const shape = requestedFinalShape(main.description), shapeFailure = shape && finalShapeViolation(shape, candidate.text);
+    const shape = requestedFinalShape(main.description), shapeFailure = candidate.purpose !== 'checkpoint' && shape && finalShapeViolation(shape, candidate.text);
     const facts = { shape, shapeFailure: shapeFailure || null, entryPath: null, browserObservation: null,
       modelObservation: snapshot.lastBrowserObservation ?? null, lastWebMutationToolCall: snapshot.lastWebMutationToolCall ?? null,
       unresolvedInteractionObservation: snapshot.unresolvedInteractionObservation ?? null, exactFile: null };

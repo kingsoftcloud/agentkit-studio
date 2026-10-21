@@ -66,6 +66,14 @@ test('an ordinary response remains not_run with durable, readable scoped evidenc
   await assert.rejects(f.verification.verify({ ...f.request, candidate: { ...f.request.candidate, text: 'forged' } }), /candidate_mismatch/);
 });
 
+test('a checkpoint observes work without requiring a final-answer shape', async t => {
+  const f = await fixture(t, { goal: 'Return only a Python list literal.', text: '' });
+  f.request.candidate.purpose = 'checkpoint';
+  const report = await f.verification.verify(f.request);
+  assert.equal(report.checks[0].status, 'not_run'); assert.equal(report.repairable, false);
+  assert.equal((await f.inspect(report)).facts.shapeFailure, null);
+});
+
 test('a malformed final answer produces evidence-backed bounded repair feedback', async t => {
   const f = await fixture(t, { goal: 'Return only a Python list literal.', text: 'Here is [1,2]' });
   const report = await f.verification.verify(f.request), check = report.checks[0];

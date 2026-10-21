@@ -55,6 +55,7 @@ export interface RunLimits {
   maxParallelTools: number; maxRepairs: number; maxOutputRestarts: number;
   finalizationReserveModelCalls: number; finalizationReserveWallMs: number;
   verificationReserveModelCalls: number; browserObservationIntervalToolCalls: number;
+  verificationIdleToolCalls: number;
   effectTimeoutMs: number; leaseMs: number; maxSubagentDepth: number;
   maxToolResultBytes: number; maxInlineImageBytes: number; maxModelStreamBytes: number;
   maxRecoveryRetries: number;
@@ -193,6 +194,7 @@ export interface VerificationReport {
 export interface CandidateBinding { subjectDigest: string; subjectContextDigest: string; environmentDigest: string }
 export interface CompletionCandidate {
   candidateId: string; text: string; goalRevision: number; workspaceRevision: string | null;
+  purpose?: 'final' | 'checkpoint';
   binding?: CandidateBinding;
 }
 export interface ChildState {
@@ -227,6 +229,9 @@ export interface RunSnapshot extends RunIdentity {
   candidate: CompletionCandidate | null; verification: VerificationReport | null;
   finalText: string; outcome: Outcome | null; reason: string | null;
   workspaceRevision: string | null; workspaceModifiedPaths: string[]; artifactRefs: ArtifactRef[];
+  workspaceDirtySinceCheckpoint: boolean; lastWorkspaceMutationToolCall: number | null;
+  checkpointWorkspaceRevision: string | null; checkpointWebMutationToolCall: number | null;
+  verificationToolCalls: number | null;
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
   hookState: HookState | null;

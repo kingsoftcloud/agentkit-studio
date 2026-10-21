@@ -8,6 +8,7 @@ import { currentHookState, pendingHookFeedback, planHook } from './hook-runtime.
 import { toolContext, deferredToolContexts } from './tool-context.mjs';
 import { reduceBrowserReceipt } from './browser-runtime.mjs';
 import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObservation } from './task-policy.mjs';
+import { checkpointCandidate, finishCheckpoint } from './verification.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -63,9 +64,14 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     messages: [...snapshot.messages, ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null,
   });
   if (snapshot.phase === 'finalizing') {
-    if (snapshot.candidate && snapshot.verification && snapshot.verification.workspaceDependency !== 'none'
+    if (snapshot.candidate && snapshot.verification
+      && (snapshot.candidate.purpose === 'checkpoint' || snapshot.verification.workspaceDependency !== 'none')
       && capabilities.workspace && snapshot.context.terminalWorkspaceCursor !== snapshot.candidate.candidateId) {
       return prepareEffect(snapshot, 'workspace', 'finalizing', { cursor: snapshot.candidate.candidateId, purpose: 'terminal' });
+    }
+    if (snapshot.candidate?.purpose === 'checkpoint' && snapshot.verification && snapshot.outcome === null && snapshot.reason === null) {
+      return transition(snapshot, finishCheckpoint(snapshot), [{ kind: 'verification.checkpoint_observed',
+        payload: { candidateId: snapshot.candidate.candidateId, toolCalls: snapshot.verificationToolCalls } }]);
     }
     const outcome = snapshot.outcome ?? 'unverified';
     const text = snapshot.candidate?.text ?? snapshot.finalText;
@@ -95,7 +101,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     && snapshot.context.inputModelCursor !== snapshot.usage.modelCalls) {
     return prepareEffect(snapshot, 'input', snapshot.phase, { step: snapshot.usage.modelCalls + 1 });
   }
-  if (snapshot.phase === 'verifying') {
+  if (snapshot.phase === 'verifying' && snapshot.candidate?.purpose !== 'checkpoint') {
     const hook = planHook(snapshot, config, 'Stop', digest);
     if (hook) return hook;
   }
@@ -127,6 +133,11 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
       return finalizing(snapshot, 'blocked', 'repeated_tool_error_no_progress');
     }
     if (modelRoom(snapshot, config) <= 0) return finalizing(snapshot, 'budget_exhausted', 'model_budget_exhausted');
+    if (snapshot.phase === 'preparing_context' && capabilities.workspace && capabilities.verification) {
+      const candidate = checkpointCandidate(snapshot, config, digest);
+      if (candidate) return transition(snapshot, { phase: 'verifying', candidate, verification: null, preparedContext: null },
+        [{ kind: 'verification.checkpoint_started', payload: { workspaceRevision: snapshot.workspaceRevision } }]);
+    }
     return prepareEffect(snapshot, 'model', 'requesting_model', { finalizationOnly: finalizationOnly(snapshot, config) });
   }
   if (snapshot.phase === 'executing_tools') {
@@ -287,6 +298,8 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     browserReobservationRefs: copy(snapshot.browserReobservationRefs ?? []), lastBrowserObservation: snapshot.lastBrowserObservation ?? null,
     lastBrowserAttemptToolCall: snapshot.lastBrowserAttemptToolCall ?? null,
     lastWebMutationToolCall: snapshot.lastWebMutationToolCall ?? null,
+    workspaceDirtySinceCheckpoint: snapshot.workspaceDirtySinceCheckpoint ?? false,
+    lastWorkspaceMutationToolCall: snapshot.lastWorkspaceMutationToolCall ?? null,
     unresolvedInteractionObservation: snapshot.unresolvedInteractionObservation ?? null };
   for (const [index, call] of calls.entries()) {
     const result = copy(results[index]!);
@@ -303,6 +316,10 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
         interactionId: `${intent.operationKey}:approval`, hostInteractionId: result.interactionId, callId: call.callId, operationKey: intent.operationKey } };
     }
     updated.usage.toolCalls += 1;
+    if (result.workspaceChangedPaths?.length) {
+      updated.workspaceDirtySinceCheckpoint = true;
+      updated.lastWorkspaceMutationToolCall = updated.usage.toolCalls;
+    }
     const definition = config.tools.find(tool => tool.name === call.name);
     if (invalidatesBrowserObservation(result, config)) updated.lastWebMutationToolCall = updated.usage.toolCalls;
     if (definition) {
@@ -356,6 +373,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
     lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall,
     lastWebMutationToolCall: updated.lastWebMutationToolCall, unresolvedInteractionObservation: updated.unresolvedInteractionObservation,
+    workspaceDirtySinceCheckpoint: updated.workspaceDirtySinceCheckpoint, lastWorkspaceMutationToolCall: updated.lastWorkspaceMutationToolCall,
     workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null, toolErrorStreak: updated.toolErrorStreak };
 }
 export function settle(snapshot: RunSnapshot, intent: EffectIntent, receipt: EffectReceipt, changes: Partial<RunSnapshot>, elapsedMs: number, facts: { kind: string; payload: ObjectValue }[] = []): CommitBatch {

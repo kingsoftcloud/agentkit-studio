@@ -27,6 +27,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     maxWallMs: null, maxModelCalls: null, maxToolCalls: null, maxParallelTools: 4, maxRepairs: 3,
     maxOutputRestarts: 0, finalizationReserveModelCalls: 1, finalizationReserveWallMs: 0,
     verificationReserveModelCalls: 0, browserObservationIntervalToolCalls: 0,
+    verificationIdleToolCalls: 0,
     effectTimeoutMs: 120_000, leaseMs: 30_000, maxSubagentDepth: 3,
     maxToolResultBytes: 65536, maxInlineImageBytes: 40 * 1024 * 1024, maxModelStreamBytes: 1024 * 1024,
     maxRecoveryRetries: 3, ...input.limits,
@@ -61,6 +62,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(value === null || Number.isSafeInteger(value) && value >= 0, `invalid_limit:${key}`);
   }
   invariant(Number.isSafeInteger(limits.maxModelStreamBytes) && limits.maxModelStreamBytes >= 0, 'invalid_limit:maxModelStreamBytes');
+  invariant(Number.isSafeInteger(limits.verificationIdleToolCalls) && limits.verificationIdleToolCalls >= 0, 'invalid_limit:verificationIdleToolCalls');
   invariant(limits.maxModelCalls === null || limits.maxModelCalls > 0, 'invalid_model_budget');
   invariant(limits.maxWallMs === null || limits.maxWallMs > 0, 'invalid_wall_budget');
   invariant(limits.effectTimeoutMs > 0 && limits.leaseMs >= 30 && limits.maxParallelTools >= 1
@@ -141,6 +143,8 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
+    workspaceDirtySinceCheckpoint: false, lastWorkspaceMutationToolCall: null,
+    checkpointWorkspaceRevision: null, checkpointWebMutationToolCall: null, verificationToolCalls: null,
     context: {}, diagnostics: {}, stopHookContinuations: 0, hookState: null, contextState: null, recoveryRetriesUsed: 0, toolErrorStreak: null,
     browserSessionRefs: [], browserReobservationRefs: [], lastBrowserObservation: null, lastBrowserAttemptToolCall: null,
     lastWebMutationToolCall: null, unresolvedInteractionObservation: null,
