@@ -109,11 +109,12 @@ installed App checks. A working macOS update does not prove Windows update suppo
 
 ## Publishing from a local machine
 
-GitHub-hosted runners cannot reach the KS3 origin reliably: the pre-publish KS3
-probe fails with `403` before anything is uploaded. The candidate build is still
-produced by `release-desktop.yml` with `publish_feed=false`, so the signed bytes
-come from CI and the publication step runs from a maintainer machine inside the
-network:
+GitHub-hosted runners reach the KS3 origin at roughly 19 KB/s, which makes a
+publication impossible: the 11 MB pre-publish probe alone takes about 9.5 minutes,
+and the 480 MB ZIP/DMG upload then stalls until KS3 aborts it with `403` (the
+multipart layer reports `retryable: false`). The candidate build is still produced
+by `release-desktop.yml` with `publish_feed=false`, so the signed bytes come from
+CI and the publication step runs from a maintainer machine inside the network:
 
 ```sh
 # macOS: download the signed candidate, verify SHA-256 sums, publish the feed,
