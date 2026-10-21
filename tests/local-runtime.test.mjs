@@ -503,3 +503,26 @@ test('an explicitly disabled memory binding does not recall or write cloud data'
   assert.doesNotMatch(result.resourceContext, /Memory:/);
   assert.equal(result.memoryWrite, false);
 });
+
+test('only a declared reasoning level reaches the gateway body', async () => {
+  const bodies = [];
+  const profile = { id: 'p', modelName: 'deepseek-v4.1-flash', baseUrl: 'https://model.test/v1', apiKey: 'k',
+    reasoningEfforts: { low: 'low', high: 'high', max: 'max' }, defaultReasoningEffort: 'high' };
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ metadata: { name: 'reasoner' }, spec: { instructions: {}, bindings: { modelProfileId: 'p' } } }) }),
+    modelService: { profile: async () => profile },
+    fetchImpl: async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+    },
+  });
+  const run = effort => handler(Readable.from([JSON.stringify({ agentId: 'reasoner', input: 'hi', ...(effort ? { reasoningEffort: effort } : {}) })]), responseSink());
+  await run('max');
+  await run('off');
+  await run();
+  assert.equal(bodies[0].reasoning_effort, 'max');
+  // `off` is not offered, but a stale DSH session could still ask for it: an
+  // undeclared level must drop rather than turn thinking off implicitly.
+  assert.equal(bodies[1].reasoning_effort, undefined);
+  assert.equal(bodies[2].reasoning_effort, undefined);
+});

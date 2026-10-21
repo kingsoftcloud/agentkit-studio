@@ -25,7 +25,7 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
         if (!result?.ok) throw new Error(result?.error?.message || 'Agent 绑定的模型不可用');
       }
       try {
-        const permission = await remote.commands?.execute?.(sessionId, '/permission read-only', []);
+        const permission = await remote.commands?.execute?.(sessionId, '/permission workspace-write', []);
         if (permission?.ok === false) console.warn('[agentkit-studio] Agent permission default was not applied:', permission.error?.message || permission.error);
       } catch (error) { console.warn('[agentkit-studio] Agent permission default unavailable:', error?.message || error); }
       if (!active()) return;

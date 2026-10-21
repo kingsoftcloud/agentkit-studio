@@ -95,3 +95,23 @@ test('Codex API format persists per profile without changing default or credenti
   assert.deepEqual(values.modelProfiles.map(p => [p.apiKey, p.default]), [['private-chat', true], ['private-responses', false]]);
   await assert.rejects(config.update({ modelProfiles: [{ ...profiles[0], codexApi: 'unknown' }] }), /接口格式无效/);
 });
+
+test('reasoning opt-in survives describe so a reload cannot erase the model declaration', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-reasoning-'));
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home } });
+  await config.update({ modelProfiles: [
+    { id: 'reasoner', provider: 'ksyun', modelName: 'deepseek', credentialName: 'KEY', reasoningEfforts: true, defaultReasoningEffort: 'max' },
+    { id: 'plain', provider: 'ksyun', modelName: 'seed', credentialName: 'KEY' },
+  ] });
+  const described = await config.describe();
+  assert.deepEqual(described.modelProfiles.map(profile => [profile.reasoningEfforts, profile.defaultReasoningEffort]),
+    [[true, 'max'], [undefined, undefined]]);
+  // An unknown level falls back instead of being written back verbatim.
+  await config.update({ modelProfiles: [{ id: 'reasoner', provider: 'ksyun', modelName: 'deepseek', credentialName: 'KEY', reasoningEfforts: true, defaultReasoningEffort: 'ultra' }] });
+  assert.equal((await config.describe()).modelProfiles[0].defaultReasoningEffort, 'high');
+  // The map shape some bridges emit is accepted and normalized to the marker.
+  await config.update({ modelProfiles: [{ id: 'reasoner', provider: 'ksyun', modelName: 'deepseek', credentialName: 'KEY', reasoningEfforts: { low: 'low', high: 'high', max: 'max' } }] });
+  const normalized = (await config.describe()).modelProfiles[0];
+  assert.equal(normalized.reasoningEfforts, true);
+  assert.equal(normalized.defaultReasoningEffort, 'high');
+});
