@@ -43,7 +43,7 @@ try {
   await expect(page.getByRole('button',{name:/^(新会话|新建会话|New session|New chat)$/}).first()).toBeVisible({timeout:120000});
   await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
   await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
-  await expect(page.getByText(expectedVersion,{exact:true})).toBeVisible({timeout:30000});
+  await expect(page.getByText(expectedVersion,{exact:true}).first()).toBeVisible({timeout:30000});
   await page.screenshot({path:join(evidence,'windows-version-settings.png'),fullPage:true});
   await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-tray.ps1',import.meta.url)),'-Evidence',evidence],{timeout:60000});
   await writeFile(join(evidence,'windows-installed-ui.json'),JSON.stringify({version,actualInstalledApp:true,windowTitle:await page.title(),onboardingVisible,...onboardingProof,studioGuideNavigatesToModelSettings:true,singleRangeConfigured:true,trayResourceMatchesNexus:true,nativeTrayDecoded:true,moduleGraph},null,2));
