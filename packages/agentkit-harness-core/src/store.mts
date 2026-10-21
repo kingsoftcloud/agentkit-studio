@@ -121,6 +121,16 @@ export class TransactionalRunStore implements RunStore {
       }
       invariant(Number.isFinite(next.activeElapsedMs) && next.activeElapsedMs >= previous.activeElapsedMs, 'execution_clock_cannot_decrease');
       validateChildBudgetTransition(previous, next);
+      const addedPromotions = (next.promotedChildRunIds ?? []).slice((previous.promotedChildRunIds ?? []).length);
+      const promotionEvents = batch.events.filter(event => event.kind === 'child.promoted');
+      if (addedPromotions.length || promotionEvents.length) {
+        const command = record.commands.find(row => !row.consumed && row.command.commandId === batch.consumedCommandId)?.command;
+        invariant(addedPromotions.length === 1 && promotionEvents.length === 1
+          && record.configuration.childPromotionPolicy === 'owned-child-promotion/v1'
+          && command?.kind === 'promote_child' && command.payload.childRunId === addedPromotions[0]
+          && promotionEvents[0]!.payload.childRunId === addedPromotions[0]
+          && promotionEvents[0]!.payload.commandId === command.commandId, 'child_promotion_requires_command');
+      }
       invariant(Number.isSafeInteger(next.recoveryRetriesUsed) && next.recoveryRetriesUsed >= previous.recoveryRetriesUsed,
         'recovery_retries_cannot_decrease');
       invariant(batch.commitId.trim(), 'invalid_commit_id');

@@ -349,7 +349,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const routes = createStudioRoutes(ctx, {
     ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
-    listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
+    listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission, getNativeHost: nativeHost,
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
   const getLegacyLocalConversationHandler = createLegacyLocalConversationFactory(ctx, services);

@@ -29,6 +29,8 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "team-templates/list",
   "team-templates/detail",
   "sessions/export-log",
+  "sessions/native-child-tasks",
+  "sessions/native-child-promote",
   "agents/list",
   "agents/create-local",
   "agents/update-cloud",

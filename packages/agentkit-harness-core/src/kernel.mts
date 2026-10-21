@@ -25,8 +25,8 @@ import type { BrowserRecovery } from './browser-contract.mjs';
 import { commandProbe, stageCommandObservations, unavailableCommands } from './background-runtime.mjs';
 import { BACKGROUND_COMMAND_CONTRACT } from './background-contract.mjs';
 import { admittedToolBudget } from './child-budget.mjs';
-import { childLifecycleRequest, childReadyProbe, childUsageFacts, reduceChildLifecycle, stageChildReady, unsettledChildren } from './child-runtime.mjs';
-import type { ChildLifecycleResult } from './child-contract.mjs';
+import { admitChildPromotion, childLifecycleRequest, childReadyProbe, childUsageFacts, reduceChildLifecycle, stageChildReady, unsettledChildren } from './child-runtime.mjs';
+import type { ChildLifecycleResult, ChildTaskControlState } from './child-contract.mjs';
 import type { BackgroundCommandRequest } from './background-contract.mjs';
 
 export interface KernelOptions {
@@ -48,7 +48,7 @@ export class NativeKernel {
   private readonly onStream: NonNullable<KernelOptions['onStream']>;
   private readonly onCheckpoint: KernelOptions['onCheckpoint'];
   private readonly active = new Map<string, AbortController>();
-  private readonly childObservers = new Map<string, AbortController>();
+  private readonly childObservers = new Map<string, { controller: AbortController; canPause: boolean }>();
   constructor(options: KernelOptions) {
     invariant(options.owner.trim(), 'worker_identity_missing');
     this.store = options.store; this.ports = options.ports; this.owner = options.owner;
@@ -96,10 +96,32 @@ export class NativeKernel {
     if (result.status === 'accepted' && ['cancel', 'policy_revoked'].includes(command.kind)) {
       this.active.get(runKey(scope, runId))?.abort(new NativeError('command_interrupt'));
     }
-    if (result.status === 'accepted' && command.kind === 'pause') {
-      this.childObservers.get(runKey(scope, runId))?.abort(new NativeError('child_observation_paused'));
+    if (result.status === 'accepted' && ['pause', 'promote_child'].includes(command.kind)) {
+      const observer = this.childObservers.get(runKey(scope, runId));
+      if (observer && (command.kind === 'promote_child' || observer.canPause)) observer.controller.abort(
+        new NativeError(command.kind === 'promote_child' ? 'child_observation_promoted' : 'child_observation_paused'));
     }
     return result;
+  }
+  childTasks(scope: RunScope, runId: string): ChildTaskControlState[] {
+    const record = this.store.load(scope, runId);
+    invariant(record.configuration.childLifecyclePolicy === 'owned-background/v2' && this.ports.children?.tasks, 'child_controls_unavailable');
+    return this.childTaskStates(record.snapshot);
+  }
+  promoteChild(scope: RunScope, runId: string, childRunId: string, commandId: string) {
+    invariant(this.store.load(scope, runId).configuration.childPromotionPolicy === 'owned-child-promotion/v1', 'child_promotion_unavailable');
+    return this.submit(scope, runId, { commandId, kind: 'promote_child', payload: { childRunId } });
+  }
+  private childTaskStates(snapshot: RunSnapshot): ChildTaskControlState[] {
+    return copy(this.ports.children?.tasks?.({ scope: copy(snapshot.scope), runId: snapshot.runId, sessionId: snapshot.sessionId,
+      turnId: snapshot.turnId, buildId: snapshot.buildId, parentRunId: snapshot.parentRunId, taskChainId: snapshot.taskChainId }) ?? []);
+  }
+  private startupPromotion(snapshot: RunSnapshot, config: RunConfiguration, results: ToolResult[], changes: Partial<RunSnapshot>) {
+    const command = pendingCommands(this.store.load(snapshot.scope, snapshot.runId))[0];
+    if (command?.kind !== 'promote_child' || results.length !== 1 || results[0]?.childBudgetSettlement
+      || results[0]?.childBudgetReservation?.deliveryMode !== 'foreground') return null;
+    const promotion = admitChildPromotion({ ...snapshot, ...changes }, config, command, this.childTaskStates(snapshot));
+    return promotion.reason === 'applied' ? { ...promotion, commandId: command.commandId } : null;
   }
   async runUntilIdle(scope: RunScope, runId: string, { signal, waitForRetry = true }: { signal?: AbortSignal; waitForRetry?: boolean } = {}): Promise<RunSnapshot> {
     const initial = this.store.load(scope, runId);
@@ -154,7 +176,8 @@ export class NativeKernel {
             this.commit(snapshot, lease, await this.recoverEffect(snapshot, config, intent));
             continue;
           }
-          const reduced = reduceCommand(snapshot, command, intent, { configuration: config, digest: this.digest });
+          const reduced = reduceCommand(snapshot, command, intent, { configuration: config, digest: this.digest,
+            ...(command.kind === 'promote_child' ? { childTasks: this.childTaskStates(snapshot) } : {}) });
           this.commit(snapshot, lease, reduced);
           if (reduced.snapshot.childTerminalPhase && controller.signal.aborted) {
             controller = new AbortController(); this.active.set(key, controller);
@@ -335,11 +358,14 @@ export class NativeKernel {
           'child_interrupted_receipt_identity_conflict');
           const results = [copy(receipts[0]!.result)];
           const changes = stagePostHooks(snapshot, reduceTools(snapshot, results, calls, intent, config, this.digest), config, calls, results);
-          return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed', result: {
-            results: results as never, recoveryPolicy: 'owned-child-start/v1' } }, changes, elapsedMs,
-          [{ kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: 'owned-child-start/v1' } },
+          const promotion = this.startupPromotion(snapshot, config, results, changes);
+          return { ...settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed', result: {
+            results: results as never, recoveryPolicy: 'owned-child-start/v1' } }, { ...changes, ...promotion?.changes }, elapsedMs,
+          [...promotion?.facts ?? [], { kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: 'owned-child-start/v1' } },
             ...childUsageFacts(snapshot, intent.operationKey, results),
-            { kind: 'tool.completed', payload: { callId: calls[0]!.callId, name: calls[0]!.name, status: results[0]!.status, content: results[0]!.content } }]);
+            ...(promotion ? [{ kind: 'command.applied', payload: { commandId: promotion.commandId, kind: 'promote_child', reason: 'applied' } }] : []),
+            { kind: 'tool.completed', payload: { callId: calls[0]!.callId, name: calls[0]!.name, status: results[0]!.status, content: results[0]!.content } }]),
+          consumedCommandId: promotion?.commandId ?? null };
         }
       } catch { /* Missing or invalid owner proof remains unknown; no start is repeated. */ }
       finally { clearTimeout(timer); }
@@ -361,6 +387,7 @@ export class NativeKernel {
       else effectSignal.addEventListener('abort', abortListener, { once: true });
     });
     let raw: ObjectValue, status: EffectReceipt['status'] = 'committed', changes: Partial<RunSnapshot>;
+    let consumedCommandId: string | null = null;
     const facts: { kind: string; payload: ObjectValue }[] = [];
     const capture = intent.kind === 'model' && intent.payload.purpose !== 'compaction'
       && configuration.contract.finalSubmissionSchema === null
@@ -421,6 +448,12 @@ export class NativeKernel {
           const calls = intent.payload.calls as unknown as ToolCall[];
           const results = raw.results as unknown as ToolResult[];
           changes = stagePostHooks(snapshot, reduceTools(snapshot, results, calls, intent, configuration, this.digest), configuration, calls, results);
+          const promotion = this.startupPromotion(snapshot, configuration, results, changes);
+          if (promotion) {
+            Object.assign(changes, promotion.changes); consumedCommandId = promotion.commandId;
+            facts.push(...promotion.facts, { kind: 'command.applied', payload: {
+              commandId: promotion.commandId, kind: 'promote_child', reason: 'applied' } });
+          }
           facts.push(...childUsageFacts(snapshot, intent.operationKey, results));
           for (const [index, result] of results.entries()) facts.push({ kind: result.status === 'approval_required' ? 'approval.requested' : 'tool.completed',
             payload: { callId: calls[index]!.callId, name: calls[index]!.name, status: result.status,
@@ -508,11 +541,12 @@ export class NativeKernel {
         return await this.recoverEffect(snapshot, configuration, intent, Math.max(0, this.now() - started));
       }
       if (intent.kind === 'child') {
-        if (code === 'child_observation_paused' && configuration.childLifecyclePolicy === 'owned-background/v2'
-          && ['poll', 'wait'].includes(String(intent.payload.action)) && !intent.payload.interaction) {
-          raw = { reason: 'child_observation_paused' }; status = 'failed';
+        if (['child_observation_paused', 'child_observation_promoted'].includes(code) && configuration.childLifecyclePolicy === 'owned-background/v2'
+          && ['poll', 'wait'].includes(String(intent.payload.action)) && (code === 'child_observation_promoted' || !intent.payload.interaction)) {
+          raw = { reason: code }; status = 'failed';
           changes = { pendingIntent: null, childLifecycleCursor: null };
-          facts.push({ kind: 'child.observation_paused', payload: { operationKey: intent.operationKey } });
+          facts.push({ kind: code === 'child_observation_promoted' ? 'child.observation_yielded' : 'child.observation_paused',
+            payload: { operationKey: intent.operationKey } });
         } else {
           raw = { code }; status = 'uncertain';
           changes = { pendingIntent: null, phase: 'finalizing', candidate: null, verification: null, finalText: '',
@@ -556,7 +590,8 @@ export class NativeKernel {
         } });
       }
     }
-    return settle(snapshot, intent, { operationKey: intent.operationKey, status, result: raw }, changes, Math.max(0, this.now() - started), facts);
+    return { ...settle(snapshot, intent, { operationKey: intent.operationKey, status, result: raw }, changes, Math.max(0, this.now() - started), facts),
+      consumedCommandId };
   }
   private async dispatch(context: PortContext, snapshot: RunSnapshot, configuration: RunConfiguration, intent: EffectIntent,
     emit: (event: ModelStreamEvent) => void): Promise<unknown> {
@@ -566,9 +601,10 @@ export class NativeKernel {
         invariant(this.ports.children, 'child_owner_unavailable');
         const observer = new AbortController(), key = runKey(snapshot.scope, snapshot.runId);
         const request = childLifecycleRequest(snapshot, intent, AbortSignal.any([context.signal, observer.signal]));
-        if (request.action !== 'cancel' && !request.interaction) this.childObservers.set(key, observer);
+        const waiting = { controller: observer, canPause: !request.interaction };
+        if (request.action !== 'cancel') this.childObservers.set(key, waiting);
         try { return await this.ports.children.collect(request); }
-        finally { if (this.childObservers.get(key) === observer) this.childObservers.delete(key); }
+        finally { if (this.childObservers.get(key) === waiting) this.childObservers.delete(key); }
       }
       case 'model': {
         if (configuration.contextPolicy) {

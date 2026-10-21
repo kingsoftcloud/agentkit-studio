@@ -1,6 +1,21 @@
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
-export function createSessionRoutes({ ctx, getSessionLogExporter }) {
+export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-child-tasks' || endpoint === 'sessions/native-child-promote') {
+            const promote = endpoint === 'sessions/native-child-promote';
+            const allowed = promote ? ['agentId', 'sessionId', 'runId', 'childRunId', 'commandId'] : ['agentId', 'sessionId', 'runId'];
+            const required = promote ? allowed : ['agentId', 'sessionId'];
+            if (!payload || Object.keys(payload).some(key => !allowed.includes(key))
+                || required.some(key => typeof payload[key] !== 'string' || !payload[key].trim() || payload[key].length > 256)
+                || payload.runId !== undefined && (typeof payload.runId !== 'string' || !payload.runId.trim() || payload.runId.length > 256))
+                throw Object.assign(new Error('Invalid Native child control request'), { code: 'STUDIO_NATIVE_CHILD_CONTROL_INVALID' });
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native child controls unavailable'), { code: 'STUDIO_NATIVE_CHILD_CONTROL_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: promote ? host.promoteChild(payload) : host.childTasks(payload) };
+        }
         if (endpoint === 'sessions/export-log') {
             const sessionId = String(payload?.sessionId || '').trim();
             if (!sessionId)

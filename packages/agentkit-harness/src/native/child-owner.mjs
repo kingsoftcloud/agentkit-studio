@@ -13,7 +13,7 @@ async function observeWhileLive(operation, signal) {
   signal.throwIfAborted();
   let onAbort;
   const canceled = new Promise((_, reject) => {
-    onAbort = () => reject(new NativeError('child_observation_paused'));
+      onAbort = () => reject(signal.reason instanceof NativeError ? signal.reason : new NativeError('child_observation_paused'));
     signal.addEventListener('abort', onAbort, { once: true });
   });
   try { const result = await Promise.race([operation, canceled]); signal.throwIfAborted(); return result; }
@@ -169,7 +169,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       if (entry && !terminal(record.snapshot.phase)) drive(entry);
       while (!terminal(record.snapshot.phase) && record.snapshot.phase !== 'awaiting_interaction') {
         request.signal.throwIfAborted(); const parent = toolInvocation(request);
-        if (parent.commands.some(row => !row.consumed && row.command.kind === 'pause')
+        if (parent.commands.some(row => !row.consumed && ['pause', 'promote_child'].includes(row.command.kind))
           || entry?.error && entry.error.code !== 'lease_busy') return startup();
         await observeWhileLive(new Promise(resolve => setTimeout(resolve, 25)), request.signal);
         record = ownedChild(request, reservation);
@@ -189,6 +189,36 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
 
   return Object.freeze({
     contract: CHILD_OWNER_CONTRACT,
+    tasks(request) {
+      const parent = parentRecord(request), snapshot = parent.snapshot;
+      const rows = [];
+      for (const childScope of scopes) for (const child of store.list(childScope)) {
+        const record = store.load(childScope, child.runId), binding = record.configuration.childOwnerBinding;
+        if (!binding || !same(binding.parent, identity(request))) continue;
+        let reservation = snapshot.childBudgetReservations.find(item => item.childRunId === child.runId);
+        if (!reservation) {
+          const intent = parent.intents.find(item => item.operationKey === binding.parentOperationKey);
+          const call = intent?.payload.calls?.[0];
+          if (intent?.kind !== 'tool' || intent.status !== 'running' || intent.payload.calls.length !== 1
+            || snapshot.pendingIntent !== intent.operationKey || intent.claimedFence !== binding.parentExecutionFence
+            || parent.lease?.fence !== binding.parentExecutionFence || parent.lease.expiresAt <= now()
+            || call.callId !== binding.parentToolCallId
+            || !['start/v1', 'delegate/v1'].includes(effective(parent).tools.find(tool => tool.name === call.name)?.childBudgetPolicy)
+            || hash({ parent: identity(snapshot), operationKey: intent.operationKey, call, budget: admittedToolBudget(snapshot, effective(parent), 1) }) !== binding.childRequestDigest) continue;
+          reservation = makeReservation(record, childScope);
+        }
+        ownedChild(request, reservation);
+        const delivery = reservation.deliveryMode === 'foreground' && !(snapshot.promotedChildRunIds ?? []).includes(child.runId)
+          ? 'foreground' : 'background';
+        const live = !terminal(snapshot.phase) && snapshot.phase !== 'finalizing' && !snapshot.childTerminalPhase
+          && !parent.commands.some(row => !row.consumed && ['cancel', 'policy_revoked'].includes(row.command.kind))
+          && !terminal(child.phase) && !unsafeReceipt(record) && reservation.settledUsageDigest === null;
+        rows.push({ childRunId: child.runId, sessionId: child.sessionId, role: binding.role, phase: child.phase, delivery,
+          canPromote: live && delivery === 'foreground' && effective(parent).childPromotionPolicy === 'owned-child-promotion/v1',
+          canCancel: live, canSendInput: live });
+      }
+      return rows;
+    },
     async start(request) {
       request.signal.throwIfAborted(); toolInvocation(request);
       check(['start/v1', 'delegate/v1'].includes(request.definition.childBudgetPolicy), 'child_start_not_admitted');
@@ -294,11 +324,24 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         if (request.action === 'cancel') entry.kernel.submit(entry.scope, entry.runId, {
           commandId: `parent-cancel-${hash({ parent: request.runId, operationKey: request.operationKey, child: entry.runId })}`, kind: 'cancel', payload: {} });
         else if (request.childApproval?.childRunId === entry.runId && request.interaction) {
-          const expected = childApproval(record, reservation);
-          check(same(expected, request.childApproval) && request.interaction.interactionId === `native-child-${hash(expected)}`
+          const expected = request.childApproval;
+          check(request.interaction.interactionId === `native-child-${hash(expected)}`
             && request.interaction.callId === expected.toolCall.callId && ['allow', 'deny'].includes(request.interaction.decision), 'child_approval_identity_conflict');
-          entry.kernel.submit(entry.scope, entry.runId, { commandId: `parent-approval-${hash({ parent: request.operationKey, approval: expected, decision: request.interaction.decision })}`,
-            kind: 'submit_interaction', payload: { interactionId: expected.interactionId, decision: request.interaction.decision } });
+          const commandId = `parent-approval-${hash({ parent: identity(request), approval: expected, decision: request.interaction.decision })}`;
+          // A promotion may detach this observer after the decision was
+          // durably delivered. Accept only that same saved decision; never
+          // infer approval from a child's phase or ask for it a second time.
+          const previousIds = parent.intents.filter(item => item.kind === 'child' && same(item.payload.childApproval, expected)
+            && same(item.payload.interaction, request.interaction)).map(item =>
+            `parent-approval-${hash({ parent: item.operationKey, approval: expected, decision: request.interaction.decision })}`);
+          const delivered = record.commands.some(row => row.command.kind === 'submit_interaction'
+            && [commandId, ...previousIds].includes(row.command.commandId)
+            && same(row.command.payload, { interactionId: expected.interactionId, decision: request.interaction.decision }));
+          if (!delivered) {
+            check(same(childApproval(record, reservation), expected), 'child_approval_identity_conflict');
+            entry.kernel.submit(entry.scope, entry.runId, { commandId, kind: 'submit_interaction',
+              payload: { interactionId: expected.interactionId, decision: request.interaction.decision } });
+          }
         }
         if (record.snapshot.phase !== 'awaiting_interaction' || request.action === 'cancel' || request.childApproval?.childRunId === entry.runId) {
           const promise = drive(entry);

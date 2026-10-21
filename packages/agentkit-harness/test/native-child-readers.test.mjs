@@ -16,7 +16,7 @@ const finalText = '子😀任务 findings complete';
 const response = (text, toolCalls = []) => ({ kind: toolCalls.length ? 'tool_calls' : 'final_candidate', text, toolCalls, usage: emptyUsage() });
 const sha = text => createHash('sha256').update(text).digest('hex');
 
-function setup(t, backend, { pending = false, onQuery, childIdOverride, staleInventory = false } = {}) {
+function setup(t, backend, { pending = false, onQuery, childIdOverride, staleInventory = false, promoted = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'native-child-readers-'));
   const store = backend === 'sqlite' ? new SqliteRunStore(join(dir, 'runs.sqlite')) : new MemoryRunStore();
   const [start, control] = nativeChildToolDefinitions(['worker']);
@@ -36,7 +36,8 @@ function setup(t, backend, { pending = false, onQuery, childIdOverride, staleInv
     restoreChild: async () => childPorts });
   t.after(async () => { release(); await owner.releaseRun({ scope, runId: 'run' }); store.close?.(); rmSync(dir, { recursive: true, force: true }); });
   const { snapshot, config } = fixture({ tools: [start, control, ...readers.definitions],
-    limits: { maxModelCalls: 20, maxToolCalls: 20, effectTimeoutMs: 130000 }, childLifecyclePolicy: 'owned-background/v2' });
+    limits: { maxModelCalls: 20, maxToolCalls: 20, effectTimeoutMs: 130000 }, childLifecyclePolicy: 'owned-background/v2',
+    ...(promoted ? { childPromotionPolicy: 'owned-child-promotion/v1' } : {}) });
   const observations = [], captured = [];
   const kernel = new NativeKernel({ store, digest, owner: 'parent', ports: { children: owner,
     tools: { execute: async request => {
@@ -54,7 +55,8 @@ function setup(t, backend, { pending = false, onQuery, childIdOverride, staleInv
       ]);
       const wait = () => response('', [{ callId: 'wait', name: control.name,
         arguments: { child_run_id: id, action: 'wait', wait_seconds: 1 } }]);
-      if (rounds === 1) return response('', [{ callId: 'start', name: start.name, arguments: { role: 'worker', task: 'Produce findings' } }]);
+      if (rounds === 1) return response('', [{ callId: 'start', name: start.name, arguments: { role: 'worker', task: 'Produce findings',
+        ...(promoted ? { background: false } : {}) } }]);
       if (rounds === 2) return pending ? query() : wait();
       if (rounds === 3) return pending ? wait() : query();
       if (rounds === 4 && !pending) {
@@ -73,6 +75,23 @@ function setup(t, backend, { pending = false, onQuery, childIdOverride, staleInv
 }
 
 for (const backend of ['memory', 'sqlite']) {
+  test(`${backend}: query tools display the persisted promotion and live controls of the original child`, async t => {
+    const f = setup(t, backend, { pending: true, promoted: true });
+    const running = f.kernel.runUntilIdle(scope, 'run');
+    let task;
+    for (let index = 0; index < 500; index++) {
+      task = f.kernel.childTasks(scope, 'run').find(item => item.phase === 'executing_tools');
+      if (task) break;
+      await new Promise(resolve => setTimeout(resolve, 2));
+    }
+    assert.ok(task); assert.equal(task.canPromote, true);
+    f.kernel.promoteChild(scope, 'run', task.childRunId, 'reader-promote');
+    assert.equal((await running).phase, 'completed');
+    const row = f.observations.find(item => item.name === 'native_child_tasks').value.content.tasks[0];
+    assert.equal(row.child_run_id, task.childRunId); assert.equal(row.delivery, 'background');
+    assert.equal(row.can_promote, false); assert.equal(row.can_cancel, true); assert.equal(row.can_send_input, true);
+    assert.deepEqual(f.counts(), { starts: 1, writes: 1, models: 2 });
+  });
   test(`${backend}: actual parallel child reads page the original delivery and inventory without restarting or accounting twice`, async t => {
     const f = setup(t, backend);
     const result = await f.kernel.runUntilIdle(scope, 'run');
@@ -102,6 +121,8 @@ for (const backend of ['memory', 'sqlite']) {
     assert.equal(result.content.terminal, false); assert.equal(result.content.final_text, '');
     const tasks = f.observations.find(item => item.name === 'native_child_tasks').value;
     assert.equal(tasks.status, 'ok'); assert.equal(tasks.content.tasks.length, 1); assert.equal(tasks.content.tasks[0].terminal, false);
+    assert.equal(tasks.content.tasks[0].delivery, 'background'); assert.equal(tasks.content.tasks[0].can_promote, false);
+    assert.equal(tasks.content.tasks[0].can_cancel, true); assert.equal(tasks.content.tasks[0].can_send_input, true);
     assert.deepEqual(f.counts(), { starts: 1, writes: 1, models: 2 });
   });
 

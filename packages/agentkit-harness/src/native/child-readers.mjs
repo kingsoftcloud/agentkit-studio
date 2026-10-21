@@ -165,6 +165,21 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
     return true;
   }
 
+  // --- Internal: unsafe (non-model, non-safe-read) receipt -----------------
+  // Same uncertain-receipt predicate as isTerminalSafe and child-owner.mjs
+  // unsafeReceipt, exposed as a standalone check for non-terminal children.
+
+  function hasUnsafeReceipt(record) {
+    for (const receipt of record.receipts) {
+      if (receipt.status === 'uncertain') {
+        const intent = record.intents.find(item => item.operationKey === receipt.operationKey);
+        if (intent?.kind !== 'model' && !(receipt.result.retryScheduled === true
+          && ['safe-read/v1', 'workspace-observation/v1'].includes(receipt.result.recoveryPolicy))) return true;
+      }
+    }
+    return false;
+  }
+
   // --- Internal: load a direct child by run ID -----------------------------
 
   function loadDirectChild(parent, childRunId) {
@@ -304,6 +319,29 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
         return { status: 'error', content: { error_code: 'child_tasks_not_available' } };
     }
 
+    // Delivery changes independently of the immutable startup reservation.
+    // Control availability comes from current durable ownership, not findings.
+    const promotionEnabled = parentRecord.configuration.childPromotionPolicy === 'owned-child-promotion/v1';
+    const promoted = new Set(parent.promotedChildRunIds ?? []);
+    const controlState = children.map(record => {
+      const child = record.snapshot;
+      const reservation = (parent.childBudgetReservations ?? []).find(item => item.childRunId === child.runId);
+      const foreground = reservation?.deliveryMode === 'foreground' && !promoted.has(child.runId);
+      const live = !terminal(parent.phase) && parent.phase !== 'finalizing' && !parent.childTerminalPhase
+        && !parentRecord.commands.some(row => !row.consumed && ['cancel', 'policy_revoked'].includes(row.command.kind))
+        && !terminal(child.phase) && !hasUnsafeReceipt(record)
+        && reservation?.settledUsageDigest === null;
+      return {
+        child_run_id: child.runId,
+        delivery: foreground ? 'foreground' : 'background',
+        can_promote: foreground && promotionEnabled && live,
+        can_cancel: live,
+        can_send_input: live,
+      };
+    });
+    const controlByRunId = new Map(controlState.map(item => [item.child_run_id, item]));
+
+    // Keep the v2 inventory identity stable while live metadata changes.
     const digestInput = canonical({
       inventory_policy: 'direct-child-inventory/v2',
       scope: parentScope,
@@ -322,6 +360,7 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
       const binding = record.configuration.childOwnerBinding;
       const goal = child.goal ?? '';
       const finalText = child.finalText ?? '';
+      const control = controlByRunId.get(child.runId);
       return {
         child_run_id: child.runId,
         child_session_id: child.sessionId,
@@ -331,6 +370,10 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
         phase: child.phase,
         terminal: terminal(child.phase),
         outcome: child.outcome,
+        delivery: control?.delivery ?? 'background',
+        can_promote: control?.can_promote ?? false,
+        can_cancel: control?.can_cancel ?? false,
+        can_send_input: control?.can_send_input ?? false,
         goal_preview: [...goal].slice(0, 256).join(''),
         goal_preview_trust: 'untrusted',
         goal_preview_complete: [...goal].length <= 256,

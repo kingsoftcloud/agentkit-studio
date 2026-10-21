@@ -46,11 +46,25 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   let unregister;
   try { unregister = projections.register(nativeDeliveryProjection()); }
   catch (error) { if (!ledger) store.close(); throw error; }
-  const lifetime = new AbortController(), active = new Set(), childOwners = new Set();
+  const lifetime = new AbortController(), active = new Set(), childOwners = new Set(), controls = new Map();
   let closed = false, closing;
   const workspaceId = hash(resolve(workspaceRoot));
+  const controlKey = (agentId, sessionId) => canonical({ agentId, sessionId });
+  const controlFor = request => {
+    invariant(!closed && typeof request?.agentId === 'string' && request.agentId.trim()
+      && typeof request.sessionId === 'string' && request.sessionId.trim(), 'studio_native_child_control_invalid');
+    const control = controls.get(controlKey(request.agentId, request.sessionId));
+    invariant(control && (request.runId === undefined || request.runId === control.runId), 'studio_native_child_control_run_unavailable');
+    return control;
+  };
   const execute = createNativeDshTurnExecutor({ store, projections, flush: session => sessions.flush(session),
     publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),
+    onActive: (_payload, control) => {
+      const key = controlKey(control.scope.agentId, control.sessionId);
+      invariant(!controls.has(key), 'studio_native_child_control_already_active');
+      controls.set(key, control);
+      return () => { if (controls.get(key) === control) controls.delete(key); };
+    },
     resolveTurn: async ({ agent, input, binding, signal, prepareInput }) => {
       if (binding?.runtime !== 'harness' || binding.local !== true) return null;
       invariant(binding.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT, 'studio_native_engine_contract_unsupported');
@@ -172,7 +186,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           taskPolicyContract: STUDIO_NATIVE_TASK_POLICY_CONTRACT, taskPolicy,
           verificationContract: STUDIO_NATIVE_VERIFICATION_CONTRACT }),
         contextPolicy: context.policy,
-        ...(children ? { childLifecyclePolicy: 'owned-background/v2', childApprovalPolicy: 'owned-child-approval/v1' } : {}),
+        ...(children ? { childLifecyclePolicy: 'owned-background/v2', childApprovalPolicy: 'owned-child-approval/v1',
+          childPromotionPolicy: 'owned-child-promotion/v1' } : {}),
         workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy,
         ...(binding.nativeTools.commandBinding ? { backgroundNotificationPolicy: 'completed-before-model/v1' } : {}),
         contract: nativeGoalContract({ sessionId: String(agent.session.id), goal: admission.objective }), instructions, inputMessages: admission.messages,
@@ -209,6 +224,15 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     },
   });
   return {
+    childTasks(request) {
+      const { kernel, scope, runId } = controlFor(request);
+      return { contract: 'agentkit.studio-native-child-control/v1', runId, tasks: kernel.childTasks(scope, runId) };
+    },
+    promoteChild(request) {
+      invariant(typeof request?.runId === 'string' && request.runId.trim(), 'studio_native_child_control_invalid');
+      const { kernel, scope, runId } = controlFor(request);
+      return kernel.promoteChild(scope, runId, request.childRunId, request.commandId);
+    },
     executeTurn(input) {
       invariant(!closed, 'studio_native_host_closed');
       const promise = execute({ ...input, signal: AbortSignal.any([input.signal, lifetime.signal]) });

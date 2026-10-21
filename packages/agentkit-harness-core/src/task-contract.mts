@@ -1,6 +1,7 @@
 import type { RunCommand, RunConfiguration, RunSnapshot, TaskContract } from './contracts.mjs';
 import { configure } from './configuration.mjs';
 import { invariant, NativeError } from './values.mjs';
+import type { ChildTaskControlState } from './child-contract.mjs';
 
 export const NATIVE_GOAL_CONTRACT_BINDING = 'agentkit.native-goal-contract/v1';
 
@@ -20,6 +21,7 @@ export interface SteeringAdmission {
 }
 export interface SteeringBindings {
   configuration?: RunConfiguration; digest?: (value: unknown) => string;
+  childTasks?: ChildTaskControlState[];
 }
 
 /** Missing contracts retain acceptance. Replacements need a fresh revision and bound tool scope. */

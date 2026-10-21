@@ -14,6 +14,10 @@ export function validateChildBudgetTransition(previous: RunSnapshot, next: RunSn
   }), 'child_budget_reservation_is_immutable');
   const oldIds = previous.childRunIds ?? [], newIds = next.childRunIds ?? [];
   invariant(newIds.length >= oldIds.length && oldIds.every((id, index) => newIds[index] === id), 'child_run_ids_are_append_only');
+  const promoted = next.promotedChildRunIds ?? [], previousPromoted = previous.promotedChildRunIds ?? [];
+  invariant(promoted.length >= previousPromoted.length && previousPromoted.every((id, index) => promoted[index] === id)
+    && new Set(promoted).size === promoted.length && promoted.every(id => after.some(item => item.childRunId === id
+      && item.deliveryMode === 'foreground')), 'child_promotions_are_append_only');
 }
 
 export function outstandingChildCalls(snapshot: RunSnapshot, kind: 'model' | 'tool'): number {

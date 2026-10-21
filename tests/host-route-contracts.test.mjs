@@ -9,7 +9,9 @@ import { createHostRouteFixture, normalizeRouteValue, compactRouteCalls } from '
 const recording = JSON.parse(await readFile(new URL('./fixtures/host-route-contracts.json', import.meta.url), 'utf8'));
 assert.equal(recording.baselineCommit, 'c6f97fbf36351875967fbb2ce30dc0097a8ebf63');
 const legacyIds = [...new Set(recording.cases.map(item => item.endpoint))].sort();
-assert.deepEqual(legacyIds, [...STUDIO_OPERATION_IDS].filter(id => !/^(templates|platform|teams|team-templates|template-resources|template-workflows)\//.test(id)).filter(id => !['agents/execution-policy', 'schedules/delivery-targets', 'host/compatibility', 'host/computer', 'assistant/catalog', 'assistant/close', 'assistant/execute', 'assistant/setup-options', 'assistant/setup-start', 'assistant/setup-status'].includes(id)).sort());
+// Native child controls are new operations, verified by the live Host and SDK
+// tests; they did not exist in this fixed legacy recording.
+assert.deepEqual(legacyIds, [...STUDIO_OPERATION_IDS].filter(id => !/^(templates|platform|teams|team-templates|template-resources|template-workflows)\//.test(id)).filter(id => !['agents/execution-policy', 'schedules/delivery-targets', 'host/compatibility', 'host/computer', 'assistant/catalog', 'assistant/close', 'assistant/execute', 'assistant/setup-options', 'assistant/setup-start', 'assistant/setup-status', 'sessions/native-child-tasks', 'sessions/native-child-promote'].includes(id)).sort());
 for (const item of recording.cases) {
   test(`${item.endpoint}: ${item.mode} retains fixed-ref envelope and adapter calls`, async () => {
     const fixture = createHostRouteFixture(item.mode);

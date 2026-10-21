@@ -40,6 +40,7 @@ export async function apply(ctx, options) {
       body: JSON.stringify({ method: 'agents/ensure-preset', payload: { agentId: record.metadata.id } }) });
     const result = (await response.json()).result;
     if (response.status !== 200 || !result?.ok || result.value.presetId !== presetId) throw Error('Child proof preset admission failed');
+    await writeFile(join(home, 'control-auth.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
     const deadline = Date.now() + 15000;
     while (true) {
       try { await ctx.agentPresets.pluginsFor(presetId); break; }

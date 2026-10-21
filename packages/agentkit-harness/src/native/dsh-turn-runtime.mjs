@@ -45,8 +45,8 @@ async function resolveWhileLive(resolve, payload) {
  * adoption of interrupted work requires an explicit host recovery workflow.
  */
 export function createNativeDshTurnExecutor({ store, resolveTurn, projections, flush,
-  owner = `native-dsh-${randomUUID()}`, onStream, publishStreamFrame, onIdle, onCheckpoint } = {}) {
-  invariant(store && typeof resolveTurn === 'function' && typeof flush === 'function'
+  owner = `native-dsh-${randomUUID()}`, onStream, publishStreamFrame, onIdle, onCheckpoint, onActive } = {}) {
+  invariant((onActive === undefined || typeof onActive === 'function') && store && typeof resolveTurn === 'function' && typeof flush === 'function'
     && typeof projections?.stateOf === 'function' && typeof owner === 'string' && owner.trim(), 'native_dsh_host_binding_invalid');
   const active = new Set(), revisions = new WeakMap();
   return async payload => {
@@ -70,7 +70,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
     const key = canonical({ scope, sessionId });
     invariant(!active.has(key), 'native_dsh_session_already_driving');
     active.add(key);
-    let live, failed = false, originalError;
+    let live, failed = false, originalError, releaseControls;
     try {
       signal.throwIfAborted();
       const head = store.sessionHead(scope, sessionId);
@@ -128,6 +128,8 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
       kernel.start({ scope, runId, sessionId, turnId: String(turn), buildId: binding.buildId, parentRunId: null,
         taskChainId: binding.taskChainId ?? sessionId }, configuration,
       binding.taskContractFactory ? { expectedParentRunId: parentRunId } : {});
+      releaseControls = onActive?.(payload, { kernel, scope: structuredClone(scope), sessionId, runId });
+      invariant(releaseControls === undefined || typeof releaseControls === 'function', 'native_dsh_controls_cleanup_invalid');
       let snapshot;
       try {
         snapshot = await kernel.runUntilIdle(scope, runId, { signal });
@@ -164,6 +166,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
     } finally {
       try {
         const cleanup = await Promise.allSettled([
+          Promise.resolve().then(() => releaseControls?.()),
           Promise.resolve().then(() => live?.abandon()),
           Promise.resolve().then(() => binding.releaseResources?.({ scope: structuredClone(scope), sessionId, runId })),
         ]);

@@ -3,7 +3,7 @@ import { terminal } from './contracts.mjs';
 import { canonical, copy, invariant, runKey } from './values.mjs';
 import { admitSteering } from './task-contract.mjs';
 import type { SteeringBindings } from './task-contract.mjs';
-import { unsettledChildren } from './child-runtime.mjs';
+import { admitChildPromotion, unsettledChildren } from './child-runtime.mjs';
 
 export function transition(snapshot: RunSnapshot, changes: Partial<RunSnapshot>, facts: { kind: string; payload: ObjectValue }[] = [],
   options: { intents?: EffectIntent[]; receipts?: EffectReceipt[]; commandId?: string; requireNoPendingCommands?: boolean } = {}): CommitBatch {
@@ -149,6 +149,11 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
         }
       }
       break;
+    case 'promote_child': {
+      const promotion = admitChildPromotion(snapshot, bindings.configuration, command, bindings.childTasks);
+      changes = promotion.changes; reason = promotion.reason; facts.push(...promotion.facts);
+      break;
+    }
     default:
       reason = 'child_lifecycle_command_pending';
   }

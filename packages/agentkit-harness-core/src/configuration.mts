@@ -18,6 +18,7 @@ export interface ConfigurationInput {
   backgroundNotificationPolicy?: RunConfiguration['backgroundNotificationPolicy'];
   childLifecyclePolicy?: RunConfiguration['childLifecyclePolicy'];
   childApprovalPolicy?: RunConfiguration['childApprovalPolicy'];
+  childPromotionPolicy?: RunConfiguration['childPromotionPolicy'];
   childOwnerBinding?: RunConfiguration['childOwnerBinding'];
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
@@ -43,6 +44,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     ...(input.backgroundNotificationPolicy === undefined ? {} : { backgroundNotificationPolicy: input.backgroundNotificationPolicy }),
     ...(input.childLifecyclePolicy === undefined ? {} : { childLifecyclePolicy: input.childLifecyclePolicy }),
     ...(input.childApprovalPolicy === undefined ? {} : { childApprovalPolicy: input.childApprovalPolicy }),
+    ...(input.childPromotionPolicy === undefined ? {} : { childPromotionPolicy: input.childPromotionPolicy }),
     ...(input.childOwnerBinding === undefined ? {} : { childOwnerBinding: input.childOwnerBinding }),
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
     contextPolicy: input.contextPolicy ?? null,
@@ -56,6 +58,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(config.childLifecyclePolicy == null || config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_lifecycle_policy');
   invariant(config.childApprovalPolicy == null || config.childApprovalPolicy === 'owned-child-approval/v1'
     && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_approval_policy');
+  invariant(config.childPromotionPolicy == null || config.childPromotionPolicy === 'owned-child-promotion/v1'
+    && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_promotion_policy');
   if (config.childOwnerBinding) {
     const binding = config.childOwnerBinding;
     scopeKey(binding.parent.scope);
@@ -173,7 +177,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,
     workspaceRevision: null, workspaceModifiedPaths: [], artifactRefs: [], children: [], backgroundCommands: [],
-    childBudgetReservations: [], childRunIds: [],
+    childBudgetReservations: [], childRunIds: [], promotedChildRunIds: [],
     childLifecycleCursor: null, childLifecycleFailure: null, childApproval: null, childTerminalPhase: null,
     workspaceDirtySinceCheckpoint: false, lastWorkspaceMutationToolCall: null,
     checkpointWorkspaceRevision: null, checkpointWebMutationToolCall: null, verificationToolCalls: null,

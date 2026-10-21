@@ -11,10 +11,11 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { nativeChildRoles } from '../src/providers/native-subagents.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
+import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
-  inputParts, childInput = ['text'], childTool = 'native_start_child' } = {}) {
+  inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-children-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   const roles = [{ name: 'reader', instructions: 'Read the requested workspace evidence.', tools: ['read_workspace_file'],
@@ -52,6 +53,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
       let call, text;
       if (child) {
         childModels++;
+        await beforeChildModel?.(childModels);
         assert.equal(url, 'https://child.invalid/v1/chat/completions');
         assert.deepEqual(body.tools.map(item => item.function.name).filter(name => name !== 'submit_final_output'), ['read_workspace_file']);
         if (childModels === 1) call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
@@ -61,6 +63,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         }
       } else {
         parentModels++;
+        if (parentModels === 2) await onParentContinuation?.(body);
         if (parentModels === 1) call = { name: childTool, arguments: { role: 'reader', task: 'Read proof.txt',
           ...childArguments,
           ...(forged ? { model_profile_id: 'unbound-profile' } : {}) } };
@@ -101,6 +104,35 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   return { host, payload, ledger, gateway, roles, requests, dispatches, record, scope, childModels: () => childModels };
 }
 for (const sqlite of [false, true]) {
+  test(`${sqlite ? 'sqlite' : 'memory'}: Studio Host promotes an admitted foreground child before parent continuation`, { timeout: 15000 }, async t => {
+    let entered, release, continued = false;
+    const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    const f = await setup(t, { sqlite, childTool: 'native_delegate', beforeChildModel: async index => {
+      if (index === 1) { entered(); await gate; }
+    }, onParentContinuation: async () => {
+      assert.equal(f.childModels(), 1); continued = true;
+      const parent = f.ledger.sessionHead(f.scope, 'parent-session');
+      assert.deepEqual(parent.promotedChildRunIds, parent.childRunIds); release();
+    } });
+    t.after(() => release());
+    const running = f.host.executeTurn(f.payload); await started;
+    const input = { agentId: f.record.metadata.id, sessionId: 'parent-session' };
+    const route = createSessionRoutes({ getNativeHost: async () => f.host });
+    const state = (await route('sessions/native-child-tasks', input)).value;
+    assert.equal(state.contract, 'agentkit.studio-native-child-control/v1'); assert.equal(state.tasks.length, 1);
+    assert.equal(state.tasks[0].canPromote, true);
+    assert.throws(() => f.host.childTasks({ ...input, agentId: 'another-agent' }), /control_run_unavailable/);
+    assert.throws(() => f.host.promoteChild({ ...input, runId: 'stale-parent', childRunId: state.tasks[0].childRunId, commandId: 'stale' }), /control_run_unavailable/);
+    const command = { ...input, runId: state.runId, childRunId: state.tasks[0].childRunId, commandId: 'host-promote' };
+    assert.equal((await route('sessions/native-child-promote', command)).value.status, 'accepted');
+    assert.equal((await route('sessions/native-child-promote', command)).value.status, 'duplicate');
+    await running;
+    const parent = f.ledger.sessionHead(f.scope, 'parent-session');
+    assert.equal(parent.phase, 'completed'); assert.equal(continued, true); assert.equal(f.childModels(), 2);
+    assert.equal(parent.childRunIds.length, 1); assert.ok(parent.childBudgetReservations[0].settledUsageDigest);
+    assert.equal(f.ledger.events(f.scope, parent.runId).filter(event => event.kind === 'child.promoted').length, 1);
+    assert.throws(() => f.host.childTasks(input), /control_run_unavailable/);
+  });
   for (const childTool of ['native_start_child', 'native_delegate']) {
     test(`${sqlite ? 'sqlite' : 'memory'}: Studio ${childTool} delivers the foreground result before the next parent model`, async t => {
       const f = await setup(t, { sqlite, childTool, childArguments: childTool === 'native_start_child' ? { background: false } : {} });

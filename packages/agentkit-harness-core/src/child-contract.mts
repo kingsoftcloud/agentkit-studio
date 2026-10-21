@@ -25,7 +25,13 @@ export interface ChildLifecycleResult {
 export interface ChildReadyRequest extends RunIdentity {
   reservations: ChildBudgetReservation[]; includeApprovals: boolean;
 }
+export interface ChildTaskControlState {
+  childRunId: string; sessionId: string; role: string; phase: string;
+  delivery: 'foreground' | 'background'; canPromote: boolean; canCancel: boolean; canSendInput: boolean;
+}
 export interface ChildLifecyclePort {
+  /** Scope-bound control metadata, including an owned start whose receipt is still in flight. */
+  tasks?(request: RunIdentity): ChildTaskControlState[];
   /** Aborting a poll/wait removes its waiter, never cancels or relaunches children. */
   collect(request: ChildLifecycleRequest): Promise<ChildLifecycleResult>;
   /** Read already sealed child facts after a lost parent claim. Never starts, approves or cancels execution. */

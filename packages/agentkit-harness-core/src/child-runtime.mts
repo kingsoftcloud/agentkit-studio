@@ -1,5 +1,5 @@
-import type { ChildApproval, ChildLifecycleRequest, ChildLifecycleResult, ChildReadyRequest } from './child-contract.mjs';
-import type { CommitBatch, EffectIntent, ObjectValue, RunConfiguration, RunSnapshot, ToolDefinition, ToolResult } from './contracts.mjs';
+import type { ChildApproval, ChildLifecycleRequest, ChildLifecycleResult, ChildReadyRequest, ChildTaskControlState } from './child-contract.mjs';
+import type { CommitBatch, EffectIntent, ObjectValue, RunCommand, RunConfiguration, RunSnapshot, ToolDefinition, ToolResult } from './contracts.mjs';
 import { addUsage } from './machine.mjs';
 import { admittedToolBudget, reduceChildBudget } from './child-budget.mjs';
 import { canonical, copy, invariant } from './values.mjs';
@@ -10,6 +10,20 @@ const settlementAuthority: ToolDefinition = { name: 'host_child_collection', des
   contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal', childBudgetPolicy: 'settle/v1' };
 export const childLifecycleCursor = (snapshot: RunSnapshot): string => `${snapshot.goalRevision}:${snapshot.usage.modelCalls}:${snapshot.usage.toolCalls}`;
 export const unsettledChildren = (snapshot: RunSnapshot) => (snapshot.childBudgetReservations ?? []).filter(item => item.settledUsageDigest === null);
+
+export function admitChildPromotion(snapshot: RunSnapshot, config: RunConfiguration | undefined, command: RunCommand,
+  tasks: ChildTaskControlState[] = []): { reason: string; changes: Partial<RunSnapshot>; facts: { kind: string; payload: ObjectValue }[] } {
+  const reject = (reason: string) => ({ reason, changes: {}, facts: [] });
+  if (config?.childPromotionPolicy !== 'owned-child-promotion/v1') return reject('child_promotion_unavailable');
+  const id = command.payload.childRunId;
+  if (Object.keys(command.payload).length !== 1 || typeof id !== 'string' || !id.trim()) return reject('invalid_child_promotion');
+  if (snapshot.childTerminalPhase || snapshot.phase === 'finalizing'
+    || (snapshot.promotedChildRunIds ?? []).includes(id)
+    || !unsettledChildren(snapshot).some(item => item.childRunId === id && item.deliveryMode === 'foreground')
+    || !tasks.some(item => item.childRunId === id && item.delivery === 'foreground' && item.canPromote)) return reject('foreground_child_unavailable');
+  return { reason: 'applied', changes: { promotedChildRunIds: [...snapshot.promotedChildRunIds ?? [], id], childLifecycleCursor: null },
+    facts: [{ kind: 'child.promoted', payload: { childRunId: id, commandId: command.commandId, delivery: 'background' } }] };
+}
 
 export function childUsageFacts(snapshot: RunSnapshot, operationKey: string, results: ToolResult[]): { kind: string; payload: ObjectValue }[] {
   return results.flatMap(item => {
@@ -25,7 +39,8 @@ export function childUsageFacts(snapshot: RunSnapshot, operationKey: string, res
 
 export function prepareChildLifecycle(snapshot: RunSnapshot, config: RunConfiguration): CommitBatch | null {
   if (config.childLifecyclePolicy !== 'owned-background/v2' || snapshot.pendingIntent || !unsettledChildren(snapshot).length) return null;
-  const foreground = unsettledChildren(snapshot).filter(item => item.deliveryMode === 'foreground').map(item => item.childRunId);
+  const foreground = unsettledChildren(snapshot).filter(item => item.deliveryMode === 'foreground'
+    && !(snapshot.promotedChildRunIds ?? []).includes(item.childRunId)).map(item => item.childRunId);
   const barrier = foreground.length > 0 && ['preparing_context', 'executing_tools'].includes(snapshot.phase);
   const action = snapshot.phase === 'finalizing' ? 'cancel' : snapshot.phase === 'verifying' || barrier ? 'wait' : 'poll';
   if (snapshot.childLifecycleFailure === 'cancel' || snapshot.childLifecycleFailure && action !== 'cancel') return null;
@@ -41,12 +56,14 @@ export function childLifecycleRequest(snapshot: RunSnapshot, intent: EffectInten
   invariant(intent.kind === 'child' && snapshot.pendingIntent === intent.operationKey
     && ['poll', 'wait', 'cancel'].includes(String(intent.payload.action))
     && canonical(intent.payload.reservations) === canonical(unsettledChildren(snapshot)), 'child_observation_identity_conflict');
+  const selected = intent.payload.waitForChildRunIds as unknown as string[] | undefined;
+  const waitFor = selected?.filter(id => !(snapshot.promotedChildRunIds ?? []).includes(id));
   return { scope: copy(snapshot.scope), runId: snapshot.runId, sessionId: snapshot.sessionId, turnId: snapshot.turnId,
     buildId: snapshot.buildId, parentRunId: snapshot.parentRunId, taskChainId: snapshot.taskChainId,
-    operationKey: intent.operationKey, signal, action: intent.payload.action as ChildLifecycleRequest['action'],
+    operationKey: intent.operationKey, signal, action: selected && !waitFor!.length ? 'poll' : intent.payload.action as ChildLifecycleRequest['action'],
     ...(intent.claimedFence === undefined ? {} : { executionFence: intent.claimedFence }),
     reservations: copy(unsettledChildren(snapshot)), childApproval: copy(intent.payload.childApproval) as unknown as ChildApproval | null,
-    ...(intent.payload.waitForChildRunIds === undefined ? {} : { waitForChildRunIds: copy(intent.payload.waitForChildRunIds) as unknown as string[] }),
+    ...(waitFor?.length ? { waitForChildRunIds: copy(waitFor) } : {}),
     interaction: copy(intent.payload.interaction) as ChildLifecycleRequest['interaction'] };
 }
 

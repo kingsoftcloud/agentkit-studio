@@ -159,6 +159,7 @@ export interface RunConfiguration {
   backgroundNotificationPolicy?: 'completed-before-model/v1' | null;
   childLifecyclePolicy?: 'owned-background/v2' | null;
   childApprovalPolicy?: 'owned-child-approval/v1' | null;
+  childPromotionPolicy?: 'owned-child-promotion/v1' | null;
   childOwnerBinding?: ChildOwnerBinding;
 }
 export interface Usage {
@@ -257,6 +258,7 @@ export interface RunSnapshot extends RunIdentity {
   failureFingerprint: string | null; failureEvidenceDigest: string | null;
   children: ChildState[]; backgroundCommands: BackgroundCommand[];
   childBudgetReservations: ChildBudgetReservation[]; childRunIds: string[];
+  promotedChildRunIds?: string[];
   childLifecycleCursor?: string | null; childLifecycleFailure?: 'poll' | 'wait' | 'cancel' | null;
   childApproval?: ChildApproval | null; childTerminalPhase?: 'canceled' | 'failed' | null;
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
