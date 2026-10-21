@@ -21,7 +21,7 @@ const response = (text, toolCalls = []) => ({ kind: toolCalls.length ? 'tool_cal
 const childConfig = () => configure({ profile: fixture().config.profile, contract: { objective: call.arguments.task }, tools: [childDefinition],
   hostBindingDigest: 'child-fixture', limits: { maxModelCalls: 3, maxToolCalls: 2 } });
 
-function setup(t, backend, { approval = false, uncertain = false, hold = false, control = null } = {}) {
+function setup(t, backend, { approval = false, uncertain = false, hold = false, control = null, foreground = false, delegate = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'native-child-owner-'));
   const store = backend === 'sqlite' ? new SqliteRunStore(join(dir, 'runs.sqlite')) : new MemoryRunStore();
   let writes = 0, starts = 0, release;
@@ -44,33 +44,115 @@ function setup(t, backend, { approval = false, uncertain = false, hold = false, 
     resolveChild: async () => { starts++; return { scope: childScope, configuration: childConfig(), ports: childPorts }; },
     restoreChild: async () => childPorts });
   t.after(async () => { release(); await owner.releaseRun({ scope, runId: 'run' }); store.close?.(); rmSync(dir, { recursive: true, force: true }); });
-  const { config, snapshot } = fixture({ tools: [startDefinition, ...(control ? [controlDefinition] : [])],
+  const definition = delegate ? nativeChildToolDefinitions(['worker'])[2] : startDefinition;
+  const startCall = { ...call, name: definition.name, arguments: { ...call.arguments, ...(foreground ? { background: false } : {}) } };
+  const { config, snapshot } = fixture({ tools: [definition, ...(control ? [controlDefinition] : [])],
     limits: { maxModelCalls: 20, maxToolCalls: 20, effectTimeoutMs: 130000 },
     childLifecyclePolicy: 'owned-background/v2', childApprovalPolicy: 'owned-child-approval/v1' });
   let rounds = 0, observed = false;
   const kernel = new NativeKernel({ store, digest, owner: 'parent', ports: { children: owner,
     tools: { execute: async request => {
-      if (request.call.name === startDefinition.name) return owner.start(request);
+      if (request.call.name === definition.name) return owner.start(request);
       const result = await owner.control(request);
       if (control === 'send') release();
       return result;
     } }, model: { generate: async request => {
       rounds++;
-      if (rounds === 1) return response('', [call]);
+      if (rounds === 1) return response('', [startCall]);
       if (control && rounds === 2) return response('', [{ callId: 'control-1', name: controlDefinition.name,
         arguments: { child_run_id: store.load(scope, 'run').snapshot.childRunIds[0], action: control,
           ...(control === 'send' ? { message: 'Use this additional child guidance' } : { wait_seconds: 1 }) } }]);
-      observed = request.messages.some(message => message.kind === 'background_child_observation');
+      observed = request.messages.some(message => message.kind === 'background_child_observation'
+        || message.role === 'tool' && message.content.includes('Child evidence'));
       return response(observed ? 'Parent used child evidence' : 'Premature parent draft');
     } } }, onCheckpoint: async current => {
       const intent = store.load(scope, 'run').intents.find(item => item.operationKey === current.pendingIntent);
       if (!approval && !hold && intent?.kind === 'child' && intent.payload.action === 'wait') release();
     } });
   kernel.start(snapshot, config);
-  return { dir, store, owner, kernel, release, writes: () => writes, starts: () => starts, observed: () => observed };
+  return { dir, store, owner, kernel, release, writes: () => writes, starts: () => starts, observed: () => observed, rounds: () => rounds };
+}
+
+async function childStarted(store) {
+  for (let tries = 0; tries < 500; tries++) {
+    const children = store.list(childScope);
+    if (children.some(child => store.load(childScope, child.runId).intents.some(intent => intent.kind === 'tool' && intent.status === 'running'))) return children[0];
+    await new Promise(resolve => setTimeout(resolve, 2));
+  }
+  assert.fail('child never entered its real tool effect');
 }
 
 for (const backend of ['memory', 'sqlite']) {
+  test(`${backend}: canceling foreground startup stops its actual child before a late write`, async t => {
+    const f = setup(t, backend, { foreground: true, hold: true });
+    const running = f.kernel.runUntilIdle(scope, 'run'), child = await childStarted(f.store);
+    f.kernel.submit(scope, 'run', { commandId: 'foreground-cancel', kind: 'cancel', payload: {} });
+    const canceled = await running;
+    assert.equal(canceled.phase, 'canceled');
+    assert.deepEqual(canceled.childRunIds, [child.runId]);
+    assert.equal(canceled.childBudgetReservations[0].deliveryMode, 'foreground');
+    f.release(); await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(f.writes(), 0); assert.equal(f.rounds(), 1); assert.equal(f.starts(), 1);
+    const record = f.store.load(childScope, child.runId);
+    assert.equal(record.snapshot.phase, 'canceled');
+    assert.ok(record.commands.some(row => row.command.kind === 'cancel'));
+    assert.ok(f.store.load(scope, 'run').receipts.some(receipt => receipt.result.recoveryPolicy === 'owned-child-start/v1'));
+  });
+
+  test(`${backend}: an uncertain foreground write stays reserved and is never replayed or returned as findings`, async t => {
+    const f = setup(t, backend, { foreground: true, hold: true, uncertain: true });
+    const running = f.kernel.runUntilIdle(scope, 'run'); await childStarted(f.store); f.release();
+    const result = await running;
+    assert.notEqual(result.phase, 'completed'); assert.equal(result.reason, 'child_receipt_unavailable');
+    assert.equal(result.childBudgetReservations[0].deliveryMode, 'foreground');
+    assert.equal(result.childBudgetReservations[0].settledUsageDigest, null);
+    assert.equal(f.writes(), 1); assert.equal(f.starts(), 1); assert.equal(f.rounds(), 1);
+    assert.equal(f.observed(), false);
+    assert.deepEqual(await f.kernel.runUntilIdle(scope, 'run'), result); assert.equal(f.writes(), 1);
+  });
+  for (const delegate of [false, true]) test(`${backend}: ${delegate ? 'native_delegate' : 'background=false'} returns one original foreground delivery and settles budget atomically`, async t => {
+    const f = setup(t, backend, { foreground: true, delegate, hold: true });
+    const running = f.kernel.runUntilIdle(scope, 'run');
+    const child = await childStarted(f.store);
+    assert.equal(f.rounds(), 1); assert.equal(f.writes(), 0);
+    assert.equal(f.store.load(scope, 'run').snapshot.childRunIds.length, 0);
+    f.release(); const result = await running;
+    assert.equal(result.phase, 'completed'); assert.equal(result.finalText, 'Parent used child evidence');
+    assert.equal(f.starts(), 1); assert.equal(f.rounds(), 2); assert.equal(f.writes(), 1);
+    assert.equal(result.childRunIds[0], child.runId); assert.equal(result.childBudgetReservations[0].deliveryMode, 'foreground');
+    assert.ok(result.childBudgetReservations[0].settledUsageDigest);
+    assert.deepEqual([result.descendantUsage.modelCalls, result.descendantUsage.toolCalls], [2, 1]);
+    assert.equal(result.messages.filter(message => message.kind === 'background_child_observation').length, 0);
+    assert.equal(f.store.events(scope, 'run').filter(event => event.kind === 'usage.reported' && event.payload.source === 'descendant_runs').length, 1);
+  });
+
+  test(`${backend}: foreground approval preserves one child and blocks the next parent model until its result`, async t => {
+    const f = setup(t, backend, { foreground: true, approval: true, hold: true });
+    const pending = await f.kernel.runUntilIdle(scope, 'run');
+    assert.equal(pending.phase, 'awaiting_interaction'); assert.equal(f.rounds(), 1);
+    assert.equal(pending.childBudgetReservations[0].deliveryMode, 'foreground');
+    f.kernel.submit(scope, 'run', { commandId: 'foreground-allow', kind: 'submit_interaction', payload: {
+      interactionId: pending.pendingInteraction.interactionId, decision: 'allow' } });
+    const running = f.kernel.runUntilIdle(scope, 'run');
+    await childStarted(f.store); assert.equal(f.rounds(), 1);
+    f.release(); const result = await running;
+    assert.equal(result.phase, 'completed'); assert.equal(f.rounds(), 2); assert.equal(f.starts(), 1); assert.equal(f.writes(), 1);
+    assert.ok(result.childBudgetReservations[0].settledUsageDigest);
+  });
+
+  test(`${backend}: pausing foreground startup preserves its original child and resume waits on that child`, async t => {
+    const f = setup(t, backend, { foreground: true, hold: true });
+    const running = f.kernel.runUntilIdle(scope, 'run'); const child = await childStarted(f.store);
+    f.kernel.submit(scope, 'run', { commandId: 'foreground-pause', kind: 'pause', payload: {} });
+    const paused = await running;
+    assert.equal(paused.phase, 'paused'); assert.equal(paused.childRunIds[0], child.runId); assert.equal(f.rounds(), 1);
+    f.kernel.submit(scope, 'run', { commandId: 'foreground-resume', kind: 'resume', payload: {} });
+    const resumed = f.kernel.runUntilIdle(scope, 'run');
+    await new Promise(resolve => setTimeout(resolve, 30)); assert.equal(f.rounds(), 1); assert.equal(f.starts(), 1);
+    f.release(); const final = await resumed;
+    assert.equal(final.phase, 'completed'); assert.equal(f.writes(), 1); assert.equal(f.starts(), 1);
+    assert.ok(final.childBudgetReservations[0].settledUsageDigest);
+  });
   for (const action of ['send', 'stop']) test(`${backend}: model-visible child control ${action} acts on the original owned child`, { timeout: 10000 }, async t => {
     const { store, kernel, writes, starts, release } = setup(t, backend, { control: action, hold: true });
     const result = await kernel.runUntilIdle(scope, 'run');
@@ -170,7 +252,7 @@ for (const backend of ['memory', 'sqlite']) {
   });
 }
 
-for (const boundary of ['startup', 'collection']) test(`Node process death before parent ${boundary} receipt reconciles the same sealed child`, { timeout: 15000 }, async t => {
+for (const boundary of ['startup', 'collection', 'foreground']) test(`Node process death before parent ${boundary} receipt reconciles the same sealed child`, { timeout: 15000 }, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'native-child-process-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const worker = spawnSync(process.execPath, [fileURLToPath(new URL('./fixtures/native-child-crash-worker.mjs', import.meta.url)), dir, boundary],
@@ -184,7 +266,8 @@ for (const boundary of ['startup', 'collection']) test(`Node process death befor
   const kernel = new NativeKernel({ store, owner: 'replacement-parent', digest, ports: { children: owner,
     tools: { execute: async () => { throw new Error('must not dispatch startup again'); } },
     model: { generate: async request => {
-      assert.ok(request.messages.some(message => message.kind === 'background_child_observation'));
+      assert.ok(request.messages.some(message => boundary === 'foreground'
+        ? message.role === 'tool' && message.content.includes('Child evidence') : message.kind === 'background_child_observation'));
       return response('Recovered parent');
     } } } });
   const result = await kernel.runUntilIdle(scope, 'run');
@@ -193,8 +276,12 @@ for (const boundary of ['startup', 'collection']) test(`Node process death befor
   assert.equal(result.childRunIds.length, 1); assert.equal(result.descendantUsage.modelCalls, 2); assert.equal(result.descendantUsage.toolCalls, 1);
   assert.equal(result.usage.toolCalls, 1);
   assert.equal(store.events(scope, 'run').filter(event => event.kind === 'usage.reported' && event.payload.source === 'descendant_runs').length, 1);
-  assert.ok(store.load(scope, 'run').receipts.some(receipt => receipt.result.recoveryPolicy === (boundary === 'startup'
-    ? 'owned-child-start/v1' : 'owned-child-observation/v1')));
+  assert.ok(store.load(scope, 'run').receipts.some(receipt => receipt.result.recoveryPolicy === (boundary === 'collection'
+    ? 'owned-child-observation/v1' : 'owned-child-start/v1')));
+  if (boundary === 'foreground') {
+    assert.equal(result.childBudgetReservations[0].deliveryMode, 'foreground');
+    assert.equal(result.messages.filter(message => message.kind === 'background_child_observation').length, 0);
+  }
 });
 
 test('an expired parent cannot start a child after a slow Host binding lookup', { timeout: 10000 }, async t => {

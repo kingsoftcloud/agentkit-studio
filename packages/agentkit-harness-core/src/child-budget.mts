@@ -52,6 +52,7 @@ function validateReservation(reservation: ChildBudgetReservation): void {
   invariant(Number.isSafeInteger(reservation.maxModelCalls) && reservation.maxModelCalls >= 1
     && Number.isSafeInteger(reservation.maxToolCalls) && reservation.maxToolCalls >= 0
     && reservation.settledUsageDigest === null, 'invalid_child_budget_reservation');
+  invariant(reservation.deliveryMode === undefined || ['foreground', 'background'].includes(reservation.deliveryMode), 'invalid_child_delivery_mode');
 }
 
 /** Called on the sealed tool receipt, inside the same parent state transaction. */
@@ -69,7 +70,9 @@ export function reduceChildBudget(snapshot: RunSnapshot, result: ToolResult, def
   }
   if (reservation) {
     validateReservation(reservation);
-    invariant(result.status === 'ok' && !settlement && !result.childRunIds?.length
+    const foreground = reservation.deliveryMode === 'foreground' && settlement
+      && settlement.childRunId === reservation.childRunId && ['ok', 'error'].includes(result.status);
+    invariant(foreground || result.status === 'ok' && !settlement && !result.childRunIds?.length
       && Object.values(usage).every(value => value === 0), 'invalid_child_budget_start_receipt');
     invariant(definition?.childBudgetPolicy === 'start/v1' || definition?.childBudgetPolicy === 'delegate/v1', 'child_budget_start_not_admitted');
     invariant(reservation.parentOperationKey === operationKey && reservation.parentToolCallId === call.callId
@@ -91,7 +94,8 @@ export function reduceChildBudget(snapshot: RunSnapshot, result: ToolResult, def
     return { childBudgetReservations: reservations, childRunIds, usage };
   }
   invariant(result.status !== 'approval_required' && result.status !== 'uncertain', 'invalid_child_budget_settlement_receipt');
-  invariant(definition?.childBudgetPolicy === 'settle/v1', 'child_budget_settlement_not_admitted');
+  invariant(definition?.childBudgetPolicy === 'settle/v1' || reservation?.deliveryMode === 'foreground'
+    && ['start/v1', 'delegate/v1'].includes(definition?.childBudgetPolicy ?? ''), 'child_budget_settlement_not_admitted');
   const reserved = reservations.find(item => item.childRunId === settlement.childRunId);
   invariant(typeof settlement.terminalSnapshotDigest === 'string' && /^[0-9a-f]{64}$/.test(settlement.terminalSnapshotDigest)
     && reserved && reserved.parentOperationKey === settlement.parentOperationKey

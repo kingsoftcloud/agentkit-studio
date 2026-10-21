@@ -38,6 +38,41 @@ function settled(overrides = {}) {
     resourceUsage: { inputTokens: 13, outputTokens: 7, modelCalls: 2, toolCalls: 3, cost: 0 },
     ...overrides };
 }
+function foreground(overrides = {}) {
+  return { ...settled(), childBudgetReservation: reservation({ deliveryMode: 'foreground' }), ...overrides };
+}
+
+for (const definition of [startDef(), delegateDef()]) {
+  test(`${definition.childBudgetPolicy}: one foreground receipt admits and settles the original budget atomically`, () => {
+    const s = snap(), output = foreground();
+    const result = reduceChildBudget(s, output, definition, 'start-op', call('start-call', definition.name), admittedToolBudget(s, config()), canonical);
+    assert.deepEqual(result.childRunIds, ['child-run']); assert.deepEqual(result.usage, output.resourceUsage);
+    assert.equal(result.childBudgetReservations[0].deliveryMode, 'foreground');
+    assert.ok(result.childBudgetReservations[0].settledUsageDigest);
+    const after = { ...s, childRunIds: result.childRunIds, childBudgetReservations: result.childBudgetReservations };
+    assert.equal(outstandingChildCalls(after, 'model'), 0); assert.equal(outstandingChildCalls(after, 'tool'), 0);
+    const repeated = reduceChildBudget(after, settled(), settleDef(), 'collect-op', call('collect-call', 'collect_child'), admittedToolBudget(after, config()), canonical);
+    assert.deepEqual(repeated.usage, emptyUsage());
+    assert.deepEqual(s.childBudgetReservations, []);
+  });
+}
+
+for (const [name, mutate] of [
+  ['background delivery', value => { value.childBudgetReservation.deliveryMode = 'background'; }],
+  ['unknown delivery mode', value => { value.childBudgetReservation.deliveryMode = 'detached'; }],
+  ['uncertain result', value => { value.status = 'uncertain'; }],
+  ['approval result', value => { value.status = 'approval_required'; }],
+  ['foreign child settlement', value => { value.childBudgetSettlement.childRunId = 'foreign'; }],
+  ['foreign parent settlement', value => { value.childBudgetSettlement.parentOperationKey = 'foreign'; }],
+  ['foreign request digest', value => { value.childBudgetSettlement.childRequestDigest = C64; }],
+  ['unsealed terminal snapshot', value => { delete value.childBudgetSettlement.terminalSnapshotDigest; }],
+  ['overspent child budget', value => { value.resourceUsage.modelCalls = 6; }],
+  ['unadmitted reservation', value => { value.childBudgetReservation.maxModelCalls = 50; }],
+]) test(`atomic foreground rejects ${name} without changing the parent`, () => {
+  const s = snap(), before = structuredClone(s), output = foreground(); mutate(output);
+  assert.throws(() => reduceChildBudget(s, output, startDef(), 'start-op', call('start-call', 'start_child'), admittedToolBudget(s, config()), canonical));
+  assert.deepEqual(s, before);
+});
 // (digest substitute: canonical is used directly in tests)
 
 // --- 1. Start reserves budget without fabricating actual usage ---

@@ -9,7 +9,8 @@ const dir = process.argv[2], store = new SqliteRunStore(join(dir, 'runs.sqlite')
 const childScope = { ...scope, agentId: 'child-agent' };
 const definition = tool({ name: 'native_start_child', readOnly: false, concurrentSafe: false, childBudgetPolicy: 'start/v1' });
 const childTool = tool({ name: 'write_proof', readOnly: false, concurrentSafe: false });
-const call = { callId: 'start-1', name: definition.name, arguments: { role: 'worker', task: 'Write the child proof' } };
+const call = { callId: 'start-1', name: definition.name, arguments: { role: 'worker', task: 'Write the child proof',
+  ...(process.argv[3] === 'foreground' ? { background: false } : {}) } };
 const { config, snapshot } = fixture({ tools: [definition], childLifecyclePolicy: 'owned-background/v2', limits: { maxModelCalls: 20, maxToolCalls: 20 } });
 store.create(config, snapshot);
 const lease = store.acquire(scope, 'run', 'dead-parent', 10, 100);

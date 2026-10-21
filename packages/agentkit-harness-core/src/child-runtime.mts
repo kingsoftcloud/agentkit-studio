@@ -14,7 +14,8 @@ export const unsettledChildren = (snapshot: RunSnapshot) => (snapshot.childBudge
 export function childUsageFacts(snapshot: RunSnapshot, operationKey: string, results: ToolResult[]): { kind: string; payload: ObjectValue }[] {
   return results.flatMap(item => {
     const child = item.childBudgetSettlement?.childRunId;
-    if (!child || !snapshot.childBudgetReservations.some(value => value.childRunId === child && value.settledUsageDigest === null)) return [];
+    if (!child || !snapshot.childBudgetReservations.some(value => value.childRunId === child && value.settledUsageDigest === null)
+      && !(item.childBudgetReservation?.childRunId === child && !snapshot.childRunIds.includes(child))) return [];
     return [{ kind: item.metadata?.usageReported === false ? 'usage.unavailable' : 'usage.reported', payload: {
       semantics: 'delta', source: 'descendant_runs', requestId: operationKey, attemptId: `${operationKey}:child:${child}`,
       childRunId: child, usage: copy(item.resourceUsage ?? {}) as unknown as ObjectValue,
@@ -24,11 +25,14 @@ export function childUsageFacts(snapshot: RunSnapshot, operationKey: string, res
 
 export function prepareChildLifecycle(snapshot: RunSnapshot, config: RunConfiguration): CommitBatch | null {
   if (config.childLifecyclePolicy !== 'owned-background/v2' || snapshot.pendingIntent || !unsettledChildren(snapshot).length) return null;
-  const action = snapshot.phase === 'finalizing' ? 'cancel' : snapshot.phase === 'verifying' ? 'wait' : 'poll';
+  const foreground = unsettledChildren(snapshot).filter(item => item.deliveryMode === 'foreground').map(item => item.childRunId);
+  const barrier = foreground.length > 0 && ['preparing_context', 'executing_tools'].includes(snapshot.phase);
+  const action = snapshot.phase === 'finalizing' ? 'cancel' : snapshot.phase === 'verifying' || barrier ? 'wait' : 'poll';
   if (snapshot.childLifecycleFailure === 'cancel' || snapshot.childLifecycleFailure && action !== 'cancel') return null;
   if (action === 'poll' && (snapshot.phase !== 'preparing_context'
     || snapshot.childLifecycleCursor === childLifecycleCursor(snapshot) && !snapshot.childApproval)) return null;
   return prepareEffect(snapshot, 'child', snapshot.phase, { action, reservations: copy(unsettledChildren(snapshot)) as never,
+    ...(barrier ? { waitForChildRunIds: foreground } : {}),
     childApproval: action === 'cancel' ? null : copy(snapshot.childApproval ?? null) as never,
     interaction: action === 'cancel' ? null : copy(snapshot.interaction) });
 }
@@ -42,6 +46,7 @@ export function childLifecycleRequest(snapshot: RunSnapshot, intent: EffectInten
     operationKey: intent.operationKey, signal, action: intent.payload.action as ChildLifecycleRequest['action'],
     ...(intent.claimedFence === undefined ? {} : { executionFence: intent.claimedFence }),
     reservations: copy(unsettledChildren(snapshot)), childApproval: copy(intent.payload.childApproval) as unknown as ChildApproval | null,
+    ...(intent.payload.waitForChildRunIds === undefined ? {} : { waitForChildRunIds: copy(intent.payload.waitForChildRunIds) as unknown as string[] }),
     interaction: copy(intent.payload.interaction) as ChildLifecycleRequest['interaction'] };
 }
 
@@ -57,6 +62,10 @@ export function reduceChildLifecycle(snapshot: RunSnapshot, config: RunConfigura
   result: ChildLifecycleResult, digest: (value: unknown) => string): Partial<RunSnapshot> {
   invariant(request.runId === snapshot.runId && canonical(request.scope) === canonical(snapshot.scope)
     && request.operationKey === snapshot.pendingIntent && canonical(request.reservations) === canonical(unsettledChildren(snapshot)), 'child_observation_identity_conflict');
+  if (request.waitForChildRunIds) invariant(request.action === 'wait' && request.waitForChildRunIds.length > 0
+    && new Set(request.waitForChildRunIds).size === request.waitForChildRunIds.length
+    && request.waitForChildRunIds.every(id => request.reservations.some(item => item.childRunId === id && item.deliveryMode === 'foreground')),
+  'child_foreground_wait_identity_conflict');
   invariant(result && result.operationKey === request.operationKey && Array.isArray(result.results)
     && Array.isArray(result.pendingChildRunIds) && Array.isArray(result.approvals)
     && [null, 'child_owner_unavailable', 'child_receipt_unavailable'].includes(result.errorCode), 'child_lifecycle_result_identity_conflict');
@@ -118,7 +127,8 @@ export function reduceChildLifecycle(snapshot: RunSnapshot, config: RunConfigura
     updated.pendingInteraction = { interactionId: `${request.operationKey}:approval`, hostInteractionId: `native-child-${digest(approval)}`,
       callId: approval.toolCall.callId, operationKey: request.operationKey };
     updated.interaction = null;
-  } else if (result.errorCode || request.action !== 'poll' && pending.length) {
+  } else if (result.errorCode || request.action !== 'poll'
+    && pending.some(id => !request.waitForChildRunIds || request.waitForChildRunIds.includes(id))) {
     updated.phase = 'finalizing'; updated.candidate = null; updated.verification = null;
     updated.childLifecycleFailure = request.action; updated.outcome = 'unverified';
     updated.reason = result.errorCode ?? 'background_children_unsettled'; updated.finalText = '';

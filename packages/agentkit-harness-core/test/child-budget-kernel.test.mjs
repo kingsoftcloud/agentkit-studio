@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { NativeKernel, MemoryRunStore, emptyUsage, modelRoom, toolRoom, transition, prepareEffect, contextContinuity } from '../dist/index.mjs';
+import { NativeKernel, MemoryRunStore, emptyUsage, modelRoom, toolRoom, transition, prepareEffect, contextContinuity,
+  prepareChildLifecycle, childLifecycleRequest, reduceChildLifecycle } from '../dist/index.mjs';
 import { SqliteRunStore } from '../../agentkit-harness/src/native/sqlite-store.mjs';
 import { fixture, scope, digest, tool } from './fixtures.mjs';
 
@@ -16,6 +17,27 @@ const reservation = request => ({ childRunId: 'child', childScope: { ...scope, a
   parentOperationKey: request.operationKey, parentToolCallId: request.call.callId,
   childRequestDigest: digest('child-request'), configurationDigest: digest('child-config'),
   maxModelCalls: 2, maxToolCalls: 3, settledUsageDigest: null });
+
+test('a resumed foreground child blocks the next model without waiting for an unrelated running background child', () => {
+  const { config, snapshot } = fixture({ childLifecyclePolicy: 'owned-background/v2' });
+  const foreground = { ...reservation({ operationKey: 'foreground-op', call: call('fg', 'start_child') }), deliveryMode: 'foreground' };
+  const background = { ...reservation({ operationKey: 'background-op', call: call('bg', 'start_child') }), childRunId: 'background' };
+  const waiting = { ...snapshot, phase: 'preparing_context', childRunIds: ['child', 'background'], childBudgetReservations: [foreground, background] };
+  const batch = prepareChildLifecycle(waiting, config), intent = batch.intents[0];
+  const request = childLifecycleRequest(batch.snapshot, intent, new AbortController().signal);
+  assert.equal(request.action, 'wait'); assert.deepEqual(request.waitForChildRunIds, ['child']);
+  const terminal = { status: 'ok', content: 'Foreground evidence', childRunIds: ['child'], resourceUsage: { ...emptyUsage(), modelCalls: 1 },
+    childBudgetSettlement: { childRunId: 'child', parentOperationKey: 'foreground-op', childRequestDigest: foreground.childRequestDigest,
+      terminalSnapshotDigest: digest('sealed-child') } };
+  const result = { operationKey: request.operationKey, results: [terminal], pendingChildRunIds: ['background'], approvals: [], errorCode: null };
+  const completed = reduceChildLifecycle(batch.snapshot, config, request, result, digest);
+  assert.equal(completed.phase, 'preparing_context'); assert.equal(completed.childLifecycleFailure, null);
+  assert.ok(completed.childBudgetReservations[0].settledUsageDigest);
+  assert.equal(completed.childBudgetReservations[1].settledUsageDigest, null);
+  assert.equal(completed.descendantUsage.modelCalls, 1);
+  assert.throws(() => reduceChildLifecycle(batch.snapshot, config, { ...request, waitForChildRunIds: ['background'] }, result, digest),
+    /child_foreground_wait_identity_conflict/);
+});
 
 for (const backend of ['memory', 'sqlite']) {
   test(`${backend}: cancellation and compaction cannot discard allocations; the store fences model claims`, t => {

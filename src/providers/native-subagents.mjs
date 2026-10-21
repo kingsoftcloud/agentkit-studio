@@ -130,6 +130,6 @@ export async function createStudioNativeChildren({ roles, scope, store, tools, h
     },
   });
   return { owner, contract: STUDIO_NATIVE_CHILD_CONTRACT, roles: structuredClone(roles),
-    execute: request => request.call.name === 'native_start_child' ? owner.start(request)
+    execute: request => ['native_start_child', 'native_delegate'].includes(request.call.name) ? owner.start(request)
       : request.call.name === 'native_child_control' ? owner.control(request) : readers.execute(request) };
 }

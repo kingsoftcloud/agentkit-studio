@@ -14,7 +14,7 @@ import { createModelService } from '../src/model-service.mjs';
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
-  inputParts, childInput = ['text'] } = {}) {
+  inputParts, childInput = ['text'], childTool = 'native_start_child' } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-children-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   const roles = [{ name: 'reader', instructions: 'Read the requested workspace evidence.', tools: ['read_workspace_file'],
@@ -61,7 +61,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         }
       } else {
         parentModels++;
-        if (parentModels === 1) call = { name: 'native_start_child', arguments: { role: 'reader', task: 'Read proof.txt',
+        if (parentModels === 1) call = { name: childTool, arguments: { role: 'reader', task: 'Read proof.txt',
           ...childArguments,
           ...(forged ? { model_profile_id: 'unbound-profile' } : {}) } };
         else if (control && parentModels === 2) {
@@ -101,6 +101,25 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   return { host, payload, ledger, gateway, roles, requests, dispatches, record, scope, childModels: () => childModels };
 }
 for (const sqlite of [false, true]) {
+  for (const childTool of ['native_start_child', 'native_delegate']) {
+    test(`${sqlite ? 'sqlite' : 'memory'}: Studio ${childTool} delivers the foreground result before the next parent model`, async t => {
+      const f = await setup(t, { sqlite, childTool, childArguments: childTool === 'native_start_child' ? { background: false } : {} });
+      await f.host.executeTurn(f.payload);
+      const parents = f.requests.filter(item => item.body.model === 'parent-model');
+      assert.equal(parents.length, 2); assert.equal(f.childModels(), 2);
+      const results = parents[1].body.messages.filter(message => message.role === 'tool');
+      assert.equal(results.length, 1); assert.match(results[0].content, /Child read actual workspace evidence/);
+      const parent = f.ledger.sessionHead(f.scope, 'parent-session');
+      assert.equal(parent.phase, 'completed'); assert.equal(parent.childRunIds.length, 1);
+      assert.equal(parent.childBudgetReservations[0].deliveryMode, 'foreground');
+      assert.ok(parent.childBudgetReservations[0].settledUsageDigest);
+      assert.deepEqual([parent.descendantUsage.modelCalls, parent.descendantUsage.toolCalls], [2, 1]);
+      assert.equal(parent.messages.filter(message => message.kind === 'background_child_observation').length, 0);
+      assert.equal(f.ledger.events(f.scope, parent.runId).filter(event => event.kind === 'usage.reported'
+        && event.payload.source === 'descendant_runs').length, 1);
+      assert.deepEqual(f.dispatches.map(item => item.name).sort(), [childTool, 'read_workspace_file'].sort());
+    });
+  }
   test(`${sqlite ? 'sqlite' : 'memory'}: Studio exposes parallel result and task queries through the actual Native tool gateway`, async t => {
     const f = await setup(t, { sqlite, control: true, query: true });
     await f.host.executeTurn(f.payload);

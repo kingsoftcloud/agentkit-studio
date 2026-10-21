@@ -52,7 +52,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const browserName = browserTools.definition.name;
   formal.set(browserName, browserTools.definition);
   const childRoles = nativeChildRoles({ subAgents: config.subAgents ?? [] });
-  const childNames = new Set(childRoles.length ? [...nativeChildToolDefinitions(childRoles.map(role => role.name)),
+  const childNames = new Set(childRoles.length ? [...nativeChildToolDefinitions(childRoles.map(role => role.name),
+    Math.max(120000, ...childRoles.map(role => role.timeoutSeconds * 1000 + 15000))),
     ...nativeChildReaderDefinitions()].map(definition => {
     formal.set(definition.name, definition); return definition.name;
   }) : []);

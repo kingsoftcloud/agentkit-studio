@@ -34,10 +34,12 @@ const server = createServer(async (request, response) => {
     } else {
       assert.ok(body.tools.some(tool => tool.function.name === 'native_start_child'));
       const step = parentStep++;
-      if (step === 0) call = { name: 'native_start_child', arguments: { role: 'reader', task: `Read proof.txt for turn ${turn}`,
+      if (step === 0) call = { name: turn === 1 ? 'native_delegate' : 'native_start_child', arguments: { role: 'reader', task: `Read proof.txt for turn ${turn}`,
         ...(turn === 2 ? { output_format: 'json_object', output_contract: 'parent' } : {}) } };
-      else if (step === 1) call = { name: 'native_child_control', arguments: {
-        child_run_id: latestChild(body), action: 'wait', wait_seconds: 1 } };
+      else if (step === 1) {
+        if (turn === 1) assert.match(body.messages.filter(message => message.role === 'tool').at(-1)?.content ?? '', /Child evidence 1/);
+        call = { name: 'native_child_control', arguments: { child_run_id: latestChild(body), action: 'wait', wait_seconds: 1 } };
+      }
       else if (step === 2) calls = [
         { name: 'native_child_result', arguments: { child_run_id: latestChild(body) } },
         { name: 'native_child_tasks', arguments: {} },
@@ -96,7 +98,7 @@ try {
     const result = await session.run(turn === 2 ? '读取 proof.txt。最后只返回 JSON 对象，格式为 {"count":整数}。' : `Use a bounded reader for proof ${turn}.`);
     assert.equal(result.finalResponse, turn === 2 ? '{"count":2}' : `Parent completed ${turn}`, JSON.stringify(result.events.filter(event => event.type === 'turn/end')));
     const tools = result.events.filter(event => event.type === 'tool/call');
-    const expectedTools = ['native_start_child', 'native_child_control', 'native_child_result', 'native_child_tasks',
+    const expectedTools = [turn === 1 ? 'native_delegate' : 'native_start_child', 'native_child_control', 'native_child_result', 'native_child_tasks',
       ...(turn === 2 ? ['submit_final_output'] : [])];
     assert.deepEqual(tools.map(event => event.data.name), expectedTools);
     assert.equal(result.events.filter(event => event.type === 'tool/result').length, expectedTools.length);
@@ -115,6 +117,9 @@ try {
       assert.equal(parent.phase, 'completed'); assert.equal(parent.childBudgetReservations.length, 1);
       assert.equal(parent.descendantUsage.modelCalls, 2); assert.equal(parent.descendantUsage.toolCalls, 1);
       const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
+      if (reservation.deliveryMode === 'foreground') {
+        assert.equal(parent.messages.filter(message => message.kind === 'background_child_observation').length, 0);
+      }
       childIds.add(reservation.childRunId);
       const child = store.load(reservation.childScope, reservation.childRunId);
       assert.equal(child.snapshot.phase, 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
@@ -130,9 +135,10 @@ try {
       assert.equal(store.events(scope, parent.runId).filter(event => event.kind === 'usage.reported' && event.payload.source === 'descendant_runs').length, 1);
     }
     assert.equal(childIds.size, 2);
+    assert.equal(parents.filter(parent => parent.childBudgetReservations[0].deliveryMode === 'foreground').length, 1);
     assert.equal(JSON.stringify(parents).includes('child-proof-secret'), false);
   } finally { store.close(); }
-  console.log('Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns across Host restart, Node-only PATH.');
+  console.log('Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, foreground native_delegate result before the next parent model, background child after Host restart, independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.');
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });

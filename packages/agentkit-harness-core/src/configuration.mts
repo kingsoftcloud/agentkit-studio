@@ -68,6 +68,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       && Number.isSafeInteger(binding.maxToolCalls) && binding.maxToolCalls >= 0
       && limits.maxModelCalls === binding.maxModelCalls && limits.maxToolCalls === binding.maxToolCalls,
     'invalid_child_owner_binding');
+    invariant(binding.deliveryMode === undefined || ['foreground', 'background'].includes(binding.deliveryMode), 'invalid_child_delivery_mode');
   }
   invariant(config.contract.objective.trim() && config.hostBindingDigest.trim()
     && profile.profileId.trim() && profile.profileVersion.trim() && profile.providerFamily.trim()

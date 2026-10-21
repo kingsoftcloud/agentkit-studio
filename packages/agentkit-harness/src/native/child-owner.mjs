@@ -60,7 +60,8 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
     return { childRunId: record.snapshot.runId, childScope: copy(childScope), parentOperationKey: binding.parentOperationKey,
       parentToolCallId: binding.parentToolCallId, childRequestDigest: binding.childRequestDigest,
       configurationDigest: record.snapshot.configDigest, maxModelCalls: binding.maxModelCalls,
-      maxToolCalls: binding.maxToolCalls, settledUsageDigest: null };
+      maxToolCalls: binding.maxToolCalls, settledUsageDigest: null,
+      ...(binding.deliveryMode ? { deliveryMode: binding.deliveryMode } : {}) };
   };
   const attachKernel = (record, ports) => {
     check(ports && typeof ports.model?.generate === 'function' && typeof ports.tools?.execute === 'function', 'child_ports_unavailable');
@@ -107,6 +108,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
     check(binding?.contract === CHILD_OWNER_CONTRACT && same(binding.parent, identity(request))
       && binding.parentOperationKey === reservation.parentOperationKey && binding.parentToolCallId === reservation.parentToolCallId
       && binding.childRequestDigest === reservation.childRequestDigest && binding.maxModelCalls === reservation.maxModelCalls
+      && binding.deliveryMode === reservation.deliveryMode
       && binding.maxToolCalls === reservation.maxToolCalls && record.snapshot.configDigest === reservation.configurationDigest
       && hash(record.configuration) === reservation.configurationDigest, 'child_owner_binding_mismatch');
     return record;
@@ -148,6 +150,36 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       parentToolCallId: reservation.parentToolCallId, interactionId: pending.interactionId, hostInteractionId: pending.hostInteractionId,
       toolCall: copy(call), definitionDigest: hash(definition) };
   };
+  const foregroundResult = async (request, reservation) => {
+    let record = ownedChild(request, reservation);
+    const entry = await liveEntry(request, reservation, record);
+    const startup = () => startupReceipt(reservation, record.configuration.childOwnerBinding.role);
+    const cancel = () => {
+      if (entry && !terminal(store.load(entry.scope, entry.runId).snapshot.phase)) {
+        entry.kernel.submit(entry.scope, entry.runId, { commandId: `foreground-cancel-${hash({ parent: request.runId,
+          operationKey: request.operationKey })}`, kind: 'cancel', payload: {} });
+        drive(entry);
+      }
+    };
+    request.signal.addEventListener('abort', cancel, { once: true });
+    try {
+      if (request.signal.aborted) cancel();
+      request.signal.throwIfAborted();
+      toolInvocation(request);
+      if (entry && !terminal(record.snapshot.phase)) drive(entry);
+      while (!terminal(record.snapshot.phase) && record.snapshot.phase !== 'awaiting_interaction') {
+        request.signal.throwIfAborted(); const parent = toolInvocation(request);
+        if (parent.commands.some(row => !row.consumed && row.command.kind === 'pause')
+          || entry?.error && entry.error.code !== 'lease_busy') return startup();
+        await observeWhileLive(new Promise(resolve => setTimeout(resolve, 25)), request.signal);
+        record = ownedChild(request, reservation);
+        if (entry?.error?.code === 'lease_busy') drive(entry);
+      }
+      request.signal.throwIfAborted(); toolInvocation(request);
+      if (record.snapshot.phase === 'awaiting_interaction' || record.snapshot.phase === 'interrupted' || unsafeReceipt(record)) return startup();
+      return { ...terminalReceipt(record, reservation), childBudgetReservation: copy(reservation) };
+    } finally { request.signal.removeEventListener('abort', cancel); }
+  };
   const projection = (record, reservation) => ({ runId: record.snapshot.runId, sessionId: record.snapshot.sessionId,
     operationKey: reservation.parentOperationKey, callId: reservation.parentToolCallId,
     state: unsafeReceipt(record) ? 'interrupted' : record.snapshot.phase === 'created' ? 'prepared' : record.snapshot.phase === 'awaiting_interaction' ? 'awaiting_interaction'
@@ -162,7 +194,9 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       check(['start/v1', 'delegate/v1'].includes(request.definition.childBudgetPolicy), 'child_start_not_admitted');
       const args = request.call.arguments;
       check(typeof args.role === 'string' && args.role.trim() && typeof args.task === 'string' && args.task.trim()
-        && args.background !== false && args.continuation_of === undefined, 'child_background_request_invalid');
+        && (args.background === undefined || typeof args.background === 'boolean')
+        && args.continuation_of === undefined, 'child_background_request_invalid');
+      const foreground = args.background === false || request.call.name === 'native_delegate' && args.background !== true;
       check(request.budget.depth < request.budget.maxDepth, 'child_depth_exhausted');
       const modelLimit = args.model_call_limit ?? 4, toolLimit = args.tool_call_limit ?? 8;
       check(Number.isSafeInteger(modelLimit) && modelLimit >= 1 && Number.isSafeInteger(toolLimit) && toolLimit >= 0, 'child_budget_invalid');
@@ -174,7 +208,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       const requestDigest = hash({ parent: identity(request), operationKey: request.operationKey, call: request.call, budget: request.budget });
       const binding = { contract: CHILD_OWNER_CONTRACT, parent: identity(request), parentOperationKey: request.operationKey,
         parentToolCallId: request.call.callId, parentExecutionFence: request.executionFence, childRequestDigest: requestDigest,
-        role: args.role, maxModelCalls, maxToolCalls };
+        role: args.role, maxModelCalls, maxToolCalls, ...(foreground ? { deliveryMode: 'foreground' } : {}) };
       const runId = locator(request);
       const existing = scopes.flatMap(childScope => store.list(childScope)).find(snapshot => snapshot.runId === runId);
       if (existing) {
@@ -183,7 +217,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
           && saved.maxModelCalls <= maxModelCalls && saved.maxToolCalls <= maxToolCalls, 'child_start_identity_conflict');
         const reservation = makeReservation(record, existing.scope);
         ownedChild(request, reservation);
-        return startupReceipt(reservation, saved.role);
+        return foreground ? foregroundResult(request, reservation) : startupReceipt(reservation, saved.role);
       }
       const bound = await observeWhileLive(Promise.resolve().then(() => resolveChild({ parent: identity(request), call: copy(request.call), childRunId: runId,
         role: args.role, task: args.task, parentContract: copy(effective(toolInvocation(request)).contract),
@@ -203,7 +237,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       const record = store.load(childIdentity.scope, runId), reservation = makeReservation(record, childIdentity.scope);
       const entry = attachKernel(record, bound.ports);
       drive(entry);
-      return startupReceipt(reservation, binding.role);
+      return foreground ? foregroundResult(request, reservation) : startupReceipt(reservation, binding.role);
     },
     async control(request) {
       request.signal.throwIfAborted();
@@ -251,7 +285,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       const { signal: ignored, ...supplied } = request;
       check(same(plain, supplied), 'child_collection_not_owned');
       const records = request.reservations.map(reservation => ownedChild(request, reservation));
-      const running = [];
+      const awaited = [];
       for (let index = 0; index < records.length; index++) {
         const reservation = request.reservations[index], record = records[index];
         const entry = await liveEntry(request, reservation, record);
@@ -266,15 +300,20 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
           entry.kernel.submit(entry.scope, entry.runId, { commandId: `parent-approval-${hash({ parent: request.operationKey, approval: expected, decision: request.interaction.decision })}`,
             kind: 'submit_interaction', payload: { interactionId: expected.interactionId, decision: request.interaction.decision } });
         }
-        if (record.snapshot.phase !== 'awaiting_interaction' || request.action === 'cancel' || request.childApproval?.childRunId === entry.runId) running.push(drive(entry));
+        if (record.snapshot.phase !== 'awaiting_interaction' || request.action === 'cancel' || request.childApproval?.childRunId === entry.runId) {
+          const promise = drive(entry);
+          if (!request.waitForChildRunIds || request.waitForChildRunIds.includes(entry.runId)) awaited.push(promise);
+        }
       }
       if (request.action !== 'poll') {
-        await observeWhileLive(Promise.all(running), request.signal);
+        await observeWhileLive(Promise.all(awaited), request.signal);
         while (request.reservations.some(reservation => {
           const record = ownedChild(request, reservation);
-          return !terminal(record.snapshot.phase) && record.commands.some(row => !row.consumed);
+          return (!request.waitForChildRunIds || request.waitForChildRunIds.includes(reservation.childRunId))
+            && !terminal(record.snapshot.phase) && record.commands.some(row => !row.consumed);
         })) {
           const continuations = request.reservations.flatMap(reservation => {
+            if (request.waitForChildRunIds && !request.waitForChildRunIds.includes(reservation.childRunId)) return [];
             const record = ownedChild(request, reservation), entry = entries.get(record.snapshot.runId);
             return entry && !terminal(record.snapshot.phase) && record.commands.some(row => !row.consumed) ? [drive(entry)] : [];
           });
@@ -284,12 +323,14 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         // Another live owner may still hold the child's lease. Observe it;
         // after expiry the same Kernel classifies its existing claims.
         while (request.reservations.some(reservation => {
+          if (request.waitForChildRunIds && !request.waitForChildRunIds.includes(reservation.childRunId)) return false;
           const record = ownedChild(request, reservation);
           return !terminal(record.snapshot.phase) && record.snapshot.phase !== 'awaiting_interaction'
             && entries.get(record.snapshot.runId)?.error?.code === 'lease_busy';
         })) {
           await observeWhileLive(new Promise(resolve => setTimeout(resolve, 25)), request.signal);
           const retries = request.reservations.flatMap(reservation => {
+            if (request.waitForChildRunIds && !request.waitForChildRunIds.includes(reservation.childRunId)) return [];
             const record = ownedChild(request, reservation), entry = entries.get(record.snapshot.runId);
             return entry && !terminal(record.snapshot.phase) && entry.error?.code === 'lease_busy' ? [drive(entry)] : [];
           });
@@ -352,7 +393,10 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         && record.configuration.childOwnerBinding.childRequestDigest === hash({ parent: identity(parent.snapshot),
           operationKey: intent.operationKey, call: calls[0], budget: admittedToolBudget(parent.snapshot, effective(parent), 1) }), 'child_recovery_identity_conflict');
       return [{ parentOperationKey: intent.operationKey, parentToolCallId: calls[0].callId,
-        result: startupReceipt(reservation, record.configuration.childOwnerBinding.role) }];
+        result: reservation.deliveryMode === 'foreground' && terminal(record.snapshot.phase)
+          && record.snapshot.phase !== 'interrupted' && !unsafeReceipt(record)
+          ? { ...terminalReceipt(record, reservation), childBudgetReservation: copy(reservation) }
+          : startupReceipt(reservation, record.configuration.childOwnerBinding.role) }];
     },
     async releaseRun(request) {
       check(same(request.scope, parentScope), 'child_parent_scope_mismatch');

@@ -170,6 +170,7 @@ export interface ChildBudgetReservation {
   childRunId: string; childScope: RunScope; parentOperationKey: string; parentToolCallId: string;
   childRequestDigest: string; configurationDigest: string;
   maxModelCalls: number; maxToolCalls: number; settledUsageDigest: string | null;
+  deliveryMode?: 'foreground' | 'background';
 }
 export interface ChildBudgetSettlement {
   childRunId: string; parentOperationKey: string; childRequestDigest: string; terminalSnapshotDigest: string;

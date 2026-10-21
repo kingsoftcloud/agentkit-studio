@@ -297,7 +297,7 @@ export class NativeKernel {
     } catch { return unavailable('browser_recovery_probe_failed'); }
     finally { clearTimeout(timer); probeSignal.removeEventListener('abort', onAbort); }
   }
-  private async recoverEffect(snapshot: RunSnapshot, config: RunConfiguration, intent: EffectIntent): Promise<CommitBatch> {
+  private async recoverEffect(snapshot: RunSnapshot, config: RunConfiguration, intent: EffectIntent, elapsedMs = 0): Promise<CommitBatch> {
     if (intent.kind === 'child' && config.childLifecyclePolicy === 'owned-background/v2' && this.ports.children?.reconcile) {
       const abort = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -336,8 +336,9 @@ export class NativeKernel {
           const results = [copy(receipts[0]!.result)];
           const changes = stagePostHooks(snapshot, reduceTools(snapshot, results, calls, intent, config, this.digest), config, calls, results);
           return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed', result: {
-            results: results as never, recoveryPolicy: 'owned-child-start/v1' } }, changes, 0,
+            results: results as never, recoveryPolicy: 'owned-child-start/v1' } }, changes, elapsedMs,
           [{ kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: 'owned-child-start/v1' } },
+            ...childUsageFacts(snapshot, intent.operationKey, results),
             { kind: 'tool.completed', payload: { callId: calls[0]!.callId, name: calls[0]!.name, status: results[0]!.status, content: results[0]!.content } }]);
         }
       } catch { /* Missing or invalid owner proof remains unknown; no start is repeated. */ }
@@ -497,6 +498,15 @@ export class NativeKernel {
       }
     } catch (error) {
       const code = error instanceof NativeError ? error.code : 'effect_port_error';
+      // Cancellation or timeout may win after a child was durably created but
+      // before its startup result reached this transaction. Recover that same
+      // ownership before a terminal command can discard its budget liability.
+      const calls = intent.payload.calls as unknown as ToolCall[] | undefined;
+      if (intent.kind === 'tool' && configuration.childLifecyclePolicy === 'owned-background/v2' && calls?.length === 1
+        && ['start/v1', 'delegate/v1'].includes(configuration.tools.find(tool => tool.name === calls[0]!.name)?.childBudgetPolicy ?? '')
+        && this.ports.children?.interruptedReceipts) {
+        return await this.recoverEffect(snapshot, configuration, intent, Math.max(0, this.now() - started));
+      }
       if (intent.kind === 'child') {
         if (code === 'child_observation_paused' && configuration.childLifecyclePolicy === 'owned-background/v2'
           && ['poll', 'wait'].includes(String(intent.payload.action)) && !intent.payload.interaction) {

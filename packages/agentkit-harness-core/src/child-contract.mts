@@ -6,6 +6,7 @@ export interface ChildOwnerBinding {
   contract: typeof CHILD_OWNER_CONTRACT; parent: RunIdentity;
   parentOperationKey: string; parentToolCallId: string; parentExecutionFence: number; childRequestDigest: string; role: string;
   maxModelCalls: number; maxToolCalls: number;
+  deliveryMode?: 'foreground' | 'background';
 }
 export interface ChildApproval {
   childRunId: string; childScope: RunScope; parentOperationKey: string; parentToolCallId: string;
@@ -14,6 +15,7 @@ export interface ChildApproval {
 export interface ChildLifecycleRequest extends PortContext {
   action: 'poll' | 'wait' | 'cancel'; reservations: ChildBudgetReservation[];
   childApproval: ChildApproval | null; interaction: ObjectValue | null;
+  waitForChildRunIds?: string[];
 }
 export interface ChildLifecycleResult {
   operationKey: string; results: ToolResult[]; pendingChildRunIds: string[];
