@@ -7,6 +7,13 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { NativeKernel, MemoryRunStore, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
+import { NATIVE_PYTHON_SYNTAX } from '../packages/agentkit-harness/src/native/python-syntax.mjs';
+test('only an owned lint builtin pins the workspace syntax engine', t => {
+  assert.deepEqual(setup(t, ['lint_workspace_file']).gateway.workspaceSyntax, NATIVE_PYTHON_SYNTAX);
+  assert.equal(setup(t).gateway.workspaceSyntax, null);
+  assert.equal(setup(t, ['lint_workspace_file'], [{ name: 'lint_workspace_file', executor: 'mcp', resourceId: 'remote' }],
+    { executeMcpTool: async () => ({ content: [] }) }).gateway.workspaceSyntax, null);
+});
 function setup(t, names = ['write_workspace_file'], contracts = [], options = {}) {
   const root = mkdtempSync(join(tmpdir(), 'studio-native-tools-')), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));

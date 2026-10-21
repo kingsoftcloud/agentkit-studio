@@ -3,6 +3,7 @@ import { resolve, join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { canonical, invariant, parseNativeJson, requiresExactJsonWire, stringifyModelJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/native/workspace-tools.mjs';
+import { NATIVE_PYTHON_SYNTAX } from '../../packages/agentkit-harness/src/native/python-syntax.mjs';
 import { projectNativeDshContent } from './native-input.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
@@ -106,6 +107,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   return {
     close,
     argumentEncoding,
+    workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
     mcpResultContract: mcpContracts.size ? 'mcp-result/v1' : null,
     mcpJsonCodec: mcpContracts.size ? NATIVE_MCP_JSON_CODEC : null,
     mcpSchemaContract: mcpSchemas.size ? NATIVE_MCP_SCHEMA_CONTRACT : null,

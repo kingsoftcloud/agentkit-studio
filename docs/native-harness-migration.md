@@ -78,7 +78,13 @@ Python 参考能力清单见 [native-reference-capabilities.md](native-reference
 
 上一阶段默认 `pnpm check` 通过构建、类型、语法、可移植性检查及 2050 项测试、1 项原有跳过、0 项失败；后续运行中输入接入按上述节奏只做定向验证，该全量结果不作为后续代码已全量重跑的证明。此前默认及有界并发曾停在原有 assistant-native-transport 测试，失败日志仍保留；现已确定其中双编辑器测试错误地按 WebCrypto 完成顺序分配上传闸门，反向摘要完成会让测试永远等待。保留旧分配逻辑的独立反向调度复现会超时；正式测试改为按请求绑定闸门并强制反向摘要完成，原幂等与恢复断言保持，16 项在 Node 26/22 均通过。最低支持的 Node 22.19.0 最新工具上下文联合回归 250 项全部通过，包含完整核心、输入、工具、会话交付、SQLite 恢复和整轮适配器。153 项模型端口、40 项 Hook 执行器及 74 项工作区测试也各有 Node 22 验证记录。
 
-Node 工作区适配器已审查并合入，提供十种工作区工具、读取修订约束、原子发布、路径边界及持久审批绑定。74 项测试在 Node 26 和 22 均通过，其中实际 Native 核心、SQLite 和文件系统联测验证了审批重开恢复，以及发布后状态写入失败会中断并阻止重复执行。默认路径的 Python bridge 尚未移除；Native 开发入口已使用该端口执行对应工作区工具，Python AST lint、全局读取预算、artifact 保存和诊断叠加也仍需补齐，不能将工具名称齐全视为行为全部齐全。
+Node 工作区适配器已审查并合入，提供十种工作区工具、读取修订约束、原子发布、路径边界及持久审批绑定。74 项测试在 Node 26 和 22 均通过，其中实际 Native 核心、SQLite 和文件系统联测验证了审批重开恢复，以及发布后状态写入失败会中断并阻止重复执行。默认路径的 Python bridge 尚未移除；Native 开发入口已使用该端口执行对应工作区工具，全局读取预算、artifact 保存和诊断叠加也仍需补齐，不能将工具名称齐全视为行为全部齐全。
+
+`lint_workspace_file` 现用固定的 `@astral-sh/ruff-wasm-nodejs@0.16.8` 检查 Python 源码，在独立 Node Worker 内运行 Rust/WASM，不启动 Python。版本化的 `agentkit.python-ast-syntax/v1` 固定 Python 3.12 语法，对应参考仓库 `pyproject.toml` 的最低版本；类型别名、类型参数及 3.12 f-string 可用，更新版本的语法会明确报错。这属于显式语言版本差异，不能宣称覆盖任意 Python 解释器版本。诊断文字和错误跨度来自 Ruff，与 CPython 不要求逐字一致。
+
+检查只接收经过既有工作区边界检查捕获的文本，不读取工作区的 Ruff 配置，也不执行源码。它使用 Ruff 的严格语法解析边界，避免将重复参数、模块级 nonlocal 等仅在编译阶段失败的情形误当成 `ast.parse` 错误；另保留默认 4300 位十进制整数、200 层括号、99 层缩进和 NUL 限制。解析最多使用现有 2 MiB 文本预算，10 秒期限或取消会终止并等待 Worker 退出；失败显式返回错误，不能降级成“检查通过”。V8 内存限制不等于 WASM 线性内存限制。引擎身份进入启用该 builtin 的 Host 绑定摘要，同名 MCP 不取得它。
+
+相关验证包括真实 Native 核心的“读取、检查错误、编辑、再检查”循环及 SQLite 重开；语法、权限、配置隔离、取消、超时及 Unicode 位置均在 Node 26/22 验证。`node scripts/verify-native-python-syntax-package.mjs <Studio tarball>` 在仓库外新建依赖树和空 npm 缓存，仅安装发布清单固定的解析器依赖，核对完整性并在 PATH 只有 Node 时执行实际打包文件；两个 Node 版本均通过。此证据仅覆盖该组件的全新安装，不替代完整 Studio、DSH Native 或 Codex 的安装与执行验收。解析器 API 为上游实验接口，精确依赖和守卫随包维护，来源见 [Ruff WASM 0.16.8](https://github.com/astral-sh/ruff/tree/0.16.8/crates/ruff_wasm)。
 
 Node 模型端口现支持 OpenAI Chat Completions、Responses 和 Anthropic Messages，每次调用只发起一个 HTTP 请求，由核心独占重试和工具执行。153 项测试包含真实本地 HTTP、Kernel 与 SQLite 集成、私有回放与历史调用 ID 映射、严格 JSON、工具参数拒绝、响应大小和超时、终止帧后的及时收尾、用量缺失及缓存语义、整次请求的图片预算。Anthropic 输入用量包含缓存读取和创建；只有主要计数完整才认定为已上报。图片预算按编码后的内联 URL 总字节计数，保留当前用户全部图片，历史图片超额时以明确省略标记替换模型视图，原始会话和回执不变。
 

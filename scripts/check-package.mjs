@@ -20,6 +20,8 @@ const expected = [
   'LICENSE',
   'src/index.mjs', 'src/product.json', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
   'dist/native-mcp-client.mjs', 'dist/native-mcp-client.json', 'dist/native-mcp-client.LICENSE.txt',
+  'packages/agentkit-harness/src/native/python-syntax.mjs',
+  'packages/agentkit-harness/src/native/python-syntax-worker.mjs',
   'packages/agentkit-harness/package.json', 'packages/agentkit-harness/agentkit-harness.plugin.json',
   'packages/agentkit-harness/src/index.mjs', 'packages/agentkit-harness/src/core.mjs',
   'packages/agentkit-harness/src/contract.mjs', 'packages/agentkit-harness/src/dsh-adapter.mjs',
@@ -31,6 +33,7 @@ const expected = [
 const missing = expected.filter(path => !files.has(path));
 if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);
 if (packageJson.name !== '@kingsoftcloud/agentkit-studio') throw new Error(`unexpected package name: ${String(packageJson.name)}`);
+if (packageJson.dependencies?.['@astral-sh/ruff-wasm-nodejs'] !== '0.16.8') throw new Error('Python-source syntax parser must be an exact production dependency');
 if (!/^\d+\.\d+\.\d+$/.test(String(packageJson.version))) throw new Error(`package version must be stable semver: ${String(packageJson.version)}`);
 if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.version) throw new Error('plugin manifest identity/version does not match package.json');
 if (manifest.requiredDsh !== '0.2.1-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);

@@ -12,9 +12,8 @@
  * rejection, symlink/path-escape protection, atomic writes, cancellation and
  * explicit errors. Host-owned concerns (effect intent/receipt, artifact
  * persistence, source-read budget, diagnostics overlay, definition digest) are
- * deliberately not reimplemented here. Nothing launches Python; capabilities
- * the Node port cannot honestly provide (e.g. python AST lint) are reported
- * explicitly rather than faked as successful.
+ * deliberately not reimplemented here. Python syntax checks use the pinned
+ * Rust/WASM parser in an isolated Node worker; nothing launches Python.
  */
 import { createHash } from 'node:crypto';
 import {
@@ -23,6 +22,7 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { checkPythonSyntax, NATIVE_PYTHON_SYNTAX } from './python-syntax.mjs';
 
 import {
   WorkspacePathError, escapeRegex, fnmatch, publishWorkspaceBytes, sha256,
@@ -71,7 +71,7 @@ export function createNativeWorkspaceTools({
   const root = workspaceRoot;
   const store = new WorkspaceStateStore(stateDir, sessionId);
   const authorizeFn = authorize || defaultAuthorize;
-  // Implementations below are synchronous. Track publications within the
+  // Mutating implementations below are synchronous. Track publications within the
   // current invocation so a later state-write failure cannot masquerade as a
   // definite failure before execution. No tracking state crosses an await.
   let activeMutations = null;
@@ -553,7 +553,7 @@ export function createNativeWorkspaceTools({
     }));
   }
 
-  function lintWorkspaceFile(args) {
+  function lintWorkspaceFile(args, { signal }) {
     const path = String(args.path ?? '');
     const language = args.language ?? 'auto';
     const target = resolvePath(path);
@@ -563,8 +563,12 @@ export function createNativeWorkspaceTools({
     const lang = detectLanguage(target, language);
     const issues = [];
     if (lang === 'python') {
-      genericTextChecks(text, issues);
-      issues.push({ severity: 'warning', line: 0, column: 0, message: 'python syntax validation unavailable in native node port; install python or use the python runtime' });
+      // Capture bytes under the same workspace checks as all text tools. The
+      // parser receives no filesystem or host execution authority.
+      return checkPythonSyntax(text || '', { signal }).then(issues => ({
+        ok: issues.length === 0, path: rel, language: lang, issues,
+        lint_model: 'built_in_lightweight', syntax_engine: { ...NATIVE_PYTHON_SYNTAX },
+      }));
     } else if (lang === 'json') {
       try {
         JSON.parse(text ?? '');
@@ -827,6 +831,17 @@ export function createNativeWorkspaceTools({
         content: { ok: false, error_type: 'state_persist_failed', executed: true, paths: [...mutations] } };
       return { status: 'error', content: { ok: false, error_type: 'internal_error', error_message: e.message } };
     } finally { activeMutations = previousMutations; }
+    // The only asynchronous implementation parses captured read-only bytes.
+    // Restore mutation tracking before any await so concurrent writers cannot
+    // attribute their publications to this invocation.
+    if (result && typeof result.then === 'function') {
+      try { result = await result; }
+      catch (error) {
+        if (signal?.aborted) return canceled();
+        return { status: 'error', content: { ok: false, error_type: error.code || 'python_syntax_unavailable',
+          error_message: error.message } };
+      }
+    }
     if (signal?.aborted && !(result && result.ok)) return canceled();
 
     if (result && result.ok === true) {

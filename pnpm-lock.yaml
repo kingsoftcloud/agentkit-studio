@@ -13,6 +13,9 @@ importers:
 
   .:
     dependencies:
+      '@astral-sh/ruff-wasm-nodejs':
+        specifier: 0.16.8
+        version: 0.16.8
       '@deepseek-ai/cordis':
         specifier: ^4.0.5
         version: 4.0.5
@@ -67,6 +70,9 @@ importers:
         version: 6.0.3
 
 packages:
+
+  '@astral-sh/ruff-wasm-nodejs@0.16.8':
+    resolution: {integrity: sha512-saSBCYcHUdAFM7i9gHZB2ciWtbjrsfWxcCDhn+PCsIXORVy7/h33xsGxv/F8bgMijoQlxUIokU/n8rYGFTxcEw==}
 
   '@deepseek-ai/cordis@4.0.5':
     resolution: {integrity: sha512-Sktq5axy0owk9PdnivBRNOJjHEVEibCt0+TDDZcv0+UH2KS1M910fX4kn5y45YFsrpZIi1mJf/1s5VzywMUnyg==}
@@ -981,6 +987,8 @@ packages:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
+
+  '@astral-sh/ruff-wasm-nodejs@0.16.8': {}
 
   '@deepseek-ai/cordis@4.0.5':
     dependencies:

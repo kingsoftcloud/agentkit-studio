@@ -477,6 +477,17 @@ review):**
 
 ## Current TS verification coverage
 
+Workspace Python-source lint now runs the pinned Ruff Rust/WASM parser in a
+terminated-on-cancel Node worker, with no Python executable or project config.
+`agentkit.python-ast-syntax/v1` pins Python 3.12, matching the reference
+project's minimum version; newer interpreter syntax and diagnostic wording
+are explicit platform differences. Its strict parse boundary preserves
+`ast.parse`'s omission of compile-time scoping checks, with the default
+decimal integer, nesting, indentation and NUL limits retained. Actual kernel
+repair and SQLite reopen, affected Host/tool tests, and a cold installation
+of this component from the packed files are covered on Node 26 and 22.
+This does not remove the old builtin bridge or prove a full Studio install.
+
 The reference inventory above remains the migration scope. The TS Host now
 composes the terminal delivery verifier (`native-verification.mjs`) with
 scoped durable artifacts, exact-file observations, strict output-shape helpers

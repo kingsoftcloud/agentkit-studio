@@ -226,7 +226,7 @@ test('write_workspace_files checks all preconditions before writing and reports 
   } finally { cleanup(); }
 });
 
-test('lint_workspace_file runs generic, json and honest-python checks', async () => {
+test('lint_workspace_file runs generic, json and Node-only Python syntax checks', async () => {
   const { call, workspaceRoot, cleanup } = setup();
   try {
     writeFileSync(join(workspaceRoot, 'clean.txt'), 'no issues\n');
@@ -255,9 +255,18 @@ test('lint_workspace_file runs generic, json and honest-python checks', async ()
     writeFileSync(join(workspaceRoot, 'code.py'), 'def f(:\n');
     const py = await call('lint_workspace_file', { path: 'code.py' });
     assert.equal(py.content.language, 'python');
-    // The node port cannot run python AST and must not fake a clean parse.
-    assert.ok(py.content.issues.some((i) => i.message.includes('unavailable')));
+    assert.equal(py.status, 'error');
+    assert.equal(py.content.ok, false);
+    assert.equal(py.content.issues.length, 1);
+    assert.equal(py.content.issues[0].severity, 'error');
+    assert.equal(py.content.issues[0].line, 1);
+    assert.ok(py.content.issues[0].column > 0);
+    assert.equal(py.content.syntax_engine.targetVersion, 'py312');
     assert.equal(py.content.lint_model, 'built_in_lightweight');
+    writeFileSync(join(workspaceRoot, 'code.py'), 'def f():\n    return 1  \n');
+    const fixed = await call('lint_workspace_file', { path: 'code.py' });
+    assert.equal(fixed.status, 'ok');
+    assert.deepEqual(fixed.content.issues, []);
   } finally { cleanup(); }
 });
 

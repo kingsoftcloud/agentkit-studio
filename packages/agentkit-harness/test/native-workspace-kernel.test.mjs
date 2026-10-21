@@ -12,6 +12,35 @@ import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
 const scope = { tenantId: 'tenant', workspaceId: 'workspace', userId: 'user', agentId: 'agent' };
 const identity = { scope, runId: 'run', sessionId: 'session', turnId: 'turn', buildId: 'build', parentRunId: null, taskChainId: 'chain' };
 const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
+
+test('real Native ledger repairs invalid Python through the Node parser and persists both diagnostics', async t => {
+  const { base, workspaceRoot, configFor, create } = setup(t), filename = join(base, 'syntax.sqlite');
+  writeFileSync(join(workspaceRoot, 'source.py'), 'def f(:\n    return 1\n');
+  let tools = create(async () => 'allow'), store = new SqliteRunStore(filename); t.after(() => store.close());
+  const config = configFor(tools), steps = [
+    ['read_workspace_file', { path: 'source.py' }], ['lint_workspace_file', { path: 'source.py' }],
+    ['edit_workspace_file', { path: 'source.py', old_text: 'def f(:', new_text: 'def f():' }],
+    ['lint_workspace_file', { path: 'source.py' }],
+  ];
+  let calls = 0;
+  const model = { generate: async () => {
+    const step = steps[calls++];
+    return step ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: `step-${calls}`, name: step[0], arguments: step[1] }] }
+      : { kind: 'final_candidate', text: 'Repaired source.py', toolCalls: [], usage: emptyUsage() };
+  } };
+  let kernel = new NativeKernel({ store, owner: 'first', digest, ports: { model, tools, workspace: tools } });
+  kernel.start(initialSnapshot(identity, config, digest(config)), config);
+  assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+  const diagnostics = store.load(scope, 'run').receipts.flatMap(item => item.result.results ?? [])
+    .filter(item => item.content?.language === 'python');
+  assert.deepEqual(diagnostics.map(item => item.status), ['error', 'ok']);
+  assert.equal(diagnostics[0].content.issues[0].severity, 'error');
+  assert.deepEqual(diagnostics[1].content.issues, []);
+  assert.equal(readFileSync(join(workspaceRoot, 'source.py'), 'utf8'), 'def f():\n    return 1\n');
+  store.close(); store = new SqliteRunStore(filename); tools = create(async () => 'allow');
+  kernel = new NativeKernel({ store, owner: 'replacement', digest, ports: { model, tools, workspace: tools } });
+  assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed'); assert.equal(calls, 5);
+});
 function setup(t) {
   const base = mkdtempSync(join(tmpdir(), 'native-workspace-kernel-')), workspaceRoot = join(base, 'workspace'), stateDir = join(base, 'state');
   mkdirSync(workspaceRoot); writeFileSync(join(workspaceRoot, 'file.txt'), 'original\n');
