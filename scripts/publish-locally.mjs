@@ -50,6 +50,16 @@ if (!['mac', 'win', 'alias'].includes(command)) throw new Error('usage: publish-
 if (!['preview', 'stable'].includes(values.channel)) throw new Error('--channel must be preview or stable');
 const channel = values.channel;
 
+// The candidate download and the original Windows build logs are read with the
+// GitHub CLI token; fall back to the logged-in CLI so an operator only needs
+// `gh auth login` once.
+if (!process.env.GH_TOKEN) {
+  try {
+    const { stdout } = await execute('gh', ['auth', 'token'], { maxBuffer: 1024 * 1024 });
+    if (stdout.trim()) process.env.GH_TOKEN = stdout.trim();
+  } catch { /* the download step reports a clearer error when auth is missing */ }
+}
+
 async function gh(...args) {
   const { stdout } = await execute('gh', args, { maxBuffer: 64 * 1024 * 1024 });
   return stdout;

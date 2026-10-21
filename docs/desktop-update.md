@@ -135,7 +135,10 @@ node scripts/publish-locally.mjs alias --channel preview
 
 `--dry-run` prints the resolved artifact and origins without touching KS3, and
 `--candidate <dir>` publishes an already downloaded candidate directory. KS3
-credentials come from the Host configuration (`KSYUN_ACCESS_KEY`/`KSYUN_SECRET_KEY`).
+credentials come from the Host configuration (`KSYUN_ACCESS_KEY`/`KSYUN_SECRET_KEY`);
+the signed candidate and the original Windows build logs are read with the GitHub
+CLI, so run `gh auth login` once first (the wrapper falls back to `gh auth token`
+when `GH_TOKEN` is not exported).
 
 ## Public download alias
 
