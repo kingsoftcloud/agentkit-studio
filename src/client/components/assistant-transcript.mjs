@@ -134,16 +134,6 @@ export function createAssistantTranscript({ ui, hostRemote, assistantConversatio
         message.role === 'assistant' ? markdown(message.text) : message.text, h(AttachmentSummary, { attachments: message.attachments }), message.delivery === 'accepted' ? h('div', { style: muted }, '云端已收到，等待历史同步') : null)),
       pending && !messages.some(message => message.requestId === pending.requestId) ? h('article', { style: { ...card, alignSelf: 'flex-end', background: BRAND.accentSoft, whiteSpace: 'pre-wrap' } }, assistantRequestText(pending), h(AttachmentSummary, { attachments: pending.attachments })) : null,
       view?.queued?.length ? h('section', { 'aria-label': '排队中的消息', style: { ...card, ...muted } }, `等待处理（${view.queuedCount || view.queued.length}）`, ...view.queued.map(item => h('p', { key: item.id || item.requestId }, queuedLabel(item)))) : null,
-      view && !view.capabilities?.history?.nativeEvents ? h('p', { style: muted }, '此云端版本仅提供文字历史。更新云端镜像后可查看工具过程和已保存的附件。') : null,
-      view?.capabilities ? h('details', { style: { ...muted, marginTop: '8px' }, 'data-assistant-capabilities': true }, h('summary', null, '当前助理能力'),
-        h('p', null, view.capabilities.execution?.permission === 'read-only' ? '此云端会话按只读权限执行。'
-          : view.capabilities.execution?.managed === true && view.capabilities.execution?.profile === 'workspace-managed/v1' ? '助理可在独立云端工作区内读写和搜索；敏感操作需逐次审批。'
-            : '执行权限由当前云端会话策略决定；未获授权的操作不会自动放开。'),
-        h('p', null, view.capabilities.approval?.interactive ? '当前云端支持按请求一次性审批；历史审批记录只读。' : '此会话未启用交互审批。'),
-        h('p', null, '此会话暂不支持转交本机执行。'),
-        view.capabilities.composer?.nativeComposer === false ? h('p', null, '原生会话输入暂未与此云端连接；消息和附件通过云端持久提交。') : null,
-        h('p', null, view.capabilities.input?.attachments ? '支持上传图片和文件；上传完成后发送给助理。' : '此云端版本暂不支持上传附件。'),
-        h('p', null, images ? '已保存的图片可预览和下载。' : '图片保留记录；云端图片读取尚未接通。'),
-        h('p', null, files ? '原生文件回执支持下载；只有路径的产物不会打开本机文件。' : '文件保留记录；云端文件下载尚未接通。')) : null);
+      view && !view.capabilities?.history?.nativeEvents ? h('p', { style: muted }, '此云端版本仅提供文字历史。更新云端镜像后可查看工具过程和已保存的附件。') : null);
   };
 }

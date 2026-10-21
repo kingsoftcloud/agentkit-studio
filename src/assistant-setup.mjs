@@ -83,7 +83,7 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     if (!memories.length) throw portableError('ASSISTANT_MEMORY_REQUIRED', '请先创建一个云端记忆库，再开通能够长期记忆的助理');
     return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories, 'workspace-managed/v1'])), model: { id: model.id, name: model.displayName || model.modelName },
       permissionProfile: 'workspace-managed/v1',
-      permissionNotice: '助理可在专属云工作区读写文件并搜索；删除单个文件需在线逐次确认。任意 Shell、越界访问及未接通的外发、支付、账号操作不会自动开放。',
+      permissionNotice: '助理可联网搜索公开信息、读取公开网页，并在专属云工作区读写文件；删除单个文件需在线逐次确认。内网与本机访问、任意 Shell、未接通的外发与支付不会自动开放。',
       memories, releaseId: image.id, environment: catalog.environment, region: catalog.region, resources,
       billingNotice: '开通后创建 1 个常驻实例（2 核 / 4 GiB）和 20 GiB 持久存储，按平台规则计费；关闭 Studio 不会停止云端计费。' };
   }
@@ -98,7 +98,7 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     };
     const snapshot = await call('snapshot', {});
     if (!snapshot.messages.length) {
-      const result = await call('submit', { requestId: ASSISTANT_WELCOME_REQUEST, text: '用户刚开通了个人助理。请用两三句自然的中文欢迎用户，说明可以交代任务、设置提醒，以及明确要求你记住偏好。不要声称已经执行了任务或记录了记忆，最后问用户想先做什么。' });
+      const result = await call('submit', { requestId: ASSISTANT_WELCOME_REQUEST, text: '用户刚开通了个人助理。请用两三句自然的中文欢迎用户，说明你可以帮他查资料（联网搜索、读取网页）、整理手头文件、设置提醒，并在他明确要求时记住偏好。不要声称已经执行了任务或记录了记忆，最后问用户想先做什么。' });
       if (!result.accepted || result.requestId !== ASSISTANT_WELCOME_REQUEST) throw portableError('ASSISTANT_WELCOME_PENDING', '欢迎消息尚未确认，请稍后刷新');
     }
     record.welcomed = true;
@@ -112,7 +112,7 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
           const selected = record.selection;
           const agent = await agents.create({ name: '我的个人助理', purpose: 'personal-assistant', runtimeType: 'dsh-native', spec: {
             ...(selected.permissionProfile === 'workspace-managed/v1' ? { security: { assistantPermissions: { profile: selected.permissionProfile } } } : {}),
-            instructions: { system: '你是用户的个人助理。自然、简洁地用中文交流。准确区分计划和已执行的工作；仅在用户明确要求时记录长期记忆，允许用户纠正和删除。' },
+            instructions: { system: '你是用户的个人助理。自然、简洁地用中文交流。你可以联网搜索公开信息、读取公开网页，在专属云端工作区读写文件，管理提醒，并在用户明确要求时记录长期记忆。不能运行任意命令，也不能访问内网、本机或需要登录的内容；做不到时直接说明，不要编造设置项或声称未执行的事情。准确区分计划和已执行的工作。' },
             memory: { enabled: true, write: { mode: 'explicit_only' } },
             bindings: { modelProfileId: selected.modelId, plugins: [{ name: 'memory', config: { binding: { resource: { kind: 'memory-instance', ...selected.memory } } } }] },
           } });
