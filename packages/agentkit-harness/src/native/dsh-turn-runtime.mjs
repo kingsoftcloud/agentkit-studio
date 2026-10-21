@@ -78,6 +78,29 @@ async function flushOwnership(flush, payload, timeoutMs) {
   } finally { clearTimeout(timer); }
 }
 
+// Optional owner consumption follows the committed terminal; it is not a new
+// task effect or acceptance result. A lost acknowledgement must not replace
+// the answer, and the owner must reconcile its own durable source receipts.
+async function consumeCompletedTurn(binding, record, signal) {
+  if (!binding.consumeCompletedTurn || record.snapshot.phase !== 'completed' || signal.aborted) return;
+  const deadline = new AbortController(), scoped = AbortSignal.any([signal, deadline.signal]);
+  let listener;
+  const canceled = new Promise((_, reject) => {
+    listener = () => reject(scoped.reason);
+    scoped.addEventListener('abort', listener, { once: true });
+    if (scoped.aborted) listener();
+  });
+  const timer = setTimeout(() => deadline.abort(new NativeError('native_completed_turn_consumer_timeout')),
+    Math.max(1, Math.floor(record.configuration.limits.effectTimeoutMs / 2)));
+  try {
+    await Promise.race([Promise.resolve().then(() => {
+      scoped.throwIfAborted();
+      return binding.consumeCompletedTurn(structuredClone(record.snapshot), { signal: scoped });
+    }), canceled]);
+  } catch { /* Optional consumption failure never rewrites the committed task. */ }
+  finally { clearTimeout(timer); scoped.removeEventListener('abort', listener); deadline.abort(); }
+}
+
 /**
  * Bind the actual Native loop to DSH's public whole-turn boundary.
  *
@@ -85,6 +108,11 @@ async function flushOwnership(flush, payload, timeoutMs) {
  * {scope, buildId, configuration, ports, source:{provider,model}, taskChainId?, taskContractFactory?}.
  * An optional trusted taskContractFactory receives the pinned parent facts.
  * Its result is frozen in the new Run configuration, with session-head CAS.
+ * Optional consumeCompletedTurn(snapshot, {signal}) runs after a committed
+ * completed terminal, before releaseResources. It has half the effect timeout;
+ * failure is optional and cannot replace task completion or delivery errors.
+ * Its owner must bind policy into hostBindingDigest and use durable idempotent
+ * receipts: same-turn redelivery may call it again, never prove a prior write.
  * The resolver must project all admitted input, including attachment bytes
  * resolved by the host, into configuration.inputMessages. It owns that trusted
  * projection; this adapter never reads attachment paths supplied in messages.
@@ -131,10 +159,11 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
     const runId = `native-dsh-${hash({ contract: NATIVE_DSH_TURN_CONTRACT, scope, sessionId, turn })}`;
     invariant(binding.taskContractFactory === undefined || typeof binding.taskContractFactory === 'function', 'native_dsh_contract_factory_invalid');
     invariant(binding.releaseResources === undefined || typeof binding.releaseResources === 'function', 'native_dsh_resource_release_invalid');
+    invariant(binding.consumeCompletedTurn === undefined || typeof binding.consumeCompletedTurn === 'function', 'native_dsh_completed_turn_consumer_invalid');
     const key = canonical({ scope, sessionId });
     invariant(!active.has(key), 'native_dsh_session_already_driving');
     active.add(key);
-    let live, failed = false, originalError, releaseControls, cancelListener;
+    let live, failed = false, originalError, releaseControls, cancelListener, admittedRun = false;
     try {
       signal.throwIfAborted();
       const head = store.sessionHead(scope, sessionId);
@@ -224,6 +253,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
         }
       }
       start();
+      admittedRun = true;
       if (signal.aborted) persistCancel();
       else if (durableOwnership) {
         cancelListener = persistCancel;
@@ -288,6 +318,9 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
     } finally {
       if (cancelListener) signal.removeEventListener('abort', cancelListener);
       try {
+        try {
+          if (admittedRun && binding.consumeCompletedTurn) await consumeCompletedTurn(binding, store.load(scope, runId), signal);
+        } catch { /* A failed optional owner lookup cannot suppress resource cleanup. */ }
         const cleanup = await Promise.allSettled([
           Promise.resolve().then(() => releaseControls?.()),
           Promise.resolve().then(() => live?.abandon()),

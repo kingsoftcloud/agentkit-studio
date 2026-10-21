@@ -469,6 +469,59 @@ test('activation cleanup drains before another drive and redelivery does not rep
   await host.execute(host.payload);
   assert.equal(cleanups.length, 2); assert.deepEqual(host.calls, effects);
 });
+for (const sqlite of [false, true]) test(`${sqlite ? 'SQLite' : 'memory'}: optional completed-turn consumption observes a committed detached terminal before resources close`, async t => {
+  const host = setup(t, sqlite), entered = gate(), release = gate();
+  let captured, current, released = false, consumptionSignal;
+  host.binding.consumeCompletedTurn = async (snapshot, { signal }) => {
+    captured = structuredClone(snapshot); current = structuredClone(host.head()); consumptionSignal = signal;
+    snapshot.goal = 'cannot mutate the committed task';
+    entered.resolve(); await release.promise;
+    throw Error('memory owner acknowledgement unavailable');
+  };
+  host.binding.releaseResources = () => { released = true; };
+  const running = host.execute(host.payload); await entered.promise;
+  assert.equal(captured.phase, 'completed'); assert.deepEqual(captured, current);
+  assert.equal(released, false); assert.equal(consumptionSignal.aborted, false);
+  await assert.rejects(host.execute(host.payload), /native_dsh_session_already_driving/);
+  release.resolve(); assert.deepEqual(await running, { reason: { kind: 'completed' } });
+  assert.equal(released, true); assert.equal(consumptionSignal.aborted, true);
+  assert.deepEqual(host.head(), captured); assert.deepEqual(host.calls, { model: 2, write: 1 });
+});
+test('an unfinished completed-turn consumer is revoked at its deadline without replacing the answer or retaining the driver', { timeout: 3000 }, async t => {
+  const host = setup(t, true); let consumptionSignal, released = false;
+  host.binding.configuration.limits.effectTimeoutMs = 1000;
+  host.binding.configuration.profile.requestTimeoutMs = 900;
+  host.binding.configuration.tools[0].timeoutMs = 900;
+  host.binding.consumeCompletedTurn = async (_snapshot, { signal }) => {
+    consumptionSignal = signal; return new Promise(() => {});
+  };
+  host.binding.releaseResources = () => { released = true; };
+  assert.deepEqual(await host.execute(host.payload), { reason: { kind: 'completed' } });
+  const terminal = structuredClone(host.head());
+  assert.equal(consumptionSignal.aborted, true); assert.equal(released, true);
+  host.binding.consumeCompletedTurn = undefined;
+  await host.execute(host.payload);
+  assert.deepEqual(host.head(), terminal); assert.deepEqual(host.calls, { model: 2, write: 1 });
+});
+test('completed-turn consumption cannot mask a delivery error and is not invoked for a suspended or canceled Run', async t => {
+  let terminalSeen = 0;
+  const host = setup(t, true, { onCheckpoint: async (_, snapshot) => {
+    if (snapshot.phase === 'completed') throw Error('terminal delivery observer failed');
+  } });
+  host.binding.consumeCompletedTurn = async () => { terminalSeen++; throw Error('optional memory failed'); };
+  await assert.rejects(host.execute(host.payload), /terminal delivery observer failed/);
+  assert.equal(host.head().phase, 'completed'); assert.equal(terminalSeen, 1);
+  const suspended = setup(t, true);
+  suspended.binding.consumeCompletedTurn = async () => { terminalSeen++; };
+  suspended.binding.ports.tools.execute = async () => ({ status: 'approval_required', content: null, interactionId: 'approval' });
+  await assert.rejects(suspended.execute(suspended.payload), { code: 'NATIVE_TURN_SUSPENDED' });
+  const canceled = setup(t, true), entered = gate();
+  canceled.binding.consumeCompletedTurn = async () => { terminalSeen++; };
+  canceled.binding.ports.model.generate = async () => { entered.resolve(); return new Promise(() => {}); };
+  const running = canceled.execute(canceled.payload); await entered.promise;
+  canceled.controller.abort(Error('cancel before terminal')); await assert.rejects(running, /cancel before terminal/);
+  assert.equal(terminalSeen, 1);
+});
 test('suspension and cancellation release activation resources after durable settlement', async t => {
   const suspended = setup(t, true), phases = [];
   suspended.binding.releaseResources = () => { phases.push(suspended.head().phase); };
