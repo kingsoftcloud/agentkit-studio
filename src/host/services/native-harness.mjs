@@ -16,6 +16,7 @@ import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
 import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
 import { modelInput } from '../../model-service.mjs';
+import { nativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -182,6 +183,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         },
         taskContractFactory: facts => nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
         configuration: { profile: parentModel.profile,
+        hostRecoveryBinding: nativeRecoveryBinding({ binding, input, source, selection, systemPrompt }),
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
           interactionContract: STUDIO_NATIVE_INTERACTION_CONTRACT,

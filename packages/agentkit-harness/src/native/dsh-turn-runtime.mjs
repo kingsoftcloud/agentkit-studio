@@ -10,6 +10,28 @@ const failure = (code, snapshot) => Object.assign(new Error(code), { code,
   ...(snapshot ? { nativeRunId: snapshot.runId, nativePhase: snapshot.phase, nativeReason: snapshot.reason } : {}),
 });
 
+/** Shared freezing for first admission and explicit adoption of the same Run. */
+export function freezeNativeDshConfiguration(binding, input, contract = binding.configuration.contract) {
+  return configure({ ...binding.configuration, contract, hostBindingDigest: hash({
+    contract: NATIVE_DSH_TURN_CONTRACT, declared: binding.configuration.hostBindingDigest,
+    goalContractBinding: NATIVE_GOAL_CONTRACT_BINDING, jsonCodec: NATIVE_JSON_CODEC,
+    input: input.messages, source: binding.source,
+  }) });
+}
+
+/** Verify a trusted Host's reconstructed ports/configuration before any worker starts. */
+export function rebindNativeDshConfiguration(record, binding, payload) {
+  invariant(hash(record.configuration) === record.snapshot.configDigest, 'stored_configuration_mismatch');
+  invariant(canonical(binding.scope) === canonical(record.snapshot.scope)
+    && binding.buildId === record.snapshot.buildId
+    && payload?.agent?.session?.id === record.snapshot.sessionId
+    && Number.isSafeInteger(payload.turn) && payload.turn > 0 && String(payload.turn) === record.snapshot.turnId,
+  'native_dsh_recovery_identity_mismatch');
+  const configuration = freezeNativeDshConfiguration(binding, payload.input, record.configuration.contract);
+  invariant(hash(configuration) === record.snapshot.configDigest, 'native_dsh_recovery_configuration_changed');
+  return configuration;
+}
+
 // Resolving host resources is not execution authority. A late lookup can never
 // start a Native run after the enclosing DSH turn has been canceled.
 async function resolveWhileLive(resolve, payload) {
@@ -87,8 +109,8 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
           throw failure('NATIVE_RUN_RECOVERY_REQUIRED', previous.snapshot);
         }
       }
-      let existing = null;
-      try { existing = store.load(scope, runId).snapshot; }
+      let existing = null, existingConfiguration = null;
+      try { const record = store.load(scope, runId); existing = record.snapshot; existingConfiguration = record.configuration; }
       catch (error) { if (!(error instanceof NativeError && error.code === 'run_not_found')) throw error; }
       // Redelivery compiles against the original parent, even after later
       // turns have advanced this Session. A new turn pins the current head.
@@ -103,12 +125,16 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
       signal.throwIfAborted();
       invariant(contract && typeof contract === 'object' && !Array.isArray(contract)
         && contract.objective === binding.configuration.contract.objective, 'native_dsh_task_contract_invalid');
-      const configuration = configure({ ...binding.configuration, contract, hostBindingDigest: hash({
-        contract: NATIVE_DSH_TURN_CONTRACT, declared: binding.configuration.hostBindingDigest,
-        goalContractBinding: NATIVE_GOAL_CONTRACT_BINDING,
-        jsonCodec: NATIVE_JSON_CODEC,
-        input: input.messages, source: binding.source,
-      }) });
+      // An optional locator introduced by a newer Host must not rewrite an
+      // older Run's identity during exact same-turn redelivery. Every original
+      // execution/configuration field still participates in start's digest CAS.
+      let frozenBinding = binding;
+      if (existingConfiguration && existingConfiguration.hostRecoveryBinding === undefined
+        && binding.configuration.hostRecoveryBinding !== undefined) {
+        const legacy = { ...binding.configuration }; delete legacy.hostRecoveryBinding;
+        frozenBinding = { ...binding, configuration: legacy };
+      }
+      const configuration = freezeNativeDshConfiguration(frozenBinding, input, contract);
       const delivery = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn, projections, flush,
         inputMessages: input.messages, systemText: configuration.instructions, source: binding.source,
         onStreamSettled: (...args) => live.settled(...args) });

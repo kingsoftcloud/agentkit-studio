@@ -50,6 +50,29 @@ function setup(t, sqlite, overrides = {}) {
 }
 for (const sqlite of [false, true]) {
   const backend = sqlite ? 'SQLite' : 'memory';
+  test(`${backend}: adding a recovery locator cannot rewrite an older same-turn Run or authorize configuration drift`, async t => {
+    const host = setup(t, sqlite);
+    await host.execute(host.payload);
+    const original = host.store.load(scope, host.head().runId), calls = structuredClone(host.calls);
+    host.binding.configuration.hostRecoveryBinding = { contract: 'host-locator/v1', revision: 1 };
+    await host.execute(host.payload);
+    assert.deepEqual(host.store.load(scope, host.head().runId).configuration, original.configuration);
+    assert.deepEqual(host.calls, calls); assert.equal(host.store.list(scope).length, 1);
+    host.binding.configuration.instructions += '\nChanged execution policy';
+    await assert.rejects(host.execute(host.payload), /run_creation_conflict/);
+    assert.deepEqual(host.store.load(scope, host.head().runId).configuration, original.configuration);
+    assert.deepEqual(host.calls, calls);
+  });
+  test(`${backend}: an existing recovery binding cannot be replaced on same-turn redelivery`, async t => {
+    const host = setup(t, sqlite);
+    host.binding.configuration.hostRecoveryBinding = { contract: 'host-locator/v1', revision: 1 };
+    await host.execute(host.payload);
+    const original = host.store.load(scope, host.head().runId), calls = structuredClone(host.calls);
+    host.binding.configuration.hostRecoveryBinding.revision = 2;
+    await assert.rejects(host.execute(host.payload), /run_creation_conflict/);
+    assert.deepEqual(host.store.load(scope, host.head().runId).configuration, original.configuration);
+    assert.deepEqual(host.calls, calls);
+  });
   test(`${backend}: goal contracts pin parent facts without recompiling a superseded turn against a later parent`, async t => {
     const host = setup(t, sqlite), facts = [], firstConfig = structuredClone(host.binding.configuration);
     host.binding.taskContractFactory = input => {

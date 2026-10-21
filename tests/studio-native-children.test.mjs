@@ -12,6 +12,7 @@ import { nativeChildRoles } from '../src/providers/native-subagents.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { readNativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
@@ -244,6 +245,13 @@ for (const sqlite of [false, true]) {
     await fixture.host.executeTurn(fixture.payload);
     const parent = fixture.ledger.sessionHead(fixture.scope, 'parent-session');
     assert.equal(parent.phase, 'completed'); assert.equal(parent.childRunIds.length, 1);
+    const recovery = readNativeRecoveryBinding(fixture.ledger.load(fixture.scope, parent.runId), {
+      agentId: fixture.record.metadata.id, sessionId: 'parent-session', runId: parent.runId });
+    assert.equal(recovery.agentRevision, 1); assert.equal(recovery.buildId, null);
+    assert.deepEqual(recovery.messages, fixture.payload.input.messages);
+    assert.deepEqual(recovery.source, { provider: 'agentkit-studio-parent-profile', model: 'parent-model' });
+    assert.equal(recovery.maxTokens, null);
+    assert.equal(JSON.stringify(recovery).includes('fixture-secret'), false);
     const reservation = parent.childBudgetReservations[0], child = fixture.ledger.load(reservation.childScope, reservation.childRunId);
     const childContract = child.configuration.contract, parentContract = fixture.ledger.load(fixture.scope, parent.runId).configuration.contract;
     assert.equal(childContract.objective, 'Read proof.txt'); assert.notEqual(childContract.revision, parentContract.revision);

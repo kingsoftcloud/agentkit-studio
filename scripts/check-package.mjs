@@ -32,6 +32,7 @@ const expected = [
   'packages/agentkit-harness/src/native/child-history.mjs',
   'src/client/state/native-children.mjs', 'src/client/dsh/native-children.mjs',
   'src/providers/native-subagents.mjs',
+  'src/providers/native-recovery-binding.mjs',
   'scripts/verify-studio-native-children.mjs',
   'tests/fixtures/studio-native-children.mjs',
   'packages/agentkit-harness-core/dist/child-contract.mjs',

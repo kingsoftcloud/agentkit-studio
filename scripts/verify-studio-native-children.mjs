@@ -214,12 +214,21 @@ try {
     values['child-controls'] ? values['guidance-fifo'] ? 4 : 3 : 4);
   const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
   const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
+  const { readNativeRecoveryBinding } = await import(pathToFileURL(join(installed, 'src/providers/native-recovery-binding.mjs')).href);
   const store = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
   const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(join(root, 'workspace'))).digest('hex'), userId: 'local-user', agentId };
   try {
     const parents = store.list(scope, 'native-child-parent'); assert.equal(parents.length, 2);
     const childIds = new Set();
     for (const parent of parents) {
+      const record = store.load(scope, parent.runId);
+      const recovery = readNativeRecoveryBinding(record, { agentId, sessionId: 'native-child-parent', runId: parent.runId });
+      assert.equal(recovery.agentRevision, 1); assert.equal(recovery.buildId, null);
+      assert.deepEqual(recovery.source, { provider: 'agentkit-studio-parent-profile', model: 'parent-proof' });
+      assert.ok(recovery.messages.some(message => message.content.some(part => part.type === 'text'
+        && (parent.turnId === '1' ? part.text.includes('Use a bounded reader for proof 1') : part.text.includes('读取 proof.txt')))));
+      assert.equal(typeof recovery.systemPrompt, 'string'); assert.ok(recovery.systemPrompt.length > 0);
+      assert.equal(JSON.stringify(recovery).includes('child-proof-secret'), false);
       const canceled = values['child-controls'] && !parent.childRunIds.includes(firstChildId);
       assert.equal(parent.phase, 'completed'); assert.equal(parent.childBudgetReservations.length, 1);
       assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : values['guidance-fifo'] ? 3 : 2); assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : 1);

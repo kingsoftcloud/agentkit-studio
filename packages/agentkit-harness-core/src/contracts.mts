@@ -159,6 +159,8 @@ export interface RunConfiguration {
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
   guidancePolicy?: 'boundary-guide/v1' | null;
+  /** Opaque, Host-owned recovery locator. The core never interprets it as authority. */
+  hostRecoveryBinding?: ObjectValue;
   backgroundNotificationPolicy?: 'completed-before-model/v1' | null;
   childLifecyclePolicy?: 'owned-background/v2' | null;
   childApprovalPolicy?: 'owned-child-approval/v1' | null;
