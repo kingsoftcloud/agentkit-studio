@@ -186,7 +186,8 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         return startupReceipt(reservation, saved.role);
       }
       const bound = await observeWhileLive(Promise.resolve().then(() => resolveChild({ parent: identity(request), call: copy(request.call), childRunId: runId,
-        role: args.role, task: args.task, maxModelCalls, maxToolCalls, depth: request.budget.depth + 1, signal: request.signal })), request.signal);
+        role: args.role, task: args.task, parentContract: copy(effective(toolInvocation(request)).contract),
+        maxModelCalls, maxToolCalls, depth: request.budget.depth + 1, signal: request.signal })), request.signal);
       request.signal.throwIfAborted(); toolInvocation(request);
       check(bound?.scope && scopes.some(item => same(item, bound.scope))
         && bound.configuration?.contract.objective === args.task, 'child_admission_binding_invalid');

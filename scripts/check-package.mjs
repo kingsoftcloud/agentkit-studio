@@ -28,6 +28,7 @@ const expected = [
   'src/build-engine.mjs',
   'packages/agentkit-harness/src/native/child-owner.mjs',
   'packages/agentkit-harness/src/native/child-tools.mjs',
+  'packages/agentkit-harness/src/native/child-readers.mjs',
   'src/providers/native-subagents.mjs',
   'scripts/verify-studio-native-children.mjs',
   'tests/fixtures/studio-native-children.mjs',

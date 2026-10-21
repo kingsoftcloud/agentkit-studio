@@ -14,11 +14,12 @@ import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
 import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
+import { modelInput } from '../../model-service.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
   contextWindow: profile.contextWindow ?? 128000, maxOutputTokens: profile.maxOutputTokens ?? 8192,
-  parameters: profile.parameters ?? {}, requestTimeoutMs: profile.requestTimeoutMs ?? 110000 });
+  parameters: profile.parameters ?? {}, requestTimeoutMs: profile.requestTimeoutMs ?? 110000, input: modelInput(profile) });
 const profileIds = record => {
   const bindings = record.spec?.bindings ?? {};
   return [...new Set([bindings.modelProfileId, ...(bindings.modelProfileIds ?? []).map(value => typeof value === 'string' ? value : value?.resourceId)].filter(Boolean))];
@@ -84,6 +85,16 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const inputServices = { attachments: () => ctx.get('attachments'),
         fileRequestText: typeof llm?.fileRequestText === 'function' ? ref => llm.fileRequestText(ref) : undefined };
       const admission = await projectNativeDshInput(input.messages, { ...inputServices, signal });
+      // Preserve original content-part indices: a text or omitted image must
+      // never shift a model's reference onto a different admitted image.
+      let childMediaSources = new Map();
+      input.messages.forEach((message, index) => {
+        if (admission.messages[index].kind !== 'user_input') return;
+        childMediaSources = new Map(); let image = 0;
+        message.content.forEach((part, partIndex) => {
+          if (part.type === 'image' && part.offloaded !== true) childMediaSources.set(partIndex, admission.messages[index].media?.[image++]);
+        });
+      });
       const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
       const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits });
       const materialized = await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
@@ -102,7 +113,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const modelBinding = (profile, id, boundContext) => {
         const desc = profileDescription(profile), digest = hash(desc);
         const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context });
-        return { profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
+        return { supportsImages: desc.input.includes('image'), profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
           compatibilityDigest: digest, ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
           providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,
@@ -115,7 +126,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       };
       const parentModel = modelBinding(selected, selectedId, context), roles = nativeChildRoles(record.spec);
       invariant(!roles.length || canonical(binding.nativeTools.childBinding?.roles) === canonical(roles), 'studio_native_child_revision_binding_changed');
-      const children = await createStudioNativeChildren({ roles, scope, store, tools,
+      const children = await createStudioNativeChildren({ roles, scope, store, tools, mediaSources: childMediaSources,
         hasSkills: Boolean(record.spec.bindings?.skills?.length || binding.nativeTools.childCapabilities?.skills),
         hasMcp: Boolean(record.spec.bindings?.mcpServers?.length || binding.nativeTools.childCapabilities?.mcp),
         resolveModel: async id => {

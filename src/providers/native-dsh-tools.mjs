@@ -18,6 +18,7 @@ import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
 import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
 import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from './native-tool-policy.mjs';
 import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/child-tools.mjs';
+import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeChildRoles } from './native-subagents.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
@@ -51,7 +52,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const browserName = browserTools.definition.name;
   formal.set(browserName, browserTools.definition);
   const childRoles = nativeChildRoles({ subAgents: config.subAgents ?? [] });
-  const childNames = new Set(childRoles.length ? nativeChildToolDefinitions(childRoles.map(role => role.name)).map(definition => {
+  const childNames = new Set(childRoles.length ? [...nativeChildToolDefinitions(childRoles.map(role => role.name)),
+    ...nativeChildReaderDefinitions()].map(definition => {
     formal.set(definition.name, definition); return definition.name;
   }) : []);
   const declared = structuredClone(config.toolContracts ?? []);

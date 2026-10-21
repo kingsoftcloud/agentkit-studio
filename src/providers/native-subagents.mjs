@@ -1,10 +1,29 @@
 import { createHash } from 'node:crypto';
 import { canonical, configure, invariant, submissionOutputFormat } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeChildOwner } from '../../packages/agentkit-harness/src/native/child-owner.mjs';
+import { createNativeChildResultTools } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeGoalContract } from './native-verification.mjs';
 
 export const STUDIO_NATIVE_CHILD_CONTRACT = 'agentkit.studio-native-children/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
+const parentOutputSchema = contract => {
+  const schema = contract?.finalSubmissionSchema, key = contract?.finalSubmissionPayloadKey;
+  const output = key ? schema?.properties?.[key] : schema;
+  invariant(output?.type === 'object', 'studio_native_child_parent_output_unavailable');
+  return structuredClone(output);
+};
+const outputSchema = (role, args, contract) => {
+  invariant(args.output_format === undefined || ['text', 'json_object'].includes(args.output_format), 'studio_native_child_output_format_invalid');
+  invariant(args.output_contract === undefined || args.output_contract === 'parent' && args.output_format === 'json_object',
+    'studio_native_child_parent_output_invalid');
+  invariant(args.output_format !== 'json_object' || role.outputSchema === null || role.outputSchema.type === 'object', 'studio_native_child_output_conflict');
+  if (args.output_contract === 'parent') {
+    const parent = parentOutputSchema(contract);
+    return { schema: role.outputSchema ? { type: 'object', allOf: [structuredClone(role.outputSchema), parent] } : parent,
+      parentOutputDigest: hash(parent) };
+  }
+  return { schema: role.outputSchema ?? (args.output_format === 'json_object' ? { type: 'object' } : null) };
+};
 const keys = ['name', 'instructions', 'description', 'tools', 'timeoutSeconds', 'maxTurns', 'maxTotalTokens', 'maxArtifacts',
   'maxToolCalls', 'concurrentSafe', 'outputSchema', 'dependsOn', 'failurePolicy', 'maxRetries', 'inheritSkills', 'inheritMcp', 'modelProfileId'];
 const camel = key => key.replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase());
@@ -47,7 +66,7 @@ export function nativeChildRoles(spec = {}) {
 
 /** Bind every child to a declared role and its own scoped tool state. */
 export async function createStudioNativeChildren({ roles, scope, store, tools, hasSkills, hasMcp,
-  resolveModel, bindTools, verificationFactory }) {
+  resolveModel, bindTools, verificationFactory, mediaSources = new Map() }) {
   if (!roles.length) return null;
   const byName = new Map(roles.map(role => [role.name, role]));
   const bindings = new Map();
@@ -62,17 +81,20 @@ export async function createStudioNativeChildren({ roles, scope, store, tools, h
     bindings.set(role.name, { model, tools: granted });
   }
   const childScope = role => ({ ...scope, agentId: `${scope.agentId}:child:${role.name}` });
+  const readers = createNativeChildResultTools({ scope, childScopes: roles.map(childScope), store, roles: roles.map(role => role.name) });
   const owner = createNativeChildOwner({ scope, childScopes: roles.map(childScope), store,
     resolveChild: async request => {
       const role = byName.get(request.role), bound = bindings.get(request.role);
       invariant(role && bound, 'studio_native_child_role_unbound');
       const args = request.call.arguments;
-      invariant(args.output_format === undefined || ['text', 'json_object'].includes(args.output_format), 'studio_native_child_output_format_invalid');
-      invariant(args.output_contract === undefined, 'studio_native_child_parent_output_unavailable');
-      invariant(!args.media?.length, 'studio_native_child_media_binding_unavailable');
-      invariant(args.output_format !== 'json_object' || role.outputSchema === null || role.outputSchema.type === 'object', 'studio_native_child_output_conflict');
+      const refs = args.media ?? [];
+      invariant(Array.isArray(refs) && refs.length <= 20 && refs.every(ref => ref && typeof ref === 'object'
+        && Object.keys(ref).length === 2 && ref.source === 'parent_user_input' && Number.isSafeInteger(ref.index)
+        && ref.index >= 0 && mediaSources.get(ref.index)), 'studio_native_child_media_reference_invalid');
+      invariant(!refs.length || bound.model.supportsImages, 'studio_native_child_model_image_unavailable');
+      const media = refs.map(ref => structuredClone(mediaSources.get(ref.index)));
       const child = childScope(role), contract = nativeGoalContract({ sessionId: request.childRunId, goal: request.task });
-      const output = role.outputSchema ?? (args.output_format === 'json_object' ? { type: 'object' } : null);
+      const { schema: output, parentOutputDigest } = outputSchema(role, args, request.parentContract);
       if (output) {
         contract.finalSubmissionSchema = { type: 'object', properties: { output }, required: ['output'], additionalProperties: false };
         contract.finalSubmissionPayloadKey = 'output'; contract.finalOutputFormat = submissionOutputFormat(contract.finalSubmissionSchema, 'output');
@@ -81,8 +103,10 @@ export async function createStudioNativeChildren({ roles, scope, store, tools, h
       const verification = await verificationFactory({ scope: child, sessionId: request.childRunId });
       request.signal.throwIfAborted();
       return { scope: child, configuration: configure({ profile: bound.model.profile, contextPolicy: bound.model.contextPolicy,
+        ...(media.length ? { inputMessages: [{ role: 'user', kind: 'user_input', content: request.task, media }] } : {}),
         instructions: role.instructions, contract, tools: bound.tools,
-        hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools }),
+        hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools,
+          ...(parentOutputDigest ? { parentOutputDigest } : {}) }),
         delegationDepth: request.depth, limits: { maxModelCalls: role.maxTurns, maxToolCalls: role.maxToolCalls ?? (role.tools.length ? role.maxTurns * 4 : 0),
           maxRepairs: Math.min(2, role.maxTurns - 1), maxSubagentDepth: request.depth, maxWallMs: role.timeoutSeconds * 1000,
           effectTimeoutMs: Math.max(120000, bound.model.profile.requestTimeoutMs + 10000) } }),
@@ -90,15 +114,22 @@ export async function createStudioNativeChildren({ roles, scope, store, tools, h
     },
     restoreChild: async ({ identity, configuration, binding }) => {
       const bound = bindings.get(binding.role), role = byName.get(binding.role);
+      const parent = store.load(binding.parent.scope, binding.parent.runId);
+      const call = parent.intents.find(item => item.operationKey === binding.parentOperationKey)?.payload.calls
+        ?.find(item => item.callId === binding.parentToolCallId);
+      invariant(call && role, 'studio_native_child_restore_binding_changed');
+      const { parentOutputDigest } = outputSchema(role, call.arguments, parent.snapshot.taskContract ?? parent.configuration.contract);
       invariant(bound && role && canonical(configuration.tools) === canonical(bound.tools)
         && canonical(configuration.profile) === canonical(bound.model.profile)
         && configuration.hostBindingDigest === hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role,
-          profile: bound.model.profile, scope: childScope(role), tools: bound.tools }), 'studio_native_child_restore_binding_changed');
+          profile: bound.model.profile, scope: childScope(role), tools: bound.tools,
+          ...(parentOutputDigest ? { parentOutputDigest } : {}) }), 'studio_native_child_restore_binding_changed');
       return { ...bindTools({ scope: identity.scope, store, sessionId: identity.sessionId, toolNames: role.tools }),
         model: bound.model.model, context: bound.model.context,
         verification: await verificationFactory({ scope: identity.scope, sessionId: identity.sessionId }) };
     },
   });
   return { owner, contract: STUDIO_NATIVE_CHILD_CONTRACT, roles: structuredClone(roles),
-    execute: request => request.call.name === 'native_start_child' ? owner.start(request) : owner.control(request) };
+    execute: request => request.call.name === 'native_start_child' ? owner.start(request)
+      : request.call.name === 'native_child_control' ? owner.control(request) : readers.execute(request) };
 }

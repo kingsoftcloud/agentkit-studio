@@ -16,6 +16,7 @@ const root = await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-'));
 console.log(`Studio child evidence: ${root}`);
 let harness, turn = 1, parentStep = 0;
 const requests = [], failures = [];
+const latestChild = body => [...JSON.stringify(body.messages).matchAll(/native-child-[a-f0-9]{64}/g)].at(-1)?.[0];
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const part of request) raw += part;
@@ -23,23 +24,39 @@ const server = createServer(async (request, response) => {
     assert.equal(request.url, '/v1/chat/completions');
     const child = body.model === 'child-proof';
     assert.ok(child || body.model === 'parent-proof');
-    let call, text;
+    let call, calls, text;
     if (child) {
-      assert.deepEqual(body.tools.map(tool => tool.function.name), ['read_workspace_file']);
+      assert.deepEqual(body.tools.map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), ['read_workspace_file']);
       assert.match(body.messages[0].content, /CHILD_WORKSPACE_READER/);
       const results = body.messages.filter(message => message.role === 'tool');
       if (!results.length) call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
-      else { assert.match(results.at(-1).content, /Evidence from the actual child workspace/); text = `Child evidence ${turn}`; }
+      else { assert.match(results.at(-1).content, /Evidence from the actual child workspace/); text = turn === 2 ? '{"count":2}' : `Child evidence ${turn}`; }
     } else {
       assert.ok(body.tools.some(tool => tool.function.name === 'native_start_child'));
-      if (parentStep++ === 0) call = { name: 'native_start_child', arguments: { role: 'reader', task: `Read proof.txt for turn ${turn}` } };
-      else text = `Parent completed ${turn}`;
+      const step = parentStep++;
+      if (step === 0) call = { name: 'native_start_child', arguments: { role: 'reader', task: `Read proof.txt for turn ${turn}`,
+        ...(turn === 2 ? { output_format: 'json_object', output_contract: 'parent' } : {}) } };
+      else if (step === 1) call = { name: 'native_child_control', arguments: {
+        child_run_id: latestChild(body), action: 'wait', wait_seconds: 1 } };
+      else if (step === 2) calls = [
+        { name: 'native_child_result', arguments: { child_run_id: latestChild(body) } },
+        { name: 'native_child_tasks', arguments: {} },
+      ];
+      else {
+        assert.match(JSON.stringify(body.messages), /native.child-result\/v1/);
+        assert.match(JSON.stringify(body.messages), /native.child-tasks\/v2/);
+        text = turn === 2 ? '{"count":2}' : `Parent completed ${turn}`;
+      }
     }
-    const delta = call ? { tool_calls: [{ index: 0, id: `tool-${requests.length}`, type: 'function',
-      function: { name: call.name, arguments: JSON.stringify(call.arguments) } }] } : { content: text };
+    if (text && body.tools.some(tool => tool.function.name === 'submit_final_output')) {
+      call = { name: 'submit_final_output', arguments: { output: JSON.parse(text) } }; text = undefined;
+    }
+    const toolCalls = calls ?? (call ? [call] : []);
+    const delta = toolCalls.length ? { tool_calls: toolCalls.map((item, index) => ({ index, id: `tool-${requests.length}-${index}`, type: 'function',
+      function: { name: item.name, arguments: JSON.stringify(item.arguments) } })) } : { content: text };
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     response.end(`data: ${JSON.stringify({ id: `r-${requests.length}`, choices: [{ index: 0, delta,
-      finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
+      finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) { failures.push(error); response.statusCode = 500; response.end('Child proof failed'); }
 });
 try {
@@ -76,11 +93,13 @@ try {
   let session = harness.session('native-child-parent');
   for (turn = 1; turn <= 2; turn++) {
     parentStep = 0;
-    const result = await session.run(`Use a bounded reader for proof ${turn}.`);
-    assert.equal(result.finalResponse, `Parent completed ${turn}`, JSON.stringify(result.events.filter(event => event.type === 'turn/end')));
+    const result = await session.run(turn === 2 ? '读取 proof.txt。最后只返回 JSON 对象，格式为 {"count":整数}。' : `Use a bounded reader for proof ${turn}.`);
+    assert.equal(result.finalResponse, turn === 2 ? '{"count":2}' : `Parent completed ${turn}`, JSON.stringify(result.events.filter(event => event.type === 'turn/end')));
     const tools = result.events.filter(event => event.type === 'tool/call');
-    assert.equal(tools.length, 1); assert.equal(tools[0].data.name, 'native_start_child');
-    assert.equal(result.events.filter(event => event.type === 'tool/result').length, 1);
+    const expectedTools = ['native_start_child', 'native_child_control', 'native_child_result', 'native_child_tasks',
+      ...(turn === 2 ? ['submit_final_output'] : [])];
+    assert.deepEqual(tools.map(event => event.data.name), expectedTools);
+    assert.equal(result.events.filter(event => event.type === 'tool/result').length, expectedTools.length);
     if (turn === 1) { await harness.close(); harness = new DeepSeekHarness(options); session = await harness.resumeSession('native-child-parent'); }
   }
   await harness.close(); harness = null;
@@ -101,12 +120,19 @@ try {
       assert.equal(child.snapshot.phase, 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
       assert.equal(child.configuration.childOwnerBinding.parent.runId, parent.runId); assert.equal(child.snapshot.parentRunId, null);
       assert.equal(child.snapshot.usage.toolCalls, 1);
+      const parentConfiguration = store.load(scope, parent.runId).configuration;
+      if (parentConfiguration.contract.finalSubmissionSchema) {
+        assert.deepEqual(child.configuration.contract.finalSubmissionSchema.properties.output,
+          parentConfiguration.contract.finalSubmissionSchema.properties.output);
+        assert.notEqual(child.configuration.contract.objective, parentConfiguration.contract.objective);
+        assert.equal(child.snapshot.finalText, '{"count":2}');
+      }
       assert.equal(store.events(scope, parent.runId).filter(event => event.kind === 'usage.reported' && event.payload.source === 'descendant_runs').length, 1);
     }
     assert.equal(childIds.size, 2);
     assert.equal(JSON.stringify(parents).includes('child-proof-secret'), false);
   } finally { store.close(); }
-  console.log('Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, independent approved child model, real scoped workspace reads, one budget settlement per child, two parent turns across Host restart, Node-only PATH.');
+  console.log('Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns across Host restart, Node-only PATH.');
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });

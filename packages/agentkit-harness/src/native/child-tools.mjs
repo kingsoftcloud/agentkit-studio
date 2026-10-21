@@ -15,6 +15,9 @@ export function nativeChildToolDefinitions(roles) {
       tool_call_limit: { type: 'integer', minimum: 0, default: 8 },
       output_format: { type: 'string', enum: ['text', 'json_object'] }, output_contract: { type: 'string', enum: ['parent'] },
       continuation_of: { type: 'string', minLength: 1, maxLength: 256 },
+      media: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, required: ['source', 'index'],
+        properties: { source: { type: 'string', enum: ['parent_user_input'] }, index: { type: 'integer', minimum: 0 } } },
+        description: 'Original content-part indices of images in the current admitted parent user input. Pass references only.' },
     } } }, { ...base, name: 'native_child_control', childBudgetPolicy: 'settle/v1',
     description: 'Send guidance, stop, or wait up to 30 seconds for a child owned by this parent. A running response is not completion. Sealed terminal results settle actual usage once.',
     parameters: { type: 'object', additionalProperties: false, required: ['child_run_id', 'action'], properties: {
