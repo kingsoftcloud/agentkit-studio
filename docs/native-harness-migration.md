@@ -228,7 +228,7 @@ Node 没有直接设置 POSIX 资源上限的接口，因此随包分发小型 C
 
 该模块在 Darwin ARM64 的 Node 26 / 22.19.0 各通过 14 项，在 Linux ARM64 和 Linux x64 的 Node 22.23.2 各通过 15 项；x64 使用 Docker 的 Rosetta 仿真。Linux 测试均为非 root、断网和空 PATH。测试夹具修正后，Mac 仅复验直接受影响的三个用例，两版本均通过。实际包通过 `check-package.mjs`；包内组件在上述四个 Node/平台组合中冷执行成功，Linux 还使用只读根文件系统和可执行临时目录。没有运行全库测试，也没有据此宣称完整 Studio 安装或所有运行入口已经通过。
 
-这一层只接受宿主已经授权的 argv/env，不是安全沙箱。命令风险扫描、工作区约束、输出读取/停止工具及 Studio 产品绑定仍待实现。持久后台 supervisor 与幂等启动的 Node 实现见下节。上层必须把控制报告失败或清理失败纳入未知结果核对，不能因此重放已产生的副作用。
+这一层只接受宿主已经授权的 argv/env，不是安全沙箱。命令风险扫描组件及持久后台 supervisor 的 Node 实现见下节；工作区约束、输出读取/停止工具及 Studio 产品绑定仍待实现。上层必须把控制报告失败或清理失败纳入未知结果核对，不能因此重放已产生的副作用。
 
 ## 本地后台命令的持久生命周期
 
@@ -244,7 +244,19 @@ supervisor 将完整的有界 stdout/stderr 分别 fsync 并原子发布后，�
 
 首轮 18 项定向用例在 Darwin ARM64 的 Node 26/22.19.0 和 Linux ARM64/x64 的 Node 22.23.2 均通过；Linux 为非 root、断网、只读根文件系统和空 PATH，x64 使用 Rosetta 仿真。真实外部进程测试覆盖宿主与 supervisor 的 SIGKILL、准备发布前、正式意图后但启动前、最终输出后和终态提交前后退出，均检查不重复命令。另使用真实命令、SQLite 重开及 Native 核心循环验证完成通知只消费一次，未知结果停止普通模型调用。补充场景按直接相关用例复验完整输出游标、启动失败、既有句柄在执行器缺失时的读取，以及 Linux 控制准入失败的未知结果语义。`verify-native-local-process-package.mjs <Studio.tgz>` 现同时验证实际包内前台执行、后台 supervisor、重开及幂等读取，不安装依赖。
 
-该层仍是宿主已授权命令的后端组件。正式风险扫描、审批和工作区绑定、run/read/stop 工具、E2B 后台实现、宿主唤醒及 Studio 各入口尚未接通，不能据此宣称后台产品能力或整个迁移已完成。
+该层仍是宿主已授权命令的后端组件。审批、工作区和风险策略绑定、run/read/stop 工具、E2B 后台实现、宿主唤醒及 Studio 各入口尚未接通，不能据此宣称后台产品能力或整个迁移已完成。
+
+## 不依赖解释器的命令风险检查
+
+`checkLocalCommand` 使用 `agentkit.local-command-policy/v1`，对应固定参考提交 `355059d` 的 `ksadk/sandbox/local_controls.py` 中 `check_command`。保留的是该检查器的有限风险规则：拒绝 kill/killall/nohup/pkill/setsid、后台 `&` 和递归强制删除；递归检查 shell/Python 的 `-c`；仅扫描直接执行且位于允许根内的 `.py/.sh/.bash` 入口，不扫描未使用的辅助文件或普通参数。引号内的数据和受支持的重定向保持为数据。
+
+Python 分析使用已固定版本的 Ruff Rust/WASM 解析器。工作线程解析语法并解码该版本的结构化 Rust Debug AST，收集 import/from 别名，再检查真实 Call 节点；没有启动 Python，也没有把正则字符串匹配当作 Python AST。覆盖 os.kill/killpg/setsid、os.system/popen 中的字面量 shell、subprocess 字面量列表/元组与 shell=True、Popen 的 start_new_session=True，以及 shutil.rmtree 的静态工作区外路径。与源代码一样，动态表达式、非字面量标志和语法错误不被推断为这些静态规则；该检查器不构成 OS 安全沙箱，也不扩大已有规则的保证。
+
+工作线程具有十秒上限、源输入二 MiB 上限、V8 内存限制及递归上限；取消等待线程终止。WASM 线性内存不受 V8 堆限制，这是资源防护而非隔离保证。固定解析器版本或 AST 编码不匹配、资源超限和解析器异常均明确失败，调用方必须拒绝执行，不能降级放行。目录和缺失路径解析检查现有及悬空符号链接的目标；具名其他用户主目录 `~user` 明确拒绝，不通过外部系统命令查找它。
+
+Python 语法目标与前述文件语法检查一样固定为 3.12。AST 中间结构和错误文案可与 CPython 不同；多处违规的首项报告顺序可能随 AST 结构不同，但不得因此漏检规则。行为用例从固定源和其 phase-one 测试逐项提取，没有运行参考 Python。组件验收覆盖每条正式风险规则、允许的数据、直接脚本、真实路径、取消和超时；实际包的冷安装验证同时执行语法检查与命令 AST 检查，仅 Node 在 PATH，安装脚本关闭。
+
+这仍是独立风险策略组件。宿主必须在正式工具中完成审批、所属工作区检查、输入捕获和执行前绑定；低层 `LocalCommandStore` 仍只接受宿主已授权请求，不会自动将此组件接入产品。未据此宣称命令工具或 Studio 的 Python builtin bridge 已完成替换。
 
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
 

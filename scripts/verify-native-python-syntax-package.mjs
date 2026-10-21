@@ -1,4 +1,4 @@
-/** Cold-install only the shipped Python-source parser outside the checkout.
+/** Cold-install the shipped Python-source parser and command policy outside the checkout.
  * This is component evidence, not a full Studio installation acceptance.
  */
 import assert from 'node:assert/strict';
@@ -20,7 +20,9 @@ const run = async (args, env, timeout) => {
 try {
   execFileSync('tar', ['-xzf', resolve(process.argv[2]), '-C', directory,
     'package/package.json', 'package/packages/agentkit-harness/src/native/python-syntax.mjs',
-    'package/packages/agentkit-harness/src/native/python-syntax-worker.mjs']);
+    'package/packages/agentkit-harness/src/native/python-syntax-worker.mjs',
+    ...['local-command-policy.mjs', 'local-command-policy-worker.mjs', 'ruff-ast.mjs']
+      .map(file => 'package/packages/agentkit-harness/src/native/' + file)]);
   const manifest = JSON.parse(await readFile(join(directory, 'package/package.json'), 'utf8'));
   const dependency = '@astral-sh/ruff-wasm-nodejs', version = manifest.dependencies?.[dependency];
   assert.equal(version, '0.16.8');
@@ -48,7 +50,16 @@ try {
     assert.deepEqual(await checkPythonSyntax('type Alias = int'), []);
     assert.match((await checkPythonSyntax('def generic[T = int](): pass'))[0].message, /Python 3\.12/);
     assert.match((await checkPythonSyntax(`number = ${'1'.repeat(4301)}`))[0].message, /4300-digit/);
-    console.log('PASS: packed Python-source parser cold-installs and runs outside the checkout with only Node on PATH; no Python, uv or install scripts.');
+    const { checkLocalCommand } = await import('./package/packages/agentkit-harness/src/native/local-command-policy.mjs');
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    await mkdir('workspace'); const cwd = new URL('./workspace/', import.meta.url).pathname;
+    const options = { cwd, allowedRoots: [cwd] };
+    assert.equal(await checkLocalCommand('echo safe', options), null);
+    assert.equal((await checkLocalCommand(['python', '-c', 'import os as o; o.kill(1,9)'], options)).rule, 'python.process_control');
+    await writeFile('workspace/danger.py', 'from subprocess import Popen as p\np(["echo"], start_new_session=True)');
+    assert.equal((await checkLocalCommand('python danger.py', options)).rule, 'python.detached_process');
+    assert.equal((await checkLocalCommand('bash -c "rm -rf scratch"', options)).rule, 'shell.recursive_force_remove');
+    console.log('PASS: packed Python-source parser and AST command policy cold-install and run outside the checkout with only Node on PATH; no Python, uv or install scripts.');
   };
   await writeFile(join(directory, 'verify.mjs'), `(${verify.toString()})().catch(error => { console.error(error); process.exitCode = 1; });\n`);
   await run([join(directory, 'verify.mjs')], env, 20000);
