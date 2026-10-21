@@ -85,6 +85,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ? request => binding.nativeTools.verifyBrowserPage(agent, request) : undefined });
       signal.throwIfAborted();
       return { scope, buildId, source,
+        releaseResources: request => binding.nativeTools.releaseSession?.(request),
         taskContractFactory: facts => nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
         configuration: { profile: { profileId: selected.id || selectedId || 'default', profileVersion: compatibilityDigest,
           providerFamily: description.protocol, compatibilityDigest, ...context.profile, requestTimeoutMs: description.requestTimeoutMs,

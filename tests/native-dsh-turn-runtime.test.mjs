@@ -385,3 +385,44 @@ test('plain Host-admitted guidance is delivered once when no display envelope is
   const before = structuredClone(host.sink.events);
   await host.execute(host.payload); assert.deepEqual(host.sink.events, before);
 });
+test('activation cleanup drains before another drive and redelivery does not repeat a tool effect', async t => {
+  const host = setup(t, true), entered = gate(), release = gate(), cleanups = [];
+  host.binding.releaseResources = async identity => {
+    cleanups.push(identity); entered.resolve(); await release.promise;
+  };
+  const running = host.execute(host.payload);
+  await entered.promise;
+  assert.equal(host.head().phase, 'completed');
+  assert.deepEqual(cleanups[0], { scope, sessionId: 'session', runId: host.head().runId });
+  await assert.rejects(host.execute(host.payload), /native_dsh_session_already_driving/);
+  release.resolve(); await running;
+  const effects = { ...host.calls };
+  await host.execute(host.payload);
+  assert.equal(cleanups.length, 2); assert.deepEqual(host.calls, effects);
+});
+test('suspension and cancellation release activation resources after durable settlement', async t => {
+  const suspended = setup(t, true), phases = [];
+  suspended.binding.releaseResources = () => { phases.push(suspended.head().phase); };
+  suspended.binding.ports.tools.execute = async () => ({ status: 'approval_required', content: null, interactionId: 'approval' });
+  await assert.rejects(suspended.execute(suspended.payload), { code: 'NATIVE_TURN_SUSPENDED' });
+  assert.deepEqual(phases, ['awaiting_interaction']);
+  const canceled = setup(t, true), entered = gate();
+  canceled.binding.ports.model.generate = async () => { entered.resolve(); return new Promise(() => {}); };
+  canceled.binding.releaseResources = () => { phases.push(canceled.head().phase); };
+  const running = canceled.execute(canceled.payload); await entered.promise;
+  canceled.controller.abort(new Error('release-cancel'));
+  await assert.rejects(running, /release-cancel/);
+  assert.deepEqual(phases, ['awaiting_interaction', 'canceled']);
+});
+test('cleanup reports both the drive error and cleanup error without changing durable state', async t => {
+  const host = setup(t, false);
+  host.binding.releaseResources = () => { throw new Error('cleanup failed'); };
+  host.binding.ports.tools.execute = async () => ({ status: 'approval_required', content: null, interactionId: 'approval' });
+  await assert.rejects(host.execute(host.payload), error => {
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.errors[0].code, 'NATIVE_TURN_SUSPENDED');
+    assert.equal(error.errors[1].message, 'cleanup failed');
+    return true;
+  });
+  assert.equal(host.head().phase, 'awaiting_interaction');
+});

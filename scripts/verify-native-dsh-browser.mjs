@@ -118,7 +118,10 @@ try {
   assert.equal(store.load(scope, 'kernel').snapshot.browserSessionRefs.length, 1);
   assert.equal(store.load(scope, 'kernel').snapshot.lastBrowserObservation.entryPath, 'app/index.html');
 
-  await gateway.close(); gateway = binding();
+  const releasedUrl = observed.browserObservation.url;
+  assert.equal((await fetch(releasedUrl)).status, 200);
+  await gateway.releaseSession({ scope, sessionId: 'session' });
+  await assert.rejects(fetch(releasedUrl), /fetch failed/);
   const restored = gateway.forAgent({ session: { id: 'session' } });
   const probe = await restored.browser.recoverSessions({ ...request('probe'), refs: [observed.browserSessionRef] });
   assert.equal(probe[0].status, 'lost'); assert.equal(probe[0].reobserveAvailable, true);

@@ -124,6 +124,10 @@ Native builtin 图片输出现先通过 Host 的 `attachments.saveImages` 校验
 
 `NativeDshTools` 现正式注册已绑定的 `browser_inspect_workspace` builtin，固定 Native 浏览器角色和参数；同名 MCP 工具不获此角色或恢复权限。所有输入先通过实际 DSH 注册器的 pre/guard/around/post/result 流程，模型无法自行绕过注册器调用后端。`native-dsh-browser.mjs` 按 ledger scope、会话及固定工作区延迟创建所有者；同会话更换 Agent 对象仍保留页面，不同会话或租户隔离。进程替换保留稳定所有者身份，恢复只探测，失联后必须显式 reload。preset 关闭会取消在途调用并释放页面、HTTP 服务和自有浏览器，即使注册器注销报错也继续释放资源。
 
+浏览器现在随一次 Native 运行激活退出而释放，覆盖完成、失败、取消及暂停；不再等到 preset 关闭才清理。此边界对应只读参考 `native_product.py` 注册的 `persistent_browser.aclose`。Host 将可信 `releaseResources` 回调传给整轮执行器，执行器先结算状态，再等待清理结束后释放会话推进锁。清理错误保留原运行错误并显式抛出，不改写已持久化状态；同一所有者清理失败时拒绝隐式创建替代资源。会话和 scope 隔离，未用浏览器不分配实例。重新激活时旧引用仍按失联处理，只有恢复检查后的显式 reload 才建立新 generation/lease；不会自动重放先前点击。
+
+该释放链的 4 个受影响模块在 Node 26/22 各通过 92 项测试；补充排空与取消前置检查后，只复验浏览器模块，各通过 12 项。上述实际 DSH + Chromium 联测同时证明 `releaseSession` 后原页面 HTTP 服务不可访问、旧输入被拒绝、显式 reload 递增 generation 与 lease；Node 22 联测使用 `PATH=/no-programs`。这些证据不替代全新无 Python 安装或完整 Studio UI 验收。
+
 开发入口的 Host 配置可通过绝对路径 `AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE` 指定 Chromium；省略时使用 Playwright 预期的已安装浏览器，模型参数不能指定可执行文件。`verify-native-dsh-browser --source <built maintained DSH checkout> --chromium <executable>` 在 Node 26/22 通过真实 DSH ToolRuntime、附件服务及生产浏览器绑定的联测，覆盖 pre 和单调 guard 拒绝、策略省略图片、下一轮模型图片，以及所有者重建后拒绝旧输入并仅由显式 reload 建立新代页面。相关绑定、输入输出及 Host 组合两版本各通过 55 项检查；补充注销失败场景后，最终绑定模块各通过 22 项。这是工具和核心边界联测，尚未覆盖完整 UI、自动化或 Frozen Build。
 
 可信 `verifyBrowserPage` 已接入逐动作授权：冷页面的导航、截图及实际选中的 Start 点击分别经过同一 DSH 注册器，模型不能指定此私有分派方式。拒绝其中一个动作会关闭冷页面；正常会话页面保持独立。冷截图写在 Host 工作区外，并通过 DSH 附件服务处理，策略省略图片不会被直接模型上下文绕过。42 项相关端口和绑定检查在 Node 26/22 通过，实际 DSH+Chromium 联测也验证了允许加载而拒绝 Start 点击的 guard；Node 22 同一实际链在 `PATH=/no-programs` 通过。这一观察边界现已接入下述独立验收报告。

@@ -494,6 +494,13 @@ Run or invoke Stop. Memory/SQLite reattachment and real verifier process loss
 are covered; the actual DSH+Chromium chain also checks checkpoint feedback.
 This does not close optional vision feedback, all product consumers or clean
 installation without Python.
+The Studio turn driver now awaits its bound resource-release callback on
+completion, cancellation, failure and suspension, matching the Python product
+composition's browser close callback. Browser owners remain scoped to the
+trusted session and ledger scope; cleanup drains before the driver admits
+another activation. Cleanup failure fences that owner and preserves the
+original error and durable Run state. Reattachment probes the old reference
+and requires explicit reload after loss, rather than replaying old inputs.
 Final repair feedback also excludes audit locations and raw evidence. Durable
 failure fingerprints and subject/environment/diagnostic digests prevent a new
 artifact URI from creating false progress after reattachment. Repairs reset

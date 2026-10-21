@@ -90,6 +90,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   return {
     close,
     argumentEncoding,
+    releaseSession: request => browserTools.releaseSession(request),
     /** Trusted verifier only: every concrete cold action still runs the DSH permission pipeline. */
     async verifyBrowserPage(agent, request) {
       invariant(!closed && builtinNames.has(browserName), 'studio_native_browser_verification_unavailable');

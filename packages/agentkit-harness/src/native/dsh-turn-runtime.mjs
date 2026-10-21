@@ -66,10 +66,11 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
     const sessionId = String(agent.session.id), scope = structuredClone(binding.scope);
     const runId = `native-dsh-${hash({ contract: NATIVE_DSH_TURN_CONTRACT, scope, sessionId, turn })}`;
     invariant(binding.taskContractFactory === undefined || typeof binding.taskContractFactory === 'function', 'native_dsh_contract_factory_invalid');
+    invariant(binding.releaseResources === undefined || typeof binding.releaseResources === 'function', 'native_dsh_resource_release_invalid');
     const key = canonical({ scope, sessionId });
     invariant(!active.has(key), 'native_dsh_session_already_driving');
     active.add(key);
-    let live;
+    let live, failed = false, originalError;
     try {
       signal.throwIfAborted();
       const head = store.sessionHead(scope, sessionId);
@@ -157,6 +158,17 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
       if (snapshot.reason === 'host_input_rejected' && snapshot.outcome === 'blocked') return { reason: { kind: 'blocked' } };
       if (snapshot.phase !== 'completed') throw failure('NATIVE_TURN_FAILED', snapshot);
       return { reason: { kind: snapshot.outcome === 'blocked' ? 'blocked' : 'completed' } };
-    } finally { live?.abandon(); active.delete(key); }
+    } catch (error) {
+      failed = true; originalError = error; throw error;
+    } finally {
+      try {
+        const cleanup = await Promise.allSettled([
+          Promise.resolve().then(() => live?.abandon()),
+          Promise.resolve().then(() => binding.releaseResources?.({ scope: structuredClone(scope), sessionId, runId })),
+        ]);
+        const errors = cleanup.filter(result => result.status === 'rejected').map(result => result.reason);
+        if (errors.length) throw new AggregateError(failed ? [originalError, ...errors] : errors, 'Native turn resource cleanup failed');
+      } finally { active.delete(key); }
+    }
   };
 }

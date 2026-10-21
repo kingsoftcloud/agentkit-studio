@@ -72,6 +72,14 @@ test('Studio Native Host pins revision/input/model while refreshing credentials 
   assert.equal(fixture.head().parentRunId, run.runId);
   assert.equal(JSON.stringify(fixture.ledger.load(run.scope, fixture.head().runId)).includes('secret-two'), false);
 });
+test('Studio Host releases the revision-bound resources with the settled Run identity', async t => {
+  const fixture = await setup(t), releases = [];
+  fixture.payload.binding.nativeTools.releaseSession = request => {
+    assert.equal(fixture.head().phase, 'completed'); releases.push(request);
+  };
+  await fixture.host.executeTurn(fixture.payload);
+  assert.deepEqual(releases, [{ scope: fixture.head().scope, runId: fixture.head().runId, sessionId: 'session' }]);
+});
 test('Studio Native pins its browser task policy and explicit execution limits in the Run configuration', async t => {
   const fixture = await setup(t, { spec: { execution: { nativeLimits: { maxModelCalls: 20, maxToolCalls: 0 } } } });
   fixture.payload.binding.nativeTools.definitions = () => [studioBrowserDefinition()];
