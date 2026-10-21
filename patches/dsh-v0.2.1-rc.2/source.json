@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "1c1382f45ec3aa66a98dc695eb181dac9f412146",
-  "branchRef": "refs/heads/codex/studio-dsh-native-polish-verified",
-  "tree": "9446122dbf21d699713b9b19f9db3f9d0b4e4ecc",
-  "sourceSha256": "2345b4fd749e16d6847d6d869908aa8fec82620e379903cc179a234ff151c135",
+  "headCommit": "649c4617f0865f6309345814b99bd82a71761dab",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
+  "tree": "dcd76e7d2845c1629596790cf785dd93542af388",
+  "sourceSha256": "16fddf257c3823a852f4a58af41d9ca71736172f1adac59a1b1c1f0064344996",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "88f47d6ac4f918f1acdfc7e9250cb3c73ef903efca59ce1eed5ae5e4e3e22f5c"
+    "sha256": "5af0451576043918681c39b5281e89f0211f3a82f6b08f728e3f3dc5f56a60fa"
   },
   "commits": [
     {
@@ -241,14 +241,20 @@
     },
     {
       "id": "046",
-      "file": "046-native-schedule-manager.patch",
-      "commit": "5abaa77f096751d94104b207ed703bf038cc2d7c",
-      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be"
+      "file": "046-macos-studio-identity.patch",
+      "commit": "058b3247e21649c31db1b28dc813f8117aa38ecf",
+      "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1"
     },
     {
       "id": "047",
-      "file": "047-isolated-native-browser.patch",
-      "commit": "1c1382f45ec3aa66a98dc695eb181dac9f412146",
+      "file": "047-native-schedule-manager.patch",
+      "commit": "d203fbc0690885d9c0e89146af7d986c767f06ea",
+      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be"
+    },
+    {
+      "id": "048",
+      "file": "048-isolated-native-browser.patch",
+      "commit": "649c4617f0865f6309345814b99bd82a71761dab",
       "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611"
     }
   ]

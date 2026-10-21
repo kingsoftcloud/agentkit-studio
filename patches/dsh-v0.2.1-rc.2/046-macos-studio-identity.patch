@@ -1,0 +1,111 @@
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index 615ec60195f13a8603ee435686f67b0ce812ef7a..2883d9837f6a75912fb21cfaa646736ce195d414 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -33,8 +33,8 @@
+   en: 372297005b57a08b
+   zh: 074a635ac17e4362
+ /deepseek-harness-desktop/installation-ownership:
+-  en: 4313fffda352fff3
+-  zh: 851a8676773b2466
++  en: 49a38fe4ffcb621b
++  zh: 5d9bcbe89f94a155
+ /deepseek-harness-desktop/installation-ownership/runtime-and-plugin-activation:
+   en: f1bdbbba239bcc59
+   zh: 94abd2dd1fe2d933
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index 844c51f7b4a911e26e89660c9566cbe197a459b5..6ceed14a3aa969b44f1a8e6f9fad82587bafccd9 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -152,7 +152,7 @@ Update copy preserves the complete version, including prerelease suffixes, witho
+ 
+ Electron chooses typed English or Chinese shell copy from its application locale and falls back to English. The macOS application bundle declares English and Simplified Chinese in `CFBundleLocalizations`, allowing macOS to match the initial application language to the user’s preferred languages. Saved Client UI language preferences still take precedence for the main interface. On Windows, the main document's language updates desktop menus, recovery and update prompts. The repository Client UI i18n gate checks desktop sources.
+ 
+-Desktop packaging copies `DSH_CLIENT_TITLE` into the build-only `DSH_DESKTOP_PRODUCT_NAME` before the official client build resolves its own title, and seals the product name into the About panel and localized shell copy, including native menus and recovery prompts; it defaults to DeepSeek Harness. Electron may retain an internal package identifier in `app.name`, so shell copy does not use that value as the product brand. Branding does not change Electron's application name or user-data directory, and model-provider names remain unchanged.
++Desktop packaging copies `DSH_CLIENT_TITLE` into the build-only `DSH_DESKTOP_PRODUCT_NAME` before the official client build resolves its own title, and seals the product name into the About panel and localized shell copy, including native menus and recovery prompts; it defaults to DeepSeek Harness. Electron may retain an internal package identifier in `app.name`, so shell copy does not use that value as the product brand. Official branding keeps Electron's application name and user-data directory unchanged; the AgentKit Studio product overrides that internal name to `agentkit-studio-desktop` so it owns its single-instance lock, user-data directory, and plugin profile, while sessions, credentials, and workspaces remain in the shared DSH home. Model-provider names remain unchanged.
+ 
+ Windows and macOS relay native fullscreen transitions and the state after each page load to the renderer, so overlays can adapt their caption clearance.
+ 
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index bb5808cadb02e7ec5128ce09e3525acd612c23b4..93922626618c68e634a3b09c2662de6191a2229a 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -152,7 +152,7 @@ Electron 拥有 `$DSH_HOME/profiles/desktop`。其 `dependencies` 包含 pnpm 
+ 
+ Electron 根据应用语言选择类型化的英文或中文 shell 文案，并回退到英文。macOS 应用包通过 `CFBundleLocalizations` 声明支持英语和简体中文，让 macOS 根据用户的首选语言匹配初始应用语言。主界面仍优先使用已保存的 Client UI 语言偏好。在 Windows 上，主文档的语言会更新桌面菜单、恢复与更新提示。仓库 Client UI i18n 检查覆盖桌面端源码。
+ 
+-Desktop 打包在官方客户端构建解析自身标题前，将 `DSH_CLIENT_TITLE` 保存为仅用于构建的 `DSH_DESKTOP_PRODUCT_NAME`，再把产品名称固定到“关于”面板和本地化 shell 文案中，包括原生菜单与恢复提示；默认名称为 DeepSeek Harness。Electron 的 `app.name` 可能保留内部包标识，因此 shell 文案不把它当作产品品牌。品牌文案不改变 Electron 的应用名称或用户数据目录，模型提供方名称也保持原样。
++Desktop 打包在官方客户端构建解析自身标题前，将 `DSH_CLIENT_TITLE` 保存为仅用于构建的 `DSH_DESKTOP_PRODUCT_NAME`，再把产品名称固定到“关于”面板和本地化 shell 文案中，包括原生菜单与恢复提示；默认名称为 DeepSeek Harness。Electron 的 `app.name` 可能保留内部包标识，因此 shell 文案不把它当作产品品牌。官方品牌保持 Electron 的应用名称与用户数据目录不变；AgentKit Studio 产品把该内部名称覆盖为 `agentkit-studio-desktop`，独占自己的单实例锁、用户数据目录与插件 profile，而会话、凭证与工作区仍保留在共享 DSH Home 中。模型提供方名称也保持原样。
+ 
+ Windows 和 macOS 会在原生全屏切换及每次页面加载后向渲染器同步全屏状态，让浮层调整顶栏避让距离。
+ 
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index 48fffaa1fb55515d833b6b16c149e905f5cc67c5..5120fd616bf3ac25debd6bf3a852c100c7749e9c 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -114,7 +114,7 @@ export function createElectronBuilderConfig(
+     appId,
+     protocols: [{ name: 'DeepSeek Harness', schemes: ['dsh'] }],
+     extraMetadata: {
+-      ...(packagesWindows && productName === 'AgentKit Studio' ? { name: 'agentkit-studio-desktop' } : {}),
++      ...(productName === 'AgentKit Studio' ? { name: 'agentkit-studio-desktop' } : {}),
+       dshDesktopAppId: appId,
+       dshDesktopUpdateChannel: update?.channel ?? 'nightly',
+       ...(policy === undefined ? {} : { dshMandatoryUpdatePolicy: policy }),
+diff --git a/apps/desktop/src/paths.ts b/apps/desktop/src/paths.ts
+index dd8339f38182972c368c0164e33698b2d8985907..53d5942b229b038ee776dcc1b84ef01da52cabe9 100644
+--- a/apps/desktop/src/paths.ts
++++ b/apps/desktop/src/paths.ts
+@@ -12,12 +12,13 @@ export interface DesktopPaths {
+ /**
+  * Resolve every Electron-owned path without changing the shared data roots.
+  * @param dshHome - Harness home shared with npm-installed dsh.
++ * @param productName - Installed product name; the official Harness build leaves this unset.
+  * @returns immutable desktop path set.
+  */
+-export function resolveDesktopPaths(dshHome: string = resolveDshHome(), platform = process.platform,
++export function resolveDesktopPaths(dshHome: string = resolveDshHome(),
+   productName = process.env.DSH_DESKTOP_PRODUCT_NAME?.trim()): DesktopPaths {
+   // Only the plugin profile is product-owned. Sessions and credentials retain the shared DSH home.
+-  const profileName = platform === 'win32' && productName === 'AgentKit Studio' ? 'desktop-agentkit-studio' : 'desktop'
++  const profileName = productName === 'AgentKit Studio' ? 'desktop-agentkit-studio' : 'desktop'
+   return {
+     profile: join(dshHome, 'profiles', profileName),
+     lock: join(dshHome, 'profiles', profileName, 'lock'),
+diff --git a/apps/desktop/tests/product-branding.spec.ts b/apps/desktop/tests/product-branding.spec.ts
+index 8caaffb9fed1b31c524f8bd394600ba10de02feb..736ccd67fe4ee9235819522ab0eb2dc52b3517f1 100644
+--- a/apps/desktop/tests/product-branding.spec.ts
++++ b/apps/desktop/tests/product-branding.spec.ts
+@@ -17,8 +17,10 @@ it('ordinary DSH builds keep the official icon and name', () => {
+   expect(config.mac.icon).toBe(fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)))
+ })
+ 
+-it('Windows Studio owns its Electron identity without migrating macOS state', () => {
++it('Studio owns its Electron identity without migrating DSH state', () => {
+   const windows = { ...env, DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio', DSH_DESKTOP_TARGET_PLATFORM: 'win32', DSH_DESKTOP_TARGET_ARCH: 'x64', DSH_CLIENT_TITLE: 'AgentKit Studio', DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN: 'https://updates.example.com' }
+   expect(createElectronBuilderConfig(windows, 'win32', 'x64').extraMetadata.name).toBe('agentkit-studio-desktop')
+-  expect(createElectronBuilderConfig({ ...env, DSH_CLIENT_TITLE: 'AgentKit Studio' }, 'darwin', 'arm64').extraMetadata.name).toBeUndefined()
++  expect(createElectronBuilderConfig({ ...env, DSH_CLIENT_TITLE: 'AgentKit Studio' }, 'darwin', 'arm64').extraMetadata.name).toBe('agentkit-studio-desktop')
++  expect(createElectronBuilderConfig(env, 'darwin', 'arm64').extraMetadata.name).toBeUndefined()
++  expect(createElectronBuilderConfig({ ...env, DSH_DESKTOP_TARGET_PLATFORM: 'win32', DSH_DESKTOP_TARGET_ARCH: 'x64', DSH_DESKTOP_AUTO_UPDATE_ENV: 'test', DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://updates.example.com', DSH_DESKTOP_MANDATORY_UPDATE_CONFIG: JSON.stringify({ allowedAuthOrigins: ['https://login.example.com'] }) }, 'win32', 'x64').extraMetadata.name).toBeUndefined()
+ })
+diff --git a/apps/desktop/tests/studio-paths.spec.ts b/apps/desktop/tests/studio-paths.spec.ts
+index 89a9a8e873e90f4b6d2ab51ab6c7171b44ab5ed0..7149e7afb2a5753b25d81440ff95422629a6f07c 100644
+--- a/apps/desktop/tests/studio-paths.spec.ts
++++ b/apps/desktop/tests/studio-paths.spec.ts
+@@ -3,11 +3,11 @@ import { join } from 'node:path'
+ import { tmpdir } from 'node:os'
+ const sharedHome = join(tmpdir(), 'studio-paths-shared-dsh')
+ import { resolveDesktopPaths } from '../src/paths.ts'
+-it('Windows Studio isolates plugin state while retaining the DSH home', () => {
+-  expect(resolveDesktopPaths(sharedHome, 'win32', 'AgentKit Studio')).toEqual({
++it('Studio isolates plugin state while retaining the DSH home', () => {
++  expect(resolveDesktopPaths(sharedHome, 'AgentKit Studio')).toEqual({
+     profile: join(sharedHome, 'profiles', 'desktop-agentkit-studio'),
+     lock: join(sharedHome, 'profiles', 'desktop-agentkit-studio', 'lock'),
+   })
+-  expect(resolveDesktopPaths(sharedHome, 'darwin', 'AgentKit Studio').profile).toBe(join(sharedHome, 'profiles', 'desktop'))
+-  expect(resolveDesktopPaths(sharedHome, 'win32', 'DeepSeek Harness').profile).toBe(join(sharedHome, 'profiles', 'desktop'))
++  expect(resolveDesktopPaths(sharedHome).profile).toBe(join(sharedHome, 'profiles', 'desktop'))
++  expect(resolveDesktopPaths(sharedHome, 'DeepSeek Harness').profile).toBe(join(sharedHome, 'profiles', 'desktop'))
+ })

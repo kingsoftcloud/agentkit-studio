@@ -1871,7 +1871,53 @@
     },
     {
       "id": "046",
-      "file": "046-native-schedule-manager.patch",
+      "file": "046-macos-studio-identity.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1",
+      "dependsOn": [
+        "032",
+        "039",
+        "040",
+        "041"
+      ],
+      "affectedFiles": [
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/src/paths.ts",
+        "apps/desktop/tests/product-branding.spec.ts",
+        "apps/desktop/tests/studio-paths.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-desktop-host"
+      ],
+      "contracts": [
+        "macOS Studio 与官方 DSH 并行运行：产品独立 Electron 名称、单实例锁、用户数据目录与插件 profile；会话、凭证与工作区保留共享 DSH Home"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游桌面产品身份配置提供等价的多产品并行锁、用户数据目录与产品 profile 合同",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/product-branding.spec.ts",
+          "apps/desktop/tests/studio-paths.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos"
+        ]
+      }
+    },
+    {
+      "id": "047",
+      "file": "047-native-schedule-manager.patch",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "category": "session-contract",
       "risk": "medium",
@@ -1971,8 +2017,8 @@
       "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be"
     },
     {
-      "id": "047",
-      "file": "047-isolated-native-browser.patch",
+      "id": "048",
+      "file": "048-isolated-native-browser.patch",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "category": "session-contract",
       "risk": "medium",
@@ -2033,10 +2079,10 @@
       "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611"
     }
   ],
-  "patchedTree": "9446122dbf21d699713b9b19f9db3f9d0b4e4ecc",
-  "patchedSourceSha256": "2345b4fd749e16d6847d6d869908aa8fec82620e379903cc179a234ff151c135",
+  "patchedTree": "dcd76e7d2845c1629596790cf785dd93542af388",
+  "patchedSourceSha256": "16fddf257c3823a852f4a58af41d9ca71736172f1adac59a1b1c1f0064344996",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "ae194ff406db655d62f5852d4350d95139045742f9692f73d03844ff67318e1f"
+    "sha256": "75abb27cdfc3150a13334a6948b8055f1f270af4d95c9e76f5d4287224950c24"
   }
 }
