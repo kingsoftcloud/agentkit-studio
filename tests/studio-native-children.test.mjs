@@ -15,7 +15,7 @@ import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
-  inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation } = {}) {
+  inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-children-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   const roles = [{ name: 'reader', instructions: 'Read the requested workspace evidence.', tools: ['read_workspace_file'],
@@ -64,7 +64,8 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
       } else {
         parentModels++;
         if (parentModels === 2) await onParentContinuation?.(body);
-        if (parentModels === 1) call = { name: childTool, arguments: { role: 'reader', task: 'Read proof.txt',
+        if (parentPlan) ({ call, text } = await parentPlan(body, parentModels));
+        else if (parentModels === 1) call = { name: childTool, arguments: { role: 'reader', task: 'Read proof.txt',
           ...childArguments,
           ...(forged ? { model_profile_id: 'unbound-profile' } : {}) } };
         else if (control && parentModels === 2) {
@@ -101,7 +102,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   payload.prepareInput = async () => ({ kind: 'enter', messages: [], assembly: payload.input.assembly });
   const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex'),
     userId: 'local-user', agentId: record.metadata.id };
-  return { host, payload, ledger, gateway, roles, requests, dispatches, record, scope, childModels: () => childModels };
+  return { host, payload, ledger, gateway, roles, requests, dispatches, record, scope, modelValues: values, childModels: () => childModels };
 }
 for (const sqlite of [false, true]) {
   test(`${sqlite ? 'sqlite' : 'memory'}: Studio Host promotes an admitted foreground child before parent continuation`, { timeout: 15000 }, async t => {
@@ -234,6 +235,41 @@ const mediaParts = [
   { type: 'image', attachment: { attachmentId: 'unselected-image' } },
   { type: 'image', attachment: { attachmentId: 'selected-image' } },
 ];
+for (const sqlite of [false, true]) for (const supportsImages of [false, true])
+test(`${sqlite ? 'sqlite' : 'memory'}: continuation preserves source image history and checks the current model (${supportsImages})`, async t => {
+  let source;
+  const f = await setup(t, { sqlite, inputParts: mediaParts, childInput: ['text', 'image'], parentPlan: async (_body, index) => {
+    if (index === 1) return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Read proof.txt',
+      media: [{ source: 'parent_user_input', index: 3 }] } } };
+    if (index === 3) return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Continue the original evidence', continuation_of: source } } };
+    return { text: 'Parent delivery' };
+  } });
+  await f.host.executeTurn(f.payload);
+  const originalParent = f.ledger.sessionHead(f.scope, 'parent-session'), reservation = originalParent.childBudgetReservations[0];
+  source = reservation.childRunId;
+  const original = f.ledger.load(reservation.childScope, source);
+  f.modelValues.modelProfiles[1].input = supportsImages ? ['text', 'image'] : ['text'];
+  f.payload.agent.session.append('turn/start', { turn: 2 });
+  await f.host.executeTurn({ ...f.payload, turn: 2, input: { ...f.payload.input, messages: [{ id: 'followup-user', role: 'user',
+    source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue the previous child evidence.' }] }] } });
+  const next = f.ledger.sessionHead(f.scope, 'parent-session');
+  assert.notEqual(next.runId, originalParent.runId); assert.equal(next.phase, 'completed');
+  assert.deepEqual(f.ledger.load(reservation.childScope, source), original);
+  const childRequests = f.requests.filter(item => item.body.model === 'child-model');
+  if (supportsImages) {
+    assert.equal(next.childRunIds.length, 1); assert.equal(childRequests.length, 3);
+    const child = f.ledger.load(reservation.childScope, next.childRunIds[0]);
+    assert.equal(child.snapshot.sessionId, original.snapshot.sessionId); assert.equal(child.snapshot.parentRunId, source);
+    const history = JSON.stringify(childRequests[2].body.messages);
+    assert.ok(history.includes(Buffer.from('selected-image').toString('base64')));
+    assert.equal(history.includes(Buffer.from('unselected-image').toString('base64')), false);
+    assert.equal(next.descendantUsage.modelCalls, 1); assert.equal(next.descendantUsage.toolCalls, 0);
+  } else {
+    assert.equal(next.childRunIds.length, 0); assert.equal(childRequests.length, 2);
+    assert.match(next.messages.filter(message => message.role === 'tool').at(-1).content, /child_followup_model_image_unavailable/);
+    assert.equal(f.ledger.list(reservation.childScope).length, 1);
+  }
+});
 for (const sqlite of [false, true]) test(`${sqlite ? 'sqlite' : 'memory'}: child image references retain original user content indices and grant only selected image bytes`, async t => {
   const fixture = await setup(t, { sqlite, inputParts: mediaParts, childInput: ['text', 'image'],
     childArguments: { media: [{ source: 'parent_user_input', index: 3 }] } });

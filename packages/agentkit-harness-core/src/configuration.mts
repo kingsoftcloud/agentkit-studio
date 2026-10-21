@@ -73,6 +73,9 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       && limits.maxModelCalls === binding.maxModelCalls && limits.maxToolCalls === binding.maxToolCalls,
     'invalid_child_owner_binding');
     invariant(binding.deliveryMode === undefined || ['foreground', 'background'].includes(binding.deliveryMode), 'invalid_child_delivery_mode');
+    invariant(binding.continuationOf === undefined && binding.continuationParentRunId === undefined
+      || [binding.continuationOf, binding.continuationParentRunId]
+        .every(value => typeof value === 'string' && value.trim() && value.length <= 256), 'invalid_child_continuation_binding');
   }
   invariant(config.contract.objective.trim() && config.hostBindingDigest.trim()
     && profile.profileId.trim() && profile.profileVersion.trim() && profile.providerFamily.trim()

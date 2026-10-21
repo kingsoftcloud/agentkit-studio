@@ -93,14 +93,19 @@ export async function createStudioNativeChildren({ roles, scope, store, tools, h
         && ref.index >= 0 && mediaSources.get(ref.index)), 'studio_native_child_media_reference_invalid');
       invariant(!refs.length || bound.model.supportsImages, 'studio_native_child_model_image_unavailable');
       const media = refs.map(ref => structuredClone(mediaSources.get(ref.index)));
-      const child = childScope(role), contract = nativeGoalContract({ sessionId: request.childRunId, goal: request.task });
+      const child = childScope(role), contract = nativeGoalContract({ sessionId: request.childSessionId, goal: request.task });
+      if (args.continuation_of !== undefined) {
+        const source = store.load(child, args.continuation_of).snapshot;
+        const inheritedMedia = [...source.messages, ...source.queuedGuidance].some(message => message.media?.length);
+        invariant(!inheritedMedia || bound.model.supportsImages, 'child_followup_model_image_unavailable');
+      }
       const { schema: output, parentOutputDigest } = outputSchema(role, args, request.parentContract);
       if (output) {
         contract.finalSubmissionSchema = { type: 'object', properties: { output }, required: ['output'], additionalProperties: false };
         contract.finalSubmissionPayloadKey = 'output'; contract.finalOutputFormat = submissionOutputFormat(contract.finalSubmissionSchema, 'output');
       }
-      const ports = bindTools({ scope: child, store, sessionId: request.childRunId, toolNames: role.tools });
-      const verification = await verificationFactory({ scope: child, sessionId: request.childRunId });
+      const ports = bindTools({ scope: child, store, sessionId: request.childSessionId, toolNames: role.tools });
+      const verification = await verificationFactory({ scope: child, sessionId: request.childSessionId });
       request.signal.throwIfAborted();
       return { scope: child, configuration: configure({ profile: bound.model.profile, contextPolicy: bound.model.contextPolicy,
         ...(media.length ? { inputMessages: [{ role: 'user', kind: 'user_input', content: request.task, media }] } : {}),

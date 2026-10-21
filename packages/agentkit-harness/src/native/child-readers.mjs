@@ -14,7 +14,9 @@
 // and taskContract.allowedToolNames must permit the tool.
 
 import { createHash } from 'node:crypto';
-import { NativeError, CHILD_OWNER_CONTRACT, canonical, copy, terminal, scopeKey } from '../../../agentkit-harness-core/dist/index.mjs';
+import { NativeError, canonical, copy, terminal, scopeKey } from '../../../agentkit-harness-core/dist/index.mjs';
+
+import { resolveChildToolIntent as resolveIntent, loadOwnedDirectChild, accountedChildDelivery } from './owned-child.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const textHash = value => createHash('sha256').update(value).digest('hex');
@@ -77,26 +79,6 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
   // Mirrors child-owner.mjs toolInvocation: the request must be bound to a
   // live parent tool effect — running intent, matching call, frozen definition,
   // signal, executionFence, valid lease, and taskContract tool scope.
-
-  function resolveIntent(parentRecord, operationKey) {
-    const intent = parentRecord.intents.find(item => item.operationKey === operationKey);
-    if (intent && Array.isArray(intent.payload.calls) && intent.payload.calls.length === 1)
-      return { intent, calls: intent.payload.calls, index: 0, base: operationKey };
-    // Parallel delegation: operationKey = "<base>:call:<1-based-index>"
-    // kernel.mts only adds :call:<index> when calls.length > 1; there is no
-    // parallel_delegation flag on the intent payload. The base intent holds
-    // the calls array; pendingIntent stays at the base operationKey.
-    const match = operationKey.match(/^(.+):call:([1-9][0-9]*)$/);
-    if (match) {
-      const base = match[1], index = parseInt(match[2], 10) - 1;
-      const baseIntent = parentRecord.intents.find(item => item.operationKey === base);
-      if (baseIntent?.kind === 'tool' && Array.isArray(baseIntent.payload.calls) && baseIntent.payload.calls.length > 1
-        && Number.isSafeInteger(index) && index < baseIntent.payload.calls.length) {
-        return { intent: baseIntent, calls: baseIntent.payload.calls, index, base };
-      }
-    }
-    return null;
-  }
 
   function validateRequest(request) {
     check(same(request.scope, parentScope), 'child_reader_scope_mismatch');
@@ -182,45 +164,7 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
 
   // --- Internal: load a direct child by run ID -----------------------------
 
-  function loadDirectChild(parent, childRunId) {
-    if (!(parent.childRunIds ?? []).includes(childRunId)) return null;
-    for (const childScope of scopes) {
-      let record;
-      try { record = store.load(childScope, childRunId); }
-      catch (error) { if (error.code === 'run_not_found') continue; throw error; }
-      const child = record.snapshot;
-      const binding = record.configuration.childOwnerBinding;
-      if (!binding || binding.contract !== CHILD_OWNER_CONTRACT) continue;
-      if (!same(child.scope, childScope)) continue;
-      // Full parent identity match
-      if (!same(binding.parent, identity(parent))) continue;
-      if (!roleIds.includes(binding.role)) continue;
-      // Must be bound to a parent reservation
-      const reservation = (parent.childBudgetReservations ?? []).find(item => item.childRunId === childRunId);
-      if (!reservation) continue;
-      if (reservation.parentOperationKey !== binding.parentOperationKey) continue;
-      if (reservation.parentToolCallId !== binding.parentToolCallId) continue;
-      if (reservation.childRequestDigest !== binding.childRequestDigest) continue;
-      if (reservation.configurationDigest !== record.snapshot.configDigest) continue;
-      // Config hash must match
-      if (hash(record.configuration) !== reservation.configurationDigest) continue;
-      if (reservation.maxModelCalls !== binding.maxModelCalls) continue;
-      if (reservation.maxToolCalls !== binding.maxToolCalls) continue;
-      if (reservation.childScope.tenantId !== childScope.tenantId
-        || reservation.childScope.workspaceId !== childScope.workspaceId
-        || reservation.childScope.userId !== childScope.userId
-        || reservation.childScope.agentId !== childScope.agentId) continue;
-      const parentRecord = store.load(parentScope, parent.runId), start = resolveIntent(parentRecord, binding.parentOperationKey);
-      const startCall = start?.calls[start.index], receipt = parentRecord.receipts.find(item => item.operationKey === start?.base && item.status === 'committed');
-      const original = receipt?.result.results?.[start?.index]?.childBudgetReservation;
-      if (!startCall || !['native_start_child', 'native_delegate'].includes(startCall.name)
-        || startCall.callId !== binding.parentToolCallId || startCall.arguments.role !== binding.role
-        || startCall.arguments.task !== record.configuration.contract.objective
-        || !original || !same(original, { ...reservation, settledUsageDigest: null })) continue;
-      return record;
-    }
-    return null;
-  }
+  const loadDirectChild = (parent, childRunId) => loadOwnedDirectChild({ store, childScopes: scopes, parent, childRunId, roles: roleIds });
 
   // --- native_child_result execute -----------------------------------------
 
@@ -243,10 +187,7 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
 
     // Only read terminal-safe deliveries
     const reservation = parent.childBudgetReservations.find(item => item.childRunId === childRunId);
-    const settled = parentRecord.receipts.filter(receipt => receipt.status === 'committed').flatMap(receipt => receipt.result.results ?? [])
-      .find(result => result.childBudgetSettlement?.childRunId === childRunId
-        && result.childBudgetSettlement.terminalSnapshotDigest === hash(child)
-        && hash({ settlement: result.childBudgetSettlement, usage: result.resourceUsage, childRunIds: result.childRunIds }) === reservation.settledUsageDigest);
+    const settled = accountedChildDelivery(parentRecord, childRecord);
     const available = Boolean(reservation.settledUsageDigest && settled && isTerminalSafe(childRecord));
     const finalText = available ? child.finalText : '';
     const charCount = [...finalText].length;

@@ -7,6 +7,8 @@ export interface ChildOwnerBinding {
   parentOperationKey: string; parentToolCallId: string; parentExecutionFence: number; childRequestDigest: string; role: string;
   maxModelCalls: number; maxToolCalls: number;
   deliveryMode?: 'foreground' | 'background';
+  continuationOf?: string;
+  continuationParentRunId?: string;
 }
 export interface ChildApproval {
   childRunId: string; childScope: RunScope; parentOperationKey: string; parentToolCallId: string;

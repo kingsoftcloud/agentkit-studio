@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { NativeKernel, NativeError, CHILD_OWNER_CONTRACT, canonical, copy, configure,
   addUsage, admittedToolBudget, childLifecycleRequest, childReadyProbe, scopeKey, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
+import { loadSessionChild, accountedChildDelivery, hasUnsafeChildReceipt } from './owned-child.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const check = (value, code) => { if (!value) throw new NativeError(code); };
@@ -125,9 +126,17 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
     }
     return entry;
   };
-  const unsafeReceipt = record => record.receipts.some(receipt => receipt.status === 'uncertain'
-    && !(receipt.result.retryScheduled === true && ['safe-read/v1', 'workspace-observation/v1'].includes(receipt.result.recoveryPolicy))
-    && record.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind !== 'model');
+  const unsafeReceipt = hasUnsafeChildReceipt;
+  const continuationSource = request => {
+    const args = request.call.arguments;
+    if (args.continuation_of === undefined) return null;
+    const resolved = loadSessionChild({ store, childScopes: scopes, parent: toolInvocation(request).snapshot,
+      childRunId: args.continuation_of });
+    check(resolved, 'child_followup_not_available');
+    check(resolved.child.configuration.childOwnerBinding.role === args.role, 'child_followup_role_mismatch');
+    check(accountedChildDelivery(resolved.parent, resolved.child), 'child_followup_requires_result_collection');
+    return resolved;
+  };
   const terminalReceipt = (record, reservation) => {
     check(terminal(record.snapshot.phase) && record.snapshot.phase !== 'interrupted' && !unsafeReceipt(record), 'child_receipt_unavailable');
     return { status: record.snapshot.phase === 'completed' ? 'ok' : 'error', content: {
@@ -220,54 +229,81 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       return rows;
     },
     async start(request) {
-      request.signal.throwIfAborted(); toolInvocation(request);
-      check(['start/v1', 'delegate/v1'].includes(request.definition.childBudgetPolicy), 'child_start_not_admitted');
-      const args = request.call.arguments;
-      check(typeof args.role === 'string' && args.role.trim() && typeof args.task === 'string' && args.task.trim()
-        && (args.background === undefined || typeof args.background === 'boolean')
-        && args.continuation_of === undefined, 'child_background_request_invalid');
-      const foreground = args.background === false || request.call.name === 'native_delegate' && args.background !== true;
-      check(request.budget.depth < request.budget.maxDepth, 'child_depth_exhausted');
-      const modelLimit = args.model_call_limit ?? 4, toolLimit = args.tool_call_limit ?? 8;
-      check(Number.isSafeInteger(modelLimit) && modelLimit >= 1 && Number.isSafeInteger(toolLimit) && toolLimit >= 0, 'child_budget_invalid');
-      const availableTools = request.budget.maxToolCallsRemaining === null ? Infinity
-        : request.budget.maxToolCallsRemaining - (request.definition.childBudgetPolicy === 'start/v1' ? 1 : 0);
-      const maxModelCalls = Math.min(modelLimit, request.budget.maxModelCallsRemaining ?? Infinity);
-      const maxToolCalls = Math.min(toolLimit, availableTools);
-      check(maxModelCalls > 0 && maxToolCalls >= 0, 'child_budget_exhausted');
-      const requestDigest = hash({ parent: identity(request), operationKey: request.operationKey, call: request.call, budget: request.budget });
-      const binding = { contract: CHILD_OWNER_CONTRACT, parent: identity(request), parentOperationKey: request.operationKey,
-        parentToolCallId: request.call.callId, parentExecutionFence: request.executionFence, childRequestDigest: requestDigest,
-        role: args.role, maxModelCalls, maxToolCalls, ...(foreground ? { deliveryMode: 'foreground' } : {}) };
-      const runId = locator(request);
-      const existing = scopes.flatMap(childScope => store.list(childScope)).find(snapshot => snapshot.runId === runId);
-      if (existing) {
-        const record = store.load(existing.scope, runId), saved = record.configuration.childOwnerBinding;
-        check(saved?.childRequestDigest === requestDigest && saved.parentToolCallId === request.call.callId
-          && saved.maxModelCalls <= maxModelCalls && saved.maxToolCalls <= maxToolCalls, 'child_start_identity_conflict');
-        const reservation = makeReservation(record, existing.scope);
-        ownedChild(request, reservation);
-        return foreground ? foregroundResult(request, reservation) : startupReceipt(reservation, saved.role);
+      try {
+        request.signal.throwIfAborted(); toolInvocation(request);
+        check(['start/v1', 'delegate/v1'].includes(request.definition.childBudgetPolicy), 'child_start_not_admitted');
+        const args = request.call.arguments;
+        check(typeof args.role === 'string' && args.role.trim() && typeof args.task === 'string' && args.task.trim()
+          && (args.background === undefined || typeof args.background === 'boolean')
+          && (args.continuation_of === undefined || typeof args.continuation_of === 'string'
+            && args.continuation_of.trim() && args.continuation_of.length <= 256), 'child_background_request_invalid');
+        const foreground = args.background === false || request.call.name === 'native_delegate' && args.background !== true;
+        check(request.budget.depth < request.budget.maxDepth, 'child_depth_exhausted');
+        const modelLimit = args.model_call_limit ?? 4, toolLimit = args.tool_call_limit ?? 8;
+        check(Number.isSafeInteger(modelLimit) && modelLimit >= 1 && Number.isSafeInteger(toolLimit) && toolLimit >= 0, 'child_budget_invalid');
+        const availableTools = request.budget.maxToolCallsRemaining === null ? Infinity
+          : request.budget.maxToolCallsRemaining - (request.definition.childBudgetPolicy === 'start/v1' ? 1 : 0);
+        const maxModelCalls = Math.min(modelLimit, request.budget.maxModelCallsRemaining ?? Infinity);
+        const maxToolCalls = Math.min(toolLimit, availableTools);
+        check(maxModelCalls > 0 && maxToolCalls >= 0, 'child_budget_exhausted');
+        const requestDigest = hash({ parent: identity(request), operationKey: request.operationKey, call: request.call, budget: request.budget });
+        const binding = { contract: CHILD_OWNER_CONTRACT, parent: identity(request), parentOperationKey: request.operationKey,
+          parentToolCallId: request.call.callId, parentExecutionFence: request.executionFence, childRequestDigest: requestDigest,
+          role: args.role, maxModelCalls, maxToolCalls, ...(foreground ? { deliveryMode: 'foreground' } : {}) };
+        const runId = locator(request);
+        const existing = scopes.flatMap(childScope => store.list(childScope)).find(snapshot => snapshot.runId === runId);
+        if (existing) {
+          const record = store.load(existing.scope, runId), saved = record.configuration.childOwnerBinding;
+          check(saved?.childRequestDigest === requestDigest && saved.parentToolCallId === request.call.callId
+            && saved.maxModelCalls <= maxModelCalls && saved.maxToolCalls <= maxToolCalls, 'child_start_identity_conflict');
+          const reservation = makeReservation(record, existing.scope);
+          ownedChild(request, reservation);
+          return foreground ? foregroundResult(request, reservation) : startupReceipt(reservation, saved.role);
+        }
+        const source = continuationSource(request);
+        const childSessionId = source?.child.snapshot.sessionId ?? runId;
+        if (source) {
+          binding.continuationOf = source.child.snapshot.runId;
+          binding.continuationParentRunId = source.parent.snapshot.runId;
+        }
+        const bound = await observeWhileLive(Promise.resolve().then(() => resolveChild({ parent: identity(request), call: copy(request.call), childRunId: runId,
+          childSessionId,
+          role: args.role, task: args.task, parentContract: copy(effective(toolInvocation(request)).contract),
+          maxModelCalls, maxToolCalls, depth: request.budget.depth + 1, signal: request.signal })), request.signal);
+        request.signal.throwIfAborted(); toolInvocation(request);
+        check(bound?.scope && scopes.some(item => same(item, bound.scope))
+          && bound.configuration?.contract.objective === args.task, 'child_admission_binding_invalid');
+        if (source) {
+          const current = continuationSource(request);
+          check(same(bound.scope, source.child.snapshot.scope) && same(identity(current.child.snapshot), identity(source.child.snapshot))
+            && current.parent.snapshot.runId === source.parent.snapshot.runId, 'child_followup_not_available');
+        }
+        binding.maxModelCalls = Math.min(maxModelCalls, bound.configuration.limits.maxModelCalls ?? maxModelCalls);
+        binding.maxToolCalls = Math.min(maxToolCalls, bound.configuration.limits.maxToolCalls ?? maxToolCalls);
+        check(binding.maxModelCalls >= 1 && binding.maxToolCalls >= 0, 'child_budget_exhausted');
+        const configuration = configure({ ...copy(bound.configuration), delegationDepth: request.budget.depth + 1,
+          limits: { ...bound.configuration.limits, maxModelCalls: binding.maxModelCalls, maxToolCalls: binding.maxToolCalls }, childOwnerBinding: binding });
+        const childIdentity = { scope: copy(bound.scope), runId, sessionId: childSessionId,
+          turnId: '1', buildId: request.buildId, parentRunId: null, taskChainId: source ? runId : request.taskChainId };
+        const kernel = new NativeKernel({ store, ports: bound.ports, owner: `${owner}:${runId}`, digest: hash });
+        try { kernel.start(childIdentity, configuration, { expectedParentRunId: source?.child.snapshot.runId ?? null }); }
+        catch (error) {
+          if (source && ['session_head_conflict', 'session_already_active'].includes(error.code))
+            throw new NativeError('child_followup_source_not_current');
+          throw error;
+        }
+        const record = store.load(childIdentity.scope, runId), reservation = makeReservation(record, childIdentity.scope);
+        const entry = attachKernel(record, bound.ports);
+        drive(entry);
+        return foreground ? foregroundResult(request, reservation) : startupReceipt(reservation, binding.role);
+      } catch (error) {
+        // Admission refusals happen before a child is created. They are known
+        // tool outcomes, not unknown external effects requiring reconciliation.
+        if (['child_followup_not_available', 'child_followup_role_mismatch', 'child_followup_requires_result_collection',
+          'child_followup_source_not_current', 'child_followup_model_image_unavailable'].includes(error.code))
+          return { status: 'error', content: { error_code: error.code, executed: false } };
+        throw error;
       }
-      const bound = await observeWhileLive(Promise.resolve().then(() => resolveChild({ parent: identity(request), call: copy(request.call), childRunId: runId,
-        role: args.role, task: args.task, parentContract: copy(effective(toolInvocation(request)).contract),
-        maxModelCalls, maxToolCalls, depth: request.budget.depth + 1, signal: request.signal })), request.signal);
-      request.signal.throwIfAborted(); toolInvocation(request);
-      check(bound?.scope && scopes.some(item => same(item, bound.scope))
-        && bound.configuration?.contract.objective === args.task, 'child_admission_binding_invalid');
-      binding.maxModelCalls = Math.min(maxModelCalls, bound.configuration.limits.maxModelCalls ?? maxModelCalls);
-      binding.maxToolCalls = Math.min(maxToolCalls, bound.configuration.limits.maxToolCalls ?? maxToolCalls);
-      check(binding.maxModelCalls >= 1 && binding.maxToolCalls >= 0, 'child_budget_exhausted');
-      const configuration = configure({ ...copy(bound.configuration), delegationDepth: request.budget.depth + 1,
-        limits: { ...bound.configuration.limits, maxModelCalls: binding.maxModelCalls, maxToolCalls: binding.maxToolCalls }, childOwnerBinding: binding });
-      const childIdentity = { scope: copy(bound.scope), runId, sessionId: runId,
-        turnId: '1', buildId: request.buildId, parentRunId: null, taskChainId: request.taskChainId };
-      const kernel = new NativeKernel({ store, ports: bound.ports, owner: `${owner}:${runId}`, digest: hash });
-      kernel.start(childIdentity, configuration);
-      const record = store.load(childIdentity.scope, runId), reservation = makeReservation(record, childIdentity.scope);
-      const entry = attachKernel(record, bound.ports);
-      drive(entry);
-      return foreground ? foregroundResult(request, reservation) : startupReceipt(reservation, binding.role);
     },
     async control(request) {
       request.signal.throwIfAborted();

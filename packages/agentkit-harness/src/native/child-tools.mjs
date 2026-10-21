@@ -9,7 +9,7 @@ export function nativeChildToolDefinitions(roles, startTimeoutMs = 120000) {
     contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' };
   invariant(Number.isSafeInteger(startTimeoutMs) && startTimeoutMs >= 120000, 'native_child_timeout_invalid');
   const definitions = [{ ...base, timeoutMs: startTimeoutMs, name: 'native_start_child', childBudgetPolicy: 'start/v1',
-    description: 'Start a bounded approved child, in the background by default. background=false waits for its delivery. An early startup receipt reserves budget and is not findings.',
+    description: 'Start a bounded approved child, in the background by default. background=false waits for its delivery. continuation_of reuses a terminal, collected child Session from this parent Session with a fresh Run and budget; collect it first. An early startup receipt reserves budget and is not findings.',
     parameters: { type: 'object', additionalProperties: false, required: ['role', 'task'], properties: {
       role: { type: 'string', enum: [...roles] }, task: { type: 'string', minLength: 1, maxLength: 32000 },
       background: { type: 'boolean', default: true }, model_call_limit: { type: 'integer', minimum: 1, default: 4 },
@@ -27,8 +27,8 @@ export function nativeChildToolDefinitions(roles, startTimeoutMs = 120000) {
     } } }];
   const delegate = structuredClone(definitions[0]);
   delegate.name = 'native_delegate'; delegate.childBudgetPolicy = 'delegate/v1';
-  delegate.description = 'Run a bounded approved child and wait for its original delivery. Its findings do not verify the parent task. background=true returns a budget reservation instead.';
+  delegate.description = 'Run a bounded approved child and wait for its original delivery. continuation_of reuses a terminal, collected child Session with a fresh Run and budget. Its findings do not verify the parent task. background=true returns a budget reservation instead.';
   delegate.parameters.properties.background.default = false;
-  for (const key of ['model_call_limit', 'tool_call_limit', 'continuation_of']) delete delegate.parameters.properties[key];
+  for (const key of ['model_call_limit', 'tool_call_limit']) delete delegate.parameters.properties[key];
   return [...definitions, delegate];
 }
