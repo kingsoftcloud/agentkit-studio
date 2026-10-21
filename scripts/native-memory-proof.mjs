@@ -38,7 +38,7 @@ export async function runMemoryProof({ harness: initial, DeepSeekHarness, option
   try {
     let session = harness.session('native-studio-session');
     for (let turn = 1; turn <= 4; turn++) {
-      const input = turn <= 2 ? original : turn === 3 ? 'Deliver the current response.' : 'Deliver the next response.';
+      const input = turn <= 2 ? original : turn === 3 ? 'Vim' : 'Vim editor';
       const result = await session.run(input);
       await writeFile(join(root, `memory-sdk-turn-${turn}.json`), JSON.stringify(result));
       assert.equal(result.finalResponse, 'Memory turn delivered.', JSON.stringify(result.events.filter(event => event.type === 'turn/end')));
@@ -59,6 +59,13 @@ export async function runMemoryProof({ harness: initial, DeepSeekHarness, option
   assert.deepEqual(failures, []);
   await writeFile(join(root, 'memory-model-requests.json'), JSON.stringify(requests));
   assert.equal(requests.filter(body => !summary(body)).length, 4);
+  for (const body of requests.filter(body => !summary(body)).slice(2)) {
+    const recalled = body.messages.filter(message => message.role === 'user'
+      && message.content.includes('agentkit.native-context-contribution/v1')).map(message => JSON.parse(message.content));
+    assert.equal(recalled.length, 1); assert.equal(recalled[0].trust, 'untrusted');
+    assert.equal(recalled[0].item.content, '我喜欢用Vim'); assert.equal(recalled[0].item.version, 1);
+    assert.equal(recalled[0].item.currentFactVerification, false);
+  }
   assert.ok(requests.some(summary), 'Actual Host context pressure must cause model summary dispatch');
   const files = (await readdir(sessions, { recursive: true })).filter(file => file.endsWith('.jsonl'));
   const events = (await Promise.all(files.map(file => rows(join(sessions, file))))).flat();
@@ -85,6 +92,7 @@ export async function runMemoryProof({ harness: initial, DeepSeekHarness, option
       assert.equal(record.snapshot.phase, 'completed'); assert.equal(record.configuration.hooks.length, 1);
       assert.equal(record.configuration.hooks[0].hookId, 'agentkit.memory.precompact');
       assert.equal(record.configuration.hooks[0].readOnly, false);
+      assert.equal(record.configuration.contextSources[0].sourceId, 'studio.memory-recall');
       if (frozen) assert.equal(record.snapshot.buildId, buildId);
     }
     const receipts = records.flatMap(record => record.receipts.filter(receipt => receipt.result.schemaVersion === 'agentkit.native-hook-result/v1'));
@@ -136,5 +144,5 @@ export async function runMemoryProof({ harness: initial, DeepSeekHarness, option
     assert.equal(settled.length, 1, 'Every actual task/summary public stream settles to exact durable Session bytes');
   }
   assert.equal(JSON.stringify(events).includes('sk-studio-fixture-secret'), false);
-  console.log(`Studio Native local Memory PASS: actual packed mountStudioHost, ${frozen ? 'pinned Frozen Build with latest memory disabled' : 'Agent Revision'}, authenticated preset RPC, four ordinary SDK turns across Host restart, real context pressure/tokenizer/summary HTTP, original-source PreCompact intents and receipts, two independent observations -> one v1 SQLite fact, repeated compaction reuses exactly two receipts, foreign Agent isolated, every public task stream durably settled, internal summaries withheld, and default DSH. Node-only PATH; fixed local dependency graph, not a fresh install.`);
+  console.log(`Studio Native local Memory PASS: actual packed mountStudioHost, ${frozen ? 'pinned Frozen Build with latest memory disabled' : 'Agent Revision'}, authenticated preset RPC, four ordinary SDK turns across Host restart, real context pressure/tokenizer/summary HTTP, original-source PreCompact intents and receipts, two independent observations -> one v1 SQLite fact, fresh uncached recall in both later model requests, repeated compaction reuses exactly two receipts, foreign Agent isolated, every public task stream durably settled, internal summaries withheld, and default DSH. Node-only PATH; fixed local dependency graph, not a fresh install.`);
 }

@@ -147,7 +147,10 @@ export interface ContextPlanningResult {
   action: 'ready' | 'compact' | 'blocked'; reason: string; state: ContextPlanningState;
   messages: Message[]; admission: ContextAdmission | null;
 }
-export interface ContextSourceDefinition { sourceId: string; priority: number; timeoutMs: number; required: boolean }
+export interface ContextSourceDefinition {
+  contract: 'agentkit.native-context-source/v1'; sourceId: string; bindingDigest: string;
+  priority: number; timeoutMs: number; required: boolean; maxTokens: number; maxBytes: number;
+}
 export interface RunConfiguration {
   engine: typeof NATIVE_ENGINE; profile: ModelProfile; limits: RunLimits; tools: ToolDefinition[];
   contract: TaskContract; instructions: string; hostBindingDigest: string;
@@ -244,6 +247,8 @@ export interface PreparedContext {
   /** Binds this disposable model view to the immutable transcript and environment. */
   sourceDigest: string;
   admission?: ContextAdmission;
+  /** Uncached contributors must be read again when another lease admits a model. */
+  sourceFence?: number;
 }
 export interface RunSnapshot extends RunIdentity {
   schemaVersion: typeof NATIVE_SCHEMA; configDigest: string; revision: number; eventSeq: number;
@@ -353,6 +358,11 @@ export interface TurnInputPort {
   }>;
 }
 export interface ContextPort {
+  /** Optional read-only, uncached data collected inside each durable Context effect.
+   * The Kernel wraps items as untrusted user data and admits only whole items.
+   */
+  readSource?(request: PortContext & { source: ContextSourceDefinition; snapshot: RunSnapshot;
+    configuration: RunConfiguration; remainingTokens: number }): Promise<{ items: ObjectValue[] }>;
   /** context is adapter state, persisted under snapshot.context.adapter. Original messages are never replaced. */
   /** A prepared view must retain unacknowledged snapshot.hookState.feedback before budgeting. */
   prepare?(request: PortContext & { snapshot: RunSnapshot; configuration: RunConfiguration; forceCompaction: boolean }): Promise<{ messages: Message[]; context: ObjectValue }>;

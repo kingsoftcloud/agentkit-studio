@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { SqliteNativeMemoryProvider } from '../packages/agentkit-harness/src/native/memory-store.mjs';
-import { memoryDigest } from '../packages/agentkit-harness/src/native/memory-candidate.mjs';
+import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } from '../packages/agentkit-harness/src/native/memory-candidate.mjs';
 import { MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
@@ -68,7 +68,7 @@ test('Studio Host assembles local Memory PreCompact against original admitted us
   for (let turn = 1; turn <= 3; turn++) {
     if (turn > 1) fixture.payload.agent.session.append('turn/start', { turn });
     fixture.payload.input.messages = [{ id: 'input-' + turn, role: 'user', source: { kind: 'user' },
-      content: [{ type: 'text', text: turn < 3 ? original : 'Finish' }] }];
+      content: [{ type: 'text', text: turn < 3 ? original : 'Vim' }] }];
     await fixture.host.executeTurn({ ...fixture.payload, turn });
     const snapshot = fixture.head(); assert.equal(snapshot.phase, 'completed');
     if (turn < 3) sources.push(`native-message://${snapshot.runId}#message=${turn === 1 ? 1 : 3}`);
@@ -78,12 +78,57 @@ test('Studio Host assembles local Memory PreCompact against original admitted us
   assert.ok(entries.flatMap(entry => entry.receipts).some(receipt => receipt.result.schemaVersion === 'agentkit.native-hook-result/v1'
     && receipt.result.status === 'ok' && receipt.result.event === 'PreCompact'));
   assert.ok(fixture.requests.some(request => JSON.parse(request.options.body).messages[0].content.startsWith('Summarize the quoted historical data')));
+  assert.ok(fixture.requests.some(request => JSON.parse(request.options.body).messages.some(message =>
+    message.content.includes('agentkit.native-context-contribution/v1') && JSON.parse(message.content).item.content === '我喜欢用Vim')));
+  assert.ok(entries.flatMap(entry => entry.receipts).filter(receipt => receipt.result.contributions)
+    .every(receipt => receipt.result.contributions.sources[0].status === 'ok'));
   const provider = new SqliteNativeMemoryProvider(join(fixture.root, 'native-harness', 'memory-v1',
     memoryDigest('local').slice(7), 'memory.sqlite'), { principal: snapshot.scope });
   try {
     const records = provider.list(); assert.equal(records.length, 1); assert.equal(records[0].content, '我喜欢用Vim');
     assert.equal(records[0].version, 1); assert.deepEqual(new Set(records[0].sourceEventIds), new Set(sources));
   } finally { provider.close(); }
+});
+test('production Host refreshes actual SQLite Memory before each model request and retains untrusted source/version metadata', async t => {
+  let writer, memoryId;
+  const observed = [];
+  const fixture = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+    write: { mode: 'off' }, recall: { enabled: true, maxTokens: 1600, minScore: 1 } } }, respond: (count, body) => {
+    const items = body.messages.filter(message => message.role === 'user' && message.content.includes('agentkit.native-context-contribution/v1'))
+      .map(message => JSON.parse(message.content));
+    assert.equal(items.length, 1); assert.equal(items[0].trust, 'untrusted');
+    assert.equal(items[0].item.currentFactVerification, false);
+    assert.equal(items[0].item.version, count); observed.push(items[0].item.content);
+    if (count === 1) {
+      // An independent connection changes the fact after this request's read.
+      writer.mutate({ action: 'correct', memoryId, expectedVersion: 1, content: 'My preferred editor is Emacs',
+        operationKey: 'external-correction', sourceEventId: 'independent-user-input', sourceSessionId: 'other-session' });
+      return { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'read-1', type: 'function',
+        function: { name: 'observe', arguments: '{}' } }] }, finish_reason: 'tool_calls' }] };
+    }
+    return { choices: [{ index: 0, delta: { content: 'Current preference delivered.' }, finish_reason: 'stop' }] };
+  } });
+  const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(join(fixture.root, 'workspace'))).digest('hex'),
+    userId: 'local-user', agentId: fixture.record.metadata.id };
+  writer = new SqliteNativeMemoryProvider(join(fixture.root, 'native-harness/memory-v1', memoryDigest('local').slice(7), 'memory.sqlite'),
+    { principal: scope });
+  t.after(() => writer.close());
+  const candidate = nativeUserMemoryCandidate({ text: '记住：My preferred editor is Vim', sourceEventId: 'seed-user',
+    ...nativeMemoryScopeBindings(scope)[0] });
+  memoryId = writer.applyCandidate({ candidate, operationKey: 'seed', sourceSessionId: 'other-session', sourceDigest: memoryDigest(candidate.content) }).memoryId;
+  const definition = { name: 'observe', description: 'Read a fixture', parameters: { type: 'object', properties: {} },
+    readOnly: true, concurrentSafe: true, permissions: [], timeoutMs: 1000,
+    contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' };
+  fixture.payload.binding.nativeTools.definitions = () => [definition];
+  fixture.payload.binding.nativeTools.forAgent = () => ({ tools: { execute: async () => ({ status: 'ok', content: 'Observed' }) } });
+  fixture.payload.input.messages[0].content[0].text = 'preferred editor';
+  await fixture.host.executeTurn(fixture.payload);
+  assert.deepEqual(observed, ['My preferred editor is Vim', 'My preferred editor is Emacs']);
+  assert.equal(fixture.head().phase, 'completed');
+  const run = fixture.ledger.load(scope, fixture.head().runId);
+  assert.equal(run.configuration.contextSources[0].sourceId, 'studio.memory-recall');
+  assert.equal(run.snapshot.messages.some(message => message.kind === 'context_contribution'), false);
+  assert.ok(run.receipts.filter(receipt => receipt.result.contributions).every(receipt => receipt.result.contributions.sources[0].status === 'ok'));
 });
 test('Studio Native Host pins revision/input/model while refreshing credentials outside its ledger', async t => {
   const fixture = await setup(t);

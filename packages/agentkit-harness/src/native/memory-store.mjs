@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { canonical, copy, invariant } from '../../../agentkit-harness-core/dist/index.mjs';
 import { NATIVE_MEMORY_CANDIDATE, NATIVE_USER_EXTRACTION_POLICY, nativeMemoryScopeBindings,
   memoryDigest, deriveMemoryProfileSlotKey, evaluateNativeMemoryCandidate, nativeMemorySensitiveLabels } from './memory-candidate.mjs';
+import { admitNativeMemoryRecords, nativeMemoryQueryTerms, nativeMemoryKeywordCoverage } from './memory-recall.mjs';
 
 export const NATIVE_MEMORY_STORE = 'agentkit.native-memory-store/v1';
 const text = value => typeof value === 'string' && !!value.trim();
@@ -191,6 +192,28 @@ export class SqliteNativeMemoryProvider {
     };
     this.receipt = (operationKey, requestDigest) => copy(receipt(operationKey, requestDigest));
     this.get = memoryId => copy(get(memoryId));
+    this.search = ({ query, topK = 8, minScore = .45, now = Date.now() } = {}) => {
+      open();
+      invariant(Number.isSafeInteger(topK) && topK >= 1 && topK <= 64 && Number.isFinite(minScore)
+        && minScore >= 0 && minScore <= 1 && Number.isFinite(now), 'native_memory_search_invalid');
+      const terms = nativeMemoryQueryTerms(query);
+      if (!namespaces.length) return { status: 'ok', records: [], retrievalStrategy: 'keyword', provider: 'local-default' };
+      try {
+        const match = terms.map(() => '(instr(lower(json_extract(data,\'$.content\')),?)>0 OR instr(lower(json_extract(data,\'$.summary\')),?)>0)');
+        const score = terms.map(() => "CASE WHEN instr(lower(json_extract(data,'$.content')),?)>0 THEN 1 ELSE 0 END");
+        const rows = db.prepare(`SELECT data FROM memory_records WHERE namespace IN (${namespaces.map(() => '?').join(',')})
+          AND json_extract(data,'$.status')='active' AND json_extract(data,'$.memoryType') IN ('profile','fact','episode')
+          ${terms.length ? 'AND (' + match.join(' OR ') + ')' : ''}
+          ORDER BY ${terms.length ? '(' + score.join('+') + ') DESC,' : ''}
+            json_extract(data,'$.importance') DESC,json_extract(data,'$.updatedAt') DESC LIMIT ?`)
+          .all(...namespaces, ...terms.flatMap(term => [term, term]), ...terms, Math.max(topK, 32));
+        const records = admitNativeMemoryRecords(rows.map(row => JSON.parse(row.data)), { principal: owner, scopes, now })
+          .filter(record => nativeMemoryKeywordCoverage(query, record.content) >= minScore)
+          .sort((a, b) => nativeMemoryKeywordCoverage(query, b.content) - nativeMemoryKeywordCoverage(query, a.content))
+          .slice(0, topK);
+        return { status: 'ok', records, retrievalStrategy: 'keyword', provider: 'local-default' };
+      } catch { return { status: 'failed', records: [], errorCode: 'provider_error', retrievalStrategy: 'keyword', provider: 'local-default' }; }
+    };
     this.list = ({ limit = 64, includeDeleted = false } = {}) => {
       open(); invariant(Number.isSafeInteger(limit) && limit > 0 && limit <= 1000, 'native_memory_list_invalid');
       if (!namespaces.length) return [];

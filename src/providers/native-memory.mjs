@@ -14,11 +14,16 @@ export function studioNativeMemoryPolicy(spec) {
   const memory = spec.memory ?? {};
   const policy = { enabled: memory.enabled ?? false, providerRef: memory.providerRef ?? 'local-default',
     scopes: memory.scopes ?? ['workspace', 'agent', 'user'],
+    recall: { enabled: memory.recall?.enabled ?? true, maxTokens: memory.recall?.maxTokens ?? 1600,
+      topK: memory.recall?.topK ?? 8, minScore: memory.recall?.minScore ?? .45 },
     write: { mode: memory.write?.mode ?? 'candidate', flushBeforeCompaction: memory.write?.flushBeforeCompaction ?? true,
       flushAfterTurn: memory.write?.flushAfterTurn ?? true },
     rollout: spec.context?.rollout?.memoryWrite ?? 'shadow' };
   invariant(typeof policy.enabled === 'boolean' && typeof policy.providerRef === 'string'
     && Array.isArray(policy.scopes) && policy.scopes.every(scope => ['tenant', 'workspace', 'agent', 'user'].includes(scope))
+    && typeof policy.recall.enabled === 'boolean' && Number.isSafeInteger(policy.recall.maxTokens) && policy.recall.maxTokens >= 0
+    && Number.isSafeInteger(policy.recall.topK) && policy.recall.topK >= 1 && policy.recall.topK <= 64
+    && Number.isFinite(policy.recall.minScore) && policy.recall.minScore >= 0 && policy.recall.minScore <= 1
     && ['off', 'explicit_only', 'candidate'].includes(policy.write.mode)
     && typeof policy.write.flushBeforeCompaction === 'boolean' && typeof policy.write.flushAfterTurn === 'boolean'
     && ['off', 'shadow', 'enabled'].includes(policy.rollout), 'studio_native_memory_policy_invalid');

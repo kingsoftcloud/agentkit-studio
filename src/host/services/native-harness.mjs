@@ -9,6 +9,7 @@ import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src
 import { createNativeChildHistory } from '../../../packages/agentkit-harness/src/native/child-history.mjs';
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
+import { bindStudioNativeMemoryRecall } from '../../providers/native-memory-recall.mjs';
 import { bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
 import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATION_CONTRACT } from '../../providers/native-verification.mjs';
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
@@ -178,6 +179,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       if (ownedChildren) childOwners.add(ownedChildren);
       signal.throwIfAborted();
       const hookOptions = { scope, sessionId: String(agent.session.id), record, buildId: binding.buildId ?? null, store };
+      const memoryRecall = bindStudioNativeMemoryRecall({ ...hookOptions, storeDir });
       const memoryHooks = bindStudioNativeMemoryFlush({ ...hookOptions, storeDir, contextWindow: context.profile.contextWindow });
       let registeredHooks, hooks;
       try { registeredHooks = hookRegistry?.bind(hookOptions); hooks = composeStudioNativeHooks(registeredHooks, memoryHooks); }
@@ -198,11 +200,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         },
         taskContractFactory: facts => nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
         configuration: { profile: parentModel.profile,
+        ...(memoryRecall ? { contextSources: [memoryRecall.source] } : {}),
         ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
         hostRecoveryBinding: nativeRecoveryBinding({ binding, input, source, selection, systemPrompt }),
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
           interactionContract: STUDIO_NATIVE_INTERACTION_CONTRACT,
+          ...(memoryRecall ? { contextSources: [memoryRecall.source] } : {}),
           ...(hooks ? { hookContract: STUDIO_NATIVE_HOOK_CONTRACT, hooks: hooks.definitions,
             stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
           ...(children ? { childContract: STUDIO_NATIVE_CHILD_CONTRACT, childRoles: roles } : {}),
@@ -227,7 +231,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...roles.map(role => role.timeoutSeconds * 1000 + 15000), ...tools.map(tool => tool.timeoutMs + 10000)) } },
         ports: { ...binding.nativeTools.forAgent(agent, { scope, store, ...(children ? { children } : {}) }),
           ...(hooks ? { hooks } : {}),
-          ...(children ? { children: children.owner } : {}), verification, context: context.port, input: { prepare: async request => {
+          ...(children ? { children: children.owner } : {}), verification,
+          context: { ...context.port, ...(memoryRecall ? { readSource: memoryRecall.readSource } : {}) }, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);
           request.signal.throwIfAborted();

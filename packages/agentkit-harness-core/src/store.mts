@@ -7,6 +7,7 @@ import { isCommandObservationBatch } from './background-runtime.mjs';
 import { isChildReadyBatch } from './child-runtime.mjs';
 import { validateChildControlDelivery } from './child-control.mjs';
 import { guidanceRunnable } from './guidance.mjs';
+import { isContextSourceRefreshBatch } from './context-source-refresh.mjs';
 
 /** The backend must serialize read/modify/write atomically, including failures. */
 export interface LedgerBackend {
@@ -178,9 +179,11 @@ export class TransactionalRunStore implements RunStore {
           && next.phase === 'finalizing' && next.childTerminalPhase === (command.kind === 'cancel' ? 'canceled' : 'failed')
           && receipt.result.commandId === command.commandId && receipt.result.code === 'superseded_before_dispatch'
           && receipt.result.executed === false;
+        const sourceRefreshed = intent?.kind === 'model' && receipt.result.code === 'context_source_refresh_required'
+          && isContextSourceRefreshBatch(previous, record.configuration, intent, lease.fence, batch);
         const undispatched = receipt.status === 'not_dispatched' && intent?.status === 'prepared'
           && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null
-          && (steeringRetired || browserRetired || backgroundRetired || childRetired || childCancelRetired);
+          && (steeringRetired || browserRetired || backgroundRetired || childRetired || childCancelRetired || sourceRefreshed);
         invariant((receipt.status === 'not_dispatched' ? undispatched : intent?.status === 'running')
           && !record.receipts.some(item => item.operationKey === receipt.operationKey), 'receipt_without_claim');
       }

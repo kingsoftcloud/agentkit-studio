@@ -4,6 +4,7 @@ import { canonical, copy, invariant, scopeKey } from './values.mjs';
 import { validateSubmissionContract } from './final-submission.mjs';
 import { compileToolInput } from './tool-input.mjs';
 import { validateHookDefinition } from './hook-contract.mjs';
+import { validateContextSource } from './context-contributions.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -145,6 +146,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     && config.delegationDepth <= limits.maxSubagentDepth, 'subagent_depth_exhausted');
   invariant(new Set(config.hooks.map(hook => hook.hookId)).size === config.hooks.length, 'duplicate_hook');
   invariant(new Set(config.contextSources.map(source => source.sourceId)).size === config.contextSources.length, 'duplicate_context_source');
+  for (const source of config.contextSources) validateContextSource(source, limits.effectTimeoutMs);
+  invariant(!config.contextSources.length || config.contextPolicy, 'context_source_counter_required');
   invariant(config.hooks.every(hook => hook.timeoutMs > 0 && hook.timeoutMs < limits.effectTimeoutMs), 'invalid_hook_timeout');
   for (const hook of config.hooks) validateHookDefinition(hook);
   invariant(Number.isSafeInteger(config.stopHookContinuationLimit) && config.stopHookContinuationLimit >= 0, 'invalid_stop_hook_limit');

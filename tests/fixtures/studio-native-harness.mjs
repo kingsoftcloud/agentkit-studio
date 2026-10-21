@@ -57,7 +57,7 @@ async function applyProof(ctx, options) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
         ...(options.memory ? { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
-          recall: { enabled: false }, write: { mode: 'candidate', flushBeforeCompaction: true, flushAfterTurn: false } },
+          recall: { enabled: true }, write: { mode: 'candidate', flushBeforeCompaction: true, flushAfterTurn: false } },
           context: { maxInputTokens: 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
             compaction: { thresholdRatio: .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl

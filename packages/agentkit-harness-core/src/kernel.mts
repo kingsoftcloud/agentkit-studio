@@ -17,6 +17,9 @@ import { contextSourceDigest, modelContextMessages, validateContextMessages } fr
 import { assertHookFeedbackRetained, deniedByHook, reduceHook, stagePostHooks } from './hook-runtime.mjs';
 import { hookBytes, hookResult } from './hook-contract.mjs';
 import { planNativeContext, reduceContextModel } from './context-planning.mjs';
+import type { ContextCounters } from './context-planning.mjs';
+import { collectContextContributions } from './context-contributions.mjs';
+import { refreshContextSources } from './context-source-refresh.mjs';
 import { reduceTurnInput } from './turn-input.mjs';
 import { modelStreamCapture } from './model-stream.mjs';
 import { browserRecoveryTransition } from './browser-runtime.mjs';
@@ -309,6 +312,11 @@ export class NativeKernel {
           catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
           continue;
         }
+        const refreshed = refreshContextSources(snapshot, config, backgroundIntent, lease.fence);
+        if (refreshed) {
+          this.commit(snapshot, lease, refreshed);
+          continue;
+        }
         if (snapshot.pendingIntent !== null) {
           const intent = record.intents.find(item => item.operationKey === snapshot.pendingIntent);
           invariant(intent, 'pending_intent_missing');
@@ -560,17 +568,19 @@ export class NativeKernel {
             changes = { pendingIntent: null, contextState: result.state, preparedContext: null,
               phase: result.action === 'compact' ? 'compacting' : result.action === 'blocked' ? 'finalizing' : 'preparing_context',
               ...(result.action === 'blocked' ? { outcome: 'blocked' as const, reason: result.reason } : {}),
-              context: { ...snapshot.context, preparedCursor: intent.payload.cursor ?? null } };
+              context: { ...snapshot.context, preparedCursor: intent.payload.cursor ?? null,
+                ...(raw.contributions ? { contributions: objectValue(raw.contributions) } : {}) } };
             if (result.action === 'ready') {
               invariant(result.admission && result.admission.sourceDigest === contextSourceDigest(snapshot, this.digest)
                 && result.admission.countedInputTokens + result.admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
               changes.preparedContext = { messages: validateContextMessages(result.messages), sourceDigest: result.admission.sourceDigest,
-                admission: result.admission };
+                admission: result.admission, ...(configuration.contextSources.length ? { sourceFence: executionFence } : {}) };
               assertHookFeedbackRetained(snapshot, changes.preparedContext.messages);
               assertGuidanceRetained(snapshot, changes.preparedContext.messages);
             }
             facts.push({ kind: 'context.planned', payload: { action: result.action, reason: result.reason,
-              admission: result.admission as unknown as ObjectValue | null, compactions: result.state.compactions } });
+              admission: result.admission as unknown as ObjectValue | null, compactions: result.state.compactions,
+              ...(raw.contributions ? { contributions: objectValue(raw.contributions) } : {}) } });
             break;
           }
           assertHookFeedbackRetained(snapshot, validateContextMessages(raw.messages));
@@ -742,7 +752,7 @@ export class NativeKernel {
           const assertBinding = () => invariant(counter && counter.tokenizerId === policy.tokenizerId && counter.tokenizerDigest === policy.tokenizerDigest, 'context_tokenizer_binding_mismatch');
           assertBinding();
           invariant(counter, 'context_tokenizer_binding_mismatch');
-          return planNativeContext(snapshot, configuration, advertisedTools(snapshot, configuration), {
+          const counters: ContextCounters = {
             countRequest: async (messages, tools, purpose, maxOutputTokens) => {
               context.signal.throwIfAborted(); assertBinding();
               const count = await counter.countRequest({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens },
@@ -750,9 +760,17 @@ export class NativeKernel {
                 maxInlineImageBytes: configuration.limits.maxInlineImageBytes });
               context.signal.throwIfAborted(); assertBinding(); return count;
             },
-            countText: async text => { context.signal.throwIfAborted(); assertBinding(); const count = await counter.countText({ ...context, text });
+            countText: async (text: string) => { context.signal.throwIfAborted(); assertBinding(); const count = await counter.countText({ ...context, text });
               context.signal.throwIfAborted(); assertBinding(); return count; },
-          }, this.digest, intent.payload.forceCompaction === true, intent.payload.allowCompaction !== false);
+          };
+          const collected = await collectContextContributions(context, snapshot, configuration, this.ports.context,
+            messages => counters.countRequest(messages, [], 'task', configuration.profile.maxOutputTokens));
+          const planned = await planNativeContext(snapshot, configuration, advertisedTools(snapshot, configuration), counters,
+            this.digest, intent.payload.forceCompaction === true, intent.payload.allowCompaction !== false, collected.messages);
+          return configuration.contextSources.length ? { ...planned, contributions: { sources: collected.diagnostics.map(source => ({
+            ...source, budgeted: source.admitted ?? 0, admitted: planned.messages.filter(message => message.kind === 'context_contribution'
+              && JSON.parse(message.content).sourceId === source.sourceId).length,
+          })) } } : planned;
         }
         invariant(this.ports.context.prepare, 'context_prepare_port_missing');
         return this.ports.context.prepare({ ...context, snapshot: copy(snapshot), configuration: copy(configuration), forceCompaction: intent.payload.forceCompaction === true });
