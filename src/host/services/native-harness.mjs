@@ -6,6 +6,7 @@ import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sq
 import { createNativeModelPort } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
 import { createNativeDshTurnExecutor, NATIVE_DSH_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
+import { createNativeChildHistory } from '../../../packages/agentkit-harness/src/native/child-history.mjs';
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
 import { bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
@@ -56,6 +57,16 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     const control = controls.get(controlKey(request.agentId, request.sessionId));
     invariant(control && (request.runId === undefined || request.runId === control.runId), 'studio_native_child_control_run_unavailable');
     return control;
+  };
+  const childHistory = request => {
+    invariant(!closed && typeof request?.agentId === 'string' && request.agentId.trim()
+      && request.agentId.length <= 256, 'studio_native_child_history_invalid');
+    const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: request.agentId };
+    return createNativeChildHistory({ scope, store, liveTasks: runId => {
+      const control = controls.get(controlKey(request.agentId, request.sessionId));
+      return control?.runId === runId && store.load(scope, runId).configuration.childLifecyclePolicy === 'owned-background/v2'
+        ? control.kernel.childTasks(scope, runId) : [];
+    } });
   };
   const execute = createNativeDshTurnExecutor({ store, projections, flush: session => sessions.flush(session),
     publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),
@@ -224,6 +235,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     },
   });
   return {
+    childHistory(request) { return childHistory(request).list(request); },
+    childResult(request) { return childHistory(request).result(request); },
     childTasks(request) {
       const { kernel, scope, runId } = controlFor(request);
       return { contract: 'agentkit.studio-native-child-control/v1', runId, tasks: kernel.childTasks(scope, runId) };

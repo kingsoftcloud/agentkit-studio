@@ -105,6 +105,36 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   return { host, payload, ledger, gateway, roles, requests, dispatches, record, scope, modelValues: values, childModels: () => childModels };
 }
 for (const sqlite of [false, true]) {
+  test(`${sqlite ? 'sqlite' : 'memory'}: Host child history spans only its parent Session and reads original settled pages without execution`, async t => {
+    const text = '首段😀子任务证据';
+    const f = await setup(t, { sqlite, childTool: 'native_delegate', childResult: text });
+    await f.host.executeTurn(f.payload);
+    const input = { agentId: f.record.metadata.id, sessionId: 'parent-session' };
+    const first = f.host.childHistory(input), original = f.ledger.load(f.scope, first.runId);
+    assert.equal(first.contract, 'agentkit.studio-native-child-history/v1'); assert.equal(first.tasks.length, 1);
+    assert.equal(first.tasks[0].resultAvailable, true); assert.equal(first.tasks[0].canPromote, false);
+    assert.equal(first.tasks[0].usageIncludedInParent, true); assert.equal(first.tasks[0].usage.modelCalls, 2);
+    const childRunId = first.tasks[0].childRunId;
+    const page = f.host.childResult({ ...input, childRunId, offset: 2, limit: 3 });
+    assert.equal(page.text, [...text].slice(2, 5).join('')); assert.equal(page.parentAcceptance, 'not_evaluated');
+    assert.equal(page.nextOffset, 5); assert.equal(page.complete, false);
+    const counts = { requests: f.requests.length, tools: f.dispatches.length };
+    const repeated = f.host.childResult({ ...input, childRunId }); assert.equal(repeated.text, text);
+    assert.deepEqual({ requests: f.requests.length, tools: f.dispatches.length }, counts);
+    f.payload.agent.session.append('turn/start', { turn: 2 });
+    await f.host.executeTurn({ ...f.payload, turn: 2 });
+    const history = f.host.childHistory(input);
+    assert.notEqual(history.runId, first.runId); assert.equal(history.tasks.length, 1);
+    assert.equal(history.tasks[0].parentRunId, first.runId); assert.equal(history.tasks[0].childRunId, childRunId);
+    assert.equal(f.host.childResult({ ...input, childRunId }).text, text);
+    assert.equal(f.host.childHistory({ ...input, runId: first.runId }).runId, first.runId);
+    assert.throws(() => f.host.childHistory({ ...input, offset: 1, inventoryDigest: first.inventoryDigest }), /inventory_changed/);
+    assert.throws(() => f.host.childHistory({ ...input, sessionId: 'other', runId: first.runId }), /run_unavailable/);
+    assert.throws(() => f.host.childResult({ ...input, agentId: 'other', childRunId }), /result_unavailable/);
+    assert.throws(() => f.host.childResult({ ...input, childRunId: 'guessed-child' }), /result_unavailable/);
+    assert.deepEqual(f.ledger.load(f.scope, first.runId), original);
+  });
+
   test(`${sqlite ? 'sqlite' : 'memory'}: Studio Host promotes an admitted foreground child before parent continuation`, { timeout: 15000 }, async t => {
     let entered, release, continued = false;
     const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
@@ -120,6 +150,10 @@ for (const sqlite of [false, true]) {
     const input = { agentId: f.record.metadata.id, sessionId: 'parent-session' };
     const route = createSessionRoutes({ getNativeHost: async () => f.host });
     const state = (await route('sessions/native-child-tasks', input)).value;
+    const live = f.host.childHistory(input);
+    assert.equal(live.tasks.length, 1); assert.equal(live.tasks[0].childRunId, state.tasks[0].childRunId);
+    assert.equal(live.tasks[0].resultAvailable, false); assert.equal(live.tasks[0].canPromote, true);
+    assert.equal(live.tasks[0].usageIncludedInParent, false);
     assert.equal(state.contract, 'agentkit.studio-native-child-control/v1'); assert.equal(state.tasks.length, 1);
     assert.equal(state.tasks[0].canPromote, true);
     assert.throws(() => f.host.childTasks({ ...input, agentId: 'another-agent' }), /control_run_unavailable/);

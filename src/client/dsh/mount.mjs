@@ -133,6 +133,9 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
     { name: 'conversation.session.header.actions', id: 'agentkit-studio-cloud-status', order: -10 }, CloudSessionStatus,
   ));
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+    { name: 'conversation.session.header.actions', id: 'agentkit-studio-native-children', order: -9 }, ui.NativeChildPanel,
+  ));
 
   // Authoring entry: only the hero selector keeps the "创建 Agent" button.
   // The composer-left injection was removed — conversation authoring is a

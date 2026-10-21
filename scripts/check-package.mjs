@@ -29,6 +29,8 @@ const expected = [
   'packages/agentkit-harness/src/native/child-owner.mjs',
   'packages/agentkit-harness/src/native/child-tools.mjs',
   'packages/agentkit-harness/src/native/child-readers.mjs',
+  'packages/agentkit-harness/src/native/child-history.mjs',
+  'src/client/state/native-children.mjs', 'src/client/dsh/native-children.mjs',
   'src/providers/native-subagents.mjs',
   'scripts/verify-studio-native-children.mjs',
   'tests/fixtures/studio-native-children.mjs',

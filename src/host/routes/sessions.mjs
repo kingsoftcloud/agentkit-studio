@@ -1,6 +1,24 @@
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-child-history' || endpoint === 'sessions/native-child-result') {
+            const result = endpoint === 'sessions/native-child-result';
+            const allowed = ['agentId', 'sessionId', 'runId', 'offset', 'limit', ...(result ? ['childRunId'] : ['inventoryDigest'])];
+            const required = ['agentId', 'sessionId', ...(result ? ['childRunId'] : [])];
+            if (!payload || Array.isArray(payload) || Object.keys(payload).some(key => !allowed.includes(key))
+                || required.some(key => typeof payload[key] !== 'string' || !payload[key].trim() || payload[key].length > 256)
+                || payload.runId !== undefined && (typeof payload.runId !== 'string' || !payload.runId.trim() || payload.runId.length > 256)
+                || payload.offset !== undefined && (!Number.isSafeInteger(payload.offset) || payload.offset < 0)
+                || payload.limit !== undefined && (!Number.isSafeInteger(payload.limit) || payload.limit < 1 || payload.limit > (result ? 16000 : 64))
+                || !result && payload.inventoryDigest !== undefined && (typeof payload.inventoryDigest !== 'string' || !/^[0-9a-f]{64}$/.test(payload.inventoryDigest)))
+                throw Object.assign(new Error('Invalid Native child history request'), { code: 'STUDIO_NATIVE_CHILD_HISTORY_INVALID' });
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native child history unavailable'), { code: 'STUDIO_NATIVE_CHILD_HISTORY_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: result ? host.childResult(payload) : host.childHistory(payload) };
+        }
         if (endpoint === 'sessions/native-child-tasks' || endpoint === 'sessions/native-child-promote') {
             const promote = endpoint === 'sessions/native-child-promote';
             const allowed = promote ? ['agentId', 'sessionId', 'runId', 'childRunId', 'commandId'] : ['agentId', 'sessionId', 'runId'];

@@ -1,4 +1,5 @@
 import { createNativeHostRemote } from './remote/node-client.mjs';
+import { validateOperationResponse } from './contracts/transport.mjs';
 /**
  * Narrow browser-to-AgentKit Host transport used by the Studio product layer.
  *
@@ -106,6 +107,15 @@ export function createStudioHostRemote(options = {}) {
     return result;
   }
 
+  async function nativeChildOperation(operation, payload, signal) {
+    const reply = await request('/agentkit', { method: 'POST', body: JSON.stringify({ method: operation, payload }), signal });
+    const envelope = reply?.result;
+    validateOperationResponse(operation, envelope);
+    if (!envelope.ok) throw new StudioHostError(envelope.error?.message || 'Native child operation failed', {
+      code: envelope.error?.code, status: envelope.error?.status, details: envelope.error?.details });
+    return envelope.value;
+  }
+
   return {
     get csrfToken() { return csrfToken; },
     get sessionToken() { return sessionToken; },
@@ -172,6 +182,9 @@ export function createStudioHostRemote(options = {}) {
     trace: id => request(`/api/v1/traces/${encodeURIComponent(id)}`),
     traceOtlp: id => request(`/api/v1/traces/${encodeURIComponent(id)}/otlp`),
     exportSessionLog: (id, query = '') => request(`/api/v1/sessions/${encodeURIComponent(id)}:export${query ? `?${query}` : ''}`),
+    nativeChildHistory: (payload, signal) => nativeChildOperation('sessions/native-child-history', payload, signal),
+    nativeChildResult: (payload, signal) => nativeChildOperation('sessions/native-child-result', payload, signal),
+    promoteNativeChild: (payload, signal) => nativeChildOperation('sessions/native-child-promote', payload, signal),
     channelConnection: () => request('/api/v1/channels/connection'),
     updateChannelConnection: payload => request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
     updateAgentChannelConnection: (id, payload) => request(`/api/v1/channels/agents/${encodeURIComponent(id)}/connection`, { method: 'PUT', body: JSON.stringify(payload) }),

@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
-  promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' } } });
+  promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-'));
@@ -48,6 +48,14 @@ const server = createServer(async (request, response) => {
         if (values.promote && turn === 1) {
           const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
           const state = await control('sessions/native-child-tasks', { agentId, sessionId: 'native-child-parent' });
+          if (values.history) {
+            const live = await control('sessions/native-child-history', { agentId, sessionId: 'native-child-parent' });
+            assert.equal(live.tasks.length, 1); assert.equal(live.tasks[0].childRunId, state.tasks[0].childRunId);
+            assert.equal(live.tasks[0].canPromote, true); assert.equal(live.tasks[0].resultAvailable, false);
+            assert.equal(live.tasks[0].usageIncludedInParent, false);
+            const pending = await control('sessions/native-child-result', { agentId, sessionId: 'native-child-parent', childRunId: state.tasks[0].childRunId });
+            assert.equal(pending.text, ''); assert.equal(pending.task.resultAvailable, false);
+          }
           assert.equal(state.tasks.length, 1); assert.equal(state.tasks[0].canPromote, true); assert.equal(state.tasks[0].delivery, 'foreground');
           promotion = { agentId, sessionId: 'native-child-parent', runId: state.runId, childRunId: state.tasks[0].childRunId,
             commandId: 'actual-sdk-promote' };
@@ -139,7 +147,30 @@ try {
       ...(turn === 2 ? ['submit_final_output'] : [])];
     assert.deepEqual(tools.map(event => event.data.name), expectedTools);
     assert.equal(result.events.filter(event => event.type === 'tool/result').length, expectedTools.length);
-    if (turn === 1) { await harness.close(); harness = new DeepSeekHarness(options); session = await harness.resumeSession('native-child-parent'); }
+    if (values.history) {
+      const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
+      const identity = { agentId, sessionId: 'native-child-parent' };
+      const history = await control('sessions/native-child-history', { ...identity, limit: 1 });
+      assert.equal(history.contract, 'agentkit.studio-native-child-history/v1'); assert.equal(history.totalTasks, turn);
+      assert.equal(history.tasks[0].parentRunId, history.runId); assert.equal(history.tasks[0].resultAvailable, true);
+      assert.equal(history.tasks[0].usageIncludedInParent, true); assert.equal(history.tasks[0].canPromote, false);
+      const saved = await control('sessions/native-child-result', { ...identity, childRunId: firstChildId, offset: 2, limit: 5 });
+      assert.equal(saved.text, [...'Child evidence 1'].slice(2, 7).join('')); assert.equal(saved.parentAcceptance, 'not_evaluated');
+      if (!history.complete) {
+        const next = await control('sessions/native-child-history', { ...identity, offset: history.nextOffset, inventoryDigest: history.inventoryDigest, limit: 1 });
+        assert.equal(next.complete, true); assert.equal(next.tasks[0].childRunId, firstChildId);
+        assert.notEqual(next.tasks[0].parentRunId, history.runId);
+      }
+    }
+    if (turn === 1) {
+      await harness.close(); harness = new DeepSeekHarness(options); session = await harness.resumeSession('native-child-parent');
+      if (values.history) {
+        const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
+        const restored = await control('sessions/native-child-history', { agentId, sessionId: 'native-child-parent' });
+        assert.equal(restored.tasks.length, 1); assert.equal(restored.tasks[0].childRunId, firstChildId);
+        assert.equal(restored.tasks[0].resultAvailable, true); assert.equal(restored.tasks[0].canPromote, false);
+      }
+    }
   }
   await harness.close(); harness = null;
   assert.deepEqual(failures, []); assert.equal(requests.filter(body => body.model === 'child-proof').length, 4);
@@ -189,7 +220,7 @@ try {
     }
     assert.equal(JSON.stringify(parents).includes('child-proof-secret'), false);
   } finally { store.close(); }
-  console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
+  console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
 } finally {
   releaseChild();
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
