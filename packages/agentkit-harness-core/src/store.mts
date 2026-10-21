@@ -2,6 +2,7 @@ import { commandPriority, terminal } from './contracts.mjs';
 import type { CommandReceipt, CommitBatch, EffectIntent, Lease, RunCommand, RunConfiguration, RunScope, RunSnapshot, RunStore, StoredRun } from './contracts.mjs';
 import { canonical, copy, invariant, runKey, scopeKey } from './values.mjs';
 import { transcriptExtends } from './context-view.mjs';
+import { isCommandObservationBatch } from './background-runtime.mjs';
 
 /** The backend must serialize read/modify/write atomically, including failures. */
 export interface LedgerBackend {
@@ -146,8 +147,10 @@ export class TransactionalRunStore implements RunStore {
           && (previous.browserSessionRefs?.length || previous.lastBrowserObservation)
           && batch.events.some(event => event.kind === 'browser.recovered' && ['lost', 'restarted'].includes(String(event.payload.status)))
           && batch.requireNoPendingCommands;
+        const backgroundRetired = intent?.kind === 'model' && receipt.result.code === 'superseded_by_background_observation'
+          && receipt.result.executed === false && isCommandObservationBatch(previous, record.configuration, batch, intent);
         const undispatched = receipt.status === 'not_dispatched' && intent?.status === 'prepared'
-          && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null && (steeringRetired || browserRetired);
+          && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null && (steeringRetired || browserRetired || backgroundRetired);
         invariant((receipt.status === 'not_dispatched' ? undispatched : intent?.status === 'running')
           && !record.receipts.some(item => item.operationKey === receipt.operationKey), 'receipt_without_claim');
       }

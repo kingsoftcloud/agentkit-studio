@@ -15,6 +15,7 @@ export interface ConfigurationInput {
   contextPolicy?: RunConfiguration['contextPolicy'];
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
   inputMessages?: Message[] | null;
+  backgroundNotificationPolicy?: RunConfiguration['backgroundNotificationPolicy'];
 }
 export function configure(input: ConfigurationInput): RunConfiguration {
   const profile: ModelProfile = {
@@ -36,6 +37,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     engine: NATIVE_ENGINE, profile, limits,
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     inputMessages: input.inputMessages ?? null,
+    ...(input.backgroundNotificationPolicy === undefined ? {} : { backgroundNotificationPolicy: input.backgroundNotificationPolicy }),
     contextSources: input.contextSources ?? [], hooks: input.hooks ?? [],
     contextPolicy: input.contextPolicy ?? null,
     workspaceObservationPolicy: input.workspaceObservationPolicy ?? null,
@@ -84,6 +86,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(!tool.concurrentSafe || tool.readOnly && tool.observationRole === 'none', 'invalid_tool_concurrency');
     invariant(!tool.delegatedReadOnly || tool.concurrentSafe, 'invalid_delegated_reader');
     invariant(!tool.backgroundCommandPolicy || !tool.readOnly && !tool.concurrentSafe, 'invalid_background_launcher');
+    invariant(tool.backgroundCommandPolicy === undefined || tool.backgroundCommandPolicy === 'owned-command-launch/v1', 'invalid_background_launcher_policy');
     invariant(tool.recoveryPolicy === undefined || ['manual', 'safe-read/v1'].includes(tool.recoveryPolicy), 'invalid_tool_recovery_policy');
     invariant(tool.recoveryPolicy !== 'safe-read/v1' || tool.readOnly && tool.observationRole === 'none'
       && !tool.delegatedReadOnly && !tool.childBudgetPolicy && !tool.backgroundCommandPolicy, 'invalid_safe_read_recovery');
@@ -105,6 +108,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(!config.hooks.some(hook => hook.events.includes('Stop')) || config.stopHookContinuationLimit > 0, 'stop_hook_requires_limit');
   invariant(['text', 'json_object', 'json_value'].includes(config.contract.finalOutputFormat), 'invalid_final_output_format');
   invariant(['manual', 'pure-inference/v1'].includes(config.modelRecoveryPolicy), 'invalid_model_recovery_policy');
+  invariant(config.backgroundNotificationPolicy === undefined || config.backgroundNotificationPolicy === null
+    || config.backgroundNotificationPolicy === 'completed-before-model/v1', 'invalid_background_notification_policy');
   if (config.contextPolicy) {
     const policy = config.contextPolicy;
     invariant(typeof policy.tokenizerId === 'string' && policy.tokenizerId.trim() && typeof policy.tokenizerDigest === 'string' && policy.tokenizerDigest.trim()

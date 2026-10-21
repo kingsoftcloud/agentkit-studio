@@ -9,6 +9,7 @@ import { toolContext, deferredToolContexts } from './tool-context.mjs';
 import { reduceBrowserReceipt } from './browser-runtime.mjs';
 import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObservation } from './task-policy.mjs';
 import { checkpointCandidate, finishCheckpoint } from './verification.mjs';
+import { rememberCommand } from './background-runtime.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -295,6 +296,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   invariant(results.length === calls.length && calls.length > 0
     && canonical(snapshot.pendingTools.slice(0, calls.length)) === canonical(calls), 'tool_receipt_mismatch');
   let updated = { ...copy(snapshot), browserSessionRefs: copy(snapshot.browserSessionRefs ?? []),
+    backgroundCommands: copy(snapshot.backgroundCommands),
     browserReobservationRefs: copy(snapshot.browserReobservationRefs ?? []), lastBrowserObservation: snapshot.lastBrowserObservation ?? null,
     lastBrowserAttemptToolCall: snapshot.lastBrowserAttemptToolCall ?? null,
     lastWebMutationToolCall: snapshot.lastWebMutationToolCall ?? null,
@@ -305,12 +307,13 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     const result = copy(results[index]!);
     invariant(['ok', 'error', 'approval_required', 'uncertain'].includes(result.status), 'invalid_tool_result');
     if (calls.length > 1 && (result.status === 'approval_required' || result.status === 'uncertain'
-      || result.workspaceChangedPaths?.length || result.childRunIds?.length || result.browserSessionRef || result.browserObservation
+      || result.workspaceChangedPaths?.length || result.childRunIds?.length || result.browserSessionRef || result.browserObservation || result.backgroundCommandRef
       || (result.resourceUsage?.modelCalls ?? 0) > 0)) {
       return { pendingIntent: null, phase: 'finalizing', outcome: 'blocked', reason: 'parallel_readonly_contract_violation',
         usage: { ...snapshot.usage, toolCalls: snapshot.usage.toolCalls + calls.length } };
     }
     if (result.status === 'approval_required') {
+      invariant(result.backgroundCommandRef === undefined, 'background_command_before_approval');
       invariant(typeof result.interactionId === 'string' && result.interactionId.trim(), 'approval_identity_missing');
       return { pendingIntent: null, phase: 'awaiting_interaction', pendingInteraction: {
         interactionId: `${intent.operationKey}:approval`, hostInteractionId: result.interactionId, callId: call.callId, operationKey: intent.operationKey } };
@@ -321,13 +324,15 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       updated.lastWorkspaceMutationToolCall = updated.usage.toolCalls;
     }
     const definition = config.tools.find(tool => tool.name === call.name);
+    updated.backgroundCommands = rememberCommand(updated, result, definition);
     if (invalidatesBrowserObservation(result, config)) updated.lastWebMutationToolCall = updated.usage.toolCalls;
     if (definition) {
       updated.unresolvedInteractionObservation = advanceInteractionObservation(updated.unresolvedInteractionObservation,
         definition, updated.usage.toolCalls, result, digest);
       Object.assign(updated, reduceBrowserReceipt(updated, result, definition, call, digest));
     }
-    const browserFields = { browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
+    const browserFields = { backgroundCommands: updated.backgroundCommands,
+      browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
       lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall,
       lastWebMutationToolCall: updated.lastWebMutationToolCall, unresolvedInteractionObservation: updated.unresolvedInteractionObservation };
     if (updated.phase === 'finalizing') return { ...browserFields, pendingIntent: null, phase: 'finalizing',
@@ -369,6 +374,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
     context: updated.context,
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
+    backgroundCommands: updated.backgroundCommands,
     queuedGuidance: updated.queuedGuidance,
     browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
     lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall,

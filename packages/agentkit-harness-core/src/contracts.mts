@@ -1,4 +1,6 @@
 import type { BrowserObservation, BrowserRecovery, BrowserSessionRef } from './browser-contract.mjs';
+import type { BackgroundCommandPort, BackgroundCommandRef, BackgroundCommandState } from './background-contract.mjs';
+export type { BackgroundCommandPort } from './background-contract.mjs';
 
 /** Serializable contracts. No Host services, filesystem handles or credentials. */
 export const NATIVE_SCHEMA = 'agentkit.native-run/v1' as const;
@@ -152,6 +154,7 @@ export interface RunConfiguration {
   workspaceObservationPolicy: { role: 'browser'; pathSuffixes: string[] } | null;
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
+  backgroundNotificationPolicy?: 'completed-before-model/v1' | null;
 }
 export interface Usage {
   inputTokens: number; outputTokens: number; modelCalls: number; toolCalls: number; cost: number;
@@ -169,6 +172,7 @@ export interface ToolResult {
   /** Only a tool pinned with observationRole=browser can admit these host capabilities. */
   browserSessionRef?: BrowserSessionRef; browserSessionClosed?: boolean;
   browserObservation?: BrowserObservation;
+  backgroundCommandRef?: BackgroundCommandRef; backgroundCommandFinished?: boolean;
 }
 export type ModelResponseKind = 'tool_calls' | 'final_candidate' | 'output_limit' | 'context_overflow'
   | 'empty_response' | 'malformed_tool_call' | 'provider_retryable_error' | 'provider_terminal_error'
@@ -204,10 +208,7 @@ export interface ChildState {
   reservedModelCalls: number | null; reservedToolCalls: number | null; usage: Usage;
   notified: boolean; metadata: ObjectValue;
 }
-export interface BackgroundCommand {
-  commandId: string; operationKey: string; state: 'running' | 'completed' | 'failed' | 'canceled';
-  notified: boolean; metadata: ObjectValue;
-}
+export type BackgroundCommand = BackgroundCommandState;
 export interface ToolErrorStreak {
   signature: string; count: number; modelCall: number; goalRevision: number; workspaceRevision: string | null;
 }
@@ -337,9 +338,6 @@ export interface ArtifactPort {
 }
 export interface ChildLifecyclePort {
   invoke(request: PortContext & { action: 'start' | 'resume' | 'cancel' | 'message' | 'promote' | 'release' | 'observe'; input: ObjectValue }): Promise<ObjectValue>;
-}
-export interface BackgroundCommandPort {
-  invoke(request: PortContext & { action: 'launch' | 'observe' | 'cancel'; input: ObjectValue }): Promise<ObjectValue>;
 }
 export interface NativePorts {
   model: ModelPort; tools: ToolPort; workspace?: WorkspacePort; context?: ContextPort;

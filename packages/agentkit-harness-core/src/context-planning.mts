@@ -35,7 +35,7 @@ export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguratio
     limits: config.limits, workspaceRevision: snapshot.workspaceRevision, workspaceModifiedPaths: snapshot.workspaceModifiedPaths,
     artifactRefs: snapshot.artifactRefs, pendingInteraction: snapshot.pendingInteraction,
     children: snapshot.children.map(child => ({ runId: child.runId, state: child.state, notified: child.notified })),
-    backgroundCommands: snapshot.backgroundCommands.map(command => ({ commandId: command.commandId, state: command.state, notified: command.notified })),
+    backgroundCommands: snapshot.backgroundCommands.map(command => ({ ...command.ref, notified: command.notified })),
     verification: snapshot.verification, hostBindingDigest: config.hostBindingDigest,
   }) as unknown as ObjectValue;
 }

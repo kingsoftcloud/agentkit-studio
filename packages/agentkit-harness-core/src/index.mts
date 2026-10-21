@@ -20,3 +20,5 @@ export * from './context-planning.mjs';
 export * from './browser-contract.mjs';
 export * from './browser-runtime.mjs';
 export * from './task-policy.mjs';
+export * from './background-contract.mjs';
+export * from './background-runtime.mjs';

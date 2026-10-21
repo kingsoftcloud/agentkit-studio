@@ -22,6 +22,9 @@ import { modelStreamCapture } from './model-stream.mjs';
 import { browserRecoveryTransition } from './browser-runtime.mjs';
 import { validateBrowserSessionRef } from './browser-contract.mjs';
 import type { BrowserRecovery } from './browser-contract.mjs';
+import { commandProbe, stageCommandObservations, unavailableCommands } from './background-runtime.mjs';
+import { BACKGROUND_COMMAND_CONTRACT } from './background-contract.mjs';
+import type { BackgroundCommandRequest } from './background-contract.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -175,6 +178,21 @@ export class NativeKernel {
           await new Promise(resolve => setTimeout(resolve, Math.min(50, snapshot.retryNotBefore - this.now())));
           continue;
         }
+        const backgroundIntent = record.intents.find(item => item.operationKey === snapshot.pendingIntent) ?? null;
+        const backgroundRequest = commandProbe(snapshot, config, backgroundIntent);
+        if (backgroundRequest) {
+          const started = this.now();
+          const observations = await this.inspectBackgroundCommands(backgroundRequest, snapshot, config, controller.signal);
+          if (leaseError) throw leaseError;
+          if (controller.signal.aborted || pendingCommands(this.store.load(scope, runId)).length) continue;
+          const elapsed = Math.max(0, this.now() - started);
+          let batch: CommitBatch;
+          try { batch = stageCommandObservations(snapshot, config, backgroundRequest, observations, backgroundIntent, elapsed); }
+          catch { batch = stageCommandObservations(snapshot, config, backgroundRequest, unavailableCommands(backgroundRequest), backgroundIntent, elapsed); }
+          try { this.commit(snapshot, lease, batch); }
+          catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
+          continue;
+        }
         if (snapshot.pendingIntent !== null) {
           const intent = record.intents.find(item => item.operationKey === snapshot.pendingIntent);
           invariant(intent, 'pending_intent_missing');
@@ -201,6 +219,24 @@ export class NativeKernel {
       try { this.store.release(scope, runId, lease); }
       catch (error) { if (!(error instanceof NativeError && error.code === 'stale_fence')) throw error; }
     }
+  }
+  private async inspectBackgroundCommands(request: BackgroundCommandRequest, snapshot: RunSnapshot, config: RunConfiguration, signal: AbortSignal): Promise<unknown> {
+    const remaining = config.limits.maxWallMs === null ? config.limits.effectTimeoutMs
+      : Math.min(config.limits.effectTimeoutMs, Math.max(0, config.limits.maxWallMs - snapshot.activeElapsedMs));
+    if (remaining <= 0) return [];
+    if (this.ports.background?.contract !== BACKGROUND_COMMAND_CONTRACT) return unavailableCommands(request);
+    const timeout = new AbortController(), probeSignal = AbortSignal.any([signal, timeout.signal]);
+    const timer = setTimeout(() => timeout.abort(new NativeError('background_command_probe_timeout')), remaining);
+    let onAbort = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(probeSignal.reason);
+      if (probeSignal.aborted) onAbort(); else probeSignal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      const result = await Promise.race([this.ports.background.observe({ ...copy(request), signal: probeSignal }), aborted]);
+      probeSignal.throwIfAborted(); return result;
+    } catch { return unavailableCommands(request); }
+    finally { clearTimeout(timer); probeSignal.removeEventListener('abort', onAbort); }
   }
   private commit(snapshot: RunSnapshot, lease: Lease, batch: CommitBatch): RunSnapshot {
     return this.store.commit(snapshot.scope, snapshot.runId, lease, this.now(), snapshot.revision, batch);
