@@ -14,6 +14,12 @@ const ROUTINE = Object.freeze(['read', 'read_image', 'write', 'edit', 'glob', 'g
 // refused after resolution. The policy adds an independent early refusal so an
 // obviously internal target never reaches a provider.
 const WEB_TOOLS = Object.freeze(['web_search', 'web_fetch']);
+// DSH's shipped DeepSeek search provider resolves DEEPSEEK_API_KEY at each
+// search. Without that credential web_fetch still reaches public pages, but
+// advertising web_search would claim a capability the runtime cannot execute.
+export function availableWebTools(env = {}) {
+  return WEB_TOOLS.filter(name => name !== 'web_search' || String(env.DEEPSEEK_API_KEY || '').trim() !== '');
+}
 const WEB_FETCH_MAX_URL_LENGTH = 2048;
 const PRIVATE_IPV4 = /^(?:0\.|10\.|127\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|198\.(?:18|19)\.|192\.0\.[02]\.|22[4-9]\.|2[3-5]\d\.)/u;
 const PRIVATE_SUFFIXES = Object.freeze(['.localhost', '.local', '.internal', '.lan', '.home.arpa']);
@@ -144,6 +150,7 @@ async function runtimeRoot(env) {
  */
 export async function createAssistantPermissionModel({ ctx, env = {}, profile, agentId, sensitiveTools = [] } = {}) {
   const optedIn = selectAssistantPermissionProfile(profile) === ASSISTANT_PERMISSION_PROFILE;
+  const webTools = availableWebTools(env);
   const releaseStartup = installAssistantStartupGuard(ctx, env);
   let root = null;
   const expectedRoot = optedIn && env.AGENTKIT_HOME && env.DSH_HOME && /^[a-f0-9]{64}$/.test(env.AGENTKIT_BUNDLE_SHA256 || '')
@@ -264,7 +271,7 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     const sensitiveCatalog = new Map(catalog);
     for (const item of registerAssistantWorkspaceTools({ agent, workspaceRoot: cwd })) sensitiveCatalog.set(item.name, item);
     for (const item of sensitiveCatalog.values()) if (tools.get(item.name, agent) !== item.definition) throw fail('Sensitive tool definition is not the trusted catalog entry');
-    const admitted = new Map([...ROUTINE, ...WEB_TOOLS, ...sensitiveCatalog.keys()].map(name => [name, tools.get(name, agent)]).filter(([, definition]) => definition));
+    const admitted = new Map([...ROUTINE, ...webTools, ...sensitiveCatalog.keys()].map(name => [name, tools.get(name, agent)]).filter(([, definition]) => definition));
     const copies = createAssistantWorkspaceAttachmentCopies({ agent, workspaceRoot: cwd });
     const grants = new WeakSet(); let disposed = false;
     function decision(exec) {
@@ -273,7 +280,7 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
       if (sessionTool(agent, exec.name)) return undefined;
       if (!admitted.has(exec.name) || tools.get(exec.name, agent) !== admitted.get(exec.name)) return 'This tool is not admitted by the assistant workspace policy';
       if (sensitiveCatalog.has(exec.name)) return approval.effectivePolicy(agent.session) === 'ask' ? undefined : 'Sensitive approvals are disabled for this session';
-      if (WEB_TOOLS.includes(exec.name)) return exec.name === 'web_fetch' ? checkedFetchUrl(exec.arguments?.url) : undefined;
+      if (webTools.includes(exec.name)) return exec.name === 'web_fetch' ? checkedFetchUrl(exec.arguments?.url) : undefined;
       const field = ['glob', 'grep'].includes(exec.name) ? 'path' : 'file_path';
       try {
         const input = exec.arguments?.[field] ?? (field === 'path' ? '.' : undefined);
@@ -310,7 +317,7 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     const approval = ctx.get('approval')?.effectivePolicy(agent.session);
     return { profile: ASSISTANT_PERMISSION_PROFILE, managed: true, permission, approval,
       execution: 'fixed-tool-operations', arbitraryShell: false, network: 'public-web-read-only',
-      webTools: WEB_TOOLS.filter(name => agent.ctx.get('tools')?.get?.(name, agent)),
+      webTools: webTools.filter(name => agent.ctx.get('tools')?.get?.(name, agent)),
       sessionTools: staged.get(agent)?.ready ? SESSION_TOOLS.filter(name => sessionTool(agent, name)) : [],
       sensitiveTools: [...states.get(agent).sensitiveCatalog.keys()].filter(name => agent.ctx.get('tools').get(name, agent)),
       isolation: 'private-runtime-workspace' };

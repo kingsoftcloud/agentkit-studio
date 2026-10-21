@@ -13,7 +13,7 @@ const resources = Object.freeze({ cpu: 2, memoryGiB: 4, storageGiB: 20 });
 const labels = { PREPARING: '正在准备你的助理', UPLOADING: '正在保存助理配置', UPLOADED: '正在创建云端环境', PREPARED: '正在准备云端环境', CREATING: '正在创建云端环境', PROVISIONING: '正在分配云端资源', CONFIGURING: '正在连接你的助理', TOKEN_PENDING: '正在连接你的助理', STARTING: '助理正在启动', READY: '助理已就绪', AVAILABLE_UPDATING: '助理已就绪' };
 const readyStates = new Set(['READY', 'AVAILABLE_UPDATING']);
 
-export function createAssistantSetup({ storeDir, configuration, models, serverClient, deploymentClient, agents, build, deployments, fetchImpl = fetch }) {
+export function createAssistantSetup({ storeDir, configuration, models, serverClient, deploymentClient, agents, build, deployments, credentials, fetchImpl = fetch }) {
   const images = createDeploymentImages({ client: deploymentClient, configuration });
   const active = new Map(), errors = new Map();
   async function scope() {
@@ -72,18 +72,26 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
       ready: readyStates.has(record.state), cloudAgentId: record.cloudAgentId || null, deploymentId: record.deploymentId || null,
       releaseId: record.selection?.releaseId || null, failure: record.failure || null, resources, startedAt: record.startedAt };
   }
+  async function webSearchCredential() {
+    const resolved = await credentials?.resolve?.('DEEPSEEK_API_KEY').catch(() => null);
+    return typeof resolved?.value === 'string' && resolved.value.trim() ? resolved.value : null;
+  }
   async function options() {
     const key = await scope();
-    const [model, catalog, memory] = await Promise.all([models.profile(''), images.list('dsh-native'), listStudioResources({ serverClient, query: { kind: 'memory-instance', limit: 200 } })]);
+    const [model, catalog, memory, search] = await Promise.all([models.profile(''), images.list('dsh-native'), listStudioResources({ serverClient, query: { kind: 'memory-instance', limit: 200 } }), webSearchCredential()]);
     const eligible = catalog.releases.filter(item => item.runtimeIdentity && item.capabilities.includes('personal-assistant/v1') && item.capabilities.includes(ASSISTANT_MANAGED_PERMISSION_CAPABILITY));
     const image = eligible.find(item => item.id === catalog.defaultReleaseId) || (eligible.length === 1 ? eligible[0] : null);
     if (!image) throw portableError('ASSISTANT_IMAGE_UNAVAILABLE', '当前环境还没有支持受管工作区与敏感审批的个人助理镜像，请先更新云端版本配置');
     admitDeploymentStorage(resources, catalog, 'dsh-native');
     const memories = memory.items.filter(item => !item.disabled).map(item => ({ id: item.resourceId, name: item.name || item.resourceId, region: item.region || catalog.region }));
     if (!memories.length) throw portableError('ASSISTANT_MEMORY_REQUIRED', '请先创建一个云端记忆库，再开通能够长期记忆的助理');
-    return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories, 'workspace-managed/v1'])), model: { id: model.id, name: model.displayName || model.modelName },
+    const webSearch = Boolean(search);
+    return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories, 'workspace-managed/v1', webSearch])), model: { id: model.id, name: model.displayName || model.modelName },
       permissionProfile: 'workspace-managed/v1',
-      permissionNotice: '助理可联网搜索公开信息、读取公开网页，并在专属云工作区读写文件；删除单个文件需在线逐次确认。内网与本机访问、任意 Shell、未接通的外发与支付不会自动开放。',
+      webSearch,
+      permissionNotice: webSearch
+        ? '助理可联网搜索公开信息、读取公开网页，并在专属云工作区读写文件；删除单个文件需在线逐次确认。内网与本机访问、任意 Shell、未接通的外发与支付不会自动开放。'
+        : '助理可读取公开网页，并在专属云工作区读写文件；删除单个文件需在线逐次确认。当前未配置 DeepSeek 搜索凭证，因此暂不启用联网搜索。内网与本机访问、任意 Shell、未接通的外发与支付不会自动开放。',
       memories, releaseId: image.id, environment: catalog.environment, region: catalog.region, resources,
       billingNotice: '开通后创建 1 个常驻实例（2 核 / 4 GiB）和 20 GiB 持久存储，按平台规则计费；关闭 Studio 不会停止云端计费。' };
   }
@@ -98,7 +106,9 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     };
     const snapshot = await call('snapshot', {});
     if (!snapshot.messages.length) {
-      const result = await call('submit', { requestId: ASSISTANT_WELCOME_REQUEST, text: '用户刚开通了个人助理。请用两三句自然的中文欢迎用户，说明你可以帮他查资料（联网搜索、读取网页）、整理手头文件、设置提醒，并在他明确要求时记住偏好。不要声称已经执行了任务或记录了记忆，最后问用户想先做什么。' });
+      const webSearch = Boolean(await webSearchCredential());
+      const research = webSearch ? '查资料（联网搜索、读取网页）' : '查资料（读取公开网页）';
+      const result = await call('submit', { requestId: ASSISTANT_WELCOME_REQUEST, text: `用户刚开通了个人助理。请用两三句自然的中文欢迎用户，说明你可以帮他${research}、整理手头文件、设置提醒，并在他明确要求时记住偏好。不要声称已经执行了任务或记录了记忆，最后问用户想先做什么。` });
       if (!result.accepted || result.requestId !== ASSISTANT_WELCOME_REQUEST) throw portableError('ASSISTANT_WELCOME_PENDING', '欢迎消息尚未确认，请稍后刷新');
     }
     record.welcomed = true;
