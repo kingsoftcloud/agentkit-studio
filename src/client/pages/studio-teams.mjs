@@ -1,4 +1,4 @@
-function createStudioTeamPages({ ui, hostRemote, actions, window = globalThis.window, CustomEvent = globalThis.CustomEvent }) {
+function createStudioTeamPages({ ui, hostRemote, actions, window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent }) {
   const { React, BRAND, inputStyle, buttonStyle, pagerButtonStyle, Pill, StudioSubnav, AgentCreatePage, AgentWorkspace, McpResourceDialog, EmptyState } = ui;
   const { createElement: h, useState, useEffect, useRef } = React;
   function StudioTeamTemplateGallery({ onCreated, onCatalog }) {
@@ -158,7 +158,8 @@ function createStudioTeamPages({ ui, hostRemote, actions, window = globalThis.wi
           pending = false;
         }
       };
-      const timer = setInterval(poll, 2e3);
+      void poll();
+      const timer = setInterval(() => { if (!document.hidden) void poll(); }, 2e3);
       return () => {
         current = false;
         clearInterval(timer);
