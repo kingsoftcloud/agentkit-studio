@@ -101,6 +101,23 @@ test('Studio Native rejects missing public turn capability and unbound models be
   await assert.rejects(fixture.host.executeTurn(fixture.payload), /studio_native_bound_model_unavailable/);
   assert.equal(fixture.requests.length, 0); assert.equal(fixture.head(), null);
 });
+test('Studio Native uses the admitted SessionController model selection instead of stale creation options', async t => {
+  const fixture = await setup(t);
+  fixture.payload.agent.options = { provider: 'old-default', model: 'old-default' };
+  fixture.payload.input.assembly.variables = { provider: 'agentkit-studio-fixture', model: 'pinned' };
+  await fixture.host.executeTurn(fixture.payload);
+  assert.equal(fixture.requests.length, 1);
+  assert.equal(JSON.parse(fixture.requests[0].options.body).model, 'pinned');
+  assert.equal(fixture.ledger.load(fixture.head().scope, fixture.head().runId).configuration.profile.profileId, 'fixture');
+});
+test('an unbound or malformed admitted model cannot fall back to the creation default', async t => {
+  const fixture = await setup(t); fixture.models.catalog = async () => ({ items: [] });
+  for (const variables of [{ provider: 'unbound', model: 'pinned' }, { provider: 'agentkit-studio-fixture', model: 'unbound' }, { model: null }]) {
+    fixture.payload.input.assembly.variables = variables;
+    await assert.rejects(fixture.host.executeTurn(fixture.payload), /studio_native_(bound_model_unavailable|model_selection_invalid)/);
+  }
+  assert.equal(fixture.requests.length, 0); assert.equal(fixture.head(), null);
+});
 test('Studio Native resolves Frozen Build authority instead of reading a mutable agent draft', async t => {
   const fixture = await setup(t);
   fixture.payload.binding.buildId = 'frozen-build';
@@ -173,16 +190,19 @@ test('Studio Native respects a pre-step rejection without reporting the stale ca
   assert.equal(fixture.head().outcome, 'blocked'); assert.equal(fixture.head().reason, 'host_input_rejected');
   assert.equal(fixture.head().finalText, '');
 });
-for (const series of [false, true]) test(`Studio Native refuses a changed ${series ? 'request series' : 'tool binding'} during input admission`, async t => {
+for (const changed of ['tool binding', 'request series', 'model selection']) test(`Studio Native refuses a changed ${changed} during input admission`, async t => {
   const fixture = await setup(t);
   fixture.payload.binding.nativeTools.definitions = (_agent, tools) => tools;
   fixture.payload.prepareInput = async () => ({ kind: 'enter', messages: [],
-    ...(series ? { startsRequestSeries: true } : {}), assembly: { tools: series ? [] : [{ name: 'unexpected' }] } });
+    ...(changed === 'request series' ? { startsRequestSeries: true } : {}), assembly: {
+      tools: changed === 'tool binding' ? [{ name: 'unexpected' }] : [],
+      ...(changed === 'model selection' ? { variables: { provider: 'agentkit-studio-fixture', model: 'changed-after-admission' } } : {}),
+    } });
   await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'NATIVE_TURN_FAILED', nativeReason: 'effect_outcome_unknown' });
   assert.equal(fixture.requests.length, 1); assert.equal(fixture.head().phase, 'interrupted');
   const run = fixture.head();
   assert.equal(fixture.ledger.load(run.scope, run.runId).receipts.at(-1).result.code,
-    series ? 'studio_native_request_series_rebind_required' : 'studio_native_input_binding_changed');
+    changed === 'request series' ? 'studio_native_request_series_rebind_required' : 'studio_native_input_binding_changed');
 });
 test('Studio Native close during a stalled input claim fences late admission', async t => {
   const fixture = await setup(t);

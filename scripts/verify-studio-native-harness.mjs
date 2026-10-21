@@ -9,17 +9,21 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { respondToAutomationProof, runAutomationProof, verifyAutomationLedger } from './native-automation-proof.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
-  commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false }, archive: { type: 'string' } } });
+  commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
+  automation: { type: 'boolean', default: false }, archive: { type: 'string' } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
 assert.ok(!values.frozen || values['mount-host'], '--frozen requires --mount-host');
+assert.ok(!values.automation || values['mount-host'] && values.commands && !values.frozen, '--automation requires --mount-host --commands without --frozen');
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
 const exactInteger = 9007199254740993n, mcpEffects = [];
+const automationCalls = []; let automationProof;
 console.log(`Studio Native Host evidence: ${root}`);
 const jsonRows = async path => (await readFile(path, 'utf8').catch(error => {
   if (error.code === 'ENOENT') return ''; throw error;
@@ -69,7 +73,9 @@ const server = createServer(async (request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(canonical({ jsonrpc: '2.0', id: body.id, result })); return;
     }
-    const body = JSON.parse(raw); requests.push(body);
+    const body = JSON.parse(raw);
+    if (values.automation && respondToAutomationProof(body, response, automationCalls)) return;
+    requests.push(body);
     assert.equal(request.url, '/v1/chat/completions'); assert.equal(body.model, 'pinned');
     if (values.frozen) {
       assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('FROZEN_NATIVE_SYSTEM_A')));
@@ -111,6 +117,7 @@ const server = createServer(async (request, response) => {
       finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) {
     failures.push(error);
+    if (values.automation) await writeFile(join(root, 'automation-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (!response.headersSent) response.writeHead(500);
     response.end('verification failed');
   }
@@ -155,6 +162,9 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
+    ...values.automation ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
+      '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
+      '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'"] : [],
   ] : [];
   const fixture = values['mount-host'] ? 'studio-native-mounted-harness.mjs' : 'studio-native-harness.mjs';
   await writeFile(patch, [
@@ -168,6 +178,7 @@ try {
     `        mountHost: ${values['mount-host']}`,
     `        commands: ${values.commands}`,
     `        frozen: ${values.frozen}`,
+    `        automation: ${values.automation}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -203,6 +214,7 @@ try {
   assert.equal(denied.events.filter(event => event.type === 'tool/result').length, 1);
   assert.equal(denied.events.some(event => event.type === 'request/header'), false);
   await assert.rejects(readFile(join(root, 'workspace/denied.txt')), { code: 'ENOENT' });
+  if (values.automation) automationProof = await runAutomationProof(root);
   const delegated = await harness.session('default-session').run('Use the default engine.');
   assert.equal(delegated.finalResponse, 'Default engine completed.');
   await harness.close(); harness = null;
@@ -213,11 +225,11 @@ try {
   assert.deepEqual(admissions.map(row => row.name), [toolName, toolName, toolName]);
   assert.equal((await readFile(join(root, 'default-invocations.jsonl'), 'utf8')).trim().split('\n').length, 1);
   const logs = (await readdir(sessions, { recursive: true })).filter(file => file.endsWith('.jsonl'));
-  assert.equal(logs.length, 2);
+  assert.equal(logs.length, values.automation ? 4 : 2);
   const stored = (await Promise.all(logs.map(file => readFile(join(sessions, file), 'utf8')))).flatMap(text => text.trim().split('\n').map(line => JSON.parse(line)));
-  assert.equal(stored.filter(event => event.type === 'assistant/message').length, 7);
-  assert.equal(stored.filter(event => event.type === 'tool/result').length, 3);
-  const live = (await jsonRows(join(root, 'assistant-stream.jsonl'))).filter(row => row.frame.attemptId.startsWith('native-dsh-'));
+  assert.equal(stored.filter(event => event.type === 'assistant/message').length, values.automation ? 11 : 7);
+  assert.equal(stored.filter(event => event.type === 'tool/result').length, values.automation ? 5 : 3);
+  const live = (await jsonRows(join(root, 'assistant-stream.jsonl'))).filter(row => row.session === 'native-studio-session' && row.frame.attemptId.startsWith('native-dsh-'));
   const starts = live.filter(row => row.frame.type === 'start');
   assert.equal(starts.length, 6);
   for (const { frame: start } of starts) {
@@ -232,7 +244,7 @@ try {
       && JSON.stringify(event.data.stream) === JSON.stringify(chunks.map(({ time, chunk }) => ({ type: 'chunk', time, chunk }))));
     assert.equal(matches.length, 1, 'Every public stream must settle to its exact durable Session stream');
   }
-  assert.equal(stored.filter(event => event.type === 'turn/end').length, 4);
+  assert.equal(stored.filter(event => event.type === 'turn/end').length, values.automation ? 6 : 4);
   assert.equal(JSON.stringify(stored).includes('sk-studio-fixture-secret'), false);
   assert.equal((await readFile(join(root, 'studio/native-harness/runs.sqlite'))).includes(Buffer.from('sk-studio-fixture-secret')), false);
   // Inspect the packed Host's independent, durable verdict after both process
@@ -244,6 +256,7 @@ try {
     userId: 'local-user', agentId };
   const reopened = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
   try {
+    if (automationProof) verifyAutomationLedger({ store: reopened, scope, proof: automationProof, calls: automationCalls, events: stored });
     const runs = reopened.list(scope, 'native-studio-session');
     assert.equal(runs.length, 3);
     if (values.frozen) assert.ok(runs.every(run => run.buildId === buildId));
@@ -297,6 +310,7 @@ try {
     assert.equal(probes.length, 2); assert.ok(probes.some(probe => probe.source === 'resume'));
     assert.ok(probes.every(probe => probe.unauthorizedStatus === 401 && probe.compatible));
   }
+  if (automationProof) console.log('Studio Native automation PASS: authenticated Build operation, latest Revision schedule and frozen Build evaluation, actual unattended permission denial with no file effect, real model HTTP and durable independent Native ledgers.');
   console.log(`Studio Native Host PASS: ${values['mount-host'] ? 'full mountStudioHost with real authenticated HTTP control RPC, production preset admission and startup restoration' : 'production Host factory and runtime plugin'}, actual packed Studio files, public Host prompt import, Node-only PATH, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual model HTTP requests, 6 public live streams before provider completion with exact durable Session stream settlement, ${values['mcp-schema'] ? '2 MCP marker effects with exact model/input/output schemas and persisted numeric receipts' : '2 Node workspace writes'}, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.`);
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

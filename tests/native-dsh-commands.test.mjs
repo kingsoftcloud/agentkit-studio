@@ -16,7 +16,7 @@ function setup(t, commandSettings = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'studio-command-tools-')), workspaceRoot = join(root, 'workspace'), stateDir = join(root, 'state');
   mkdirSync(workspaceRoot); const filename = join(root, 'ledger.sqlite'); let ledger = new SqliteRunStore(filename), gateway;
   const registry = new Map(), agent = { session: { id: 'session' } }; let deny = false, failPost = false, effects = 0;
-  const ctx = { effect: install => install(), tools: {
+  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
     argumentEncodings: ['dsh.raw-json-number/v1'],
     register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     execute: async input => {

@@ -39,7 +39,7 @@ async function applyProof(ctx, options) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
-      ...(options.frozen ? { spec: { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } } : {}),
+      ...(options.frozen || options.automation ? { spec: { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } } : {}),
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'] } : { tools: [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
@@ -96,6 +96,7 @@ async function applyProof(ctx, options) {
   let delegate = false;
   ctx.llm.registerAdapter(['agentkit-studio-fixture'], {
     providerInfo: provider => ({ id: provider, name: 'Studio Native proof' }), providerRetryPolicy: () => undefined,
+    listModels: async provider => [{ provider, id: 'pinned', name: 'pinned' }],
     resolveModel: (provider, model) => ({ provider, id: model, name: model }),
     prepareCall: () => {
       if (!delegate) throw Error('DSH model loop entered during Studio Native execution');
@@ -130,6 +131,7 @@ async function applyProof(ctx, options) {
         const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });
         if (login.status !== 302) throw Error('Mounted Host connection authentication failed');
         const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+        if (options.automation) await writeFile(join(options.directory, 'mounted-host-connection.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
         const rpc = async (method, payload = {}) => {
           const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
             body: JSON.stringify({ method, payload, rpcId: method }), signal: AbortSignal.timeout(10000) });

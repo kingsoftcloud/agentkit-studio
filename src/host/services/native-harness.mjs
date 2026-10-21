@@ -21,6 +21,17 @@ const profileIds = record => {
   const bindings = record.spec?.bindings ?? {};
   return [...new Set([bindings.modelProfileId, ...(bindings.modelProfileIds ?? []).map(value => typeof value === 'string' ? value : value?.resourceId)].filter(Boolean))];
 };
+// SessionController selections are applied by the public prompt assembly;
+// Agent.options retains the creation default and can be stale at this boundary.
+const admittedModelSelection = (agent, assembly) => {
+  const selection = { ...agent.options };
+  for (const key of ['provider', 'model']) {
+    const value = assembly?.variables?.[key];
+    invariant(value === undefined || typeof value === 'string' && value.trim(), 'studio_native_model_selection_invalid');
+    if (value !== undefined) selection[key] = value;
+  }
+  return selection;
+};
 
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
@@ -53,7 +64,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         'studio_native_build_engine_mismatch');
       const ids = profileIds(record), profiles = await Promise.all((ids.length ? ids : ['']).map(id => models.profile(id)));
       signal.throwIfAborted();
-      const selection = agent.options ?? {};
+      const selection = admittedModelSelection(agent, input.assembly);
       let selected, selectedId;
       for (let index = 0; index < profiles.length; index++) {
         const profile = profiles[index], id = ids[index] || '';
@@ -96,6 +107,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
           toolArgumentEncoding: binding.nativeTools.argumentEncoding ?? null,
+          toolPermissionContract: binding.nativeTools.permissionContract ?? null,
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),
           ...(binding.nativeTools.commandBinding ? { commandBinding: binding.nativeTools.commandBinding } : {}),
           mcpResultContract: binding.nativeTools.mcpResultContract ?? null,
@@ -119,6 +131,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           // A changing model/tool series needs an explicit Native rebind, not
           // an unlogged change to the frozen execution contract.
           invariant(next.startsRequestSeries !== true, 'studio_native_request_series_rebind_required');
+          const nextSelection = admittedModelSelection(agent, next.assembly);
+          invariant(nextSelection.provider === selection.provider && nextSelection.model === selection.model,
+            'studio_native_input_binding_changed');
           invariant(renderPrompt(next.assembly) === systemPrompt
             && canonical(binding.nativeTools.definitions(agent, next.assembly.tools)) === canonical(tools),
           'studio_native_input_binding_changed');

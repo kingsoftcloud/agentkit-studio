@@ -16,6 +16,7 @@ import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 import { nativeMcpOutcome } from './native-mcp-output.mjs';
 import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
 import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
+import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from './native-tool-policy.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -87,6 +88,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
               === canonical(invocation.request.call.arguments), 'studio_native_tool_authority_missing');
           exec.signal.throwIfAborted();
           invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
+          if (formal.has(name) && !mcpContracts.has(name)) {
+            try { await authorizeNativeBuiltin(ctx, exec, formal.get(name)); }
+            catch (error) {
+              invocation.outcome = { status: 'error', content: { code: error.code || 'STUDIO_NATIVE_PERMISSION_DENIED', executed: false } };
+              throw error;
+            }
+          }
+          exec.signal.throwIfAborted();
           invocation.dispatched = true;
           let outcome;
           if (invocation.verificationDispatch) {
@@ -121,6 +130,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   return {
     close,
     argumentEncoding,
+    permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
     commandBinding: [...commandNames].some(name => builtinNames.has(name)) ? {
       contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },

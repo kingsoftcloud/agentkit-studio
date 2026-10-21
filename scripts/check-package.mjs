@@ -26,6 +26,7 @@ const expected = [
   'packages/agentkit-harness/src/native/local-command-policy.mjs',
   'packages/agentkit-harness/src/native/local-command-tools.mjs',
   'src/build-engine.mjs',
+  'src/providers/native-tool-policy.mjs',
   'packages/agentkit-harness/src/native/owned-command.mjs',
   'packages/agentkit-harness/src/native/local-command-policy-worker.mjs',
   'packages/agentkit-harness/src/native/ruff-ast.mjs',

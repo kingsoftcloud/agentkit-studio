@@ -286,6 +286,16 @@ Harness Build 在内容寻址的 manifest 中固定 `agentkit.build-engine/v1`�
 
 `node scripts/verify-studio-native-harness.mjs --source <维护源码> --mount-host --commands --frozen --archive <实际 Studio.tgz>` 在 Node 26 和 22 均通过。验证实际构建归档、修改当前草稿至下一 Revision、关闭 Host 的 Native 默认开关，再经真实 HTTP 接纳 Frozen preset。两轮真实命令执行跨 Host 进程重启、第三轮权限拒绝、流式与持久化核对以及独立默认 DSH 轮次均通过；每次模型请求都包含冻结指令并排除后来草稿指令，所有 Native Run 均绑定原 Build ID。相关 Build、操作幂等、preset、Native Host 与既有 Frozen runtime 模块定向通过。此证据覆盖该冻结引擎及对话路径，自动化、部署 HTTP 运行和完整安装仍需单独验收。
 
+## 自动化入口与会话权限
+
+Native 从已接纳的公开 prompt assembly 读取 SessionController 选择的模型，再对照 Agent 或 Frozen Build 的模型绑定核验；创建时的 Agent options 只作为未提供选择时的默认值。中途改变模型仍要求显式重绑，不能在同一冻结的 Run 内静默换模型。
+
+Node builtin 直接操作文件或进程，不能仅凭进入 ToolRegistry 推断已获得 DSH 文件权限。当前正式 builtin 在自身实际派发前读取 Host sandbox policy；只读工具可执行，有潜在修改的工具在 read-only 模式下必须通过真实 ApprovalService 的 allowed-once。拒绝、服务缺失、非法答复、取消和审批后服务丢失或策略失效都不派发。该契约 agentkit.native-tool-permission/v1 纳入 Host binding digest；它只授予本次工具调用，不改变会话模式，也不跨调用缓存授权。
+
+`node scripts/verify-studio-native-harness.mjs --source <维护源码> --mount-host --commands --automation --archive <实际 Studio.tgz>` 使用真实认证 HTTP 创建 Build 操作、修改当前 Revision、执行计划任务并运行固定 Build 评测。计划使用新指令，评测保持冻结指令；两者的无人值守 read-only/never 策略使真实命令被拒绝，持久 Native 回执明确 executed=false，工作区无被拒绝文件，DSH 有对应的审批询问/拒绝审计。既有 SDK 对话、重启、公开流式和独立默认 DSH 轮次同时保留。此验证使用固定本地 Host 依赖图，不是全新安装或部署 HTTP 验收。
+
+权限判断目前依正式工具的 readOnly 声明保守执行：run_command 即使只有读取命令也被视为可能修改，browser 工具也未按每个动作拆分；它们在只读模式下仍需单次审批。尚需补齐命令隔离后端与更细能力策略，以及交互审批恢复、审批期间进程崩溃等产品语义，不能据此声称审批整体迁移完成。
+
 尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build 的剩余运行入口、无 Python 安装执行及其他 runtime 回归。
 
 安装配置、默认切换和完整恢复操作说明将在对应产品路径实际验证后补充，当前不可将本说明作为已完成迁移的运行手册。

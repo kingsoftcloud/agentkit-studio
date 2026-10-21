@@ -19,7 +19,7 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
   const registry = new Map(), calls = [];
   let deny = false, postFailure = false;
-  const ctx = { effect: install => install(), tools: {
+  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
     register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     execute: async input => {
       calls.push(input);
@@ -42,6 +42,23 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   return { gateway, agent, request, registry, workspaceRoot, calls, ctx,
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
+
+test('an allowed registry pipeline cannot bypass read-only Native writes or reuse a one-shot approval', async t => {
+  const host = setup(t), requests = [];
+  host.ctx.sandboxPolicy.resolve = () => ({ mode: 'read-only' });
+  let outcome = 'rejected';
+  host.ctx.approval = { request: async request => { requests.push(request); return outcome; } };
+  const tool = host.gateway.forAgent(host.agent).tools;
+  await assert.rejects(tool.execute(host.request()), { code: 'STUDIO_NATIVE_PERMISSION_DENIED' });
+  assert.equal(existsSync(join(host.workspaceRoot, 'file.txt')), false);
+  outcome = 'allowed-once';
+  assert.equal((await tool.execute(host.request())).status, 'ok');
+  assert.equal(readFileSync(join(host.workspaceRoot, 'file.txt'), 'utf8'), 'value');
+  outcome = 'rejected';
+  await assert.rejects(tool.execute(host.request({ path: 'second.txt', content: 'forbidden' })), { code: 'STUDIO_NATIVE_PERMISSION_DENIED' });
+  assert.equal(existsSync(join(host.workspaceRoot, 'second.txt')), false);
+  assert.equal(requests.length, 3); assert.ok(requests.every(request => request.agent === host.agent && request.toolName === 'write_workspace_file'));
+});
 
 for (const invalidOutput of [false, true]) test(`Native MCP pins exact input/output schemas through the ledger (invalid output: ${invalidOutput})`, async t => {
   const integer = 9007199254740993n;
