@@ -221,6 +221,80 @@ export class SqliteNativeMemoryProvider {
         ${includeDeleted ? '' : "AND json_extract(data,'$.status')='active'"} ORDER BY rowid LIMIT ?`)
         .all(...namespaces, limit).map(row => JSON.parse(row.data));
     };
+    // Explicit owner mutation: remember/correct/forget with host authority and a
+    // receipt sealed in the same transaction as the fact. This is distinct from
+    // applyCandidate (the auto profile path): no candidate.reason is consulted or
+    // forgeable here, and the host supplies the exact call requestDigest. Shadow
+    // rollout never reaches this path; the tool layer rejects writes upstream.
+    const authorityValid = value => ['explicit_user', 'approved_call', 'candidate'].includes(value);
+    this.applyMutation = request => {
+      const input = copy(request), { action, scope, scopeId, content, memoryId, expectedVersion,
+        operationKey, requestDigest, authority, sourceSessionId, sourceEventId,
+        sourceGoalRevision, sourceGoalDigest, horizon: entries = [] } = input;
+      invariant(['remember', 'correct', 'forget'].includes(action) && text(operationKey) && sha(requestDigest)
+        && authorityValid(authority) && text(sourceSessionId) && text(sourceEventId)
+        && typeof sourceGoalRevision === 'string' && text(sourceGoalRevision) && sha(sourceGoalDigest)
+        && typeof scope === 'string' && typeof scopeId === 'string'
+        && selected.some(binding => binding.scope === scope && binding.scopeId === scopeId)
+        && (action === 'remember'
+          ? expectedVersion === undefined && !text(memoryId) && text(content) && [...content].length <= 8192
+          : text(memoryId) && Number.isSafeInteger(expectedVersion) && expectedVersion > 0
+            && (action === 'forget' ? content === undefined : text(content) && [...content].length <= 8192)),
+        'native_memory_apply_mutation_invalid');
+      const horizonEntries = entries.map(entry => candidateInput({ ...entry, sourceSessionId, operationKey }));
+      return transaction(() => {
+        const prior = receipt(operationKey, requestDigest); if (prior) return prior;
+        const now = iso();
+        let record;
+        if (action === 'remember') {
+          invariant(!nativeMemorySensitiveLabels(content).length, 'native_memory_content_rejected');
+          record = { memoryId: 'memory_' + randomUUID(), tenantId: owner.tenantId, workspaceId: owner.workspaceId,
+            scope, scopeId, memoryType: 'profile', content, summary: content, contentHash: memoryDigest(content),
+            status: 'active', confidence: 1, importance: authority === 'explicit_user' ? .9 : .8, sensitivity: 'none',
+            sourceSessionId, sourceEventIds: [sourceEventId], version: 1, validFrom: now, validTo: '', expiresAt: '',
+            createdAt: now, updatedAt: now, writePolicy: authority === 'explicit_user' ? 'user_confirm' : 'auto',
+            metadata: { slotKey: deriveMemoryProfileSlotKey(content), extractionPolicy: NATIVE_USER_EXTRACTION_POLICY,
+              mutationSessionId: sourceSessionId, authority, sourceGoalRevision, sourceGoalDigest } };
+        } else {
+          const original = get(memoryId);
+          invariant(original && original.status === 'active' && original.version === expectedVersion,
+            'native_memory_version_or_identity_conflict');
+          invariant(original.writePolicy !== 'locked', 'native_memory_slot_locked');
+          if (action === 'correct') invariant(!nativeMemorySensitiveLabels(content).length, 'native_memory_content_rejected');
+          record = { ...original, content: action === 'forget' ? '' : content,
+            summary: action === 'forget' ? '' : content, contentHash: memoryDigest(action === 'forget' ? '' : content),
+            status: action === 'forget' ? 'deleted' : 'active', version: original.version + 1, updatedAt: now,
+            sourceEventIds: [...new Set([...original.sourceEventIds, sourceEventId])],
+            metadata: action === 'forget' ? {} : { ...original.metadata, slotKey: deriveMemoryProfileSlotKey(content),
+              mutationSessionId: sourceSessionId, authority, sourceGoalRevision, sourceGoalDigest } };
+          horizon(record, original, horizonEntries);
+          if (action === 'forget') discardObservations(original);
+        }
+        save(record);
+        return seal(operationKey, requestDigest, { committed: true, action, memoryId: record.memoryId,
+          version: record.version, status: record.status, contentHash: record.contentHash,
+          sourceEventIds: record.sourceEventIds });
+      });
+    };
+    // Reconcile a sealed receipt against the current fact for unknown-side-effect
+    // recovery (timeout/cancel/lost callback) and acceptance/turn-consumer queries.
+    // A missing or conflicting receipt is uncertain and this never re-executes the
+    // mutation; an old receipt that no longer matches the current record is stale.
+    this.reconcile = request => {
+      open();
+      const { operationKey, requestDigest, memoryId } = copy(request);
+      invariant(text(operationKey) && sha(requestDigest), 'native_memory_reconcile_invalid');
+      let sealed = null, conflict = false;
+      try { sealed = receipt(operationKey, requestDigest); }
+      catch (error) { if (error?.code === 'native_memory_operation_conflict') conflict = true; else throw error; }
+      const lookupId = memoryId || sealed?.memoryId, current = lookupId ? get(lookupId) : null;
+      const consistent = !!sealed && !conflict && !!current && sealed.memoryId === current.memoryId
+        && sealed.version === current.version && sealed.contentHash === current.contentHash
+        && sealed.status === current.status;
+      return { status: sealed ? (conflict ? 'conflict' : consistent ? 'ok' : 'stale') : 'uncertain',
+        receipt: sealed, current: current && copy(current), consistent, conflict,
+        retryability: sealed && !conflict ? 'none' : 'requires_reconcile' };
+    };
     this.close = () => { if (!closed) { closed = true; db.close(); } };
   }
 }
