@@ -1,0 +1,48 @@
+# Native 本地记忆迁移状态
+
+参考 `ksadk-python` 的 `feat-ksadk-harness-2` / `355059d78e47ed764bbdb3606304cdf34e9838a3`。当前已实现本地候选提取、SQLite 候选消费与纠正/遗忘存储事务，并接通 Studio Native 的压缩前 Hook。**完整记忆能力尚未迁移完成**：召回与上下文刷新、显式管理工具的权限/审批和核对、记忆验收、轮次完成后的候选消费、配置界面，以及实际打包 Host 中的本地记忆端到端验收仍待补齐。
+
+现有绑定 `memory-instance` 的云记忆是另一个路径：它通过 AICP 召回并在轮次后提交对话。此实现没有用云端对话写入替代 Python 的本地候选语义，Native 的云写入拒绝保护仍保留，等待独立的持久化副作用接入。
+
+## 当前接入
+
+受信任的 Agent Revision/Build 配置可启用本地压缩前消费：
+
+```js
+{
+  memory: {
+    enabled: true,
+    providerRef: 'local-default',
+    scopes: ['user'],
+    recall: { enabled: false },
+    write: { mode: 'candidate', flushBeforeCompaction: true, flushAfterTurn: false }
+  },
+  context: { rollout: { memoryWrite: 'enabled' } }
+}
+```
+
+`write.mode` 支持 `off`、`explicit_only`、`candidate`。`memoryWrite` 支持 `off`、`shadow`、`enabled`，缺省为 `shadow`；shadow 只在 Hook 结果中报告候选策略判定，不打开记忆数据库、不累加观察次数。关闭记忆、关闭压缩前消费、不含 user scope、write off 或 rollout off 都不安装此 Hook。`flushAfterTurn` 已纳入策略绑定，但其消费者尚未实现；目前请勿据此认为轮次后会自动保存。
+
+Hook 与受信任宿主注册的其他 Hooks 合并，保留显式 Stop 继续次数上限，重复 ID 或冲突策略拒绝组装。其绑定包含原 Agent 修订/Build/spec 和来源契约；恢复时重新派生，不接受漂移后的来源。它使用已有的密封 Hook 意图、回执、租约与取消机制，不参与工具授权或任务验收。
+
+## 来源与存储边界
+
+`studioOriginalUserMemorySources` 对每个待压缩用户消息核对当前消息引用、原历史 Run/消息索引、原 Run 配置摘要及 Host 准入胶囊。只接受原人类用户输入；schedule 即使用了 user 模型角色也排除。只从原始文本块提取，不把附件、工具、模型、摘要或宿主上下文视为记忆来源。重复投影保留原始来源身份，不能成为第二次观察。
+
+`nativeUserMemoryCandidate` 对完整陈述识别显式记忆意图和隐式偏好；不截断长事实，不从引用段落中匹配子串。用户 scope 包含 tenant/workspace/Agent/user；其他 scope 也通过明确命名空间绑定。ID 使用 TS 契约的 canonical SHA-256，不要求复刻 Python 的 JSON 字节或历史摘要。保留参考正则的边缘行为，例如单独的“记住：”会把冒号提议为候选；候选本身不是授权。
+
+`SqliteNativeMemoryProvider` 使用 WAL、synchronous FULL 与 BEGIN IMMEDIATE。每个候选的事实、来源消费标记、独立观察及回执共享一个事务：
+
+- 隐式偏好第一次仅 pending，第二个独立原始来源才可提交；同来源在其他生命周期中重投只得到 duplicate_source。
+- 命中敏感标签或检测规则的内容及超长候选拒绝；检测是 best-effort，并非完整 DLP。pending/rejected 状态不保存候选正文。回执保存处理结果与指纹，不保存请求正文。
+- 同槽位纠正保留业务 ID 并增加版本；跨 principal 隔离。显式纠正的历史输入边界与事实同事务消费，保留无关槽位的观察。
+- 遗忘清空事实正文与槽位观察，保留原来源标记；旧来源不能复活记忆，新来源从第一次观察重新累计。
+- 重用操作 ID 但更改请求参数会冲突。旧回执是历史效果，不能证明事实当前仍存在；读取事实必须重新查询。
+
+数据库位于 Studio store 的 `native-harness/memory-v1/<tenant摘要>/memory.sqlite`，与 Run ledger 分开。单个候选内有原子性；一批候选之间、记忆库与 Run ledger 之间没有分布式事务。回调在记忆事务提交后丢失结果会进入结果未知状态，停止摘要派发，不自动重跑；当前人工核对产品流程仍待完善。
+
+## 已执行验证范围
+
+`node --test packages/agentkit-harness/test/native-memory.test.mjs tests/studio-native-memory.test.mjs tests/studio-native-harness.test.mjs`
+
+覆盖确定性 Python 行为样例、原始来源校验、真实 Kernel 压缩与生产 Host 工厂组装、真实 SQLite 事务回滚、两个独立 Node writer、提交前后实际进程退出及数据库重开、遗忘/纠正/重投，以及提交后回调结果丢失时不派发摘要且不重复写入。Host 工厂测试使用受限的 Host/HTTP response doubles；它们不是完整 DSH CLI、浏览器或全新安装的记忆验收，后者仍是未完成项。

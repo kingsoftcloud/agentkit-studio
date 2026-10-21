@@ -386,6 +386,9 @@ project Studio Build/Gateway facts into the Native ports.
   Studio Native browser tool.
 - `native_hook_port.py`, `native_hook_registration.py` — consume locked Harness
   Hook sources under current Studio Run authority.
+  TS production registration and lifecycle are now implemented by
+  `src/providers/native-hooks.mjs` and the trusted Host bootstrap, with packed
+  Host/Frozen recovery evidence. See [Native Hooks](native-hooks.md).
 - `native_context_port.py`, `native_context_evidence.py`,
   `native_context_registration.py` — locked DSH Context sources consumed as
   scoped, bounded data.
@@ -396,6 +399,12 @@ project Studio Build/Gateway facts into the Native ports.
 - `native_memory_*.py` — DSH Memory recall/turn/sources/tool_port/acceptance/
   context/flush projection into the Native effect and approval boundary; an
   assistant promise is not a persisted fact.
+  TS now has original-user candidate extraction, isolated SQLite source/
+  observation/fact/receipt transactions, correction/forget storage and the
+  production PreCompact Hook. Recall, explicit tools/approval/reconciliation,
+  acceptance and completed-turn consumption are still incomplete; see
+  [Native Memory migration status](native-memory.md). Cloud transcript writes
+  do not satisfy this local capability.
 - `native_model_recovery.py` — explicit host grant for the narrow ordinary
   Studio Chat Completions path (route/type checks prove local construction
   identity).

@@ -26,7 +26,7 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 生产 Host 的 `createStudioNativeHarness` 从 Studio Agent 修订或 Frozen Build 解析可信配置，绑定已选模型与工作区身份，通过宿主 attachment 服务解析用户图片和文件引用。凭证只在模型端口调用时重新读取，不进入 Native 配置或账本。`createNativeDshTools` 将 Native 工具意图交给实际 DSH ToolRegistry，保留其权限管线；被允许的十种工作区工具及本地命令工具使用 Node 实现。工具名与资源 ID 分开处理，停用契约不能重新获得 builtin 执行权限。写入成功后管线报错时保留未知结果状态，新轮次不能绕过未知写或中断状态继续执行。
 
-开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时，普通 Revision 保持原有 Harness 路径；Frozen Build 使用构建时固定的引擎，见下文。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`，长期记忆写入会显式拒绝组装；这些缺口尚未解决。
+开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时，普通 Revision 保持原有 Harness 路径；Frozen Build 使用构建时固定的引擎，见下文。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`。本地记忆已接通下述压缩前候选消费；云端记忆写入仍显式拒绝组装，完整记忆能力尚未完成。
 
 `node scripts/verify-studio-native-harness.mjs --source <已构建的维护源码>` 验证实际打包的 Studio 文件、公开 Host prompt 模块解析、生产 Native Host 工厂及 runtime plugin。它在真实 SDK profile 中选择 preset，执行两轮 Native 对话并在轮间重启进程，另外运行一轮策略拒绝写入，核对六次真实 HTTP 请求、两次经过实际 DSH 工具管线的 Node 文件写入、被拒绝的文件未落盘、会话持久化、用量和一个独立的默认 DSH 会话。Node 26 与最低 Node 22.19.0 均通过。运行子进程的 PATH 仅含 Node，Python 配置指向不存在的位置。该验证的 DSH 公共包及 Studio 依赖来自固定的本地 Host 图，不能替代全新环境安装、完整 `mountStudioHost` 启动或所有 runtime 的无 Python 验收。完整流式界面消费、审批界面、源读取工作集等剩余上下文策略、输入的显式重绑与未知领取恢复操作、其他正式端口和自动化/部署入口仍待完成。
 
@@ -52,7 +52,7 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 25 项 Hooks 核心测试包含回调执行前、实际副作用后、回执提交后的真实进程退出和 SQLite 接管。反馈保留到有意义的任务响应确认送达，模型端错误不会清除待交付反馈；上下文端口若遗漏它会被拒绝。`PreCompact` 现仅针对正式接纳的来源集合调度，回调完成后重新计算摘要请求，拒绝时不调用摘要模型。
 
-Node `hook-executor.mjs` 根据固定范围、完整回调定义和执行策略绑定宿主回调，每次执行均须显式授权。单调时钟限定从可用性检查到结果校验的整个期限；取消、关闭和迟到授权不能授予后续执行权。JavaScript 无法强制终止不合作的 Promise，执行器继续持有它，限定清理等待时间，并将无有效结果的修改回调标记为结果未知。生产 Host 现通过 `nativeHookRegistrations` 组装精确 Agent 的可信 Node 回调，核对原运行的持久意图、身份、阶段和 fence；恢复时重新核对同一来源、配置及授权版本。接口及边界见 [Native Hooks 宿主接入](native-hooks.md)。这不包含本地记忆候选提取及原子消费回执，记忆写入仍是独立待迁移项。
+Node `hook-executor.mjs` 根据固定范围、完整回调定义和执行策略绑定宿主回调，每次执行均须显式授权。单调时钟限定从可用性检查到结果校验的整个期限；取消、关闭和迟到授权不能授予后续执行权。JavaScript 无法强制终止不合作的 Promise，执行器继续持有它，限定清理等待时间，并将无有效结果的修改回调标记为结果未知。生产 Host 现通过 `nativeHookRegistrations` 组装精确 Agent 的可信 Node 回调，核对原运行的持久意图、身份、阶段和 fence；恢复时重新核对同一来源、配置及授权版本。接口及边界见 [Native Hooks 宿主接入](native-hooks.md)。本地记忆现复用该密封 Hook 边界：完整原始用户候选提取、按 principal 隔离的 SQLite 来源/观察/事实/回执事务及压缩前消费已实现，包含 shadow/off/explicit_only 和提交后结果未知的保护。召回、显式管理工具及审批/核对、记忆验收和轮次后消费仍待补齐；范围与当前验证见 [Native 本地记忆迁移状态](native-memory.md)。
 
 目标变更可以在效果尚未领取执行权时撤销旧意图，留下明确的 `not_dispatched` 回执并按新要求准备执行；模型尝试数与 claim 在同一事务增加，准备后被撤销的请求不消耗调用额度。正式 Studio 指导使用 `guidancePolicy=boundary-guide/v1`：已准备的请求和工具批次先完成或核对，指导在封口边界进入当前目标，不撤销原请求。未启用该策略的底层旧指导接口仍保留原先撤销未派发意图的行为。对已经领取而失联的效果，先按恢复策略判断；未知写入继续中断，指导消息不会自动授权重跑。
 

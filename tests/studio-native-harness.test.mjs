@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { SqliteNativeMemoryProvider } from '../packages/agentkit-harness/src/native/memory-store.mjs';
+import { memoryDigest } from '../packages/agentkit-harness/src/native/memory-candidate.mjs';
 import { MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
@@ -36,7 +38,7 @@ async function setup(t, { spec = {}, profile = {}, respond } = {}) {
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
       requests.push({ url, options });
-      const response = respond ? respond(requests.length) : { choices: [{ index: 0, delta: { content: 'Complete' }, finish_reason: 'stop' }] };
+      const response = respond ? respond(requests.length, JSON.parse(options.body)) : { choices: [{ index: 0, delta: { content: 'Complete' }, finish_reason: 'stop' }] };
       return new Response(`data: ${JSON.stringify({ id: `response-${requests.length}`, ...response,
         usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
     } });
@@ -54,9 +56,35 @@ async function setup(t, { spec = {}, profile = {}, respond } = {}) {
   // The workspace identity is public deterministic configuration, not a path
   // read from user input. Keep the hash identical to production's scope key.
   const ledgerScope = () => createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex');
-  return { host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services,
+  return { root, host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
+test('Studio Host assembles local Memory PreCompact against original admitted user inputs and actual SQLite facts', async t => {
+  const fixture = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+    write: { mode: 'candidate', flushBeforeCompaction: true, flushAfterTurn: false } },
+    context: { maxInputTokens: 2400, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
+      compaction: { targetRatio: .2, summaryMaxTokens: 80 } } }, profile: { contextWindow: 2400, maxOutputTokens: 128 } });
+  const original = ' '.repeat(2500) + '我喜欢用Vim', sources = [];
+  for (let turn = 1; turn <= 3; turn++) {
+    if (turn > 1) fixture.payload.agent.session.append('turn/start', { turn });
+    fixture.payload.input.messages = [{ id: 'input-' + turn, role: 'user', source: { kind: 'user' },
+      content: [{ type: 'text', text: turn < 3 ? original : 'Finish' }] }];
+    await fixture.host.executeTurn({ ...fixture.payload, turn });
+    const snapshot = fixture.head(); assert.equal(snapshot.phase, 'completed');
+    if (turn < 3) sources.push(`native-message://${snapshot.runId}#message=${turn === 1 ? 1 : 3}`);
+  }
+  const snapshot = fixture.head(), entries = fixture.ledger.list(snapshot.scope, 'session')
+    .map(run => fixture.ledger.load(snapshot.scope, run.runId));
+  assert.ok(entries.flatMap(entry => entry.receipts).some(receipt => receipt.result.schemaVersion === 'agentkit.native-hook-result/v1'
+    && receipt.result.status === 'ok' && receipt.result.event === 'PreCompact'));
+  assert.ok(fixture.requests.some(request => JSON.parse(request.options.body).messages[0].content.startsWith('Summarize the quoted historical data')));
+  const provider = new SqliteNativeMemoryProvider(join(fixture.root, 'native-harness', 'memory-v1',
+    memoryDigest('local').slice(7), 'memory.sqlite'), { principal: snapshot.scope });
+  try {
+    const records = provider.list(); assert.equal(records.length, 1); assert.equal(records[0].content, '我喜欢用Vim');
+    assert.equal(records[0].version, 1); assert.deepEqual(new Set(records[0].sourceEventIds), new Set(sources));
+  } finally { provider.close(); }
+});
 test('Studio Native Host pins revision/input/model while refreshing credentials outside its ledger', async t => {
   const fixture = await setup(t);
   await fixture.host.executeTurn(fixture.payload);

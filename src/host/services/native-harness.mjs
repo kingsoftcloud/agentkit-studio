@@ -19,6 +19,7 @@ import { modelInput } from '../../model-service.mjs';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
 import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../providers/native-hooks.mjs';
+import { bindStudioNativeMemoryFlush, composeStudioNativeHooks } from '../../providers/native-memory.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -176,7 +177,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const ownedChildren = children && { scope, owner: children.owner, runIds: new Set() };
       if (ownedChildren) childOwners.add(ownedChildren);
       signal.throwIfAborted();
-      const hooks = hookRegistry?.bind({ scope, sessionId: String(agent.session.id), record, buildId: binding.buildId ?? null, store });
+      const hookOptions = { scope, sessionId: String(agent.session.id), record, buildId: binding.buildId ?? null, store };
+      const memoryHooks = bindStudioNativeMemoryFlush({ ...hookOptions, storeDir, contextWindow: context.profile.contextWindow });
+      let registeredHooks, hooks;
+      try { registeredHooks = hookRegistry?.bind(hookOptions); hooks = composeStudioNativeHooks(registeredHooks, memoryHooks); }
+      catch (error) { await registeredHooks?.close(); await memoryHooks?.close(); throw error; }
       return { scope, buildId, source,
         releaseResources: async request => {
           await hooks?.close();
