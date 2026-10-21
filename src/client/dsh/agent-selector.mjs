@@ -22,7 +22,7 @@ export function createAgentSelector({
     };
     const setAgentPermission = async targetSessionId => {
       try {
-        const result = await studioRemote?.commands?.execute?.(targetSessionId, '/permission read-only', []);
+        const result = await studioRemote?.commands?.execute?.(targetSessionId, '/permission workspace-write', []);
         if (result && result.ok === false) console.warn('[agentkit-studio] Agent permission default was not applied:', result.error?.message || result.error);
       } catch (error) {
         // Older DSH profiles may not expose the permission command. The

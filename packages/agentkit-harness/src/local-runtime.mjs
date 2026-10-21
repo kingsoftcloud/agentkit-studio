@@ -247,8 +247,11 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
-function createGatewayModel({ profile, fetchImpl = fetch, signal, modelIdleTimeoutMs }) {
+function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signal, modelIdleTimeoutMs }) {
   if (!profile?.baseUrl || !profile?.apiKey) throw new LocalRuntimeError('MODEL_PROFILE_INVALID', '模型配置缺少 baseUrl 或 API Key');
+  // Only a level this profile declared reaches the wire; an undeclared level
+  // would be an unknown parameter to the gateway.
+  const reasoningWire = reasoningEffort && profile.reasoningEfforts?.[reasoningEffort];
   return {
     async *stream({ messages, tools = [] }) {
       if (signal?.aborted) throw runtimeCancelledError();
@@ -262,7 +265,7 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal, modelIdleTimeo
       try { response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${profile.apiKey}` },
-        body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}) }),
+        body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(reasoningWire ? { reasoning_effort: reasoningWire } : {}) }),
         signal: requestSignal,
       }); } catch {
         if (signal?.aborted) throw runtimeCancelledError();
@@ -456,7 +459,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     send({ kind: 'assistant_text', lifecycle: 'running', payload: { text: '' } });
 
     try {
-      const model = createGatewayModel({ profile, fetchImpl, signal, modelIdleTimeoutMs });
+      const model = createGatewayModel({ profile, reasoningEffort: parsed.reasoningEffort, fetchImpl, signal, modelIdleTimeoutMs });
       // The harness owns the canonical loop; this local provider drives the
       // configured model while resource calls remain explicit Host actions.
       let text = '';

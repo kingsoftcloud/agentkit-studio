@@ -1,4 +1,5 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { studioReasoning } from '../../model-reasoning.mjs';
 export const MODEL_CREDENTIAL_NAMES = ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY'];
 
 export const DEFAULT_KSYUN_BASE_URL = 'http://kspmas.ksyun.com/v1';
@@ -51,16 +52,24 @@ export function createModelBridge({ hostRemote }) {
         const baseUrl = normalizeModelEndpoint(profile.baseUrl, provider);
         if (!baseUrl) throw new Error(`模型 ${modelName} 需要填写 API 地址`);
         const credentialName = modelCredentialName(profile, index);
+        const reasoning = studioReasoning(profile);
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
           displayName: `${provider} · ${modelName}`, api: 'openai-completions', apiKeyEnv: credentialName,
           baseURL: baseUrl,
+          // A concrete route default keeps fresh sessions on a thinking level
+          // instead of DSH's "provider default" row, which would omit the
+          // parameter and leave thinking to the gateway's own default.
+          ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}),
           // Kspmas model metadata is multimodal, but custom DSH routes fall
           // back to text-only unless the capability is declared explicitly.
           // Keep the input contract on each profile so read_image and native
           // image messages are admitted consistently with the upstream model.
           models: (catalogs[index]?.items?.length ? catalogs[index].items : [{ id: modelName, name: modelName, input: profile.input || ['text'] }])
             .map(model => ({ id: model.id, name: model.name || model.id, contextWindow: 262144, maxTokens: 32768,
-              input: model.inputKnown === false && model.id === modelName ? profile.input || ['text'] : model.input || ['text'] })),
+              input: model.inputKnown === false && model.id === modelName ? profile.input || ['text'] : model.input || ['text'],
+              // The profile describes one model; sibling catalog entries keep
+              // their own (absent) capability instead of inheriting this map.
+              ...(reasoning && model.id === modelName ? { reasoningEfforts: reasoning.efforts } : {}) })),
         } } };
       });
       const response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, [
