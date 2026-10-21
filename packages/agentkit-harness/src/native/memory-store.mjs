@@ -255,9 +255,20 @@ export class SqliteNativeMemoryProvider {
             createdAt: now, updatedAt: now, writePolicy: authority === 'explicit_user' ? 'user_confirm' : 'auto',
             metadata: { slotKey: deriveMemoryProfileSlotKey(content), extractionPolicy: NATIVE_USER_EXTRACTION_POLICY,
               mutationSessionId: sourceSessionId, authority, sourceGoalRevision, sourceGoalDigest } };
+          // Consume the original user sources in the same transaction (reference
+          // local_sqlite.apply_mutation consumes the horizon for remember too), so
+          // an explicit write supersedes the auto profile candidate for that slot
+          // and PreCompact/afterTurn cannot re-extract the same source into a
+          // second observation or fact.
+          horizon(record, null, horizonEntries);
         } else {
           const original = get(memoryId);
-          invariant(original && original.status === 'active' && original.version === expectedVersion,
+          // The CAS read must bind the exact call's scope: a record found in any
+          // selected namespace is not enough. Correcting/forgetting under scope:user
+          // must not touch an agent-scope record that happens to share the database.
+          invariant(original && original.status === 'active' && original.version === expectedVersion
+            && original.tenantId === owner.tenantId && original.scope === scope && original.scopeId === scopeId
+            && (original.scope === 'org' || original.workspaceId === owner.workspaceId),
             'native_memory_version_or_identity_conflict');
           invariant(original.writePolicy !== 'locked', 'native_memory_slot_locked');
           if (action === 'correct') invariant(!nativeMemorySensitiveLabels(content).length, 'native_memory_content_rejected');

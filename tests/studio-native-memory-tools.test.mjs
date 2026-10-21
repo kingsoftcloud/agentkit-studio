@@ -22,8 +22,14 @@ function config(text, source = { kind: 'user' }) {
 const planner = { countMessage: message => Math.ceil(JSON.stringify(message).length / 4) };
 let seq = 0;
 function call(name, args) { return { name, arguments: args, callId: 'call-' + ++seq }; }
-function request(name, args, runId, operationKey) {
-  return { call: call(name, args), operationKey: operationKey ?? 'op-' + (++seq), runId, scope, signal: { throwIfAborted() {} } };
+// Real locked definition + real AbortSignal per request, bound to the composed
+// port. request.scope is the studio scope (the bound principal).
+function makeRequest(port) {
+  return (name, args, runId, operationKey) => {
+    const ac = new AbortController();
+    return { call: call(name, args), definition: port.definitions.find(d => d.name === name),
+      operationKey: operationKey ?? 'op-' + (++seq), runId, scope, signal: ac.signal, abortController: ac };
+  };
 }
 
 function studio(t, spec = { runtime: { type: 'harness' }, memory: { enabled: true, providerRef: 'local-default',
@@ -35,13 +41,13 @@ function studio(t, spec = { runtime: { type: 'harness' }, memory: { enabled: tru
     countRequest: async request => Math.ceil(JSON.stringify({ messages: request.messages, tools: request.tools }).length / 4),
     countText: async request => Math.ceil(request.text.length / 4) } } };
   const worker = () => new NativeKernel({ store, ports, digest, owner: 'worker' });
-  const seed = objective => {
+  const seed = (objective, runId = 'mem-run') => {
     const configuration = config(objective);
-    worker().start({ ...fixture().snapshot, runId: 'mem-run', parentRunId: null, sessionId: 'session' }, configuration);
+    worker().start({ ...fixture().snapshot, runId, parentRunId: null, sessionId: 'session' }, configuration);
     // Drive one model turn so the run has real admission events; the memory tools
     // resolve provenance from the latest actual Run event, not an invented one.
-    worker().runUntilIdle(scope, 'mem-run');
-    return 'mem-run';
+    worker().runUntilIdle(scope, runId);
+    return runId;
   };
   t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
   return { root, store, record, seed };
@@ -75,6 +81,7 @@ test('composed port resolves explicit authority from the actual admitted goal: a
   const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
     authorize: async () => 'allow', consent: async req => { consentLog.push(req.call.arguments.action); return 'allow'; }, planner });
   t.after(() => port.close());
+  const request = makeRequest(port);
   // Exact explicit content -> explicit_user authority, consent NOT called, user_confirm fact.
   const exact = await port.execute(request('manage_memory', { action: 'remember', scope: 'user', content: '我的编辑器是 Vim' }, runId, 'op-exact'));
   assert.equal(exact.status, 'ok'); assert.equal(exact.content.committed, true);
@@ -100,6 +107,7 @@ test('composed port reconcile verifies a committed receipt against the current f
   const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
     authorize: async () => 'allow', consent: async () => 'allow', planner });
   t.after(() => port.close());
+  const request = makeRequest(port);
   const rememberReq = request('manage_memory', { action: 'remember', scope: 'user', content: '我的偏好是咖啡' }, runId, 'op-rec');
   const remembered = await port.execute(rememberReq);
   assert.equal(remembered.content.committed, true);
@@ -114,4 +122,54 @@ test('composed port reconcile verifies a committed receipt against the current f
   // An operation key that never ran is uncertain and never redone.
   const unknown = await port.reconcile(request('manage_memory', { action: 'remember', scope: 'user', content: 'never' }, runId, 'op-never'));
   assert.equal(unknown.status, 'uncertain'); assert.equal(unknown.content.retryability, 'requires_reconcile');
+});
+
+test('strict authority: a non-explicit goal never grants explicit_user; only an exact match of the original human statement skips consent, and a content mismatch routes to consent', async t => {
+  const { store, record, root, seed } = studio(t);
+  const runId = seed('帮我整理一下本周的报告'); // not an explicit memory instruction
+  const consentLog = [];
+  const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
+    authorize: async () => 'allow', consent: async req => { consentLog.push(req.call.arguments.content); return 'allow'; }, planner });
+  t.after(() => port.close());
+  const request = makeRequest(port);
+  // A remember whose content is not an original explicit human statement of this
+  // run -> not explicit_user -> consent required. No model/tool text grants it.
+  const r = await port.execute(request('manage_memory', { action: 'remember', scope: 'user', content: '随便写的事实' }, runId, 'op-ne-1'));
+  assert.equal(r.status, 'ok'); assert.equal(port.provider.get(r.content.memoryId).writePolicy, 'auto');
+  assert.deepEqual(consentLog, ['随便写的事实']);
+  // An explicit goal but a content that does not match the original statement -> consent.
+  const runId2 = seed('记住我的编辑器是 Vim', 'mem-run-2');
+  const consentLog2 = [];
+  const port2 = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
+    authorize: async () => 'allow', consent: async () => { consentLog2.push('called'); return 'allow'; }, planner });
+  t.after(() => port2.close());
+  const request2 = makeRequest(port2);
+  const mismatch = await port2.execute(request2('manage_memory', { action: 'remember', scope: 'user', content: '我的编辑器是 Emacs' }, runId2, 'op-ne-2'));
+  assert.equal(mismatch.status, 'ok'); assert.equal(port2.provider.get(mismatch.content.memoryId).writePolicy, 'auto');
+  assert.deepEqual(consentLog2, ['called']);
+  // The exact original statement DOES skip consent.
+  const consentLog3 = [];
+  const port3 = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
+    authorize: async () => 'allow', consent: async () => { consentLog3.push('called'); return 'allow'; }, planner });
+  t.after(() => port3.close());
+  const request3 = makeRequest(port3);
+  const exact = await port3.execute(request3('manage_memory', { action: 'remember', scope: 'user', content: '我的编辑器是 Vim' }, runId2, 'op-ne-3'));
+  assert.equal(exact.status, 'ok'); assert.equal(port3.provider.get(exact.content.memoryId).writePolicy, 'user_confirm');
+  assert.deepEqual(consentLog3, []);
+});
+
+test('fail-closed source: a run with no admission events (un-driven) returns memory_source_event_unavailable and never reaches consent or writes', async t => {
+  const { store, record, root } = studio(t);
+  // Seed creates a run but do NOT drive it: resolveMutationSource finds no origin event.
+  const configuration = config('记住我的编辑器是 Vim');
+  const ports = { model: { generate: async () => finish('Delivered.') }, context: { tokens: { tokenizerId: 'counter', tokenizerDigest: 'counter/v1', countRequest: async () => 1, countText: async () => 1 } } };
+  new NativeKernel({ store, ports, digest, owner: 'worker' }).start({ ...fixture().snapshot, runId: 'cold-run', parentRunId: null, sessionId: 'session' }, configuration);
+  const consentLog = [];
+  const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
+    authorize: async () => 'allow', consent: async () => { consentLog.push('called'); return 'allow'; }, planner });
+  t.after(() => port.close());
+  const request = makeRequest(port);
+  const r = await port.execute(request('manage_memory', { action: 'remember', scope: 'user', content: '我的编辑器是 Vim' }, 'cold-run', 'op-cold'));
+  assert.equal(r.status, 'error'); assert.equal(r.content.code, 'memory_source_event_unavailable');
+  assert.deepEqual(consentLog, []); assert.deepEqual(port.provider.list(), []);
 });
