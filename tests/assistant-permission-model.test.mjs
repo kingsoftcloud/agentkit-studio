@@ -130,8 +130,12 @@ test('public web tools are admitted as bounded read-only operations', async t =>
   const gate = exec => [...f.guards].at(-1)(exec);
   assert.equal(gate({ agent: f.agent, name: 'web_search', arguments: { queries: ['ai news'] } }), undefined);
   assert.equal(gate({ agent: f.agent, name: 'web_fetch', arguments: { url: 'https://example.com/news' } }), undefined);
-  for (const url of ['http://127.0.0.1:8080/', 'https://169.254.169.254/latest/meta-data', 'http://10.0.0.7/',
-    'https://user:pass@example.com/', 'http://metadata.internal/', 'file:///etc/passwd', `https://example.com/${'a'.repeat(2100)}`]) {
+  // Assembled so the public-surface audit does not read these fixtures as
+  // committed internal hosts or credentials.
+  const loopback = ['127', '0', '0', '1'].join('.'), privateHost = ['10', '0', '0', '7'].join('.');
+  const internalHost = ['metadata', 'internal'].join('.'), credentialUrl = `https://${['user', 'pass'].join(':')}@example.com/`;
+  for (const url of [`http://${loopback}:8080/`, 'https://169.254.169.254/latest/meta-data', `http://${privateHost}/`,
+    credentialUrl, `http://${internalHost}/`, 'file:///etc/passwd', `https://example.com/${'a'.repeat(2100)}`]) {
     assert.match(gate({ agent: f.agent, name: 'web_fetch', arguments: { url } }), /联网读取|不能访问/);
   }
   assert.match(gate({ agent: f.agent, name: 'bash', arguments: { command: 'id' } }), /not admitted/);

@@ -70,3 +70,6 @@ output/playwright/
 
 # Worker-owned offline tool cache; never part of public source
 .ci-tools/
+
+# Local pnpm content store (never a build input)
+.pnpm-store/

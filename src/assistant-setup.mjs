@@ -70,7 +70,7 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     if (!record) return { state: 'NOT_STARTED' };
     return { state: record.state, message: record.failure?.message || labels[record.state] || '请核对开通状态',
       ready: readyStates.has(record.state), cloudAgentId: record.cloudAgentId || null, deploymentId: record.deploymentId || null,
-      failure: record.failure || null, resources, startedAt: record.startedAt };
+      releaseId: record.selection?.releaseId || null, failure: record.failure || null, resources, startedAt: record.startedAt };
   }
   async function options() {
     const key = await scope();
@@ -191,6 +191,34 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     });
     kick(key); return publicState(await read(key));
   }
+  // In-place image upgrade: rebuild the frozen package from the Agent's current
+  // revision, then reuse the native rollout update so history and storage stay.
+  async function upgrade(input = {}) {
+    if (input.confirmed !== true) throw portableError('ASSISTANT_CONFIRM_REQUIRED', '请确认升级云端助理后再继续');
+    const key = await scope(), record = await read(key);
+    if (!record || !readyStates.has(record.state) || !record.welcomed) throw portableError('ASSISTANT_UPGRADE_UNAVAILABLE', '助理尚未就绪，暂不能升级，请稍后重试');
+    const available = await options();
+    if (input.optionsId !== available.optionsId) throw portableError('ASSISTANT_OPTIONS_CHANGED', '升级配置已变化，请刷新后确认');
+    if (available.releaseId === record.selection?.releaseId) return publicState(record);
+    await locked(key, async () => {
+      const latest = await read(key);
+      if (!latest || latest.state !== record.state || latest.selection?.releaseId !== record.selection?.releaseId) return;
+      const agent = await agents.get(latest.agentId);
+      const frozen = await build.build({ agentId: agent.metadata.id, agentName: agent.metadata.name, revision: agent.metadata.revision,
+        metadata: agent.metadata, spec: agent.spec, bindings: agent.bindings });
+      const preview = await deployments.prepareUpdate({ deploymentId: latest.deploymentId, buildId: frozen.id, releaseId: available.releaseId });
+      await deployments.applyUpdate({ deploymentId: latest.deploymentId, previewId: preview.previewId, buildId: frozen.id,
+        bundleId: preview.bundleId, releaseId: preview.releaseId || available.releaseId,
+        idempotencyKey: `assistant-upgrade-${sha256(JSON.stringify([latest.deploymentId, frozen.id, available.releaseId])).slice(0, 40)}` });
+      latest.buildId = frozen.id;
+      latest.preview = { ...(latest.preview || {}), buildId: frozen.id, releaseId: available.releaseId };
+      latest.selection = { ...latest.selection, releaseId: available.releaseId };
+      latest.state = 'UPDATING'; latest.failure = null;
+      await write(latest);
+    });
+    kick(key);
+    return publicState(await read(key));
+  }
   // Read-only lineage lookup: catalog/binding must never start deployment work.
   async function reference() {
     let key;
@@ -198,5 +226,5 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     const record = await read(key);
     return record ? { agentId: record.agentId, cloudAgentId: record.cloudAgentId, deploymentId: record.deploymentId } : null;
   }
-  return { options, start, status, reference };
+  return { options, start, status, upgrade, reference };
 }
