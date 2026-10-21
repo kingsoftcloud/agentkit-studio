@@ -671,7 +671,13 @@ try {
     const uiRoutes = createAssistantRoutes({ assistantStoreDir: join(scratch, 'ui-lifecycle'), deployments: async () => ({ agents: {
       list: async () => ({ items: [uiAgent] }),
       connect: async id => { assert.equal(id, uiAgent.metadata.id); return { agent: uiAgent, endpoint: base, token, capabilities: runtimeIdentity.capabilities }; },
-    } }) });
+    } }),
+      // The browser page asks whether an upgrade is available before enabling
+      // its banner; a read-only fixture keeps the relay free of cloud writes.
+      assistantSetup: async () => ({
+        status: async () => ({ state: 'NOT_STARTED', ready: false, releaseId: null }),
+        options: async () => ({ optionsId: 'ui-fixture-options', releaseId: 'ui-fixture-release' }),
+      }) });
     report.ui = await verifyPersonalAssistantUi({ source, installed,
       api: (operation, input = {}) => api(operation, { ...input, conversation: 'ui-acceptance' }),
       relay: (method, payload) => uiRoutes(method, method === 'assistant/execute' ? { ...payload, input: { ...payload.input, conversation: 'ui-acceptance' } } : payload),
