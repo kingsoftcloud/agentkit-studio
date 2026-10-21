@@ -107,6 +107,35 @@ again. Never lower the feed version or disable signature validation to roll back
 See [Windows releases](windows-release.md) for the independent NSIS/signature and
 installed App checks. A working macOS update does not prove Windows update support.
 
+## Publishing from a local machine
+
+GitHub-hosted runners cannot reach the KS3 origin reliably: the pre-publish KS3
+probe fails with `403` before anything is uploaded. The candidate build is still
+produced by `release-desktop.yml` with `publish_feed=false`, so the signed bytes
+come from CI and the publication step runs from a maintainer machine inside the
+network:
+
+```sh
+# macOS: download the signed candidate, verify SHA-256 sums, publish the feed,
+# then refresh the studio/latest download alias.
+node scripts/publish-locally.mjs mac \
+  --run <candidate-run-id> --studio-ref <40-char-sha> \
+  --expected-previous-version <current-feed-version>
+
+# Windows: verify the signed installer evidence, publish the Windows feed and
+# refresh the alias.
+node scripts/publish-locally.mjs win \
+  --run <candidate-run-id> --studio-ref <40-char-sha> \
+  --version <build-version> --expected-previous-version <current-feed-version>
+
+# Repair only the download alias.
+node scripts/publish-locally.mjs alias --channel preview
+```
+
+`--dry-run` prints the resolved artifact and origins without touching KS3, and
+`--candidate <dir>` publishes an already downloaded candidate directory. KS3
+credentials come from the Host configuration (`KSYUN_ACCESS_KEY`/`KSYUN_SECRET_KEY`).
+
 ## Public download alias
 
 The public site links to fixed `studio/latest/` URLs instead of a versioned folder;
