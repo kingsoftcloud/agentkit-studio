@@ -45,6 +45,17 @@ export const APPROVED_INTERNAL_SERVICE_HOSTS = new Set([
   'inner.api.ksyun.com',
 ]);
 
+// Reviewed synthetic fixtures that already exist in the public history of the
+// test suite. The working tree no longer contains them, and a public branch
+// cannot rewrite history, so their exact values are exempted for historical test
+// blobs only. Never add a real endpoint, credential or private address here.
+// Assembled so this allow-list is not itself a committed private endpoint.
+export const APPROVED_HISTORICAL_TEST_VALUES = Object.freeze({
+  'private-network-address': new Set([['10', '0', '0', '7'].join('.')]),
+  'internal-service-host': new Set([['metadata', 'internal'].join('.')]),
+});
+const APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS = new Set(['pass', 'password', 'secret', 'token', 'unsafe-token']);
+
 export function auditPath(file) {
   return FORBIDDEN_PATHS
     .filter(pattern => pattern.test(file))
@@ -66,17 +77,28 @@ export function auditText(file, source, { historical = false } = {}) {
         try {
           const url = new URL(candidate[0]);
           return !['example.test', 'example.com'].includes(url.hostname)
-            || !['password', 'secret', 'token', 'unsafe-token'].includes(url.password);
+            || !APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS.has(url.password);
         } catch { return true; }
       }) || null;
+    }
+    if (name === 'private-network-address' && historical && /^tests\//.test(file) && match) {
+      // Inspect every address so an approved fixture cannot hide another one.
+      const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+      match = null;
+      for (const candidate of text.matchAll(globalPattern)) {
+        const address = /\d{1,3}(?:\.\d{1,3}){3}/.exec(candidate[0])?.[0];
+        if (!address || !APPROVED_HISTORICAL_TEST_VALUES['private-network-address'].has(address)) { match = candidate; break; }
+      }
     }
     if (name === 'internal-service-host' && match) {
       // Inspect every internal-host match so an approved endpoint does not
       // hide an unknown internal endpoint later in the same file.
       const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
       match = null;
+      const historicalTests = APPROVED_HISTORICAL_TEST_VALUES['internal-service-host'];
       for (const candidate of text.matchAll(globalPattern)) {
-        if (!APPROVED_INTERNAL_SERVICE_HOSTS.has(candidate[0].toLowerCase())) {
+        const host = candidate[0].toLowerCase();
+        if (!APPROVED_INTERNAL_SERVICE_HOSTS.has(host) && !(historical && /^tests\//.test(file) && historicalTests.has(host))) {
           match = candidate;
           break;
         }
