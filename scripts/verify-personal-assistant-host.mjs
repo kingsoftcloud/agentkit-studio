@@ -515,7 +515,7 @@ try {
   assert.equal(managed.capabilities.execution.permission, 'workspace-write');
   assert.equal(managed.capabilities.execution.approval, 'ask');
   assert.equal(managed.capabilities.execution.arbitraryShell, false);
-  assert.equal(managed.capabilities.execution.network, false);
+  assert.equal(managed.capabilities.execution.network, 'public-web-read-only');
   const managedAgent = running.ctx.get('agents').get(managedReceipt.sessionId);
   assert.ok(managedAgent);
   const managedCwd = managedAgent.session.header.cwd;
