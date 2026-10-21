@@ -2088,12 +2088,104 @@
         "packages/util/values/tests/raw-number.spec.ts"
       ],
       "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e"
+    },
+    {
+      "id": "050",
+      "file": "050-external-turn-ownership.patch",
+      "category": "lifecycle",
+      "risk": "high",
+      "dependsOn": [
+        "016",
+        "041",
+        "047",
+        "049"
+      ],
+      "removeWhen": "The pinned upstream includes equivalent durable external-turn ownership, same-turn recovery and cancellation boundaries.",
+      "contracts": [
+        "A required dsh.external-turn/v1 event records exact engine ownership before effects; unsupported readers refuse rather than repair away an owned turn.",
+        "Explicit dsh.external-turn-host/v1 recovery reserves the original open turn, preserves scoped pre-step admission and rejects competing or foreign recovery.",
+        "Failure preserves ownership and parks queued input; successful settlement closes once, and cancellation waits for the executor before releasing queued work.",
+        "Unclaimed turns and forks retain ordinary interruption repair; claiming after step execution or delegating back to the default loop is rejected.",
+        "Generated API, event, configuration and format catalogs follow the maintained sources; workflow guest numeric validation and client permission-slot catalogs are refreshed from their existing owners."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent",
+        "@deepseek-ai/dsh-agent-loop",
+        "@deepseek-ai/dsh-session",
+        "@deepseek-ai/dsh-tool-cordis",
+        "@deepseek-ai/dsh-cordis-client-runner",
+        "@deepseek-ai/dsh-workflow-ptc"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Reviewed maintained source, public Agent/JSONL recovery tests and relevant Node 26/22 regressions; no upstream submission receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/external-turn-recovery.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/resume.spec.ts",
+          "packages/core/session/tests/repair.spec.ts",
+          "packages/workflow/workflow-ptc/tests/guest.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/architecture.i18n.yaml",
+        "docs/architecture.md",
+        "docs/architecture.zh.md",
+        "docs/config-catalog.md",
+        "docs/config-catalog.zh.md",
+        "docs/event-producer-consumer.md",
+        "docs/event-producer-consumer.zh.md",
+        "docs/persistence-catalog.i18n.yaml",
+        "docs/persistence-catalog.md",
+        "docs/persistence-catalog.zh.md",
+        "docs/persistence-changes/2026-10-21-external-turn-ownership.i18n.yaml",
+        "docs/persistence-changes/2026-10-21-external-turn-ownership.md",
+        "docs/persistence-changes/2026-10-21-external-turn-ownership.schema.json",
+        "docs/persistence-changes/2026-10-21-external-turn-ownership.zh.md",
+        "docs/persistence-changes/historical-formats/README.i18n.yaml",
+        "docs/persistence-changes/historical-formats/README.md",
+        "docs/persistence-changes/historical-formats/README.zh.md",
+        "docs/persistence-schema.json",
+        "docs/subsystems/core.i18n.yaml",
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "docs/subsystems/session.md",
+        "docs/subsystems/session.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/external-turn-ownership/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/external-turn-ownership/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/external-turn-ownership/guide.zh.md",
+        "packages/core/agent-loop/README.i18n.yaml",
+        "packages/core/agent-loop/README.md",
+        "packages/core/agent-loop/README.zh.md",
+        "packages/core/agent-loop/src/agent.ts",
+        "packages/core/agent-loop/src/index.ts",
+        "packages/core/agent-loop/tests/external-turn-recovery.spec.ts",
+        "packages/core/agent/src/runtime-types.ts",
+        "packages/core/agent/src/types.ts",
+        "packages/core/session/src/external-turn.ts",
+        "packages/core/session/src/index.ts",
+        "packages/core/session/src/known-event-types.ts",
+        "packages/core/session/src/repair.ts",
+        "packages/core/session/src/types.ts",
+        "packages/extensions/cordis-client-runner/src/client/slot-catalog.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "packages/workflow/workflow-ptc/src/guest-source.ts",
+        "scripts/type-equiv.manifest.json"
+      ],
+      "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e"
     }
   ],
-  "patchedTree": "1602800c40282ef0058ba90d873e4e47a2fdb035",
-  "patchedSourceSha256": "0eac393f1f27f206487bfaa3c9c9963140488e924195f30eadd5e0be67a95c23",
+  "patchedTree": "394dda034ed92d2ec62458e94ea7f8d9dabc49bd",
+  "patchedSourceSha256": "fb8f1ea5b94ceddb638ea46c17289f19a2b69815dcad8fa39d225ebf8cfdc0f4",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "9975dad02b7aca9dd8a94bad6dfc04146e252cb3b09f139dd8733798c07a91ed"
+    "sha256": "2a59202e46d4dc28d95ced00ccb07986723f2efac78b4aaff389b6a7b1c53226"
   }
 }

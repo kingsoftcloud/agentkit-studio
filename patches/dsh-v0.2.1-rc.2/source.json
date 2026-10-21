@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "ef3e02863a3268d46ac2c4c14d4873343168c2fa",
+  "headCommit": "f4bccbf1c3b6c5dcf15a874424aca00f1895461c",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-numeric",
-  "tree": "1602800c40282ef0058ba90d873e4e47a2fdb035",
-  "sourceSha256": "0eac393f1f27f206487bfaa3c9c9963140488e924195f30eadd5e0be67a95c23",
+  "tree": "394dda034ed92d2ec62458e94ea7f8d9dabc49bd",
+  "sourceSha256": "fb8f1ea5b94ceddb638ea46c17289f19a2b69815dcad8fa39d225ebf8cfdc0f4",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "0f23fc221481608929b976d8892e0fa567dd6e0a8de5d7dd672ce7a06077ee42"
+    "sha256": "c15cd3a7309f2859dfcbd6a6491a331416fc0747237e66767de6faa838a6ec05"
   },
   "commits": [
     {
@@ -262,6 +262,12 @@
       "file": "049-exact-numeric-arguments.patch",
       "commit": "ef3e02863a3268d46ac2c4c14d4873343168c2fa",
       "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e"
+    },
+    {
+      "id": "050",
+      "file": "050-external-turn-ownership.patch",
+      "commit": "f4bccbf1c3b6c5dcf15a874424aca00f1895461c",
+      "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e"
     }
   ]
 }

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, lstatSync, mkdtempSync, rmSync } from 'node:fs';
 import { basename, resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 
 const archive = process.argv[2];
 if (!archive) {
@@ -33,6 +34,9 @@ const expected = [
   'src/client/state/native-children.mjs', 'src/client/dsh/native-children.mjs',
   'src/providers/native-subagents.mjs',
   'src/providers/native-recovery-binding.mjs',
+  'host-source/dsh-v0.2.1-rc.2/maintenance.bundle',
+  'host-source/dsh-v0.2.1-rc.2/LICENSE',
+  'scripts/verify-native-recovery-capability.mjs',
   'scripts/verify-studio-native-children.mjs',
   'tests/fixtures/studio-native-children.mjs',
   'packages/agentkit-harness-core/dist/child-contract.mjs',
@@ -82,6 +86,11 @@ if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.versio
 if (manifest.requiredDsh !== '0.2.1-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
 if (packageJson.private !== true) throw new Error('package.json must remain private until registry publication is approved');
 const harnessPackage = JSON.parse(read('packages/agentkit-harness/package.json'));
+const maintenance = JSON.parse(read('patches/dsh-v0.2.1-rc.2/source.json'));
+const bundledSource = execFileSync('tar', ['-xOzf', tarball, 'package/host-source/dsh-v0.2.1-rc.2/maintenance.bundle']);
+if (createHash('sha256').update(bundledSource).digest('hex') !== maintenance.bundle.sha256) {
+  throw new Error('packaged maintenance source differs from its reviewed descriptor');
+}
 const harnessManifest = JSON.parse(read('packages/agentkit-harness/agentkit-harness.plugin.json'));
 if (harnessPackage.name !== '@kingsoftcloud/agentkit-harness' || harnessPackage.private === true) throw new Error('Harness package must be independently packable');
 if (harnessManifest.type !== 'dsh-plugin' || harnessManifest.package !== harnessPackage.name) throw new Error('Harness manifest is not a DSH plugin manifest');

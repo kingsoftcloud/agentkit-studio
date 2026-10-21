@@ -29,10 +29,10 @@ function atomDigest(event) {
 /** Host-only fold of actual Session events; it grants no Native execution authority. */
 export function nativeDeliveryProjection() {
   return {
-    key: NATIVE_DELIVERY_PROJECTION, stateVersion: 2,
+    key: NATIVE_DELIVERY_PROJECTION, stateVersion: 3,
     stateSchema: { parse(value) {
       invariant(ownObject(value) && ownObject(value.atoms) && ownObject(value.seqs) && Number.isSafeInteger(value.turn) && value.turn >= 0
-        && typeof value.hasSurface === 'boolean' && Object.values(value.atoms).every(item => /^[a-f0-9]{64}$/.test(item)), 'native_delivery_state_invalid');
+        && typeof value.openTurn === 'boolean' && typeof value.hasSurface === 'boolean' && Object.values(value.atoms).every(item => /^[a-f0-9]{64}$/.test(item)), 'native_delivery_state_invalid');
       invariant(Object.keys(value.atoms).length === Object.keys(value.seqs).length
         && Object.keys(value.atoms).every(key => Number.isSafeInteger(value.seqs[key]) && value.seqs[key] > 0), 'native_delivery_state_invalid');
       if (value.head !== null) invariant(ownObject(value.head) && Number.isSafeInteger(value.head.seq)
@@ -40,9 +40,10 @@ export function nativeDeliveryProjection() {
       canonical(value);
       return value;
     } },
-    init: () => ({ atoms: {}, seqs: {}, turn: 0, hasSurface: false, head: null }),
+    init: () => ({ atoms: {}, seqs: {}, turn: 0, openTurn: false, hasSurface: false, head: null }),
     apply(state, event) {
-      if (event.type === 'turn/start') return { ...state, turn: event.data.turn };
+      if (event.type === 'turn/start') return { ...state, turn: event.data.turn, openTurn: true };
+      if (event.type === 'turn/end') return { ...state, openTurn: false };
       const key = atomKey(event);
       if (key === null) return state;
       const fingerprint = atomDigest(event);
@@ -81,6 +82,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     const value = projections.stateOf(session, NATIVE_DELIVERY_PROJECTION);
     invariant(value !== undefined, 'native_delivery_projection_missing');
     invariant(value.turn === turn, 'native_delivery_turn_mismatch');
+    invariant(value.openTurn, 'native_delivery_turn_closed');
     return value;
   };
   const append = (type, data, options = {}) => {
@@ -104,8 +106,8 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       .every(key => key === projectionName), 'native_delivery_admission_changed');
     // Pin the consumer identity before any Session append; a retry must use
     // the same admitted input even if no Native event has been delivered yet.
-    if (!Object.hasOwn(record.projections, projectionName)) store.acknowledge(scope, runId, projectionName, 0);
     state();
+    if (!Object.hasOwn(record.projections, projectionName)) store.acknowledge(scope, runId, projectionName, 0);
     append('step/start', { turn, step: 1 });
     const desired = systemText ? [{ type: 'text', text: systemText }] : [];
     const current = state();
@@ -236,6 +238,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       })]);
       invariant(persisted === true, 'native_delivery_not_durable');
     } finally { clearTimeout(timer); }
+    state();
     store.acknowledge(scope, runId, projectionName, snapshot.eventSeq);
     for (const settlement of settlements) onStreamSettled?.(...settlement);
   }

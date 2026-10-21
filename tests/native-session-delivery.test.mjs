@@ -259,3 +259,20 @@ test('multi-message admission keeps original attachment/source blocks once; only
   assert.deepEqual(displayed[2].content, [{ type: 'text', text: 'Inspect carefully' }]);
   const before = structuredClone(sink.events); await deliver(result); assert.deepEqual(sink.events, before);
 });
+
+for (const boundary of ['before-delivery', 'during-flush']) {
+  test(`a closed original DSH turn rejects Native delivery at ${boundary} without acknowledging it`, async t => {
+    const { store } = setup(t), sink = consumer();
+    const snapshot = await new NativeKernel({ store, ports: ports(), digest, owner: 'closed-turn-verification' }).runUntilIdle(scope, 'run');
+    assert.ok(snapshot.eventSeq > 0);
+    const close = () => sink.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
+    if (boundary === 'before-delivery') close();
+    const before = structuredClone(sink.events);
+    const push = delivery(store, sink, { flush: async session => { close(); return sink.flush(session); } });
+    await assert.rejects(push(snapshot), { code: 'native_delivery_turn_closed' });
+    const projections = Object.values(store.load(scope, 'run').projections);
+    assert.ok(projections.every(cursor => cursor === 0));
+    if (boundary === 'before-delivery') { assert.deepEqual(sink.events, before); assert.equal(projections.length, 0); }
+    assert.equal(sink.projections.stateOf().openTurn, false);
+  });
+}

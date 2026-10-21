@@ -1,5 +1,7 @@
 # Native Harness TypeScript 迁移
 
+宿主维护源码提供显式 `Agent.externalTurns` 生命周期：执行器可在副作用前持久记录版本化 `turn/owner`，重建 Agent 保留其原未结束轮次；可信 Host 显式恢复时独占该轮次，失败保持开放并停放后续输入，成功只关闭一次。普通 DSH 轮次与 fork 继续原修复路径，旧版读取器会拒绝不支持的必读事件。Native 消费投影同步记录轮次开放状态，已关闭轮次不能继续投递，刷新等待期间关闭也不推进消费游标。这些接口和保护已实现，但 Studio 尚未写入该归属标记，也尚未接通父 Run 冷恢复控制入口；当前生产路径不能据此宣称已支持重启续跑。
+
 当前迁移尚未完成，Studio 的默认 Harness 仍沿用既有执行路径。生产 Host 已加入可显式启用的 Native 整轮执行与 Node 工作区工具组装；这不代表全部 Python 正式能力、各产品入口或安装方式已通过验收。
 
 行为参考固定为 KsADK 的 `feat-ksadk-harness-2` 分支提交 `355059d78e47ed764bbdb3606304cdf34e9838a3`。目标为现有 `runtime.type = "harness"`，保留 DSH Native 和 Codex runtime。没有 Python 历史会话数据，只免除历史数据兼容要求；新运行的持久化和恢复属于必备能力。
@@ -356,7 +358,7 @@ Memory 与 SQLite 都执行上述事务边界；真实独立 Node 进程在事�
 
 新建的 Studio 父 Run 还保存 `agentkit.studio-native-recovery-binding/v1`：原 Agent 修订、可选 Frozen Build、模型路由、输出预算、原始 DSH 输入及原系统提示。它属于参与配置摘要的 Host 数据；核心只保存和校验 JSON 对象，不解释 DSH 对象或授予权限，不保存模型凭证和工具执行句柄。`readNativeRecoveryBinding` 核对配置摘要与原 Agent/Session/Run 身份，`assertNativeRecoveryPreset` 拒绝 preset、修订、Build 或 runtime 变化。`rebindNativeDshConfiguration` 再核对原 scope、Session、轮次、Build 及完整冻结配置；重新编译时使用原任务契约，不能重新授予预算或改成新任务。模型、工具、权限契约、输入、提示或预算变化都会在启动 worker 前拒绝。旧 Run 没有该字段仍可读取，但不能根据当前默认值猜测恢复绑定。
 
-这些是冷恢复的绑定与校验基础，尚未接通冷恢复控制入口。DSH 的实际 `resumeWith` 会先为中断的日志追加 `interruptedTurnClosers`，包括旧 `turn/end`；Native 投影只追踪最后的 `turn/start`，因此最后轮次编号仍相同并不证明旧轮次仍能接收新的结果。还需要显式处理 DSH 轮次生命周期、可信 preset 工具管线重绑、原 Run 接管和 Studio 展示，不能把同轮次重放、持久入队或此绑定校验称为冷恢复完成。
+这些是冷恢复的绑定与校验基础，尚未接通冷恢复控制入口。维护宿主现通过 `dsh.external-turn-host/v1` 保留带 `turn/owner` 的原未结束轮次，并提供显式独占恢复；普通中断轮次仍追加 `interruptedTurnClosers`。Native 投影已区分开放与关闭轮次，禁止向已关闭轮次继续投递。整轮 preset 还提供仅进程内有效的 `agentkit/native-recovery-binding` 查询，可信 Host 通过官方 `agentEvents` 取得该 Agent 作用域已有的工具绑定，查询本身不启动执行。Studio 仍需在首次执行前写入完整归属、处理 Session 与 Native 账本之间的中断窗口、重绑原 preset 并接管原 Run，再贯通控制与展示；不能把这些接口或同轮重放称为冷恢复完成。
 
 绑定阶段的三个相关模块在 Node 26 / 22 各通过 88 项。随后补充 Session/轮次拒绝及旧 Run 的同轮次重放兼容，只复验两个直接相关模块；兼容重放不向旧 Run 追加元数据，其他执行配置漂移或已有恢复绑定被替换仍会拒绝。打包后的实际 `mountStudioHost` 两轮子任务验证另核实这份绑定在 Host 重启和 SQLite 重开后仍保留原模型、修订与输入，且不含模型密钥。验证运行在仅有 Node 的 PATH 下，复用固定本地依赖图；不等于全新安装或冷恢复端到端验收。
 

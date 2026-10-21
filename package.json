@@ -45,6 +45,7 @@
     "tests",
     "scripts",
     "patches",
+    "host-source",
     "cordis.patch.yml"
   ],
   "scripts": {

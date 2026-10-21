@@ -329,6 +329,15 @@ export function apply(ctx, config = {}) {
     return bridge.executeNativeTurn({ ...payload, binding: { agentId, runtime: config.runtime, local: true,
       buildId: config.buildId, agentRevision: config.agentRevision, nativeEngineContract: config.nativeEngineContract, nativeTools: nativeToolBindings } });
   });
+  // Trusted Host queries this ephemeral binding through agentEvents(ctx, agent).
+  // Durable ownership grants no tools or permissions by itself.
+  if (wholeNativeTurn) ctx.on('agentkit/native-recovery-binding', async () => {
+    if (config.resourcesUnavailable) throw Object.assign(new Error('Native Harness 资源恢复失败，请修复绑定后重试'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    return { agentId, runtime: config.runtime, local: true,
+      agentRevision: config.agentRevision, ...(config.buildId ? { buildId: config.buildId } : {}),
+      nativeEngineContract: config.nativeEngineContract, nativeTools: nativeToolBindings };
+  });
   // The Agent loop dispatches its request waterfall through the selected Agent
   // scope, then invokes `llm.stream` from the root loop context. Bind the
   // Studio provider at the scoped request boundary so the root adapter can
