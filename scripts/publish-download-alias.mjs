@@ -19,15 +19,23 @@ const { values } = parseArgs({ options: {
 } });
 const origin = new URL(values.origin ?? 'https://agentkit.ks3-cn-beijing.ksyuncs.com');
 if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.username || origin.password) throw new Error('--origin must be a bare HTTPS origin');
-const bucket = values.bucket ?? 'agentkit';
+const fromEnvironment = (...names) => names.map(name => process.env[name]).find(Boolean) ?? '';
+const bucket = values.bucket || fromEnvironment('STUDIO_DOWNLOAD_PROD_KS3_BUCKET') || 'agentkit';
 const region = values.region ?? 'cn-beijing';
 const channel = values.channel ?? 'preview';
 if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket) || !/^cn-(?:beijing|shanghai|guangzhou|ningbo|qinghai|qingyang)$/.test(region)) throw new Error('invalid bucket or region');
 if (!['preview', 'stable'].includes(channel)) throw new Error('--channel must be preview or stable');
 
 const ALIAS = 'studio/latest/';
-const { values: credentials } = await createGlobalConfiguration().resolve();
-if (!credentials.cloudAccessKey || !credentials.cloudSecretKey) throw new Error('KS3 credentials are missing from the Host configuration');
+// The Host configuration wins locally; the release workflows pass the bucket
+// credentials as STUDIO_DOWNLOAD_PROD_KS3_* secrets instead.
+let configuration = {};
+try { ({ values: configuration } = await createGlobalConfiguration().resolve()); } catch {}
+const credentials = {
+  cloudAccessKey: configuration.cloudAccessKey || fromEnvironment('KSYUN_ACCESS_KEY', 'STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY'),
+  cloudSecretKey: configuration.cloudSecretKey || fromEnvironment('KSYUN_SECRET_KEY', 'STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY'),
+};
+if (!credentials.cloudAccessKey || !credentials.cloudSecretKey) throw new Error('KS3 credentials are missing from the Host configuration and the environment');
 
 async function request(method, key, { body, contentType, headers: extra = {} } = {}) {
   const headers = { date: new Date().toUTCString(), ...extra };
@@ -49,6 +57,15 @@ async function status(key) {
 }
 
 async function copy(sourceKey, key, expectedBytes) {
+  // KS3 answers ObjectAlreayExists instead of overwriting on server-side copy,
+  // so a refresh has to remove the previous alias object first.
+  const existing = await status(key);
+  if (existing !== 404 && existing !== 200) throw new Error(`cannot inspect ${key} (${existing})`);
+  if (existing === 200) {
+    const removed = await request('DELETE', key);
+    await removed.body?.cancel();
+    if (!removed.ok && removed.status !== 404) throw new Error(`remove ${key} failed (${removed.status})`);
+  }
   const response = await request('PUT', key, {
     headers: { 'content-type': 'application/octet-stream', 'x-kss-copy-source': `/${bucket}/${sourceKey}`, 'x-kss-acl': 'public-read', 'cache-control': 'no-cache' },
   });
