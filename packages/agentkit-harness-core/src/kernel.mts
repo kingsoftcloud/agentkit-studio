@@ -1,9 +1,9 @@
 import { emptyUsage, terminal } from './contracts.mjs';
-import type { CommitBatch, EffectIntent, EffectReceipt, Lease, ModelRequest, ModelResult, ModelStreamEvent, ModelStreamRecord, NativePorts, ObjectValue, PortContext,
+import type { CommitBatch, EffectIntent, EffectReceipt, Lease, Message, ModelRequest, ModelResult, ModelStreamEvent, ModelStreamRecord, NativePorts, ObjectValue, PortContext,
   RunCommand, RunConfiguration, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation,
   HookInvocation, HookInvocationResult, ContextPlanningResult } from './contracts.mjs';
 import { initialSnapshot } from './configuration.mjs';
-import { pendingCommands } from './store.mjs';
+import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
 import { addUsage, advertisedTools, modelRoom, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
@@ -23,6 +23,7 @@ import { browserRecoveryTransition } from './browser-runtime.mjs';
 import { validateBrowserSessionRef } from './browser-contract.mjs';
 import type { BrowserRecovery } from './browser-contract.mjs';
 import { commandProbe, stageCommandObservations, unavailableCommands } from './background-runtime.mjs';
+import { assertGuidanceRetained } from './guidance.mjs';
 import { BACKGROUND_COMMAND_CONTRACT } from './background-contract.mjs';
 import { admittedToolBudget } from './child-budget.mjs';
 import { admitChildPromotion, childLifecycleRequest, childReadyProbe, childUsageFacts, reduceChildLifecycle, stageChildReady, unsettledChildren } from './child-runtime.mjs';
@@ -175,7 +176,7 @@ export class NativeKernel {
     await port!.wakeControl!(this.store.load(snapshot.scope, snapshot.runId).snapshot, batch.childControlDelivery!);
   }
   private startupPromotion(snapshot: RunSnapshot, config: RunConfiguration, results: ToolResult[], changes: Partial<RunSnapshot>) {
-    const command = pendingCommands(this.store.load(snapshot.scope, snapshot.runId))[0];
+    const command = runnableCommands(this.store.load(snapshot.scope, snapshot.runId))[0];
     if (command?.kind !== 'promote_child' || results.length !== 1 || results[0]?.childBudgetSettlement
       || results[0]?.childBudgetReservation?.deliveryMode !== 'foreground') return null;
     const promotion = admitChildPromotion({ ...snapshot, ...changes }, config, command, this.childTaskStates(snapshot));
@@ -203,7 +204,7 @@ export class NativeKernel {
     const heartbeat = setInterval(() => {
       try {
         lease = this.store.renew(scope, runId, lease, this.now(), initial.configuration.limits.leaseMs);
-        const command = pendingCommands(this.store.load(scope, runId))[0];
+        const command = runnableCommands(this.store.load(scope, runId))[0];
         if (command && ['cancel', 'policy_revoked'].includes(command.kind)) controller.abort(new NativeError('command_interrupt'));
       } catch (error) { leaseError = error; controller.abort(new NativeError('lease_lost')); }
     }, Math.max(10, Math.floor(initial.configuration.limits.leaseMs / 3)));
@@ -223,7 +224,7 @@ export class NativeKernel {
         const record = this.store.load(scope, runId), snapshot = record.snapshot;
         const config = effectiveRunConfiguration(snapshot, record.configuration, this.digest);
         if (terminal(snapshot.phase)) return snapshot;
-        const commands = pendingCommands(record);
+        const commands = runnableCommands(record);
         const command = commands[0];
         if (command) {
           if (['message_child', 'cancel_child'].includes(command.kind)) {
@@ -258,7 +259,7 @@ export class NativeKernel {
           const probeStarted = this.now();
           const reports = await this.inspectBrowserResources(snapshot, config, controller.signal);
           if (leaseError) throw leaseError;
-          if (controller.signal.aborted || pendingCommands(this.store.load(scope, runId)).length) continue;
+          if (controller.signal.aborted || runnableCommands(this.store.load(scope, runId)).length) continue;
           const batch = browserRecoveryTransition(snapshot, reports, pending, Math.max(0, this.now() - probeStarted));
           browserChecked = true;
           if (batch) {
@@ -282,11 +283,11 @@ export class NativeKernel {
           let ready: { childRunIds: string[] };
           try { ready = await this.ports.children.readyChildren({ ...childProbe, signal: controller.signal }); }
           catch (error) {
-            if (controller.signal.aborted || pendingCommands(this.store.load(scope, runId)).length) continue;
+            if (controller.signal.aborted || runnableCommands(this.store.load(scope, runId)).length) continue;
             throw error;
           }
           if (leaseError) throw leaseError;
-          if (controller.signal.aborted || pendingCommands(this.store.load(scope, runId)).length) continue;
+          if (controller.signal.aborted || runnableCommands(this.store.load(scope, runId)).length) continue;
           const batch = stageChildReady(snapshot, config, backgroundIntent!, childProbe, ready.childRunIds);
           if (batch) {
             try { this.commit(snapshot, lease, batch); }
@@ -299,7 +300,7 @@ export class NativeKernel {
           const started = this.now();
           const observations = await this.inspectBackgroundCommands(backgroundRequest, snapshot, config, controller.signal);
           if (leaseError) throw leaseError;
-          if (controller.signal.aborted || pendingCommands(this.store.load(scope, runId)).length) continue;
+          if (controller.signal.aborted || runnableCommands(this.store.load(scope, runId)).length) continue;
           const elapsed = Math.max(0, this.now() - started);
           let batch: CommitBatch;
           try { batch = stageCommandObservations(snapshot, config, backgroundRequest, observations, backgroundIntent, elapsed); }
@@ -566,12 +567,14 @@ export class NativeKernel {
               changes.preparedContext = { messages: validateContextMessages(result.messages), sourceDigest: result.admission.sourceDigest,
                 admission: result.admission };
               assertHookFeedbackRetained(snapshot, changes.preparedContext.messages);
+              assertGuidanceRetained(snapshot, changes.preparedContext.messages);
             }
             facts.push({ kind: 'context.planned', payload: { action: result.action, reason: result.reason,
               admission: result.admission as unknown as ObjectValue | null, compactions: result.state.compactions } });
             break;
           }
           assertHookFeedbackRetained(snapshot, validateContextMessages(raw.messages));
+          assertGuidanceRetained(snapshot, raw.messages as unknown as Message[]);
           changes = { pendingIntent: null, phase: 'preparing_context',
             preparedContext: { messages: validateContextMessages(raw.messages), sourceDigest: contextSourceDigest(snapshot, this.digest) },
             context: { ...snapshot.context, adapter: objectValue(raw.context), preparedCursor: intent.payload.cursor ?? null } };
@@ -615,7 +618,7 @@ export class NativeKernel {
           changes = { pendingIntent: null, phase: 'finalizing', candidate: null, verification: null, finalText: '',
             childLifecycleFailure: intent.payload.action as 'poll' | 'wait' | 'cancel', outcome: 'unverified', reason: 'child_owner_unavailable' };
         }
-      } else if (intent.kind === 'context' && configuration.contextPolicy || ['invalid_context_messages', 'invalid_context_tool_pairing', 'context_binding_mismatch', 'context_hook_feedback_missing'].includes(code)) {
+      } else if (intent.kind === 'context' && configuration.contextPolicy || ['invalid_context_messages', 'invalid_context_tool_pairing', 'context_binding_mismatch', 'context_hook_feedback_missing', 'context_guidance_missing'].includes(code)) {
         raw = { code }; status = 'failed';
         changes = { pendingIntent: null, preparedContext: null, phase: 'finalizing', outcome: 'blocked', reason: code };
       } else if (intent.kind === 'model' && !signal.aborted && ['effect_timeout', 'effect_port_error'].includes(code)) {
@@ -680,6 +683,7 @@ export class NativeKernel {
           return this.ports.model.generate({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens: chunk.maxOutputTokens },
             messages: copy(chunk.messages), tools: [], finalizationOnly: false, maxInlineImageBytes: configuration.limits.maxInlineImageBytes }, () => {});
         }
+        assertGuidanceRetained(snapshot, modelContextMessages(snapshot, this.digest));
         const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
         if (configuration.contextPolicy) {
           const admission = snapshot.preparedContext?.admission;

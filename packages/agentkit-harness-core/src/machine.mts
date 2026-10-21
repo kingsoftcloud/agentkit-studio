@@ -9,6 +9,7 @@ import { toolContext, deferredToolContexts } from './tool-context.mjs';
 import { reduceBrowserReceipt } from './browser-runtime.mjs';
 import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObservation } from './task-policy.mjs';
 import { checkpointCandidate, finishCheckpoint } from './verification.mjs';
+import { effectiveGuidanceResponse } from './guidance.mjs';
 import { rememberCommand } from './background-runtime.mjs';
 import { admittedToolBudget, outstandingChildCalls, reduceChildBudget } from './child-budget.mjs';
 import { prepareChildLifecycle, unsettledChildren } from './child-runtime.mjs';
@@ -222,6 +223,7 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
   const replay = boundReplay(result, config);
   const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
   const base: Partial<RunSnapshot> = { pendingIntent: null, preparedContext: null, usage,
+    ...(snapshot.pendingGuidanceIds?.length && effectiveGuidanceResponse(result) ? { pendingGuidanceIds: [] } : {}),
     ...(result.usageReported === false ? { diagnostics: { ...snapshot.diagnostics, providerUsageIncomplete: true } } : {}) };
   // Only a meaningful sealed task response acknowledges delivery. Provider
   // errors, malformed calls and context-overflow retries keep this input debt.
@@ -405,5 +407,8 @@ export function settle(snapshot: RunSnapshot, intent: EffectIntent, receipt: Eff
   invariant(receipt.operationKey === intent.operationKey && snapshot.pendingIntent === intent.operationKey, 'effect_receipt_mismatch');
   return transition(snapshot, { ...changes, activeElapsedMs: snapshot.activeElapsedMs + elapsedMs }, [
     { kind: 'effect.settled', payload: { operationKey: intent.operationKey, kind: intent.kind, status: receipt.status } }, ...facts,
+    ...(intent.kind === 'model' && intent.payload.purpose !== 'compaction' && changes.pendingGuidanceIds?.length === 0
+      ? (snapshot.pendingGuidanceIds ?? []).map(inputId => ({ kind: 'input.guidance_consumed', payload: {
+        inputId, operationKey: intent.operationKey, goalRevision: snapshot.goalRevision } })) : []),
   ], { receipts: [receipt] });
 }

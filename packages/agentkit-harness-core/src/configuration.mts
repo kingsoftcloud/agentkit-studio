@@ -12,6 +12,7 @@ export interface ConfigurationInput {
   hostBindingDigest: string; contextSources?: RunConfiguration['contextSources']; hooks?: RunConfiguration['hooks'];
   stopHookContinuationLimit?: number; delegationDepth?: number;
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
+  guidancePolicy?: RunConfiguration['guidancePolicy'];
   contextPolicy?: RunConfiguration['contextPolicy'];
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
   inputMessages?: Message[] | null;
@@ -42,6 +43,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     engine: NATIVE_ENGINE, profile, limits,
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     inputMessages: input.inputMessages ?? null,
+    ...(input.guidancePolicy === undefined ? {} : { guidancePolicy: input.guidancePolicy }),
     ...(input.backgroundNotificationPolicy === undefined ? {} : { backgroundNotificationPolicy: input.backgroundNotificationPolicy }),
     ...(input.childLifecyclePolicy === undefined ? {} : { childLifecyclePolicy: input.childLifecyclePolicy }),
     ...(input.childApprovalPolicy === undefined ? {} : { childApprovalPolicy: input.childApprovalPolicy }),
@@ -57,6 +59,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       finalSubmissionSchema: null, finalSubmissionPayloadKey: null, finalOutputFormat: 'text', ...input.contract },
   };
   canonical(config);
+  invariant(config.guidancePolicy == null || config.guidancePolicy === 'boundary-guide/v1', 'invalid_guidance_policy');
   invariant(config.childLifecyclePolicy == null || config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_lifecycle_policy');
   invariant(config.childApprovalPolicy == null || config.childApprovalPolicy === 'owned-child-approval/v1'
     && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_approval_policy');
@@ -179,7 +182,9 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     messages: [
       ...(configuration.instructions ? [{ role: 'system' as const, content: configuration.instructions, persistent: true }] : []),
       ...(configuration.inputMessages ?? [{ role: 'user' as const, content: configuration.contract.objective }]),
-    ], preparedContext: null, queuedGuidance: [], pendingTools: [], pendingIntent: null, pendingInteraction: null, interaction: null,
+    ], preparedContext: null, queuedGuidance: [],
+    ...(configuration.guidancePolicy === 'boundary-guide/v1' ? { pendingGuidanceIds: [] } : {}),
+    pendingTools: [], pendingIntent: null, pendingInteraction: null, interaction: null,
     usage: emptyUsage(), descendantUsage: emptyUsage(), modelErrors: 0, providerErrors: 0,
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,
     candidate: null, verification: null, finalText: '', outcome: null, reason: null,

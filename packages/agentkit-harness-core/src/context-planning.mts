@@ -78,10 +78,12 @@ function groupsOf(messages: Message[], indexes: number[]): number[][] {
 }
 function mandatoryIndexes(snapshot: RunSnapshot, groups: number[][], config: RunConfiguration): Set<number> {
   const mandatory = new Set<number>(), messages = snapshot.messages;
+  const pendingGuidance = new Set(snapshot.pendingGuidanceIds ?? []);
   const pendingFeedback = new Set((snapshot.hookState?.goalRevision === snapshot.goalRevision ? snapshot.hookState.feedback : []).map(canonical));
   for (const group of groups) if (group.some(index => {
     const message = messages[index]!;
     return message.role === 'system' || message.persistent || pendingFeedback.has(canonical(message))
+      || message.kind === 'guidance' && !message.history && message.inputId !== undefined && pendingGuidance.has(message.inputId)
       || message.role === 'user' && !message.kind;
   })) for (const index of group) mandatory.add(index);
   let goal = -1;

@@ -26,3 +26,4 @@ export * from './child-budget.mjs';
 export * from './child-contract.mjs';
 export * from './child-runtime.mjs';
 export * from './child-control.mjs';
+export * from './guidance.mjs';

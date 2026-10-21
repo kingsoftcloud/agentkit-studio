@@ -32,6 +32,8 @@ export interface Message extends ToolContextMessage {
   history?: { sourceRunId: string; sourceIndex: number };
   /** Original protocol call id -> canonical historical/current call id. */
   replayToolIds?: Record<string, string>;
+  /** Durable inline input identity; carries no tool or Host authority. */
+  inputId?: string; inputGoalRevision?: number;
 }
 export interface ToolDefinition {
   name: string; description: string; parameters: ObjectValue;
@@ -156,6 +158,7 @@ export interface RunConfiguration {
   workspaceObservationPolicy: { role: 'browser'; pathSuffixes: string[] } | null;
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
+  guidancePolicy?: 'boundary-guide/v1' | null;
   backgroundNotificationPolicy?: 'completed-before-model/v1' | null;
   childLifecyclePolicy?: 'owned-background/v2' | null;
   childApprovalPolicy?: 'owned-child-approval/v1' | null;
@@ -245,6 +248,7 @@ export interface RunSnapshot extends RunIdentity {
   phase: Phase; resumePhase: Phase | null; goal: string; goalRevision: number;
   taskContract: TaskContract | null; taskContractDigest: string | null;
   messages: Message[]; preparedContext: PreparedContext | null; queuedGuidance: Message[];
+  pendingGuidanceIds?: string[];
   pendingTools: ToolCall[]; pendingIntent: string | null;
   pendingInteraction: PendingInteraction | null; interaction: ObjectValue | null;
   usage: Usage; descendantUsage: Usage; modelErrors: number; providerErrors: number;

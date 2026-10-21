@@ -108,6 +108,7 @@ export async function createStudioNativeChildren({ roles, scope, store, tools, h
       const verification = await verificationFactory({ scope: child, sessionId: request.childSessionId });
       request.signal.throwIfAborted();
       return { scope: child, configuration: configure({ profile: bound.model.profile, contextPolicy: bound.model.contextPolicy,
+        guidancePolicy: 'boundary-guide/v1',
         ...(media.length ? { inputMessages: [{ role: 'user', kind: 'user_input', content: request.task, media }] } : {}),
         instructions: role.instructions, contract, tools: bound.tools,
         hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools,

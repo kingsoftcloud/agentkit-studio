@@ -4,10 +4,18 @@ import { canonical, copy, invariant, runKey } from './values.mjs';
 import { admitSteering } from './task-contract.mjs';
 import type { SteeringBindings } from './task-contract.mjs';
 import { admitChildPromotion, unsettledChildren } from './child-runtime.mjs';
+import { guidanceReason } from './guidance.mjs';
 
 export function transition(snapshot: RunSnapshot, changes: Partial<RunSnapshot>, facts: { kind: string; payload: ObjectValue }[] = [],
   options: { intents?: EffectIntent[]; receipts?: EffectReceipt[]; commandId?: string; requireNoPendingCommands?: boolean } = {}): CommitBatch {
   invariant(!terminal(snapshot.phase), 'terminal_immutable');
+  const pendingGuidanceIds = changes.pendingGuidanceIds ?? snapshot.pendingGuidanceIds;
+  if (terminal(changes.phase ?? snapshot.phase) && pendingGuidanceIds?.length) {
+    changes = { ...changes, pendingGuidanceIds: [] };
+    facts = [...facts.filter(fact => fact.kind !== 'run.terminal'), ...pendingGuidanceIds.map(inputId => ({
+      kind: 'input.guidance_discarded', payload: { inputId, reason: changes.reason ?? changes.phase ?? snapshot.phase },
+    })), ...facts.filter(fact => fact.kind === 'run.terminal')];
+  }
   const prefix = runKey(snapshot.scope, snapshot.runId);
   const events: NativeEvent[] = facts.map((fact, index) => ({ ...copy(fact),
     eventId: `${prefix}:event:${snapshot.eventSeq + index + 1}`, runId: snapshot.runId,
@@ -37,6 +45,25 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
   if (snapshot.childTerminalPhase && !['cancel', 'policy_revoked'].includes(command.kind)) {
     return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
       kind: command.kind, reason: 'run_stopping' } }], { commandId: command.commandId, requireNoPendingCommands: false });
+  }
+  if (command.kind === 'guide' && bindings.configuration?.guidancePolicy === 'boundary-guide/v1') {
+    const reason = guidanceReason(snapshot, command, bindings.configuration);
+    const hookState = copy(snapshot.hookState);
+    if (hookState) { hookState.stop = null; delete hookState.precompact; }
+    return transition(snapshot, reason === 'applied' ? {
+      phase: 'preparing_context', messages: [...snapshot.messages, { role: 'user', kind: 'guidance',
+        content: command.payload.text as string, inputId: command.commandId, inputGoalRevision: snapshot.goalRevision }],
+      pendingGuidanceIds: [command.commandId], preparedContext: null,
+      context: { ...snapshot.context, preparedCursor: null },
+      contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null } : null,
+      candidate: null, verification: null, verificationToolCalls: null,
+      hookState, stopHookContinuations: 0, continuations: 0, retryNotBefore: 0,
+      outcome: null, finalText: '', reason: null,
+    } : {}, [
+      ...(reason === 'applied' ? [{ kind: 'input.guidance_applied', payload: {
+        inputId: command.commandId, commandId: command.commandId, goalRevision: snapshot.goalRevision, delivery: 'guide' } }] : []),
+      { kind: 'command.applied', payload: { commandId: command.commandId, kind: command.kind, reason } },
+    ], { commandId: command.commandId, requireNoPendingCommands: false });
   }
   if (command.kind === 'steer' && ['effect_outcome_unknown', 'recovery_retry_exhausted', 'browser_session_unavailable'].includes(snapshot.reason ?? '')) {
     return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
@@ -163,6 +190,14 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       reason = 'child_lifecycle_command_pending';
   }
   facts.push({ kind: 'command.applied', payload: { commandId: command.commandId, kind: command.kind, reason } });
+  if (snapshot.pendingGuidanceIds?.length && (['cancel', 'policy_revoked'].includes(command.kind)
+    || command.kind === 'steer' && reason === 'applied')) {
+    changes.pendingGuidanceIds = [];
+    // Deferred child cancellation can remain finalizing; settle input debt now.
+    facts.push(...snapshot.pendingGuidanceIds.map(inputId => ({
+      kind: 'input.guidance_discarded', payload: { inputId, reason: command.kind },
+    })));
+  }
   if (changes.phase && terminal(changes.phase)) facts.push({ kind: 'run.terminal', payload: {
     phase: changes.phase, outcome: changes.outcome ?? null, reason: changes.reason ?? null } });
   return transition(original, { ...changes, ...(retiring ? { pendingIntent: null } : {}) }, facts,

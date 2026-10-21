@@ -6,6 +6,7 @@ import { transcriptExtends } from './context-view.mjs';
 import { isCommandObservationBatch } from './background-runtime.mjs';
 import { isChildReadyBatch } from './child-runtime.mjs';
 import { validateChildControlDelivery } from './child-control.mjs';
+import { guidanceRunnable } from './guidance.mjs';
 
 /** The backend must serialize read/modify/write atomically, including failures. */
 export interface LedgerBackend {
@@ -38,6 +39,9 @@ function immutableIdentity(previous: RunSnapshot, next: RunSnapshot): void {
 export function pendingCommands(record: StoredRun): RunCommand[] {
   return record.commands.filter(row => !row.consumed).map(row => copy(row.command))
     .sort((a, b) => commandPriority[b.kind] - commandPriority[a.kind]);
+}
+export function runnableCommands(record: StoredRun): RunCommand[] {
+  return pendingCommands(record).filter(command => guidanceRunnable(record.snapshot, command, record.configuration));
 }
 
 /** Shared invariants for memory, SQLite, and other transactional backends. */
@@ -186,14 +190,30 @@ export class TransactionalRunStore implements RunStore {
       if (!terminal(next.phase)) invariant(unsettled.length <= 1 && (unsettled[0]?.operationKey ?? null) === next.pendingIntent, 'orphaned_effect');
       if (batch.consumedCommandId !== null) invariant(record.commands.some(row =>
         !row.consumed && row.command.commandId === batch.consumedCommandId), 'command_not_pending');
-      if (batch.requireNoPendingCommands) invariant(!record.commands.some(row =>
-        !row.consumed && row.command.commandId !== batch.consumedCommandId), 'pending_command_conflict');
+      if (batch.requireNoPendingCommands) invariant(!runnableCommands(record).some(command =>
+        command.commandId !== batch.consumedCommandId), 'pending_command_conflict');
       const commands = record.commands.map(row => ({ ...row,
         consumed: row.consumed || terminal(next.phase) || row.command.commandId === batch.consumedCommandId }));
-      const updated = { ...record, snapshot: next, commands,
-        events: [...record.events, ...batch.events], intents: [...record.intents, ...batch.intents],
+      // Read accepted inbox entries under the same write lock as cancellation.
+      // Validate/idempotently fingerprint the original request, then derive the
+      // terminal settlement facts; an enqueue in another process cannot vanish.
+      const discarded = terminal(next.phase) && batch.consumedCommandId !== null
+        && record.configuration.guidancePolicy === 'boundary-guide/v1'
+        ? pendingCommands(record).filter(command => command.commandId !== batch.consumedCommandId).map(command => ({
+          kind: 'command.discarded', payload: { commandId: command.commandId, kind: command.kind, status: 'discarded',
+            reason: 'run_terminal', terminalReason: next.reason, terminatingCommandId: batch.consumedCommandId },
+        })) : [];
+      const terminalIndex = batch.events.findIndex(event => event.kind === 'run.terminal');
+      const entries = [...batch.events];
+      if (discarded.length) entries.splice(terminalIndex < 0 ? entries.length : terminalIndex, 0,
+        ...discarded.map(fact => ({ ...fact, eventId: '', runId, turnId: next.turnId, seq: 0 })));
+      const events = discarded.length ? entries.map((event, index) => ({ ...event,
+        seq: previous.eventSeq + index + 1, eventId: `${runKey(scope, runId)}:event:${previous.eventSeq + index + 1}` })) : entries;
+      const finalSnapshot = discarded.length ? { ...next, eventSeq: previous.eventSeq + events.length } : next;
+      const updated = { ...record, snapshot: finalSnapshot, commands,
+        events: [...record.events, ...events], intents: [...record.intents, ...batch.intents],
         receipts: [...record.receipts, ...batch.receipts], commits: [...record.commits, { commitId: batch.commitId, fingerprint }] };
-      return { record: updated, value: copy(next) };
+      return { record: updated, value: copy(finalSnapshot) };
     };
     const delivery = batch.childControlDelivery;
     if (!delivery) return this.backend.update(runKey(scope, runId), apply);
@@ -224,7 +244,7 @@ export class TransactionalRunStore implements RunStore {
       const intent = record.intents.find(item => item.operationKey === operationKey);
       invariant(intent?.status === 'prepared' && record.snapshot.pendingIntent === operationKey
         && !record.receipts.some(receipt => receipt.operationKey === operationKey), 'effect_already_claimed');
-      invariant(pendingCommands(record).length === 0, 'pending_command_conflict');
+      invariant(runnableCommands(record).length === 0, 'pending_command_conflict');
       const running = { ...intent, status: 'running' as const, claimedAtMs: now, claimedFence: lease.fence };
       // A prepared request reserves execution order, not provider usage. Charge
       // its attempt atomically with the claim, including claims lost in a crash.

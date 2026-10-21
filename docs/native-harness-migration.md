@@ -52,7 +52,7 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 Node `hook-executor.mjs` 根据固定范围、完整回调定义和执行策略绑定宿主回调，每次执行均须显式授权。单调时钟限定从可用性检查到结果校验的整个期限；取消、关闭和迟到授权不能授予后续执行权。JavaScript 无法强制终止不合作的 Promise，执行器继续持有它，限定清理等待时间，并将无有效结果的修改回调标记为结果未知。40 项执行器测试在 Node 26 和 22 均通过，包含真实核心与 SQLite 的工具、Stop、审批重开及 PreCompact 允许/拒绝联测。Studio 回调资源仍未组装，因此 Hooks 产品路径还未全部验收。
 
-指导和目标变更可以在效果尚未领取执行权时撤销旧意图，留下明确的 `not_dispatched` 回执并按新要求准备执行；模型尝试数与 claim 在同一事务增加，准备后被撤销的请求不消耗调用额度。测试覆盖暂停、强制压缩目的、审批决定保留和 SQLite 重开。对已经领取而失联的效果，先按恢复策略判断；未知写入继续中断，指导消息不会自动授权重跑。
+目标变更可以在效果尚未领取执行权时撤销旧意图，留下明确的 `not_dispatched` 回执并按新要求准备执行；模型尝试数与 claim 在同一事务增加，准备后被撤销的请求不消耗调用额度。正式 Studio 指导使用 `guidancePolicy=boundary-guide/v1`：已准备的请求和工具批次先完成或核对，指导在封口边界进入当前目标，不撤销原请求。未启用该策略的底层旧指导接口仍保留原先撤销未派发意图的行为。对已经领取而失联的效果，先按恢复策略判断；未知写入继续中断，指导消息不会自动授权重跑。
 
 维护的 DSH 源码新增 `agent/execute-turn` 整轮执行接口，已按源码提交导出为补丁 047；补丁 048 记录两种 SDK 的新会话首轮接管及后续默认循环委派。主线程独立验证了 TypeScript SDK 回放、六项接口/Loader 测试，以及 Python SDK 对真实 macOS arm64 单文件可执行产物的比较模式测试。该产物通过正常构建脚本生成，SHA-256 为 `9ab087d78a5eff5c64cf67cb0945563d7ae998507cc24502a2ee2c77c44141df`。维护源码的汇总类型检查通过；Studio 尚未默认切换执行引擎。
 
@@ -335,6 +335,10 @@ Node 的 `createNativeChildOwner` 运行真实子 Kernel，每个子任务有独
 Studio 的现有认证控制通道增加 `sessions/native-child-tasks`、`sessions/native-child-promote`、`sessions/native-child-send` 与 `sessions/native-child-cancel`，返回契约 `agentkit.studio-native-child-control/v1`。查询指定 `agentId/sessionId`，操作还必须携带当前 `runId/childRunId/commandId`；发送指导额外提供 `text/expectedGoalRevision`。过期父 Run 和其他 Agent 的控制句柄会被拒绝。控制句柄只在当前 Native turn 激活期间有效，结束或卸载时释放。操作如未收到确定回执，保存原 Run、子任务、commandId 及原指导文本/修订号，只允许明确重试同一请求；刷新历史不会重发操作，也不会把请求绑定到新的父 Run。非活动父 Run 的控制恢复界面仍待接入。
 
 指导须显式启用 `childInputPolicy=owned-child-input/v1`；停止需要已拥有子任务端口提供目标与唤醒能力。操作先入父任务持久命令队列，在父执行者的有效租约下核对原启动回执、完整因果归属、冻结配置与未结算预约，再把父命令消费和原子任务收件箱入队写入同一事务。目标修订号过期或父/子取消、策略撤销、改目标命令抢先时，指导不会投递。子任务应用指导时再次核对目标修订号。HTTP 接收回执只证明父命令已入队；面板随后显示等待投递、已投递或明确拒绝的状态。
+
+Studio 父任务和已批准子角色的配置启用 `guidancePolicy=boundary-guide/v1`。多条指导按原收件箱顺序逐条应用，每条获得一次有文本或完整工具调用的任务模型响应后，下一条才可应用；模型重试、空响应、上下文溢出和摘要模型不算有效处理。已有工具批次及审批完整封口后再接收指导，前一次文本候选保留在协议历史，目标和验收契约不变。延后的指导不会遮蔽取消、审批或改目标命令，也不阻塞效果领取和只读探测。`input.guidance_applied`、`input.guidance_consumed`、`input.guidance_discarded` 分别记录应用、有效模型处理及未处理要求的结清；取消造成终态时，Store 在原事务内为其余已接收命令写入 `command.discarded`。指导身份及待处理状态随 SQLite 持久化，在压缩和 Host 上下文投影中强制保留；预算耗尽或未知副作用不会被指导绕过。
+
+`packages/agentkit-harness-core/test/guidance-boundary.test.mjs` 对照 Python 固定参考的 `guidance.py`、`effect_receipts.py` 与 `test_inline_guidance.py`，验证两种存储、有效处理顺序、真实摘要请求、审批和抢占、预算耗尽、丢失写入领取及两处真实进程退出。真实 SDK 安装包验证增加 `--guidance-fifo`（与 `--promote --continue-child --history --child-controls` 一起使用），通过认证接口投递两条指导及同 ID 重试，核对不同 HTTP 模型请求逐条可见、两次不同的处理回执和一次原子任务用量结算。
 
 Memory 与 SQLite 都执行上述事务边界；真实独立 Node 进程在事务内退出会回滚两边，提交后退出则保留同一子命令，恢复不重复投递或启动。停止仍由原子任务 Kernel 中断现有执行、封存结果并由原父任务结算，不伪造终态或用量。停止等待审批的子任务会撤销父任务中的对应审批，不能向受保护工具发送允许决定；Host 驱动会唤醒并中止过期的审批等待，迟到回复无权执行工具。
 
