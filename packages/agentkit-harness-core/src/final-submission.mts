@@ -3,9 +3,10 @@ import type { ValidateFunction } from 'ajv';
 import type { Json, ObjectValue, RunConfiguration, ToolCall, ToolDefinition } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
 import { parseModelJson } from './model-json.mjs';
+import { compileWithExactIntegers, removeExactIntegerSchema } from './exact-integer-schema.mjs';
 
 export const FINAL_SUBMISSION_TOOL = 'submit_final_output';
-const validator = new Ajv2020({ strict: false, validateFormats: false, ownProperties: true, addUsedSchema: false });
+const validator = new Ajv2020({ strict: false, validateFormats: false, ownProperties: true, addUsedSchema: false, passContext: true });
 const compiled = new Map<string, { schema: ObjectValue; validate: ValidateFunction }>();
 
 function bounded(value: Json, depth = 0): boolean {
@@ -30,11 +31,12 @@ function compile(schema: ObjectValue): ValidateFunction {
   }
   invariant(schema.type === 'object' && length <= 16384 && bounded(schema), 'invalid_final_submission_schema');
   let validate: ValidateFunction;
-  try { validate = validator.compile(schema); }
+  try { validate = compileWithExactIntegers(validator, schema); }
   catch { invariant(false, 'invalid_final_submission_schema'); }
   if (compiled.size >= 64) {
     const oldest = compiled.keys().next().value!;
-    validator.removeSchema(compiled.get(oldest)!.schema); compiled.delete(oldest);
+    const record = compiled.get(oldest)!;
+    validator.removeSchema(record.schema); removeExactIntegerSchema(validator, record.validate); compiled.delete(oldest);
   }
   compiled.set(key, { schema, validate }); return validate;
 }

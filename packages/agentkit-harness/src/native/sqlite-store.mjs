@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { TransactionalRunStore, canonical, invariant, scopeKey } from '../../../agentkit-harness-core/dist/index.mjs';
+import { TransactionalRunStore, canonical, invariant, scopeKey, parseNativeJson } from '../../../agentkit-harness-core/dist/index.mjs';
 
 const collections = {
   intents: item => item.operationKey,
@@ -46,18 +46,18 @@ export class SqliteRunStore extends TransactionalRunStore {
       const row = db.prepare(`SELECT data FROM native_runs
         WHERE json_extract(data,'$.snapshot.scope')=? AND json_extract(data,'$.snapshot.sessionId')=?
         ORDER BY rowid DESC LIMIT 1`).get(canonical(scope), sessionId);
-      return row ? JSON.parse(row.data).snapshot : null;
+      return row ? parseNativeJson(row.data).snapshot : null;
     };
     const read = key => {
       open();
       const row = db.prepare('SELECT data FROM native_runs WHERE key=?').get(key);
       if (!row) return null;
-      const record = JSON.parse(row.data);
-      record.events = db.prepare('SELECT data FROM native_events WHERE run_key=? ORDER BY seq').all(key).map(item => JSON.parse(item.data));
+      const record = parseNativeJson(row.data);
+      record.events = db.prepare('SELECT data FROM native_events WHERE run_key=? ORDER BY seq').all(key).map(item => parseNativeJson(item.data));
       for (const collection of Object.keys(collections)) record[collection] = [];
       for (const item of db.prepare('SELECT collection,data FROM native_items WHERE run_key=? ORDER BY rowid').all(key)) {
         invariant(Object.hasOwn(collections, item.collection), 'invalid_ledger_collection');
-        record[item.collection].push(JSON.parse(item.data));
+        record[item.collection].push(parseNativeJson(item.data));
       }
       return record;
     };

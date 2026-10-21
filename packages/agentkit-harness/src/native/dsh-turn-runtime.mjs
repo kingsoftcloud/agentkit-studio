@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { NativeKernel, NativeError, NATIVE_GOAL_CONTRACT_BINDING, canonical, configure, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, NativeError, NATIVE_GOAL_CONTRACT_BINDING, NATIVE_JSON_CODEC, canonical, configure, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
 import { createNativeSessionDelivery } from './session-delivery.mjs';
 import { nativeLiveStream } from './assistant-stream.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from './dsh-turn-contract.mjs';
@@ -104,6 +104,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, projections, f
       const configuration = configure({ ...binding.configuration, contract, hostBindingDigest: hash({
         contract: NATIVE_DSH_TURN_CONTRACT, declared: binding.configuration.hostBindingDigest,
         goalContractBinding: NATIVE_GOAL_CONTRACT_BINDING,
+        jsonCodec: NATIVE_JSON_CODEC,
         input: input.messages, source: binding.source,
       }) });
       const delivery = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn, projections, flush,

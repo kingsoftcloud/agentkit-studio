@@ -33,6 +33,16 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   return { gateway, agent, request, registry, workspaceRoot, calls, ctx,
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
+
+test('an unsupported exact integer is rejected before the DSH pipeline can execute an effect', async t => {
+  const host = setup(t), port = host.gateway.forAgent(host.agent).tools;
+  for (const numeric of [9007199254740993n, -0, 1000000000000000100.0]) {
+    const result = await port.execute(host.request({ path: 'integer.txt', content: 'unsafe', numeric }));
+    assert.equal(result.status, 'error'); assert.equal(result.content.code, 'STUDIO_NATIVE_EXACT_NUMBER_UNSUPPORTED');
+    assert.equal(result.content.executed, false); assert.equal(host.calls.length, 0);
+  }
+  assert.equal(existsSync(join(host.workspaceRoot, 'integer.txt')), false);
+});
 test('workspace browser metadata is pinned and DSH denial cannot start its backend', async t => {
   let created = 0;
   const host = setup(t, ['browser_inspect_workspace'], [], { createBrowser: () => { created++; throw new Error('must not start'); } });

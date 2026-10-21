@@ -40,6 +40,20 @@ function abortNow() {
   return ac.signal;
 }
 
+test('artifact metadata exact integers survive disk reopen and search', async () => {
+  const { directory, store, cleanup } = await setup();
+  try {
+    const integer = 9007199254740993n;
+    const ref = await store.write({ ...ctx('numeric', 'write'), content: 'exact', mediaType: 'text/plain', metadata: { id: integer } });
+    assert.equal(ref.metadata.id, integer);
+    const reopened = await createNativeArtifactStore({ directory, scope: SCOPE });
+    const read = await reopened.read({ ...ctx('numeric', 'read'), ref, offset: 0, limit: 100 });
+    assert.equal(read.content, 'exact');
+    const matches = await reopened.search({ ...ctx('numeric', 'search'), query: 'exact', limit: 10 });
+    assert.equal(matches[0].metadata.id, integer);
+  } finally { cleanup(); }
+});
+
 // ---------------------------------------------------------------------------
 // write / read / paging
 

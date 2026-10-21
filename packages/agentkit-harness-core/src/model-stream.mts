@@ -1,5 +1,5 @@
 import type { ModelStreamEvent, ModelStreamRecord } from './contracts.mjs';
-import { copy } from './values.mjs';
+import { canonical, copy } from './values.mjs';
 
 /** A bounded, public display prefix. It never supplies execution or replay authority. */
 export function modelStreamCapture(maxBytes: number, now: () => number,
@@ -26,7 +26,7 @@ export function modelStreamCapture(maxBytes: number, now: () => number,
       const clock = now();
       const time = Math.max(records.at(-1)?.time ?? 0, Number.isSafeInteger(clock) && clock >= 0 ? clock : 0);
       const record = { time, event };
-      const size = new TextEncoder().encode(JSON.stringify(record)).length + (records.length ? 1 : 0);
+      const size = new TextEncoder().encode(canonical(record)).length + (records.length ? 1 : 0);
       if (bytes + size > maxBytes) { truncated = true; return; }
       bytes += size; records.push(record);
       // Display observers cannot veto or mutate the model result or receipt.

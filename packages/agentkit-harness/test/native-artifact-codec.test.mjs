@@ -28,6 +28,18 @@ import {
 
 const SCOPE = Object.freeze({ tenantId: 'tenant', workspaceId: 'ws', userId: 'user', agentId: 'agent' });
 
+test('artifact numeric codec preserves arbitrary integers and large IEEE float values distinctly', () => {
+  const integer = 9007199254740993n;
+  assert.equal(safeJsonParse(canonicalStringify({ id: integer })).id, integer);
+  const float = 1000000000000000100.0;
+  assert.equal(typeof safeJsonParse(canonicalStringify(float)), 'number');
+  assert.equal(safeJsonParse(canonicalStringify(float)), float);
+  assert.equal(Object.is(safeJsonParse(canonicalStringify(-0)), -0), true);
+  assert.equal(Object.is(safeJsonParse('-0'), -0), true); // The local artifact decoder retains its JSON.parse-compatible sign.
+  assert.equal(typeof safeJsonParse('9'.repeat(4300)), 'bigint');
+  assert.throws(() => safeJsonParse('9'.repeat(4301)));
+});
+
 function ctx(runId, operationKey, signal) {
   return {
     scope: SCOPE, runId, sessionId: 'sess', turnId: 'turn-1', buildId: 'build-1',

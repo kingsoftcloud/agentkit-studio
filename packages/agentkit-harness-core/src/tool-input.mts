@@ -8,8 +8,9 @@ import type { FormatsPlugin } from 'ajv-formats';
 import type { ValidateFunction } from 'ajv';
 import type { Json, ObjectValue, ToolCall, ToolDefinition } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
+import { compileWithExactIntegers, removeExactIntegerSchema } from './exact-integer-schema.mjs';
 
-const options = { strict: false, allErrors: true, ownProperties: true, addUsedSchema: false, logger: false as const };
+const options = { strict: false, allErrors: true, ownProperties: true, addUsedSchema: false, passContext: true, logger: false as const };
 const legacyOptions = { ...options, ignoreKeywordsWithRef: true };
 // The CJS package exports its constructor as module.exports and .default.
 const Ajv4 = draft4 as unknown as new (options: typeof legacyOptions) => InstanceType<typeof Ajv>;
@@ -67,11 +68,11 @@ export function compileToolInput(schema: ObjectValue): ValidateFunction {
   } else invariant(false, 'unsupported_tool_schema_dialect');
   prepareSchema(schema, !!legacy);
   let validate: ValidateFunction;
-  try { validate = validator.compile(schema); }
+  try { validate = compileWithExactIntegers(validator, schema, true); }
   catch { invariant(false, 'invalid_tool_input_schema'); }
   if (compiled.size >= 128) {
     const oldest = compiled.keys().next().value!, record = compiled.get(oldest)!;
-    record.validator.removeSchema(record.schema); compiled.delete(oldest);
+    record.validator.removeSchema(record.schema); removeExactIntegerSchema(record.validator, record.validate); compiled.delete(oldest);
   }
   compiled.set(key, { validate, validator, schema }); return validate;
 }

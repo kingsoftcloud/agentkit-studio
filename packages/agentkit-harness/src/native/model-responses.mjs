@@ -34,7 +34,7 @@ import { validateMediaBlock, MediaError } from './model-media.mjs';
 // tool-argument decoding consistent with the kernel's own validation, so a
 // malformed provider payload is a terminal protocol error rather than a
 // silently-accepted ambiguity.
-import { parseModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+import { parseModelJson, stringifyModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
@@ -195,7 +195,7 @@ export function buildResponsesRequest(binding, request) {
     payload.parallel_tool_calls = true;
   }
 
-  return { url, headers, body: JSON.stringify(payload) };
+  return { url, headers, body: stringifyModelJson(payload) };
 }
 
 // Project host messages onto the Responses input wire. system/developer
@@ -274,7 +274,7 @@ function safeStringifyArguments(arguments_) {
     throw new ProtocolError('invalid historical tool arguments');
   }
   const visit = (value, seen = new Set()) => {
-    if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+    if (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'bigint') return;
     if (typeof value === 'number' && Number.isFinite(value)) return;
     if (typeof value !== 'object' || seen.has(value)
       || (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
@@ -285,7 +285,7 @@ function safeStringifyArguments(arguments_) {
     seen.delete(value);
   };
   visit(arguments_);
-  try { return JSON.stringify(arguments_); }
+  try { return stringifyModelJson(arguments_); }
   catch { throw new ProtocolError('invalid historical tool arguments'); }
 }
 

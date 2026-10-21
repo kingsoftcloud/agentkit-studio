@@ -41,6 +41,7 @@ import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { parseNativeJson } from '../../../agentkit-harness-core/dist/model-json.mjs';
 import {
   assertNonEmptyString, buildArtifactUri, canonicalStringify, decodeUtf8Fatal,
   encodeUtf8, identityDigest, jsonEquals, parseArtifactUri, runDigest,
@@ -1112,7 +1113,7 @@ export async function createNativeArtifactStore(options) {
           uri: meta.uri, digest: meta.digest, mediaType: meta.mediaType,
           sizeBytes: meta.sizeBytes,
           // normalize the null-prototype parse result to a plain JSON object
-          metadata: JSON.parse(canonicalStringify(meta.metadata)),
+          metadata: parseNativeJson(canonicalStringify(meta.metadata)),
         });
         if (matches.length >= request.limit) break;
       }

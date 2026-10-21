@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { realpathSync } from 'node:fs';
-import { canonical, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, invariant, requiresExactJsonWire } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/native/workspace-tools.mjs';
 import { projectNativeDshContent } from './native-input.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
@@ -140,6 +140,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           || hasSkills && ['skill', 'bash', 'pwsh'].includes(request.call.name)),
         'studio_native_tool_not_bound');
         request.signal.throwIfAborted();
+        if (requiresExactJsonWire(request.call.arguments)) return { status: 'error', content: {
+          code: 'STUDIO_NATIVE_EXACT_NUMBER_UNSUPPORTED', executed: false,
+          message: 'The current DSH tool boundary cannot preserve this exact numeric value. The tool was not executed.',
+        } };
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
         const invocation = { agent, request };

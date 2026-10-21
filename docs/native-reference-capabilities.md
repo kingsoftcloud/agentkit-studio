@@ -496,9 +496,16 @@ mismatched reports clear the previous verification cursor. Targeted
 Memory/SQLite and Host tests cover these boundaries.
 The Python-list parser pins Unicode 14.0.0 and the CPython 3.11 default decimal
 integer limit of 4300 digits; an unhashable literal becomes a bounded rejection
-instead of the source's uncaught TypeError. Structured model JSON still needs
-lossless handling of integers beyond JavaScript's safe range. These differences
-and open requirements prevent a claim of completed lossless migration.
+instead of the source's uncaught TypeError. Structured model JSON now represents
+unsafe integer tokens as bigint under `agentkit.native-json-integer/v1`, while
+decimal/exponent tokens retain IEEE float semantics. Core copies, SQLite,
+artifact metadata, numeric schema predicates, three model protocols, private
+replay and structured final delivery preserve these values. A real Node process
+exit after a committed tool receipt also retains the exact integer without
+redispatch. The current DSH tool pipeline still accepts ordinary JSON values
+only; Studio rejects tool input requiring the exact numeric codec before
+dispatch with an explicit unsupported result. That host boundary remains an open migration requirement,
+so this does not establish completed lossless migration.
 
 ## Oracle reproducibility
 

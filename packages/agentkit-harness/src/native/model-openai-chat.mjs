@@ -24,7 +24,7 @@ import { validateMediaBlock, projectMediaOpenAI, MediaError } from './model-medi
 // provider-envelope and tool-argument decoding consistent with the kernel's
 // own validation, so a malformed provider payload is a terminal protocol error
 // rather than a silently-accepted ambiguity.
-import { parseModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+import { parseModelJson, stringifyModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
 
 // Wrap parseModelJson so its NativeError codes become the adapter's ProtocolError.
 function strictParseJson(text) {
@@ -109,7 +109,7 @@ export function buildOpenAIRequest(binding, request) {
     payload.tool_choice = 'auto';
   }
 
-  return { url, headers, body: JSON.stringify(payload) };
+  return { url, headers, body: stringifyModelJson(payload) };
 }
 
 // Project host messages onto the chat wire, admitting media only on user/tool
@@ -180,7 +180,7 @@ export function projectMessagesOpenAI(request, maxInlineImageBytes) {
 
 function safeStringifyArguments(arguments_) {
   if (arguments_ == null || typeof arguments_ !== 'object') return '{}';
-  try { return JSON.stringify(arguments_); } catch { return '{}'; }
+  try { return stringifyModelJson(arguments_); } catch { return '{}'; }
 }
 
 function validateAssistantToolIds(calls) {

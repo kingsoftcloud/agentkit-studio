@@ -21,7 +21,7 @@ import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-m
 // parseModelJson is the kernel's strict finite JSON parser (rejects duplicate
 // keys and non-finite numbers); using it keeps provider-envelope and tool-input
 // decoding consistent with the kernel's own validation.
-import { parseModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+import { parseModelJson, stringifyModelJson, parseNativeJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
@@ -113,7 +113,7 @@ export function buildAnthropicRequest(binding, request) {
     payload.tool_choice = { type: 'auto' };
   }
 
-  return { url, headers, body: JSON.stringify(payload) };
+  return { url, headers, body: stringifyModelJson(payload) };
 }
 
 // Project host messages onto the Anthropic Messages wire. System messages are
@@ -464,7 +464,7 @@ export function createAnthropicStreamState(profile) {
           // Only a non-empty initial input pins the block; an empty `input: {}`
           // is the usual placeholder and still allows input_json_delta fragments.
           if (Object.keys(block.input).length > 0) {
-            tool.arguments = JSON.stringify(block.input);
+            tool.arguments = stringifyModelJson(block.input);
             tool.initialInput = true;
             this.initialInputs.add(index);
           }
@@ -680,7 +680,7 @@ export function createAnthropicStreamState(profile) {
 
 function deepCopy(value) {
   if (value == null || typeof value !== 'object') return value;
-  return JSON.parse(JSON.stringify(value));
+  return parseNativeJson(stringifyModelJson(value));
 }
 
 export { ANTHROPIC_VERSION, parseRetryAfterMs };

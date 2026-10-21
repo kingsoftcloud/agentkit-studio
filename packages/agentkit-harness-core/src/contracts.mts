@@ -3,7 +3,8 @@ import type { BrowserObservation, BrowserRecovery, BrowserSessionRef } from './b
 /** Serializable contracts. No Host services, filesystem handles or credentials. */
 export const NATIVE_SCHEMA = 'agentkit.native-run/v1' as const;
 export const NATIVE_ENGINE = 'agentkit.native/v1' as const;
-export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+/** bigint represents a JSON integer outside the safe Number range, never a string or object wrapper. */
+export type Json = null | boolean | number | bigint | string | Json[] | { [key: string]: Json };
 export type ObjectValue = { [key: string]: Json };
 export type Phase = 'created' | 'preparing_context' | 'requesting_model' | 'executing_tools'
   | 'awaiting_interaction' | 'compacting' | 'verifying' | 'finalizing' | 'paused'

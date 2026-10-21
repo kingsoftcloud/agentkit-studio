@@ -9,6 +9,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
+import { parseNativeJson } from '../../../agentkit-harness-core/dist/model-json.mjs';
 
 /** Reject anything that is not a non-empty trimmed string. */
 export function assertNonEmptyString(value, code) {
@@ -38,8 +39,11 @@ export function canonicalStringify(value) {
     if (item === null) return 'null';
     if (typeof item === 'string') return JSON.stringify(item);
     if (typeof item === 'boolean') return item ? 'true' : 'false';
+    if (typeof item === 'bigint') return item.toString();
     if (typeof item === 'number') {
       if (!Number.isFinite(item)) throw Object.assign(new Error('non_json_number'), { code: 'non_json_number' });
+      if (Object.is(item, -0)) return '-0.0';
+      if (Number.isInteger(item) && !Number.isSafeInteger(item)) return item.toExponential();
       return JSON.stringify(item);
     }
     if (typeof item !== 'object') {
@@ -113,7 +117,7 @@ export function validateMetadataObject(value, code = 'invalid_artifact_metadata'
   walk(value);
   // Round-trip through canonical JSON to reject non-JSON values found by
   // traversal and normalize to a plain object.
-  return JSON.parse(canonicalStringify(value));
+  return parseNativeJson(canonicalStringify(value));
 }
 
 /**
@@ -216,7 +220,12 @@ export function safeJsonParse(text, code = 'invalid_artifact_record') {
     if (chunk === 'null') return null;
     // Enforce the JSON number grammar (see JSON_NUMBER) instead of trusting
     // Number(), which coerces 0x10/+1/01/1./.1 into numbers JSON.parse rejects.
-    if (chunk === '' || !JSON_NUMBER.test(chunk) || !Number.isFinite(Number(chunk))) fail();
+    if (chunk === '' || !JSON_NUMBER.test(chunk)) fail();
+    if (!/[.eE]/.test(chunk) && !Number.isSafeInteger(Number(chunk))) {
+      if (chunk.replace(/^-/, '').length > 4300) fail();
+      return BigInt(chunk);
+    }
+    if (!Number.isFinite(Number(chunk))) fail();
     return Number(chunk);
   };
   const root = parseValue();
