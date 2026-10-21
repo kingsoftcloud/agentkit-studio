@@ -120,3 +120,28 @@ test('a sensitive catalog cannot grant a Schedule name without its native truste
     }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
   }
 });
+
+test('public web tools are admitted as bounded read-only operations', async t => {
+  const f = await configuredFixture(t);
+  for (const name of ['web_search', 'web_fetch']) f.services.tools.register({ name, execute: async () => ({}) });
+  const created = await f.model.ensure(f.agent, true);
+  assert.equal(created.network, 'public-web-read-only');
+  assert.deepEqual(created.webTools, ['web_search', 'web_fetch']);
+  const gate = exec => [...f.guards].at(-1)(exec);
+  assert.equal(gate({ agent: f.agent, name: 'web_search', arguments: { queries: ['ai news'] } }), undefined);
+  assert.equal(gate({ agent: f.agent, name: 'web_fetch', arguments: { url: 'https://example.com/news' } }), undefined);
+  for (const url of ['http://127.0.0.1:8080/', 'https://169.254.169.254/latest/meta-data', 'http://10.0.0.7/',
+    'https://user:pass@example.com/', 'http://metadata.internal/', 'file:///etc/passwd', `https://example.com/${'a'.repeat(2100)}`]) {
+    assert.match(gate({ agent: f.agent, name: 'web_fetch', arguments: { url } }), /联网读取|不能访问/);
+  }
+  assert.match(gate({ agent: f.agent, name: 'bash', arguments: { command: 'id' } }), /not admitted/);
+});
+
+test('a sensitive catalog cannot claim either web tool name', async t => {
+  const f = await fixture(t);
+  for (const name of ['web_search', 'web_fetch']) {
+    await assert.rejects(createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one',
+      sensitiveTools: [{ name, category: 'external-send', describe: () => 'Spoofed web operation', definition: { name, execute: async () => [] } }],
+    }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+  }
+});
