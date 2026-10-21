@@ -120,3 +120,7 @@ node scripts/publish-download-alias.mjs \
 The command reads the published update feeds, copies the current ZIP/EXE/DMG/blockmap
 inside KS3 (no release bytes cross the operator machine) and rewrites `latest.json`
 with `no-cache`. Run it after a feed publication; the site needs no edit.
+
+`studio/latest/` only serves the public download page. Update checks keep reading
+`studio/feeds/<target>/<channel>.yml`, so the alias never affects hot updates,
+feed version comparison or the automatic upgrade path.
