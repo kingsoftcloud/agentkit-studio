@@ -121,3 +121,7 @@ monotonic guard rejection, native approval audit and the production live bridge.
 It includes changed-file refusal, pre-execute approval bypass, symlink swaps,
 restored-agent denial and disposal during pending approval. Controlled package
 integration is separate from installed Host and browser acceptance.
+
+### 原生定时工具
+
+受管助理仅放行当前 Agent 可见且仍由 DSH Schedule 服务登记的 schedule_create、schedule_list、schedule_update 和 schedule_delete。登记保存工具定义和 execute 函数的精确身份；同名替换、函数变更、服务卸载或权限模型释放后均拒绝执行。工具注册晚于会话恢复时，实时身份检查允许在服务就绪后使用，能力快照中的 sessionTools 只列出当时仍可用的可信工具。工具仍使用调用 Agent 的原始会话，不能通过参数指定另一个会话。工作区路径、普通工具和逐次审批限制保持原有检查。

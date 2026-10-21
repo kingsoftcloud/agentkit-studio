@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 import { readClientSource } from './helpers/client-source.mjs';
+import { mountStudio } from '../src/client/dsh/mount.mjs';
 
 test('Studio disables the independent DSH account welcome and recharge flow', async () => {
   const entries = parse(await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8'));
@@ -51,16 +52,55 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /createConversationAgentState/);
 });
 
-test('Agent authoring reuses the native composer and starts a fresh session from Agents', () => {
-  // Keep authoring in the native conversation, with entries in the fresh
-  // conversation hero and the Agents page rather than a second composer.
-  assert.doesNotMatch(clientSource, /conversation\.input\.left/);
+test('Agent authoring reuses the native composer and starts a fresh session from Agents', async () => {
+  // Keep authoring in the hero and Agents page: a parent-composer entry lets
+  // users seed authoring mid-chat. The cloud graph alone owns an attachment
+  // entry on its separately constructed Context; it cannot alter this parent.
+  const isolatedGraph = await readFile(new URL('../src/client/dsh/assistant-native-graph.mjs', import.meta.url), 'utf8');
+  assert.equal(clientSource.split(isolatedGraph).length, 2, 'exclude only the exact isolated graph source once');
+  assert.doesNotMatch(clientSource.replace(isolatedGraph, ''), /conversation\.input\.left/);
+  assert.match(isolatedGraph, /const ctx = new Context\(\)/);
+  assert.equal((isolatedGraph.match(/conversation\.input\.left/g) || []).length, 1);
+  assert.match(isolatedGraph, /name: 'conversation\.input\.left', id: 'studio\.assistant\.attachment'/);
+  assert.doesNotMatch(isolatedGraph, /globalThis|window\.__(?:DSH|AGENTKIT)/);
   assert.match(clientSource, /function NativeAuthoringButton/);
   assert.match(clientSource, /openAgentAuthoring/);
   assert.match(clientSource, /持续更新草稿/);
   assert.match(clientSource, /我明确确认草稿后再创建/);
   assert.match(clientSource, /agentkit-studio:seed-authoring/);
   assert.doesNotMatch(clientSource, /function ConversationalAgentCreatePage/);
+});
+
+test('parent Studio mounting preserves local composer services and never installs the assistant attachment entry', () => {
+  const registered = [], injected = [];
+  const composer = Object.freeze({ name: 'parent-native-composer' });
+  const commandUi = Object.freeze({ name: 'parent-native-commands' });
+  const sessions = Object.freeze({ name: 'parent-native-sessions' });
+  const noop = () => {};
+  const ctx = {
+    conversation: composer, commandUi, sessions, remote: {}, connection: {}, layout: {},
+    effect: noop, on: noop, inject(_dependencies, apply) { return apply(ctx); },
+    uiConversation: { events: { register: noop } },
+    slots: {
+      inject(name, register) { injected.push(name); return register(); },
+      register(options) { registered.push(options); return noop; },
+    },
+    provide() { assert.fail('parent composer services must not be replaced'); },
+  };
+  mountStudio(ctx, {
+    ui: { React: { createElement: noop }, BRAND: {}, PANELS: [{ id: 'assistant', page: 'assistant' }] },
+    authoring: { openAgentAuthoring: noop }, connectionOwner: {}, hostRemote: {},
+    actions: { registerBinding: () => noop, registerSessionOpener: () => noop }, documentEffects: {},
+    createDshModelBridge: () => ({}), writeConversationAgent: noop,
+    window: {}, CustomEvent: class {}, closed: () => true,
+  });
+  assert.ok(registered.some(entry => entry.name === 'conversation.hero.agentPreset'), 'native authoring entry remains installed');
+  assert.ok(registered.some(entry => entry.name === 'main' && entry.key === 'assistant'), 'assistant page remains installed');
+  assert.equal(injected.includes('conversation.input.left'), false);
+  assert.equal(registered.some(entry => entry.name === 'conversation.input.left' || entry.id === 'studio.assistant.attachment'), false);
+  assert.equal(ctx.conversation, composer);
+  assert.equal(ctx.commandUi, commandUi);
+  assert.equal(ctx.sessions, sessions);
 });
 
 test('model settings keep multiple providers and profiles independently configurable', () => {

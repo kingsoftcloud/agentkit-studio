@@ -1,0 +1,757 @@
+diff --git a/docs/subsystems/schedule.md b/docs/subsystems/schedule.md
+index c1d842141b39e18eba37b1db41a8fe4ad083c8f8..eba8d0680e7f57f68eb9346bf229edc4bc5bcfec 100644
+--- a/docs/subsystems/schedule.md
++++ b/docs/subsystems/schedule.md
+@@ -455,6 +455,23 @@ Shared management service; reads, deletion, and timing edits never activate a Se
+ 
+ ```ts cordis-catalog
+ /**
++ * Retain the exact definition and execution body contributed by a trusted Host
++ * Schedule tool plugin. This Host-only registration grants no tool visibility;
++ * callers must still resolve the definition through the current Agent's tools.
++ * @param definition - Official Schedule tool definition from trusted composition.
++ * @returns Disposer owned by the calling plugin's scope.
++ */
++registerToolDefinition(definition: ToolDefinition): () => void
++
++/**
++ * Check a live trusted Schedule tool registration, including its original body.
++ * This Host-only check does not resolve Agent visibility or authorize a call.
++ * @param definition - Definition resolved from the calling Agent's tool registry.
++ * @returns Whether an undisposed contribution retains this exact definition and body.
++ */
++isToolDefinition(definition: ToolDefinition): boolean
++
++/**
+  * Create a reminder bound to the caller-selected Session without activating it.
+  *
+  * The request must supply a title; a missing, blank-after-trim, or over-long
+@@ -525,7 +542,7 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
+ @Remote('update') async update(request: ScheduleUpdateRequest, signal?: AbortSignal): Promise<ScheduleUpdateResult>
+ ```
+ 
+-Types: [SessionId](core.md)
++Types: [SessionId](core.md) · [ToolDefinition](tools.md)
+ 
+ Source: [`packages/schedule/schedule/src/index.ts`](../../packages/schedule/schedule/src/index.ts)
+ 
+diff --git a/docs/subsystems/schedule.zh.md b/docs/subsystems/schedule.zh.md
+index 0203ad8a85021b5eb0cf54a0f0b680307f33c593..3e8252d90d140bd9acef8af4a0d80809d041de22 100644
+--- a/docs/subsystems/schedule.zh.md
++++ b/docs/subsystems/schedule.zh.md
+@@ -455,6 +455,23 @@ Shared management service; reads, deletion, and timing edits never activate a Se
+ 
+ ```ts cordis-catalog
+ /**
++ * Retain the exact definition and execution body contributed by a trusted Host
++ * Schedule tool plugin. This Host-only registration grants no tool visibility;
++ * callers must still resolve the definition through the current Agent's tools.
++ * @param definition - Official Schedule tool definition from trusted composition.
++ * @returns Disposer owned by the calling plugin's scope.
++ */
++registerToolDefinition(definition: ToolDefinition): () => void
++
++/**
++ * Check a live trusted Schedule tool registration, including its original body.
++ * This Host-only check does not resolve Agent visibility or authorize a call.
++ * @param definition - Definition resolved from the calling Agent's tool registry.
++ * @returns Whether an undisposed contribution retains this exact definition and body.
++ */
++isToolDefinition(definition: ToolDefinition): boolean
++
++/**
+  * Create a reminder bound to the caller-selected Session without activating it.
+  *
+  * The request must supply a title; a missing, blank-after-trim, or over-long
+@@ -525,7 +542,7 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
+ @Remote('update') async update(request: ScheduleUpdateRequest, signal?: AbortSignal): Promise<ScheduleUpdateResult>
+ ```
+ 
+-Types: [SessionId](core.zh.md)
++Types: [SessionId](core.zh.md) · [ToolDefinition](tools.zh.md)
+ 
+ Source: [`packages/schedule/schedule/src/index.ts`](../../packages/schedule/schedule/src/index.ts)
+ 
+diff --git a/packages/client/ui-schedule/README.i18n.yaml b/packages/client/ui-schedule/README.i18n.yaml
+index 205e4c6b8442ce42dbe55a60cbda3b3c795dd12c..79486c437c289e724270293e99e438db76cbe7c4 100644
+--- a/packages/client/ui-schedule/README.i18n.yaml
++++ b/packages/client/ui-schedule/README.i18n.yaml
+@@ -38,3 +38,6 @@
+ /deepseek-ai-dsh-client-ui-schedule/known-limitations-and-deferred-work/dev-note:
+   en: e67f633dc6fe7773
+   zh: a4b126f9a4eaca6f
++/deepseek-ai-dsh-client-ui-schedule/embedded-task-manager:
++  en: c1b8691704a3f46f
++  zh: f58995f11ade5c6f
+diff --git a/packages/client/ui-schedule/README.md b/packages/client/ui-schedule/README.md
+index 220af1e6c7fff765bf9ab9d0575709f52b3eb896..2ea0e5ce07b44519c802cc803df08662de802b85 100644
+--- a/packages/client/ui-schedule/README.md
++++ b/packages/client/ui-schedule/README.md
+@@ -106,3 +106,7 @@ None. Catalog presentation does not enter model requests.
+ None.
+ 
+ </details>
++
++## Embedded task manager
++
++The root-scoped `schedule.manager` factory reuses the Tasks page, rule editor, and saved delivery history. Its caller supplies `onNewTask` and `onOpenSession`, the standard Session and Workspace sources, and a Remote service scoped to the authorized catalog. The factory does not activate Sessions or create reminders. Existing workspace and Sidebar entries activate only when their navigation dependencies are present.
+diff --git a/packages/client/ui-schedule/README.zh.md b/packages/client/ui-schedule/README.zh.md
+index 88575c44057d5991f2ddbc15aa2339a6a87a0441..ca8d84d0f0635fc1678283eac6103236497dd698 100644
+--- a/packages/client/ui-schedule/README.zh.md
++++ b/packages/client/ui-schedule/README.zh.md
+@@ -106,3 +106,7 @@ kind: "package-reference"
+ 无。
+ 
+ </details>
++
++## 嵌入任务管理器
++
++根作用域工厂 `schedule.manager` 复用任务页、规则编辑器和已保存的投递历史。调用方提供 `onNewTask`、`onOpenSession`、标准会话与工作区数据源，以及限定在授权目录内的 Remote 服务。工厂不会激活会话或创建提醒。现有工作区和侧栏入口仅在所需导航服务可用时注册。
+diff --git a/packages/client/ui-schedule/src/client/TaskManagerPage.tsx b/packages/client/ui-schedule/src/client/TaskManagerPage.tsx
+index 8f09c96137034573f04c1cf7de4de4ffa7dd7b72..cde31c436661379cce27b522dca73112b7d63e65 100644
+--- a/packages/client/ui-schedule/src/client/TaskManagerPage.tsx
++++ b/packages/client/ui-schedule/src/client/TaskManagerPage.tsx
+@@ -27,7 +27,7 @@ export interface TaskManagerInjected extends TaskDetailInjected {
+ }
+ 
+ /** Root-scoped task catalog props derived from the framework and injected actions. */
+-export type TaskManagerPageProps = PropsRuntime<'main'>
++export type TaskManagerPageProps = Pick<PropsRuntime<'main'>, 'useSessions' | 'useWorkspaces'>
+   & InjectFace<TaskManagerInjected>
+   & PropsLocale<'schedule.manager'>
+ 
+diff --git a/packages/client/ui-schedule/src/client/index.ts b/packages/client/ui-schedule/src/client/index.ts
+index 084d0edb8d7df415540e3039f12d8c7ddc40717f..3af55eee7f8501e022b356b7a256fe8dcf5753cc 100644
+--- a/packages/client/ui-schedule/src/client/index.ts
++++ b/packages/client/ui-schedule/src/client/index.ts
+@@ -65,6 +65,15 @@ const MANAGER_NS = 'schedule.manager'
+ const PANEL_ID = 'schedules' as MainPanelId
+ 
+ declare module '@deepseek-ai/dsh-client-ui-slots' {
++  interface SlotFactoryMap {
++    /** Reusable native task manager; the caller owns navigation and the Remote scope. */
++    'schedule.manager': {
++      scope: 'root'
++      props: Pick<TaskManagerInjected, 'onNewTask' | 'onOpenSession'>
++      inject: Omit<TaskManagerInjected, 'onNewTask' | 'onOpenSession'>
++      locale: 'schedule.manager'
++    }
++  }
+   interface LocaleNamespaceMap {
+     /** Active Schedule catalog copy. */
+     'schedule.catalog': ScheduleCatalogKey
+@@ -73,10 +82,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+   }
+ }
+ 
+-/** Required services for catalogs, ambient Session marks, the right Sidebar, Remote queries, and original-Session navigation. */
++/** Services needed by the reusable task manager; workspace navigation entries inject their own dependencies. */
+ export const inject = [
+-  'slots', 'locale', 'remote', 'remote.schedule', 'conversation', 'uiConversation', 'uiWorkspace', 'sessions',
+-  'workspaces', 'sidebarRightTabs', 'sidebarRight',
++  'slots', 'locale', 'remote', 'remote.schedule',
+ ]
+ 
+ /**
+@@ -132,114 +140,123 @@ export function apply(ctx: ClientContext): void {
+     return result
+   }
+   const loadHistory = (request: ScheduleDeliveryHistoryRequest) => ctx.remote.schedule.history(request)
+-  const openSession = (id: SessionId): void => {
+-    if (sessionLinkState(id, ctx.sessions.list.getSnapshot(), ctx.workspaces.list.getSnapshot()) === 'available') {
+-      ctx.uiWorkspace.openSession(id)
+-    }
+-  }
+-  const detail: TaskDetailInjected & ScheduleTaskCatalogInjected = {
++  const managerDetail = {
+     hooks: manager.hooks,
+     onDelete: reportedDelete(manager.onDelete),
+     onRetry: manager.onRetry,
+     onUpdateTiming: updateTask,
+     loadHistory,
+-    onOpenSession: openSession,
+   }
+-  // The Sidebar persists a tab's layout record and not its navigation
+-  // parameters, so this page type keeps the task it last showed per Session and
+-  // tab id. That Session's committed tab ids bound every write, so a closed tab
+-  // leaves no entry behind.
+-  const taskBindings = new TaskTabBindings(
+-    sessionId => ctx.sidebarRight.tabsIn(sessionId).map(tab => tab.id),
+-  )
+-  ctx.effect(() => ctx.sidebarRightTabs.register(scheduleTaskDefinition(t)), 'ui-schedule: task tab type')
+-  ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+-    name: 'sidebar.right.pane.tab',
+-    key: SCHEDULE_TASK_ID,
+-    locale: MANAGER_NS,
+-    inject: (): ScheduleTaskTabInjected => ({ ...detail, taskBindings }),
+-  }, ScheduleTaskTab))
+-  ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+-    name: 'sidebar.right.pane.tab.title',
+-    key: SCHEDULE_TASK_ID,
+-    locale: MANAGER_NS,
+-    inject: (): ScheduleTaskCatalogInjected & ScheduleTaskBindingInjected => ({ hooks: detail.hooks, taskBindings }),
+-  }, ScheduleTaskTabTitle))
+-  ctx.slots.inject('main', () => ctx.slots.register({
+-    name: 'main',
+-    key: PANEL_ID,
+-    locale: MANAGER_NS,
+-    inject: (): TaskManagerInjected => ({
+-      ...detail,
+-      // The page has no creation form: a new reminder starts in a Session.
+-      onNewTask: () => { ctx.uiWorkspace.startSession() },
+-    }),
+-  }, TaskManagerPage))
+-  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+-    name: 'sidebar.panellist',
+-    id: PANEL_ID,
+-    order: 10,
+-    locale: MANAGER_NS,
+-    label: () => t('panel'),
+-  }, TaskManagerIcon))
+-  // The created task is a Turn-level element, not a Tool-group row: the Turn
+-  // Definition publishes the settled result and this tail list entry renders
+-  // the card beneath the closing prose.
+-  ctx.uiConversation.events.register(scheduleTurnDefinition)
+-  ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
+-    name: 'conversation.chat.turnTail',
+-    id: 'schedule-created',
+-    order: 20,
+-    locale: MANAGER_NS,
+-    inject: (sessionId: SessionId): ScheduleTurnCardInjected => ({
+-      hooks: { catalog: manager.hooks.catalog },
+-      onRetry: manager.onRetry,
+-      openTaskDetail: (id) => {
+-        ctx.sidebarRight.openTab(SCHEDULE_TASK_KIND, { params: { sessionId, id } })
+-      },
+-    }),
+-  }, ScheduleTurnCard))
+-  // The Session header keeps one per-Session source: it lists the open
+-  // Session's active tasks and starts only while that header is mounted. The
+-  // Sidebar row seats read the shared `manager` catalog instead, so every
+-  // visible row projects one Host query rather than issuing its own.
+-  const createSource: SessionScheduleSourceFactory = sessionId =>
+-    createSessionScheduleSource(ctx, sessionId)
+-  ctx.slots.inject(
+-    'conversation.session.header.utilities',
+-    () => ctx.slots.register({
+-      name: 'conversation.session.header.utilities',
+-      id: 'schedule-catalog',
+-      // Sits left of the overflow menu (order 0) and right of the header's
+-      // leading utilities (order -10), matching the shipped mock.
+-      order: -5,
++  ctx.slots.registerFactory({
++    name: 'schedule.manager', scope: 'root', locale: MANAGER_NS,
++    inject: () => managerDetail,
++  }, TaskManagerPage)
++  ctx.inject(['conversation', 'uiConversation', 'uiWorkspace', 'sessions', 'workspaces', 'sidebarRightTabs', 'sidebarRight'], (ctx) => {
++    const openSession = (id: SessionId): void => {
++      if (sessionLinkState(id, ctx.sessions.list.getSnapshot(), ctx.workspaces.list.getSnapshot()) === 'available') {
++        ctx.uiWorkspace.openSession(id)
++      }
++    }
++    const detail: TaskDetailInjected & ScheduleTaskCatalogInjected = {
++      ...managerDetail,
++      onOpenSession: openSession,
++    }
++    // The Sidebar persists a tab's layout record and not its navigation
++    // parameters, so this page type keeps the task it last showed per Session and
++    // tab id. That Session's committed tab ids bound every write, so a closed tab
++    // leaves no entry behind.
++    const taskBindings = new TaskTabBindings(
++      sessionId => ctx.sidebarRight.tabsIn(sessionId).map(tab => tab.id),
++    )
++    ctx.effect(() => ctx.sidebarRightTabs.register(scheduleTaskDefinition(t)), 'ui-schedule: task tab type')
++    ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
++      name: 'sidebar.right.pane.tab',
++      key: SCHEDULE_TASK_ID,
++      locale: MANAGER_NS,
++      inject: (): ScheduleTaskTabInjected => ({ ...detail, taskBindings }),
++    }, ScheduleTaskTab))
++    ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
++      name: 'sidebar.right.pane.tab.title',
++      key: SCHEDULE_TASK_ID,
++      locale: MANAGER_NS,
++      inject: (): ScheduleTaskCatalogInjected & ScheduleTaskBindingInjected => ({ hooks: detail.hooks, taskBindings }),
++    }, ScheduleTaskTabTitle))
++    ctx.slots.inject('main', () => ctx.slots.register({
++      name: 'main',
++      key: PANEL_ID,
++      locale: MANAGER_NS,
++      inject: (): TaskManagerInjected => ({
++        ...detail,
++        // The page has no creation form: a new reminder starts in a Session.
++        onNewTask: () => { ctx.uiWorkspace.startSession() },
++      }),
++    }, TaskManagerPage))
++    ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
++      name: 'sidebar.panellist',
++      id: PANEL_ID,
++      order: 10,
++      locale: MANAGER_NS,
++      label: () => t('panel'),
++    }, TaskManagerIcon))
++    // The created task is a Turn-level element, not a Tool-group row: the Turn
++    // Definition publishes the settled result and this tail list entry renders
++    // the card beneath the closing prose.
++    ctx.uiConversation.events.register(scheduleTurnDefinition)
++    ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
++      name: 'conversation.chat.turnTail',
++      id: 'schedule-created',
++      order: 20,
++      locale: MANAGER_NS,
++      inject: (sessionId: SessionId): ScheduleTurnCardInjected => ({
++        hooks: { catalog: manager.hooks.catalog },
++        onRetry: manager.onRetry,
++        openTaskDetail: (id) => {
++          ctx.sidebarRight.openTab(SCHEDULE_TASK_KIND, { params: { sessionId, id } })
++        },
++      }),
++    }, ScheduleTurnCard))
++    // The Session header keeps one per-Session source: it lists the open
++    // Session's active tasks and starts only while that header is mounted. The
++    // Sidebar row seats read the shared `manager` catalog instead, so every
++    // visible row projects one Host query rather than issuing its own.
++    const createSource: SessionScheduleSourceFactory = sessionId =>
++      createSessionScheduleSource(ctx, sessionId)
++    ctx.slots.inject(
++      'conversation.session.header.utilities',
++      () => ctx.slots.register({
++        name: 'conversation.session.header.utilities',
++        id: 'schedule-catalog',
++        // Sits left of the overflow menu (order 0) and right of the header's
++        // leading utilities (order -10), matching the shipped mock.
++        order: -5,
++        locale: NS,
++        inject: (sessionId) => {
++          const source = createSource(sessionId)
++          return {
++            ...source,
++            // The header's deletions settle through the same app-wide toast as the
++            // Tasks page and the task tab.
++            onDelete: reportedDelete(source.onDelete),
++            openTaskDetail: (id: ScheduleId) => {
++              ctx.sidebarRight.openTab(SCHEDULE_TASK_KIND, { params: { sessionId, id } })
++            },
++          }
++        },
++      }, ScheduleCatalogAction),
++    )
++    ctx.slots.inject('sidebar.session.row.leading', () => ctx.slots.register({
++      name: 'sidebar.session.row.leading',
++      id: 'schedule-mark',
++      order: 10,
+       locale: NS,
+-      inject: (sessionId) => {
+-        const source = createSource(sessionId)
+-        return {
+-          ...source,
+-          // The header's deletions settle through the same app-wide toast as the
+-          // Tasks page and the task tab.
+-          onDelete: reportedDelete(source.onDelete),
+-          openTaskDetail: (id: ScheduleId) => {
+-            ctx.sidebarRight.openTab(SCHEDULE_TASK_KIND, { params: { sessionId, id } })
+-          },
+-        }
+-      },
+-    }, ScheduleCatalogAction),
+-  )
+-  ctx.slots.inject('sidebar.session.row.leading', () => ctx.slots.register({
+-    name: 'sidebar.session.row.leading',
+-    id: 'schedule-mark',
+-    order: 10,
+-    locale: NS,
+-    inject: () => ({ hooks: { catalog: manager.hooks.catalog } }),
+-  }, SessionScheduleMark))
+-  ctx.slots.inject('sidebar.session.row.hover', () => ctx.slots.register({
+-    name: 'sidebar.session.row.hover',
+-    id: 'schedule-tasks',
+-    order: 10,
+-    locale: NS,
+-    inject: () => ({ hooks: { catalog: manager.hooks.catalog } }),
+-  }, SessionScheduleHover))
++      inject: () => ({ hooks: { catalog: manager.hooks.catalog } }),
++    }, SessionScheduleMark))
++    ctx.slots.inject('sidebar.session.row.hover', () => ctx.slots.register({
++      name: 'sidebar.session.row.hover',
++      id: 'schedule-tasks',
++      order: 10,
++      locale: NS,
++      inject: () => ({ hooks: { catalog: manager.hooks.catalog } }),
++    }, SessionScheduleHover))
++  })
+ }
+diff --git a/packages/client/ui-schedule/tests/browser-plugin.client.spec.ts b/packages/client/ui-schedule/tests/browser-plugin.client.spec.ts
+index 4fa73699b9f7910e663178e5b439fb611c09a2ca..5c0b143d7a588c90fc5b34440e1912d1b8b0d0d8 100644
+--- a/packages/client/ui-schedule/tests/browser-plugin.client.spec.ts
++++ b/packages/client/ui-schedule/tests/browser-plugin.client.spec.ts
+@@ -139,8 +139,7 @@ function declareTranscriptSeats(ctx: Context): () => void {
+ describe('ui-schedule browser half', () => {
+   it('declares only the services used by registration', () => {
+     expect(inject).toEqual([
+-      'slots', 'locale', 'remote', 'remote.schedule', 'conversation', 'uiConversation', 'uiWorkspace', 'sessions',
+-      'workspaces', 'sidebarRightTabs', 'sidebarRight',
++      'slots', 'locale', 'remote', 'remote.schedule',
+     ])
+   })
+ 
+diff --git a/packages/client/ui-schedule/tests/embedded-manager.client.spec.tsx b/packages/client/ui-schedule/tests/embedded-manager.client.spec.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..3a60318fe7ce760d4b95f1073e03e07f8c4eb056
+--- /dev/null
++++ b/packages/client/ui-schedule/tests/embedded-manager.client.spec.tsx
+@@ -0,0 +1,59 @@
++// @vitest-environment jsdom
++import { Context, Service } from '@deepseek-ai/cordis'
++import { act, fireEvent, screen, waitFor } from '@testing-library/react'
++import { afterEach, expect, it, vi } from 'vitest'
++import * as renderer from '@deepseek-ai/dsh-client-ui-renderer/client'
++import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
++import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
++import type { ScheduleCatalogEntry, ScheduleId } from '@deepseek-ai/dsh-schedule/client'
++import type { SessionId } from '@deepseek-ai/dsh-session/types'
++import * as schedule from '../src/client/index.ts'
++
++const cleanups: Array<() => Promise<void>> = []
++afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
++
++it('renders the native manager factory without workspace navigation or conversation services', async () => {
++  const ctx = new Context()
++  const container = document.createElement('div')
++  document.body.append(container)
++  let unmount: (() => void) | undefined
++  cleanups.push(async () => { await act(async () => { unmount?.(); await ctx.fiber.dispose() }); container.remove() })
++  const sessionId = 'cloud-only' as SessionId
++  const record: ScheduleCatalogEntry = { id: 'task' as ScheduleId, sessionId, kind: 'weekly', title: 'Weekly review', prompt: 'Check report', scheduledAt: '2030-01-01T09:00:00.000Z', time: '09:00:00.000', timeZone: 'UTC', weekdays: [1], status: 'active' }
++  const changed = new Set<() => void>()
++  const catalog = vi.fn(async () => ({ ok: true as const, value: [record] }))
++  class Remote extends Service {
++    constructor(scope: Context) { super(scope, 'remote') }
++    $on(_event: string, listener: () => void) { changed.add(listener); return () => { changed.delete(listener) } }
++  }
++  const navigate = vi.fn()
++  await ctx.plugin(renderer).await()
++  await ctx.plugin({ inject: ['slots'], apply(scope: Context) {
++    new Remote(scope)
++    scope.provide('remote.schedule', { catalog } as never)
++    const locale = new LocaleRuntime(scope, undefined, { languages: ['en'], preference: null })
++    scope.provide('locale', locale)
++    scope.slots.installLocale(locale)
++    const absentSession = createSnapshotStore({ key: undefined, hooks: {}, keyedHooks: {}, props: { sessionId: undefined } })
++    scope.slots.installScope('session', { current: absentSession, bindingSource: () => absentSession })
++    scope.slots.provideRoot({ hooks: {
++      sessions: createSnapshotStore({ phase: 'ready', ids: [sessionId], byId: { [sessionId]: { id: sessionId, title: 'Assistant', displayTitle: 'Assistant', running: false, blank: false, updatedAt: 0, retainedBy: {} } }, projectionsBySession: {} } as const),
++      workspaces: createSnapshotStore({ items: [], archivedSessionIds: [], pinnedSessionIds: [], state: 'idle', phase: 'ready', error: null } as const),
++    } })
++    scope.slots.register({ name: 'root', children: { 'shell.overlay': { kind: 'list', scope: 'root' } } }, ({ renderFactorySlot, renderSlot }) => <>
++      {renderFactorySlot('schedule.manager', { onNewTask: navigate, onOpenSession: navigate })}
++      {renderSlot('shell.overlay', {})}
++    </>)
++  } }).await()
++  const plugin = ctx.plugin(schedule)
++  await plugin.await()
++  await act(async () => { unmount = ctx.get('uiRenderer')!.mount(container) })
++  await waitFor(() => expect(screen.getByText('Weekly review')).toBeTruthy())
++  fireEvent.click(screen.getByRole('button', { name: 'New' }))
++  expect(navigate).toHaveBeenCalledOnce()
++  expect(ctx.get('sessions')).toBeUndefined()
++  expect(ctx.get('uiWorkspace')).toBeUndefined()
++  expect(catalog).toHaveBeenCalledOnce()
++  await act(async () => { await plugin.dispose() })
++  expect(changed.size).toBe(0)
++})
+diff --git a/packages/client/ui-schedule/tests/task-detail.client.spec.tsx b/packages/client/ui-schedule/tests/task-detail.client.spec.tsx
+index ff64d41b88a5cb010c5530b099d6fadf75f8502f..76272b62c4ed66b2d40ff9bb10e0a795d4862ad3 100644
+--- a/packages/client/ui-schedule/tests/task-detail.client.spec.tsx
++++ b/packages/client/ui-schedule/tests/task-detail.client.spec.tsx
+@@ -11,7 +11,7 @@
+  */
+ import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+-import { allowAllAccess, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
++import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+ import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
+ import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+ import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
+@@ -114,11 +114,6 @@ function mount(
+     useCatalog: select => select(snapshot),
+     useSessions: select => select(sessions),
+     useWorkspaces: select => select(workspaces),
+-    usePanelInfo: select => select({ activePanelId: null }),
+-    useSessionStatus: select => select(new Map()),
+-    useSessionRetainInfo: () => undefined,
+-    useResource: () => { throw new Error('The task manager does not load document resources') },
+-    ...allowAllAccess,
+     onDelete: vi.fn<TaskManagerPageProps['onDelete']>(async () => 'deleted'),
+     onRetry: vi.fn(async () => {}),
+     onNewTask: vi.fn(),
+diff --git a/packages/client/ui-schedule/tests/task-manager-page.client.spec.tsx b/packages/client/ui-schedule/tests/task-manager-page.client.spec.tsx
+index 7f29237374488e683a22d20e0fb69ba831ddf772..6864e4a554627184e9fbc1035005c60ac2bb668a 100644
+--- a/packages/client/ui-schedule/tests/task-manager-page.client.spec.tsx
++++ b/packages/client/ui-schedule/tests/task-manager-page.client.spec.tsx
+@@ -170,11 +170,6 @@ function mount(
+     useCatalog: select => select(snapshot),
+     useSessions: select => select(sessions),
+     useWorkspaces: select => select(workspaces),
+-    usePanelInfo: select => select({ activePanelId: null }),
+-    useSessionStatus: select => select(new Map()),
+-    useSessionRetainInfo: () => undefined,
+-    useResource: () => { throw new Error('The task manager does not load document resources') },
+-    ...allowAllAccess,
+     onDelete: vi.fn<TaskManagerPageProps['onDelete']>(async () => 'deleted'),
+     onRetry: vi.fn(async () => {}),
+     onNewTask: vi.fn(),
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index b321cb7ece210e061a506e72ed2fc174fdfb8749..20c9db2ea7e54a72d8449d00517e0c31cad315af 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -2021,6 +2021,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+     description: 'Shared management service; reads, deletion, and timing edits never activate a Session.\n\n`sessionPersistence` is a load-order requirement rather than a directly called service: a delivery commits only when `ctx.sessions.flush()` reports that a `session/flush` listener participated, and the persistence backend providing this service is the plugin that registers that listener.',
+     methods: [
+       {
++        signature: 'registerToolDefinition(definition: ToolDefinition): () => void',
++        description: 'Retain the exact definition and execution body contributed by a trusted Host Schedule tool plugin. This Host-only registration grants no tool visibility; callers must still resolve the definition through the current Agent\'s tools.',
++        parameters: [{ name: 'definition', description: 'Official Schedule tool definition from trusted composition.' }],
++        returns: 'Disposer owned by the calling plugin\'s scope.',
++      },
++      {
++        signature: 'isToolDefinition(definition: ToolDefinition): boolean',
++        description: 'Check a live trusted Schedule tool registration, including its original body. This Host-only check does not resolve Agent visibility or authorize a call.',
++        parameters: [{ name: 'definition', description: 'Definition resolved from the calling Agent\'s tool registry.' }],
++        returns: 'Whether an undisposed contribution retains this exact definition and body.',
++      },
++      {
+         signature: 'async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord>',
+         description: 'Create a reminder bound to the caller-selected Session without activating it.\n\nThe request must supply a title; a missing, blank-after-trim, or over-long title rejects with `invalid_prompt` instead of deriving one from the prompt. A Session a delegated child owns rejects with `subagent_session`, because delivery can never reach it: the child is one whose delegation depth is above zero. The record is built from the clock reading taken before the request joins the serialized queue, so a create that waits behind a longer operation keeps its request-time anchor and may already be due when the queue reaches it.',
+         parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'signal', description: 'Optional cancellation checked before persistence begins, including after FIFO waits.' }],
+diff --git a/packages/schedule/schedule/README.i18n.yaml b/packages/schedule/schedule/README.i18n.yaml
+index f0c56100d680cf480de1f56ea437aa1d8edfe702..557034b5cec426cc471c48ef1ef5c90ebeb5b4b3 100644
+--- a/packages/schedule/schedule/README.i18n.yaml
++++ b/packages/schedule/schedule/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: 23386452a66b2fbd
+   zh: 4a8d91b2f313fead
+ /deepseek-ai-dsh-schedule/use-this-package:
+-  en: 88aba0cd93ff0903
+-  zh: a8e4c257c319de53
++  en: f821484942f61df0
++  zh: 9c675801ae924f5f
+ /deepseek-ai-dsh-schedule/understand-the-implementation:
+   en: 3d11c664125e32d8
+   zh: 01a007a5ffb2ab63
+diff --git a/packages/schedule/schedule/README.md b/packages/schedule/schedule/README.md
+index 19125f6137761254912bd5f48ba6590cbae97c53..b3bae1cc89e2ad6c4baa50ae0e6f7daaa6c97673 100644
+--- a/packages/schedule/schedule/README.md
++++ b/packages/schedule/schedule/README.md
+@@ -46,6 +46,8 @@ Cron input carries `expression` and `time_zone`. The expression is the standard
+ 
+ A reminder is bound to the calling Agent's Session. The shared `schedule` Remote namespace exposes `catalog` for active and inactive Host tasks with their original Session ids, and `list`, `history`, `update`, and `delete` with an explicit Session id. Remote `list` and model `schedule_list` return only active tasks. Catalog entries retain only the latest receipt in `lastDelivery`; catalog and list responses omit saved delivery history. None of these operations activates an Agent or reads Session logs. Explicit deletion stops future delivery, leaves the original Session and already queued messages intact, and removes the stored task row together with its saved delivery records: the task leaves `list` and `catalog`, never schedules again, and `history` answers `schedule_not_found` for the same `(sessionId, id)`.
+ 
++The Host-only tool identity registry supports [trusted Schedule tool admission](../tool-schedule/README.md#understand-the-implementation); it exposes no Remote operation or Session-management authority.
++
+ Archiving a Session with active reminders is refused until they stop, and choosing to stop them deletes every active reminder; unarchiving does not bring them back.
+ 
+ `history({sessionId, id, limit, before?})` reads saved deliveries for one stored task. Callers must provide an integer `limit` from 1 through 100; an invalid limit rejects with `invalid_rule`. Records return newest-first in append order, even when wall time moves backward. The optional `before` message-id cursor is exclusive; `nextBefore` is the oldest returned message id and appears only when more saved records remain. A missing task or wrong Session binding returns `schedule_not_found`; an unknown cursor returns `delivery_cursor_not_found`. A successful empty page is distinct from either failure.
+diff --git a/packages/schedule/schedule/README.zh.md b/packages/schedule/schedule/README.zh.md
+index 39eb161d5cfe61d12f726d229a45160588746ca3..9c6b358899f74ec30071c00dc0451cfbf4d3c2f0 100644
+--- a/packages/schedule/schedule/README.zh.md
++++ b/packages/schedule/schedule/README.zh.md
+@@ -46,6 +46,8 @@ cron 输入携带 `expression` 和 `time_zone`。表达式是标准五字段 Vix
+ 
+ 提醒绑定到调用 Agent 的会话。共享的 `schedule` Remote namespace 提供 `catalog`，返回活动和未运行的宿主任务及其原始会话 id，并提供带明确会话 id 的 `list`、`history`、`update` 和 `delete`。Remote `list` 和模型 `schedule_list` 仅返回活动任务。目录条目的 `lastDelivery` 仅保留最近一次回执；目录和列表响应均不包含已保存的发送历史。这些操作均不激活 Agent 或读取会话日志。显式删除会阻止后续投递，保留原会话和已经入队的消息，并移除已存储的任务行及其已保存的发送记录：任务从 `list` 和 `catalog` 中消失、不再调度，`history` 对相同的 `(sessionId, id)` 返回 `schedule_not_found`。
+ 
++仅限 Host 的工具身份注册表支持[可信 Schedule 工具准入](../tool-schedule/README.zh.md#understand-the-implementation)，不提供 Remote 操作或会话管理权限。
++
+ 归档仍有活动提醒的会话会被拒绝，直到这些提醒停止；选择停止它们会删除全部活动提醒，取消归档不会把它们带回来。
+ 
+ `history({sessionId, id, limit, before?})` 读取一个已存储任务的已保存发送记录。调用方必须提供 1 至 100 的整数 `limit`；非法值以 `invalid_rule` 拒绝。记录按追加顺序从新到旧返回，即使实际时间回拨也不改变顺序。可选的 `before` 消息 id 游标不包含自身；`nextBefore` 是本页最早记录的消息 id，仅在还有更早的已保存记录时出现。任务不存在或会话绑定不符时返回 `schedule_not_found`；未知游标返回 `delivery_cursor_not_found`。查询成功的空页与这两类失败相互区分。
+diff --git a/packages/schedule/schedule/src/index.ts b/packages/schedule/schedule/src/index.ts
+index b7e4ecb62aeb24b134389e90b95ade6a282dfe48..3f5845ad76159feeb690831b71fe5a6b7406f83e 100644
+--- a/packages/schedule/schedule/src/index.ts
++++ b/packages/schedule/schedule/src/index.ts
+@@ -6,6 +6,7 @@ import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
+ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
+ import { delegationDepthOf } from '@deepseek-ai/dsh-subagent'
+ import type { SessionId } from '@deepseek-ai/dsh-session'
++import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+ import type { SessionActivity } from '@deepseek-ai/dsh-workspace'
+ import { ScheduleRuntime } from './runtime.ts'
+ import { scheduleDomain } from './storage.ts'
+@@ -111,6 +112,11 @@ export class ScheduleService extends TypertRemoteService {
+   private chain: Promise<unknown> = Promise.resolve()
+   private runtime: ScheduleRuntime | undefined
+   private stopping = false
++  private readonly toolDefinitions = new Set<{
++    definition: ToolDefinition
++    name: string
++    execute: ToolDefinition['execute']
++  }>()
+ 
+   /**
+    * @param ctx - Host services owning storage, dispatch, and Session restoration.
+@@ -211,6 +217,35 @@ export class ScheduleService extends TypertRemoteService {
+   }
+ 
+   /**
++   * Retain the exact definition and execution body contributed by a trusted Host
++   * Schedule tool plugin. This Host-only registration grants no tool visibility;
++   * callers must still resolve the definition through the current Agent's tools.
++   * @param definition - Official Schedule tool definition from trusted composition.
++   * @returns Disposer owned by the calling plugin's scope.
++   */
++  registerToolDefinition(definition: ToolDefinition): () => void {
++    return this.ctx.effect(() => {
++      const entry = { definition, name: definition.name, execute: definition.execute }
++      this.toolDefinitions.add(entry)
++      return () => { this.toolDefinitions.delete(entry) }
++    })
++  }
++
++  /**
++   * Check a live trusted Schedule tool registration, including its original body.
++   * This Host-only check does not resolve Agent visibility or authorize a call.
++   * @param definition - Definition resolved from the calling Agent's tool registry.
++   * @returns Whether an undisposed contribution retains this exact definition and body.
++   */
++  isToolDefinition(definition: ToolDefinition): boolean {
++    if (this.stopping) return false
++    for (const entry of this.toolDefinitions) {
++      if (entry.definition === definition && entry.name === definition.name && entry.execute === definition.execute) return true
++    }
++    return false
++  }
++
++  /**
+    * Create a reminder bound to the caller-selected Session without activating it.
+    *
+    * The request must supply a title; a missing, blank-after-trim, or over-long
+diff --git a/packages/schedule/tool-schedule/README.i18n.yaml b/packages/schedule/tool-schedule/README.i18n.yaml
+index 8563815ed2ccbd200acd6af1cdc20a09b0ff2832..1b9da667d92715ce53f479163ce95434eb2da55e 100644
+--- a/packages/schedule/tool-schedule/README.i18n.yaml
++++ b/packages/schedule/tool-schedule/README.i18n.yaml
+@@ -27,8 +27,8 @@
+   en: eef3a83c0ffb2931
+   zh: 9b527abfde4c3406
+ /deepseek-ai-dsh-tool-schedule/understand-the-implementation:
+-  en: 065702b7a82b8fa1
+-  zh: 642037baaa2c0f1d
++  en: 58940d3308faf684
++  zh: 6440f0a9b1a31c4e
+ /deepseek-ai-dsh-tool-schedule/understand-the-implementation/source-map:
+   en: 676c4e0595fcc8dd
+   zh: f02ed861f66e7747
+diff --git a/packages/schedule/tool-schedule/README.md b/packages/schedule/tool-schedule/README.md
+index b923332157844c5ee3c8d1f8c51f0574304b2e43..29ea5ae75b058fbac129d55985fbe9ed9f5c6b5c 100644
+--- a/packages/schedule/tool-schedule/README.md
++++ b/packages/schedule/tool-schedule/README.md
+@@ -56,6 +56,8 @@ The package declares no `Config` fields. It injects `ctx.tools` and registers th
+ 
+ The plugin registers four `defineTool` definitions through the context that loads it, so a preset mount decides visibility and Cordis effect ownership disposes them with the mount. Execution reads `exec.agent` for the Session binding and the injected `ctx.schedule` service for storage; the delegation-depth guard runs before selector and identity checks, all before the service call, and any failure the service raises that is not a `ScheduleInputError` collapses to `internal_error` so storage details never reach the model. Model content is the canonical JSON of the returned value, and the Host service owns persistence, scheduling, Session restoration, and delivery.
+ 
++The Host-only `schedule.registerToolDefinition` contribution retains the original definition and execution function until the mounting scope is disposed. Host permission consumers use `schedule.isToolDefinition` together with the current Agent’s visible tool lookup; a name match, copied definition, or replaced execution function does not retain that identity. These methods are not exposed through the Schedule Remote namespace.
++
+ ### Source map
+ 
+ | File | Role |
+diff --git a/packages/schedule/tool-schedule/README.zh.md b/packages/schedule/tool-schedule/README.zh.md
+index 8404186f32c98feee8831d3dfbe930c18cec85f8..c03a67624e6a3ac1b50cb1eded2cde190b286449 100644
+--- a/packages/schedule/tool-schedule/README.zh.md
++++ b/packages/schedule/tool-schedule/README.zh.md
+@@ -56,6 +56,8 @@ kind: "package-reference"
+ 
+ 插件通过加载它的上下文注册四个 `defineTool` 定义，因此由 preset 挂载决定可见性，并由 Cordis effect 的所有权随挂载一并释放。执行时读取 `exec.agent` 作为 Session 绑定，并读取注入的 `ctx.schedule` 服务进行存储；委派深度守卫先于选择器与身份校验运行，二者均在服务调用之前完成，服务抛出的任何非 `ScheduleInputError` 失败都收敛为 `internal_error`，因此存储细节不会到达模型。模型内容为返回值的规范 JSON，而持久化、调度、Session 恢复与投递都由宿主服务负责。
+ 
++仅限 Host 的 `schedule.registerToolDefinition` 注册保留原始工具定义与执行函数，直至挂载作用域销毁。Host 权限消费方同时使用 `schedule.isToolDefinition` 和当前 Agent 的可见工具查询；名称相同、复制的定义或替换的执行函数均不能保留此身份。这些方法不通过 Schedule Remote 命名空间公开。
++
+ ### 源码映射
+ 
+ | 文件 | 作用 |
+diff --git a/packages/schedule/tool-schedule/src/index.ts b/packages/schedule/tool-schedule/src/index.ts
+index da802b4a2c486a4b9bc5a23310fc9396cbdd00f5..7f74ae0b118d884331a8ec5a1d85fec241109b0a 100644
+--- a/packages/schedule/tool-schedule/src/index.ts
++++ b/packages/schedule/tool-schedule/src/index.ts
+@@ -11,7 +11,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
+ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+ import { delegationDepthOf } from '@deepseek-ai/dsh-subagent'
+ import { defineTool } from '@deepseek-ai/dsh-tools'
+-import type { GenericCallView } from '@deepseek-ai/dsh-tools'
++import type { GenericCallView, ToolDefinition } from '@deepseek-ai/dsh-tools'
+ import {
+   MAX_TITLE_LENGTH, MIN_EVERY_INTERVAL_SECONDS, REQUIRED_TITLE_MESSAGE, ScheduleId, ScheduleInputError, scheduleView,
+ } from '@deepseek-ai/dsh-schedule'
+@@ -450,7 +450,11 @@ export function apply(ctx: Context): void {
+  * @param ctx - Scope whose `schedule` service the tools act through.
+  */
+ function registerScheduleTools(ctx: Context): void {
+-  ctx.tools.register(defineTool({
++  const register = (definition: ToolDefinition) => {
++    ctx.tools.register(definition)
++    ctx.schedule.registerToolDefinition(definition)
++  }
++  register(defineTool({
+     name: 'schedule_create',
+     description: CREATE_DESCRIPTION,
+     parameters: {
+@@ -488,7 +492,7 @@ function registerScheduleTools(ctx: Context): void {
+     presentCall: args => present('Create reminder', 'other', args.prompt),
+   }))
+ 
+-  ctx.tools.register(defineTool({
++  register(defineTool({
+     name: 'schedule_list',
+     description: LIST_DESCRIPTION,
+     parameters: {},
+@@ -509,7 +513,7 @@ function registerScheduleTools(ctx: Context): void {
+     presentCall: () => present('List reminders', 'read'),
+   }))
+ 
+-  ctx.tools.register(defineTool({
++  register(defineTool({
+     name: 'schedule_delete',
+     description: DELETE_DESCRIPTION,
+     parameters: {
+@@ -535,7 +539,7 @@ function registerScheduleTools(ctx: Context): void {
+     presentCall: args => present('Delete reminder', 'other', args.id),
+   }))
+ 
+-  ctx.tools.register(defineTool({
++  register(defineTool({
+     name: 'schedule_update',
+     description: UPDATE_DESCRIPTION,
+     parameters: {
+diff --git a/packages/schedule/tool-schedule/tests/tool-schedule.spec.ts b/packages/schedule/tool-schedule/tests/tool-schedule.spec.ts
+index 7e2c29497852b7f72b085172c31eb21fa3a4e192..2a28d7b18207a8af496cb33fc8a849f833a969fe 100644
+--- a/packages/schedule/tool-schedule/tests/tool-schedule.spec.ts
++++ b/packages/schedule/tool-schedule/tests/tool-schedule.spec.ts
+@@ -45,6 +45,32 @@ describe('Schedule model tools', () => {
+     }
+   })
+ 
++  it('retains exact trusted definition and body identity only while the tool mount is live', async () => {
++    const test = await setup()
++    for (const name of ['schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update']) {
++      const definition = test.ctx.tools.get(name, test.agent)!
++      expect(test.service.isToolDefinition(definition)).toBe(true)
++      expect(test.service.isToolDefinition({ ...definition })).toBe(false)
++      const original = definition.execute
++      definition.execute = async () => []
++      expect(test.service.isToolDefinition(definition)).toBe(false)
++      definition.execute = original
++      expect(test.service.isToolDefinition(definition)).toBe(true)
++    }
++    const definition = test.ctx.tools.get('schedule_list', test.agent)!
++    await test.scope.dispose()
++    expect(test.service.isToolDefinition(definition)).toBe(false)
++    expect(test.ctx.tools.get('schedule_list', test.agent)).toBeUndefined()
++  })
++
++  it('revokes retained tool identity when the Host Schedule service stops', async () => {
++    const test = await setup()
++    const definition = test.ctx.tools.get('schedule_list', test.agent)!
++    expect(test.service.isToolDefinition(definition)).toBe(true)
++    await test.fiber.dispose()
++    expect(test.service.isToolDefinition(definition)).toBe(false)
++  })
++
+   it('refuses a call dispatched without a caller Agent in every tool', async () => {
+     const test = await harness(); tests.push(test)
+     await test.ctx.plugin(ToolSchedule)

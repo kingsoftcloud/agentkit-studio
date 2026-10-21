@@ -20,7 +20,7 @@ export function createAssistantTranscript({ ui, hostRemote, assistantConversatio
   const labels = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
   // A native Chat ancestor may expose local-file handlers. Cloud text must
   // replace that navigation scope rather than inherit another Host's paths.
-  const markdown = value => value ? h(MarkdownDelegateProvider || ui.React.Fragment, null, h(MarkdownText, { text: value, labels })) : null;
+  const markdown = value => value ? h('div', { 'data-assistant-markdown': true }, h(MarkdownDelegateProvider || ui.React.Fragment, null, h(MarkdownText, { text: value, labels }))) : null;
   const dot = state => StateDot ? h(StateDot, { state }) : null;
   const muted = { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 };
   const card = { border: `1px solid ${BRAND.border}`, borderRadius: '12px', padding: '12px 14px', overflowWrap: 'anywhere' };

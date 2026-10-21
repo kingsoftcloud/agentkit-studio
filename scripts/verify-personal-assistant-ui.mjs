@@ -30,7 +30,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
   let child, browser, context, page;
   let setupFailureFixture = true;
   const setupFailureMessage = '云端入口的 TLS 证书校验失败；请检查证书链';
-  const errors = [], promptAttempts = [], relayFailures = [];
+  const errors = [], promptAttempts = [], relayFailures = [], nativeLifecycle = [];
   let losePromptAck = false;
   const composer = () => page.getByRole('region', { name: '云端原生输入', exact: true });
   const input = () => composer().locator('[data-composer-input][role="textbox"]');
@@ -92,6 +92,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
           : setupFailureFixture && body.method === 'assistant/setup-status' ? { ok: true, value: { state: 'STARTING', ready: false,
             message: setupFailureMessage, failure: { code: 'DEPLOYMENT_TLS_FAILED', message: setupFailureMessage } } }
           : await relay(body.method, body.payload);
+        if (body.payload?.operation) nativeLifecycle.push({ operation: body.payload.operation, carrierId: body.payload.input?.carrierId, accepted: result.ok === true });
         const request = body.payload?.operation === 'native-call' && body.payload.input?.endpoint === 'session/prompt'
           ? body.payload.input.payload?.args?.request : null;
         if (request) {
@@ -115,12 +116,23 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('agentkit.assistant.agent')) === 'cloud-fixture');
     assert.equal(await page.getByRole('tablist', { name: '助理功能' }).count(), 0, 'conversation opens without configuration tabs');
     assert.equal(await page.getByLabel('云端助理', { exact: true }).isVisible(), false, 'connection selector belongs in secondary settings');
-    await input().waitFor();
+    // The maintained Host can deliver the session catalog and its UI modules
+    // in separate turns. Wait on the actual native editor with a bounded
+    // acceptance timeout instead of assuming the localStorage agent marker
+    // means the graph has already mounted.
+    await composer().waitFor({ timeout: 60000 });
+    await input().waitFor({ timeout: 60000, state: 'visible' });
     assert.equal(await input().count(), 1, 'exactly one native DSH editor must be mounted');
     assert.equal(await input().getAttribute('contenteditable'), 'true');
     assert.equal(await page.getByLabel('发给助理', { exact: true }).count(), 0);
-    await composer().getByRole('button', { name: '添加附件', exact: true }).waitFor();
-    await composer().getByText('原生输入已绑定云端会话；附件保存后提交，关闭页面也会继续执行。', { exact: true }).waitFor();
+    const attachment = composer().getByRole('button', { name: '添加附件', exact: true });
+    await attachment.waitFor();
+    assert.equal(await attachment.count(), 1, 'one attachment entry belongs inside the native composer');
+    assert.equal(await composer().locator('[data-composer-card] [data-assistant-native-attachment]').count(), 1);
+    assert.equal(await composer().locator('input[type="file"]').count(), 1, 'only the native picker is mounted');
+    for (const copy of ['原生输入已绑定云端会话', '云端原生连接已建立', '离开也没关系，回来可以接着聊。']) {
+      assert.equal(await page.getByText(copy, { exact: false }).count(), 0, 'conversation must not show persistent implementation or reassurance copy');
+    }
   };
   try {
     await open();
@@ -137,6 +149,8 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     await waitForConversation();
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-welcome.png'), fullPage: true });
     await input().fill('保留这份草稿');
+    await input().press('Escape');
+    assert.equal(await input().textContent(), '保留这份草稿', 'native Escape dismissal preserves text');
     assert.equal(await page.getByRole('button', { name: '助理设置', exact: true }).count(), 0);
     await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
     const connectionCard = page.getByRole('dialog', { name: '助理连接信息', exact: true });
@@ -159,6 +173,12 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     await settings.getByRole('button', { name: '个人助理', exact: true }).click();
     await page.locator('[data-studio-assistant-settings]').waitFor();
     await page.getByLabel('云端助理', { exact: true }).waitFor();
+    const diagnostics = page.locator('[data-assistant-connection-diagnostics]');
+    assert.equal(await diagnostics.getAttribute('open'), null, 'connection diagnostics start collapsed');
+    await diagnostics.locator('summary').click();
+    await diagnostics.getByText('原生输入', { exact: true }).waitFor();
+    await diagnostics.getByText('工作区读写', { exact: true }).waitFor();
+    await diagnostics.locator('summary').click();
     await page.getByLabel('助理名字', { exact: true }).fill('小星');
     await page.getByLabel('如何称呼你', { exact: true }).fill('小夏');
     await page.getByRole('button', { name: '保存名字和称呼', exact: true }).click();
@@ -170,8 +190,20 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     await deletion.getByRole('button', { name: '取消', exact: true }).click();
     await deletion.waitFor({ state: 'hidden' });
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-settings.png'), fullPage: true });
+    const managerTask = await api('schedule-create', { spec: { title: '界面验收提醒', prompt: '原生任务详情验收', every_seconds: 3600 } });
     await page.locator('[data-studio-assistant-settings]').getByRole('button', { name: '计划任务', exact: true }).click();
-    await page.getByLabel('任务名称', { exact: true }).waitFor();
+    const taskManager = page.locator('[data-assistant-native-schedule]');
+    await taskManager.getByRole('heading', { name: '自动化任务', exact: true }).waitFor();
+    assert.equal(await page.getByLabel('延迟秒数', { exact: true }).count(), 0, 'Settings reuses native rule editing rather than a seconds-only form');
+    await taskManager.getByRole('button', { name: '界面验收提醒', exact: true }).click();
+    await taskManager.getByLabel('自动化任务名称', { exact: true }).fill('已修改的验收提醒');
+    await taskManager.getByRole('button', { name: '保存修改', exact: true }).click();
+    await until(async () => (await api('schedule-get', { id: managerTask.id })).item?.title === '已修改的验收提醒', 'native detail edit persists through complete-record comparison');
+    await taskManager.getByRole('tab', { name: '任务运行记录', exact: true }).click();
+    await until(async () => nativeLifecycle.some(call => call.operation === 'schedule-history' && call.accepted), 'native delivery history uses scoped cloud request');
+    await page.screenshot({ path: screenshot.replace(/\.png$/, '-schedule.png'), fullPage: true });
+    await taskManager.getByRole('button', { name: '关闭详情', exact: true }).click();
+    await api('schedule-delete', { id: managerTask.id });
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
     await page.getByRole('heading', { name: '小星', exact: true }).waitFor();
@@ -179,11 +211,41 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     await page.getByRole('dialog', { name: '助理连接信息', exact: true }).getByText('小星', { exact: true }).waitFor();
     await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
     assert.equal(await input().textContent(), '保留这份草稿');
+    const opensBeforeSwitch = nativeLifecycle.filter(call => call.operation === 'native-open' && call.accepted).length;
+    const closesBeforeSwitch = nativeLifecycle.filter(call => call.operation === 'native-close' && call.accepted).length;
+    await page.getByRole('button', { name: '助理连接信息', exact: true }).click();
+    await page.getByRole('dialog', { name: '助理连接信息', exact: true }).getByRole('button', { name: '在系统设置中管理助理', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '个人助理', exact: true }).click();
+    await page.getByLabel('云端助理', { exact: true }).selectOption('');
+    await until(async () => nativeLifecycle.filter(call => call.operation === 'native-close' && call.accepted).length === closesBeforeSwitch + 1, 'deselecting the assistant closes its native carrier');
+    assert.equal(await composer().count(), 0, 'old native composer is released when its assistant is deselected');
+    await page.getByLabel('云端助理', { exact: true }).selectOption('cloud-fixture');
+    await composer().waitFor({ timeout: 60000 });
+    await input().waitFor({ timeout: 60000, state: 'visible' });
+    await until(async () => nativeLifecycle.filter(call => call.operation === 'native-open' && call.accepted).length === opensBeforeSwitch + 1, 'reselecting the assistant opens a fresh native carrier');
+    assert.equal((await input().textContent()).trim(), '', 'memory-only native drafts are released with their graph');
+    assert.equal(await composer().locator('input[type="file"]').count(), 1);
+    assert.equal(nativeLifecycle.some(call => /cancel-turn|^cancel$/.test(call.operation)), false, 'view lifecycle never cancels cloud work');
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    await waitForConversation();
+    await input().fill('browser text send uses native command dismissal');
+    await composer().getByRole('button', { name: '发送消息', exact: true }).click();
+    await until(async () => promptAttempts.length === 1 && (await input().textContent()).trim() === '', 'plain text Send dismisses native command UI and commits');
+    assert.deepEqual(promptAttempts[0].content, [{ type: 'text', text: 'browser text send uses native command dismissal' }]);
+    await until(async () => (await api('snapshot')).status === 'completed', 'plain text task completes before attachment case');
+    promptAttempts.length = 0;
     await input().fill('browser task survives Studio Host exit');
     const uploadResponse = page.waitForResponse(response => response.request().postDataJSON()?.payload?.operation === 'attachment-upload');
+    // A lost upload or chooser must surface as this step's own assertion with
+    // its real cause; an unhandled waiter rejection would kill the process
+    // before the failure screenshot is captured.
+    uploadResponse.catch(() => {});
     const picking = page.waitForEvent('filechooser');
+    picking.catch(() => {});
     await composer().getByRole('button', { name: '添加附件', exact: true }).click();
-    await (await picking).setFiles({ name: attachmentFixture.name, mimeType: 'text/plain', buffer: attachmentFixture.bytes });
+    const chooser = await picking;
+    await chooser.setFiles({ name: attachmentFixture.name, mimeType: 'text/plain', buffer: attachmentFixture.bytes });
     const uploadedResponse = await uploadResponse;
     assert.equal(new URL(uploadedResponse.url()).pathname, ASSISTANT_UPLOAD_RPC_PATH, 'attachments must use the dedicated authenticated upload ingress');
     const uploaded = await uploadedResponse.json();
@@ -213,9 +275,9 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     await page.getByRole('heading', { name: '小星', exact: true }).waitFor();
     await page.getByLabel('助理会话', { exact: true }).getByText('browser task survives Studio Host exit', { exact: true }).waitFor({ timeout: 15000 });
     assert.ok(await page.getByLabel('助理会话', { exact: true }).getByText('ASSISTANT_DONE', { exact: true }).count());
-    await page.getByRole('heading', { name: 'Markdown 验收', exact: true }).waitFor();
-    await page.getByRole('cell', { name: '已渲染', exact: true }).waitFor();
-    await page.locator('pre code').filter({ hasText: 'console.log("studio");' }).waitFor();
+    await page.getByRole('heading', { name: 'Markdown 验收', exact: true }).last().waitFor();
+    await page.getByRole('cell', { name: '已渲染', exact: true }).last().waitFor();
+    await page.locator('pre code').filter({ hasText: 'console.log("studio");' }).last().waitFor();
     assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
     assert.equal(await page.evaluate(() => globalThis.__studioMarkdownUnsafe === true), false);
     assert.equal(await page.getByText('原生会话展示暂不可用，正在显示已保存的文字记录。', { exact: true }).count(), 0);
@@ -232,7 +294,7 @@ export async function verifyPersonalAssistantUi({ source, installed, api, relay,
     const catalog = await verifyStudioCatalogUi(page);
     await page.screenshot({ path: screenshot.replace(/\.png$/, '-catalog.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    return { passed: true, catalog, savedAssistantAndOwnerNames: true, renamedTitleAndDeviceCard: true, identitySurvivesClientRestart: true, nativeSystemSettings: true, deletionConfirmationCancelled: true, localComputerCard: true, connectionRecovers: true, nativeComposer: true, nativeReceiptUpload: true, nativeToolRead: true, nativeDownloadBytes: true, exactNativeAckRetry: true, nativeMarkdown: true, unsafeMarkdownBlocked: true, conversationFirst: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, enterSends: true,
+    return { passed: true, catalog, savedAssistantAndOwnerNames: true, renamedTitleAndDeviceCard: true, identitySurvivesClientRestart: true, nativeSystemSettings: true, deletionConfirmationCancelled: true, localComputerCard: true, connectionRecovers: true, nativeComposer: true, nativeReceiptUpload: true, nativeToolRead: true, nativeDownloadBytes: true, exactNativeAckRetry: true, nativeMarkdown: true, unsafeMarkdownBlocked: true, conversationFirst: true, conciseConversation: true, collapsedConnectionDiagnostics: true, oneNativeAttachmentPicker: true, autoSelectedSingleAssistant: true, draftSurvivesSettings: true, nativeTextSend: true, escapePreservesDraft: true, agentSwitchReleasesNativeGraph: true, enterSends: true,
       localHostRestarted: true, clientRestarted: true, nativeElectron: process.env.STUDIO_VERIFY_NATIVE === '1', cloudRuntime: 'real-dsh', model: 'controlled', ownershipCatalog: 'controlled', rendererErrors: 0 };
   } catch (error) { await page?.screenshot({ path: screenshot.replace(/\.png$/, '-failure.png'), fullPage: true, timeout: 3000 }).catch(() => {}); throw error; }
   finally { try { await closeVerificationClient(browser); } finally { await stop(); } }

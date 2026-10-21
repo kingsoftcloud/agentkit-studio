@@ -46,6 +46,7 @@ import { createAssistantSettings } from './pages/assistant-settings.mjs';
 import { createAssistantConversation } from './dsh/assistant-conversation.mjs';
 import { createAssistantTranscript } from './components/assistant-transcript.mjs';
 import { createAssistantPage } from './pages/assistant.mjs';
+import { createAssistantBrowser } from './components/assistant-browser.mjs';
 
 import { createExpertPages } from './pages/expert-catalog.mjs';
 import { createTemplateSquare } from './pages/template-square.mjs';
@@ -104,9 +105,10 @@ export function createStudioApp({ React, primitives, ConversationNodeAssembler, 
   Object.assign(ui, createCredentialOnboarding({ ui, hostRemote, window, document }));
   Object.assign(ui, createAgentPages({ ui, hostRemote, actions, window }));
   ui.ComputerConnection = createComputerConnection({ ui, hostRemote, actions, window, document });
-  ui.AssistantSettingsSection = createAssistantSettings({ ui, hostRemote, actions, window });
+  ui.AssistantSettingsSection = createAssistantSettings({ ui, hostRemote, actions, window, nativeModules });
   const assistantConversation = createAssistantConversation({ ConversationNodeAssembler });
   ui.AssistantTranscript = createAssistantTranscript({ ui, hostRemote, assistantConversation, window });
+  ui.AssistantBrowser = createAssistantBrowser({ ui, nativeModules, window });
   ui.AssistantPage = createAssistantPage({ ui, hostRemote, actions, window, nativeModules });
   Object.assign(ui, createExpertPages({ ui, hostRemote, actions, window, CustomEvent }));
   Object.assign(ui, createTemplateSquare({ ui, hostRemote, window, CustomEvent }));

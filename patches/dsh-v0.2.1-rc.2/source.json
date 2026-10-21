@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "058b3247e21649c31db1b28dc813f8117aa38ecf",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-11",
-  "tree": "02c3a9d4836d41283ea90a205ce2a0bbf749af0d",
-  "sourceSha256": "8fa282c5d6cafe75aeed562eab52f719a3685412a34367cf3ef2f79a607ea0ea",
+  "headCommit": "649c4617f0865f6309345814b99bd82a71761dab",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
+  "tree": "dcd76e7d2845c1629596790cf785dd93542af388",
+  "sourceSha256": "16fddf257c3823a852f4a58af41d9ca71736172f1adac59a1b1c1f0064344996",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "a1fb6a9e8cdc2557e123d22b37123ae109e455d737ecad19e7cbfcb13b2042c4"
+    "sha256": "5af0451576043918681c39b5281e89f0211f3a82f6b08f728e3f3dc5f56a60fa"
   },
   "commits": [
     {
@@ -244,6 +244,18 @@
       "file": "046-macos-studio-identity.patch",
       "commit": "058b3247e21649c31db1b28dc813f8117aa38ecf",
       "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1"
+    },
+    {
+      "id": "047",
+      "file": "047-native-schedule-manager.patch",
+      "commit": "d203fbc0690885d9c0e89146af7d986c767f06ea",
+      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be"
+    },
+    {
+      "id": "048",
+      "file": "048-isolated-native-browser.patch",
+      "commit": "649c4617f0865f6309345814b99bd82a71761dab",
+      "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611"
     }
   ]
 }
