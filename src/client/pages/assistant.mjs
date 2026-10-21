@@ -35,6 +35,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
     const [catalogReady, setCatalogReady] = useState(false);
     const [setup, setSetup] = useState(null), [setupOptions, setSetupOptions] = useState(null);
     const [setupMemory, setSetupMemory] = useState(''), [setupBusy, setSetupBusy] = useState(false);
+    const [upgrade, setUpgrade] = useState(null), [upgrading, setUpgrading] = useState(false);
     useEffect(() => {
       let alive = true;
       hostRemote.assistantCatalog().then(result => {
@@ -80,6 +81,36 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
       return () => { stopped = true; window.clearTimeout(timer); };
     }, [catalogReady, catalog.length]);
     const connectedAgentId = catalog.some(item => item.metadata.id === agentId) ? agentId : '';
+    // A ready assistant may still run an older cloud image. Offer the in-place
+    // rollout update (history, workspace files and memory are preserved) only
+    // when the catalog exposes a different eligible release.
+    useEffect(() => {
+      if (!connectedAgentId) { setUpgrade(null); return; }
+      let alive = true;
+      void (async () => {
+        try {
+          const current = await hostRemote.assistantSetupStatus();
+          if (!alive || !current?.ready) { if (alive) setUpgrade(null); return; }
+          const available = await hostRemote.assistantSetupOptions();
+          if (!alive) return;
+          setUpgrade({ currentReleaseId: current.releaseId || null, availableReleaseId: available.releaseId, optionsId: available.optionsId });
+        } catch { if (alive) setUpgrade(null); }
+      })();
+      return () => { alive = false; };
+    }, [connectedAgentId]);
+    const upgradeNow = async () => {
+      if (!upgrade || upgrading) return;
+      const confirmed = await actions.confirm({ title: '升级云端助理', detail: '将切换到新的云端运行版本并重建冻结包；会话历史、工作区文件和记忆会保留，升级期间暂不能对话。', confirmLabel: '升级' });
+      if (!confirmed) return;
+      setUpgrading(true); setError('');
+      try {
+        const result = await hostRemote.assistantSetupUpgrade({ confirmed: true, optionsId: upgrade.optionsId });
+        setUpgrade(previous => previous ? { ...previous, currentReleaseId: result?.releaseId || previous.availableReleaseId } : previous);
+        setNotice('云端助理正在升级，完成后自动生效。');
+        void session.refresh();
+      } catch (reason) { setError(reason.message); }
+      finally { setUpgrading(false); }
+    };
     useEffect(() => {
       followLatest.current = true;
       session.connect(connectedAgentId);
@@ -164,6 +195,11 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
         h('div', null, h('h1', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, assistantName),
           statusLabel ? h('span', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, statusLabel) : null),
         h(ComputerConnection, { assistantName, deploymentName: chosen?.metadata.name })),
+      upgrade && upgrade.currentReleaseId && upgrade.availableReleaseId !== upgrade.currentReleaseId
+        ? h('div', { role: 'status', 'data-studio-assistant-upgrade': true, style: { margin: '0 24px 8px', padding: '10px 14px', border: `1px solid ${BRAND.border}`, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' } },
+          h('span', { style: { fontSize: '13px', color: BRAND.inkMuted, lineHeight: 1.7 } }, upgrading ? '正在升级云端助理，会话与工作区文件会保留…' : '云端助理有新的运行版本可用，升级后可获得更强的联网与工具能力；会话、工作区文件和记忆都会保留。'),
+          upgrading ? null : button('升级云端助理', () => void upgradeNow()))
+        : null,
       h('div', { ref: history, 'aria-label': '助理会话', onScroll: event => { const node = event.currentTarget; followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100; },
         style: { flex: '1 1 0', minHeight: 0, overflow: 'auto', padding: '20px 24px' } },
         h('div', { style: { maxWidth: '760px', margin: '0 auto', minHeight: '100%', display: 'flex', flexDirection: 'column', gap: '24px', justifyContent: hasConversation || historyUnavailable ? 'flex-start' : 'center' } },
