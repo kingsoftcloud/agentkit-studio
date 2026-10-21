@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
 import { createZip, buildIdFor, readZipEntry } from './zip.mjs';
+import { buildExecutionEngine, validateBuildEngineManifest } from './build-engine.mjs';
 
 export class BuildError extends Error {
   constructor(code, message, details = {}) {
@@ -21,7 +22,8 @@ export class BuildError extends Error {
   }
 }
 
-export function createStudioBuild({ storeDir } = {}) {
+export function createStudioBuild({ storeDir, nativeEngineContract } = {}) {
+  buildExecutionEngine({}, nativeEngineContract);
   const root = storeDir;
   const pending = new Map();
 
@@ -59,14 +61,17 @@ export function createStudioBuild({ storeDir } = {}) {
     return result;
   }
 
-  async function buildSnapshot({ agentId, agentName, revision, spec, bindings = {}, metadata = {} }) {
+  async function buildSnapshot({ agentId, agentName, revision, spec, bindings = {}, metadata = {}, executionEngine }) {
     if (!agentId) throw new BuildError('BUILD_AGENT_ID_MISSING', 'AgentId 不能为空');
     if (!Number.isSafeInteger(revision) || revision < 1 || (metadata.revision !== undefined && metadata.revision !== revision)) throw new BuildError('BUILD_REVISION_INVALID', '构建 Revision 无效或与 Agent 定义不一致');
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new BuildError('BUILD_DEFINITION_INVALID', '构建缺少有效的 Agent 定义');
-    // The build id is content-addressed over the frozen definition only —
-    // never the wall clock — so rebuilding an unchanged revision is idempotent
+    // The build id is content-addressed over the frozen definition and engine,
+    // never the wall clock, so rebuilding the same definition and engine is idempotent
     // (same contract as the legacy builder's resolved digest).
-    const identity = { format: 'agentkit.agent-bundle/v1', agentId, name: String(agentName || agentId), revision: Number(revision) || 1, bindings, metadata, spec: spec ?? null };
+    const selectedEngine = buildExecutionEngine(spec, nativeEngineContract);
+    if (executionEngine !== undefined && !isDeepStrictEqual(executionEngine, selectedEngine)) throw new BuildError('BUILD_ENGINE_BINDING_CHANGED', '构建引擎绑定已变化');
+    const identity = { format: selectedEngine ? 'agentkit.agent-bundle/v2' : 'agentkit.agent-bundle/v1', agentId, name: String(agentName || agentId), revision: Number(revision) || 1, bindings, metadata, spec: spec ?? null,
+      ...(selectedEngine ? { executionEngine: selectedEngine } : {}) };
     const buildId = buildIdFor(identity);
     const manifest = { ...identity, createdAt: new Date().toISOString() };
     const dir = join(agentDir(agentId), buildId);
@@ -88,6 +93,7 @@ export function createStudioBuild({ storeDir } = {}) {
       id: buildId,
       agentId,
       revision: manifest.revision,
+      ...(selectedEngine ? { executionEngine: selectedEngine } : {}),
       status: 'SUCCEEDED',
       createdAt: manifest.createdAt,
       artifact: 'agent-bundle.zip',
@@ -119,7 +125,8 @@ export function createStudioBuild({ storeDir } = {}) {
     try {
       const manifest = JSON.parse(readZipEntry(zip, 'agent-bundle/manifest.json').toString('utf8'));
       const { createdAt, ...identity } = manifest;
-      if (manifest.format !== 'agentkit.agent-bundle/v1' || manifest.agentId !== agentId || buildIdFor(identity) !== buildId || !manifest.spec) throw new Error('bundle identity mismatch');
+      if (manifest.agentId !== agentId || buildIdFor(identity) !== buildId || !manifest.spec) throw new Error('bundle identity mismatch');
+      validateBuildEngineManifest(manifest);
       const spec = JSON.parse(readZipEntry(zip, 'agent-bundle/spec.json').toString('utf8'));
       if (!isDeepStrictEqual(spec, { spec: manifest.spec, bindings: manifest.bindings })) throw new Error('bundle spec mismatch');
       return { zip, record: {
@@ -127,6 +134,7 @@ export function createStudioBuild({ storeDir } = {}) {
         spec: { ...manifest.spec, bindings: manifest.bindings },
         bindings: manifest.bindings,
         buildId,
+        ...(manifest.executionEngine ? { executionEngine: manifest.executionEngine } : {}),
       } };
     } catch (error) {
       throw new BuildError('BUILD_ARTIFACT_INVALID', '构建产物损坏或与 BuildId 不匹配', { agentId, buildId });
@@ -140,5 +148,6 @@ export function createStudioBuild({ storeDir } = {}) {
     return { filename: `${agentId}-${buildId}.zip`, contentType: 'application/zip', bytes: zip.length, base64: zip.toString('base64') };
   }
 
-  return { build, list, artifactPath, resolve, download };
+  return { build, list, artifactPath, resolve, download,
+    executionEngineFor: spec => buildExecutionEngine(spec, nativeEngineContract) };
 }

@@ -11,6 +11,7 @@ import { createModelService } from '../src/model-service.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
 import { createZip, readZipFiles } from '../src/zip.mjs';
 import { prepareLocalResourceContext } from '../src/local-runtime.mjs';
+import { selectedNativeBuildContract } from '../src/build-engine.mjs';
 
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-portable-'));
@@ -19,7 +20,7 @@ async function fixture(t, overrides = {}) {
   const content = '---\nname: inventory-format\ndescription: Format inventory answers\n---\nUse format SKU|COUNT.\n';
   await writeFile(join(skillRoot, 'SKILL.md'), content);
   await writeFile(join(skillRoot, 'scripts', 'format.sh'), '#!/bin/sh\nprintf "SKU|COUNT"\n', { mode: 0o700 });
-  const build = createStudioBuild({ storeDir: join(root, 'source-store') });
+  const build = createStudioBuild({ storeDir: join(root, 'source-store'), nativeEngineContract: overrides.nativeEngineContract });
   const agentId = 'ar-local-1234567890abcdef', skillId = 'cloud-skill-space';
   const bindings = { modelProfileId: 'configured-model', skills: [skillId], mcpServers: ['cloud-mcp'], plugins: [
     { enabled: true, config: { binding: { resource: { kind: 'knowledge-base', id: 'kb-1' } } } },
@@ -34,6 +35,19 @@ async function fixture(t, overrides = {}) {
   const portable = createPortableBundles({ storeDir: join(root, 'source-store'), build, models, adapters, configuration });
   return { root, skillRoot, build, record, agentId, skillId, portable, models, adapters };
 }
+
+test('Native export/import retain the frozen engine when the target Host live default is off', async t => {
+  const native = 'agentkit.native-dsh-turn/v1', f = await fixture(t, { nativeEngineContract: native });
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  assert.equal(verifyPortableBundle(zip).definition.format, 'agentkit.agent-bundle/v2');
+  const target = join(f.root, 'native-target'), imported = await importPortableBundle(zip, target);
+  await rm(join(f.root, 'source-store'), { recursive: true });
+  const restored = await createStudioBuild({ storeDir: join(target, 'studio') }).resolve(imported.agentId, imported.buildId);
+  assert.equal(restored.buildId, f.record.id);
+  assert.equal(selectedNativeBuildContract(restored), native);
+  assert.deepEqual(restored.executionEngine, (await verifyPortableBundle(zip)).definition.executionEngine);
+});
 
 test('export and import retain exact build, file modes, resource identity and target-only credentials', async t => {
   const f = await fixture(t), result = await f.portable.prepare(f.agentId, f.record.id);

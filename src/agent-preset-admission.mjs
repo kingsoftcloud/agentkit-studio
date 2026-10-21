@@ -11,6 +11,7 @@
  * Native contract replaces the whole turn; legacy bindings retain the loop.
  */
 import { NATIVE_DSH_TURN_CONTRACT } from '../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
+import { selectedNativeBuildContract } from './build-engine.mjs';
 
 function encodedId(value) {
   return encodeURIComponent(String(value))
@@ -222,6 +223,7 @@ export class DshPresetAdmission {
   }
 
   async register(agent, eligibility, buildId, { allowUnavailableResources = false } = {}) {
+    const nativeEngineContract = selectedNativeBuildContract(agent, this.nativeEngineContract);
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
@@ -275,8 +277,8 @@ export class DshPresetAdmission {
           local: eligibility.local,
           ...(resourcesUnavailable ? { resourcesUnavailable: true } : {}),
           ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
-          ...(eligibility.local && eligibility.runtime === 'harness' && this.nativeEngineContract
-            ? { nativeEngineContract: this.nativeEngineContract } : {}),
+          ...(eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
+            ? { nativeEngineContract } : {}),
           ...(!eligibility.local ? { cloudVersionId: agent.deployment?.versionId || 'initial' } : {}),
           ...(buildId ? { buildId } : {}),
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),

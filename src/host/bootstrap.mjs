@@ -137,7 +137,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const credentials = credentialsService;
   const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
   const workspaceRoot = resolve(runtimeEnv.AGENTKIT_STUDIO_WORKSPACE || process.cwd());
-  if (runtimeEnv.AGENTKIT_STUDIO_NATIVE_HARNESS) {
+  // A frozen Native Build retains its engine when the live-preset default is
+  // disabled. Register the capability; selection remains explicit per preset.
+  {
     const { createNativeDshTools } = await import('../providers/native-dsh-tools.mjs');
     ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config }) => createNativeDshTools({ ctx: toolsCtx, config,
       workspaceRoot, stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),

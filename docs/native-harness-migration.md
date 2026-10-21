@@ -24,7 +24,7 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 生产 Host 的 `createStudioNativeHarness` 从 Studio Agent 修订或 Frozen Build 解析可信配置，绑定已选模型与工作区身份，通过宿主 attachment 服务解析用户图片和文件引用。凭证只在模型端口调用时重新读取，不进入 Native 配置或账本。`createNativeDshTools` 将 Native 工具意图交给实际 DSH ToolRegistry，保留其权限管线；被允许的十种工作区工具及本地命令工具使用 Node 实现。工具名与资源 ID 分开处理，停用契约不能重新获得 builtin 执行权限。写入成功后管线报错时保留未知结果状态，新轮次不能绕过未知写或中断状态继续执行。
 
-开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时保持原有 Harness 路径。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`，长期记忆写入会显式拒绝组装；这些缺口尚未解决。
+开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时，普通 Revision 保持原有 Harness 路径；Frozen Build 使用构建时固定的引擎，见下文。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`，长期记忆写入会显式拒绝组装；这些缺口尚未解决。
 
 `node scripts/verify-studio-native-harness.mjs --source <已构建的维护源码>` 验证实际打包的 Studio 文件、公开 Host prompt 模块解析、生产 Native Host 工厂及 runtime plugin。它在真实 SDK profile 中选择 preset，执行两轮 Native 对话并在轮间重启进程，另外运行一轮策略拒绝写入，核对六次真实 HTTP 请求、两次经过实际 DSH 工具管线的 Node 文件写入、被拒绝的文件未落盘、会话持久化、用量和一个独立的默认 DSH 会话。Node 26 与最低 Node 22.19.0 均通过。运行子进程的 PATH 仅含 Node，Python 配置指向不存在的位置。该验证的 DSH 公共包及 Studio 依赖来自固定的本地 Host 图，不能替代全新环境安装、完整 `mountStudioHost` 启动或所有 runtime 的无 Python 验收。完整流式界面消费、审批界面、源读取工作集等剩余上下文策略、输入的显式重绑与未知领取恢复操作、其他正式端口和自动化/部署入口仍待完成。
 
@@ -276,6 +276,16 @@ Python 语法目标与前述文件语法检查一样固定为 3.12。AST 中间�
 
 剩余命令能力包括 E2B/其他正式后端的产品选择和恢复、源 sandbox registry/TTL 状态字段、前台输出增量展示，以及后台持续写入与验收/工作集的完整联动。这批实现不等于所有 sandbox 能力或全部 builtin bridge 迁移完成。
 
-尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build、无 Python 安装执行及其他 runtime 回归。
+## Frozen Build 的引擎固定
+
+新的 Harness 构建使用 `agentkit.agent-bundle/v2`，使旧版宿主明确拒绝不认识的格式，避免忽略引擎字段后使用错误引擎执行。归档下载、运行包导出和导入保留同一引擎绑定；历史 v1 构建只接受未固定引擎的旧格式。
+
+Harness Build 在内容寻址的 manifest 中固定 `agentkit.build-engine/v1`，明确使用旧 Harness 或 Native 引擎。Native 同时固定整轮接口、核心引擎、运行 schema 与精确 JSON 编码契约。该字段由宿主 Build 服务生成，不从可编辑的 Agent spec 获取授权；构建操作的幂等指纹也包含它。因此相同 Agent Revision 切换引擎会产生不同 Build ID 和构建操作，不能错误复用先前缓存的结果。
+
+归档读取、preset 接纳和 Native Host 都检查该绑定。关闭普通 Revision 的 Native 开关后，已经冻结的 Native Build 仍可运行；反向开启开关也不会把旧 Harness Build 改成 Native。早于此字段的 Build 保留旧 Harness。未知或被改变的引擎、整轮协议、运行 schema 和 JSON 编码明确拒绝执行。Node 工具工厂始终注册为可用能力，仅由显式接纳的 Native preset 调用，不改变普通 Revision 的默认引擎。
+
+`node scripts/verify-studio-native-harness.mjs --source <维护源码> --mount-host --commands --frozen --archive <实际 Studio.tgz>` 在 Node 26 和 22 均通过。验证实际构建归档、修改当前草稿至下一 Revision、关闭 Host 的 Native 默认开关，再经真实 HTTP 接纳 Frozen preset。两轮真实命令执行跨 Host 进程重启、第三轮权限拒绝、流式与持久化核对以及独立默认 DSH 轮次均通过；每次模型请求都包含冻结指令并排除后来草稿指令，所有 Native Run 均绑定原 Build ID。相关 Build、操作幂等、preset、Native Host 与既有 Frozen runtime 模块定向通过。此证据覆盖该冻结引擎及对话路径，自动化、部署 HTTP 运行和完整安装仍需单独验收。
+
+尚需完成源正式能力清单的逐项对照、上下文剩余策略、子任务及后台生命周期、其余模型和端口能力、Studio 各入口及剩余事件消费、自动化和 Frozen Build 的剩余运行入口、无 Python 安装执行及其他 runtime 回归。
 
 安装配置、默认切换和完整恢复操作说明将在对应产品路径实际验证后补充，当前不可将本说明作为已完成迁移的运行手册。

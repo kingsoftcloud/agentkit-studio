@@ -9,6 +9,7 @@ import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
 import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
+import { buildExecutionEngine } from '../src/build-engine.mjs';
 
 async function setup(t, { spec = {}, profile = {} } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
@@ -28,7 +29,8 @@ async function setup(t, { spec = {}, profile = {} } = {}) {
   } };
   const ctx = { get: id => services[id] };
   const resolutions = [], builds = { resolve: async (agentId, buildId) => {
-    resolutions.push({ agentId, buildId }); return structuredClone(record);
+    resolutions.push({ agentId, buildId }); return { ...structuredClone(record),
+      executionEngine: buildExecutionEngine(record.spec, 'agentkit.native-dsh-turn/v1') };
   } };
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
@@ -106,6 +108,12 @@ test('Studio Native resolves Frozen Build authority instead of reading a mutable
   await fixture.host.executeTurn(fixture.payload);
   assert.deepEqual(fixture.resolutions, [{ agentId: fixture.record.metadata.id, buildId: 'frozen-build' }]);
   assert.equal(fixture.head().buildId, 'frozen-build');
+});
+test('Studio Native refuses a legacy Frozen Build before creating a run or contacting a model', async t => {
+  const fixture = await setup(t); fixture.payload.binding.buildId = 'legacy-build';
+  fixture.builds.resolve = async () => structuredClone(fixture.record);
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), /studio_native_build_engine_mismatch/);
+  assert.equal(fixture.requests.length, 0); assert.equal(fixture.head(), null);
 });
 test('a changed Frozen revision and a mid-run model binding cannot dispatch an HTTP request', async t => {
   const frozen = await setup(t);

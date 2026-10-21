@@ -34,14 +34,27 @@ async function applyProof(ctx, options) {
   await mkdir(workspaceRoot, { recursive: true });
   const agents = createAgentStore({ storeDir: options.mountHost ? join(options.directory, 'studio/agents') : join(options.directory, 'studio') });
   const identity = join(options.directory, 'agent-id.json');
-  let record;
-  try { record = await agents.get(JSON.parse(await readFile(identity, 'utf8')).id); }
+  let record, savedIdentity;
+  try { savedIdentity = JSON.parse(await readFile(identity, 'utf8')); record = await agents.get(savedIdentity.id); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
+      ...(options.frozen ? { spec: { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } } : {}),
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'] } : { tools: [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
+  }
+  if (options.frozen) {
+    const { createStudioBuild } = await import('../../src/studio-build.mjs');
+    const builds = createStudioBuild({ storeDir: join(options.directory, 'studio'), nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
+    if (!savedIdentity?.buildId) {
+      const built = await builds.build({ agentId: record.metadata.id, agentName: record.metadata.name,
+        revision: record.metadata.revision, metadata: record.metadata, spec: record.spec, bindings: record.spec.bindings });
+      savedIdentity = { id: record.metadata.id, buildId: built.id };
+      await writeFile(identity, JSON.stringify(savedIdentity));
+      await agents.update(record.metadata.id, { spec: { ...record.spec, instructions: { system: 'LATEST_NATIVE_SYSTEM_B' } } });
+    }
+    record = await builds.resolve(savedIdentity.id, savedIdentity.buildId);
   }
   let presetId = 'studio-native-proof';
   if (options.mountHost) {
@@ -61,8 +74,9 @@ async function applyProof(ctx, options) {
       resourceAdapterFactory: deps => createLocalResourceAdapters({ ...deps, resourceStore: { get: id => id === 'native-schema-fixture'
         ? { resourceId: id, endpointUrl: options.mcpUrl } : deps.resourceStore?.get(id) } }),
     } : {}), env: { AGENTKIT_HOME: home,
-      AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } });
-    presetId = dshPresetId(record.metadata.id, record.metadata.revision);
+      AGENTKIT_STUDIO_WORKSPACE: workspaceRoot,
+      ...(!options.frozen ? { AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } : {}) } });
+    presetId = dshPresetId(record.metadata.id, record.metadata.revision, record.buildId || '');
   } else {
     const bridge = mountRuntimeBridge(ctx);
     const models = createModelService({
@@ -128,7 +142,8 @@ async function applyProof(ctx, options) {
         const stored = await rpc('agents/local-get', { agentId: record.metadata.id });
         if (stored.metadata.id !== record.metadata.id) throw Error('Mounted Host read a different Agent');
         if (source !== 'resume') {
-          const admitted = await rpc('agents/ensure-preset', { agentId: record.metadata.id });
+          const admitted = await rpc('agents/ensure-preset', { agentId: record.metadata.id,
+            ...(record.buildId ? { buildId: record.buildId } : {}) });
           if (admitted.presetId !== presetId) throw Error('Mounted Host admitted a different preset');
         }
         await appendFile(join(options.directory, 'mounted-host-http.jsonl'), JSON.stringify({ source,

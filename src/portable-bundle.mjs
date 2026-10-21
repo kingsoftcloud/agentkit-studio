@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { stringify } from 'yaml';
 import { createZip, readZipFiles, readZipEntry, buildIdFor } from './zip.mjs';
 import { createStudioBuild } from './studio-build.mjs';
+import { validateBuildEngineManifest } from './build-engine.mjs';
 import { createAgentStore } from './agent-store.mjs';
 import { materializeCloudSkill } from './skill-files.mjs';
 import { capturePortableResources, portableError, sha256, rejectInlineSecrets } from './portable-resources.mjs';
@@ -28,7 +29,8 @@ export function verifyPortableBundle(zip) {
     }
     const definition = JSON.parse(readZipEntry(byName.get('agent-bundle.zip').data, 'agent-bundle/manifest.json'));
     const { createdAt: builtAt, ...definitionIdentity } = definition;
-    if (definition.format !== 'agentkit.agent-bundle/v1' || definition.agentId !== identity.agentId || buildIdFor(definitionIdentity) !== identity.buildId) throw new Error('build identity mismatch');
+    if (definition.agentId !== identity.agentId || buildIdFor(definitionIdentity) !== identity.buildId) throw new Error('build identity mismatch');
+    validateBuildEngineManifest(definition);
     if (JSON.stringify(JSON.parse(readZipEntry(byName.get('agent-bundle.zip').data, 'agent-bundle/spec.json'))) !== JSON.stringify({ spec: definition.spec, bindings: definition.bindings })) throw new Error('build spec mismatch');
     rejectInlineSecrets(definition.spec); rejectInlineSecrets(definition.metadata);
     for (const item of identity.requirements) if (!/^[A-Za-z_][A-Za-z0-9_]{0,159}$/.test(item.name)) throw new Error('invalid credential reference');

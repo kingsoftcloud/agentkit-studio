@@ -11,10 +11,11 @@ import { parseArgs } from 'node:util';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
-  commands: { type: 'boolean', default: false }, archive: { type: 'string' } } });
+  commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false }, archive: { type: 'string' } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
+assert.ok(!values.frozen || values['mount-host'], '--frozen requires --mount-host');
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
@@ -70,6 +71,10 @@ const server = createServer(async (request, response) => {
     }
     const body = JSON.parse(raw); requests.push(body);
     assert.equal(request.url, '/v1/chat/completions'); assert.equal(body.model, 'pinned');
+    if (values.frozen) {
+      assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('FROZEN_NATIVE_SYSTEM_A')));
+      assert.equal(JSON.stringify(body.messages).includes('LATEST_NATIVE_SYSTEM_B'), false);
+    }
     assert.deepEqual(body.tools.map(tool => tool.function.name), [toolName]);
     if (values['mcp-schema']) {
       const parameters = parseNativeJson(raw).tools[0].function.parameters;
@@ -162,6 +167,7 @@ try {
     '      config:', `        directory: ${JSON.stringify(root)}`, `        repository: ${JSON.stringify(installed)}`,
     `        mountHost: ${values['mount-host']}`,
     `        commands: ${values.commands}`,
+    `        frozen: ${values.frozen}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -233,13 +239,14 @@ try {
   // lifetimes have ended. Successful text delivery cannot manufacture a pass.
   const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
   const { createNativeArtifactStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/artifact-store.mjs')).href);
-  const { id: agentId } = JSON.parse(await readFile(join(root, 'agent-id.json'), 'utf8'));
+  const { id: agentId, buildId } = JSON.parse(await readFile(join(root, 'agent-id.json'), 'utf8'));
   const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(resolve(root, 'workspace'))).digest('hex'),
     userId: 'local-user', agentId };
   const reopened = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
   try {
     const runs = reopened.list(scope, 'native-studio-session');
     assert.equal(runs.length, 3);
+    if (values.frozen) assert.ok(runs.every(run => run.buildId === buildId));
     assert.equal(runs.filter(run => run.parentRunId === null).length, 1);
     assert.ok(runs.every(run => run.parentRunId === null || runs.some(parent => parent.runId === run.parentRunId)));
     assert.equal(new Set(runs.map(run => reopened.load(scope, run.runId).configuration.contract.revision)).size, 3);

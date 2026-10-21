@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { canonical, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeModelPort } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
 import { createNativeDshTurnExecutor, NATIVE_DSH_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
@@ -48,6 +49,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       signal.throwIfAborted();
       invariant(record?.metadata?.id === binding.agentId && record.metadata.local === true
         && record.metadata.revision === binding.agentRevision && record.spec?.runtime?.type === 'harness', 'studio_native_revision_binding_changed');
+      if (binding.buildId) invariant(selectedNativeBuildContract({ ...record, buildId: binding.buildId }) === NATIVE_DSH_TURN_CONTRACT,
+        'studio_native_build_engine_mismatch');
       const ids = profileIds(record), profiles = await Promise.all((ids.length ? ids : ['']).map(id => models.profile(id)));
       signal.throwIfAborted();
       const selection = agent.options ?? {};

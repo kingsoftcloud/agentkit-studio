@@ -29,6 +29,8 @@ export async function submitAgentBuild({ payload, localStore, serverClient, buil
     agentId, agentName: String(detail.metadata.name || agentId), revision,
     spec: detail.spec, bindings: detail.spec.bindings ?? detail.bindings ?? {}, metadata: detail.metadata,
   });
+  const executionEngine = build.executionEngineFor?.(snapshot.spec);
+  if (executionEngine) snapshot.executionEngine = executionEngine;
   const fingerprint = buildIdFor(snapshot);
   const operation = await operations.submit({
     kind: 'build', resourceId: agentId,
