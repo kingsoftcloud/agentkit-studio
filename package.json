@@ -45,7 +45,7 @@
     "build:harness": "node scripts/build-native-harness.mjs",
     "precheck": "node scripts/build-native-harness.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "pretest": "node scripts/build-native-harness.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
-    "prepack": "node scripts/build-native-harness.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
+    "prepack": "node scripts/check-local-process-launcher.mjs && node scripts/build-native-harness.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "build:mcp": "node scripts/build-mcp-client.mjs",
     "test": "node --test tests/*.test.mjs packages/agentkit-harness/test/*.test.mjs packages/agentkit-harness-core/test/*.test.mjs packages/expert-catalog/test/*.test.mjs",
     "pack:harness": "pnpm --dir packages/agentkit-harness pack --pack-destination ../../.artifacts",
