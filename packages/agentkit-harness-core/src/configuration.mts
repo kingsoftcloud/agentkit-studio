@@ -148,7 +148,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(config.hooks.every(hook => hook.timeoutMs > 0 && hook.timeoutMs < limits.effectTimeoutMs), 'invalid_hook_timeout');
   for (const hook of config.hooks) validateHookDefinition(hook);
   invariant(Number.isSafeInteger(config.stopHookContinuationLimit) && config.stopHookContinuationLimit >= 0, 'invalid_stop_hook_limit');
-  invariant(!config.hooks.some(hook => hook.events.includes('Stop')) || config.stopHookContinuationLimit > 0, 'stop_hook_requires_limit');
+  invariant(!config.hooks.some(hook => hook.events.includes('Stop')) || input.stopHookContinuationLimit !== undefined, 'stop_hook_requires_limit');
   invariant(['text', 'json_object', 'json_value'].includes(config.contract.finalOutputFormat), 'invalid_final_output_format');
   invariant(['manual', 'pure-inference/v1'].includes(config.modelRecoveryPolicy), 'invalid_model_recovery_policy');
   invariant(config.backgroundNotificationPolicy === undefined || config.backgroundNotificationPolicy === null

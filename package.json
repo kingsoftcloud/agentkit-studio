@@ -19,6 +19,7 @@
     "./client": "./dist/client.js",
     "./brand": "./src/brand.js",
     "./host-remote": "./src/host-remote.mjs",
+    "./host-bootstrap": "./src/host/bootstrap.mjs",
     "./model-proxy": "./src/model-proxy.mjs",
     "./session-adapter": "./src/session-adapter.mjs",
     "./manifest": "./studio.plugin.json",

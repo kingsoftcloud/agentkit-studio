@@ -34,6 +34,7 @@ const expected = [
   'src/client/state/native-children.mjs', 'src/client/dsh/native-children.mjs',
   'src/providers/native-subagents.mjs',
   'src/providers/native-recovery-binding.mjs',
+  'src/providers/native-hooks.mjs', 'docs/native-hooks.md', 'tests/studio-native-hooks.test.mjs',
   'host-source/dsh-v0.2.1-rc.2/maintenance.bundle',
   'host-source/dsh-v0.2.1-rc.2/LICENSE',
   'scripts/verify-native-recovery-capability.mjs',
@@ -83,6 +84,7 @@ try {
   }
 } finally { rmSync(extracted, { recursive: true, force: true }); }
 if (packageJson.name !== '@kingsoftcloud/agentkit-studio') throw new Error(`unexpected package name: ${String(packageJson.name)}`);
+if (packageJson.exports?.['./host-bootstrap'] !== './src/host/bootstrap.mjs') throw new Error('trusted Native Hook bootstrap must be publicly importable');
 if (packageJson.dependencies?.['@astral-sh/ruff-wasm-nodejs'] !== '0.16.8') throw new Error('Python-source syntax parser must be an exact production dependency');
 if (!/^\d+\.\d+\.\d+$/.test(String(packageJson.version))) throw new Error(`package version must be stable semver: ${String(packageJson.version)}`);
 if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.version) throw new Error('plugin manifest identity/version does not match package.json');

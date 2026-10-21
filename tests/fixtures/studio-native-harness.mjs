@@ -13,6 +13,22 @@ import { createLocalResourceAdapters } from '../../src/local-resource-adapters.m
 export const name = 'studio-native-host-verification';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets'];
 
+function proofNativeHookRegistrations(options, record) {
+  return [{ sourceRef: 'plugin://studio-proof-governance@1', sourceDigest: 'sha256:' + 'f'.repeat(64),
+    agentIds: [record.metadata.id], authorizationVersion: 'studio-proof-policy/v1',
+    configuration: { contract: 'agentkit.studio-native-hooks/v1', cleanupTimeoutMs: 1000, stopContinuationLimit: 0,
+      hooks: [{ hookId: 'studio-proof-governance', events: ['PreToolUse', 'PostToolUse', 'Stop'], readOnly: true,
+        timeoutMs: 5000, maxInputBytes: 100000, maxOutputBytes: 16000, failureMode: 'block' }] },
+    authorize: async request => request.scope.agentId === record.metadata.id && request.sessionId === 'native-studio-session' ? 'allow' : 'deny',
+    callback: async request => {
+      await appendFile(join(options.directory, 'native-hook-callbacks.jsonl'), JSON.stringify({ agentId: request.scope.agentId,
+        runId: request.runId, sessionId: request.sessionId, operationKey: request.operationKey, event: request.event }) + '\n');
+      return { additionalContext: [`Host ${request.event} governance feedback`],
+        ...(request.event === 'PreToolUse' ? { updatedArguments: { ...request.input.call.arguments,
+          content: request.input.call.arguments.content + ' via Hook' } } : {}) };
+    } }];
+}
+
 /** Exercise production Host, preset plugin and ToolRegistry in the shipped CLI. */
 export async function apply(ctx, options) {
   try { await applyProof(ctx, options); }
@@ -69,8 +85,9 @@ async function applyProof(ctx, options) {
     await writeFile(join(home, 'config.yaml'), JSON.stringify({ modelProfiles: [{ id: 'fixture', provider: 'openai-compatible',
       modelName: 'pinned', baseUrl: options.modelUrl, default: true, credentialName: 'STUDIO_NATIVE_FIXTURE_KEY' }],
       modelProfileKeys: { STUDIO_NATIVE_FIXTURE_KEY: 'sk-studio-fixture-secret' } }), { mode: 0o600 });
-    const { mountStudioHost } = await import('../../src/host/bootstrap.mjs');
-    await mountStudioHost(ctx, { configurationHome: home, ...(options.mcpUrl ? {
+    const { mountStudioHost } = await import('@kingsoftcloud/agentkit-studio/host-bootstrap');
+    await mountStudioHost(ctx, { configurationHome: home,
+      nativeHookRegistrations: options.hooks ? proofNativeHookRegistrations(options, record) : [], ...(options.mcpUrl ? {
       resourceAdapterFactory: deps => createLocalResourceAdapters({ ...deps, resourceStore: { get: id => id === 'native-schema-fixture'
         ? { resourceId: id, endpointUrl: options.mcpUrl } : deps.resourceStore?.get(id) } }),
     } : {}), env: { AGENTKIT_HOME: home,

@@ -21,7 +21,8 @@ function compactionSubject(snapshot: RunSnapshot, definition: HookDefinition): O
   const subject = copy(snapshot.contextState!.compaction!.hookSubject);
   if (definition.compactionSourceProjection === 'canonical_user') {
     const messages = subject.messages as unknown as Message[], refs = subject.messageRefs as string[];
-    const indexes = messages.flatMap((message, index) => message.role === 'user' && !message.kind ? [index] : []);
+    const indexes = messages.flatMap((message, index) => message.role === 'user'
+      && (message.kind === undefined || message.kind === 'user_input') ? [index] : []);
     subject.messages = indexes.map(index => messages[index]!) as unknown as ObjectValue[];
     subject.messageRefs = indexes.map(index => refs[index]!);
     subject.sourceProjection = 'canonical_user';

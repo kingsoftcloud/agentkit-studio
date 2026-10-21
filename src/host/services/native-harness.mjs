@@ -18,6 +18,7 @@ import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTR
 import { modelInput } from '../../model-service.mjs';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
+import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../providers/native-hooks.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -46,7 +47,7 @@ const recoveredPromptAssembly = (assembly, source) => ({ ...assembly,
 
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
-  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor } = {}) {
+  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor, hookRegistry } = {}) {
   const sessions = ctx.get('sessions'), projections = ctx.get('sessionProjections'), llm = ctx.get('llm');
   invariant(typeof sessions?.flush === 'function' && typeof projections?.register === 'function'
     && typeof renderPrompt === 'function', 'studio_native_host_services_unavailable');
@@ -175,8 +176,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const ownedChildren = children && { scope, owner: children.owner, runIds: new Set() };
       if (ownedChildren) childOwners.add(ownedChildren);
       signal.throwIfAborted();
+      const hooks = hookRegistry?.bind({ scope, sessionId: String(agent.session.id), record, buildId: binding.buildId ?? null, store });
       return { scope, buildId, source,
         releaseResources: async request => {
+          await hooks?.close();
           if (ownedChildren) {
             ownedChildren.runIds.add(request.runId);
             let phase;
@@ -190,10 +193,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         },
         taskContractFactory: facts => nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
         configuration: { profile: parentModel.profile,
+        ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
         hostRecoveryBinding: nativeRecoveryBinding({ binding, input, source, selection, systemPrompt }),
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
           interactionContract: STUDIO_NATIVE_INTERACTION_CONTRACT,
+          ...(hooks ? { hookContract: STUDIO_NATIVE_HOOK_CONTRACT, hooks: hooks.definitions,
+            stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
           ...(children ? { childContract: STUDIO_NATIVE_CHILD_CONTRACT, childRoles: roles } : {}),
           toolArgumentEncoding: binding.nativeTools.argumentEncoding ?? null,
           toolPermissionContract: binding.nativeTools.permissionContract ?? null,
@@ -212,8 +218,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ...(binding.nativeTools.commandBinding ? { backgroundNotificationPolicy: 'completed-before-model/v1' } : {}),
         contract: nativeGoalContract({ sessionId: String(agent.session.id), goal: admission.objective }), instructions, inputMessages: admission.messages,
         tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000,
+          (hooks?.requiredEffectTimeoutMs ?? 0) + 1,
           ...roles.map(role => role.timeoutSeconds * 1000 + 15000), ...tools.map(tool => tool.timeoutMs + 10000)) } },
         ports: { ...binding.nativeTools.forAgent(agent, { scope, store, ...(children ? { children } : {}) }),
+          ...(hooks ? { hooks } : {}),
           ...(children ? { children: children.owner } : {}), verification, context: context.port, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);

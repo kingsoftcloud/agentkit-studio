@@ -1,4 +1,5 @@
 /** Host-owned runtime registrations. Cordis scopes, never Agent ids, own cleanup. */
+import { createStudioNativeHookRegistry } from '../providers/native-hooks.mjs';
 const mounted = new Set();
 let standalone;
 
@@ -16,6 +17,7 @@ function abortable(value, signal) {
 }
 
 export function createRuntimeBridge() {
+  const nativeHooks = createStudioNativeHookRegistry();
   const lifetime = new AbortController();
   const routes = new Map();
   const pending = new Set();
@@ -53,6 +55,7 @@ export function createRuntimeBridge() {
   }
 
   const bridge = {
+    nativeHooks,
     get signal() { return lifetime.signal; },
     setAdapter(value) { return register('adapter', value); },
     setResourceToolExecutor(value) {
@@ -152,6 +155,7 @@ export function createRuntimeBridge() {
       nativeTurnExecutor = undefined;
       nativeToolsFactory = undefined;
       routes.clear();
+      return nativeHooks.close();
     },
   };
   return bridge;
@@ -163,7 +167,7 @@ export function mountRuntimeBridge(ctx) {
   ctx.provide('studioRuntimeBridge', bridge);
   ctx.effect(() => {
     mounted.add(bridge);
-    return () => { mounted.delete(bridge); bridge.close(); };
+    return () => { mounted.delete(bridge); return bridge.close(); };
   }, 'agentkit-studio: runtime bridge lifetime');
   return bridge;
 }

@@ -14,13 +14,16 @@ import { respondToAutomationProof, runAutomationProof, verifyAutomationLedger } 
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
-  automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false }, archive: { type: 'string' } } });
+  automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
+  hooks: { type: 'boolean', default: false }, archive: { type: 'string' } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
 assert.ok(!values.frozen || values['mount-host'], '--frozen requires --mount-host');
 assert.ok(!values.automation || values['mount-host'] && values.commands && !values.frozen, '--automation requires --mount-host --commands without --frozen');
 assert.ok(!values.recovery || values['mount-host'] && !values.automation, '--recovery requires --mount-host without --automation');
+assert.ok(!values.hooks || values['mount-host'] && !values.automation && !values.commands && !values['mcp-schema'],
+  '--hooks exercises mounted Host workspace tools without automation/commands/MCP');
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
@@ -182,6 +185,7 @@ try {
     `        frozen: ${values.frozen}`,
     `        automation: ${values.automation}`,
     `        recovery: ${values.recovery}`,
+    `        hooks: ${values.hooks}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -250,7 +254,7 @@ try {
     assert.equal(result.events.some(event => ['request/header', 'request/context'].includes(event.type)), false);
     assert.deepEqual(result.events.filter(event => event.type === 'assistant/message').map(event => event.data.usage),
       [{ inputTokens: 5, outputTokens: 7 }, { inputTokens: 5, outputTokens: 7 }]);
-    assert.equal(await readFile(join(root, 'workspace', `published-${turn}.txt`), 'utf8'), `publication-${turn}`);
+    assert.equal(await readFile(join(root, 'workspace', `published-${turn}.txt`), 'utf8'), `publication-${turn}${values.hooks ? ' via Hook' : ''}`);
     const receipt = result.events.find(event => event.type === 'tool/result').data.message;
     assert.deepEqual(receipt.content, [{ type: 'text', text: `Published published-${turn}.txt (policy view)` }]);
     const context = result.events.filter(event => event.type === 'user/message').find(event => event.data.source.kind === 'tool');
@@ -318,6 +322,15 @@ try {
     assert.equal(new Set(runs.map(run => reopened.load(scope, run.runId).configuration.contract.revision)).size, 3);
     const evidence = await createNativeArtifactStore({ directory: join(root, 'studio/native-harness/verification-evidence'), scope });
     for (const run of runs) {
+      if (values.hooks) {
+        const record = reopened.load(scope, run.runId);
+        assert.equal(record.configuration.hooks.length, 1); assert.equal(record.configuration.stopHookContinuationLimit, 0);
+        const receipts = record.receipts.filter(receipt => receipt.result.schemaVersion === 'agentkit.native-hook-result/v1');
+        assert.deepEqual(receipts.map(receipt => receipt.result.event), ['PreToolUse', 'PostToolUse', 'Stop']);
+        assert.ok(receipts.every(receipt => receipt.status === 'committed' && receipt.result.status === 'ok'));
+        assert.equal(record.configuration.hooks[0].sourceRef, 'plugin://studio-proof-governance@1');
+        assert.ok(record.snapshot.messages.some(message => message.kind === 'hook_context'));
+      }
       if (values.commands) {
         const record = reopened.load(scope, run.runId);
         assert.equal(record.configuration.backgroundNotificationPolicy, 'completed-before-model/v1');
@@ -365,6 +378,12 @@ try {
   }
   if (automationProof) console.log('Studio Native automation PASS: authenticated Build operation, latest Revision schedule and frozen Build evaluation, actual unattended permission denial with no file effect, real model HTTP and durable independent Native ledgers.');
   console.log(`Studio Native Host PASS: ${values['mount-host'] ? 'full mountStudioHost with real authenticated HTTP control RPC, production preset admission and startup restoration' : 'production Host factory and runtime plugin'}, actual packed Studio files, public Host prompt import, Node-only PATH, 2 successful Native turns across process restart plus 1 policy-denied turn, 6 actual model HTTP requests, 6 public live streams before provider completion with exact durable Session stream settlement, ${values['mcp-schema'] ? '2 MCP marker effects with exact model/input/output schemas and persisted numeric receipts' : '2 Node workspace writes'}, authoritative post-policy text, deferred contexts and actual Host inbox steering in model/Session/history, no denied write and 1 separate default DSH turn.`);
+  if (values.hooks) {
+    const callbacks = await jsonRows(join(root, 'native-hook-callbacks.jsonl'));
+    assert.equal(callbacks.length, 9); assert.equal(new Set(callbacks.map(row => row.operationKey + ':' + row.runId)).size, 9);
+    assert.ok(callbacks.every(row => row.agentId === agentId && row.sessionId === 'native-studio-session'));
+    console.log('Studio Native Hooks PASS: trusted exact-Agent registration; durable Pre/Post/Stop intents and receipts; actual rewritten workspace bytes; no denied write; original provider arguments retained; no callbacks on default DSH.');
+  }
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });
