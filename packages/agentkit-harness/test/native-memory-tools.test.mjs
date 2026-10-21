@@ -116,6 +116,61 @@ test('a late allowance arriving after cancellation does not trigger the mutation
   store.close(); store2.close();
 });
 
+test('deferred authorization drift: mutating call arguments, operationKey, definition or scope during the authorize await rejects with no write', async () => {
+  // The caller mutates ITS OWN request object during the async authorize window
+  // (e.g. a racing re-dispatch). The approved identity is captured before the
+  // await, so the drift is detected and the write is refused — not silently
+  // recomputed with the changed arguments.
+  let target;
+  const { tools, store, req } = build({ resolveAuthority: () => null,
+    authorize: async request => { request.signal; // simulate caller-side mutation of the live request
+      target.call.arguments.content = 'Hijacked'; return 'allow'; } });
+  target = req('manage_memory', { action: 'remember', scope: 'user', content: 'Original' }, { operationKey: 'drift-args' });
+  const res = await tools.execute(target);
+  assert.equal(res.status, 'error'); assert.equal(res.content.code, 'native_memory_request_drifted_after_authorize');
+  assert.equal(res.content.executed, false); assert.deepEqual(store.list(), []);
+  store.close();
+  // operationKey mutation during consent await.
+  let target2;
+  const { tools: t2, store: s2 } = build({ resolveAuthority: () => null,
+    consent: async request => { request.signal; target2.operationKey = 'drifted-key'; return 'allow'; } });
+  const mk2 = (n, a, op) => { const ac = new AbortController(); return { call: { name: n, arguments: a, callId: 'c-' + op }, definition: t2.definitions.find(d => d.name === n), operationKey: op, runId: 'run', scope: principal, signal: ac.signal, abortController: ac }; };
+  target2 = mk2('manage_memory', { action: 'remember', scope: 'user', content: 'Original2' }, 'drift-key');
+  const res2 = await t2.execute(target2);
+  assert.equal(res2.status, 'error'); assert.equal(res2.content.executed, false);
+  assert.equal(res2.content.code, 'native_memory_request_drifted_after_consent');
+  assert.deepEqual(s2.list(), []); s2.close();
+  // scope mutation during authorize await.
+  let target3;
+  const { tools: t3, store: s3 } = build({ resolveAuthority: () => null,
+    authorize: async request => { request.signal; target3.scope = { ...principal, userId: 'foreign' }; return 'allow'; } });
+  const mk3 = (n, a, op) => { const ac = new AbortController(); return { call: { name: n, arguments: a, callId: 'c-' + op }, definition: t3.definitions.find(d => d.name === n), operationKey: op, runId: 'run', scope: principal, signal: ac.signal, abortController: ac }; };
+  target3 = mk3('manage_memory', { action: 'remember', scope: 'user', content: 'Original3' }, 'drift-scope');
+  const res3 = await t3.execute(target3);
+  assert.equal(res3.content.code, 'native_memory_request_drifted_after_authorize');
+  assert.deepEqual(s3.list(), []); s3.close();
+});
+
+test('a callback cannot poison the internal locked formal definition: mutating the definition it receives does not weaken later requests', async () => {
+  const { tools, store, req, def } = build({ resolveAuthority: () => null,
+    authorize: async request => { request.signal; // Try to weaken the locked formal via the copy it received.
+      request.definition.readOnly = true; request.definition.permissions = ['memory:admin']; return 'allow'; } });
+  const r = req('manage_memory', { action: 'remember', scope: 'user', content: 'Poison test' }, { operationKey: 'poison-1' });
+  const res = await tools.execute(r);
+  // The mutation reached only the isolated copy; the internal formal is untouched,
+  // so the request still resolves (the mutated copy is not re-read) and writes.
+  assert.equal(res.status, 'ok'); assert.equal(res.content.committed, true);
+  // A subsequent request still sees the original locked formal (readOnly:false).
+  const manageDef = tools.definitions.find(d => d.name === 'manage_memory');
+  assert.equal(manageDef.readOnly, false); assert.deepEqual(manageDef.permissions, ['memory:write']);
+  // The poisoned copy did not leak into binding checks: a fresh forged readOnly:true
+  // request is still rejected.
+  const forged = await tools.execute({ ...req('manage_memory', { action: 'remember', scope: 'user', content: 'X' }, { operationKey: 'poison-2' }),
+    definition: { ...def('manage_memory'), readOnly: true } });
+  assert.equal(forged.content.code, 'native_memory_definition_unbound');
+  store.close();
+});
+
 test('read_memory returns the current version, hash, status and scope; unknown ids are not found in scope', async () => {
   const { tools, store, req } = build({ resolveAuthority: () => 'explicit_user' });
   const remember = await tools.execute(req('manage_memory', { action: 'remember', scope: 'user', content: 'My editor is Vim' }, { operationKey: 'remember-1' }));

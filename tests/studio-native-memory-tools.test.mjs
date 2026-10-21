@@ -41,12 +41,14 @@ function studio(t, spec = { runtime: { type: 'harness' }, memory: { enabled: tru
     countRequest: async request => Math.ceil(JSON.stringify({ messages: request.messages, tools: request.tools }).length / 4),
     countText: async request => Math.ceil(request.text.length / 4) } } };
   const worker = () => new NativeKernel({ store, ports, digest, owner: 'worker' });
-  const seed = (objective, runId = 'mem-run') => {
+  const seed = async (objective, runId = 'mem-run') => {
     const configuration = config(objective);
     worker().start({ ...fixture().snapshot, runId, parentRunId: null, sessionId: 'session' }, configuration);
-    // Drive one model turn so the run has real admission events; the memory tools
-    // resolve provenance from the latest actual Run event, not an invented one.
-    worker().runUntilIdle(scope, runId);
+    // Drive one model turn to completion so the run has real admission events and
+    // no dangling async work. runUntilIdle is async; awaiting it guarantees the
+    // tools resolve provenance from a fully-driven run and the test cleanup is not
+    // racing a still-running worker.
+    await worker().runUntilIdle(scope, runId);
     return runId;
   };
   t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
@@ -76,7 +78,7 @@ test('composeStudioNativeMemoryTools is gated by enabled, local-default provider
 
 test('composed port resolves explicit authority from the actual admitted goal: an exact match skips consent, a mismatch and forget route to consent', async t => {
   const { store, record, root, seed } = studio(t);
-  const runId = seed('记住我的编辑器是 Vim');
+  const runId = await seed('记住我的编辑器是 Vim');
   const consentLog = [];
   const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
     authorize: async () => 'allow', consent: async req => { consentLog.push(req.call.arguments.action); return 'allow'; }, planner });
@@ -103,7 +105,7 @@ test('composed port resolves explicit authority from the actual admitted goal: a
 
 test('composed port reconcile verifies a committed receipt against the current fact after a real run', async t => {
   const { store, record, root, seed } = studio(t);
-  const runId = seed('记住我的偏好是咖啡');
+  const runId = await seed('记住我的偏好是咖啡');
   const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
     authorize: async () => 'allow', consent: async () => 'allow', planner });
   t.after(() => port.close());
@@ -126,7 +128,7 @@ test('composed port reconcile verifies a committed receipt against the current f
 
 test('strict authority: a non-explicit goal never grants explicit_user; only an exact match of the original human statement skips consent, and a content mismatch routes to consent', async t => {
   const { store, record, root, seed } = studio(t);
-  const runId = seed('帮我整理一下本周的报告'); // not an explicit memory instruction
+  const runId = await seed('帮我整理一下本周的报告'); // not an explicit memory instruction
   const consentLog = [];
   const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
     authorize: async () => 'allow', consent: async req => { consentLog.push(req.call.arguments.content); return 'allow'; }, planner });
@@ -138,7 +140,7 @@ test('strict authority: a non-explicit goal never grants explicit_user; only an 
   assert.equal(r.status, 'ok'); assert.equal(port.provider.get(r.content.memoryId).writePolicy, 'auto');
   assert.deepEqual(consentLog, ['随便写的事实']);
   // An explicit goal but a content that does not match the original statement -> consent.
-  const runId2 = seed('记住我的编辑器是 Vim', 'mem-run-2');
+  const runId2 = await seed('记住我的编辑器是 Vim', 'mem-run-2');
   const consentLog2 = [];
   const port2 = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
     authorize: async () => 'allow', consent: async () => { consentLog2.push('called'); return 'allow'; }, planner });
@@ -172,4 +174,54 @@ test('fail-closed source: a run with no admission events (un-driven) returns mem
   const r = await port.execute(request('manage_memory', { action: 'remember', scope: 'user', content: '我的编辑器是 Vim' }, 'cold-run', 'op-cold'));
   assert.equal(r.status, 'error'); assert.equal(r.content.code, 'memory_source_event_unavailable');
   assert.deepEqual(consentLog, []); assert.deepEqual(port.provider.list(), []);
+});
+
+test('schedule and attachment-style goals never grant explicit_user even when the tool content echoes a stored fact', async t => {
+  const { store, record, root, seed } = studio(t);
+  // A schedule-style goal (not an explicit memory instruction) carries no
+  // explicitMemoryTarget, so resolveAuthority returns null even if the tool
+  // content happens to match a fact the user stated earlier.
+  const runId = await seed('每天早上9点提醒我开会');
+  const consentLog = [];
+  const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
+    authorize: async () => 'allow', consent: async () => { consentLog.push('called'); return 'allow'; }, planner });
+  t.after(() => port.close());
+  const request = makeRequest(port);
+  const r = await port.execute(request('manage_memory', { action: 'remember', scope: 'user', content: '每天早上9点提醒我开会' }, runId, 'op-sched'));
+  assert.equal(r.status, 'ok'); assert.equal(port.provider.get(r.content.memoryId).writePolicy, 'auto');
+  assert.deepEqual(consentLog, ['called']);
+});
+
+test('corrupt provenance projection fails closed: an unavailable run returns memory_source_unavailable with no write or consent', async t => {
+  const { store, record, root, seed } = studio(t);
+  await seed('记住我的编辑器是 Vim');
+  const consentLog = [];
+  const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
+    authorize: async () => 'allow', consent: async () => { consentLog.push('called'); return 'allow'; }, planner });
+  t.after(() => port.close());
+  const request = makeRequest(port);
+  // A runId that does not exist -> load returns null -> resolveMutationSource
+  // returns unavailable (no origin event) and no consent prompt, no write.
+  const r = await port.execute(request('manage_memory', { action: 'remember', scope: 'user', content: '我的编辑器是 Vim' }, 'nonexistent-run', 'op-corrupt'));
+  assert.equal(r.status, 'error'); assert.equal(r.content.code, 'memory_source_event_unavailable');
+  assert.deepEqual(consentLog, []); assert.deepEqual(port.provider.list(), []);
+});
+
+test('a history projection from an older run does not skip the current approval even when its content matches', async t => {
+  const { store, record, root, seed } = studio(t);
+  // Run 1 (older) has an explicit user statement. Run 2 (current) is a different
+  // non-explicit goal. Even if the tool content matches run 1's explicit fact,
+  // resolveAuthority uses the CURRENT goal (explicitMemoryTarget(run2.goal)=null)
+  // so it cannot skip consent. This proves a real run-history explicit instruction
+  // from an older run does not exempt the current call from approval.
+  await seed('记住我的编辑器是 Vim', 'old-run');
+  const runId2 = await seed('帮我总结一下会议纪要', 'current-run');
+  const consentLog = [];
+  const port = composeStudioNativeMemoryTools({ record, scope, store, storeDir: root,
+    authorize: async () => 'allow', consent: async () => { consentLog.push('called'); return 'allow'; }, planner });
+  t.after(() => port.close());
+  const request = makeRequest(port);
+  const r = await port.execute(request('manage_memory', { action: 'remember', scope: 'user', content: '我的编辑器是 Vim' }, runId2, 'op-history'));
+  assert.equal(r.status, 'ok'); assert.equal(port.provider.get(r.content.memoryId).writePolicy, 'auto');
+  assert.deepEqual(consentLog, ['called']);
 });

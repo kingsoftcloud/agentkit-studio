@@ -86,26 +86,13 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     return binding || null;
   };
 
-  async function checkedAuthorize(request, locked) {
-    // The authorizer sees only the locked formal definition; a forged
-    // request.definition (readOnly/permissions/parameters) never reaches it.
-    const effective = { ...request, definition: locked };
-    const decision = await authorize(effective);
-    if (decision !== 'allow') return approvalOrDenied(decision);
-    if (request.call.name !== 'manage_memory' || policy.rollout === 'shadow') return 'allow';
-    // Only a recognized exact explicit user command narrowly skips the second
-    // approval. forget never skips via model interpretation; a tool name or
-    // committed text is not authorization. Missing authority routes to consent.
-    const authority = resolveAuthority(request);
-    if (authority === 'explicit_user') return 'allow';
-    const consented = await consent(effective);
-    return consented === 'allow' ? 'allow' : approvalOrDenied(consented);
-  }
-
   // The request must carry the exact locked formal definition and be bound to
   // this port's principal, with a real cancellable signal. A forged definition
   // (readOnly/permissions/parameters) is rejected before any authorize/read and
-  // cannot affect the authorizer, which only ever sees the locked formal copy.
+  // cannot affect the authorizer. Returns an ISOLATED deep copy of the locked
+  // formal definition — the authorizer/consent callbacks receive only this copy,
+  // so a malicious callback cannot mutate the internal locked formal and weaken
+  // later requests (the internal formal map is never exposed by reference).
   function bindingResult(request) {
     if (!(request && request.call && typeof request.call.name === 'string'
       && typeof request.call.callId === 'string' && request.call.callId))
@@ -120,7 +107,50 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
       return { status: 'error', content: { code: 'native_memory_call_name_unbound', executed: false } };
     if (!(request.signal instanceof AbortSignal))
       return { status: 'error', content: { code: 'native_memory_signal_unbound', executed: false } };
-    return locked;
+    return copy(locked);
+  }
+
+  // Freeze the complete pending request identity at authorize time. The
+  // authorizer/consent callbacks receive isolated copies (never the internal
+  // locked formal). After every await we verify the caller's request identity
+  // did NOT drift (call arguments, callId, operationKey, definition, scope): a
+  // mutation during deferred authorization rejects with no write rather than
+  // silently recomputing a changed digest and continuing. Host current-intent /
+  // fence guards are the parent's concern; here we only guarantee the approved
+  // call itself did not drift between approval and dispatch.
+  function pendingIdentity(request, locked) {
+    return { call: canonical(request.call), callId: request.call.callId,
+      operationKey: request.operationKey, definition: canonical(locked),
+      scope: canonical(request.scope) };
+  }
+  function drifted(request, locked, pending) {
+    return pending.call !== canonical(request.call) || pending.callId !== request.call.callId
+      || pending.operationKey !== request.operationKey || pending.definition !== canonical(locked)
+      || pending.scope !== canonical(request.scope);
+  }
+
+  async function checkedAuthorize(request, locked) {
+    // Isolated copies for the callbacks; the internal formal map is untouched.
+    const effective = { call: copy(request.call), definition: copy(locked),
+      operationKey: request.operationKey, runId: request.runId, scope: copy(request.scope),
+      signal: request.signal };
+    const pending = pendingIdentity(request, locked);
+    const decision = await authorize(effective);
+    request.signal.throwIfAborted();
+    if (drifted(request, locked, pending))
+      return { status: 'error', content: { code: 'native_memory_request_drifted_after_authorize', executed: false } };
+    if (decision !== 'allow') return approvalOrDenied(decision);
+    if (request.call.name !== 'manage_memory' || policy.rollout === 'shadow') return 'allow';
+    // Only a recognized exact explicit user command narrowly skips the second
+    // approval. forget never skips via model interpretation; a tool name or
+    // committed text is not authorization. Missing authority routes to consent.
+    const authority = resolveAuthority(request);
+    if (authority === 'explicit_user') return 'allow';
+    const consented = await consent(effective);
+    request.signal.throwIfAborted();
+    if (drifted(request, locked, pending))
+      return { status: 'error', content: { code: 'native_memory_request_drifted_after_consent', executed: false } };
+    return consented === 'allow' ? 'allow' : approvalOrDenied(consented);
   }
 
   async function readRecord(request) {
@@ -165,7 +195,7 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
 
   function invalidArgs(code) { return { status: 'error', content: { code, executed: false } }; }
 
-  async function mutate(request, source) {
+  async function mutate(request, source, locked) {
     const args = request.call.arguments;
     const binding = bindingFor(args.scope);
     if (!binding) return invalidArgs('invalid_memory_action_arguments');
@@ -188,7 +218,9 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
     // a null here is a binding bug, not a recoverable source state.
     invariant(source, 'native_memory_source_unbound');
     const authority = resolveAuthority(request) === 'explicit_user' ? 'explicit_user' : 'approved_call';
-    const requestDigest = nativeMemoryRequestDigest({ call: request.call, definition: manage, lockedDigest });
+    // Use the isolated locked copy (not the internal formal) for the digest, so
+    // the approved identity is exactly what is persisted.
+    const requestDigest = nativeMemoryRequestDigest({ call: request.call, definition: locked, lockedDigest });
     // Omit absent fields: the store's canonical copy visits every key and rejects
     // undefined values, and remember/forget intentionally leave fields unset.
     const payload = { action: args.action, scope: binding.scope, scopeId: binding.scopeId,
@@ -228,16 +260,24 @@ export function buildNativeMemoryTools({ policy, principal, lockedDigest, provid
       if (!source) return { status: 'error', content: { code: 'memory_source_event_unavailable', executed: false } };
       request.signal.throwIfAborted();
     }
+    // Capture the complete pending identity before any await so a drift during
+    // deferred authorization rejects with no write (checkedAuthorize also guards
+    // its own awaits; this guards the read/search/mutate dispatch paths).
+    const pending = pendingIdentity(request, locked);
     const auth = await checkedAuthorize(request, locked);
     // A late allowance arriving after cancellation must not trigger the mutation.
     request.signal.throwIfAborted();
-    if (canonical(request.scope) !== canonical(principal))
-      return { status: 'error', content: { code: 'native_memory_scope_rebind_after_authorize', executed: false } };
+    // Honor the authorizer's own drift decision (it distinguishes authorize vs
+    // consent drift) before the execute-level drift guard, which catches any
+    // drift the authorizer path did not exercise (e.g. read/search after allow).
+    if (auth && typeof auth === 'object' && auth.status === 'error') return auth;
     if (auth !== 'allow') return auth;
+    if (drifted(request, locked, pending))
+      return { status: 'error', content: { code: 'native_memory_request_drifted_after_authorize', executed: false } };
     request.signal.throwIfAborted();
     if (request.call.name === 'read_memory') return readRecord(request);
     if (request.call.name === 'search_memory') return searchRecords(request);
-    return mutate(request, source);
+    return mutate(request, source, locked);
   }
 
   // Same-identity receipt/reconcile for unknown-side-effect recovery and

@@ -44,11 +44,15 @@ export function composeStudioNativeMemoryTools({ record, scope, store, storeDir,
 
   // Strict original-user provenance, computed once per request and shared by
   // resolveAuthority and resolveMutationSource. studioOriginalUserMemorySources
-  // validates that each message is a real admitted original human statement
-  // (no history projection, matching admission config); schedules, attachments
-  // and history projections are NOT treated as human authority. A corrupt or
-  // mismatched projection fails closed here; non-human context is never wrapped
-  // into a source.
+  // validates that each message resolves to a real admitted original human
+  // statement; it intentionally supports history projections (for PreCompact
+  // consumption). A projection's sourceSessionId is the ORIGINAL run's session,
+  // so an observation with sourceSessionId === the current snapshot's session is
+  // a current-Run original human message; a different session is a history
+  // projection from an older run. resolveAuthority uses ONLY current-Run
+  // originals; resolveMutationSource's consumption horizon keeps all of them
+  // (including history) per the original requirement. A corrupt/mismatched
+  // projection fails closed here; non-human context is never wrapped into a source.
   const provenanceCache = new WeakMap();
   const provenance = request => {
     if (provenanceCache.has(request)) return provenanceCache.get(request);
@@ -65,12 +69,18 @@ export function composeStudioNativeMemoryTools({ record, scope, store, storeDir,
         try {
           const sources = studioOriginalUserMemorySources({ store, scope, runId: request.runId, messages, messageRefs });
           const [binding] = nativeMemoryScopeBindings(scope, ['user']);
+          const currentSession = loaded.snapshot.sessionId;
           const horizon = sources.observations.map(observation => {
             const candidate = nativeUserMemoryCandidate({ text: observation.content,
               sourceEventId: observation.sourceEventId, ...binding });
-            return candidate ? { candidate, sourceDigest: observation.sourceDigest } : null;
+            if (!candidate) return null;
+            // currentOriginal excludes history projections (PreCompact) and any
+            // non-current-Run original: authority comes only from the CURRENT run's
+            // original human statement, not an older run a projection dragged in.
+            const currentOriginal = observation.sourceSessionId === currentSession;
+            return { candidate, sourceDigest: observation.sourceDigest, currentOriginal };
           }).filter(Boolean);
-          result = { ok: true, snapshot: loaded.snapshot, origin, horizon };
+          result = { ok: true, snapshot: loaded.snapshot, origin, horizon, currentSession };
         } catch (error) {
           // Corrupt/mismatched source projection: fail closed, never an empty horizon.
           result = { ok: false, code: 'memory_source_unavailable', reason: error?.code ?? 'provenance_failed' };
@@ -81,18 +91,27 @@ export function composeStudioNativeMemoryTools({ record, scope, store, storeDir,
     return result;
   };
 
-  // Only a recognized exact explicit user command narrowly skips the second
-  // approval. Authority is resolved from the actual current Run's original-user
-  // provenance, not from snapshot.goal text (which may carry schedules,
-  // attachments or history projections). forget never qualifies; a tool name or
-  // committed text is not authorization. No match -> consent (approved_call).
+  // Only a recognized exact explicit user command from the CURRENT run narrowly
+  // skips the second approval. Two independent checks both hold:
+  //   1. The CURRENT snapshot.goal decodes (explicitMemoryTarget) to the exact
+  //      action+content the tool call carries — a steered/superseded goal, an old
+  //      run's goal, or a schedule/attachment masquerading as the goal does not.
+  //   2. A CURRENT-Run original human statement (not a history projection, not a
+  //      non-human source) produced that exact explicit candidate.
+  // forget never qualifies; a tool name or committed text is not authorization.
+  // No match -> consent (approved_call). A real run-history explicit instruction
+  // from an older run does NOT skip the current approval.
   const resolveAuthority = request => {
     if (request.call.arguments?.action === 'forget') return null;
     const p = provenance(request);
     if (!p.ok) return null;
     const args = request.call.arguments;
-    for (const { candidate } of p.horizon) {
-      if (!candidate.reason.startsWith('explicit_user')) continue;
+    const target = explicitMemoryTarget(p.snapshot.goal);
+    if (!target) return null;
+    const targetAction = target[0] === 'add' ? 'remember' : 'correct';
+    if (targetAction !== args.action || target[1] !== args.content) return null;
+    for (const { candidate, currentOriginal } of p.horizon) {
+      if (!currentOriginal || !candidate.reason.startsWith('explicit_user')) continue;
       const operation = candidate.operation === 'add' ? 'remember' : 'correct';
       if (operation === args.action && candidate.content === args.content) return 'explicit_user';
     }
@@ -112,10 +131,16 @@ export function composeStudioNativeMemoryTools({ record, scope, store, storeDir,
         throw Object.assign(new Error(p.code), { code: p.code, reason: p.reason });
       return null;
     }
-    const horizon = request.call.arguments?.scope === 'user' && policy.rollout !== 'shadow' ? p.horizon : [];
+    // The consumption horizon keeps ALL original-user observations (including
+    // history projections carried for PreCompact) so an explicit write supersedes
+    // the auto profile candidate for that slot; only the authority check above
+    // restricts to current-Run originals. Strip the internal currentOriginal flag
+    // before handing the entries to the store, which expects {candidate,sourceDigest}.
+    const rawHorizon = request.call.arguments?.scope === 'user' && policy.rollout !== 'shadow'
+      ? p.horizon.map(({ candidate, sourceDigest }) => ({ candidate, sourceDigest })) : [];
     return { sourceSessionId: p.snapshot.sessionId, sourceEventId: p.origin.eventId,
       sourceGoalRevision: String(p.snapshot.goalRevision),
-      sourceGoalDigest: memoryDigest(p.snapshot.goal), horizon };
+      sourceGoalDigest: memoryDigest(p.snapshot.goal), horizon: rawHorizon };
   };
 
   const tools = buildNativeMemoryTools({ policy, principal: scope, lockedDigest, provider,
