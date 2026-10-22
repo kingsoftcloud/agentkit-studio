@@ -11,6 +11,8 @@ import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 import { createStudioHostRemote } from '../src/host-remote.mjs';
+import { nativeDeliveryProjection } from '../packages/agentkit-harness/src/native/session-delivery.mjs';
+import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 
 const gate = () => Promise.withResolvers();
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -68,7 +70,7 @@ async function fixture(t, { fetchModel, maxTokens = 500 } = {}) {
   const route = createSessionRoutes({ getNativeHost: async () => host });
   const status = await host.recoveryStatus(request);
   assert.equal(status.state, 'available'); assert.equal(requests.length, 0);
-  return { host, ledger, agent, binding, requests, events, services, values, seen, controller, route, assembly,
+  return { host, ledger, agent, binding, requests, events, services, values, seen, controller, route, assembly, session,
     request: { ...request, runId: status.runId }, rotate: value => { key = value; } };
 }
 
@@ -160,4 +162,209 @@ test('UI refresh never resumes; an unconfirmed recovery retries only the same Ru
     await remote.nativeRecoveryStatus(identity); await remote.resumeNativeRun({ ...identity, runId: 'original' });
     assert.deepEqual(seen.map(row => row[0]), ['sessions/native-recovery-status', 'sessions/native-recovery-resume']);
   }
+});
+
+// A fixture variant that drives a real Run through createStudioNativeHarness until
+// a tool effect returns ``uncertain``, leaving the Run ``interrupted`` with an
+// uncertain receipt and a durable turn/owner (no turn/end). This is the
+// ``effect_outcome_unknown`` product scenario — not a hand-edited snapshot.
+async function interruptedFixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'studio-recovery-int-')), workspaceRoot = join(root, 'workspace');
+  await mkdir(workspaceRoot);
+  const agents = createAgentStore({ storeDir: root }), ledger = new MemoryRunStore();
+  const record = await agents.create({ name: 'Interrupted', runtimeType: 'harness', bindings: { modelProfileIds: ['fixture'] } });
+  const events = [], projections = new Map(), requests = [], seen = [], controller = new AbortController();
+  let key = 'secret', running = Promise.resolve();
+  projections.set('dsh:original-session:1:v1:', nativeDeliveryProjection());
+  const session = { id: 'original-session', append(type, data, options) { events.push({ type, data: structuredClone(data), ...options, seq: events.length + 1 }); } };
+  session.append('turn/start', { turn: 1 });
+  const assembly = { prompt: 'Original system prompt', tools: [], variables: { provider: 'agentkit-studio-fixture', model: 'original' } };
+  const agent = { session, options: { maxTokens: 500, provider: 'agentkit-studio-fixture', model: 'original' },
+    externalTurns: nativeOwnershipHost(session, events), whenIdle: () => running };
+  agent.externalTurns.resume = async (_engine, execute) => {
+    const owner = agent.externalTurns.pending();
+    running = execute({ ownership: owner, turn: owner.turn, signal: controller.signal,
+      prepareInput: async () => ({ kind: 'enter', messages: [], assembly }) });
+    try { const ending = await running; session.append('turn/end', { turn: owner.turn, ...ending }); return ending; }
+    catch (error) { session.append('turn/end', { turn: owner.turn, reason: { kind: 'error', error: { code: 'NATIVE_TURN_FAILED' } } }); throw error; }
+  };
+  const writeTool = { name: 'write', description: 'Write a file', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
+    readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 5000, contextRole: 'none', observationRole: 'none',
+    progressObservation: false, contextRetention: 'normal' };
+  let toolCalls = 0;
+  const binding = { agentId: record.metadata.id, agentRevision: 1, runtime: 'harness', local: true,
+    nativeEngineContract: 'agentkit.native-dsh-turn/v1', nativeTools: {
+      definitions: () => [writeTool], forAgent: () => ({ tools: { execute: async () => {
+        toolCalls++;
+        return { status: 'uncertain', content: 'Write acknowledgment lost' };
+      } } }),
+      argumentEncoding: null, permissionContract: null,
+    } };
+  const services = { sessions: { flush: async () => true }, sessionProjections: {
+    register(value) { projections.set(value.key, value); return () => projections.delete(value.key); },
+    stateOf: (_, id) => projections.has(id) ? events.reduce(projections.get(id).apply, projections.get(id).init()) : undefined,
+  }, sessionController: { resolveAgent: async id => { assert.equal(id, session.id); seen.push('resolve'); return { agent }; } },
+  systemPrompt: { assemble: async context => { assert.equal(context.agent, agent); seen.push('assemble'); return assembly; } } };
+  const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'original', baseUrl: 'https://fixture.invalid/v1' }] };
+  const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: key }) } });
+  const host = await createStudioNativeHarness({ ctx: { get: id => services[id] }, storeDir: root, workspaceRoot, agents, models, ledger,
+    renderPrompt: assembly => `${assembly.prompt} for ${assembly.variables.model}`,
+    agentEvents: (_ctx, actual) => { assert.equal(actual, agent); return { serial: async event => { assert.equal(event, 'agentkit/native-recovery-binding'); seen.push('query'); return binding; } }; },
+    assembleContextFor: (actual, signal) => ({ agent: actual, scope: actual, signal }),
+    fetchImpl: async (_url, options) => {
+      requests.push({ body: JSON.parse(options.body), headers: new Headers(options.headers) });
+      return new Response('data: ' + JSON.stringify({ id: 'r1', choices: [{ index: 0,
+        delta: { tool_calls: [{ index: 0, id: 'write-1', type: 'function', function: { name: 'write', arguments: '{}' } }] },
+        finish_reason: 'tool_calls' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+    } });
+  t.after(async () => { await host.close(); await rm(root, { recursive: true, force: true }); });
+  const payload = { agent, input: { kind: 'enter', messages: [{ id: 'original-user', role: 'user', content: [{ type: 'text', text: 'Write the file' }] }], assembly },
+    turn: 1, signal: controller.signal, prepareInput: async () => ({ kind: 'enter', messages: [], assembly }), binding };
+  // The Run starts, the model calls write, the tool returns uncertain → interrupted.
+  await assert.rejects(host.executeTurn(payload), /NATIVE_TURN_FAILED/);
+  // Verify the tool was actually dispatched (not just that the phase changed).
+  assert.equal(toolCalls, 1, 'the write tool was dispatched exactly once');
+  // Derive the real scope from the durable turn/owner binding — the Host binds
+  // Runs under its own workspace hash, not a hand-picked 'unused' workspaceId.
+  const owner = agent.externalTurns.pending();
+  assert.ok(owner, 'the turn owner was claimed');
+  const admission = readNativeDshOwnership(owner, { sessionId: session.id, turn: 1 });
+  const realScope = admission.identity.scope;
+  const runRecord = ledger.load(realScope, admission.identity.runId);
+  assert.equal(runRecord.snapshot.phase, 'interrupted', `phase=${runRecord.snapshot.phase} reason=${runRecord.snapshot.reason}`);
+  assert.equal(runRecord.snapshot.reason, 'effect_outcome_unknown');
+  // Verify the uncertain tool result is sealed in the tool receipt — not just
+  // that the phase is interrupted. The receipt status is 'committed' (the
+  // effect was sealed); the uncertain outcome is in result.results[0].status.
+  const toolReceipt = runRecord.receipts.find(r => r.operationKey.endsWith(':tool'));
+  assert.ok(toolReceipt, 'a tool receipt exists');
+  const toolResults = toolReceipt.result.results;
+  assert.ok(Array.isArray(toolResults) && toolResults.length === 1, 'one tool result is sealed');
+  assert.equal(toolResults[0].status, 'uncertain', 'the tool result status is uncertain');
+  assert.equal(toolResults[0].content, 'Write acknowledgment lost', 'the uncertain content is preserved');
+  assert.ok(events.some(e => e.type === 'turn/owner'), 'the turn owner was claimed');
+  assert.equal(events.some(e => e.type === 'turn/end'), false, 'no turn/end — the run did not complete');
+  const route = createSessionRoutes({ getNativeHost: async () => host });
+  const request = { agentId: binding.agentId, sessionId: session.id, runId: admission.identity.runId };
+  return { host, ledger, agent, binding, requests, events, seen, route, request, realScope, toolCalls };
+}
+
+test('an interrupted Run with an uncertain receipt surfaces reconciliation_required and refuses resume without re-execution', async t => {
+  const f = await interruptedFixture(t);
+  // Host recoveryStatus: the interrupted Run with a durable turn/owner is
+  // reconciliation_required, canResume false, with the real interrupted phase.
+  const status = await f.host.recoveryStatus(f.request);
+  assert.equal(status.state, 'reconciliation_required', `state=${status.state}`);
+  assert.equal(status.canResume, false);
+  assert.equal(status.phase, 'interrupted');
+  assert.equal(status.runId, f.request.runId);
+  assert.equal(f.requests.length, 1, 'status read does not execute another model call');
+  // Host resumeTurn: the interrupted Run cannot be resumed — it must be
+  // reconciled first, not blindly re-driven.
+  await assert.rejects(f.host.resumeTurn(f.request), /reconciliation_required/);
+  assert.equal(f.requests.length, 1, 'resume rejection does not execute another model call');
+  assert.equal(f.toolCalls, 1, 'resume rejection does not re-dispatch the tool');
+  // The turn owner is still pending (no turn/end), so the Run is not closed.
+  assert.ok(f.agent.externalTurns.pending(), 'the original turn owner is still pending');
+  // Client state: refresh surfaces reconciliation_required, resume is a no-op
+  // (canResume false), and no model or tool is re-executed.
+  const state = createNativeRecoveryState({ agentId: f.request.agentId, sessionId: f.request.sessionId, hostRemote: {
+    nativeRecoveryStatus: async () => status,
+    resumeNativeRun: async () => assert.fail('resume must not be dispatched when canResume is false'),
+  } });
+  await state.refresh();
+  assert.equal(state.getSnapshot().status.state, 'reconciliation_required');
+  assert.equal(state.getSnapshot().status.canResume, false);
+  state.resume(); // no-op — canResume false
+  await tick();
+  assert.equal(f.requests.length, 1, 'client resume no-op does not execute another model call');
+  assert.equal(f.toolCalls, 1, 'client resume no-op does not re-dispatch the tool');
+  state.dispose();
+});
+
+test('an old Run whose session head advanced to a new owner is rejected, not recovered, with no model re-execution', async t => {
+  // Use the standard fixture but swap fetchModel so the second model call hangs
+  // until an explicit model-entered gate resolves (not polling ticks).
+  let modelCalls = 0;
+  const modelEntered = gate();
+  const f = await fixture(t, { fetchModel: signal => {
+    modelCalls++;
+    if (modelCalls === 1) return new Response('data: ' + JSON.stringify({ choices: [{ index: 0, delta: { content: 'Recovered' }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+    // Second call: signal that the model is entered, then hang until abort.
+    modelEntered.resolve();
+    return new Promise(resolve => { signal.addEventListener('abort', () => resolve(new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } })), { once: true }); });
+  } });
+  // Drive the original Run to completion via recovery resume.
+  const ack = (await f.route('sessions/native-recovery-resume', f.request)).value;
+  assert.equal(ack.state, 'recovering');
+  await f.agent.whenIdle(); await tick();
+  assert.equal(modelCalls, 1, 'the original Run executed one model call');
+  const originalRunId = f.request.runId;
+  assert.equal((await f.host.recoveryStatus(f.request)).state, 'closed');
+  assert.equal(f.events.filter(e => e.type === 'turn/end').length, 1, 'the original turn ended');
+  assert.equal(f.agent.externalTurns.pending(), null, 'the original turn owner is no longer pending');
+  // Start a real second turn through the Host with a hanging model, so the
+  // new Run's owner is pending and the session head advances. This is not a
+  // hand-appended turn/owner — a real Kernel Run is created and driven.
+  const secondController = new AbortController();
+  f.session.append('turn/start', { turn: 2 });
+  const secondPayload = { agent: f.agent, input: { kind: 'enter',
+    messages: [{ id: 'second-user', role: 'user', content: [{ type: 'text', text: 'Second task' }] }], assembly: f.assembly },
+    turn: 2, signal: secondController.signal, prepareInput: async () => ({ kind: 'enter', messages: [], assembly: f.assembly }), binding: f.binding };
+  // Keep the original promise — do NOT .catch() it, which would turn a reject
+  // into a resolve and make later assertions unreliable.
+  const secondTurn = f.host.executeTurn(secondPayload);
+  // Wait for the model to actually be entered (explicit gate, not tick polling).
+  let timer;
+  await Promise.race([modelEntered.promise, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Error('second model never entered')), 15000);
+  })]).finally(() => clearTimeout(timer));
+  assert.equal(modelCalls, 2, 'the second Run made a model call');
+  // The new owner is pending; the session head has advanced to the new Run.
+  const newOwner = f.agent.externalTurns.pending();
+  assert.ok(newOwner, 'the new turn owner is pending');
+  assert.notEqual(newOwner.turn, 1, 'the pending owner is the new turn, not the old one');
+  // Snapshot the new Run's ledger, owner and public events before querying the old Run.
+  const newRunId = JSON.parse(newOwner.binding).identity.runId;
+  const newScope = JSON.parse(newOwner.binding).identity.scope;
+  const newLedgerBefore = JSON.stringify(f.ledger.load(newScope, newRunId));
+  const newOwnerBefore = JSON.stringify(newOwner);
+  const eventsBefore = JSON.stringify(f.events);
+  // Query the OLD Run's recovery status: with the new owner pending and a
+  // different runId, the old request's runId does not match the new owner's
+  // identity — the Host must reject it as an identity mismatch, not return
+  // closed, to protect against cross-run confusion.
+  await assert.rejects(f.host.recoveryStatus({ agentId: f.request.agentId, sessionId: f.request.sessionId, runId: originalRunId }),
+    /identity_mismatch/);
+  await assert.rejects(f.host.resumeTurn({ agentId: f.request.agentId, sessionId: f.request.sessionId, runId: originalRunId }),
+    /identity_mismatch/);
+  assert.equal(modelCalls, 2, 'querying/resuming the old Run does not execute another model call');
+  // The new Run's ledger, owner and public events are unchanged by the old-Run queries.
+  assert.equal(JSON.stringify(f.ledger.load(newScope, newRunId)), newLedgerBefore, 'the new Run ledger is unchanged');
+  assert.equal(JSON.stringify(f.agent.externalTurns.pending()), newOwnerBefore, 'the new owner is unchanged');
+  assert.equal(JSON.stringify(f.events), eventsBefore, 'the public events are unchanged');
+  assert.equal(f.events.filter(e => e.type === 'turn/end').length, 1, 'no second turn/end was produced');
+  // Release the second Run: cancel it. executeTurn with an abort signal may
+  // resolve to { reason: { kind: 'aborted', ... } } (durableOwnership) or reject.
+  // Settle the promise and assert the actual outcome — never swallow errors.
+  secondController.abort();
+  let secondSettled = null;
+  await secondTurn.then(value => { secondSettled = { resolved: true, value }; },
+    error => { secondSettled = { resolved: false, error }; });
+  assert.ok(secondSettled, 'the second Run settled');
+  if (secondSettled.resolved) {
+    // durableOwnership cancel resolves with an aborted reason.
+    assert.equal(secondSettled.value?.reason?.kind, 'aborted', `unexpected resolved value: ${JSON.stringify(secondSettled.value)}`);
+  } else {
+    // A reject must carry a cancel/abort code, not an arbitrary error.
+    assert.match(String(secondSettled.error?.code ?? secondSettled.error?.message ?? ''), /abort|cancel|NATIVE_TURN/i,
+      `unexpected rejection: ${secondSettled.error?.message}`);
+  }
+  // The new Run is canceled in the ledger.
+  const newRecord = f.ledger.load(newScope, newRunId);
+  assert.equal(newRecord.snapshot.phase, 'canceled', `the second Run is canceled, phase=${newRecord.snapshot.phase}`);
+  // The old Run remains completed.
+  const ownerAdmission = JSON.parse(f.events.find(e => e.type === 'turn/owner').data.binding);
+  const oldRecord = f.ledger.load(ownerAdmission.identity.scope, originalRunId);
+  assert.equal(oldRecord.snapshot.phase, 'completed', 'the old Run remains completed');
 });
