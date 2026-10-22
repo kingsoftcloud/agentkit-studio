@@ -88,15 +88,23 @@ function renderBridgedOutput(_args, value) {
   return [{ type: 'text', text: String(value?.result || '') }];
 }
 
-function createBuiltinExecutor(config = {}) {
+function createBuiltinExecutor(config = {}, nodeTools) {
   const spawnImpl = config.spawnImpl || nodeSpawn;
   const root = builtinRoot(config);
   const python = builtinPython(config, root);
   const workspaceRoot = resolve(String(config.workspaceRoot || process.env.AGENTKIT_STUDIO_WORKSPACE || process.cwd()));
   const stateDir = join(workspaceRoot, '.agentkit', 'tool-state');
-  return async (contract, argumentsValue, { signal, callId, agentId } = {}) => {
+  return async (contract, argumentsValue, exec = {}) => {
     const name = String(contract?.name || '').trim();
     if (!name) throw builtinError('BUILTIN_TOOL_NAME_MISSING', 'AgentEngine 内置 Tool 缺少名称');
+    if (nodeTools?.supports(name)) {
+      const result = await nodeTools.execute(name, argumentsValue, exec);
+      if (result?.status === 'ok') return result.content;
+      if (result?.status === 'error') return { ...result.content, ok: false };
+      if (result?.status === 'uncertain') return { ...result.content, ok: false, status: 'uncertain' };
+      throw builtinError('BUILTIN_TOOL_INVALID_OUTPUT', `Node builtin ${name} 返回了无效结果`, { name });
+    }
+    const { signal } = exec, agentId = config.agentId;
     const timeoutMs = Math.min(3_600_000, Math.max(1_000, Number(contract.timeoutSeconds || 20) * 1000));
     const session = `${String(agentId || 'agent')}:${String(config.sessionId || 'default')}`;
     const statePath = join(stateDir, `${encodeURIComponent(String(agentId || 'agent'))}.sqlite`);
@@ -169,7 +177,7 @@ function createBuiltinExecutor(config = {}) {
   };
 }
 
-function registerBuiltinTools(ctx, contracts, config) {
+function registerBuiltinTools(ctx, contracts, config, bridge) {
   const declared = (Array.isArray(contracts) ? contracts : [])
     .filter(contract => contract && contract.executor === 'builtin' && contract.enabled !== false && contract.name);
   // A persisted DSH preset can outlive the catalog request that originally
@@ -189,19 +197,21 @@ function registerBuiltinTools(ctx, contracts, config) {
   const values = [...declared, ...fallback];
   if (!values.length) return;
   if (typeof ctx.tools?.register !== 'function') return;
-  const executeBuiltin = createBuiltinExecutor(config);
+  const nodeTools = bridge.createBuiltinTools?.({ ctx, config }) ?? null;
+  if (nodeTools && typeof ctx.effect === 'function') ctx.effect(() => () => nodeTools.close(), 'agentkit-studio: Node builtin lifetime');
+  const executeBuiltin = createBuiltinExecutor(config, nodeTools);
   const install = () => {
-    const disposers = values.map(contract => ctx.tools.register({
-      name: String(contract.name),
-      description: String(contract.description || `AgentEngine 内置 Tool：${contract.name}`),
-      parameters: contract.parameters || { type: 'object', properties: {} },
-      output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
-      execute: async (args, exec) => bridgedOutput(await executeBuiltin(contract, args, {
-        signal: exec?.signal,
-        callId: exec?.callId,
-        agentId: config.agentId,
-      })),
-    }));
+    const disposers = values.map(contract => {
+      const formal = nodeTools?.supports(String(contract.name))
+        ? nodeTools.definitions.find(definition => definition.name === String(contract.name)) : null;
+      return ctx.tools.register({
+        name: String(contract.name),
+        description: String(contract.description || `AgentEngine 内置 Tool：${contract.name}`),
+        parameters: formal?.parameters || contract.parameters || { type: 'object', properties: {} },
+        output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
+        execute: async (args, exec) => bridgedOutput(await executeBuiltin(contract, args, exec)),
+      });
+    });
     return () => disposers.forEach(dispose => { try { dispose?.(); } catch {} });
   };
   if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: builtin tool bindings');
@@ -315,7 +325,7 @@ export function apply(ctx, config = {}) {
   }
   const wholeNativeTurn = config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT;
   const nativeToolBindings = wholeNativeTurn ? bridge.createNativeTools({ ctx, config }) : null;
-  if (!wholeNativeTurn) registerBuiltinTools(ctx, config.toolContracts, config);
+  if (!wholeNativeTurn) registerBuiltinTools(ctx, config.toolContracts, config, bridge);
   if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, config.toolBindings);
   const toolAdapter = config.runtime === 'codex'

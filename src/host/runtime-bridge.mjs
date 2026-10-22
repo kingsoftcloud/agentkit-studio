@@ -27,6 +27,7 @@ export function createRuntimeBridge() {
   let executor;
   let nativeTurnExecutor;
   let nativeToolsFactory;
+  let builtinToolsFactory;
   const assertOpen = () => { if (lifetime.signal.aborted) throw unavailable(); };
 
   function register(slot, value) {
@@ -35,6 +36,7 @@ export function createRuntimeBridge() {
     if (slot === 'adapter') adapter = record;
     else if (slot === 'native-turn') nativeTurnExecutor = record;
     else if (slot === 'native-tools') nativeToolsFactory = record;
+    else if (slot === 'builtin-tools') builtinToolsFactory = record;
     else executor = record;
     return () => {
       record.controller.abort(unavailable('STUDIO_RUNTIME_REGISTRATION_RETIRED'));
@@ -42,6 +44,7 @@ export function createRuntimeBridge() {
       if (slot === 'executor' && executor === record) executor = undefined;
       if (slot === 'native-turn' && nativeTurnExecutor === record) nativeTurnExecutor = undefined;
       if (slot === 'native-tools' && nativeToolsFactory === record) nativeToolsFactory = undefined;
+      if (slot === 'builtin-tools' && builtinToolsFactory === record) builtinToolsFactory = undefined;
     };
   }
 
@@ -74,6 +77,17 @@ export function createRuntimeBridge() {
       assertOpen();
       if (!nativeToolsFactory) throw unavailable('STUDIO_NATIVE_TOOLS_FACTORY_UNAVAILABLE');
       return nativeToolsFactory.value(input);
+    },
+    setBuiltinToolsFactory(value) {
+      if (typeof value !== 'function') throw new TypeError('Builtin tools factory must be a function');
+      return register('builtin-tools', value);
+    },
+    createBuiltinTools(input) {
+      assertOpen();
+      const registration = builtinToolsFactory;
+      if (!registration) return null;
+      return registration.value({ ...input,
+        isClosed: () => lifetime.signal.aborted || registration.controller.signal.aborted });
     },
     async executeNativeTurn(input) {
       assertOpen();
@@ -154,6 +168,7 @@ export function createRuntimeBridge() {
       executor = undefined;
       nativeTurnExecutor = undefined;
       nativeToolsFactory = undefined;
+      builtinToolsFactory = undefined;
       routes.clear();
       return nativeHooks.close();
     },

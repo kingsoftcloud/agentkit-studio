@@ -36,6 +36,52 @@ test('retiring old Native registrations cannot remove their replacements', async
   bridge.close();
 });
 
+test('Node builtin factories retain their own retirement and Host lifetime', () => {
+  const bridge = createRuntimeBridge();
+  assert.equal(bridge.createBuiltinTools({}), null);
+  const retireOld = bridge.setBuiltinToolsFactory(input => ({ ...input, source: 'old' }));
+  const old = bridge.createBuiltinTools({ isClosed: () => false });
+  const retireNext = bridge.setBuiltinToolsFactory(input => ({ ...input, source: 'next' }));
+  const next = bridge.createBuiltinTools({});
+  retireOld();
+  assert.equal(old.isClosed(), true); assert.equal(next.isClosed(), false);
+  assert.equal(bridge.createBuiltinTools({}).source, 'next');
+  retireNext(); assert.equal(next.isClosed(), true); assert.equal(bridge.createBuiltinTools({}), null);
+  bridge.setBuiltinToolsFactory(input => input);
+  const last = bridge.createBuiltinTools({}); bridge.close();
+  assert.equal(last.isClosed(), true);
+  assert.throws(() => bridge.createBuiltinTools({}), { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} builtin registry forwards real execution to the Node Host without Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [], disposers = [], seen = [];
+  const definition = { name: 'write_workspace_file', parameters: { type: 'object',
+    properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'], additionalProperties: false } };
+  let response = { status: 'ok', content: { ok: true, path: 'node.txt' } }, closed = 0;
+  bridge.setBuiltinToolsFactory(({ config, ctx, isClosed }) => {
+    assert.equal(config.agentId, 'node-agent'); assert.equal(typeof ctx.tools.register, 'function');
+    return { definitions: [definition], supports: name => name === definition.name,
+      execute: async (name, args, exec) => { assert.equal(isClosed(), false); seen.push({ name, args, exec }); return response; },
+      close: () => { closed++; } };
+  });
+  const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; }, schemas: () => [] },
+    on: () => () => {}, effect: install => { disposers.push(install()); } };
+  applyPreset(ctx, { agentId: 'node-agent', runtime, local: true, toolBindings: ['write_workspace_file'],
+    spawnImpl: () => assert.fail('Node workspace must not fall back to Python') });
+  assert.equal(registered.length, 1); assert.deepEqual(registered[0].parameters, definition.parameters);
+  const args = { path: 'node.txt', content: 'Actual registry execution context' },
+    exec = { name: definition.name, callId: 'node-call', signal: new AbortController().signal, agent: { session: { id: 'real-session' } } };
+  assert.deepEqual(JSON.parse((await registered[0].execute(args, exec)).result), response.content);
+  assert.equal(seen[0].exec, exec); assert.equal(seen[0].args, args);
+  response = { status: 'error', content: { error_type: 'file_not_read' } };
+  assert.deepEqual(JSON.parse((await registered[0].execute(args, exec)).result), { error_type: 'file_not_read', ok: false });
+  response = { status: 'uncertain', content: { error_type: 'state_persist_failed', executed: true, paths: ['node.txt'] } };
+  const unknown = JSON.parse((await registered[0].execute(args, exec)).result);
+  assert.equal(unknown.status, 'uncertain'); assert.equal(unknown.executed, true); assert.equal(unknown.ok, false);
+  disposers.reverse().forEach(dispose => dispose?.()); assert.equal(closed, 1); bridge.close();
+});
+
 test('a Harness preset claims the whole turn and rejects model-step fallback', async () => {
   const bridge = createRuntimeBridge(), listeners = new Map(), disposers = [];
   const nativeTools = {};
