@@ -142,6 +142,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const bundleDigest = hash(baseTools);
       const profileDigest = hash(description);
       const pluginLockDigest = hash({ mcpBindingDigest: binding.nativeTools.mcpBindingDigest ?? null,
+        ...(binding.nativeTools.skillDisclosureBindingDigest ? { skillDisclosureBindingDigest: binding.nativeTools.skillDisclosureBindingDigest } : {}),
         commandBinding: binding.nativeTools.commandBinding ?? null,
         ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
         ...(binding.nativeTools.workspaceMutationContract ? { workspaceMutationContract: binding.nativeTools.workspaceMutationContract } : {}),
@@ -174,7 +175,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // A memory write is an external effect and must get its own Native intent.
       // Refuse that composition until its durable port is installed.
       invariant(!materialized.memoryWrite, 'studio_native_memory_write_port_unavailable');
-      const instructions = original ? original.configuration.instructions : [systemPrompt, materialized.resourceContext].filter(Boolean).join('\n\n');
+      const skillInstructions = await binding.nativeTools.skillInstructions?.(signal);
+      const instructions = original ? original.configuration.instructions : [systemPrompt, materialized.resourceContext,
+        skillInstructions].filter(Boolean).join('\n\n');
       const verification = await createNativeVerification({ scope, sessionId, workspaceRoot,
         evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence'),
         verifyBrowserPage: taskPolicy.workspaceObservationPolicy && typeof binding.nativeTools.verifyBrowserPage === 'function'
@@ -297,6 +300,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(componentBinding ? { componentBinding } : {}),
           ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
           mcpResultContract: binding.nativeTools.mcpResultContract ?? null,
+          ...(binding.nativeTools.skillDisclosureBindingDigest ? { skillDisclosureBindingDigest: binding.nativeTools.skillDisclosureBindingDigest } : {}),
           mcpJsonCodec: binding.nativeTools.mcpJsonCodec ?? null,
           mcpSchemaContract: binding.nativeTools.mcpSchemaContract ?? null,
           mcpBindingDigest: binding.nativeTools.mcpBindingDigest ?? null,

@@ -409,3 +409,11 @@ Native 工具的 `approval_required` 和原始 `interactionId` 现在通过生�
 显式绑定的 `component_status` 已通过实际 Native Kernel、SQLite 工具权限和 Studio Host 执行，保留 `summary`、`skill_space`、`skill_runtime`、`sandbox`、`workspace` 分组。Host 按本轮实际模型、已启用资源、记忆服务、工作区和已挂载工具生成固定快照，并将其纳入恢复绑定摘要。服务目录中的条目不会使尚未挂载的执行服务显示为可执行；Skills 执行服务目前仍报告未启用。
 
 端口核对完整作用域、会话、正式定义、原请求和信号；完成后重放、撤权、取消或请求漂移不会返回成功。共享 gateway 按会话持有和释放端口，不串用另一会话的模型和工具状态。端口 30 项测试在 Node 26.5.0 / 22.19.0 各通过；Host、gateway 及相邻集成共 98 项在两版本各通过，随后新增取消检查后的 Host 模块 4 项各通过，契约类型检查通过。未运行全量测试；打包 Host 的独立运行验证和正式 Skills 服务接入仍待验收。
+
+## 正式 Native Skills 渐进披露
+
+绑定的文件 Skill 已通过 Node 源适配器接入 `skill_catalog`、`skill_read_manifest`、`skill_read_instructions`、`skill_read_resource` 四个正式工具。Host 仅在上下文中加入有明确不可信数据标记的元数据预览，最多八项、4096 字节；预览转义标签，不提前注入完整 Skill 指令。实际源内容摘要参与 Host、记忆插件和冷恢复的绑定，后续源内容变化明确拒绝。
+
+完整指令可直接读取；资源读取须由同一个 Run 的实际 SQLite 已提交指令回执授权，不能继承另一 Run 的披露状态。端口核对准备事件、正式定义、当前权限与原请求；资源限制为规范的包内相对路径，支持 UTF-8/base64 和 32768 字节上限。会话释放撤销自己的端口，不关闭共享父资源。父级审查另外复现并修复了最后一次权限回调替换信号后仍返回成功的问题，补充了真实 Kernel 对信号漂移、端口关闭和资源越界的验证。
+
+Claude 固定快照的端口 27 项在 Node 26/22 各通过；父级补充后端口 30 项、文件源 31 项、gateway/原 Host 65 项、组件 Host 4 项及新增 Skills Host 3 项均已定向验证。六模块首次组合验证在两版本各为 132 通过、1 个失败；失败是测试误写了现有源漂移错误码，修正为准确的 `skill_source_content_changed` 后，仅重跑新增 Host 模块，两版本各 3 通过。契约类型检查通过，没有运行全量。该接入尚不包含子任务 Skills 继承、远程 Skill 执行服务、管理工具与打包 Host 的独立运行验收。
