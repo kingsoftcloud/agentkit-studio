@@ -165,3 +165,56 @@ test('a sensitive catalog cannot claim either web tool name', async t => {
     }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
   }
 });
+
+async function cloudFixture(t, { grants = ['code-execution'], cloudSandbox } = {}) {
+  const f = await fixture(t);
+  const model = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE,
+    agentId: 'agent-one', grants, cloudSandbox });
+  const cwd = await model.newSessionCwd('assistant-cloud');
+  const guards = new Set(), definitions = new Map();
+  let permission = 'read-only', policy = 'ask';
+  const services = {
+    tools: {
+      guard(callback) { guards.add(callback); return () => guards.delete(callback); },
+      get: name => definitions.get(name), register: definition => { definitions.set(definition.name, definition); return () => definitions.delete(definition.name); },
+    },
+    approval: { effectivePolicy: () => policy, request: async () => 'unavailable' },
+    fs: { sandboxMode: 'read-only' }, workingDirectory: { get: () => cwd },
+    sandboxPolicy: { resolve: () => ({ mode: permission }) },
+    permissionPresets: { set(session, preset) { permission = preset; policy = 'ask'; } },
+  };
+  f.ctx.get = key => services[key];
+  const agent = { session: { id: 'assistant-cloud', header: { cwd } }, ctx: f.ctx };
+  const snapshot = await model.ensure(agent, true);
+  return { ...f, model, agent, services, guards, snapshot, cwd };
+}
+
+test('a code-execution grant registers the confined tools and reports the bounded domain', async t => {
+  const f = await cloudFixture(t, { cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
+  assert.equal(f.snapshot.execution, 'bounded-cloud-exec/v1');
+  assert.equal(f.snapshot.network, 'offline');
+  assert.deepEqual(f.snapshot.shellTools, ['cloud_bash', 'cloud_run_code']);
+  assert.deepEqual(f.snapshot.grants, ['code-execution']);
+  assert.equal(f.snapshot.arbitraryShell, false);
+  const guard = [...f.guards].at(-1);
+  assert.equal(guard({ agent: f.agent, name: 'cloud_bash', arguments: { command: 'pwd' } }), undefined);
+  // The grant admits exactly the two confined tools; the native shell names stay refused.
+  assert.match(guard({ agent: f.agent, name: 'bash', arguments: { command: 'pwd' } }), /not admitted/);
+});
+
+test('without the grant the cloud tools are absent and shell names stay refused', async t => {
+  const f = await cloudFixture(t, { grants: [] });
+  assert.equal(f.snapshot.execution, 'fixed-tool-operations');
+  assert.deepEqual(f.snapshot.shellTools, []);
+  assert.deepEqual(f.snapshot.grants, []);
+  const guard = [...f.guards].at(-1);
+  assert.match(guard({ agent: f.agent, name: 'cloud_bash', arguments: { command: 'pwd' } }), /not admitted/);
+});
+
+test('a grant on an image without a usable confiner stays unregistered and reports it', async t => {
+  const f = await cloudFixture(t, { cloudSandbox: { available: false, reason: '运行镜像缺少 bubblewrap' } });
+  assert.equal(f.snapshot.execution, 'unavailable');
+  assert.deepEqual(f.snapshot.shellTools, []);
+  const guard = [...f.guards].at(-1);
+  assert.match(guard({ agent: f.agent, name: 'cloud_bash', arguments: { command: 'pwd' } }), /not admitted/);
+});
