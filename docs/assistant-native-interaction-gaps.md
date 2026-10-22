@@ -8,7 +8,7 @@
 2. 浏览器通过 DSH 公开模块加载接口创建独立 Connection、Gateway、Typert、Remote、Controller 和 UI graph。真正的 `SessionReference` 来自这个 graph；同名 Session ID、显示 home 或 generation 不能跨 Host 冒充绑定。
 3. 原生 `conversation.content` 工厂呈现输入部分，工具/图片/文件历史保留现有安全原生组装器。没有导入私有 InputBar，也没有把云 Session 塞进本地 Controller。
 4. 原生 prompt 转为既有 `assistant/submit`：附件先取得当前云 Session 的 receipt，指纹覆盖完整有序内容和语义字段，重复请求复用 requestId，DSH flush 成功后才确认。读连接中断不取消已接收任务。
-5. 上传适配仅注册在独立 graph。实例配置为 `hostPathPolicy: upload-only`、`draftPersistence: memory-only`、`submissionActions: queue-only`；不会读取全局本机路径 hook，不会以云 ID 读写本地 DSH 草稿。原生 Stop/steer 被关闭，产品仍提供精确回合停止。
+5. 上传适配仅注册在独立 graph。实例配置为 `hostPathPolicy: upload-only`、`draftPersistence: memory-only`、`submissionActions: queue-only`；不会读取全局本机路径 hook，不会以云 ID 读写本地 DSH 草稿。原生 Stop 复用输入框发送按钮，carrier 只转发当前会话的运行状态并放行绑定会话的 `session/cancel`；steer 仍被关闭。自定义输入框与旧镜像继续使用精确回合停止接口。
 6. 原生发送未知 ACK 时输入会恢复失败草稿。确认使用原 journal/requestId，成功后只按原内容指纹、草稿版本和附件身份清理对应恢复稿；后来编辑的草稿保留，不能把已确认内容当新任务再次发送。
 
 ## carrier 白名单与生命周期

@@ -151,7 +151,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
           // The handle is not a credential. Each subsequent operation is again
           // authenticated by the receipt transport and this exact conversation.
           return nativeCarrier.open({ sessionId, runAssistant: (op, input) => {
-            if (!['submit', 'attachment-upload'].includes(op)) throw fail('ASSISTANT_OPERATION_INVALID', '原生会话不支持此写入操作');
+            if (!['submit', 'attachment-upload', 'cancel'].includes(op)) throw fail('ASSISTANT_OPERATION_INVALID', '原生会话不支持此写入操作');
             return api(op, { ...input, conversation: payload.conversation ?? 'personal' });
           } });
         }));

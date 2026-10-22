@@ -263,8 +263,10 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
         running && !canCancel ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, '更新云端助理后可停止当前任务。') : null,
         pending ? h('p', { role: 'status', style: { fontSize: '12px', color: BRAND.inkMuted } }, pending.observed ? '消息已收到，保存待确认。' : '上一条消息的保存结果待确认。') : null,
         nativeComposerAvailable ? h(NativeComposer, { key: agentId, agentId, hiddenComposer: !useNativeComposer, onAccepted: () => session.refresh() }) : null,
-        useNativeComposer ? h('div', null,
-          running ? button(!canCancel ? '停止（需更新云端）' : stopping ? '正在停止…' : '停止当前任务', () => void session.cancel(() => actions.confirm({ title: '停止当前任务', detail: '停止助理正在处理的任务？停止请求受理后，仍需等待云端确认。', confirmLabel: '停止' })), stopping || !canCancel) : null) : h('form', { className: 'studio-assistant-composer',
+        // The isolated native graph owns the composer button: while a turn runs
+        // its send arrow becomes Stop, so Studio no longer renders a second
+        // cancel control beside the card.
+        useNativeComposer ? null : h('form', { className: 'studio-assistant-composer',
           onDragOver: event => { if (canUpload && Array.from(event.dataTransfer?.types || []).includes('Files')) event.preventDefault(); },
           onDrop: event => { if (event.dataTransfer?.files?.length) { event.preventDefault(); session.addAttachments(Array.from(event.dataTransfer.files)); } },
           onSubmit: event => { event.preventDefault(); void submit(); }, style: { ...box, padding: '12px 14px', borderRadius: '20px' } },
