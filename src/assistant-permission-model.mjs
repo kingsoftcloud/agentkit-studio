@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { registerAssistantWorkspaceTools } from './assistant-workspace-tools.mjs';
 import { createAssistantWorkspaceAttachmentCopies } from './assistant-workspace-attachments.mjs';
 import { createCloudExecutor, registerAssistantCloudExecutionTools, resolveCloudSandbox } from './assistant-cloud-execution.mjs';
+import { registerAssistantCloudBrowserTools, resolveCloudBrowser } from './assistant-cloud-browser.mjs';
 
 export const ASSISTANT_PERMISSION_PROFILE = 'workspace-managed/v1';
 const ROUTINE = Object.freeze(['read', 'read_image', 'write', 'edit', 'glob', 'grep']);
@@ -27,7 +28,7 @@ const PRIVATE_SUFFIXES = Object.freeze(['.localhost', '.local', '.internal', '.l
 const SESSION_TOOLS = Object.freeze(['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']);
 // The only grant that changes the managed tool surface in this release. Browser
 // and local-bridge grants stay unknown until their capability ships.
-const CLOUD_GRANTS = Object.freeze(['code-execution']);
+const CLOUD_GRANTS = Object.freeze(['code-execution', 'browser']);
 const normalizeGrants = value => {
   const list = Array.isArray(value) ? value : [];
   return Object.freeze(CLOUD_GRANTS.filter(name => list.includes(name)));
@@ -156,12 +157,13 @@ async function runtimeRoot(env) {
  * This is path containment in a private receipt-owned workspace, not isolation
  * from a hostile process with the same OS identity (see the companion guide).
  */
-export async function createAssistantPermissionModel({ ctx, env = {}, profile, agentId, sensitiveTools = [], grants: grantsInput, cloudSandbox } = {}) {
+export async function createAssistantPermissionModel({ ctx, env = {}, profile, agentId, sensitiveTools = [], grants: grantsInput, cloudSandbox, cloudBrowser } = {}) {
   const optedIn = selectAssistantPermissionProfile(profile) === ASSISTANT_PERMISSION_PROFILE;
   const grants = normalizeGrants(grantsInput);
   // Image-level gate: a grant is only meaningful when this runtime can confine
   // the child. The runtime identity advertises nothing in that case.
   const cloudSandboxUsable = (cloudSandbox === undefined ? resolveCloudSandbox({ env }) : cloudSandbox)?.available === true;
+  const cloudBrowserUsable = (cloudBrowser === undefined ? resolveCloudBrowser({ env }) : cloudBrowser)?.available === true;
   const webTools = availableWebTools(env);
   const releaseStartup = installAssistantStartupGuard(ctx, env);
   let root = null;
@@ -295,8 +297,16 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
         catch { executor.dispose(); }
       } else executor.dispose();
     }
-    const cloudNames = new Set(cloud?.names || []);
+    // Cloud browser is a grant too: the CDP child talks only through the
+    // image's egress proxy, and revocation closes the browser with the Session.
+    let browsing;
+    if (grants.includes('browser') && cloudBrowserUsable) {
+      try { browsing = registerAssistantCloudBrowserTools({ agent, workspaceRoot: cwd, env }); }
+      catch { browsing = undefined; }
+    }
+    const cloudNames = new Set([...(cloud?.names || []), ...(browsing?.names || [])]);
     if (cloud) for (const definition of cloud.definitions) if (tools.get(definition.name, agent) !== definition) throw fail('Cloud execution tool definition is not the trusted registration');
+    if (browsing) for (const definition of browsing.definitions) if (tools.get(definition.name, agent) !== definition) throw fail('Cloud browser tool definition is not the trusted registration');
     const admitted = new Map([...ROUTINE, ...webTools, ...sensitiveCatalog.keys(), ...cloudNames].map(name => [name, tools.get(name, agent)]).filter(([, definition]) => definition));
     const copies = createAssistantWorkspaceAttachmentCopies({ agent, workspaceRoot: cwd });
     const approved = new WeakSet(); let disposed = false;
@@ -330,8 +340,8 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
       return next();
     }, { prepend: true });
     state.releaseListener = listener;
-    const release = () => { disposed = true; state.ready = false; listener(); copies.dispose(); cloud?.executor.dispose(); for (const dispose of cloud?.disposers || []) dispose(); releases.delete(release); };
-    releases.add(release); states.set(agent, { cwd, sensitiveCatalog, copies, cloud, grants }); byId.set(agent.session.id, agent);
+    const release = () => { disposed = true; state.ready = false; listener(); copies.dispose(); cloud?.executor.dispose(); browsing?.browser?.dispose?.(); for (const dispose of [...(cloud?.disposers || []), ...(browsing?.disposers || [])]) dispose(); releases.delete(release); };
+    releases.add(release); states.set(agent, { cwd, sensitiveCatalog, copies, cloud, browsing, grants }); byId.set(agent.session.id, agent);
     state.ready = true;
   }
 
@@ -345,11 +355,12 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     const state = states.get(agent), cloud = state.cloud;
     return { profile: ASSISTANT_PERMISSION_PROFILE, managed: true, permission, approval,
       execution: cloud ? 'bounded-cloud-exec/v1' : state.grants.includes('code-execution') ? 'unavailable' : 'fixed-tool-operations',
-      arbitraryShell: false, network: cloud ? 'offline' : 'public-web-read-only',
+      arbitraryShell: false, network: state.browsing ? 'public-web-read-only' : cloud ? 'offline' : 'public-web-read-only',
       webTools: webTools.filter(name => agent.ctx.get('tools')?.get?.(name, agent)),
       sessionTools: staged.get(agent)?.ready ? SESSION_TOOLS.filter(name => sessionTool(agent, name)) : [],
       sensitiveTools: [...states.get(agent).sensitiveCatalog.keys()].filter(name => agent.ctx.get('tools').get(name, agent)),
       shellTools: cloud ? [...cloud.names] : [],
+      browserTools: state.browsing ? [...state.browsing.names] : [],
       grants: [...state.grants],
       isolation: 'private-runtime-workspace' };
   }
@@ -367,7 +378,8 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     // Static capability facts for the runtime identity document; no Session needed.
     cloudCapabilities: Object.freeze({
       codeExecution: optedIn && Boolean(root) && cloudSandboxUsable && grants.includes('code-execution'),
-      network: 'offline',
+      browser: optedIn && Boolean(root) && cloudBrowserUsable && grants.includes('browser'),
+      network: grants.includes('browser') && cloudBrowserUsable ? 'public-web-read-only' : 'offline',
     }),
     async stageAttachment(agent, ref, bytes) {
       const state = states.get(agent);

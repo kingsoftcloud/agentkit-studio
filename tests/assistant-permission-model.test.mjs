@@ -166,10 +166,11 @@ test('a sensitive catalog cannot claim either web tool name', async t => {
   }
 });
 
-async function cloudFixture(t, { grants = ['code-execution'], cloudSandbox } = {}) {
+async function cloudFixture(t, { grants = ['code-execution'], cloudSandbox, cloudBrowser } = {}) {
   const f = await fixture(t);
-  const model = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE,
-    agentId: 'agent-one', grants, cloudSandbox });
+  const env = { ...f.env, ...(arguments[1]?.env || {}) };
+  const model = await createAssistantPermissionModel({ ctx: f.ctx, env, profile: ASSISTANT_PERMISSION_PROFILE,
+    agentId: 'agent-one', grants, cloudSandbox, cloudBrowser });
   const cwd = await model.newSessionCwd('assistant-cloud');
   const guards = new Set(), definitions = new Map();
   let permission = 'read-only', policy = 'ask';
@@ -223,11 +224,30 @@ test('runtime identity advertises cloud execution only for a real grant and conf
   const f = await fixture(t);
   const grant = { profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one', grants: ['code-execution'] };
   const live = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
-  assert.deepEqual(live.cloudCapabilities, { codeExecution: true, network: 'offline' });
+  assert.deepEqual(live.cloudCapabilities, { codeExecution: true, browser: false, network: 'offline' });
   const missing = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, cloudSandbox: { available: false, reason: '缺少 bubblewrap' } });
   assert.equal(missing.cloudCapabilities.codeExecution, false, 'an unconfined image must not advertise the capability');
   const ungranted = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one' });
   assert.equal(ungranted.cloudCapabilities.codeExecution, false);
   const legacy = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, agentId: 'agent-one', grants: ['code-execution'], cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
   assert.equal(legacy.cloudCapabilities.codeExecution, false, 'legacy profile never advertises the capability');
+  const browsing = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, grants: ['browser'], cloudBrowser: { available: true, chromium: '/usr/bin/chromium' } });
+  assert.equal(browsing.cloudCapabilities.browser, true);
+  assert.equal(browsing.cloudCapabilities.network, 'public-web-read-only');
+  const noChromium = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, grants: ['browser'], cloudBrowser: { available: false, reason: '缺少浏览器' } });
+  assert.equal(noChromium.cloudCapabilities.browser, false, 'an image without Chromium must not advertise browsing');
+});
+
+test('a browser grant registers the CDP tools only when the image ships Chromium', async t => {
+  const chromiumEnv = { AGENTKIT_CHROMIUM: process.execPath };
+  const granted = await cloudFixture(t, { grants: ['browser'], cloudBrowser: { available: true }, env: chromiumEnv });
+  assert.equal(granted.snapshot.browserTools.length, 8);
+  assert.equal(granted.snapshot.network, 'public-web-read-only');
+  assert.deepEqual(granted.snapshot.grants, ['browser']);
+  const guard = [...granted.guards].at(-1);
+  assert.equal(guard({ agent: granted.agent, name: 'cloud_browser_open', arguments: { url: 'https://example.com' } }), undefined);
+  const headless = await cloudFixture(t, { grants: ['browser'], cloudBrowser: { available: false, reason: '缺少 Chromium' } });
+  assert.deepEqual(headless.snapshot.browserTools, []);
+  assert.deepEqual(headless.snapshot.grants, ['browser']);
+  assert.match([...headless.guards].at(-1)({ agent: headless.agent, name: 'cloud_browser_open', arguments: { url: 'https://example.com' } }), /not admitted/);
 });
