@@ -134,3 +134,10 @@ deletes the source directory, and admits all three from target-only files with
 the frozen engine pin retained. This proves multi-space admission and context
 assembly; formal Native disclosure mounting and complete Frozen execution
 remain separate acceptance requirements.
+## 已准入的 Native Skill 文件来源
+
+`createStudioNativeSkillSource` 现提供正式披露端口需要的只读 `manifest`、`fullText`、`resource` 和固定别名列表。它只接收宿主显式准入、允许模型调用的定义。`agentkit.studio-native-skill-source/v1` 绑定按别名排序的原 manifest UTF-8 SHA-256、完整目录摘要及每个相对文件的摘要；摘要不包含本机路径。完整目录摘要固定规范路径、文件字节、执行位和目录权限。冷重建必须严格匹配完整绑定，JSON 属性顺序不影响匹配。
+
+目录扫描通过有界迭代限制为 2048 项、64 层和全包 64 MiB，单次资源返回最多 32768 字节。来源固定原根目录对象，拒绝根及祖先、后代符号链接和特殊文件；文件通过 `O_NOFOLLOW`、文件描述符身份及大小、时间、模式复查读取。每次披露前后重验全包；未读取文件的新增、删除、修改和执行权限变化也会失效。合法 `__proto__` 文件名保留为真正的资源键，错误不会公开宿主绝对路径。inline Skill 只提供原指令和 manifest，没有资源文件。
+
+来源模块在 Node 26.5.0、22.19.0 各通过 31 项真实文件测试；独立探针另验证资源特殊键、规范 JSON 绑定重建、相同字节替换根目录和删除根后的路径脱敏。该模块尚未接入生产 Host 的正式四个披露工具或子任务 Skills 继承，当前证据不代表这些路径已完成。
