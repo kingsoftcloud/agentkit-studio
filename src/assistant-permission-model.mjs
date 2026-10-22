@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { registerAssistantWorkspaceTools } from './assistant-workspace-tools.mjs';
 import { createAssistantWorkspaceAttachmentCopies } from './assistant-workspace-attachments.mjs';
-import { createCloudExecutor, registerAssistantCloudExecutionTools } from './assistant-cloud-execution.mjs';
+import { createCloudExecutor, registerAssistantCloudExecutionTools, resolveCloudSandbox } from './assistant-cloud-execution.mjs';
 
 export const ASSISTANT_PERMISSION_PROFILE = 'workspace-managed/v1';
 const ROUTINE = Object.freeze(['read', 'read_image', 'write', 'edit', 'glob', 'grep']);
@@ -159,6 +159,9 @@ async function runtimeRoot(env) {
 export async function createAssistantPermissionModel({ ctx, env = {}, profile, agentId, sensitiveTools = [], grants: grantsInput, cloudSandbox } = {}) {
   const optedIn = selectAssistantPermissionProfile(profile) === ASSISTANT_PERMISSION_PROFILE;
   const grants = normalizeGrants(grantsInput);
+  // Image-level gate: a grant is only meaningful when this runtime can confine
+  // the child. The runtime identity advertises nothing in that case.
+  const cloudSandboxUsable = (cloudSandbox === undefined ? resolveCloudSandbox({ env }) : cloudSandbox)?.available === true;
   const webTools = availableWebTools(env);
   const releaseStartup = installAssistantStartupGuard(ctx, env);
   let root = null;
@@ -361,6 +364,11 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
   await validation;
   for (const agent of initial) await ensure(agent);
   return { enabled: optedIn && Boolean(root), newSessionCwd, ensure, snapshot,
+    // Static capability facts for the runtime identity document; no Session needed.
+    cloudCapabilities: Object.freeze({
+      codeExecution: optedIn && Boolean(root) && cloudSandboxUsable && grants.includes('code-execution'),
+      network: 'offline',
+    }),
     async stageAttachment(agent, ref, bytes) {
       const state = states.get(agent);
       if (closed || !state || !staged.get(agent)?.ready || await owned(agent.session.id) !== state.cwd || agent.session.header.cwd !== state.cwd) throw fail('Attachment workspace ownership cannot be verified');

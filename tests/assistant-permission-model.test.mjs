@@ -218,3 +218,16 @@ test('a grant on an image without a usable confiner stays unregistered and repor
   const guard = [...f.guards].at(-1);
   assert.match(guard({ agent: f.agent, name: 'cloud_bash', arguments: { command: 'pwd' } }), /not admitted/);
 });
+
+test('runtime identity advertises cloud execution only for a real grant and confiner', async t => {
+  const f = await fixture(t);
+  const grant = { profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one', grants: ['code-execution'] };
+  const live = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
+  assert.deepEqual(live.cloudCapabilities, { codeExecution: true, network: 'offline' });
+  const missing = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, cloudSandbox: { available: false, reason: '缺少 bubblewrap' } });
+  assert.equal(missing.cloudCapabilities.codeExecution, false, 'an unconfined image must not advertise the capability');
+  const ungranted = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one' });
+  assert.equal(ungranted.cloudCapabilities.codeExecution, false);
+  const legacy = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, agentId: 'agent-one', grants: ['code-execution'], cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
+  assert.equal(legacy.cloudCapabilities.codeExecution, false, 'legacy profile never advertises the capability');
+});
