@@ -308,8 +308,12 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     // log: both silent catches previously hid a registry-schema rejection.
     for (const [name, failure] of [['execution', cloudFailure], ['browser', browserFailure]]) {
       if (failure === undefined) continue;
-      try { ctx.get?.('logger')?.warn?.(`assistant cloud ${name} was not registered: ${typeof failure === 'string' ? failure : failure?.message || failure}`); }
-      catch { /* Logging must never fail the Session. */ }
+      const detail = `assistant cloud ${name} was not registered: ${typeof failure === 'string' ? failure
+        : [failure?.code, failure?.message].filter(Boolean).join(': ') || String(failure)}`;
+      try { ctx.get?.('logger')?.warn?.(detail); } catch { /* Logging must never fail the Session. */ }
+      // The managed runtime has no logger service in the frozen Host; its
+      // stderr is the only durable place a capability refusal can be seen.
+      try { process.stderr.write(`[agentkit-studio] ${detail}\n`); } catch { /* stderr closed */ }
     }
     const cloudNames = new Set([...(cloud?.names || []), ...(browsing?.names || [])]);
     if (cloud) for (const definition of cloud.definitions) if (tools.get(definition.name, agent) !== definition) throw fail('Cloud execution tool definition is not the trusted registration');
