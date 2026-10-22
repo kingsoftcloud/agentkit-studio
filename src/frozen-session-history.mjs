@@ -94,7 +94,7 @@ async function readFrozenHistoryPage({ handle, session, latestSeq, request, invo
   const ordered = kind === 'events' && request.EventOrder === 'session_seq';
   const after = request.AfterSeqId ?? (ordered ? 0 : undefined);
   if (!integer(limit, 1) || limit > (kind === 'events' ? 1000 : 200) || (before !== undefined && !integer(before, 1))
-    || (after !== undefined && !integer(after)) || (before !== undefined && after !== undefined)
+    || (after !== undefined && !integer(after)) || (before !== undefined && after !== undefined && !ordered)
     || (request.Offset !== undefined && !integer(request.Offset))
     || ((request.Offset ?? 0) > 0 && (before !== undefined || after !== undefined))) throw runtimeError('RUNTIME_HISTORY_CURSOR_INVALID');
   for (const key of ['IncludeReasoning', 'IncludeToolEvents', 'IncludeAttachments']) {
@@ -129,7 +129,8 @@ async function readFrozenHistoryPage({ handle, session, latestSeq, request, invo
       LatestSeqId: page.at(-1)?.SeqId ?? 0, HasMore: start > 0, NextCursor: start > 0 ? page[0].SeqId : null, ...metadata };
   }
   const forward = after !== undefined;
-  let position = forward ? Math.min(after, snapshot) : Math.min(snapshot, before === undefined ? snapshot : before - 1);
+  const upper = forward && before !== undefined ? Math.min(snapshot, before - 1) : snapshot;
+  let position = forward ? Math.min(after, upper) : Math.min(snapshot, before === undefined ? snapshot : before - 1);
   let events = [], bytes = 0, count = 0, groups = [], selected = [];
   if (kind === 'events' && forward && position > 0) {
     // Event pages can end inside a turn. Reconstruct only that turn's prefix
@@ -145,10 +146,10 @@ async function readFrozenHistoryPage({ handle, session, latestSeq, request, invo
       cut = offset; position = cut;
     }
   }
-  while (forward ? position < snapshot : position > 0) {
+  while (forward ? position < upper : position > 0) {
     signal.throwIfAborted();
     const offset = forward ? position : Math.max(0, position - 256);
-    const length = forward ? Math.min(256, snapshot - position) : position - offset;
+    const length = forward ? Math.min(256, upper - position) : position - offset;
     const batch = (await handle.read(offset, length, { signal })).events;
     if (batch.length !== length || batch.some((event, index) => event.seq !== offset + index)) throw runtimeError('RUNTIME_HISTORY_PREFIX_UNAVAILABLE', 503);
     count += batch.length; bytes += Buffer.byteLength(JSON.stringify(batch));
@@ -158,7 +159,7 @@ async function readFrozenHistoryPage({ handle, session, latestSeq, request, invo
     groups = groupEvents(events, kind, after);
     // A backward page may start inside an earlier invocation; its unknown
     // prefix cannot be projected until another bounded slice reaches its start.
-    const candidates = forward && position < snapshot ? groups.filter(group => group.closed) : groups;
+    const candidates = forward && position < upper ? groups.filter(group => group.closed) : groups;
     selected = selectGroups(candidates, limit, forward);
     const messages = selected.reduce((sum, group) => sum + group.messages, 0);
     const hasAdditionalGroup = candidates.some(group => group.messages && !selected.includes(group));
@@ -168,9 +169,9 @@ async function readFrozenHistoryPage({ handle, session, latestSeq, request, invo
     .filter(item => kind !== 'events' || after === undefined || item.SeqId > after);
   const messages = kind === 'events' ? forward ? projected.slice(0, limit) : projected.slice(-limit) : projected;
   const hasUnselected = groups.some(group => group.messages && !selected.includes(group));
-  const hasMore = projected.length > messages.length || hasUnselected || (forward ? position < snapshot : position > 0);
+  const hasMore = projected.length > messages.length || hasUnselected || (forward ? position < upper : position > 0);
   const latest = kind === 'events' && messages.length ? messages.at(-1).SeqId
-    : selected.length ? selected.at(-1).events.at(-1).seq + 1 : forward ? position : Math.min(snapshot, after || 0);
+    : selected.length ? selected.at(-1).events.at(-1).seq + 1 : forward ? Math.max(after, position) : Math.min(snapshot, after || 0);
   return { SessionId: session.sessionId, [kind === 'events' ? 'Events' : 'Messages']: messages, LatestSeqId: latest,
     HasMore: hasMore, ...(ordered ? { EventOrder: 'session_seq' } : {}), NextCursor: forward ? latest : hasMore && selected.length ? kind === 'events' ? messages[0]?.SeqId ?? selected[0].start : selected[0].start : null,
     ...metadata };
