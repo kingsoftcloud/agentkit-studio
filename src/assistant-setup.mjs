@@ -14,7 +14,7 @@ const labels = { PREPARING: '正在准备你的助理', UPLOADING: '正在保存
 const readyStates = new Set(['READY', 'AVAILABLE_UPDATING']);
 // Grants the current runtime composition can actually enforce. Browser stays
 // out until the image advertises it and the plugin registers its tools.
-const GRANT_CAPABILITIES = Object.freeze({ 'code-execution': ASSISTANT_CODE_EXECUTION_CAPABILITY });
+const GRANT_CAPABILITIES = Object.freeze({ 'code-execution': ASSISTANT_CODE_EXECUTION_CAPABILITY, browser: ASSISTANT_BROWSER_CAPABILITY });
 const normalizeGrants = value => Array.isArray(value) ? [...new Set(value.filter(item => typeof item === 'string'))] : [];
 const availableGrants = capabilities => Object.keys(GRANT_CAPABILITIES).filter(name => capabilities.includes(GRANT_CAPABILITIES[name]));
 

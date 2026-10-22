@@ -11,6 +11,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
   // offer today. Unknown names stay hidden instead of guessing copy.
   const GRANTS = {
     'code-execution': { label: '在云端运行命令与脚本', detail: '助理可在隔离的云工作区内执行命令和脚本：默认无网络，读不到宿主机凭证，也不能访问工作区之外的路径。' },
+    browser: { label: '在云端使用浏览器', detail: '助理可打开公开网页、读取页面内容并截图；只允许 http/https，不能访问内网、本机或需要登录的内容，下载文件大小受限。' },
   };
   const grantLabel = name => GRANTS[name]?.label || name;
   const AssistantApprovals = createAssistantApprovals({ ui, window });
