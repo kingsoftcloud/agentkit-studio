@@ -9,9 +9,14 @@ import { runtimeSkill } from '../src/skill-files.mjs';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
-import { createZip, readZipFiles } from '../src/zip.mjs';
+import { createZip, readZipFiles, buildIdFor } from '../src/zip.mjs';
 import { prepareLocalResourceContext } from '../src/local-runtime.mjs';
 import { selectedNativeBuildContract } from '../src/build-engine.mjs';
+import { sha256 } from '../src/portable-resources.mjs';
+import { PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_BUILTIN_TOOLS } from '../src/portable-native-tools.mjs';
+
+const NATIVE_DSH_TURN = 'agentkit.native-dsh-turn/v1';
+const TEN_WORKSPACE_TOOLS = [...PORTABLE_NATIVE_BUILTIN_TOOLS];
 
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-portable-'));
@@ -161,3 +166,213 @@ test('portable startup rejects other runtime identities and never inherits legac
   await writeFile(join(target, '.portable-importing'), '');
   await assert.rejects(loadPortableRuntime(target, env), { code: 'PORTABLE_IMPORT_INCOMPLETE' });
 });
+
+test('Native Frozen engine build exports its ten Node workspace builtins with a verified capability manifest', async t => {
+  const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [...TEN_WORKSPACE_TOOLS] } });
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  const { manifest, definition } = verifyPortableBundle(zip);
+  assert.equal(definition.executionEngine.engine, 'agentkit.native/v1');
+  assert.deepEqual(manifest.nativeBuiltin, { contract: PORTABLE_NATIVE_BUILTIN_CONTRACT, engine: NATIVE_DSH_TURN, tools: [...TEN_WORKSPACE_TOOLS] });
+  // The manifest is part of the content-addressed identity, so it is covered by
+  // the bundleId and cannot be silently dropped or altered without recomputation.
+  assert.equal(manifest.bundleId, `bundle_${sha256(JSON.stringify({ format: manifest.format, agentId: manifest.agentId, buildId: manifest.buildId, resources: manifest.resources, requirements: manifest.requirements, files: manifest.files, nativeBuiltin: manifest.nativeBuiltin }))}`);
+  // Original tool bindings are preserved verbatim in the frozen Build, not
+  // reordered or dropped, and no Host path leaks into the archive.
+  for (const secret of [f.root, 'source-model-secret', 'source-mcp-secret']) assert.equal(zip.includes(Buffer.from(secret)), false);
+  const target = join(f.root, 'native-tools-target'), imported = await importPortableBundle(zip, target);
+  const restored = await createStudioBuild({ storeDir: join(target, 'studio') }).resolve(imported.agentId, imported.buildId);
+  assert.deepEqual(restored.bindings.tools, [...TEN_WORKSPACE_TOOLS]);
+  assert.equal(selectedNativeBuildContract(restored), NATIVE_DSH_TURN);
+});
+
+test('a combined Native binding (subset of tools plus skill/model/mcp) survives import and source removal with the frozen engine', async t => {
+  const subset = ['read_workspace_file', 'write_workspace_file', 'list_workspace_files'];
+  const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [...subset] } });
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  const { manifest } = verifyPortableBundle(zip);
+  assert.deepEqual(manifest.nativeBuiltin.tools, [...subset].sort());
+  const target = join(f.root, 'combined-target'), imported = await importPortableBundle(zip, target);
+  // Removing the entire source store and skill directory proves the target
+  // stands alone: no absolute export path, no cloud Skill fallback, no Host state.
+  await rm(f.skillRoot, { recursive: true }); await rm(join(f.root, 'source-store'), { recursive: true });
+  const env = { AGENTKIT_HOME: target, AGENTKIT_RUNTIME_AGENT_ID: imported.agentId, AGENTKIT_RUNTIME_BUILD_ID: imported.buildId };
+  for (const requirement of imported.requirements) env[requirement.name] = 'target-only-secret';
+  const runtime = await loadPortableRuntime(target, env);
+  const skill = await runtime.loadSkill(f.skillId);
+  assert.equal(skill.definitions.length, 1);
+  // The target Host live default is off (no nativeEngineContract), yet the
+  // imported Build still resolves to its original frozen Native engine.
+  const restored = await createStudioBuild({ storeDir: join(target, 'studio') }).resolve(imported.agentId, imported.buildId);
+  assert.deepEqual(restored.bindings.tools, [...subset]);
+  assert.equal(selectedNativeBuildContract(restored), NATIVE_DSH_TURN);
+  assert.deepEqual(restored.executionEngine, (await verifyPortableBundle(zip)).definition.executionEngine);
+});
+
+test('builtin tools that are not Node-wired are rejected with an explicit reason at export', async t => {
+  for (const [overrides, messageMatch] of [
+    // A Native Frozen engine build binding an unknown, non-whitelisted tool.
+    [{ nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: ['shell'] } }, /shell/],
+    // A Native Frozen engine build mixing a whitelisted tool with an unknown one.
+    [{ nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: ['workspace_status', 'shell'] } }, /shell/],
+    // A legacy Harness build (no Native engine pin) cannot export tools yet.
+    [{ bindings: { tools: ['workspace_status'] } }, /Python/],
+    // A DSH Native runtime whose builtins are not yet Node-wired.
+    [{ runtime: 'dsh-native', bindings: { tools: ['workspace_status'] } }, /Python/],
+    // A Codex runtime whose builtins are not yet Node-wired.
+    [{ runtime: 'codex', bindings: { tools: ['workspace_status'] } }, /Python/],
+  ]) {
+    const f = await fixture(t, overrides);
+    await assert.rejects(f.portable.prepare(f.agentId, f.record.id), { code: 'PORTABLE_BUILTIN_UNSUPPORTED', message: messageMatch });
+  }
+});
+
+test('a recomputed archive identity cannot smuggle a bad or missing builtin manifest past verification', async t => {
+  const subset = ['read_workspace_file', 'write_workspace_file', 'list_workspace_files'];
+  const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [...subset] } });
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  // Recompute the content-addressed bundleId after each mutation so the bundleId
+  // check alone would pass; the cross-check against the frozen Build must still fail.
+  const recompute = mutate => {
+    const files = readZipFiles(zip), portable = files.find(file => file.name === 'portable.json');
+    const manifest = JSON.parse(portable.data.toString('utf8'));
+    mutate(manifest);
+    const { bundleId, createdAt, ...identity } = manifest;
+    manifest.bundleId = `bundle_${sha256(JSON.stringify(identity))}`;
+    portable.data = Buffer.from(JSON.stringify(manifest, null, 2));
+    return createZip(files);
+  };
+  const expectedSorted = [...subset].sort();
+  const validManifest = { contract: PORTABLE_NATIVE_BUILTIN_CONTRACT, engine: NATIVE_DSH_TURN, tools: expectedSorted };
+  for (const [label, mutate] of [
+    ['extra whitelisted tool not in bindings', m => { m.nativeBuiltin = { ...validManifest, tools: [...expectedSorted, 'search_workspace_files'].sort() }; }],
+    ['wrong engine', m => { m.nativeBuiltin = { ...validManifest, engine: 'agentkit.native/v1' }; }],
+    ['unknown contract', m => { m.nativeBuiltin = { ...validManifest, contract: 'agentkit.portable-native-builtin/v9' }; }],
+    ['extra field', m => { m.nativeBuiltin = { ...validManifest, extra: true }; }],
+    ['unsorted tools', m => { m.nativeBuiltin = { ...validManifest, tools: [...expectedSorted].reverse() }; }],
+    ['stripped manifest with tools present', m => { delete m.nativeBuiltin; }],
+  ]) {
+    assert.throws(() => verifyPortableBundle(recompute(mutate)), { code: 'PORTABLE_BUNDLE_INVALID' }, `verify tamper ${label} should be rejected`);
+    await assert.rejects(importPortableBundle(recompute(mutate), join(f.root, `rejected-${label}`)), { code: 'PORTABLE_BUNDLE_INVALID' }, `import tamper ${label} should be rejected`);
+  }
+  // A spurious manifest on an otherwise valid tools-less bundle is also rejected.
+  const plain = await fixture(t);
+  const plainPrepared = await plain.portable.prepare(plain.agentId, plain.record.id);
+  const plainZip = Buffer.from((await plain.portable.download(plain.agentId, plain.record.id, plainPrepared.bundleId)).base64, 'base64');
+  const recomputePlain = mutate => {
+    const files = readZipFiles(plainZip), portable = files.find(file => file.name === 'portable.json');
+    const manifest = JSON.parse(portable.data.toString('utf8'));
+    mutate(manifest);
+    const { bundleId, createdAt, ...identity } = manifest;
+    manifest.bundleId = `bundle_${sha256(JSON.stringify(identity))}`;
+    portable.data = Buffer.from(JSON.stringify(manifest, null, 2));
+    return createZip(files);
+  };
+  await assert.rejects(importPortableBundle(recomputePlain(m => { m.nativeBuiltin = validManifest; }), join(f.root, 'rejected-spurious')), { code: 'PORTABLE_BUNDLE_INVALID' });
+  assert.throws(() => verifyPortableBundle(recomputePlain(m => { m.nativeBuiltin = validManifest; })), { code: 'PORTABLE_BUNDLE_INVALID' });
+});
+
+test('malformed tool binding shapes are rejected at export instead of silently dropped', async t => {
+  for (const [label, overrides] of [
+    ['null element', { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [null] } }],
+    ['empty object element', { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [{}] } }],
+    ['empty string element', { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [''] } }],
+    ['non-array tools object', { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: { name: 'run_code' } } }],
+    ['numeric resourceId', { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [{ resourceId: 123 }] } }],
+    ['resourceId/name contradiction', { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [{ resourceId: 'workspace_status', name: 'shell' }] } }],
+    ['null element on legacy harness', { bindings: { tools: [null] } }],
+    ['non-array on dsh-native', { runtime: 'dsh-native', bindings: { tools: { name: 'run_code' } } }],
+  ]) {
+    const f = await fixture(t, overrides);
+    await assert.rejects(f.portable.prepare(f.agentId, f.record.id), { code: 'PORTABLE_BINDING_INVALID' }, `${label} should be rejected`);
+  }
+});
+
+test('duplicate and mixed string/object bindings resolve consistently with the formal catalog contract', async t => {
+  const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN,
+    bindings: { tools: ['workspace_status', 'workspace_status', { resourceId: 'read_workspace_file' }, { name: 'read_workspace_file' }] } });
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  const { manifest, definition } = verifyPortableBundle(zip);
+  // The manifest binds the de-duplicated, spec-sorted distinct tool names; the
+  // frozen Build preserves the original (duplicate, mixed) binding array verbatim.
+  assert.deepEqual(manifest.nativeBuiltin.tools, ['read_workspace_file', 'workspace_status']);
+  assert.deepEqual(definition.bindings.tools, ['workspace_status', 'workspace_status', { resourceId: 'read_workspace_file' }, { name: 'read_workspace_file' }]);
+  // An object carrying an extra non-identity field is still accepted (the formal
+  // contract ignores extra fields, only resourceId/id/name is the identity).
+  const f2 = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [{ resourceId: 'workspace_status', enabled: false }] } });
+  const prepared2 = await f2.portable.prepare(f2.agentId, f2.record.id);
+  const zip2 = Buffer.from((await f2.portable.download(f2.agentId, f2.record.id, prepared2.bundleId)).base64, 'base64');
+  assert.deepEqual(verifyPortableBundle(zip2).manifest.nativeBuiltin.tools, ['workspace_status']);
+});
+
+test('tampering both inner agent-bundle and outer portable with full identity recompute still rejects malformed, conflicting and unknown tools', async t => {
+  const subset = ['read_workspace_file', 'write_workspace_file', 'list_workspace_files'];
+  const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: [...subset] } });
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+
+  // Recompute EVERY identity — inner buildId, agent-bundle.zip file hashes, and
+  // outer bundleId — after tampering both the inner agent-bundle manifest and
+  // the outer portable manifest. This simulates a determined attacker who
+  // recomputes the entire archive; the shape and cross-copy checks must still
+  // catch the malformed, conflicting or unknown tool bindings.
+  function tamperArchive({ mutateInner, mutateOuter } = {}) {
+    const outerFiles = readZipFiles(zip);
+    const portableFile = outerFiles.find(file => file.name === 'portable.json');
+    const bundleFile = outerFiles.find(file => file.name === 'agent-bundle.zip');
+    const manifest = JSON.parse(portableFile.data.toString('utf8'));
+    // Read and tamper the inner agent-bundle.
+    const innerFiles = readZipFiles(bundleFile.data);
+    const innerManifest = JSON.parse(innerFiles.find(file => file.name === 'agent-bundle/manifest.json').data.toString('utf8'));
+    if (mutateInner) mutateInner(innerManifest);
+    // spec.json must match { spec, bindings } of the (tampered) inner manifest,
+    // otherwise the existing 'build spec mismatch' check would fire first.
+    const newBundle = createZip([
+      { name: 'agent-bundle/manifest.json', data: JSON.stringify(innerManifest, null, 2) },
+      { name: 'agent-bundle/spec.json', data: JSON.stringify({ spec: innerManifest.spec, bindings: innerManifest.bindings }, null, 2) },
+      { name: 'agent-bundle/README.md', data: innerFiles.find(file => file.name === 'agent-bundle/README.md').data },
+    ]);
+    // Recompute the inner buildId from the tampered manifest identity.
+    const { createdAt, ...innerIdentity } = innerManifest;
+    manifest.buildId = buildIdFor(innerIdentity);
+    // Update the agent-bundle.zip file entry hash/bytes in the outer manifest.
+    const bundleEntry = manifest.files.find(file => file.name === 'agent-bundle.zip');
+    bundleEntry.sha256 = sha256(newBundle); bundleEntry.bytes = newBundle.length;
+    bundleFile.data = newBundle;
+    if (mutateOuter) mutateOuter(manifest);
+    // Recompute the outer bundleId from the fully updated identity.
+    const { bundleId, createdAt: outerCreatedAt, ...identity } = manifest;
+    manifest.bundleId = `bundle_${sha256(JSON.stringify(identity))}`;
+    portableFile.data = Buffer.from(JSON.stringify(manifest, null, 2));
+    return createZip(outerFiles);
+  }
+  const expectedSorted = [...subset].sort();
+  const validManifest = { contract: PORTABLE_NATIVE_BUILTIN_CONTRACT, engine: NATIVE_DSH_TURN, tools: expectedSorted };
+
+  for (const [label, opts] of [
+    // spec.bindings.tools and bindings.tools diverge: smuggle an unknown tool
+    // through the top-level bindings copy while spec still lists the whitelist.
+    ['spec/bindings tools divergence', { mutateInner: m => { m.bindings.tools = [...subset, 'shell']; } }],
+    // Both copies carry a malformed null element (consistent, but malformed).
+    ['malformed null element in both copies', { mutateInner: m => { m.spec.bindings.tools = [null]; m.bindings.tools = [null]; } }],
+    // Both copies carry an unknown tool not on the whitelist.
+    ['unknown tool in both copies', { mutateInner: m => { m.spec.bindings.tools = [...subset, 'run_code']; m.bindings.tools = [...subset, 'run_code']; } }],
+    // Non-array tools in both copies (a Python tool object smuggled in).
+    ['non-array tools in both copies', { mutateInner: m => { m.spec.bindings.tools = { name: 'run_code' }; m.bindings.tools = { name: 'run_code' }; } }],
+    // Inner manifest drops tools but the outer manifest still declares a builtin.
+    ['inner drops tools, outer keeps manifest', { mutateInner: m => { delete m.spec.bindings.tools; delete m.bindings.tools; } }],
+    // Inner has the right tools but the outer nativeBuiltin declares an extra one.
+    ['outer manifest declares extra tool', { mutateOuter: m => { m.nativeBuiltin = { ...validManifest, tools: [...expectedSorted, 'search_workspace_files'].sort() }; } }],
+    // Inner has an extra whitelisted tool the outer manifest does not declare.
+    ['inner extra whitelisted tool, outer manifest honest', { mutateInner: m => { m.spec.bindings.tools = [...subset, 'search_workspace_files']; m.bindings.tools = [...subset, 'search_workspace_files']; } }],
+    // Outer manifest stripped while inner still binds tools.
+    ['outer manifest stripped, inner has tools', { mutateOuter: m => { delete m.nativeBuiltin; } }],
+  ]) {
+    assert.throws(() => verifyPortableBundle(tamperArchive(opts)), { code: 'PORTABLE_BUNDLE_INVALID' }, `verify: ${label}`);
+    await assert.rejects(importPortableBundle(tamperArchive(opts), join(f.root, `full-tamper-${label}`)), { code: 'PORTABLE_BUNDLE_INVALID' }, `import: ${label}`);
+  }
+});
+

@@ -9,6 +9,7 @@ import { validateBuildEngineManifest } from './build-engine.mjs';
 import { createAgentStore } from './agent-store.mjs';
 import { materializeCloudSkill } from './skill-files.mjs';
 import { capturePortableResources, portableError, sha256, rejectInlineSecrets } from './portable-resources.mjs';
+import { validatePortableNativeBuiltin } from './portable-native-tools.mjs';
 
 const FORMAT = 'agentkit.portable-bundle/v1';
 const validBundleId = id => /^bundle_[0-9a-f]{64}$/.test(id || '');
@@ -33,6 +34,12 @@ export function verifyPortableBundle(zip) {
     validateBuildEngineManifest(definition);
     if (JSON.stringify(JSON.parse(readZipEntry(byName.get('agent-bundle.zip').data, 'agent-bundle/spec.json'))) !== JSON.stringify({ spec: definition.spec, bindings: definition.bindings })) throw new Error('build spec mismatch');
     rejectInlineSecrets(definition.spec); rejectInlineSecrets(definition.metadata);
+    // The builtin capability manifest is cross-checked against the Frozen Build's
+    // actual bound tools, independent of the content-addressed bundleId, so a
+    // recomputed archive identity carrying a bad/missing/spurious manifest still
+    // fails: unknown contract, wrong engine, missing or extra tool names, or any
+    // extra field are rejected here, not only at export time.
+    if (validatePortableNativeBuiltin(identity.nativeBuiltin, { ...definition, buildId: identity.buildId })) throw new Error('native builtin manifest mismatch');
     for (const item of identity.requirements) if (!/^[A-Za-z_][A-Za-z0-9_]{0,159}$/.test(item.name)) throw new Error('invalid credential reference');
     for (const skill of identity.resources.skills) for (const root of skill.roots) {
       if (!/^skills\/[0-9a-f]{24}\/\d+$/.test(root) || !byName.has(`${root}/SKILL.md`)) throw new Error('invalid skill root');
@@ -52,10 +59,11 @@ export function createPortableBundles({ storeDir, build, models, adapters, confi
   async function prepare(agentId, buildId) {
     const record = await build.resolve(agentId, buildId);
     if (!/^ar-local-[a-f0-9]{16}$/.test(agentId) || record.metadata.local === false) throw portableError('PORTABLE_AGENT_UNSUPPORTED', '运行包目前只支持本地 Agent Build');
-    const { resources, requirements, files } = await capturePortableResources({ record, models, adapters, configuration });
+    const { resources, requirements, files, nativeBuiltin } = await capturePortableResources({ record, models, adapters, configuration });
     files.unshift({ name: 'agent-bundle.zip', data: Buffer.from((await build.download(agentId, buildId)).base64, 'base64'), executable: false });
     const identity = { format: FORMAT, agentId, buildId, resources, requirements,
-      files: files.map(file => ({ name: file.name, bytes: file.data.length, sha256: sha256(file.data), executable: Boolean(file.executable) })) };
+      files: files.map(file => ({ name: file.name, bytes: file.data.length, sha256: sha256(file.data), executable: Boolean(file.executable) })),
+      ...(nativeBuiltin ? { nativeBuiltin } : {}) };
     const bundleId = `bundle_${sha256(JSON.stringify(identity))}`;
     const manifest = { ...identity, bundleId, createdAt: new Date().toISOString() };
     const zip = createZip([{ name: 'portable.json', data: json(manifest) }, ...files]);

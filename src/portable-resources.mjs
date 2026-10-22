@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { resolvePortableNativeBuiltins } from './portable-native-tools.mjs';
 
 export const portableError = (code, message) => Object.assign(new Error(message), { code });
 export const sha256 = data => createHash('sha256').update(data).digest('hex');
@@ -59,7 +60,15 @@ export async function capturePortableResources({ record, models, adapters, confi
   rejectInlineSecrets(record.metadata);
   const bindings = record.spec.bindings || record.bindings || {}, runtime = record.spec.runtime?.type;
   if (!['dsh-native', 'harness', 'codex'].includes(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '运行包仅支持 DSH Native、Codex 和自研 Harness');
-  if (bindings.tools?.length) throw portableError('PORTABLE_BUILTIN_UNSUPPORTED', '该 Agent 绑定的内置工具依赖外部 Python 工具运行时，尚不能导出为可迁移运行包');
+  // Only the Node workspace builtins mounted by native-dsh-tools.mjs may travel
+  // with a Frozen Native engine build; everything else still needs the legacy
+  // Python bridge. The decision follows selectedNativeBuildContract (the Frozen
+  // Build's executionEngine), never a Host env switch or the runtime string.
+  const nativeBuiltins = resolvePortableNativeBuiltins(record);
+  if (nativeBuiltins.kind === 'invalid') throw portableError('PORTABLE_BINDING_INVALID', '该 Agent 绑定的内置工具形状无效，请修正 Tool 绑定后重新导出');
+  if (nativeBuiltins.kind === 'unsupported') throw portableError('PORTABLE_BUILTIN_UNSUPPORTED',
+    nativeBuiltins.unknown ? `该 Agent 绑定的内置工具尚不能导出为可迁移运行包：${nativeBuiltins.unknown.join(', ')}`
+      : '该 Agent 绑定的内置工具依赖外部 Python 工具运行时，尚不能导出为可迁移运行包');
   const plugins = bindings.plugins || [];
   if (plugins.some(item => item.enabled === false)) throw portableError('PORTABLE_DISABLED_PLUGIN_UNSUPPORTED', '请先移除已停用的资源插件绑定，当前运行包不迁移其遗留配置');
   const cloudResources = plugins.filter(item => item.enabled !== false).map(item => item.config?.binding?.resource);
@@ -132,5 +141,6 @@ export async function capturePortableResources({ record, models, adapters, confi
     requireEnv('KSYUN_SECRET_KEY', 'cloud', 'cloud secret key');
     if (values.cloudSessionToken) requireEnv('KSYUN_SESSION_TOKEN', 'cloud', 'cloud session token');
   }
-  return { resources: { profiles, mcps, skills, cloud, remote }, requirements, files };
+  return { resources: { profiles, mcps, skills, cloud, remote }, requirements, files,
+    nativeBuiltin: nativeBuiltins.kind === 'native' ? nativeBuiltins.manifest : undefined };
 }
