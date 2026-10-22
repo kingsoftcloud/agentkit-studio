@@ -1,4 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { closeSync, existsSync, fsyncSync, openSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';
@@ -21,21 +23,34 @@ export async function apply(ctx, options) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (!record) {
     record = await agents.create({ name: 'Native child proof', runtimeType: 'harness', spec: {
-      subAgents: [{ name: 'reader', instructions: 'CHILD_WORKSPACE_READER: read proof.txt and report its evidence.',
-        tools: ['read_workspace_file'], modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2 }],
-      bindings: { tools: ['read_workspace_file'], modelProfileIds: ['parent-profile', 'child-profile'] },
+      subAgents: [options.writingRecovery
+        ? { name: 'writer', instructions: 'CHILD_WORKSPACE_WRITER: write child.txt in the isolated child workspace and report completion.',
+          tools: ['read_workspace_file', 'write_workspace_file'], modelProfileId: 'child-profile', maxTurns: 4, maxToolCalls: 2 }
+        : { name: 'reader', instructions: 'CHILD_WORKSPACE_READER: read proof.txt and report its evidence.',
+          tools: ['read_workspace_file'], modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2 }],
+      bindings: { tools: options.writingRecovery ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
+        modelProfileIds: ['parent-profile', 'child-profile'] },
     } });
     await writeFile(join(home, 'identity.json'), JSON.stringify({ agentId: record.metadata.id }));
   }
   await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } });
   const presetId = dshPresetId(record.metadata.id, record.metadata.revision);
-  ctx.on('agent/created', async ({ agent, source }) => {
-    if (agent.session.id !== 'native-child-parent') return;
+  let activeAgent;
+  const authenticate = async () => {
     const origin = ctx.webServer.getOrigin();
-    const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual' });
+    const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });
     if (login.status !== 302) throw Error('Child proof authentication failed');
     const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+    await writeFile(join(home, 'control-auth.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
+    return { origin, cookie };
+  };
+  // The real SessionController must be callable before reconstructing an agent.
+  if (options.writingRecovery) await authenticate();
+  ctx.on('agent/created', async ({ agent, source }) => {
+    if (agent.session.id !== 'native-child-parent') return;
+    activeAgent = agent;
+    const { origin, cookie } = await authenticate();
     const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
       body: JSON.stringify({ method: 'agents/ensure-preset', payload: { agentId: record.metadata.id } }) });
     const result = (await response.json()).result;
@@ -58,4 +73,47 @@ export async function apply(ctx, options) {
     resolveModel: (provider, model) => ({ provider, id: model, name: model }),
     prepareCall: () => { throw Error('DSH model loop entered during Native child proof'); },
   });
+  if (options.writingRecovery) {
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      if (exec.agent.session.id === 'native-child-parent') await appendFile(join(home, 'tool-admissions.jsonl'),
+        JSON.stringify({ name: exec.name, arguments: exec.arguments, callId: exec.callId }) + '\n');
+      return next();
+    });
+    const { SqliteRunStore } = await import('../../packages/agentkit-harness/src/native/sqlite-store.mjs');
+    const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex'),
+      userId: 'local-user', agentId: record.metadata.id };
+    const childScope = { ...scope, agentId: `${scope.agentId}:child:writer` };
+    const marker = join(home, 'child-write-crash.json');
+    let checking = false;
+    const timer = setInterval(async () => {
+      if (checking || !activeAgent || existsSync(marker) || !existsSync(join(home, 'crash-requested'))) return;
+      checking = true;
+      let ledger;
+      try {
+        ledger = new SqliteRunStore(join(home, 'studio/native-harness/runs.sqlite'));
+        const parent = ledger.sessionHead(scope, 'native-child-parent');
+        const child = ledger.list(childScope).at(-1);
+        if (!parent || !child) return;
+        const parentRecord = ledger.load(scope, parent.runId), childRecord = ledger.load(childScope, child.runId);
+        const pendingModel = row => row.intents.some(intent => intent.operationKey === row.snapshot.pendingIntent
+          && intent.kind === 'model' && intent.status === 'running');
+        const committedWrite = childRecord.intents.some(intent => intent.kind === 'tool'
+          && intent.payload.calls?.length === 1 && intent.payload.calls[0].name === 'write_workspace_file'
+          && intent.payload.calls[0].arguments.path === 'child.txt'
+          && childRecord.receipts.some(receipt => receipt.operationKey === intent.operationKey && receipt.status === 'committed'
+            && receipt.result.results?.[0]?.status === 'ok' && receipt.result.results[0].content?.ok === true));
+        if (!pendingModel(parentRecord) || !pendingModel(childRecord) || !committedWrite) return;
+        if (await ctx.sessions.flush(activeAgent.session) !== true) throw Error('Child proof Session flush was not durable');
+        const events = activeAgent.session.snapshotEvents();
+        if (!events.some(event => event.type === 'turn/owner') || events.some(event => event.type === 'turn/end'))
+          throw Error('Child proof did not stop inside the original owned turn');
+        writeFileSync(marker, JSON.stringify({ pid: process.pid, parent: parentRecord, child: childRecord, events }));
+        const fd = openSync(marker, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
+        process.exit(37); // Deliberately bypass all Kernel/Host/child cleanup.
+      } catch (error) {
+        writeFileSync(join(home, 'child-write-crash-error.txt'), String(error.stack)); process.exit(38);
+      } finally { ledger?.close(); checking = false; }
+    }, 20);
+    ctx.effect(() => () => clearInterval(timer), 'Child writing recovery crash injection');
+  }
 }

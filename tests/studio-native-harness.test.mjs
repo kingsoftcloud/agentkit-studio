@@ -60,6 +60,18 @@ async function setup(t, { spec = {}, profile = {}, respond } = {}) {
   return { root, host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
+test('Studio Host seals pure inference replay only for its plain HTTP model binding', async t => {
+  for (const [parameters, expected] of [[{}, 'pure-inference/v1'], [{ temperature: 0.2 }, 'manual'],
+    [{ background: true }, 'manual']]) {
+    const h = await setup(t, { profile: { parameters } });
+    await h.host.executeTurn(h.payload);
+    const snapshot = h.head(), saved = h.ledger.load(snapshot.scope, snapshot.runId);
+    assert.equal(snapshot.finalText, 'Complete');
+    assert.equal(saved.configuration.modelRecoveryPolicy, expected);
+    assert.equal(h.requests.length, 1);
+    assert.equal(saved.snapshot.usage.modelCalls, 1);
+  }
+});
 test('Studio Host assembles local Memory PreCompact against original admitted user inputs and actual SQLite facts', async t => {
   const fixture = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
     write: { mode: 'candidate', flushBeforeCompaction: true, flushAfterTurn: false } },

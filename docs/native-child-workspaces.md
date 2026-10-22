@@ -12,4 +12,14 @@ Native 子任务文件工作区已接入 Studio Host。父 Agent 显式绑定的
 
 后续受控合并验证：Node 26 和 Node 22 各 77 项相关测试通过（合并端口 8、Studio 子任务 Host 37、网关 32）。真实进程在发布文件之后、返回 ToolResult/提交凭证之前退出，重开数据库等待原 lease 到期后进入 `interrupted`，原 effect 记录 uncertain，重复发布次数为零。另一组实际 Host 两轮对话证明：第一轮的子任务由第二轮父 Run 发布，随后子任务续跑修改文件，仍从第二轮的原始 committed 凭证还原增量基线；额外 SQLite 连接重开读取同样成功。日志位于本地进度目录的 `child-merge-final-node26.log`、`child-merge-final-node22.log`。
 
-尚未完成：活跃写子任务的完整 Host 进程退出冷恢复、Skills/MCP 继承及端到端安装验收。合并只由显式工具调用触发，读取历史不会发布文件。隔离目录限制 SDK 文件工具的读写范围，不能作为任意宿主命令的操作系统沙箱；文件发布也不提供跨文件原子事务。
+活跃写子任务的完整 Host 冷恢复已另行验证：`scripts/verify-studio-native-child-write-recovery.mjs` 解包实际 Studio 包，使用固定维护版 DSH SDK、真实 `mountStudioHost`、注册工具、AgentStore、SQLite 和 SessionController。子任务写入自己的隔离目录后，父子模型请求均已发出且未返回，宿主以 exit37 退出，不执行清理。等待原租约自然到期，启动新宿主，通过鉴权恢复 RPC 接回原父子 Run，保留原配置、Session 事件前缀和隔离绑定，最后只发布一次文件。重复恢复请求不增加模型调用。父子丢失的推理尝试均保留 uncertain 回执和用量不完整诊断；子任务工具执行次数仍为 1。
+
+Node 26.5.0、22.19.0 均通过这条打包验证；相关 Host/模型模块各 114 项定向测试通过。原有打包只读子任务的两轮执行、宿主重启、同子 Session 续跑和历史查询也通过。重启时的模型配置按核心 `configure()` 的默认值归一化后核对，避免把已持久化的默认重试字段误判为配置漂移。实际命令为：
+
+```sh
+node scripts/verify-studio-native-child-write-recovery.mjs --source .artifacts/dsh-native-numeric --archive .artifacts/native-migration/kingsoftcloud-agentkit-studio-0.0.2.tgz --keep
+```
+
+当前 Host 只对其普通 HTTP 推理绑定启用 `pure-inference/v1`：受支持的 OpenAI Chat、Responses 或 Anthropic 协议，且模型扩展参数为空。工具调用由模型提出，由 Native 本地调度；模型请求本身不能执行 Studio 工具。带扩展参数的配置保留 `manual`，不将未知提供方行为自动重跑。推理重试仍可能产生额外计费，丢失尝试不会被抹去或视为免费。
+
+尚未完成：Skills/MCP 继承及端到端全新安装验收。此打包验证复用固定本地依赖图，PATH 只提供 Node；不代表全新依赖安装、在线模型或 E2B 验收。合并只由显式工具调用触发，读取历史不会发布文件。隔离目录限制 SDK 文件工具的读写范围，不能作为任意宿主命令的操作系统沙箱；文件发布也不提供跨文件原子事务。

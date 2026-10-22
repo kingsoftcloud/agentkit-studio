@@ -127,6 +127,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         guidancePolicy: 'boundary-guide/v1',
         ...(media.length ? { inputMessages: [{ role: 'user', kind: 'user_input', content: request.task, media }] } : {}),
         instructions: role.instructions, contract, tools: bound.tools,
+        modelRecoveryPolicy: bound.model.modelRecoveryPolicy ?? 'manual',
         ...(isolated ? { hostRecoveryBinding: { childWorkspace: isolated.binding } } : {}),
         hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools,
           ...(isolated ? { childWorkspace: isolated.binding } : {}),
@@ -147,8 +148,14 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         role, existing: true, expectedBinding: configuration.hostRecoveryBinding?.childWorkspace }) : null;
       invariant(!bound?.isolatedWrite || configuration.hostRecoveryBinding?.childWorkspace,
         'studio_native_child_workspace_binding_changed');
+      // configure() fills retry/output defaults before persisting the profile.
+      // Reconstruct the same normalized profile, rather than comparing it to
+      // the Host's deliberately partial input and rejecting every live child.
+      const profile = bound && configure({ profile: bound.model.profile, contract: configuration.contract,
+        hostBindingDigest: configuration.hostBindingDigest }).profile;
       invariant(bound && role && canonical(configuration.tools) === canonical(bound.tools)
-        && canonical(configuration.profile) === canonical(bound.model.profile)
+        && canonical(configuration.profile) === canonical(profile)
+        && configuration.modelRecoveryPolicy === (bound.model.modelRecoveryPolicy ?? 'manual')
         && configuration.hostBindingDigest === hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role,
           profile: bound.model.profile, scope: childScope(role), tools: bound.tools,
           ...(isolated ? { childWorkspace: isolated.binding } : {}),

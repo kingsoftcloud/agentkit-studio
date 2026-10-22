@@ -38,6 +38,16 @@ import { parseModelJson } from '../../../agentkit-harness-core/dist/index.mjs';
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 const DEFAULT_IDLE_MS = 180000;
 
+/** Only the adapter's plain inference request is admitted for cold replay.
+ * Profile extensions can enable provider behavior we cannot prove pure. Keep
+ * those manual until their semantics have an explicit Host admission contract.
+ * A replay remains a new billed attempt; the ledger retains uncertain usage. */
+export function nativeModelRecoveryPolicy({ protocol, parameters = {} } = {}) {
+  return ['openai-chat', 'openai-responses', 'anthropic-messages'].includes(protocol)
+    && parameters !== null && typeof parameters === 'object' && !Array.isArray(parameters)
+    && Object.keys(parameters).length === 0 ? 'pure-inference/v1' : 'manual';
+}
+
 // A response body exceeded maxResponseBytes: terminal, never a truncated final.
 class OverflowError extends Error {
   constructor() { super('response body exceeded maxResponseBytes'); this.name = 'OverflowError'; }

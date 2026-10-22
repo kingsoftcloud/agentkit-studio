@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { canonical, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sqlite-store.mjs';
-import { createNativeModelPort } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
+import { createNativeModelPort, nativeModelRecoveryPolicy } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
 import { createNativeDshTurnExecutor, NATIVE_DSH_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { createNativeChildHistory } from '../../../packages/agentkit-harness/src/native/child-history.mjs';
@@ -185,7 +185,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const modelBinding = (profile, id, boundContext) => {
         const desc = profileDescription(profile), digest = hash(desc);
         const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context });
-        return { supportsImages: desc.input.includes('image'), profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
+        return { supportsImages: desc.input.includes('image'), modelRecoveryPolicy: nativeModelRecoveryPolicy(desc),
+        profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
           compatibilityDigest: digest, ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
           providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,
@@ -270,7 +271,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         taskContractFactory: facts => extendNativeMemoryGoal(facts.goal,
           nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
           { providerRef: memoryProviderRef }),
-        configuration: { profile: parentModel.profile,
+        configuration: { profile: parentModel.profile, modelRecoveryPolicy: parentModel.modelRecoveryPolicy,
         ...(memoryRecall ? { contextSources: [memoryRecall.source] } : {}),
         ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
         hostRecoveryBinding: sealedCapsule,
