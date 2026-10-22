@@ -2,7 +2,7 @@
 // port has no launch, stop, approval or model capability; those are separate
 // durable tool/Host operations. Backend selection never falls back to the env.
 import { BACKGROUND_COMMAND_CONTRACT, backgroundCommandObservation, backgroundCommandRef,
-  commandProbe, canonical, copy, NativeError } from '../../../agentkit-harness-core/dist/index.mjs';
+  commandProbe, canonical, copy, NativeError, BACKGROUND_NOTIFICATION_ADMISSION } from '../../../agentkit-harness-core/dist/index.mjs';
 import { ownedCommandReceipt } from './owned-command.mjs';
 
 const backends = new Set(['local_process', 'e2b']);
@@ -16,6 +16,46 @@ export function createBackgroundCommandPort({ scope, store, readers = {} }) {
     'invalid_background_command_readers');
   return Object.freeze({
     contract: BACKGROUND_COMMAND_CONTRACT,
+    /** Controlled idle admission reads the original receipt, never environment
+     * hints. This method cannot create a turn or mutate the backend. */
+    async observeCompletion(request) {
+      const signal = request.signal;
+      check(signal instanceof AbortSignal, 'background_notification_signal_invalid');
+      const { signal: _, ...body } = request, sealed = canonical(body);
+      let original;
+      const current = () => {
+        signal.throwIfAborted();
+        const { signal: liveSignal, ...live } = request;
+        check(liveSignal === signal && canonical(live) === sealed && same(request.scope, pinnedScope), 'background_notification_request_drift');
+        const source = store.load(pinnedScope, request.sourceRunId), snapshot = source.snapshot;
+        const head = store.sessionHead(pinnedScope, snapshot.sessionId);
+        const ref = backgroundCommandRef(request.ref);
+        check(same(body, { contract: BACKGROUND_NOTIFICATION_ADMISSION, scope: pinnedScope, sourceRunId: snapshot.runId,
+          sessionId: snapshot.sessionId, sourceConfigDigest: snapshot.configDigest, sourceRevision: snapshot.revision,
+          headRunId: head?.runId, ref }) && snapshot.phase === 'completed' && head?.phase === 'completed'
+          && ref.sourceRunId === snapshot.runId && snapshot.backgroundCommands.some(row => same(row.ref, ref) && !row.notified)
+          && head.backgroundCommands.some(row => same(row.ref, ref) && !row.notified), 'background_notification_read_unbound');
+        if (original) check(same(original, source), 'background_notification_read_changed');
+        else original = source;
+        return { ...ownedCommandReceipt({ scope: pinnedScope, store, current: source, ref }), source };
+      };
+      const { ref, backend, source } = current();
+      if (!backend || !bindings[backend]) return backgroundCommandObservation({ ref, status: 'unavailable' });
+      let output;
+      try {
+        output = await bindings[backend]({ scope: copy(pinnedScope), sessionId: source.snapshot.sessionId,
+          runId: source.snapshot.runId, ref: copy(ref), stdoutCursor: 0, stderrCursor: 0, maxBytes: 8192, waitSeconds: 0, signal });
+      } catch {
+        current(); return backgroundCommandObservation({ ref, status: 'unavailable' });
+      }
+      current();
+      if (['starting', 'running'].includes(output?.status)) return null;
+      try {
+        check(output && typeof output === 'object' && !Array.isArray(output), 'invalid_background_command_output');
+        return backgroundCommandObservation({ ...output, ref,
+          outputMayBeTruncated: output.outputMayBeTruncated === true || output.stdoutCursor >= 8192 || output.stderrCursor >= 8192 });
+      } catch { return backgroundCommandObservation({ ref, status: 'unavailable' }); }
+    },
     async observe(request) {
       request.signal.throwIfAborted();
       check(same(request.scope, pinnedScope), 'background_command_scope_mismatch');

@@ -33,6 +33,7 @@ function unique<T>(items: T[], key: (item: T) => string): void {
   invariant(new Set(items.map(key)).size === items.length, 'duplicate_batch_key');
 }
 function immutableIdentity(previous: RunSnapshot, next: RunSnapshot): void {
+  invariant(canonical(previous.backgroundNotification ?? null) === canonical(next.backgroundNotification ?? null), 'run_identity_changed');
   for (const field of ['schemaVersion', 'scope', 'runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId', 'configDigest'] as const) {
     invariant(canonical(previous[field]) === canonical(next[field]), 'run_identity_changed');
   }
@@ -50,16 +51,24 @@ export class TransactionalRunStore implements RunStore {
   constructor(private readonly backend: LedgerBackend) {}
 
   create(configuration: RunConfiguration, snapshot: RunSnapshot): RunSnapshot {
-    return this.backend.update(runKey(snapshot.scope, snapshot.runId), (current, sessionHead) => {
+    return this.createWithStatus(configuration, snapshot).snapshot;
+  }
+  createNotification(configuration: RunConfiguration, snapshot: RunSnapshot): { snapshot: RunSnapshot; created: boolean } {
+    invariant(snapshot.backgroundNotification?.contract === 'agentkit.background-notification-admission/v1', 'invalid_notification_admission');
+    return this.createWithStatus(configuration, snapshot);
+  }
+  private createWithStatus(configuration: RunConfiguration, snapshot: RunSnapshot): { snapshot: RunSnapshot; created: boolean } {
+    return this.backend.update<{ snapshot: RunSnapshot; created: boolean }>(runKey(snapshot.scope, snapshot.runId), (current, sessionHead) => {
       const config = copy(configuration), initial = copy(snapshot);
       if (current) {
         invariant(canonical(current.configuration) === canonical(config)
+          && canonical(current.snapshot.backgroundNotification ?? null) === canonical(initial.backgroundNotification ?? null)
           && current.snapshot.configDigest === initial.configDigest
           && current.snapshot.sessionId === initial.sessionId && current.snapshot.turnId === initial.turnId
           && current.snapshot.buildId === initial.buildId && current.snapshot.parentRunId === initial.parentRunId
           && current.snapshot.taskChainId === initial.taskChainId
           && current.configuration.contract.objective === initial.goal, 'run_creation_conflict');
-        return { record: current, value: copy(current.snapshot) };
+        return { record: current, value: { snapshot: copy(current.snapshot), created: false } };
       }
       invariant(initial.revision === 0 && initial.eventSeq === 0 && initial.phase === 'created'
         && initial.pendingIntent === null, 'invalid_initial_snapshot');
@@ -67,7 +76,7 @@ export class TransactionalRunStore implements RunStore {
       invariant((parent?.runId ?? null) === initial.parentRunId, 'session_head_conflict');
       invariant(!parent || terminal(parent.phase), 'session_already_active');
       return { record: { configuration: config, snapshot: initial, lease: null, fence: 0,
-        events: [], intents: [], receipts: [], commands: [], commits: [], projections: {} }, value: copy(initial) };
+        events: [], intents: [], receipts: [], commands: [], commits: [], projections: {} }, value: { snapshot: copy(initial), created: true } };
     });
   }
   load(scope: RunScope, runId: string): StoredRun { return copy(found(this.backend.get(runKey(scope, runId)))); }

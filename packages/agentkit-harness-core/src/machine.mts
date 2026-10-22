@@ -98,7 +98,10 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
   if (config.limits.maxWallMs !== null && snapshot.activeElapsedMs >= config.limits.maxWallMs) {
     return finalizing(snapshot, 'budget_exhausted', 'execution_budget_exhausted');
   }
-  if (snapshot.phase === 'created') return transition(snapshot, { phase: 'preparing_context' }, [{ kind: 'run.started', payload: { buildId: snapshot.buildId } }]);
+  if (snapshot.phase === 'created') return transition(snapshot, { phase: 'preparing_context' }, [
+    { kind: 'run.started', payload: { buildId: snapshot.buildId } },
+    ...(snapshot.backgroundNotification ? [{ kind: 'background.notification_admitted', payload: { ...snapshot.backgroundNotification } }] : []),
+  ]);
   if (snapshot.phase === 'verifying' && snapshot.browserReobservationRefs?.length) {
     return transition(snapshot, { phase: 'preparing_context', candidate: null, verification: null, preparedContext: null,
       messages: [...snapshot.messages, { role: 'user', kind: 'browser_recovery_observation',

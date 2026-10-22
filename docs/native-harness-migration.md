@@ -387,3 +387,11 @@ Native 工具的 `approval_required` 和原始 `interactionId` 现在通过生�
 `node scripts/verify-studio-node-builtins.mjs --source <已构建维护版 DSH> --archive <Studio.tgz> --keep` 解包真实发布包，启动生产 mountStudioHost，经鉴权接口准入 DSH Native 与 Codex 预设，用真实 SessionController 创建会话，再通过实际 DSH ToolRegistry 执行文件操作。Node 26.5.0 与 22.19.0 均通过：文件读取后编辑、跨会话未读拒绝、路径越界拒绝、Ruff WASM 解析、真实 read-only 策略拒绝、ApprovalService 的一次允许和下一次拒绝、等待审批时取消及迟到允许零写入；pre/post 管线均观察到调用。Host PATH 只包含 Node，Python 路径明确不可用。该验证的审批处于受信任测试轮次内，不发起模型请求；它不代表 Codex CLI/在线模型对话、全新依赖安装或整个旧 builtin 桥已验收。
 
 适配器自身在 Node 26/22 各通过 28 项测试，包含新进程重开、真实共享文件锁等待后的撤权和异步解析关闭；相关 runtime bridge、preset 与适配器三个模块各通过 80 项。没有运行仓库全量测试。
+
+## 后台命令完成通知的受控接纳
+
+核心新增 `agentkit.background-notification-admission/v1`。Host 可通过 `admitBackgroundNotification` 将已完成源 Run 所拥有的后台命令结果，接纳为同一 Session、任务链和 Build 下的新通知 Run。接纳先核实原工具意图、已提交启动回执、正式工具策略及当前会话头部；读取实际启动回执指定的后端，不根据当前环境猜测后端。通知是带类型的不可信数据，不伪造新的用户目标，也不重新启动原命令。
+
+新 Run、原始通知及去重标记在一次 Session 头部 CAS 事务中创建。稳定 Run 标识使重复接纳复用原记录；源 Run 保持终态且不修改。通知继续扣除源任务与已执行通知的模型、工具、后代用量、修复、续接和时间预算，观察耗时也计入剩余时间。原信号、完整观察请求或 Session 头部发生漂移，以及取消、超时、后端仍运行或结果未知时，均不接纳新通知。
+
+新增独立 Node 进程验证在通知事务提交后直接退出，再由新进程重开 SQLite、推进原通知，第三个进程重复恢复不新增模型调用；该测试使用确定性的模型和工具端口。实际后台观察端口另核对原启动回执和后端选择。Store、历史、通知接纳与后台端口四个相关模块在 Node 26.5.0 / 22.19.0 各通过 58 项，无失败或跳过，契约类型检查通过。当前这是接纳和恢复的底层能力，生产 Host 的空闲监听、通知轮次归属与打包端到端唤醒仍待接入和验收。

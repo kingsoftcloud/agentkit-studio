@@ -5,7 +5,7 @@ import { canonical, copy, invariant } from './values.mjs';
 type Identify = (value: unknown) => string;
 const inheritedKinds = new Set(['user_guidance', 'historical_tool_observation',
   'guidance', 'steering', 'user_input', 'dsh_context', 'tool_context', 'host_input',
-  'historical_verification_observation', 'user_document_observation', 'background_child_observation']);
+  'historical_verification_observation', 'user_document_observation', 'background_child_observation', 'background_command_observation']);
 
 /** Imported protocol ids are stable across later turns; observations grant no new execution. */
 export function projectSessionHistory(parent: StoredRun | null, configuration: RunConfiguration, identify: Identify): Message[] {

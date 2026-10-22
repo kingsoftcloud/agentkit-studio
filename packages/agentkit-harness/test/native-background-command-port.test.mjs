@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NativeKernel, MemoryRunStore, emptyUsage, commandProbe, transition } from '../../agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, MemoryRunStore, emptyUsage, commandProbe, transition, admitBackgroundNotification } from '../../agentkit-harness-core/dist/index.mjs';
 import { createBackgroundCommandPort } from '../src/native/background-command-port.mjs';
 import { fixture, scope, digest, tool } from '../../agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
@@ -10,6 +10,27 @@ import { join } from 'node:path';
 
 const launcher = tool({ name: 'run_command', readOnly: false, concurrentSafe: false, backgroundCommandPolicy: 'owned-command-launch/v1' });
 const final = () => ({ kind: 'final_candidate', text: 'Complete', toolCalls: [], usage: emptyUsage() });
+
+test('idle completion admission uses the original receipt-selected backend without executing another command', async t => {
+  const host = await setup(t, { reader: async () => ({ status: 'running' }) });
+  const source = await new NativeKernel({ store: host.store, digest, owner: 'finish-source', now: () => 100, ports: {
+    model: { generate: async () => final() }, background: host.port,
+  } }).runUntilIdle(scope, 'run');
+  assert.equal(source.phase, 'completed');
+  let captured, reads = 0;
+  const port = createBackgroundCommandPort({ scope, store: host.store, readers: { local_process: async request => {
+    reads++; assert.equal(request.runId, 'run'); assert.equal(request.waitSeconds, 0);
+    return { status: 'completed', stdout: 'actual owned handle completion', exitCode: 0 };
+  }, e2b: async () => assert.fail('wrong backend') } });
+  const admitted = await admitBackgroundNotification({ store: host.store, scope, sourceRunId: 'run', taskId: source.backgroundCommands[0].ref.taskId,
+    digest, signal: new AbortController().signal, observe: request => { captured = request; return port.observeCompletion(request); } });
+  assert.equal(admitted.created, true);
+  assert.equal(reads, 1);
+  assert.match(admitted.snapshot.messages.at(-1).content, /actual owned handle completion/);
+  assert.equal(host.store.load(scope, 'run').snapshot.phase, 'completed');
+  await assert.rejects(port.observeCompletion(captured), { code: 'background_notification_read_unbound' });
+  assert.equal(reads, 1, 'already admitted head cannot authorize another external read');
+});
 async function setup(t, { backend = 'sandbox/local_process', reader, status = 'ok', sourceTools = [launcher], store = new MemoryRunStore() } = {}) {
   let launches = 0, calls = 0, paused = false;
   const { config, snapshot } = fixture({ tools: sourceTools, backgroundNotificationPolicy: 'completed-before-model/v1' });

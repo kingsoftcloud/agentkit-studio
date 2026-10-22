@@ -251,6 +251,9 @@ export interface PreparedContext {
   sourceFence?: number;
 }
 export interface RunSnapshot extends RunIdentity {
+  /** Immutable controlled admission of an owned command's completion. */
+  backgroundNotification?: { contract: 'agentkit.background-notification-admission/v1'; sourceRunId: string;
+    taskId: string; requestDigest: string; sourceConfigDigest: string; admissionElapsedMs: number };
   schemaVersion: typeof NATIVE_SCHEMA; configDigest: string; revision: number; eventSeq: number;
   phase: Phase; resumePhase: Phase | null; goal: string; goalRevision: number;
   taskContract: TaskContract | null; taskContractDigest: string | null;
@@ -317,6 +320,7 @@ export interface StoredRun {
 /** All mutations are atomic. Implementations must fence even duplicate commits. */
 export interface RunStore {
   create(configuration: RunConfiguration, snapshot: RunSnapshot): RunSnapshot;
+  createNotification(configuration: RunConfiguration, snapshot: RunSnapshot): { snapshot: RunSnapshot; created: boolean };
   load(scope: RunScope, runId: string): StoredRun;
   list(scope: RunScope, sessionId?: string): RunSnapshot[];
   sessionHead(scope: RunScope, sessionId: string): RunSnapshot | null;
