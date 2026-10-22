@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "649c4617f0865f6309345814b99bd82a71761dab",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
-  "tree": "dcd76e7d2845c1629596790cf785dd93542af388",
-  "sourceSha256": "16fddf257c3823a852f4a58af41d9ca71736172f1adac59a1b1c1f0064344996",
+  "headCommit": "3596ee104ee64ca2bed0b85f0e8467c7d4000b2a",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-12",
+  "tree": "caab366b5220ec207003dd5e1d0252e986d1ac59",
+  "sourceSha256": "740dd754a7e61dfd27c73034a47470ac5a158ac1756eaeab8355a56537cba48e",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "5af0451576043918681c39b5281e89f0211f3a82f6b08f728e3f3dc5f56a60fa"
+    "sha256": "70827a0b5759c06111791119e60b0361675ce02692c8a1127f5bb733447e9856"
   },
   "commits": [
     {
@@ -256,6 +256,18 @@
       "file": "048-isolated-native-browser.patch",
       "commit": "649c4617f0865f6309345814b99bd82a71761dab",
       "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611"
+    },
+    {
+      "id": "049",
+      "file": "049-flock-libc-report-network.patch",
+      "commit": "df9409cca9c98c10018081db348884723f924dd7",
+      "sha256": "5308b85d6836a2feecdd05168e990d6273032d9dcd03c9ca19a17cc0afd70d05"
+    },
+    {
+      "id": "050",
+      "file": "050-maintenance-source-validation.patch",
+      "commit": "3596ee104ee64ca2bed0b85f0e8467c7d4000b2a",
+      "sha256": "03f58fa416958357f5b22aa8b32509704028f5f582a31103b0ef13839c9e64f8"
     }
   ]
 }

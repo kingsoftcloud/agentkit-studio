@@ -102,6 +102,97 @@ test('loopback proxy authenticates, pins model and credential, and closes after 
   await assert.rejects(fetch(url));
 });
 
+test('Responses proxy forwards the first SSE bytes before completion and preserves the wire', async () => {
+  const first = 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"first"}\n\n';
+  const last = 'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_kept"}}\n\n';
+  let finish, requests = 0;
+  const proxy = await createCodexModelProxy({ profile: { ...profile, api: 'responses' }, fetchImpl: async url => {
+    assert.equal(url, 'https://chat.example/v1/responses');
+    requests++;
+    return new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode(first));
+      finish = () => { controller.enqueue(new TextEncoder().encode(last)); controller.close(); };
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  } });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` }, body: '{"input":"hi","stream":true}' });
+    const reader = response.body.getReader();
+    let timer;
+    const chunk = await Promise.race([reader.read(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Error('SSE buffered before completion')), 1000);
+    })]).finally(() => clearTimeout(timer));
+    assert.equal(new TextDecoder().decode(chunk.value), first);
+    finish(); finish = undefined;
+    let wire = first;
+    while (true) { const chunk = await reader.read(); if (chunk.done) break; wire += new TextDecoder().decode(chunk.value); }
+    assert.equal(wire, first + last);
+    assert.equal(requests, 1);
+  } finally { finish?.(); await proxy.close(); }
+});
+
+test('Responses proxy preserves the Codex-selected model when no model was configured', async () => {
+  let body;
+  const proxy = await createCodexModelProxy({ profile: { ...profile, api: 'responses', modelName: undefined }, fetchImpl: async (_url, options) => {
+    body = JSON.parse(options.body);
+    return Response.json({ id: 'resp_original', output: [], model: body.model });
+  } });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` }, body: '{"model":"codex-selected","input":"hi"}' });
+    assert.equal(body.model, 'codex-selected');
+    assert.deepEqual(await response.json(), { id: 'resp_original', output: [], model: 'codex-selected' });
+  } finally { await proxy.close(); }
+});
+
+test('Responses proxy permits an active stream longer than the silence deadline', async () => {
+  const chunks = Array.from({ length: 6 }, (_, index) => `data: {"index":${index}}\n\n`);
+  let interval, aborted = false;
+  const proxy = await createCodexModelProxy({ profile: { ...profile, api: 'responses' }, idleTimeoutMs: 50,
+    fetchImpl: async (_url, { signal }) => new Response(new ReadableStream({ start(controller) {
+      let index = 0;
+      interval = setInterval(() => {
+        controller.enqueue(new TextEncoder().encode(chunks[index++]));
+        if (index === chunks.length) { clearInterval(interval); controller.close(); }
+      }, 20);
+      signal.addEventListener('abort', () => { aborted = true; clearInterval(interval); controller.error(signal.reason); }, { once: true });
+    } }), { headers: { 'Content-Type': 'text/event-stream' } }),
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` }, body: '{"input":"hi","stream":true}', signal: AbortSignal.timeout(1000) });
+    assert.equal(await response.text(), chunks.join(''));
+    assert.equal(aborted, false);
+  } finally { clearInterval(interval); await proxy.close(); }
+});
+
+test('Responses proxy aborts upstream silence both before headers and after the first frame', async () => {
+  for (const afterHeaders of [false, true]) {
+    let upstreamAborted = false;
+    const proxy = await createCodexModelProxy({ profile: { ...profile, api: 'responses' }, idleTimeoutMs: 30,
+      fetchImpl: async (_url, { signal }) => {
+        if (!afterHeaders) return new Promise((_resolve, reject) => signal.addEventListener('abort', () => {
+          upstreamAborted = true; reject(signal.reason);
+        }, { once: true }));
+        return new Response(new ReadableStream({ start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"partial":true}\n\n'));
+          signal.addEventListener('abort', () => { upstreamAborted = true; controller.error(signal.reason); }, { once: true });
+        } }), { headers: { 'Content-Type': 'text/event-stream' } });
+      },
+    });
+    try {
+      const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+        headers: { Authorization: `Bearer ${proxy.apiKey}` }, body: '{"input":"hi","stream":true}', signal: AbortSignal.timeout(400) });
+      const wire = await response.text();
+      assert.equal(upstreamAborted, true);
+      assert.match(wire, /MODEL_PROXY_FAILED/);
+      assert.doesNotMatch(wire, /response.completed/);
+      if (afterHeaders) assert.match(wire, /"partial":true/);
+      else assert.equal(response.status, 502);
+    } finally { await proxy.close(); }
+  }
+});
+
 test('EOF without a completion marker is an error, not a successful Responses result', async () => {
   const proxy = await createCodexModelProxy({ profile, fetchImpl: async () => new Response('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n', { headers: { 'Content-Type': 'text/event-stream' } }) });
   try {

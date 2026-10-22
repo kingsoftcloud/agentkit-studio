@@ -35,6 +35,15 @@ test('disabled and colliding provider routes cannot redirect a Codex credential'
   await assert.rejects(resolveConfiguredCodexModel({ provider: 'agentkit-studio-a', model: 'same-model' }, models), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' });
 });
 
+test('an explicit configured Codex API reaches the runtime without changing its credential route', async () => {
+  const { models, profiles } = services();
+  for (const api of ['responses', 'chat-completions']) {
+    profiles[1].codexApi = api;
+    const selection = await resolveConfiguredCodexModel({ provider: 'agentkit-studio-b', model: 'same-model' }, models);
+    assert.deepEqual(selection.modelProvider, { baseUrl: 'https://b.example/v1', apiKey: 'key-b', api });
+  }
+});
+
 test('gateway-bound Codex admission does not require the native account catalog', async () => {
   const { models } = services();
   const catalog = { list: () => { throw new Error('should not read native account'); } };

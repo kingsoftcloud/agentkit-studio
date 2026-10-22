@@ -38,6 +38,20 @@ test('public surface audit allows a tracked file deleted from the working tree',
   assert.deepEqual(hits, []);
 });
 
+test('current and historical negative fixtures allow only reviewed synthetic URL credentials', () => {
+  for (const historical of [false, true]) {
+    for (const [host, password] of [['example.test', 'fixture-secret'], ['fixture.test', 'password']]) {
+      const fixture = ['https://user:', `${password}@${host}/mcp`].join('');
+      assert.deepEqual(auditText('tests/fixtures/input.json', buffer(fixture), { historical }), []);
+      assert.ok(auditText('src/input.mjs', buffer(fixture), { historical }).some(hit => hit.kind === 'embedded-url-credential'));
+    }
+    for (const fixture of [
+      ['https://user:', 'unknown-credential@example.test/'].join(''),
+      ['https://user:', 'password@production.test/'].join(''),
+    ]) assert.ok(auditText('tests/fixtures/input.json', buffer(fixture), { historical }).some(hit => hit.kind === 'embedded-url-credential'));
+  }
+});
+
 test('public surface audit scans every tracked text file for high-confidence private material', () => {
   assert.deepEqual(auditPath('src/credentials.mjs'), []);
   const token = ['ghp_', '123456789012345678901234567890'].join('');

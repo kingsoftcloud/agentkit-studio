@@ -6,13 +6,76 @@ import { observeNativeRun } from '../src/frozen-build-runtime.mjs';
 
 const token = 'runtime-test-token-with-at-least-24-characters';
 const buildId = 'build_0123456789abcdef0123';
-async function setup(t, runner) {
-  const server = await startBuildRuntimeHttp({ agentId: 'ar-local-test', buildId, token, runner, port: 0 });
+async function setup(t, runner, options = {}) {
+  const server = await startBuildRuntimeHttp({ agentId: 'ar-local-test', buildId, token, runner, port: 0, ...options });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address.port}`;
   const post = (value, path = '/runs', headers = {}) => fetch(base + path, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...headers }, body: JSON.stringify(value) });
   return { base, post };
 }
+
+test('runtime logs correlate a streamed run without delaying deltas or exposing content', async t => {
+  const logs = [];
+  let finish;
+  const gate = new Promise(resolve => { finish = resolve; });
+  const { post } = await setup(t, async request => {
+    request.onFrame({ kind: 'assistant', value: { type: 'chunk', chunk: { type: 'text-delta', text: 'private-answer' } } });
+    await gate;
+    return { output: 'private-answer' };
+  }, { runLog: entry => logs.push(entry) });
+  t.after(() => finish());
+  const response = await post({ input: 'private-prompt', sessionId: 'session-log', requestId: 'invocation-log', stream: true });
+  const events = readSse(response.body)[Symbol.asyncIterator]();
+  await events.next();
+  assert.equal((await events.next()).value.chunk.text, 'private-answer');
+  assert.deepEqual(logs.map(entry => entry.event), ['runtime.run.started']);
+  finish();
+  await events.next();
+  assert.equal((await events.next()).done, true);
+  assert.deepEqual(logs.map(entry => entry.event), ['runtime.run.started', 'runtime.run.completed']);
+  for (const entry of logs) {
+    assert.equal(entry.agentId, 'ar-local-test');
+    assert.equal(entry.buildId, buildId);
+    assert.equal(entry.sessionId, 'session-log');
+    assert.equal(entry.invocationId, 'invocation-log');
+    assert.match(entry.runId, /^run_/);
+    assert.ok(Number.isFinite(Date.parse(entry.at)));
+  }
+  assert.ok(logs[1].durationMs >= 0);
+  assert(!JSON.stringify(logs).includes('private-'));
+  assert(!JSON.stringify(logs).includes(token));
+});
+
+test('failed and cancelled runs log a single safe terminal outcome', async t => {
+  for (const cancelled of [false, true]) {
+    const logs = [];
+    const { post } = await setup(t, request => {
+      if (!cancelled) throw new Error('private-upstream-token and raw response');
+      return new Promise((resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
+    }, { runLog: entry => logs.push(entry) });
+    const response = await post({ input: 'private-prompt', requestId: 'outcome-log', stream: true });
+    const events = readSse(response.body)[Symbol.asyncIterator]();
+    const first = (await events.next()).value;
+    if (cancelled) assert.equal((await post({}, `/runs/${first.runId}/cancel`)).status, 202);
+    await events.next();
+    assert.equal((await events.next()).done, true);
+    assert.deepEqual(logs.map(entry => entry.event),
+      ['runtime.run.started', cancelled ? 'runtime.run.cancelled' : 'runtime.run.failed']);
+    assert.equal(logs[1].code, cancelled ? 'RUNTIME_CANCELLED' : 'RUNTIME_RUN_FAILED');
+    assert(!JSON.stringify(logs).includes('private-'));
+  }
+});
+
+test('a failed log sink cannot fail or repeat a successful run', async t => {
+  let runs = 0, attempts = 0;
+  const { post } = await setup(t, async () => { runs++; return { output: 'ok' }; },
+    { runLog: () => { attempts++; throw Error('fixture log sink unavailable'); } });
+  const response = await post({ input: 'hello', requestId: 'sink-failure' });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).output, 'ok');
+  assert.equal(runs, 1);
+  assert.equal(attempts, 2);
+});
 
 test('HTTP authentication, scope and malformed input cannot start a run', async t => {
   let calls = 0;

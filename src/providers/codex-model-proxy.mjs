@@ -1,13 +1,13 @@
-/** Turn-scoped, authenticated loopback adapter for Chat-Completions-only models. */
+/** Turn-scoped, authenticated loopback transport for explicitly configured model APIs. */
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createModelProxyHandler } from '../model-proxy-handler.mjs';
 
-export async function createCodexModelProxy({ profile, fetchImpl, onRequestMetrics }) {
+export async function createCodexModelProxy({ profile, fetchImpl, onRequestMetrics, idleTimeoutMs }) {
   const token = randomBytes(32).toString('hex');
   const authorization = Buffer.from(`Bearer ${token}`);
   const handler = createModelProxyHandler({
-    codexTools: true, fetchImpl, onRequestMetrics,
+    codexTools: true, fetchImpl, onRequestMetrics, idleTimeoutMs, upstreamApi: profile.api || 'chat-completions',
     models: { profile: async id => {
       if (id !== 'bound') throw Object.assign(new Error('模型路由不存在'), { code: 'MODEL_NOT_FOUND', status: 404 });
       return profile;

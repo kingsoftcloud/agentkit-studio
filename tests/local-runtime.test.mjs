@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { createLocalConversationHandler, prepareLocalResourceContext } from '../src/local-runtime.mjs';
+import { createLocalConversationHandler, prepareLocalResourceContext, writeBoundMemory } from '../src/local-runtime.mjs';
 
 test('memory context explains Host persistence and does not promise writes in read-only mode', async () => {
   const memory = { config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } };
@@ -139,6 +139,33 @@ test('local runtime executes bound MCP tools and records a local trace', async (
     ['tool.completed', 'search'],
   ]);
   assert.ok(traces[0].events.some(event => event.event_type === 'turn.text'));
+});
+
+test('local Harness cancellation during a bound MCP tool records a cancelled terminal without another model call', async () => {
+  const controller = new AbortController(), traces = [], response = responseSink();
+  let requests = 0;
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: { bindings: { mcpServers: ['pending-mcp'] } } }) }),
+    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'synthetic', modelName: 'fixture' }) },
+    resourceAdapter: {
+      listMcpTools: async () => [{ name: 'pending_tool', inputSchema: { type: 'object' } }],
+      callMcpTool: async (_binding, _name, _args, options) => {
+        assert.ok(options?.signal instanceof AbortSignal);
+        controller.abort();
+        options.signal.throwIfAborted();
+      },
+    },
+    observability: { syncTrace: async record => traces.push(record) },
+    fetchImpl: async () => {
+      requests++;
+      return new Response('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"pending-call","type":"function","function":{"name":"pending_tool","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  await handler(Readable.from([JSON.stringify({ agentId: 'agent', sessionId: 'pending-session', input: 'Run the bound tool' })]), response, { signal: controller.signal });
+  assert.equal(traces[0].status, 'canceled');
+  assert.equal(traces[0].events.at(-1).event_type, 'run.canceled');
+  assert.doesNotMatch(response.chunks.join(''), /run\.completed|run\.failed/);
+  assert.equal(requests, 1);
 });
 
 test('local runtime hands native DSH MCP calls back to the loop without executing them', async () => {
@@ -378,6 +405,36 @@ test('explicit-only memory distinguishes save commands from recall questions and
   ]) {
     const prepared = await prepareLocalResourceContext({ record, input, resourceAdapter, resourceMode: 'context-only' });
     assert.equal(prepared.memoryWrite, expected, input);
+  }
+});
+
+test('object-first memory save requests flush the completed turn without flushing questions', async () => {
+  const binding = { config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } };
+  const record = { spec: { memory: { enabled: true, write: { mode: 'explicit_only' } }, bindings: { plugins: [binding] } } };
+  for (const [input, explicit] of [
+    ['请把以下我的长期偏好保存到已绑定记忆库：我的数字员工验收项目的偏好代号是 DE-MEMORY-test。', true],
+    ['把我的偏好写入长期记忆库：使用简短回答。', true],
+    ['请帮我把这条信息存入已绑定的记忆库：项目代号是 FIR。', true],
+    ['请不要把我的偏好保存到记忆库。', false],
+    ['请把我的偏好不要保存到记忆库。', false],
+    ['请把这条信息如果用户同意再保存到记忆库。', false],
+    ['把我的偏好保存到记忆库了吗？', false],
+    ['能否把我的偏好保存到记忆库？', false],
+    ['如何把这条信息保存到记忆库？', false],
+    ['我之前让你把我的偏好保存到记忆库，现在是什么？', false],
+    ['请把“保存到记忆库”这句话翻译成英文。', false],
+    ['请把我的偏好保存到文件里。', false],
+  ]) {
+    let written;
+    const resourceAdapter = { searchMemory: async () => [], writeMemory: async (...args) => {
+      written = args; return { accepted: true };
+    } };
+    const prepared = await prepareLocalResourceContext({ record, input, resourceAdapter, resourceMode: 'context-only' });
+    assert.equal(prepared.memoryWrite, explicit, input);
+    await writeBoundMemory({ binding, resourceAdapter, input, assistantText: '本轮结束后按配置提交。',
+      userId: 'employee-1', sessionId: 'session-1', agentId: 'agent-1' });
+    assert.equal(written[3].flush, explicit, input);
+    assert.equal(written[2][0].content, input, 'the complete user fact must remain unchanged');
   }
 });
 

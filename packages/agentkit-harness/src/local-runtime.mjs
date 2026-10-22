@@ -29,6 +29,23 @@ function bindingIds(bindings, key) {
   return values.map(value => typeof value === 'string' ? value : value?.resourceId || value?.id).filter(Boolean).map(String);
 }
 
+/** One ordered resource set for preset admission and all three executors. */
+export function boundSkillResources(bindings = {}) {
+  const resources = bindingIds(bindings, 'skills').map(resourceId => ({ kind: 'skill', resourceId }));
+  for (const plugin of Array.isArray(bindings.plugins) ? bindings.plugins : []) {
+    const resource = plugin?.config?.binding?.resource;
+    if (plugin.enabled === false || resource?.kind !== 'skill-space') continue;
+    const resourceId = resource.id || resource.resourceId;
+    if (resourceId) resources.push({ kind: 'skill-space', resourceId: String(resourceId) });
+  }
+  const seen = new Set();
+  return resources.filter(({ resourceId }) => {
+    if (seen.has(resourceId)) return false;
+    seen.add(resourceId);
+    return true;
+  });
+}
+
 function extractText(value) {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(extractText).filter(Boolean).join('\n');
@@ -126,8 +143,13 @@ function explicitMemoryIntent(input) {
   // Only a direct imperative opts into writing. A recall question such as
   // “我之前要求记住的代号是什么” must not become another memory write.
   const text = String(input || '');
+  // Object-first commands are equally explicit. Limit recognition to a
+  // direct imperative with a memory destination, excluding quoted requests,
+  // questions, conditions and negations in the object phrase.
+  const objectFirst = /(?:^|[。.!！;；\n:：])\s*(?:(?:请帮我|请|帮我|麻烦你?)\s*)?把((?:以下|这(?:一)?条|这(?:个|些)|我的)[^。.!！;；\n:：?？“”"'「」『』]{0,160}?)(?:保存|写入|存入)(?:到|进)?(?:已绑定的?|绑定的?)?(?:长期)?记忆库\s*(?:[:：，,。.!！]|$)/.exec(text);
   return /(?:^|[。.!！;；\n:：])\s*(?:(?:请帮我|请|帮我|麻烦你?)\s*)?(?:记住|记下|别忘了)(?!了吗|什么|过)/.test(text)
     || /(?:^|[。.!！;；\n:：])\s*(?:(?:请帮我|请|帮我|麻烦你?)\s*)?(?:明确\s*)?(?:保存|写入|存入)(?:这(?:一)?条(?:信息|内容|记录)?|以下(?:信息|内容)?)?\s*(?:到|进)?\s*(?:长期记忆(?:库)?|记忆库)\s*(?:[:：，,。.!！]|$)/.test(text)
+    || Boolean(objectFirst && !/不要|别|勿|是否|能否|如何|如果/.test(objectFirst[1]))
     || /(?:^|[。.!！;；\n:：])\s*(?:please\s+)?remember(?:\s+that)?\s+(?!what\b|when\b|how\b|whether\b|if\b)/i.test(text);
 }
 
@@ -193,12 +215,11 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   const contextOnly = resourceMode === 'context-only';
   const toolsOnly = resourceMode === 'tools-only';
   const bindings = toolsOnly ? (record?.spec?.bindings || record?.bindings || {}) : promptOnly ? {} : record?.spec?.bindings || record?.bindings || {};
-  const skillIds = bindingIds(bindings, 'skills');
+  const skillResources = boundSkillResources(bindings);
   const knowledge = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'knowledge-base');
   const memory = record?.spec?.memory?.enabled === false ? null : memoryBinding(bindings);
-  const skillSpace = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'skill-space');
   const toolIds = boundToolIds(bindings.tools);
-  if ((skillIds.length || knowledge || memory || skillSpace || (Array.isArray(bindings.mcpServers) && bindings.mcpServers.length)) && !resourceAdapter) {
+  if ((skillResources.length || knowledge || memory || (Array.isArray(bindings.mcpServers) && bindings.mcpServers.length)) && !resourceAdapter) {
     throw new LocalRuntimeError('RESOURCE_ADAPTER_MISSING', '该 Agent 绑定了资源，但本地资源适配器未启用');
   }
   if (toolIds.length && !toolAdapter) {
@@ -208,14 +229,9 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   if (!toolsOnly && record?.spec?.memory?.enabled === false && memoryBinding(bindings)) {
     resourceContext += '\n\nMemory binding contract: 当前 Agent 的跨会话长期记忆已关闭。Host 本轮没有查询记忆库，也不会写入记忆库；下面即使有 Knowledge，也只属于知识库检索，不能据此声称长期记忆已启用或已召回。\n';
   }
-  if (!toolsOnly && skillIds.length) {
-    const skills = await Promise.all(skillIds.map(id => checkedResource({ kind: 'skill', resourceId: id, action: 'load', agent, onResource }, () => resourceAdapter.loadSkill(id))));
-    resourceContext += skills.filter(Boolean).map(skill => `Skill ${skill.name || ''}:\n${formatSkillContext(skill, { indexOnly: record?.spec?.runtime?.type === 'codex' })}`).join('\n\n');
-  }
-  if (!toolsOnly && skillSpace) {
-    const resourceId = skillSpace.config.binding.resource.id || skillSpace.config.binding.resource.resourceId;
-    const skill = await checkedResource({ kind: 'skill-space', resourceId, action: 'load', agent, onResource }, () => resourceAdapter.loadSkill(resourceId));
-    if (skill) resourceContext += `\n\n${formatSkillContext(skill, { limit: 24000, indexOnly: record?.spec?.runtime?.type === 'codex' })}`;
+  if (!toolsOnly) for (const { kind, resourceId } of skillResources) {
+    const skill = await checkedResource({ kind, resourceId, action: 'load', agent, onResource }, () => resourceAdapter.loadSkill(resourceId));
+    if (skill) resourceContext += `\n\n${kind === 'skill' ? `Skill ${skill.name || ''}:\n` : ''}${formatSkillContext(skill, { limit: 24000, indexOnly: record?.spec?.runtime?.type === 'codex' })}`;
   }
   if (!toolsOnly && knowledge) {
     const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;
@@ -502,7 +518,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
           try {
             result = tool._source === 'dsh'
               ? await toolAdapter.callTool(call.name, args, { callId: call.id, signal, agent })
-              : await resourceAdapter.callMcpTool(tool._resourceId, call.name, args);
+              : await resourceAdapter.callMcpTool(tool._resourceId, call.name, args, { signal });
           } catch (error) {
             noteTrace('tool.failed', { name: call.name, code: String(error?.code || 'MCP_TOOL_FAILED') });
             throw error;

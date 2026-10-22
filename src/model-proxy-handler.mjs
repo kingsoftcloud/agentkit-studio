@@ -5,48 +5,65 @@ import { randomUUID } from 'node:crypto';
 import { responsesToChat, chatToResponses, createResponsesStreamTransformer } from './model-proxy.mjs';
 import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
+import { createModelIdleDeadline } from '../packages/agentkit-harness/src/model-idle-deadline.mjs';
 
-export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics }) {
+export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics, upstreamApi = 'chat-completions', idleTimeoutMs = 120000 }) {
+  if (!['chat-completions', 'responses'].includes(upstreamApi)) throw new TypeError('Unsupported model proxy API');
   return async (request, response) => {
     const admission = admit(request);
     if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(); return; }
     const match = /^\/agentkit\/models\/([^/]+)\/v1\/(responses|chat\/completions)$/.exec(new URL(request.url, 'http://localhost').pathname);
-    if (request.method !== 'POST' || !match) { response.writeHead(404); response.end(); return; }
+    if (request.method !== 'POST' || !match || (upstreamApi === 'responses' && match[2] !== 'responses')) { response.writeHead(404); response.end(); return; }
     const controller = new AbortController();
     const disconnect = () => { if (!response.writableEnded) controller.abort(); };
     response.on('close', disconnect);
-    const timer = setTimeout(() => controller.abort(), 120000);
+    const deadline = createModelIdleDeadline({ signal: controller.signal, timeoutMs: idleTimeoutMs });
     try {
       const chunks = []; let size = 0;
       for await (const chunk of request) {
         size += chunk.length;
         if (size > 16 * 1024 * 1024) throw Object.assign(new Error('模型请求超出大小限制'), { status: 413, code: 'REQUEST_TOO_LARGE' });
         chunks.push(chunk);
+        deadline.touch();
       }
       const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       const profile = await models.profile(decodeURIComponent(match[1]));
-      const convert = match[2] === 'responses';
+      const nativeResponses = upstreamApi === 'responses';
+      const convert = match[2] === 'responses' && !nativeResponses;
       if (convert && input.previous_response_id) throw Object.assign(new Error('请传入完整对话历史；此兼容端点不保存远端 Response ID'), { status: 400, code: 'STATELESS_INPUT_REQUIRED' });
       const toolContext = convert && codexTools ? prepareCodexProxyRequest(input) : undefined;
       const body = convert ? responsesToChat(toolContext?.request || input) : input;
+      // Codex serializes an absent reasoning body as null. Some Responses
+      // providers reject that optional field instead of treating it as absent.
+      // Preserve summaries, encrypted content, message phases and tool items.
+      if (nativeResponses && Array.isArray(body.input)) {
+        body.input = body.input.map(item => {
+          if (item?.type !== 'reasoning' || item.content !== null) return item;
+          const { content: _absent, ...reasoning } = item;
+          return reasoning;
+        });
+      }
       // A route represents exactly one configured model. Callers choose a
       // different profile route to use a different model/credential pair.
-      body.model = profile.modelName;
-      if (body.stream) body.stream_options = { ...body.stream_options, include_usage: true };
+      // An unbound native Codex provider may let Codex select its default model.
+      if (!nativeResponses || profile.modelName) body.model = profile.modelName;
+      if (body.stream && !nativeResponses) body.stream_options = { ...body.stream_options, include_usage: true };
       const serialized = JSON.stringify(body);
       if (onRequestMetrics) {
         const chars = value => JSON.stringify(value).length;
-        const messages = Array.isArray(body.messages) ? body.messages : [];
-        onRequestMetrics({ requestId: randomUUID(), protocol: 'chat-completions', model: profile.modelName,
+        const items = nativeResponses ? body.input : body.messages;
+        const messages = Array.isArray(items) ? items : typeof items === 'string' ? [{ role: 'user', content: items }] : [];
+        onRequestMetrics({ requestId: randomUUID(), protocol: upstreamApi, model: body.model,
           requestChars: serialized.length, requestBytes: Buffer.byteLength(serialized),
           toolCount: body.tools?.length || 0, toolsChars: body.tools ? chars(body.tools) : 0, messagesChars: chars(messages),
-          instructionsChars: messages.filter(message => ['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0),
+          instructionsChars: (body.instructions ? chars(body.instructions) : 0) + messages.filter(message => ['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0),
           conversationChars: messages.filter(message => !['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0) });
       }
-      const upstream = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
+      const upstream = await fetchImpl(`${profile.baseUrl}/${nativeResponses ? 'responses' : 'chat/completions'}`, {
         method: 'POST', headers: { Authorization: `Bearer ${profile.apiKey}`, 'Content-Type': 'application/json' },
-        body: serialized, signal: controller.signal, redirect: 'error',
+        body: serialized, signal: deadline.signal, redirect: 'error',
       });
+      deadline.touch();
       if (!upstream.ok) {
         await upstream.body?.cancel();
         throw Object.assign(new Error(`模型服务返回 ${upstream.status}`), { status: upstream.status, code: 'MODEL_UPSTREAM_ERROR' });
@@ -58,12 +75,12 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
         return;
       }
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
-      const write = async data => { if (data && !response.write(data)) await once(response, 'drain', { signal: controller.signal }); };
-      if (!convert) { for await (const bytes of upstream.body) await write(bytes); }
+      const write = async data => { if (data && !response.write(data)) await once(response, 'drain', { signal: deadline.signal }); };
+      if (!convert) { for await (const bytes of upstream.body) { deadline.touch(); await write(bytes); } }
       else {
         const transformer = createResponsesStreamTransformer({ model: profile.modelName, toolContext });
         let done = false;
-        for await (const chunk of readSse(upstream.body, { onDone: () => { done = true; } })) await write(transformer.handle(chunk));
+        for await (const chunk of readSse(upstream.body, { onChunk: deadline.touch, onDone: () => { done = true; } })) await write(transformer.handle(chunk));
         // Some compatible gateways omit `choices[*].finish_reason` on the
         // final usage-only chunk and signal completion with [DONE]. The SSE
         // parser already consumed that sentinel, so the transformer closes
@@ -82,6 +99,6 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
         response.writeHead(error.status || (code === 'INVALID_JSON' || code === 'UNSUPPORTED_TOOL_TYPE' ? 400 : 502), { 'Content-Type': 'application/json' });
         response.end(JSON.stringify(value));
       } else response.end(`event: error\ndata: ${JSON.stringify({ type: 'error', ...value.error })}\n\n`);
-    } finally { clearTimeout(timer); response.off('close', disconnect); }
+    } finally { deadline.dispose(); response.off('close', disconnect); }
   };
 }
