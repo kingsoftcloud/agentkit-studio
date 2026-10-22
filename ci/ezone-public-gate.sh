@@ -32,15 +32,15 @@ restore_worker_archive() {
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Fetch a dedicated active CI input when a clean/single-branch clone lacks the
 # blobs. Development branch cleanup must not remove the worker's bootstrap tools.
-for object in e40c700f23af7f7043735845d554d79757e750eb 9b8d230e71682849ba86598c03511eafb711fb1f ee8d9651d24c80aad9a90407b9142c1e695dbbef e75c9202b3e056860860953b0540ec8efaefe99a; do
+for object in e40c700f23af7f7043735845d554d79757e750eb e92c48af3ef39355a546a9de88990d0628a0a46d ee8d9651d24c80aad9a90407b9142c1e695dbbef e75c9202b3e056860860953b0540ec8efaefe99a; do
   if ! git -C "$repo_root" cat-file -e "$object^{blob}" 2>/dev/null; then
     git -C "$repo_root" fetch --no-tags origin refs/heads/codex/studio-ci-tool-cache-v1
     break
   fi
 done
 restore_worker_archive "$repo_root/.ci-tools/gitleaks-v8.30.1/gitleaks.tar.gz" e40c700f23af7f7043735845d554d79757e750eb 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-restore_worker_archive "$repo_root/.ci-tools/node-v22.19.0/node.tar.xz" 9b8d230e71682849ba86598c03511eafb711fb1f b2eb68fe2dae8c7a7d27255a4fcff6292179a6089835879932b2641aad0bc9d9
-restore_worker_archive "$repo_root/.ci-tools/node-v22.19.0/node-libs.tar.gz" ee8d9651d24c80aad9a90407b9142c1e695dbbef 127c4a3eab99ab5c48bea474f12d08c80c3590a63892d130e1c02f272b13cb02
+restore_worker_archive "$repo_root/.ci-tools/node-v22.23.4/node.tar.xz" e92c48af3ef39355a546a9de88990d0628a0a46d 701d127e4abaf9c7b168f4bb0fb71b3195d9c2d29eb5ce3ea28e8999c27af8ed
+restore_worker_archive "$repo_root/.ci-tools/node-v22.23.4/node-libs.tar.gz" ee8d9651d24c80aad9a90407b9142c1e695dbbef 127c4a3eab99ab5c48bea474f12d08c80c3590a63892d130e1c02f272b13cb02
 restore_worker_archive "$repo_root/.ci-tools/pnpm-v10.33.2/pnpm.tgz" e75c9202b3e056860860953b0540ec8efaefe99a 7a7bcf13d7f6ceb3946c03978373d99be9fde1cafc3000bdfed4c4f791167610
 
 # Configure the Ezone CI job to run this file for merge requests and master.
@@ -86,18 +86,27 @@ if [[ -z "${GITLEAKS_BIN:-}" ]]; then
 fi
 tool_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/agentkit-tools"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-node_archive="$repo_root/.ci-tools/node-v22.19.0/node.tar.xz"
-node_libs_archive="$repo_root/.ci-tools/node-v22.19.0/node-libs.tar.gz"
+node_archive="$repo_root/.ci-tools/node-v22.23.4/node.tar.xz"
+node_libs_archive="$repo_root/.ci-tools/node-v22.23.4/node-libs.tar.gz"
 pnpm_archive="$repo_root/.ci-tools/pnpm-v10.33.2/pnpm.tgz"
+# Minimum fixed releases: 22.23.4 / 24.22.1 / 26.12.1 (October 2026 security release).
+node_version_ok() {
+  local version major minor patch
+  version="${1#v}"
+  IFS=. read -r major minor patch <<< "$version"
+  case "$major" in
+    22) (( minor > 23 || (minor == 23 && patch >= 4) )) ;;
+    24) (( minor > 22 || (minor == 22 && patch >= 1) )) ;;
+    26) (( minor > 12 || (minor == 12 && patch >= 1) )) ;;
+    *) (( major > 26 )) ;;
+  esac
+}
 node_ok=false
-if command -v node >/dev/null 2>&1; then
-  node_major="$(node --version | awk -F'[v.]' '{print $2}')"
-  [[ "$node_major" =~ ^[0-9]+$ ]] && (( node_major >= 22 )) && node_ok=true
-fi
+if command -v node >/dev/null 2>&1 && node_version_ok "$(node --version 2>/dev/null || true)"; then node_ok=true; fi
 if [[ "$node_ok" != true ]]; then
   if [[ -f "$node_archive" ]]; then
     node_sha="$(sha256_file "$node_archive")"
-    [[ "$node_sha" == 'b2eb68fe2dae8c7a7d27255a4fcff6292179a6089835879932b2641aad0bc9d9' ]] || {
+    [[ "$node_sha" == '701d127e4abaf9c7b168f4bb0fb71b3195d9c2d29eb5ce3ea28e8999c27af8ed' ]] || {
       echo 'Worker-provided Node.js archive checksum mismatch' >&2
       exit 1
     }
@@ -127,9 +136,13 @@ EOF
   elif command -v apk >/dev/null 2>&1; then
     apk add --no-cache nodejs-current npm
   else
-    echo 'Ezone CI requires Node.js 22.19+ and this worker has no bootstrap archive or apk' >&2
+    echo 'Ezone CI requires Node.js 22.23.4+ (or 24.22.1+ / 26.12.1+) and this worker has no bootstrap archive or apk' >&2
     exit 2
   fi
+fi
+if ! node_version_ok "$(node --version)"; then
+  echo "Ezone CI requires Node.js 22.23.4+ (or 24.22.1+ / 26.12.1+); found $(node --version). Update the worker image or the pinned tool cache." >&2
+  exit 2
 fi
 pnpm_ok=false
 if command -v pnpm >/dev/null 2>&1 && [[ "$(pnpm --version 2>/dev/null || true)" == '10.33.2' ]]; then pnpm_ok=true; fi

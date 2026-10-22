@@ -28,7 +28,7 @@ signing and updates.
 
 Requirements:
 
-- Node.js `22.19.0` with development headers
+- Node.js `22.23.4` (or `24.22.1+`) with development headers
 - pnpm `10.33.2`, Corepack, Git, Make, and a native compiler toolchain
 - A checkout of the pinned DSH source tree, kept outside this repository
 

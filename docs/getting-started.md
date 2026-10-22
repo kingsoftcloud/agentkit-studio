@@ -21,7 +21,7 @@ with its channel feed; the version of the plugin package is not the App version.
 
 ## Development
 
-Use Node.js 22.19.0+ (or Node.js 24), pnpm 10.33.2, Git, Make and a native compiler.
+Use Node.js 22.23.4+ (or Node.js 24.22.1+ / 26.12.1+), pnpm 10.33.2, Git, Make and a native compiler.
 Keep the official DSH checkout outside this repository:
 
 ```sh
