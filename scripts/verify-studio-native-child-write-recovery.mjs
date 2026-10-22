@@ -8,27 +8,62 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
-const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' } } });
+const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
+  mcp: { type: 'boolean' }, 'mcp-unknown': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
+assert.ok(!values['mcp-unknown'] || values.mcp, '--mcp-unknown requires --mcp');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-native-child-write-recovery-'));
 console.log(`Studio writing child recovery evidence: ${root}`);
 let harness, recovered = false, parentCalls = 0, childCalls = 0, recoveryStep = 0, originalChildId;
+let remoteEffects = 0;
 const requests = [], failures = [];
+const expectedChildModels = values.mcp ? 4 : 3, expectedChildTools = values.mcp ? 2 : 1;
 const text = 'Original isolated child bytes, written once.\n';
 const server = createServer(async (request, response) => {
   try {
+    if (request.url === '/mcp' && request.method !== 'POST') {
+      response.writeHead(request.method === 'DELETE' ? 200 : 405); response.end(); return;
+    }
     let raw = ''; for await (const part of request) raw += part;
-    const body = JSON.parse(raw); requests.push(body);
+    const body = JSON.parse(raw);
+    if (request.url === '/mcp') {
+      let result;
+      if (body.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} },
+        serverInfo: { name: 'child-proof-mcp', version: '1' } };
+      else if (body.method === 'tools/list') result = { tools: [{ name: 'remote_proof', description: 'Record the agreed proof once on the bound remote service.',
+        inputSchema: { type: 'object', properties: { proof_key: { type: 'string' } }, required: ['proof_key'], additionalProperties: false },
+        outputSchema: { type: 'object', properties: { receipt_id: { type: 'string' }, proof_key: { type: 'string' } },
+          required: ['receipt_id', 'proof_key'], additionalProperties: false } }] };
+      else if (body.method === 'tools/call') {
+        assert.equal(body.params.name, 'remote_proof'); assert.deepEqual(body.params.arguments, { proof_key: 'original-child-effect' });
+        remoteEffects++;
+        await writeFile(join(root, 'remote-effect.json'), JSON.stringify({ count: remoteEffects, proofKey: body.params.arguments.proof_key }));
+        if (values['mcp-unknown']) {
+          if (parentCalls >= 2) await writeFile(join(root, 'crash-requested'), 'Remote effect exists; its response is deliberately withheld.');
+          return; // The independent service survives the Host exit; no receipt reaches the child.
+        }
+        result = { content: [{ type: 'text', text: `Remote effect receipt remote-once-${remoteEffects}` }],
+          structuredContent: { receipt_id: `remote-once-${remoteEffects}`, proof_key: body.params.arguments.proof_key } };
+      } else if (body.method === 'notifications/initialized') { response.writeHead(202); response.end(); return; }
+      else throw Error(`Unexpected MCP method ${body.method}`);
+      response.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'child-proof-session' });
+      response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result })); return;
+    }
+    requests.push(body);
     assert.equal(request.url, '/v1/chat/completions');
     let call, final;
     if (body.model === 'child-proof') {
       childCalls++;
       assert.match(body.messages[0].content, /CHILD_WORKSPACE_WRITER/);
-      assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).sort(), ['read_workspace_file', 'write_workspace_file']);
+      const finalOnly = values.mcp && recovered && childCalls === expectedChildModels;
+      assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).sort(),
+        finalOnly ? [] : ['read_workspace_file', ...(values.mcp ? ['remote_proof'] : []), 'write_workspace_file']);
       if (childCalls === 1) call = { name: 'write_workspace_file', arguments: { path: 'child.txt', content: text } };
+      else if (values.mcp && childCalls === 2) call = { name: 'remote_proof', arguments: { proof_key: 'original-child-effect' } };
       else {
         assert.match(JSON.stringify(body.messages.filter(message => message.role === 'tool')), /child\.txt/);
+        if (values.mcp) assert.match(JSON.stringify(body.messages), /remote-once-1/);
         if (!recovered) {
           if (parentCalls >= 2) await writeFile(join(root, 'crash-requested'), 'The child committed its write and both original models are waiting.');
           return; // Fault injector terminates the real Host while both models wait.
@@ -44,7 +79,8 @@ const server = createServer(async (request, response) => {
       else if (!recovered) {
         originalChildId = [...JSON.stringify(body.messages).matchAll(/native-child-[a-f0-9]{64}/g)].at(-1)?.[0];
         assert.ok(originalChildId);
-        if (childCalls >= 2) await writeFile(join(root, 'crash-requested'), 'The child committed its write and both original models are waiting.');
+        if (values['mcp-unknown'] ? remoteEffects > 0 : childCalls >= expectedChildModels - 1)
+          await writeFile(join(root, 'crash-requested'), 'The child effect exists and the original parent is waiting.');
         return;
       } else {
         assert.match(JSON.stringify(body.messages), new RegExp(originalChildId));
@@ -102,6 +138,8 @@ try {
     '    - id: child-proof-presets', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:', '        default: standard',
     '    - id: child-proof-fixture', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-native-children.mjs')).href)}`,
     '      config:', '        writingRecovery: true', `        directory: ${JSON.stringify(root)}`,
+    ...(values.mcp ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`,
+      `        mcpUnknown: ${Boolean(values['mcp-unknown'])}`] : []),
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`, '',
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
@@ -120,7 +158,16 @@ try {
   assert.equal(parent.childBudgetReservations.length, 1);
   assert.equal(parent.childBudgetReservations[0].childRunId, child.runId);
   assert.equal(childBefore.configuration.childOwnerBinding.parent.runId, parent.runId);
-  assert.equal(child.usage.toolCalls, 1); assert.equal(child.phase, 'requesting_model');
+  assert.equal(child.usage.toolCalls, values['mcp-unknown'] ? 1 : expectedChildTools);
+  assert.equal(child.phase, values['mcp-unknown'] ? 'executing_tools' : 'requesting_model');
+  if (values.mcp) {
+    assert.equal(remoteEffects, 1);
+    const tool = childBefore.configuration.tools.find(tool => tool.name === 'remote_proof');
+    assert.ok(tool && !tool.readOnly && !tool.concurrentSafe);
+    const intent = childBefore.intents.find(intent => intent.kind === 'tool' && intent.payload.calls?.[0]?.name === 'remote_proof');
+    assert.ok(intent);
+    assert.equal(childBefore.receipts.some(receipt => receipt.operationKey === intent.operationKey), !values['mcp-unknown']);
+  }
   assert.equal(parent.phase, 'requesting_model'); assert.equal(crash.events.some(event => event.type === 'turn/end'), false);
   const { createAgentStore } = await import(pathToFileURL(join(installed, 'src/agent-store.mjs')).href);
   const { nativeChildRoles } = await import(pathToFileURL(join(installed, 'src/providers/native-subagents.mjs')).href);
@@ -132,7 +179,9 @@ try {
     expectedBinding: childBefore.configuration.hostRecoveryBinding.childWorkspace });
   assert.equal(await readFile(join(isolation.root, 'child.txt'), 'utf8'), text);
   await assert.rejects(readFile(join(root, 'workspace/child.txt')), { code: 'ENOENT' });
-  console.log('Crash boundary proven: original parent and child Run, committed isolated write, both awaiting models, no parent publication.');
+  console.log(values['mcp-unknown']
+    ? 'Crash boundary proven: original parent/child Run, committed isolated write, remote effect with its response withheld, no parent publication.'
+    : 'Crash boundary proven: original parent and child Run, committed isolated write and any MCP result, both awaiting models, no parent publication.');
   await harness.close(); harness = null;
   // Real wall-clock leases expire naturally; no ledger edits or synthetic clock.
   const leaseDeadline = Math.max(parentBefore.lease?.expiresAt ?? 0, childBefore.lease?.expiresAt ?? 0);
@@ -156,13 +205,41 @@ try {
     await sleep(25);
   }
   assert.deepEqual(failures, []);
-  assert.equal(settled?.value?.state, 'closed', JSON.stringify(settled));
+  assert.equal(settled?.value?.state, values['mcp-unknown'] ? 'reconciliation_required' : 'closed', JSON.stringify(settled));
   const finishedCalls = requests.length;
-  assert.equal((await rpc('sessions/native-recovery-resume', request)).value.state, 'closed');
+  const duplicate = await rpc('sessions/native-recovery-resume', request);
+  if (values['mcp-unknown']) { assert.equal(duplicate.ok, false); assert.equal(duplicate.error.code, 'studio_native_recovery_reconciliation_required'); }
+  else assert.equal(duplicate.value.state, 'closed');
   assert.equal(requests.length, finishedCalls);
   await harness.close(); harness = null;
   const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
   const store = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
+  if (values['mcp-unknown']) {
+    try {
+      const finalParent = store.load(parent.scope, parent.runId), finalChild = store.load(child.scope, child.runId);
+      assert.equal(store.list(parent.scope, parent.sessionId).length, 1);
+      assert.equal(store.list(child.scope, child.sessionId).length, 1);
+      assert.equal(finalParent.snapshot.phase, 'interrupted'); assert.equal(finalChild.snapshot.phase, 'interrupted');
+      assert.deepEqual(finalParent.configuration, parentBefore.configuration);
+      assert.deepEqual(finalChild.configuration, childBefore.configuration);
+      assert.deepEqual(finalChild.events.slice(0, childBefore.events.length), childBefore.events);
+      const intent = finalChild.intents.find(intent => intent.kind === 'tool' && intent.payload.calls?.[0]?.name === 'remote_proof');
+      const receipt = finalChild.receipts.find(receipt => receipt.operationKey === intent.operationKey);
+      assert.equal(receipt?.status, 'uncertain');
+      assert.equal(finalChild.snapshot.usage.toolCalls, 2);
+      assert.equal(childCalls, 2); assert.equal(remoteEffects, 1);
+      const admissions = (await readFile(join(root, 'tool-admissions.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+      assert.equal(admissions.filter(call => call.name === 'remote_proof').length, 1);
+      assert.equal(admissions.filter(call => call.name === 'write_workspace_file').length, 1);
+      assert.equal(admissions.filter(call => call.name === 'native_child_merge').length, 0);
+      assert.equal(await readFile(join(isolation.root, 'child.txt'), 'utf8'), text);
+      await assert.rejects(readFile(join(root, 'workspace/child.txt')), { code: 'ENOENT' });
+      await writeFile(join(root, 'verified.json'), JSON.stringify({ parentRunId: parent.runId, childRunId: child.runId,
+        remoteEffects, childWrites: 1, parentPublications: 0, state: 'reconciliation_required',
+        parentCalls, childCalls, node: process.version }, null, 2));
+      console.log('PASS: packed Host keeps a lost child MCP response uncertain after cold recovery; one remote effect, zero replays, original child/file/Session/Run retained, reconciliation required.');
+    } finally { store.close(); }
+  } else {
   try {
     assert.equal(store.list(parent.scope, parent.sessionId).length, 1);
     assert.equal(store.list(child.scope, child.sessionId).length, 1);
@@ -174,7 +251,7 @@ try {
     assert.deepEqual(finalChild.configuration, childBefore.configuration);
     assert.deepEqual(finalParent.events.slice(0, parentBefore.events.length), parentBefore.events);
     assert.deepEqual(finalChild.events.slice(0, childBefore.events.length), childBefore.events);
-    assert.equal(finalChild.snapshot.usage.toolCalls, 1);
+    assert.equal(finalChild.snapshot.usage.toolCalls, expectedChildTools);
     for (const row of [finalParent, finalChild]) {
       assert.equal(row.configuration.modelRecoveryPolicy, 'pure-inference/v1');
       assert.equal(row.snapshot.diagnostics.uncertainModelCalls, 1);
@@ -184,8 +261,8 @@ try {
       assert.equal(replayed.length, 1, 'The lost inference remains uncertain and charged before a new attempt.');
     }
     assert.equal(finalParent.snapshot.usage.modelCalls, 6);
-    assert.equal(finalChild.snapshot.usage.modelCalls, 3);
-    assert.equal(finalParent.snapshot.descendantUsage.modelCalls, 3);
+    assert.equal(finalChild.snapshot.usage.modelCalls, expectedChildModels);
+    assert.equal(finalParent.snapshot.descendantUsage.modelCalls, expectedChildModels);
     assert.ok(finalParent.snapshot.childBudgetReservations[0].settledUsageDigest);
     const calls = finalParent.receipts.flatMap(receipt => receipt.result?.results ?? []);
     assert.equal(calls.filter(result => result.content?.schema_version === 'native.child-file-merge/v2' && result.content.ok).length, 1);
@@ -193,7 +270,11 @@ try {
   const admissions = (await readFile(join(root, 'tool-admissions.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(admissions.filter(call => call.name === 'write_workspace_file' && call.arguments.path === 'child.txt').length, 1);
   assert.equal(admissions.filter(call => call.name === 'native_child_merge').length, 1);
-  assert.equal(childCalls, 3); assert.equal(parentCalls, 6);
+  assert.equal(childCalls, expectedChildModels); assert.equal(parentCalls, 6);
+  if (values.mcp) {
+    assert.equal(remoteEffects, 1);
+    assert.equal(admissions.filter(call => call.name === 'remote_proof').length, 1);
+  }
   assert.equal(await readFile(join(root, 'workspace/child.txt'), 'utf8'), text);
   assert.equal(await readFile(join(isolation.root, 'child.txt'), 'utf8'), text);
   const logs = (await readdir(join(root, 'sessions'), { recursive: true })).filter(file => file.endsWith('.jsonl'));
@@ -202,8 +283,10 @@ try {
   assert.deepEqual(events.slice(0, crash.events.length), crash.events);
   for (const kind of ['turn/start', 'turn/owner', 'turn/end']) assert.equal(events.filter(event => event.type === kind).length, 1);
   await writeFile(join(root, 'verified.json'), JSON.stringify({ parentRunId: parent.runId, childRunId: child.runId,
-    childWorkspaceBinding: isolation.binding, childWrites: 1, parentPublications: 1, parentCalls, childCalls, node: process.version }, null, 2));
+    childWorkspaceBinding: isolation.binding, childWrites: 1, parentPublications: 1,
+    ...(values.mcp ? { remoteEffects } : {}), parentCalls, childCalls, node: process.version }, null, 2));
   console.log('PASS: packed production Host cold-resumed the original live writing child, one write, one controlled publication, duplicate recovery harmless, original Session/Run/config/event prefixes retained, Node-only PATH.');
+  }
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });

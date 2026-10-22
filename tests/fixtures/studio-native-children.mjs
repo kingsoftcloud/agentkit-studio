@@ -25,15 +25,22 @@ export async function apply(ctx, options) {
     record = await agents.create({ name: 'Native child proof', runtimeType: 'harness', spec: {
       subAgents: [options.writingRecovery
         ? { name: 'writer', instructions: 'CHILD_WORKSPACE_WRITER: write child.txt in the isolated child workspace and report completion.',
-          tools: ['read_workspace_file', 'write_workspace_file'], modelProfileId: 'child-profile', maxTurns: 4, maxToolCalls: 2 }
+          tools: ['read_workspace_file', 'write_workspace_file'], modelProfileId: 'child-profile',
+          inheritMcp: Boolean(options.mcpUrl), maxTurns: options.mcpUrl ? 5 : 4, maxToolCalls: options.mcpUrl ? 3 : 2 }
         : { name: 'reader', instructions: 'CHILD_WORKSPACE_READER: read proof.txt and report its evidence.',
           tools: ['read_workspace_file'], modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2 }],
       bindings: { tools: options.writingRecovery ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
+        ...(options.mcpUrl ? { mcpServers: ['child-proof-mcp'] } : {}),
         modelProfileIds: ['parent-profile', 'child-profile'] },
     } });
     await writeFile(join(home, 'identity.json'), JSON.stringify({ agentId: record.metadata.id }));
   }
-  await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home,
+  const resourceOptions = options.mcpUrl ? { resourceAdapterFactory: deps =>
+    import('../../src/local-resource-adapters.mjs').then(({ createLocalResourceAdapters }) => createLocalResourceAdapters({
+      ...deps, resourceStore: { get: id => id === 'child-proof-mcp'
+        ? { resourceId: id, endpointUrl: options.mcpUrl } : deps.resourceStore?.get(id) },
+    })) } : {};
+  await mountStudioHost(ctx, { configurationHome: home, ...resourceOptions, env: { AGENTKIT_HOME: home,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } });
   const presetId = dshPresetId(record.metadata.id, record.metadata.revision);
   let activeAgent;
@@ -102,7 +109,17 @@ export async function apply(ctx, options) {
           && intent.payload.calls[0].arguments.path === 'child.txt'
           && childRecord.receipts.some(receipt => receipt.operationKey === intent.operationKey && receipt.status === 'committed'
             && receipt.result.results?.[0]?.status === 'ok' && receipt.result.results[0].content?.ok === true));
-        if (!pendingModel(parentRecord) || !pendingModel(childRecord) || !committedWrite) return;
+        const committedMcp = !options.mcpUrl || childRecord.intents.some(intent => intent.kind === 'tool'
+          && intent.payload.calls?.length === 1 && intent.payload.calls[0].name === 'remote_proof'
+          && childRecord.receipts.some(receipt => receipt.operationKey === intent.operationKey && receipt.status === 'committed'
+            && receipt.result.results?.[0]?.status === 'ok'
+            && receipt.result.results[0].content?.structuredContent?.receipt_id === 'remote-once-1'));
+        const unknownMcp = options.mcpUnknown && existsSync(join(home, 'remote-effect.json'))
+          && childRecord.intents.some(intent => intent.operationKey === childRecord.snapshot.pendingIntent
+            && intent.kind === 'tool' && intent.status === 'running'
+            && intent.payload.calls?.length === 1 && intent.payload.calls[0].name === 'remote_proof');
+        if (!pendingModel(parentRecord) || !committedWrite
+          || !(options.mcpUnknown ? unknownMcp : pendingModel(childRecord) && committedMcp)) return;
         if (await ctx.sessions.flush(activeAgent.session) !== true) throw Error('Child proof Session flush was not durable');
         const events = activeAgent.session.snapshotEvents();
         if (!events.some(event => event.type === 'turn/owner') || events.some(event => event.type === 'turn/end'))
