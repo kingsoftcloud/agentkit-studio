@@ -372,6 +372,18 @@ Memory 与 SQLite 都执行上述事务边界；真实独立 Node 进程在事�
 
 ## 工具网关保留持久审批结果
 
+下节另记录旧 runtime 的 Node 文件工具接入；本节的持久 Native 审批契约与其执行循环分别验证。
+
 Native 工具的 `approval_required` 和原始 `interactionId` 现在通过生产 DSH 工具网关原样交给 Kernel，不能再被普通成功结果覆盖。DSH 后置策略明确拒绝结果时仍返回错误，不绕过宿主策略。
 
 新增定向验证经过实际注册的工具网关、Kernel、Run SQLite 和 Memory SQLite：工具在真实写入前由确定性的 Host 边界要求审批；等待状态及原审批标识持久化后，另一 SQLite 连接和新 Kernel 重开，拒绝过期标识、接收允许或拒绝，也支持等待期间取消。允许后才进入真实 Memory 实现和账本检查；拒绝、取消及后置策略拒绝均零写入，重复命令不重复写入。该用例覆盖网关与账本，尚不代表完整桌面审批 UI 或进程重启后的全部 Host 重建。三个相关模块在 Node 26.5.0 和 Node 22.19.0 各通过 77 项测试，无失败或跳过。
+
+## DSH Native 与 Codex 的 Node 文件工具
+
+生产 Host 现为旧 runtime 注册 `agentkit.dsh-node-workspace/v1`，复用 Native 的十个工作区工具实现。DSH Native、Codex 的 builtin 注册器保留原执行上下文和完整 DSH 权限管线，并使用正式 Node 参数定义；受支持的文件工具直接调用 Node 端口。其他尚未接入的 builtin 仍走旧 Python 桥，因此整个桥尚未移除。
+
+读取状态位于工作区外的 Host store，按 Agent、工作区和真实 Session 分隔；同会话可重开，其他会话或 Agent 不继承编辑读取许可。每次调用固定实际 DSH Agent、Session、callId、原取消信号、名称、函数参数及 `exec.arguments`，在审批等待、文件锁等待和异步解析后复查。Host 或注册作用域关闭后不能继续返回成功；写入后失权保留原回执和修改路径，并报告 uncertain。异步关闭校验不被当作布尔许可，拒绝会被观察。
+
+`node scripts/verify-studio-node-builtins.mjs --source <已构建维护版 DSH> --archive <Studio.tgz> --keep` 解包真实发布包，启动生产 mountStudioHost，经鉴权接口准入 DSH Native 与 Codex 预设，用真实 SessionController 创建会话，再通过实际 DSH ToolRegistry 执行文件操作。Node 26.5.0 与 22.19.0 均通过：文件读取后编辑、跨会话未读拒绝、路径越界拒绝、Ruff WASM 解析、真实 read-only 策略拒绝、ApprovalService 的一次允许和下一次拒绝、等待审批时取消及迟到允许零写入；pre/post 管线均观察到调用。Host PATH 只包含 Node，Python 路径明确不可用。该验证的审批处于受信任测试轮次内，不发起模型请求；它不代表 Codex CLI/在线模型对话、全新依赖安装或整个旧 builtin 桥已验收。
+
+适配器自身在 Node 26/22 各通过 28 项测试，包含新进程重开、真实共享文件锁等待后的撤权和异步解析关闭；相关 runtime bridge、preset 与适配器三个模块各通过 80 项。没有运行仓库全量测试。

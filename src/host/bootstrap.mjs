@@ -143,6 +143,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const credentials = credentialsService;
   const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
   const workspaceRoot = resolve(runtimeEnv.AGENTKIT_STUDIO_WORKSPACE || process.cwd());
+  {
+    const { createDshNodeWorkspaceTools } = await import('../providers/dsh-node-workspace-tools.mjs');
+    ctx.effect(() => bridge.setBuiltinToolsFactory(({ ctx: toolsCtx, config, isClosed }) => createDshNodeWorkspaceTools({
+      ctx: toolsCtx, workspaceRoot, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId, isClosed,
+    })), 'agentkit-studio: Node builtin workspace environment');
+  }
   // A frozen Native Build retains its engine when the live-preset default is
   // disabled. Register the capability; selection remains explicit per preset.
   {
