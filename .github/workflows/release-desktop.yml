@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.4'
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.2
@@ -179,7 +179,7 @@ jobs:
       - name: Set up Node and pnpm
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
       - uses: pnpm/action-setup@v4
         with:
           version: 11.28.5
@@ -525,7 +525,7 @@ jobs:
       - name: Set up Node and pnpm
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
       - uses: pnpm/action-setup@v4
         with:
           version: 11.28.5
@@ -627,7 +627,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
       - name: Verify real installed update and retained data
         working-directory: studio
         env:
