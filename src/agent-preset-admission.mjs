@@ -228,7 +228,12 @@ export class DshPresetAdmission {
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
-    const plugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins(agent) : [];
+    const basePlugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins(agent) : [];
+    // The whole-turn Native gateway owns explicitly bound Web tools. The
+    // standard preset's Web plugin registers the same names in this scope;
+    // inheriting both would fail admission before a Session can execute.
+    const plugins = eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
+      ? basePlugins.filter(row => row.name !== '@deepseek-ai/dsh-tool-web') : basePlugins;
     let resourcesUnavailable = false;
     if (prefix) {
       const persona = plugins.find(row => row.id === 'persona');

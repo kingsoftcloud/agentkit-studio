@@ -14,6 +14,7 @@ import { respondToAutomationProof, runAutomationProof, verifyAutomationLedger } 
 import { respondToMemoryProof, runMemoryProof } from './native-memory-proof.mjs';
 import { createManagedMemoryProof } from './native-memory-managed-proof.mjs';
 import { createParallelMemoryProof } from './native-memory-parallel-proof.mjs';
+import { createWebProof } from './native-web-proof.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
@@ -21,7 +22,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { ty
   hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false },
   'memory-managed': { type: 'boolean', default: false },
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
-  'studio-dependencies': { type: 'string' } } });
+  'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
@@ -39,6 +40,10 @@ assert.ok(!values['memory-parallel'] || values['mount-host'] && !values.memory &
   && !values.automation && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery,
   '--memory-parallel is a separate mounted Host proof; --frozen is supported');
 const parallelMemory = values['memory-parallel'] ? createParallelMemoryProof() : null;
+assert.ok(!values.web || values['mount-host'] && !values.memory && !managedMemory && !parallelMemory
+  && !values.automation && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery,
+  '--web is a separate mounted Host proof; --frozen is supported');
+const webProof = values.web ? createWebProof() : null;
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
@@ -70,6 +75,7 @@ async function waitForPublicPrefix(count, expected) {
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
+    if (webProof) { await webProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
     if (values['mcp-schema'] && request.url === '/mcp') {
       if (request.method !== 'POST') { response.writeHead(405); response.end(); return; }
       const body = parseNativeJson(raw);
@@ -213,6 +219,7 @@ try {
     `        memory: ${values.memory || Boolean(managedMemory || parallelMemory)}`,
     `        memoryManaged: ${Boolean(managedMemory || parallelMemory)}`,
     `        memoryParallel: ${Boolean(parallelMemory)}`,
+    `        web: ${values.web}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -223,7 +230,10 @@ try {
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_PYTHON: '/unavailable/python', AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (parallelMemory) {
+  if (webProof) {
+    await webProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures, frozen: values.frozen });
+    harness = null;
+  } else if (parallelMemory) {
     await parallelMemory.run({ harness, root, installed, sessions, requests, failures, frozen: values.frozen });
     harness = null;
   } else if (managedMemory) {

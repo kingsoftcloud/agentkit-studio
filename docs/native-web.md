@@ -20,4 +20,6 @@ HTML 使用现有 parse5 解析器提取文本，排除脚本、样式等节点�
 
 对照版本为 KsADK `feat-ksadk-harness-2` 的 `355059d`。保留模型可见的请求、结果及主要错误语义；HTML 解析和网络异常类名允许 Node 与 Python 的差异，Node 额外显式报告响应体上限。
 
-已执行 Node 26 与 Node 22 的相关验证，覆盖本地真实 HTTP、DNS dispatcher、ArtifactStore 落盘、工具策略、Host Run ledger/model 回放和 provider 绑定变化拒绝。搜索协议使用确定性本地 HTTP 响应；未宣称已验证线上搜索服务、完整冷安装或浏览器 UI。实际打包 Host 验收另行记录，模块通过不代表整个 Native 迁移完成。
+已执行 Node 26 与 Node 22 的相关验证，覆盖本地真实 HTTP、DNS dispatcher、ArtifactStore 落盘、工具策略、Host Run ledger/model 回放和 provider 绑定变化拒绝。标准 preset 的原 Web 插件由整轮 Native preset 排除，防止同一工具名重复注册；其他 runtime 保留原配置。
+
+`node scripts/verify-studio-native-harness.mjs --source <维护宿主构建目录> --mount-host --web --keep` 实际打包并挂载 Studio Host，通过公开 SDK 与认证 preset RPC 连续执行搜索、抓取及模型回放，重启 Host 后续聊。它核对两个 completed Run、四个成功工具调用的持久化 intent/receipt、完整 Unicode ArtifactStore 内容、六次模型请求的公开流与 Session 落盘字节，并验证默认 DSH。Node 26 Revision 与 Node 22 Frozen Build 两种场景均已通过；后者添加 `--frozen`。验证使用 Node-only PATH 和现有本地依赖图。搜索协议使用确定性本地 HTTP 响应；未宣称已验证线上搜索服务、完整冷安装或浏览器 UI，整个 Native 迁移仍有其他能力待完成。

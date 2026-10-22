@@ -112,6 +112,26 @@ test('local runtime presets reuse the official composition including delivery to
   }
 });
 
+test('only the whole-turn Native preset replaces the base Web plugin with its locked tools', async () => {
+  const base = [{ id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true } },
+    { id: 'present', name: '@deepseek-ai/dsh-tool-present' }];
+  for (const [runtime, nativeEngineContract, keepWeb] of [
+    ['harness', 'agentkit.native-dsh-turn/v1', false], ['harness', undefined, true],
+    ['codex', 'agentkit.native-dsh-turn/v1', true], ['dsh-native', 'agentkit.native-dsh-turn/v1', true],
+  ]) {
+    let definition;
+    const admission = new DshPresetAdmission({ nativeEngineContract,
+      getAgent: async () => agent({ spec: { runtime: { type: runtime }, bindings: { tools: ['web_fetch', 'web_search'] } } }),
+      getBasePlugins: async () => base.map(row => structuredClone(row)),
+      registry: { register: async value => { definition = value; } },
+    });
+    await admission.ensure('demo/agent');
+    assert.equal(definition.plugins.some(row => row.name === '@deepseek-ai/dsh-tool-web'), keepWeb, runtime);
+    assert.ok(definition.plugins.some(row => row.name === '@deepseek-ai/dsh-tool-present'));
+  }
+  assert.equal(base.length, 2);
+});
+
 test('a single Agent model resolves to the Studio-published DSH session route', () => {
   const revision = agent({ spec: { runtime: { type: 'harness' }, bindings: { modelProfileIds: ['deepseek-v4-flash'] } } });
   assert.deepEqual(dshModelSelection(revision, { values: { modelProfiles: [{ id: 'ksyun:deepseek-v4-flash', provider: 'ksyun', modelName: 'deepseek-v4-flash', enabled: true }] } }), {

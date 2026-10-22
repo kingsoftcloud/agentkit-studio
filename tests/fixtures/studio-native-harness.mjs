@@ -61,7 +61,8 @@ async function applyProof(ctx, options) {
           context: { maxInputTokens: options.memoryManaged ? 16000 : 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
-        ? { mcpServers: ['native-schema-fixture'] } : { tools: options.memory ? [] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
+        ? { mcpServers: ['native-schema-fixture'] } : { tools: options.memory ? [] : options.web ? ['web_fetch', 'web_search']
+          : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
   if (options.frozen) {
@@ -98,6 +99,9 @@ async function applyProof(ctx, options) {
         ? { resourceId: id, endpointUrl: options.mcpUrl } : deps.resourceStore?.get(id) } }),
     } : {}), env: { AGENTKIT_HOME: home,
       AGENTKIT_STUDIO_WORKSPACE: workspaceRoot,
+      ...(options.web ? { KSADK_WEB_SEARCH_PROVIDER: 'http',
+        KSADK_WEB_SEARCH_BASE_URL: new URL('/search', options.modelUrl).href,
+        KSADK_WEB_SEARCH_API_KEY: 'web-proof-search-secret', KSADK_WEB_SSRF_POLICY_JSON: '{"allow_private":true}' } : {}),
       ...(!options.frozen ? { AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } : {}) } });
     presetId = dshPresetId(record.metadata.id, record.metadata.revision, record.buildId || '');
   } else {
@@ -209,7 +213,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory || options.web) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.
