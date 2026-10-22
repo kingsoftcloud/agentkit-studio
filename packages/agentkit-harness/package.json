@@ -4,7 +4,7 @@
   "description": "AgentKit Harness DSH plugin using the official Agent, Session, persistence and stream contracts.",
   "type": "module",
   "license": "Apache-2.0",
-  "engines": { "node": ">=22.19.0", "dsh": "0.2.1-rc.2" },
+  "engines": { "node": "^22.23.4 || >=24.22.1", "dsh": "0.2.1-rc.2" },
   "exports": {
     ".": { "types": "./src/index.d.ts", "default": "./src/index.mjs" },
     "./core": { "types": "./src/index.d.ts", "default": "./src/core.mjs" },

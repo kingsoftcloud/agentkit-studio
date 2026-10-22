@@ -30,7 +30,7 @@ jobs:
           version: 10.33.2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Render docs/ Markdown into the static site
