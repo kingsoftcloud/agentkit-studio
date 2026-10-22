@@ -9,7 +9,7 @@ import { createStudioBuild } from '../src/studio-build.mjs';
 import { sha256 } from '../src/portable-resources.mjs';
 
 async function fixture(t, { loseWelcome = false } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'assistant-setup-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await mkdtemp(join(tmpdir(), 'assistant-setup-')); t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
   const values = { cloudAccessKey: 'synthetic-access', cloudSecretKey: 'synthetic-secret', cloudRegion: 'pre-online' };
   const model = { id: 'model', modelName: 'Example', apiKey: 'synthetic-model-key' };
   const records = new Map(), messages = [], calls = { create: 0, welcome: 0, upgrade: 0, upgradeInput: null };
