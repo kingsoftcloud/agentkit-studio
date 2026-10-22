@@ -26,5 +26,5 @@ try {
   });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
-  if (result.status === 0) console.log('Assistant permissions: real DSH permission setter, tool guard, filesystem, search and approval audit passed; full installed Host acceptance remains separate.');
+  if (result.status === 0) console.log('Assistant permissions: real DSH permission setter, trusted Schedule tool identities/CRUD, tool guard, filesystem, search and approval audit passed; full installed Host acceptance remains separate.');
 } finally { await rm(probe, { force: true }); }

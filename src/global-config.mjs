@@ -54,6 +54,10 @@ function normalizeProfiles(value) {
     default: profile.default === true,
     ...(profile.codexApi ? { codexApi: profile.codexApi === 'chat-completions' ? 'chat-completions' : 'responses' } : {}),
     ...(Array.isArray(profile.input) ? { input: [...new Set(profile.input.filter(item => ['text', 'image'].includes(item)))] } : {}),
+    // Read back the opt-in marker and its default level only: the wire map is
+    // the gateway's business and is materialized at bridge time, so it must
+    // not be frozen into the user's configuration file.
+    ...(profile.reasoningEfforts ? { reasoningEfforts: true, defaultReasoningEffort: ['low', 'high', 'max'].includes(scalar(profile.defaultReasoningEffort)) ? scalar(profile.defaultReasoningEffort) : 'high' } : {}),
   })).filter(profile => profile.modelName);
   if (!profiles.length) return profiles;
   // Older config files did not have a default marker. Preserve their first

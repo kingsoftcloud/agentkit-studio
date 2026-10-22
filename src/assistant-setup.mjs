@@ -6,14 +6,19 @@ import { sha256, portableError } from './portable-resources.mjs';
 import { createDeploymentImages } from './deployment-images.mjs';
 import { admitDeploymentStorage } from './deployment-storage.mjs';
 import { listStudioResources } from './resource-catalog.mjs';
-import { ASSISTANT_MANAGED_PERMISSION_CAPABILITY } from './contracts/assistant-capabilities.mjs';
+import { ASSISTANT_BROWSER_CAPABILITY, ASSISTANT_CODE_EXECUTION_CAPABILITY, ASSISTANT_MANAGED_PERMISSION_CAPABILITY } from './contracts/assistant-capabilities.mjs';
 
 export const ASSISTANT_WELCOME_REQUEST = 'assistant-welcome-v1';
 const resources = Object.freeze({ cpu: 2, memoryGiB: 4, storageGiB: 20 });
 const labels = { PREPARING: '正在准备你的助理', UPLOADING: '正在保存助理配置', UPLOADED: '正在创建云端环境', PREPARED: '正在准备云端环境', CREATING: '正在创建云端环境', PROVISIONING: '正在分配云端资源', CONFIGURING: '正在连接你的助理', TOKEN_PENDING: '正在连接你的助理', STARTING: '助理正在启动', READY: '助理已就绪', AVAILABLE_UPDATING: '助理已就绪' };
 const readyStates = new Set(['READY', 'AVAILABLE_UPDATING']);
+// Grants the current runtime composition can actually enforce. Browser stays
+// out until the image advertises it and the plugin registers its tools.
+const GRANT_CAPABILITIES = Object.freeze({ 'code-execution': ASSISTANT_CODE_EXECUTION_CAPABILITY, browser: ASSISTANT_BROWSER_CAPABILITY });
+const normalizeGrants = value => Array.isArray(value) ? [...new Set(value.filter(item => typeof item === 'string'))] : [];
+const availableGrants = capabilities => Object.keys(GRANT_CAPABILITIES).filter(name => capabilities.includes(GRANT_CAPABILITIES[name]));
 
-export function createAssistantSetup({ storeDir, configuration, models, serverClient, deploymentClient, agents, build, deployments, fetchImpl = fetch }) {
+export function createAssistantSetup({ storeDir, configuration, models, serverClient, deploymentClient, agents, build, deployments, credentials, fetchImpl = fetch }) {
   const images = createDeploymentImages({ client: deploymentClient, configuration });
   const active = new Map(), errors = new Map();
   async function scope() {
@@ -70,20 +75,30 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     if (!record) return { state: 'NOT_STARTED' };
     return { state: record.state, message: record.failure?.message || labels[record.state] || '请核对开通状态',
       ready: readyStates.has(record.state), cloudAgentId: record.cloudAgentId || null, deploymentId: record.deploymentId || null,
-      failure: record.failure || null, resources, startedAt: record.startedAt };
+      releaseId: record.selection?.releaseId || null, grants: normalizeGrants(record.selection?.grants), failure: record.failure || null, resources, startedAt: record.startedAt };
+  }
+  async function webSearchCredential() {
+    const resolved = await credentials?.resolve?.('DEEPSEEK_API_KEY').catch(() => null);
+    return typeof resolved?.value === 'string' && resolved.value.trim() ? resolved.value : null;
   }
   async function options() {
     const key = await scope();
-    const [model, catalog, memory] = await Promise.all([models.profile(''), images.list('dsh-native'), listStudioResources({ serverClient, query: { kind: 'memory-instance', limit: 200 } })]);
+    const [model, catalog, memory, search] = await Promise.all([models.profile(''), images.list('dsh-native'), listStudioResources({ serverClient, query: { kind: 'memory-instance', limit: 200 } }), webSearchCredential()]);
     const eligible = catalog.releases.filter(item => item.runtimeIdentity && item.capabilities.includes('personal-assistant/v1') && item.capabilities.includes(ASSISTANT_MANAGED_PERMISSION_CAPABILITY));
     const image = eligible.find(item => item.id === catalog.defaultReleaseId) || (eligible.length === 1 ? eligible[0] : null);
     if (!image) throw portableError('ASSISTANT_IMAGE_UNAVAILABLE', '当前环境还没有支持受管工作区与敏感审批的个人助理镜像，请先更新云端版本配置');
     admitDeploymentStorage(resources, catalog, 'dsh-native');
     const memories = memory.items.filter(item => !item.disabled).map(item => ({ id: item.resourceId, name: item.name || item.resourceId, region: item.region || catalog.region }));
     if (!memories.length) throw portableError('ASSISTANT_MEMORY_REQUIRED', '请先创建一个云端记忆库，再开通能够长期记忆的助理');
-    return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories, 'workspace-managed/v1'])), model: { id: model.id, name: model.displayName || model.modelName },
+    const webSearch = Boolean(search);
+    const grants = availableGrants(image.capabilities);
+    return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories, 'workspace-managed/v1', webSearch, grants])), model: { id: model.id, name: model.displayName || model.modelName },
       permissionProfile: 'workspace-managed/v1',
-      permissionNotice: '助理可在专属云工作区读写文件并搜索；删除单个文件需在线逐次确认。任意 Shell、越界访问及未接通的外发、支付、账号操作不会自动开放。',
+      grants,
+      webSearch,
+      permissionNotice: webSearch
+        ? '助理可联网搜索公开信息、读取公开网页，并在专属云工作区读写文件；删除单个文件需在线逐次确认。内网与本机访问、任意 Shell、未接通的外发与支付不会自动开放。'
+        : '助理可读取公开网页，并在专属云工作区读写文件；删除单个文件需在线逐次确认。当前未配置 DeepSeek 搜索凭证，因此暂不启用联网搜索。内网与本机访问、任意 Shell、未接通的外发与支付不会自动开放。',
       memories, releaseId: image.id, environment: catalog.environment, region: catalog.region, resources,
       billingNotice: '开通后创建 1 个常驻实例（2 核 / 4 GiB）和 20 GiB 持久存储，按平台规则计费；关闭 Studio 不会停止云端计费。' };
   }
@@ -91,6 +106,9 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     const connection = await deployments.agents.connect(record.cloudAgentId);
     if (!connection.capabilities.includes('personal-assistant/v1')) throw portableError('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '云端版本未提供个人助理能力');
     if (record.selection?.permissionProfile === 'workspace-managed/v1' && !connection.capabilities.includes(ASSISTANT_MANAGED_PERMISSION_CAPABILITY)) throw portableError('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '当前云端版本未确认受管工作区权限能力，尚未发送欢迎任务');
+    for (const grant of normalizeGrants(record.selection?.grants)) {
+      if (!connection.capabilities.includes(GRANT_CAPABILITIES[grant])) throw portableError('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '当前云端版本未确认所选能力，尚未发送欢迎任务');
+    }
     const call = async (operation, input) => {
       const response = await fetchImpl(`${connection.endpoint}/v1/assistant/${operation}`, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(30000) });
       if (!response.ok) throw portableError('ASSISTANT_WELCOME_PENDING', '助理正在准备欢迎消息，请稍后刷新');
@@ -98,7 +116,9 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     };
     const snapshot = await call('snapshot', {});
     if (!snapshot.messages.length) {
-      const result = await call('submit', { requestId: ASSISTANT_WELCOME_REQUEST, text: '用户刚开通了个人助理。请用两三句自然的中文欢迎用户，说明可以交代任务、设置提醒，以及明确要求你记住偏好。不要声称已经执行了任务或记录了记忆，最后问用户想先做什么。' });
+      const webSearch = Boolean(await webSearchCredential());
+      const research = webSearch ? '查资料（联网搜索、读取网页）' : '查资料（读取公开网页）';
+      const result = await call('submit', { requestId: ASSISTANT_WELCOME_REQUEST, text: `用户刚开通了个人助理。请用两三句自然的中文欢迎用户，说明你可以帮他${research}、整理手头文件、设置提醒，并在他明确要求时记住偏好。不要声称已经执行了任务或记录了记忆，最后问用户想先做什么。` });
       if (!result.accepted || result.requestId !== ASSISTANT_WELCOME_REQUEST) throw portableError('ASSISTANT_WELCOME_PENDING', '欢迎消息尚未确认，请稍后刷新');
     }
     record.welcomed = true;
@@ -111,8 +131,9 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
         if (!record.agentId) {
           const selected = record.selection;
           const agent = await agents.create({ name: '我的个人助理', purpose: 'personal-assistant', runtimeType: 'dsh-native', spec: {
-            ...(selected.permissionProfile === 'workspace-managed/v1' ? { security: { assistantPermissions: { profile: selected.permissionProfile } } } : {}),
-            instructions: { system: '你是用户的个人助理。自然、简洁地用中文交流。准确区分计划和已执行的工作；仅在用户明确要求时记录长期记忆，允许用户纠正和删除。' },
+            ...(selected.permissionProfile === 'workspace-managed/v1' ? { security: { assistantPermissions: { profile: selected.permissionProfile,
+              ...(normalizeGrants(selected.grants).length ? { grants: normalizeGrants(selected.grants) } : {}) } } } : {}),
+            instructions: { system: '你是用户的个人助理。自然、简洁地用中文交流。你可以联网搜索公开信息、读取公开网页，在专属云端工作区读写文件，管理提醒，并在用户明确要求时记录长期记忆。不能运行任意命令，也不能访问内网、本机或需要登录的内容；做不到时直接说明，不要编造设置项或声称未执行的事情。准确区分计划和已执行的工作。' },
             memory: { enabled: true, write: { mode: 'explicit_only' } },
             bindings: { modelProfileId: selected.modelId, plugins: [{ name: 'memory', config: { binding: { resource: { kind: 'memory-instance', ...selected.memory } } } }] },
           } });
@@ -180,6 +201,8 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     if (input.optionsId !== available.optionsId) throw portableError('ASSISTANT_OPTIONS_CHANGED', '开通配置已变化，请刷新后确认');
     const memory = available.memories.find(item => item.id === input.memoryId) || (available.memories.length === 1 && !input.memoryId ? available.memories[0] : null);
     if (!memory) throw portableError('ASSISTANT_MEMORY_REQUIRED', '请选择保存助理记忆的云端记忆库');
+    const selectedGrants = normalizeGrants(input.grants);
+    if (selectedGrants.some(name => !available.grants.includes(name))) throw portableError('ASSISTANT_GRANT_UNSUPPORTED', '当前云端版本尚未提供所选能力，请先更新镜像');
     await locked(key, async () => {
       const existing = await read(key);
       if (existing && existing.state !== 'DELETED') return;
@@ -187,7 +210,70 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
       // turn the same opening action into a second billable cloud create.
       const requestId = existing ? `assistant-${key}-${randomUUID()}` : `assistant-${key}`;
       await write({ format: 'agentkit.assistant-setup/v1', scope: key, state: 'PREPARING', startedAt: new Date().toISOString(), requestId,
-        deploymentId: `dep_${sha256(requestId).slice(0, 32)}`, selection: { modelId: available.model.id, memory, releaseId: available.releaseId, permissionProfile: available.permissionProfile } });
+        deploymentId: `dep_${sha256(requestId).slice(0, 32)}`,
+        selection: { modelId: available.model.id, memory, releaseId: available.releaseId, permissionProfile: available.permissionProfile,
+          ...(selectedGrants.length ? { grants: selectedGrants } : {}) } });
+    });
+    kick(key); return publicState(await read(key));
+  }
+  // In-place image upgrade: rebuild the frozen package from the Agent's current
+  // revision, then reuse the native rollout update so history and storage stay.
+  async function upgrade(input = {}) {
+    if (input.confirmed !== true) throw portableError('ASSISTANT_CONFIRM_REQUIRED', '请确认升级云端助理后再继续');
+    const key = await scope(), record = await read(key);
+    if (!record || !readyStates.has(record.state) || !record.welcomed) throw portableError('ASSISTANT_UPGRADE_UNAVAILABLE', '助理尚未就绪，暂不能升级，请稍后重试');
+    const available = await options();
+    if (input.optionsId !== available.optionsId) throw portableError('ASSISTANT_OPTIONS_CHANGED', '升级配置已变化，请刷新后确认');
+    if (normalizeGrants(record.selection?.grants).some(name => !available.grants.includes(name))) throw portableError('ASSISTANT_GRANT_UNSUPPORTED', '目标云端版本暂不支持已开启的能力，请先关闭或稍后再升级');
+    if (available.releaseId === record.selection?.releaseId) return publicState(record);
+    await locked(key, async () => {
+      const latest = await read(key);
+      if (!latest || latest.state !== record.state || latest.selection?.releaseId !== record.selection?.releaseId) return;
+      const agent = await agents.get(latest.agentId);
+      const frozen = await build.build({ agentId: agent.metadata.id, agentName: agent.metadata.name, revision: agent.metadata.revision,
+        metadata: agent.metadata, spec: agent.spec, bindings: agent.bindings });
+      const preview = await deployments.prepareUpdate({ deploymentId: latest.deploymentId, buildId: frozen.id, releaseId: available.releaseId });
+      await deployments.applyUpdate({ deploymentId: latest.deploymentId, previewId: preview.previewId, buildId: frozen.id,
+        bundleId: preview.bundleId, releaseId: preview.releaseId || available.releaseId,
+        idempotencyKey: `assistant-upgrade-${sha256(JSON.stringify([latest.deploymentId, frozen.id, available.releaseId])).slice(0, 40)}` });
+      latest.buildId = frozen.id;
+      latest.preview = { ...(latest.preview || {}), buildId: frozen.id, releaseId: available.releaseId };
+      latest.selection = { ...latest.selection, releaseId: available.releaseId };
+      latest.state = 'UPDATING'; latest.failure = null;
+      await write(latest);
+    });
+    kick(key);
+    return publicState(await read(key));
+  }
+  // Enabling or revoking a capability is a spec change, so it follows the same
+  // frozen-build and in-place rollout path as an image upgrade. Revocation is
+  // applied by the new build; the old deployment keeps the old grant until the
+  // rollout switches over, and the client disables the switch immediately.
+  async function setGrants(input = {}) {
+    if (input.confirmed !== true) throw portableError('ASSISTANT_CONFIRM_REQUIRED', '请确认后再变更云端助理能力');
+    const key = await scope(), record = await read(key);
+    if (!record || !readyStates.has(record.state) || !record.welcomed) throw portableError('ASSISTANT_GRANTS_UNAVAILABLE', '助理尚未就绪，暂不能变更云端能力');
+    const requested = normalizeGrants(input.grants);
+    const available = await options();
+    if (requested.some(name => !available.grants.includes(name))) throw portableError('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '当前云端版本尚未提供所选能力，请先升级云端助理');
+    if (normalizeGrants(record.selection?.grants).join(',') === requested.join(',')) return publicState(record);
+    if (input.optionsId !== undefined && input.optionsId !== available.optionsId) throw portableError('ASSISTANT_OPTIONS_CHANGED', '能力配置已变化，请刷新后确认');
+    await locked(key, async () => {
+      const latest = await read(key);
+      if (!latest || latest.state !== record.state || latest.buildId !== record.buildId) return;
+      const agent = await agents.get(latest.agentId);
+      const permissions = { ...(agent.spec?.security?.assistantPermissions || {}), profile: available.permissionProfile };
+      if (requested.length) permissions.grants = requested; else delete permissions.grants;
+      const updated = await agents.update(latest.agentId, { spec: { security: { ...(agent.spec?.security || {}), assistantPermissions: permissions } } });
+      const frozen = await build.build({ agentId: updated.metadata.id, agentName: updated.metadata.name, revision: updated.metadata.revision,
+        metadata: updated.metadata, spec: updated.spec, bindings: updated.bindings });
+      const preview = await deployments.prepareUpdate({ deploymentId: latest.deploymentId, buildId: frozen.id, releaseId: available.releaseId });
+      await deployments.applyUpdate({ deploymentId: latest.deploymentId, previewId: preview.previewId, buildId: frozen.id,
+        bundleId: preview.bundleId, releaseId: preview.releaseId || available.releaseId,
+        idempotencyKey: `assistant-grants-${sha256(JSON.stringify([latest.deploymentId, frozen.id, requested])).slice(0, 40)}` });
+      latest.buildId = frozen.id; latest.preview = { ...(latest.preview || {}), buildId: frozen.id, releaseId: preview.releaseId || available.releaseId };
+      latest.selection = { ...latest.selection, releaseId: preview.releaseId || available.releaseId, grants: requested };
+      latest.state = 'UPDATING'; latest.failure = null; await write(latest);
     });
     kick(key); return publicState(await read(key));
   }
@@ -198,5 +284,5 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     const record = await read(key);
     return record ? { agentId: record.agentId, cloudAgentId: record.cloudAgentId, deploymentId: record.deploymentId } : null;
   }
-  return { options, start, status, reference };
+  return { options, start, status, upgrade, setGrants, reference };
 }

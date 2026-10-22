@@ -42,7 +42,7 @@ export function verifyPortableBundle(zip) {
   }
 }
 
-export function createPortableBundles({ storeDir, build, models, adapters, configuration }) {
+export function createPortableBundles({ storeDir, build, models, adapters, configuration, credentials }) {
   async function archivePath(bundleId) {
     if (!validBundleId(bundleId)) throw portableError('PORTABLE_ID_INVALID', '运行包标识无效');
     return join(storeDir, 'portable-exports', `${bundleId}.zip`);
@@ -50,7 +50,7 @@ export function createPortableBundles({ storeDir, build, models, adapters, confi
   async function prepare(agentId, buildId) {
     const record = await build.resolve(agentId, buildId);
     if (!/^ar-local-[a-f0-9]{16}$/.test(agentId) || record.metadata.local === false) throw portableError('PORTABLE_AGENT_UNSUPPORTED', '运行包目前只支持本地 Agent Build');
-    const { resources, requirements, files } = await capturePortableResources({ record, models, adapters, configuration });
+    const { resources, requirements, files } = await capturePortableResources({ record, models, adapters, configuration, credentials });
     files.unshift({ name: 'agent-bundle.zip', data: Buffer.from((await build.download(agentId, buildId)).base64, 'base64'), executable: false });
     const identity = { format: FORMAT, agentId, buildId, resources, requirements,
       files: files.map(file => ({ name: file.name, bytes: file.data.length, sha256: sha256(file.data), executable: Boolean(file.executable) })) };

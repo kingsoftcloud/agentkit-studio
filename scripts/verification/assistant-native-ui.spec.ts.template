@@ -310,7 +310,7 @@ describe('Studio assistant page with real session controller and React', () => {
     const view = render(h(f.Page));
     const confirm = await view.findByRole('button', { name: '确认提交' });
     expect(f.values.has('agentkit.assistant.pending.cloud-owned')).toBe(true);
-    expect(view.getByText(/保存结果仍待确认/)).toBeTruthy();
+    expect(view.getByText('消息已出现在云端，请确认提交以核对保存结果。').getAttribute('role')).toBe('status');
     expect(f.remote.assistantExecute.mock.calls.filter(call => call[1] === 'submit')).toHaveLength(0);
     fireEvent.click(confirm);
     await waitFor(() => expect(f.values.has('agentkit.assistant.pending.cloud-owned')).toBe(false));

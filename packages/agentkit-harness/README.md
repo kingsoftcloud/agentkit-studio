@@ -1,6 +1,6 @@
 # @kingsoftcloud/agentkit-harness
 
-AgentKit Harness 是一个 **DSH 插件**。它复用 DSH 的 `AgentRegistry`、`SessionStore`、Session persistence、AgentLoop 和 `agent/assistant-stream`，只提供 Studio 侧的薄服务外观。公共 Harness 合同没有第二套 Session 状态机、事件 envelope 或文件存储。
+Star Harness（包名 `@kingsoftcloud/agentkit-harness`）是一个 **DSH 插件**。它复用 DSH 的 `AgentRegistry`、`SessionStore`、Session persistence、AgentLoop 和 `agent/assistant-stream`，只提供 Studio 侧的薄服务外观。公共 Harness 合同没有第二套 Session 状态机、事件 envelope 或文件存储。
 
 当前包可从源码独立打包并安装到 DSH profile。npm registry 发布需要对应 scope 权限；打包成功不等于 registry 已发布。
 

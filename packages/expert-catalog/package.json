@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Self-owned expert templates for the existing Studio Agent workbench.",
   "license": "Apache-2.0",
-  "engines": { "node": ">=22.19.0" },
+  "engines": { "node": "^22.23.4 || >=24.22.1" },
   "exports": { ".": "./src/index.mjs", "./catalog": "./src/catalog.mjs", "./client": "./src/client.mjs", "./seed": "./src/seed.mjs" },
   "files": ["src", "README.md"],
   "scripts": { "test": "node --test test/*.test.mjs" },

@@ -57,3 +57,19 @@ test('public surface audit allows binary product assets while still checking the
   const binary = Buffer.from([0, 1, 2, 3, 4]);
   assert.deepEqual(auditText('assets/icon.png', binary), []);
 });
+
+test('historical synthetic test fixtures stay approved without loosening current files', () => {
+  const loopbackFixture = ['http://10.0.', '0.7/'].join('');
+  const internalFixture = ['http://metadata.', 'internal/'].join('');
+  const credentialFixture = ['https://user:', 'pass@example.com/'].join('');
+  assert.deepEqual(auditText('tests/assistant-permission-model.test.mjs', buffer(loopbackFixture), { historical: true }), []);
+  assert.deepEqual(auditText('tests/assistant-permission-model.test.mjs', buffer(internalFixture), { historical: true }), []);
+  assert.deepEqual(auditText('tests/assistant-permission-model.test.mjs', buffer(credentialFixture), { historical: true }), []);
+  assert.ok(auditText('tests/assistant-permission-model.test.mjs', buffer(loopbackFixture)).length > 0);
+  const otherPrivate = ['http://10.9.', '9.9/'].join('');
+  assert.ok(auditText('tests/assistant-permission-model.test.mjs', buffer(otherPrivate), { historical: true }).length > 0);
+  const otherInternal = ['http://leak.', 'internal/'].join('');
+  assert.ok(auditText('tests/assistant-permission-model.test.mjs', buffer(otherInternal), { historical: true }).length > 0);
+  const otherCredential = ['https://user:', 'real-secret@example.com/'].join('');
+  assert.ok(auditText('tests/assistant-permission-model.test.mjs', buffer(otherCredential), { historical: true }).length > 0);
+});

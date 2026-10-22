@@ -56,3 +56,22 @@ test('fresh profiles mount one official service and official tools are not regis
  await ensureStudioTeamRuntime(ctx,{load:async()=>({default:{}})});assert.equal(plugins,1);
  installStudioTeamTools({ctx:{tools:{register:()=>tools++},systemPrompt:{section:()=>{}}}},{teams:{},run:{},useOfficialTools:true});assert.equal(tools,0);
 });
+
+test('a declared official Teams entry owns the service while it activates',async()=>{
+ const {ensureStudioTeamRuntime}=await import('../src/studio-team-runtime.mjs');
+ let loaded=0,mounted=0;const services=new Map();
+ const entries=()=>[{options:{id:'agent-team',name:'@deepseek-ai/dsh-experimental-agent-team'}}];
+ const ctx={root:{loader:{await:async()=>{},entries}},effect:()=>{},get:name=>services.get(name),plugin:async()=>{mounted++;}};
+ const ready=ensureStudioTeamRuntime(ctx,{load:async()=>{loaded++;return {default:{}};},waitMs:2000});
+ setTimeout(()=>services.set('agentTeams',{}),50);
+ await ready;
+ assert.equal(loaded,0);assert.equal(mounted,0);
+});
+test('a declared entry that never activates still gets a Studio fallback',async()=>{
+ const {ensureStudioTeamRuntime}=await import('../src/studio-team-runtime.mjs');
+ let loaded=0,mounted=0;const services=new Map();
+ const entries=()=>[{options:{id:'agent-team',name:'@deepseek-ai/dsh-experimental-agent-team'}}];
+ const ctx={root:{loader:{await:async()=>{},entries}},effect:()=>{},get:name=>services.get(name),plugin:async()=>{mounted++;services.set('agentTeams',{});}};
+ await ensureStudioTeamRuntime(ctx,{load:async()=>{loaded++;return {default:{}};},waitMs:30});
+ assert.equal(loaded,1);assert.equal(mounted,1);
+});

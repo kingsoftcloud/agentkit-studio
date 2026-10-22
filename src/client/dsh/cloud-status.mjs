@@ -3,7 +3,7 @@ import { operationalDate } from '../state/operational-data.mjs';
 
 export function createCloudSessionStatus({
   ui: { React: { createElement: h, useEffect, useState, Fragment }, ResourceDialog, buttonStyle },
-  hostRemote, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
+  hostRemote, document = globalThis.document, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
 }) {
   function CloudSessionStatus({ sessionId, useSessions }) {
     const session = useSessions(state => state?.byId?.[sessionId]);
@@ -35,7 +35,7 @@ export function createCloudSessionStatus({
           if (active) { setReceipt(rows.find(item => item.sessionId === sessionId && item.executionLocation === 'cloud') || null); setError(''); }
         } catch { if (active) setError('执行凭据读取失败，请稍后刷新。'); }
       };
-      void load(); const timer = setInterval(load, 5000);
+      void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 5000);
       return () => { active = false; clearInterval(timer); };
     }, [open, agent, sessionId]);
     if (!agent?.deployment) return null;

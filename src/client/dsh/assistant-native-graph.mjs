@@ -3,6 +3,30 @@ import { ASSISTANT_ATTACHMENT_LIMITS, readAssistantAttachment } from '../state/a
 const allowed = new Set(['session/follow', 'session/projections', 'session/page', 'session/prompt', 'fileUploads/upload']);
 const bytesBase64 = bytes => { let value = ''; for (let offset = 0; offset < bytes.length; offset += 0x8000) value += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)); return btoa(value); };
 
+/** Minimal command face for the cloud-only composer; no command menus or Host hooks. */
+export function createAssistantNativeCommandUi({ sessionId, sessions, createSnapshotStore }) {
+  const file = createSnapshotStore(null), popups = new WeakMap();
+  const inScope = scope => {
+    const session = sessions.sessionOf(scope), binding = sessions.binding(sessionId);
+    if (!session || session.sessionId !== sessionId || binding?.session !== session) throw new Error('Cloud commands require the retained cloud Session scope');
+  };
+  return { file, commandUi: {
+    register(command) {
+      if (command.name !== 'file' || command.ui?.kind !== 'action') throw new Error('Cloud composer only supports the native file action');
+      if (file.getSnapshot()) throw new Error('Cloud file action already registered');
+      file.set(command);
+      return () => { if (file.getSnapshot() === command) file.set(null); };
+    },
+    popupFor(scope) {
+      inScope(scope);
+      // InputHub invokes dismissal during normal Send and Escape even though
+      // this isolated graph never mounts a command popup.
+      if (!popups.has(scope)) popups.set(scope, Object.freeze({ dismiss() {} }));
+      return popups.get(scope);
+    },
+  } };
+}
+
 /** Retain accepts discovered identities, not a Host-authenticated id on its own. */
 function waitForCloudSession(sessions, sessionId, signal) {
   signal.throwIfAborted();
@@ -17,8 +41,18 @@ function waitForCloudSession(sessions, sessionId, signal) {
     const check = () => {
       if (signal.aborted) { aborted(); return; }
       const catalog = sessions.list.getSnapshot();
-      if (catalog.phase !== 'ready') return;
-      finish(catalog.ids.includes(sessionId) && catalog.byId[sessionId] ? undefined : new Error('云端会话尚未出现在当前目录，请重新连接输入'));
+      // A real Host publishes the ready marker before the first session
+      // snapshot.  Treat that as an intermediate state: rejecting here loses
+      // the graph during module/session delivery and leaves the Web composer
+      // waiting forever for its textbox.  Only a terminal catalog failure is
+      // fatal; otherwise keep listening until the retained session appears or
+      // the bounded timeout expires.
+      if (catalog.phase === 'error' || catalog.phase === 'failed') {
+        finish(new Error('读取云端会话目录失败，请重新连接输入'));
+        return;
+      }
+      if (catalog.phase !== 'ready' || !catalog.ids.includes(sessionId) || !catalog.byId[sessionId]) return;
+      finish();
     };
     const timer = setTimeout(() => finish(new Error('读取云端会话目录超时，请重新连接输入')), 30000);
     signal.addEventListener('abort', aborted, { once: true });
@@ -32,7 +66,7 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
   const { Context, React, connection, typert, gateway, remotes, renderer, sessions, uiSession, settings, locale, conversation, attachment, createSnapshotStore } = modules;
   const policy = conversation.Config?.({});
   if (policy?.hostPathPolicy !== 'host-paths' || policy.draftPersistence !== 'session-local' || policy.submissionActions !== 'native') { await transport.dispose(); throw new Error('请更新 Studio 宿主后使用安全的云端原生输入'); }
-  const ctx = new Context(); let reference, unmount, disposed = false;
+  const ctx = new Context(); let reference, unmount, disposed = false; let mountedElement = null;
   const lifetime = new AbortController();
   const dispose = async () => {
     if (disposed) return; disposed = true; signal?.removeEventListener('abort', aborted); lifetime.abort();
@@ -96,10 +130,47 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
       });
     const EmptyView = () => null;
     ctx.slots.register({ name: 'studio.assistant.cloud-composer' }, function NativeComposer({ renderFactorySlot }) {
-      return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: { views: EmptyView, widthControls: EmptyView } });
+      return React.createElement('div', { 'data-assistant-cloud-composer': true },
+        React.createElement('style', null, '[data-assistant-cloud-composer] [data-composer-card] button[aria-haspopup="listbox"]:disabled { display: none; }'),
+        renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: { views: EmptyView, widthControls: EmptyView } }));
     });
+    const commands = createAssistantNativeCommandUi({ sessionId: transport.sessionId, sessions: ctx.sessions, createSnapshotStore });
+    ctx.provide('commandUi', commands.commandUi);
     await ctx.plugin(conversation, { hostPathPolicy: 'upload-only', draftPersistence: 'memory-only', submissionActions: 'queue-only' }).await();
     await ctx.plugin(attachment).await();
+    const inputState = createSnapshotStore(transport.getState());
+    ctx.effect(() => transport.subscribe(() => inputState.set(transport.getState())));
+    // The cloud graph owns the attachment entry. The DSH command registry is
+    // not mounted in this isolated graph, so the entry drives the mounted DSH
+    // file input directly; uploads still flow through the graph's fileUpload
+    // service and the dedicated attachment-upload ingress.
+    const composerFileInput = () => mountedElement?.querySelector('input[type="file"]') ?? null;
+    const canPickFiles = () => {
+      if (disposed) return false;
+      const state = transport.getState();
+      if (state.invalid || state.pending || state.busy || state.disconnected) return false;
+      const input = composerFileInput();
+      return input !== null && !input.disabled;
+    };
+    ctx.slots.register({ name: 'conversation.input.left', id: 'studio.assistant.attachment',
+      inject: () => ({ hooks: { cloudInputState: inputState, cloudFileCommand: commands.file } }),
+    }, function CloudAttachment({ sessionId, useInput, useCloudInputState, useCloudFileCommand }) {
+      // Subscribe to native intake and transport gates without introducing a
+      // parallel draft or picker. The mounted DSH input owns intake; the
+      // registered command only contributes the icon while it is available.
+      useInput(value => value); useCloudInputState(value => value);
+      const command = useCloudFileCommand(value => value);
+      const [mounted, setMounted] = React.useState(false);
+      React.useEffect(() => { setMounted(true); }, []);
+      const disabled = !mounted || sessionId !== transport.sessionId || !canPickFiles();
+      return React.createElement('button', { type: 'button', 'aria-label': '添加附件', title: '添加附件', disabled,
+        'data-assistant-native-attachment': true,
+        onMouseDown: event => event.preventDefault(),
+        onClick: () => { if (sessionId === transport.sessionId && canPickFiles()) composerFileInput()?.click(); },
+        style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', padding: 0,
+          border: 0, borderRadius: '8px', background: 'transparent', color: 'inherit', opacity: disabled ? 0.4 : 1, cursor: disabled ? 'default' : 'pointer' },
+      }, command?.icon ? React.createElement(command.icon, { size: 16 }) : '＋');
+    });
     // Existing product history already renders the safe Queue and plan facts.
     for (const id of ['queue', 'todo']) ctx.slots.register({ name: 'conversation.input.dock', id, priority: 1000 }, () => null);
     const updateBlock = () => {
@@ -117,18 +188,8 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
     const snapshot = reference.binding.session.getSnapshot();
     if (snapshot.openState !== 'open' || snapshot.openError) throw new Error('云端原生会话未能打开');
     if (ctx.sessions.binding(transport.sessionId) !== reference.binding) throw new Error('Cloud session binding changed');
-    if (container) unmount = ctx.get('uiRenderer').mount(container);
+    if (container) { mountedElement = container; unmount = ctx.get('uiRenderer').mount(container); }
     return { ctx, reference, transport, dispose,
-      addFiles(files) {
-        if (disposed || ctx.sessions.binding(transport.sessionId) !== reference.binding) return '云端输入连接已关闭，请重新连接';
-        const pending = transport.getState();
-        if (pending.invalid || pending.pending || pending.busy || pending.disconnected) return '请先确认上一条消息的保存结果';
-        // Public ComposerBarInjected owns native browser intake, draft allocation
-        // and upload cancellation; this picker never creates a parallel draft.
-        const bar = ctx.slots.entries('conversation.composer.bar')[0];
-        const intake = bar?.inject(transport.sessionId)?.addFiles;
-        return typeof intake === 'function' ? intake(files) : '当前原生输入未提供文件选择，请重新连接';
-      },
       async confirm() {
         if (disposed) return { accepted: false, reset: false };
         const input = ctx.conversation.input.for(reference.binding.ctx), before = input.state.getSnapshot();
@@ -144,6 +205,6 @@ export async function createAssistantNativeGraph({ modules, transport, window, c
         // attachments stay in the same memory-only graph, including its undo state.
         return { accepted: true, reset: matches && before.draftRev === after.draftRev
           && before.attachmentIds.length === after.attachmentIds.length && before.attachmentIds.every((id, index) => id === after.attachmentIds[index]) };
-      }, mount(element) { if (disposed || unmount) throw new Error('Cloud composer already mounted or released'); unmount = ctx.get('uiRenderer').mount(element); } };
+      }, mount(element) { if (disposed || unmount) throw new Error('Cloud composer already mounted or released'); mountedElement = element; unmount = ctx.get('uiRenderer').mount(element); } };
   } catch (error) { await dispose(); throw error; }
 }

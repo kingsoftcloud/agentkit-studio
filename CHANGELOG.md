@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+- 云端镜像目录出现当前 Studio 尚未实现的能力声明时，只停用该镜像版本并回退到最新的兼容镜像，同时给出升级提示；不再因一次新镜像发布拒绝整个目录，导致旧客户端无法部署任何 Agent。
+- Raise the development and CI Node.js baseline to 22.23.4 (or 24.22.1 / 26.12.1) for the October 2026 security release, and fail fast in `pnpm check`, the development doctor and CI when the runtime predates the fix.
 - Adapt generic Hosted UI Actions to frozen Studio runtimes with verified account isolation, native DSH history recovery, and explicit stream failures; retain existing personal assistant data and permissions.
+- Keep the assistant conversation quiet: one native attachment picker, concise errors and on-demand connection diagnostics.
+- Open assistant links in an instance-scoped native Studio browser pane with explicit external opening and cleanup on close or assistant change.
+- Replace the one-shot delay form with the native DSH task manager, recurring rules, complete-record editing and delivery history; admit only trusted native schedule tools scoped to the current assistant Session.
+- Add a secret-free Ubuntu PR browser acceptance stage. Full-access cloud execution still requires a separately isolated executor; current deployment and existing Session permissions are unchanged.
 
 - Fix normal portable assistant cold startup and process-restart scheduling through profile-owned plugin resolution and native runtime readiness dependencies; add an installed CLI startup/restart CI smoke.
 

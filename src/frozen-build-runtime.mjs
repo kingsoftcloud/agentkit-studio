@@ -70,7 +70,9 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
   const identity = await createAssistantIdentity({ directory: env.AGENTKIT_HOME, defaultName: frozen.metadata?.name || '个人助理' });
   // Optional on older Hosts: use only the public non-owner Peer factory. The
   // build credential remains at this HTTP boundary, never a Host owner role.
-  const permissionModel = await createAssistantPermissionModel({ ctx, env, agentId, profile: frozen.spec?.security?.assistantPermissions?.profile });
+  const permissionModel = await createAssistantPermissionModel({ ctx, env, agentId,
+    profile: frozen.spec?.security?.assistantPermissions?.profile,
+    grants: frozen.spec?.security?.assistantPermissions?.grants });
   let assistant;
   const connection = ctx.get('connection');
   const nativeCarrier = typeof connection?.createPeer === 'function'

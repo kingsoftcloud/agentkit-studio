@@ -1,0 +1,699 @@
+diff --git a/packages/client/ui-sidebar-browser/README.i18n.yaml b/packages/client/ui-sidebar-browser/README.i18n.yaml
+index d17a9852a058eb499029d9b287e21d2694d3dd81..d3ff3dcb0fb1abd7244449dccdd227787288d997 100644
+--- a/packages/client/ui-sidebar-browser/README.i18n.yaml
++++ b/packages/client/ui-sidebar-browser/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: d152484eb41ac6b4
+   zh: de4a2a92773d135e
+ /deepseek-ai-dsh-client-ui-sidebar-browser/use-this-package:
+-  en: 8cf8739a3e4c3504
+-  zh: a893ba17036fd8f7
++  en: 3e75ebc2576198f3
++  zh: 149b090dcddbd52b
+ /deepseek-ai-dsh-client-ui-sidebar-browser/use-this-package/when-to-choose-it:
+   en: fb79cb7d59bc01af
+   zh: 5f6202d8b0b62d7d
+diff --git a/packages/client/ui-sidebar-browser/README.md b/packages/client/ui-sidebar-browser/README.md
+index e3664ef582d6fa980a40a9e7679c0e8b4b34d0f6..946455781deec1f40736dffd44e789e31026f456 100644
+--- a/packages/client/ui-sidebar-browser/README.md
++++ b/packages/client/ui-sidebar-browser/README.md
+@@ -27,6 +27,8 @@ Browse HTTP(S) pages, including loopback services, inside independent right-Side
+ 
+ Browser is disabled by default in Web profiles and enabled on Desktop. Enable the shipped entry through the Web profile patch to use it. Open **Browser** from the right-Sidebar guide and enter an HTTP(S) URL. Chat HTTP(S) links open here when the [link preference](../ui-chat/README.md) selects **In-App Sidebar**. A host name without a scheme becomes HTTPS. Public and loopback targets use the same default sandbox. Each guide action or delegated message-link activation creates another Browser tab.
+ 
++The same Client plugin registers the root-scoped `browser.content` factory for an independent browser graph. Render it with `{ url }`; no Session, Workspace, Sidebar service or persisted store is required. Each occurrence reuses the native Browser chrome and controller and releases its page on unmount. Web always applies `sandbox="allow-scripts allow-forms"`, retaining an opaque origin with no popup, top-navigation or sandbox-lowering control. `credentialless` is an additional browser hint, not the isolation guarantee. Desktop creates a fresh opaque, process-local storage identity for each occurrence instead of resolving a local Workspace. Only the toolbar's explicit external-open action launches another browser. Existing Sidebar tabs retain their prior behavior.
++
+ ### When to choose it
+ 
+ Choose Browser for a Web page that should remain beside the current Session. Choose [Document Preview](../ui-sidebar-documentpreview/README.md) for local files, and use the explicit external-browser action when a site refuses iframe embedding or needs browser capabilities this package withholds.
+diff --git a/packages/client/ui-sidebar-browser/README.zh.md b/packages/client/ui-sidebar-browser/README.zh.md
+index 4be25a37c002fc1d5cfc2db3ed90993718878c0d..4f7931def8f16728975c106924ef6f12a23e2548 100644
+--- a/packages/client/ui-sidebar-browser/README.zh.md
++++ b/packages/client/ui-sidebar-browser/README.zh.md
+@@ -27,6 +27,8 @@ kind: "package-reference"
+ 
+ Browser 在 Web profile 中默认禁用，在 Desktop 中默认启用。Web 用户可通过 profile patch 启用随附条目。可以从右侧 Sidebar guide 打开 **浏览器**并输入 HTTP(S) URL。Chat 的[链接偏好](../ui-chat/README.zh.md)选择**应用内侧边栏**时，HTTP(S) 链接会在此打开。不带 scheme 的主机名会补全为 HTTPS。公共目标与 loopback 目标使用相同的默认 sandbox。每次 guide 操作或委托到此的消息链接操作都会创建一个新的 Browser tab。
+ 
++同一个 Client plugin 还会为独立浏览器图注册 root scope 的 `browser.content` factory，使用 `{ url }` 渲染，无需 Session、Workspace、Sidebar service 或持久化 store。每个实例复用原生 Browser 导航栏和 controller，并在卸载时释放页面。Web 始终使用 `sandbox="allow-scripts allow-forms"`，保留 opaque origin，且不允许弹窗、顶层导航或降低 sandbox 限制。`credentialless` 只是额外的浏览器提示，不是隔离保证。Desktop 为每个实例创建全新、不透明、仅在进程内存在的存储身份，不解析本地 Workspace。只有工具栏中明确的外部打开操作才会启动另一个浏览器。原有 Sidebar tab 的行为保持不变。
++
+ ### 何时选择
+ 
+ 当 Web 页面需要保留在当前 Session 旁时，选择 Browser。本地文件使用 [Document Preview](../ui-sidebar-documentpreview/README.zh.md)；站点拒绝 iframe 嵌入或需要本包不授予的浏览器 capability 时，使用明确的外部浏览器操作。
+diff --git a/packages/client/ui-sidebar-browser/package.json b/packages/client/ui-sidebar-browser/package.json
+index cf21af30526c6ba447ab85eefc90e497106e7200..e6f0082afb00233be55972df61ba9766d2014ac1 100644
+--- a/packages/client/ui-sidebar-browser/package.json
++++ b/packages/client/ui-sidebar-browser/package.json
+@@ -50,6 +50,7 @@
+   "devDependencies": {
+     "@deepseek-ai/cordis": "workspace:~",
+     "@deepseek-ai/dsh-api-workspace-controller": "workspace:*",
++    "@deepseek-ai/dsh-util-crypto": "workspace:*",
+     "@deepseek-ai/dsh-brand": "workspace:*",
+     "@deepseek-ai/dsh-client-locale": "workspace:*",
+     "@deepseek-ai/dsh-client-shortcuts": "workspace:*",
+diff --git a/packages/client/ui-sidebar-browser/src/client/browser/IframeImpl.ts b/packages/client/ui-sidebar-browser/src/client/browser/IframeImpl.ts
+index 0692b80997b077c2a4fc197c12c3e9cc4cf4f065..77fdad7dfb4304d9b6986cf3d59f55a0f181d120 100644
+--- a/packages/client/ui-sidebar-browser/src/client/browser/IframeImpl.ts
++++ b/packages/client/ui-sidebar-browser/src/client/browser/IframeImpl.ts
+@@ -16,10 +16,13 @@ export class IframeImpl implements BrowserFrame {
+   private disposed = false
+   private disposal: Promise<void> | undefined
+ 
+-  /** @param options - initial checkpoint and persistence writer. @param presentation - iframe DOM adapter. */
+-  constructor(private readonly options: BrowserPageOptions, private readonly presentation: IframePresentation) {
++  /** @param options - initial checkpoint and persistence writer. @param presentation - iframe DOM adapter.
++   * @param isolated - enforces fixed opaque-origin embedding without a sandbox control.
++   */
++  constructor(private readonly options: BrowserPageOptions, private readonly presentation: IframePresentation,
++    private readonly isolated = false) {
+     this.navigation = new BrowserNavigation(options.initial)
+-    this.store = createSnapshotStore({ ...emptyBrowserFrame(), sandboxEnabled: this.sandboxed })
++    this.store = createSnapshotStore({ ...emptyBrowserFrame(), sandboxEnabled: this.isolated ? undefined : this.sandboxed })
+   }
+ 
+   /**
+@@ -72,7 +75,7 @@ export class IframeImpl implements BrowserFrame {
+   }
+ 
+   private setSandbox(enabled: boolean): void {
+-    if (this.disposed || enabled === this.sandboxed) return
++    if (this.disposed || this.isolated || enabled === this.sandboxed) return
+     this.sandboxed = enabled
+     if (this.store.getSnapshot().target === undefined) {
+       this.store.set({ ...this.store.getSnapshot(), sandboxEnabled: enabled })
+@@ -94,7 +97,7 @@ export class IframeImpl implements BrowserFrame {
+     return { target, address: target === undefined ? 'empty' : state.navigation.status === 'unknown' ? 'unknown' : 'requested',
+       loading: state.navigation.status === 'loading' && this.error === undefined,
+       canGoBack: this.navigation.canGoBack, canGoForward: this.navigation.canGoForward,
+-      error: this.error, sandboxEnabled: this.sandboxed }
++      error: this.error, sandboxEnabled: this.isolated ? undefined : this.sandboxed }
+   }
+ 
+   private publish(): void {
+diff --git a/packages/client/ui-sidebar-browser/src/client/index.ts b/packages/client/ui-sidebar-browser/src/client/index.ts
+index d44226eb13c6dca7cde6d7b2b20d614c58d96281..e575e0f18ec0518d6936514daafbabe5524dfc16 100644
+--- a/packages/client/ui-sidebar-browser/src/client/index.ts
++++ b/packages/client/ui-sidebar-browser/src/client/index.ts
+@@ -1,5 +1,6 @@
+ /** Register the HTTP(S) Browser tab type in the right Sidebar. */
+ import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
++import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
+ import type { Context } from '@deepseek-ai/cordis'
+ import type {} from '@deepseek-ai/dsh-client-locale/client'
+ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+@@ -10,7 +11,8 @@ import { BrowserBody, type BrowserBodyProps } from './view/BrowserBody.tsx'
+ import { BrowserTitle } from './view/BrowserTitle.tsx'
+ import { createBrowserControllers } from './browser/BrowserController.ts'
+ import type { BrowserInjected } from './browser/BrowserController.ts'
+-import { createIframePage } from './pages.ts'
++import { createIframePage, createIsolatedIframePage } from './pages.ts'
++import { EmbeddedBrowserBody } from './view/EmbeddedBrowserBody.tsx'
+ import { createElectronPage } from './electron/pages.ts'
+ import type { DesktopBrowserBridge } from '../types.ts'
+ import { browserWorkspace } from './electron/workspace.ts'
+@@ -29,6 +31,19 @@ export type { SidebarBrowserKey } from './locales.ts'
+ export type { BrowserState } from './browser/store.ts'
+ export type { BrowserAddressFailure, BrowserAddressResult, BrowserTarget } from './browser/url.ts'
+ 
++declare module '@deepseek-ai/dsh-client-ui-slots' {
++  interface SlotFactoryMap {
++    /** An isolated browser occurrence with no Session or persisted browsing state. */
++    'browser.content': {
++      scope: 'root'
++      props: { readonly url: string }
++      inject: BrowserInjected
++      locale: 'sidebarBrowser'
++    }
++  }
++}
++
++
+ declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
+   interface SidebarRightTabParamsMap {
+     /** Optional initial Browser URL. */
+@@ -37,10 +52,29 @@ declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
+ }
+ 
+ /** Required Browser services. */
+-export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
++export const inject = ['slots', 'locale']
+ 
+-/** Register the Browser type, localized guide entry, body, and title. */
++/** Register isolated root content and the optional Session Sidebar browser.
++ * @param ctx - client context with renderer and locale services.
++ */
+ export function apply(ctx: Context): void {
++  const carrier = (globalThis as typeof globalThis & {
++    dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
++  }).dshDesktop
++  const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
++  ctx.effect(() => ctx.locale.register('sidebarBrowser', { zh, en }), 'ui-sidebar-browser.copy')
++  const isolated = createBrowserControllers({ replace() {}, forget() {} }, (options) => {
++    if (desktop === undefined) return createIsolatedIframePage(options)
++    const identity = `embedded-browser:${randomUUID()}`
++    return createElectronPage(options, desktop, (signal) => { signal.throwIfAborted(); return Promise.resolve(identity) })
++  }, () => false)
++  ctx.effect(() => () => isolated.dispose(), 'ui-sidebar-browser.isolated-frames')
++  ctx.slots.registerFactory({ name: 'browser.content', scope: 'root', locale: 'sidebarBrowser',
++    inject: () => isolated }, EmbeddedBrowserBody)
++  ctx.inject(['sidebarRight', 'sidebarRightTabs'], (scope) => { installSidebar(scope, desktop) })
++}
++
++function installSidebar(ctx: Context, desktop: DesktopBrowserBridge | undefined): void {
+   const namespace = 'sidebarBrowser'
+   const t = ctx.locale.bind(namespace)
+   ctx.inject(['shortcuts'], (ctx) => {
+@@ -66,11 +100,6 @@ export function apply(ctx: Context): void {
+   })
+   const store = createBrowserStore()
+   const openTabs = ctx.sidebarRight.openTabs
+-  const carrier = (globalThis as typeof globalThis & {
+-    dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
+-  }).dshDesktop
+-  const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
+-  ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'ui-sidebar-browser.copy')
+   ctx.effect(() => ctx.sidebarRightTabs.register({ ...browserDefinition(t), keepMounted: desktop !== undefined }), 'ui-sidebar-browser.type')
+   const installFrames = (scope: Context, factory: (sessionId: BrowserBodyProps['sessionId']) => BrowserPageFactory): void => {
+     const controllers = new Map<BrowserBodyProps['sessionId'], BrowserInjected>()
+diff --git a/packages/client/ui-sidebar-browser/src/client/pages.ts b/packages/client/ui-sidebar-browser/src/client/pages.ts
+index 220616b4bdcb2b7aca72b29e3ab0ef3a42fcdf66..8c5ba56bc4241bb4e624bcd0c9002733b913cf73 100644
+--- a/packages/client/ui-sidebar-browser/src/client/pages.ts
++++ b/packages/client/ui-sidebar-browser/src/client/pages.ts
+@@ -17,3 +17,17 @@ export function createIframePage(options: BrowserPageOptions): BrowserPage {
+   const frame = new IframeImpl(options, presentation)
+   return { frame, presentation }
+ }
++
++/** Assemble an iframe whose fixed sandbox cannot be relaxed by controller commands.
++ * @param options - in-memory navigation callbacks.
++ * @returns the isolated iframe provider and its presentation.
++ */
++export function createIsolatedIframePage(options: BrowserPageOptions): BrowserPage {
++  const presentation = new IframePresentation({
++    loaded: (revision) => { frame.handleLoaded(revision) },
++    failed: (revision) => { frame.handleLoadFailed(revision) },
++    remounted: () => { frame.reload() },
++  }, true)
++  const frame = new IframeImpl(options, presentation, true)
++  return { frame, presentation }
++}
+diff --git a/packages/client/ui-sidebar-browser/src/client/view/BrowserBody.tsx b/packages/client/ui-sidebar-browser/src/client/view/BrowserBody.tsx
+index f819dba4365490773e30487cbb50e20b64b5dd3d..a257b34c059f7777295e1cd771e585e3d89c7fdc 100644
+--- a/packages/client/ui-sidebar-browser/src/client/view/BrowserBody.tsx
++++ b/packages/client/ui-sidebar-browser/src/client/view/BrowserBody.tsx
+@@ -1,48 +1,21 @@
+-/** Common browser chrome; a presentation adapter attaches the page inside its content container. */
++/** Sidebar tab scope for the shared Browser chrome and controller. */
+ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+-import type { FormEvent, ReactNode } from 'react'
+-import {
+-  Button,
+-  IconChevronLeftOutlineRegular,
+-  IconChevronRightOutlineRegular,
+-  IconLinkOutlineRegular,
+-  IconRefreshOutlineRegular, Tooltip,
+-  IconRightUpOutlineRegular,
+-  SHIELD_OUTLINE_PATH,
+-  ICON_REGULAR_STROKE,
+-} from '@deepseek-ai/dsh-client-ui-primitives'
++import type { ReactNode } from 'react'
+ import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+ import type { BrowserInjected } from '../browser/BrowserController.ts'
+ import { emptyBrowserFrame } from '../browser/BrowserFrame.ts'
+ import { currentBrowserTarget } from '../browser/BrowserPersistence.ts'
+ import type { BrowserStore } from '../browser/store.ts'
+-import css from './Browser.module.css'
++import { BrowserChrome } from './BrowserChrome.tsx'
+ 
+ const EMPTY_FRAME = emptyBrowserFrame()
+ 
+-function SandboxPolicyIcon({ sandboxed }: { readonly sandboxed: boolean }): ReactNode {
+-  return (
+-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+-      <path d={SHIELD_OUTLINE_PATH} stroke="currentColor" strokeWidth={ICON_REGULAR_STROKE} strokeLinejoin="round" />
+-      {sandboxed
+-        ? <path d="M12.1654 5.7552L8.9447 9.41475C8.73044 9.65816 8.53628 9.8804 8.35774 10.0423C8.1713 10.2114 7.94235 10.3717 7.64016 10.4254C7.48207 10.4535 7.32 10.4552 7.16151 10.4294C6.85843 10.3801 6.62728 10.2223 6.43836 10.0559C6.25752 9.89653 6.06037 9.67732 5.84264 9.43705L4.72925 8.20897L5.63557 7.38707L6.74897 8.61594C6.98603 8.87755 7.12974 9.03533 7.24673 9.13839C7.31033 9.19443 7.34485 9.21476 7.35823 9.22122C7.38068 9.22484 7.40352 9.22515 7.42593 9.22122C7.40522 9.22502 7.42893 9.23294 7.53583 9.136C7.65132 9.03126 7.79316 8.87139 8.02643 8.60638L11.2479 4.94763L12.1654 5.7552Z" fill="currentColor" />
+-        : <path d="M10.6074 4.40278L8.00975 6.99973L10.6074 9.59739L9.59736 10.6074L6.9997 8.00978L4.40274 10.6074L3.3927 9.59739L5.98966 6.99973L3.3927 4.40278L4.40274 3.39273L6.9997 5.98969L9.59736 3.39273L10.6074 4.40278Z" fill="currentColor" transform="translate(1.2 0.8)" />}
+-    </svg>
+-  )
+-}
+-
+ /** Browser body props assembled by the tab seat. */
+ export type BrowserBodyProps = PropsRuntime<'sidebar.right.pane.tab'>
+   & PropsStore<BrowserStore>
+   & PropsLocale<'sidebarBrowser'>
+   & InjectFace<BrowserInjected>
+ 
+-function useBrowserDraft(url: string | undefined, revision: number): readonly [string, (value: string) => void] {
+-  const [edit, setEdit] = useState<{ readonly revision: number; readonly value: string }>()
+-  return [edit?.revision === revision ? edit.value : url ?? '',
+-    (value) => { setEdit({ revision, value }) }]
+-}
+-
+ /** Render provider-neutral navigation state and optional controls. */
+ export function BrowserBody(props: BrowserBodyProps): ReactNode {
+   const { mount, loadUrl, restore, goBack, goForward, reload, setSandbox, useBrowserState, useStore, useTabInfo, t } = props
+@@ -56,8 +29,6 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
+   const state = useBrowserState(tab.id)
+   const frame = state?.frame ?? EMPTY_FRAME
+   const restoreTarget = state === undefined ? currentBrowserTarget(initial.current) : state.restoreTarget
+-  const target = frame.target ?? restoreTarget
+-  const [draft, setDraft] = useBrowserDraft(target?.url ?? initialUrl.current, state?.addressRevision ?? 0)
+ 
+   useLayoutEffect(() => {
+     const hide = mount({
+@@ -69,65 +40,9 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
+     return hide
+   }, [mount, tab.id, tab.signal, tab.actions, viewportId, props.actions])
+ 
+-  const unknown = frame.address === 'unknown'
+-  const externalUrl = unknown ? undefined : target?.url
+-  const sandboxed = frame.sandboxEnabled
+-  const failure = state?.addressFailure
+-  const error = frame.error
+-  const submit = (event: FormEvent): void => { event.preventDefault(); loadUrl(tab.id, draft) }
+-
+-  return (
+-    <div className={css.root}>
+-      <form className={css.toolbar} onSubmit={submit}>
+-        <button type="button" className={css.tool} aria-label={t('back')} title={t('back')} disabled={!frame.canGoBack} onClick={() => { goBack(tab.id) }}><IconChevronLeftOutlineRegular /></button>
+-        <button type="button" className={css.tool} aria-label={t('forward')} title={t('forward')} disabled={!frame.canGoForward} onClick={() => { goForward(tab.id) }}><IconChevronRightOutlineRegular /></button>
+-        <Tooltip label={t('reload')} shortcutKeys={tab.refreshShortcut?.keys} side="bottom" delayMs={500}>
+-          <button type="button" className={css.tool} aria-label={t('reload')} aria-keyshortcuts={tab.refreshShortcut?.aria} disabled={target === undefined || mountEpoch === 0} onClick={() => { reload(tab.id) }}><IconRefreshOutlineRegular /></button>
+-        </Tooltip>
+-        <div className={css.addressBox}>
+-          <input
+-            className={[css.address, unknown ? css.addressUnknown : ''].join(' ')}
+-            value={draft}
+-            aria-label={t('address.placeholder')}
+-            placeholder={t('address.placeholder')}
+-            spellCheck={false}
+-            onChange={(event) => { setDraft(event.currentTarget.value) }}
+-          />
+-          {unknown && <span className={css.addressChanged}>{t('address.changed')}</span>}
+-          <button type="submit" className={[css.tool, css.addressGo].join(' ')} aria-label={t('go')} title={t('go')}><IconLinkOutlineRegular /></button>
+-        </div>
+-        <button type="button" className={css.tool} aria-label={t('external')} title={t('external')} disabled={externalUrl === undefined}
+-          onClick={externalUrl === undefined ? undefined : () => { window.open(externalUrl, '_blank', 'noopener,noreferrer') }}
+-        ><IconRightUpOutlineRegular size={14} /></button>
+-        {sandboxed !== undefined && <button
+-          type="button"
+-          className={[css.tool, sandboxed ? '' : css.sandboxOff].join(' ')}
+-          aria-label={t(sandboxed ? 'sandbox.disable' : 'sandbox.enable')}
+-          title={t(sandboxed ? 'sandbox.disable' : 'sandbox.enable')}
+-          aria-pressed={!sandboxed}
+-          onClick={() => { setSandbox(tab.id, !sandboxed) }}
+-        ><SandboxPolicyIcon sandboxed={sandboxed} /></button>}
+-      </form>
+-      {sandboxed === false && <div className={css.sandboxWarning} role="status">{t('sandbox.warning')}</div>}
+-      {error !== undefined && <div className={css.failure} role="status">{error.code !== undefined && error.description !== undefined
+-        ? t('load.failed.detail', { code: String(error.code), description: error.description })
+-        : t('load.failed')}</div>}
+-      {failure !== undefined && <div className={css.failure} role="alert">{t(`error.${failure}`)}</div>}
+-      <div className={css.content} aria-busy={frame.loading}>
+-        <div id={viewportId} className={css.viewport} aria-label={t('type.label')} />
+-        {restoreTarget !== undefined && <section className={css.restore} aria-label={t('restore.previous')}>
+-          <p className={css.restoreLabel}>{t('restore.previous')}</p>
+-          <p className={css.restoreTitle}>{restoreTarget.title}</p>
+-          <p className={css.restoreUrl}>{restoreTarget.url}</p>
+-          <Button variant="primary" size="sm" disabled={mountEpoch === 0} onClick={() => { restore(tab.id) }}>
+-            {t('restore.action')}
+-          </Button>
+-        </section>}
+-        {restoreTarget === undefined && (target === undefined || frame.loading) && error === undefined && <div className={css.placeholder}>
+-          <div className={css.start}>{t(target === undefined ? 'start' : 'loading')}</div>
+-        </div>}
+-      </div>
+-      {unknown && <p className={css.limit}>{t('address.unknown')}</p>}
+-    </div>
+-  )
++  return <BrowserChrome frame={frame} state={state} restoreTarget={restoreTarget} initialUrl={initialUrl.current}
++    viewportId={viewportId} mountEpoch={mountEpoch} refreshShortcut={tab.refreshShortcut} t={t}
++    loadUrl={(value) => { loadUrl(tab.id, value) }} restore={() => { restore(tab.id) }}
++    goBack={() => { goBack(tab.id) }} goForward={() => { goForward(tab.id) }} reload={() => { reload(tab.id) }}
++    setSandbox={(enabled) => { setSandbox(tab.id, enabled) }} />
+ }
+diff --git a/packages/client/ui-sidebar-browser/src/client/view/BrowserChrome.tsx b/packages/client/ui-sidebar-browser/src/client/view/BrowserChrome.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..979e616801a717554778fa508365885abedb347a
+--- /dev/null
++++ b/packages/client/ui-sidebar-browser/src/client/view/BrowserChrome.tsx
+@@ -0,0 +1,124 @@
++/** Common browser chrome; a presentation adapter attaches the page inside its content container. */
++import { useState } from 'react'
++import type { FormEvent, ReactNode } from 'react'
++import {
++  Button,
++  IconChevronLeftOutlineRegular,
++  IconChevronRightOutlineRegular,
++  IconLinkOutlineRegular,
++  IconRefreshOutlineRegular, Tooltip,
++  IconRightUpOutlineRegular,
++  SHIELD_OUTLINE_PATH,
++  ICON_REGULAR_STROKE,
++} from '@deepseek-ai/dsh-client-ui-primitives'
++import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
++import type { BrowserControllerState } from '../browser/BrowserController.ts'
++import type { BrowserFrameState } from '../browser/BrowserFrame.ts'
++import type { BrowserTarget } from '../browser/url.ts'
++import type { BrowserBodyProps } from './BrowserBody.tsx'
++import css from './Browser.module.css'
++
++function SandboxPolicyIcon({ sandboxed }: { readonly sandboxed: boolean }): ReactNode {
++  return (
++    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
++      <path d={SHIELD_OUTLINE_PATH} stroke="currentColor" strokeWidth={ICON_REGULAR_STROKE} strokeLinejoin="round" />
++      {sandboxed
++        ? <path d="M12.1654 5.7552L8.9447 9.41475C8.73044 9.65816 8.53628 9.8804 8.35774 10.0423C8.1713 10.2114 7.94235 10.3717 7.64016 10.4254C7.48207 10.4535 7.32 10.4552 7.16151 10.4294C6.85843 10.3801 6.62728 10.2223 6.43836 10.0559C6.25752 9.89653 6.06037 9.67732 5.84264 9.43705L4.72925 8.20897L5.63557 7.38707L6.74897 8.61594C6.98603 8.87755 7.12974 9.03533 7.24673 9.13839C7.31033 9.19443 7.34485 9.21476 7.35823 9.22122C7.38068 9.22484 7.40352 9.22515 7.42593 9.22122C7.40522 9.22502 7.42893 9.23294 7.53583 9.136C7.65132 9.03126 7.79316 8.87139 8.02643 8.60638L11.2479 4.94763L12.1654 5.7552Z" fill="currentColor" />
++        : <path d="M10.6074 4.40278L8.00975 6.99973L10.6074 9.59739L9.59736 10.6074L6.9997 8.00978L4.40274 10.6074L3.3927 9.59739L5.98966 6.99973L3.3927 4.40278L4.40274 3.39273L6.9997 5.98969L9.59736 3.39273L10.6074 4.40278Z" fill="currentColor" transform="translate(1.2 0.8)" />}
++    </svg>
++  )
++}
++
++/** Plain navigation and callbacks shared by Sidebar and isolated browser bodies. */
++export interface BrowserChromeProps extends PropsLocale<'sidebarBrowser'> {
++  readonly frame: BrowserFrameState
++  readonly state: BrowserControllerState | undefined
++  readonly restoreTarget: BrowserTarget | undefined
++  readonly initialUrl: string | undefined
++  readonly viewportId: string
++  readonly mountEpoch: number
++  readonly refreshShortcut?: ReturnType<BrowserBodyProps['useTabInfo']>['tab']['refreshShortcut']
++  readonly loadUrl: (value: string) => void
++  readonly restore: () => void
++  readonly goBack: () => void
++  readonly goForward: () => void
++  readonly reload: () => void
++  readonly setSandbox: (enabled: boolean) => void
++}
++
++function useBrowserDraft(url: string | undefined, revision: number): readonly [string, (value: string) => void] {
++  const [edit, setEdit] = useState<{ readonly revision: number; readonly value: string }>()
++  return [edit?.revision === revision ? edit.value : url ?? '',
++    (value) => { setEdit({ revision, value }) }]
++}
++
++/** Render the common Browser address bar, navigation controls and page viewport.
++ * @param props - current navigation state and controller commands.
++ * @returns the native Browser chrome.
++ */
++export function BrowserChrome({ frame, state, restoreTarget, initialUrl, viewportId, mountEpoch,
++  refreshShortcut, loadUrl, restore, goBack, goForward, reload, setSandbox, t }: BrowserChromeProps): ReactNode {
++  const target = frame.target ?? restoreTarget
++  const [draft, setDraft] = useBrowserDraft(target?.url ?? initialUrl, state?.addressRevision ?? 0)
++  const unknown = frame.address === 'unknown'
++  const externalUrl = unknown ? undefined : target?.url
++  const sandboxed = frame.sandboxEnabled
++  const failure = state?.addressFailure
++  const error = frame.error
++  const submit = (event: FormEvent): void => { event.preventDefault(); loadUrl(draft) }
++
++  return (
++    <div className={css.root}>
++      <form className={css.toolbar} onSubmit={submit}>
++        <button type="button" className={css.tool} aria-label={t('back')} title={t('back')} disabled={!frame.canGoBack} onClick={() => { goBack() }}><IconChevronLeftOutlineRegular /></button>
++        <button type="button" className={css.tool} aria-label={t('forward')} title={t('forward')} disabled={!frame.canGoForward} onClick={() => { goForward() }}><IconChevronRightOutlineRegular /></button>
++        <Tooltip label={t('reload')} shortcutKeys={refreshShortcut?.keys} side="bottom" delayMs={500}>
++          <button type="button" className={css.tool} aria-label={t('reload')} aria-keyshortcuts={refreshShortcut?.aria} disabled={target === undefined || mountEpoch === 0} onClick={() => { reload() }}><IconRefreshOutlineRegular /></button>
++        </Tooltip>
++        <div className={css.addressBox}>
++          <input
++            className={[css.address, unknown ? css.addressUnknown : ''].join(' ')}
++            value={draft}
++            aria-label={t('address.placeholder')}
++            placeholder={t('address.placeholder')}
++            spellCheck={false}
++            onChange={(event) => { setDraft(event.currentTarget.value) }}
++          />
++          {unknown && <span className={css.addressChanged}>{t('address.changed')}</span>}
++          <button type="submit" className={[css.tool, css.addressGo].join(' ')} aria-label={t('go')} title={t('go')}><IconLinkOutlineRegular /></button>
++        </div>
++        <button type="button" className={css.tool} aria-label={t('external')} title={t('external')} disabled={externalUrl === undefined}
++          onClick={externalUrl === undefined ? undefined : () => { window.open(externalUrl, '_blank', 'noopener,noreferrer') }}
++        ><IconRightUpOutlineRegular size={14} /></button>
++        {sandboxed !== undefined && <button
++          type="button"
++          className={[css.tool, sandboxed ? '' : css.sandboxOff].join(' ')}
++          aria-label={t(sandboxed ? 'sandbox.disable' : 'sandbox.enable')}
++          title={t(sandboxed ? 'sandbox.disable' : 'sandbox.enable')}
++          aria-pressed={!sandboxed}
++          onClick={() => { setSandbox(!sandboxed) }}
++        ><SandboxPolicyIcon sandboxed={sandboxed} /></button>}
++      </form>
++      {sandboxed === false && <div className={css.sandboxWarning} role="status">{t('sandbox.warning')}</div>}
++      {error !== undefined && <div className={css.failure} role="status">{error.code !== undefined && error.description !== undefined
++        ? t('load.failed.detail', { code: String(error.code), description: error.description })
++        : t('load.failed')}</div>}
++      {failure !== undefined && <div className={css.failure} role="alert">{t(`error.${failure}`)}</div>}
++      <div className={css.content} aria-busy={frame.loading}>
++        <div id={viewportId} className={css.viewport} aria-label={t('type.label')} />
++        {restoreTarget !== undefined && <section className={css.restore} aria-label={t('restore.previous')}>
++          <p className={css.restoreLabel}>{t('restore.previous')}</p>
++          <p className={css.restoreTitle}>{restoreTarget.title}</p>
++          <p className={css.restoreUrl}>{restoreTarget.url}</p>
++          <Button variant="primary" size="sm" disabled={mountEpoch === 0} onClick={() => { restore() }}>
++            {t('restore.action')}
++          </Button>
++        </section>}
++        {restoreTarget === undefined && (target === undefined || frame.loading) && error === undefined && <div className={css.placeholder}>
++          <div className={css.start}>{t(target === undefined ? 'start' : 'loading')}</div>
++        </div>}
++      </div>
++      {unknown && <p className={css.limit}>{t('address.unknown')}</p>}
++    </div>
++  )
++}
+diff --git a/packages/client/ui-sidebar-browser/src/client/view/EmbeddedBrowserBody.tsx b/packages/client/ui-sidebar-browser/src/client/view/EmbeddedBrowserBody.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..967d680a1a569cac69e71b65d5a33a6bf3dc9dfc
+--- /dev/null
++++ b/packages/client/ui-sidebar-browser/src/client/view/EmbeddedBrowserBody.tsx
+@@ -0,0 +1,34 @@
++/** Root-scoped, disposable occurrence of the native Browser chrome. */
++import { useId, useLayoutEffect, useState } from 'react'
++import type { ReactNode } from 'react'
++import type { FactoryComponentPropsOf } from '@deepseek-ai/dsh-client-ui-slots'
++import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
++import { emptyBrowserFrame } from '../browser/BrowserFrame.ts'
++import { BrowserChrome } from './BrowserChrome.tsx'
++
++const EMPTY_FRAME = emptyBrowserFrame()
++
++
++/** Mount one page; closing or replacing the occurrence aborts its controller.
++ * @param props - initial URL and framework-bound controller state and commands.
++ * @returns the native Browser chrome with fixed isolated embedding policy.
++ */
++export function EmbeddedBrowserBody({ url, mount, loadUrl, restore, goBack, goForward, reload,
++  setSandbox, useBrowserState, t }: FactoryComponentPropsOf<'browser.content'>): ReactNode {
++  const tabId = useId() as TabId
++  const viewportId = useId()
++  const [mountEpoch, setMountEpoch] = useState(0)
++  const state = useBrowserState(tabId)
++  useLayoutEffect(() => {
++    const lifetime = new AbortController()
++    const hide = mount({ tabId, signal: lifetime.signal, viewportId, applicationOrigin: window.location.origin,
++      initial: undefined, initialUrl: url, openTab: (value) => { loadUrl(tabId, value) } })
++    setMountEpoch(value => value + 1)
++    return () => { lifetime.abort(); hide() }
++  }, [mount, tabId, viewportId, url, loadUrl])
++  return <BrowserChrome frame={state?.frame ?? EMPTY_FRAME} state={state} restoreTarget={undefined}
++    initialUrl={url} viewportId={viewportId} mountEpoch={mountEpoch} t={t}
++    loadUrl={(value) => { loadUrl(tabId, value) }} restore={() => { restore(tabId) }}
++    goBack={() => { goBack(tabId) }} goForward={() => { goForward(tabId) }} reload={() => { reload(tabId) }}
++    setSandbox={(enabled) => { setSandbox(tabId, enabled) }} />
++}
+diff --git a/packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts b/packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts
+index fc064f5ca7f01646607c025e48eaff1b196d4b19..9236497a0babc2251653bb5e606e279b8ed6371a 100644
+--- a/packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts
++++ b/packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts
+@@ -6,6 +6,9 @@ import css from './Browser.module.css'
+ /** Fixed iframe policy; top navigation and downloads are not granted directly. */
+ export const WEB_BROWSER_SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'
+ 
++/** Opaque-origin embedding policy for independent root-scoped browser content. */
++export const ISOLATED_BROWSER_SANDBOX = 'allow-scripts allow-forms'
++
+ interface IframeDocument {
+   readonly target: BrowserTarget
+   readonly revision: number
+@@ -26,8 +29,10 @@ export class IframePresentation implements BrowserPresentation {
+   private document: IframeDocument | undefined
+   private rendered = false
+ 
+-  /** @param events - provider-owned load and remount callbacks. */
+-  constructor(private readonly events: IframePresentationEvents) {}
++  /** @param events - provider-owned load and remount callbacks.
++   * @param isolated - always use an opaque-origin sandbox without popup or top-navigation grants.
++   */
++  constructor(private readonly events: IframePresentationEvents, private readonly isolated = false) {}
+ 
+   /** @param viewportId - mounted placeholder. @returns removes only the iframe presentation. */
+   mount(viewportId: string): () => void {
+@@ -74,7 +79,10 @@ export class IframePresentation implements BrowserPresentation {
+     element.title = current.target.title
+     element.referrerPolicy = 'no-referrer'
+     element.dataset.sidebarBrowserFrame = 'iframe'
+-    if (current.sandboxed) element.setAttribute('sandbox', WEB_BROWSER_SANDBOX)
++    if (this.isolated) {
++      element.setAttribute('sandbox', ISOLATED_BROWSER_SANDBOX)
++      element.setAttribute('credentialless', '')
++    } else if (current.sandboxed) element.setAttribute('sandbox', WEB_BROWSER_SANDBOX)
+     element.addEventListener('load', () => {
+       if (this.element === element) this.events.loaded(current.revision)
+     })
+diff --git a/packages/client/ui-sidebar-browser/tests/apply.client.spec.ts b/packages/client/ui-sidebar-browser/tests/apply.client.spec.ts
+index 67167dd7da15df92971dd14c203d24ec5e23312c..3b02a516a0bf5ba2b0f5141cc159650be5ce964c 100644
+--- a/packages/client/ui-sidebar-browser/tests/apply.client.spec.ts
++++ b/packages/client/ui-sidebar-browser/tests/apply.client.spec.ts
+@@ -38,6 +38,7 @@ async function boot(platform: ShortcutPlatform = 'macos', runtime: 'desktop' | '
+   const tabs = new SidebarRightTabRegistry(ctx)
+   const registered: Recorded[] = []
+   const slots = {
++    registerFactory: vi.fn(() => () => {}),
+     inject: vi.fn((_name: string, register: () => () => void) => register()),
+     register: vi.fn((options: Omit<Recorded, 'component'>, component: unknown) => {
+       const entry: Recorded = { ...options, component }
+diff --git a/packages/client/ui-sidebar-browser/tests/embedded-browser.client.spec.tsx b/packages/client/ui-sidebar-browser/tests/embedded-browser.client.spec.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..06326b31b04bbb92b8ee3ba8c7f4415d44fe58cd
+--- /dev/null
++++ b/packages/client/ui-sidebar-browser/tests/embedded-browser.client.spec.tsx
+@@ -0,0 +1,111 @@
++// @vitest-environment jsdom
++/** Real root renderer composition for disposable, isolated Browser content. */
++import { Context } from '@deepseek-ai/cordis'
++import { createElement } from 'react'
++import { act, fireEvent, waitFor, within } from '@testing-library/react'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import * as renderer from '@deepseek-ai/dsh-client-ui-renderer/client'
++import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
++import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
++import * as browser from '@deepseek-ai/dsh-client-ui-sidebar-browser/client'
++import { createIsolatedIframePage } from '../src/client/pages.ts'
++import { ISOLATED_BROWSER_SANDBOX } from '../src/client/view/IframePresentation.ts'
++import type { DesktopBrowserLeaseId, DesktopBrowserBridge } from '../src/types.ts'
++
++const credentials = new URL('https://example.test/'); credentials.username = 'synthetic-user'; credentials.password = 'synthetic-password'
++const cleanup: Array<() => Promise<void>> = []
++afterEach(async () => {
++  for (const dispose of cleanup.splice(0)) await dispose()
++  vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear()
++})
++
++async function mountBrowser(url = 'https://docs.example/one') {
++  const ctx = new Context()
++  await ctx.plugin(renderer).await()
++  const absent = createSnapshotStore({ key: undefined, hooks: {}, keyedHooks: {}, props: {} })
++  ctx.slots.installScope('session', { current: absent, bindingSource: () => absent })
++  const locale = new LocaleRuntime(ctx)
++  ctx.provide('locale', locale)
++  ctx.slots.installLocale(locale)
++  await ctx.plugin(browser).await()
++  ctx.slots.register({ name: 'root' }, ({ renderFactorySlot }) => createElement('div', null, renderFactorySlot('browser.content', { url })))
++  const host = document.createElement('div'); document.body.append(host)
++  const uiRenderer = ctx.get('uiRenderer')
++  if (uiRenderer === undefined) throw new Error('Browser fixture renderer was not installed')
++  let unmount: () => void
++  await act(async () => { unmount = uiRenderer.mount(host) })
++  let disposed = false
++  const dispose = async () => {
++    if (disposed) return
++    disposed = true
++    await act(async () => { unmount(); await ctx.fiber.dispose() })
++    host.remove()
++  }
++  cleanup.push(dispose)
++  return { ctx, host, dispose, ui: within(host) }
++}
++
++describe('isolated Browser content', () => {
++  it('uses the native chrome without Session, Workspace or Sidebar services and never restores saved browsing', async () => {
++    localStorage.setItem('dsh.sidebar-browser.v1', '{"url":"https://private.example"}')
++    const external = vi.spyOn(window, 'open').mockReturnValue(null)
++    const mounted = await mountBrowser()
++    const frame = mounted.host.querySelector('iframe')!
++    expect(frame.src).toBe('https://docs.example/one')
++    expect(frame.getAttribute('sandbox')).toBe(ISOLATED_BROWSER_SANDBOX)
++    expect(frame.getAttribute('sandbox')?.split(' ')).toEqual(['allow-scripts', 'allow-forms'])
++    expect(frame.hasAttribute('credentialless')).toBe(true)
++    expect(mounted.host.textContent).not.toContain('private.example')
++    expect(mounted.host.querySelector('[aria-pressed]')).toBeNull()
++    expect(mounted.ctx.get('sessions')).toBeUndefined()
++    expect(mounted.ctx.get('workspaces')).toBeUndefined()
++    expect(mounted.ctx.get('remote')).toBeUndefined()
++    expect(external).not.toHaveBeenCalled()
++    const input = mounted.ui.getByRole('textbox')
++    fireEvent.change(input, { target: { value: 'https://docs.example/two' } }); fireEvent.submit(input.closest('form')!)
++    await waitFor(() => { expect(mounted.host.querySelector('iframe')?.src).toBe('https://docs.example/two') })
++    expect(localStorage.getItem('dsh.sidebar-browser.v1')).toBe('{"url":"https://private.example"}')
++    await mounted.dispose()
++    expect(frame.isConnected).toBe(false)
++  })
++
++  it('cannot relax the opaque-origin sandbox through a direct provider command', async () => {
++    const host = document.createElement('div'); host.id = 'isolated-provider'; document.body.append(host)
++    const page = createIsolatedIframePage({ initial: undefined, persist() {}, openRequested() {} })
++    try {
++      page.presentation.mount(host.id)
++      page.frame.loadUrl({ kind: 'https', url: 'https://example.test/', title: 'test' })
++      page.frame.sandbox?.setEnabled(false)
++      page.frame.reload()
++      expect(page.frame.getSnapshot().sandboxEnabled).toBeUndefined()
++      expect(host.querySelector('iframe')?.getAttribute('sandbox')).toBe(ISOLATED_BROWSER_SANDBOX)
++    } finally { await page.frame.dispose(); host.remove() }
++  })
++
++  it.each(['javascript:alert(1)', 'file:///private/report', credentials.href, window.location.origin + '/api'])('refuses privileged initial URL %s', async (url) => {
++    const mounted = await mountBrowser(url)
++    expect(mounted.host.querySelector('iframe')).toBeNull()
++    expect(mounted.ui.getByRole('alert')).toBeDefined()
++  })
++
++  it('uses a fresh opaque desktop identity and releases guests on occurrence close', async () => {
++    let sequence = 0
++    const bridge = {
++      acquire: vi.fn(async (_identity: string) => ({ lease: `lease-${++sequence}` as DesktopBrowserLeaseId, partition: `guest-${sequence}` })),
++      release: vi.fn(async (_lease: DesktopBrowserLeaseId) => {}), onOpenRequested: vi.fn(() => () => {}),
++    } satisfies DesktopBrowserBridge
++    vi.stubGlobal('dshDesktop', { protocolVersion: 1, browser: bridge })
++    const first = await mountBrowser()
++    await waitFor(() => { expect(first.host.querySelector('webview')).not.toBeNull() })
++    const firstIdentity = bridge.acquire.mock.calls[0]![0]
++    expect(firstIdentity).toMatch(/^embedded-browser:[0-9a-f-]+$/u)
++    expect(first.host.querySelector('webview')?.getAttribute('partition')).toBe('guest-1')
++    await first.dispose()
++    expect(bridge.release).toHaveBeenCalledWith('lease-1')
++    const second = await mountBrowser()
++    await waitFor(() => { expect(second.host.querySelector('webview')).not.toBeNull() })
++    expect(bridge.acquire.mock.calls[1]![0]).not.toBe(firstIdentity)
++    await second.dispose()
++    expect(bridge.release).toHaveBeenCalledTimes(2)
++  })
++})
+diff --git a/packages/client/ui-sidebar-browser/tsconfig.client.json b/packages/client/ui-sidebar-browser/tsconfig.client.json
+index d09540aeb55ee3aa4bdbfc122cd83b0895b5797f..5339ec70c950de782a84be47440af1caaa8815d8 100644
+--- a/packages/client/ui-sidebar-browser/tsconfig.client.json
++++ b/packages/client/ui-sidebar-browser/tsconfig.client.json
+@@ -14,6 +14,7 @@
+     { "path": "../../../vendor/cordis" },
+     { "path": "../../api/workspace-controller/tsconfig.client.json" },
+     { "path": "../../util/brand" },
++    { "path": "../../util/crypto" },
+     { "path": "../locale/tsconfig.client.json" },
+     { "path": "../shortcuts/tsconfig.client.json" },
+     { "path": "../store" },
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 5f38bae3561846058531c3fcc1092df01b012024..c65ad61d5e0a7e15695d8bc84e9aed7a6066234f 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -5619,6 +5619,9 @@ importers:
+ 
+   packages/client/ui-sidebar-browser:
+     devDependencies:
++      '@deepseek-ai/dsh-util-crypto':
++        specifier: workspace:*
++        version: link:../../util/crypto
+       '@deepseek-ai/cordis':
+         specifier: workspace:~
+         version: link:../../../vendor/cordis

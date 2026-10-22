@@ -1,10 +1,11 @@
 /** Only receipt-owned DSH deployments may be reached; tokens stay in Node. */
+import { ASSISTANT_SCHEDULE_OPERATIONS, ASSISTANT_SCHEDULE_CAPABILITY } from '../../contracts/assistant-schedule.mjs';
 import { createHash } from 'node:crypto';
 import { createAssistantLifecycle } from '../../assistant-lifecycle.mjs';
 import { ASSISTANT_ATTACHMENT_CAPABILITIES } from '../../contracts/assistant-attachments.mjs';
 import { encodeAssistantInput, readAssistantResponse, assistantCloudFailure } from '../../assistant-transport.mjs';
 import { ASSISTANT_NATIVE_CAPABILITY, ASSISTANT_NATIVE_OPERATIONS, isAssistantNativeOperation } from '../../contracts/assistant-native.mjs';
-const operations = new Set([...ASSISTANT_NATIVE_OPERATIONS, 'snapshot', 'image-read', 'attachment-upload', 'file-read', 'approval-decide', 'cancel-turn', 'submit', 'cancel', 'identity-update', 'schedule-list', 'schedule-create', 'schedule-delete', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
+const operations = new Set([...ASSISTANT_NATIVE_OPERATIONS, ...ASSISTANT_SCHEDULE_OPERATIONS, 'snapshot', 'image-read', 'attachment-upload', 'file-read', 'approval-decide', 'cancel-turn', 'submit', 'cancel', 'identity-update', 'memory-list', 'memory-save', 'memory-update', 'memory-delete']);
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
 export function createAssistantRoutes({ deployments, assistantStoreDir, assistantSetup, runtimeFetch, fetchImpl = runtimeFetch || fetch }) {
   const lifecycle = createAssistantLifecycle({ directory: assistantStoreDir, deployments, fetchImpl });
@@ -12,8 +13,9 @@ export function createAssistantRoutes({ deployments, assistantStoreDir, assistan
     if (endpoint === 'assistant/close') return { ok: true, value: await lifecycle.close(payload) };
     if (endpoint.startsWith('assistant/setup-')) {
       const service = await assistantSetup();
-      const action = endpoint.slice('assistant/setup-'.length);
-      if (!['options', 'start', 'status'].includes(action)) throw fail('ASSISTANT_OPERATION_INVALID', '不支持的开通操作');
+      const methods = { options: 'options', start: 'start', status: 'status', upgrade: 'upgrade', grants: 'setGrants' };
+      const action = methods[endpoint.slice('assistant/setup-'.length)];
+      if (!action) throw fail('ASSISTANT_OPERATION_INVALID', '不支持的开通操作');
       return { ok: true, value: await service[action](payload) };
     }
     const { agents } = await deployments();
@@ -26,6 +28,7 @@ export function createAssistantRoutes({ deployments, assistantStoreDir, assistan
     if (agent.spec?.runtime?.type !== 'dsh-native') throw fail('ASSISTANT_RUNTIME_INVALID', '个人助理需要 DSH Runtime');
     if (!capabilities.includes('personal-assistant/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '请更新云端 DSH 镜像以启用个人助理和后台会话恢复', 409);
     if (isAssistantNativeOperation(payload.operation) && !capabilities.includes(ASSISTANT_NATIVE_CAPABILITY)) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供安全的原生会话连接，请更新后重试', 409);
+    if (['schedule-catalog', 'schedule-get', 'schedule-history', 'schedule-update'].includes(payload.operation) && !capabilities.includes(ASSISTANT_SCHEDULE_CAPABILITY)) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '请更新云端 DSH 镜像以管理原生计划任务', 409);
     if (payload.operation === 'cancel-turn' && !capabilities.includes('personal-assistant-cancel-turn/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供按任务停止能力，请更新后重试', 409);
     if (payload.operation === 'approval-decide' && !capabilities.includes('personal-assistant-approval-bridge/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供实时审批接口', 409);
     if (payload.operation === 'image-read' && !capabilities.includes('personal-assistant-images/v1')) throw fail('ASSISTANT_IMAGE_UPGRADE_REQUIRED', '此云端镜像尚未提供助理图片读取能力', 409);

@@ -59,8 +59,20 @@ partially validating it. This check does not eliminate external OS races.
 `glob` and `grep` execute the official fixed ripgrep argument templates. This is
 bounded search execution, not a general-purpose shell. Arbitrary bash, PowerShell,
 terminal commands, `run_code`, unknown MCP tools, and all other unlisted tools are
-refused. File sandbox mode alone is not a network policy. No network execution
-permission is inferred from workspace-write.
+refused. File sandbox mode alone is not a network policy.
+
+Public read-only web access is a separate fixed-tool grant: `web_search` and
+`web_fetch` are admitted only when the native tools are mounted, and only through
+the Host web provider that pins resolved public addresses, refuses loopback,
+private, link-local and credential-bearing URLs, caps timeout and output, and
+requires same-origin redirects. The policy adds an independent early URL refusal
+(`http`/`https` only, bounded length, no credentials, no private host literal or
+internal suffix) before a provider is reached; DNS validation and connection
+pinning remain the provider's job. The grant never enables arbitrary shell,
+local-network services, or writes outside the private workspace, and it does not
+imply any sensitive-operation authority. Snapshots expose
+`network: 'public-web-read-only'` and the admitted `webTools` names so the Host
+can describe or gate UI without inferring a grant from an absent field.
 
 The default sensitive operation is the real
 `assistant_delete_workspace_file` tool. It handles one regular single-link file
@@ -121,3 +133,7 @@ monotonic guard rejection, native approval audit and the production live bridge.
 It includes changed-file refusal, pre-execute approval bypass, symlink swaps,
 restored-agent denial and disposal during pending approval. Controlled package
 integration is separate from installed Host and browser acceptance.
+
+### 原生定时工具
+
+受管助理仅放行当前 Agent 可见且仍由 DSH Schedule 服务登记的 schedule_create、schedule_list、schedule_update 和 schedule_delete。登记保存工具定义和 execute 函数的精确身份；同名替换、函数变更、服务卸载或权限模型释放后均拒绝执行。工具注册晚于会话恢复时，实时身份检查允许在服务就绪后使用，能力快照中的 sessionTools 只列出当时仍可用的可信工具。工具仍使用调用 Agent 的原始会话，不能通过参数指定另一个会话。工作区路径、普通工具和逐次审批限制保持原有检查。

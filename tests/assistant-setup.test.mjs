@@ -9,22 +9,27 @@ import { createStudioBuild } from '../src/studio-build.mjs';
 import { sha256 } from '../src/portable-resources.mjs';
 
 async function fixture(t, { loseWelcome = false } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'assistant-setup-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await mkdtemp(join(tmpdir(), 'assistant-setup-')); t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
   const values = { cloudAccessKey: 'synthetic-access', cloudSecretKey: 'synthetic-secret', cloudRegion: 'pre-online' };
   const model = { id: 'model', modelName: 'Example', apiKey: 'synthetic-model-key' };
-  const records = new Map(), messages = [], calls = { create: 0, welcome: 0 };
+  const records = new Map(), messages = [], calls = { create: 0, welcome: 0, upgrade: 0, upgradeInput: null };
+  const release = id => ({ id, version: id, label: 'Fixture', enabled: true, channel: 'preview', runtimeIdentity: true,
+    capabilities: ['personal-assistant/v1', 'personal-assistant-workspace-managed/v1'],
+    image: `hub.kce.ksyun.com/test/runtime@sha256:${id === 'assistant-fixture' ? 'a'.repeat(64) : 'b'.repeat(64)}`,
+    port: 8080, platform: 'linux/amd64', runtimes: ['dsh-native'], bundleFormat: 'agentkit.portable-bundle/v1', minimumStudioVersion: '0.0.2', notices: [] });
+  const catalog = { format: 'agentkit.runtime-images/v1', environment: 'pre-online', region: 'cn-beijing-6', defaultReleaseId: null, releases: [release('assistant-fixture')] };
   const deps = { storeDir: join(root, 'setup'), configuration: { resolve: async () => ({ values }) }, models: { profile: async () => model },
     agents: createAgentStore({ storeDir: join(root, 'agents') }), build: createStudioBuild({ storeDir: root }),
     serverClient: { listResource: async () => ({ items: [{ resourceId: 'memory', name: 'My memory', region: 'cn-beijing-6' }], total: 1 }) },
     deploymentClient: { getBootstrapConfig: async () => ({ data: {
       Product: 'agentkit-studio', ClientType: 'studio', Environment: 'pre-online', Region: 'cn-beijing-6',
       Capabilities: { ContainerStorage: { Contract: 'agentengine.container-storage/v1', Frameworks: ['harness'], MinSizeGi: 20, MaxSizeGi: 500, MaxReplicas: 1, PaymentType: 'Daily' } },
-      Configs: { 'studio.runtime.images.v1': { format: 'agentkit.runtime-images/v1', environment: 'pre-online', region: 'cn-beijing-6', defaultReleaseId: null,
-        releases: [{ id: 'assistant-fixture', version: 'assistant-fixture', label: 'Fixture', enabled: true, channel: 'preview', runtimeIdentity: true, capabilities: ['personal-assistant/v1', 'personal-assistant-workspace-managed/v1'],
-          image: `hub.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`, port: 8080, platform: 'linux/amd64', runtimes: ['dsh-native'], bundleFormat: 'agentkit.portable-bundle/v1', minimumStudioVersion: '0.0.2', notices: [] }] } },
+      Configs: { 'studio.runtime.images.v1': catalog },
     } }) },
     deployments: {
       prepare: async input => ({ ...input, previewId: 'preview', bundleId: 'bundle' }),
+      prepareUpdate: async input => ({ ...input, previewId: 'upgrade-preview', bundleId: 'upgrade-bundle', releaseId: input.releaseId }),
+      applyUpdate: async input => { calls.upgrade++; calls.upgradeInput = input; return { deploymentId: input.deploymentId, state: 'UPDATING' }; },
       get: async id => { if (!records.has(id)) throw Object.assign(Error(), { code: 'DEPLOYMENT_NOT_FOUND' }); return records.get(id); },
       create: async input => { calls.create++; const id = 'dep_' + sha256(input.idempotencyKey).slice(0, 32); const d = { id, state: 'PROVISIONING', cloudAgentId: 'ar-cloud-test' }; records.set(id, d); return d; },
       refresh: async id => { const d = { ...records.get(id), state: 'READY' }; records.set(id, d); return d; },
@@ -38,7 +43,7 @@ async function fixture(t, { loseWelcome = false } = {}) {
       return Response.json({ accepted: true, requestId: input.requestId });
     },
   };
-  return { root, values, deps, calls, service: createAssistantSetup(deps) };
+  return { root, values, deps, calls, catalog, release, service: createAssistantSetup(deps) };
 }
 async function until(fn) { for (let i = 0; i < 100; i++) { const value = await fn(); if (value) return value; await new Promise(r => setTimeout(r, 10)); } assert.fail('setup did not settle'); }
 
@@ -135,4 +140,78 @@ test('new managed assistants require matching image capability before creating b
   };
   await assert.rejects(f.service.options(), {code:'ASSISTANT_IMAGE_UNAVAILABLE'});
   assert.equal(f.calls.create,0); assert.equal((await f.deps.agents.list()).length,0);
+});
+
+test('an older assistant image upgrades in place and keeps the existing record scope', async t => {
+  const f = await fixture(t), first = await f.service.options();
+  await f.service.start({ confirmed: true, optionsId: first.optionsId, memoryId: 'memory' });
+  await until(async () => (await f.service.status()).ready);
+  assert.equal((await f.service.status()).releaseId, 'assistant-fixture');
+  assert.equal(f.calls.upgrade, 0);
+
+  f.catalog.releases = [...f.catalog.releases, f.release('assistant-fixture-2')];
+  f.catalog.defaultReleaseId = 'assistant-fixture-2';
+  const available = await f.service.options();
+  assert.equal(available.releaseId, 'assistant-fixture-2');
+  await assert.rejects(f.service.upgrade({ confirmed: true, optionsId: 'stale-options' }), { code: 'ASSISTANT_OPTIONS_CHANGED' });
+  await assert.rejects(f.service.upgrade({}), { code: 'ASSISTANT_CONFIRM_REQUIRED' });
+
+  const upgraded = await f.service.upgrade({ confirmed: true, optionsId: available.optionsId });
+  assert.equal(f.calls.upgrade, 1);
+  assert.equal(f.calls.upgradeInput.releaseId, 'assistant-fixture-2');
+  assert.ok(f.calls.upgradeInput.previewId && f.calls.upgradeInput.bundleId && f.calls.upgradeInput.idempotencyKey);
+  assert.equal(upgraded.releaseId, 'assistant-fixture-2');
+  await until(async () => (await f.service.status()).ready);
+  const settled = await f.service.status();
+  assert.equal(settled.releaseId, 'assistant-fixture-2');
+  assert.equal(settled.ready, true);
+  assert.equal(f.calls.create, 1, 'an upgrade must never create a second cloud instance');
+  assert.equal(f.calls.welcome, 1, 'an upgrade must not replay the welcome turn');
+});
+
+test('cloud execution is offered only when the image advertises capability 1', async t => {
+  const f = await fixture(t);
+  assert.deepEqual((await f.service.options()).grants, []);
+  f.catalog.releases[0].capabilities.push('personal-assistant-code-execution/v1');
+  assert.deepEqual((await f.service.options()).grants, ['code-execution']);
+});
+
+test('a granted assistant is created with the grant and only welcomes when the image confirms it', async t => {
+  const f = await fixture(t);
+  f.catalog.releases[0].capabilities.push('personal-assistant-code-execution/v1');
+  const options = await f.service.options();
+  await f.service.start({ confirmed: true, optionsId: options.optionsId, memoryId: 'memory', grants: ['code-execution'] });
+  await until(async () => (await f.service.status()).state === 'ACTION_REQUIRED');
+  const agent = (await f.deps.agents.list())[0];
+  assert.deepEqual(agent.spec.security.assistantPermissions.grants, ['code-execution']);
+  assert.equal(f.calls.welcome, 0, 'the image did not confirm the capability, so no welcome turn runs');
+  // An image that confirms both the managed profile and the capability can welcome.
+  f.deps.deployments.agents.connect = async () => ({ endpoint: 'https://assistant.test', token: 'synthetic-runtime-token',
+    capabilities: ['personal-assistant/v1', 'personal-assistant-workspace-managed/v1', 'personal-assistant-code-execution/v1'] });
+  const retried = createAssistantSetup(f.deps);
+  await until(async () => (await retried.status()).ready);
+  assert.equal(f.calls.welcome, 1);
+});
+
+test('an existing ready assistant can enable and later revoke the grant through a spec rollout', async t => {
+  const f = await fixture(t), options = await f.service.options();
+  await f.service.start({ confirmed: true, optionsId: options.optionsId, memoryId: 'memory' });
+  await until(async () => (await f.service.status()).ready && f.calls.welcome === 1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const before = await f.deps.agents.get((await f.deps.agents.list())[0].metadata.id);
+  f.catalog.releases[0].capabilities.push('personal-assistant-code-execution/v1');
+  await assert.rejects(f.service.setGrants({ confirmed: true, grants: ['browser'] }), { code: 'ASSISTANT_IMAGE_UPGRADE_REQUIRED' });
+  const enabling = await f.service.setGrants({ confirmed: true, grants: ['code-execution'] });
+  assert.deepEqual(enabling.grants, ['code-execution']);
+  assert.equal(f.calls.upgrade, 1);
+  await until(async () => (await f.service.status()).ready);
+  const granted = await f.deps.agents.get(before.metadata.id);
+  assert.deepEqual(granted.spec.security.assistantPermissions.grants, ['code-execution']);
+  assert.equal(granted.metadata.revision, before.metadata.revision + 1);
+  const revoking = await f.service.setGrants({ confirmed: true, grants: [] });
+  assert.deepEqual(revoking.grants, []);
+  assert.equal(f.calls.upgrade, 2);
+  const revoked = await f.deps.agents.get(before.metadata.id);
+  assert.equal(revoked.spec.security.assistantPermissions.grants, undefined);
+  assert.equal(revoked.spec.security.assistantPermissions.profile, 'workspace-managed/v1');
 });

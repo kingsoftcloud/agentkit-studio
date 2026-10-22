@@ -102,6 +102,8 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "assistant/setup-options",
   "assistant/setup-start",
   "assistant/setup-status",
+  "assistant/setup-upgrade",
+  "assistant/setup-grants",
   "deployments/prepare",
   "deployments/create",
   "deployments/prepareUpdate",

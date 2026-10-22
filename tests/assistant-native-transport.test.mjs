@@ -6,7 +6,14 @@ const scope = 'a'.repeat(64);
 const receipt = { receiptId: 'receipt-one', kind: 'image', mediaType: 'image/png', attachment: { attachmentId: 'sha256:' + 'b'.repeat(64), name: 'one.png', bytes: 3 } };
 const input = { sessionId: 'cloud-session', requestId: 'request-one', mode: 'queue', clientTimeZone: 'UTC', content: [{ type: 'image', mediaType: 'image/png', data: 'YWJj', name: 'one.png' }] };
 const prompt = value => ['/api', 'session/prompt', { args: { request: value } }];
-function bench({ memory = new Map(), change, scopeId = scope, sessionId = 'cloud-session' } = {}) {
+async function waitFor(predicate, description) {
+  const deadline = performance.now() + 5000;
+  while (!predicate()) {
+    assert.ok(performance.now() < deadline, `Timed out waiting for ${description}`);
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+}
+function bench({ memory = new Map(), change, scopeId = scope, sessionId = 'cloud-session', crypto = webcrypto } = {}) {
   const calls = [], storage = { get length() { return memory.size; }, key: index => [...memory.keys()][index] ?? null, getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) };
   const execute = async (_agent, operation, value, signal) => {
     calls.push({ operation, value, signal });
@@ -16,7 +23,7 @@ function bench({ memory = new Map(), change, scopeId = scope, sessionId = 'cloud
     if (operation === 'native-call') return { ok: true, value: { accepted: true } };
     return {};
   };
-  return { calls, memory, storage, open: () => createAssistantNativeTransport({ execute, agentId: 'assistant', storage, crypto: webcrypto }) };
+  return { calls, memory, storage, open: () => createAssistantNativeTransport({ execute, agentId: 'assistant', storage, crypto }) };
 }
 
 test('native image send journals only receipt before durable submission and preserves exact ID', async () => {
@@ -82,7 +89,7 @@ test('disposing a poll cancels only its stream and closes its carrier, never clo
   const transport = await b.open(), controller = new AbortController();
   const stream = transport.rpc.open('/api', 'session/follow', { args: {} }, controller.signal)[Symbol.asyncIterator]();
   const waiting = stream.next().catch(error => error);
-  while (!polling) await new Promise(resolve => setTimeout(resolve, 0));
+  await waitFor(() => polling, 'the native follow stream to begin polling');
   await transport.dispose(); await waiting;
   assert.ok(b.calls.some(row => row.operation === 'native-stream-cancel'));
   assert.ok(b.calls.some(row => row.operation === 'native-close'));
@@ -150,24 +157,47 @@ test('terminal carrier errors block the native graph and preserve the safe failu
   await transport.dispose();
 });
 
-test('two simultaneous composers cannot overwrite or delete another unknown-ACK request journal', async () => {
-  const uploadA = Promise.withResolvers(), uploadB = Promise.withResolvers(); let uploads = 0, unknown = true;
-  const b = bench({ change(operation, value) {
-    if (operation === 'attachment-upload') return ++uploads === 1 ? uploadA.promise : uploadB.promise;
+for (const firstDigest of ['A', 'B']) test(`two simultaneous composers preserve unknown-ACK journals when digest ${firstDigest} finishes first`, async t => {
+  const uploadA = Promise.withResolvers(), uploadB = Promise.withResolvers(), firstUpload = Promise.withResolvers();
+  const uploads = []; let unknown = true;
+  const crypto = {
+    randomUUID: () => webcrypto.randomUUID(),
+    subtle: { async digest(algorithm, data) {
+      const result = await webcrypto.subtle.digest(algorithm, data);
+      const name = JSON.parse(new TextDecoder().decode(data)).content[0].name;
+      if (name !== `request-${firstDigest}.png`) await firstUpload.promise;
+      return result;
+    } },
+  };
+  const b = bench({ crypto, change(operation, value) {
+    if (operation === 'attachment-upload') {
+      assert.ok(['request-A.png', 'request-B.png'].includes(value.name));
+      uploads.push(value.name); firstUpload.resolve();
+      // Digest completion order is independent of request order.
+      return value.name === 'request-A.png' ? uploadA.promise : uploadB.promise;
+    }
     if (operation === 'native-call' && value.payload.args.request.requestId === 'request-A' && unknown) throw Error('A ACK lost');
   } });
   const first = await b.open(), second = await b.open();
-  const sendingA = first.rpc.call(...prompt({ ...input, requestId: 'request-A' }));
-  const sendingB = second.rpc.call(...prompt({ ...input, requestId: 'request-B' }));
-  while (uploads < 2) await new Promise(resolve => setTimeout(resolve, 0));
-  uploadA.resolve({ ...receipt, receiptId: 'receipt-A' }); assert.equal((await sendingA).ok, false);
-  uploadB.resolve({ ...receipt, receiptId: 'receipt-B' }); assert.equal((await sendingB).ok, true);
+  t.after(async () => {
+    firstUpload.resolve(); uploadA.resolve(receipt); uploadB.resolve(receipt);
+    await first.dispose(); await second.dispose();
+  });
+  let resultA, resultB;
+  const sendingA = first.rpc.call(...prompt({ ...input, requestId: 'request-A', content: [{ ...input.content[0], name: 'request-A.png' }] })).then(result => { resultA = result; });
+  const sendingB = second.rpc.call(...prompt({ ...input, requestId: 'request-B', content: [{ ...input.content[0], name: 'request-B.png' }] })).then(result => { resultB = result; });
+  await waitFor(() => uploads.length === 2, `both uploads after digest ${firstDigest} finishes first`);
+  assert.deepEqual(uploads, firstDigest === 'A' ? ['request-A.png', 'request-B.png'] : ['request-B.png', 'request-A.png']);
+  uploadA.resolve({ ...receipt, receiptId: 'receipt-A' });
+  await waitFor(() => resultA !== undefined, 'request A to settle after its own upload receipt'); assert.equal(resultA.ok, false);
+  uploadB.resolve({ ...receipt, receiptId: 'receipt-B' });
+  await waitFor(() => resultB !== undefined, 'request B to settle after its own upload receipt'); assert.equal(resultB.ok, true);
+  await Promise.all([sendingA, sendingB]);
   assert.equal(b.memory.size, 1); assert.match([...b.memory.keys()][0], /request-A$/);
   assert.equal(first.getState().pending.request.requestId, 'request-A');
   unknown = false; assert.equal(await first.confirm(), true);
   assert.deepEqual(b.calls.filter(call => call.operation === 'native-call').map(call => call.value.payload.args.request.requestId), ['request-A', 'request-B', 'request-A']);
-  assert.equal(b.memory.size, 0); assert.equal(uploads, 2);
-  await first.dispose(); await second.dispose();
+  assert.equal(b.memory.size, 0); assert.equal(uploads.length, 2);
 });
 
 test('refresh enumerates independent pending records and confirms each original ID without an index race', async () => {
@@ -178,7 +208,7 @@ test('refresh enumerates independent pending records and confirms each original 
   } });
   const first = await b.open(), second = await b.open();
   const sends = [first.rpc.call(...prompt({ ...input, requestId: 'request-A' })), second.rpc.call(...prompt({ ...input, requestId: 'request-B' }))];
-  while (uploads < 2) await new Promise(resolve => setTimeout(resolve, 0));
+  await waitFor(() => uploads === 2, 'both uploads before restoring independent pending records');
   gates[0].resolve({ ...receipt, receiptId: 'receipt-A' }); gates[1].resolve({ ...receipt, receiptId: 'receipt-B' });
   await Promise.all(sends); assert.equal(b.memory.size, 2); await first.dispose(); await second.dispose();
   unknown = false;

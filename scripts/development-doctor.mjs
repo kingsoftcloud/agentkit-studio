@@ -5,17 +5,17 @@ import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { prepareDevelopment } from './prepare-development.mjs';
 import { checkInstalledProfile } from './check-profile.mjs';
+import { NODE_VERSION_GUIDANCE, nodeVersionSupported, nodeVersionSummary } from './node-version.mjs';
 
 const { values } = parseArgs({ options: {
   'tools-only': { type: 'boolean' }, ...Object.fromEntries(['source', 'patches', 'commit', 'profile', 'archive'].map(key => [key, { type: 'string' }])),
 } });
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
-const [major, minor] = process.versions.node.split('.').map(Number);
-if (!((major === 22 && minor >= 19) || major >= 24)) throw Error('请安装 Node.js 22.19.0（见 .node-version）后重试');
+if (!nodeVersionSupported(process.versions.node)) throw Error(`请安装 ${NODE_VERSION_GUIDANCE}（见 .node-version）后重试`);
 if (process.platform === 'win32') throw Error('这些 Makefile 目标需要 macOS 或 Linux；Windows 请使用 WSL2');
 try { await access(resolve(dirname(process.execPath), '../include/node/node_api.h')); }
-catch { throw Error('DSH 原生模块需要 Node 开发头文件；请使用包含 include/node 的 Node.js 22.19.0 安装'); }
-console.log(`Node.js ${process.versions.node}（验证基线 22.19.0）`);
+catch { throw Error(`DSH 原生模块需要 Node 开发头文件；请使用包含 include/node 的 ${NODE_VERSION_GUIDANCE} 安装`); }
+console.log(nodeVersionSummary(process.versions.node));
 for (const command of ['git', 'make', 'cc', 'pnpm']) {
   let version;
   try { version = execFileSync(command, ['--version'], { encoding: 'utf8' }).trim().split('\n')[0]; }

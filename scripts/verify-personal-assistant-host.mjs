@@ -315,6 +315,17 @@ try {
     while (Date.now() < end) { const snapshot = await api('snapshot'); if (predicate(snapshot)) return snapshot; report.lastWait = { status: snapshot.status, asOfSeq: snapshot.asOfSeq, pendingCount: snapshot.pendingInteractions?.length, approval: snapshot.capabilities?.approval }; await new Promise(resolve => setTimeout(resolve, 100)); }
     throw new Error('Assistant result timed out');
   };
+  const chatTool = async ({ requestId, text, name, args }) => {
+    const before = (await api('snapshot')).asOfSeq;
+    managedToolPlans.set(text, [[name, args]]);
+    const receipt = await api('submit', { requestId, text });
+    const snapshot = await waitFor(value => value.status === 'completed' && userEvent(value, requestId));
+    const calls = snapshot.events.filter(event => event.seq > before && event.type === 'tool/call');
+    const results = snapshot.events.filter(event => event.seq > before && event.type === 'tool/result');
+    assert.deepEqual(calls.map(event => event.data.name), [name], 'natural chat must dispatch the actual native Schedule tool');
+    assert.equal(results.length, 1); assert.equal(results[0].data.message.isError, false);
+    return { receipt, snapshot, result: results[0].data.message };
+  };
   stage = 'persist-assistant-identity';
   await api('identity-update', { assistantName: '小星', ownerName: '小夏' });
   assert.deepEqual((await api('snapshot')).identity, { assistantName: '小星', ownerName: '小夏' });
@@ -340,18 +351,51 @@ try {
   await api('submit', { requestId: 'first', text: 'continue after client exit' });
   assert.equal(requests.filter(row => row.input === 'continue after client exit').length, before);
   check('retry-reuses-durable-native-request');
-  stage = 'official-cloud-schedule';
+  stage = 'native-schedule-natural-chat-crud';
   await api('identity-update', { assistantName: '小月', ownerName: '小夏' });
   assert.equal(completed.scheduleEnabled, true);
-  await api('schedule-create', { spec: { title: 'offline reminder', prompt: 'timer while client is closed', after_seconds: 2 } });
-  const scheduledSnapshot = await waitFor(value => value.status === 'completed' && value.lastTurnEndSeq > completed.lastTurnEndSeq);
-  assert.ok(scheduledSnapshot.events.some(event => event.type === 'user/message' && event.data.source.kind === 'schedule'));
-  const scheduled = (await api('schedule-list')).items;
+  const schedule = running.ctx.get('schedule');
+  assert.ok(schedule, 'the actual Host Schedule service must be enabled');
+  const createdChat = await chatTool({ requestId: 'schedule-chat-create', text: '请在一小时后提醒我检查发布报告。', name: 'schedule_create',
+    args: { title: '检查发布报告', prompt: '检查发布报告', after_seconds: 3600 } });
+  const scheduleSessionId = createdChat.receipt.sessionId;
+  assert.deepEqual(createdChat.snapshot.capabilities.execution.sessionTools, ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']);
+  const createdTasks = await schedule.list({ sessionId: scheduleSessionId });
+  assert.equal(createdTasks.length, 1); const chatTask = createdTasks[0];
+  assert.equal(chatTask.title, '检查发布报告');
+  const listedChat = await chatTool({ requestId: 'schedule-chat-list', text: '请列出我在这个会话里设置的提醒。', name: 'schedule_list', args: {} });
+  assert.ok(JSON.stringify(listedChat.result).includes(chatTask.id));
+  await chatTool({ requestId: 'schedule-chat-update', text: '把检查发布报告的提醒改成检查修订报告，两小时后提醒我。', name: 'schedule_update',
+    args: { id: chatTask.id, title: '检查修订报告', prompt: '检查修订报告', at: new Date(Date.now() + 7_200_000).toISOString() } });
+  const revisedTask = (await schedule.list({ sessionId: scheduleSessionId }))[0];
+  assert.equal(revisedTask.id, chatTask.id); assert.equal(revisedTask.title, '检查修订报告'); assert.equal(revisedTask.prompt, '检查修订报告');
+  assert.equal(revisedTask.kind, 'at');
+  const foreignSessionId = 'controlled-other-schedule-session';
+  const foreignTask = await schedule.create(foreignSessionId, { title: 'Other Session task', prompt: 'Keep other Session task', after_seconds: 3600 });
+  const refusedChat = await chatTool({ requestId: 'schedule-chat-foreign', text: `删除另一个会话中的提醒 ${foreignTask.id}。`, name: 'schedule_delete', args: { id: foreignTask.id } });
+  assert.ok(JSON.stringify(refusedChat.result).includes('schedule_not_found'));
+  assert.deepEqual(await schedule.list({ sessionId: foreignSessionId }), [foreignTask]);
+  await schedule.delete({ sessionId: foreignSessionId, id: foreignTask.id });
+  await chatTool({ requestId: 'schedule-chat-delete', text: '取消刚才检查修订报告的提醒。', name: 'schedule_delete', args: { id: chatTask.id } });
+  assert.deepEqual(await schedule.list({ sessionId: scheduleSessionId }), []);
+  check('natural-chat-native-schedule-create-list-update-delete-and-session-isolation');
+  stage = 'native-schedule-offline-delivery-history';
+  const deliveryChat = await chatTool({ requestId: 'schedule-chat-due', text: '请在五秒后提醒我检查关闭客户端后的任务。', name: 'schedule_create',
+    args: { title: '检查离线任务', prompt: 'timer while client is closed', after_seconds: 5 } });
+  const offlineTask = (await schedule.list({ sessionId: scheduleSessionId }))[0];
+  assert.ok(offlineTask);
+  const scheduledSnapshot = await waitFor(value => value.status === 'completed' && value.lastTurnEndSeq > deliveryChat.snapshot.lastTurnEndSeq
+    && value.events.some(event => event.seq > deliveryChat.snapshot.asOfSeq && event.type === 'user/message' && event.data.source.kind === 'schedule'));
+  assert.equal(scheduledSnapshot.cloudSessionId, scheduleSessionId);
+  const scheduled = (await schedule.catalog()).filter(item => item.sessionId === scheduleSessionId);
   assert.equal(scheduled.length, 1); assert.equal(scheduled[0].status, 'inactive');
+  const deliveredHistory = await schedule.history({ sessionId: scheduleSessionId, id: offlineTask.id, limit: 100 });
+  assert.equal(deliveredHistory.records.length, 1); assert.equal(deliveredHistory.records[0].prompt, 'timer while client is closed');
+  assert.equal(deliveredHistory.records[0].messageId, scheduled[0].lastDelivery.messageId);
   const scheduledRequest = requests.findLast(row => row.input.includes('timer while client is closed'));
   assert.ok(scheduledRequest, 'the model must receive the scheduled task, not repeat the previous user input');
   assert.match(scheduledRequest.identity, /"assistantName":"小月"/, 'renames reach already live agents and scheduled work');
-  check('official-schedule-delivers-without-client');
+  check('native-chat-schedule-delivers-without-client-and-records-inbox-history', { acknowledgment: 'inbox-delivery', sessionId: scheduleSessionId });
   stage = 'fresh-host-recovery';
   await fiber.dispose(); fiber = undefined;
   await running.shutdown.shutdown(0); running = undefined;
@@ -471,7 +515,7 @@ try {
   assert.equal(managed.capabilities.execution.permission, 'workspace-write');
   assert.equal(managed.capabilities.execution.approval, 'ask');
   assert.equal(managed.capabilities.execution.arbitraryShell, false);
-  assert.equal(managed.capabilities.execution.network, false);
+  assert.equal(managed.capabilities.execution.network, 'public-web-read-only');
   const managedAgent = running.ctx.get('agents').get(managedReceipt.sessionId);
   assert.ok(managedAgent);
   const managedCwd = managedAgent.session.header.cwd;
@@ -583,7 +627,11 @@ try {
   assert.equal(await readFile(join(managedCwd, 'keep.txt'), 'utf8'), 'keep after refusal');
   check('unattended-sensitive-tool-finishes-refused-without-waiting-or-grant');
   stage = 'managed-runtime-disposal-guard';
-  await api('schedule-create', { spec: { title: 'managed resume proof', prompt: 'managed resumed schedule', after_seconds: 10 } });
+  const restartChat = await chatTool({ requestId: 'schedule-chat-restart', text: '请在十秒后提醒我检查重新启动后的工作区。', name: 'schedule_create',
+    args: { title: '检查重启工作区', prompt: 'managed resumed schedule', after_seconds: 10 } });
+  const restartSchedule = (await running.ctx.get('schedule').list({ sessionId: managedReceipt.sessionId })).find(item => item.prompt === 'managed resumed schedule');
+  assert.ok(restartSchedule); assert.equal(restartChat.receipt.sessionId, managedReceipt.sessionId);
+
   await fiber.dispose(); fiber = undefined;
   assert.equal(running.ctx.get('agents').get(managedReceipt.sessionId), managedAgent, 'this guard proof requires the same still-live native Agent');
   const closedCall = await running.ctx.get('tools').execute({ agent: managedAgent, name: 'write', arguments: { file_path: 'closed.txt', content: 'must not write' }, callId: 'closed-runtime-proof', signal: new AbortController().signal });
@@ -595,10 +643,13 @@ try {
   await boot(); await mount(runtime);
   const coldPermissions = (await api('snapshot')).capabilities.execution;
   assert.equal(coldPermissions.permission, 'unknown'); assert.equal(coldPermissions.managed, false);
-  const resumedSchedule = await waitFor(value => value.status === 'completed' && value.lastTurnEndSeq > offline.lastTurnEndSeq);
-  assert.ok(resumedSchedule.events.some(event => event.seq > offline.lastTurnEndSeq && event.type === 'user/message' && event.data.source.kind === 'schedule'));
+  const resumedSchedule = await waitFor(value => value.status === 'completed' && value.lastTurnEndSeq > restartChat.snapshot.lastTurnEndSeq
+    && value.events.some(event => event.seq > restartChat.snapshot.asOfSeq && event.type === 'user/message' && event.data.source.kind === 'schedule'));
+  assert.equal(resumedSchedule.cloudSessionId, managedReceipt.sessionId);
+  const restartHistory = await running.ctx.get('schedule').history({ sessionId: managedReceipt.sessionId, id: restartSchedule.id, limit: 100 });
+  assert.equal(restartHistory.records.length, 1); assert.equal(restartHistory.records[0].prompt, 'managed resumed schedule');
   assert.equal(await readFile(join(managedCwd, 'scheduled.txt'), 'utf8'), 'restored schedule workspace');
-  check('restored-schedule-awaits-managed-validation-without-facade-resume');
+  check('chat-created-native-schedule-survives-host-restart-and-delivers-to-original-session', { acknowledgment: 'inbox-delivery', sessionId: managedReceipt.sessionId });
   await api('submit', { requestId: 'managed-restart', text: 'managed restored write' });
   const restoredManaged = await waitFor(value => value.status === 'completed' && userEvent(value, 'managed-restart'));
   assert.equal(restoredManaged.capabilities.execution.permission, 'workspace-write');
@@ -620,7 +671,13 @@ try {
     const uiRoutes = createAssistantRoutes({ assistantStoreDir: join(scratch, 'ui-lifecycle'), deployments: async () => ({ agents: {
       list: async () => ({ items: [uiAgent] }),
       connect: async id => { assert.equal(id, uiAgent.metadata.id); return { agent: uiAgent, endpoint: base, token, capabilities: runtimeIdentity.capabilities }; },
-    } }) });
+    } }),
+      // The browser page asks whether an upgrade is available before enabling
+      // its banner; a read-only fixture keeps the relay free of cloud writes.
+      assistantSetup: async () => ({
+        status: async () => ({ state: 'NOT_STARTED', ready: false, releaseId: null }),
+        options: async () => ({ optionsId: 'ui-fixture-options', releaseId: 'ui-fixture-release' }),
+      }) });
     report.ui = await verifyPersonalAssistantUi({ source, installed,
       api: (operation, input = {}) => api(operation, { ...input, conversation: 'ui-acceptance' }),
       relay: (method, payload) => uiRoutes(method, method === 'assistant/execute' ? { ...payload, input: { ...payload.input, conversation: 'ui-acceptance' } } : payload),

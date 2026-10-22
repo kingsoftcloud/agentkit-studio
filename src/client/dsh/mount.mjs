@@ -75,7 +75,7 @@ export function mountStudio(ctx, app) {
         if (app.closed()) return;
         if (!selected?.ok) console.warn('[agentkit-studio] Agent model selection failed:', selected.error?.message || selected.error);
       }
-      const permission = await ctx.remote?.commands?.execute?.(sessionId, '/permission read-only', []);
+      const permission = await ctx.remote?.commands?.execute?.(sessionId, '/permission workspace-write', []);
       if (permission && permission.ok === false) console.warn('[agentkit-studio] Agent permission default was not applied:', permission.error?.message || permission.error);
     } catch (error) {
       console.warn('[agentkit-studio] Native Agent session defaults unavailable:', error?.message || error);

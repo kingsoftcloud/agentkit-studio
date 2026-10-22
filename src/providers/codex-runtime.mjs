@@ -127,7 +127,7 @@ export function createCodexRuntime(options = {}) {
   const runtime = {
     executable,
     cwd,
-    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, cwd: requestedCwd } = {}) {
+    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, reasoningEffort, cwd: requestedCwd } = {}) {
       const cwd = String(requestedCwd ?? runtime.cwd);
       if (!isAbsolute(cwd)) throw new CodexRuntimeError('CODEX_WORKSPACE_INVALID', 'Codex 工作目录必须是绝对路径');
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
@@ -150,10 +150,15 @@ export function createCodexRuntime(options = {}) {
         [`model_providers.${providerId}.requires_openai_auth`]: false,
         [`model_providers.${providerId}.supports_websockets`]: false,
       }).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]) : [];
+      // Codex resolves the effort from config.toml; passing it as a CLI
+      // override keeps it scoped to this ephemeral thread and out of user
+      // configuration. Values are already narrowed to Codex's enum upstream.
+      const reasoningArgs = reasoningEffort
+        ? ['-c', `model_reasoning_effort=${JSON.stringify(String(reasoningEffort))}`] : [];
 
       let child;
       try {
-        child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...providerArgs], {
+        child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...providerArgs, ...reasoningArgs], {
           cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...baseEnv, ...(modelProvider ? { AGENTKIT_CODEX_MODEL_API_KEY: modelProvider.apiKey } : {}) },

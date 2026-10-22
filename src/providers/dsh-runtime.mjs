@@ -8,6 +8,7 @@ import { nativeCodexUsage } from './codex-usage.mjs';
  * the AgentEngine/local-runtime stream and back into DSH text chunks.
  */
 import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.mjs';
+import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { dshModelFailure } from '../model-failure.mjs';
@@ -592,6 +593,9 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               agentId,
               ...(cwd ? { cwd } : {}),
               ...selected,
+              ...(options.reasoningEffort && selected.reasoningEfforts?.[options.reasoningEffort]
+                ? { reasoningEffort: studioCodexReasoningWire(options.reasoningEffort) }
+                : {}),
               sessionId: String(options.sessionId || ''),
               input,
               messages: Array.isArray(options.messages) ? options.messages : [],
@@ -647,6 +651,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           history,
           ...(nativeTools ? { systemPrompt: (Array.isArray(options.messages) ? options.messages : []).filter(message => message?.role === 'system').map(textOf).filter(Boolean).join('\n\n') } : {}),
           ...(options.provider ? { modelSelection: { provider: options.provider, model: options.studioSelectedModel || options.model } } : {}),
+          ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
           nativeTools,
           tools: Array.isArray(options.tools) ? options.tools : [],
         }, { signal: options.signal, toolAdapter, agent: toolAgent }); }

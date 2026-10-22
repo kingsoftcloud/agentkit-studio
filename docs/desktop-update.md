@@ -46,6 +46,23 @@ candidate can be reused by its `candidate_run_id`; identity and asset digests mu
 match. `release_tools_ref` may update publication tools without replacing signed
 App bytes. It must never relabel a newer source commit as the signed candidate.
 
+## Ship macOS and Windows together
+
+Every desktop release covers both platforms in one batch. Publish the macOS feed
+with `release-desktop.yml`; after the signed macOS build succeeds and
+`publish_feed=true`, the workflow's `queue-windows` job dispatches
+`release-windows.yml` automatically with the same immutable `studio_ref`,
+`build_version`, channel and origin. Windows is then published explicitly with
+`publish-windows.yml` (or `scripts/publish-windows-candidate.mjs` from the
+retained artifacts) using the accepted candidate run id and the previous Windows
+feed version. Both feeds refresh `studio/latest` through
+`publish-download-alias.mjs`.
+
+A macOS-only batch is incomplete: the download page and Windows automatic updates
+would stay on the previous version, so do not report a release as shipped until
+`studio/feeds/mac-arm64/preview-mac.yml` and `studio/feeds/win-x64/preview.yml`
+report the same version and `studio/latest/latest.json` carries both platforms.
+
 ## Publish incremental or full updates
 
 The repository release command publishes immutable assets before replacing the
@@ -106,3 +123,77 @@ again. Never lower the feed version or disable signature validation to roll back
 
 See [Windows releases](windows-release.md) for the independent NSIS/signature and
 installed App checks. A working macOS update does not prove Windows update support.
+
+## Publishing from a local machine
+
+GitHub-hosted runners reach the KS3 origin at roughly 19 KB/s, which makes a
+publication impossible: the 11 MB pre-publish probe alone takes about 9.5 minutes,
+and the 480 MB ZIP/DMG upload then stalls until KS3 aborts it with `403` (the
+multipart layer reports `retryable: false`). The candidate build is still produced
+by `release-desktop.yml` with `publish_feed=false`, so the signed bytes come from
+CI and the publication step runs from a maintainer machine inside the network:
+
+```sh
+# macOS: download the signed candidate, verify SHA-256 sums, publish the feed,
+# then refresh the studio/latest download alias.
+node scripts/publish-locally.mjs mac \
+  --run <candidate-run-id> --studio-ref <40-char-sha> \
+  --expected-previous-version <current-feed-version>
+
+# Windows: verify the signed installer evidence, publish the Windows feed and
+# refresh the alias.
+node scripts/publish-locally.mjs win \
+  --run <candidate-run-id> --studio-ref <40-char-sha> \
+  --version <build-version> --expected-previous-version <current-feed-version>
+
+# Repair only the download alias.
+node scripts/publish-locally.mjs alias --channel preview
+```
+
+`--dry-run` prints the resolved artifact and origins without touching KS3, and
+`--candidate <dir>` publishes an already downloaded candidate directory. KS3
+credentials come from the Host configuration (`KSYUN_ACCESS_KEY`/`KSYUN_SECRET_KEY`);
+the signed candidate and the original Windows build logs are read with the GitHub
+CLI, so run `gh auth login` once first (the wrapper falls back to `gh auth token`
+when `GH_TOKEN` is not exported).
+
+## Public download alias
+
+The public site links to fixed `studio/latest/` URLs instead of a versioned folder;
+`latest.json` carries the current versions and checksums:
+
+```sh
+node scripts/publish-download-alias.mjs \
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --channel preview
+```
+
+The command reads the published update feeds, copies the current ZIP/EXE/DMG/blockmap
+inside KS3 (no release bytes cross the operator machine) and rewrites `latest.json`
+with `no-cache`. Existing alias objects are deleted before the copy because KS3
+answers `ObjectAlreayExists` instead of overwriting a server-side copy.
+
+Both publish paths run it automatically once the feed advance is verified:
+`release-desktop.yml` publishes the macOS feed and `publish-windows.yml` publishes
+the Windows feed, so the site follows a release without any manual step. The
+workflows pass `STUDIO_DOWNLOAD_PROD_KS3_BUCKET/ACCESS_KEY/SECRET_KEY`, while a
+local run keeps reading the Host configuration. The command stays runnable by hand
+to repair the alias:
+
+
+`studio/latest/` only serves the public download page. Update checks keep reading
+`studio/feeds/<target>/<channel>.yml`, so the alias never affects hot updates,
+feed version comparison or the automatic upgrade path.
+
+## Version naming
+
+Desktop builds are named `<dsh version>.<YYYYMMDD>.<build ordinal of the day>`,
+for example `0.2.1-rc.2.20261021.1`:
+
+- `0.2.1-rc.2` — the DSH runtime version the build embeds (tracks DSH releases)
+- `20261021` — the packaging date
+- `1` — the first build packaged that day; the ordinal keeps increasing
+
+Because the suffix always advances, the feed version is greater than the
+previous release and the updater sees a normal upgrade. `build_version` is an
+explicit workflow input for `release-desktop.yml` / `release-windows.yml`; when
+omitted the desktop version falls back to the bare DSH version.

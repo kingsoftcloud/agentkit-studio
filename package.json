@@ -6,6 +6,15 @@
   "packageManager": "pnpm@10.33.2",
   "icon": "./assets/agentkit-studio.svg",
   "description": "AgentKit Studio product plugin with an independent TypeScript provider for the official DSH host.",
+  "homepage": "https://kingsoftcloud.github.io/agentkit-studio/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kingsoftcloud/agentkit-studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kingsoftcloud/agentkit-studio/issues"
+  },
+  "license": "Apache-2.0",
   "exports": {
     ".": "./src/index.mjs",
     "./client": "./dist/client.js",
@@ -39,7 +48,8 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "check": "tsc -p tsconfig.contracts.json && node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node --check packages/agentkit-harness/src/core.mjs && node --check packages/agentkit-harness/src/index.mjs && node --test tests/*.test.mjs packages/agentkit-harness/test/*.test.mjs packages/expert-catalog/test/*.test.mjs",
+    "check:node": "node scripts/check-node-version.mjs",
+    "check": "node scripts/check-node-version.mjs && tsc -p tsconfig.contracts.json && node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node --check packages/agentkit-harness/src/core.mjs && node --check packages/agentkit-harness/src/index.mjs && node --test tests/*.test.mjs packages/agentkit-harness/test/*.test.mjs packages/expert-catalog/test/*.test.mjs",
     "build:client": "node scripts/build-client.mjs",
     "precheck": "node scripts/build-client.mjs",
     "pretest": "node scripts/build-client.mjs",
@@ -65,7 +75,7 @@
     "pack:catalog": "pnpm --dir packages/expert-catalog pack --pack-destination ../../.artifacts"
   },
   "engines": {
-    "node": ">=22.19.0",
+    "node": "^22.23.4 || >=24.22.1",
     "dsh": "0.2.1-rc.2"
   },
   "dsh": {
@@ -80,7 +90,8 @@
         "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-workspace"
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-schedule"
       ],
       "platform": "web",
       "external": [
@@ -94,7 +105,9 @@
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-attachment"
+        "@deepseek-ai/dsh-client-ui-attachment",
+        "@deepseek-ai/dsh-client-ui-sidebar-browser",
+        "@deepseek-ai/dsh-client-ui-schedule"
       ]
     },
     "bundle": {
@@ -106,7 +119,7 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh-experimental-agent-team": "0.2.1-rc.2",
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "@openai/codex": "0.159.2",
     "aws4": "1.13.2",
     "undici": "8.11.2",
@@ -117,6 +130,7 @@
     "@electron/asar": "3.4.1",
     "@playwright/test": "1.58.2",
     "esbuild": "0.27.7",
+    "marked": "18.1.1",
     "typescript": "6.0.3"
   }
 }

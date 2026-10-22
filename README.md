@@ -1,5 +1,7 @@
 # AgentKit Studio
 
+[官网与下载](https://kingsoftcloud.github.io/agentkit-studio/) · [文档索引](docs/README.md) · [GitHub Releases](https://github.com/kingsoftcloud/agentkit-studio/releases)
+
 AgentKit Studio is a product plugin for the public [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) host. It provides Agent authoring, resource management, local conversations, deployment controls, automation, and plugin discovery in the Harness Web and desktop surfaces.
 
 The Studio plugin is designed to run with the pinned DSH host version declared in [CONTRIBUTING.md](CONTRIBUTING.md). This repository contains Studio code, compatibility patches, tests, and packaging scripts; it does not vendor the DSH source tree or user credentials.
@@ -7,7 +9,7 @@ The Studio plugin is designed to run with the pinned DSH host version declared i
 ## What it provides
 
 - Agent creation and revision-based editing with model, MCP, Skill, knowledge, and memory bindings.
-- Native DSH conversations for Studio, Codex, and AgentKit Harness runtimes.
+- Native DSH conversations for Studio, Codex, and Star Harness runtimes.
 - Host-owned resource discovery and lifecycle operations.
 - Build, deployment, automation, channel, and operational surfaces through typed Host APIs.
 - DSH plugin discovery with curated official bundles and post-install capability checks.
@@ -26,7 +28,7 @@ signing and updates.
 
 Requirements:
 
-- Node.js `22.19.0` with development headers
+- Node.js `22.23.4` (or `24.22.1+`) with development headers
 - pnpm `10.33.2`, Corepack, Git, Make, and a native compiler toolchain
 - A checkout of the pinned DSH source tree, kept outside this repository
 
