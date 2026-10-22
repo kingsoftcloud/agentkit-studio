@@ -301,7 +301,9 @@ test('native binding opens only after durable Session creation and scopes every 
   assert.ok(f.logs.has(binding.sessionId)); assert.equal(f.runs, 0);
   await opened.runAssistant('submit', { conversation: 'foreign', requestId: 'bound-request', text: 'only current cloud session' });
   assert.equal(f.logs.size, 1); assert.equal(f.logs.get(binding.sessionId).filter(event => event.type === 'user/message').length, 1);
-  assert.throws(() => opened.runAssistant('cancel', {}), { code: 'ASSISTANT_OPERATION_INVALID' });
+  assert.throws(() => opened.runAssistant('steer', {}), { code: 'ASSISTANT_OPERATION_INVALID' });
+  assert.equal((await opened.runAssistant('cancel', {})).accepted, true);
+  assert.equal(f.cancelled, 1);
   await assert.rejects(api('native-open', { conversation: 'own', sessionId: 'foreign' }), { code: 'ASSISTANT_INPUT_INVALID' });
   const signal = new AbortController().signal;
   const request = await api('native-stream-poll', { conversation: 'own', carrierId: binding.carrierId }, { signal });
@@ -309,7 +311,7 @@ test('native binding opens only after durable Session creation and scopes every 
   const foreign = await api('native-call', { conversation: 'different', carrierId: binding.carrierId });
   assert.notEqual(foreign.sessionId, binding.sessionId, 'carrier receives authoritative current conversation, never caller sessionId');
   assert.equal(api.nativeCarrierSupported, true); api.dispose(); assert.equal(disposed, 1);
-  assert.equal(f.cancelled, 0);
+  assert.equal(f.cancelled, 1);
 });
 
 test('unavailable native carrier never creates a Session or advertises a binding', async () => {

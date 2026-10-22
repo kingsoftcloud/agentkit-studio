@@ -38,7 +38,7 @@ Studio 的「个人助理」侧栏连接一个专属的 DSH Native 云端部署�
 
 重新连接通过 DSH 历史分页恢复内容，不维护第二份会话数据库。公开快照只保留安全的原生会话事件；客户端把它们交给已安装 DSH 的 `ConversationNodeAssembler` 和事件定义，复用原生 Markdown、DisclosureRow、StateDot 与 ImageLightbox 展示文字、工具和嵌套工具结果、图片、产物、任务状态及审批记录。重连和加载更早记录会合并去重，近期页面移动不会丢掉已经看过的历史。
 
-原生输入使用独立的云端 Client graph：公开 `conversation.content` 工厂、真实 `SessionReference`、Connection/Gateway/Remote/Controller 都绑定到当前部署的受限 carrier。即使两台 Host 的 Session ID 相同，也不会进入本地会话。原生 prompt 适配回原有 durable submit + flush；不会改用断开即取消的 `/v1/responses`。输入采用仅上传、内存草稿、仅队列发送的实例配置，本地 DSH 的默认行为不变。原生停止与 steer 不开放，页面仍使用精确回合停止接口。
+原生输入使用独立的云端 Client graph：公开 `conversation.content` 工厂、真实 `SessionReference`、Connection/Gateway/Remote/Controller 都绑定到当前部署的受限 carrier。即使两台 Host 的 Session ID 相同，也不会进入本地会话。原生 prompt 适配回原有 durable submit + flush；不会改用断开即取消的 `/v1/responses`。输入采用仅上传、内存草稿、仅队列发送的实例配置，本地 DSH 的默认行为不变。原生 Stop 复用原生输入框的发送按钮：运行中发送箭头变为停止，carrier 仅转发当前会话的 `api-session/status` 并把 `session/cancel` 绑定到该会话，页面底部不再额外渲染停止按钮；steer 仍不开放，自定义输入框和旧镜像仍使用精确回合停止接口。
 
 ## 附件、输入与能力边界
 

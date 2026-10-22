@@ -23,6 +23,9 @@ function fixture(options = {}) {
       return (async function* () {
         if (endpoint === '$events') {
           yield { type: 'ready', clientId: 'real-generation', host: { home: 'CANARY' } };
+          yield { type: 'emit', event: 'api-session/status', args: ['session', true] };
+          yield { type: 'emit', event: 'api-session/status', args: ['foreign', true] };
+          yield { type: 'emit', event: 'api-session/status', args: ['session', 'CANARY'] };
           yield { type: 'emit', event: 'CANARY', args: ['CANARY'] };
           yield { type: 'waterfall', request: { private: 'CANARY' } };
         } else if (endpoint === 'session/control') yield { type: 'baseline', value: { projections: {
@@ -44,6 +47,7 @@ function fixture(options = {}) {
   const runAssistant = async (operation, payload) => {
     writes.push({ operation, payload });
     if (options.write) return options.write(operation, payload);
+    if (operation === 'cancel') return { accepted: true };
     return operation === 'submit' ? { accepted: true, requestId: payload.requestId, sessionId: 'session' }
       : { receiptId: 'file-receipt', attachment: { attachmentId: `sha256:${'a'.repeat(64)}`, name: 'report.txt', bytes: 4 } };
   };
@@ -80,7 +84,7 @@ test('cross-session handle and subagent addressing are rejected before upstream'
 
 test('closed RPC allowlist rejects native commands, policy, paths, steer and event results', async t => {
   const f = fixture(); t.after(() => f.service.dispose());
-  for (const endpoint of ['$events/result', 'session/cancel', 'session/create', 'session/selectModel', 'commands/execute', 'settings/write', 'session/modelCatalog', 'session/openWorkspacePath']) {
+  for (const endpoint of ['$events/result', 'session/create', 'session/selectModel', 'commands/execute', 'settings/write', 'session/modelCatalog', 'session/openWorkspacePath']) {
     assert.equal((await f.call(endpoint, {})).ok, false);
   }
   assert.equal((await f.call('session/prompt', { request: { sessionId: 'session', requestId: 'req', mode: 'steer', content: [{ type: 'text', text: 'hello' }] } })).ok, false);
@@ -124,11 +128,22 @@ test('inline image bytes and caller fingerprints never bypass receipt admission'
   assert.equal(f.writes.length, 0);
 });
 
-test('event generation is real but home, broadcasts and waterfalls are not exposed', async t => {
+test('event generation is real but only the bound running flag leaves the carrier', async t => {
   const f = fixture(); t.after(() => f.service.dispose());
   await f.open('$events'); await tick();
   const result = await f.request('native-stream-poll', { streamId: 'events' });
-  assert.deepEqual(result, { items: [{ type: 'ready', clientId: 'real-generation', host: { home: '' } }], ended: false });
+  assert.deepEqual(result, { items: [{ type: 'ready', clientId: 'real-generation', host: { home: '' } },
+    { type: 'emit', event: 'api-session/status', args: ['session', true] }], ended: false });
+  assert.ok(!JSON.stringify(result).includes('CANARY'));
+});
+
+test('native cancel is bound to the exact session and never reaches read RPCs', async t => {
+  const f = fixture(); t.after(() => f.service.dispose());
+  assert.equal((await f.call('session/cancel', { request: { sessionId: 'foreign' } })).ok, false);
+  assert.equal((await f.call('session/cancel', { request: {} })).ok, false);
+  assert.deepEqual(await f.call('session/cancel', { request: { sessionId: 'session' } }), { ok: true, value: { accepted: true } });
+  assert.deepEqual(f.writes.map(row => row.operation), ['cancel']);
+  assert.equal(f.calls.length, 0);
 });
 
 test('control and follow streams sanitize all output paths while access advertises only facade capabilities', async t => {

@@ -234,6 +234,14 @@ function projectionValues(value) {
 export function projectAssistantNativeProjectionBaseline(value) {
   const baseline = object(value); return { asOfSeq: integer(baseline.asOfSeq, -1), values: projectionValues(baseline.values) };
 }
+/** Retain only the bound Session's running flag; every other forwarded Host event stays out.
+ * An unrecognized event shape is dropped, never allowed to break the read stream. */
+export function projectAssistantNativeStatusEvent(value, sessionId) {
+  const frame = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  if (!frame || frame.event !== 'api-session/status' || !Array.isArray(frame.args)) return null;
+  if (frame.args.length !== 2 || frame.args[0] !== sessionId || typeof frame.args[1] !== 'boolean') return null;
+  return { type: 'emit', event: 'api-session/status', args: [sessionId, frame.args[1]] };
+}
 /** Project the public nullable/migration-aware SessionController.projections response. */
 export function projectAssistantNativeProjections(value) {
   if (value === null) return null;
