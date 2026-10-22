@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util'
 import YAML from 'yaml'
 import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs'
 import { publishedDesktopMetadata, studioDesktopPublication } from '../src/desktop-release-metadata.mjs'
+import { desktopReleaseUploads } from '../src/desktop-release-uploads.mjs'
 
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
 const TARGET = 'mac-arm64'
@@ -147,19 +148,7 @@ async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviou
   const publishedFeed = join(output, `${selectedChannel}-mac.yml`)
   const plan = layout === 'studio' ? studioDesktopPublication(candidate.metadata, { origin: storageOrigin, channel: selectedChannel, mode }) : undefined
   await writeFile(publishedFeed, YAML.stringify(plan?.metadata || publishedDesktopMetadata(candidate.metadata, candidate.metadata.version)), { mode: 0o600 })
-  const uploadRoot = `dsh-desk/bin/${TARGET}`
-  const feedRoot = `dsh-desk/feeds/${TARGET}`
-  const uploads = [
-    [`${candidate.expectedBase}.dmg`, plan?.assets.dmg || `${uploadRoot}/${candidate.expectedBase}.dmg`, 'application/x-apple-diskimage', storageOrigin],
-    [`${candidate.expectedBase}.zip`, plan?.assets.zip || `${uploadRoot}/${candidate.expectedBase}.zip`, 'application/zip', storageOrigin],
-    [`${candidate.expectedBase}.zip.blockmap`, plan?.assets.blockmap || `${uploadRoot}/${candidate.expectedBase}.zip.blockmap`, 'application/octet-stream', storageOrigin],
-    ['mac-arm64-release.json', plan?.releaseKey || `${feedRoot}/mac-arm64-release.json`, 'application/json', storageOrigin],
-    ...(plan ? [[`${selectedChannel}-mac.yml`, plan.feedKey, 'application/yaml', storageOrigin],
-      ...(storageOrigin !== feedOrigin ? [[`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml', storageOrigin]] : [])] : []),
-    [`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml', feedOrigin],
-    ...(compatibilityOrigin && compatibilityOrigin !== feedOrigin && compatibilityOrigin !== storageOrigin
-      ? [[`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml', compatibilityOrigin]] : []),
-  ]
+  const uploads = desktopReleaseUploads({ expectedBase: candidate.expectedBase, plan, selectedChannel, target: TARGET, storageOrigin, feedOrigin, compatibilityOrigin })
   const uploaded = []
   for (const [filename, objectKey, contentType, uploadOrigin] of uploads) {
     console.log(`uploading ${objectKey}`)

@@ -16,7 +16,11 @@ const credentials = resolveKs3OriginCredentials(process.env, origin);
 const directory = await mkdtemp(join(tmpdir(), 'studio-ks3-probe-'));
 const bytes = randomBytes(11 * 1024 * 1024);
 const path = join(directory, 'probe.bin');
-const objectKey = `dsh-desk/bin/mac-arm64/ks3-multipart-probe-${randomUUID()}.bin`;
+// Qualify the prefix the selected layout really writes: the Studio layout must
+// never depend on the legacy dsh-desk prefix, which older release credentials
+// are not allowed to write.
+const probeRoot = process.env.RELEASE_LAYOUT === 'studio' ? 'studio/bin' : 'dsh-desk/bin';
+const objectKey = `${probeRoot}/mac-arm64/ks3-multipart-probe-${randomUUID()}.bin`;
 const url = new URL(objectKey, origin);
 const started = Date.now();
 let created = false;
