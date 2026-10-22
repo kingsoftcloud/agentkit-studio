@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { canonical, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeModelPort, nativeModelRecoveryPolicy } from '../../../packages/agentkit-harness/src/native/model-port.mjs';

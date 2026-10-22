@@ -32,7 +32,7 @@ function memoryPath(root, scope) {
   return join(root, 'native-harness', 'memory-v1', memoryDigest(scope.tenantId).slice(7), 'memory.sqlite');
 }
 
-async function setup(t, { spec, approval = async () => 'allowed-once', respond } = {}) {
+async function setup(t, { spec, approval = async () => 'allowed-once', respond, observeMemory } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-memory-host-'));
   const workspaceRoot = join(root, 'workspace'); await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root });
@@ -69,6 +69,10 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond }
   };
   const nativeTools = createNativeDshTools({ ctx: toolCtx, config: { toolBindings: [], toolContracts: [] },
     workspaceRoot, stateDir: join(root, 'state') });
+  if (observeMemory) {
+    const bindMemory = nativeTools.bindMemory;
+    nativeTools.bindMemory = memory => { observeMemory(memory); return bindMemory(memory); };
+  }
   const services = { sessions: { flush: async () => true }, llm: {},
     sessionProjections: { register(definition) { definitions.set(definition.key, definition); return () => definitions.delete(definition.key); },
       stateOf(_session, id) { const definition = definitions.get(id); return events.reduce(definition.apply, definition.init()); } } };
@@ -135,6 +139,49 @@ test('two independent original human sources converge to one Memory fact via the
     assert.equal(records[0].content, '我喜欢用Vim');
     assert.equal(records[0].version, 1);
     assert.equal(records[0].sourceEventIds.length, 2, 'two independent runs each observed once');
+  } finally { provider.close(); }
+});
+
+test('Host completed-turn consumption confirms a direct Memory write with the original owner receipt', async t => {
+  const consumed = [], ownerRequests = [];
+  const h = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+    write: { mode: 'candidate', flushBeforeCompaction: false, flushAfterTurn: true },
+    recall: { enabled: false, maxTokens: 0 } }, context: { rollout: { memoryWrite: 'enabled' } } },
+    observeMemory: memory => {
+      const consume = memory.memoryTurn.consume;
+      memory.memoryTurn.consume = async (snapshot, options) => {
+        const directWriteReceipt = options.directWriteReceipt;
+        const result = await consume(snapshot, { ...options, directWriteReceipt: async request => {
+          const receipt = await directWriteReceipt(request);
+          ownerRequests.push({ request, receipt });
+          return receipt;
+        } });
+        consumed.push(result);
+        return result;
+      };
+    }, respond: count => count === 1 ? toolCall('direct-memory', 'manage_memory',
+      { action: 'remember', scope: 'user', content: '我喜欢用Vim' }) : finish('Done.') });
+  // Ordinary preference input exercises direct-write verification. An explicit
+  // "remember" request is handled by its dedicated verifier and skips this path.
+  const snapshot = await h.run('我喜欢用Vim');
+  assert.equal(snapshot.phase, 'completed', snapshot.reason);
+  assert.deepEqual(consumed, [{ status: 'direct_write_already_committed' }]);
+  assert.equal(ownerRequests.length, 1);
+  const { request, receipt } = ownerRequests[0];
+  assert.deepEqual(request.scope, snapshot.scope);
+  assert.equal(request.runId, snapshot.runId);
+  assert.equal(request.call.callId, 'direct-memory');
+  assert.equal(request.definition.name, 'manage_memory');
+  assert.equal(receipt.committed, true);
+  assert.deepEqual(receipt, request.toolResultContent);
+  const run = h.ledger.load(snapshot.scope, snapshot.runId);
+  const intent = run.intents.find(item => item.kind === 'tool');
+  assert.equal(request.operationKey, intent.operationKey);
+  const provider = h.memoryProvider(snapshot.scope);
+  try {
+    assert.equal(provider.list().length, 1);
+    assert.equal(provider.list()[0].content, '我喜欢用Vim');
+    assert.equal(provider.list()[0].version, 1);
   } finally { provider.close(); }
 });
 
