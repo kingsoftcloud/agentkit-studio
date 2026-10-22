@@ -87,7 +87,9 @@ test('the Landlock plan adds namespace isolation and a read-only allow list', ()
   assert.deepEqual(readOnly, ['/usr', '/etc', '/dev/urandom']);
   assert.ok(!readOnly.includes('/proc'), 'a readable /proc would expose Host credentials');
   const readWrite = plan.args.flatMap((arg, index) => arg === '--rw' ? [plan.args[index + 1]] : []);
-  assert.deepEqual(readWrite, ['/dev/null', '/tmp', root]);
+  assert.deepEqual(readWrite, ['/dev/null', root]);
+  assert.ok(!readWrite.includes('/tmp'), 'shared /tmp would let the child write outside the workspace');
+  assert.equal(plan.env.TMPDIR, join(root, '.cloud-exec-tmp'));
   assert.equal(plan.env.PATH, '/usr/local/bin:/usr/bin:/bin');
   assert.equal(plan.env.HOME, root);
   assert.equal(plan.env.AGENTKIT_MODEL_API_KEY, undefined);

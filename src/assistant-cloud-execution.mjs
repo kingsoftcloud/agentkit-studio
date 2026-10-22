@@ -1,7 +1,6 @@
 /** Confined command and program execution for a managed cloud assistant. */
 import { spawn as spawnChild, spawnSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
-import { realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 
 export const CLOUD_BASH_TOOL = 'cloud_bash';
@@ -21,12 +20,14 @@ const SYSTEM_BINDINGS = Object.freeze([
 // spawned by the Host, and a readable /proc would expose Host credentials
 // through /proc/<host-pid>/environ.
 const LANDLOCK_READ_ONLY = Object.freeze(['/usr', '/etc', '/dev/urandom']);
-const LANDLOCK_READ_WRITE = Object.freeze(['/dev/null', '/tmp']);
+// No shared /tmp: the confined child writes temp files inside its own
+// workspace subdirectory so nothing it creates is visible to the Host.
+const LANDLOCK_READ_WRITE = Object.freeze(['/dev/null']);
 const LANDLOCK_LAUNCHER_RELATIVE = Object.freeze([
   'node_modules', '@deepseek-ai', 'node-addon-system-linux-x64', 'bin', 'landlock-run',
 ]);
 const CLOUD_ENVIRONMENT = Object.freeze([
-  ['PATH', '/usr/local/bin:/usr/bin:/bin'], ['TMPDIR', '/tmp'], ['LANG', 'C.UTF-8'], ['LC_ALL', 'C.UTF-8'],
+  ['PATH', '/usr/local/bin:/usr/bin:/bin'], ['TMPDIR', '.cloud-exec-tmp'], ['LANG', 'C.UTF-8'], ['LC_ALL', 'C.UTF-8'],
   ['TERM', 'dumb'], ['PYTHONDONTWRITEBYTECODE', '1'], ['NODE_OPTIONS', '--max-old-space-size=512'],
   ['AGENTKIT_CLOUD_EXECUTION', '1'],
 ]);
@@ -127,7 +128,9 @@ function boundedText(input, limit, label) {
 }
 
 function cloudEnvironment(root) {
-  return Object.fromEntries([['HOME', root], ...CLOUD_ENVIRONMENT]);
+  // Temporary files belong to the confined workspace, never to a shared /tmp
+  // that the Host also writes: TMPDIR is resolved below the owned root.
+  return Object.fromEntries([['HOME', root], ...CLOUD_ENVIRONMENT.map(([name, value]) => [name, name === 'TMPDIR' ? join(root, value) : value])]);
 }
 
 /**
@@ -198,6 +201,10 @@ export function createCloudExecutor({ workspaceRoot, sandbox, spawn = spawnChild
     if (disposed) throw fail('云端执行已关闭');
     if (!confiner?.available) throw fail(confiner?.reason || '云端执行沙箱不可用');
     const planned = plan(argv, Math.min(timeoutOf(timeoutMs), maxTimeout));
+    if (typeof planned.env?.TMPDIR === 'string') {
+      try { mkdirSync(planned.env.TMPDIR, { recursive: true }); }
+      catch (error) { throw fail(`云端执行临时目录不可用: ${error.code || 'mkdir-error'}`); }
+    }
     return await new Promise((resolvePromise, rejectPromise) => {
       let child;
       try {
