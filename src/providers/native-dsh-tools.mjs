@@ -26,6 +26,7 @@ import { createNativeToolAuthority } from './native-tool-authority.mjs';
 import { WORKSPACE_MUTATION_LOCK } from '../../packages/agentkit-harness/src/native/workspace-mutation-lock.mjs';
 import { STUDIO_NATIVE_CHILD_WORKSPACE_BINDING } from './native-child-workspace-host.mjs';
 import { nativeChildMergeDefinition } from './native-child-merge.mjs';
+import { createNativeComponentTools, nativeComponentToolDefinitions, NATIVE_COMPONENT_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/component-tools.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -49,6 +50,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   };
   const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions' });
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
+  for (const definition of nativeComponentToolDefinitions()) formal.set(definition.name, definition);
   const controls = localControlSettings(commandSettings), commandEnv = buildScriptEnvironment(commandEnvironment, { settings: controls });
   const commandNames = new Set(localCommandToolDefinitions(controls).map(definition => {
     formal.set(definition.name, definition); return definition.name;
@@ -110,6 +112,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   // definitions() selects the caller-session's locked formal. The preset
   // gateway is shared across sessions, so this map is keyed by sessionId.
   const memoryNames = new Set();
+  const componentOwners = new Map();
   const memoryOwners = new Map(); // sessionId -> { memoryHost, definitions: Map }
   let memoryRegistered = false, memoryDisposers = [];
   let closed = false, closing, disposers = [];
@@ -134,6 +137,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     memoryDisposers = []; memoryRegistered = false;
     const webClosing = [...webOwners.keys()].map(closeWebSession);
     if (webTemplate) webClosing.push(webTemplate.close());
+    for (const owners of componentOwners.values()) for (const owner of owners) owner.close();
+    componentOwners.clear();
     return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, ...memoryClosing, ...webClosing, browserTools.close()]).then(results => {
       const failed = results.find(result => result.status === 'rejected');
       if (failed) throw failed.reason;
@@ -187,6 +192,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             outcome = await (await invocation.commands()).execute({ ...invocation.request, signal: exec.signal });
           } else if (webNames.has(name)) {
             outcome = await (await invocation.web()).execute({ ...invocation.request, signal: exec.signal });
+          } else if (name === 'component_status') {
+            invariant(invocation.components, 'studio_native_component_binding_missing');
+            outcome = await invocation.components.execute({ ...invocation.request, signal: exec.signal });
           } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
             : formal.has(name) ? await invocation.workspaceTools.execute({ ...invocation.request, signal: exec.signal },
               { assertCurrent: invocation.assertCurrent })
@@ -360,6 +368,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     bindMemory,
     argumentEncoding,
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
+    componentContract: builtinNames.has('component_status') ? NATIVE_COMPONENT_TOOLS_CONTRACT : null,
     childBinding: childRoles.length ? { contract: NATIVE_CHILD_TOOLS_CONTRACT, roles: structuredClone(childRoles) } : null,
     childCapabilities: { skills: hasSkills, mcp: mcpContracts.size > 0 },
     childMcpBinding: structuredClone(childMcpBinding),
@@ -376,6 +385,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     mcpSchemaContract: mcpSchemas.size ? NATIVE_MCP_SCHEMA_CONTRACT : null,
     mcpBindingDigest,
     async releaseSession(request) {
+      const owners = componentOwners.get(request.sessionId);
+      if (owners) { for (const owner of owners) owner.close(); componentOwners.delete(request.sessionId); }
       const results = await Promise.allSettled([browserTools.releaseSession(request), closeWebSession(request.sessionId)]);
       const failure = results.find(result => result.status === 'rejected');
       if (failure) throw failure.reason;
@@ -470,6 +481,16 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           sessionId, authorize: async () => 'allow' }) : state(agent, sessionId);
       const assertCurrent = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
         isClosed: () => closed }) : undefined;
+      let components;
+      if (builtinNames.has('component_status') && commandAuthority?.componentBinding
+        && (!commandAuthority.toolNames || commandAuthority.toolNames.includes('component_status'))) {
+        invariant(commandAuthority.componentBinding.contract === NATIVE_COMPONENT_TOOLS_CONTRACT,
+          'studio_native_component_binding_invalid');
+        components = createNativeComponentTools({ scope: commandAuthority.scope, sessionId,
+          status: commandAuthority.componentBinding.status, assertCurrent });
+        if (!componentOwners.has(sessionId)) componentOwners.set(sessionId, new Set());
+        componentOwners.get(sessionId).add(components);
+      }
       let commandsPromise;
       const commands = () => commandsPromise ||= (async () => {
         invariant(commandAuthority?.scope && commandAuthority?.store, 'studio_native_command_ledger_unavailable');
@@ -526,7 +547,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } };
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
-        const invocation = { agent, request, workspaceTools, assertCurrent, children: commandAuthority?.children,
+        const invocation = { agent, request, workspaceTools, assertCurrent, components, children: commandAuthority?.children,
           argumentEncoding: exactNumbers ? argumentEncoding : null, commands, web, assertMcpCurrent };
         calls.set(callId, invocation);
         try {

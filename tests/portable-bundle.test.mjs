@@ -375,4 +375,3 @@ test('tampering both inner agent-bundle and outer portable with full identity re
     await assert.rejects(importPortableBundle(tamperArchive(opts), join(f.root, `full-tamper-${label}`)), { code: 'PORTABLE_BUNDLE_INVALID' }, `import: ${label}`);
   }
 });
-

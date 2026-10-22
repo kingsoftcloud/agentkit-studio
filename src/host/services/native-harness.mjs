@@ -23,6 +23,7 @@ import { createStudioNativeRecovery } from './native-recovery.mjs';
 import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../providers/native-hooks.mjs';
 import { bindStudioNativeMemoryFlush, composeStudioNativeHooks } from '../../providers/native-memory.mjs';
 import { bindStudioNativeMemoryHost, extendNativeMemoryGoal } from '../../providers/native-memory-host.mjs';
+import { studioNativeComponentStatus } from '../../providers/native-component-status.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -226,6 +227,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       try { registeredHooks = hookRegistry?.bind(hookOptions); hooks = composeStudioNativeHooks(registeredHooks, memoryHooks); }
       catch (error) { await registeredHooks?.close(); await memoryHooks?.close(); throw error; }
       const memoryProviderRef = memoryHost?.policy.providerRef ?? 'local-default';
+      const componentBinding = binding.nativeTools.componentContract ? studioNativeComponentStatus({ record,
+        modelName: selected.modelName, workspaceRoot, tools, commandBinding: binding.nativeTools.commandBinding,
+        localMemoryBound: Boolean(memoryHost?.policy.enabled) }) : null;
       return { scope, buildId, source,
         // Optional completed-Turn consumption: the Memory owner consumes only
         // original current-Run human inputs after the committed terminal. It
@@ -290,6 +294,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),
           ...(binding.nativeTools.workspaceMutationContract ? { workspaceMutationContract: binding.nativeTools.workspaceMutationContract } : {}),
           ...(binding.nativeTools.commandBinding ? { commandBinding: binding.nativeTools.commandBinding } : {}),
+          ...(componentBinding ? { componentBinding } : {}),
           ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
           mcpResultContract: binding.nativeTools.mcpResultContract ?? null,
           mcpJsonCodec: binding.nativeTools.mcpJsonCodec ?? null,
@@ -308,7 +313,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000,
           (hooks?.requiredEffectTimeoutMs ?? 0) + 1,
           ...roles.map(role => role.timeoutSeconds * 1000 + 15000), ...tools.map(tool => tool.timeoutMs + 10000)) } },
-        ports: { ...binding.nativeTools.forAgent(agent, { scope, store, ...(children ? { children } : {}) }),
+        ports: { ...binding.nativeTools.forAgent(agent, { scope, store, ...(componentBinding ? { componentBinding } : {}), ...(children ? { children } : {}) }),
           ...(hooks ? { hooks } : {}),
           ...(children ? { children: children.owner } : {}), verification: memoryVerification ?? verification,
           context: { ...context.port, ...(memoryRecall ? { readSource: memoryRecall.readSource } : {}) }, input: { prepare: async request => {
