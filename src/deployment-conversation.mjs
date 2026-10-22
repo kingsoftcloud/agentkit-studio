@@ -1,13 +1,14 @@
 /** Native DSH presentation; frozen cloud runtime owns prompts, resources and tools. */
 import { CLOUD_PROVIDER } from './deployment-agents.mjs';
+import { clampExecutionMode } from './execution-policy.mjs';
 import { sha256, portableError } from './portable-resources.mjs';
 import { cloudFrames } from './providers/dsh-runtime.mjs';
 import { createCodexToolRecorder } from './providers/codex-tool-events.mjs';
 import { sanitizeResourceCheck } from './resource-checks.mjs';
 
-export function createDeploymentConversation({ agents, fetchImpl = fetch, observability }) {
+export function createDeploymentConversation({ agents, fetchImpl = fetch, observability, permissionModeFor }) {
   return async function* stream(options) {
-    const { agent, endpoint, token, capabilities } = await (await agents()).connect(options.agentId);
+    const { agent, endpoint, token, capabilities, allowedPermissionModes = [], executionModeSwitching } = await (await agents()).connect(options.agentId);
     if ((options.cloudVersionId || 'initial') !== (agent.deployment.versionId || 'initial')) {
       throw portableError('DEPLOYMENT_SESSION_VERSION_CHANGED', '云端 Agent 已升级或回滚，请开启新会话使用当前版本；此会话历史仍保留');
     }
@@ -22,7 +23,16 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
     const request = { input: options.input, stream: true, model: selected,
       session_id: `studio-${sha256(String(options.sessionId)).slice(0, 40)}`,
       request_id: `message-${sha256(JSON.stringify([options.sessionId, options.userMessage.id])).slice(0, 40)}` };
-    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+    // The runtime owns the ceiling; a conversation may only select a mode the
+    // frozen image declares. Old images ignore the absent header entirely.
+    let permissionMode = null;
+    if (executionModeSwitching && typeof permissionModeFor === 'function' && allowedPermissionModes.length) {
+      const requested = await permissionModeFor(options.agentId);
+      const clamped = requested ? clampExecutionMode(requested, allowedPermissionModes.at(-1)) : null;
+      if (clamped && allowedPermissionModes.includes(clamped)) permissionMode = clamped;
+    }
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'text/event-stream',
+      ...(permissionMode ? { 'x-agentkit-permission-mode': permissionMode } : {}) };
     const calls = new Map(), items = new Map();
     const recorder = createCodexToolRecorder(options.session, { label: '云端', code: 'CLOUD' });
     let responseId, verified = false, response, complete = false;

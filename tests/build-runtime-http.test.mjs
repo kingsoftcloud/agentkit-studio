@@ -125,3 +125,24 @@ test('authenticated version probe reports the serving bundle without starting a 
   assert.equal(body.buildId, buildId); assert.equal(body.bundleSha256, bundleSha256);
   assert(!JSON.stringify(body).includes(token));
 });
+
+test('conversation execution modes are declared, narrowed by the ceiling and validated per request', async t => {
+  const modes = [], requestIds = ['req-one', 'req-two', 'req-three', 'req-four'];
+  const server = await startBuildRuntimeHttp({ agentId: 'ar-local-test', buildId, token,
+    executionPolicy: { format: 'agentkit.execution-policy/v1', permissionMode: 'workspace-write', approvalPolicy: 'never', approvalSource: 'runtime-policy' },
+    executionPolicyMax: 'workspace-write',
+    runner: async request => { modes.push(request.permissionMode); return {}; }, port: 0 });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address.port}`;
+  const identity = await (await fetch(base + '/v1/agentkit/runtime', { headers: { authorization: `Bearer ${token}` } })).json();
+  assert.deepEqual(identity.allowedPermissionModes, ['read-only', 'workspace-write']);
+  assert.equal(identity.capabilities.includes('cloud-execution-policy/v1'), true);
+  const post = mode => fetch(base + '/runs', { method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(mode ? { 'x-agentkit-permission-mode': mode } : {}) },
+    body: JSON.stringify({ input: 'hi', requestId: requestIds.shift() }) });
+  assert.equal((await post('danger-full-access')).status, 403);
+  assert.equal((await post('unconfined')).status, 400);
+  assert.equal((await post('read-only')).status, 200);
+  assert.equal((await post()).status, 200);
+  assert.deepEqual(modes, ['read-only', 'workspace-write']);
+});

@@ -12,6 +12,7 @@ import { createAssistantNativeCarrierService } from './assistant-native-carrier.
 import { createFrozenHostedActions } from './frozen-hosted-actions.mjs';
 import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
 import { createAssistantPermissionModel } from './assistant-permission-model.mjs';
+import { DEFAULT_CLOUD_EXECUTION_MAX, DEFAULT_CLOUD_EXECUTION_MODE, cloudExecutionPolicy, readExecutionMode } from './execution-policy.mjs';
 
 const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, 'step/end', 'turn/end']);
 
@@ -43,8 +44,14 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
     if (!admission.modelSelection) throw Object.assign(new Error('冻结模型没有可用的运行时路由'), { code: 'RUNTIME_MODEL_UNAVAILABLE' });
     selections.set(entry.id, admission.modelSelection);
   }
+  // The image declares the default conversation policy. A deployment may narrow
+  // the ceiling later through its environment; image defaults keep parity with
+  // Local DSH sessions (workspace-write) while allowing every mode to be chosen.
+  const executionModeDefault = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_DEFAULT) || DEFAULT_CLOUD_EXECUTION_MODE;
+  const executionModeMax = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_MAX) || DEFAULT_CLOUD_EXECUTION_MAX;
+  const declaredPolicy = cloudExecutionPolicy(executionModeDefault);
   const nativeRun = createNativeAutomationRunner({
-    getService: name => ctx.get(name), reuseSession: true,
+    getService: name => ctx.get(name), reuseSession: true, executionPolicy: declaredPolicy,
     assertHostCompatible: () => hostCompatibility?.require('frozen-runtime'),
     loadReplay: request => loadFrozenRequestReplay(request, selections.get(request.model)),
     admit: async () => admit(agentId, await build.resolve(agentId, buildId)),
@@ -85,7 +92,7 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
   const hosted = createFrozenHostedActions({ ctx, agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, frozen, admit, model,
     models: catalog.length ? catalog.map(item => item.id) : [model], bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
     responses: createRuntimeResponsesContract({ agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, model, models: catalog.length ? catalog.map(item => item.id) : [model] }) });
-  return startBuildRuntimeHttp({ hosted, agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: nativeRun.executionPolicy, validatePrevious, assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
+  return startBuildRuntimeHttp({ hosted, agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: declaredPolicy, executionPolicyMax: executionModeMax, validatePrevious, assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 

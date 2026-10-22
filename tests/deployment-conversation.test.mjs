@@ -165,3 +165,23 @@ test('new native presets carry each deployment version through the scoped reques
   assert.equal(requests, 3, 'stale sessions must fail before a cloud request');
   assert.equal(definitions.size, 3, 'each rollout preserves the prior preset even if Agent revision is unchanged');
 });
+
+test('a switching cloud image receives exactly one clamped conversation execution mode', async () => {
+  const headers = [];
+  const switching = mode => async () => ({ connect: async () => ({ agent, endpoint: 'https://ar-cloud-test.agent-pre.kspmas.ksyun.com', token: 'private-runtime-token',
+    executionPolicy: { format: 'agentkit.execution-policy/v1', permissionMode: 'workspace-write', approvalPolicy: 'never', approvalSource: 'runtime-policy' },
+    capabilities: ['cloud-execution-policy/v1'], allowedPermissionModes: ['read-only', 'workspace-write'], executionModeSwitching: true }) });
+  const run = async permissionModeFor => {
+    const stream = createDeploymentConversation({ agents: switching(), permissionModeFor, fetchImpl: async (_url, init) => { headers.push(init.headers); return response(JSON.parse(init.body)); } });
+    await collect(stream(options));
+    return headers.at(-1);
+  };
+  assert.equal((await run(async () => 'workspace-write'))['x-agentkit-permission-mode'], 'workspace-write');
+  assert.equal((await run(async () => 'danger-full-access'))['x-agentkit-permission-mode'], 'workspace-write');
+  assert.equal((await run(async () => null))['x-agentkit-permission-mode'], undefined);
+  const legacy = createDeploymentConversation({ agents: async () => ({ connect: async () => ({ agent, endpoint: 'https://ar-cloud-test.agent-pre.kspmas.ksyun.com', token: 'private-runtime-token' }) }),
+    permissionModeFor: async () => 'workspace-write',
+    fetchImpl: async (_url, init) => { headers.push(init.headers); return response(JSON.parse(init.body)); } });
+  await collect(legacy(options));
+  assert.equal(headers.at(-1)['x-agentkit-permission-mode'], undefined);
+});

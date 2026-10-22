@@ -33,10 +33,40 @@ test('policy operation verifies the owned deployment and returns no connection c
       return { agent: { deployment: { buildId: 'frozen-build' } }, endpoint: 'private-endpoint', token: 'private-token', executionPolicy: policy }; },
   } }) });
   const result = await route('agents/execution-policy', { agentId: 'owned', permissionMode: 'danger-full-access' });
-  assert.deepEqual(result, { ok: true, value: { agentId: 'owned', buildId: 'frozen-build', executionPolicy: policy } });
+  assert.deepEqual(result, { ok: true, value: { agentId: 'owned', buildId: 'frozen-build', executionPolicy: policy,
+    allowedPermissionModes: [], executionModeSwitching: false, selectedPermissionMode: null } });
   assert.deepEqual(connected, ['owned']);
+  assert.equal(JSON.stringify(result).includes('private-token'), false);
+  assert.equal(JSON.stringify(result).includes('private-endpoint'), false);
   await assert.rejects(route('agents/execution-policy', { agentId: 'foreign' }), { code: 'DEPLOYMENT_AGENT_NOT_FOUND' });
   assert.equal((await route('agents/execution-policy', {})).error.code, 'INVALID_AGENT_ID');
+});
+
+test('conversation execution mode is only persisted inside the modes declared by the frozen image', async () => {
+  const stored = new Map(), connected = [];
+  const modes = ['read-only', 'workspace-write'];
+  const route = createAgentRoutes({ serverClientPromise: Promise.resolve({}), deployments: async () => ({ agents: {
+    connect: async id => { connected.push(id); if (id !== 'owned') throw Object.assign(new Error('not owned'), { code: 'DEPLOYMENT_AGENT_NOT_FOUND' });
+      return { agent: { deployment: { buildId: 'frozen-build' } }, executionPolicy: { ...policy, permissionMode: 'workspace-write' },
+        capabilities: ['cloud-execution-policy/v1'], allowedPermissionModes: modes, executionModeSwitching: true }; },
+  } }), cloudExecutionModes: { get: async id => stored.get(id) || null, set: async (id, mode) => { stored.set(id, mode); return mode; } } });
+  const applied = await route('agents/execution-policy-set', { agentId: 'owned', permissionMode: 'danger-full-access' });
+  assert.deepEqual(applied.value, { agentId: 'owned', selectedPermissionMode: 'workspace-write', allowedPermissionModes: modes,
+    executionPolicy: { ...policy, permissionMode: 'workspace-write' } });
+  assert.equal(stored.get('owned'), 'workspace-write');
+  assert.equal((await route('agents/execution-policy-set', { agentId: 'owned', permissionMode: 'unconfined' })).error.code, 'CLOUD_EXECUTION_MODE_INVALID');
+  await assert.rejects(route('agents/execution-policy-set', { agentId: 'foreign', permissionMode: 'read-only' }), { code: 'DEPLOYMENT_AGENT_NOT_FOUND' });
+  assert.equal((await route('agents/execution-policy', { agentId: 'owned' })).value.selectedPermissionMode, 'workspace-write');
+  assert.deepEqual(connected, ['owned', 'foreign', 'owned']);
+});
+
+test('an image without the switching capability rejects execution mode changes', async () => {
+  const route = createAgentRoutes({ serverClientPromise: Promise.resolve({}), deployments: async () => ({ agents: {
+    connect: async id => ({ agent: { deployment: { buildId: 'frozen-build' } }, executionPolicy: policy,
+      capabilities: [], allowedPermissionModes: [], executionModeSwitching: false }),
+  } }), cloudExecutionModes: { get: async () => null, set: async () => assert.fail('must not persist') } });
+  const result = await route('agents/execution-policy-set', { agentId: 'owned', permissionMode: 'workspace-write' });
+  assert.equal(result.error.code, 'CLOUD_EXECUTION_MODE_UNSUPPORTED');
 });
 
 test('ordinary runner diagnostics coexist with managed assistant Session permissions without overwriting them', async t => {

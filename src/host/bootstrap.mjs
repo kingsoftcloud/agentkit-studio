@@ -16,6 +16,7 @@ import { registerControlPlaneRoutes } from './routes/http.mjs';
 import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
+import { createCloudExecutionModes } from '../cloud-execution-modes.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
 
@@ -33,6 +34,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { loadPortableRuntime, createPortableBundles } = await import('../portable-bundle.mjs');
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
+  const cloudExecutionModes = createCloudExecutionModes({ directory: studioStoreDir });
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
     env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
@@ -94,7 +96,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     bridge,
     AdapterBase: LlmAdapter,
     attachments: () => ctx.get('attachments'),
-    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise, fetchImpl: services.runtimeFetch }),
+    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise, fetchImpl: services.runtimeFetch,
+      permissionModeFor: agentId => cloudExecutionModes.get(agentId) }),
     localHandler: localRuntimeHandler,
     codexRuntime,
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
@@ -316,7 +319,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     await bindRuntime();
   }
   const routes = createStudioRoutes(ctx, {
-    ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility,
+    ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
   });
