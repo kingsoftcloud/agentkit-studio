@@ -25,7 +25,7 @@ const SERVER_ACTIONS = new Set([
 ]);
 
 const SKILL_SERVICE_ACTIONS = new Set([
-  'ListSkillsBySpaceId', 'GetSkillDownloadUrl', 'GetPremadeSkillDownloadUrl',
+  'ListSkillSpaces', 'ListAvailablePremadeSkills', 'ListSkillsBySpaceId', 'GetSkillDownloadUrl', 'GetPremadeSkillDownloadUrl',
 ]);
 
 function normalizeAgent(item = {}) {

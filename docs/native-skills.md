@@ -6,6 +6,13 @@ These modules are not yet mounted by the production Studio gateway. Existing
 Studio skill registration continues through its current path. This is an
 implementation milestone, not completed Skills parity.
 
+These six names cover the legacy toolset surface. The formal Python Native
+profile additionally has `skill_catalog`, `skill_read_manifest`,
+`skill_read_instructions`, and `skill_read_resource` with Run-scoped disclosure
+and receipt-based recovery. Resource plugins separately expose
+`read_skill_resource`. Those distinct surfaces, child inheritance, and pinned
+resource Build admission are still required for complete Studio Skills parity.
+
 ## Trusted execution boundary
 
 Every call supplies the exact formal definition, complete Native Run identity,
@@ -51,15 +58,21 @@ Native `approval_required` and its `interactionId`; an approval without that
 identity is not a usable result.
 
 Incomplete service listings cannot silently establish a complete selection.
-The initial Studio service wrapper is provisional; its pagination and service
-semantics are being replaced by a separately reviewed adapter before mounting.
+The Studio provider now uses `createNativeSkillService` with the real signed
+KOP GET transport, replacing its provisional one-page/deduplicating wrapper.
+The adapter checks every page's space and total, duplicates, version changes,
+page size, and page budget. A full page without a total continues; a short page
+with a remaining total reports incomplete. Public listing keeps the service's
+single-request protocol. The two listing actions have been added to the
+explicit Skill-only action allowlist.
 The workflow backend, output artifact budgeting, cloud service protocol, per-Build
 binding and production permission integration still require final assembly
 and validation.
 
 ## Verification
 
-The following targeted modules passed on Node 26.5.0 and Node 22.19.0,
+At the earlier guarded-port checkpoint, the following targeted modules passed
+on Node 26.5.0 and Node 22.19.0,
 72 tests per runtime, zero failures or skips:
 
 ```sh
@@ -89,3 +102,18 @@ adapter test stops a 50 MiB stream after reading 21 MiB against a 20 MiB limit,
 without a Content-Length header, and cancels the remaining stream. Transport
 responses are deterministic injected boundaries; this is not an online cloud
 or whole-Host validation.
+
+The subsequent service integration group passed 112 tests on each Node version,
+with zero failures or skips:
+
+```sh
+node --test tests/native-skill-service.test.mjs tests/native-dsh-skills.test.mjs \
+  tests/native-skills-authority.test.mjs tests/server-client.test.mjs
+```
+
+Its integration test runs the actual NativeKernel, SQLite store, guarded Studio
+provider, Skill Service parser, signed AgentEngine client, downloader and ZIP
+cache. Injected HTTP responses return a deterministic version and archive.
+The committed successful receipt retains those exact instructions and version;
+the archive request receives no control-plane authorization header. This does
+not yet prove DSH registry/permission assembly or production gateway mounting.

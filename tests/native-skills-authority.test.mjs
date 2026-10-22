@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeSkillTools } from '../packages/agentkit-harness/src/native/skill-tools.mjs';
@@ -9,6 +10,10 @@ import { createNativeToolAuthority } from '../src/providers/native-tool-authorit
 import { NativeKernel, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { createAgentEngineClient } from '../src/server-client.mjs';
+import { createNativeSkillService } from '../src/providers/native-skill-service.mjs';
+import { createNativeSkillLoader } from '../src/providers/native-skill-loader.mjs';
+import { createZip } from '../src/zip.mjs';
 
 const agent = { session: { id: 'session' } };
 const identity = { scope, runId: 'run', sessionId: 'session', turnId: 'turn', buildId: 'build',
@@ -147,4 +152,54 @@ test('real SQLite intent authorizes the Skills port once and rejects the origina
   store.close(); store = new SqliteRunStore(filename);
   const reopened = f.port(createNativeToolAuthority({ scope, sessionId: 'session', store }));
   assert.equal((await reopened.execute(original)).status, 'error'); assert.equal(serviceCalls, 1);
+});
+
+test('actual Native ledger loads an exact archive through the signed Skill client and guarded provider', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'native-skills-signed-load-'));
+  t.after(() => rmSync(root, { force: true, recursive: true }));
+  const store = new SqliteRunStore(join(root, 'ledger.sqlite')); t.after(() => store.close());
+  const text = '---\nname: alpha\n---\nFollow the real package instructions.';
+  const archive = createZip([{ name: 'SKILL.md', data: text }, { name: 'scripts/run.mjs', data: 'console.log(42)' }]);
+  const hash = createHash('sha256').update(archive).digest('hex'), actions = [];
+  let archiveFetches = 0;
+  const fetchImpl = async (input, init) => {
+    const url = new URL(input);
+    if (url.hostname === 'archive.example') {
+      assert.equal(init.headers, undefined); assert.equal(init.redirect, 'error'); archiveFetches++;
+      return new Response(archive);
+    }
+    const action = url.searchParams.get('Action'); actions.push(action);
+    assert.equal(init.method, 'GET'); assert.match(init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=fixture-key\//);
+    let data;
+    if (action === 'ListSkillsBySpaceId') {
+      assert.equal(url.searchParams.get('SpaceId'), 'space');
+      data = { SkillSpaceId: 'space', TotalCount: 1, Skills: [{ Name: 'alpha', SkillId: 'skill-alpha', VersionId: 'version-3', ContentHash: 'sha256:' + hash }] };
+    } else {
+      assert.equal(action, 'GetSkillDownloadUrl'); assert.equal(url.searchParams.get('VersionId'), 'version-3');
+      data = { DownloadUrl: 'https://archive.example/alpha.zip?signature=private' };
+    }
+    return Response.json({ Code: 0, RequestId: 'actual-request', Data: data });
+  };
+  const client = createAgentEngineClient({ configuration: { resolve: async () => ({ values: {
+    cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'fixture-key', cloudSecretKey: 'fixture-secret',
+  } }) }, fetchImpl });
+  const loadSkillFn = createNativeSkillLoader({ serviceClient: createNativeSkillService(client), cacheDir: join(root, 'cache'), fetchImpl });
+  const provider = createStudioNativeSkills({ serviceClient: client, loadSkillFn, authorize: async () => 'allow',
+    skillSpaceIds: ['space'], agentId: scope.agentId, agentRevision: 1, buildId: 'build', backendBindingDigest: 'fixture-locked-service/v1' });
+  const port = provider.forAgent(agent, { scope, sessionId: 'session', agentRevision: 1,
+    assertCurrent: createNativeToolAuthority({ scope, sessionId: 'session', store }) }).tools;
+  const { config, snapshot } = fixture({ tools: provider.definitions, limits: { effectTimeoutMs: 910000 } });
+  let modelCalls = 0;
+  const kernel = new NativeKernel({ store, owner: 'host', digest, ports: { tools: port, model: {
+    generate: async () => !modelCalls++ ? { kind: 'tool_calls', text: '', usage: emptyUsage(),
+      toolCalls: [{ callId: 'load', name: 'load_skill', arguments: { skill_name: 'alpha' } }] }
+      : { kind: 'final_candidate', text: 'loaded', usage: emptyUsage(), toolCalls: [] },
+  } } });
+  kernel.start(snapshot, config); assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+  const loaded = store.load(scope, 'run'), intent = loaded.intents.find(i => i.kind === 'tool');
+  const result = loaded.receipts.find(r => r.operationKey === intent.operationKey).result.results[0];
+  assert.equal(result.status, 'ok'); assert.equal(result.content.instructions, text);
+  assert.equal(result.content.version_id, 'version-3');
+  assert.equal(readFileSync(join(result.content.root_dir, 'scripts/run.mjs'), 'utf8'), 'console.log(42)');
+  assert.deepEqual(actions, ['ListSkillsBySpaceId', 'GetSkillDownloadUrl']); assert.equal(archiveFetches, 1);
 });
