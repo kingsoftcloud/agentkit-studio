@@ -161,6 +161,7 @@ export function createCodexRuntime(options = {}) {
         child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...providerArgs, ...reasoningArgs], {
           cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
           env: { ...baseEnv, ...(modelProvider ? { AGENTKIT_CODEX_MODEL_API_KEY: modelProvider.apiKey } : {}) },
         });
       } catch (error) {

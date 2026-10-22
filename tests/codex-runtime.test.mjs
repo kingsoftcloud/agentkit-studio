@@ -405,3 +405,10 @@ test('Codex cumulative token notifications reach consumers once without duplicat
   assert.equal(chunks.reduce((sum, chunk) => sum + chunk.usage.outputTokens, 0), 50);
   assert.equal(chunks.reduce((sum, chunk) => sum + chunk.usage.cachedInputTokens, 0), 80);
 });
+
+test('Codex App Server child is spawned without a Windows console window', async () => {
+  let options;
+  const runtime = createCodexRuntime({ spawnImpl: (_executable, _args, value) => { options = value; return fakeSpawn(); }, cwd: '/tmp', timeoutMs: 1000 });
+  for await (const _chunk of runtime.stream({ input: 'hide the console' })) {}
+  assert.equal(options.windowsHide, true);
+});
