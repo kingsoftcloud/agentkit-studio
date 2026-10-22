@@ -3,6 +3,8 @@ import { canonical, configure, invariant, submissionOutputFormat } from '../../p
 import { createNativeChildOwner } from '../../packages/agentkit-harness/src/native/child-owner.mjs';
 import { createNativeChildResultTools } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeGoalContract } from './native-verification.mjs';
+import { createStudioNativeChildMerge } from './native-child-merge.mjs';
+import { previousChildPublication } from '../../packages/agentkit-harness/src/native/child-publication.mjs';
 
 export const STUDIO_NATIVE_CHILD_CONTRACT = 'agentkit.studio-native-children/v2';
 const workspaceTools = new Set(['workspace_status', 'list_workspace_files', 'read_workspace_file', 'lint_workspace_file',
@@ -68,8 +70,8 @@ export function nativeChildRoles(spec = {}) {
 }
 
 /** Bind every child to a declared role and its own scoped tool state. */
-export async function createStudioNativeChildren({ roles, scope, store, tools, hasSkills, hasMcp,
-  resolveModel, bindTools, verificationFactory, fileWorkspaces, mediaSources = new Map() }) {
+export async function createStudioNativeChildren({ roles, scope, sessionId, store, tools, hasSkills, hasMcp,
+  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, mediaSources = new Map() }) {
   if (!roles.length) return null;
   const byName = new Map(roles.map(role => [role.name, role]));
   const bindings = new Map();
@@ -85,6 +87,9 @@ export async function createStudioNativeChildren({ roles, scope, store, tools, h
     bindings.set(role.name, { model, tools: granted, isolatedWrite });
   }
   const childScope = role => ({ ...scope, agentId: `${scope.agentId}:child:${role.name}` });
+  const merge = [...bindings.values()].some(binding => binding.isolatedWrite)
+    ? createStudioNativeChildMerge({ scope, sessionId, store, roles, fileWorkspaces, isClosed,
+      previousPublication: previousChildPublication, authorize: async () => 'allow' }) : null;
   const readers = createNativeChildResultTools({ scope, childScopes: roles.map(childScope), store, roles: roles.map(role => role.name) });
   const owner = createNativeChildOwner({ scope, childScopes: roles.map(childScope), store,
     resolveChild: async request => {
@@ -157,5 +162,6 @@ export async function createStudioNativeChildren({ roles, scope, store, tools, h
   });
   return { owner, contract: STUDIO_NATIVE_CHILD_CONTRACT, roles: structuredClone(roles),
     execute: request => ['native_start_child', 'native_delegate'].includes(request.call.name) ? owner.start(request)
-      : request.call.name === 'native_child_control' ? owner.control(request) : readers.execute(request) };
+      : request.call.name === 'native_child_control' ? owner.control(request)
+        : request.call.name === 'native_child_merge' && merge ? merge.execute(request) : readers.execute(request) };
 }

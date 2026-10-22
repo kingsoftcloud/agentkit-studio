@@ -14,6 +14,7 @@ import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { readNativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { previousChildPublication } from '../packages/agentkit-harness/src/native/child-publication.mjs';
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
@@ -147,6 +148,77 @@ test('production Host confines a writing child and its continuation to the origi
   assert.equal(f.dispatches.filter(dispatch => dispatch.name === 'write_workspace_file').length, 1);
   assert.equal(first.receipts.flatMap(receipt => receipt.result.results ?? []).filter(result => result.status === 'ok'
     && result.workspaceChangedPaths?.includes('child-only.txt')).length, 1);
+});
+
+test('production Host restores merge grants from a later parent Run for incremental child publication', async t => {
+  const boundTools = ['read_workspace_file', 'write_workspace_file'];
+  let f, firstChildId, nextChildId;
+  f = await setup(t, { sqlite: true, boundTools, role: { tools: boundTools, maxTurns: 3, maxToolCalls: 2 },
+    childPlan: async (_body, index) => index === 1 || index === 3
+      ? { call: { name: 'write_workspace_file', arguments: { path: 'child-only.txt', content: index === 1 ? 'version one' : 'version two' } } }
+      : { text: 'Child file delivery' },
+    parentPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Write child version one' } } };
+      if (index === 2) {
+        firstChildId = /native-child-[a-f0-9]{64}/.exec(JSON.stringify(body.messages))?.[0]; assert.ok(firstChildId);
+        return { text: 'First parent delivery' };
+      }
+      if (index === 3) return { call: { name: 'native_child_merge', arguments: { child_run_id: firstChildId } } };
+      if (index === 4) {
+        assert.equal(await readFile(join(f.workspaceRoot, 'child-only.txt'), 'utf8'), 'version one');
+        return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Update your isolated file', continuation_of: firstChildId } } };
+      }
+      if (index === 5) {
+        const head = f.ledger.sessionHead(f.scope, 'parent-session'); nextChildId = head.childRunIds.at(-1);
+        assert.notEqual(nextChildId, firstChildId);
+        return { call: { name: 'native_child_merge', arguments: { child_run_id: nextChildId } } };
+      }
+      return { text: 'Incremental parent delivery' };
+    } });
+  await f.host.executeTurn(f.payload);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+  const source = f.ledger.load(childScope, firstChildId);
+  const originalParent = f.ledger.sessionHead(f.scope, 'parent-session');
+  f.payload.agent.session.append('turn/start', { turn: 2 });
+  await f.host.executeTurn({ ...f.payload, turn: 2, input: { ...f.payload.input, messages: [{ id: 'merge-followup', role: 'user',
+    source: { kind: 'user' }, content: [{ type: 'text', text: 'Publish and continue the original child files.' }] }] } });
+  const later = f.ledger.sessionHead(f.scope, 'parent-session'); assert.equal(later.phase, 'completed');
+  assert.equal(later.parentRunId, originalParent.runId); assert.equal(f.childModels(), 4);
+  assert.equal(await readFile(join(f.workspaceRoot, 'child-only.txt'), 'utf8'), 'version two');
+  assert.deepEqual(f.ledger.load(childScope, firstChildId), source);
+  const merges = f.ledger.load(f.scope, later.runId).receipts.flatMap(receipt => receipt.result.results ?? [])
+    .filter(result => result.content?.schema_version === 'native.child-file-merge/v2');
+  assert.equal(merges.length, 2); assert.ok(merges.every(result => result.status === 'ok'));
+  assert.equal(merges[1].content.comparison_revision, source.snapshot.workspaceRevision);
+  assert.notEqual(merges[1].content.comparison_revision, source.configuration.hostRecoveryBinding.childWorkspace.baseRevision);
+  const reopened = new SqliteRunStore(join(f.root, 'runs.sqlite'));
+  try {
+    const args = { store: reopened, childScopes: [childScope], parent: reopened.load(f.scope, later.runId).snapshot,
+      child: reopened.load(childScope, nextChildId) };
+    const grant = previousChildPublication(args);
+    assert.equal(grant.revision, source.snapshot.workspaceRevision);
+    assert.equal(grant.inventoryDigest, merges[0].content.publication.inventory_digest);
+    assert.equal(previousChildPublication({ ...args, parent: { ...args.parent, sessionId: 'foreign-session' } }), null);
+    assert.equal(previousChildPublication({ ...args, child: { ...args.child,
+      snapshot: { ...args.child.snapshot, workspaceRevision: 'sha256:' + '0'.repeat(64) } } }), null);
+    for (const corrupt of ['uncertain', 'failed', 'extra_arguments', 'no_prepared_event']) {
+      const store = { load: (scope, runId) => {
+        const record = reopened.load(scope, runId);
+        if (runId !== later.runId || scope.agentId !== f.scope.agentId) return record;
+        const matching = record.intents.filter(intent => intent.payload.calls?.some(call => call.name === 'native_child_merge'));
+        for (const intent of matching) {
+          if (corrupt === 'extra_arguments') intent.payload.calls.forEach(call => { if (call.name === 'native_child_merge') call.arguments.extra = true; });
+          if (corrupt === 'no_prepared_event') record.events = record.events.filter(event => event.payload.operationKey !== intent.operationKey);
+          for (const receipt of record.receipts.filter(receipt => receipt.operationKey === intent.operationKey)) {
+            if (corrupt === 'uncertain') receipt.status = 'uncertain';
+            if (corrupt === 'failed') receipt.result.results.forEach(result => { result.status = 'error'; });
+          }
+        }
+        return record;
+      } };
+      assert.equal(previousChildPublication({ ...args, store }), null, corrupt);
+    }
+  } finally { reopened.close(); }
 });
 for (const sqlite of [false, true]) {
   for (const action of ['send', 'cancel']) test(`${sqlite ? 'sqlite' : 'memory'}: Host control route ${action} targets the original active child`, async t => {

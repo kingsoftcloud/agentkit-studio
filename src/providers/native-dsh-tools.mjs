@@ -25,6 +25,7 @@ import { nativeChildRoles } from './native-subagents.mjs';
 import { createNativeToolAuthority } from './native-tool-authority.mjs';
 import { WORKSPACE_MUTATION_LOCK } from '../../packages/agentkit-harness/src/native/workspace-mutation-lock.mjs';
 import { STUDIO_NATIVE_CHILD_WORKSPACE_BINDING } from './native-child-workspace-host.mjs';
+import { nativeChildMergeDefinition } from './native-child-merge.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -62,7 +63,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const childRoles = nativeChildRoles({ subAgents: config.subAgents ?? [] });
   const childNames = new Set(childRoles.length ? [...nativeChildToolDefinitions(childRoles.map(role => role.name),
     Math.max(120000, ...childRoles.map(role => role.timeoutSeconds * 1000 + 15000))),
-    ...nativeChildReaderDefinitions()].map(definition => {
+    ...nativeChildReaderDefinitions(), ...(childRoles.some(role => role.tools.some(name => formal.get(name)?.readOnly === false))
+      ? [nativeChildMergeDefinition()] : [])].map(definition => {
     formal.set(definition.name, definition); return definition.name;
   }) : []);
   const declared = structuredClone(config.toolContracts ?? []);

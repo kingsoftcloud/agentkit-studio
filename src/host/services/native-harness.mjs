@@ -198,7 +198,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       };
       const parentModel = modelBinding(selected, selectedId, context), roles = nativeChildRoles(record.spec);
       invariant(!roles.length || canonical(binding.nativeTools.childBinding?.roles) === canonical(roles), 'studio_native_child_revision_binding_changed');
-      const children = await createStudioNativeChildren({ roles, scope, store, tools, mediaSources: childMediaSources,
+      const children = await createStudioNativeChildren({ roles, scope, sessionId, store, tools, mediaSources: childMediaSources,
+        isClosed: () => lifetime.signal.aborted,
         fileWorkspaces: roles.length ? createStudioNativeChildWorkspaces({ workspaceRoot,
           stateDir: join(storeDir, 'native-harness') }) : null,
         hasSkills: Boolean(record.spec.bindings?.skills?.length || binding.nativeTools.childCapabilities?.skills),
