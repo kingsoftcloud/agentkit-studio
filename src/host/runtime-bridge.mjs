@@ -1,5 +1,6 @@
 /** Host-owned runtime registrations. Cordis scopes, never Agent ids, own cleanup. */
 import { createStudioNativeHookRegistry } from '../providers/native-hooks.mjs';
+import { createStudioNativeContextSourceRegistry } from '../providers/native-context-sources.mjs';
 const mounted = new Set();
 let standalone;
 
@@ -18,6 +19,7 @@ function abortable(value, signal) {
 
 export function createRuntimeBridge() {
   const nativeHooks = createStudioNativeHookRegistry();
+  const nativeContextSources = createStudioNativeContextSourceRegistry();
   const lifetime = new AbortController();
   const routes = new Map();
   const pending = new Set();
@@ -59,6 +61,7 @@ export function createRuntimeBridge() {
 
   const bridge = {
     nativeHooks,
+    nativeContextSources,
     get signal() { return lifetime.signal; },
     setAdapter(value) { return register('adapter', value); },
     setResourceToolExecutor(value) {
@@ -170,6 +173,7 @@ export function createRuntimeBridge() {
       nativeToolsFactory = undefined;
       builtinToolsFactory = undefined;
       routes.clear();
+      nativeContextSources.close();
       return nativeHooks.close();
     },
   };

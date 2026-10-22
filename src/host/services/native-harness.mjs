@@ -52,7 +52,7 @@ const recoveredPromptAssembly = (assembly, source) => ({ ...assembly,
 
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
-  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor, hookRegistry } = {}) {
+  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor, hookRegistry, contextSourceRegistry } = {}) {
   const sessions = ctx.get('sessions'), projections = ctx.get('sessionProjections'), llm = ctx.get('llm');
   invariant(typeof sessions?.flush === 'function' && typeof projections?.register === 'function'
     && typeof renderPrompt === 'function', 'studio_native_host_services_unavailable');
@@ -162,7 +162,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const sealedCapsule = nativeRecoveryBinding({ binding, input, source, selection, systemPrompt });
       const memoryHost = bindStudioNativeMemoryHost({ record, scope, sessionId, store, storeDir,
         buildId: binding.buildId ?? null, context, ctx, bundleDigest, profileDigest, pluginLockDigest, sealedCapsule });
-      let memoryDispose;
+      let memoryDispose, registeredContext;
       try {
         if (memoryHost?.port && typeof binding.nativeTools.bindMemory === 'function')
           memoryDispose = binding.nativeTools.bindMemory(memoryHost);
@@ -225,6 +225,16 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       signal.throwIfAborted();
       const hookOptions = { scope, sessionId, record, buildId: binding.buildId ?? null, store };
       const memoryRecall = bindStudioNativeMemoryRecall({ ...hookOptions, storeDir });
+      registeredContext = contextSourceRegistry?.bind({ ...hookOptions, expectedRuntimeBuildId: buildId });
+      const contextSources = [...(memoryRecall ? [memoryRecall.source] : []), ...(registeredContext?.sources ?? [])];
+      invariant(new Set(contextSources.map(source => source.sourceId)).size === contextSources.length,
+        'studio_native_context_source_collision');
+      const readContextSource = request => {
+        if (memoryRecall && request.source.sourceId === memoryRecall.source.sourceId) return memoryRecall.readSource(request);
+        invariant(registeredContext?.sources.some(source => source.sourceId === request.source.sourceId),
+          'studio_native_context_source_unbound');
+        return registeredContext.readSource(request);
+      };
       const memoryHooks = bindStudioNativeMemoryFlush({ ...hookOptions, storeDir, contextWindow: context.profile.contextWindow });
       let registeredHooks, hooks;
       try { registeredHooks = hookRegistry?.bind(hookOptions); hooks = composeStudioNativeHooks(registeredHooks, memoryHooks); }
@@ -273,20 +283,20 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             }
             await binding.nativeTools.releaseSession?.(request);
           } finally {
-            memoryDispose?.(); memoryHost?.close();
+            registeredContext?.close(); memoryDispose?.(); memoryHost?.close();
           }
         },
         taskContractFactory: facts => extendNativeMemoryGoal(facts.goal,
           nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
           { providerRef: memoryProviderRef }),
         configuration: { profile: parentModel.profile, modelRecoveryPolicy: parentModel.modelRecoveryPolicy,
-        ...(memoryRecall ? { contextSources: [memoryRecall.source] } : {}),
+        ...(contextSources.length ? { contextSources } : {}),
         ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
         hostRecoveryBinding: sealedCapsule,
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
           interactionContract: STUDIO_NATIVE_INTERACTION_CONTRACT,
-          ...(memoryRecall ? { contextSources: [memoryRecall.source] } : {}),
+          ...(contextSources.length ? { contextSources } : {}),
           ...(hooks ? { hookContract: STUDIO_NATIVE_HOOK_CONTRACT, hooks: hooks.definitions,
             stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
           ...(children ? { childContract: STUDIO_NATIVE_CHILD_CONTRACT, childRoles: roles } : {}),
@@ -320,7 +330,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ports: { ...binding.nativeTools.forAgent(agent, { scope, store, ...(componentBinding ? { componentBinding } : {}), ...(children ? { children } : {}) }),
           ...(hooks ? { hooks } : {}),
           ...(children ? { children: children.owner } : {}), verification: memoryVerification ?? verification,
-          context: { ...context.port, ...(memoryRecall ? { readSource: memoryRecall.readSource } : {}) }, input: { prepare: async request => {
+          context: { ...context.port, ...(contextSources.length ? { readSource: readContextSource } : {}) }, input: { prepare: async request => {
           request.signal.throwIfAborted();
           const next = await prepareInput(request.step);
           request.signal.throwIfAborted();
@@ -348,7 +358,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           return { status: 'admitted', messages };
         } }, model: parentModel.model },
       };
-      } catch (error) { memoryDispose?.(); memoryHost?.close(); throw error; }
+      } catch (error) { registeredContext?.close(); memoryDispose?.(); memoryHost?.close(); throw error; }
   };
   const execute = createNativeDshTurnExecutor({ store, projections, durableOwnership: true, flush: session => sessions.flush(session),
     publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),

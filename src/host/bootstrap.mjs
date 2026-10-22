@@ -25,7 +25,7 @@ import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecy
 import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/agentkit-harness/src/skill-bindings.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
-  nativeHookRegistrations = [] } = {}) {
+  nativeHookRegistrations = [], nativeContextSourceRegistrations = [] } = {}) {
   const hostCompatibility = await loadHostCompatibility(ctx);
   ctx.provide('studioHostCompatibility', hostCompatibility);
   const cloudEndpointOptions = {
@@ -36,6 +36,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   for (const registration of nativeHookRegistrations) {
     const retire = bridge.nativeHooks.register(registration);
     ctx.effect(() => retire, 'agentkit-studio: trusted Native hook source');
+  }
+  for (const registration of nativeContextSourceRegistrations) {
+    const retire = bridge.nativeContextSources.register(registration);
+    ctx.effect(() => retire, 'agentkit-studio: trusted Native context source');
   }
   // Defer optional portable-bundle dependencies until Host activation.
   // The browser uses the separately declared ./client bundle; it must never
@@ -167,7 +171,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       .then(([{ createStudioNativeHarness }, { renderPrompt }, agents, studio, resources, { emitAgentEvent, agentEvents, assembleContextFor }]) => createStudioNativeHarness({
         ctx, storeDir: studioStoreDir, workspaceRoot, agents, builds: studio.build, models, resources, fetchImpl: hostFetch, renderPrompt,
         publishStreamFrame: ({ agent }, frame) => emitAgentEvent(ctx, agent, 'agent/assistant-stream', { frame }),
-        agentEvents, assembleContextFor, hookRegistry: bridge.nativeHooks,
+        agentEvents, assembleContextFor, hookRegistry: bridge.nativeHooks, contextSourceRegistry: bridge.nativeContextSources,
       })), 'agentkit-studio: Native Harness lifetime');
   ctx.effect(() => bridge.setNativeTurnExecutor(async payload => (await nativeHost()).executeTurn(payload)), 'agentkit-studio: Native whole-turn registration');
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');

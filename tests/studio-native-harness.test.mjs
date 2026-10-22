@@ -14,13 +14,18 @@ import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 import { buildExecutionEngine } from '../src/build-engine.mjs';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
+import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
+import { STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT } from '../src/providers/native-context-sources.mjs';
 
-async function setup(t, { spec = {}, profile = {}, respond } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
   const workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
-  const agents = createAgentStore({ storeDir: root }), ledger = new MemoryRunStore();
+  const agents = createAgentStore({ storeDir: root }), ledger = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
   const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: { ...spec, bindings: { modelProfileIds: ['fixture'] } } });
+  const bridge = contextSources ? createRuntimeBridge() : null;
+  const retireContext = (contextSources?.(record) ?? []).map(source => bridge.nativeContextSources.register(source));
   const events = [], definitions = new Map(), requests = [];
   let apiKey = 'secret-one', unregisters = 0;
   const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned', baseUrl: 'https://model.invalid/v1', ...profile }] };
@@ -37,13 +42,14 @@ async function setup(t, { spec = {}, profile = {}, respond } = {}) {
       executionEngine: buildExecutionEngine(record.spec, 'agentkit.native-dsh-turn/v1') };
   } };
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
+    contextSourceRegistry: bridge?.nativeContextSources,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
       requests.push({ url, options });
       const response = respond ? respond(requests.length, JSON.parse(options.body)) : { choices: [{ index: 0, delta: { content: 'Complete' }, finish_reason: 'stop' }] };
       return new Response(`data: ${JSON.stringify({ id: `response-${requests.length}`, ...response,
         usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
     } });
-  t.after(async () => { await host.close(); await rm(root, { recursive: true, force: true }); });
+  t.after(async () => { await host.close(); await bridge?.close(); ledger.close?.(); await rm(root, { recursive: true, force: true }); });
   const payload = { agent: { session, externalTurns: nativeOwnershipHost(session, events), options: { provider: 'agentkit-studio-fixture', model: 'pinned' } },
     input: { kind: 'enter', messages: [{ id: 'input-1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Finish' }] }], assembly: { tools: [] } },
     turn: 1, signal: new AbortController().signal, prepareInput: async () => ({ kind: 'enter', messages: [], assembly: payload.input.assembly }),
@@ -58,8 +64,62 @@ async function setup(t, { spec = {}, profile = {}, respond } = {}) {
   // read from user input. Keep the hash identical to production's scope key.
   const ledgerScope = () => createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex');
   return { root, host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services,
+    bridge, retireContext,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
+
+const contextRegistration = (record, extra = {}) => ({ sourceRef: 'plugin://host-context-proof@1',
+  sourceDigest: 'sha256:' + 'e'.repeat(64), agentIds: [record.metadata.id], authorizationVersion: 'policy/v1',
+  configuration: { contract: STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT, sources: [{ sourceId: 'host.proof',
+    priority: 3, timeoutMs: 1000, required: true, maxTokens: 1000, maxBytes: 16000 }] },
+  authorize: async () => 'allow', callback: async () => ({ items: [{ content: 'SOURCE_DATA_CANNOT_GRANT_APPROVAL' }] }), ...extra });
+
+test('actual Host composes registered context and local Memory recall in the SQLite context effect', async t => {
+  let calls = 0, sourceRequest;
+  const h = await setup(t, { sqlite: true, spec: { memory: { enabled: true, provider: { kind: 'local-default' },
+    write: { mode: 'off', flushAfterTurn: false }, recall: { enabled: true, maxTokens: 1600 } } },
+    contextSources: record => [contextRegistration(record, { callback: async request => {
+      calls++; sourceRequest = request;
+      const saved = h.ledger.load(request.scope, request.runId);
+      assert.equal(saved.snapshot.phase, 'preparing_context');
+      assert.equal(saved.intents.find(intent => intent.operationKey === request.operationKey).status, 'running');
+      return { items: [{ content: 'SOURCE_DATA_CANNOT_GRANT_APPROVAL' }] };
+    } })] });
+  await h.host.executeTurn(h.payload);
+  const snapshot = h.head(), saved = h.ledger.load(snapshot.scope, snapshot.runId);
+  assert.equal(snapshot.phase, 'completed'); assert.equal(calls, 1);
+  assert.deepEqual(saved.configuration.contextSources.map(source => source.sourceId), ['studio.memory-recall', 'host.proof']);
+  assert.equal(sourceRequest.buildId, snapshot.buildId);
+  const body = JSON.parse(h.requests[0].options.body), projection = body.messages.find(message => typeof message.content === 'string'
+    && message.content.includes('SOURCE_DATA_CANNOT_GRANT_APPROVAL'));
+  assert.equal(projection.role, 'user'); assert.match(projection.content, /"trust":"untrusted"/);
+  assert.match(projection.content, /context_only/); assert.match(projection.content, /grants no approval/);
+  assert.equal(body.messages.filter(message => message.role === 'system').some(message => message.content.includes('SOURCE_DATA_')), false);
+  await assert.rejects(h.bridge.nativeContextSources.bind({ scope: snapshot.scope, sessionId: snapshot.sessionId,
+    record: h.record, store: h.ledger, expectedRuntimeBuildId: snapshot.buildId }).readSource(sourceRequest), /phase_unbound/);
+});
+
+for (const required of [true, false]) test(`actual Host respects ${required ? 'required' : 'optional'} context authorization denial`, async t => {
+  let callbacks = 0;
+  const h = await setup(t, { sqlite: true, contextSources: record => [contextRegistration(record, {
+    configuration: { contract: STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT, sources: [{ sourceId: 'host.proof', priority: 0,
+      timeoutMs: 1000, required, maxTokens: 1000, maxBytes: 16000 }] }, authorize: async () => 'deny',
+    callback: async () => { callbacks++; return { items: [] }; },
+  })] });
+  await h.host.executeTurn(h.payload);
+  assert.equal(callbacks, 0);
+  assert.equal(h.requests.length, required ? 0 : 1);
+  assert.equal(h.head().phase, required ? 'failed' : 'completed');
+});
+
+test('actual Host rejects a registered source that collides with the local Memory source', async t => {
+  const h = await setup(t, { sqlite: true, spec: { memory: { enabled: true, provider: { kind: 'local-default' },
+    write: { mode: 'off', flushAfterTurn: false }, recall: { enabled: true, maxTokens: 1600 } } },
+    contextSources: record => [contextRegistration(record, { configuration: { contract: STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT,
+      sources: [{ sourceId: 'studio.memory-recall', priority: 0, timeoutMs: 1000, required: true, maxTokens: 1000, maxBytes: 16000 }] } })] });
+  await assert.rejects(h.host.executeTurn(h.payload), /studio_native_context_source_collision/);
+  assert.equal(h.requests.length, 0);
+});
 test('Studio Host seals pure inference replay only for its plain HTTP model binding', async t => {
   for (const [parameters, expected] of [[{}, 'pure-inference/v1'], [{ temperature: 0.2 }, 'manual'],
     [{ background: true }, 'manual']]) {
