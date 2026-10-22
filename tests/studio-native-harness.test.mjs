@@ -13,6 +13,7 @@ import { createStudioNativeHarness } from '../src/host/services/native-harness.m
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 import { buildExecutionEngine } from '../src/build-engine.mjs';
+import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 
 async function setup(t, { spec = {}, profile = {}, respond } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
@@ -215,6 +216,50 @@ test('Studio Host releases the revision-bound resources with the settled Run ide
   await fixture.host.executeTurn(fixture.payload);
   assert.deepEqual(releases, [{ scope: fixture.head().scope, runId: fixture.head().runId, sessionId: 'session' }]);
 });
+test('Studio Native executes Web through its ledger, replays its result and rejects a changed provider binding', async t => {
+  const fixture = await setup(t, { respond: (count, body) => {
+    if (count === 1) return { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'web-query', type: 'function',
+      function: { name: 'web_search', arguments: '{"query":"source proof"}' } }] }, finish_reason: 'tool_calls' }] };
+    const result = body.messages.find(message => message.role === 'tool' && message.tool_call_id === 'web-query');
+    assert.ok(result); assert.match(result.content, /source proof/);
+    return { choices: [{ index: 0, delta: { content: 'Search completed.' }, finish_reason: 'stop' }] };
+  } });
+  const registry = new Map(), calls = [];
+  const gateway = createNativeDshTools({ ctx: { effect: install => install(), tools: {
+    register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
+    async execute(input) {
+      calls.push(input.name);
+      const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
+      return { isError: false, value, content: tool.output.render(input.arguments, value) };
+    },
+  } }, config: { toolBindings: ['web_search'] }, workspaceRoot: join(fixture.root, 'workspace'),
+  stateDir: join(fixture.root, 'web-state'), webEnvironment: { KSADK_WEB_SEARCH_PROVIDER: 'fake' } });
+  t.after(() => gateway.close());
+  fixture.payload.binding.nativeTools = gateway;
+  fixture.payload.input.assembly.tools = [...registry.values()];
+  const ending = await fixture.host.executeTurn(fixture.payload);
+  const head = fixture.head(), run = fixture.ledger.load(head.scope, head.runId);
+  assert.equal(head.phase, 'completed'); assert.equal(fixture.requests.length, 2);
+  assert.deepEqual(calls, ['web_search']);
+  assert.deepEqual(run.configuration.tools.find(tool => tool.name === 'web_search'),
+    gateway.definitions(fixture.payload.agent, [...registry.values()])[0]);
+  const intent = run.intents.find(intent => intent.kind === 'tool');
+  assert.ok(intent, 'the tool has its own durable intent');
+  const receipt = run.receipts.find(receipt => receipt.operationKey === intent.operationKey);
+  assert.equal(receipt.result.results.length, 1);
+  assert.equal(receipt.result.results[0].status, 'ok');
+  assert.equal(receipt.result.results[0].content.provider, 'fake');
+  assert.equal(receipt.result.results[0].content.query, 'source proof');
+  assert.deepEqual(ending, { reason: { kind: 'completed' } });
+  // Re-resolving a preset with different provider settings keeps the same tool
+  // schemas but must not adopt an existing Run under a new capability digest.
+  fixture.payload.binding.nativeTools = { ...gateway,
+    webBinding: { ...gateway.webBinding, bindingDigest: 'changed-provider-binding' } };
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+  assert.equal(fixture.requests.length, 2); assert.deepEqual(calls, ['web_search']);
+  assert.deepEqual(fixture.ledger.load(head.scope, head.runId), run);
+});
+
 test('Studio Native pins its browser task policy and explicit execution limits in the Run configuration', async t => {
   const fixture = await setup(t, { spec: { execution: { nativeLimits: { maxModelCalls: 20, maxToolCalls: 0 } } } });
   fixture.payload.binding.nativeTools.definitions = () => [studioBrowserDefinition()];

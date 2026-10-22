@@ -13,6 +13,8 @@ import { LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY } from '../../packages/ag
 import { projectNativeDshContent } from './native-input.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
+import { createNativeDshWebTools } from './native-dsh-web.mjs';
+import { nativeWebToolDefinitions } from '../../packages/agentkit-harness/src/native/web-tools.mjs';
 import { nativeMcpOutcome } from './native-mcp-output.mjs';
 import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
 import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
@@ -25,7 +27,7 @@ const names = values => (values ?? []).map(value => typeof value === 'string' ? 
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
 export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
-  commandSettings = {}, commandEnvironment = process.env }) {
+  commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
@@ -51,6 +53,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     evidenceRoot: join(stateDir, 'browser-evidence') });
   const browserName = browserTools.definition.name;
   formal.set(browserName, browserTools.definition);
+  const webNames = new Set(nativeWebToolDefinitions().map(definition => {
+    formal.set(definition.name, definition); return definition.name;
+  }));
   const childRoles = nativeChildRoles({ subAgents: config.subAgents ?? [] });
   const childNames = new Set(childRoles.length ? [...nativeChildToolDefinitions(childRoles.map(role => role.name),
     Math.max(120000, ...childRoles.map(role => role.timeoutSeconds * 1000 + 15000))),
@@ -68,6 +73,21 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const builtin = [...allowed].filter(name => contracts.get(name)?.executor === 'builtin'
     || formal.has(name) && contracts.get(name)?.executor !== 'mcp');
   const builtinNames = new Set(builtin);
+  // Sample the environment once per preset, including its SSRF policy. A later
+  // environment edit cannot change an already admitted Build's tool behavior.
+  const webEnvironmentSnapshot = { ...webEnvironment };
+  const webTemplate = [...webNames].some(name => builtinNames.has(name))
+    ? createNativeDshWebTools({ config: { env: webEnvironmentSnapshot, sessionId: 'definitions', authorize: async () => 'allow' },
+      ...(webFetch ? { fetch: webFetch } : {}) }) : null;
+  const webOwners = new Map();
+  const closeWebSession = async sessionId => {
+    const owners = webOwners.get(sessionId);
+    if (!owners) return;
+    webOwners.delete(sessionId);
+    const results = await Promise.allSettled([...owners].map(async owner => (await owner).close()));
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure) throw failure.reason;
+  };
   const mcpContracts = new Map([...contracts].filter(([name, contract]) => allowed.has(name) && contract.executor === 'mcp'
     && String(contract.mcpResourceId || contract.resourceId || '').trim()));
   invariant(!mcpContracts.size || typeof executeMcpTool === 'function', 'studio_native_mcp_executor_unavailable');
@@ -101,7 +121,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     const memoryUnregistering = [];
     for (const dispose of memoryDisposers) { try { memoryUnregistering.push(Promise.resolve(dispose?.())); } catch (error) { memoryUnregistering.push(Promise.reject(error)); } }
     memoryDisposers = []; memoryRegistered = false;
-    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, ...memoryClosing, browserTools.close()]).then(results => {
+    const webClosing = [...webOwners.keys()].map(closeWebSession);
+    if (webTemplate) webClosing.push(webTemplate.close());
+    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, ...memoryClosing, ...webClosing, browserTools.close()]).then(results => {
       const failed = results.find(result => result.status === 'rejected');
       if (failed) throw failed.reason;
     });
@@ -150,6 +172,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           } else if (commandNames.has(name)) {
             invariant(typeof invocation.commands === 'function', 'studio_native_command_ledger_unavailable');
             outcome = await (await invocation.commands()).execute({ ...invocation.request, signal: exec.signal });
+          } else if (webNames.has(name)) {
+            outcome = await (await invocation.web()).execute({ ...invocation.request, signal: exec.signal });
           } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
             : formal.has(name) ? await invocation.workspaceTools.execute({ ...invocation.request, signal: exec.signal })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
@@ -325,6 +349,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     childBinding: childRoles.length ? { contract: NATIVE_CHILD_TOOLS_CONTRACT, roles: structuredClone(childRoles) } : null,
     childCapabilities: { skills: hasSkills, mcp: mcpContracts.size > 0 },
     workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
+    webBinding: webTemplate ? { contract: webTemplate.contract, bindingDigest: webTemplate.bindingDigest } : null,
     commandBinding: [...commandNames].some(name => builtinNames.has(name)) ? {
       contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },
       risk: [LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY], backend: 'local_process', environmentDigest: hash(commandEnv),
@@ -336,7 +361,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       name, resourceId: String(contract.mcpResourceId || contract.resourceId).trim(),
       schema: contract.nativeMcpSchema ?? { parameters: contract.parameters ?? { type: 'object', properties: {} } },
     }))) : null,
-    releaseSession: request => browserTools.releaseSession(request),
+    async releaseSession(request) {
+      const results = await Promise.allSettled([browserTools.releaseSession(request), closeWebSession(request.sessionId)]);
+      const failure = results.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
+    },
     /** Trusted verifier only: every concrete cold action still runs the DSH permission pipeline. */
     async verifyBrowserPage(agent, request) {
       invariant(!closed && builtinNames.has(browserName), 'studio_native_browser_verification_unavailable');
@@ -421,6 +450,20 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           captureWorkspace: request => state(agent).capture(request),
           resolveOwnedCommand: createOwnedCommandResolver(commandAuthority) });
       })();
+      let webPromise;
+      const web = () => {
+        if (webPromise) return webPromise;
+        invariant(!closed && commandAuthority?.scope && commandAuthority?.store, 'studio_native_web_ledger_unavailable');
+        webPromise = (async () => {
+          const artifacts = await createNativeArtifactStore({ directory: join(stateDir, 'web-artifacts'), scope: commandAuthority.scope });
+          invariant(!closed, 'studio_native_tools_closed');
+          return createNativeDshWebTools({ config: { env: webEnvironmentSnapshot, sessionId, authorize: async () => 'allow',
+            artifact: { store: artifacts, scope: commandAuthority.scope } }, ...(webFetch ? { fetch: webFetch } : {}) });
+        })();
+        if (!webOwners.has(sessionId)) webOwners.set(sessionId, new Set());
+        webOwners.get(sessionId).add(webPromise);
+        return webPromise;
+      };
       return { workspace: { observe: request => workspaceTools.observe(request) },
         ...(commandAuthority?.children ? { children: commandAuthority.children.owner } : {}),
         ...(commandAuthority && [...commandNames].some(name => builtinNames.has(name)) ? {
@@ -444,7 +487,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
         const invocation = { agent, request, workspaceTools, children: commandAuthority?.children,
-          argumentEncoding: exactNumbers ? argumentEncoding : null, commands };
+          argumentEncoding: exactNumbers ? argumentEncoding : null, commands, web };
         calls.set(callId, invocation);
         try {
           // Numeric raw tokens retain their intrinsic brand through the negotiated

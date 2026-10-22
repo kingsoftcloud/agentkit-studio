@@ -141,6 +141,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const profileDigest = hash(description);
       const pluginLockDigest = hash({ mcpBindingDigest: binding.nativeTools.mcpBindingDigest ?? null,
         commandBinding: binding.nativeTools.commandBinding ?? null,
+        ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
         workspaceSyntax: binding.nativeTools.workspaceSyntax ?? null });
       // Compose the local-default Memory owner for this Build (Revision or
       // Frozen) and bind its tools into the real DSH pipeline. Returns null for
@@ -281,6 +282,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           toolPermissionContract: binding.nativeTools.permissionContract ?? null,
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),
           ...(binding.nativeTools.commandBinding ? { commandBinding: binding.nativeTools.commandBinding } : {}),
+          ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
           mcpResultContract: binding.nativeTools.mcpResultContract ?? null,
           mcpJsonCodec: binding.nativeTools.mcpJsonCodec ?? null,
           mcpSchemaContract: binding.nativeTools.mcpSchemaContract ?? null,
