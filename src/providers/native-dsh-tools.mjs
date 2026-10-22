@@ -532,6 +532,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           const externalFailure = result?.isError && !builtinNames.has(request.call.name) && !invocation.outcome
             && (!mcpContracts.has(request.call.name) || invocation.dispatched);
           const status = invocation.outcome?.status === 'uncertain' || afterWriteFailure || externalFailure || result?.concludesTurn ? 'uncertain'
+            // Approval is a Native control result, not a successful execution.
+            // Keep its original interactionId so the kernel durably waits and
+            // resumes the exact call. A rejecting post-policy still takes effect.
+            : invocation.outcome?.status === 'approval_required' && !result?.isError ? 'approval_required'
             : invocation.outcome?.status === 'error' || result?.isError ? 'error' : 'ok';
           const options = { signal: request.signal, attachments: () => ctx.get?.('attachments'),
             fileRequestText: async ref => {

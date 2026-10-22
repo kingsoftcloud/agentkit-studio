@@ -76,6 +76,76 @@ function configFor(goal, tools, buildId, capsule, contextPolicy) {
       source: { provider: 'fixture', model: 'pinned' }, selection: {}, systemPrompt: 'Answer the current user.' }) });
 }
 
+for (const decision of ['allow', 'deny', 'cancel', 'post-policy-deny']) test(`registered gateway preserves durable approvals through SQLite reopen (${decision})`, async t => {
+  const h = setup(t, { spec: { runtime: { type: 'harness' }, memory: { enabled: true, providerRef: 'local-default',
+    scopes: ['user'], write: { mode: 'candidate', flushAfterTurn: false }, recall: { enabled: false, maxTokens: 0 } },
+    context: { rollout: { memoryWrite: 'enabled' } } } });
+  const original = h.memoryHost.port;
+  let dispatches = 0, models = 0;
+  // A deterministic Host approval boundary defers BEFORE the actual Memory
+  // implementation. Approved calls still enter its real ledger guard, consent
+  // and SQLite mutation; the gateway must retain the Native control envelope.
+  h.memoryHost.port = { ...original, execute: async request => {
+    dispatches++;
+    if (!request.interaction) return { status: 'approval_required', interactionId: 'original-host-approval',
+      content: { executed: false, reason: 'Exact call needs approval' } };
+    assert.deepEqual(request.interaction, { interactionId: 'original-host-approval', callId: 'durable-memory', decision });
+    if (request.interaction.decision === 'deny') return { status: 'error', content: { code: 'policy_denied', executed: false } };
+    return original.execute(request);
+  } };
+  h.resolveApproval('allowed-once');
+  if (decision === 'post-policy-deny') {
+    const execute = h.ctx.tools.execute;
+    h.ctx.tools.execute = async request => ({ ...await execute(request), isError: true,
+      content: [{ type: 'text', text: 'Post-policy rejects this tool result' }] });
+  }
+  const agent = { session: { id: 'session' } };
+  const model = { generate: async () => ++models === 1
+    ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'durable-memory', name: 'manage_memory',
+      arguments: { action: 'remember', scope: 'user', content: 'my coffee is flat white' } }] }
+    : { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] } };
+  const ports = store => ({ ...h.gateway.forAgent(agent, { scope, store }), model, context: h.context.port });
+  const kernel = new NativeKernel({ store: h.store, ports: ports(h.store), digest, owner: 'before-approval' });
+  kernel.start({ ...fixture().snapshot, runId: 'run', sessionId: 'session' },
+    configFor(h.objective, original.definitions, null, h.sealedCapsule, h.context.policy));
+  const waiting = await kernel.runUntilIdle(scope, 'run');
+  if (decision === 'post-policy-deny') {
+    assert.equal(waiting.phase, 'completed');
+    assert.equal(waiting.pendingInteraction, null);
+    assert.equal(dispatches, 1); assert.equal(await noWrites(h.root, scope), 0);
+    const result = h.store.load(scope, 'run').receipts.flatMap(receipt => receipt.result.results ?? [])
+      .find(result => result.content?.reason === 'Exact call needs approval');
+    assert.equal(result.status, 'error');
+    return;
+  }
+  assert.equal(waiting.phase, 'awaiting_interaction');
+  assert.equal(waiting.pendingInteraction.hostInteractionId, 'original-host-approval');
+  assert.equal(models, 1); assert.equal(dispatches, 1); assert.equal(await noWrites(h.root, scope), 0);
+  const reopened = new SqliteRunStore(join(h.root, 'runs.sqlite'));
+  t.after(() => reopened.close());
+  const persisted = reopened.load(scope, 'run');
+  assert.deepEqual(persisted.snapshot.pendingInteraction, waiting.pendingInteraction);
+  assert.equal(persisted.receipts.flatMap(receipt => receipt.result.results ?? [])
+    .filter(result => result.status === 'approval_required').length, 1);
+  const resumed = new NativeKernel({ store: reopened, ports: ports(reopened), digest, owner: 'after-approval' });
+  assert.equal((await resumed.runUntilIdle(scope, 'run')).phase, 'awaiting_interaction');
+  assert.equal(dispatches, 1, 'reopening a waiting approval never dispatches the tool again');
+  resumed.submit(scope, 'run', { commandId: 'stale', kind: 'submit_interaction', payload: { interactionId: 'stale', decision: 'allow' } });
+  assert.equal((await resumed.runUntilIdle(scope, 'run')).phase, 'awaiting_interaction');
+  assert.equal(dispatches, 1);
+  const command = decision === 'cancel' ? { commandId: 'cancel', kind: 'cancel', payload: {} }
+    : { commandId: 'answer', kind: 'submit_interaction', payload: { interactionId: waiting.pendingInteraction.interactionId, decision } };
+  resumed.submit(scope, 'run', command);
+  const done = await resumed.runUntilIdle(scope, 'run');
+  assert.equal(done.phase, decision === 'cancel' ? 'canceled' : 'completed');
+  assert.equal(await noWrites(h.root, scope), decision === 'allow' ? 1 : 0);
+  assert.equal(dispatches, decision === 'cancel' ? 1 : 2);
+  resumed.submit(scope, 'run', command);
+  await resumed.runUntilIdle(scope, 'run');
+  assert.equal(await noWrites(h.root, scope), decision === 'allow' ? 1 : 0);
+  assert.equal(dispatches, decision === 'cancel' ? 1 : 2, 'duplicate approval/cancel never repeats a write');
+});
+
 // Drive a real kernel that emits a manage_memory write needing consent. The
 // objective is NOT an explicit memory instruction, so resolveAuthority routes
 // to consent (the deferred approval); the run is in executing_tools while
