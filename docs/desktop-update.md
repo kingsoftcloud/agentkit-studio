@@ -46,6 +46,21 @@ candidate can be reused by its `candidate_run_id`; identity and asset digests mu
 match. `release_tools_ref` may update publication tools without replacing signed
 App bytes. It must never relabel a newer source commit as the signed candidate.
 
+## Ship macOS and Windows together
+
+Every desktop release covers both platforms in one batch. Publish the macOS feed
+with `release-desktop.yml`, then build the same immutable `studio_ref` with the
+same `build_version` through `release-windows.yml` and publish it with
+`publish-windows.yml` (or `scripts/publish-windows-candidate.mjs` from the
+retained artifacts) using the accepted candidate run id and the previous Windows
+feed version. Both feeds then refresh `studio/latest` through
+`publish-download-alias.mjs`.
+
+A macOS-only batch is incomplete: the download page and Windows automatic updates
+would stay on the previous version, so do not report a release as shipped until
+`studio/feeds/mac-arm64/preview-mac.yml` and `studio/feeds/win-x64/preview.yml`
+report the same version and `studio/latest/latest.json` carries both platforms.
+
 ## Publish incremental or full updates
 
 The repository release command publishes immutable assets before replacing the
