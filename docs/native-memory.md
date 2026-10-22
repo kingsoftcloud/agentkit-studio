@@ -84,3 +84,5 @@ Host 工厂、工具网关及 Memory 防护三个相关模块在 Node 26、22 �
 - `node scripts/verify-studio-native-harness.mjs --source <维护DSH源码> --mount-host --memory-managed --archive <Studio.tgz> --keep`：八轮记忆读写、纠正、遗忘、拒绝、Host 重启及 SQLite owner 回执核对。
 - 同一命令改用 `--memory-parallel`：两个真实 SDK Session 共用一个 preset；A 等待审批时 B 写入并释放，之后 A 继续搜索、B 新轮读取。
 - 两者均支持 `--frozen`。`--studio-dependencies <node_modules>` 可以选择全新安装的普通 Studio 依赖图；DSH Host 依赖仍由 `--source` 提供，不代表完整 Host 已完成全新安装验收。
+
+主线 `a47685b` 的最终包已通过 Node 26 Revision 和 Node 22 Frozen 的双 Session 场景、Node 26 的压缩前召回与重启场景，以及使用全新普通 Studio 依赖的 Node 22 Frozen 八轮管理场景。并行读取的权限回调允许任意先后顺序，每个调用的身份、结果和持久化回执仍分别核对。模型和审批回复使用确定性本地服务；完整浏览器、完整 Host 全新安装及在线服务验证仍未完成。

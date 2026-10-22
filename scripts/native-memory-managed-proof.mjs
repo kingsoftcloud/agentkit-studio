@@ -167,8 +167,14 @@ export function createManagedMemoryProof() {
       assert.equal(settled.length, 1, 'Every public Memory model stream must settle to the exact durable Session bytes');
     }
     const admissions = await readRows(join(root, 'tool-admissions.jsonl'));
-    assert.deepEqual(admissions.map(row => row.name), ['manage_memory', 'read_memory', 'search_memory',
-      'manage_memory', 'manage_memory', 'manage_memory', 'manage_memory']);
+    const admittedNames = admissions.map(row => row.name);
+    assert.equal(new Set(admissions.map(row => row.callId)).size, 7, 'Every admission belongs to one distinct pipeline call');
+    assert.deepEqual(admittedNames.slice(0, 1), ['manage_memory']);
+    // Both reads are concurrentSafe and dispatched in one real batch. Their
+    // policy callbacks may arrive in either order; each result and durable
+    // receipt is separately checked above, including the exact call identity.
+    assert.deepEqual(admittedNames.slice(1, 3).sort(), ['read_memory', 'search_memory']);
+    assert.deepEqual(admittedNames.slice(3), ['manage_memory', 'manage_memory', 'manage_memory', 'manage_memory']);
     const probes = await readRows(join(root, 'mounted-host-http.jsonl'));
     assert.equal(probes.length, 2); assert.ok(probes.some(probe => probe.source === 'resume'));
     assert.ok(probes.every(probe => probe.unauthorizedStatus === 401 && probe.compatible));
