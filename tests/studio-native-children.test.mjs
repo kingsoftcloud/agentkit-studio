@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -17,14 +17,15 @@ import { readNativeRecoveryBinding } from '../src/providers/native-recovery-bind
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
-  inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan } = {}) {
+  inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan,
+  childPlan, boundTools = ['read_workspace_file'] } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-children-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   const roles = [{ name: 'reader', instructions: 'Read the requested workspace evidence.', tools: ['read_workspace_file'],
     modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2, ...role }];
   const agents = createAgentStore({ storeDir: join(root, 'agents') });
   const record = await agents.create({ name: 'Parent', runtimeType: 'harness', spec: { subAgents: roles,
-    bindings: { modelProfileIds: ['parent-profile', 'child-profile'], tools: ['read_workspace_file'] } } });
+    bindings: { modelProfileIds: ['parent-profile', 'child-profile'], tools: boundTools } } });
   const ledger = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
   const events = [], registered = new Map(), projections = new Map(), dispatches = [], requests = [];
   const session = { id: 'parent-session', append(type, data, options) { events.push({ type, data, ...options, seq: events.length + 1 }); } };
@@ -41,7 +42,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
       return { isError: false, content: definition.output.render(request.arguments, value) };
     },
   } };
-  const gateway = createNativeDshTools({ ctx, config: { subAgents: roles, toolBindings: ['read_workspace_file'] },
+  const gateway = createNativeDshTools({ ctx, config: { subAgents: roles, toolBindings: boundTools },
     workspaceRoot, stateDir: join(root, 'tools') });
   const values = { modelProfiles: [{ id: 'parent-profile', provider: 'openai-compatible', modelName: 'parent-model', baseUrl: 'https://parent.invalid/v1' },
     { id: 'child-profile', provider: 'openai-compatible', modelName: 'child-model', baseUrl: 'https://child.invalid/v1', input: childInput }] };
@@ -57,8 +58,9 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         childModels++;
         await beforeChildModel?.(childModels, body);
         assert.equal(url, 'https://child.invalid/v1/chat/completions');
-        assert.deepEqual(body.tools.map(item => item.function.name).filter(name => name !== 'submit_final_output'), ['read_workspace_file']);
-        if (childModels === 1) call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
+        assert.deepEqual(body.tools.map(item => item.function.name).filter(name => name !== 'submit_final_output'), roles[0].tools);
+        if (childPlan) ({ call, text } = await childPlan(body, childModels));
+        else if (childModels === 1) call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
         else {
           assert.match(JSON.stringify(body.messages.filter(item => item.role === 'tool')), /Actual child evidence/);
           text = childResult;
@@ -104,8 +106,48 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   payload.prepareInput = async () => ({ kind: 'enter', messages: [], assembly: payload.input.assembly });
   const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex'),
     userId: 'local-user', agentId: record.metadata.id };
-  return { host, payload, ledger, gateway, roles, requests, dispatches, record, scope, modelValues: values, childModels: () => childModels };
+  return { root, workspaceRoot, host, payload, ledger, gateway, roles, requests, dispatches, record, scope,
+    modelValues: values, childModels: () => childModels };
 }
+
+test('production Host confines a writing child and its continuation to the original isolated workspace', async t => {
+  const boundTools = ['read_workspace_file', 'write_workspace_file'];
+  let f, firstId;
+  f = await setup(t, { sqlite: true, childTool: 'native_delegate', boundTools,
+    role: { tools: boundTools, maxTurns: 3, maxToolCalls: 2 },
+    childPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'write_workspace_file', arguments: { path: 'child-only.txt', content: 'isolated child bytes' } } };
+      if (index === 3) return { call: { name: 'read_workspace_file', arguments: { path: 'child-only.txt' } } };
+      if (index === 4) assert.match(JSON.stringify(body.messages.filter(message => message.role === 'tool')), /isolated child bytes/);
+      return { text: 'Child file evidence' };
+    },
+    parentPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Write an isolated child file' } } };
+      if (index === 2) {
+        firstId = /native-child-[a-f0-9]{64}/.exec(JSON.stringify(body.messages))?.[0]; assert.ok(firstId);
+        assert.equal(await readFile(join(f.workspaceRoot, 'proof.txt'), 'utf8'), 'Actual child evidence');
+        await assert.rejects(readFile(join(f.workspaceRoot, 'child-only.txt')), { code: 'ENOENT' });
+        return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Read your original isolated file', continuation_of: firstId } } };
+      }
+      return { text: 'Parent delivery' };
+    } });
+  await f.host.executeTurn(f.payload);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+  const children = f.ledger.list(childScope).map(snapshot => f.ledger.load(childScope, snapshot.runId));
+  assert.equal(children.length, 2); assert.equal(f.childModels(), 4);
+  const first = children.find(record => record.snapshot.runId === firstId), next = children.find(record => record !== first);
+  assert.equal(first.snapshot.phase, 'completed'); assert.equal(next.snapshot.phase, 'completed');
+  assert.equal(next.snapshot.parentRunId, firstId); assert.equal(next.snapshot.sessionId, first.snapshot.sessionId);
+  assert.ok(first.snapshot.workspaceRevision);
+  const binding = first.configuration.hostRecoveryBinding.childWorkspace;
+  assert.deepEqual(next.configuration.hostRecoveryBinding.childWorkspace, binding);
+  assert.equal(binding.contract, 'agentkit.native-child-workspace-binding/v1');
+  assert.equal(await readFile(join(f.root, 'native-harness', 'child-workspaces', binding.isolationId, 'work', 'child-only.txt'), 'utf8'), 'isolated child bytes');
+  await assert.rejects(readFile(join(f.workspaceRoot, 'child-only.txt')), { code: 'ENOENT' });
+  assert.equal(f.dispatches.filter(dispatch => dispatch.name === 'write_workspace_file').length, 1);
+  assert.equal(first.receipts.flatMap(receipt => receipt.result.results ?? []).filter(result => result.status === 'ok'
+    && result.workspaceChangedPaths?.includes('child-only.txt')).length, 1);
+});
 for (const sqlite of [false, true]) {
   for (const action of ['send', 'cancel']) test(`${sqlite ? 'sqlite' : 'memory'}: Host control route ${action} targets the original active child`, async t => {
     let entered, release;

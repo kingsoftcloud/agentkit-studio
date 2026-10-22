@@ -16,6 +16,7 @@ import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
 import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
+import { createStudioNativeChildWorkspaces } from '../../providers/native-child-workspace-host.mjs';
 import { modelInput } from '../../model-service.mjs';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
@@ -198,6 +199,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const parentModel = modelBinding(selected, selectedId, context), roles = nativeChildRoles(record.spec);
       invariant(!roles.length || canonical(binding.nativeTools.childBinding?.roles) === canonical(roles), 'studio_native_child_revision_binding_changed');
       const children = await createStudioNativeChildren({ roles, scope, store, tools, mediaSources: childMediaSources,
+        fileWorkspaces: roles.length ? createStudioNativeChildWorkspaces({ workspaceRoot,
+          stateDir: join(storeDir, 'native-harness') }) : null,
         hasSkills: Boolean(record.spec.bindings?.skills?.length || binding.nativeTools.childCapabilities?.skills),
         hasMcp: Boolean(record.spec.bindings?.mcpServers?.length || binding.nativeTools.childCapabilities?.mcp),
         resolveModel: async id => {
@@ -207,7 +210,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           return modelBinding(profiles[index], id);
         },
         bindTools: authority => binding.nativeTools.forChild(agent, authority),
-        verificationFactory: child => createNativeVerification({ ...child, workspaceRoot,
+        verificationFactory: child => createNativeVerification({ ...child, workspaceRoot: child.workspaceRoot ?? workspaceRoot,
           evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence') }),
       });
       const ownedChildren = children && { scope, owner: children.owner, runIds: new Set() };

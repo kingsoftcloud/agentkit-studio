@@ -24,6 +24,7 @@ import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/sr
 import { nativeChildRoles } from './native-subagents.mjs';
 import { createNativeToolAuthority } from './native-tool-authority.mjs';
 import { WORKSPACE_MUTATION_LOCK } from '../../packages/agentkit-harness/src/native/workspace-mutation-lock.mjs';
+import { STUDIO_NATIVE_CHILD_WORKSPACE_BINDING } from './native-child-workspace-host.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -437,15 +438,24 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     forChild(agent, authority) {
       invariant(authority?.scope && authority.store && typeof authority.sessionId === 'string' && authority.sessionId,
         'studio_native_child_tool_binding_missing');
+      const isolated = authority.workspaceBinding?.contract === STUDIO_NATIVE_CHILD_WORKSPACE_BINDING
+        && typeof authority.workspaceRoot === 'string' && /^[0-9a-f]{64}$/.test(authority.workspaceBinding.isolationId)
+        && /^sha256:[0-9a-f]{64}$/.test(authority.workspaceBinding.baseRevision);
+      invariant(authority.workspaceRoot === undefined || isolated, 'studio_native_child_workspace_binding_missing');
       invariant(Array.isArray(authority.toolNames) && authority.toolNames.every(name => allowed.has(name)
-        && formal.get(name)?.readOnly === true && !mcpContracts.has(name) && !memoryNames.has(name)),
+        && formal.has(name) && (formal.get(name).readOnly === true || isolated)
+        && template.definitions.some(definition => definition.name === name)
+        && !mcpContracts.has(name) && !memoryNames.has(name)),
         'studio_native_child_tools_not_bound');
       const bound = this.forAgent(agent, { ...authority, childSessionId: authority.sessionId });
       return { tools: bound.tools, workspace: bound.workspace };
     },
     forAgent(agent, commandAuthority) {
       const sessionId = commandAuthority?.childSessionId ?? String(agent.session.id);
-      const workspaceTools = state(agent, sessionId);
+      const workspaceTools = commandAuthority?.childSessionId && commandAuthority.workspaceRoot
+        ? createNativeWorkspaceTools({ workspaceRoot: commandAuthority.workspaceRoot,
+          stateDir: join(stateDir, 'child-tool-state', commandAuthority.workspaceBinding.isolationId),
+          sessionId, authorize: async () => 'allow' }) : state(agent, sessionId);
       const assertCurrent = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
         isClosed: () => closed }) : undefined;
       let commandsPromise;
