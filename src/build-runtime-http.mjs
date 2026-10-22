@@ -1,5 +1,5 @@
 /** Authenticated transport for one frozen Build. DSH remains the runtime and history owner. */
-import { readExecutionPolicy } from './execution-policy.mjs';
+import { CLOUD_EXECUTION_POLICY_CAPABILITY, executionModesUpTo, readExecutionMode, readExecutionPolicy } from './execution-policy.mjs';
 import { createServer } from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
@@ -13,10 +13,22 @@ import { ASSISTANT_ATTACHMENT_CAPABILITIES } from './contracts/assistant-attachm
 const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
+/** A request may only select a mode inside the ceiling declared by this runtime. */
+const PERMISSION_MODE_HEADER = 'x-agentkit-permission-mode';
 
-export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, validatePrevious, assistant, hosted, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
+function readRequestedExecutionMode(value) {
+  if (value === undefined) return null;
+  if (Array.isArray(value)) throw fail('RUNTIME_PERMISSION_MODE_INVALID');
+  const mode = String(value).trim();
+  if (!/^[a-z][a-z-]{0,31}$/.test(mode) || !readExecutionMode(mode)) throw fail('RUNTIME_PERMISSION_MODE_INVALID');
+  return mode;
+}
+
+export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, assistant, hosted, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
   if (!agentId || !/^build_[0-9a-f]{20}$/.test(buildId || '') || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const declaredPolicy = readExecutionPolicy(executionPolicy);
+  const ceiling = readExecutionMode(executionPolicyMax) || declaredPolicy?.permissionMode || 'read-only';
+  const allowedPermissionModes = executionModesUpTo(ceiling);
   const tokenHash = hash(token);
   const responses = createRuntimeResponsesContract({ agentId, buildId, token, model, models });
   const active = new Map();
@@ -32,7 +44,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
       if (closing) throw fail('RUNTIME_STOPPING', 503);
       if (assistant?.retiring?.() && !['/v1/assistant/close', '/v1/agentkit/runtime'].includes(url.pathname)) throw fail('ASSISTANT_CLOSED', 410);
       if (req.method === 'GET' && url.pathname === '/v1/agentkit/runtime') {
-        json(res, 200, { format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId, bundleSha256, deploymentVersion, model, models, ...(declaredPolicy ? { executionPolicy: declaredPolicy } : {}), capabilities: ['bound-model-selection', 'resource-checks', ...(assistant ? ['personal-assistant/v1', ...(assistant.managedPermissionsSupported ? [ASSISTANT_MANAGED_PERMISSION_CAPABILITY] : []), ...(assistant.nativeCarrierSupported ? [ASSISTANT_NATIVE_CAPABILITY] : []), ...(assistant.cloudExecutionSupported ? [ASSISTANT_CODE_EXECUTION_CAPABILITY] : []), ...(assistant.cloudBrowserSupported ? [ASSISTANT_BROWSER_CAPABILITY] : []), ...(assistant.scopedCancelSupported ? ['personal-assistant-cancel-turn/v1'] : []), ...(assistant.imageReadSupported ? ['personal-assistant-images/v1'] : []), ...(assistant.attachmentUploadSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.upload] : []), ...(assistant.contentSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.content] : []), ...(assistant.fileReadSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.read] : []), ...(assistant.approvalBridgeSupported ? ['personal-assistant-approval-bridge/v1'] : []), ...(assistant.deletionSupported ? ['personal-assistant-delete/v1'] : []), ...(assistant.identitySupported ? ['personal-assistant-identity/v1'] : []), ...(assistant.scheduleManagerSupported ? [ASSISTANT_SCHEDULE_CAPABILITY] : [])] : [])] }); return;
+        json(res, 200, { format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId, bundleSha256, deploymentVersion, model, models, ...(declaredPolicy ? { executionPolicy: declaredPolicy } : {}), ...(declaredPolicy && allowedPermissionModes.length ? { allowedPermissionModes } : {}), capabilities: ['bound-model-selection', 'resource-checks', ...(declaredPolicy && allowedPermissionModes.length ? [CLOUD_EXECUTION_POLICY_CAPABILITY] : []), ...(assistant ? ['personal-assistant/v1', ...(assistant.managedPermissionsSupported ? [ASSISTANT_MANAGED_PERMISSION_CAPABILITY] : []), ...(assistant.nativeCarrierSupported ? [ASSISTANT_NATIVE_CAPABILITY] : []), ...(assistant.cloudExecutionSupported ? [ASSISTANT_CODE_EXECUTION_CAPABILITY] : []), ...(assistant.cloudBrowserSupported ? [ASSISTANT_BROWSER_CAPABILITY] : []), ...(assistant.scopedCancelSupported ? ['personal-assistant-cancel-turn/v1'] : []), ...(assistant.imageReadSupported ? ['personal-assistant-images/v1'] : []), ...(assistant.attachmentUploadSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.upload] : []), ...(assistant.contentSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.content] : []), ...(assistant.fileReadSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.read] : []), ...(assistant.approvalBridgeSupported ? ['personal-assistant-approval-bridge/v1'] : []), ...(assistant.deletionSupported ? ['personal-assistant-delete/v1'] : []), ...(assistant.identitySupported ? ['personal-assistant-identity/v1'] : []), ...(assistant.scheduleManagerSupported ? [ASSISTANT_SCHEDULE_CAPABILITY] : [])] : [])] }); return;
       }
       const assistantRoute = /^\/v1\/assistant\/([a-z-]+)$/.exec(url.pathname);
       if (req.method === 'POST' && assistantRoute && assistant) {
@@ -70,6 +82,8 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
       const isHostedRun = action === 'RunAgent' && hosted;
       const isResponses = url.pathname === '/v1/responses' || isHostedRun;
       if (req.method !== 'POST' || (!isResponses && url.pathname !== '/runs' && !(action && hosted))) throw fail('RUNTIME_ROUTE_NOT_FOUND', 404);
+      const requestedMode = readRequestedExecutionMode(req.headers[PERMISSION_MODE_HEADER]);
+      if (requestedMode && !allowedPermissionModes.includes(requestedMode)) throw fail('RUNTIME_PERMISSION_MODE_DENIED', 403);
       if (isResponses && req.headers['last-event-id']) throw fail('RESPONSES_STREAM_REPLAY_UNSUPPORTED');
       if (!String(req.headers['content-type'] || '').startsWith('application/json')) throw fail('RUNTIME_JSON_REQUIRED', 415);
       const chunks = []; let bytes = 0;
@@ -115,6 +129,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
         heartbeat = setInterval(() => { if (!res.destroyed && !abort.signal.aborted) res.write(': keepalive\n\n'); }, 15000); heartbeat.unref();
       }
       const result = await runner({ agentId, buildId, sessionId, occurrenceId: runId, input: input.input, ...(isResponses ? { model: input.model } : {}), signal: abort.signal,
+        ...(requestedMode || declaredPolicy?.permissionMode ? { permissionMode: requestedMode || declaredPolicy.permissionMode } : {}),
         ...(input.stream || projection ? { onFrame: frame => { if (!abort.signal.aborted) { if (projection) projection.frame(frame); else emit(frame.kind === 'assistant' ? 'dsh.assistant' : 'dsh.event', frame.value); } } } : {}) });
       if (abort.signal.aborted) throw abort.signal.reason;
       const value = { ...result, requestId: input.requestId, runtimeRunId: runId, buildId };

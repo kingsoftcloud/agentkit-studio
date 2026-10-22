@@ -1,5 +1,5 @@
 /** Only local deployment receipts establish Studio cloud Agent lineage. */
-import { readExecutionPolicy } from './execution-policy.mjs';
+import { CLOUD_EXECUTION_POLICY_CAPABILITY, readExecutionMode, readExecutionPolicy } from './execution-policy.mjs';
 import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDeploymentVersion } from './deployment-versions.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
@@ -52,7 +52,12 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     if (identityRequired && !identity) {
       throw portableError('DEPLOYMENT_NOT_READY', '运行入口尚未确认当前冻结版本，请刷新部署状态后重试');
     }
-    return { agent, endpoint, token, executionPolicy: readExecutionPolicy(identity?.executionPolicy), capabilities: Array.isArray(identity?.capabilities) ? identity.capabilities : [] };
+    const capabilities = Array.isArray(identity?.capabilities) ? identity.capabilities : [];
+    const allowedPermissionModes = Array.isArray(identity?.allowedPermissionModes)
+      ? identity.allowedPermissionModes.map(readExecutionMode).filter(Boolean) : [];
+    return { agent, endpoint, token, executionPolicy: readExecutionPolicy(identity?.executionPolicy), capabilities,
+      allowedPermissionModes,
+      executionModeSwitching: capabilities.includes(CLOUD_EXECUTION_POLICY_CAPABILITY) && allowedPermissionModes.length > 1 };
   }
   async function projectRows(rows) {
     const items = [], warnings = [];
