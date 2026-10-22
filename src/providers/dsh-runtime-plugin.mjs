@@ -57,11 +57,14 @@ function builtinRoot(config = {}) {
   return candidates.find(candidate => existsSync(candidate)) || candidates[0] || process.cwd();
 }
 
-function builtinPython(config = {}, root) {
+function builtinPython(config = {}, root, platform = config.platform || process.platform) {
   const configured = String(config.pythonExecutable || process.env.AGENTKIT_KSADK_PYTHON || process.env.KSADK_PYTHON || '').trim();
   if (configured) return configured;
-  const venv = join(root, '.venv', 'bin', 'python');
-  return existsSync(venv) ? venv : 'python3';
+  // Windows virtualenvs place the interpreter under Scripts\ and the system
+  // launcher is `python`, not the POSIX-only `python3`.
+  const windows = platform === 'win32';
+  const venv = windows ? join(root, '.venv', 'Scripts', 'python.exe') : join(root, '.venv', 'bin', 'python');
+  return existsSync(venv) ? venv : windows ? 'python' : 'python3';
 }
 
 function builtinError(code, message, details = {}) {
@@ -87,10 +90,12 @@ function renderBridgedOutput(_args, value) {
   return [{ type: 'text', text: String(value?.result || '') }];
 }
 
-function createBuiltinExecutor(config = {}) {
+export function createBuiltinExecutor(config = {}) {
   const spawnImpl = config.spawnImpl || nodeSpawn;
+  const platform = config.platform || process.platform;
+  const windows = platform === 'win32';
   const root = builtinRoot(config);
-  const python = builtinPython(config, root);
+  const python = builtinPython(config, root, platform);
   const workspaceRoot = resolve(String(config.workspaceRoot || process.env.AGENTKIT_STUDIO_WORKSPACE || process.cwd()));
   const stateDir = join(workspaceRoot, '.agentkit', 'tool-state');
   return async (contract, argumentsValue, { signal, callId, agentId } = {}) => {
@@ -112,8 +117,11 @@ function createBuiltinExecutor(config = {}) {
     try {
       child = spawnImpl(python, args, {
         cwd: workspaceRoot,
-        detached: true,
+        // `detached` gives a Windows child its own console window; the
+        // console-subsystem Python process must instead be launched hidden.
+        detached: !windows,
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
         env: { ...process.env, KSADK_TOOL_APPROVAL_MODE: 'full', KSADK_PROJECT_DIR: workspaceRoot },
       });
     } catch (error) {

@@ -31,3 +31,22 @@ test('missing Codex binary fails with a typed error without a gateway fallback',
   const catalog = createCodexModelCatalog({ spawnImpl: () => { throw new Error('missing'); } });
   await assert.rejects(catalog.list(), { code: 'CODEX_PROVIDER_UNAVAILABLE' });
 });
+
+test('catalog App Server child is spawned without a Windows console window', async () => {
+  let options;
+  const catalog = createCodexModelCatalog({ spawnImpl: (_executable, _args, value) => {
+    options = value;
+    const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    child.stdin = new Writable({ write(chunk, encoding, callback) {
+      const message = JSON.parse(String(chunk));
+      const result = message.method === 'config/read' ? { config: { models: { new_thread: { model: 'model-a' } } } }
+        : message.method === 'model/list' ? { data: [{ id: 'model-a', model: 'model-a', displayName: 'A', isDefault: true }], nextCursor: null } : {};
+      if (message.id) child.stdout.write(JSON.stringify({ id: message.id, result }) + '\n');
+      callback();
+    } });
+    child.kill = () => { child.stdout.end(); child.emit('exit', 0); };
+    return child;
+  } });
+  await catalog.list();
+  assert.equal(options.windowsHide, true);
+});
