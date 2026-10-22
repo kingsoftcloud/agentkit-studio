@@ -246,7 +246,8 @@ async function interruptedFixture(t) {
   assert.equal(events.some(e => e.type === 'turn/end'), false, 'no turn/end — the run did not complete');
   const route = createSessionRoutes({ getNativeHost: async () => host });
   const request = { agentId: binding.agentId, sessionId: session.id, runId: admission.identity.runId };
-  return { host, ledger, agent, binding, requests, events, seen, route, request, realScope, toolCalls };
+  return { host, ledger, agent, binding, requests, events, seen, route, request, realScope,
+    get toolCalls() { return toolCalls; } };
 }
 
 test('an interrupted Run with an uncertain receipt surfaces reconciliation_required and refuses resume without re-execution', async t => {
@@ -344,22 +345,10 @@ test('an old Run whose session head advanced to a new owner is rejected, not rec
   assert.equal(JSON.stringify(f.agent.externalTurns.pending()), newOwnerBefore, 'the new owner is unchanged');
   assert.equal(JSON.stringify(f.events), eventsBefore, 'the public events are unchanged');
   assert.equal(f.events.filter(e => e.type === 'turn/end').length, 1, 'no second turn/end was produced');
-  // Release the second Run: cancel it. executeTurn with an abort signal may
-  // resolve to { reason: { kind: 'aborted', ... } } (durableOwnership) or reject.
-  // Settle the promise and assert the actual outcome — never swallow errors.
+  // This durable-ownership fixture resolves cancellation to an aborted ending.
+  // Assert that contract exactly; a generic Native failure cannot satisfy it.
   secondController.abort();
-  let secondSettled = null;
-  await secondTurn.then(value => { secondSettled = { resolved: true, value }; },
-    error => { secondSettled = { resolved: false, error }; });
-  assert.ok(secondSettled, 'the second Run settled');
-  if (secondSettled.resolved) {
-    // durableOwnership cancel resolves with an aborted reason.
-    assert.equal(secondSettled.value?.reason?.kind, 'aborted', `unexpected resolved value: ${JSON.stringify(secondSettled.value)}`);
-  } else {
-    // A reject must carry a cancel/abort code, not an arbitrary error.
-    assert.match(String(secondSettled.error?.code ?? secondSettled.error?.message ?? ''), /abort|cancel|NATIVE_TURN/i,
-      `unexpected rejection: ${secondSettled.error?.message}`);
-  }
+  assert.deepEqual(await secondTurn, { reason: { kind: 'aborted', reason: { kind: 'disposed' } } });
   // The new Run is canceled in the ledger.
   const newRecord = f.ledger.load(newScope, newRunId);
   assert.equal(newRecord.snapshot.phase, 'canceled', `the second Run is canceled, phase=${newRecord.snapshot.phase}`);
