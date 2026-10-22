@@ -3,7 +3,7 @@ export function createAgentModelSelection({ models, agentStorePromise, codexMode
   return async agent => {
       const local = agent?.metadata?.local !== false && agent?.source !== 'agentengine-server';
       if (!local) return { provider: CLOUD_PROVIDER, model: agent.deployment.model };
-      if (local && !agent.buildId) await (await agentStorePromise).captureRevision(agent);
+      if (local && !agent.buildId && !agent.managedRuntime) await (await agentStorePromise).captureRevision(agent);
       if (local && agent?.spec?.runtime?.type === 'codex') return selectCodexAgentModel(agent, { models, catalog: codexModels });
       const settings = { values: await models.settings() };
       const configured = dshModelSelection(agent, settings);

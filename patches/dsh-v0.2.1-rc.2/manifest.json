@@ -120,6 +120,10 @@
     "node-projection": {
       "kind": "real-dsh-node-projection",
       "script": "scripts/verify-dsh-node-store.mjs"
+    },
+    "native": {
+      "kind": "posix-built-native-owner",
+      "target": "pnpm --dir native/system run build:test-oracle && pnpm --dir native/system run test:flock"
     }
   },
   "patches": [
@@ -2118,12 +2122,114 @@
       ],
       "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611",
       "sequence": 41
+    },
+    {
+      "id": "049",
+      "file": "049-flock-libc-report-network.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "general-fix",
+      "risk": "low",
+      "maintainerRole": "Studio maintained Host and runtime integration owner",
+      "removeWhen": "Pinned upstream supplies equivalent Linux libc probing without network inspection.",
+      "contracts": [
+        "Linux libc detection excludes reverse DNS and restores caller report settings on success or failure.",
+        "Asynchronous flock ownership, libc selection and syscall errors remain unchanged."
+      ],
+      "affectedPackages": [
+        "native/system/packages/entry"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Isolated maintained-source checks and regressions passed locally; no upstream submission or remote CI receipt."
+      },
+      "dependsOn": [],
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "frozen",
+          "native"
+        ],
+        "nativeTests": [
+          "native/system/test/flock.test.js"
+        ]
+      },
+      "affectedFiles": [
+        "native/system/packages/entry/README.i18n.yaml",
+        "native/system/packages/entry/README.md",
+        "native/system/packages/entry/README.zh.md",
+        "native/system/packages/entry/src/flock.ts",
+        "native/system/test/fixtures/flock-libc-report.js",
+        "native/system/test/flock.test.js"
+      ],
+      "sha256": "5308b85d6836a2feecdd05168e990d6273032d9dcd03c9ca19a17cc0afd70d05",
+      "sequence": 42
+    },
+    {
+      "id": "050",
+      "file": "050-maintenance-source-validation.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "generated-docs",
+      "risk": "low",
+      "maintainerRole": "Studio maintained Host and runtime integration owner",
+      "removeWhen": "Maintained upstream catalogs, bilingual records and validation recognize the same unchanged runtime APIs and artifact metadata.",
+      "contracts": [
+        "Generated catalogs match maintained approval and permission APIs.",
+        "Only unquoted uv artifact byte sizes are excluded from commit-reference detection; actual commit references remain rejected.",
+        "Tool callback identity and permission selection behavior remain unchanged."
+      ],
+      "affectedPackages": [
+        "packages/core/tools",
+        "packages/client/ui-permission-presets",
+        "packages/extensions/tool-cordis",
+        "packages/extensions/cordis-client-runner",
+        "scripts"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Isolated maintained-source checks and regressions passed locally; no upstream submission or remote CI receipt."
+      },
+      "dependsOn": [
+        "038",
+        "043",
+        "045",
+        "047"
+      ],
+      "verification": {
+        "hostTests": [
+          "scripts/verify-repository-references.spec.ts",
+          "packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx",
+          "packages/core/tools/tests/tools.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/approval.md",
+        "docs/subsystems/approval.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md",
+        "packages/client/ui-permission-presets/README.i18n.yaml",
+        "packages/client/ui-permission-presets/src/client/PermissionSelect.tsx",
+        "packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx",
+        "packages/core/tools/src/index.ts",
+        "packages/experimental/inspector/README.i18n.yaml",
+        "packages/extensions/cordis-client-runner/src/client/slot-catalog.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "packages/interaction/user-approval/README.i18n.yaml",
+        "scripts/verify-repository-references.spec.ts",
+        "scripts/verify-repository-references.ts"
+      ],
+      "sha256": "03f58fa416958357f5b22aa8b32509704028f5f582a31103b0ef13839c9e64f8",
+      "sequence": 43
     }
   ],
-  "patchedTree": "dcd76e7d2845c1629596790cf785dd93542af388",
-  "patchedSourceSha256": "16fddf257c3823a852f4a58af41d9ca71736172f1adac59a1b1c1f0064344996",
+  "patchedTree": "caab366b5220ec207003dd5e1d0252e986d1ac59",
+  "patchedSourceSha256": "740dd754a7e61dfd27c73034a47470ac5a158ac1756eaeab8355a56537cba48e",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "75abb27cdfc3150a13334a6948b8055f1f270af4d95c9e76f5d4287224950c24"
+    "sha256": "d7b43c69f2bf24c7afae191cea4334c82f69ee5fa10493997058862b0bb8fc51"
   }
 }

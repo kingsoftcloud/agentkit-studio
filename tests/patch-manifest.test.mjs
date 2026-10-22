@@ -17,7 +17,8 @@ const invalid = error => error.code === 'PATCH_MANIFEST_INVALID';
 
 test('all shipped patches have exact content, paths, ordered dependencies and verification ownership', async () => {
   const { report } = await checkPatchManifest(fileURLToPath(directory));
-  assert.equal(report.patches, 41); assert.equal(report.paths, 250); assert.ok(report.hostTests.length > 0);
+  assert.equal(report.patches, 43); assert.equal(report.paths, 264); assert.ok(report.hostTests.length > 0);
+  assert.deepEqual(report.nativeTests, ['native/system/test/flock.test.js']);
 });
 
 test('unregistered patch files and modified content cannot enter a build', async () => {
@@ -55,6 +56,19 @@ test('host test paths cannot inject runner options or escape the checkout', asyn
     manifest.patches[0].verification.hostTests = [path];
     assert.throws(() => validatePatchManifest(manifest, files), invalid);
   }
+});
+
+test('native owner tests are explicit and confined to the native system test directory', async () => {
+  const { manifest, files } = await inputs();
+  const checks = manifest.patches[0].verification;
+  checks.nativeTests = ['native/system/test/flock.test.js'];
+  assert.deepEqual(validatePatchManifest(manifest, files).nativeTests, checks.nativeTests);
+  for (const path of ['--eval=run()', '../outside.test.js', 'native/system/test/../flock.test.js', 'scripts/other.test.js', 'native/system/test/fixture.js']) {
+    checks.nativeTests = [path];
+    assert.throws(() => validatePatchManifest(manifest, files), invalid);
+  }
+  checks.nativeTests = 'native/system/test/flock.test.js';
+  assert.throws(() => validatePatchManifest(manifest, files), invalid);
 });
 
 test('missing exit conditions and unknown verification cannot be admitted', async () => {

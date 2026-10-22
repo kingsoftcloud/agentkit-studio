@@ -18,6 +18,46 @@ test('cloud Skill Space with no Skills is a valid empty binding', async () => {
   assert.deepEqual(calls, [{ name: 'ListSkillsBySpaceId', params: { SpaceId: 'bcb4df65-2448-4c8a-99ca-62a12d26bce9', PageNumber: 1, PageSize: 100 } }]);
 });
 
+test('managed Skill cache never caches the access grant across turns', async () => {
+  const space = 'bcb4df65-2448-4c8a-99ca-62a12d26bce9';
+  let lists = 0, checks = 0, revoked = false;
+  const adapters = createLocalResourceAdapters({ serverClient: {
+    skillAction: async () => { lists++; if (revoked) throw Object.assign(new Error('revoked'), { code: 'MANAGED_RESOURCE_ACCESS_REVOKED' }); return { data: { Skills: [] } }; },
+    authorizeSkillSpace: async id => { assert.equal(id, space); checks++; if (revoked) throw Object.assign(new Error('revoked'), { code: 'MANAGED_RESOURCE_ACCESS_REVOKED' }); },
+  } });
+  await adapters.loadSkill(space);
+  await adapters.loadSkill(space);
+  assert.deepEqual({ lists, checks }, { lists: 1, checks: 1 });
+  revoked = true;
+  await assert.rejects(adapters.loadSkill(space), { code: 'MANAGED_RESOURCE_ACCESS_REVOKED' });
+  await assert.rejects(adapters.loadSkill(space), { code: 'MANAGED_RESOURCE_ACCESS_REVOKED' });
+  assert.deepEqual({ lists, checks }, { lists: 2, checks: 2 });
+  await adapters.close();
+});
+
+test('cloud Skill Space consumes subsequent pages and rejects a later page failure', async t => {
+  const cacheDir = await mkdtemp(join(tmpdir(), 'studio-skill-pages-'));
+  t.after(() => rm(cacheDir, { recursive: true, force: true }));
+  const archive = createZip([{ name: 'SKILL.md', data: '# Page skill\nUse the bound page.' }]);
+  const calls = [];
+  let failPage = false;
+  const serverClient = { skillAction: async (action, params) => {
+    calls.push({ action, params });
+    if (action !== 'ListSkillsBySpaceId') return { data: { DownloadUrl: 'https://download.test/skill.zip' } };
+    if (failPage && params.PageNumber === 2) throw Object.assign(new Error('second page unavailable'), { code: 'SECOND_PAGE_FAILED' });
+    return { data: { Skills: [{ SkillId: `skill-${params.PageNumber}`, Name: `Page ${params.PageNumber}` }], TotalCount: 2 } };
+  } };
+  const adapter = createLocalResourceAdapters({ serverClient, cacheDir, fetchImpl: async () => new Response(archive) });
+  const loaded = await adapter.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9');
+  assert.equal(loaded.definitions.length, 2);
+  assert.deepEqual(calls.filter(item => item.action === 'ListSkillsBySpaceId').map(item => item.params.PageNumber), [1, 2]);
+  await adapter.close();
+  failPage = true;
+  const broken = createLocalResourceAdapters({ serverClient, cacheDir, fetchImpl: async () => new Response(archive) });
+  await assert.rejects(broken.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9'), { code: 'SECOND_PAGE_FAILED' });
+  await broken.close();
+});
+
 test('missing cloud Skill Space returns an actionable resource error', async () => {
   const adapters = createLocalResourceAdapters({
     serverClient: {

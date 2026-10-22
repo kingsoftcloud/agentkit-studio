@@ -36,6 +36,7 @@ try {
     result.packageManager = { expected: packageJson.packageManager, actual: `pnpm@${version}` };
     if (result.packageManager.expected !== result.packageManager.actual) throw Object.assign(new Error('DSH package manager does not match its pinned version'), { code: 'PATCHED_HOST_PACKAGE_MANAGER_MISMATCH' });
     for (const file of inputs.hostTests) if (!(await stat(join(checkout, file))).isFile()) throw new Error('Missing registered host test');
+    for (const file of inputs.nativeTests) if (!(await stat(join(checkout, file))).isFile()) throw new Error('Missing registered native test');
     await run(['install', '--frozen-lockfile'], checkout);
     await run(['run', 'build:official'], checkout);
     result.buildPassed = true;
@@ -45,6 +46,15 @@ try {
     });
     result.dependencyLifecycle = JSON.parse(await readFile(lifecycleReport, 'utf8'));
     assertHostDependencyLifecycleReport(result.dependencyLifecycle);
+    if (inputs.nativeTests.length) {
+      result.native = { files: inputs.nativeTests, platform: process.platform, passed: false };
+      if (process.platform === 'linux' || process.platform === 'darwin') {
+        await run(['--dir', 'native/system', 'run', 'build:test-oracle'], checkout);
+        await run(['exec', 'node', '--test', ...inputs.nativeTests], checkout);
+        result.native.passed = true;
+        result.native.linuxLibcCasesExecuted = process.platform === 'linux';
+      } else result.native.skipped = 'Native system tests require POSIX; Linux libc acceptance is separate';
+    }
     const testReport = join(output, 'host-tests.json');
     try {
       await run(['exec', 'vitest', 'run', ...inputs.hostTests, '--reporter=default', '--reporter=json', `--outputFile=${testReport}`], checkout);

@@ -11,7 +11,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (!value) throw Object.assign(new Error(`自动化需要 DSH ${name} 服务`), { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     return value;
   };
-  const run = async ({ agentId, sessionId, occurrenceId, input, model, requestFingerprint, buildId = '', timeoutSeconds, signal: callerSignal, onFrame }) => service('agents').withoutInitiator(async () => {
+  const run = async ({ agentId, sessionId, occurrenceId, input, model, requestFingerprint, buildId = '', timeoutSeconds, signal: callerSignal, onFrame, approvalPolicy = UNATTENDED_EXECUTION_POLICY.approvalPolicy }) => service('agents').withoutInitiator(async () => {
     const startedAt = Date.now();
     const controller = service('sessionController');
     const expiry = AbortSignal.timeout(timeoutSeconds ? Math.max(1000, Number(timeoutSeconds) * 1000) : timeoutMs);
@@ -38,9 +38,10 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     signal.throwIfAborted();
     // The command is a user action and would misattribute its approval notice.
     service('permissionPresets').set(agent.session, UNATTENDED_EXECUTION_POLICY.permissionMode);
-    // Headless runs have no person to answer the Host's interactive approval UI.
-    // Keep confinement and reject escalation through the public approval service.
-    service('approval').setPolicy(agent, UNATTENDED_EXECUTION_POLICY.approvalPolicy, { actor: 'automation' });
+    // A managed run may ask a person through the Host's approval answerer;
+    // every other run stays headless and rejects escalation through the same
+    // public approval service. Confinement is unchanged either way.
+    service('approval').setPolicy(agent, approvalPolicy, { actor: 'automation' });
     signal.throwIfAborted();
     const unobserve = onFrame ? observe?.(agent, onFrame) : undefined;
     try {

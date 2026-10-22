@@ -31,6 +31,37 @@ export function createRuntimeResponsesStream(request, write) {
   };
   const projector = {
     start() { lifecycle('response.created', runtimeResponse(request)); lifecycle('response.in_progress', runtimeResponse(request)); },
+    /**
+     * Present one pending approval as the Responses `mcp_approval_request`
+     * item the hosted UI turns into an interaction card. The item stays
+     * `in_progress` until `approvalSettled` closes it.
+     * @param {{id: string, name?: string, arguments?: unknown, reason?: string}} value - approval item fields.
+     */
+    approval(value) {
+      if (!value?.id) return;
+      const index = items.length;
+      const record = { index, closed: false, key: `approval:${value.id}`,
+        item: { ...value, type: 'mcp_approval_request', status: 'in_progress' } };
+      items.push(record); blocks.set(record.key, record);
+      emit('response.output_item.added', { output_index: index, item: record.item, run_id: request.runId });
+    },
+    /**
+     * Close the presented approval item and publish the authoritative terminal
+     * decision the hosted UI applies to its interaction store.
+     * @param {string} interactionId - approval request id issued by the Host.
+     * @param {'approved' | 'rejected' | 'cancelled'} decision - settled outcome.
+     * @param {number} [revision] - interaction revision after settlement.
+     */
+    approvalSettled(interactionId, decision, revision = 2) {
+      const record = items.find(entry => entry.item?.type === 'mcp_approval_request' && entry.item.id === interactionId);
+      if (record && !record.closed) {
+        record.closed = true;
+        record.item.status = decision === 'approved' ? 'completed' : 'incomplete';
+        record.item.decision = decision;
+        emit('response.output_item.done', { output_index: record.index, item: record.item, run_id: request.runId });
+      }
+      emit('response.approval_resolved', { approval_request_id: interactionId, decision, revision, run_id: request.runId });
+    },
     frame(frame) {
       const value = frame.value;
       if (frame.kind === 'assistant' && value.type === 'chunk') {

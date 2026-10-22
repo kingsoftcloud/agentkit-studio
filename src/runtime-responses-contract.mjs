@@ -22,10 +22,12 @@ function userText(input) {
   return text;
 }
 
-export function createRuntimeResponsesContract({ agentId, buildId, token, model = '', models = [model] }) {
+export function createRuntimeResponsesContract({ agentId, buildId, definitionId, versionId, token, model = '', models = [model] }) {
   // Handles carry only scoped hashes. Their signature binds Agent, Build and
   // principal without a second transcript/response store beside DSH.
-  const sign = (value, principal = '') => createHmac('sha256', token).update(JSON.stringify([agentId, buildId, principal, value])).digest('hex').slice(0, 32);
+  const scope = buildId || JSON.stringify([versionId, definitionId]);
+  const metadataIdentity = buildId ? { agentId, buildId } : { agentId, versionId, manifestSha256: definitionId };
+  const sign = (value, principal = '') => createHmac('sha256', token).update(JSON.stringify([agentId, scope, principal, value])).digest('hex').slice(0, 32);
   const checked = (value, prefix, principal) => {
     const match = new RegExp(`^${prefix}_([a-f0-9]{32}${prefix === 'resp' ? '_[a-f0-9]{32}' : ''})_([a-f0-9]{32})$`).exec(value || '');
     if (!match || !timingSafeEqual(Buffer.from(sign(`${prefix}_${match[1]}`, principal)), Buffer.from(match[2]))) throw runtimeError('RESPONSES_HANDLE_INVALID', 404);
@@ -40,7 +42,7 @@ export function createRuntimeResponsesContract({ agentId, buildId, token, model 
       if (!/^resp_[a-f0-9]{32}_[a-f0-9]{32}_[a-f0-9]{32}$/.test(responseId)) throw runtimeError('RESPONSES_HANDLE_INVALID', 404);
       return `run_${responseId.split('_')[2]}`;
     },
-    parse(input, headers = {}) {
+    parse(input, headers = {}, { principal: verifiedPrincipal } = {}) {
       const allowed = ['input', 'stream', 'session_id', 'conversation', 'previous_response_id', 'request_id', 'model', 'user', 'account_id', 'metadata'];
       if (!object(input) || Object.keys(input).some(key => !allowed.includes(key))) throw runtimeError('RESPONSES_UNSUPPORTED_FIELD');
       if (input.stream !== undefined && typeof input.stream !== 'boolean') throw runtimeError('RESPONSES_INPUT_INVALID');
@@ -48,7 +50,7 @@ export function createRuntimeResponsesContract({ agentId, buildId, token, model 
       for (const field of ['session_id', 'user', 'account_id', 'request_id']) if (input[field] !== undefined && !identity(input[field])) throw runtimeError('RESPONSES_INPUT_INVALID');
       if (input.metadata !== undefined && (!object(input.metadata) || Object.entries(input.metadata).some(([key, value]) => key !== 'agentengine' && (key.length > 64 || typeof value !== 'string' || value.length > 512))
         || Object.keys(input.metadata).length > 17)) throw runtimeError('RESPONSES_METADATA_INVALID');
-      const principal = JSON.stringify([input.account_id || '', input.user || '']);
+      const principal = verifiedPrincipal ?? JSON.stringify([input.account_id || '', input.user || '']);
       let conversation = input.conversation;
       if (object(conversation) && Object.keys(conversation).length === 1) conversation = conversation.id;
       if (conversation !== undefined && !identity(conversation)) throw runtimeError('RESPONSES_INPUT_INVALID');
@@ -57,7 +59,7 @@ export function createRuntimeResponsesContract({ agentId, buildId, token, model 
       if (ids.some(value => !identity(value)) || new Set(ids).size > 1) throw runtimeError('RESPONSES_REQUEST_ID_INVALID');
       const requestId = ids[0] || randomUUID();
       const label = conversation || input.session_id;
-      let session = label?.startsWith('conv_') ? checked(label, 'conv', principal)[0] : digest(JSON.stringify([agentId, buildId, principal, label || requestId]));
+      let session = label?.startsWith('conv_') ? checked(label, 'conv', principal)[0] : digest(JSON.stringify([agentId, scope, principal, label || requestId]));
       let previous;
       if (input.previous_response_id !== undefined) {
         if (typeof input.previous_response_id !== 'string') throw runtimeError('RESPONSES_INPUT_INVALID');
@@ -69,7 +71,8 @@ export function createRuntimeResponsesContract({ agentId, buildId, token, model 
       const run = digest(JSON.stringify([session, requestId]));
       return { input: userText(input.input), requestId, stream: input.stream === true, sessionId: `runtime-${session}`, runId: `run_${run}`,
         responseId: responseHandle(session, run, principal), conversationId: sessionHandle(session, principal), previous,
-        model: input.model ?? model, createdAt: Math.floor(Date.now() / 1000), metadata: { ...(input.metadata || {}), agentkit: { agentId, buildId } } };
+        ...(verifiedPrincipal === undefined ? {} : { sessionLabel: label || requestId }),
+        model: input.model ?? model, createdAt: Math.floor(Date.now() / 1000), metadata: { ...(input.metadata || {}), agentkit: metadataIdentity } };
     },
   };
 }

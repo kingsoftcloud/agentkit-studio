@@ -54,7 +54,7 @@ export const APPROVED_HISTORICAL_TEST_VALUES = Object.freeze({
   'private-network-address': new Set([['10', '0', '0', '7'].join('.')]),
   'internal-service-host': new Set([['metadata', 'internal'].join('.')]),
 });
-const APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS = new Set(['pass', 'password', 'secret', 'token', 'unsafe-token']);
+const APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS = new Set(['pass', 'password', 'secret', 'token', 'unsafe-token', 'fixture-secret']);
 
 export function auditPath(file) {
   return FORBIDDEN_PATHS
@@ -71,12 +71,12 @@ export function auditText(file, source, { historical = false } = {}) {
     // Deleted documents remain reachable through Git history and receive the
     // same private-material checks as current files.
     let match = pattern.exec(text);
-    if (name === 'embedded-url-credential' && historical && /^tests\//.test(file)) {
+    if (name === 'embedded-url-credential' && /^tests\//.test(file)) {
       const candidates = [...text.matchAll(/https?:\/\/[^\s/:@]+:[^\s/@]+@[^\s"'<>`]+/gi)];
       if (candidates.length) match = candidates.find(candidate => {
         try {
           const url = new URL(candidate[0]);
-          return !['example.test', 'example.com'].includes(url.hostname)
+          return !['example.test', 'example.com', 'fixture.test'].includes(url.hostname)
             || !APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS.has(url.password);
         } catch { return true; }
       }) || null;

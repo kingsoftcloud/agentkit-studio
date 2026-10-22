@@ -34,6 +34,8 @@ export function validatePatchManifest(manifest, files, { baseCommit = manifest.b
     if (!Array.isArray(entry.dependsOn) || entry.dependsOn.some(value => !text(value)) || new Set(entry.dependsOn).size !== entry.dependsOn.length) reject(`${entry.id}: invalid dependencies`);
     const checks = entry.verification;
     if (!checks || !Array.isArray(checks.hostTests) || checks.hostTests.some(path => !safePath(path) || !/\.spec\.[cm]?[jt]sx?$/.test(path)) || !list(checks.integrations)) reject(`${entry.id}: missing verification`);
+    if (checks.nativeTests !== undefined && (!Array.isArray(checks.nativeTests)
+      || checks.nativeTests.some(path => !safePath(path) || !/^native\/system\/test\/[^/]+\.test\.js$/.test(path)))) reject(`${entry.id}: invalid native tests`);
     for (const profile of checks.integrations) if (!Object.hasOwn(manifest.verificationProfiles || {}, profile) || !text(manifest.verificationProfiles[profile]?.kind)) reject(`${entry.id}: unknown verification profile`);
     const bytes = files.get(entry.file);
     if (!bytes || !/^[a-f0-9]{64}$/.test(entry.sha256 || '') || digest(bytes) !== entry.sha256) reject(`${entry.id}: content digest mismatch`);
@@ -69,7 +71,8 @@ export function validatePatchManifest(manifest, files, { baseCommit = manifest.b
   if (!same(entries.map(entry => entry.file), [...files.keys()].sort()) || entries.some((entry, index) => entry.file !== [...files.keys()].sort()[index])) reject('manifest order differs from application order');
   const hash = createHash('sha256').update(baseCommit);
   for (const entry of entries) hash.update(entry.file).update('\0').update(files.get(entry.file));
-  return { baseCommit, patches: entries.length, paths: owner.size, seriesSha256: hash.digest('hex'), hostTests: [...new Set(entries.flatMap(entry => entry.verification.hostTests))].sort(), verified: true };
+  return { baseCommit, patches: entries.length, paths: owner.size, seriesSha256: hash.digest('hex'), hostTests: [...new Set(entries.flatMap(entry => entry.verification.hostTests))].sort(),
+    nativeTests: [...new Set(entries.flatMap(entry => entry.verification.nativeTests || []))].sort(), verified: true };
 }
 
 export async function checkPatchManifest(directory, options) {

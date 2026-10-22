@@ -19,7 +19,8 @@ export async function resolveConfiguredCodexModel({ provider, model }, models) {
   const reasoning = studioReasoning(profile);
   return { model,
     ...(reasoning ? { reasoningEfforts: reasoning.efforts } : {}),
-    modelProvider: { baseUrl: profile.baseUrl, apiKey: profile.apiKey, ...(profile.codexApi === 'chat-completions' ? { api: 'chat-completions' } : {}) } };
+    modelProvider: { baseUrl: profile.baseUrl, apiKey: profile.apiKey,
+      ...(['responses', 'chat-completions'].includes(profile.codexApi) ? { api: profile.codexApi } : {}) } };
 }
 
 export async function selectCodexAgentModel(agent, { models, catalog }) {

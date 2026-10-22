@@ -56,7 +56,7 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
         if (binding.tool._source === 'dsh') {
           return toolAdapter.callTool(binding.tool.name, args || {}, { callId, signal, agent });
         }
-        return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {});
+        return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {}, { signal });
       },
     };
   };
