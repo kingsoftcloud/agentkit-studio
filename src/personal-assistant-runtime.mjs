@@ -253,6 +253,8 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
   Object.defineProperty(api, 'scopedCancelSupported', { get: scopedCancelAvailable });
   api.nativeCarrierSupported = Boolean(nativeCarrier);
   api.managedPermissionsSupported = Boolean(permissionModel?.enabled && nativeCarrier?.hasLiveSession);
+  api.cloudExecutionSupported = permissionModel?.cloudCapabilities?.codeExecution === true;
+  api.cloudBrowserSupported = permissionModel?.cloudCapabilities?.browser === true;
   api.disconnectInteractions = sessionId => approvalBridge.disconnect(sessionId);
   api.dispose = disposeInteractions;
   api.imageReadSupported = typeof controller.attachment === 'function';

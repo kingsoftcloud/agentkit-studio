@@ -1,10 +1,15 @@
-# Native cloud execution: deployment contract still required
+# Native cloud execution: provisioner contract
 
-Status: proposed integration contract, not a shipped executor or a claim that
-current cloud instances are isolated enough for general commands. No deployment,
-credential, existing assistant or existing Session is changed by this proposal.
-The current shipped profile remains `workspace-managed/v1`; its separate native
-schedule admission is described in [assistant-permission-model.md](assistant-permission-model.md).
+Status: implemented for the managed-assistant runtime image as capability 1
+(bounded cloud command and script execution). The executor launcher, file/egress
+policy, grant gating and deployment evidence are documented in
+[assistant-cloud-computer.md](assistant-cloud-computer.md); this page keeps the
+provisioner contract and the reasoning that a capability string alone is not
+isolation. It is not a claim that arbitrary cloud instances are isolated enough
+for general commands: the shipped profile remains `workspace-managed/v1`, and
+only instances whose image advertises the executor capability expose the tools.
+Its separate native schedule admission is described in
+[assistant-permission-model.md](assistant-permission-model.md).
 
 ## What the repository actually establishes
 
@@ -63,8 +68,9 @@ provisioning, reconnect, operation replay or Windows endpoint.
 
 ## Minimum provisioner inputs and outputs
 
-The following fields are a proposed private contract. They are not new accepted
-browser arguments or an implemented API.
+The following fields are the private provisioner contract now implemented by
+the Studio runtime image. They are not new accepted browser arguments or a
+public API.
 
 ### Trusted inputs
 

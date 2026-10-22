@@ -4,7 +4,7 @@ import { createAssistantNativeComposer } from '../src/client/components/assistan
 import { createAssistantPage } from '../src/client/pages/assistant.mjs';
 import { createAssistantSettings } from '../src/client/pages/assistant-settings.mjs';
 
-function render(factory, states = {}, props = {}, additions = {}) {
+function render(factory, states = {}, props = {}, additions = {}, remote = {}) {
   let index = 0;
   const ui = {
     React: { createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
@@ -15,7 +15,7 @@ function render(factory, states = {}, props = {}, additions = {}) {
   };
   Object.assign(ui, additions);
   const window = { localStorage: { getItem: () => null }, crypto: { randomUUID: () => 'fixture-request' } };
-  return factory({ ui, hostRemote: {}, actions: {}, window })(props);
+  return factory({ ui, hostRemote: remote.hostRemote || {}, actions: remote.actions || {}, window })(props);
 }
 const nodes = root => typeof root === 'object' && root !== null ? [root, ...root.children.flatMap(nodes)] : [];
 const text = root => typeof root === 'string' ? root : root?.children?.map(text).join('') || '';
@@ -51,6 +51,27 @@ test('connection diagnostics never infer a grant from an absent capability', () 
   const legacy = diagnostics({ capabilities: { execution: { permission: 'read-only', approval: 'never' } } });
   assert.equal(rowValue(legacy, '工作区权限'), '只读');
   assert.equal(rowValue(legacy, '审批策略'), '不支持询问');
+});
+
+test('cloud capability grants render and submit the confirmed grant set', async () => {
+  const calls = [];
+  const hostRemote = { assistantSetupSetGrants: async input => { calls.push(input); return { grants: input.grants }; } };
+  const actions = { confirm: async request => { calls.push(request); return true; } };
+  const tree = render(createAssistantPage, {
+    0: catalog, 1: 'cloud-agent', 3: session(),
+    12: { available: ['code-execution', 'browser'], current: [], optionsId: 'options-1' },
+  }, {}, {}, { hostRemote, actions });
+  const labels = nodes(tree).map(node => text(node));
+  assert.ok(labels.some(label => label.includes('在云端运行命令与脚本')), 'prompt offers the cloud execution grant');
+  assert.ok(labels.some(label => label.includes('在云端使用浏览器')), 'prompt offers the cloud browser grant');
+  const boxes = nodes(tree).filter(node => node.type === 'input' && node.props.type === 'checkbox');
+  assert.equal(boxes.length, 2, 'one toggle per offered capability');
+  boxes[0].props.onChange({ target: { checked: true } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const confirm = calls.find(call => call && typeof call === 'object' && call.confirmLabel === '开启');
+  assert.equal(confirm.title, '开启在云端运行命令与脚本');
+  const submitted = calls.find(call => call && Array.isArray(call.grants));
+  assert.deepEqual(submitted, { confirmed: true, grants: ['code-execution'], optionsId: 'options-1' });
 });
 
 test('native composer wrapper has no parallel attachment picker or persistent technical footer', () => {

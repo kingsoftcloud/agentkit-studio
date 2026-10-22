@@ -9,7 +9,7 @@ import { createStudioBuild } from '../src/studio-build.mjs';
 import { sha256 } from '../src/portable-resources.mjs';
 
 async function fixture(t, { loseWelcome = false } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'assistant-setup-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await mkdtemp(join(tmpdir(), 'assistant-setup-')); t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
   const values = { cloudAccessKey: 'synthetic-access', cloudSecretKey: 'synthetic-secret', cloudRegion: 'pre-online' };
   const model = { id: 'model', modelName: 'Example', apiKey: 'synthetic-model-key' };
   const records = new Map(), messages = [], calls = { create: 0, welcome: 0, upgrade: 0, upgradeInput: null };
@@ -167,4 +167,51 @@ test('an older assistant image upgrades in place and keeps the existing record s
   assert.equal(settled.ready, true);
   assert.equal(f.calls.create, 1, 'an upgrade must never create a second cloud instance');
   assert.equal(f.calls.welcome, 1, 'an upgrade must not replay the welcome turn');
+});
+
+test('cloud execution is offered only when the image advertises capability 1', async t => {
+  const f = await fixture(t);
+  assert.deepEqual((await f.service.options()).grants, []);
+  f.catalog.releases[0].capabilities.push('personal-assistant-code-execution/v1');
+  assert.deepEqual((await f.service.options()).grants, ['code-execution']);
+});
+
+test('a granted assistant is created with the grant and only welcomes when the image confirms it', async t => {
+  const f = await fixture(t);
+  f.catalog.releases[0].capabilities.push('personal-assistant-code-execution/v1');
+  const options = await f.service.options();
+  await f.service.start({ confirmed: true, optionsId: options.optionsId, memoryId: 'memory', grants: ['code-execution'] });
+  await until(async () => (await f.service.status()).state === 'ACTION_REQUIRED');
+  const agent = (await f.deps.agents.list())[0];
+  assert.deepEqual(agent.spec.security.assistantPermissions.grants, ['code-execution']);
+  assert.equal(f.calls.welcome, 0, 'the image did not confirm the capability, so no welcome turn runs');
+  // An image that confirms both the managed profile and the capability can welcome.
+  f.deps.deployments.agents.connect = async () => ({ endpoint: 'https://assistant.test', token: 'synthetic-runtime-token',
+    capabilities: ['personal-assistant/v1', 'personal-assistant-workspace-managed/v1', 'personal-assistant-code-execution/v1'] });
+  const retried = createAssistantSetup(f.deps);
+  await until(async () => (await retried.status()).ready);
+  assert.equal(f.calls.welcome, 1);
+});
+
+test('an existing ready assistant can enable and later revoke the grant through a spec rollout', async t => {
+  const f = await fixture(t), options = await f.service.options();
+  await f.service.start({ confirmed: true, optionsId: options.optionsId, memoryId: 'memory' });
+  await until(async () => (await f.service.status()).ready && f.calls.welcome === 1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const before = await f.deps.agents.get((await f.deps.agents.list())[0].metadata.id);
+  f.catalog.releases[0].capabilities.push('personal-assistant-code-execution/v1');
+  await assert.rejects(f.service.setGrants({ confirmed: true, grants: ['browser'] }), { code: 'ASSISTANT_IMAGE_UPGRADE_REQUIRED' });
+  const enabling = await f.service.setGrants({ confirmed: true, grants: ['code-execution'] });
+  assert.deepEqual(enabling.grants, ['code-execution']);
+  assert.equal(f.calls.upgrade, 1);
+  await until(async () => (await f.service.status()).ready);
+  const granted = await f.deps.agents.get(before.metadata.id);
+  assert.deepEqual(granted.spec.security.assistantPermissions.grants, ['code-execution']);
+  assert.equal(granted.metadata.revision, before.metadata.revision + 1);
+  const revoking = await f.service.setGrants({ confirmed: true, grants: [] });
+  assert.deepEqual(revoking.grants, []);
+  assert.equal(f.calls.upgrade, 2);
+  const revoked = await f.deps.agents.get(before.metadata.id);
+  assert.equal(revoked.spec.security.assistantPermissions.grants, undefined);
+  assert.equal(revoked.spec.security.assistantPermissions.profile, 'workspace-managed/v1');
 });

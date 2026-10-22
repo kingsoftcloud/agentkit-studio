@@ -7,6 +7,13 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
   const { React: { createElement: h, useState, useEffect, useRef }, BRAND, buttonStyle, inputStyle, ComputerConnection, AssistantTranscript, AssistantBrowser, Button, FileTypeIcon, StateDot } = ui;
   const NativeComposer = nativeModules ? createAssistantNativeComposer({ ui, hostRemote, nativeModules, window }) : null;
   const Action = Button || 'button';
+  // The two capabilities are the only managed-surface changes the client can
+  // offer today. Unknown names stay hidden instead of guessing copy.
+  const GRANTS = {
+    'code-execution': { label: '在云端运行命令与脚本', detail: '助理可在隔离的云工作区内执行命令和脚本：默认无网络，读不到宿主机凭证，也不能访问工作区之外的路径。' },
+    browser: { label: '在云端使用浏览器', detail: '助理可打开公开网页、读取页面内容并截图；只允许 http/https，不能访问内网、本机或需要登录的内容，下载文件大小受限。' },
+  };
+  const grantLabel = name => GRANTS[name]?.label || name;
   const AssistantApprovals = createAssistantApprovals({ ui, window });
   const read = key => { try { return JSON.parse(window.localStorage.getItem(key)); } catch { return null; } };
   const save = (key, value) => window.localStorage.setItem(key, JSON.stringify(value));
@@ -36,6 +43,9 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
     const [setup, setSetup] = useState(null), [setupOptions, setSetupOptions] = useState(null);
     const [setupMemory, setSetupMemory] = useState(''), [setupBusy, setSetupBusy] = useState(false);
     const [upgrade, setUpgrade] = useState(null), [upgrading, setUpgrading] = useState(false);
+    const [pageNotice, setPageNotice] = useState('');
+    const [capabilities, setCapabilities] = useState(null), [capabilityBusy, setCapabilityBusy] = useState(false);
+    const [setupGrants, setSetupGrants] = useState([]);
     useEffect(() => {
       let alive = true;
       hostRemote.assistantCatalog().then(result => {
@@ -94,6 +104,10 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
           const available = await hostRemote.assistantSetupOptions();
           if (!alive) return;
           setUpgrade({ currentReleaseId: current.releaseId || null, availableReleaseId: available.releaseId, optionsId: available.optionsId });
+          const offered = Array.isArray(available.grants) ? available.grants : [];
+          const held = Array.isArray(current.grants) ? current.grants : [];
+          setCapabilities(offered.length || held.length ? { available: offered, current: held, optionsId: available.optionsId } : null);
+          setSetupGrants(previous => previous.filter(name => offered.includes(name)));
         } catch { if (alive) setUpgrade(null); }
       })();
       return () => { alive = false; };
@@ -106,10 +120,25 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
       try {
         const result = await hostRemote.assistantSetupUpgrade({ confirmed: true, optionsId: upgrade.optionsId });
         setUpgrade(previous => previous ? { ...previous, currentReleaseId: result?.releaseId || previous.availableReleaseId } : previous);
-        setNotice('云端助理正在升级，完成后自动生效。');
+        setPageNotice('云端助理正在升级，完成后自动生效。');
         void session.refresh();
       } catch (reason) { setError(reason.message); }
       finally { setUpgrading(false); }
+    };
+    const configureGrant = async (name, enabled) => {
+      if (!capabilities || capabilityBusy) return;
+      const next = enabled ? [...new Set([...capabilities.current, name])] : capabilities.current.filter(item => item !== name);
+      const confirmed = await actions.confirm({ title: `${enabled ? '开启' : '关闭'}${grantLabel(name)}`,
+        detail: enabled ? GRANTS[name]?.detail || '开启后云端助理可以使用这项能力。' : '关闭后云端助理将不能再使用这项能力；已经产生的会话记录和工作区文件会保留。',
+        confirmLabel: enabled ? '开启' : '关闭' });
+      if (!confirmed) return;
+      setCapabilityBusy(true); setError('');
+      try {
+        const result = await hostRemote.assistantSetupSetGrants({ confirmed: true, grants: next, optionsId: capabilities.optionsId });
+        setCapabilities(previous => previous ? { ...previous, current: Array.isArray(result?.grants) ? result.grants : next } : previous);
+        setPageNotice(result?.state === 'UPDATING' ? '正在应用能力变更，完成后自动生效。' : '能力变更已提交。');
+      } catch (reason) { setError(reason.message); }
+      finally { setCapabilityBusy(false); }
     };
     useEffect(() => {
       followLatest.current = true;
@@ -164,7 +193,7 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
       const start = async () => {
         if (setupBusy || !setupOptions) return;
         setSetupBusy(true); setError('');
-        try { setSetup(await hostRemote.assistantSetupStart({ confirmed: true, optionsId: setupOptions.optionsId, memoryId: setupMemory })); }
+        try { setSetup(await hostRemote.assistantSetupStart({ confirmed: true, optionsId: setupOptions.optionsId, memoryId: setupMemory, grants: setupGrants })); }
         catch (reason) { setError(reason.message); }
         finally { setSetupBusy(false); }
       };
@@ -182,6 +211,12 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
             setupOptions.memories.length > 1 ? h('label', { style: { display: 'block', textAlign: 'left', fontSize: '13px', marginBottom: '16px' } }, '把记忆保存在',
               h('select', { 'aria-label': '助理记忆库', value: setupMemory, onChange: event => setSetupMemory(event.target.value), style: { ...inputStyle(), width: '100%', marginTop: '8px' } },
                 h('option', { value: '' }, '选择记忆库'), ...setupOptions.memories.map(item => h('option', { key: item.id, value: item.id }, item.name)))) : null,
+            setupOptions.grants?.length ? h('div', { style: { textAlign: 'left', margin: '0 0 18px' } },
+              h('p', { style: { fontSize: '13px', margin: '0 0 6px' } }, '云端能力（开通后可随时调整）'),
+              ...setupOptions.grants.map(name => h('label', { key: name, style: { display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12px', color: BRAND.inkMuted, lineHeight: 1.7, marginTop: '6px' } },
+                h('input', { type: 'checkbox', checked: setupGrants.includes(name), disabled: setupBusy,
+                  onChange: event => setSetupGrants(previous => event.target.checked ? [...new Set([...previous, name])] : previous.filter(item => item !== name)) }),
+                h('span', null, grantLabel(name))))) : null,
             h('button', { type: 'button', onClick: () => void start(), disabled: setupBusy || !setupMemory, style: { ...buttonStyle(), padding: '12px 24px', borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }, '开通个人助理'),
             h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7, marginTop: '18px' } }, setupOptions.billingNotice),
             setupOptions.permissionNotice ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.7 } }, setupOptions.permissionNotice) : null,
@@ -199,6 +234,15 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
         ? h('div', { role: 'status', 'data-studio-assistant-upgrade': true, style: { margin: '0 24px 8px', padding: '10px 14px', border: `1px solid ${BRAND.border}`, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' } },
           h('span', { style: { fontSize: '13px', color: BRAND.inkMuted, lineHeight: 1.7 } }, upgrading ? '正在升级云端助理，会话与工作区文件会保留…' : '云端助理有新的运行版本可用，升级后可获得更强的联网与工具能力；会话、工作区文件和记忆都会保留。'),
           upgrading ? null : button('升级云端助理', () => void upgradeNow()))
+        : null,
+      capabilities && (capabilities.available.length || capabilities.current.length)
+        ? h('div', { role: 'status', 'data-studio-assistant-capabilities': true, style: { margin: '0 24px 8px', padding: '10px 14px', border: `1px solid ${BRAND.border}`, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' } },
+          h('span', { style: { fontSize: '13px', color: BRAND.inkMuted, lineHeight: 1.7 } }, capabilityBusy ? '正在应用云端能力变更…' : '云端能力'),
+          h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap' } },
+            ...capabilities.available.map(name => h('label', { key: name, style: { display: 'flex', gap: '6px', alignItems: 'center', fontSize: '12px', color: BRAND.inkMuted } },
+              h('input', { type: 'checkbox', checked: capabilities.current.includes(name), disabled: capabilityBusy || upgrading,
+                onChange: event => void configureGrant(name, event.target.checked) }),
+              h('span', null, grantLabel(name))))))
         : null,
       h('div', { ref: history, 'aria-label': '助理会话', onScroll: event => { const node = event.currentTarget; followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100; },
         style: { flex: '1 1 0', minHeight: 0, overflow: 'auto', padding: '20px 24px' } },
@@ -248,6 +292,6 @@ export function createAssistantPage({ ui, hostRemote, actions, window, nativeMod
               canUpload ? button('添加附件', () => filePicker.current?.click(), Boolean(pending) || historyUnavailable) : null),
             h('div', { style: { display: 'flex', gap: '8px' } }, running ? button(!canCancel ? '停止（需更新云端）' : stopping ? '正在停止…' : '停止', () => void session.cancel(() => actions.confirm({ title: '停止当前任务', detail: '停止助理正在处理的任务？停止请求受理后，仍需等待云端确认。', confirmLabel: '停止' })), stopping || !canCancel) : null,
               h(Action, { type: 'submit', disabled: busy || !view || historyUnavailable || pendingInvalid || (!pending && (!attachmentsReady || !draft.trim() && !attachments.length)), ...(Button ? { variant: 'primary' } : { style: { ...buttonStyle(), borderRadius: '12px', background: BRAND.primaryFill, color: BRAND.primaryText } }) }, pending ? pending.observed ? '确认提交' : '重试上一条' : '发送')))),
-        notice ? h('p', { role: 'status', style: { margin: '8px 0 0', fontSize: '11px', color: BRAND.inkMuted, textAlign: 'center' } }, notice) : null))));
+        pageNotice || notice ? h('p', { role: 'status', style: { margin: '8px 0 0', fontSize: '11px', color: BRAND.inkMuted, textAlign: 'center' } }, pageNotice || notice) : null))));
   };
 }
