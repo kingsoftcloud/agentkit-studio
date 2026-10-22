@@ -9,6 +9,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile, rm, rename, link } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export class AgentStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -52,6 +54,29 @@ export function createAgentStore({ storeDir } = {}) {
   const root = storeDir;
 
   async function ensureDir() { await mkdir(root, { recursive: true, mode: 0o700 }); }
+
+  // Serializes publication of an Agent's current pointer across Host processes.
+  // SQLite owns the lock lifetime, so process death cannot leave a stale file
+  // lock. busy_timeout=0 plus asynchronous retry keeps the Host event loop free.
+  async function withMutationLock(agentId, callback) {
+    pathFor(agentId);
+    await ensureDir();
+    const directory = join(root, '.mutation-locks');
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const deadline = performance.now() + 5000;
+    for (;;) {
+      const db = new DatabaseSync(join(directory, `${agentId}.sqlite`));
+      try { db.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE;'); }
+      catch (error) {
+        db.close();
+        if (error.errcode !== 5 && error.errcode !== 6) throw error;
+        if (performance.now() >= deadline) throw new AgentStoreError('AGENT_MUTATION_BUSY', 'Agent 正在更新，请稍后重试', { agentId });
+        await delay(10); continue;
+      }
+      try { return await callback(); }
+      finally { try { db.exec('ROLLBACK'); } finally { db.close(); } }
+    }
+  }
 
   function pathFor(agentId) {
     if (!/^ar-local-[a-f0-9]{16}$/.test(agentId)) throw new AgentStoreError('INVALID_AGENT_ID', '本地 Agent ID 无效');
@@ -151,8 +176,21 @@ export function createAgentStore({ storeDir } = {}) {
   }
 
   async function update(agentId, patch = {}) {
+    // An approved binding proposal is based on a particular revision. Retain
+    // its exact bytes across the async lock rather than reading a mutable object.
+    const fixed = structuredClone(patch);
+    if (fixed.expectedRevision !== undefined && (!Number.isSafeInteger(fixed.expectedRevision) || fixed.expectedRevision < 1))
+      throw new AgentStoreError('INVALID_EXPECTED_AGENT_REVISION', '预期 Agent Revision 无效');
+    return withMutationLock(agentId, () => updateLocked(agentId, fixed));
+  }
+
+  async function updateLocked(agentId, patch) {
     const record = await get(agentId);
     if (!record) throw new AgentStoreError('AGENT_NOT_FOUND', '本地 Agent 不存在', { agentId });
+    if (patch.expectedRevision !== undefined && record.metadata.revision !== patch.expectedRevision)
+      throw new AgentStoreError('AGENT_EXPECTED_REVISION_CONFLICT', 'Agent 已更新，请重新核对绑定', {
+        agentId, expectedRevision: patch.expectedRevision, actualRevision: record.metadata.revision,
+      });
     await captureRevision(record);
     if (patch.name) record.metadata.name = String(patch.name);
     if (patch.description !== undefined) record.metadata.description = String(patch.description);
@@ -174,10 +212,11 @@ export function createAgentStore({ storeDir } = {}) {
   }
 
   async function remove(agentId) {
-    await ensureDir();
-    await rm(pathFor(agentId), { force: true });
-    await rm(dirname(revisionPath(agentId,1)),{recursive:true,force:true});
-    return { agentId, deleted: true };
+    return withMutationLock(agentId, async () => {
+      await rm(pathFor(agentId), { force: true });
+      await rm(dirname(revisionPath(agentId,1)),{recursive:true,force:true});
+      return { agentId, deleted: true };
+    });
   }
 
   return { create, list, get, update, remove, captureRevision, getRevision, listRevisions, root };
