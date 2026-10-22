@@ -22,6 +22,8 @@ import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from '
 import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/child-tools.mjs';
 import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeChildRoles } from './native-subagents.mjs';
+import { createNativeToolAuthority } from './native-tool-authority.mjs';
+import { WORKSPACE_MUTATION_LOCK } from '../../packages/agentkit-harness/src/native/workspace-mutation-lock.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -175,7 +177,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           } else if (webNames.has(name)) {
             outcome = await (await invocation.web()).execute({ ...invocation.request, signal: exec.signal });
           } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
-            : formal.has(name) ? await invocation.workspaceTools.execute({ ...invocation.request, signal: exec.signal })
+            : formal.has(name) ? await invocation.workspaceTools.execute({ ...invocation.request, signal: exec.signal },
+              { assertCurrent: invocation.assertCurrent })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
           invocation.outcome = structuredClone(outcome);
           return nativeDshBuiltinOutput(mcpContracts.has(name) ? { ...outcome, content: outcome.context.content } : outcome,
@@ -349,6 +352,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     childBinding: childRoles.length ? { contract: NATIVE_CHILD_TOOLS_CONTRACT, roles: structuredClone(childRoles) } : null,
     childCapabilities: { skills: hasSkills, mcp: mcpContracts.size > 0 },
     workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
+    workspaceMutationContract: [...builtinNames].some(name => ['write_workspace_file', 'write_workspace_files',
+      'edit_workspace_file', 'multi_edit_workspace_file', 'delete_workspace_file'].includes(name)) ? WORKSPACE_MUTATION_LOCK : null,
     webBinding: webTemplate ? { contract: webTemplate.contract, bindingDigest: webTemplate.bindingDigest } : null,
     commandBinding: [...commandNames].some(name => builtinNames.has(name)) ? {
       contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },
@@ -441,6 +446,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     forAgent(agent, commandAuthority) {
       const sessionId = commandAuthority?.childSessionId ?? String(agent.session.id);
       const workspaceTools = state(agent, sessionId);
+      const assertCurrent = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
+        isClosed: () => closed }) : undefined;
       let commandsPromise;
       const commands = () => commandsPromise ||= (async () => {
         invariant(commandAuthority?.scope && commandAuthority?.store, 'studio_native_command_ledger_unavailable');
@@ -486,7 +493,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } };
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
-        const invocation = { agent, request, workspaceTools, children: commandAuthority?.children,
+        const invocation = { agent, request, workspaceTools, assertCurrent, children: commandAuthority?.children,
           argumentEncoding: exactNumbers ? argumentEncoding : null, commands, web };
         calls.set(callId, invocation);
         try {

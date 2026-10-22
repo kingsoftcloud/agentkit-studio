@@ -1,0 +1,30 @@
+import { canonical, copy, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
+
+/** A DSH registration/permission decision alone cannot authorize a later
+ * publication after waiting for a workspace lock. Re-read the Native ledger. */
+export function createNativeToolAuthority({ scope, sessionId, store, isClosed = () => false }) {
+  scopeKey(scope);
+  invariant(typeof sessionId === 'string' && sessionId.trim() && typeof store?.load === 'function'
+    && typeof isClosed === 'function', 'studio_native_tool_authority_binding_invalid');
+  const fixedScope = copy(scope);
+  return request => {
+    try {
+      if (isClosed() || !(request.signal instanceof AbortSignal) || request.signal.aborted
+        || canonical(request.scope) !== canonical(fixedScope) || request.sessionId !== sessionId) return false;
+      const current = store.load(fixedScope, request.runId), snapshot = current.snapshot;
+      if (!snapshot || snapshot.phase !== 'executing_tools'
+        || !['sessionId', 'runId', 'turnId', 'buildId', 'parentRunId', 'taskChainId'].every(key => request[key] === snapshot[key])
+        || !current.lease || current.lease.expiresAt <= Date.now()
+        || !Number.isSafeInteger(request.executionFence) || request.executionFence <= 0
+        || current.lease.fence !== request.executionFence) return false;
+      const intent = current.intents.find(item => item.operationKey === snapshot.pendingIntent);
+      if (intent?.kind !== 'tool' || intent.status !== 'running' || intent.claimedFence !== request.executionFence
+        || !Array.isArray(intent.payload?.calls)) return false;
+      const index = intent.payload.calls.findIndex(call => canonical(call) === canonical(request.call));
+      if (index < 0 || request.operationKey !== (intent.payload.calls.length === 1
+        ? intent.operationKey : `${intent.operationKey}:call:${index + 1}`)) return false;
+      const definition = current.configuration.tools.find(tool => tool.name === request.call.name);
+      return !!definition && canonical(definition) === canonical(request.definition);
+    } catch { return false; }
+  };
+}

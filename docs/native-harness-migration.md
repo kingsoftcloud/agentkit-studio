@@ -4,6 +4,8 @@ Studio 的 Native 整轮执行现在先通过 `Agent.externalTurns` 写入版本
 
 当前迁移尚未完成，Studio 的默认 Harness 仍沿用既有执行路径。生产 Host 已加入可显式启用的 Native 整轮执行与 Node 工作区工具组装；这不代表全部 Python 正式能力、各产品入口或安装方式已通过验收。
 
+工作区 builtin 的同步写入现在使用 `agentkit.workspace-mutation-lock/v1`：同一规范工作区的预检与发布持同一个 SQLite 进程锁，等待结束及每次实际写入前重新核验当前 Native intent、完整工具调用、冻结定义和有效 lease/fence。该契约进入 Host 与插件绑定摘要。持锁进程退出后由 OS 释放；不会按文件年龄或 PID 猜测接管。子任务工作区模块正在接入同一锁，尚未完成生产发布流程；编辑器与任意外部命令也不参与这个协作锁，因此它不代表整个文件系统的原子事务。
+
 行为参考固定为 KsADK 的 `feat-ksadk-harness-2` 分支提交 `355059d78e47ed764bbdb3606304cdf34e9838a3`。目标为现有 `runtime.type = "harness"`，保留 DSH Native 和 Codex runtime。没有 Python 历史会话数据，只免除历史数据兼容要求；新运行的持久化和恢复属于必备能力。
 
 ## 实现分层

@@ -23,6 +23,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { checkPythonSyntax, NATIVE_PYTHON_SYNTAX } from './python-syntax.mjs';
+import { acquireWorkspaceMutationLock, workspaceMutationGuard } from './workspace-mutation-lock.mjs';
 
 import {
   WorkspacePathError, escapeRegex, fnmatch, publishWorkspaceBytes, sha256,
@@ -74,8 +75,9 @@ export function createNativeWorkspaceTools({
   // Mutating implementations below are synchronous. Track publications within the
   // current invocation so a later state-write failure cannot masquerade as a
   // definite failure before execution. No tracking state crosses an await.
-  let activeMutations = null;
+  let activeMutations = null, activeGuard = null;
   function publish(target, bytes, options) {
+    activeGuard?.();
     publishWorkspaceBytes(target, bytes, options);
     activeMutations?.add(relativeOf(target));
   }
@@ -716,6 +718,7 @@ export function createNativeWorkspaceTools({
     if (!existsSync(target)) return { ok: false, error_message: `workspace path not found: ${path}` };
     const info = lstatSync(target, { bigint: true });
     try {
+      activeGuard?.();
       if (info.isDirectory()) {
         rmdirSync(target);
       } else {
@@ -747,7 +750,7 @@ export function createNativeWorkspaceTools({
 
   // ---- execute --------------------------------------------------------------
 
-  async function execute(request) {
+  async function execute(request, { assertCurrent } = {}) {
     if (!request || typeof request !== 'object') {
       return { status: 'error', content: { code: 'invalid_request', message: 'request object required' } };
     }
@@ -761,6 +764,9 @@ export function createNativeWorkspaceTools({
     if (!impl) return { status: 'error', content: { code: 'unknown_tool', message: `unknown tool: ${name}` } };
     const signal = request.signal;
     const mutating = MUTATING.has(name);
+    let guard;
+    try { guard = workspaceMutationGuard(request, mutating ? assertCurrent : undefined, checkRootBoundary); }
+    catch (error) { return { status: 'error', content: { code: error.code || 'invalid_request' } }; }
 
     // The root boundary is pinned at factory creation. Re-check it on every
     // execute: a symlink swap (or parent rewrite) that changes the live
@@ -819,18 +825,23 @@ export function createNativeWorkspaceTools({
     if (signal?.aborted) return canceled();
 
     let result;
-    const mutations = new Set(), previousMutations = activeMutations;
-    activeMutations = mutations;
+    const mutations = new Set(), previousMutations = activeMutations, previousGuard = activeGuard;
+    let release;
     try {
+      if (mutating) release = acquireWorkspaceMutationLock(pinnedRootReal);
+      guard();
+      activeMutations = mutations; activeGuard = guard;
       result = impl(call.arguments ?? {}, { signal, request });
+      guard();
     } catch (e) {
+      if (signal?.aborted && !mutations.size) return canceled();
       if (e instanceof WorkspacePathError) {
         return { status: 'error', content: { ok: false, error_type: 'path_escape', error_message: e.message } };
       }
       if (mutations.size) return { status: 'uncertain', workspaceChangedPaths: [...mutations],
         content: { ok: false, error_type: 'state_persist_failed', executed: true, paths: [...mutations] } };
-      return { status: 'error', content: { ok: false, error_type: 'internal_error', error_message: e.message } };
-    } finally { activeMutations = previousMutations; }
+      return { status: 'error', content: { ok: false, error_type: e.code || 'internal_error', error_message: e.message } };
+    } finally { activeMutations = previousMutations; activeGuard = previousGuard; release?.(); }
     // The only asynchronous implementation parses captured read-only bytes.
     // Restore mutation tracking before any await so concurrent writers cannot
     // attribute their publications to this invocation.
