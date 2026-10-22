@@ -59,8 +59,20 @@ partially validating it. This check does not eliminate external OS races.
 `glob` and `grep` execute the official fixed ripgrep argument templates. This is
 bounded search execution, not a general-purpose shell. Arbitrary bash, PowerShell,
 terminal commands, `run_code`, unknown MCP tools, and all other unlisted tools are
-refused. File sandbox mode alone is not a network policy. No network execution
-permission is inferred from workspace-write.
+refused. File sandbox mode alone is not a network policy.
+
+Public read-only web access is a separate fixed-tool grant: `web_search` and
+`web_fetch` are admitted only when the native tools are mounted, and only through
+the Host web provider that pins resolved public addresses, refuses loopback,
+private, link-local and credential-bearing URLs, caps timeout and output, and
+requires same-origin redirects. The policy adds an independent early URL refusal
+(`http`/`https` only, bounded length, no credentials, no private host literal or
+internal suffix) before a provider is reached; DNS validation and connection
+pinning remain the provider's job. The grant never enables arbitrary shell,
+local-network services, or writes outside the private workspace, and it does not
+imply any sensitive-operation authority. Snapshots expose
+`network: 'public-web-read-only'` and the admitted `webTools` names so the Host
+can describe or gate UI without inferring a grant from an absent field.
 
 The default sensitive operation is the real
 `assistant_delete_workspace_file` tool. It handles one regular single-link file

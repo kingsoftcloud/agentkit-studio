@@ -54,7 +54,7 @@ async function collectDirectory(root, prefix, files, limits, depth = 0) {
   }
 }
 
-export async function capturePortableResources({ record, models, adapters, configuration }) {
+export async function capturePortableResources({ record, models, adapters, configuration, credentials }) {
   rejectInlineSecrets(record.spec);
   rejectInlineSecrets(record.metadata);
   const bindings = record.spec.bindings || record.bindings || {}, runtime = record.spec.runtime?.type;
@@ -125,12 +125,21 @@ export async function capturePortableResources({ record, models, adapters, confi
   const cloud = {};
   if (remote.length) {
     const { values } = await configuration.resolve();
-    cloud.cloudServerUrl = endpoint(values.cloudServerUrl || 'https://aicp.api.ksyun.com');
+    cloud.cloudServerUrl = endpoint(values.cloudServerUrl || 'https://aicp.ksyun.com');
     cloud.cloudRegion = values.cloudRegion || 'cn-beijing-6';
     if (values.cloudCustomSource) cloud.cloudCustomSource = values.cloudCustomSource;
     requireEnv('KSYUN_ACCESS_KEY', 'cloud', 'cloud access key');
     requireEnv('KSYUN_SECRET_KEY', 'cloud', 'cloud secret key');
     if (values.cloudSessionToken) requireEnv('KSYUN_SESSION_TOKEN', 'cloud', 'cloud session token');
+  }
+  // Managed personal assistants mount DSH's DeepSeek search provider, which
+  // reads DEEPSEEK_API_KEY for every search. Freeze the credential only when
+  // the Host can resolve one: provisioning must still work for users without a
+  // DeepSeek account (they keep public web_fetch, and the runtime advertises
+  // only the web tools it can actually execute).
+  if (record.spec?.security?.assistantPermissions?.profile === 'workspace-managed/v1' && typeof credentials?.resolve === 'function') {
+    const search = await credentials.resolve('DEEPSEEK_API_KEY').catch(() => null);
+    if (typeof search?.value === 'string' && search.value.trim()) requireEnv('DEEPSEEK_API_KEY', 'web-search', 'personal assistant web search');
   }
   return { resources: { profiles, mcps, skills, cloud, remote }, requirements, files };
 }

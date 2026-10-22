@@ -3,7 +3,7 @@ import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 export function createChannelsPage({
   ui: { React: { createElement: h, useEffect, useState, Fragment }, EmptyState, Metric, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, Pill, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND },
-  hostRemote, actions, window = globalThis.window, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
+  hostRemote, actions, window = globalThis.window, document = globalThis.document, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
 }) {
   function ChannelsPage() {
     const [status, setStatus] = useState('loading');
@@ -65,6 +65,7 @@ export function createChannelsPage({
     useEffect(() => {
       let active = true, pending = false;
       const timer = setInterval(async () => {
+        if (document.hidden) return;
         if (pending) return;
         pending = true;
         try { const value = await hostRemote.channelConnection(); if (active) setConnection(value); } catch {} finally { pending = false; }

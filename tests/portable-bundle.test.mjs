@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createStudioBuild } from '../src/studio-build.mjs';
 import { createPortableBundles, verifyPortableBundle, importPortableBundle, loadPortableRuntime } from '../src/portable-bundle.mjs';
+import { resolveDeploymentCredentials } from '../src/deployment-credentials.mjs';
 import { runtimeSkill } from '../src/skill-files.mjs';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
 import { createModelService } from '../src/model-service.mjs';
@@ -32,7 +33,7 @@ async function fixture(t, overrides = {}) {
     loadSkill: async () => ({ definitions: [runtimeSkill({ name: 'skill', content, path: join(skillRoot, 'SKILL.md') })] }) };
   const configuration = { resolve: async () => ({ values: { cloudServerUrl: 'https://cloud.example', cloudRegion: 'cn-test', cloudAccessKey: 'source-ak', cloudSecretKey: 'source-sk' } }) };
   const portable = createPortableBundles({ storeDir: join(root, 'source-store'), build, models, adapters, configuration });
-  return { root, skillRoot, build, record, agentId, skillId, portable, models, adapters };
+  return { root, skillRoot, build, record, agentId, skillId, portable, models, adapters, configuration };
 }
 
 test('export and import retain exact build, file modes, resource identity and target-only credentials', async t => {
@@ -146,4 +147,35 @@ test('portable startup rejects other runtime identities and never inherits legac
   await assert.rejects(loadPortableRuntime(target, env), { code: 'PORTABLE_RUNTIME_MISMATCH' });
   await writeFile(join(target, '.portable-importing'), '');
   await assert.rejects(loadPortableRuntime(target, env), { code: 'PORTABLE_IMPORT_INCOMPLETE' });
+});
+
+test('managed assistant bundles freeze the DeepSeek search credential only when the Host resolves it', async t => {
+  const f = await fixture(t);
+  const assistantId = 'ar-local-fedcba0987654321';
+  const bindings = { modelProfileId: 'configured-model' }, spec = { runtime: { type: 'harness' },
+    security: { assistantPermissions: { profile: 'workspace-managed/v1' } }, bindings };
+  const assistant = await f.build.build({ agentId: assistantId, agentName: 'assistant', revision: 1,
+    metadata: { id: assistantId, revision: 1, local: true }, spec, bindings });
+  const searchCredential = 'search-private-credential';
+  const credentials = { resolve: async name => name === 'DEEPSEEK_API_KEY' ? { value: searchCredential, source: 'stored' } : null };
+  const portable = createPortableBundles({ storeDir: join(f.root, 'assistant-store'), build: f.build, models: f.models,
+    adapters: f.adapters, configuration: f.configuration, credentials });
+  const prepared = await portable.prepare(assistantId, assistant.id);
+  const requirement = prepared.requirements.find(item => item.name === 'DEEPSEEK_API_KEY');
+  assert.equal(requirement?.resourceId, 'web-search');
+  const zip = Buffer.from((await portable.download(assistantId, assistant.id, prepared.bundleId)).base64, 'base64');
+  assert.equal(zip.includes(Buffer.from(searchCredential)), false);
+  const resolved = await resolveDeploymentCredentials({ zip, models: f.models, adapters: f.adapters, credentials, configuration: f.configuration });
+  assert.equal(resolved.DEEPSEEK_API_KEY, searchCredential);
+  // Rotation is allowed, but a revoked credential must fail before any billable create.
+  const rotated = { resolve: async name => name === 'DEEPSEEK_API_KEY' ? { value: 'rotated-private-credential' } : null };
+  assert.equal((await resolveDeploymentCredentials({ zip, models: f.models, adapters: f.adapters, credentials: rotated, configuration: f.configuration })).DEEPSEEK_API_KEY, 'rotated-private-credential');
+  await assert.rejects(resolveDeploymentCredentials({ zip, models: f.models, adapters: f.adapters, credentials: { resolve: async () => null }, configuration: f.configuration }), { code: 'PORTABLE_CREDENTIAL_MISSING' });
+  // Regular builds never freeze a search credential, even when one is resolvable.
+  const plain = await portable.prepare(f.agentId, f.record.id);
+  assert.equal(plain.requirements.some(item => item.name === 'DEEPSEEK_API_KEY'), false);
+  // Without a resolvable credential the assistant deployment keeps working with web_fetch only.
+  const plainAssistant = createPortableBundles({ storeDir: join(f.root, 'assistant-plain-store'), build: f.build, models: f.models,
+    adapters: f.adapters, configuration: f.configuration });
+  assert.equal((await plainAssistant.prepare(assistantId, assistant.id)).requirements.some(item => item.name === 'DEEPSEEK_API_KEY'), false);
 });

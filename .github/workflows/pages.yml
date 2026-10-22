@@ -2,7 +2,12 @@ name: Deploy AgentKit Studio site
 on:
   push:
     branches: [main]
-    paths: [docs/**, .github/workflows/pages.yml]
+    paths:
+      - docs/**
+      - scripts/build-docs-site.mjs
+      - package.json
+      - pnpm-lock.yaml
+      - .github/workflows/pages.yml
   workflow_dispatch:
 permissions:
   contents: read
@@ -17,11 +22,22 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Render docs/ Markdown into the static site
+        run: node scripts/build-docs-site.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: .artifacts/docs-site
       - id: deployment
         uses: actions/deploy-pages@v4

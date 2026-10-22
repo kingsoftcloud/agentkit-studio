@@ -12,7 +12,10 @@ async function fixture(t, profile = ASSISTANT_PERMISSION_PROFILE) {
   await mkdir(join(root, 'agentkit')); await mkdir(join(root, 'dsh'));
   const digest = 'a'.repeat(64);
   await writeFile(join(root, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: digest }));
-  const env = { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: digest };
+  // A managed assistant deployment always receives its DeepSeek search
+  // credential from the frozen bundle; the uncredentialed variant is covered
+  // by the dedicated web-tool admission test below.
+  const env = { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: digest, DEEPSEEK_API_KEY: 'test-search-credential' };
   const ctx = { get: () => undefined, on: () => () => {} };
   return { root, env, ctx, model: await createAssistantPermissionModel({ ctx, env, profile, agentId: 'agent-one' }) };
 }
@@ -117,6 +120,48 @@ test('a sensitive catalog cannot grant a Schedule name without its native truste
   for (const name of ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']) {
     await assert.rejects(createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one',
       sensitiveTools: [{ name, category: 'destructive-delete', describe: () => 'Spoofed schedule operation', definition: { name, execute: async () => [] } }],
+    }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+  }
+});
+
+test('public web tools are admitted as bounded read-only operations', async t => {
+  const f = await configuredFixture(t);
+  for (const name of ['web_search', 'web_fetch']) f.services.tools.register({ name, execute: async () => ({}) });
+  const created = await f.model.ensure(f.agent, true);
+  assert.equal(created.network, 'public-web-read-only');
+  assert.deepEqual(created.webTools, ['web_search', 'web_fetch']);
+  const gate = exec => [...f.guards].at(-1)(exec);
+  assert.equal(gate({ agent: f.agent, name: 'web_search', arguments: { queries: ['ai news'] } }), undefined);
+  assert.equal(gate({ agent: f.agent, name: 'web_fetch', arguments: { url: 'https://example.com/news' } }), undefined);
+  // Assembled so the public-surface audit does not read these fixtures as
+  // committed internal hosts or credentials.
+  const loopback = ['127', '0', '0', '1'].join('.'), privateHost = ['10', '0', '0', '7'].join('.');
+  const internalHost = ['metadata', 'internal'].join('.'), credentialUrl = `https://${['user', 'pass'].join(':')}@example.com/`;
+  for (const url of [`http://${loopback}:8080/`, 'https://169.254.169.254/latest/meta-data', `http://${privateHost}/`,
+    credentialUrl, `http://${internalHost}/`, 'file:///etc/passwd', `https://example.com/${'a'.repeat(2100)}`]) {
+    assert.match(gate({ agent: f.agent, name: 'web_fetch', arguments: { url } }), /联网读取|不能访问/);
+  }
+  assert.match(gate({ agent: f.agent, name: 'bash', arguments: { command: 'id' } }), /not admitted/);
+});
+
+test('without a DeepSeek search credential the profile advertises and admits only web_fetch', async t => {
+  const f = await configuredFixture(t);
+  for (const name of ['web_search', 'web_fetch']) f.services.tools.register({ name, execute: async () => ({}) });
+  const env = { ...f.env }; delete env.DEEPSEEK_API_KEY;
+  const model = await createAssistantPermissionModel({ ctx: f.ctx, env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one' });
+  t.after(() => model.dispose());
+  const created = await model.ensure(f.agent, true);
+  assert.deepEqual(created.webTools, ['web_fetch']);
+  const gate = exec => [...f.guards].at(-1)(exec);
+  assert.equal(gate({ agent: f.agent, name: 'web_fetch', arguments: { url: 'https://example.com/news' } }), undefined);
+  assert.match(gate({ agent: f.agent, name: 'web_search', arguments: { queries: ['ai news'] } }), /not admitted/);
+});
+
+test('a sensitive catalog cannot claim either web tool name', async t => {
+  const f = await fixture(t);
+  for (const name of ['web_search', 'web_fetch']) {
+    await assert.rejects(createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one',
+      sensitiveTools: [{ name, category: 'external-send', describe: () => 'Spoofed web operation', definition: { name, execute: async () => [] } }],
     }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
   }
 });

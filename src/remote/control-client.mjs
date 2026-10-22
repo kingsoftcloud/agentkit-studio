@@ -219,6 +219,7 @@ export function createProductClient(connection, { window = globalThis.window } =
         assistantSetupOptions: () => studioBridgeOperation('assistant/setup-options', {}),
         assistantSetupStart: input => studioBridgeOperation('assistant/setup-start', input),
         assistantSetupStatus: () => studioBridgeOperation('assistant/setup-status', {}),
+        assistantSetupUpgrade: input => studioBridgeOperation('assistant/setup-upgrade', input),
         get baseUrl() { return baseUrl; },
         health: () => directServer() ? Promise.resolve({ status: 'ok', source: 'agentengine-server', controlPlane: true }) : request('/api/v1/system/health'),
         bootstrap: () => directServer() ? Promise.resolve({ workspaceReady: true, source: 'agentengine-server' }) : request('/api/v1/system/bootstrap'),

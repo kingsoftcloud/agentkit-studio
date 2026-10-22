@@ -13,7 +13,7 @@ const resources = Object.freeze({ cpu: 2, memoryGiB: 4, storageGiB: 20 });
 const labels = { PREPARING: '正在准备你的助理', UPLOADING: '正在保存助理配置', UPLOADED: '正在创建云端环境', PREPARED: '正在准备云端环境', CREATING: '正在创建云端环境', PROVISIONING: '正在分配云端资源', CONFIGURING: '正在连接你的助理', TOKEN_PENDING: '正在连接你的助理', STARTING: '助理正在启动', READY: '助理已就绪', AVAILABLE_UPDATING: '助理已就绪' };
 const readyStates = new Set(['READY', 'AVAILABLE_UPDATING']);
 
-export function createAssistantSetup({ storeDir, configuration, models, serverClient, deploymentClient, agents, build, deployments, fetchImpl = fetch }) {
+export function createAssistantSetup({ storeDir, configuration, models, serverClient, deploymentClient, agents, build, deployments, credentials, fetchImpl = fetch }) {
   const images = createDeploymentImages({ client: deploymentClient, configuration });
   const active = new Map(), errors = new Map();
   async function scope() {
@@ -70,20 +70,28 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     if (!record) return { state: 'NOT_STARTED' };
     return { state: record.state, message: record.failure?.message || labels[record.state] || '请核对开通状态',
       ready: readyStates.has(record.state), cloudAgentId: record.cloudAgentId || null, deploymentId: record.deploymentId || null,
-      failure: record.failure || null, resources, startedAt: record.startedAt };
+      releaseId: record.selection?.releaseId || null, failure: record.failure || null, resources, startedAt: record.startedAt };
+  }
+  async function webSearchCredential() {
+    const resolved = await credentials?.resolve?.('DEEPSEEK_API_KEY').catch(() => null);
+    return typeof resolved?.value === 'string' && resolved.value.trim() ? resolved.value : null;
   }
   async function options() {
     const key = await scope();
-    const [model, catalog, memory] = await Promise.all([models.profile(''), images.list('dsh-native'), listStudioResources({ serverClient, query: { kind: 'memory-instance', limit: 200 } })]);
+    const [model, catalog, memory, search] = await Promise.all([models.profile(''), images.list('dsh-native'), listStudioResources({ serverClient, query: { kind: 'memory-instance', limit: 200 } }), webSearchCredential()]);
     const eligible = catalog.releases.filter(item => item.runtimeIdentity && item.capabilities.includes('personal-assistant/v1') && item.capabilities.includes(ASSISTANT_MANAGED_PERMISSION_CAPABILITY));
     const image = eligible.find(item => item.id === catalog.defaultReleaseId) || (eligible.length === 1 ? eligible[0] : null);
     if (!image) throw portableError('ASSISTANT_IMAGE_UNAVAILABLE', '当前环境还没有支持受管工作区与敏感审批的个人助理镜像，请先更新云端版本配置');
     admitDeploymentStorage(resources, catalog, 'dsh-native');
     const memories = memory.items.filter(item => !item.disabled).map(item => ({ id: item.resourceId, name: item.name || item.resourceId, region: item.region || catalog.region }));
     if (!memories.length) throw portableError('ASSISTANT_MEMORY_REQUIRED', '请先创建一个云端记忆库，再开通能够长期记忆的助理');
-    return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories, 'workspace-managed/v1'])), model: { id: model.id, name: model.displayName || model.modelName },
+    const webSearch = Boolean(search);
+    return { optionsId: sha256(JSON.stringify([key, catalog.revision, image.id, model.id, memories, 'workspace-managed/v1', webSearch])), model: { id: model.id, name: model.displayName || model.modelName },
       permissionProfile: 'workspace-managed/v1',
-      permissionNotice: '助理可在专属云工作区读写文件并搜索；删除单个文件需在线逐次确认。任意 Shell、越界访问及未接通的外发、支付、账号操作不会自动开放。',
+      webSearch,
+      permissionNotice: webSearch
+        ? '助理可联网搜索公开信息、读取公开网页，并在专属云工作区读写文件；删除单个文件需在线逐次确认。内网与本机访问、任意 Shell、未接通的外发与支付不会自动开放。'
+        : '助理可读取公开网页，并在专属云工作区读写文件；删除单个文件需在线逐次确认。当前未配置 DeepSeek 搜索凭证，因此暂不启用联网搜索。内网与本机访问、任意 Shell、未接通的外发与支付不会自动开放。',
       memories, releaseId: image.id, environment: catalog.environment, region: catalog.region, resources,
       billingNotice: '开通后创建 1 个常驻实例（2 核 / 4 GiB）和 20 GiB 持久存储，按平台规则计费；关闭 Studio 不会停止云端计费。' };
   }
@@ -98,7 +106,9 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     };
     const snapshot = await call('snapshot', {});
     if (!snapshot.messages.length) {
-      const result = await call('submit', { requestId: ASSISTANT_WELCOME_REQUEST, text: '用户刚开通了个人助理。请用两三句自然的中文欢迎用户，说明可以交代任务、设置提醒，以及明确要求你记住偏好。不要声称已经执行了任务或记录了记忆，最后问用户想先做什么。' });
+      const webSearch = Boolean(await webSearchCredential());
+      const research = webSearch ? '查资料（联网搜索、读取网页）' : '查资料（读取公开网页）';
+      const result = await call('submit', { requestId: ASSISTANT_WELCOME_REQUEST, text: `用户刚开通了个人助理。请用两三句自然的中文欢迎用户，说明你可以帮他${research}、整理手头文件、设置提醒，并在他明确要求时记住偏好。不要声称已经执行了任务或记录了记忆，最后问用户想先做什么。` });
       if (!result.accepted || result.requestId !== ASSISTANT_WELCOME_REQUEST) throw portableError('ASSISTANT_WELCOME_PENDING', '欢迎消息尚未确认，请稍后刷新');
     }
     record.welcomed = true;
@@ -112,7 +122,7 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
           const selected = record.selection;
           const agent = await agents.create({ name: '我的个人助理', purpose: 'personal-assistant', runtimeType: 'dsh-native', spec: {
             ...(selected.permissionProfile === 'workspace-managed/v1' ? { security: { assistantPermissions: { profile: selected.permissionProfile } } } : {}),
-            instructions: { system: '你是用户的个人助理。自然、简洁地用中文交流。准确区分计划和已执行的工作；仅在用户明确要求时记录长期记忆，允许用户纠正和删除。' },
+            instructions: { system: '你是用户的个人助理。自然、简洁地用中文交流。你可以联网搜索公开信息、读取公开网页，在专属云端工作区读写文件，管理提醒，并在用户明确要求时记录长期记忆。不能运行任意命令，也不能访问内网、本机或需要登录的内容；做不到时直接说明，不要编造设置项或声称未执行的事情。准确区分计划和已执行的工作。' },
             memory: { enabled: true, write: { mode: 'explicit_only' } },
             bindings: { modelProfileId: selected.modelId, plugins: [{ name: 'memory', config: { binding: { resource: { kind: 'memory-instance', ...selected.memory } } } }] },
           } });
@@ -191,6 +201,34 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     });
     kick(key); return publicState(await read(key));
   }
+  // In-place image upgrade: rebuild the frozen package from the Agent's current
+  // revision, then reuse the native rollout update so history and storage stay.
+  async function upgrade(input = {}) {
+    if (input.confirmed !== true) throw portableError('ASSISTANT_CONFIRM_REQUIRED', '请确认升级云端助理后再继续');
+    const key = await scope(), record = await read(key);
+    if (!record || !readyStates.has(record.state) || !record.welcomed) throw portableError('ASSISTANT_UPGRADE_UNAVAILABLE', '助理尚未就绪，暂不能升级，请稍后重试');
+    const available = await options();
+    if (input.optionsId !== available.optionsId) throw portableError('ASSISTANT_OPTIONS_CHANGED', '升级配置已变化，请刷新后确认');
+    if (available.releaseId === record.selection?.releaseId) return publicState(record);
+    await locked(key, async () => {
+      const latest = await read(key);
+      if (!latest || latest.state !== record.state || latest.selection?.releaseId !== record.selection?.releaseId) return;
+      const agent = await agents.get(latest.agentId);
+      const frozen = await build.build({ agentId: agent.metadata.id, agentName: agent.metadata.name, revision: agent.metadata.revision,
+        metadata: agent.metadata, spec: agent.spec, bindings: agent.bindings });
+      const preview = await deployments.prepareUpdate({ deploymentId: latest.deploymentId, buildId: frozen.id, releaseId: available.releaseId });
+      await deployments.applyUpdate({ deploymentId: latest.deploymentId, previewId: preview.previewId, buildId: frozen.id,
+        bundleId: preview.bundleId, releaseId: preview.releaseId || available.releaseId,
+        idempotencyKey: `assistant-upgrade-${sha256(JSON.stringify([latest.deploymentId, frozen.id, available.releaseId])).slice(0, 40)}` });
+      latest.buildId = frozen.id;
+      latest.preview = { ...(latest.preview || {}), buildId: frozen.id, releaseId: available.releaseId };
+      latest.selection = { ...latest.selection, releaseId: available.releaseId };
+      latest.state = 'UPDATING'; latest.failure = null;
+      await write(latest);
+    });
+    kick(key);
+    return publicState(await read(key));
+  }
   // Read-only lineage lookup: catalog/binding must never start deployment work.
   async function reference() {
     let key;
@@ -198,5 +236,5 @@ export function createAssistantSetup({ storeDir, configuration, models, serverCl
     const record = await read(key);
     return record ? { agentId: record.agentId, cloudAgentId: record.cloudAgentId, deploymentId: record.deploymentId } : null;
   }
-  return { options, start, status, reference };
+  return { options, start, status, upgrade, reference };
 }

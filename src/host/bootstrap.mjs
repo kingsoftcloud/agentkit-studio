@@ -134,7 +134,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
-    adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
+    adapters: await resourceAdaptersPromise, configuration: await configurationPromise, credentials });
   templateServices = await (await import('./services/templates.mjs')).createTemplateServices(ctx, {
     ...services, storeDir: studioStoreDir, env: runtimeEnv, models, listCodexAgentModels, codexModels, getTeamTemplates: () => teamTemplates,
   });
