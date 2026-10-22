@@ -19,7 +19,7 @@ import { previousChildPublication } from '../packages/agentkit-harness/src/nativ
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
   inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan,
-  childPlan, boundTools = ['read_workspace_file'] } = {}) {
+  childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-children-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   const roles = [{ name: 'reader', instructions: 'Read the requested workspace evidence.', tools: ['read_workspace_file'],
@@ -39,12 +39,13 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
     register: definition => { registered.set(definition.name, definition); return () => registered.delete(definition.name); },
     execute: async request => {
       dispatches.push({ name: request.name, callId: request.callId, agent: request.agent });
+      await beforeToolDispatch?.(request);
       const definition = registered.get(request.name), value = await definition.execute(request.arguments, request);
       return { isError: false, content: definition.output.render(request.arguments, value) };
     },
   } };
-  const gateway = createNativeDshTools({ ctx, config: { subAgents: roles, toolBindings: boundTools },
-    workspaceRoot, stateDir: join(root, 'tools') });
+  const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id, subAgents: roles, toolBindings: boundTools,
+    toolContracts: mcp?.contracts }, workspaceRoot, stateDir: join(root, 'tools'), executeMcpTool: mcp?.execute });
   const values = { modelProfiles: [{ id: 'parent-profile', provider: 'openai-compatible', modelName: 'parent-model', baseUrl: 'https://parent.invalid/v1' },
     { id: 'child-profile', provider: 'openai-compatible', modelName: 'child-model', baseUrl: 'https://child.invalid/v1', input: childInput }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: 'fixture-secret' }) } });
@@ -59,7 +60,10 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         childModels++;
         await beforeChildModel?.(childModels, body);
         assert.equal(url, 'https://child.invalid/v1/chat/completions');
-        assert.deepEqual(body.tools.map(item => item.function.name).filter(name => name !== 'submit_final_output'), roles[0].tools);
+        const expectedTools = [...roles[0].tools, ...(roles[0].inheritMcp && mcp ? mcp.contracts.map(item => item.name).sort() : [])];
+        const offeredTools = body.tools ?? [];
+        assert.deepEqual(offeredTools.map(item => item.function.name).filter(name => name !== 'submit_final_output'),
+          childModels > 1 && !offeredTools.length ? [] : expectedTools);
         if (childPlan) ({ call, text } = await childPlan(body, childModels));
         else if (childModels === 1) call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
         else {
@@ -87,7 +91,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
             usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
         } else text = parentResult;
       }
-      if (text && body.tools.some(item => item.function.name === 'submit_final_output')) {
+      if (text && body.tools?.some(item => item.function.name === 'submit_final_output')) {
         call = { name: 'submit_final_output', arguments: { output: JSON.parse(text) } }; text = undefined;
       }
       const delta = call ? { tool_calls: [{ index: 0, id: `call-${requests.length}`, type: 'function',
@@ -110,6 +114,101 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   return { root, workspaceRoot, host, payload, ledger, gateway, roles, requests, dispatches, record, scope,
     modelValues: values, childModels: () => childModels };
 }
+
+const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
+  parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
+
+test('SQLite Host grants inherited MCP through each child intent and rejects foreign or completed replay', async t => {
+  const effects = [], captured = [];
+  const f = await setup(t, { sqlite: true, childTool: 'native_delegate', boundTools: [],
+    role: { tools: [], inheritMcp: true, maxToolCalls: null },
+    mcp: { contracts: [childMcpContract], execute: async input => {
+      assert.equal(typeof input.assertCurrent, 'function'); input.assertCurrent();
+      effects.push(input); return { content: [{ type: 'text', text: `Remote evidence ${input.arguments.id}` }] };
+    } },
+    childPlan: async (body, index) => {
+      if (index < 3) return { call: { name: 'remote_lookup', arguments: { id: index } } };
+      assert.match(JSON.stringify(body.messages), /Remote evidence 1/);
+      assert.match(JSON.stringify(body.messages), /Remote evidence 2/);
+      return { text: 'Inherited MCP delivery' };
+    } });
+  const bind = f.gateway.forChild.bind(f.gateway);
+  f.gateway.forChild = (agent, authority) => {
+    const ports = bind(agent, authority), execute = ports.tools.execute;
+    ports.tools.execute = async request => {
+      captured.push({ request: { ...structuredClone(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))),
+        signal: request.signal }, execute });
+      await assert.rejects(execute({ ...request, scope: { ...request.scope, userId: 'foreign' } }), /child_tool_not_bound/);
+      await assert.rejects(execute({ ...request, runId: 'foreign-run' }), /child_mcp_authority_stale/);
+      return execute(request);
+    };
+    return ports;
+  };
+  await f.host.executeTurn(f.payload);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+  const child = f.ledger.list(childScope)[0], saved = f.ledger.load(childScope, child.runId);
+  assert.equal(child.phase, 'completed'); assert.equal(effects.length, 2);
+  assert.ok(saved.configuration.limits.maxToolCalls >= 2 && saved.configuration.limits.maxToolCalls <= 12);
+  assert.deepEqual(saved.configuration.tools.map(tool => tool.name), ['remote_lookup']);
+  assert.ok(saved.configuration.tools.every(tool => !tool.readOnly && !tool.concurrentSafe));
+  assert.ok(effects.every(input => input.agentId === f.record.metadata.id && input.resourceId === 'bound-catalog'
+    && input.agent === f.payload.agent && input.resultFormat === 'mcp-result/v1'));
+  assert.equal(f.dispatches.filter(item => item.name === 'remote_lookup').length, 2);
+  for (const { request, execute } of captured) await assert.rejects(execute(request), /child_mcp_authority_stale/);
+  for (const input of effects) assert.throws(input.assertCurrent, /child_mcp_authority_stale/);
+  assert.equal(effects.length, 2);
+  const reopened = new SqliteRunStore(join(f.root, 'runs.sqlite'));
+  try { assert.deepEqual(reopened.load(childScope, child.runId).configuration, saved.configuration); }
+  finally { reopened.close(); }
+  assert.throws(() => bind(f.payload.agent, { scope: childScope, store: f.ledger, sessionId: child.sessionId,
+    toolNames: ['remote_lookup'] }), /child_tools_not_bound/);
+  assert.throws(() => bind(f.payload.agent, { scope: childScope, store: f.ledger, sessionId: child.sessionId,
+    toolNames: ['remote_lookup'], mcpBinding: { ...f.gateway.childMcpBinding, bindingDigest: '0'.repeat(64) } }), /mcp_binding_changed/);
+});
+
+test('MCP inheritance is opt-in and rejects concurrent-safe roles with unknown remote effects before model work', async t => {
+  const mcp = { contracts: [childMcpContract], execute: async () => assert.fail('No MCP dispatch') };
+  const f = await setup(t, { sqlite: true, childTool: 'native_delegate', mcp,
+    childPlan: async (_body, index) => index === 1
+      ? { call: { name: 'read_workspace_file', arguments: { path: 'proof.txt' } } } : { text: 'Read only local evidence' } });
+  await f.host.executeTurn(f.payload);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+  assert.deepEqual(f.ledger.load(childScope, f.ledger.list(childScope)[0].runId).configuration.tools.map(tool => tool.name), ['read_workspace_file']);
+  const unsafe = await setup(t, { mcp, role: { inheritMcp: true, concurrentSafe: true } });
+  await assert.rejects(unsafe.host.executeTurn(unsafe.payload), /child_mcp_role_unsafe/);
+  assert.equal(unsafe.requests.length, 0);
+});
+
+for (const drift of ['before_dispatch', 'after_effect']) test(`child MCP full request authority loss ${drift} cannot authorize a successful effect`, async t => {
+  let request, effects = 0;
+  const mutate = () => { request.budget = { ...request.budget, remainingTokens: (request.budget?.remainingTokens ?? 0) + 1 }; };
+  const f = await setup(t, { sqlite: true, childTool: 'native_delegate', boundTools: [],
+    role: { tools: [], inheritMcp: true, maxToolCalls: null },
+    beforeToolDispatch: async input => { if (input.name === 'remote_lookup' && drift === 'before_dispatch') mutate(); },
+    mcp: { contracts: [childMcpContract], execute: async () => {
+      effects++; if (drift === 'after_effect') mutate();
+      return { content: [{ type: 'text', text: 'Remote effect receipt' }] };
+    } },
+    childPlan: async (_body, index) => index === 1
+      ? { call: { name: 'remote_lookup', arguments: { id: 1 } } } : { text: 'Child completion' } });
+  const bind = f.gateway.forChild.bind(f.gateway);
+  f.gateway.forChild = (agent, authority) => {
+    const ports = bind(agent, authority), execute = ports.tools.execute;
+    ports.tools.execute = input => { request = input; return execute(input); };
+    return ports;
+  };
+  try { await f.host.executeTurn(f.payload); }
+  catch (error) { assert.equal(error.nativeReason, 'child_receipt_unavailable'); }
+  assert.equal(effects, drift === 'before_dispatch' ? 0 : 1);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+  const child = f.ledger.list(childScope)[0], saved = f.ledger.load(childScope, child.runId);
+  const results = saved.receipts.flatMap(receipt => receipt.result.results ?? []);
+  assert.ok(!results.some(result => result.status === 'ok'));
+  if (drift === 'after_effect') {
+    assert.ok(results.some(result => result.status === 'uncertain'));
+    assert.match(JSON.stringify(results), /Remote effect receipt/);
+  }
+});
 
 test('production Host confines a writing child and its continuation to the original isolated workspace', async t => {
   const boundTools = ['read_workspace_file', 'write_workspace_file'];

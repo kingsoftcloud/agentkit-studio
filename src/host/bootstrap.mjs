@@ -115,14 +115,14 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   ctx.effect(() => bridge.setAdapter(dshRuntimeAdapter), 'agentkit-studio: runtime transport registration');
   const routeDshRuntime = (options, next) => routeRuntime(options, next, bridge, request => hostCompatibility.isAgentLoopRequest(request));
   ctx.on('llm/stream', routeDshRuntime);
-  ctx.effect(() => bridge.setResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal, resultFormat } = {}) => {
+  ctx.effect(() => bridge.setResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal, resultFormat, assertCurrent } = {}) => {
     const adapters = await resourceAdaptersPromise;
     if (typeof adapters?.callMcpTool !== 'function') {
       const error = new Error('AgentKit Studio MCP 资源适配器不可用');
       error.code = 'MCP_RESOURCE_ADAPTER_MISSING';
       throw error;
     }
-    return adapters.callMcpTool(resourceId, name, args, { signal, resultFormat });
+    return adapters.callMcpTool(resourceId, name, args, { signal, resultFormat, assertCurrent });
   }), 'agentkit-studio: resource tool registration');
   ctx.inject(['llm'], llmCtx => {
     // registerAdapter already returns a disposer. Put the registration call

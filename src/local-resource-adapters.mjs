@@ -221,12 +221,26 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     }
   }
 
-  async function callMcpTool(id, name, args = {}, { signal, resultFormat = 'content' } = {}) {
-    signal?.throwIfAborted();
+  async function callMcpTool(id, name, args = {}, { signal, resultFormat = 'content', assertCurrent } = {}) {
+    const check = () => {
+      signal?.throwIfAborted();
+      if (assertCurrent === undefined) return;
+      if (typeof assertCurrent !== 'function') throw new LocalResourceError('MCP_AUTHORITY_INVALID', 'MCP 调用权限校验无效');
+      const result = assertCurrent();
+      if (result && typeof result.then === 'function') {
+        Promise.resolve(result).catch(() => {});
+        throw new LocalResourceError('MCP_AUTHORITY_INVALID', 'MCP 调用权限校验必须同步完成');
+      }
+      if (result === false) throw new LocalResourceError('MCP_AUTHORITY_STALE', 'MCP 调用权限已失效');
+    };
+    check();
     if (!['content', 'mcp-result/v1'].includes(resultFormat)) throw new LocalResourceError('MCP_RESULT_FORMAT_INVALID', 'MCP 结果格式无效');
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
     const key = resourceId(id);
     const entry = await mcp(id, resultFormat === 'mcp-result/v1' ? NATIVE_MCP_JSON_CODEC : undefined);
+    // Credentials and connection initialization may wait. Borrowing a parent
+    // connection cannot extend the child's original dispatch authority.
+    check();
     let result;
     try { result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal }); }
     catch (error) {

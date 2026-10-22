@@ -205,6 +205,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           stateDir: join(storeDir, 'native-harness') }) : null,
         hasSkills: Boolean(record.spec.bindings?.skills?.length || binding.nativeTools.childCapabilities?.skills),
         hasMcp: Boolean(record.spec.bindings?.mcpServers?.length || binding.nativeTools.childCapabilities?.mcp),
+        mcpBinding: binding.nativeTools.childMcpBinding,
         resolveModel: async id => {
           if (id === null) return parentModel;
           const index = ids.indexOf(id);

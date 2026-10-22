@@ -1,4 +1,4 @@
-Native 子任务文件工作区已接入 Studio Host。父 Agent 显式绑定的十个 workspace 工具可以授予子角色；包含写工具的角色使用隔离目录，且不能声明 `concurrentSafe: true`。命令、Browser、Memory 等工具不因此获得子角色授权，Skills/MCP 继承还在独立接入。
+Native 子任务文件工作区已接入 Studio Host。父 Agent 显式绑定的十个 workspace 工具可以授予子角色；包含写工具的角色使用隔离目录，且不能声明 `concurrentSafe: true`。命令、Browser、Memory 等工具不因此获得子角色授权。`inheritMcp: true` 另外继承父 Agent 已绑定的全部 MCP 工具，Skills 继承仍待接入。
 
 新子 Session 复制真实父工作区的当前文件，包括未提交及未跟踪文件，忽略 `.git`、`.agentkit`、`.harness-tools`、`.artifacts`。后续 Run 继续使用同一隔离目录和最初基线，不重新复制父目录。模型不能选择隔离路径；scope、Session、角色及父目录共同决定隔离身份。冻结配置保存 `hostRecoveryBinding.childWorkspace`，契约为 `agentkit.native-child-workspace-binding/v1`。恢复时核对原身份、路径摘要、角色摘要和基线；缺失目录不会重新准备。
 
@@ -22,4 +22,8 @@ node scripts/verify-studio-native-child-write-recovery.mjs --source .artifacts/d
 
 当前 Host 只对其普通 HTTP 推理绑定启用 `pure-inference/v1`：受支持的 OpenAI Chat、Responses 或 Anthropic 协议，且模型扩展参数为空。工具调用由模型提出，由 Native 本地调度；模型请求本身不能执行 Studio 工具。带扩展参数的配置保留 `manual`，不将未知提供方行为自动重跑。推理重试仍可能产生额外计费，丢失尝试不会被抹去或视为免费。
 
-尚未完成：Skills/MCP 继承及端到端全新安装验收。此打包验证复用固定本地依赖图，PATH 只提供 Node；不代表全新依赖安装、在线模型或 E2B 验收。合并只由显式工具调用触发，读取历史不会发布文件。隔离目录限制 SDK 文件工具的读写范围，不能作为任意宿主命令的操作系统沙箱；文件发布也不提供跨文件原子事务。
+MCP 继承默认关闭。启用后，子配置固定工具定义、资源绑定及 Schema 的摘要，恢复必须仍匹配原绑定。借用父连接不会转移连接所有权；子任务继续通过父 Agent 的 DSH 权限管线，但调用必须符合子任务自身的 scope、Run、Session、原始 intent、完整参数及定义、当前 lease/fence。权限管线等待后和连接初始化等待后都复查，派发前失效不调用远端；远端已执行后发生权限漂移则保留原回执并标为 uncertain。未知远端效果不能凭目录 read-only 提示取得安全重试或并行权限，因此当前继承 MCP 的角色不能声明 `concurrentSafe: true`。工作区隔离不会隔离 MCP 的外部资源。
+
+继承 MCP 的 Host/网关两个相关模块在 Node 26.5.0、22.19.0 各通过 73 项测试，使用实际 AgentStore、NativeKernel、SQLite 和注册网关，远端及 DSH 外壳为确定性设施；覆盖连续两次 MCP 调用、未声明继承、跨身份和已完成调用重放拒绝、派发前请求漂移与执行后 uncertain 原回执。资源适配器另验证真正 MCP 客户端等待后的权限复查和异步校验拒绝。这些证据不代表继承 MCP 的完整打包 Host、在线远端或进程退出恢复已验收。
+
+尚未完成：Skills 继承、MCP 继承的打包 Host 冷恢复和端到端全新安装验收。前述文件工作区打包验证复用固定本地依赖图，PATH 只提供 Node；不代表全新依赖安装、在线模型或 E2B 验收。合并只由显式工具调用触发，读取历史不会发布文件。隔离目录限制 SDK 文件工具的读写范围，不能作为任意宿主命令的操作系统沙箱；文件发布也不提供跨文件原子事务。

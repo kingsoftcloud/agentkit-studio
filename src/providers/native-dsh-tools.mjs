@@ -98,6 +98,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   invariant(!mcpContracts.size || typeof executeMcpTool === 'function', 'studio_native_mcp_executor_unavailable');
   const mcpSchemas = new Map([...mcpContracts].filter(([, contract]) => contract.nativeMcpSchema !== undefined)
     .map(([name, contract]) => [name, bindNativeMcpSchema(contract.nativeMcpSchema)]));
+  const mcpBindingDigest = mcpContracts.size ? hash([...mcpContracts].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([name, contract]) => ({
+    name, resourceId: String(contract.mcpResourceId || contract.resourceId).trim(),
+    schema: contract.nativeMcpSchema ?? { parameters: contract.parameters ?? { type: 'object', properties: {} } },
+  }))) : null;
+  const childMcpBinding = mcpContracts.size ? { contract: 'agentkit.studio-child-borrowed-mcp/v1',
+    bindingDigest: mcpBindingDigest, toolNames: [...mcpContracts.keys()].sort() } : null;
   // Memory tool names are registered ONCE (shared across the preset's sessions)
   // but each active session owns its own Memory owner; a call routes to the
   // owner bound for ITS session via the registered execute closure, and
@@ -155,6 +161,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             }
           }
           exec.signal.throwIfAborted();
+          invocation.assertMcpCurrent?.();
           invocation.dispatched = true;
           let outcome;
           if (invocation.verificationDispatch) {
@@ -169,7 +176,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             const contract = mcpContracts.get(name);
             outcome = nativeMcpOutcome(await executeMcpTool({ agentId: config.agentId,
               resourceId: String(contract.mcpResourceId || contract.resourceId).trim(), name,
-              arguments: args, signal: exec.signal, callId: exec.callId, agent: exec.agent, resultFormat: 'mcp-result/v1' }),
+              arguments: args, signal: exec.signal, callId: exec.callId, agent: exec.agent, resultFormat: 'mcp-result/v1',
+              ...(invocation.assertMcpCurrent ? { assertCurrent: invocation.assertMcpCurrent } : {}) }),
               { validateOutput: mcpSchemas.get(name)?.validateOutput });
           } else if (childNames.has(name)) {
             invariant(typeof invocation.children?.execute === 'function', 'studio_native_child_ledger_unavailable');
@@ -354,6 +362,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     childBinding: childRoles.length ? { contract: NATIVE_CHILD_TOOLS_CONTRACT, roles: structuredClone(childRoles) } : null,
     childCapabilities: { skills: hasSkills, mcp: mcpContracts.size > 0 },
+    childMcpBinding: structuredClone(childMcpBinding),
     workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
     workspaceMutationContract: [...builtinNames].some(name => ['write_workspace_file', 'write_workspace_files',
       'edit_workspace_file', 'multi_edit_workspace_file', 'delete_workspace_file'].includes(name)) ? WORKSPACE_MUTATION_LOCK : null,
@@ -365,10 +374,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     mcpResultContract: mcpContracts.size ? 'mcp-result/v1' : null,
     mcpJsonCodec: mcpContracts.size ? NATIVE_MCP_JSON_CODEC : null,
     mcpSchemaContract: mcpSchemas.size ? NATIVE_MCP_SCHEMA_CONTRACT : null,
-    mcpBindingDigest: mcpContracts.size ? hash([...mcpContracts].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([name, contract]) => ({
-      name, resourceId: String(contract.mcpResourceId || contract.resourceId).trim(),
-      schema: contract.nativeMcpSchema ?? { parameters: contract.parameters ?? { type: 'object', properties: {} } },
-    }))) : null,
+    mcpBindingDigest,
     async releaseSession(request) {
       const results = await Promise.allSettled([browserTools.releaseSession(request), closeWebSession(request.sessionId)]);
       const failure = results.find(result => result.status === 'rejected');
@@ -444,12 +450,16 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         && typeof authority.workspaceRoot === 'string' && /^[0-9a-f]{64}$/.test(authority.workspaceBinding.isolationId)
         && /^sha256:[0-9a-f]{64}$/.test(authority.workspaceBinding.baseRevision);
       invariant(authority.workspaceRoot === undefined || isolated, 'studio_native_child_workspace_binding_missing');
+      const inheritsMcp = authority.mcpBinding !== undefined;
+      invariant(!inheritsMcp || childMcpBinding && canonical(authority.mcpBinding) === canonical(childMcpBinding),
+        'studio_native_child_mcp_binding_changed');
       invariant(Array.isArray(authority.toolNames) && authority.toolNames.every(name => allowed.has(name)
-        && formal.has(name) && (formal.get(name).readOnly === true || isolated)
+        && (inheritsMcp && mcpContracts.has(name) || formal.has(name) && (formal.get(name).readOnly === true || isolated)
         && template.definitions.some(definition => definition.name === name)
-        && !mcpContracts.has(name) && !memoryNames.has(name)),
+        && !mcpContracts.has(name) && !memoryNames.has(name))),
         'studio_native_child_tools_not_bound');
-      const bound = this.forAgent(agent, { ...authority, childSessionId: authority.sessionId });
+      const bound = this.forAgent(agent, { ...authority, scope: structuredClone(authority.scope),
+        toolNames: [...authority.toolNames], childSessionId: authority.sessionId });
       return { tools: bound.tools, workspace: bound.workspace };
     },
     forAgent(agent, commandAuthority) {
@@ -498,6 +508,17 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         if (commandAuthority?.childSessionId) invariant(canonical(request.scope) === canonical(commandAuthority.scope)
           && commandAuthority.toolNames.includes(request.call.name), 'studio_native_child_tool_not_bound');
         request.signal.throwIfAborted();
+        // A child borrows the parent's MCP transport, but dispatch is owned by
+        // the child's current Native intent, never by the parent DSH session.
+        const childMcp = commandAuthority?.childSessionId && mcpContracts.has(request.call.name);
+        const originalSignal = request.signal;
+        const sealed = childMcp ? canonical(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))) : null;
+        const assertMcpCurrent = childMcp ? () => {
+          invariant(request.signal === originalSignal && !originalSignal.aborted
+            && canonical(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))) === sealed
+            && assertCurrent(request), 'studio_native_child_mcp_authority_stale');
+        } : undefined;
+        assertMcpCurrent?.();
         const exactNumbers = requiresExactJsonWire(request.call.arguments);
         if (exactNumbers && !argumentEncoding) return { status: 'error', content: {
           code: 'STUDIO_NATIVE_EXACT_NUMBER_UNSUPPORTED', executed: false,
@@ -506,7 +527,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
         const invocation = { agent, request, workspaceTools, assertCurrent, children: commandAuthority?.children,
-          argumentEncoding: exactNumbers ? argumentEncoding : null, commands, web };
+          argumentEncoding: exactNumbers ? argumentEncoding : null, commands, web, assertMcpCurrent };
         calls.set(callId, invocation);
         try {
           // Numeric raw tokens retain their intrinsic brand through the negotiated
@@ -531,7 +552,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           // whether its effect ran. Never infer safe retry from isError alone.
           const externalFailure = result?.isError && !builtinNames.has(request.call.name) && !invocation.outcome
             && (!mcpContracts.has(request.call.name) || invocation.dispatched);
-          const status = invocation.outcome?.status === 'uncertain' || afterWriteFailure || externalFailure || result?.concludesTurn ? 'uncertain'
+          let staleMcp = false;
+          if (assertMcpCurrent) { try { assertMcpCurrent(); } catch { staleMcp = true; } }
+          let status = staleMcp || invocation.outcome?.status === 'uncertain' || afterWriteFailure || externalFailure || result?.concludesTurn ? 'uncertain'
             // Approval is a Native control result, not a successful execution.
             // Keep its original interactionId so the kernel durably waits and
             // resumes the exact call. A rejecting post-policy still takes effect.
@@ -556,6 +579,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           // post-policy DSH output above; native context cannot bypass it.
           const content = invocation.outcome ? structuredClone(invocation.outcome.content) : result?.additionalContexts?.length
             ? { content: result.content, additionalContexts: result.additionalContexts } : result.content;
+          if (assertMcpCurrent) { try { assertMcpCurrent(); } catch { status = 'uncertain'; } }
           return { ...invocation.outcome, status, content,
           context, ...(additionalContexts.length ? { additionalContexts } : {}) };
         } finally { calls.delete(callId); }

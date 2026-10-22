@@ -235,7 +235,12 @@ test('inline MCP descriptors resolve env credentials and execute through Streama
   });
   assert.equal((await adapters.callMcpTool(binding, 'search', { fail: true }, { resultFormat: 'mcp-result/v1' })).isError, true);
   await assert.rejects(adapters.callMcpTool(binding, 'search', { fail: true }), { code: 'MCP_TOOL_FAILED' });
-  const calls = requests.length;
+  const calls = requests.length, effects = requests.filter(item => item.method === 'tools/call').length;
+  let checks = 0;
+  await assert.rejects(adapters.callMcpTool(binding, 'search', {}, { assertCurrent: () => ++checks < 2 }), { code: 'MCP_AUTHORITY_STALE' });
+  assert.equal(checks, 2);
+  assert.equal(requests.filter(item => item.method === 'tools/call').length, effects);
+  await assert.rejects(adapters.callMcpTool(binding, 'search', {}, { assertCurrent: () => Promise.reject(new Error('late guard')) }), { code: 'MCP_AUTHORITY_INVALID' });
   await assert.rejects(adapters.callMcpTool(binding, 'search', {}, { resultFormat: 'unsupported' }), { code: 'MCP_RESULT_FORMAT_INVALID' });
   assert.equal(requests.length, calls);
   assert.ok(requests.filter(item => item.method === 'initialize').every(item => item.authorization === 'Bearer secret-from-credential-service'));
