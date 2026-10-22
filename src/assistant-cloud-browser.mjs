@@ -474,7 +474,7 @@ export function createCloudBrowser({
     }
     await pageCommand('Input.insertText', { text });
     touch();
-    return { selector, typed: Buffer.byteLength(text, 'utf8') };
+    return { selector: selector ?? '', typed: Buffer.byteLength(text, 'utf8') };
   }
 
   async function press(args) {
@@ -571,53 +571,76 @@ export function createCloudBrowser({
     return { closed: true };
   }
 
+
+const OUTPUT_TEXT = value => [{ type: 'text', text: value }];
+const stringList = { type: 'array', items: { type: 'string' } };
+const outputSchema = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
+
+function browserOutput(properties, required, render) {
+  return { schema: outputSchema(properties, required), render: (_args, value) => OUTPUT_TEXT(render(value)) };
+}
+
   const definitions = [
     {
       name: 'cloud_browser_open',
       description: 'Open a public http(s) URL in this assistant\'s cloud Chromium. The URL is checked before navigation and again after redirects; internal, loopback, metadata and credential-bearing URLs are refused.',
       parameters: objectSchema({ url: { type: 'string' } }, ['url']),
+      output: browserOutput({ url: { type: 'string' }, title: { type: 'string' }, warnings: stringList }, ['url', 'title', 'warnings'],
+        value => `${value.title || '(无标题)'}\n${value.url}${value.warnings?.length ? `\n提示: ${value.warnings.join(', ')}` : ''}`),
       execute: (args, exec) => navigate(args?.url, { signal: exec?.signal }),
     },
     {
       name: 'cloud_browser_snapshot',
       description: 'Read the current page as bounded text (at most 32 KiB), its title, URL and up to 200 links. Prefer this over screenshots when reading content.',
       parameters: objectSchema(),
+      output: browserOutput({ url: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' }, truncated: { type: 'boolean' }, bytes: { type: 'number' }, links: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, href: { type: 'string' } }, required: ['text', 'href'], additionalProperties: false } } }, ['url', 'title', 'text', 'truncated', 'bytes', 'links'],
+        value => `${value.title || '(无标题)'}\n${value.url}\n${value.truncated ? '(内容已截断)' : ''}\n${value.text}`),
       execute: () => snapshot(),
     },
     {
       name: 'cloud_browser_click',
       description: 'Click the first element matching a CSS selector. The element is scrolled into view and clicked at its center.',
       parameters: objectSchema({ selector: { type: 'string' } }, ['selector']),
+      output: browserOutput({ selector: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } }, ['selector', 'x', 'y'],
+        value => `已点击 ${value.selector} (${value.x}, ${value.y})`),
       execute: args => click(args),
     },
     {
       name: 'cloud_browser_type',
       description: 'Insert text into the focused element, or focus a CSS selector first and then insert the text.',
       parameters: objectSchema({ text: { type: 'string' }, selector: { type: 'string' } }, ['text']),
+      output: browserOutput({ selector: { type: 'string' }, typed: { type: 'number' } }, ['selector', 'typed'],
+        value => `已输入 ${value.typed} 字节${value.selector ? ` 到 ${value.selector}` : ''}`),
       execute: (args) => type(args),
     },
     {
       name: 'cloud_browser_press',
       description: 'Press one allowlisted key: Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown or Space.',
       parameters: objectSchema({ key: { type: 'string' } }, ['key']),
+      output: browserOutput({ key: { type: 'string' } }, ['key'], value => `已按键 ${value.key}`),
       execute: (args) => press(args),
     },
     {
       name: 'cloud_browser_screenshot',
       description: 'Capture the 1280x800 viewport as a PNG under files/.cloud-browser/ and return the workspace-relative path. At most 4 MiB.',
       parameters: objectSchema(),
+      output: browserOutput({ path: { type: 'string' }, bytes: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' }, url: { type: 'string' } }, ['path', 'bytes', 'width', 'height', 'url'],
+        value => `截图已保存: ${value.path} (${value.width}x${value.height}, ${value.bytes} 字节) ${value.url}`),
       execute: () => screenshot(),
     },
     {
       name: 'cloud_browser_download',
       description: 'Download one file into files/downloads/ (at most 64 MiB). Open or click something first, or pass a URL or CSS selector to trigger the download.',
       parameters: objectSchema({ url: { type: 'string' }, selector: { type: 'string' }, timeoutMs: { type: 'number' } }),
+      output: browserOutput({ path: { type: 'string' }, bytes: { type: 'number' } }, ['path', 'bytes'],
+        value => `下载完成: ${value.path} (${value.bytes} 字节)`),
       execute: args => download(args),
     },
     {
       name: 'cloud_browser_close',
       description: 'Close the cloud browser page and its Chromium process. A later cloud_browser_open starts a new browser.',
       parameters: objectSchema(),
+      output: browserOutput({ closed: { type: 'boolean' } }, ['closed'], value => value.closed ? '云端浏览器已关闭' : '云端浏览器未关闭'),
       execute: () => close(),
     },
   ];

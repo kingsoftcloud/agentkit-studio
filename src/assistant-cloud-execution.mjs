@@ -1,8 +1,8 @@
 /** Confined command and program execution for a managed cloud assistant. */
-import { spawn as spawnChild } from 'node:child_process';
+import { spawn as spawnChild, spawnSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, resolve, sep } from 'node:path';
 
 export const CLOUD_BASH_TOOL = 'cloud_bash';
 export const CLOUD_RUN_CODE_TOOL = 'cloud_run_code';
@@ -15,6 +15,22 @@ const SYSTEM_BINDINGS = Object.freeze([
   ['/etc/hosts', '/etc/hosts'], ['/etc/nsswitch.conf', '/etc/nsswitch.conf'], ['/etc/resolv.conf', '/etc/resolv.conf'],
   ['/etc/ca-certificates', '/etc/ca-certificates'], ['/etc/ca-certificates.conf', '/etc/ca-certificates.conf'],
 ]);
+// The Landlock launcher is read-only allow-list based: it grants read access to
+// the system roots below and write access only to the workspace, a shared temp
+// root and /dev/null. /proc is deliberately NOT granted: the confined child is
+// spawned by the Host, and a readable /proc would expose Host credentials
+// through /proc/<host-pid>/environ.
+const LANDLOCK_READ_ONLY = Object.freeze(['/usr', '/etc', '/dev/urandom']);
+const LANDLOCK_READ_WRITE = Object.freeze(['/dev/null', '/tmp']);
+const LANDLOCK_LAUNCHER_RELATIVE = Object.freeze([
+  'node_modules', '@deepseek-ai', 'node-addon-system-linux-x64', 'bin', 'landlock-run',
+]);
+const CLOUD_ENVIRONMENT = Object.freeze([
+  ['PATH', '/usr/local/bin:/usr/bin:/bin'], ['TMPDIR', '/tmp'], ['LANG', 'C.UTF-8'], ['LC_ALL', 'C.UTF-8'],
+  ['TERM', 'dumb'], ['PYTHONDONTWRITEBYTECODE', '1'], ['NODE_OPTIONS', '--max-old-space-size=512'],
+  ['AGENTKIT_CLOUD_EXECUTION', '1'],
+]);
+const LANDLOCK_INFORMATIONAL = 'landlock-run: partial enforcement (older Landlock ABI)';
 const fail = (message, code = 'ASSISTANT_CLOUD_EXEC_REFUSED') => Object.assign(new Error(message), { code });
 
 function checkedWorkspace(workspaceRoot) {
@@ -25,12 +41,77 @@ function checkedWorkspace(workspaceRoot) {
   return root;
 }
 
-/** Resolve the only supported confiner. A missing bwrap refuses execution; it never degrades to an unconfined child. */
-export function resolveCloudSandbox({ platform = process.platform, env = process.env, bwrapPath } = {}) {
+function installRoots(env) {
+  const roots = [];
+  if (typeof env.AGENTKIT_INSTALLATION === 'string' && isAbsolute(env.AGENTKIT_INSTALLATION)) roots.push(env.AGENTKIT_INSTALLATION);
+  // The DSH Host owns the image's fixed installation; its own entry script
+  // identifies the runtime root without importing any Host-internal module.
+  const entry = process.argv[1];
+  if (typeof entry === 'string' && isAbsolute(entry)) {
+    const marker = `${sep}node_modules${sep}`;
+    const at = entry.indexOf(marker);
+    if (at > 0) roots.push(entry.slice(0, at));
+  }
+  roots.push('/opt/agentkit/runtime');
+  return [...new Set(roots)];
+}
+
+/** Locate the Landlock launcher shipped next to the Host installation. */
+export function resolveLandlockLauncher({ env = process.env } = {}) {
+  const explicit = env.AGENTKIT_LANDLOCK;
+  if (typeof explicit === 'string' && explicit) return isAbsolute(explicit) && existsSync(explicit) ? explicit : undefined;
+  for (const root of installRoots(env)) {
+    const candidate = join(root, ...LANDLOCK_LAUNCHER_RELATIVE);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+const probeCache = new Map();
+
+function cachedProbe(key, probe) {
+  if (probeCache.has(key)) return probeCache.get(key);
+  const verdict = Boolean(probe());
+  probeCache.set(key, verdict);
+  return verdict;
+}
+
+/** Run the confined argv once and report whether the kernel actually enforced it. */
+export function probeSandbox({ sandbox, run = spawnSync, timeoutMs = 5000 } = {}) {
+  if (!sandbox?.path) return false;
+  if (sandbox.kind === 'bwrap') {
+    const result = run(sandbox.path, ['--unshare-user', '--unshare-pid', '--die-with-parent', '--ro-bind', '/', '/',
+      '--tmpfs', '/tmp', '--', '/bin/true'], { timeout: timeoutMs, stdio: 'ignore', env: { PATH: '/usr/local/bin:/usr/bin:/bin' } });
+    return result?.status === 0;
+  }
+  if (sandbox.kind === 'landlock') {
+    const result = run(sandbox.path, ['--probe'], { timeout: timeoutMs, stdio: 'ignore', env: {} });
+    return result?.status === 0;
+  }
+  return false;
+}
+
+/**
+ * Resolve the confiner used for every cloud execution. bubblewrap keeps the
+ * strongest isolation (private mounts, hidden Host state); the Landlock
+ * launcher is the fallback for kernels or runtime policies where bwrap cannot
+ * create its mount namespace. A backend is only reported usable after it
+ * proved enforcement once; execution never degrades to an unconfined child.
+ */
+export function resolveCloudSandbox({ platform = process.platform, env = process.env, bwrapPath, landlockPath, unsharePath, probe = probeSandbox } = {}) {
   if (platform !== 'linux') return { available: false, reason: '该运行环境没有可用的 Linux 执行沙箱' };
-  const path = bwrapPath || env.AGENTKIT_BWRAP || '/usr/bin/bwrap';
-  if (!isAbsolute(path) || !existsSync(path)) return { available: false, reason: '运行镜像缺少 bubblewrap，云端执行不可用' };
-  return { available: true, kind: 'bwrap', path };
+  const bwrap = bwrapPath || env.AGENTKIT_BWRAP || '/usr/bin/bwrap';
+  if (isAbsolute(bwrap) && existsSync(bwrap)) {
+    const sandbox = { available: true, kind: 'bwrap', path: bwrap, isolation: 'namespaces' };
+    if (cachedProbe(`bwrap:${bwrap}`, () => probe({ sandbox }))) return sandbox;
+  }
+  const launcher = landlockPath || resolveLandlockLauncher({ env });
+  const unshare = unsharePath || env.AGENTKIT_UNSHARE || '/usr/bin/unshare';
+  if (launcher && isAbsolute(unshare) && existsSync(unshare)) {
+    const sandbox = { available: true, kind: 'landlock', path: launcher, unshare, isolation: 'landlock' };
+    if (cachedProbe(`landlock:${launcher}`, () => probe({ sandbox }))) return sandbox;
+  }
+  return { available: false, reason: '运行环境没有可用的隔离后端：bubblewrap 与 Landlock 沙盒启动器均不可用' };
 }
 
 function timeoutOf(value) {
@@ -45,22 +126,42 @@ function boundedText(input, limit, label) {
   return input;
 }
 
-/** Build one bwrap invocation. The child sees only the bindings below and the fixed environment. */
+function cloudEnvironment(root) {
+  return Object.fromEntries([['HOME', root], ...CLOUD_ENVIRONMENT]);
+}
+
+/**
+ * Build one confined invocation. bubblewrap mounts a private root; Landlock
+ * runs the launcher inside fresh user/pid/ipc/uts/net namespaces with an
+ * allow-list filesystem policy, so both backends keep the child offline and
+ * bound to the workspace.
+ */
 export function planCloudExecution({ sandbox, workspaceRoot, argv, timeoutMs }) {
   const root = checkedWorkspace(workspaceRoot);
-  if (!sandbox?.available || sandbox.kind !== 'bwrap') throw fail(sandbox?.reason || '云端执行沙箱不可用');
-  const args = ['--die-with-parent', '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-net'];
-  for (const [source, target] of SYSTEM_BINDINGS) args.push('--ro-bind-try', source, target);
-  for (const [target, source] of [['/bin', 'usr/bin'], ['/sbin', 'usr/sbin'], ['/lib', 'usr/lib'], ['/lib64', 'usr/lib64']]) {
-    args.push('--symlink', source, target);
+  if (!sandbox?.available) throw fail(sandbox?.reason || '云端执行沙箱不可用');
+  if (sandbox.kind === 'bwrap') {
+    const args = ['--die-with-parent', '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-net'];
+    for (const [source, target] of SYSTEM_BINDINGS) args.push('--ro-bind-try', source, target);
+    for (const [target, source] of [['/bin', 'usr/bin'], ['/sbin', 'usr/sbin'], ['/lib', 'usr/lib'], ['/lib64', 'usr/lib64']]) {
+      args.push('--symlink', source, target);
+    }
+    args.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--tmpfs', '/run', '--tmpfs', '/var/tmp');
+    args.push('--bind', root, root, '--chdir', root, '--hostname', 'agentkit-cloud-exec', '--clearenv');
+    for (const [key, value] of [['PATH', '/usr/local/bin:/usr/bin:/bin'], ['HOME', root], ...CLOUD_ENVIRONMENT]) {
+      args.push('--setenv', key, value);
+    }
+    args.push('--', ...argv);
+    return { file: sandbox.path, args, env: {}, cwd: root, timeoutMs };
   }
-  args.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--tmpfs', '/run', '--tmpfs', '/var/tmp');
-  args.push('--bind', root, root, '--chdir', root, '--hostname', 'agentkit-cloud-exec', '--clearenv');
-  for (const [key, value] of [['PATH', '/usr/local/bin:/usr/bin:/bin'], ['HOME', root], ['TMPDIR', '/tmp'],
-    ['LANG', 'C.UTF-8'], ['LC_ALL', 'C.UTF-8'], ['TERM', 'dumb'], ['PYTHONDONTWRITEBYTECODE', '1'],
-    ['NODE_OPTIONS', '--max-old-space-size=512'], ['AGENTKIT_CLOUD_EXECUTION', '1']]) args.push('--setenv', key, value);
-  args.push('--', ...argv);
-  return { file: sandbox.path, args, env: {}, cwd: root, timeoutMs };
+  if (sandbox.kind === 'landlock') {
+    if (!isAbsolute(sandbox.unshare || '') || !existsSync(sandbox.unshare)) throw fail('云端执行沙箱不可用：缺少 unshare');
+    const args = ['--user', '--map-root-user', '--net', '--pid', '--fork', '--ipc', '--uts', '--kill-child', sandbox.path];
+    for (const path of LANDLOCK_READ_ONLY) args.push('--ro', path);
+    for (const path of LANDLOCK_READ_WRITE) args.push('--rw', path);
+    args.push('--rw', root, '--', ...argv);
+    return { file: sandbox.unshare, args, env: cloudEnvironment(root), cwd: root, timeoutMs };
+  }
+  throw fail('云端执行沙箱不可用：未知的隔离后端');
 }
 
 function appendBounded(chunks, chunk, state, label, cap = OUTPUT_BYTES) {
@@ -69,6 +170,12 @@ function appendBounded(chunks, chunk, state, label, cap = OUTPUT_BYTES) {
   chunks.push(slice); state.bytes += slice.length;
   if (slice.length < chunk.length) state.truncated = true;
   state[label] = true;
+}
+
+/** Drop the launcher's informational verdict line so tool output stays the command's own. */
+function cleanStderr(text) {
+  if (!text.includes('landlock-run: ')) return text;
+  return text.split('\n').filter(line => !line.startsWith('landlock-run: ')).join('\n');
 }
 
 /**
@@ -126,7 +233,9 @@ export function createCloudExecutor({ workspaceRoot, sandbox, spawn = spawnChild
         if (aborted) return finish(fail('云端执行已取消', 'ASSISTANT_CLOUD_EXEC_ABORTED'));
         if (timedOut) return finish(fail(`云端执行超过 ${Math.round(planned.timeoutMs / 1000)} 秒，进程组已终止`, 'ASSISTANT_CLOUD_EXEC_TIMEOUT'));
         const decode = chunks => Buffer.concat(chunks).toString('utf8');
-        finish(null, { exitCode: code, signal: signalName, stdout: decode(out), stderr: decode(err),
+        const stderr = decode(err);
+        finish(null, { exitCode: typeof code === 'number' ? code : -1, signal: signalName || '',
+          stdout: decode(out), stderr: confiner.kind === 'landlock' ? cleanStderr(stderr) : stderr,
           stdoutTruncated: stdoutState.truncated || stdoutState.bytes >= outputCap, stderrTruncated: stderrState.truncated,
           timeoutMs: planned.timeoutMs });
       });
@@ -137,6 +246,7 @@ export function createCloudExecutor({ workspaceRoot, sandbox, spawn = spawnChild
     available: Boolean(confiner?.available),
     reason: confiner?.reason,
     sandbox: confiner,
+    backend: confiner?.kind,
     runBash({ command, timeoutMs } = {}, options) {
       const text = boundedText(command, MAX_COMMAND_BYTES, '命令');
       return run(['/bin/bash', '-c', text], { ...options, timeoutMs });
@@ -152,15 +262,17 @@ export function createCloudExecutor({ workspaceRoot, sandbox, spawn = spawnChild
   };
 }
 
+// The Host tool registry only accepts a single type per property (type arrays
+// are rejected at registration), so signal absence is encoded explicitly.
 function outputSchema() {
   return { type: 'object', properties: {
-    exitCode: { type: ['number', 'null'] }, signal: { type: ['string', 'null'] },
+    exitCode: { type: 'number' }, signal: { type: 'string' },
     stdout: { type: 'string' }, stderr: { type: 'string' },
     stdoutTruncated: { type: 'boolean' }, stderrTruncated: { type: 'boolean' },
-  }, required: ['exitCode', 'stdout', 'stderr', 'stdoutTruncated', 'stderrTruncated'], additionalProperties: false };
+  }, required: ['exitCode', 'signal', 'stdout', 'stderr', 'stdoutTruncated', 'stderrTruncated'], additionalProperties: false };
 }
 
-const renderOutput = (_args, value) => [{ type: 'text', text: `exit ${value.exitCode ?? value.signal}\n${value.stdout}${value.stderr}` }];
+const renderOutput = (_args, value) => [{ type: 'text', text: `exit ${value.exitCode}${value.signal ? ` (${value.signal})` : ''}\n${value.stdout}${value.stderr}` }];
 
 /** Register the confined tools for one managed Agent. Names are admitted only while the grant is active. */
 export function registerAssistantCloudExecutionTools({ agent, workspaceRoot, executor = createCloudExecutor({ workspaceRoot }), previous }) {

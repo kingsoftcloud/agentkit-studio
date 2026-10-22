@@ -289,20 +289,27 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     // never inherits the Host environment, and revocation disposes it with the
     // same Session binding. A requested grant whose image cannot confine the
     // child stays unregistered instead of failing the whole assistant.
-    let cloud;
+    let cloud, cloudFailure;
     if (grants.includes('code-execution')) {
       const executor = createCloudExecutor({ workspaceRoot: cwd, env, sandbox: cloudSandbox });
       if (executor.available) {
         try { cloud = registerAssistantCloudExecutionTools({ agent, workspaceRoot: cwd, executor }); }
-        catch { executor.dispose(); }
-      } else executor.dispose();
+        catch (error) { cloudFailure = error; executor.dispose(); }
+      } else { cloudFailure = executor.reason || 'ASSISTANT_CLOUD_EXECUTION_UNAVAILABLE'; executor.dispose(); }
     }
     // Cloud browser is a grant too: the CDP child talks only through the
     // image's egress proxy, and revocation closes the browser with the Session.
-    let browsing;
+    let browsing, browserFailure;
     if (grants.includes('browser') && cloudBrowserUsable) {
       try { browsing = registerAssistantCloudBrowserTools({ agent, workspaceRoot: cwd, env }); }
-      catch { browsing = undefined; }
+      catch (error) { browserFailure = error; browsing = undefined; }
+    }
+    // A grant whose image cannot register the tools stays visible in the Host
+    // log: both silent catches previously hid a registry-schema rejection.
+    for (const [name, failure] of [['execution', cloudFailure], ['browser', browserFailure]]) {
+      if (failure === undefined) continue;
+      try { ctx.get?.('logger')?.warn?.(`assistant cloud ${name} was not registered: ${typeof failure === 'string' ? failure : failure?.message || failure}`); }
+      catch { /* Logging must never fail the Session. */ }
     }
     const cloudNames = new Set([...(cloud?.names || []), ...(browsing?.names || [])]);
     if (cloud) for (const definition of cloud.definitions) if (tools.get(definition.name, agent) !== definition) throw fail('Cloud execution tool definition is not the trusted registration');

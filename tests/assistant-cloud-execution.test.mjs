@@ -3,12 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CLOUD_BASH_TOOL, CLOUD_RUN_CODE_TOOL, createCloudExecutor, planCloudExecution,
-  registerAssistantCloudExecutionTools, resolveCloudSandbox,
+  registerAssistantCloudExecutionTools, resolveCloudSandbox, resolveLandlockLauncher,
 } from '../src/assistant-cloud-execution.mjs';
 
 function workspace() {
@@ -19,6 +19,13 @@ function workspace() {
 
 function sandboxForTest(path = '/usr/bin/bwrap') {
   return { available: true, kind: 'bwrap', path };
+}
+
+function sandboxForLandlock(root) {
+  const launcher = join(root, 'landlock-run'), unshare = join(root, 'unshare');
+  writeFileSync(launcher, '');
+  writeFileSync(unshare, '');
+  return { available: true, kind: 'landlock', path: launcher, unshare, isolation: 'landlock' };
 }
 
 function mockChild({ pid = 4242 } = {}) {
@@ -39,6 +46,52 @@ test('a missing Linux confiner refuses execution instead of degrading', () => {
   const missing = resolveCloudSandbox({ platform: 'linux', env: {}, bwrapPath: '/nonexistent/bwrap' });
   assert.equal(missing.available, false);
   assert.match(missing.reason, /bubblewrap/);
+  assert.equal(resolveLandlockLauncher({ env: {} }), undefined);
+});
+
+test('an unusable bubblewrap falls back to the Landlock launcher', () => {
+  const root = workspace();
+  const bwrap = join(root, 'bwrap'), launcher = join(root, 'landlock-run'), unshare = join(root, 'unshare');
+  for (const path of [bwrap, launcher, unshare]) writeFileSync(path, '');
+  const sandbox = resolveCloudSandbox({
+    platform: 'linux', env: {}, bwrapPath: bwrap, landlockPath: launcher, unsharePath: unshare,
+    probe: ({ sandbox: candidate }) => candidate.kind === 'landlock',
+  });
+  assert.equal(sandbox.available, true);
+  assert.equal(sandbox.kind, 'landlock');
+  assert.equal(sandbox.path, launcher);
+  assert.equal(sandbox.unshare, unshare);
+});
+
+test('a backend that fails its enforcement probe is never reported usable', () => {
+  const root = workspace();
+  const bwrap = join(root, 'bwrap'), launcher = join(root, 'landlock-run'), unshare = join(root, 'unshare');
+  for (const path of [bwrap, launcher, unshare]) writeFileSync(path, '');
+  const sandbox = resolveCloudSandbox({
+    platform: 'linux', env: {}, bwrapPath: bwrap, landlockPath: launcher, unsharePath: unshare, probe: () => false,
+  });
+  assert.equal(sandbox.available, false);
+  assert.match(sandbox.reason, /bubblewrap/);
+});
+
+test('the Landlock plan adds namespace isolation and a read-only allow list', () => {
+  const root = workspace();
+  const sandbox = sandboxForLandlock(workspace());
+  const plan = planCloudExecution({ sandbox, workspaceRoot: root, argv: ['/bin/bash', '-c', 'pwd'], timeoutMs: 5000 });
+  assert.equal(plan.file, sandbox.unshare);
+  assert.deepEqual(plan.args.slice(0, 9), ['--user', '--map-root-user', '--net', '--pid', '--fork', '--ipc', '--uts', '--kill-child', sandbox.path]);
+  assert.ok(plan.args.includes('--net'), 'the confined child must stay offline');
+  const separator = plan.args.indexOf('--');
+  assert.deepEqual(plan.args.slice(separator, separator + 3), ['--', '/bin/bash', '-c']);
+  const readOnly = plan.args.flatMap((arg, index) => arg === '--ro' ? [plan.args[index + 1]] : []);
+  assert.deepEqual(readOnly, ['/usr', '/etc', '/dev/urandom']);
+  assert.ok(!readOnly.includes('/proc'), 'a readable /proc would expose Host credentials');
+  const readWrite = plan.args.flatMap((arg, index) => arg === '--rw' ? [plan.args[index + 1]] : []);
+  assert.deepEqual(readWrite, ['/dev/null', '/tmp', root]);
+  assert.equal(plan.env.PATH, '/usr/local/bin:/usr/bin:/bin');
+  assert.equal(plan.env.HOME, root);
+  assert.equal(plan.env.AGENTKIT_MODEL_API_KEY, undefined);
+  assert.equal(plan.cwd, root);
 });
 
 test('the plan confines the child: no network, no inherited environment, workspace-only cwd', () => {
@@ -77,6 +130,31 @@ test('the executor spawns with an empty environment and returns bounded output',
   assert.deepEqual(calls[0].options.env, {});
   assert.equal(calls[0].options.cwd, root);
   assert.equal(calls[0].options.detached, true);
+});
+
+test('the Landlock launcher verdict line is not mixed into tool stderr', async () => {
+  const root = workspace();
+  const child = mockChild();
+  const executor = createCloudExecutor({ workspaceRoot: root, sandbox: sandboxForLandlock(workspace()), spawn: captureSpawn(child).spawn });
+  const pending = executor.runBash({ command: 'printf hello' });
+  child.stdout.write('hello');
+  child.stderr.write('landlock-run: partial enforcement (older Landlock ABI)\nreal failure\n');
+  child.emit('close', 1, null);
+  const result = await pending;
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.stderr, 'real failure\n');
+  assert.equal(result.signal, '');
+});
+
+test('a signalled child keeps lossless JSON output values', async () => {
+  const root = workspace();
+  const child = mockChild();
+  const executor = createCloudExecutor({ workspaceRoot: root, sandbox: sandboxForTest(), spawn: captureSpawn(child).spawn });
+  const pending = executor.runBash({ command: 'sleep 10' });
+  child.emit('close', null, 'SIGKILL');
+  const result = await pending;
+  assert.equal(result.exitCode, -1);
+  assert.equal(result.signal, 'SIGKILL');
 });
 
 test('output beyond the cap is truncated rather than returned in full', async () => {
@@ -142,6 +220,10 @@ test('granted tools register under the confined names', () => {
   assert.deepEqual(definitions.map(item => item.name), [CLOUD_BASH_TOOL, CLOUD_RUN_CODE_TOOL]);
   for (const definition of definitions) {
     assert.equal(definition.parameters.additionalProperties, false);
-    assert.ok(definition.output.schema.properties.exitCode);
+    const { schema } = definition.output;
+    assert.ok(schema.properties.exitCode);
+    // The Host registry rejects union types: every output property needs one type.
+    for (const [name, property] of Object.entries(schema.properties)) assert.equal(typeof property.type, 'string', `${definition.name}.${name}`);
+    assert.equal(typeof definition.output.render, 'function');
   }
 });
