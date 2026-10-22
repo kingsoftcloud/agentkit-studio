@@ -16,6 +16,10 @@ Node SDK 依赖固定为 `e2b@2.58.0`。`src/providers/native-e2b-sdk-transport.
 
 拥有者提供显式 Host 核对接口：`inspectReconciliation()` 返回原记录及其摘要；`reconcileAdoption(request, {sandboxId, expectedRecordDigest})` 需要独立的同步 `assertReconciliationAuthority(request, decision) === true`。普通命令授权不能代替核对授权。Host 注入生命周期的 `inspectSandbox`，经原控制平面 `Sandbox.getInfo` 只读验证原 sandbox ID、运行状态、`nativeOwner` 与原 `nativeCreateOperation`，再将同一创建接管为 ready；审核期间记录、身份、signal、decision 或权限变化都会拒绝。未知关闭不能借此重新激活；已知 ID 不允许替换。核对审计保留原状态/记录摘要和当前操作身份。该接口不证明任何后台命令完成，也不重放未知命令。无法确认创建不存在时，仍保留 unknown，不自动创建替代实例。
 
-Host 的命令工具选择、审批、sandbox 生命周期调用与后台 store 接线仍未完成；上述核对接口的 Studio 人工操作入口还需补齐。后台命令状态与恢复模块另行审查。当前不能把这些模块视为 Studio E2B 已完成迁移。
+`src/providers/native-e2b-host.mjs` 提供 Host 组装工厂，将显式配置、SDK 生命周期和持久 sandbox 拥有者绑定到 scope 与 Session。配置在异步 SDK 加载前快照，保留 KsADK 的 template/timeout/internet/type/traffic-source 配置与 Skill Runtime 的回退字段。只把显式 `sandboxEnvironment` 送进 sandbox，不复制 Host 环境。公开 binding 仅含策略与不透明摘要；凭据只通过可信的 supervisor 构造端口传递，不能归档到 Build 或工具结果。地址、凭据、模板、策略或 sandbox 环境变化后，原 sandbox 记录拒绝借用。
+
+Studio 的命令后端默认仍为 `local_process`，显式 `KSADK_SANDBOX_BACKEND=e2b` 需要 `E2B_API_URL`（HTTPS origin）、`E2B_DOMAIN`、`E2B_API_KEY` 和 `KSADK_SANDBOX_TEMPLATE_ID`（或 `KSADK_SKILL_RUNTIME_TEMPLATE_ID`）。后端选择器拒绝不支持的值，不回退本地；E2B 工厂也不探测或改写 API 地址。配置与生命周期的组装已有定向验证，工厂尚未挂到生产 gateway 的命令选择入口，因此设置这些变量还不能启用 Studio E2B 命令。
+
+Host 的命令工具选择、审批与后台 store 接线仍未完成；上述核对接口的 Studio 人工操作入口还需补齐。后台命令状态与恢复模块另行审查。当前不能把这些模块视为 Studio E2B 已完成迁移。
 
 定向验证覆盖 SDK 适配与拥有者，并包含真实 Node 进程在创建或核对查询过程中退出后重开、未知状态禁止重新创建、精确核对授权、元数据不匹配、已审核记录变化、迟到权限撤销和清理未知禁止接管。SDK 验证包含实际安装包的离线加载与确定性接口替身；未使用云端密钥发起在线请求，也未宣称远端进程或完整 Host E2B 验收通过。
