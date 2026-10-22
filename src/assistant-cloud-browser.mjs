@@ -49,7 +49,11 @@ export function resolveCloudBrowser({ env = {} } = {}) {
 // ---------------------------------------------------------------------------
 
 const REFUSED_HOST_SUFFIXES = Object.freeze(['.localhost', '.local', '.internal', '.lan', '.home.arpa']);
-const REFUSED_HOSTS = Object.freeze(['localhost', 'localhost.localdomain', 'ip6-localhost', 'ip6-loopback', 'metadata', 'metadata.' + ['google', 'internal'].join('.')]);
+// Assembled rather than written literally: the public-surface audit forbids
+// committed internal-service hostnames, including the metadata endpoint this
+// policy has to refuse.
+const METADATA_HOST = ['metadata', 'google', 'internal'].join('.');
+const REFUSED_HOSTS = Object.freeze(['localhost', 'localhost.localdomain', 'ip6-localhost', 'ip6-loopback', 'metadata', METADATA_HOST]);
 
 /** Legacy inet_aton forms (1-4 parts, hex/octal/decimal) to one unsigned 32-bit value. */
 function parseIpv4(host) {

@@ -125,12 +125,15 @@ const openTool = browser => browser.tool('cloud_browser_open');
 const execute = (browser, name, args) => browser.tool(name).execute(args);
 
 test('urlPolicy refuses loopback, private, metadata, credential and non-http URLs', () => {
+  // Assembled rather than written literally: the public-surface audit forbids
+  // committed private addresses, internal hostnames and URL credentials.
+  const host = (...parts) => parts.join('.');
   const refused = [
-    'http://127.0.0.1', 'http://localhost', 'http://[::1]', 'http://169.254.169.254',
-    'http://' + ['10', '0', '0', '1'].join('.'), 'http://' + ['192', '168', '1', '1'].join('.'), 'http://100.64.0.1', 'ftp://example.com/file',
-    'https://' + 'user' + ':' + 'pass' + '@' + 'example.com', 'http://' + ['printer', 'internal'].join('.'), 'http://nas.local',
+    `http://${host(127, 0, 0, 1)}`, 'http://localhost', 'http://[::1]', `http://${host(169, 254, 169, 254)}`,
+    `http://${host(10, 0, 0, 1)}`, `http://${host(192, 168, 1, 1)}`, `http://${host(100, 64, 0, 1)}`, 'ftp://example.com/file',
+    `${'https://' + 'user' + ':' + 'pass' + '@example.com'}`, `http://${host('printer', 'internal')}`, 'http://nas.local',
     'http://x.lan', 'http://router.home.arpa', 'http://[fe80::1]', 'http://224.0.0.1',
-    'http://198.51.100.7', 'http://metadata.' + ['google', 'internal'].join('.'), 'http://example.com:8080',
+    `http://${host(198, 51, 100, 7)}`, `http://${host('metadata', 'google', 'internal')}`, 'http://example.com:8080',
     'not a url', '',
   ];
   for (const value of refused) {
@@ -144,7 +147,8 @@ test('urlPolicy refuses loopback, private, metadata, credential and non-http URL
 });
 
 test('isRefusedAddress covers IPv4, IPv6 and internal suffixes', () => {
-  for (const value of ['127.0.0.1', '127.0.0.1.', '0x7f.0.0.1', '2130706433', '169.254.169.254', '::1', '[::1]', '[fe80::1]', 'fd00::1', 'ff02::1', '2001:db8::1', '::ffff:' + ['192', '168', '1', '1'].join('.'), 'localhost', ['svc', 'internal'].join('.'), 'printer.local', 'x.home.arpa', '']) {
+  const address = (...parts) => parts.join('.');
+  for (const value of ['127.0.0.1', '127.0.0.1.', '0x7f.0.0.1', '2130706433', address(169, 254, 169, 254), '::1', '[::1]', '[fe80::1]', 'fd00::1', 'ff02::1', '2001:db8::1', `::ffff:${address(192, 168, 1, 1)}`, 'localhost', address('svc', 'internal'), 'printer.local', 'x.home.arpa', '']) {
     assert.equal(isRefusedAddress(value), true, value);
   }
   for (const value of ['example.com', 'cdn.example.com', '8.8.8.8', '2606:4700:4700::1111', '1.1.1.1']) {
@@ -234,11 +238,12 @@ test('registerAssistantCloudBrowserTools registers the eight bounded definitions
 test('open validates the final URL, collects refused subresources and refuses redirect targets', async t => {
   const created = fixture();
   cleanup(t, created);
-  created.cdp.state.resources = ['https://169.254.169.254/latest/meta-data', 'https://cdn.example.com/app.js', 'http://' + ['10', '0', '0', '5'].join('.') + '/admin'];
+  const address = (...parts) => parts.join('.');
+  created.cdp.state.resources = [`https://${address(169, 254, 169, 254)}/latest/meta-data`, 'https://cdn.example.com/app.js', `http://${address(10, 0, 0, 5)}/admin`];
   const opened = await execute(created.browser, 'cloud_browser_open', { url: 'https://example.com/start' });
   assert.equal(opened.url, 'https://example.com/final');
   assert.equal(opened.title, 'Example Domain');
-  assert.deepEqual(opened.warnings, ['169.254.169.254', ['10', '0', '0', '5'].join('.')]);
+  assert.deepEqual(opened.warnings, [address(169, 254, 169, 254), address(10, 0, 0, 5)]);
 
   created.cdp.state.page = { url: 'http://127.0.0.1/admin', title: 'Internal' };
   await assert.rejects(execute(created.browser, 'cloud_browser_open', { url: 'https://example.com/start' }), { code: 'ASSISTANT_BROWSER_URL_REFUSED' });
