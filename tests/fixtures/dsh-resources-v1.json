@@ -1,0 +1,1058 @@
+{
+  "format": "agentengine.resources/v1",
+  "valid": [
+    {
+      "name": "empty",
+      "value": {}
+    },
+    {
+      "name": "single-knowledge",
+      "value": {
+        "knowledge_base": {
+          "id": "kb-fixture"
+        }
+      }
+    },
+    {
+      "name": "combined",
+      "value": {
+        "knowledge_base": {
+          "id": "kb-fixture",
+          "region": "cn-beijing-6"
+        },
+        "memory": {
+          "id": "mem-fixture"
+        },
+        "skill_space": {
+          "id": "e6ac51d4-f888-4d4b-b08d-a18c0d38bd0a"
+        },
+        "mcp_servers": [
+          {
+            "id": "mcp-first"
+          },
+          {
+            "id": "mcp-second",
+            "region": "cn-beijing-6"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty-mcp",
+      "value": {
+        "mcp_servers": []
+      }
+    },
+    {
+      "name": "multiple-skill-spaces",
+      "value": {
+        "skill_spaces": [
+          {
+            "id": "space-first"
+          },
+          {
+            "id": "space-second",
+            "region": "cn-beijing-6"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty-skill-spaces",
+      "value": {
+        "skill_spaces": []
+      }
+    },
+    {
+      "name": "direct-mcp-default-http",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "mcp-first",
+            "endpoint": "https://example.test"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-authenticated-pair",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "crm",
+            "endpoint": "https://crm.example.test/mcp",
+            "transport": "http",
+            "env_refs": {
+              "Authorization": "MCP_CRM_TOKEN"
+            }
+          },
+          {
+            "id": "search",
+            "endpoint": "http://search.example.test/sse",
+            "transport": "sse",
+            "env_refs": {
+              "X-Api-Key": "MCP_SEARCH_API_KEY"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mixed-platform-and-direct-mcp",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "platform-mcp",
+            "region": "cn-beijing-6"
+          },
+          {
+            "id": "external",
+            "endpoint": "http://127.0.0.1:8080/mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-ipv6",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "ipv6",
+            "endpoint": "http://[::1]:8080/mcp",
+            "env_refs": {}
+          }
+        ]
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "null",
+      "value": null
+    },
+    {
+      "name": "array",
+      "value": []
+    },
+    {
+      "name": "scalar",
+      "value": "fixture-secret"
+    },
+    {
+      "name": "unknown-kind",
+      "value": {
+        "tools": []
+      }
+    },
+    {
+      "name": "null-reference",
+      "value": {
+        "knowledge_base": null
+      }
+    },
+    {
+      "name": "string-reference",
+      "value": {
+        "memory": "mem-fixture"
+      }
+    },
+    {
+      "name": "missing-id",
+      "value": {
+        "knowledge_base": {}
+      }
+    },
+    {
+      "name": "empty-id",
+      "value": {
+        "memory": {
+          "id": ""
+        }
+      }
+    },
+    {
+      "name": "long-id",
+      "value": {
+        "memory": {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "name": "non-text-id",
+      "value": {
+        "memory": {
+          "id": 1
+        }
+      }
+    },
+    {
+      "name": "id-control",
+      "value": {
+        "memory": {
+          "id": "mem-fixture\ninjected"
+        }
+      }
+    },
+    {
+      "name": "id-whitespace",
+      "value": {
+        "memory": {
+          "id": " mem-fixture"
+        }
+      }
+    },
+    {
+      "name": "inline-secret",
+      "value": {
+        "memory": {
+          "id": "mem-fixture",
+          "api_key": "fixture-secret"
+        }
+      }
+    },
+    {
+      "name": "credential-in-reference",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "mcp-first",
+            "credentialRef": "fixture-secret"
+          }
+        ]
+      }
+    },
+    {
+      "name": "command-in-reference",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "mcp-first",
+            "command": "fixture-secret"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bad-region",
+      "value": {
+        "knowledge_base": {
+          "id": "kb-fixture",
+          "region": "https://fixture-secret"
+        }
+      }
+    },
+    {
+      "name": "empty-region",
+      "value": {
+        "skill_space": {
+          "id": "space-fixture",
+          "region": ""
+        }
+      }
+    },
+    {
+      "name": "mcp-non-array",
+      "value": {
+        "mcp_servers": {}
+      }
+    },
+    {
+      "name": "mcp-null-entry",
+      "value": {
+        "mcp_servers": [
+          null
+        ]
+      }
+    },
+    {
+      "name": "mcp-duplicate",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "mcp-first"
+          },
+          {
+            "id": "mcp-first"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mcp-duplicate-cross-region",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "mcp-first",
+            "region": "cn-beijing-6"
+          },
+          {
+            "id": "mcp-first",
+            "region": "cn-shanghai-2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mcp-too-many",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "mcp-0"
+          },
+          {
+            "id": "mcp-1"
+          },
+          {
+            "id": "mcp-2"
+          },
+          {
+            "id": "mcp-3"
+          },
+          {
+            "id": "mcp-4"
+          },
+          {
+            "id": "mcp-5"
+          },
+          {
+            "id": "mcp-6"
+          },
+          {
+            "id": "mcp-7"
+          },
+          {
+            "id": "mcp-8"
+          },
+          {
+            "id": "mcp-9"
+          },
+          {
+            "id": "mcp-10"
+          },
+          {
+            "id": "mcp-11"
+          },
+          {
+            "id": "mcp-12"
+          },
+          {
+            "id": "mcp-13"
+          },
+          {
+            "id": "mcp-14"
+          },
+          {
+            "id": "mcp-15"
+          },
+          {
+            "id": "mcp-16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "id-final-newline",
+      "value": {
+        "memory": {
+          "id": "mem-fixture\n"
+        }
+      }
+    },
+    {
+      "name": "region-final-newline",
+      "value": {
+        "memory": {
+          "id": "mem-fixture",
+          "region": "cn-beijing-6\n"
+        }
+      }
+    },
+    {
+      "name": "skill-spaces-non-array",
+      "value": {
+        "skill_spaces": {}
+      }
+    },
+    {
+      "name": "skill-spaces-null-entry",
+      "value": {
+        "skill_spaces": [
+          null
+        ]
+      }
+    },
+    {
+      "name": "skill-spaces-string-entry",
+      "value": {
+        "skill_spaces": [
+          "space-first"
+        ]
+      }
+    },
+    {
+      "name": "skill-spaces-duplicate",
+      "value": {
+        "skill_spaces": [
+          {
+            "id": "space-first"
+          },
+          {
+            "id": "space-first"
+          }
+        ]
+      }
+    },
+    {
+      "name": "skill-spaces-duplicate-cross-region",
+      "value": {
+        "skill_spaces": [
+          {
+            "id": "space-first",
+            "region": "cn-beijing-6"
+          },
+          {
+            "id": "space-first",
+            "region": "cn-shanghai-2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "skill-space-singular-and-plural",
+      "value": {
+        "skill_space": {
+          "id": "space-first"
+        },
+        "skill_spaces": [
+          {
+            "id": "space-second"
+          }
+        ]
+      }
+    },
+    {
+      "name": "skill-spaces-too-many",
+      "value": {
+        "skill_spaces": [
+          {
+            "id": "space-0"
+          },
+          {
+            "id": "space-1"
+          },
+          {
+            "id": "space-2"
+          },
+          {
+            "id": "space-3"
+          },
+          {
+            "id": "space-4"
+          },
+          {
+            "id": "space-5"
+          },
+          {
+            "id": "space-6"
+          },
+          {
+            "id": "space-7"
+          },
+          {
+            "id": "space-8"
+          },
+          {
+            "id": "space-9"
+          },
+          {
+            "id": "space-10"
+          },
+          {
+            "id": "space-11"
+          },
+          {
+            "id": "space-12"
+          },
+          {
+            "id": "space-13"
+          },
+          {
+            "id": "space-14"
+          },
+          {
+            "id": "space-15"
+          },
+          {
+            "id": "space-16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "skill-spaces-inline-secret",
+      "value": {
+        "skill_spaces": [
+          {
+            "id": "space-first",
+            "api_key": "fixture-secret"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-null-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-non-string-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-empty-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-relative-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "/mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-file-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "file:///etc/passwd"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-userinfo-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://fixture-secret@example.test/mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-password-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://user:fixture-secret@example.test/mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-query-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp?token=fixture-secret"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-fragment-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp#fixture-secret"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-empty-query-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp?"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-space-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/a b"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-newline-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-backslash-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test\\mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-unicode-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/\u6d4b\u8bd5"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-bad-port-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test:65536/mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-zero-port-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test:0/mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-bad-ipv6-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "http://[invalid]/mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-ipvfuture-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "http://[v1.abc]/mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-long-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-missing-host-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "http:///mcp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-stdio",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "transport": "stdio"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-null-transport",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "transport": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-array-transport",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "transport": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-object-transport",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "transport": {}
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-null-auth",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-array-auth",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-scalar-auth",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": "fixture-secret"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-non-string-auth",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Authorization": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-inline-auth",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Authorization": "Bearer fixture-secret"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-model-credential",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Authorization": "AGENTKIT_MODEL_API_KEY"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-cloud-credential",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Authorization": "KSYUN_ACCESS_KEY"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-unmasked-name",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Authorization": "MCP_CRM_AUTH"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-duplicate-header",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Authorization": "MCP_CRM_TOKEN",
+              "authorization": "MCP_OTHER_TOKEN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-protocol-header",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Mcp-Session-Id": "MCP_CRM_TOKEN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-host-header",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Host": "MCP_HOST_KEY"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-header-newline",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Authorization\nX-Evil": "MCP_CRM_TOKEN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-prototype-header",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "__proto__": "MCP_CRM_TOKEN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-env-ref-newline",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "Authorization": "MCP_CRM_TOKEN\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-many-auth-headers",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "env_refs": {
+              "X-Key-0": "MCP_CRM_TOKEN",
+              "X-Key-1": "MCP_CRM_TOKEN",
+              "X-Key-2": "MCP_CRM_TOKEN",
+              "X-Key-3": "MCP_CRM_TOKEN",
+              "X-Key-4": "MCP_CRM_TOKEN",
+              "X-Key-5": "MCP_CRM_TOKEN",
+              "X-Key-6": "MCP_CRM_TOKEN",
+              "X-Key-7": "MCP_CRM_TOKEN",
+              "X-Key-8": "MCP_CRM_TOKEN",
+              "X-Key-9": "MCP_CRM_TOKEN",
+              "X-Key-10": "MCP_CRM_TOKEN",
+              "X-Key-11": "MCP_CRM_TOKEN",
+              "X-Key-12": "MCP_CRM_TOKEN",
+              "X-Key-13": "MCP_CRM_TOKEN",
+              "X-Key-14": "MCP_CRM_TOKEN",
+              "X-Key-15": "MCP_CRM_TOKEN",
+              "X-Key-16": "MCP_CRM_TOKEN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-inline-headers",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "headers": {
+              "Authorization": "fixture-secret"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-inline-api-key",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "api_key": "fixture-secret"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct-mcp-ambiguous-region",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "endpoint": "https://example.test/mcp",
+            "region": "cn-beijing-6"
+          }
+        ]
+      }
+    },
+    {
+      "name": "auth-without-direct-endpoint",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "direct",
+            "env_refs": {
+              "Authorization": "MCP_CRM_TOKEN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "platform-direct-id-collision",
+      "value": {
+        "mcp_servers": [
+          {
+            "id": "same"
+          },
+          {
+            "id": "same",
+            "endpoint": "https://example.test/mcp"
+          }
+        ]
+      }
+    }
+  ]
+}

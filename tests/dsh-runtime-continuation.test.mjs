@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createDshRuntimeAdapter, unbindDshAgentRoutes, routeDshRuntime, setDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
+import { createManagedApprovalRegistry } from '../src/managed-runtime-approval.mjs';
 
 const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
 const completed = `data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`;
@@ -205,4 +206,50 @@ test('Codex completed text is persisted through the bound memory adapter', async
   });
   for await (const _chunk of adapter.stream({ ...prompt, model: 'local:codex-memory-agent', studioRuntime: 'codex', sessionId: 'memory-session' })) {}
   assert.equal(written, '已记住你的偏好');
+});
+
+test('managed approval runs lift the Codex thread policy and route App Server asks into the bridge', async t => {
+  const bridge = createRuntimeBridge(); t.after(() => bridge.close());
+  bridge.bindRoute('approval-session', { agentId: 'approval-agent', runtime: 'codex', local: true });
+  bridge.bindRoute('plain-session', { agentId: 'approval-agent', runtime: 'codex', local: true });
+  const published = [];
+  const registry = createManagedApprovalRegistry({ ctx: { on: () => () => {} } });
+  t.after(() => registry.dispose());
+  const run = registry.begin({ runId: 'run-codex-1', sessionId: 'public-approval', nativeSessionId: 'approval-session',
+    mode: 'ask', publish: item => published.push(item), publishDone: () => {} });
+  assert.equal(run.policy, 'ask');
+  const seen = [], outcomes = [];
+  const codexRuntime = {
+    async *stream(options) {
+      seen.push(options);
+      if (typeof options.requestApproval === 'function') {
+        const pending = options.requestApproval({ toolName: 'codex/command', callId: 'item-cmd', reason: 'write file' });
+        const item = published.at(-1);
+        registry.resolve({ sessionId: 'public-approval', nativeSessionId: 'approval-session', runId: 'run-codex-1',
+          interactionId: item.id, expectedRevision: 1, action: 'approve' });
+        outcomes.push(await pending);
+      }
+      yield { type: 'text', text: '业务答复' };
+    },
+  };
+  const adapter = createDshRuntimeAdapter({ bridge,
+    codexResourceContext: async () => ({ systemPrompt: '', dynamicTools: [], toolHandler: async () => ({}) }),
+    codexRuntime,
+  });
+  bridge.setAdapter(adapter);
+  const owned = new WeakSet();
+  const next = async function* () { yield { type: 'text', text: 'next' }; };
+  const read = options => Array.fromAsync(routeDshRuntime(options, next, bridge, value => owned.has(value)));
+  const turn = Object.freeze({ ...prompt, sessionId: 'approval-session' }); owned.add(turn);
+  const chunks = await read(turn);
+  assert.ok(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.text === '业务答复'));
+  assert.equal(seen[0].approvalPolicy, 'on-request');
+  assert.equal(typeof seen[0].requestApproval, 'function');
+  assert.deepEqual(outcomes, ['allowed-once']);
+  assert.deepEqual(published.map(item => [item.type, item.name, item.call_id]),
+    [['mcp_approval_request', 'codex/command', 'item-cmd']]);
+  const plain = Object.freeze({ ...prompt, sessionId: 'plain-session' }); owned.add(plain);
+  await read(plain);
+  assert.equal(seen[1].approvalPolicy, undefined);
+  assert.equal(seen[1].requestApproval, undefined);
 });
