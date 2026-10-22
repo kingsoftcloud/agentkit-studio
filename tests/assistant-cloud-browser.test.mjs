@@ -182,6 +182,23 @@ test('resolveCloudBrowser requires an existing Chromium and a credential-free so
   }
 });
 
+test('registration keeps the Host tools service receiver bound', async t => {
+  const created = fixture();
+  cleanup(t, created);
+  // The real registry exposes register() as a prototype method; an extracted
+  // reference loses `this` and used to throw before any tool was registered.
+  class HostTools {
+    #registered = [];
+    register(definition) { this.#registered.push(definition.name); return () => {}; }
+    get registered() { return [...this.#registered]; }
+  }
+  const tools = new HostTools();
+  const agent = { ctx: { get: name => name === 'tools' ? tools : undefined }, session: { id: 'bound' } };
+  const result = registerAssistantCloudBrowserTools({ agent, workspaceRoot: created.root, env: { AGENTKIT_CHROMIUM: created.chromium } });
+  assert.deepEqual(result.names, [...BROWSER_TOOLS]);
+  assert.deepEqual(tools.registered, [...BROWSER_TOOLS]);
+});
+
 test('registerAssistantCloudBrowserTools registers the eight bounded definitions', async t => {
   const created = fixture();
   cleanup(t, created);

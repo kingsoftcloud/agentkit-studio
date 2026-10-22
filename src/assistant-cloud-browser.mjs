@@ -697,7 +697,12 @@ export function registerAssistantCloudBrowserTools(registerOrOptions, maybeBrows
     for (const dispose of options.previous.disposers || []) { try { dispose(); } catch { /* stale disposer */ } }
   }
   if (!browser.available) throw fail(browser.resolution?.reason || '云端浏览器不可用', 'ASSISTANT_BROWSER_UNAVAILABLE');
-  const register = options.register ?? options.agent?.ctx?.get?.('tools')?.register;
+  // The Host's tools service exposes `register` as a prototype method: calling
+  // an extracted reference would lose `this` and throw, so bind it through the
+  // service. An explicit `register` injection keeps the test seam unchanged.
+  const tools = options.agent?.ctx?.get?.('tools');
+  const register = typeof options.register === 'function' ? options.register
+    : typeof tools?.register === 'function' ? definition => tools.register(definition) : undefined;
   if (typeof register !== 'function') throw fail('云端浏览器需要原生工具注册表', 'ASSISTANT_BROWSER_UNAVAILABLE');
   const disposers = [];
   for (const definition of browser.tools) {
