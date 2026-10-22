@@ -179,28 +179,43 @@ export const factory = config => createNativeE2BSdkTransport(config);
 
 /** Trusted lifecycle port for createNativeE2BSandboxOwner, never a model tool. */
 export async function createNativeE2BSdkLifecycle({ connection, template = 'base', timeoutSeconds = 300,
-  env = {}, loadSdk = () => import('e2b') } = {}) {
+  env = {}, allowInternetAccess = true, loadSdk = () => import('e2b') } = {}) {
   const bound = connectionOptions(connection);
   invariant(typeof template === 'string' && template.trim() && template.length <= 256, 'e2b_template_invalid');
   invariant(Number.isSafeInteger(timeoutSeconds) && timeoutSeconds > 0 && timeoutSeconds <= 86400, 'e2b_sandbox_timeout_invalid');
   invariant(env && typeof env === 'object' && !Array.isArray(env)
     && Object.values(env).every(value => typeof value === 'string'), 'e2b_sandbox_env_invalid');
+  invariant(typeof allowInternetAccess === 'boolean', 'e2b_sandbox_internet_policy_invalid');
   const environment = copy(env);
   checkSdkEnvironment(); const sdk = await loadSdk(); checkSdkEnvironment();
   invariant(typeof sdk.Sandbox?.create === 'function' && typeof sdk.Sandbox?.kill === 'function', 'e2b_sdk_lifecycle_contract_invalid');
   const bindingDigest = createHash('sha256').update(canonical({ contract: NATIVE_E2B_SDK_TRANSPORT,
-    connection: bound, template, timeoutSeconds, env: environment })).digest('hex');
+    connection: bound, template, timeoutSeconds, env: environment, allowInternetAccess })).digest('hex');
   return Object.freeze({ bindingDigest,
     async createSandbox({ signal, metadata } = {}) {
       invariant(signal instanceof AbortSignal, 'e2b_signal_invalid'); signal.throwIfAborted(); checkSdkEnvironment();
       invariant(metadata && typeof metadata === 'object' && !Array.isArray(metadata)
         && Object.values(metadata).every(value => typeof value === 'string'), 'e2b_sandbox_metadata_invalid');
       const sandbox = await sdk.Sandbox.create(template, { ...bound, headers: { ...bound.headers },
-        signal, metadata: copy(metadata), envs: { ...environment }, timeoutMs: timeoutSeconds * 1000, requestTimeoutMs: 30000 });
+        signal, metadata: copy(metadata), envs: { ...environment }, allowInternetAccess,
+        timeoutMs: timeoutSeconds * 1000, requestTimeoutMs: 30000 });
       // Return a proven created identity even if cancellation arrived during the
       // API call. The durable owner records that fact before refusing readiness.
       invariant(validId(sandbox?.sandboxId), 'e2b_created_identity_invalid');
       return { sandboxId: sandbox.sandboxId };
+    },
+    async inspectSandbox(id, { signal } = {}) {
+      invariant(validId(id) && signal instanceof AbortSignal, 'e2b_sandbox_identity_invalid');
+      signal.throwIfAborted(); checkSdkEnvironment();
+      invariant(typeof sdk.Sandbox.getInfo === 'function', 'e2b_sdk_inspection_contract_invalid');
+      // A read of the original control plane, without connect/resume/create.
+      // Only the owner metadata needed for reconciliation crosses this port.
+      const info = await sdk.Sandbox.getInfo(id, { ...bound, headers: { ...bound.headers }, signal, requestTimeoutMs: 30000 });
+      signal.throwIfAborted(); checkSdkEnvironment();
+      invariant(info?.sandboxId === id && ['running', 'paused'].includes(info.state)
+        && info.metadata && typeof info.metadata === 'object' && !Array.isArray(info.metadata)
+        && Object.values(info.metadata).every(value => typeof value === 'string'), 'e2b_sandbox_inspection_invalid');
+      return { sandboxId: id, state: info.state, metadata: copy(info.metadata) };
     },
     async killSandbox(id, { signal } = {}) {
       invariant(validId(id) && signal instanceof AbortSignal, 'e2b_sandbox_identity_invalid');

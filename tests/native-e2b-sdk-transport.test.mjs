@@ -168,7 +168,7 @@ test('the installed SDK exposes the lifecycle port without creating a sandbox du
 test('lifecycle uses the fixed template, timeout, environment and owner metadata with actual SDK argument names', async () => {
   const calls = [], env = { LANG: 'original' }, signal = new AbortController().signal;
   const lifecycle = await createNativeE2BSdkLifecycle({ connection: connection(), template: 'owned-template',
-    timeoutSeconds: 123, env, loadSdk: async () => ({ Sandbox: {
+    timeoutSeconds: 123, env, allowInternetAccess: false, loadSdk: async () => ({ Sandbox: {
       async create(template, options) { calls.push({ template, options }); return { sandboxId: 'sandbox-A' }; },
       async kill(id, options) { calls.push({ id, options }); return true; },
     } }) });
@@ -176,9 +176,49 @@ test('lifecycle uses the fixed template, timeout, environment and owner metadata
   assert.deepEqual(await lifecycle.createSandbox({ signal, metadata: { nativeOwner: 'original-owner' } }), { sandboxId: 'sandbox-A' });
   assert.equal(calls[0].template, 'owned-template'); assert.equal(calls[0].options.timeoutMs, 123000);
   assert.equal(calls[0].options.signal, signal); assert.equal(calls[0].options.retries, 0);
+  assert.equal(calls[0].options.allowInternetAccess, false);
   assert.deepEqual(calls[0].options.envs, { LANG: 'original' });
   assert.deepEqual(calls[0].options.metadata, { nativeOwner: 'original-owner' });
   assert.equal(await lifecycle.killSandbox('sandbox-A', { signal }), true); assert.equal(calls[1].id, 'sandbox-A');
+});
+
+test('lifecycle internet policy is strict and participates in the frozen binding', async () => {
+  const enabled = await createNativeE2BSdkLifecycle({ connection: connection(), allowInternetAccess: true });
+  const disabled = await createNativeE2BSdkLifecycle({ connection: connection(), allowInternetAccess: false });
+  assert.notEqual(enabled.bindingDigest, disabled.bindingDigest);
+  await assert.rejects(createNativeE2BSdkLifecycle({ connection: connection(), allowInternetAccess: 'false' }), /e2b_sandbox_internet_policy_invalid/);
+});
+
+test('lifecycle inspection is an exact control-plane getInfo read with only owner metadata returned', async () => {
+  const calls = [], signal = new AbortController().signal;
+  const lifecycle = await createNativeE2BSdkLifecycle({ connection: connection(), loadSdk: async () => ({ Sandbox: {
+    async create() { assert.fail('inspection must not create'); }, async kill() { assert.fail('inspection must not kill'); },
+    async getInfo(id, opts) {
+      calls.push({ id, opts });
+      return { sandboxId: id, state: 'running', metadata: { nativeOwner: 'owner', nativeCreateOperation: 'operation' },
+        envdAccessToken: 'never-return-this' };
+    },
+  } }) });
+  const inspected = await lifecycle.inspectSandbox('sandbox-original', { signal });
+  assert.deepEqual(inspected, { sandboxId: 'sandbox-original', state: 'running',
+    metadata: { nativeOwner: 'owner', nativeCreateOperation: 'operation' } });
+  assert.equal(calls.length, 1); assert.equal(calls[0].id, 'sandbox-original');
+  assert.equal(calls[0].opts.signal, signal); assert.equal(calls[0].opts.apiUrl, connection().apiUrl);
+  assert.equal(calls[0].opts.retries, 0); assert.equal(calls[0].opts.requestTimeoutMs, 30000);
+});
+
+test('lifecycle inspection rejects a substituted sandbox or a response after cancellation', async () => {
+  const observed = gate(), entered = gate(), controller = new AbortController(); let calls = 0;
+  const lifecycle = await createNativeE2BSdkLifecycle({ connection: connection(), loadSdk: async () => ({ Sandbox: {
+    async create() {}, async kill() {}, async getInfo(id) {
+      calls++; entered.resolve(); await observed.promise; return { sandboxId: 'wrong-sandbox', state: 'running', metadata: {} };
+    },
+  } }) });
+  const pending = lifecycle.inspectSandbox('sandbox-original', { signal: controller.signal });
+  const expected = assert.rejects(pending, { name: 'AbortError' });
+  await entered.promise; controller.abort(); observed.resolve(); await expected;
+  await assert.rejects(lifecycle.inspectSandbox('sandbox-original', { signal: new AbortController().signal }), /e2b_sandbox_inspection_invalid/);
+  assert.equal(calls, 2);
 });
 
 test('lifecycle returns a proven created identity when a cancellation arrives during creation', async () => {

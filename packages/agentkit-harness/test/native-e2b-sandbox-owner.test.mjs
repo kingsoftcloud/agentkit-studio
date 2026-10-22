@@ -158,3 +158,125 @@ test('a confirmed kill arriving after its fence was revoked stays unknown', asyn
   assert.equal(fixture.owner.inspect().phase, 'unknown');
   assert.equal(fixture.owner.inspect().outcomeReason, 'sandbox_kill_authority_lost');
 });
+
+async function uncertainCreation(t, { knownId = false } = {}) {
+  let metadata, createAttempts = 0;
+  const fixture = setup(t, { createSandbox: async input => {
+    createAttempts++; metadata = input.metadata;
+    throw Object.assign(new Error('remote create reply lost'), knownId ? { sandboxId: 'remote-A' } : {});
+  } });
+  await assert.rejects(fixture.owner.ensure(request()), { code: 'e2b_sandbox_outcome_unknown' });
+  const observations = [];
+  const owner = fixture.reopen({ assertReconciliationAuthority: () => true,
+    inspectSandbox: async (sandboxId, options) => {
+      observations.push({ sandboxId, options }); return { sandboxId, state: 'running', metadata: { ...metadata } };
+    } });
+  const decision = () => ({ sandboxId: 'remote-A', expectedRecordDigest: owner.inspectReconciliation().recordDigest });
+  return { ...fixture, owner, observations, decision, metadata, createAttempts: () => createAttempts };
+}
+
+test('explicit recovery adopts only a remotely verified original creation without creating or replaying a command', async t => {
+  const fixture = await uncertainCreation(t);
+  const decision = fixture.decision(), input = request({ operationKey: 'manual-reconcile' });
+  assert.deepEqual(await fixture.owner.reconcileAdoption(input, decision), {
+    sandboxId: 'remote-A', adopted: true, commandsReconciled: false,
+  });
+  assert.equal(fixture.observations.length, 1); assert.equal(fixture.observations[0].options.signal, input.signal);
+  const record = fixture.reopen().inspect();
+  assert.equal(record.phase, 'ready'); assert.equal(record.reconciliation.previousRecordDigest, decision.expectedRecordDigest);
+  assert.equal(record.reconciliation.previousOutcomeReason, 'sandbox_create_outcome_unknown');
+  assert.equal(record.reconciliation.identity.operationKey, 'manual-reconcile');
+  assert.deepEqual(await fixture.reopen().ensure(request({ operationKey: 'after-adoption' })), { sandboxId: 'remote-A', created: false });
+  assert.equal(fixture.createAttempts(), 1); assert.deepEqual(fixture.killed, []);
+});
+
+test('an ordinary tool authorizer cannot grant recovery and a stale reviewed record cannot trigger an API read', async t => {
+  const fixture = await uncertainCreation(t);
+  await assert.rejects(fixture.reopen().reconcileAdoption(request(), fixture.decision()), /e2b_owner_reconciliation_unavailable/);
+  for (const authority of [() => false, async () => true]) {
+    const owner = fixture.reopen({ assertReconciliationAuthority: authority,
+      inspectSandbox: async () => { assert.fail('no inspection without exact recovery authority'); } });
+    await assert.rejects(owner.reconcileAdoption(request(), fixture.decision()), /e2b_owner_authority_unproven/);
+  }
+  await assert.rejects(fixture.owner.reconcileAdoption(request(), { ...fixture.decision(), expectedRecordDigest: 'b'.repeat(64) }),
+    /e2b_owner_reconciliation_record_changed/);
+  assert.equal(fixture.observations.length, 0); assert.equal(fixture.owner.inspect().phase, 'unknown');
+});
+
+test('recovery verifies remote owner, original create operation, identity and running state rather than trusting the supplied ID', async t => {
+  for (const change of [{ metadata: { nativeOwner: 'foreign', nativeCreateOperation: 'foreign' } },
+    { state: 'paused' }, { sandboxId: 'foreign' }, { wrongOperation: true }]) {
+    const fixture = await uncertainCreation(t);
+    const owner = fixture.reopen({ assertReconciliationAuthority: () => true, inspectSandbox: async sandboxId => ({
+      sandboxId, state: 'running', metadata: fixture.metadata, ...change,
+      ...(change.wrongOperation ? { metadata: { ...fixture.metadata, nativeCreateOperation: 'foreign' } } : {}),
+    }) });
+    await assert.rejects(owner.reconcileAdoption(request(), fixture.decision()), /e2b_owner_reconciliation_proof_invalid/);
+    assert.equal(owner.inspect().phase, 'unknown');
+  }
+});
+
+test('a proven sandbox ID cannot be replaced by a recovery candidate even before inspection', async t => {
+  const fixture = await uncertainCreation(t, { knownId: true });
+  await assert.rejects(fixture.owner.reconcileAdoption(request(), { ...fixture.decision(), sandboxId: 'foreign' }),
+    /e2b_owner_reconciliation_sandbox_mismatch/);
+  assert.equal(fixture.observations.length, 0); assert.equal(fixture.owner.inspect().sandboxId, 'remote-A');
+});
+
+test('unknown cleanup cannot be converted into a ready sandbox by adopting an old creation', async t => {
+  const fixture = setup(t); await fixture.owner.ensure(request());
+  const owner = fixture.reopen({ killSandbox: async () => false, assertReconciliationAuthority: () => true,
+    inspectSandbox: async () => { assert.fail('cleanup requires its own reconciliation'); } });
+  await owner.close(request({ operationKey: 'close' }));
+  await assert.rejects(owner.reconcileAdoption(request(), { sandboxId: 'remote-A',
+    expectedRecordDigest: owner.inspectReconciliation().recordDigest }), /e2b_owner_reconciliation_phase_invalid/);
+  assert.equal(owner.inspect().phase, 'unknown');
+});
+
+test('authority or exact-decision drift after the backend read keeps the record unknown', async t => {
+  for (const drift of ['authority', 'decision', 'signal', 'request']) {
+    const fixture = await uncertainCreation(t), entered = gate(), finish = gate(); let authorized = true;
+    const owner = fixture.reopen({ assertReconciliationAuthority: () => authorized,
+      inspectSandbox: async sandboxId => { entered.resolve(); await finish.promise;
+        return { sandboxId, state: 'running', metadata: fixture.metadata }; } });
+    const input = request(), decision = fixture.decision();
+    const pending = owner.reconcileAdoption(input, decision), expected = assert.rejects(pending);
+    await entered.promise;
+    if (drift === 'authority') authorized = false;
+    if (drift === 'decision') decision.sandboxId = 'replacement';
+    if (drift === 'signal') input.signal = signal();
+    if (drift === 'request') input.executionFence++;
+    finish.resolve(); await expected;
+    assert.equal(owner.inspect().phase, 'unknown'); assert.equal(owner.inspect().sandboxId, null);
+  }
+});
+
+test('an unavailable backend observation remains unknown without allowing another create', async t => {
+  const fixture = await uncertainCreation(t);
+  const owner = fixture.reopen({ assertReconciliationAuthority: () => true,
+    inspectSandbox: async () => { throw new Error('control-plane unavailable'); } });
+  await assert.rejects(owner.reconcileAdoption(request(), fixture.decision()), {
+    code: 'e2b_owner_reconciliation_observation_unknown', uncertain: true,
+  });
+  await assert.rejects(owner.ensure(request()), { code: 'e2b_sandbox_outcome_unknown', uncertain: true });
+  assert.equal(owner.inspect().phase, 'unknown');
+});
+
+test('process death while observing recovery leaves the original unknown record intact', async t => {
+  const fixture = await uncertainCreation(t);
+  const moduleUrl = new URL('../src/native/e2b-sandbox-owner.mjs', import.meta.url).href;
+  const code = `import {readFileSync} from 'node:fs';
+    import {createNativeE2BSandboxOwner} from ${JSON.stringify(moduleUrl)};
+    const {config,input,decision}=JSON.parse(readFileSync(0,'utf8'));
+    const owner=createNativeE2BSandboxOwner({...config,assertAuthority:()=>true,
+      assertReconciliationAuthority:()=>true,createSandbox:async()=>{throw Error('must not create')},
+      killSandbox:async()=>{throw Error('must not kill')},inspectSandbox:async()=>{process.exit(38)}});
+    await owner.reconcileAdoption({...input,signal:new AbortController().signal},decision);`;
+  const before = fixture.owner.inspectReconciliation();
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8',
+    input: JSON.stringify({ config: { stateRoot: fixture.config.stateRoot, workspaceRoot: fixture.config.workspaceRoot,
+      scope, sessionId: 'session', bindingDigest }, input: { ...request(), signal: undefined }, decision: fixture.decision() }) });
+  assert.equal(child.status, 38, child.stderr);
+  assert.deepEqual(fixture.owner.inspectReconciliation(), before);
+  assert.equal((await fixture.owner.reconcileAdoption(request(), fixture.decision())).adopted, true);
+});

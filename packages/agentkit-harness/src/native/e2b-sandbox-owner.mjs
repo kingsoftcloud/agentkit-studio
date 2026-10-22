@@ -17,11 +17,14 @@ const outcomeUnknown = () => Object.assign(new Error('Sandbox outcome requires r
 });
 
 export function createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope, sessionId, bindingDigest,
-  assertAuthority, createSandbox, killSandbox, lockTimeoutMs = 5000 } = {}) {
+  assertAuthority, createSandbox, killSandbox, inspectSandbox = null, assertReconciliationAuthority = null,
+  lockTimeoutMs = 5000 } = {}) {
   const scopeIdentity = scopeKey(scope), fixedScope = copy(scope);
   invariant(typeof sessionId === 'string' && sessionId.trim(), 'e2b_owner_session_required');
   invariant(typeof bindingDigest === 'string' && /^[a-f0-9]{64}$/.test(bindingDigest), 'e2b_owner_binding_required');
   invariant(typeof assertAuthority === 'function' && typeof createSandbox === 'function' && typeof killSandbox === 'function', 'e2b_owner_capabilities_required');
+  invariant((inspectSandbox === null || typeof inspectSandbox === 'function')
+    && (assertReconciliationAuthority === null || typeof assertReconciliationAuthority === 'function'), 'e2b_owner_reconciliation_capabilities_invalid');
   invariant(Number.isSafeInteger(lockTimeoutMs) && lockTimeoutMs > 0 && lockTimeoutMs <= 120000, 'e2b_owner_lock_timeout_invalid');
   const workspace = realpathSync(workspaceRoot), lexical = resolve(stateRoot);
   invariant(lexical !== workspace && !lexical.startsWith(workspace + sep), 'e2b_owner_state_inside_workspace');
@@ -56,12 +59,12 @@ export function createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope, s
     identity: { runId: request.runId, operationKey: request.operationKey, callId: request.call.callId,
       executionFence: request.executionFence } };
   }
-  function guard(request, before) {
+  function guard(request, before, authority = assertAuthority) {
     invariant(realpathSync(workspaceRoot) === workspace && realpathSync(lexical) === root, 'e2b_owner_root_changed');
     const current = snapshot(request);
     invariant(current.requestDigest === before.requestDigest && current.signal === before.signal, 'e2b_owner_context_drift');
     before.signal.throwIfAborted();
-    invariant(assertAuthority(request) === true, 'e2b_owner_authority_unproven');
+    invariant(authority?.(request) === true, 'e2b_owner_authority_unproven');
   }
   const unknown = (record, reason, sandboxId = record.sandboxId) => ({ ...record, phase: 'unknown', sandboxId,
     outcomeReason: reason, updatedAt: Date.now() });
@@ -135,6 +138,59 @@ export function createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope, s
       return { confirmed: true, sandboxId: record.sandboxId };
     } finally { release(); }
   }
+
+  /** Explicit Host recovery action, never a model tool or an automatic retry.
+   * A separate exact-action authorization and an expected durable record hash
+   * are required. A caller-supplied sandbox ID is only a lookup candidate:
+   * the original bound backend must prove the metadata of THIS creation.
+   * Adoption does not reconcile or replay any command that might have run.
+   */
+  async function reconcileAdoption(request, decision) {
+    invariant(typeof inspectSandbox === 'function' && typeof assertReconciliationAuthority === 'function',
+      'e2b_owner_reconciliation_unavailable');
+    invariant(decision && validId(decision.sandboxId) && /^[a-f0-9]{64}$/.test(decision.expectedRecordDigest),
+      'e2b_owner_reconciliation_decision_invalid');
+    const fixedDecision = copy(decision), decisionDigest = hash(decision);
+    const before = snapshot(request);
+    const check = () => {
+      invariant(hash(decision) === decisionDigest, 'e2b_owner_reconciliation_decision_drift');
+      guard(request, before, current => assertReconciliationAuthority(current, copy(fixedDecision)));
+    };
+    check();
+    const release = await lockUntil(join(directory, 'lifecycle.sqlite'), performance.now() + lockTimeoutMs);
+    try {
+      check();
+      const record = read();
+      invariant(record && hash(record) === fixedDecision.expectedRecordDigest, 'e2b_owner_reconciliation_record_changed');
+      // An unfinished creator can only be classified after its OS lock was
+      // acquired here. Its original creation metadata is retained unchanged.
+      invariant(['creating', 'unknown'].includes(record.phase) && !record.closeIdentity,
+        'e2b_owner_reconciliation_phase_invalid');
+      invariant(record.sandboxId === null || record.sandboxId === fixedDecision.sandboxId,
+        'e2b_owner_reconciliation_sandbox_mismatch');
+      let observed;
+      try { observed = await inspectSandbox(fixedDecision.sandboxId, { signal: before.signal }); }
+      catch {
+        throw Object.assign(new Error('Sandbox observation requires reconciliation'), {
+          code: 'e2b_owner_reconciliation_observation_unknown', uncertain: true,
+        });
+      }
+      check();
+      invariant(observed?.sandboxId === fixedDecision.sandboxId && observed.state === 'running'
+        && observed.metadata?.nativeOwner === ownerKey
+        && observed.metadata?.nativeCreateOperation === hash(record.createIdentity), 'e2b_owner_reconciliation_proof_invalid');
+      // Keep the old unknown outcome and the reviewed record hash in the audit
+      // record. No "not created" conclusion or permission to create anew.
+      const reconciliation = { identity: before.identity, previousRecordDigest: fixedDecision.expectedRecordDigest,
+        previousPhase: record.phase, previousOutcomeReason: record.outcomeReason ?? null,
+        observationDigest: hash(observed), reconciledAt: Date.now() };
+      write({ ...record, phase: 'ready', sandboxId: fixedDecision.sandboxId, outcomeReason: 'sandbox_adopted_after_verification',
+        reconciliation, updatedAt: Date.now() });
+      return { sandboxId: fixedDecision.sandboxId, adopted: true, commandsReconciled: false };
+    } finally { release(); }
+  }
   return Object.freeze({ contract: NATIVE_E2B_SANDBOX_OWNER, ownerKey, ensure, close,
+    reconcileAdoption,
+    inspectReconciliation: () => { const record = read(); return record ? { record: copy(record), recordDigest: hash(record) } : null; },
     inspect: () => { const record = read(); return record ? copy(record) : null; } });
 }
