@@ -13,8 +13,9 @@ export function createAssistantRoutes({ deployments, assistantStoreDir, assistan
     if (endpoint === 'assistant/close') return { ok: true, value: await lifecycle.close(payload) };
     if (endpoint.startsWith('assistant/setup-')) {
       const service = await assistantSetup();
-      const action = endpoint.slice('assistant/setup-'.length);
-      if (!['options', 'start', 'status', 'upgrade'].includes(action)) throw fail('ASSISTANT_OPERATION_INVALID', '不支持的开通操作');
+      const methods = { options: 'options', start: 'start', status: 'status', upgrade: 'upgrade', grants: 'setGrants' };
+      const action = methods[endpoint.slice('assistant/setup-'.length)];
+      if (!action) throw fail('ASSISTANT_OPERATION_INVALID', '不支持的开通操作');
       return { ok: true, value: await service[action](payload) };
     }
     const { agents } = await deployments();
