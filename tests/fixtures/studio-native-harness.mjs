@@ -57,9 +57,9 @@ async function applyProof(ctx, options) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
         ...(options.memory ? { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
-          recall: { enabled: true }, write: { mode: 'candidate', flushBeforeCompaction: true, flushAfterTurn: false } },
-          context: { maxInputTokens: 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
-            compaction: { thresholdRatio: .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
+          recall: { enabled: true }, write: { mode: 'candidate', flushBeforeCompaction: !options.memoryManaged, flushAfterTurn: Boolean(options.memoryManaged) } },
+          context: { maxInputTokens: options.memoryManaged ? 16000 : 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
+            compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'] } : { tools: options.memory ? [] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
@@ -144,7 +144,7 @@ async function applyProof(ctx, options) {
     ctx.effect(() => disposePreset, 'Studio verification preset');
   }
   ctx.on('agent/created', async ({ agent, source }) => {
-    if (agent.session.id === 'native-studio-session') {
+    if (agent.session.id === 'native-studio-session' || options.memoryParallel && agent.session.id === 'native-studio-peer') {
       if (options.mountHost) {
         const origin = ctx.webServer.getOrigin();
         const unauthorized = await fetch(origin + '/agentkit', { method: 'POST', headers: { origin, 'content-type': 'application/json' },
@@ -198,15 +198,18 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/pre-execute', async (exec, next) => {
-    if (exec.agent.session.id === 'native-studio-session') {
-      await appendFile(join(options.directory, 'tool-admissions.jsonl'), JSON.stringify({ callId: exec.callId, name: exec.name }) + '\n');
+    if (exec.agent.session.id === 'native-studio-session' || options.memoryParallel && exec.agent.session.id === 'native-studio-peer') {
+      await appendFile(join(options.directory, 'tool-admissions.jsonl'), JSON.stringify({ callId: exec.callId, name: exec.name,
+        ...(options.memoryParallel ? { sessionId: exec.agent.session.id } : {}) }) + '\n');
+      if (options.memoryManaged && exec.name === 'manage_memory' && exec.arguments.content === 'Memory pipeline forbidden')
+        return { kind: 'deny', reason: 'Memory pipeline denied the write' };
       if (exec.arguments.path === 'denied.txt' || options.commands && exec.arguments.command.endsWith('> denied.txt'))
         return { kind: 'deny', reason: 'Verification policy denied this write' };
     }
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.
@@ -216,6 +219,23 @@ async function applyProof(ctx, options) {
       additionalContexts: [{ id: `context-${exec.callId}`, role: 'user', source: { kind: 'tool', callId: exec.callId },
         content: [{ type: 'text', text: `Loaded context for ${path}` }] }] };
   });
+  if (options.memoryManaged) ctx.on('approval/request', async request => {
+    if (request.agent.session.id !== 'native-studio-session' || request.toolName !== 'manage_memory') return;
+    if (options.memoryParallel) {
+      await writeFile(join(options.directory, 'memory-approval-waiting'), request.callId);
+      const deadline = Date.now() + 15000;
+      while (!existsSync(join(options.directory, 'memory-approval-release'))) {
+        request.signal.throwIfAborted();
+        if (Date.now() >= deadline) throw Error('Parallel Memory approval proof timed out');
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      request.signal.throwIfAborted();
+      return 'allowed-once';
+    }
+    // Deterministic human responder; the actual ApprovalService still owns
+    // turn enclosure, the policy decision and persisted asked/decided events.
+    return Promise.resolve(request.reason?.includes('forget') ? 'allowed-once' : 'rejected');
+  }, { prepend: true });
   if (options.recovery) {
     const origin = ctx.webServer.getOrigin();
     const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });

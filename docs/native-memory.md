@@ -1,6 +1,6 @@
 # Native 本地记忆迁移状态
 
-参考 `ksadk-python` 的 `feat-ksadk-harness-2` / `355059d78e47ed764bbdb3606304cdf34e9838a3`。当前已实现本地候选提取、SQLite 候选消费与纠正/遗忘存储事务、压缩前 Hook，以及模型请求前的本地召回和上下文刷新。独立的轮次完成消费器与显式记忆验收器也已实现，但尚未接入生产 Host。配置界面已支持本地记忆，模板创建支持该提供方。**完整记忆能力尚未迁移完成**：管理工具的权限/审批和核对、消费与验收的 Host 接入及完整产品安装运行验收仍待补齐。
+参考 `ksadk-python` 的 `feat-ksadk-harness-2` / `355059d78e47ed764bbdb3606304cdf34e9838a3`。当前已实现本地候选提取、SQLite 候选消费与纠正/遗忘存储事务、压缩前 Hook，以及模型请求前的本地召回和上下文刷新。轮次完成消费、read/search/manage 工具与显式记忆验收现已接入生产 Native Host 和 DSH 工具权限管线。配置界面支持本地记忆，模板创建支持该提供方。**完整记忆能力尚未迁移完成**：云记忆写入、未知副作用的人工核对流程及完整产品安装和浏览器运行验收仍待补齐。
 
 Agent 表单分别保存召回、写入方式、压缩前/轮次后刷新、作用域和写入开关。关闭记忆会保留原设置，空作用域不会自动扩大；写入默认使用 shadow，开启实际写入需要明确选择。Harness 模板可使用 `local-default`，允许写入方式为 `off`；只有启用的本地记忆可以满足模板必需的记忆库要求。关闭本地记忆后创建、重读和保存新修订已通过真实 Agent store 验证；完整浏览器交互尚未验收。
 
@@ -23,7 +23,7 @@ Agent 表单分别保存召回、写入方式、压缩前/轮次后刷新、作�
 }
 ```
 
-`write.mode` 支持 `off`、`explicit_only`、`candidate`。`memoryWrite` 支持 `off`、`shadow`、`enabled`，缺省为 `shadow`；shadow 只在 Hook 结果中报告候选策略判定，不打开记忆数据库、不累加观察次数。关闭记忆、关闭压缩前消费、不含 user scope、write off 或 rollout off 都不安装此 Hook。`flushAfterTurn` 已纳入策略绑定，独立消费器已实现，生产 Host 尚未安装它；目前请勿据此认为轮次后会自动保存。
+`write.mode` 支持 `off`、`explicit_only`、`candidate`。`memoryWrite` 支持 `off`、`shadow`、`enabled`，缺省为 `shadow`；shadow 的自动候选消费只报告策略判定，不执行写入、不累加观察次数；独立的只读记忆工具仍可访问数据库。关闭记忆、关闭压缩前消费、不含 user scope、write off 或 rollout off 都不安装此 Hook。`flushAfterTurn` 已接入生产 Host：canonical completed Run 提交后、资源释放前消费当前原始用户输入；仍须满足写入方式、rollout、资格与来源校验。
 
 Hook 与受信任宿主注册的其他 Hooks 合并，保留显式 Stop 继续次数上限，重复 ID 或冲突策略拒绝组装。其绑定包含原 Agent 修订/Build/spec 和来源契约；恢复时重新派生，不接受漂移后的来源。它使用已有的密封 Hook 意图、回执、租约与取消机制，不参与工具授权或任务验收。
 
@@ -65,8 +65,22 @@ Hook 与受信任宿主注册的其他 Hooks 合并，保留显式 Stop 继续�
 
 `bindStudioNativeMemoryTurn` 只消费当前 canonical completed Run 中经原始 Host 准入确认的人类输入，复核原 Revision/Build、scope 和 Session。资格沿用参考的 verified/unverified 条件，失败或阻塞的验收不进入消费。显式记忆任务及已执行的管理操作走各自所有者，不从自动候选路径补写；原始 source 身份与压缩前 Hook 共用，不能重复累计观察。
 
-整轮适配器提供受资源生命周期约束的 `consumeCompletedTurn`：主终态提交之后、资源释放之前执行，取消或截止撤销消费能力，消费异常不替换主结果。消费器关闭会取消在途调用，迟到回调不能开启新数据库写入；已提交但丢失结果的效果仍视为未知。消费器与压缩前模块的定向测试在 Node 22、26 各通过 36 项，生产 Host 接入仍由后续联测验证。
+整轮适配器提供受资源生命周期约束的 `consumeCompletedTurn`：主终态提交之后、资源释放之前执行，取消或截止撤销消费能力，消费异常不替换主结果。消费器关闭会取消在途调用，迟到回调不能开启新数据库写入；已提交但丢失结果的效果仍视为未知。消费器与压缩前模块的定向测试在 Node 22、26 各通过 36 项；生产 Host 已将该回调纳入终态资源生命周期。
 
-`studio.explicit-durable-memory/v2` 只读验收器为已识别的单一显式记忆目标固定验收身份。它重新读取当前 scoped fact，管理写入还须取得与原完整调用、正式工具定义及操作键一致的真实 owner receipt。承诺、伪造工具 JSON 和事实已变化的历史回执不能通过；已持久存在并被当前召回或显式读取的 add 目标不要求重复写入。证据服务失败仍阻塞，验收器不会写入或授予审批。相关验收与既有 verifier 的定向测试在两个 Node 版本各通过 40 项，尚未证明生产工具审批及完整 Host 路径。
+`studio.explicit-durable-memory/v2` 只读验收器为已识别的单一显式记忆目标固定验收身份。它重新读取当前 scoped fact，管理写入还须取得与原完整调用、正式工具定义及操作键一致的真实 owner receipt。承诺、伪造工具 JSON 和事实已变化的历史回执不能通过；已持久存在并被当前召回或显式读取的 add 目标不要求重复写入。证据服务失败仍阻塞，验收器不会写入或授予审批。相关验收与既有 verifier 的定向测试在两个 Node 版本各通过 40 项；现由 Host 将基线验收器与真实 Memory owner 验收器组合。
 
 安装包组件可使用 `node scripts/verify-native-studio-install.mjs --archive <Studio.tgz> --keep` 独立验证。它在仓库外以新 npm 缓存安装完整包的生产依赖，禁用安装脚本，PATH 仅含 Node，再加载 Studio/Native Host 工厂并执行真实 SQLite、记忆和 WASM 源码解析。Node 26、22 的新目录安装均成功；此检查不启动完整 DSH Host，也不执行 Codex，不能代替完整产品安装运行验收。
+
+## 管理工具与共享 preset 生命周期
+
+启用本地记忆并提供作用域时，Host 绑定锁定的 `read_memory`、`search_memory`；允许写入时增加 `manage_memory`。工具仍进入实际 DSH pre/guard/around/post 管线。非明确请求的写入和所有遗忘操作需要真实 ApprovalService 的当次授权。审批后及 SQLite 变更前重新核对原调用、完整定义、当前 intent、租约/fence、Session 和 Build 胶囊；过期调用不能借迟到批准写入。
+
+同 preset 的 DSH 工具注册由网关共享，每个 Session 的锁定定义和 Memory owner 单独绑定。单个 Session 结束只释放自己的 owner，不注销共享工具，也不改变其他 Session 的工具摘要。网关关闭同步撤销全部仍在使用的 Memory owner，避免等待中的批准在关闭后写入。子任务不能借用父 Session 的 Memory 工具。
+
+Host 工厂、工具网关及 Memory 防护三个相关模块在 Node 26、22 各通过 50 项，无跳过；包括真实 SQLite 的双 Session 并发、网关关闭后迟到批准无写入、新租约拒绝旧执行者以及真实 tokenizer 对非空检索结果的计数。确定性模型和受限宿主 fixture 不等于完整产品浏览器验收。
+
+完整打包 Host 验收入口为：
+
+- `node scripts/verify-studio-native-harness.mjs --source <维护DSH源码> --mount-host --memory-managed --archive <Studio.tgz> --keep`：八轮记忆读写、纠正、遗忘、拒绝、Host 重启及 SQLite owner 回执核对。
+- 同一命令改用 `--memory-parallel`：两个真实 SDK Session 共用一个 preset；A 等待审批时 B 写入并释放，之后 A 继续搜索、B 新轮读取。
+- 两者均支持 `--frozen`。`--studio-dependencies <node_modules>` 可以选择全新安装的普通 Studio 依赖图；DSH Host 依赖仍由 `--source` 提供，不代表完整 Host 已完成全新安装验收。

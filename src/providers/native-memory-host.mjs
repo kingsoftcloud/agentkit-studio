@@ -288,6 +288,7 @@ export function bindStudioNativeMemoryHost({ record, scope, sessionId, store, st
   };
 
   return { contract: STUDIO_NATIVE_MEMORY_HOST, policy, port, provider, memoryOwner, memoryTurn,
+    scope: boundScope, sessionId, buildId: boundBuildId,
     withDispatch, wrapVerification, verificationDigest, hostBindingDigest,
     manageMemoryToolNames: DEFAULT_MANAGE_MEMORY_TOOL_NAMES, close };
 }

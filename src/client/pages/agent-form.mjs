@@ -177,7 +177,8 @@ export function createAgentForm({
     // Native memory configuration. The local-default path (harness, blank/edit)
     // exposes recall/write/rollout; every other enabled path is cloud-only and
     // keeps the original minimal memory UI. recall.enabled stays independent
-    // of memory.enabled; shadow only evaluates, flushAfterTurn is not yet wired.
+    // of memory.enabled; shadow evaluates without writing. Both flush points
+    // consume original user sources through the local Native Memory owner.
     const memoryConfigPanel = () => {
       if (!memoryEnabled) return null;
       if (cloudEditing) return h('div', { 'data-memory-cloud-edit': true, style: { marginTop: '16px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '云端 Agent 的记忆由 AgentEngine Server 管理记忆库绑定；如需调整请在「绑定能力」步骤操作，本地记忆配置不适用。');
@@ -202,7 +203,7 @@ export function createAgentForm({
             h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' } },
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: BRAND.ink, fontSize: '12px' } }, h('input', { type: 'checkbox', 'aria-label': '压缩前刷新记忆', checked: memoryConfig.writeFlushBeforeCompaction, onChange: event => updateMemory({ writeFlushBeforeCompaction: event.target.checked }) }), '压缩前刷新'),
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: BRAND.ink, fontSize: '12px' } }, h('input', { type: 'checkbox', 'aria-label': '轮次后刷新记忆', checked: memoryConfig.writeFlushAfterTurn, onChange: event => updateMemory({ writeFlushAfterTurn: event.target.checked }) }), '轮次后刷新')),
-            h('p', { style: { margin: '8px 0 0', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '压缩前刷新会在上下文压缩前提取记忆候选，并按写入方式与开关处理；轮次后刷新暂不可用，仅保留设置。')),
+            h('p', { style: { margin: '8px 0 0', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '压缩前刷新在上下文压缩前提取记忆候选；轮次后刷新在本轮完成后提取当前用户消息中的候选。实际写入由写入方式与开关决定。')),
           h('div', { style: divider },
             h('label', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '记忆写入开关', h('select', { 'aria-label': '记忆写入开关', value: memoryConfig.rollout, onChange: event => updateMemory({ rollout: event.target.value }), style: inputStyle() }, h('option', { value: 'off' }, '关闭写入'), h('option', { value: 'shadow' }, '仅评估（shadow）'), h('option', { value: 'enabled' }, '实际写入'))),
             h('p', { style: { margin: '6px 0 0', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, memoryConfig.rollout === 'shadow' ? 'shadow 仅评估候选策略，不写入记忆库。' : memoryConfig.rollout === 'enabled' ? 'enabled 实际写入本地记忆库；请确认后再开启。' : '关闭后不写入记忆库，已写入事实仍可召回。'))) : h(Fragment, null,

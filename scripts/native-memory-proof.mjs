@@ -12,7 +12,8 @@ const rows = async path => (await readFile(path, 'utf8')).trim().split('\n').fil
 /** Real HTTP provider peer. The Host uses its normal tokenizer and planner. */
 export async function respondToMemoryProof({ request, response, body, requests, frozen, waitForPublicPrefix }) {
   assert.equal(request.url, '/v1/chat/completions'); assert.equal(body.model, 'pinned');
-  assert.deepEqual(body.tools ?? [], []);
+  assert.deepEqual((body.tools ?? []).map(tool => tool.function.name),
+    summary(body) ? [] : ['read_memory', 'search_memory', 'manage_memory']);
   if (frozen && !summary(body)) {
     assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('FROZEN_NATIVE_SYSTEM_A')));
     assert.equal(JSON.stringify(body.messages).includes('LATEST_NATIVE_SYSTEM_B'), false);

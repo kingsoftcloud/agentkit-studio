@@ -12,11 +12,16 @@ import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/di
 import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { respondToAutomationProof, runAutomationProof, verifyAutomationLedger } from './native-automation-proof.mjs';
 import { respondToMemoryProof, runMemoryProof } from './native-memory-proof.mjs';
+import { createManagedMemoryProof } from './native-memory-managed-proof.mjs';
+import { createParallelMemoryProof } from './native-memory-parallel-proof.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
   automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
-  hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false }, archive: { type: 'string' } } });
+  hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false },
+  'memory-managed': { type: 'boolean', default: false },
+  'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
+  'studio-dependencies': { type: 'string' } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
@@ -27,6 +32,13 @@ assert.ok(!values.hooks || values['mount-host'] && !values.automation && !values
   '--hooks exercises mounted Host workspace tools without automation/commands/MCP');
 assert.ok(!values.memory || values['mount-host'] && !values.automation && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery,
   '--memory exercises mounted Host original-user Memory without the other proof scenarios; --frozen is supported');
+assert.ok(!values['memory-managed'] || values['mount-host'] && !values.memory && !values.automation && !values.commands
+  && !values['mcp-schema'] && !values.hooks && !values.recovery, '--memory-managed is a separate mounted Host proof; --frozen is supported');
+const managedMemory = values['memory-managed'] ? createManagedMemoryProof() : null;
+assert.ok(!values['memory-parallel'] || values['mount-host'] && !values.memory && !managedMemory
+  && !values.automation && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery,
+  '--memory-parallel is a separate mounted Host proof; --frozen is supported');
+const parallelMemory = values['memory-parallel'] ? createParallelMemoryProof() : null;
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
@@ -82,6 +94,8 @@ const server = createServer(async (request, response) => {
       response.end(canonical({ jsonrpc: '2.0', id: body.id, result })); return;
     }
     const body = JSON.parse(raw);
+    if (parallelMemory) { await parallelMemory.respond({ request, response, body, requests, frozen: values.frozen }); return; }
+    if (managedMemory) { await managedMemory.respond({ request, response, body, requests, frozen: values.frozen }); return; }
     if (values.memory) {
       await respondToMemoryProof({ request, response, body, requests, frozen: values.frozen, waitForPublicPrefix }); return;
     }
@@ -128,7 +142,7 @@ const server = createServer(async (request, response) => {
       finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) {
     failures.push(error);
-    if (values.memory) await writeFile(join(root, 'memory-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
+    if (values.memory || managedMemory || parallelMemory) await writeFile(join(root, 'memory-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (values.automation) await writeFile(join(root, 'automation-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (!response.headersSent) response.writeHead(500);
     response.end('verification failed');
@@ -139,24 +153,27 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   // Install the actual packed Studio files into an isolated Host graph. DSH
-  // owns its public packages; ordinary Studio dependencies use the installed
-  // versions in this checkout. Nothing is installed into the developer's home.
+  // owns its maintained public packages; ordinary Studio dependencies can come
+  // from a fresh registry install, without falling back to this checkout.
   if (!values.archive) execFileSync('pnpm', ['pack', '--pack-destination', root], { cwd: repository, stdio: 'pipe' });
   const packedName = values.archive || (await readdir(root)).find(name => name.endsWith('.tgz'));
   assert.ok(packedName, 'Studio package was produced');
   const archive = values.archive ? resolve(packedName) : join(root, packedName);
   const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
+  const studioDependencies = values['studio-dependencies'] ? resolve(values['studio-dependencies']) : join(repository, 'node_modules');
   await mkdir(graph);
   execFileSync('tar', ['-xzf', archive, '-C', graph]);
   await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
-  for (const entry of await readdir(join(repository, 'node_modules'))) {
+  for (const entry of await readdir(studioDependencies)) {
     if (entry === '@deepseek-ai' || entry.startsWith('.')) continue;
-    await symlink(join(repository, 'node_modules', entry), join(dependencies, entry));
+    await symlink(join(studioDependencies, entry), join(dependencies, entry));
   }
   const dshDependencies = values['mount-host'] ? join(source, 'apps/cli/node_modules/@deepseek-ai') : join(repository, 'node_modules/@deepseek-ai');
   for (const entry of await readdir(dshDependencies)) {
     await symlink(join(dshDependencies, entry), join(dependencies, '@deepseek-ai', entry));
   }
+  await writeFile(join(root, 'dependency-graph.json'), JSON.stringify({ archive, studioDependencies, dshDependencies,
+    scope: 'Packed Studio execution with selected installed dependencies; maintained DSH Host remains supplied by --source.' }, null, 2));
   if (!values['mount-host']) {
     await symlink(join(source, 'packages/core/system-prompt'), join(dependencies, '@deepseek-ai/dsh-system-prompt'));
     await symlink(join(source, 'packages/core/agent'), join(dependencies, '@deepseek-ai/dsh-agent'));
@@ -193,7 +210,9 @@ try {
     `        automation: ${values.automation}`,
     `        recovery: ${values.recovery}`,
     `        hooks: ${values.hooks}`,
-    `        memory: ${values.memory}`,
+    `        memory: ${values.memory || Boolean(managedMemory || parallelMemory)}`,
+    `        memoryManaged: ${Boolean(managedMemory || parallelMemory)}`,
+    `        memoryParallel: ${Boolean(parallelMemory)}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -204,7 +223,13 @@ try {
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_PYTHON: '/unavailable/python', AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (values.memory) {
+  if (parallelMemory) {
+    await parallelMemory.run({ harness, root, installed, sessions, requests, failures, frozen: values.frozen });
+    harness = null;
+  } else if (managedMemory) {
+    await managedMemory.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures, frozen: values.frozen });
+    harness = null;
+  } else if (values.memory) {
     await runMemoryProof({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures, frozen: values.frozen });
     harness = null;
   } else {

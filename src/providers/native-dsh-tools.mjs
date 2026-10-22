@@ -73,8 +73,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   invariant(!mcpContracts.size || typeof executeMcpTool === 'function', 'studio_native_mcp_executor_unavailable');
   const mcpSchemas = new Map([...mcpContracts].filter(([, contract]) => contract.nativeMcpSchema !== undefined)
     .map(([name, contract]) => [name, bindNativeMcpSchema(contract.nativeMcpSchema)]));
+  // Memory tool names are registered ONCE (shared across the preset's sessions)
+  // but each active session owns its own Memory owner; a call routes to the
+  // owner bound for ITS session via the registered execute closure, and
+  // definitions() selects the caller-session's locked formal. The preset
+  // gateway is shared across sessions, so this map is keyed by sessionId.
   const memoryNames = new Set();
-  let memoryBinding = null;
+  const memoryOwners = new Map(); // sessionId -> { memoryHost, definitions: Map }
+  let memoryRegistered = false, memoryDisposers = [];
   let closed = false, closing, disposers = [];
   const close = () => {
     if (closing) return closing;
@@ -83,12 +89,19 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       try { return Promise.resolve(dispose?.()); } catch (error) { return Promise.reject(error); }
     });
     disposers = [];
-    // Dispose the bound Memory owner's own registrations; the provider lifetime
-    // is released by the Host's releaseResources, not here.
-    const memoryDispose = memoryBinding?._dispose;
-    memoryBinding = null;
-    const memoryUnregistering = memoryDispose ? [Promise.resolve(memoryDispose())] : [];
-    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, browserTools.close()]).then(results => {
+    // Close every active session's Memory owner host so a deferred approval that
+    // resolves after gateway close cannot commit a write (the host guard checks
+    // its own closed flag). Just dropping the routing entry is NOT enough — a
+    // Memory body mid-approval holds the host. Collect close failures rather
+    // than swallow them; releaseResources later close() is idempotent.
+    const memoryClosing = [...memoryOwners.values()].map(({ memoryHost }) => {
+      try { return Promise.resolve(memoryHost.close()); } catch (error) { return Promise.reject(error); }
+    });
+    memoryOwners.clear();
+    const memoryUnregistering = [];
+    for (const dispose of memoryDisposers) { try { memoryUnregistering.push(Promise.resolve(dispose?.())); } catch (error) { memoryUnregistering.push(Promise.reject(error)); } }
+    memoryDisposers = []; memoryRegistered = false;
+    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, ...memoryClosing, browserTools.close()]).then(results => {
       const failed = results.find(result => result.status === 'rejected');
       if (failed) throw failed.reason;
     });
@@ -152,81 +165,99 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   /** Trusted Memory binding entry. The parent composes the per-Build Memory
    * owner (definitions + provider + consent + planner) and binds it here so
    * the Memory tools enter the real DSH pre/guard/around/post pipeline. The
-   * Host never executes Memory directly: every call still goes through
-   * ``ctx.tools.execute``, the standing Node builtin policy runs, and the
-   * Memory tool body owns its own exact-call consent. Returns a disposer the
-   * caller runs from ``releaseResources``; it unregisters only the names this
-   * binding registered (an older owner's disposer cannot delete a newer
-   * owner's Memory tools) and leaves the provider lifetime to the caller's
-   * ``close``. */
-  const bindMemory = memoryHost => {
-    invariant(!closed && memoryHost?.port && Array.isArray(memoryHost.port.definitions)
-      && typeof memoryHost.withDispatch === 'function', 'studio_native_memory_binding_invalid');
-    // Each binding owns its own names and registrations; a disposer only ever
-    // removes what its binding added, so rebinding a new owner cannot let the
-    // old owner's disposer delete the new owner's Memory tools.
-    const ownedNames = [];
-    let ownedDisposers = [];
-    const dispose = () => {
-      for (const name of ownedNames) { formal.delete(name); allowed.delete(name); builtinNames.delete(name); memoryNames.delete(name); }
-      ownedNames.length = 0;
-      for (const dispose of ownedDisposers) { try { dispose?.(); } catch { /* best-effort unregister */ } }
-      ownedDisposers = [];
-      if (memoryBinding === memoryHost) memoryBinding = null;
-    };
-    // Rebinding replaces a prior owner: dispose it first so its names are free
-    // and its provider is released by the caller, before registering the new.
-    if (memoryBinding) memoryBinding._dispose?.();
-    const definitions = memoryHost.port.definitions;
-    for (const definition of definitions) {
-      invariant(!formal.has(definition.name) && !contracts.has(definition.name) && !childNames.has(definition.name),
+   * preset gateway is SHARED across sessions, so each active session owns its
+   * own Memory owner keyed by sessionId; the Memory tool NAMES are registered
+   * ONCE (shared) and a call routes to the owner bound for ITS session — never
+   * the model's args, and never a single global owner. A session's release
+   * (releaseResources) only drops ITS owner entry; it must NOT unregister the
+   * shared Memory tool registrations (that would interrupt a sibling session
+   * mid-approval) — only the gateway close() unregisters them. definitions()
+   * selects the caller-session's locked Memory formal. The Host never executes
+   * Memory directly. Returns a disposer the caller runs from releaseResources;
+   * it drops this session's routing entry; releaseResources closes the owner. */
+  const ownerKey = memoryHost => {
+    invariant(typeof memoryHost?.sessionId === 'string' && memoryHost.sessionId, 'studio_native_memory_session_unbound');
+    return memoryHost.sessionId;
+  };
+  // Fixed, per-tool Memory parameter schemas used for the SHARED registry
+  // registration. These are the union of every policy variant's real schema
+  // (all Memory scopes, the full action enum, every field), so the shared DSH
+  // input validation admits any legitimate Memory call while the per-call
+  // locked formal (from the caller-session owner) still enforces the exact
+  // Build-bound schema + locked digest. Never a loose {additionalProperties:true}.
+  const MEMORY_SHARED_SCHEMAS = Object.freeze({
+    read_memory: { type: 'object', additionalProperties: false, required: ['memory_id'],
+      properties: { memory_id: { type: 'string', minLength: 1, maxLength: 256 } } },
+    search_memory: { type: 'object', additionalProperties: false, required: ['query'],
+      properties: { query: { type: 'string', minLength: 1, maxLength: 4096 } } },
+    manage_memory: { type: 'object', additionalProperties: false, required: ['action', 'scope'],
+      properties: { action: { type: 'string', enum: ['remember', 'correct', 'forget'] },
+        scope: { type: 'string', enum: ['tenant', 'workspace', 'agent', 'user'] },
+        content: { type: 'string', maxLength: 8192 },
+        memory_id: { type: 'string', minLength: 1, maxLength: 256 },
+        expected_version: { type: 'integer', minimum: 1 } } },
+  });
+  const MEMORY_DESCRIPTIONS = Object.freeze({
+    read_memory: 'Read one durable long-term memory_id in this Agent\'s locked scopes, including its current version, status, content hash, scope and TTL.',
+    search_memory: 'Search durable long-term Memory in this Agent\'s locked scopes by a specific query, including current memory_id, version and provenance.',
+    manage_memory: 'Remember, correct, or forget one durable long-term fact in a locked scope. A proposal without a recognized explicit user request needs exact-call approval.',
+  });
+  const ensureMemoryRegistered = () => {
+    if (memoryRegistered) return;
+    // Collision/safety: the shared Memory names must not collide with workspace,
+    // MCP, child or already-registered tool names. Reject before registering.
+    for (const name of Object.keys(MEMORY_SHARED_SCHEMAS)) {
+      invariant(!formal.has(name) && !contracts.has(name) && !childNames.has(name),
         'studio_native_memory_tool_collision');
     }
-    // Register all names first; a half-way register failure rolls back THIS
-    // binding (its names + the disposers collected so far) so a later owner can
-    // bind cleanly, then rethrows. The formal maps are only committed once every
-    // registration succeeded.
     const pendingDisposers = [];
     try {
-      for (const definition of definitions) {
+      for (const [name, schema] of Object.entries(MEMORY_SHARED_SCHEMAS)) {
         pendingDisposers.push(ctx.tools.register({
-          name: definition.name, description: definition.description ?? '',
-          parameters: structuredClone(definition.parameters),
+          name, description: MEMORY_DESCRIPTIONS[name],
+          parameters: structuredClone(schema),
           output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
           execute: async (args, exec) => {
             const invocation = calls.get(String(exec.callId));
             invariant(!closed, 'studio_native_tools_closed');
-            invariant(invocation && invocation.agent === exec.agent && invocation.request.call.name === definition.name
+            invariant(invocation && invocation.agent === exec.agent && invocation.request.call.name === name
               && canonical(invocation.argumentEncoding ? parseNativeJson(JSON.stringify(args)) : args)
                 === canonical(invocation.request.call.arguments), 'studio_native_tool_authority_missing');
             exec.signal.throwIfAborted();
             invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
+            // Resolve THIS call's Memory owner from the invocation's session. A call
+            // never executes against another session's owner; a missing owner is a
+            // hard error (no write), not a fallback to a global/last owner.
+            const session = String(exec.agent.session.id);
+            const entry = memoryOwners.get(session);
+            invariant(entry, 'studio_native_memory_owner_unbound');
+            const memoryHost = entry.memoryHost;
+            const lockedFormal = entry.definitions.get(invocation.request.call.name);
+            invariant(lockedFormal, 'studio_native_memory_definition_unbound');
             // The complete DSH pre/guard/around/post pipeline already authorized
             // this call. Enforce the standing Node builtin policy (memory:write is
             // not a workspace write; the Memory tool's own consent runs below).
-            try { await authorizeNativeBuiltin(ctx, exec, formal.get(definition.name)); }
+            try { await authorizeNativeBuiltin(ctx, exec, lockedFormal); }
             catch (error) {
               invocation.outcome = { status: 'error', content: { code: error.code || 'STUDIO_NATIVE_PERMISSION_DENIED', executed: false } };
               throw error;
             }
             exec.signal.throwIfAborted();
             invocation.dispatched = true;
-            // Per-call dispatch context on AsyncLocalStorage: read-only Memory
-            // tools are concurrentSafe and may run in parallel, so the consent,
-            // the token planner and the ledger guard observe THIS call's agent /
-            // original signal / complete request, not a shared mutable ref. The
-            // Memory tool body runs entirely inside this dispatch.
+            // Per-call dispatch context on AsyncLocalStorage: read-only Memory tools
+            // are concurrentSafe and may run in parallel, so the consent, the token
+            // planner and the ledger guard observe THIS call's agent / original
+            // signal / complete request, not a shared mutable ref. The Memory tool
+            // body runs entirely inside this dispatch bound to THIS session's owner.
             return memoryHost.withDispatch({ request: invocation.request, agent: exec.agent, signal: exec.signal },
               async () => {
                 try {
                   const outcome = await memoryHost.port.execute({ ...invocation.request, signal: exec.signal });
                   invocation.outcome = structuredClone(outcome);
                 } catch (error) {
-                  // A ledger/fence/capsule guard failure (item 3) thrown by the
-                  // applyMutation wrapper is a known no-write rejection: convert
-                  // it to a clean error outcome so the kernel sees 'error', not
-                  // 'uncertain' (we know the write did not happen). Other throws
-                  // propagate.
+                  // A ledger/fence/capsule guard failure thrown by the applyMutation
+                  // wrapper is a known no-write rejection: convert to a clean error
+                  // outcome so the kernel sees 'error', not 'uncertain'. Others throw.
                   if (error?.code === 'memory_dispatch_unbound' || error?.code === 'memory_host_closed'
                     || (typeof error?.code === 'string' && error.code.startsWith('memory_execution_'))) {
                     invocation.outcome = { status: 'error', content: { code: error.code, executed: false } };
@@ -238,22 +269,52 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           } }));
       }
     } catch (error) {
-      // Roll back the partial binding: unregister what registered, leave the
-      // formal maps untouched (they were not committed yet).
+      // A half-way shared registration failure rolls back what registered so a
+      // later bind can register cleanly; memoryRegistered stays false.
       for (const dispose of pendingDisposers) { try { dispose?.(); } catch { /* best-effort */ } }
       throw error;
     }
-    // Commit: publish the formal maps and hand the disposer to the caller.
-    for (const definition of definitions) {
-      formal.set(definition.name, definition);
-      allowed.add(definition.name);
-      builtinNames.add(definition.name);
-      memoryNames.add(definition.name);
-      ownedNames.push(definition.name);
+    // Commit only after every registration succeeded.
+    memoryDisposers = pendingDisposers;
+    for (const name of Object.keys(MEMORY_SHARED_SCHEMAS)) { allowed.add(name); builtinNames.add(name); memoryNames.add(name); }
+    memoryRegistered = true;
+  };
+  const bindMemory = memoryHost => {
+    invariant(!closed && memoryHost?.port && Array.isArray(memoryHost.port.definitions)
+      && typeof memoryHost.withDispatch === 'function' && typeof memoryHost.close === 'function',
+    'studio_native_memory_binding_invalid');
+    const session = ownerKey(memoryHost);
+    // Validate + snapshot the owner's definitions BEFORE touching any existing
+    // entry: no unknown names, no duplicates, and a deep snapshot so a later
+    // mutation of the owner's external object cannot change the locked formal.
+    const knownNames = new Set(Object.keys(MEMORY_SHARED_SCHEMAS));
+    const seen = new Set();
+    const ownDefinitions = new Map();
+    for (const definition of memoryHost.port.definitions) {
+      invariant(typeof definition?.name === 'string' && knownNames.has(definition.name),
+        'studio_native_memory_definition_unknown');
+      invariant(!seen.has(definition.name), 'studio_native_memory_definition_duplicate');
+      seen.add(definition.name);
+      ownDefinitions.set(definition.name, structuredClone(definition));
     }
-    ownedDisposers = pendingDisposers;
-    memoryBinding = memoryHost;
-    memoryBinding._dispose = dispose;
+    // Register the shared Memory tools (once); a failure here throws before any
+    // existing session entry is touched. Only after validation + registration
+    // succeed do we replace the prior SAME-session entry (rebind). A DIFFERENT
+    // session's owner is never touched.
+    ensureMemoryRegistered();
+    const prior = memoryOwners.get(session);
+    const entry = { memoryHost, definitions: ownDefinitions };
+    memoryOwners.set(session, entry);
+    // A prior same-session owner is replaced only after the new one is committed.
+    if (prior && prior.memoryHost !== memoryHost) { try { prior.memoryHost.close(); } catch { /* best-effort */ } }
+    const dispose = () => {
+      // Drop only THIS session's owner entry. Do NOT unregister the shared
+      // Memory tool names (a sibling session may be mid-approval) and do NOT
+      // touch other sessions' owners. The provider lifetime is closed by the
+      // caller (releaseResources) via memoryHost.close(); this dispose only
+      // removes the routing entry so the session no longer accepts calls.
+      if (memoryOwners.get(session) === entry) memoryOwners.delete(session);
+    };
     return dispose;
   };
   return {
@@ -302,15 +363,28 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     },
     definitions(agent, assemblyTools) {
       const schemas = new Map((assemblyTools ?? []).map(schema => [schema.name, schema]));
+      // Resolve THIS agent's session Memory owner so the caller-session's LOCKED
+      // Memory formal is selected — not a global/last-bound one. The preset
+      // gateway is shared across sessions; Memory tool definitions are
+      // per-session (per-Build), so they must NOT live in the shared formal map.
+      // When this session has NO Memory owner bound (e.g. base-bundle sampling
+      // before bindMemory), Memory names are EXCLUDED entirely — no fallback to
+      // a prompt-assembly Memory schema or another session's defs.
+      const sessionOwner = memoryOwners.get(String(agent?.session?.id));
+      const sessionMemoryDefs = sessionOwner?.definitions;
       const selected = new Set(allowed);
+      // Exclude Memory names unless THIS session has a bound owner that actually
+      // carries each name (a disabled write must not surface manage_memory, etc.).
+      for (const name of memoryNames) { if (!sessionMemoryDefs?.has(name)) selected.delete(name); }
       if (hasSkills) {
         for (const name of ['skill', 'bash', 'pwsh']) if (schemas.has(name)) selected.add(name);
       }
       return [...selected].map(name => {
-        // A locked builtin (workspace, browser, Memory) pins its own formal
-        // definition; it does not borrow a schema from the prompt assembly.
-        // Memory tools are registered for the Build during turn binding, after
-        // the assembly is built, so they may be absent from ``assemblyTools``.
+        // Memory tools: select THIS session's owner locked formal only.
+        if (memoryNames.has(name)) {
+          const memDef = sessionMemoryDefs?.get(name);
+          if (memDef) return structuredClone(memDef);
+        }
         const exact = builtinNames.has(name) ? formal.get(name) : null;
         if (exact) return structuredClone(exact);
         const schema = schemas.get(name);
@@ -384,7 +458,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             arguments: args, ...(exactNumbers ? { argumentEncoding } : {}), signal: request.signal, agent });
           request.signal.throwIfAborted();
           invariant(typeof result?.isError === 'boolean' && Array.isArray(result.content), 'studio_native_tool_result_invalid');
-          const readOnlyBuiltin = builtinNames.has(request.call.name) && formal.get(request.call.name)?.readOnly;
+          // Memory tools live per-session (not in the shared formal map): resolve
+          // the caller-session's locked definition for readOnly/mutation checks.
+          const memOwner = memoryOwners.get(sessionId);
+          const memDef = memOwner?.definitions.get(request.call.name);
+          const lockedFormal = memDef ?? formal.get(request.call.name);
+          const readOnlyBuiltin = builtinNames.has(request.call.name) && lockedFormal?.readOnly;
           const afterWriteFailure = result?.isError && invocation.outcome?.status === 'ok' && !readOnlyBuiltin;
           // Without an owned builtin receipt an external failure cannot prove
           // whether its effect ran. Never infer safe retry from isError alone.

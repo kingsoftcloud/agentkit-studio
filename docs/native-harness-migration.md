@@ -26,7 +26,7 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 生产 Host 的 `createStudioNativeHarness` 从 Studio Agent 修订或 Frozen Build 解析可信配置，绑定已选模型与工作区身份，通过宿主 attachment 服务解析用户图片和文件引用。凭证只在模型端口调用时重新读取，不进入 Native 配置或账本。`createNativeDshTools` 将 Native 工具意图交给实际 DSH ToolRegistry，保留其权限管线；被允许的十种工作区工具及本地命令工具使用 Node 实现。工具名与资源 ID 分开处理，停用契约不能重新获得 builtin 执行权限。写入成功后管线报错时保留未知结果状态，新轮次不能绕过未知写或中断状态继续执行。
 
-开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时，普通 Revision 保持原有 Harness 路径；Frozen Build 使用构建时固定的引擎，见下文。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`。本地记忆已接通下述压缩前候选消费；云端记忆写入仍显式拒绝组装，完整记忆能力尚未完成。
+开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时，普通 Revision 保持原有 Harness 路径；Frozen Build 使用构建时固定的引擎，见下文。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`。本地记忆已接通压缩前消费、轮次后消费、管理工具和显式记忆验收；共享 preset 的多 Session 绑定与关闭防护见 `native-memory.md`。云端记忆写入仍显式拒绝组装，完整记忆能力尚未完成。
 
 `node scripts/verify-studio-native-harness.mjs --source <已构建的维护源码>` 验证实际打包的 Studio 文件、公开 Host prompt 模块解析、生产 Native Host 工厂及 runtime plugin。它在真实 SDK profile 中选择 preset，执行两轮 Native 对话并在轮间重启进程，另外运行一轮策略拒绝写入，核对六次真实 HTTP 请求、两次经过实际 DSH 工具管线的 Node 文件写入、被拒绝的文件未落盘、会话持久化、用量和一个独立的默认 DSH 会话。Node 26 与最低 Node 22.19.0 均通过。运行子进程的 PATH 仅含 Node，Python 配置指向不存在的位置。该验证的 DSH 公共包及 Studio 依赖来自固定的本地 Host 图，不能替代全新环境安装、完整 `mountStudioHost` 启动或所有 runtime 的无 Python 验收。完整流式界面消费、审批界面、源读取工作集等剩余上下文策略、输入的显式重绑与未知领取恢复操作、其他正式端口和自动化/部署入口仍待完成。
 
