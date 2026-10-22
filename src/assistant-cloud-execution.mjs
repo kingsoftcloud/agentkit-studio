@@ -268,8 +268,8 @@ function outputSchema() {
   return { type: 'object', properties: {
     exitCode: { type: 'number' }, signal: { type: 'string' },
     stdout: { type: 'string' }, stderr: { type: 'string' },
-    stdoutTruncated: { type: 'boolean' }, stderrTruncated: { type: 'boolean' },
-  }, required: ['exitCode', 'signal', 'stdout', 'stderr', 'stdoutTruncated', 'stderrTruncated'], additionalProperties: false };
+    stdoutTruncated: { type: 'boolean' }, stderrTruncated: { type: 'boolean' }, timeoutMs: { type: 'number' },
+  }, required: ['exitCode', 'signal', 'stdout', 'stderr', 'stdoutTruncated', 'stderrTruncated', 'timeoutMs'], additionalProperties: false };
 }
 
 const renderOutput = (_args, value) => [{ type: 'text', text: `exit ${value.exitCode}${value.signal ? ` (${value.signal})` : ''}\n${value.stdout}${value.stderr}` }];
