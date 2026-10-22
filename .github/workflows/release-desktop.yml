@@ -749,6 +749,9 @@ jobs:
           version: 11.28.5
           package_json_file: .ci-dsh/package.json
       - run: pnpm install --frozen-lockfile
+      - name: Install native libc test toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build and verify the maintained Host
         run: node scripts/verify-patched-dsh-host.mjs --source ../.ci-dsh --patches patches/dsh-v0.2.1-rc.2 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
       - name: Install Chromium
