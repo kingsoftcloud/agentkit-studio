@@ -119,11 +119,13 @@ export class CdpConnection {
     if (typeof method !== 'string' || !method) return Promise.reject(fail('CDP 方法名无效', 'ASSISTANT_BROWSER_CDP_ERROR'));
     const id = ++this.#nextId;
     return new Promise((resolvePromise, rejectPromise) => {
+      // Keep the timeout ref'd: an in-flight command must keep the process
+      // alive long enough for the timeout to fire instead of leaving a
+      // promise that the event loop silently abandons (Node 22 cancels it).
       const timer = setTimeout(() => {
         this.#pending.delete(id);
         rejectPromise(fail(`云端浏览器命令 ${method} 超时`, 'ASSISTANT_BROWSER_CDP_TIMEOUT'));
       }, timeoutMs);
-      timer.unref?.();
       this.#pending.set(id, { resolve: resolvePromise, reject: rejectPromise, timer, method });
       try { this.#ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); }
       catch {
