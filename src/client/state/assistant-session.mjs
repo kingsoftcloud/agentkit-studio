@@ -137,8 +137,14 @@ export function createAssistantSession({ execute, storage, createRequestId, time
         patch.approvalDecision = null;
         if (state.errorKind === 'approval') { patch.error = ''; patch.errorKind = null; patch.notice = '该审批已结束，请查看云端后续记录。'; }
       }
-      emit(patch);
-      if (pending && received(snapshot, pending.requestId)) {
+      // A healthy idle cloud session returns the same snapshot every poll.
+      // Re-emitting it re-renders the whole assistant page every few seconds;
+      // only publish when something user-visible actually changed.
+      const quiet = previous && JSON.stringify(previous) === JSON.stringify(snapshot)
+        && state.accepted.length === 0 && !state.readError && !state.errorKind && !state.cancelPhase
+        && !state.approvalDecision && !state.pendingInvalid && !patch.notice;
+      if (!quiet) emit(patch);
+      if (pending && received(snapshot, pending.requestId) && !state.pending?.observed) {
         // Observing the native inbox/log is not a persistence flush watermark.
         // Keep the recovery ID until the idempotent submit returns its durable ACK.
         emit({ pending: { ...pending, observed: true },
