@@ -161,7 +161,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
    * ``close``. */
   const bindMemory = memoryHost => {
     invariant(!closed && memoryHost?.port && Array.isArray(memoryHost.port.definitions)
-      && memoryHost.dispatchRef, 'studio_native_memory_binding_invalid');
+      && typeof memoryHost.withDispatch === 'function', 'studio_native_memory_binding_invalid');
     // Each binding owns its own names and registrations; a disposer only ever
     // removes what its binding added, so rebinding a new owner cannot let the
     // old owner's disposer delete the new owner's Memory tools.
@@ -177,56 +177,83 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     // Rebinding replaces a prior owner: dispose it first so its names are free
     // and its provider is released by the caller, before registering the new.
     if (memoryBinding) memoryBinding._dispose?.();
-    for (const definition of memoryHost.port.definitions) {
+    const definitions = memoryHost.port.definitions;
+    for (const definition of definitions) {
       invariant(!formal.has(definition.name) && !contracts.has(definition.name) && !childNames.has(definition.name),
         'studio_native_memory_tool_collision');
+    }
+    // Register all names first; a half-way register failure rolls back THIS
+    // binding (its names + the disposers collected so far) so a later owner can
+    // bind cleanly, then rethrows. The formal maps are only committed once every
+    // registration succeeded.
+    const pendingDisposers = [];
+    try {
+      for (const definition of definitions) {
+        pendingDisposers.push(ctx.tools.register({
+          name: definition.name, description: definition.description ?? '',
+          parameters: structuredClone(definition.parameters),
+          output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
+          execute: async (args, exec) => {
+            const invocation = calls.get(String(exec.callId));
+            invariant(!closed, 'studio_native_tools_closed');
+            invariant(invocation && invocation.agent === exec.agent && invocation.request.call.name === definition.name
+              && canonical(invocation.argumentEncoding ? parseNativeJson(JSON.stringify(args)) : args)
+                === canonical(invocation.request.call.arguments), 'studio_native_tool_authority_missing');
+            exec.signal.throwIfAborted();
+            invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
+            // The complete DSH pre/guard/around/post pipeline already authorized
+            // this call. Enforce the standing Node builtin policy (memory:write is
+            // not a workspace write; the Memory tool's own consent runs below).
+            try { await authorizeNativeBuiltin(ctx, exec, formal.get(definition.name)); }
+            catch (error) {
+              invocation.outcome = { status: 'error', content: { code: error.code || 'STUDIO_NATIVE_PERMISSION_DENIED', executed: false } };
+              throw error;
+            }
+            exec.signal.throwIfAborted();
+            invocation.dispatched = true;
+            // Per-call dispatch context on AsyncLocalStorage: read-only Memory
+            // tools are concurrentSafe and may run in parallel, so the consent,
+            // the token planner and the ledger guard observe THIS call's agent /
+            // original signal / complete request, not a shared mutable ref. The
+            // Memory tool body runs entirely inside this dispatch.
+            return memoryHost.withDispatch({ request: invocation.request, agent: exec.agent, signal: exec.signal },
+              async () => {
+                try {
+                  const outcome = await memoryHost.port.execute({ ...invocation.request, signal: exec.signal });
+                  invocation.outcome = structuredClone(outcome);
+                } catch (error) {
+                  // A ledger/fence/capsule guard failure (item 3) thrown by the
+                  // applyMutation wrapper is a known no-write rejection: convert
+                  // it to a clean error outcome so the kernel sees 'error', not
+                  // 'uncertain' (we know the write did not happen). Other throws
+                  // propagate.
+                  if (error?.code === 'memory_dispatch_unbound' || error?.code === 'memory_host_closed'
+                    || (typeof error?.code === 'string' && error.code.startsWith('memory_execution_'))) {
+                    invocation.outcome = { status: 'error', content: { code: error.code, executed: false } };
+                  } else throw error;
+                }
+                return nativeDshBuiltinOutput(invocation.outcome,
+                  { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
+              });
+          } }));
+      }
+    } catch (error) {
+      // Roll back the partial binding: unregister what registered, leave the
+      // formal maps untouched (they were not committed yet).
+      for (const dispose of pendingDisposers) { try { dispose?.(); } catch { /* best-effort */ } }
+      throw error;
+    }
+    // Commit: publish the formal maps and hand the disposer to the caller.
+    for (const definition of definitions) {
       formal.set(definition.name, definition);
       allowed.add(definition.name);
       builtinNames.add(definition.name);
       memoryNames.add(definition.name);
       ownedNames.push(definition.name);
     }
+    ownedDisposers = pendingDisposers;
     memoryBinding = memoryHost;
     memoryBinding._dispose = dispose;
-    ownedDisposers = memoryHost.port.definitions.map(definition => ctx.tools.register({
-      name: definition.name, description: definition.description ?? '',
-      parameters: structuredClone(definition.parameters),
-      output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
-      execute: async (args, exec) => {
-        const invocation = calls.get(String(exec.callId));
-        invariant(!closed, 'studio_native_tools_closed');
-        invariant(invocation && invocation.agent === exec.agent && invocation.request.call.name === definition.name
-          && canonical(invocation.argumentEncoding ? parseNativeJson(JSON.stringify(args)) : args)
-            === canonical(invocation.request.call.arguments), 'studio_native_tool_authority_missing');
-        exec.signal.throwIfAborted();
-        invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
-        // The complete DSH pre/guard/around/post pipeline already authorized
-        // this call. Enforce the standing Node builtin policy (memory:write is
-        // not a workspace write; the Memory tool's own consent runs below).
-        try { await authorizeNativeBuiltin(ctx, exec, formal.get(definition.name)); }
-        catch (error) {
-          invocation.outcome = { status: 'error', content: { code: error.code || 'STUDIO_NATIVE_PERMISSION_DENIED', executed: false } };
-          throw error;
-        }
-        exec.signal.throwIfAborted();
-        invocation.dispatched = true;
-        // Per-call dispatch context: read-only Memory tools (read_memory /
-        // search_memory) are concurrentSafe and may run in parallel, so the
-        // consent and token planner must observe THIS call's agent/signal, not
-        // a shared mutable ref overwritten by a sibling call. Save and restore
-        // so a parallel call cannot leave a stale agent/signal for the next.
-        const priorAgent = memoryHost.dispatchRef.agent, priorSignal = memoryHost.dispatchRef.signal;
-        memoryHost.dispatchRef.agent = exec.agent;
-        memoryHost.dispatchRef.signal = exec.signal;
-        try {
-          const outcome = await memoryHost.port.execute({ ...invocation.request, signal: exec.signal });
-          invocation.outcome = structuredClone(outcome);
-          return nativeDshBuiltinOutput(outcome, { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
-        } finally {
-          memoryHost.dispatchRef.agent = priorAgent;
-          memoryHost.dispatchRef.signal = priorSignal;
-        }
-      } }));
     return dispose;
   };
   return {

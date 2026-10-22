@@ -147,8 +147,16 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // a non-local provider so the cloud Memory path stays unchanged. The
       // verification wrapper is always produced for local-default so an explicit
       // Memory task fails closed when the owner is not installed.
+      const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
+      if (original) invariant(renderPrompt(recoveredPromptAssembly(input.assembly, source)) === systemPrompt,
+        'studio_native_recovery_prompt_changed');
+      // Seal the Host recovery capsule once per Build. The Memory owner guard
+      // compares the CURRENT configuration's capsule to THIS sealed identity
+      // (revision, buildId, system prompt, source, messages), so a legitimately
+      // advanced/replaced Run or a new owner cannot authorize a stale write.
+      const sealedCapsule = nativeRecoveryBinding({ binding, input, source, selection, systemPrompt });
       const memoryHost = bindStudioNativeMemoryHost({ record, scope, sessionId, store, storeDir,
-        buildId: binding.buildId ?? null, context, ctx, bundleDigest, profileDigest, pluginLockDigest });
+        buildId: binding.buildId ?? null, context, ctx, bundleDigest, profileDigest, pluginLockDigest, sealedCapsule });
       let memoryDispose;
       try {
         if (memoryHost?.port && typeof binding.nativeTools.bindMemory === 'function')
@@ -162,9 +170,6 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // A memory write is an external effect and must get its own Native intent.
       // Refuse that composition until its durable port is installed.
       invariant(!materialized.memoryWrite, 'studio_native_memory_write_port_unavailable');
-      const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
-      if (original) invariant(renderPrompt(recoveredPromptAssembly(input.assembly, source)) === systemPrompt,
-        'studio_native_recovery_prompt_changed');
       const instructions = original ? original.configuration.instructions : [systemPrompt, materialized.resourceContext].filter(Boolean).join('\n\n');
       const verification = await createNativeVerification({ scope, sessionId, workspaceRoot,
         evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence'),
@@ -222,11 +227,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           // The completed-Turn consumer passes the full call context
           // ({scope, runId, operationKey, call, definition, toolResultContent,
           // signal}); forward all of it to the locked tool port so the bound
-          // definition and principal stay on the receipt. The owner receipt the
-          // port returns is the raw sealed result, deep-equal to the ledger tool
-          // result content — never a forged JSON body.
-          const directWriteReceipt = memoryHost.port ? async ({ call, definition, operationKey, signal }) => {
-            const result = await memoryHost.port.reconcile({ call, definition, operationKey, signal });
+          // definition and principal stay on the receipt. A non-matching passed
+          // scope is rejected; the Host's bound scope is the trusted default the
+          // locked port requires. The owner receipt the port returns is the raw
+          // sealed result, deep-equal to the ledger tool result content — never a
+          // forged JSON body.
+          const directWriteReceipt = memoryHost.port ? async ({ scope: receiptScope, runId, operationKey, call, definition, signal }) => {
+            if (receiptScope !== undefined && canonical(receiptScope) !== canonical(scope)) return null;
+            const result = await memoryHost.port.reconcile({ call, definition, scope: copy(scope), operationKey, signal });
             if (result.status === 'ok' && result.content.receipt?.committed === true) return result.content.receipt;
             return null;
           } : undefined;
@@ -259,7 +267,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         configuration: { profile: parentModel.profile,
         ...(memoryRecall ? { contextSources: [memoryRecall.source] } : {}),
         ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
-        hostRecoveryBinding: nativeRecoveryBinding({ binding, input, source, selection, systemPrompt }),
+        hostRecoveryBinding: sealedCapsule,
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
           inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
           interactionContract: STUDIO_NATIVE_INTERACTION_CONTRACT,
