@@ -18,9 +18,12 @@ const bytes = randomBytes(11 * 1024 * 1024);
 const path = join(directory, 'probe.bin');
 // Qualify the prefix the selected layout really writes: the Studio layout must
 // never depend on the legacy dsh-desk prefix, which older release credentials
-// are not allowed to write.
-const probeRoot = process.env.RELEASE_LAYOUT === 'studio' ? 'studio/bin' : 'dsh-desk/bin';
-const objectKey = `${probeRoot}/mac-arm64/ks3-multipart-probe-${randomUUID()}.bin`;
+// are not allowed to write. The signed build version directory is the exact
+// prefix the assets are published under, so probing it qualifies that grant.
+const buildVersion = (process.env.EXPECTED_BUILD_VERSION || '').trim();
+const studioRoot = buildVersion && /^[0-9A-Za-z._-]+$/.test(buildVersion) ? `studio/${buildVersion}` : 'studio/bin';
+const probeRoot = process.env.RELEASE_LAYOUT === 'studio' ? studioRoot : 'dsh-desk/bin';
+const objectKey = process.env.RELEASE_LAYOUT === 'studio' ? `${probeRoot}/ks3-multipart-probe-${randomUUID()}.bin` : `${probeRoot}/mac-arm64/ks3-multipart-probe-${randomUUID()}.bin`;
 const url = new URL(objectKey, origin);
 const started = Date.now();
 let created = false;
