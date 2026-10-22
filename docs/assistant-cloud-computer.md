@@ -1,8 +1,9 @@
 # Cloud computer: execution domain and cloud browser
 
-Status: development plan (2026-10-22). Capability 1 (cloud execution) and
-capability 2 (cloud browser) are being implemented behind new image
-capabilities; no existing assistant gains them without an explicit image upgrade
+Status: capabilities 1 (cloud execution) and 2 (cloud browser) are implemented
+and verified against the pre-online deployment on 2026-10-22 (runtime image
+release `0.0.2-dsh021-native-dcd76e7-99be301`). They stay behind image
+capabilities: no existing assistant gains them without an explicit image upgrade
 and an explicit user grant. Capability 3 (local bridge) is design-only and opens
 no network path.
 
@@ -73,7 +74,24 @@ receives a shell on the Host process.
   each capped at 64 KiB, file output capped by the workspace copy tool, process
   group `SIGKILL` on timeout or abort, and no background jobs or PTY sessions.
 - Availability: if `bwrap` is missing or unprivileged user namespaces are
-  denied, the tools refuse to run; they never fall back to an unconfined child.
+  denied, the tools refuse to run unconfined. On hosts that cannot create a
+  `bwrap` sandbox at all (no `CAP_SYS_ADMIN`, enforced container AppArmor) the
+  executor falls back to the bundled Landlock launcher; the probe result is
+  cached per process and the policy snapshot names the backend actually in use.
+
+### Landlock fallback (bubblewrap unavailable)
+
+The fallback runs the bundled `landlock-run` binary inside
+`unshare --user --map-root-user --net --pid --fork --ipc --uts --kill-child`,
+so the child still has no network, no Host UID, no Host PID view, and dies with
+its parent. Landlock then allows reads of `/usr`, `/etc` and `/dev/urandom`,
+writes only to `/dev/null` and the owned workspace, and `TMPDIR` points at
+`.cloud-exec-tmp` inside that workspace. `/proc` is deliberately absent from the
+allow list, so `/proc/<host-pid>/environ` stays unreadable. Compared with
+`bwrap` the fallback cannot remount `/etc` or provide a fresh `procfs`, and the
+kernel may only partially enforce the policy ("partial enforcement (older
+Landlock ABI)"); it is an interim backend for hosts that cannot run `bwrap`, not
+a stronger guarantee.
 
 ### Explicitly unsupported in v1
 
@@ -123,6 +141,42 @@ rollout. Cookies and logins are not restored from the Session log.
   `disabled`), `shellTools`, `browserTools`, and the actual `network` mode
   (`offline` or `public-web-only`).
 
+## Verification evidence (2026-10-22, pre-online deployment)
+
+Image `0.0.2-dsh021-native-dcd76e7-99be301`, assistant
+`ar-20261021221136-a2b22cd8`, grants `code-execution` + `browser`, backend
+`landlock` (the pod cannot create a `bwrap` sandbox).
+
+Capability 1, from an actual `cloud_bash` call in a fresh conversation:
+
+- `uname` reports the runtime pod (`Linux ... 5.15.0-136-generic ... x86_64`),
+  Python 3.11.2 and Node v22.19.0 are the image's own runtimes, and the working
+  directory is the Session's `assistant-workspaces/<hash>/files` path.
+- `ip` is absent and `curl https://example.com` fails: the confined child has no
+  network. `/proc/1/environ` and `/proc/self/uid_map` are unreadable; `/root`
+  cannot be listed; no credential-shaped environment variable is present.
+- Writes inside the workspace succeed, `/usr/local` writes are denied, and the
+  private `.cloud-exec-tmp` directory keeps temporary files out of the shared
+  `/tmp`.
+
+Capability 2, from one `cloud_run`-free browser session in a fresh conversation:
+
+- `cloud_browser_open {"url":"https://example.com"}` returned the page title and
+  URL, `cloud_browser_snapshot` returned the rendered text,
+  `cloud_browser_click {"selector":"a"}` navigated to the linked IANA page,
+  `cloud_browser_screenshot` wrote `files/.cloud-browser/shot-*.png`
+  (1280x800, 108679 bytes) as confirmed by a following `cloud_bash` `ls`, and
+  `cloud_browser_close` disposed the Chromium process group.
+- All eight `cloud_browser_*` names appear in the Session policy snapshot's
+  `browserTools`, and `network` reports `public-web-read-only`.
+
+Root cause fixed during verification: the browser tools were registered with an
+extracted `tools.register` reference, which lost its receiver and threw inside
+the Host's registry, so the grant was advertised while no browser tool reached
+the Session. Registration now calls the service method, with a regression test
+that uses a prototype-method registry. Registration failures are also written to
+runtime stderr instead of only to a logger the frozen Host does not provide.
+
 ## Local bridge (capability 3, design only)
 
 The user decision on 2026-10-22 is one pairing and one authorization: pair the
@@ -147,9 +201,11 @@ this and opens no inbound or outbound device channel.
 ## Acceptance checks
 
 - `env`, `/proc/1/environ`, `/var/lib/agentkit`, and the runtime token paths are
-  unreadable or absent inside the executor.
+  unreadable or absent inside the executor. Evidence above confirms the
+  `/proc`, `/root` and environment checks on the Landlock backend.
 - Commands cannot write outside the assistant workspace; symlink and `..`
-  escapes fail.
+  escapes fail, and temporary files stay in the workspace-local
+  `.cloud-exec-tmp` directory.
 - A runaway command is killed at its timeout; output is truncated at the cap.
 - The browser cannot reach cluster services, metadata endpoints, loopback or
   private ranges; downloads land only in the workspace with a size cap.
