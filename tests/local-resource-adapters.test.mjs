@@ -92,6 +92,30 @@ test('cloud Skill Space rejects a downloaded archive with a mismatched ContentHa
   await assert.rejects(() => adapters.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9'), error => error instanceof LocalResourceError && error.code === 'SKILL_ARCHIVE_HASH_MISMATCH' && error.details.resourceId === 'skill-1');
 });
 
+test('production cloud Skill admission stops a streaming oversized archive before consuming the full response', async () => {
+  let pulls = 0, cancelled = false;
+  const adapters = createLocalResourceAdapters({
+    serverClient: { skillAction: async name => name === 'ListSkillsBySpaceId'
+      ? { data: { Skills: [{ SkillId: 'streamed-skill' }] } }
+      : { data: { DownloadUrl: 'https://download.test/large.zip?signature=private' } } },
+    fetchImpl: async (_url, init) => {
+      assert.equal(init.redirect, 'error'); assert.equal(init.credentials, 'omit');
+      return new Response(new ReadableStream({
+        pull(controller) {
+          pulls++;
+          if (pulls <= 50) controller.enqueue(new Uint8Array(1024 * 1024));
+          else controller.close();
+        },
+        cancel() { cancelled = true; },
+      }, { highWaterMark: 0 }));
+    },
+  });
+  await assert.rejects(adapters.loadSkill('bcb4df65-2448-4c8a-99ca-62a12d26bce9'), error =>
+    error instanceof LocalResourceError && error.code === 'SKILL_ARCHIVE_TOO_LARGE'
+      && error.details.resourceId === 'streamed-skill' && !error.message.includes('signature'));
+  assert.equal(cancelled, true); assert.equal(pulls, 21);
+});
+
 test('missing non-cloud Skill remains an explicit local import error', async () => {
   const adapters = createLocalResourceAdapters({
     skillDiscovery: { listInstalled: async () => ({ items: [] }) },

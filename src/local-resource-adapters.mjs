@@ -5,6 +5,7 @@ import { Client, StreamableHTTPClientTransport, SSEClientTransport, StdioClientT
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { materializeCloudSkill, runtimeSkill } from './skill-files.mjs';
+import { fetchNativeSkillArchive } from './providers/native-skill-loader.mjs';
 import { MCP_JSON_PARSER_CONTRACT, NATIVE_MCP_JSON_CODEC, nativeMcpJsonParser, nativeMcpSchemaValidator } from './providers/native-mcp-json.mjs';
 
 export class LocalResourceError extends Error {
@@ -265,16 +266,14 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       const expectedHash = contentHash(item.ContentHash || item.contentHash || item.content_hash || item.Hash || item.hash, skillId);
       const download = await serverClient.skillAction(versionId ? 'GetSkillDownloadUrl' : 'GetPremadeSkillDownloadUrl', { SkillId: skillId, ...(versionId ? { VersionId: versionId } : {}) });
       const url = String(download.data?.DownloadUrl || download.data?.download_url || '').trim();
-      if (!/^https:\/\//i.test(url)) throw new LocalResourceError('SKILL_DOWNLOAD_URL_INVALID', '云端 Skill 下载地址无效', { resourceId: skillId });
-      const response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(30000) });
-      if (!response.ok) throw new LocalResourceError('SKILL_DOWNLOAD_FAILED', `云端 Skill 下载失败（${response.status}）`, { resourceId: skillId });
-      const length = Number(response.headers.get('content-length') || 0);
-      if (length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
-      const archive = Buffer.from(await response.arrayBuffer());
-      if (archive.length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
-      if (expectedHash) {
-        const actualHash = createHash('sha256').update(archive).digest('hex');
-        if (actualHash !== expectedHash) throw new LocalResourceError('SKILL_ARCHIVE_HASH_MISMATCH', '云端 Skill 压缩包完整性校验失败', { resourceId: skillId, expected: expectedHash, actual: actualHash });
+      let archive;
+      try {
+        // This is trusted pre-Run resource admission. Native tool execution
+        // uses the same downloader with its actual intent/fence authority.
+        ({ archive } = await fetchNativeSkillArchive({ url, contentHash: expectedHash,
+          signal: AbortSignal.timeout(30000), assertCurrent: () => true, fetchImpl }));
+      } catch (error) {
+        throw new LocalResourceError(error.code || 'SKILL_DOWNLOAD_FAILED', '云端 Skill 下载或完整性校验失败', { resourceId: skillId });
       }
       try { manifests.push(...await materializeCloudSkill(archive, cacheDir, String(item.Name || item.name || skillId))); }
       catch (error) { throw new LocalResourceError(error.code || 'SKILL_ARCHIVE_INVALID', '云端 Skill 文件无法完整加载：' + error.message, { resourceId: skillId }); }

@@ -362,7 +362,8 @@ export function createNativeSkillTools({
           space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '' };
       }
       const g3 = guard.check(); if (g3) return { ok: false, error_type: g3.code, error_message: g3.message };
-      const loaded = await loadSkillFn({ skillId: skill.skillId, versionId: skill.versionId, name: skill.name, spaceId: sid, contentHash: skill.contentHash || '', signal: guard.signal });
+      const loaded = await loadSkillFn({ skillId: skill.skillId, versionId: skill.versionId, name: skill.name, spaceId: sid,
+        contentHash: skill.contentHash || '', signal: guard.signal, assertCurrent: () => guard.assertCurrent() });
       const g4 = guard.check(); if (g4) return { ok: false, error_type: g4.code, error_message: g4.message };
       if (!loaded || !loaded.content) {
         return { ok: false, error_type: 'SKILL_MANIFEST_MISSING',
