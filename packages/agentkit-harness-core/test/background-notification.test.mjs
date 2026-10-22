@@ -14,23 +14,26 @@ const launcher = tool({ name: 'run_command', readOnly: false, concurrentSafe: fa
   backgroundCommandPolicy: 'owned-command-launch/v1' });
 const finish = () => ({ kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() });
 
-async function setup(t, { backend = 'sqlite', tasks = 2, limits = {}, profile = {} } = {}) {
+async function setup(t, { backend = 'sqlite', tasks = 2, limits = {}, profile = {}, unknownAfterLaunch = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'native-notification-')), filename = join(root, 'runs.sqlite');
   let store = backend === 'sqlite' ? new SqliteRunStore(filename) : new MemoryRunStore();
-  const data = fixture({ tools: [{ ...launcher, timeoutMs: Math.min(launcher.timeoutMs, (limits.effectTimeoutMs ?? 120000) - 1) }], backgroundNotificationPolicy: 'completed-before-model/v1',
+  const data = fixture({ tools: [{ ...launcher, timeoutMs: Math.min(launcher.timeoutMs, (limits.effectTimeoutMs ?? 120000) - 1) },
+    ...(unknownAfterLaunch ? [tool({ name: 'write', readOnly: false, concurrentSafe: false })] : [])], backgroundNotificationPolicy: 'completed-before-model/v1',
     limits: { finalizationReserveModelCalls: 0, maxModelCalls: 7, maxToolCalls: 3, ...limits },
     profile: { ...fixture().config.profile, ...profile } });
   let launches = 0, models = 0;
   const kernel = new NativeKernel({ store, digest, owner: 'source', ports: {
     model: { generate: async () => ++models <= tasks
-      ? { ...finish(), kind: 'tool_calls', toolCalls: [{ callId: `launch-${models}`, name: 'run_command', arguments: {} }] } : finish() },
-    tools: { execute: async request => ({ status: 'ok', content: { backend: 'sandbox/local_process' },
-      backgroundCommandRef: { taskId: (++launches).toString(16).padStart(64, '0'), sourceRunId: request.runId, operationKey: request.operationKey } }) },
+      ? { ...finish(), kind: 'tool_calls', toolCalls: [{ callId: `launch-${models}`, name: 'run_command', arguments: {} }] }
+      : unknownAfterLaunch && models === tasks + 1 ? { ...finish(), kind: 'tool_calls', toolCalls: [{ callId: 'unknown-write', name: 'write', arguments: {} }] } : finish() },
+    tools: { execute: async request => request.call.name === 'write' ? { status: 'uncertain', content: { code: 'external_write_unknown' } }
+      : ({ status: 'ok', content: { backend: 'sandbox/local_process' },
+        backgroundCommandRef: { taskId: (++launches).toString(16).padStart(64, '0'), sourceRunId: request.runId, operationKey: request.operationKey } }) },
     background: { contract: BACKGROUND_COMMAND_CONTRACT, observe: async () => [] },
   } });
   kernel.start(data.snapshot, data.config);
   const source = await kernel.runUntilIdle(scope, 'run');
-  assert.equal(source.phase, 'completed', source.reason);
+  assert.equal(source.phase, unknownAfterLaunch ? 'interrupted' : 'completed', source.reason);
   assert.equal(launches, tasks);
   t.after(() => { store.close?.(); rmSync(root, { recursive: true, force: true }); });
   const admission = (taskId = source.backgroundCommands[0].ref.taskId, extra = {}) => admitBackgroundNotification({ store, scope,
@@ -181,4 +184,42 @@ test('an observation that ignores cancellation is bounded by the original effect
   await assert.rejects(h.admission(undefined, { observe: async () => new Promise(() => {}) }),
     { code: 'background_notification_observation_timeout' });
   assert.equal(h.store.list(scope).length, 1);
+});
+
+test('a real uncertain write after launch prevents a fresh notification model admission', async t => {
+  const h = await setup(t, { tasks: 1, unknownAfterLaunch: true });
+  assert.equal(h.source.reason, 'effect_outcome_unknown');
+  const sourceBefore = h.store.load(scope, 'run');
+  assert.ok(sourceBefore.receipts.some(receipt => receipt.result.results?.some(result => result.status === 'uncertain')));
+  let reads = 0;
+  await assert.rejects(h.admission(undefined, { observe: async () => { reads++; assert.fail('no poll while reconciliation is required'); } }),
+    { code: 'background_notification_reconciliation_required' });
+  assert.equal(reads, 0);
+  assert.equal(h.store.list(scope).length, 1);
+  assert.deepEqual(h.store.load(scope, 'run'), sourceBefore);
+});
+
+test('later notices inherit actual head steering and its task contract without reviving the original goal', async t => {
+  const h = await setup(t), first = await h.admission();
+  const kernel = new NativeKernel({ store: h.store, digest, owner: 'steered-notice', ports: {
+    model: { generate: async request => {
+      assert.ok(request.messages.some(message => message.kind === 'steering' && message.content === 'Revised notification goal'));
+      return finish();
+    } },
+    background: { contract: BACKGROUND_COMMAND_CONTRACT, observe: async () => [] },
+  } });
+  kernel.submit(scope, first.snapshot.runId, { commandId: 'change-notification-goal', kind: 'steer', payload: {
+    text: 'Revised notification goal', expectedGoalRevision: first.snapshot.goalRevision,
+    taskContract: { ...first.configuration.contract, revision: 'notification-goal-2', objective: 'Revised notification goal' },
+  } });
+  const completed = await kernel.runUntilIdle(scope, first.snapshot.runId);
+  assert.equal(completed.phase, 'completed', completed.reason);
+  assert.equal(completed.goal, 'Revised notification goal');
+  assert.equal(completed.taskContract.revision, 'notification-goal-2');
+  const second = await h.admission(h.source.backgroundCommands[1].ref.taskId);
+  assert.equal(second.snapshot.goal, completed.goal);
+  assert.equal(second.snapshot.goalRevision, completed.goalRevision);
+  assert.deepEqual(second.configuration.contract, completed.taskContract);
+  assert.equal(second.snapshot.parentRunId, completed.runId);
+  assert.equal(second.configuration.limits.maxModelCalls, 3);
 });
