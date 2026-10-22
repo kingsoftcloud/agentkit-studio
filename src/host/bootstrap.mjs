@@ -22,6 +22,7 @@ import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
+import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/agentkit-harness/src/skill-bindings.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [] } = {}) {
@@ -204,13 +205,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getModelSelection: createAgentModelSelection({ models, agentStorePromise, codexModels, selectCodexAgentModel, CLOUD_PROVIDER, dshModelSelection }),
     getSkillDefinitions: async agent => {
       const bindings = agent?.spec?.bindings || {};
-      const ids = (bindings.skills || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id).filter(Boolean);
-      const space = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'skill-space')?.config?.binding?.resource;
-      if (space) ids.push(space.id || space.resourceId);
-      if (!ids.length) return [];
+      if (!boundSkillResources(bindings).length) return [];
       const adapter = await resourceAdaptersPromise;
-      const loaded = await Promise.all([...new Set(ids)].map(id => adapter.loadSkill(id)));
-      return loaded.flatMap(item => item.definitions || []);
+      return loadBoundSkillDefinitions(bindings, adapter);
     },
     getToolContracts: async agent => {
       const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'

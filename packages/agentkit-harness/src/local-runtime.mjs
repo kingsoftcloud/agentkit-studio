@@ -12,6 +12,7 @@ import { modelFailureDetails } from './model-failure.mjs';
 import { formatSkillContext } from './skill-context.mjs';
 import { chatCompletionUsage } from './chat-usage.mjs';
 import { checkedResource } from './resource-checks.mjs';
+import { boundSkillResources, loadBoundSkills } from './skill-bindings.mjs';
 import { dshModelRoute } from './model-route.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 
@@ -193,12 +194,11 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   const contextOnly = resourceMode === 'context-only';
   const toolsOnly = resourceMode === 'tools-only';
   const bindings = toolsOnly ? (record?.spec?.bindings || record?.bindings || {}) : promptOnly ? {} : record?.spec?.bindings || record?.bindings || {};
-  const skillIds = bindingIds(bindings, 'skills');
+  const skillResources = boundSkillResources(bindings);
   const knowledge = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'knowledge-base');
   const memory = record?.spec?.memory?.enabled === false ? null : memoryBinding(bindings);
-  const skillSpace = bindings.plugins?.find(item => item?.config?.binding?.resource?.kind === 'skill-space');
   const toolIds = boundToolIds(bindings.tools);
-  if ((skillIds.length || knowledge || memory || skillSpace || (Array.isArray(bindings.mcpServers) && bindings.mcpServers.length)) && !resourceAdapter) {
+  if ((skillResources.length || knowledge || memory || (Array.isArray(bindings.mcpServers) && bindings.mcpServers.length)) && !resourceAdapter) {
     throw new LocalRuntimeError('RESOURCE_ADAPTER_MISSING', '该 Agent 绑定了资源，但本地资源适配器未启用');
   }
   if (toolIds.length && !toolAdapter) {
@@ -208,14 +208,11 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   if (!toolsOnly && record?.spec?.memory?.enabled === false && memoryBinding(bindings)) {
     resourceContext += '\n\nMemory binding contract: 当前 Agent 的跨会话长期记忆已关闭。Host 本轮没有查询记忆库，也不会写入记忆库；下面即使有 Knowledge，也只属于知识库检索，不能据此声称长期记忆已启用或已召回。\n';
   }
-  if (!toolsOnly && skillIds.length) {
-    const skills = await Promise.all(skillIds.map(id => checkedResource({ kind: 'skill', resourceId: id, action: 'load', agent, onResource }, () => resourceAdapter.loadSkill(id))));
-    resourceContext += skills.filter(Boolean).map(skill => `Skill ${skill.name || ''}:\n${formatSkillContext(skill, { indexOnly: record?.spec?.runtime?.type === 'codex' })}`).join('\n\n');
-  }
-  if (!toolsOnly && skillSpace) {
-    const resourceId = skillSpace.config.binding.resource.id || skillSpace.config.binding.resource.resourceId;
-    const skill = await checkedResource({ kind: 'skill-space', resourceId, action: 'load', agent, onResource }, () => resourceAdapter.loadSkill(resourceId));
-    if (skill) resourceContext += `\n\n${formatSkillContext(skill, { limit: 24000, indexOnly: record?.spec?.runtime?.type === 'codex' })}`;
+  if (!toolsOnly && skillResources.length) {
+    const loaded = await loadBoundSkills(bindings, resourceAdapter, { agent, onResource });
+    resourceContext += loaded.filter(item => item.value).map(({ kind, value }) => kind === 'skill'
+      ? `Skill ${value.name || ''}:\n${formatSkillContext(value, { indexOnly: record?.spec?.runtime?.type === 'codex' })}`
+      : `\n\n${formatSkillContext(value, { limit: 24000, indexOnly: record?.spec?.runtime?.type === 'codex' })}`).join('\n\n');
   }
   if (!toolsOnly && knowledge) {
     const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;

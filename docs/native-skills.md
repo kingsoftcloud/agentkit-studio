@@ -117,3 +117,20 @@ cache. Injected HTTP responses return a deterministic version and archive.
 The committed successful receipt retains those exact instructions and version;
 the archive request receives no control-plane authorization header. This does
 not yet prove DSH registry/permission assembly or production gateway mounting.
+
+## Complete explicit Skill bindings
+
+Preset admission and local resource context now share `boundSkillResources`.
+They resolve every enabled Skill Space alongside explicit Skills, preserve
+binding order, and load each resource ID once. A later space failing to load
+prevents admission of a partial preset. Disabled bindings are excluded and
+malformed enabled Skill bindings fail explicitly.
+
+The focused binding, local-runtime, preset-admission and portable-bundle tests
+passed 76 tests on both Node versions. Related resource-check, Codex resource
+context and Native authority tests passed another 15 on each. The new Frozen
+case builds an actual Native archive, exports and imports three Skill resources,
+deletes the source directory, and admits all three from target-only files with
+the frozen engine pin retained. This proves multi-space admission and context
+assembly; formal Native disclosure mounting and complete Frozen execution
+remain separate acceptance requirements.
