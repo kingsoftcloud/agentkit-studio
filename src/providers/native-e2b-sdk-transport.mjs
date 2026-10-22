@@ -176,3 +176,36 @@ export async function createNativeE2BSdkTransport({ connection, sandboxId = null
 
 /** Detached supervisor module factory; config arrives through its stdin. */
 export const factory = config => createNativeE2BSdkTransport(config);
+
+/** Trusted lifecycle port for createNativeE2BSandboxOwner, never a model tool. */
+export async function createNativeE2BSdkLifecycle({ connection, template = 'base', timeoutSeconds = 300,
+  env = {}, loadSdk = () => import('e2b') } = {}) {
+  const bound = connectionOptions(connection);
+  invariant(typeof template === 'string' && template.trim() && template.length <= 256, 'e2b_template_invalid');
+  invariant(Number.isSafeInteger(timeoutSeconds) && timeoutSeconds > 0 && timeoutSeconds <= 86400, 'e2b_sandbox_timeout_invalid');
+  invariant(env && typeof env === 'object' && !Array.isArray(env)
+    && Object.values(env).every(value => typeof value === 'string'), 'e2b_sandbox_env_invalid');
+  const environment = copy(env);
+  checkSdkEnvironment(); const sdk = await loadSdk(); checkSdkEnvironment();
+  invariant(typeof sdk.Sandbox?.create === 'function' && typeof sdk.Sandbox?.kill === 'function', 'e2b_sdk_lifecycle_contract_invalid');
+  const bindingDigest = createHash('sha256').update(canonical({ contract: NATIVE_E2B_SDK_TRANSPORT,
+    connection: bound, template, timeoutSeconds, env: environment })).digest('hex');
+  return Object.freeze({ bindingDigest,
+    async createSandbox({ signal, metadata } = {}) {
+      invariant(signal instanceof AbortSignal, 'e2b_signal_invalid'); signal.throwIfAborted(); checkSdkEnvironment();
+      invariant(metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+        && Object.values(metadata).every(value => typeof value === 'string'), 'e2b_sandbox_metadata_invalid');
+      const sandbox = await sdk.Sandbox.create(template, { ...bound, headers: { ...bound.headers },
+        signal, metadata: copy(metadata), envs: { ...environment }, timeoutMs: timeoutSeconds * 1000, requestTimeoutMs: 30000 });
+      // Return a proven created identity even if cancellation arrived during the
+      // API call. The durable owner records that fact before refusing readiness.
+      invariant(validId(sandbox?.sandboxId), 'e2b_created_identity_invalid');
+      return { sandboxId: sandbox.sandboxId };
+    },
+    async killSandbox(id, { signal } = {}) {
+      invariant(validId(id) && signal instanceof AbortSignal, 'e2b_sandbox_identity_invalid');
+      signal.throwIfAborted(); checkSdkEnvironment();
+      return await sdk.Sandbox.kill(id, { ...bound, headers: { ...bound.headers }, signal, requestTimeoutMs: 30000 }) === true;
+    },
+  });
+}

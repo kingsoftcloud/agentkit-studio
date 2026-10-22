@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeE2BSdkTransport, NATIVE_E2B_SDK_TRANSPORT } from '../src/providers/native-e2b-sdk-transport.mjs';
+import { createNativeE2BSdkTransport, createNativeE2BSdkLifecycle, NATIVE_E2B_SDK_TRANSPORT } from '../src/providers/native-e2b-sdk-transport.mjs';
 
 const connection = () => ({ apiUrl: 'https://api.fixture.invalid', domain: 'fixture.invalid', apiKey: 'test-e2b-secret', headers: { 'x-source': 'studio' } });
 function gate() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -157,4 +157,46 @@ test('invalid explicit targets fail before loading the SDK and ambient sandbox U
     process.env.E2B_SANDBOX_URL = 'http://wrong-env.invalid';
     await assert.rejects(createNativeE2BSdkTransport({ connection: connection() }), /e2b_ambient_sandbox_url_forbidden/);
   } finally { if (before === undefined) delete process.env.E2B_SANDBOX_URL; else process.env.E2B_SANDBOX_URL = before; }
+});
+
+test('the installed SDK exposes the lifecycle port without creating a sandbox during binding', async () => {
+  const lifecycle = await createNativeE2BSdkLifecycle({ connection: connection() });
+  assert.match(lifecycle.bindingDigest, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(lifecycle).includes('test-e2b-secret'), false);
+});
+
+test('lifecycle uses the fixed template, timeout, environment and owner metadata with actual SDK argument names', async () => {
+  const calls = [], env = { LANG: 'original' }, signal = new AbortController().signal;
+  const lifecycle = await createNativeE2BSdkLifecycle({ connection: connection(), template: 'owned-template',
+    timeoutSeconds: 123, env, loadSdk: async () => ({ Sandbox: {
+      async create(template, options) { calls.push({ template, options }); return { sandboxId: 'sandbox-A' }; },
+      async kill(id, options) { calls.push({ id, options }); return true; },
+    } }) });
+  env.LANG = 'changed';
+  assert.deepEqual(await lifecycle.createSandbox({ signal, metadata: { nativeOwner: 'original-owner' } }), { sandboxId: 'sandbox-A' });
+  assert.equal(calls[0].template, 'owned-template'); assert.equal(calls[0].options.timeoutMs, 123000);
+  assert.equal(calls[0].options.signal, signal); assert.equal(calls[0].options.retries, 0);
+  assert.deepEqual(calls[0].options.envs, { LANG: 'original' });
+  assert.deepEqual(calls[0].options.metadata, { nativeOwner: 'original-owner' });
+  assert.equal(await lifecycle.killSandbox('sandbox-A', { signal }), true); assert.equal(calls[1].id, 'sandbox-A');
+});
+
+test('lifecycle returns a proven created identity when a cancellation arrives during creation', async () => {
+  const controller = new AbortController();
+  const lifecycle = await createNativeE2BSdkLifecycle({ connection: connection(), loadSdk: async () => ({ Sandbox: {
+    async create() { controller.abort(); return { sandboxId: 'sandbox-created-before-cancel' }; }, async kill() { throw new Error('must not kill'); },
+  } }) });
+  assert.deepEqual(await lifecycle.createSandbox({ signal: controller.signal, metadata: { nativeOwner: 'owner' } }),
+    { sandboxId: 'sandbox-created-before-cancel' });
+});
+
+test('lifecycle never retries an unknown create and a rejected or truthy kill cannot confirm cleanup', async () => {
+  let creates = 0, kills = 0;
+  const lifecycle = await createNativeE2BSdkLifecycle({ connection: connection(), loadSdk: async () => ({ Sandbox: {
+    async create() { creates++; throw new Error('create response lost'); },
+    async kill() { kills++; return 'true'; },
+  } }) });
+  await assert.rejects(lifecycle.createSandbox({ signal: new AbortController().signal, metadata: { nativeOwner: 'owner' } }), /create response lost/);
+  assert.equal(creates, 1); assert.equal(await lifecycle.killSandbox('sandbox-A', { signal: new AbortController().signal }), false);
+  assert.equal(kills, 1);
 });
