@@ -547,4 +547,12 @@ Node 层新增 `E2BCommandStore`、独立监督进程、正式 `sandbox_status/r
 
 工具端口封存完整 JSON 请求，只排除原顶层 `AbortSignal`；审批、权限回调、沙箱创建、存储构造和输出边界均复核身份。非合作异步创建/启动也能响应原取消信号，未知结果保留已知沙箱和预先确定的 task ID。输出预算必须预留完整归属和有效远端 ID 的空间；不足时在创建/执行前拒绝。执行后的摘要可以缩短正文，不能截断归属或把未知副作用改成 `executed:false`。
 
-四个直接相关模块在 Node 26.5 与 22.19.0 各通过 61 项；随后加强清理目标、读取后身份及传输配置封存，最后分别复验请求边界 9 项和存储边界 3 项，两个版本均通过。覆盖真实 Kernel、SQLite、ToolAuthority，两个实际 detached 监督进程 SIGKILL 边界，以及 UTF-8、并发恢复声明、旧代次、取消、未知结果与预算。故障测试的远端传输使用明确的本地子进程替身；这证明 Node 状态/进程边界，不代表线上 E2B 服务或实际打包 Studio 的 E2B 集成已验收。真实 E2B JS SDK 适配器和沙箱生命周期端口另有既有验证；产品工具组装、后台唤醒、`run_code`、Frozen 配置和 legacy builtin 的 E2B 接线仍待完成，不能据此移除所有 Python fallback 或开启最终默认路径。
+四个直接相关模块在 Node 26.5 与 22.19.0 各通过 61 项；随后加强清理目标、读取后身份及传输配置封存，最后分别复验请求边界 9 项和存储边界 3 项，两个版本均通过。覆盖真实 Kernel、SQLite、ToolAuthority，两个实际 detached 监督进程 SIGKILL 边界，以及 UTF-8、并发恢复声明、旧代次、取消、未知结果与预算。故障测试的远端传输使用明确的本地子进程替身；这证明 Node 状态/进程边界，不代表线上 E2B 服务或实际打包 Studio 的 E2B 集成已验收。真实 E2B JS SDK 适配器和沙箱生命周期端口另有既有验证。
+
+Studio 的 Native 工具组装现根据 Host 环境中的 `KSADK_SANDBOX_BACKEND` 固定选择后端，缺省继续使用 `local_process`。显式选择 `e2b` 时必须同时配置 `E2B_API_URL`（明确的 HTTPS 控制平面）、`E2B_DOMAIN`、`E2B_API_KEY` 和 `KSADK_SANDBOX_TEMPLATE_ID`；模板也接受既有 `KSADK_SKILL_RUNTIME_TEMPLATE_ID`。无效配置在注册工具前拒绝，不退回本地 shell。`KSADK_SANDBOX_TIMEOUT`（缺省 900 秒）、`KSADK_SANDBOX_TYPE`、`KSADK_SANDBOX_ALLOW_INTERNET_ACCESS` 和 traffic source 进入同一配置绑定；密钥只保存在 Host/监督进程的私有配置中，不写入 Build、工具回执或远程环境变量。
+
+固定的配置摘要参与既有 Build 和宿主恢复摘要。每个完整 Native scope 与 Session 使用独立的沙箱所有权和后台目录；改变端点、密钥或模板后不能借用该 Session 的旧沙箱，也不能通过切换目录自动创建另一沙箱。显式调用的环境参数只传给远程命令，Host 环境不共享。前台超时上限使用固定沙箱期限，工具正式期限覆盖等待与收尾，后台缺省期限沿用该配置；Native 自身的取消与总预算仍然有效。
+
+`sandbox_status/run_command/read_command_output/stop_command` 进入原 DSH 注册、权限与输出管线，由真实 Native 工具意图包围。后台观察端口只提供原回执拥有的非阻塞读取；Session 释放或普通 Host 关闭不会杀死持久远程命令。监督进程丢失仍报告未知，读取不会自动创建沙箱、重连进程或重发命令。远端已创建但 Host 权限随后失效时，已知沙箱身份保存在未知记录中，需要后续显式核对。组件状态仅在正式 E2B 工具和配置同时挂载时显示隔离执行及模板绑定；这不代表独立 Skills 执行服务已挂载。
+
+接线定向验证使用真实 Studio Host/NativeKernel/SQLite/ToolAuthority，以及明确的 DSH registry 与远程 SDK 替身，覆盖环境配置固定、非零退出、权限拒绝、scope/Session 隔离、后台只读观察、数据库与 gateway 重开、配置变化拒绝和创建中关闭。超时接线修正后，五个受影响模块在两种 Node 各通过 44 项；先前本地命令和后台运行的相关回归也通过。完整打包 SDK 的 E2B 入口、线上 E2B、显式恢复/清理的产品入口、`run_code`、Frozen 配置导出和 legacy builtin 接线仍待验收或实现，不能据此移除所有 Python fallback 或宣布完整迁移完成。

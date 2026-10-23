@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNativeE2BHostBinding, nativeCommandBackend } from '../src/providers/native-e2b-host.mjs';
+import { createNativeE2BHostBinding, nativeCommandBackend, prepareNativeE2BHost } from '../src/providers/native-e2b-host.mjs';
 
 const scope = { tenantId: 'tenant', workspaceId: 'workspace', userId: 'user', agentId: 'agent' };
 const environment = () => ({ KSADK_SANDBOX_BACKEND: 'e2b', E2B_API_URL: 'https://original.fixture.invalid',
@@ -33,6 +33,25 @@ test('Studio backend selection preserves local default and rejects unsupported e
     assert.equal(nativeCommandBackend({ KSADK_SANDBOX_BACKEND: raw }), 'local_process');
   assert.equal(nativeCommandBackend({ KSADK_SANDBOX_BACKEND: ' E2B ' }), 'e2b');
   for (const raw of ['pod', 'pod_process', 'not-real', 12]) assert.throws(() => nativeCommandBackend({ KSADK_SANDBOX_BACKEND: raw }));
+});
+
+test('preset preparation validates synchronously and pins the same connection before asynchronous Session construction', async t => {
+  const f = fixture(t), original = structuredClone(f.options.env);
+  const prepared = prepareNativeE2BHost({ env: f.options.env, loadSdk: f.options.loadSdk });
+  assert.equal(f.loads, 0); assert.equal(prepared.binding.backend, 'e2b');
+  assert.equal(JSON.stringify(prepared).includes(original.E2B_API_KEY), false);
+  f.options.env.E2B_API_KEY = 'later-key'; f.options.env.KSADK_SANDBOX_TEMPLATE_ID = 'later-template';
+  const host = await prepared.forSession(f.options);
+  await host.owner.ensure(request());
+  assert.equal(f.calls[0].options.apiKey, original.E2B_API_KEY);
+  assert.equal(f.calls[0].template, original.KSADK_SANDBOX_TEMPLATE_ID);
+  assert.equal(prepared.binding.bindingDigest,
+    prepareNativeE2BHost({ env: original }).binding.bindingDigest);
+  assert.notEqual(prepared.binding.bindingDigest,
+    prepareNativeE2BHost({ env: f.options.env }).binding.bindingDigest);
+  for (const change of [{ E2B_API_KEY: '' }, { KSADK_SANDBOX_ALLOW_INTERNET_ACCESS: 'typo' },
+    { E2B_API_URL: 'http://wrong.invalid' }]) assert.throws(() => prepareNativeE2BHost({ env: { ...original, ...change } }));
+  assert.equal(f.loads, 1);
 });
 
 test('bound Host enters the actual SDK lifecycle only after current owner authority and preserves metadata', async t => {

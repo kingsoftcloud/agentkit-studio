@@ -12,7 +12,7 @@ import { studioNativeComponentStatus } from '../src/providers/native-component-s
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 
-async function setup(t, { intercept = async () => {} } = {}) {
+async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoadSdk } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'studio-component-host-')), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot);
   const store = new SqliteRunStore(join(root, 'runs.sqlite'));
@@ -37,7 +37,8 @@ async function setup(t, { intercept = async () => {} } = {}) {
   } };
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id,
     toolBindings: record.spec.bindings.tools, toolContracts: [] }, workspaceRoot, stateDir: join(root, 'state'),
-    commandEnvironment: { MODEL_API_KEY: 'never-copy-this-key', KSADK_SKILL_RUNTIME_BACKEND: 'imagined-e2b' } });
+    commandEnvironment: commandEnvironment ?? { MODEL_API_KEY: 'never-copy-this-key', KSADK_SKILL_RUNTIME_BACKEND: 'imagined-e2b' },
+    ...(e2bLoadSdk ? { e2bLoadSdk } : {}) });
   const nativeRequests = [], originalForAgent = gateway.forAgent.bind(gateway), bound = new Map();
   gateway.forAgent = (agent, authority) => {
     const ports = originalForAgent(agent, authority); bound.set(agent.session.id, ports);
@@ -106,6 +107,26 @@ test('actual Host + registered gateway + SQLite returns pinned component facts a
   const replay = await h.bound.get('session').tools.execute(h.nativeRequests[0]);
   assert.equal(replay.status, 'error');
   assert.equal(h.store.load(h.scope, snapshot.runId).receipts.length, count);
+});
+
+test('Host admits an explicit E2B configuration into its Build pin and component projection without allocating a sandbox', async t => {
+  let loads = 0;
+  const environment = { KSADK_SANDBOX_BACKEND: 'e2b', KSADK_SANDBOX_TEMPLATE_ID: 'bound-template',
+    E2B_API_URL: 'https://original.fixture.invalid', E2B_DOMAIN: 'fixture.invalid', E2B_API_KEY: 'private-e2b-secret' };
+  const h = await setup(t, { commandEnvironment: environment, e2bLoadSdk: async () => { loads++; assert.fail('status projection must not load SDK'); } });
+  const binding = h.gateway.commandBinding;
+  assert.equal(binding.backend, 'e2b');
+  environment.KSADK_SANDBOX_BACKEND = 'local'; environment.E2B_API_KEY = 'changed-key';
+  await h.host.executeTurn(h.payload('e2b-session'));
+  const { result, saved, snapshot } = h.result('e2b-session');
+  assert.equal(snapshot.phase, 'completed'); assert.equal(loads, 0);
+  assert.equal(result.summary.isolated_execution, 'enabled');
+  assert.equal(result.sandbox.backend, 'e2b'); assert.equal(result.sandbox.template_bound, true);
+  assert.equal(result.skill_runtime.enabled, false);
+  assert.deepEqual(result.sandbox.tools, ['sandbox_status', 'run_command']);
+  assert.deepEqual(h.gateway.commandBinding, binding);
+  for (const secret of ['private-e2b-secret', 'changed-key']) assert.equal(JSON.stringify(saved).includes(secret), false);
+  assert.match(saved.configuration.hostBindingDigest, /^[a-f0-9]{64}$/u);
 });
 
 test('overlapping sessions keep their own model/status snapshots through the shared gateway', async t => {

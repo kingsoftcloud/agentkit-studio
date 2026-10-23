@@ -29,12 +29,15 @@ import { nativeChildMergeDefinition } from './native-child-merge.mjs';
 import { createNativeComponentTools, nativeComponentToolDefinitions, NATIVE_COMPONENT_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/component-tools.mjs';
 import { createNativeSkillDisclosurePort, nativeSkillDisclosureDefinitions, SKILL_DISCLOSURE_CONTRACT } from '../../packages/agentkit-harness/src/native/skill-disclosure.mjs';
 import { createStudioNativeSkillSource } from './native-skill-source.mjs';
+import { e2bCommandToolDefinitions, E2B_COMMAND_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
+import { nativeCommandBackend, prepareNativeE2BHost } from './native-e2b-host.mjs';
+import { createNativeDshE2BCommands } from './native-dsh-e2b-commands.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
 export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
-  commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch }) {
+  commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch, e2bLoadSdk }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
@@ -60,8 +63,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
   for (const definition of nativeComponentToolDefinitions()) formal.set(definition.name, definition);
   for (const definition of nativeSkillDisclosureDefinitions()) if (disclosureNames.has(definition.name)) formal.set(definition.name, definition);
-  const controls = localControlSettings(commandSettings), commandEnv = buildScriptEnvironment(commandEnvironment, { settings: controls });
-  const commandNames = new Set(localCommandToolDefinitions(controls).map(definition => {
+  const commandEnvironmentSnapshot = { ...commandEnvironment }, commandBackend = nativeCommandBackend(commandEnvironmentSnapshot);
+  const controls = commandBackend === 'local_process' ? localControlSettings(commandSettings) : null;
+  const commandEnv = controls ? buildScriptEnvironment(commandEnvironmentSnapshot, { settings: controls }) : null;
+  const commandNames = new Set((controls ? localCommandToolDefinitions(controls) : e2bCommandToolDefinitions()).map(definition => {
     formal.set(definition.name, definition); return definition.name;
   }));
   const browserTools = createNativeDshBrowserTools({ workspaceRoot: workspace, createBrowser, browserExecutablePath,
@@ -92,6 +97,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const builtin = [...allowed].filter(name => contracts.get(name)?.executor === 'builtin'
     || formal.has(name) && contracts.get(name)?.executor !== 'mcp');
   const builtinNames = new Set(builtin);
+  const e2b = commandBackend === 'e2b' && [...commandNames].some(name => builtinNames.has(name))
+    ? prepareNativeE2BHost({ env: commandEnvironmentSnapshot, ...(e2bLoadSdk ? { loadSdk: e2bLoadSdk } : {}) }) : null;
+  if (e2b) for (const definition of e2bCommandToolDefinitions(e2b.binding.timeoutSeconds)) formal.set(definition.name, definition);
   // Sample the environment once per preset, including its SSRF policy. A later
   // environment edit cannot change an already admitted Build's tool behavior.
   const webEnvironmentSnapshot = { ...webEnvironment };
@@ -386,6 +394,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     invariant(authority?.scope && authority?.store, 'studio_native_command_ledger_unavailable');
     const artifacts = await createNativeArtifactStore({ directory: join(stateDir, 'command-artifacts'), scope: authority.scope });
     invariant(!closed, 'studio_native_tools_closed');
+    if (commandBackend === 'e2b') return createNativeDshE2BCommands({ prepared: e2b, workspaceRoot: workspace, stateDir,
+      scope: authority.scope, sessionId: authority.childSessionId ?? String(agent.session.id), store: authority.store,
+      artifacts, isClosed: () => closed, inProcessTransport: Boolean(e2bLoadSdk) });
     return createNativeLocalCommandTools({ workspaceRoot: workspace, stateRoot: join(stateDir, 'background-commands'),
       sessionId: authority.childSessionId ?? String(agent.session.id), settings: controls, sourceEnv: commandEnv, artifacts, authorize: async () => 'allow',
       captureWorkspace: request => state(agent).capture(request), resolveOwnedCommand: createOwnedCommandResolver(authority) });
@@ -436,7 +447,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     workspaceMutationContract: [...builtinNames].some(name => ['write_workspace_file', 'write_workspace_files',
       'edit_workspace_file', 'multi_edit_workspace_file', 'delete_workspace_file'].includes(name)) ? WORKSPACE_MUTATION_LOCK : null,
     webBinding: webTemplate ? { contract: webTemplate.contract, bindingDigest: webTemplate.bindingDigest } : null,
-    commandBinding: [...commandNames].some(name => builtinNames.has(name)) ? {
+    commandBinding: [...commandNames].some(name => builtinNames.has(name)) ? e2b ? {
+      contract: E2B_COMMAND_TOOLS_CONTRACT, backend: 'e2b', host: { ...e2b.binding },
+    } : {
       contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },
       risk: [LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY], backend: 'local_process', environmentDigest: hash(commandEnv),
     } : null,
@@ -447,7 +460,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       const fixed = { scope: structuredClone(authority.scope), store: authority.store };
       const sessionId = String(agent.session.id);
       let commands;
-      const port = createBackgroundCommandPort({ ...fixed, readers: { local_process: async request => {
+      const port = createBackgroundCommandPort({ ...fixed, readers: { [commandBackend]: async request => {
         invariant(!closed && request.sessionId === sessionId, 'studio_native_background_observer_unbound');
         commands ||= commandToolsFor(agent, fixed);
         const result = await (await commands).reader(request);
@@ -617,7 +630,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         ...(commandAuthority?.children ? { children: commandAuthority.children.owner } : {}),
         ...(commandAuthority && [...commandNames].some(name => builtinNames.has(name)) ? {
           background: createBackgroundCommandPort({ ...commandAuthority,
-            readers: { local_process: async request => (await commands()).reader(request) } }),
+            readers: { [commandBackend]: async request => (await commands()).reader(request) } }),
         } : {}),
         ...(builtinNames.has(browserName) ? { browser: { recoverSessions: request => browserTools.forSession(sessionId).recoverSessions(request) } } : {}),
         tools: { execute: async request => {

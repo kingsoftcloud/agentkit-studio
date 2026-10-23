@@ -177,9 +177,8 @@ export async function createNativeE2BSdkTransport({ connection, sandboxId = null
 /** Detached supervisor module factory; config arrives through its stdin. */
 export const factory = config => createNativeE2BSdkTransport(config);
 
-/** Trusted lifecycle port for createNativeE2BSandboxOwner, never a model tool. */
-export async function createNativeE2BSdkLifecycle({ connection, template = 'base', timeoutSeconds = 300,
-  env = {}, allowInternetAccess = true, loadSdk = () => import('e2b') } = {}) {
+function lifecycleConfiguration({ connection, template = 'base', timeoutSeconds = 300,
+  env = {}, allowInternetAccess = true } = {}) {
   const bound = connectionOptions(connection);
   invariant(typeof template === 'string' && template.trim() && template.length <= 256, 'e2b_template_invalid');
   invariant(Number.isSafeInteger(timeoutSeconds) && timeoutSeconds > 0 && timeoutSeconds <= 86400, 'e2b_sandbox_timeout_invalid');
@@ -187,10 +186,23 @@ export async function createNativeE2BSdkLifecycle({ connection, template = 'base
     && Object.values(env).every(value => typeof value === 'string'), 'e2b_sandbox_env_invalid');
   invariant(typeof allowInternetAccess === 'boolean', 'e2b_sandbox_internet_policy_invalid');
   const environment = copy(env);
-  checkSdkEnvironment(); const sdk = await loadSdk(); checkSdkEnvironment();
-  invariant(typeof sdk.Sandbox?.create === 'function' && typeof sdk.Sandbox?.kill === 'function', 'e2b_sdk_lifecycle_contract_invalid');
+  checkSdkEnvironment();
   const bindingDigest = createHash('sha256').update(canonical({ contract: NATIVE_E2B_SDK_TRANSPORT,
     connection: bound, template, timeoutSeconds, env: environment, allowInternetAccess })).digest('hex');
+  return { bound, template, timeoutSeconds, environment, allowInternetAccess, bindingDigest };
+}
+
+/** Validate and pin a Build before asynchronous SDK loading. Secrets do not
+ * leave this description; the lifecycle uses the identical digest algorithm. */
+export function describeNativeE2BSdkLifecycle(options) {
+  return Object.freeze({ bindingDigest: lifecycleConfiguration(options).bindingDigest });
+}
+
+/** Trusted lifecycle port for createNativeE2BSandboxOwner, never a model tool. */
+export async function createNativeE2BSdkLifecycle({ loadSdk = () => import('e2b'), ...options } = {}) {
+  const { bound, template, timeoutSeconds, environment, allowInternetAccess, bindingDigest } = lifecycleConfiguration(options);
+  const sdk = await loadSdk(); checkSdkEnvironment();
+  invariant(typeof sdk.Sandbox?.create === 'function' && typeof sdk.Sandbox?.kill === 'function', 'e2b_sdk_lifecycle_contract_invalid');
   return Object.freeze({ bindingDigest,
     async createSandbox({ signal, metadata } = {}) {
       invariant(signal instanceof AbortSignal, 'e2b_signal_invalid'); signal.throwIfAborted(); checkSdkEnvironment();

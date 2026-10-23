@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawn } from 'node:child_process';
+import { factory as subprocessTransport } from './e2b-fake-transport.mjs';
 import { NativeKernel, configure, emptyUsage, canonical } from '../../agentkit-harness-core/dist/index.mjs';
 import { fixture, scope, digest } from '../../agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
@@ -23,20 +23,7 @@ const poll = async (fn, { timeoutMs = 10000 } = {}) => {
 };
 
 function fakeTransport(sandboxId = 'sb-kernel') {
-  return {
-    start(command, { cwd, env, timeout, sandboxId: requestedId }) {
-      const proc = spawn('/bin/sh', ['-c', command], { cwd: cwd || undefined, env: env || undefined, stdio: ['ignore', 'pipe', 'pipe'] });
-      const handle = { pid: proc.pid, result: null,
-        async * [Symbol.asyncIterator]() { const o = []; proc.stdout.on('data', x => o.push(x)); proc.stderr.on('data', () => {});
-          await new Promise(r => { const d = () => { if (handle.result === null) { handle.result = { exitCode: proc.exitCode }; r(); } };
-            proc.once('exit', d); proc.stdout.once('end', d); proc.once('close', d); });
-          for (const x of o) yield { stdout: x.toString('utf8') }; },
-        disconnect() {} };
-      return { pid: proc.pid, handle, sandboxId };
-    },
-    reconnect(pid, opts) { return { async * [Symbol.asyncIterator]() {}, result: null, disconnect() {} }; },
-    kill(pid, opts) { try { process.kill(pid, 'SIGKILL'); return true; } catch { return false; } },
-  };
+  return subprocessTransport({ sandboxId });
 }
 
 function setupKernel(t, { maxModelCalls = 2 } = {}) {

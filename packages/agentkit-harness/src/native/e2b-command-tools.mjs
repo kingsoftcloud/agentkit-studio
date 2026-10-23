@@ -27,14 +27,16 @@ function base(name, description, properties, required, mutating, timeoutMs) {
     ...(!mutating ? { recoveryPolicy: 'safe-read/v1' } : {}) };
 }
 
-export function e2bCommandToolDefinitions() {
+export function e2bCommandToolDefinitions(foregroundTimeoutSeconds = 300) {
+  invariant(Number.isSafeInteger(foregroundTimeoutSeconds) && foregroundTimeoutSeconds > 0
+    && foregroundTimeoutSeconds <= 86400, 'e2b_command_foreground_limit_invalid');
   return [
     base('sandbox_status', 'Report the bound E2B remote sandbox backend and its execution boundary.', {}, [], false, 10000),
     { ...base('run_command', 'Run a command inside the bound E2B remote sandbox. background=true returns an owned task_id for non-blocking reads via read_command_output; stop_command requests cancellation. The sandbox is remote — cwd is a remote path, not a host-local one. An unknown outcome is never re-launched.',
       { command: { type: 'string', minLength: 1 }, cwd: { anyOf: [{ type: 'string' }, { type: 'null' }] },
         timeout: schemas.nullableSeconds, env: { anyOf: [{ type: 'object', additionalProperties: { type: 'string' } }, { type: 'null' }] },
         background: { type: 'boolean' }, background_timeout: schemas.nullableSeconds },
-      ['command'], true, 120000), backgroundCommandPolicy: 'owned-command-launch/v1' },
+      ['command'], true, foregroundTimeoutSeconds * 1000 + 20000), backgroundCommandPolicy: 'owned-command-launch/v1' },
     base('read_command_output', 'Read an owned E2B command status and UTF-8 byte cursors. Reusing a cursor is read-only. Waiting never changes the command deadline. No sandbox creation or command restart.',
       { task_id: { type: 'string', pattern: '^[a-f0-9]{64}$' }, stdout_cursor: schemas.cursor,
         stderr_cursor: schemas.cursor, max_bytes: { type: 'integer', minimum: 4, maximum: 65536 },
@@ -74,7 +76,7 @@ function abortable(promise, signal) {
 
 export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFactory,
   authorize, assertAuthority, resolveOwnedCommand, artifacts, maxOutputBytes = 24000,
-  allowInternetAccess = false } = {}) {
+  allowInternetAccess = false, foregroundTimeoutSeconds = 300, backgroundTimeoutSeconds = 300 } = {}) {
   invariant(scope && typeof sessionId === 'string' && !!sessionId.trim(), 'e2b_command_scope_required');
   invariant(Number.isSafeInteger(maxOutputBytes) && maxOutputBytes >= 256, 'e2b_command_max_output_bytes_invalid');
   invariant(owner && typeof owner.ensure === 'function' && typeof owner.inspect === 'function', 'e2b_command_owner_required');
@@ -82,7 +84,9 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
   invariant(typeof authorize === 'function', 'e2b_command_authorize_required');
   invariant(typeof assertAuthority === 'function', 'e2b_command_assert_authority_required');
   invariant(typeof resolveOwnedCommand === 'function', 'e2b_command_resolve_owned_required');
-  const definitions = e2bCommandToolDefinitions();
+  invariant(Number.isSafeInteger(backgroundTimeoutSeconds) && backgroundTimeoutSeconds > 0
+    && backgroundTimeoutSeconds <= 86400, 'e2b_command_background_limit_invalid');
+  const definitions = e2bCommandToolDefinitions(foregroundTimeoutSeconds);
   const formal = new Map(definitions.map(d => [d.name, copy(d)]));
   const fixedScope = copy(scope);
   scopeKey(fixedScope);
@@ -327,8 +331,10 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
       if (guardResult1) return guardResult1;
 
       if (!store) store = syncValue(storeFactory({ scope: copy(fixedScope), sessionId, sandboxId }));
-      const suppliedTimeout = args.background ? (args.background_timeout ?? 300) : (args.timeout ?? 300);
-      const timeoutSeconds = Number(suppliedTimeout > 86400 ? 86400 : suppliedTimeout);
+      const suppliedTimeout = args.background ? (args.background_timeout ?? backgroundTimeoutSeconds)
+        : (args.timeout ?? foregroundTimeoutSeconds);
+      const maximum = args.background ? 86400 : foregroundTimeoutSeconds;
+      const timeoutSeconds = Number(suppliedTimeout > maximum ? maximum : suppliedTimeout);
       const afterFactory = guard(request, before, dispatched, known); if (afterFactory) return afterFactory;
       if (typeof store.commandId === 'function') {
         taskId = syncValue(store.commandId(before.operationKey));

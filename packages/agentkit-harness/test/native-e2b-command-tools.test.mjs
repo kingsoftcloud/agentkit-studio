@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSy
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { factory as subprocessTransport } from './e2b-fake-transport.mjs';
 import { createNativeE2BCommandTools, E2B_COMMAND_TOOLS_CONTRACT } from '../src/native/e2b-command-tools.mjs';
 import { E2BCommandStore, createE2BBackgroundReader } from '../src/native/e2b-background.mjs';
 import { TERMINAL } from '../src/native/e2b-command-state.mjs';
@@ -22,23 +23,15 @@ const poll = async (fn, { timeoutMs = 10000 } = {}) => {
 
 // Fake transport: runs commands as local subprocesses (deterministic, NOT real E2B).
 function fakeTransport({ sandboxId = 'sb-test' } = {}) {
+  const transport = subprocessTransport({ sandboxId });
   return {
-    start(command, { cwd, env, timeout, sandboxId: requestedId }) {
-      assert.ok(requestedId, 'transport.start must receive a sandboxId');
-      const proc = spawn('/bin/sh', ['-c', command], { cwd: cwd || undefined, env: env || undefined, stdio: ['ignore', 'pipe', 'pipe'] });
-      const handle = { pid: proc.pid, result: null,
-        async * [Symbol.asyncIterator]() { const o = []; const e = [];
-          proc.stdout.on('data', x => o.push(x)); proc.stderr.on('data', x => e.push(x));
-          await new Promise(r => { const d = () => { if (handle.result === null) {
-            // A signal-killed process has null exitCode (not 0), matching the real SDK.
-            handle.result = { exitCode: proc.exitCode }; r(); } };
-            proc.once('exit', d); proc.stdout.once('end', d); proc.once('close', d); });
-          for (const x of o) yield { stdout: x.toString('utf8') }; for (const x of e) yield { stderr: x.toString('utf8') }; },
-        disconnect() {} };
-      return { pid: proc.pid, handle, sandboxId };
+    ...transport,
+    start(command, options) {
+      assert.ok(options.sandboxId, 'transport.start must receive a sandboxId');
+      // stdout EOF may precede process exit. The shared fixture waits for
+      // close and preserves null for signal kills, rather than guessing zero.
+      return transport.start(command, options);
     },
-    reconnect(pid, opts) { return { async * [Symbol.asyncIterator]() {}, result: null, disconnect() {} }; },
-    kill(pid, opts) { try { process.kill(pid, 'SIGKILL'); return true; } catch { return false; } },
   };
 }
 

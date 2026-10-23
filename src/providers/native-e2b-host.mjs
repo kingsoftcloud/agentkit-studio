@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeE2BSandboxOwner } from '../../packages/agentkit-harness/src/native/e2b-sandbox-owner.mjs';
-import { createNativeE2BSdkLifecycle, createNativeE2BSdkTransport, NATIVE_E2B_SDK_TRANSPORT } from './native-e2b-sdk-transport.mjs';
+import { createNativeE2BSdkLifecycle, createNativeE2BSdkTransport, describeNativeE2BSdkLifecycle, NATIVE_E2B_SDK_TRANSPORT } from './native-e2b-sdk-transport.mjs';
 
 export const STUDIO_NATIVE_E2B_HOST = 'agentkit.studio-native-e2b-host/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -34,7 +34,8 @@ function configuration(env, sandboxEnvironment) {
   const timeoutSeconds = Number(rawTimeout.trim());
   invariant(Number.isSafeInteger(timeoutSeconds) && timeoutSeconds > 0 && timeoutSeconds <= 86400, 'studio_native_e2b_timeout_invalid');
   const bool = raw => {
-    invariant(raw == null || typeof raw === 'string', 'studio_native_e2b_internet_policy_invalid');
+    invariant(raw == null || typeof raw === 'string' && ['1', 'true', 'yes', 'on', '0', 'false', 'no', 'off']
+      .includes(raw.trim().toLowerCase()), 'studio_native_e2b_internet_policy_invalid');
     return raw == null || ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
   };
   const allowInternetAccess = bool(env.KSADK_SANDBOX_ALLOW_INTERNET_ACCESS ?? env.KSADK_SKILL_RUNTIME_ALLOW_INTERNET_ACCESS);
@@ -51,6 +52,22 @@ function configuration(env, sandboxEnvironment) {
   return { connection: { apiUrl: env.E2B_API_URL, domain: env.E2B_DOMAIN, apiKey: env.E2B_API_KEY,
     headers: { 'X-Traffic-Source': source.trim() || 'agentkit' } },
     template: template.trim(), timeoutSeconds, allowInternetAccess, sandboxType, env: copy(sandboxEnvironment) };
+}
+
+/** Preset-wide immutable configuration. Validation and the public Build pin
+ * happen synchronously, before registration, approval or an SDK import. */
+export function prepareNativeE2BHost({ env = {}, sandboxEnvironment = {}, loadSdk } = {}) {
+  const fixedEnv = { ...env }, fixedEnvironment = copy(sandboxEnvironment);
+  const fixed = configuration(fixedEnv, fixedEnvironment);
+  const lifecycle = describeNativeE2BSdkLifecycle({ connection: fixed.connection, template: fixed.template,
+    timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess, env: fixed.env });
+  const binding = Object.freeze({ contract: STUDIO_NATIVE_E2B_HOST, backend: 'e2b',
+    bindingDigest: hash({ contract: STUDIO_NATIVE_E2B_HOST, lifecycle: lifecycle.bindingDigest, sandboxType: fixed.sandboxType }),
+    transportContract: NATIVE_E2B_SDK_TRANSPORT, template: fixed.template, sandboxType: fixed.sandboxType,
+    timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess });
+  return Object.freeze({ binding,
+    forSession: options => createNativeE2BHostBinding({ ...options, env: fixedEnv,
+      sandboxEnvironment: fixedEnvironment, ...(loadSdk ? { loadSdk } : {}) }) });
 }
 
 export async function createNativeE2BHostBinding({ env, scope, sessionId, workspaceRoot, stateRoot,
