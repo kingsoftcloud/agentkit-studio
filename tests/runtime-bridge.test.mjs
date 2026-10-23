@@ -1,10 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DSH_NODE_BUILTIN_NAMES, unavailableNodeBuiltin } from '../src/providers/dsh-node-builtin-catalog.mjs';
 import { Context } from '@deepseek-ai/cordis';
 import { createRuntimeBridge, mountRuntimeBridge, ownAsyncResource, resolveRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { apply as applyPreset } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
 import { spawnSync } from 'node:child_process';
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} every unavailable builtin rejects without consulting a Python executor`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } },
+    on: () => () => {}, effect: install => install() };
+  const config = { agentId: 'node-only', runtime, local: true,
+    toolBindings: [...DSH_NODE_BUILTIN_NAMES, 'unknown_builtin', 'workspace', 'skills', 'core'] };
+  for (const key of ['pythonRoot', 'pythonExecutable', 'spawnImpl', 'workspaceRoot'])
+    Object.defineProperty(config, key, { get: () => assert.fail(`legacy executor configuration accessed: ${key}`) });
+  applyPreset(ctx, config);
+  assert.equal(registered.length, DSH_NODE_BUILTIN_NAMES.length + 4);
+  for (const tool of registered) {
+    const code = unavailableNodeBuiltin(tool.name).code;
+    await assert.rejects(tool.execute({}, {}), { code, details: { name: tool.name, contract: 'agentkit.dsh-node-builtin-catalog/v1' } });
+    assert.match(code, /NODE_PORT_UNAVAILABLE|^BUILTIN_TOOL_UNSUPPORTED$/);
+  }
+  bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unrestricted meta-dispatchers are rejected before Node factory activation`, () => {
+  const bridge = createRuntimeBridge();
+  bridge.setBuiltinToolsFactory(() => assert.fail('meta dispatcher must not activate a port'));
+  const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: () => assert.fail('meta dispatcher cannot be registered') }, on: () => () => {} };
+  for (const name of ['tool_search', 'tool_dispatcher', 'agentengine_tool_dispatcher', ' tool_dispatcher '])
+    for (const binding of [{ toolBindings: [name] }, { toolContracts: [{ name, executor: 'builtin', enabled: true }] }])
+      assert.throws(() => applyPreset(ctx, { agentId: 'node-only', runtime, local: true, ...binding }),
+        { code: 'BUILTIN_META_TOOL_FORBIDDEN' });
+  bridge.close();
+});
 
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
 

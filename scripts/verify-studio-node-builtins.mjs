@@ -10,6 +10,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import { createHash } from 'node:crypto';
 import { createZip } from '../src/zip.mjs';
 import { browserExecutable } from '../tests/fixtures/browser-executable.mjs';
+import { DSH_NODE_BUILTIN_NAMES } from '../src/providers/dsh-node-builtin-catalog.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   'skill-backend': { type: 'string', default: 'local_process' }, 'command-backend': { type: 'string', default: 'local_process' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
@@ -86,6 +87,7 @@ try {
   assert.equal(report?.passed, true, JSON.stringify(report));
   assert.equal(report.node, process.version); assert.equal(report.path, nodeBin);
   assert.deepEqual(report.runtimes.map(row => row.runtime), ['dsh-native', 'codex']);
+  for (const row of report.runtimes) assert.deepEqual(row.builtinNames, [...DSH_NODE_BUILTIN_NAMES].sort());
   assert.ok(report.runtimes.every(row => row.crossSessionReadStateIsolated && row.parser === 'ruff-wasm'));
   assert.ok(report.runtimes.every(row => row.web.calls === 6 && row.web.preAndGuardDeniedWithoutFetch
     && row.web.postPolicyPreserved && row.web.canceled && row.web.fullOutputPersisted && row.web.crossSessionOutputIsolated));

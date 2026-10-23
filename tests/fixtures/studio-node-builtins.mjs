@@ -8,6 +8,8 @@ import { createServer } from 'node:http';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { mountStudioHost } from '../../src/host/bootstrap.mjs';
 import { bindDshInvocationContext } from '../../src/providers/dsh-invocation-context.mjs';
+import { DSH_NODE_BUILTIN_NAMES } from '../../src/providers/dsh-node-builtin-catalog.mjs';
+import { sandboxRegistryName } from '../../src/providers/sandbox-code-name.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
 export const name = 'studio-node-builtin-proof';
@@ -133,6 +135,7 @@ export async function apply(ctx, options) {
     'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'run_code', 'component_status', 'browser_inspect_workspace',
     'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills', 'list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent',
     'skill_discover_github', 'skill_install', 'skill_bind_agent', 'search_knowledge_base', 'load_memory', 'save_memory'];
+  assert.deepEqual(tools.map(sandboxRegistryName).sort(), [...DSH_NODE_BUILTIN_NAMES].sort());
   const records = [];
   if (previous) for (const row of previous.runtimes) { const record = await agents.get(row.agentId); assert.ok(record); records.push(record); }
   else for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
@@ -285,6 +288,9 @@ export async function apply(ctx, options) {
       agent.session.append('turn/start', { turn: 1 });
       setSandboxMode(agent.session, 'workspace-write');
       const registry = agent.ctx.get('tools');
+      const builtinNames = registry.schemas(agent).map(tool => tool.name)
+        .filter(name => DSH_NODE_BUILTIN_NAMES.includes(name)).sort();
+      assert.deepEqual(builtinNames, [...DSH_NODE_BUILTIN_NAMES].sort());
       const call = async (name, args, signal = new AbortController().signal) => {
         const result = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name, arguments: args, signal });
         assert.equal(result.isError, false, JSON.stringify(result));
@@ -870,7 +876,7 @@ export async function apply(ctx, options) {
         assert.deepEqual(before, after, 'Both actual DSH policy phases must observe every admitted call.');
         const audits = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').map(event => event.data.outcome);
         assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected', 'allowed-once', 'rejected', ...(!e2bCommands ? ['allowed-once', 'rejected'] : [])]);
-        report.runtimes.push({ runtime, agentId: record.metadata.id, sessionId: created.sessionId,
+        report.runtimes.push({ runtime, builtinNames, agentId: record.metadata.id, sessionId: created.sessionId,
           registeredCalls: before.length, approvals: audits, crossSessionReadStateIsolated: true, parser: lint.syntax_engine.parser });
         report.runtimes.at(-1).web = webProof;
         report.runtimes.at(-1).commands = commandProof;

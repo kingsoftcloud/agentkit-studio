@@ -7,64 +7,14 @@
 export const name = 'agentkit-studio-dsh-runtime';
 export const inject = ['tools', 'skills', 'studioRuntimeBridge'];
 const AGENT_REQUEST_EVENT = ['agent', 'request'].join('/');
-import { spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
 import { bindDshAgentRoute, executeDshResourceTool } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { migrateLegacyCodexObservations } from './codex-observation.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 import { nativeA2aToolDefinitions } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
-import { sandboxRegistryName, SANDBOX_CODE_NAME } from './sandbox-code-name.mjs';
-
-// Node environments own migrated builtins through the complete DSH registry.
-// The remaining Python fallback must be removed as each corresponding Host
-// capability is migrated; a missing migrated port never re-enters Python.
-const EXECUTE_BUILTIN = `
-import contextlib, json, sqlite3, sys
-from dataclasses import asdict
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-with contextlib.redirect_stdout(sys.stderr):
-    from ksadk.toolsets import get_agentengine_tools
-    import ksadk.toolsets.workspace as workspace
-    import ksadk.toolsets.workspace_state as state
-    workspace.workspace_root = lambda: Path(sys.argv[2])
-    tool = get_agentengine_tools(include=[sys.argv[3]], mode='direct')[0]
-    arguments = json.load(sys.stdin)
-    db_path = Path(sys.argv[4])
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path, timeout=10) as db:
-        db.execute('CREATE TABLE IF NOT EXISTS reads (session TEXT PRIMARY KEY, data TEXT)')
-        db.execute('BEGIN IMMEDIATE')
-        row = db.execute('SELECT data FROM reads WHERE session=?', (sys.argv[5],)).fetchone()
-        if row:
-            for item in json.loads(row[0]):
-                state.record_read_state(state.WorkspaceReadState(**item))
-        value = tool.invoke(arguments) if hasattr(tool, 'invoke') else tool(**arguments)
-        snapshot = [asdict(item) for item in state._READ_STATE.values()]
-        db.execute('INSERT OR REPLACE INTO reads VALUES (?, ?)', (sys.argv[5], json.dumps(snapshot)))
-print(json.dumps(value, ensure_ascii=False))
-`;
-
-function builtinRoot(config = {}) {
-  const candidates = [
-    config.pythonRoot,
-    process.env.AGENTKIT_KSADK_ROOT,
-    process.env.KSADK_ROOT,
-    join(process.cwd(), 'ksadk-python'),
-    resolve(process.cwd(), '..', 'ksadk-python'),
-  ].filter(Boolean).map(String);
-  return candidates.find(candidate => existsSync(candidate)) || candidates[0] || process.cwd();
-}
-
-function builtinPython(config = {}, root) {
-  const configured = String(config.pythonExecutable || process.env.AGENTKIT_KSADK_PYTHON || process.env.KSADK_PYTHON || '').trim();
-  if (configured) return configured;
-  const venv = join(root, '.venv', 'bin', 'python');
-  return existsSync(venv) ? venv : 'python3';
-}
+import { sandboxRegistryName } from './sandbox-code-name.mjs';
+import { assertConcreteBuiltin, unavailableNodeBuiltin } from './dsh-node-builtin-catalog.mjs';
 
 function builtinError(code, message, details = {}) {
   return Object.assign(new Error(message), { code, details });
@@ -89,100 +39,17 @@ function renderBridgedOutput(_args, value) {
   return [{ type: 'text', text: String(value?.result || '') }];
 }
 
-function createBuiltinExecutor(config = {}, nodeTools) {
-  const spawnImpl = config.spawnImpl || nodeSpawn;
-  const root = builtinRoot(config);
-  const python = builtinPython(config, root);
-  const workspaceRoot = resolve(String(config.workspaceRoot || process.env.AGENTKIT_STUDIO_WORKSPACE || process.cwd()));
-  const stateDir = join(workspaceRoot, '.agentkit', 'tool-state');
+function createBuiltinExecutor(nodeTools) {
   return async (contract, argumentsValue, exec = {}) => {
     const name = String(contract?.name || '').trim();
     if (!name) throw builtinError('BUILTIN_TOOL_NAME_MISSING', 'AgentEngine 内置 Tool 缺少名称');
-    if (nodeTools?.supports(name)) {
-      const result = await nodeTools.execute(name, argumentsValue, exec);
-      if (result?.status === 'ok') return result.content;
-      if (result?.status === 'error') return { ...result.content, ok: false };
-      if (result?.status === 'uncertain') return { ...result.content, ok: false, status: 'uncertain' };
-      throw builtinError('BUILTIN_TOOL_INVALID_OUTPUT', `Node builtin ${name} 返回了无效结果`, { name });
-    }
-    if (['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent'].includes(name))
-      throw builtinError('A2A_NODE_PORT_UNAVAILABLE', 'Node A2A environment is unavailable');
-    if (name === 'browser_inspect_workspace') throw builtinError('BROWSER_NODE_PORT_UNAVAILABLE', 'Node browser environment is unavailable');
-    if (['skill_discover_github', 'skill_install', 'skill_bind_agent'].includes(name))
-      throw builtinError('SKILL_MANAGEMENT_NODE_PORT_UNAVAILABLE', 'Node Skill management environment is unavailable');
-    if (name === 'search_knowledge_base') throw builtinError('KNOWLEDGE_NODE_PORT_UNAVAILABLE', 'Node knowledge environment is unavailable');
-    if (['load_memory', 'save_memory'].includes(name)) throw builtinError('MEMORY_NODE_PORT_UNAVAILABLE', 'Node Memory environment is unavailable');
-    if (name === SANDBOX_CODE_NAME) throw builtinError('SANDBOX_CODE_NODE_PORT_UNAVAILABLE', 'Node sandbox code environment is unavailable');
-    const { signal } = exec, agentId = config.agentId;
-    const timeoutMs = Math.min(3_600_000, Math.max(1_000, Number(contract.timeoutSeconds || 20) * 1000));
-    const session = `${String(agentId || 'agent')}:${String(config.sessionId || 'default')}`;
-    const statePath = join(stateDir, `${encodeURIComponent(String(agentId || 'agent'))}.sqlite`);
-    mkdirSync(workspaceRoot, { recursive: true });
-    const args = [
-      '-B', '-I', '-c', EXECUTE_BUILTIN,
-      root,
-      workspaceRoot,
-      name,
-      statePath,
-      session,
-    ];
-    let child;
-    try {
-      child = spawnImpl(python, args, {
-        cwd: workspaceRoot,
-        detached: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, KSADK_TOOL_APPROVAL_MODE: 'full', KSADK_PROJECT_DIR: workspaceRoot },
-      });
-    } catch (error) {
-      throw builtinError('BUILTIN_TOOL_PROVIDER_UNAVAILABLE', 'AgentEngine 内置 Tool 执行器无法启动', { name, cause: String(error?.message || error) });
-    }
-    if (!child?.stdin || !child?.stdout) throw builtinError('BUILTIN_TOOL_PROVIDER_UNAVAILABLE', 'AgentEngine 内置 Tool 执行器没有提供 stdio 通道', { name });
-    return await new Promise((resolveValue, reject) => {
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      let timer;
-      const finish = (error, value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener?.('abort', onAbort);
-        if (error) reject(error); else resolveValue(value);
-      };
-      const onAbort = () => {
-        try { child.kill?.('SIGTERM'); } catch {}
-        finish(builtinError('TOOL_CANCELLED', '内置 Tool 调用已取消', { name }));
-      };
-      timer = setTimeout(() => {
-        try { child.kill?.('SIGKILL'); } catch {}
-        finish(builtinError('BUILTIN_TOOL_TIMEOUT', `内置 Tool ${name} 执行超时`, { name, timeoutMs }));
-      }, timeoutMs);
-      signal?.addEventListener?.('abort', onAbort, { once: true });
-      child.stdout.on('data', chunk => {
-        stdout += String(chunk);
-        if (stdout.length > 1_048_576) {
-          try { child.kill?.('SIGKILL'); } catch {}
-          finish(builtinError('BUILTIN_TOOL_OUTPUT_TOO_LARGE', `内置 Tool ${name} 输出超过 1 MiB`, { name }));
-        }
-      });
-      child.stderr?.on('data', chunk => { stderr = `${stderr}${String(chunk)}`.slice(-4000); });
-      child.once('error', error => finish(builtinError('BUILTIN_TOOL_PROVIDER_UNAVAILABLE', `内置 Tool ${name} 执行器启动失败`, { name, cause: String(error?.message || error) })));
-      child.once('close', (code, signalName) => {
-        if (settled) return;
-        if (code !== 0) {
-          finish(builtinError('BUILTIN_TOOL_FAILED', `内置 Tool ${name} 执行失败`, { name, code, signal: signalName, stderr }));
-          return;
-        }
-        try { finish(null, JSON.parse(stdout)); }
-        catch { finish(builtinError('BUILTIN_TOOL_INVALID_OUTPUT', `内置 Tool ${name} 返回了无效 JSON`, { name })); }
-      });
-      try {
-        child.stdin.end(JSON.stringify(argumentsValue || {}));
-      } catch (error) {
-        finish(builtinError('BUILTIN_TOOL_PROVIDER_UNAVAILABLE', `无法向内置 Tool ${name} 写入参数`, { name, cause: String(error?.message || error) }));
-      }
-    });
+    assertConcreteBuiltin(name);
+    if (!nodeTools?.supports(name)) throw unavailableNodeBuiltin(name);
+    const result = await nodeTools.execute(name, argumentsValue, exec);
+    if (result?.status === 'ok') return result.content;
+    if (result?.status === 'error') return { ...result.content, ok: false };
+    if (result?.status === 'uncertain') return { ...result.content, ok: false, status: 'uncertain' };
+    throw builtinError('BUILTIN_TOOL_INVALID_OUTPUT', `Node builtin ${name} 返回了无效结果`, { name });
   };
 }
 
@@ -191,7 +58,7 @@ function registerBuiltinTools(ctx, contracts, config, bridge) {
     .filter(contract => contract && contract.executor === 'builtin' && contract.enabled !== false && contract.name);
   // A persisted DSH preset can outlive the catalog request that originally
   // admitted it. Preserve the Agent's explicit builtin bindings in that case;
-  // the Python executor still validates the name against ksadk toolsets.
+  // an unavailable Node port rejects the call without another executor.
   const a2aDefinitions = config.a2aBindings?.length ? nativeA2aToolDefinitions() : [];
   for (const definition of a2aDefinitions) {
     if ((contracts ?? []).some(contract => contract.name === definition.name && contract.enabled !== false && contract.executor !== 'builtin'))
@@ -213,11 +80,12 @@ function registerBuiltinTools(ctx, contracts, config, bridge) {
   const values = [...declared, ...fallback].map(contract => ({ ...contract, name: sandboxRegistryName(String(contract.name)) }));
   if (new Set(values.map(contract => contract.name)).size !== values.length)
     throw builtinError('BUILTIN_TOOL_NAME_COLLISION', 'Sandbox code bindings resolve to the same registry name');
+  for (const contract of values) assertConcreteBuiltin(contract.name);
   if (!values.length) return;
   if (typeof ctx.tools?.register !== 'function') return;
   const nodeTools = bridge.createBuiltinTools?.({ ctx, config }) ?? null;
   if (nodeTools && typeof ctx.effect === 'function') ctx.effect(() => () => nodeTools.close(), 'agentkit-studio: Node builtin lifetime');
-  const executeBuiltin = createBuiltinExecutor(config, nodeTools);
+  const executeBuiltin = createBuiltinExecutor(nodeTools);
   const install = () => {
     const disposers = values.map(contract => {
       const formal = nodeTools?.supports(String(contract.name))

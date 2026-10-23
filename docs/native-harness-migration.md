@@ -1,5 +1,11 @@
 # Native Harness TypeScript 迁移
 
+当前普通工具目录的 31 项及 platform factory 额外 3 项均有 Node 端口，
+DSH builtin 的 Python 脚本、解释器查找和子进程 fallback 已删除。
+具体范围、缺少端口时的行为及未闭环能力见 [Node builtin 接线](native-node-builtins.md)。
+下文较早阶段的“仍保留 Python fallback”是历史记录，不代表当前源码；
+本次删除不证明全部工具行为、扩展 executor、完整安装或默认切换已完成。
+
 Skill 管理的 Node 实现、持久化边界、验证范围与尚未闭环的行为差异见
 [Skill management checkpoint](native-skill-management.md)。该阶段不能视为完整无损迁移完成。
 
