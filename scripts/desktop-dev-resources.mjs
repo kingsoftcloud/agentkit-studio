@@ -1,5 +1,6 @@
 /** Preflight disposable Desktop resources before starting a native window. */
 import { readFile, realpath, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -31,21 +32,26 @@ export async function assertDesktopDevResources({ source, primaryRuntime }) {
   if (manifest.schemaVersion !== undefined && manifest.schemaVersion !== 2)
     throw new Error('Unsupported Desktop primary runtime resource format');
   const nodeOnly = manifest.schemaVersion === 2;
+  if (!nodeOnly || !/^[a-f0-9]{64}$/.test(manifest.officeLibrarySha256 ?? ''))
+    throw new Error('Desktop requires Node-only Office authoring resources; run prepare-studio-desktop-dev.mjs again');
   if (nodeOnly && (manifest.python !== undefined || manifest.components !== undefined ||
     Object.keys(manifest.pythonPackages ?? {}).length !== 0 || typeof manifest.node !== 'string'))
     throw new Error('Node-only Desktop resources must declare Node and contain no Python metadata');
-  // The Host validates full metadata. This preflight checks files consumed by
-  // its Office composition; the current assets have no check_office.py helper.
+  // The Host validates full metadata; this preflight checks its Node Office resources.
   const required = [
     ...['office', 'office-docx', 'office-pptx', 'office-xlsx', 'office-render', 'office-recalculate', 'office-export-pdf']
       .map(name => join(assets, name, 'SKILL.md')),
     join(primaryRuntime, 'runtime.json'),
+    ...['office-docx', 'office-pptx', 'office-xlsx', 'office-recalculate'].map(name => join(assets, name, 'SKILL.node.md')),
+    join(primaryRuntime, 'dependencies/node/node_modules/office.mjs'),
     join(primaryRuntime, 'dependencies/node/bin', process.platform === 'win32' ? 'node.exe' : 'node'),
-    ...(nodeOnly ? [] : [join(primaryRuntime, 'dependencies/python', ...(process.platform === 'win32' ? ['python.exe'] : ['bin/python3']))]),
     join(primaryRuntime, 'dependencies/pnpm/bin/pnpm.mjs')];
   for (const path of required) {
     if (!(await stat(path)).isFile()) throw new Error(`Desktop development resource is not a file: ${path}`);
   }
+  const library = await readFile(join(primaryRuntime, 'dependencies/node/node_modules/office.mjs'));
+  if (createHash('sha256').update(library).digest('hex') !== manifest.officeLibrarySha256)
+    throw new Error('Desktop Office library checksum mismatch; prepare resources again');
   const require = createRequire(join(source, 'apps/desktop-host/package.json'));
   const cli = join(dirname(require.resolve('@deepseek-ai/libreoffice-kit/package.json')), 'lib/cli.js');
   if (!(await stat(cli)).isFile()) throw new Error(`Desktop Office CLI is missing: ${cli}`);

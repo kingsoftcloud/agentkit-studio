@@ -2302,12 +2302,95 @@
         "scripts/primary-runtime/prepare.ts"
       ],
       "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee"
+    },
+    {
+      "id": "053",
+      "file": "053-node-office-authoring.patch",
+      "category": "packaging",
+      "risk": "medium",
+      "dependsOn": [
+        "050",
+        "051",
+        "052"
+      ],
+      "removeWhen": "The pinned upstream supplies Node Office authoring resources and equivalent Desktop integration and verification.",
+      "contracts": [
+        "Desktop prepares and requires Node-only Office authoring, without Python resources; other SDK carriers retain explicit Python workflows. All seven skills and four Node authoring bodies remain progressively loaded.",
+        "The relocatable module contains document, spreadsheet, presentation, data-analysis and XML/ZIP libraries with dependency notices. Its SHA-256 binds runtime metadata; resolve, install and reuse reject missing or corrupted modules.",
+        "OOXML editing preserves every untouched file part byte; callers maintain relationships, content types, revisions and formula caches. Input snapshots, bounded decompression and CRC validation reject malformed or oversized archives before publication.",
+        "Actual packaged Node creates, edits and reopens DOCX/XLSX/PPTX with styles, comments, formulas, charts, embedded workbooks and notes. Existing CLI conversion, rendering and recalculation remain available."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-skill-office",
+        "@deepseek-ai/dsh-tool-workspace-dependencies",
+        "@deepseek-ai/dsh-desktop-host",
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Node runtime integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained source c7e43983; six affected modules 166 cases passed each Node26/22, expanded skill resource cases passed; real locked Node24 offline resources install/cold resolve and three-format editing passed with PATH=/nonexistent. Seven native LibreOffice operations passed on macOS arm64. Full Electron and other-platform acceptance remain separate."
+      },
+      "verification": {
+        "hostTests": [
+          "apps/desktop-host/tests/office.spec.ts",
+          "packages/skill/skill-office/tests/office-package.spec.ts",
+          "packages/skill/skill-office/tests/skill-office.spec.ts",
+          "packages/skill/skill-office/tests/progressive-loading.spec.ts",
+          "packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts",
+          "scripts/primary-runtime/prepare.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "THIRD_PARTY_NOTICES.md",
+        "apps/desktop-host/src/office.ts",
+        "apps/desktop-host/tests/office.spec.ts",
+        "apps/desktop/scripts/prepare-primary-runtime.ts",
+        "apps/desktop/scripts/smoke-runtime.ts",
+        "apps/desktop/tests/fixtures/office-conversion-inputs.mjs",
+        "docs/config-catalog.md",
+        "docs/config-catalog.zh.md",
+        "docs/subsystems/skills.i18n.yaml",
+        "docs/subsystems/skills.md",
+        "docs/subsystems/skills.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md",
+        "packages/skill/skill-office/README.i18n.yaml",
+        "packages/skill/skill-office/README.md",
+        "packages/skill/skill-office/README.zh.md",
+        "packages/skill/skill-office/assets/office-docx/SKILL.node.md",
+        "packages/skill/skill-office/assets/office-pptx/SKILL.node.md",
+        "packages/skill/skill-office/assets/office-recalculate/SKILL.node.md",
+        "packages/skill/skill-office/assets/office-xlsx/SKILL.node.md",
+        "packages/skill/skill-office/package.json",
+        "packages/skill/skill-office/src/authoring.ts",
+        "packages/skill/skill-office/src/index.ts",
+        "packages/skill/skill-office/src/office-package.ts",
+        "packages/skill/skill-office/tests/__snapshots__/progressive-loading.spec.ts.snap",
+        "packages/skill/skill-office/tests/office-package.spec.ts",
+        "packages/skill/skill-office/tests/progressive-loading.spec.ts",
+        "packages/skill/skill-office/tests/skill-office.spec.ts",
+        "packages/skill/skill-office/tsdown.config.ts",
+        "packages/skill/tool-workspace-dependencies/README.i18n.yaml",
+        "packages/skill/tool-workspace-dependencies/README.md",
+        "packages/skill/tool-workspace-dependencies/README.zh.md",
+        "packages/skill/tool-workspace-dependencies/src/index.ts",
+        "packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts",
+        "pnpm-lock.yaml",
+        "scripts/primary-runtime/prepare.ts"
+      ],
+      "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a"
     }
   ],
-  "patchedTree": "98a4631a52e82692978960b955562aae83327455",
-  "patchedSourceSha256": "ce7b4217db5b3da4531cff84fd7dba8243cd7d7cf0d65313f0c764506086677b",
+  "patchedTree": "15ebe9073b5a11da79c709b122a2de05d1383558",
+  "patchedSourceSha256": "f2d3bf3eb9cce2b147e9db3c1e3fd6bf37711a0a3d107381768cd3e0e3eeed64",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "5f293749602ae56cbff9cb65611c2568c51bfd9a20fa222868f72f578000822a"
+    "sha256": "f21c17e091f2b06c6611399aa5f8a3132ccfd5a3356d9d482a9a606ef990f14b"
   }
 }

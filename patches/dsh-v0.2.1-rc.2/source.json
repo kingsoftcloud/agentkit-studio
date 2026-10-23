@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "594077b72ae7398531f340564e80e88169a43c94",
+  "headCommit": "c7e4398390cdd0cf2604ce48acd40d84bd896068",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-idle",
-  "tree": "98a4631a52e82692978960b955562aae83327455",
-  "sourceSha256": "ce7b4217db5b3da4531cff84fd7dba8243cd7d7cf0d65313f0c764506086677b",
+  "tree": "15ebe9073b5a11da79c709b122a2de05d1383558",
+  "sourceSha256": "f2d3bf3eb9cce2b147e9db3c1e3fd6bf37711a0a3d107381768cd3e0e3eeed64",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "caf646e3f7fdefc6a1f333607ba0709f9c7047f74a156a7874eb19be9ea003cf"
+    "sha256": "756ceb9f2a63efea3dcc29f665819eb74fd2b994cd18240edc2201949d962b96"
   },
   "commits": [
     {
@@ -280,6 +280,12 @@
       "file": "052-node-only-primary-runtime.patch",
       "commit": "594077b72ae7398531f340564e80e88169a43c94",
       "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee"
+    },
+    {
+      "id": "053",
+      "file": "053-node-office-authoring.patch",
+      "commit": "c7e4398390cdd0cf2604ce48acd40d84bd896068",
+      "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a"
     }
   ]
 }

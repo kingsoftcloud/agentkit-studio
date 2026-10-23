@@ -75,13 +75,9 @@ macOS arm64 已验证锁定的 Node 24.21.0 和 pnpm 11.28.5：无系统命令�
 pnpm 版本，防止被启动目录的另一项目配置切换。证据保留在
 `.artifacts/native-migration/node-primary-runtime/`。
 
-这是显式资源格式支持；Desktop 默认资源尚未切换。Office 的 DOCX/XLSX/PPTX 编写
-指令仍使用 Python 库，完整 Desktop 冒烟检查会明确拒绝缺少 Python 的这条验证路径。
-Node LibreOffice 的渲染、重算、转换能力不能代替文档编写兼容性验收。
-资源改造绑定维护源码 `594077b7`；上述 31 包全新安装证据绑定此前 `570ad603`。
-资源格式、路径查询和定向测试的通过，不表示新版整个 Host 已重新完成全新安装验收。
+Desktop 资源与 Office 工作流现已切换到 Node，实际三格式创建/编辑/重开和七项原生 Office 操作已验证；详见[Node Office](native-node-office.md)。该实现绑定维护源码 `c7e43983`，没有以此前 31 包的 `570ad603` 安装证据代替当前源码的完整 Host/桌面验收。
 
 这仍不等于完整迁移验收。真实模型/Codex CLI、线上 E2B/云服务、全部自动化/Frozen/
-部署/恢复界面组合及最终默认切换分别验收；Desktop Office 编写能力及其他平台的
+部署/恢复界面组合及最终默认切换分别验收；完整 Desktop/Electron 及其他平台的
 纯 Node 安装仍待闭环。当前实际结论以
 [验收状态](native-migration-status.md) 和保留的具体验证记录为准。

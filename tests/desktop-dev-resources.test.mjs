@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -34,12 +35,25 @@ for (const nodeOnly of [false, true]) test(`Desktop checks actual Office assets 
     await writeFile(path, path.endsWith('package.json') ? '{"name":"@deepseek-ai/libreoffice-kit"}' : 'fixture');
   }
   const manifest = { desktopVersion: '1', platform: process.platform, arch: process.arch, node: '24.21.0', pnpm: '11.28.5',
+    officeLibrarySha256: createHash('sha256').update('fixture').digest('hex'),
     pythonPackages: {}, ...nodeOnly ? { schemaVersion: 2 } : { python: '3.12.14' } };
   await writeFile(join(primaryRuntime, 'runtime.json'), JSON.stringify(manifest));
+  if (!nodeOnly) {
+    await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /requires Node-only Office/);
+    return;
+  }
+  for (const path of [join(primaryRuntime, 'dependencies/node/node_modules/office.mjs'),
+    ...['office-docx', 'office-pptx', 'office-xlsx', 'office-recalculate'].map(name => join(assets, name, 'SKILL.node.md'))]) {
+    await mkdir(dirname(path), { recursive: true }); await writeFile(path, 'fixture');
+  }
   await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /office-render/);
   await mkdir(join(assets, 'office-render'));
   await writeFile(join(assets, 'office-render/SKILL.md'), '# fixture');
   await assertDesktopDevResources({ source, primaryRuntime });
+  const library = join(primaryRuntime, 'dependencies/node/node_modules/office.mjs');
+  await writeFile(library, 'corrupt');
+  await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /checksum mismatch/);
+  await writeFile(library, 'fixture');
   if (nodeOnly) {
     await writeFile(join(primaryRuntime, 'runtime.json'), JSON.stringify({ ...manifest, python: '3.12.14' }));
     await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /no Python metadata/);
