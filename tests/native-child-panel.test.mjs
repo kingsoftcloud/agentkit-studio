@@ -154,7 +154,11 @@ test('the actual header panel renders saved history, reads results and exposes o
     useState: (...args) => dispatcher.useState(...args), useEffect: (...args) => dispatcher.useEffect(...args) };
   const calls = [], controls = [], recoveries = [], active = { ...task, canSendInput: true, canCancel: true, goalRevision: 2 };
   const recovery = { contract: 'agentkit.studio-native-recovery/v1', agentId: 'local-agent', sessionId: 'session', runId: 'original-run',
-    state: 'available', canResume: true };
+    state: 'available', canResume: true, accounting: { contract: 'agentkit.studio-native-usage/v1', runId: 'original-run',
+      snapshotRevision: 4, own: { modelCalls: 2, toolCalls: 1, inputTokens: 4, outputTokens: 6, cost: 0 },
+      descendant: { modelCalls: 1, toolCalls: 2, inputTokens: 7, outputTokens: 9, cost: .25 },
+      total: { modelCalls: 3, toolCalls: 3, inputTokens: 11, outputTokens: 15, cost: .25 },
+      final: false, incomplete: true, complete: false } };
   const historic = { ...task, childRunId: 'old-child', parentRunId: 'old-parent', canPromote: false, resultAvailable: true, phase: 'completed' };
   const Panel = createNativeChildPanel({ ui: { React, ResourceDialog: 'dialog', buttonStyle: () => ({}) },
     setInterval: () => 1, clearInterval() {}, hostRemote: {
@@ -171,9 +175,12 @@ test('the actual header panel renders saved history, reads results and exposes o
   const outer = hooks(Panel, dispatcher), props = { sessionId: 'session', useSessions: select => select({ byId: { session: { projectionValues: { agentPreset: 'agentkit-studio-agent-local-agent-r1-hash' } } } }) };
   outer.render(props); await tick(); const mounted = outer.render(props); assert.equal(typeof mounted.type, 'function');
   const child = hooks(mounted.type, dispatcher); child.render(mounted.props);
-  let tree = child.render(mounted.props); walk(tree).find(node => node.type === 'button' && node.children.includes('子任务')).props.onClick();
+  let tree = child.render(mounted.props); walk(tree).find(node => node.type === 'button' && node.children.includes('运行与子任务')).props.onClick();
   child.render(mounted.props); await tick(); tree = child.render(mounted.props);
   assert.equal(recoveries.length, 0, 'opening and refreshing a panel never resumes a Run');
+  assert.ok(walk(tree).some(node => node.props['aria-label'] === 'Native 运行用量'));
+  assert.ok(walk(tree).some(node => node.children.includes('运行用量（统计不完整，显示已知用量）：模型 3 次 · 工具 3 次 · 输入 11 / 输出 15 tokens。')));
+  assert.ok(walk(tree).some(node => node.children.includes('包含本运行、工具内模型调用及已结算的子任务用量。')));
   walk(tree).find(node => node.type === 'button' && node.children.includes('恢复原运行')).props.onClick(); await tick(); tree = child.render(mounted.props);
   assert.deepEqual(recoveries, [{ agentId: 'local-agent', sessionId: 'session', runId: 'original-run' }]);
   assert.equal(walk(tree).filter(node => node.type === 'button' && node.children.includes('转为后台')).length, 1);

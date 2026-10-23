@@ -30,11 +30,15 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
       return () => clearInterval(timer);
     }, [open, controller, recovery]);
     const page = state.page, detail = state.detail;
+    const accounting = recoveryState.status?.accounting;
     return h(Fragment, null,
-      h('button', { type: 'button', style: buttonStyle(), onClick: () => setOpen(true) }, '子任务'),
-      open ? h(ResourceDialog, { title: '本会话的子任务', detail: '显示当前轮和历史轮次；子任务结果是证据，不代表父任务验收通过。', wide: true, onClose: () => setOpen(false) },
+      h('button', { type: 'button', style: buttonStyle(), onClick: () => setOpen(true) }, '运行与子任务'),
+      open ? h(ResourceDialog, { title: '本会话的运行与子任务', detail: '查看运行用量、恢复状态及各轮子任务。子任务结果仍需父任务验收。', wide: true, onClose: () => setOpen(false) },
         h('button', { type: 'button', style: buttonStyle(), disabled: !controller || state.loading, onClick: () => { void controller?.refresh(); void recovery?.refresh(); } }, state.loading ? '读取中…' : '刷新'),
         recoveryState.error ? h('p', { role: 'alert' }, recoveryState.error) : null,
+        accounting ? h('section', { 'aria-label': 'Native 运行用量' },
+          h('p', null, `运行用量${accounting.incomplete ? '（统计不完整，显示已知用量）' : accounting.final ? '' : '（截至目前）'}：模型 ${accounting.total.modelCalls} 次 · 工具 ${accounting.total.toolCalls} 次 · 输入 ${accounting.total.inputTokens} / 输出 ${accounting.total.outputTokens} tokens。`),
+          h('p', { style: { fontSize: '12px' } }, '包含本运行、工具内模型调用及已结算的子任务用量。')) : null,
         recoveryState.status && recoveryState.status.state !== 'closed' ? h('section', { 'aria-label': '原运行恢复' },
           h('p', null, recoveryState.status.state === 'recovering' ? '原运行已接管，正在继续。'
             : recoveryState.status.state === 'reconciliation_required' ? '有执行结果未知的操作，需要核对；不会自动重跑。'

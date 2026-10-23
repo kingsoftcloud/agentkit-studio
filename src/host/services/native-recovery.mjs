@@ -1,8 +1,9 @@
-import { canonical, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { addUsage, canonical, copy, invariant, terminal } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { readNativeDshOwnership } from '../../../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, verifyNativeDshBackgroundOwnership } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 
 export const STUDIO_NATIVE_RECOVERY_CONTRACT = 'agentkit.studio-native-recovery/v1';
+export const STUDIO_NATIVE_USAGE_CONTRACT = 'agentkit.studio-native-usage/v1';
 const text = value => typeof value === 'string' && value.trim() && value.length <= 256;
 const ended = record => record && ['completed', 'failed', 'canceled'].includes(record.snapshot.phase);
 
@@ -37,8 +38,9 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     const owner = agent.externalTurns?.pending();
     if (!owner) {
       let record = null;
-      if (request.runId) {
-        try { record = store.load(scope, request.runId); }
+      const runId = request.runId ?? store.sessionHead(scope, request.sessionId)?.runId;
+      if (runId) {
+        try { record = store.load(scope, runId); }
         catch (error) { if (error.code !== 'run_not_found') throw error; }
         invariant(!record || record.snapshot.sessionId === request.sessionId, 'studio_native_recovery_identity_mismatch');
       }
@@ -57,11 +59,21 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
   };
   const summary = (request, inspected) => {
     const { admission, record } = inspected;
+    const runId = admission?.identity.runId ?? record?.snapshot.runId ?? request.runId ?? null;
     const attempt = attempts.get(controlKey(request.agentId, request.sessionId));
-    const applicable = attempt?.runId === (admission?.identity.runId ?? request.runId) ? attempt : null;
+    const applicable = attempt?.runId === runId ? attempt : null;
     const driving = applicable?.running || Boolean(admission && controls.get(controlKey(request.agentId, request.sessionId))?.runId === admission.identity.runId);
+    const snapshot = record?.snapshot;
+    const incomplete = snapshot && (snapshot.diagnostics.providerUsageIncomplete === true || snapshot.diagnostics.descendantUsageIncomplete === true);
+    // This is a read-only view of the original ledger, not usage attributed to
+    // a synthetic assistant message or another provider. Unknown counters stay
+    // explicit lower bounds; neither a closed DSH turn nor zero makes them free.
+    const accounting = snapshot ? { contract: STUDIO_NATIVE_USAGE_CONTRACT, runId: snapshot.runId,
+      snapshotRevision: snapshot.revision, own: copy(snapshot.usage), descendant: copy(snapshot.descendantUsage),
+      total: addUsage(snapshot.usage, snapshot.descendantUsage), final: terminal(snapshot.phase),
+      incomplete, complete: terminal(snapshot.phase) && !incomplete } : null;
     return { contract: STUDIO_NATIVE_RECOVERY_CONTRACT, agentId: request.agentId, sessionId: request.sessionId,
-      runId: admission?.identity.runId ?? request.runId ?? null, turn: admission ? inspected.turn : null,
+      runId, turn: admission ? inspected.turn : null, accounting,
       state: driving ? 'recovering' : !admission ? 'closed'
         : record?.snapshot.phase === 'interrupted' ? 'reconciliation_required' : applicable?.error ? 'failed' : 'available',
       phase: record?.snapshot.phase ?? (admission ? 'admitted' : null),

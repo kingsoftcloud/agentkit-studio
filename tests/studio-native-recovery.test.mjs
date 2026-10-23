@@ -164,6 +164,33 @@ test('UI refresh never resumes; an unconfirmed recovery retries only the same Ru
   }
 });
 
+test('the recovery client retains valid usage and rejects unknown, inconsistent or foreign accounting without execution', async () => {
+  const usage = { inputTokens: 7, outputTokens: 9, modelCalls: 1, toolCalls: 2, cost: .25 };
+  const zero = { inputTokens: 0, outputTokens: 0, modelCalls: 0, toolCalls: 0, cost: 0 };
+  const identity = { agentId: 'a', sessionId: 's' };
+  const valid = { contract: 'agentkit.studio-native-recovery/v1', ...identity, runId: 'original', state: 'closed', canResume: false,
+    accounting: { contract: 'agentkit.studio-native-usage/v1', runId: 'original', snapshotRevision: 6,
+      own: { ...zero }, descendant: { ...usage }, total: { ...usage }, final: true, incomplete: true, complete: false } };
+  let response = structuredClone(valid), controls = 0;
+  const client = createNativeRecoveryState({ ...identity, hostRemote: {
+    nativeRecoveryStatus: async () => response, resumeNativeRun: async () => { controls++; assert.fail('refresh must not execute'); },
+  } });
+  await client.refresh(); assert.deepEqual(client.getSnapshot().status, valid);
+  for (const alter of [value => { value.contract = 'future/v2'; }, value => { value.runId = 'foreign'; },
+    value => { value.complete = true; }, value => { value.total.modelCalls = 0; },
+    value => { value.total.cost = null; }, value => { value.total.inputTokens = -1; },
+    value => { value.descendant.toolCalls = 1.5; }, value => { delete value.own.outputTokens; },
+    value => { value.total.extra = 1; }]) {
+    response = structuredClone(valid); alter(response.accounting); await client.refresh();
+    assert.deepEqual(client.getSnapshot().status, valid, 'malformed accounting cannot replace accepted data');
+    assert.match(client.getSnapshot().error, /读取失败/);
+  }
+  response = { ...structuredClone(valid), accounting: null }; await client.refresh();
+  assert.equal(client.getSnapshot().status.accounting, null, 'a non-Native Session has no fabricated usage');
+  delete response.accounting; await client.refresh(); assert.equal(client.getSnapshot().error, '', 'older v1 status consumers remain compatible');
+  await client.resume(); assert.equal(controls, 0); client.dispose();
+});
+
 // A fixture variant that drives a real Run through createStudioNativeHarness until
 // a tool effect returns ``uncertain``, leaving the Run ``interrupted`` with an
 // uncertain receipt and a durable turn/owner (no turn/end). This is the

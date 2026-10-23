@@ -80,6 +80,55 @@ const contextRegistration = (record, extra = {}) => ({ sourceRef: 'plugin://host
     priority: 3, timeoutMs: 1000, required: true, maxTokens: 1000, maxBytes: 16000 }] },
   authorize: async () => 'allow', callback: async () => ({ items: [{ content: 'SOURCE_DATA_CANNOT_GRANT_APPROVAL' }] }), ...extra });
 
+for (const reported of [true, false]) test(`Native usage view preserves tool counters and completeness=${reported} after SQLite reopen without execution`, async t => {
+  const h = await setup(t, { sqlite: true, respond: count => ({ choices: [{ index: 0,
+    delta: count === 1 ? { tool_calls: [{ index: 0, id: 'nested-model', type: 'function',
+      function: { name: 'inspect', arguments: '{}' } }] } : { content: 'Finished' },
+    finish_reason: count === 1 ? 'tool_calls' : 'stop' }] }) });
+  let calls = 0;
+  h.payload.binding.nativeTools = { definitions: () => [tool({ name: 'inspect' })],
+    forAgent: () => ({ tools: { execute: async () => {
+      calls++;
+      return { status: 'ok', content: 'PRIVATE_TOOL_CONTENT',
+        resourceUsage: { modelCalls: 1, toolCalls: 2, inputTokens: 7, outputTokens: 9, cost: .25,
+          cachedInputTokens: 3, reasoningTokens: 4 }, resourceUsageReported: reported };
+    } } }) };
+  h.services.sessionController = { resolveAgent: async id => {
+    assert.equal(id, h.payload.agent.session.id); return { agent: h.payload.agent };
+  } };
+  await h.host.executeTurn(h.payload);
+  h.payload.agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
+  const request = { agentId: h.record.metadata.id, sessionId: h.payload.agent.session.id };
+  const status = await h.host.recoveryStatus(request);
+  assert.equal(status.state, 'closed'); assert.equal(status.canResume, false);
+  assert.equal(status.runId, h.head().runId, 'status without a Run id still finds the original completed head');
+  assert.equal(status.accounting.contract, 'agentkit.studio-native-usage/v1');
+  assert.equal(status.accounting.final, true); assert.equal(status.accounting.complete, reported);
+  assert.equal(status.accounting.incomplete, !reported);
+  assert.equal(status.accounting.own.modelCalls, 2); assert.equal(status.accounting.descendant.modelCalls, 1);
+  assert.deepEqual(status.accounting.total, { modelCalls: 3, toolCalls: 3, inputTokens: 11, outputTokens: 15,
+    cost: .25, cachedInputTokens: 3, reasoningTokens: 4 });
+  assert.equal(JSON.stringify(status).includes('PRIVATE_TOOL_CONTENT'), false);
+  assert.equal(JSON.stringify(status).includes('secret-one'), false);
+  status.accounting.total.modelCalls = 99;
+  const expected = (await h.host.recoveryStatus(request)).accounting;
+  assert.equal(expected.total.modelCalls, 3, 'returned accounting is detached from the ledger');
+  await h.host.close(); h.ledger.close();
+  const reopened = new SqliteRunStore(join(h.root, 'runs.sqlite'));
+  const cold = await createStudioNativeHarness({ ctx: { get: id => h.services[id] }, storeDir: h.root,
+    workspaceRoot: join(h.root, 'workspace'), agents: h.agents, models: h.models, ledger: reopened,
+    renderPrompt: () => assert.fail('reading usage never assembles a replacement prompt'),
+    fetchImpl: () => assert.fail('reading usage never calls a model') });
+  t.after(async () => { await cold.close(); reopened.close(); });
+  const route = createSessionRoutes({ getNativeHost: async () => cold });
+  const observed = (await route('sessions/native-recovery-status', request)).value;
+  assert.deepEqual(observed.accounting, expected); assert.equal(observed.state, 'closed');
+  const foreign = await cold.recoveryStatus({ ...request, agentId: 'other-agent' });
+  assert.equal(foreign.accounting, null); assert.equal(foreign.runId, null);
+  assert.equal(calls, 1); assert.equal(h.requests.length, 2);
+  await cold.close(); reopened.close();
+});
+
 // Actual Host, model HTTP codec, NativeKernel, canonical receipts and SQLite;
 // command transport and DSH Session lifecycle are explicit test doubles.
 async function backgroundHost(t, { frozen = false, nested = false } = {}) {

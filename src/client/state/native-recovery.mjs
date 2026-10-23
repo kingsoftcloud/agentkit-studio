@@ -1,4 +1,10 @@
 const check = (value, message) => { if (!value) throw Error(message); };
+const counters = ['inputTokens', 'outputTokens', 'modelCalls', 'toolCalls', 'cost'];
+const optionalCounters = ['cachedInputTokens', 'reasoningTokens'];
+const validUsage = usage => usage && typeof usage === 'object' && !Array.isArray(usage)
+  && Object.keys(usage).every(key => [...counters, ...optionalCounters].includes(key))
+  && [...counters, ...optionalCounters.filter(key => key in usage)].every(key => typeof usage[key] === 'number'
+    && Number.isFinite(usage[key]) && usage[key] >= 0 && (key === 'cost' || Number.isSafeInteger(usage[key])));
 
 /** Reads never resume work. A lost response retains the original Run identity. */
 export function createNativeRecoveryState({ hostRemote, agentId, sessionId }) {
@@ -10,6 +16,16 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId }) {
       && ['available', 'recovering', 'reconciliation_required', 'failed', 'closed'].includes(value.state)
       && typeof value.canResume === 'boolean' && (!value.canResume || typeof value.runId === 'string' && value.runId.trim())
       && (!runId || value.runId === runId), '恢复记录与原会话或运行不一致，请刷新核对。');
+    const accounting = value.accounting;
+    if (accounting != null) {
+      check(accounting.contract === 'agentkit.studio-native-usage/v1' && accounting.runId === value.runId
+        && Number.isSafeInteger(accounting.snapshotRevision) && accounting.snapshotRevision >= 0
+        && ['final', 'incomplete', 'complete'].every(key => typeof accounting[key] === 'boolean')
+        && accounting.complete === (accounting.final && !accounting.incomplete)
+        && [accounting.own, accounting.descendant, accounting.total].every(validUsage)
+        && [...counters, ...optionalCounters].every(key => (accounting.total[key] ?? 0)
+          === (accounting.own[key] ?? 0) + (accounting.descendant[key] ?? 0)), '运行用量与原记录不一致，请刷新核对。');
+    }
     return value;
   };
   async function refresh() {
