@@ -379,6 +379,15 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     };
     return dispose;
   };
+  const commandToolsFor = async (agent, authority) => {
+    invariant(!closed, 'studio_native_tools_closed');
+    invariant(authority?.scope && authority?.store, 'studio_native_command_ledger_unavailable');
+    const artifacts = await createNativeArtifactStore({ directory: join(stateDir, 'command-artifacts'), scope: authority.scope });
+    invariant(!closed, 'studio_native_tools_closed');
+    return createNativeLocalCommandTools({ workspaceRoot: workspace, stateRoot: join(stateDir, 'background-commands'),
+      sessionId: authority.childSessionId ?? String(agent.session.id), settings: controls, sourceEnv: commandEnv, artifacts, authorize: async () => 'allow',
+      captureWorkspace: request => state(agent).capture(request), resolveOwnedCommand: createOwnedCommandResolver(authority) });
+  };
   return {
     close,
     bindMemory,
@@ -420,6 +429,27 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },
       risk: [LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY], backend: 'local_process', environmentDigest: hash(commandEnv),
     } : null,
+    backgroundObserver(agent, authority) {
+      invariant(!closed, 'studio_native_tools_closed');
+      invariant(authority?.scope?.agentId === config.agentId && authority.store && agent?.session?.id
+        && [...commandNames].some(name => builtinNames.has(name)), 'studio_native_background_observer_unbound');
+      const fixed = { scope: structuredClone(authority.scope), store: authority.store };
+      const sessionId = String(agent.session.id);
+      let commands;
+      const port = createBackgroundCommandPort({ ...fixed, readers: { local_process: async request => {
+        invariant(!closed && request.sessionId === sessionId, 'studio_native_background_observer_unbound');
+        commands ||= commandToolsFor(agent, fixed);
+        const result = await (await commands).reader(request);
+        invariant(!closed, 'studio_native_tools_closed');
+        return result;
+      } } });
+      // This port exposes only completion reads, without executable tools,
+      // Session disclosure owners or a model/command launch capability.
+      return Object.freeze({ contract: port.contract, observeCompletion: request => {
+        invariant(!closed && request.sessionId === sessionId, 'studio_native_background_observer_unbound');
+        return port.observeCompletion(request);
+      } });
+    },
     mcpResultContract: mcpContracts.size ? 'mcp-result/v1' : null,
     mcpJsonCodec: mcpContracts.size ? NATIVE_MCP_JSON_CODEC : null,
     mcpSchemaContract: mcpSchemas.size ? NATIVE_MCP_SCHEMA_CONTRACT : null,
@@ -556,14 +586,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         componentOwners.get(sessionId).add(components);
       }
       let commandsPromise;
-      const commands = () => commandsPromise ||= (async () => {
-        invariant(commandAuthority?.scope && commandAuthority?.store, 'studio_native_command_ledger_unavailable');
-        const artifacts = await createNativeArtifactStore({ directory: join(stateDir, 'command-artifacts'), scope: commandAuthority.scope });
-        return createNativeLocalCommandTools({ workspaceRoot: workspace, stateRoot: join(stateDir, 'background-commands'), sessionId,
-          settings: controls, sourceEnv: commandEnv, artifacts, authorize: async () => 'allow',
-          captureWorkspace: request => state(agent).capture(request),
-          resolveOwnedCommand: createOwnedCommandResolver(commandAuthority) });
-      })();
+      const commands = () => commandsPromise ||= commandToolsFor(agent, commandAuthority);
       let webPromise;
       const web = () => {
         if (webPromise) return webPromise;

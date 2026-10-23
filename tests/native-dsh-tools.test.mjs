@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
-import { NativeKernel, MemoryRunStore, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, MemoryRunStore, emptyUsage, BACKGROUND_COMMAND_CONTRACT, BACKGROUND_NOTIFICATION_ADMISSION } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
 import { NATIVE_PYTHON_SYNTAX } from '../packages/agentkit-harness/src/native/python-syntax.mjs';
 test('only an owned lint builtin pins the workspace syntax engine', t => {
@@ -15,7 +15,7 @@ test('only an owned lint builtin pins the workspace syntax engine', t => {
     { executeMcpTool: async () => ({ content: [] }) }).gateway.workspaceSyntax, null);
 });
 function setup(t, names = ['write_workspace_file'], contracts = [], options = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'studio-native-tools-')), workspaceRoot = join(root, 'workspace');
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'studio-native-tools-')), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
   const registry = new Map(), calls = [];
   let deny = false, postFailure = false;
@@ -30,7 +30,7 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
     },
   } };
   if (options.argumentEncodings) ctx.tools.argumentEncodings = options.argumentEncodings;
-  const gateway = createNativeDshTools({ ctx, config: { toolBindings: names, toolContracts: contracts }, workspaceRoot, stateDir: join(root, 'state'), ...options });
+  const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: names, toolContracts: contracts }, workspaceRoot, stateDir: join(root, 'state'), ...options });
   t.after(() => gateway.close());
   const agent = { session: { id: 'session' } };
   const definitions = () => gateway.definitions(agent, [...registry.values()]);
@@ -42,6 +42,44 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   return { gateway, agent, request, registry, workspaceRoot, calls, ctx,
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
+
+test('readonly completion gateway reconnects to a real local command using the original SQLite launch receipt', async t => {
+  const h = setup(t, ['run_command', 'read_command_output']), store = new SqliteRunStore(join(h.workspaceRoot, '..', 'runs.sqlite'));
+  t.after(() => store.close());
+  const data = fixture({ tools: h.gateway.definitions(h.agent, [...h.registry.values()]),
+    backgroundNotificationPolicy: 'completed-before-model/v1', limits: { effectTimeoutMs: 1000000 } });
+  let models = 0;
+  const bound = h.gateway.forAgent(h.agent, { scope, store });
+  const kernel = new NativeKernel({ store, digest, owner: 'real-command-launch', ports: { tools: bound.tools,
+    // Isolate the new idle reader: the ordinary turn leaves this command for
+    // idle observation, while the launch and backend receipt are real.
+    background: { contract: BACKGROUND_COMMAND_CONTRACT, observe: async () => [] },
+    model: { generate: async () => ++models === 1 ? { kind: 'tool_calls', text: '', usage: emptyUsage(),
+      toolCalls: [{ callId: 'launch-command', name: 'run_command', arguments: { command: 'printf observer-proof', background: true } }] }
+      : { kind: 'final_candidate', text: 'Started', toolCalls: [], usage: emptyUsage() } } } });
+  kernel.start(data.snapshot, data.config);
+  const source = await kernel.runUntilIdle(scope, 'run');
+  assert.equal(source.phase, 'completed'); assert.equal(source.backgroundCommands.length, 1);
+  const ref = source.backgroundCommands[0].ref;
+  const observer = h.gateway.backgroundObserver(h.agent, { scope, store });
+  assert.deepEqual(Object.keys(observer), ['contract', 'observeCompletion']); assert.equal(observer.execute, undefined);
+  assert.equal(observer.contract, BACKGROUND_COMMAND_CONTRACT);
+  const request = { contract: BACKGROUND_NOTIFICATION_ADMISSION, scope, sourceRunId: 'run', sessionId: 'session',
+    sourceConfigDigest: source.configDigest, sourceRevision: source.revision, headRunId: 'run', ref,
+    signal: AbortSignal.timeout(5000) };
+  let observed;
+  do {
+    request.signal.throwIfAborted();
+    observed = await observer.observeCompletion(request);
+    if (!observed || observed.status === 'unavailable') await new Promise(resolve => setTimeout(resolve, 10));
+  } while (!observed || observed.status === 'unavailable');
+  assert.equal(observed.status, 'completed'); assert.equal(observed.stdout, 'observer-proof');
+  assert.equal(h.calls.filter(call => call.name === 'run_command').length, 1);
+  assert.throws(() => observer.observeCompletion({ ...request, sessionId: 'foreign' }), /observer_unbound/);
+  assert.throws(() => h.gateway.backgroundObserver(h.agent, { scope: { ...scope, agentId: 'foreign' }, store }), /observer_unbound/);
+  h.gateway.close();
+  assert.throws(() => observer.observeCompletion(request), /observer_unbound/);
+});
 
 test('child reads use independent workspace state and cannot grant writes to either child or parent', async t => {
   const host = setup(t, ['read_workspace_file', 'write_workspace_file']);

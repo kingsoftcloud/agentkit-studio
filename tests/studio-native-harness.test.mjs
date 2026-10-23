@@ -10,6 +10,7 @@ import { MemoryRunStore, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotificatio
 import { digest, tool } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { nativeDshBackgroundOwnership } from '../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createBackgroundCommandPort } from '../packages/agentkit-harness/src/native/background-command-port.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
@@ -208,6 +209,116 @@ test('background Host close during prompt rebinding cancels the existing notice 
   const saved = h.ledger.load(h.source.snapshot.scope, n.saved.snapshot.runId);
   assert.ok(saved.commands.some(row => row.command.commandId === `${saved.snapshot.runId}:dsh-turn-cancel`));
   assert.equal(saved.snapshot.phase, 'created');
+});
+
+// SDK start is a fault-controllable lifecycle double here. The maintained SDK
+// suite must separately prove its real reservation and JSONL durability.
+async function idleBackgroundHost(t, { afterPrepare, read } = {}) {
+  const h = await backgroundHost(t), agent = h.payload.agent;
+  let starts = 0, reads = 0, status = 'running', nextTurn = 16;
+  let sdkSignal = new AbortController();
+  agent.status = 'idle';
+  agent.externalTurns.idleAdmissionContract = 'dsh.external-turn-start/v1';
+  agent.externalTurns.start = async (prepare, execute) => {
+    assert.equal(agent.status, 'idle'); agent.status = 'running';
+    const turn = ++nextTurn; starts++;
+    agent.session.append('turn/start', { turn });
+    let owned = false;
+    try {
+      const ownership = await prepare({ turn, signal: sdkSignal.signal });
+      await afterPrepare?.({ ownership, signal: sdkSignal });
+      sdkSignal.signal.throwIfAborted();
+      agent.externalTurns.claim(ownership); owned = true;
+      const ending = await execute({ ownership, turn, signal: sdkSignal.signal, prepareInput: h.payload.prepareInput });
+      agent.session.append('turn/end', { turn, ...ending }); return ending;
+    } catch (error) {
+      if (!owned) agent.session.append('turn/end', { turn, reason: { kind: 'error', error: { message: error.message } } });
+      throw error;
+    } finally { agent.status = 'idle'; }
+  };
+  h.payload.binding.nativeTools.backgroundObserver = (_agent, authority) => {
+    assert.equal(_agent, agent);
+    return createBackgroundCommandPort({ ...authority, readers: { local_process: async request => {
+      reads++; if (read) await read(request);
+      return status === 'running' ? { status } : { status, exitCode: status === 'completed' ? 0 : null,
+        stdout: 'OBSERVED_REAL_COMMAND_RESULT', stderr: '', stdoutCursor: 28, stderrCursor: 0 };
+    } } });
+  };
+  const request = { agent, agentId: h.record.metadata.id, sourceRunId: h.source.snapshot.runId,
+    taskId: h.source.snapshot.backgroundCommands[0].ref.taskId };
+  return { ...h, request, setStatus: value => { status = value; }, countsIdle: () => ({ starts, reads }),
+    resetSignal: () => { sdkSignal = new AbortController(); } };
+}
+
+test('idle background Host waits for actual command completion and admits one typed notice without an inbox message', async t => {
+  const h = await idleBackgroundHost(t);
+  assert.equal((await h.host.notifyBackgroundCompletion(h.request)).status, 'watching');
+  assert.deepEqual(h.countsIdle(), { starts: 0, reads: 1 }); assert.equal(h.requests.length, 2);
+  assert.equal(h.ledger.list(h.source.snapshot.scope, 'session').length, 1);
+  h.setStatus('completed');
+  const result = await h.host.notifyBackgroundCompletion(h.request);
+  assert.equal(result.status, 'admitted'); assert.equal(h.requests.length, 3);
+  assert.equal(h.ledger.load(h.source.snapshot.scope, result.runId).snapshot.phase, 'completed');
+  assert.deepEqual(h.countsIdle(), { starts: 1, reads: 3 });
+  assert.equal((await h.host.notifyBackgroundCompletion(h.request)).status, 'discarded');
+  assert.deepEqual(h.countsIdle(), { starts: 1, reads: 3 }); assert.equal(h.requests.length, 3);
+  assert.equal(h.events.filter(row => row.type === 'user/message' && row.data.source?.kind === 'agentkit-native-background-notification').length, 1);
+  assert.equal(h.events.filter(row => row.type === 'user/message' && row.data.source?.kind === 'user').length, 1);
+  assert.deepEqual(h.ledger.load(h.source.snapshot.scope, h.source.snapshot.runId), h.source);
+});
+
+test('idle background Host reuses a persisted admission after prepare succeeded but ownership was not recorded', async t => {
+  let fail = true;
+  const h = await idleBackgroundHost(t, { afterPrepare: () => { if (fail) throw Error('owner append failed'); } });
+  h.setStatus('completed');
+  await assert.rejects(h.host.notifyBackgroundCompletion(h.request), /owner append failed/);
+  const notice = h.head(); assert.equal(notice.phase, 'created'); assert.equal(h.requests.length, 2);
+  assert.equal(h.payload.agent.externalTurns.pending(), null);
+  fail = false;
+  const result = await h.host.notifyBackgroundCompletion(h.request);
+  assert.equal(result.runId, notice.runId); assert.equal(h.requests.length, 3);
+  assert.deepEqual(h.countsIdle(), { starts: 2, reads: 2 }, 'the existing admission never re-observes or recreates the command');
+  assert.equal(h.counts().launches, 1);
+});
+
+test('idle background Host persists cancellation between notice admission and owner recording', async t => {
+  let cancel = true;
+  const h = await idleBackgroundHost(t, { afterPrepare: ({ signal }) => { if (cancel) signal.abort({ kind: 'user' }); } });
+  h.setStatus('completed');
+  await assert.rejects(h.host.notifyBackgroundCompletion(h.request), reason => reason.kind === 'user');
+  const notice = h.head(), saved = h.ledger.load(notice.scope, notice.runId);
+  assert.deepEqual(saved.commands.find(row => row.command.kind === 'cancel').command.payload.dshCancelReason, { kind: 'user' });
+  cancel = false; h.resetSignal();
+  await h.host.notifyBackgroundCompletion(h.request);
+  assert.equal(h.head().phase, 'canceled'); assert.equal(h.requests.length, 2);
+  assert.deepEqual(h.countsIdle(), { starts: 2, reads: 2 }); assert.equal(h.counts().launches, 1);
+});
+
+test('idle background Host refuses concurrent admissions and close cancels a pending readonly probe', async t => {
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const h = await idleBackgroundHost(t, { read: async () => { entered.resolve(); await release.promise; } });
+  const pending = h.host.notifyBackgroundCompletion(h.request);
+  const rejected = assert.rejects(pending, /Studio Native host closed/);
+  await entered.promise;
+  await assert.rejects(h.host.notifyBackgroundCompletion(h.request), /background_already_active/);
+  await h.host.close(); await rejected;
+  release.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(h.countsIdle(), { starts: 0, reads: 1 }); assert.equal(h.requests.length, 2);
+  assert.equal(h.ledger.list(h.source.snapshot.scope, 'session').length, 1);
+});
+
+test('idle background Host requires a real advertised idle capability and the original preset before reads or ownership', async t => {
+  const h = await idleBackgroundHost(t); h.setStatus('completed');
+  const capability = h.payload.agent.externalTurns.idleAdmissionContract;
+  delete h.payload.agent.externalTurns.idleAdmissionContract;
+  await assert.rejects(h.host.notifyBackgroundCompletion(h.request), /idle_ownership_host_required/);
+  h.payload.agent.externalTurns.idleAdmissionContract = capability;
+  h.payload.agent.status = 'running';
+  await assert.rejects(h.host.notifyBackgroundCompletion(h.request), /background_session_busy/);
+  h.payload.agent.status = 'idle'; h.payload.binding.agentRevision++;
+  await assert.rejects(h.host.notifyBackgroundCompletion(h.request), /recovery_preset_changed/);
+  assert.deepEqual(h.countsIdle(), { starts: 0, reads: 0 }); assert.equal(h.requests.length, 2);
+  assert.equal(h.ledger.list(h.source.snapshot.scope, 'session').length, 1);
 });
 
 test('actual Host composes registered context and local Memory recall in the SQLite context effect', async t => {
