@@ -132,7 +132,7 @@ export class DshNodeCommandLedger {
       && record.result?.status === 'ok' && record.taskId === taskId
       && record.result.content?.task_id === taskId && canonical(record.binding) === canonical(binding),
     'dsh_node_command_task_unowned');
-    return { backend: 'local_process', ref: { taskId, operationKey: record.request.operationKey } };
+    return { backend: binding.backend ?? 'local_process', ref: { taskId, operationKey: record.request.operationKey } };
   }
   publishTask(request, result) {
     if (request.call.name !== 'run_command' || result.status !== 'ok' || !result.content?.task_id) return;

@@ -667,4 +667,7 @@ DSH 的 E2B 工作流随后也通过独立 DSH 持久契约接入 Node，复用 
 实际打包 Host 在拒绝连接后退出，新 PID 恢复原 call 不新增请求或命令，记录字节不变。
 成功执行/精确产物/SIGKILL 另由明确 SDK 控制面替身下的实际 Bash 验证，不能合称线上
 E2B 成功验收。配置与证据见 [DSH E2B Skills](native-skills.md#dsh-native--codex-的-e2b-skill-工作流)。
-DSH 的交互式 E2B 命令、管理工具等剩余 builtin 仍保留 Python fallback；没有默认切换或整体完成声明。
+DSH 的交互式 E2B 命令随后已通过独立 DSH 所有权接入 Node，复用 SDK 与持久命令
+监督器，保留真实审批/策略和不可盲目重放的任务归属，并修复超过 64 KiB 的完整输出
+附件截断。验证范围与剩余空闲/容量回收等差异见 [E2B 命令](native-e2b.md#dsh-native--codex-的交互式-node-命令)。
+`run_code`、管理工具等剩余 builtin 仍保留 Python fallback；没有默认切换或整体完成声明。

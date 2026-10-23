@@ -74,10 +74,40 @@ function abortable(promise, signal) {
   });
 }
 
-export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFactory,
+export function createNativeE2BCommandTools(options = {}) {
+  invariant(options.scope, 'e2b_command_scope_required');
+  const fixedScope = copy(options.scope); scopeKey(fixedScope);
+  return createCommandTools(options, { contract: E2B_COMMAND_TOOLS_CONTRACT, fields: { scope: fixedScope },
+    identity(request) {
+      invariant(request.scope && canonical(request.scope) === canonical(fixedScope), 'e2b_command_scope_unbound');
+      invariant(['runId','turnId','buildId','taskChainId'].every(k => typeof request[k] === 'string' && request[k].trim()),
+        'e2b_command_identity_required');
+      invariant(request.parentRunId === null || typeof request.parentRunId === 'string' && request.parentRunId.trim(),
+        'e2b_command_parent_run_id_invalid');
+      invariant(Number.isSafeInteger(request.executionFence) && request.executionFence > 0, 'e2b_command_fence_required');
+      return { scope: copy(request.scope), runId: request.runId, turnId: request.turnId, buildId: request.buildId,
+        parentRunId: request.parentRunId, taskChainId: request.taskChainId, executionFence: request.executionFence };
+    }, backgroundRef: (before, taskId) => ({ taskId, sourceRunId: before.identity.runId, operationKey: before.operationKey }) });
+}
+
+export const DSH_E2B_COMMAND_TOOLS_CONTRACT = 'agentkit.dsh-e2b-command-tools/v1';
+/** Share command semantics with Native, using real DSH ownership only. */
+export function createDshE2BCommandTools(options = {}) {
+  const { agentId } = options;
+  invariant(typeof agentId === 'string' && agentId.trim(), 'e2b_command_agent_required');
+  return createCommandTools(options, { contract: DSH_E2B_COMMAND_TOOLS_CONTRACT, fields: { agentId },
+    identity(request) {
+      invariant(request.agentId === agentId && ['scope','runId','turnId','buildId','taskChainId','parentRunId','executionFence']
+        .every(key => request[key] === undefined), 'e2b_command_identity_required');
+      return { agentId };
+    }, backgroundRef: (before, taskId) => ({ taskId, agentId, sessionId: before.sessionId,
+      sourceCallId: before.callId, operationKey: before.operationKey }) });
+}
+
+function createCommandTools({ sessionId, owner, storeFactory,
   authorize, assertAuthority, resolveOwnedCommand, artifacts, maxOutputBytes = 24000,
-  allowInternetAccess = false, foregroundTimeoutSeconds = 300, backgroundTimeoutSeconds = 300 } = {}) {
-  invariant(scope && typeof sessionId === 'string' && !!sessionId.trim(), 'e2b_command_scope_required');
+  allowInternetAccess = false, foregroundTimeoutSeconds = 300, backgroundTimeoutSeconds = 300 }, ownership) {
+  invariant(typeof sessionId === 'string' && !!sessionId.trim(), 'e2b_command_scope_required');
   invariant(Number.isSafeInteger(maxOutputBytes) && maxOutputBytes >= 256, 'e2b_command_max_output_bytes_invalid');
   invariant(owner && typeof owner.ensure === 'function' && typeof owner.inspect === 'function', 'e2b_command_owner_required');
   invariant(typeof storeFactory === 'function', 'e2b_command_store_factory_required');
@@ -88,8 +118,6 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
     && backgroundTimeoutSeconds <= 86400, 'e2b_command_background_limit_invalid');
   const definitions = e2bCommandToolDefinitions(foregroundTimeoutSeconds);
   const formal = new Map(definitions.map(d => [d.name, copy(d)]));
-  const fixedScope = copy(scope);
-  scopeKey(fixedScope);
   let store = null;
 
   function snapshot(request) {
@@ -99,19 +127,12 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
     const def = formal.get(request.call.name);
     invariant(def, 'e2b_command_tool_unbound');
     invariant(request.definition && canonical(request.definition) === canonical(def), 'e2b_command_definition_unbound');
-    invariant(request.scope && canonical(request.scope) === canonical(fixedScope), 'e2b_command_scope_unbound');
     invariant(request.signal instanceof AbortSignal, 'e2b_command_signal_unbound');
     invariant(typeof request.sessionId === 'string' && request.sessionId === sessionId, 'e2b_command_session_unbound');
-    invariant(['runId','turnId','buildId','taskChainId'].every(k => typeof request[k] === 'string' && request[k].trim()),
-      'e2b_command_identity_required');
-    invariant(request.parentRunId === null || typeof request.parentRunId === 'string' && request.parentRunId.trim(),
-      'e2b_command_parent_run_id_invalid');
-    invariant(Number.isSafeInteger(request.executionFence) && request.executionFence > 0, 'e2b_command_fence_required');
+    const identity = ownership.identity(request);
     const { signal: _signal, ...body } = request;
     return { body: canonical(body), signal: request.signal,
-      runId: request.runId, sessionId: request.sessionId, operationKey: request.operationKey,
-      scope: copy(request.scope), turnId: request.turnId, buildId: request.buildId,
-      parentRunId: request.parentRunId, taskChainId: request.taskChainId, executionFence: request.executionFence,
+      identity, sessionId: request.sessionId, operationKey: request.operationKey,
       callId: request.call.callId };
   }
 
@@ -134,10 +155,7 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
   // to be representable. If it does not fit, the command is rejected before
   // any side-effect.
   function originLocator(before, sandboxId, taskId) {
-    return { scope: copy(before.scope), sessionId: before.sessionId, runId: before.runId,
-      turnId: before.turnId, buildId: before.buildId, parentRunId: before.parentRunId,
-      taskChainId: before.taskChainId, operationKey: before.operationKey,
-      executionFence: before.executionFence, callId: before.callId,
+    return { ...copy(before.identity), sessionId: before.sessionId, operationKey: before.operationKey, callId: before.callId,
       ...(sandboxId ? { sandbox_id: sandboxId } : {}),
       ...(taskId ? { task_id: taskId } : {}) };
   }
@@ -261,7 +279,7 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
           sandbox_id: inspect?.sandboxId ?? null, sandbox_phase: inspect?.phase ?? 'absent',
           allow_internet_access: allowInternetAccess,
           boundary: 'Remote E2B sandbox. The Host filesystem is not shared.',
-          contracts: [E2B_COMMAND_TOOLS_CONTRACT] } };
+          contracts: [ownership.contract] } };
       }
 
       if (request.call.name === 'read_command_output' || request.call.name === 'stop_command') {
@@ -272,7 +290,7 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
         invariant(owned?.backend === 'e2b' && owned.ref?.taskId === args.task_id, 'e2b_command_backend_mismatch');
         const afterResolve = guard(request, before, false, null); if (afterResolve) return afterResolve;
         taskId = args.task_id;
-        if (!store) store = syncValue(storeFactory({ scope: copy(fixedScope), sessionId }));
+        if (!store) store = syncValue(storeFactory({ ...copy(ownership.fields), sessionId }));
         invariant(typeof store.commandId === 'function'
           && syncValue(store.commandId(owned.ref.operationKey)) === taskId, 'e2b_command_owned_operation_mismatch');
         const handle = syncValue(store.connect(owned.ref.taskId));
@@ -330,7 +348,7 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
       const guardResult1 = guard(request, before, dispatched, known);
       if (guardResult1) return guardResult1;
 
-      if (!store) store = syncValue(storeFactory({ scope: copy(fixedScope), sessionId, sandboxId }));
+      if (!store) store = syncValue(storeFactory({ ...copy(ownership.fields), sessionId, sandboxId }));
       const suppliedTimeout = args.background ? (args.background_timeout ?? backgroundTimeoutSeconds)
         : (args.timeout ?? foregroundTimeoutSeconds);
       const maximum = args.background ? 86400 : foregroundTimeoutSeconds;
@@ -352,7 +370,7 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
       invariant(taskId === undefined || taskId === handle.commandId, 'e2b_command_identity_changed');
       taskId = handle.commandId;
       known = { content: { ...originLocator(before, sandboxId, taskId) },
-        ...(args.background ? { backgroundCommandRef: { taskId, sourceRunId: before.runId, operationKey: before.operationKey } } : {}) };
+        ...(args.background ? { backgroundCommandRef: ownership.backgroundRef(before, taskId) } : {}) };
       const guardResult2 = guard(request, before, dispatched, known);
       if (guardResult2) return guardResult2;
 
@@ -363,7 +381,7 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
           content: { ok: !uncertain, backend: 'sandbox/e2b', sandbox_id: sandboxId,
             task_id: taskId, ...commandOutput(observed), ...originLocator(before, sandboxId, taskId),
             process_timeout_seconds: timeoutSeconds },
-          backgroundCommandRef: { taskId, sourceRunId: before.runId, operationKey: before.operationKey } };
+          backgroundCommandRef: ownership.backgroundRef(before, taskId) };
       } else {
         const until = performance.now() + timeoutSeconds * 1000 + 15000;
         let output;
@@ -374,12 +392,28 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
         }
         const guardResult3 = guard(request, before, dispatched, known);
         if (guardResult3) return guardResult3;
-        output = handle.readOutput({ stdoutCursor: 0, stderrCursor: 0, maxBytes: 65536 });
+        // The model sees a bounded preview, but its artifact must contain all
+        // retained foreground output, not just the first 64 KiB cursor window.
+        const stdout = [], stderr = []; let stdoutCursor = 0, stderrCursor = 0, bytes = 0;
+        for (;;) {
+          const rejected = guard(request, before, dispatched, known); if (rejected) return rejected;
+          output = syncValue(handle.readOutput({ stdoutCursor, stderrCursor, maxBytes: 65536 }));
+          invariant(typeof output.stdout === 'string' && typeof output.stderr === 'string', 'e2b_command_output_invalid');
+          bytes += Buffer.byteLength(output.stdout) + Buffer.byteLength(output.stderr);
+          invariant(bytes <= 16 * 1024 * 1024, 'e2b_command_retained_output_too_large');
+          stdout.push(output.stdout); stderr.push(output.stderr);
+          if (!output.outputMayBeTruncated) break;
+          invariant(Number.isSafeInteger(output.stdoutCursor) && output.stdoutCursor >= stdoutCursor
+            && Number.isSafeInteger(output.stderrCursor) && output.stderrCursor >= stderrCursor
+            && (output.stdoutCursor > stdoutCursor || output.stderrCursor > stderrCursor), 'e2b_command_output_cursor_stalled');
+          stdoutCursor = output.stdoutCursor; stderrCursor = output.stderrCursor;
+        }
+        output = { ...output, stdout: stdout.join(''), stderr: stderr.join('') };
         const uncertain = output.status === 'unknown' || output.evidenceIncomplete
           || !TERMINAL.has(output.status)
           || (['timed_out', 'canceled'].includes(output.status) && output.exitCode === null);
         known = { status: uncertain ? 'uncertain' : 'ok',
-          content: { ok: !uncertain, backend: 'sandbox/e2b', sandbox_id: sandboxId, command,
+          content: { ok: !uncertain, status: output.status, backend: 'sandbox/e2b', sandbox_id: sandboxId, command,
             task_id: taskId, ...originLocator(before, sandboxId, taskId),
             stdout: output.stdout, stderr: output.stderr,
             exit_code: uncertain ? null : output.exitCode,
@@ -401,5 +435,5 @@ export function createNativeE2BCommandTools({ scope, sessionId, owner, storeFact
   return Object.freeze({ definitions: copy(definitions), async execute(request) {
     const result = await execute(request);
     return result.content === undefined ? result : boundResult(result);
-  }, contract: E2B_COMMAND_TOOLS_CONTRACT });
+  }, contract: ownership.contract });
 }

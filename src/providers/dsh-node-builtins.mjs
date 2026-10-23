@@ -6,6 +6,8 @@ import { createDshNodeWorkspaceTools } from './dsh-node-workspace-tools.mjs';
 import { createDshNodeWebTools } from './dsh-node-web-tools.mjs';
 import { createDshNodeToolOutputStore } from './dsh-node-tool-output-store.mjs';
 import { createDshNodeCommandTools } from './dsh-node-command-tools.mjs';
+import { createDshNodeE2BCommandTools } from './dsh-node-e2b-command-tools.mjs';
+import { e2bCommandToolDefinitions } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
 import { createDshNodeComponentTools } from './dsh-node-component-tools.mjs';
 import { readDshComponentBindings } from './dsh-component-bindings.mjs';
 import { createDshNodeSkillTools } from './dsh-node-skill-tools.mjs';
@@ -32,10 +34,12 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
   const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: ssrfPolicy.allowPrivate ? null : isBlockedAddress });
   const web = createDshNodeWebTools({ agentId, isClosed, signal, fetchImpl: pinned.fetch, searchFetch: fetchImpl,
     providerConfig: resolveWebSearchConfig(env), ssrfPolicy, persistOutput: persistOutput ?? output?.persistOutput });
-  // Explicit E2B remains on its existing backend until its neutral adapter is
-  // complete. Never execute an E2B-selected call on the Host by falling back.
-  const commands = nativeCommandBackend(env) === 'local_process' && supportsLocalProcessPlatform()
-    ? createDshNodeCommandTools({ ctx, workspaceRoot, stateDir, agentId, isClosed, signal, env, persistOutput }) : null;
+  const commandBackend = nativeCommandBackend(env);
+  const wantsCommands = !requested || e2bCommandToolDefinitions().some(tool => requested.has(tool.name));
+  const commands = !wantsCommands ? null : commandBackend === 'e2b'
+    ? createDshNodeE2BCommandTools({ ctx, workspaceRoot, stateDir, agentId, agentRevision, buildId, isClosed, signal, env, persistOutput })
+    : supportsLocalProcessPlatform()
+      ? createDshNodeCommandTools({ ctx, workspaceRoot, stateDir, agentId, isClosed, signal, env, persistOutput }) : null;
   const skills = skillConnection && (!requested || nativeSkillReadToolDefinitions().some(tool => requested.has(tool.name)))
     ? createDshNodeSkillTools({ agentId, workspaceRoot, stateDir, connection: skillConnection,
       skillSpaceIds: facts.skillSpaceIds, env, fetchImpl, isClosed, signal }) : null;
@@ -52,14 +56,15 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
   const commandNames = commands ? names.filter(name => commands.supports(name)) : [];
   ports.push(createDshNodeComponentTools({ agentId, isClosed, signal, status: {
     summary: { model: '', knowledge_base_bound: facts.knowledgeBaseBound, long_term_memory_bound: facts.longTermMemoryBound,
-      skill_space_bound: spaces.length > 0, isolated_execution: workflowBinding?.isolated ? 'enabled' : 'not_enabled',
+      skill_space_bound: spaces.length > 0, isolated_execution: workflowBinding?.isolated || commandNames.length && commandBackend === 'e2b'
+        ? 'enabled' : 'not_enabled',
       sandbox_direct_tools: commandNames.length ? 'enabled' : 'not_enabled' },
     skill_space: { space_ids: spaces, user_space_ids: skillBinding?.userSpaceIds ?? [], public_space_ids: skillBinding?.publicSpaceIds ?? [],
       tools: names.filter(name => skills?.supports(name) || workflows?.supports(name)) },
     skill_runtime: { backend: workflowBinding?.backend ?? 'disabled', enabled: Boolean(workflows), template_bound: Boolean(workflowBinding?.host?.template),
       ...(workflows ? { request_protocol: DSH_NODE_SKILL_WORKFLOW } : {}) },
-    sandbox: { backend: commandNames.length ? 'local_process' : 'disabled', enabled: commandNames.length > 0,
-      template_bound: false, tools: commandNames },
+    sandbox: { backend: commandNames.length ? commandBackend : 'disabled', enabled: commandNames.length > 0,
+      template_bound: Boolean(commandNames.length && commands?.binding?.host?.template), tools: commandNames },
     workspace: { root: workspaceRoot, tools: names.filter(name => workspace.supports(name)) },
   } }));
   for (const port of ports) for (const definition of port.definitions) {

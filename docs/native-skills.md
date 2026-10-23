@@ -395,5 +395,5 @@ HTTPS ZIP。创建失败保留原 DSH 意图和 unknown；旧 Host PID 确认退
 保留真实脚本和精确产物断言。Host PATH 只含 Node/bash，Python 配置不可用；复用固定
 依赖图，不代表全新安装、线上 E2B 成功、模型/Codex CLI 或完整产品验收。
 
-DSH 的交互式 E2B 命令、其他剩余 builtin、Skill 输入文件与完整专用事件，以及未知
+DSH 的交互式 E2B 命令随后也已接入 Node，见 [E2B 命令](native-e2b.md#dsh-native--codex-的交互式-node-命令)。其他剩余 builtin、Skill 输入文件与完整专用事件，以及未知
 结果的产品核对/清理入口仍需继续迁移和验收。完整 Python fallback 尚未移除。

@@ -98,7 +98,7 @@ test('resource facts are versioned, independent of secrets, and honor disabled b
   assert.throws(() => readDshComponentBindings({ ...facts, contract: 'other' }), /dsh_component_bindings_invalid/);
 });
 
-test('composition reports admitted E2B Skill readiness separately from unmounted E2B command tools', async t => {
+test('composition reports actual admitted local/E2B commands independently of E2B Skill readiness', async t => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-components-')), workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot);
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const config = { ctx: {}, workspaceRoot, stateDir: join(root, 'state'), agentId: 'agent',
@@ -116,8 +116,8 @@ test('composition reports admitted E2B Skill readiness separately from unmounted
     assert.deepEqual(result.content.skill_space.space_ids, ['space']); assert.deepEqual(result.content.skill_space.tools, ['execute_skills']);
     assert.equal(result.content.skill_runtime.enabled, true); assert.equal(result.content.skill_runtime.backend, 'e2b');
     assert.equal(result.content.skill_runtime.template_bound, true); assert.equal(result.content.summary.isolated_execution, 'enabled');
-    assert.equal(result.content.sandbox.enabled, backend === 'local_process');
-    assert.deepEqual(result.content.sandbox.tools, backend === 'local_process' ? ['run_command'] : []);
+    assert.equal(result.content.sandbox.enabled, true); assert.equal(result.content.sandbox.backend, backend);
+    assert.deepEqual(result.content.sandbox.tools, ['run_command']); assert.equal(result.content.sandbox.template_bound, backend === 'e2b');
     assert.equal(JSON.stringify(result).includes('never-copy'), false);
   }
 });

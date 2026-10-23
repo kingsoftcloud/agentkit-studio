@@ -229,6 +229,11 @@ test('actual builtin composition selects Node commands and never falls back to l
   for (const name of ['sandbox_status', 'run_command', 'read_command_output', 'stop_command']) assert.equal(builtins.supports(name), true);
   const status = await builtins.execute('sandbox_status', {}, f.execution('sandbox_status', {}));
   assert.equal(status.content.backend, 'local_process'); assert.equal(status.content.isolated, false);
-  const e2b = createDshNodeBuiltins({ ...f.config, env: { KSADK_SANDBOX_BACKEND: 'e2b' } }); t.after(() => e2b.close());
-  assert.equal(e2b.supports('run_command'), false); assert.equal(e2b.supports('web_fetch'), true);
+  const e2b = createDshNodeBuiltins({ ...f.config, env: { KSADK_SANDBOX_BACKEND: 'e2b', KSADK_SANDBOX_TEMPLATE_ID: 'explicit-template',
+    E2B_API_URL: 'https://fixture.invalid', E2B_DOMAIN: 'fixture.invalid', E2B_API_KEY: 'test-only-key' } }); t.after(() => e2b.close());
+  assert.equal(e2b.supports('run_command'), true); assert.equal(e2b.supports('web_fetch'), true);
+  const component = await e2b.execute('component_status', {}, f.execution('component_status', {}));
+  assert.equal(component.content.sandbox.backend, 'e2b'); assert.equal(component.content.sandbox.template_bound, true);
+  assert.equal(component.content.summary.isolated_execution, 'enabled');
+  assert.throws(() => createDshNodeBuiltins({ ...f.config, env: { KSADK_SANDBOX_BACKEND: 'e2b' } }), /studio_native_e2b_template_required/);
 });

@@ -10,9 +10,10 @@ import { createServer as createHttpsServer } from 'node:https';
 import { createHash } from 'node:crypto';
 import { createZip } from '../src/zip.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
-  'skill-backend': { type: 'string', default: 'local_process' } } });
+  'skill-backend': { type: 'string', default: 'local_process' }, 'command-backend': { type: 'string', default: 'local_process' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 const skillBackend = values['skill-backend']; assert.ok(['local_process', 'e2b'].includes(skillBackend));
+const commandBackend = values['command-backend']; assert.ok(['local_process', 'e2b'].includes(commandBackend));
 const repository = fileURLToPath(new URL('..', import.meta.url)), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-node-builtins-'));
 console.log(`Studio Node builtin evidence: ${root}`);
@@ -63,6 +64,7 @@ try {
     `        skillDownloadUrl: ${JSON.stringify(skillDownloadUrl)}`, `        skillArchiveHash: ${JSON.stringify(sha256(skillArchive))}`,
     `        skillBody: ${JSON.stringify(skillBody)}`, `        skillScript: ${JSON.stringify(skillScript)}`, '',
     `        skillBackend: ${JSON.stringify(skillBackend)}`, '',
+    `        commandBackend: ${JSON.stringify(commandBackend)}`, '',
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   const harnessOptions = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
@@ -86,14 +88,18 @@ try {
   assert.ok(report.runtimes.every(row => row.web.calls === 6 && row.web.preAndGuardDeniedWithoutFetch
     && row.web.postPolicyPreserved && row.web.canceled && row.web.fullOutputPersisted && row.web.crossSessionOutputIsolated));
   assert.equal(new Set(report.runtimes.flatMap(row => row.web.outputs.map(output => output.path))).size, 4);
-  assert.ok(report.runtimes.every(row => row.commands.duplicateCount === 1 && row.commands.fullOutputBytes === 120000
-    && row.commands.sessionOwnership && row.commands.policyDenial && row.commands.postPolicyPreserved
-    && row.commands.backgroundCanceled && row.commands.oneShotApprovals === 2));
+  assert.ok(report.runtimes.every(row => row.commands.backend === commandBackend && row.commands.sessionOwnership
+    && row.commands.policyDenial && row.commands.postPolicyPreserved && row.commands.oneShotApprovals === 2));
+  if (commandBackend === 'local_process') assert.ok(report.runtimes.every(row => row.commands.duplicateCount === 1
+    && row.commands.fullOutputBytes === 120000 && row.commands.backgroundCanceled));
+  else assert.ok(report.runtimes.every(row => row.commands.creationUnknown && row.commands.duplicateSuppressed
+    && row.commands.noLocalEffect && row.commands.originalDshOwner));
   assert.ok(report.runtimes.every(row => row.components.ok === true && row.components.summary.model === 'deepseek-flash'
     && row.components.workspace.tools.length === 10 && row.components.sandbox.tools.length === 4
     && row.components.skill_runtime.enabled === true && row.components.skill_runtime.backend === skillBackend
     && row.components.skill_runtime.request_protocol === 'agentkit.dsh-node-skill-workflow/v1'
-    && row.components.summary.isolated_execution === (skillBackend === 'e2b' ? 'enabled' : 'not_enabled')));
+    && row.components.sandbox.backend === commandBackend && row.components.sandbox.template_bound === (commandBackend === 'e2b')
+    && row.components.summary.isolated_execution === (skillBackend === 'e2b' || commandBackend === 'e2b' ? 'enabled' : 'not_enabled')));
   assert.equal(downloads, 4);
   assert.ok(report.runtimes.every(row => row.skills.instructionsSha256 === sha256(skillBody) && row.skills.serviceRequests === 7
     && row.skills.policyDeniedWithoutRequest && row.skills.postPolicyPreserved && row.skills.scriptsNotExecuted));
@@ -106,7 +112,7 @@ try {
     && row.workflows.outcomeUnknown));
   assert.equal(new Set(report.runtimes.map(row => row.workflows.runtimeId)).size, 2);
   let cold;
-  if (skillBackend === 'e2b') {
+  if (skillBackend === 'e2b' || commandBackend === 'e2b') {
     await rm(join(root, 'start-proof')); await harness.close();
     const goneBy = Date.now() + 15000;
     for (;;) {
@@ -125,13 +131,15 @@ try {
     assert.equal(cold?.passed, true, JSON.stringify(cold)); assert.notEqual(cold.pid, report.pid); assert.equal(cold.previousPid, report.pid);
     assert.equal(cold.node, process.version); assert.equal(cold.networkCalls, 0); assert.equal(cold.skillRequests, 0); assert.equal(downloads, 4);
     assert.deepEqual(cold.restored.map(row => [row.runtime, row.agentId, row.sessionId, row.runtimeId, row.taskId, row.unchanged]),
-      report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.workflows.runtimeId, row.workflows.taskId, true]));
+      skillBackend === 'e2b' ? report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.workflows.runtimeId, row.workflows.taskId, true]) : []);
+    assert.deepEqual(cold.restoredCommands.map(row => [row.runtime, row.agentId, row.sessionId, row.taskId, row.unchanged]),
+      commandBackend === 'e2b' ? report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.commands.taskId, true]) : []);
   }
-  await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, skillBackend, downloads,
+  await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, skillBackend, commandBackend, downloads,
     archiveSha256: sha256(await readFile(resolve(values.archive))), skillArchiveHash: sha256(skillArchive), report, ...(cold ? { cold } : {}) }, null, 2));
-  console.log(skillBackend === 'local_process'
+  console.log(skillBackend === 'local_process' && commandBackend === 'local_process'
     ? 'PASS: packed Host registers Node workspace + web + commands + component_status + five Skill reads + durable local execute_skills for DSH Native and Codex; real HTTP service/CA-verified HTTPS ZIP/scripts/exact text+binary artifacts; stable real DSH identity and duplicate suppression; policy, one-shot approval and post policy retained; Node/bash PATH with invalid Python. Model/Codex CLI and fresh dependency installation are separate acceptance.'
-    : 'PASS: packed Host DSH Native/Codex E2B Skill workflow uses actual installed SDK with an explicitly refused endpoint; durable real DSH creation intent/unknown outcome, unchanged cold owner replay and zero commands; HTTP Skill Service + CA-verified HTTPS ZIP and original local command/workspace/Web/approvals remain intact. Node/bash PATH, Python unavailable. This is refusal/recovery acceptance, not online E2B success, fresh installation or model/Codex CLI proof.');
+    : `PASS: packed Host DSH Native/Codex selected commands=${commandBackend}, Skills=${skillBackend}; E2B uses actual installed SDK with an explicitly refused endpoint, durable original DSH creation/unknown intent and distinct-PID cold restore with unchanged records. Real HTTP Skill Service + CA-verified HTTPS ZIP, workspace/Web and approvals retained. Node/bash PATH, Python unavailable. Refusal/recovery acceptance; online E2B success, fresh install and model/Codex CLI are separate gates.`);
 } finally {
   await harness?.close();
   download?.closeAllConnections(); if (download) await new Promise(resolve => download.close(resolve));

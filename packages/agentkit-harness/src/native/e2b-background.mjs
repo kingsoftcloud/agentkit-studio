@@ -25,6 +25,12 @@ import { LOCAL_BACKGROUND_CONTRACT, TERMINAL, LocalCommandError, check, createPr
 
 export const E2B_BACKGROUND_CONTRACT = 'agentkit.e2b-background-command/v1';
 export const RECOVERY_CLAIM_TTL_MS = 30000;
+// Public deterministic locators let the Host persist a task before SDK entry.
+export const e2bCommandOwner = (workspaceRoot, sessionId) => digest([realpathSync(workspaceRoot), 'e2b', sessionId]);
+export function e2bCommandId(owner, operationKey) {
+  check(typeof operationKey === 'string' && !!operationKey.trim(), 'invalid_background_operation_key');
+  return digest([owner, operationKey]);
+}
 const supervisor = new URL('./e2b-background-supervisor.mjs', import.meta.url).href;
 const validSandboxId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 // A strict confirmed-true: the value must be exactly true, not a truthy Promise.
@@ -147,7 +153,7 @@ export class E2BCommandStore {
     // Post-creation realpath check: a symlink in the resolved path that landed
     // inside the workspace is still rejected.
     check(root !== workspace && !root.startsWith(workspace + '/'), 'background_state_inside_workspace');
-    this.owner = digest([workspace, 'e2b', sessionId]);
+    this.owner = e2bCommandOwner(workspace, sessionId);
     this.directory = join(root, 'commands', this.owner);
     this._sandboxRoot = join(root, 'sandboxes', this.owner);
     this.sessionId = sessionId;
@@ -171,8 +177,7 @@ export class E2BCommandStore {
     Object.freeze(this);
   }
   commandId(operationKey) {
-    check(typeof operationKey === 'string' && !!operationKey.trim(), 'invalid_background_operation_key');
-    return digest([this.owner, operationKey]);
+    return e2bCommandId(this.owner, operationKey);
   }
   connect(commandId) {
     check(validId(commandId), 'invalid_background_command_identity');

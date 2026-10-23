@@ -13,7 +13,8 @@ export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agent
 export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
   const skillBackend = options.skillBackend ?? 'local_process', e2b = skillBackend === 'e2b';
-  const previous = e2b && existsSync(join(home, 'proof.json')) ? JSON.parse(await readFile(join(home, 'proof.json'), 'utf8')) : null;
+  const commandBackend = options.commandBackend ?? 'local_process', e2bCommands = commandBackend === 'e2b';
+  const previous = (e2b || e2bCommands) && existsSync(join(home, 'proof.json')) ? JSON.parse(await readFile(join(home, 'proof.json'), 'utf8')) : null;
   const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
   const sha256 = value => createHash('sha256').update(value).digest('hex');
   let networkCalls = 0, pendingRequest; const skillRequests = [];
@@ -67,7 +68,8 @@ export async function apply(ctx, options) {
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
     KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
     KSADK_SKILL_SERVICE_TOKEN: 'builtin-skill-read-token', KSADK_SKILL_RUNTIME_BACKEND: skillBackend,
-    KSADK_SKILL_RUNTIME_TIMEOUT: '20', ...(e2b ? { KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'node-skill-proof-template',
+    KSADK_SANDBOX_BACKEND: commandBackend, KSADK_SANDBOX_TIMEOUT: '20',
+    KSADK_SKILL_RUNTIME_TIMEOUT: '20', ...(e2b || e2bCommands ? { KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'node-skill-proof-template',
       E2B_API_URL: 'https://127.0.0.1:9', E2B_DOMAIN: 'e2b-proof.synthetic', E2B_API_KEY: 'e2b-proof-not-a-real-key' } : {}) } });
   ctx.llm.registerAdapter(['agentkit-studio-builtin-proof'], {
     providerInfo: provider => ({ id: provider, name: 'Node builtin registry proof' }), providerRetryPolicy: () => undefined,
@@ -101,26 +103,39 @@ export async function apply(ctx, options) {
       return result.value;
     };
     if (previous) {
-      const restored = [];
+      const restored = [], restoredCommands = [];
       for (const row of previous.runtimes) {
         const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, JSON.stringify(found.error));
         const agent = found.agent; assert.equal(agent.session.id, row.sessionId); setSandboxMode(agent.session, 'workspace-write');
-        const recordBytes = await readFile(row.workflows.record), record = JSON.parse(recordBytes);
-        const ownerRoot = join(dirname(row.workflows.record), 'sandbox'), owners = await readdir(ownerRoot); assert.equal(owners.length, 1);
-        const ownerPath = join(ownerRoot, owners[0], 'owner.json'), ownerBytes = await readFile(ownerPath);
-        assert.equal(record.request.call.callId, `workflow-original-${row.runtime}`);
         agent.session.append('turn/start', { turn: 2 });
         try {
-          const cold = await agent.ctx.get('tools').execute({ agent, callId: record.request.call.callId, name: 'execute_skills',
-            arguments: record.request.call.arguments, signal: new AbortController().signal });
-          assert.equal(cold.isError, false); assert.deepEqual(JSON.parse(cold.value.result), record.result);
-          assert.ok((await readFile(row.workflows.record)).equals(recordBytes)); assert.ok((await readFile(ownerPath)).equals(ownerBytes));
-          restored.push({ runtime: row.runtime, agentId: row.agentId, sessionId: row.sessionId, runtimeId: record.runtimeId,
-            taskId: record.taskId, recordSha256: sha256(recordBytes), ownerSha256: sha256(ownerBytes), unchanged: true });
+          if (e2b) {
+            const recordBytes = await readFile(row.workflows.record), record = JSON.parse(recordBytes);
+            const ownerRoot = join(dirname(row.workflows.record), 'sandbox'), owners = await readdir(ownerRoot); assert.equal(owners.length, 1);
+            const ownerPath = join(ownerRoot, owners[0], 'owner.json'), ownerBytes = await readFile(ownerPath);
+            assert.equal(record.request.call.callId, `workflow-original-${row.runtime}`);
+            const cold = await agent.ctx.get('tools').execute({ agent, callId: record.request.call.callId, name: 'execute_skills',
+              arguments: record.request.call.arguments, signal: new AbortController().signal });
+            assert.equal(cold.isError, false); assert.deepEqual(JSON.parse(cold.value.result), record.result);
+            assert.ok((await readFile(row.workflows.record)).equals(recordBytes)); assert.ok((await readFile(ownerPath)).equals(ownerBytes));
+            restored.push({ runtime: row.runtime, agentId: row.agentId, sessionId: row.sessionId, runtimeId: record.runtimeId,
+              taskId: record.taskId, recordSha256: sha256(recordBytes), ownerSha256: sha256(ownerBytes), unchanged: true });
+          }
+          if (e2bCommands) {
+            const bytes = await readFile(row.commands.record), record = JSON.parse(bytes);
+            const ownerRoot = join(dirname(dirname(row.commands.record)), 'e2b-sandbox'), names = await readdir(ownerRoot);
+            assert.equal(names.length, 1); const ownerPath = join(ownerRoot, names[0], 'owner.json'), ownerBytes = await readFile(ownerPath);
+            const cold = await agent.ctx.get('tools').execute({ agent, callId: record.request.call.callId, name: 'run_command',
+              arguments: record.request.call.arguments, signal: new AbortController().signal });
+            assert.equal(cold.isError, false); assert.deepEqual(JSON.parse(cold.value.result), record.result.content);
+            assert.ok((await readFile(row.commands.record)).equals(bytes)); assert.ok((await readFile(ownerPath)).equals(ownerBytes));
+            restoredCommands.push({ runtime: row.runtime, agentId: row.agentId, sessionId: row.sessionId, taskId: record.taskId,
+              recordSha256: sha256(bytes), ownerSha256: sha256(ownerBytes), unchanged: true });
+          }
         } finally { agent.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } }); assert.equal(await ctx.sessions.flush(agent.session), true); }
       }
       assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0);
-      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, networkCalls, skillRequests: 0 };
+      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, networkCalls, skillRequests: 0 };
     }
     const report = { passed: false, pid: process.pid, webOrigin, node: process.version, path: process.env.PATH, runtimes: [] };
     let serial = 0;
@@ -150,9 +165,10 @@ export async function apply(ctx, options) {
         assert.equal(agent.options.model, 'deepseek-flash');
         assert.equal(components.ok, true); assert.equal(components.summary.model, agent.options.model);
         assert.equal(components.summary.knowledge_base_bound, false); assert.equal(components.summary.long_term_memory_bound, false);
-        assert.equal(components.summary.skill_space_bound, true); assert.equal(components.summary.isolated_execution, e2b ? 'enabled' : 'not_enabled');
+        assert.equal(components.summary.skill_space_bound, true); assert.equal(components.summary.isolated_execution, e2b || e2bCommands ? 'enabled' : 'not_enabled');
         assert.equal(components.skill_runtime.backend, skillBackend); assert.equal(components.skill_runtime.template_bound, e2b);
-        assert.equal(components.sandbox.backend, 'local_process'); assert.equal(components.sandbox.enabled, true);
+        assert.equal(components.sandbox.backend, commandBackend); assert.equal(components.sandbox.enabled, true);
+        assert.equal(components.sandbox.template_bound, e2bCommands);
         assert.deepEqual(components.sandbox.tools, ['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
         assert.deepEqual([...components.workspace.tools].sort(), tools.filter(name => name.includes('workspace')).sort());
         assert.equal(components.workspace.root, workspaceRoot); assert.equal(components.skill_runtime.enabled, true);
@@ -411,6 +427,52 @@ export async function apply(ctx, options) {
         const removeCommandResult = agent.ctx.on('tools/result', exec => { if (commandNames.has(exec.name)) commandPhases.push('result'); });
         let commandProof;
         try {
+          if (e2bCommands) {
+            const status = await call('sandbox_status', {}); assert.equal(status.backend, 'e2b'); assert.equal(status.isolated, true);
+            assert.equal(status.sandbox_phase, 'absent'); commandPhases.length = 0;
+            const command = `printf forbidden > ${runtime}-must-not-run-locally`, callId = `command-original-${runtime}`;
+            const invoke = (args = { command }, id = callId) => registry.execute({ agent, callId: id, name: 'run_command',
+              arguments: args, signal: new AbortController().signal });
+            const first = await invoke(); assert.equal(first.isError, false); const result = JSON.parse(first.value.result);
+            assert.equal(result.ok, false); assert.equal(result.error_type, 'e2b_sandbox_outcome_unknown');
+            assert.equal(result.agentId, record.metadata.id); assert.equal(result.sessionId, created.sessionId);
+            assert.match(result.task_id, /^[a-f0-9]{64}$/u); assert.equal(result.executionFence, undefined);
+            const normalPhases = [...commandPhases]; assert.deepEqual(normalPhases, ['pre', 'guard', 'around', 'post', 'result']);
+            assert.deepEqual(JSON.parse((await invoke()).value.result), result);
+            assert.equal(JSON.parse((await invoke({ command: 'changed' })).value.result).error_type, 'dsh_node_command_call_identity_conflict');
+            const commandRoot = join(home, 'studio/builtin-workspace/commands'), records = [];
+            for (const path of await readdir(commandRoot, { recursive: true })) if (/^[a-f0-9]{64}\/[a-f0-9]{64}\/[a-f0-9]{64}\/record\.json$/u.test(path.split(sep).join('/'))) {
+              const file = join(commandRoot, path), value = JSON.parse(await readFile(file, 'utf8'));
+              if (value.request.agentId === record.metadata.id && value.request.call.callId === callId) records.push({ file, value });
+            }
+            assert.equal(records.length, 1); const original = records[0];
+            assert.equal(original.value.phase, 'finished'); assert.equal(original.value.taskId, result.task_id);
+            assert.equal(original.value.binding.backend, 'e2b'); assert.deepEqual(original.value.result.content, result);
+            for (const key of ['scope', 'runId', 'turnId', 'buildId', 'executionFence']) assert.equal(key in original.value.request, false);
+            const ownerRoot = join(dirname(dirname(original.file)), 'e2b-sandbox'), names = await readdir(ownerRoot); assert.equal(names.length, 1);
+            const owner = JSON.parse(await readFile(join(ownerRoot, names[0], 'owner.json'), 'utf8'));
+            assert.equal(owner.schemaVersion, 'agentkit.dsh-e2b-sandbox-owner/v1'); assert.equal(owner.agentId, record.metadata.id);
+            assert.equal(owner.sessionId, created.sessionId); assert.equal(owner.phase, 'unknown'); assert.equal(owner.sandboxId, null);
+            commandDeny = true;
+            assert.equal((await invoke({ command }, `command-guard-${runtime}`)).isError, true); commandDeny = false;
+            commandRedact = true; const redacted = await invoke(); assert.equal(redacted.isError, false);
+            assert.deepEqual(redacted.content, [{ type: 'text', text: 'Host-redacted command output' }]); commandRedact = false;
+            const foreign = await second.ctx.get('tools').execute({ agent: second, callId: `foreign-command-${runtime}`,
+              name: 'read_command_output', arguments: { task_id: result.task_id }, signal: new AbortController().signal });
+            assert.equal(JSON.parse(foreign.value.result).ok, false);
+            assert.equal((await call('stop_command', { task_id: result.task_id })).ok, false, 'unknown creation is not a granted command');
+            setSandboxMode(agent.session, 'read-only'); setApprovalPolicy(agent.session, 'ask'); let commandApprovals = 0;
+            const removeApproval = agent.ctx.on('approval/request', async () => ++commandApprovals === 1 ? 'allowed-once' : 'rejected');
+            try {
+              const approved = await call('run_command', { command: 'printf approved' }); assert.equal(approved.ok, false);
+              assert.equal(approved.error_type, 'e2b_sandbox_outcome_unknown');
+              assert.equal((await call('run_command', { command: 'printf denied' })).ok, false); assert.equal(commandApprovals, 2);
+            } finally { removeApproval(); }
+            assert.equal(existsSync(join(workspaceRoot, `${runtime}-must-not-run-locally`)), false);
+            commandProof = { backend: 'e2b', normalPhases, taskId: result.task_id, record: original.file,
+              creationUnknown: true, duplicateSuppressed: true, noLocalEffect: true, originalDshOwner: true,
+              sessionOwnership: true, policyDenial: true, postPolicyPreserved: true, oneShotApprovals: commandApprovals };
+          } else {
           const status = await call('sandbox_status', {});
           assert.equal(status.backend, 'local_process'); assert.equal(status.isolated, false);
           commandPhases.length = 0;
@@ -462,6 +524,8 @@ export async function apply(ctx, options) {
           commandProof = { normalPhases, duplicateCount: (await readFile(join(workspaceRoot, counter), 'utf8')).length,
             fullOutputBytes: Buffer.byteLength(fullCommand.stdout), sessionOwnership: true, policyDenial: true,
             postPolicyPreserved: true, backgroundCanceled: stopped.status === 'canceled', oneShotApprovals: commandApprovals };
+          commandProof.backend = 'local_process';
+          }
         } finally {
           removeCommandPre(); removeCommandGuard(); removeCommandAround(); removeCommandPost(); removeCommandResult();
         }

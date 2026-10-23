@@ -5,8 +5,10 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix } from 'node:path';
+import { constants } from 'node:os';
 
-export function skillE2BSdk(t, { root, before = () => {}, killResult = true, createGate, commandGate, afterCommand, corruptFile } = {}) {
+export function skillE2BSdk(t, { root, before = () => {}, killResult = true, createGate, commandGate, afterCommand, corruptFile,
+  signalExitCodes = false } = {}) {
   const calls = [], sandboxes = new Map(), processes = new Map();
   class CommandExitError extends Error { constructor(exitCode) { super('command failed'); this.exitCode = exitCode; } }
   t.after(() => { for (const child of processes.values()) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} } });
@@ -55,13 +57,18 @@ export function skillE2BSdk(t, { root, before = () => {}, killResult = true, cre
           if (commandGate) await commandGate(command, opts);
           const env = { PATH: '/usr/bin:/bin', ...Object.fromEntries(Object.entries(opts.envs ?? {}).map(([key, value]) => [key, mapValue(value)])) };
           const child = spawn('/bin/bash', ['-c', mapValue(command)], { cwd: localPath(opts.cwd ?? '/tmp'), env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+          // Like the real SDK, callbacks receive decoded strings; a pipe chunk
+          // can split a multibyte character, so decoding each Buffer loses bytes.
+          child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
           processes.set(child.pid, child);
           const done = new Promise((resolve, reject) => {
             child.stdout.on('data', bytes => opts.onStdout(remotePath(bytes.toString())));
             child.stderr.on('data', bytes => opts.onStderr(remotePath(bytes.toString())));
             child.on('error', reject); child.on('exit', (code, signal) => { processes.delete(child.pid);
               afterCommand?.(command, code);
-              if (Number.isInteger(code)) resolve({ exitCode: code }); else reject(new Error(`peer command signal ${signal}`)); });
+              if (Number.isInteger(code)) resolve({ exitCode: code });
+              else if (signalExitCodes && Number.isInteger(constants.signals[signal])) resolve({ exitCode: 128 + constants.signals[signal] });
+              else reject(new Error(`peer command signal ${signal}`)); });
           });
           void done.catch(() => {});
           return { pid: child.pid, async wait() { const result = await done; if (result.exitCode) throw new CommandExitError(result.exitCode); return result; },
