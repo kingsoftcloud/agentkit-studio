@@ -601,3 +601,14 @@ ZIP 加载器。Host 固定服务与凭据并把不透明摘要纳入恢复配�
 完整配置、证据边界与未完成能力见 [native-skills.md](native-skills.md)。
 当前 `execute_skills` 仍明确未启用；这次接线不表示工作流、全部 Frozen/部署入口、
 legacy Python bridge 替换或全新无 Python 安装已经完成。
+
+## A2A 的实际打包 Host 与冷历史
+
+真实 Claude 的两文件验收脚本经父级加强并独立运行，在 Node 26.5.0 / 22.19.0 均通过。
+模型经实际打包 Host/preset/ToolRegistry 调用 `call_a2a_agent`，与本机 AgentCard 和
+JSONRPC/SSE 服务通信；两个模型请求、一次发现和一次发送均精确核对。工具原始意图、
+提交回执、完整归属及托管任务记录是必需断言，不因记录缺失而跳过。
+旧 Host PID 实际退出，新 PID 只恢复原会话历史，无补发提示；完整账本、托管记录字节、
+执行事件和工具准入保持原值，回答与终态轮次仍在历史中。具体命令及证据范围见
+[native-a2a.md](native-a2a.md)。这仍不覆盖线上服务、全新安装、Frozen 部署及尚未实现的
+核对/继续/远端取消等产品能力。

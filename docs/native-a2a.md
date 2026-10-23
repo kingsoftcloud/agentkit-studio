@@ -94,10 +94,29 @@ remote checkpoint, one send, one original model call and zero replacement
 model/tool executions. This is a process recovery proof, not a packed DSH Host
 or online cloud-service proof.
 
+`scripts/verify-studio-native-a2a.mjs --source <built-maintained-dsh> --archive
+<Studio.tgz> --keep` additionally drives the actual packed `mountStudioHost`,
+authenticated control RPC, production preset, DSH ToolRegistry and
+SessionController with independent local HTTP model/discovery/JSONRPC-SSE
+services. Node 26.5.0 and 22.19.0 both verify two actual model calls, one
+discovery, one send, and zero GetTask calls for this terminal SSE fixture.
+
+The complete Native tool intent and committed receipt, original numeric turn,
+scope, Build, call/operation identity and private managed remote-task record
+are mandatory assertions. The old actual Host PID exits; a different PID
+resumes the original history without new input. The answer and completed turn
+are present, execution events and tool admissions are unchanged, the entire
+Native record compares canonically, and the full original managed-call bytes
+remain unchanged. Both processes use a Node-only PATH. Original/cold record
+files, request captures, hashes, PIDs and scope/Run identities are retained in
+the evidence root. This uses the fixed installed dependency graph and a
+graceful Host restart; the separate process test above covers SIGKILL. It is
+not online cloud, fresh installation or Frozen deployment acceptance.
+
 Still required for full migration:
 
-- Actual packed DSH Host/SessionController integration, history and Frozen
-  export/deployment coverage for this binding.
+- Frozen export/deployment coverage and the remaining product operations for
+  this binding; the local packed Host and history path above is now verified.
 - Authenticated product operations/UI to inspect, reconcile, continue and
   request cancellation of the original managed remote task. Input/auth pauses
   currently stop the Native call with an uncertain result and preserve its

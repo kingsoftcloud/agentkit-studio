@@ -1,0 +1,532 @@
+/**
+ * Verify Studio Native A2A through the packed production Host, real DSH SDK
+ * preset/ToolRegistry/SessionController (full mounted host with authenticated
+ * HTTP control RPC and production preset admission), NativeKernel/SQLite, a
+ * real local HTTP A2A AgentCard discovery + JSONRPC/SSE peer, and deterministic
+ * local model HTTP SSE.
+ *
+ * Usage:
+ *   node scripts/verify-studio-native-a2a.mjs \
+ *     --source <built DSH SDK checkout> \
+ *     --archive <packed studio .tgz> \
+ *     [--keep]
+ *
+ * The mounted Host wires the A2A tool binding for an Agent spec with:
+ *   bindings.modelProfileIds = ['fixture']   (text-only primary, modelName 'main')
+ *   bindings.tools = ['call_a2a_agent']
+ *   bindings.a2a = [{ local_name, binding_id, space_id, target_agent_id,
+ *     expected_version_id, exposure: 'tool' }]
+ *   runtime.type = 'harness'
+ *
+ * The model emits a call_a2a_agent tool call. The Native A2A host discovers
+ * the remote agent via the local HTTP ListAToASpaceAgents peer, sends a real
+ * JSONRPC SendStreamingMessage, receives a Task with a text artifact and completed status, selects the
+ * terminal reply, and the model completes.
+ *
+ * Verifies (exact, not >=):
+ *   - Exactly 1 completed Run in SQLite
+ *   - Exactly 2 model HTTP calls (tool-call + completion)
+ *   - Exactly 1 discovery HTTP call (ListAToASpaceAgents)
+ *   - Exactly 1 A2A peer Send (SendStreamingMessage), no GetTask for this stream
+ *   - The tool result reply is the remote artifact text
+ *   - Cold-before count snapshot saved, then a REAL Host/SDK process restart
+ *     (close DSH subprocess, spawn fresh with same config, resumeSession via
+ *     real SessionController/SDK history read — no new prompt). Model/tool/
+ *     A2A-peer/discovery counts must NOT increase (real comparison).
+ *   - Entire store.load record canonical unchanged after the real restart
+ *   - PIDs recorded for both the original and restarted Host processes
+ */
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import { createServer as createHttpServer } from 'node:http';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
+import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
+
+const { values } = parseArgs({
+  options: {
+    source: { type: 'string' },
+    archive: { type: 'string' },
+    keep: { type: 'boolean', default: false },
+  },
+});
+
+assert.ok(values.source, 'Use --source <built DSH SDK checkout>');
+assert.ok(values.archive, 'Use --archive <packed studio .tgz>');
+
+const source = resolve(values.source);
+const archive = resolve(values.archive);
+const repository = fileURLToPath(new URL('..', import.meta.url));
+
+const archiveBuf = await readFile(archive);
+const archiveSha = createHash('sha256').update(archiveBuf).digest('hex');
+console.log(`Archive: ${archive}`);
+console.log(`Archive SHA256: ${archiveSha}`);
+
+// Resolve the temp root through symlinks: the A2A host's privateDirectory
+// checks noSymlinks on every path component (resolve() is lexical), so the
+// macOS /var → private/var symlink in /var/folders would trigger
+// background_state_symlink. realpath resolves it to /private/var/folders/...
+const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-native-a2a-')));
+console.log(`A2A proof root: ${root}`);
+
+// A2A binding spec — the pinned remote target.
+const a2aSpec = {
+  local_name: 'research',
+  binding_id: 'a2a-binding-0000000000000000000000000001',
+  space_id: 'a2a-space-00000000000040008000000000000001',
+  target_agent_id: 'a2a-agent-00000000000040008000000000000002',
+  expected_version_id: 'a2a-version-00000000000040008000000000000003',
+  exposure: 'tool',
+};
+
+const a2aReply = 'The remote agent found 3 relevant documents.';
+const remoteTaskId = 'remote-task-a2a-proof-001';
+const remoteContextId = 'remote-context-a2a-proof-001';
+
+// Track all HTTP calls for exact counting.
+let modelCalls = 0, discoveryCalls = 0, a2aSends = 0, a2aGets = 0;
+const modelRequests = [], a2aPeerRequests = [], discoveryRequests = [], serverFailures = [];
+const jsonl = async path => (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
+async function managedRecords(root) {
+  const base = join(root, 'studio/native-harness/workspace-state');
+  const files = (await readdir(base, { recursive: true })).filter(path => path.includes('a2a-calls/') && path.endsWith('.json')).sort();
+  return Promise.all(files.map(async path => ({ path, content: await readFile(join(base, path), 'utf8') })));
+}
+async function history(root) {
+  const base = join(root, 'sessions');
+  const logs = (await readdir(base, { recursive: true })).filter(path => path.endsWith('.jsonl'));
+  assert.equal(logs.length, 1);
+  return jsonl(join(base, logs[0]));
+}
+let originalPid = null, restartedPid = null;
+
+// Single HTTP server serves three roles by URL path:
+//   /v1/chat/completions  → deterministic model SSE
+//   /agentengine/api/v1/ListAToASpaceAgents → A2A discovery
+//   /rpc  → A2A JSONRPC peer (SendStreamingMessage, GetTask)
+const server = createHttpServer(async (request, response) => {
+  try {
+    let raw = '';
+    for await (const chunk of request) raw += chunk;
+    const body = raw ? JSON.parse(raw) : null;
+
+    // === Model SSE server ===
+    if (request.url === '/v1/chat/completions') {
+      modelCalls++;
+      modelRequests.push(body);
+      console.log(`[model] call ${modelCalls}: ${body.messages.length} messages, tools=${body.tools?.length || 0}`);
+
+      response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+
+      if (modelCalls === 1) {
+        // First call: emit a tool call to call_a2a_agent.
+        const toolCallChunk = {
+          id: 'model-1', model: 'main',
+          choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'a2a-call-1', type: 'function',
+            function: { name: 'call_a2a_agent',
+              arguments: JSON.stringify({ agent: 'research', message: 'Find documents about A2A' }) } }] }, finish_reason: null }],
+        };
+        response.write('data: ' + JSON.stringify(toolCallChunk) + '\n\n');
+        const toolCallEnd = {
+          id: 'model-1', model: 'main',
+          choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+          usage: { prompt_tokens: 15, completion_tokens: 8 },
+        };
+        response.end('data: ' + JSON.stringify(toolCallEnd) + '\n\ndata: [DONE]\n\n');
+        return;
+      }
+
+      // Second call: model receives the tool result (A2A reply) and completes.
+      const toolMsg = body.messages.find(m => m.role === 'tool');
+      if (toolMsg) {
+        console.log(`[model] tool result (first 200): ${String(toolMsg.content).slice(0, 200)}`);
+      }
+
+      const answerChunk = {
+        id: 'model-2', model: 'main',
+        choices: [{ index: 0, delta: { content: 'I called the remote research agent and it reported: ' + a2aReply }, finish_reason: null }],
+      };
+      response.write('data: ' + JSON.stringify(answerChunk) + '\n\n');
+      const answerEnd = {
+        id: 'model-2', model: 'main',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 25, completion_tokens: 12 },
+      };
+      response.end('data: ' + JSON.stringify(answerEnd) + '\n\ndata: [DONE]\n\n');
+      return;
+    }
+
+    // === A2A discovery ===
+    if (request.url === '/agentengine/api/v1/ListAToASpaceAgents') {
+      discoveryCalls++;
+      discoveryRequests.push(body);
+      console.log(`[discovery] call ${discoveryCalls}: space=${body?.A2ASpaceId}`);
+      assert.equal(body.A2ASpaceId, a2aSpec.space_id, 'discovery space matches spec');
+      assert.equal(body.PageSize, 100, 'discovery page size');
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ Code: 0, Data: { Agents: [{
+        A2AAgentId: a2aSpec.target_agent_id,
+        VersionId: a2aSpec.expected_version_id,
+        Source: 'hosted',
+        AgentCard: {
+          name: 'research',
+          description: 'Research agent',
+          capabilities: { streaming: true },
+          supportedInterfaces: [{ url: `http://127.0.0.1:${server.address().port}/rpc`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+        },
+      }] } }));
+      return;
+    }
+
+    // === A2A JSONRPC peer ===
+    if (request.url === '/rpc') {
+      a2aPeerRequests.push({ method: body?.method, params: body?.params, id: body?.id });
+      const rpcId = body?.id;
+      const wrap = result => ({ jsonrpc: '2.0', id: rpcId, result });
+
+      if (body.method === 'SendStreamingMessage') {
+        a2aSends++;
+        console.log(`[a2a-peer] SendStreamingMessage: messageId=${body.params?.message?.messageId}, role=${body.params?.message?.role}`);
+        assert.equal(body.params.message.role, 'ROLE_USER', 'A2A message role');
+        assert.equal(body.params.message.parts[0].text, 'Find documents about A2A', 'A2A message text');
+
+        response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+        const event = (id, payload) => `id: ${id}\r\ndata: ${JSON.stringify(wrap(payload))}\r\n\r\n`;
+        // Stream: WORKING → artifact → COMPLETED
+        response.write(event('1', { task: { id: remoteTaskId, contextId: remoteContextId, status: { state: 'TASK_STATE_WORKING' } } }));
+        response.write(event('2', { artifactUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
+          artifact: { artifactId: 'result-docs', parts: [{ text: a2aReply }] } } }));
+        response.write(event('3', { statusUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
+          status: { state: 'TASK_STATE_COMPLETED' } } }));
+        response.end();
+        return;
+      }
+
+      if (body.method === 'GetTask') {
+        a2aGets++;
+        console.log(`[a2a-peer] GetTask: id=${body.params?.id}`);
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify(wrap({
+          id: remoteTaskId, contextId: remoteContextId,
+          status: { state: 'TASK_STATE_COMPLETED' },
+          artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }],
+        })));
+        return;
+      }
+
+      throw new Error(`Unexpected JSONRPC method: ${body.method}`);
+    }
+
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  } catch (error) {
+    serverFailures.push(error.message);
+    console.error('Server error:', error.message);
+    if (!response.headersSent) response.writeHead(500);
+    response.end('verification failed');
+  }
+});
+
+let harness, failed = false;
+try {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const serverPort = server.address().port;
+  const modelUrl = `http://127.0.0.1:${serverPort}/v1`;
+  const a2aServiceUrl = `http://127.0.0.1:${serverPort}`;
+  console.log(`Model server: ${modelUrl}`);
+  console.log(`A2A service: ${a2aServiceUrl}`);
+
+  const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
+  const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
+  await mkdir(graph);
+  execFileSync('tar', ['-xzf', archive, '-C', graph]);
+  await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
+
+  // Copy the new fixture into the extracted package.
+  await mkdir(join(installed, 'tests/fixtures'), { recursive: true });
+  await copyFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'),
+    join(installed, 'tests/fixtures/studio-native-a2a.mjs'));
+
+  // Symlink the SDK's built @deepseek-ai packages.
+  const dshDeps = join(source, 'apps/cli/node_modules/@deepseek-ai');
+  for (const entry of await readdir(dshDeps)) {
+    try { await symlink(join(dshDeps, entry), join(dependencies, '@deepseek-ai', entry)); } catch { /* exists */ }
+  }
+  const missingFromSource = [
+    ['packages/client/connection', 'dsh-client-connection'],
+    ['packages/api/session-controller', 'dsh-api-session-controller'],
+    ['packages/preset/agent-preset-registry', 'dsh-agent-preset-registry'],
+  ];
+  for (const [rel, pkgName] of missingFromSource) {
+    try { await symlink(join(source, rel), join(dependencies, '@deepseek-ai', pkgName)); } catch { /* exists */ }
+  }
+
+  // Symlink ordinary Studio dependencies from this checkout's node_modules.
+  for (const entry of await readdir(join(repository, 'node_modules'))) {
+    if (entry === '@deepseek-ai' || entry.startsWith('.')) continue;
+    try { await symlink(join(repository, 'node_modules', entry), join(dependencies, entry)); } catch { /* exists */ }
+  }
+
+  // Node-only PATH.
+  const nodeOnlyBin = join(root, 'node-only-bin');
+  await mkdir(nodeOnlyBin);
+  await symlink(process.execPath, join(nodeOnlyBin, 'node'));
+
+  // Profile packages for the mounted host.
+  const profilePackages = join(root, 'home/profiles/sdk/node_modules/@kingsoftcloud');
+  await mkdir(profilePackages, { recursive: true });
+  await symlink(installed, join(profilePackages, 'agentkit-studio'));
+
+  // DSH patch YAML.
+  const patch = join(root, 'a2a.patch.yml');
+  const fixturePath = pathToFileURL(join(installed, 'tests/fixtures/studio-native-a2a.mjs')).href;
+  await writeFile(patch, [
+    '- id: session-persistence-jsonl', '  config:', `    root: ${JSON.stringify(join(root, 'sessions'))}`, '    compression: none',
+    '- insert:',
+    '    - id: studio-proof-webserver', "      name: '@deepseek-ai/dsh-host-webserver'", '      config:',
+    "        host: '127.0.0.1'", '        port: 0',
+    '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
+    '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
+    '    - id: studio-proof-preset-registry', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:',
+    "        default: standard",
+    '    - id: studio-native-a2a-proof', `      name: ${JSON.stringify(fixturePath)}`, '      config:',
+    `        directory: ${JSON.stringify(root)}`,
+    `        repository: ${JSON.stringify(installed)}`,
+    `        modelUrl: ${JSON.stringify(modelUrl)}`,
+    `        a2aServiceUrl: ${JSON.stringify(a2aServiceUrl)}`,
+    `        a2aServiceToken: ${JSON.stringify('a2a-fixture-token')}`,
+    `        a2aBindings: ${JSON.stringify(JSON.stringify([a2aSpec]))}`,
+    `        mountHost: true`,
+    '',
+  ].join('\n'));
+
+  const patches = [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch];
+  const options = {
+    dshBin: join(source, 'apps/cli/lib/bin.js'),
+    profile: 'sdk',
+    patches,
+    dshHome: join(root, 'home'),
+    cwd: root,
+    processCwd: root,
+    provider: 'agentkit-studio-fixture',
+    model: 'main',
+    initializeTimeoutMs: 30_000,
+    requestTimeoutMs: 30_000,
+    env: {
+      ...process.env,
+      PATH: nodeOnlyBin,
+      AGENTKIT_PYTHON: '/unavailable/python',
+      AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk',
+      DSH_TELEMETRY_DISABLED: '1',
+      DSH_AGENTS_HOME: join(root, 'agents'),
+    },
+  };
+
+  harness = new DeepSeekHarness(options);
+  const session = harness.session('a2a-session');
+  const result = await session.run('Ask the research agent to find documents about A2A.');
+  // After the turn, the DSH subprocess is alive — capture its real PID.
+  originalPid = harness.client?.child?.pid ?? null;
+  console.log(`\nOriginal DSH subprocess PID: ${originalPid}`);
+  console.log(`Turn finalResponse: ${result.finalResponse}`);
+  console.log(`HTTP calls: model=${modelCalls}, discovery=${discoveryCalls}, a2aSend=${a2aSends}, a2aGet=${a2aGets}`);
+
+  // === Exact HTTP call counts ===
+  // GetTask may be 0 (stream delivered the full terminal lifecycle) or 1
+  // (stream ended non-terminal and GetTask reconciled). Exactly 0 or 1, never >1.
+  assert.equal(modelCalls, 2, `model HTTP calls: expected exactly 2, got ${modelCalls}`);
+  assert.equal(discoveryCalls, 1, `discovery HTTP calls: expected exactly 1, got ${discoveryCalls}`);
+  assert.equal(a2aSends, 1, `A2A peer Send calls: expected exactly 1, got ${a2aSends}`);
+  assert.equal(a2aGets, 0, 'the fixed SSE fixture delivers the full terminal lifecycle');
+  assert.deepEqual(serverFailures, []);
+
+  // === Verify the tool result contains the A2A reply ===
+  assert.equal(modelRequests.length, 2, `model requests captured: ${modelRequests.length}`);
+  const toolResultMsg = modelRequests[1].messages.find(m => m.role === 'tool');
+  assert.ok(toolResultMsg, 'second model request has a tool result message');
+  const toolResultContent = String(toolResultMsg.content);
+  assert.ok(toolResultContent.includes(a2aReply),
+    `tool result contains the A2A reply: "${a2aReply}" in "${toolResultContent.slice(0, 200)}"`);
+
+  // === Verify the A2A peer received the correct message ===
+  assert.equal(a2aPeerRequests.length, a2aGets + 1, `A2A peer requests: ${a2aPeerRequests.length}`);
+  assert.equal(a2aPeerRequests[0].method, 'SendStreamingMessage', 'first A2A peer request is SendStreamingMessage');
+  if (a2aGets > 0) assert.equal(a2aPeerRequests[1].method, 'GetTask', 'second A2A peer request is GetTask');
+
+  // === SQLite: exactly one completed Run ===
+  const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
+  const dbPath = join(root, 'studio/native-harness/runs.sqlite');
+  const store = new SqliteRunStore(dbPath);
+  const { id: agentId } = JSON.parse(await readFile(join(root, 'agent-id.json'), 'utf8'));
+  const scope = {
+    tenantId: 'local',
+    workspaceId: createHash('sha256').update(JSON.stringify(resolve(root, 'workspace'))).digest('hex'),
+    userId: 'local-user', agentId,
+  };
+
+  const allRuns = store.list(scope, 'a2a-session');
+  assert.equal(allRuns.length, 1, `exactly one Run in SQLite: got ${allRuns.length}`);
+  const runId = allRuns[0].runId;
+  const record = store.load(scope, runId);
+  assert.equal(record.snapshot.phase, 'completed', `Run phase: expected completed, got ${record.snapshot.phase}`);
+  console.log(`Run ${runId}: phase=${record.snapshot.phase}, usage.modelCalls=${record.snapshot.usage?.modelCalls}`);
+
+  assert.equal(record.snapshot.usage.modelCalls, 2); assert.equal(record.snapshot.usage.toolCalls, 1);
+  const toolReceipts = record.receipts.filter(receipt => receipt.result?.results);
+  assert.equal(toolReceipts.length, 1); assert.equal(toolReceipts[0].status, 'committed');
+  const toolResults = toolReceipts[0].result.results;
+  assert.equal(toolResults.length, 1); assert.equal(toolResults[0].status, 'ok');
+  assert.equal(toolResults[0].content.reply, a2aReply);
+  const managedBefore = await managedRecords(root);
+  assert.equal(managedBefore.length, 1, 'the managed task record is mandatory');
+  const managed = JSON.parse(managedBefore[0].content);
+  assert.equal(managed.phase, 'terminal'); assert.equal(managed.projection.taskId, remoteTaskId);
+  assert.equal(managed.projection.contextId, remoteContextId); assert.equal(managed.projection.state, 'completed');
+  assert.equal(toolResults[0].content.task_id, managed.platformTaskId);
+  assert.match(managed.platformTaskId, /^a2a-task-[a-f0-9]{32}$/u);
+  assert.deepEqual(managed.owner.scope, scope); assert.equal(managed.owner.sessionId, 'a2a-session');
+  assert.deepEqual(managed.request.native.scope, scope);
+  for (const key of ['runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId'])
+    assert.equal(managed.request.native[key], record.snapshot[key], key);
+  assert.equal(managed.request.native.operationKey, toolReceipts[0].operationKey);
+  assert.equal(managed.request.native.call.callId, 'a2a-call-1');
+  assert.equal(managed.request.native.call.name, 'call_a2a_agent');
+  const nativeIntent = record.intents.find(intent => intent.operationKey === toolReceipts[0].operationKey);
+  assert.ok(nativeIntent); assert.equal(nativeIntent.claimedFence, managed.request.native.executionFence);
+  const admissionPath = join(root, 'tool-admissions.jsonl');
+  const admissionsBefore = await readFile(admissionPath, 'utf8'), admissions = await jsonl(admissionPath);
+  assert.equal(admissions.length, 1); assert.equal(admissions[0].name, 'call_a2a_agent');
+  const durableBefore = await history(root), owners = durableBefore.filter(event => event.type === 'turn/owner');
+  assert.equal(owners.length, 1);
+  const ownership = readNativeDshOwnership(owners[0].data, { sessionId: 'a2a-session', turn: 1 });
+  assert.equal(ownership.identity.runId, runId); assert.deepEqual(ownership.identity.scope, scope);
+  assert.equal(ownership.identity.buildId, record.snapshot.buildId);
+  assert.equal(durableBefore.filter(event => event.type === 'turn/end').length, 1);
+  assert.equal(durableBefore.filter(event => event.type === 'tool/call').length, 1);
+  assert.equal(durableBefore.filter(event => event.type === 'tool/result').length, 1);
+  const processPath = join(root, 'host-processes.jsonl'), processesBefore = await jsonl(processPath);
+  assert.equal(processesBefore.length, 1); assert.equal(processesBefore[0].pid, originalPid);
+  assert.equal(processesBefore[0].node, process.version); assert.equal(processesBefore[0].path, nodeOnlyBin);
+  // === Cold-before snapshot ===
+  const coldBefore = {
+    modelCalls, discoveryCalls, a2aSends, a2aGets,
+    a2aPeerRequests: a2aPeerRequests.length,
+    runCount: allRuns.length,
+  };
+  const recordCanonical = canonical(record);
+  await writeFile(join(root, 'native-run-before.json'), recordCanonical);
+  await writeFile(join(root, 'managed-call-before.json'), managedBefore[0].content);
+  await writeFile(join(root, 'a2a-http-requests.json'), JSON.stringify({ modelRequests, discoveryRequests, a2aPeerRequests }, null, 2));
+  console.log(`Cold-before snapshot: ${JSON.stringify(coldBefore)}`);
+  console.log(`Full record canonical length: ${recordCanonical.length}`);
+  store.close();
+
+  // === Real Host/SDK process restart ===
+  await harness.close();
+  assert.throws(() => process.kill(originalPid, 0), { code: 'ESRCH' }, 'old actual Host process exited');
+  harness = new DeepSeekHarness(options);
+  const resumed = await harness.resumeSession('a2a-session');
+  // Wait for the fixture's resume handler.
+  const probePath = join(root, 'mounted-host-http.jsonl');
+  const resumeDeadline = Date.now() + 15000;
+  let resumeProbe;
+  while (Date.now() < resumeDeadline) {
+    const rows = (await readFile(probePath, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(JSON.parse);
+    resumeProbe = rows.find(row => row.source === 'resume');
+    if (resumeProbe) break;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  assert.equal(resumed.id, 'a2a-session');
+  assert.ok(resumeProbe, 'resume probe is mandatory after preset reconstruction');
+  assert.equal(resumeProbe.historyHasAnswer, true); assert.equal(resumeProbe.historyHasCompletedTurn, true);
+  // Capture the restarted DSH subprocess PID — must differ from the original.
+  restartedPid = harness.client?.child?.pid ?? null;
+  console.log(`Restarted DSH subprocess PID: ${restartedPid}`);
+  assert.ok(restartedPid !== null, 'restarted DSH subprocess PID captured');
+  assert.notEqual(restartedPid, originalPid,
+    `restarted PID differs from original: original=${originalPid}, restarted=${restartedPid}`);
+
+  assert.equal(resumeProbe.pid, restartedPid);
+  const processesAfter = await jsonl(processPath); assert.equal(processesAfter.length, 2);
+  assert.equal(processesAfter[1].pid, restartedPid); assert.equal(processesAfter[1].node, process.version);
+  assert.equal(processesAfter[1].path, nodeOnlyBin);
+  assert.equal(await readFile(admissionPath, 'utf8'), admissionsBefore);
+  assert.deepEqual(await managedRecords(root), managedBefore, 'complete original managed call bytes unchanged');
+  const durableAfter = await history(root);
+  const executionTypes = new Set(['turn/start','turn/owner','turn/end','user/message','assistant/message','tool/call','tool/result']);
+  assert.deepEqual(durableAfter.filter(event => executionTypes.has(event.type)), durableBefore.filter(event => executionTypes.has(event.type)));
+  assert.deepEqual(serverFailures, []);
+  // === Assert counts did NOT increase ===
+  assert.equal(modelCalls, coldBefore.modelCalls,
+    `no new model calls after restart+resume: ${coldBefore.modelCalls} -> ${modelCalls}`);
+  assert.equal(discoveryCalls, coldBefore.discoveryCalls,
+    `no new discovery calls after restart+resume: ${coldBefore.discoveryCalls} -> ${discoveryCalls}`);
+  assert.equal(a2aSends, coldBefore.a2aSends,
+    `no new A2A sends after restart+resume: ${coldBefore.a2aSends} -> ${a2aSends}`);
+  assert.equal(a2aGets, coldBefore.a2aGets,
+    `no new A2A gets after restart+resume: ${coldBefore.a2aGets} -> ${a2aGets}`);
+
+  // === Entire store.load record canonical unchanged ===
+  const reopened = new SqliteRunStore(dbPath);
+  const coldRecord = reopened.load(scope, runId);
+  const coldCanonical = canonical(coldRecord);
+  await writeFile(join(root, 'native-run-after.json'), coldCanonical);
+  await writeFile(join(root, 'managed-call-after.json'), (await managedRecords(root))[0].content);
+  assert.equal(coldCanonical, recordCanonical,
+    'entire store.load record unchanged after real Host restart + SessionController history replay');
+  assert.equal(coldRecord.snapshot.phase, 'completed', 'cold run phase completed');
+  reopened.close();
+
+  // === Verify no credentials leaked into the SQLite record ===
+  const recordStr = canonical(coldRecord);
+  assert.equal(recordStr.includes('a2a-fixture-token'), false, 'A2A service token not leaked into SQLite record');
+
+  // === Save evidence ===
+  const evidence = {
+    archive: { path: archive, sha256: archiveSha },
+    sdk: { source, commit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() },
+    node: process.version,
+    proofRoot: root,
+    originalPid, restartedPid,
+    httpCalls: { model: modelCalls, discovery: discoveryCalls, a2aSend: a2aSends, a2aGet: a2aGets },
+    coldBefore,
+    coldAfter: { modelCalls, discoveryCalls, a2aSends, a2aGets, runCount: 1 },
+    runId, agentId, sessionId: 'a2a-session',
+    a2aReply, remoteTaskId, remoteContextId,
+    a2aPeerMethods: a2aPeerRequests.map(r => r.method),
+    recordCanonicalLength: recordCanonical.length,
+    recordSha256: createHash('sha256').update(recordCanonical).digest('hex'),
+    historyOwnershipDigest: createHash('sha256').update(canonical(owners[0])).digest('hex'),
+    canonicalMatchAfterHostRestart: coldCanonical === recordCanonical,
+    a2aCallRecordPhase: managed.phase, managedRecordSha256: createHash('sha256').update(managedBefore[0].content).digest('hex'),
+    scope, turnId: record.snapshot.turnId, buildId: record.snapshot.buildId, operationKey: toolReceipts[0].operationKey,
+    fixtureSha256: createHash('sha256').update(await readFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'))).digest('hex'),
+    limitation: 'Fixed local dependency graph, actual graceful Host process restart; not SIGKILL, online service, fresh install or Frozen deployment.',
+  };
+  await writeFile(join(root, 'a2a-proof-evidence.json'), JSON.stringify(evidence, null, 2));
+  console.log(`\nEvidence saved: ${join(root, 'a2a-proof-evidence.json')}`);
+
+  process.stdout.write('\nPASS: real A2A discovery + JSONRPC/SSE peer, deterministic model, '
+    + 'model calls call_a2a_agent with real reply, '
+    + 'exactly 2 model + 1 discovery + 1 send + 0 get HTTP calls, '
+    + 'real Host restart + SessionController history replay with no new calls, '
+    + 'entire store.load record canonical unchanged, '
+    + 'A2A call identity record terminal, no credential leak\n');
+} catch (error) {
+  failed = true;
+  const detail = { code: error.code, message: error.message, stack: error.stack,
+    counts: { modelCalls, discoveryCalls, a2aSends, a2aGets, modelRequests: modelRequests.length, a2aPeerRequests: a2aPeerRequests.length } };
+  await writeFile(join(root, 'a2a-proof-failure.json'), JSON.stringify(detail, null, 2)).catch(() => {});
+  console.error('A2A proof FAILED:', error.message, error.stack);
+  throw error;
+} finally {
+  if (harness) await harness.close().catch(() => {});
+  server.closeAllConnections?.();
+  await new Promise(resolve => server.close(resolve));
+  if (!values.keep && !failed) await rm(root, { recursive: true, force: true });
+}
