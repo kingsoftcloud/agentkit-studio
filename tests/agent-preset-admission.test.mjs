@@ -43,6 +43,20 @@ test('Skill-bound presets reuse DSH loader and shell and register definitions in
   assert.deepEqual(registrations, [skill]);
 });
 
+test('only enabled bound Skill Spaces enter the whole-turn Native preset', async () => {
+  const plugin = (id, enabled = true) => ({ enabled, config: { binding: { resource: { kind: 'skill-space', id } } } });
+  for (const runtime of ['harness', 'codex', 'dsh-native']) {
+    let registered;
+    const record = agent({ spec: { runtime: { type: runtime }, bindings: { plugins: [plugin('space'), plugin('space'), plugin('disabled', false)] } } });
+    const admission = new DshPresetAdmission({ nativeEngineContract: 'agentkit.native-dsh-turn/v1',
+      getAgent: async () => record, registry: { register: async value => { registered = value; } } });
+    await admission.ensure('demo/agent');
+    const config = registered.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin'))?.config;
+    if (runtime === 'harness') assert.deepEqual(config.skillSpaceIds, ['space']);
+    else assert.equal(config?.skillSpaceIds, undefined);
+  }
+});
+
 test('dsh preset admission uses a stable revision-scoped id', () => {
   assert.equal(dshPresetId('demo/agent', 3), 'agentkit-studio-agent-demo_2Fagent-r3');
   assert.deepEqual(dshPresetEligibility(agent()), {

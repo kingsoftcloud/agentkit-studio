@@ -11,8 +11,9 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { studioNativeComponentStatus } from '../src/providers/native-component-status.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
+import { createNativeSkillConnection } from '../src/providers/native-skill-host.mjs';
 
-async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoadSdk } = {}) {
+async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoadSdk, skillConnection, skillSpaceIds } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'studio-component-host-')), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot);
   const store = new SqliteRunStore(join(root, 'runs.sqlite'));
@@ -36,7 +37,8 @@ async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoa
     },
   } };
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id,
-    toolBindings: record.spec.bindings.tools, toolContracts: [] }, workspaceRoot, stateDir: join(root, 'state'),
+    toolBindings: record.spec.bindings.tools, toolContracts: [], ...(skillSpaceIds ? { skillSpaceIds } : {}) }, workspaceRoot, stateDir: join(root, 'state'),
+    ...(skillConnection ? { skillConnection } : {}),
     commandEnvironment: commandEnvironment ?? { MODEL_API_KEY: 'never-copy-this-key', KSADK_SKILL_RUNTIME_BACKEND: 'imagined-e2b' },
     ...(e2bLoadSdk ? { e2bLoadSdk } : {}) });
   const nativeRequests = [], originalForAgent = gateway.forAgent.bind(gateway), bound = new Map();
@@ -127,6 +129,26 @@ test('Host admits an explicit E2B configuration into its Build pin and component
   assert.deepEqual(h.gateway.commandBinding, binding);
   for (const secret of ['private-e2b-secret', 'changed-key']) assert.equal(JSON.stringify(saved).includes(secret), false);
   assert.match(saved.configuration.hostBindingDigest, /^[a-f0-9]{64}$/u);
+});
+
+test('Host pins the mounted remote Skill connection and projects actual bound spaces without claiming workflow execution', async t => {
+  const skillConnection = await createNativeSkillConnection({ configuration: { resolve: async () => ({ values: {
+    cloudAccessKey: 'private-skills-key', cloudSecretKey: 'private-skills-secret', cloudAccountId: 'private-skills-account',
+  } }) } });
+  const environment = { KSADK_PUBLIC_SKILL_SPACE_IDS: 'public-space' }, spaces = ['bound-space'];
+  const h = await setup(t, { commandEnvironment: environment, skillConnection, skillSpaceIds: spaces });
+  spaces.push('late-injection'); environment.KSADK_PUBLIC_SKILL_SPACE_IDS = 'late-injection';
+  await h.host.executeTurn(h.payload('remote-skills-session'));
+  const { result, saved, snapshot } = h.result('remote-skills-session');
+  assert.equal(snapshot.phase, 'completed'); assert.equal(result.summary.skill_space_bound, true);
+  assert.deepEqual(result.skill_space.space_ids, ['bound-space', 'public-space']);
+  assert.deepEqual(result.skill_space.user_space_ids, ['bound-space']);
+  assert.deepEqual(result.skill_space.public_space_ids, ['public-space']);
+  assert.deepEqual(result.skill_space.tools, ['list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills']);
+  assert.equal(result.skill_runtime.enabled, false);
+  assert.match(saved.configuration.hostBindingDigest, /^[a-f0-9]{64}$/u);
+  for (const privateValue of ['private-skills-key', 'private-skills-secret', 'private-skills-account', 'late-injection'])
+    assert.equal(JSON.stringify(saved).includes(privateValue), false);
 });
 
 test('overlapping sessions keep their own model/status snapshots through the shared gateway', async t => {

@@ -297,6 +297,9 @@ export class DshPresetAdmission {
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),
           ...(toolContracts.length ? { toolContracts } : {}),
           ...(skillDefinitions.length ? { skillDefinitions } : {}),
+          ...(nativeEngineContract && eligibility.runtime === 'harness' ? { skillSpaceIds: [...new Set((agent.spec.bindings?.plugins ?? [])
+            .filter(plugin => plugin.enabled !== false).map(plugin => plugin.config?.binding?.resource)
+            .filter(resource => resource?.kind === 'skill-space').map(resource => resource.id || resource.resourceId).filter(Boolean))] } : {}),
           ...(nativeEngineContract && eligibility.runtime === 'harness' && agent.spec.bindings?.a2a?.length
             ? { a2aBindings: structuredClone(agent.spec.bindings.a2a) } : {}),
           ...(nativeEngineContract && eligibility.runtime === 'harness' ? { subAgents: nativeChildRoles(agent.spec) } : {}),

@@ -590,3 +590,14 @@ DSH Native 和 Codex 的默认 builtin 组合现在直接提供 Node `sandbox_st
 在 Native 原始意图之外，真实网络发送前另写 fsynced marker 与本地管理句柄；远端 task/context 及时检查点，未知发送不重发。定向验证使用真实本机 HTTP、NativeKernel/SQLite 和双 Node 进程 SIGKILL；不以 registry double 冒充真实 DSH Host，不以数据库重开冒充进程强杀。具体范围、命令文件、安装配置和明确未迁能力见 [native-a2a.md](native-a2a.md)。
 
 尚未完成 A2A 整体迁移：真实 packed Host/历史/Frozen/deploy，产品核对/继续/远端取消，内部工作负载控制面与入站服务，远程编排暴露，以及 legacy DSH Native/Codex Python A2A 桥接替代仍待闭环。Input/auth pause 当前保留原检查点并中断等待，不冒充已支持续接。完整迁移仍未完成，工程完成度先前94%偏乐观，整体暂粗估85%～90%，不是测试通过率或验收完成率。
+
+## 远程 Skills 的 Host 接线与专用服务配置
+
+Native preset 的启用空间现挂载实际远程 Skills 工具，经原 Studio 权限管线调用服务和
+ZIP 加载器。Host 固定服务与凭据并把不透明摘要纳入恢复配置；默认 Studio 云端连接和
+显式自定义 REST 服务都可使用，REST 的单次目录协议与 KOP 分页明确区分。
+真实 HTTP、NativeKernel/SQLite 与 Host 组件状态的四个定向模块，在 Node 26.5.0 /
+22.19.0 各通过 57 项、无失败或跳过，契约类型检查通过；未运行全量套件。
+完整配置、证据边界与未完成能力见 [native-skills.md](native-skills.md)。
+当前 `execute_skills` 仍明确未启用；这次接线不表示工作流、全部 Frozen/部署入口、
+legacy Python bridge 替换或全新无 Python 安装已经完成。

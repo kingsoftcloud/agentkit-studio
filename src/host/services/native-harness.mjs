@@ -162,6 +162,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         commandBinding: binding.nativeTools.commandBinding ?? null,
         ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
         ...(binding.nativeTools.a2aBinding ? { a2aBinding: binding.nativeTools.a2aBinding } : {}),
+        ...(binding.nativeTools.remoteSkillBinding ? { remoteSkillBinding: binding.nativeTools.remoteSkillBinding } : {}),
         ...(visionDescription ? { visionModel: visionDescription } : {}),
         ...(binding.nativeTools.workspaceMutationContract ? { workspaceMutationContract: binding.nativeTools.workspaceMutationContract } : {}),
         workspaceSyntax: binding.nativeTools.workspaceSyntax ?? null });
@@ -266,6 +267,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const memoryProviderRef = memoryHost?.policy.providerRef ?? 'local-default';
       const componentBinding = binding.nativeTools.componentContract ? studioNativeComponentStatus({ record,
         modelName: selected.modelName, workspaceRoot, tools, commandBinding: binding.nativeTools.commandBinding,
+        remoteSkillBinding: binding.nativeTools.remoteSkillBinding,
         localMemoryBound: Boolean(memoryHost?.policy.enabled) }) : null;
       const toolPorts = binding.nativeTools.forAgent(agent, { scope, store,
         ...(componentBinding ? { componentBinding } : {}), ...(children ? { children } : {}) });
@@ -337,6 +339,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(componentBinding ? { componentBinding } : {}),
           ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
           ...(binding.nativeTools.a2aBinding ? { a2aBinding: binding.nativeTools.a2aBinding } : {}),
+          ...(binding.nativeTools.remoteSkillBinding ? { remoteSkillBinding: binding.nativeTools.remoteSkillBinding } : {}),
           ...(vision ? { visionBinding: vision.binding } : {}),
           mcpResultContract: binding.nativeTools.mcpResultContract ?? null,
           ...(binding.nativeTools.skillDisclosureBindingDigest ? { skillDisclosureBindingDigest: binding.nativeTools.skillDisclosureBindingDigest } : {}),

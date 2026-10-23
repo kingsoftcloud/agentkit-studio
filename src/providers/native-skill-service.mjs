@@ -4,9 +4,9 @@
 // and ksadk/skills/models.py (SkillListResponse, SkillRef, ContentHash) into
 // a Node adapter that wraps serverClient.skillAction(action, params, {signal}).
 //
-// The adapter assumes KOP pagination (PageNumber/PageSize/TotalCount), which
-// is the production AICP protocol. Legacy REST endpoints without pagination
-// are not inferred from missing TotalCount and are not exposed by this port.
+// The default is KOP pagination (PageNumber/PageSize/TotalCount). An explicit
+// Host-owned skillProtocol='rest' transport preserves the reference's single
+// request protocol; missing TotalCount never changes transport selection.
 // ListAvailablePremadeSkills is a single-call protocol
 // with no pagination (matching Python).
 //
@@ -21,8 +21,7 @@
 //   - Page budget exhaustion → page_budget_exhausted + nextPage
 //   - is_active: status empty or in {active, available, enabled}
 //
-// The Studio skillAction transport is explicitly KOP-only. Unlike Python's
-// generic SDK this adapter does not guess or offer a legacy REST transport.
+// The transport advertises REST explicitly; directory data cannot select it.
 // Cross-page version changes are reported as an incomplete directory; URLs
 // must be HTTPS at the shared Node archive-download boundary.
 
@@ -30,6 +29,7 @@ export function createNativeSkillService(serverClient) {
   if (!serverClient || typeof serverClient.skillAction !== 'function') {
     throw Object.assign(new Error('serverClient.skillAction is required'), { code: 'native_skill_service_client_invalid' });
   }
+  const legacyRest = serverClient.skillProtocol === 'rest';
 
   // --- ContentHash (models.py) ----------------------------------------------
 
@@ -176,6 +176,17 @@ export function createNativeSkillService(serverClient) {
   async function listSkillsBySpaceId(spaceId, { signal, assertCurrent, maxPages = 20 } = {}) {
     if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 1000) {
       throw Object.assign(new Error('Skill directory page budget must be 1..1000'), { code: 'SKILL_PAGE_BUDGET_INVALID' });
+    }
+
+    if (legacyRest) {
+      preCheck(signal, assertCurrent);
+      const payload = await serverClient.skillAction('ListSkillsBySpaceId', { SpaceId: spaceId }, { signal });
+      postCheck(signal, assertCurrent);
+      const result = parseListResponse(payload, spaceId);
+      if (result.spaceId !== spaceId) throw Object.assign(new Error('Skill directory does not match requested space'), { code: 'SKILL_SERVICE_INVALID_RESPONSE' });
+      const incomplete = result.totalCount !== null && result.totalCount > result.skills.length;
+      return { activeSkills: result.skills.filter(isSkillActive), spaceId, truncated: incomplete,
+        paginationWarning: incomplete ? 'pagination_unavailable' : '', totalCount: result.totalCount, allSkills: result.skills };
     }
 
     let skills = [];

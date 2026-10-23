@@ -159,10 +159,13 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // disabled. Register the capability; selection remains explicit per preset.
   {
     const { createNativeDshTools } = await import('../providers/native-dsh-tools.mjs');
+    const { createNativeSkillConnection } = await import('../providers/native-skill-host.mjs');
+    const skillConnection = await createNativeSkillConnection({ configuration: await configurationPromise, env: runtimeEnv, ...cloudEndpointOptions });
     ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config }) => createNativeDshTools({ ctx: toolsCtx, config,
       workspaceRoot, stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
       commandEnvironment: runtimeEnv,
+      skillConnection,
       executeMcpTool: request => bridge.executeResourceTool(request),
     })), 'agentkit-studio: Native tool environment');
   }

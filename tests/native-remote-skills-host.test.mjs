@@ -1,0 +1,185 @@
+// Production Native gateway + authenticated Node Skill Service + loader,
+// NativeKernel and SQLite. HTTP is real localhost; the explicit transport proxy
+// preserves/asserts the signed KOP request before routing to the local peer.
+// DSH's registry is a declared pipeline double, not a packed Host proof.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { canonical, NativeKernel, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { fixture, scope, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
+import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeSkillConnection, prepareNativeSkillHost } from '../src/providers/native-skill-host.mjs';
+import { createZip } from '../src/zip.mjs';
+
+const instructions = '---\nname: alpha\ndescription: Alpha task\n---\n# Alpha\nRead the supplied JSON.';
+const zip = createZip([{ name: 'SKILL.md', data: instructions }, { name: 'scripts/run.mjs', data: 'console.log(42)' }]);
+const sha = createHash('sha256').update(zip).digest('hex');
+const final = () => ({ kind: 'final_candidate', text: 'Done.', toolCalls: [], usage: emptyUsage() });
+async function setup(t, { wrongHash = false, denied = false, rest = false } = {}) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'remote-skills-host-'))), workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot);
+  const stateDir = join(root, 'state'), filename = join(root, 'runs.sqlite');
+  let store = new SqliteRunStore(filename), gateway, approvals = 0, modelCalls = 0;
+  const requests = [], outputs = [], registry = new Map(), agent = { session: { id: 'session' } };
+  const server = createServer((req, res) => {
+    requests.push({ url: req.url, headers: req.headers });
+    const saved = store.load(scope, 'run');
+    assert.equal(saved.snapshot.phase, 'executing_tools');
+    const intent = saved.intents.find(intent => intent.operationKey === saved.snapshot.pendingIntent);
+    assert.equal(intent.status, 'running'); assert.equal(intent.claimedFence, saved.lease.fence);
+    if (req.url.startsWith('/archive')) {
+      assert.equal(req.headers.authorization, undefined, 'cloud credentials cannot accompany archive downloads');
+      res.end(zip); return;
+    }
+    assert.equal(req.method, 'GET');
+    if (rest) {
+      assert.equal(req.headers.authorization, 'Bearer original-token');
+      assert.equal(req.headers['x-amz-date'], undefined);
+      assert.ok(req.url.startsWith('/api/v1/'));
+    } else assert.match(req.headers.authorization, /Credential=original-key\//u);
+    assert.equal(req.headers['x-ksc-account-id'], 'original-account');
+    const url = new URL(req.url, origin), action = rest ? url.pathname.split('/').at(-1) : url.searchParams.get('Action');
+    if (!rest) assert.equal(url.searchParams.get('Version'), '2024-06-12');
+    let data;
+    if (action === 'ListSkillSpaces') data = { SkillSpaces: [{ SkillSpaceId: 'space', SkillSpaceName: 'Bound' }] };
+    else if (action === 'ListSkillsBySpaceId') {
+      assert.equal(url.searchParams.get('SpaceId'), 'space');
+      assert.equal(url.searchParams.get('PageNumber'), rest ? null : '1');
+      data = { SkillSpaceId: 'space', TotalCount: 1, Skills: [{ SkillId: 'skill-alpha', VersionId: 'v1', Name: 'alpha',
+        Description: 'Alpha task', Status: 'active', ContentHash: `sha256:${wrongHash ? '0'.repeat(64) : sha}` }] };
+    } else {
+      assert.equal(action, 'GetSkillDownloadUrl'); assert.equal(url.searchParams.get('SkillId'), 'skill-alpha');
+      assert.equal(url.searchParams.get('VersionId'), 'v1');
+      data = { DownloadUrl: 'https://archive.example/alpha.zip?signature=private-download' };
+    }
+    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ Code: 0, Data: data }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const values = { cloudAccessKey: 'original-key', cloudSecretKey: 'original-secret', cloudAccountId: 'original-account',
+    cloudRegion: 'cn-beijing-6', cloudServerUrl: 'https://aicp.api.ksyun.com' };
+  const proxy = (value, init) => {
+    const url = new URL(value);
+    assert.equal(init.redirect, 'error');
+    assert.ok(url.hostname === 'aicp.api.ksyun.com' || url.hostname === 'archive.example' || rest && url.origin === origin);
+    return fetch(origin + (url.hostname === 'archive.example' ? '/archive' : url.pathname + url.search), init);
+  };
+  const env = rest ? { KSADK_SKILL_SERVICE_URL: `${origin}/docs`, KSADK_SKILL_SERVICE_TOKEN: 'original-token' } : {};
+  const connection = await createNativeSkillConnection({ configuration: { resolve: async () => ({ values }) }, env, fetchImpl: proxy });
+  if (rest) { env.KSADK_SKILL_SERVICE_URL = 'https://foreign.example'; env.KSADK_SKILL_SERVICE_TOKEN = 'changed-token'; }
+  // Prove activation pins source/account/credentials, rather than reading this
+  // same mutable object when a later model tool call eventually arrives.
+  values.cloudAccessKey = 'changed-key'; values.cloudAccountId = 'changed-account'; values.cloudServerUrl = 'https://foreign.example';
+  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'read-only' }) },
+    approval: { request: async () => { approvals++; return 'allowed-once'; } }, tools: {
+      register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
+      async execute(input) {
+        if (denied) return { isError: true, content: [{ type: 'text', text: 'Policy denied' }] };
+        const tool = registry.get(input.name);
+        try { const value = await tool.execute(input.arguments, input);
+          return { isError: false, value, content: tool.output.render(input.arguments, value) }; }
+        catch (error) { return { isError: true, content: [{ type: 'text', text: error.code ?? error.message }] }; }
+      },
+    } };
+  const config = { agentId: scope.agentId, agentRevision: 1, skillSpaceIds: ['space'] };
+  const bind = () => { gateway = createNativeDshTools({ ctx, config, workspaceRoot, stateDir,
+    commandEnvironment: {}, skillConnection: connection, skillFetch: proxy }); };
+  bind();
+  async function run(calls) {
+    const definitions = gateway.definitions(agent, [...registry.values()]);
+    const data = fixture({ tools: definitions, limits: { maxModelCalls: calls.length + 2, effectTimeoutMs: 920000 } });
+    const bound = gateway.forAgent(agent, { scope, store });
+    const kernel = new NativeKernel({ store, digest, owner: 'skills-host', ports: { ...bound,
+      model: { generate: async request => {
+        const previous = request.messages.filter(message => message.role === 'tool').at(-1);
+        // A policy denial is a valid plain-text tool message rather than the
+        // typed JSON receipt produced after entering an owned builtin body.
+        if (previous) outputs.push(previous.content.startsWith('{') ? JSON.parse(previous.content) : { text: previous.content });
+        const index = modelCalls++;
+        if (index >= calls.length) return final();
+        return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: `skill-call-${index}`,
+          name: calls[index][0], arguments: calls[index][1] ?? {} }] };
+      } },
+    } });
+    kernel.start(data.snapshot, data.config);
+    return kernel.runUntilIdle(scope, 'run');
+  }
+  t.after(async () => { await gateway.close(); store.close(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve)); rmSync(root, { recursive: true, force: true }); });
+  return { run, requests, outputs, root, config, connection, get approvals() { return approvals; }, get gateway() { return gateway; },
+    get store() { return store; }, async reopen() {
+      const original = canonical(store.load(scope, 'run')); const count = requests.length;
+      await gateway.close(); store.close(); store = new SqliteRunStore(filename); bind();
+      const kernel = new NativeKernel({ store, digest, owner: 'replacement', ports: {
+        model: { generate: () => assert.fail('completed recovery cannot call model') },
+        tools: { execute: () => assert.fail('completed recovery cannot call tools') },
+      } });
+      await kernel.runUntilIdle(scope, 'run');
+      assert.equal(canonical(store.load(scope, 'run')), original); assert.equal(requests.length, count);
+    } };
+}
+
+test('actual signed Skill Service and archive HTTP enter through Native gateway and restore without executing again', async t => {
+  const h = await setup(t);
+  const result = await h.run([
+    ['list_skill_spaces'], ['list_skills'], ['search_skills', { query: 'alpha' }],
+    ['preview_skill', { skill_name: 'alpha' }], ['load_skill', { skill_name: 'alpha' }],
+    ['execute_skills', { workflow_prompt: 'Use alpha' }],
+  ]);
+  assert.equal(result.phase, 'completed'); assert.equal(h.outputs.length, 6);
+  assert.equal(h.outputs[0].spaces[0].space_id, 'space'); assert.equal(h.outputs[1].skills[0].name, 'alpha');
+  assert.equal(h.outputs[2].results[0].name, 'alpha'); assert.equal(h.outputs[3].execution_context, 'manifest_preview');
+  const loaded = h.outputs[4]; assert.equal(loaded.ok, true); assert.equal(loaded.instructions, instructions);
+  assert.equal(loaded.version_id, 'v1'); assert.equal(loaded.skill_id, 'skill-alpha'); assert.equal(loaded.space_id, 'space');
+  assert.equal(readFileSync(join(loaded.root_dir, 'scripts/run.mjs'), 'utf8'), 'console.log(42)');
+  assert.equal(h.outputs[5].error_type, 'skill_runtime_unavailable'); assert.equal(h.approvals, 1);
+  assert.equal(h.requests.filter(row => row.url.startsWith('/archive')).length, 1);
+  assert.doesNotMatch(canonical(h.store.load(scope, 'run')), /original-secret|original-key|private-download/u);
+  assert.deepEqual(h.gateway.remoteSkillBinding.userSpaceIds, ['space']);
+  await h.reopen();
+});
+
+test('a corrupt remote Skill package fails hash verification without providing instructions', async t => {
+  const h = await setup(t, { wrongHash: true });
+  await h.run([['load_skill', { skill_name: 'alpha' }]]);
+  assert.equal(h.outputs[0].ok, false); assert.equal(h.outputs[0].error_type, 'SKILL_ARCHIVE_HASH_MISMATCH');
+  assert.equal(h.outputs[0].instructions, undefined);
+});
+
+test('Host-bound custom Skill Service preserves REST shape and pinned token through actual Native calls', async t => {
+  const h = await setup(t, { rest: true });
+  const result = await h.run([['list_skills'], ['load_skill', { skill_name: 'alpha' }]]);
+  assert.equal(result.phase, 'completed'); assert.equal(h.outputs[0].skills[0].name, 'alpha');
+  assert.equal(h.outputs[1].instructions, instructions);
+  assert.equal(h.requests.filter(row => row.url.startsWith('/archive')).length, 1);
+  assert.doesNotMatch(canonical(h.store.load(scope, 'run')), /original-token|changed-token|original-secret|private-download/u);
+  await h.reopen();
+});
+
+test('the DSH denial path never enters Skill Service or the archive loader', async t => {
+  const h = await setup(t, { denied: true }); const result = await h.run([['load_skill', { skill_name: 'alpha' }]]);
+  assert.equal(result.phase, 'completed'); assert.equal(h.requests.length, 0);
+  assert.match(canonical(h.store.load(scope, 'run').receipts), /Policy denied/u);
+});
+
+test('model arguments cannot choose a Skill Space outside the Host binding', async t => {
+  const h = await setup(t); await h.run([['list_skills', { space_id: 'foreign-space' }]]);
+  assert.equal(h.requests.length, 0); assert.equal(h.outputs[0].error_type, 'SKILL_SPACE_NOT_BOUND');
+});
+
+test('remote Skill mounting requires an actual connection, snapshots spaces, and participates in Host pinning', async () => {
+  const config = { agentId: 'agent', agentRevision: 1, skillSpaceIds: ['space'] };
+  assert.equal(prepareNativeSkillHost({ config: { agentId: 'agent' }, env: {} }), null);
+  assert.throws(() => prepareNativeSkillHost({ config, env: {} }), /NATIVE_SKILL_CONNECTION_REQUIRED/u);
+  const create = key => createNativeSkillConnection({ configuration: { resolve: async () => ({ values: { cloudAccessKey: key } }) } });
+  const first = await create('first'), second = await create('second');
+  assert.notEqual(first.bindingDigest, second.bindingDigest);
+  const prepared = prepareNativeSkillHost({ config, env: {}, connection: first });
+  config.skillSpaceIds.push('injected'); assert.deepEqual(prepared.binding.userSpaceIds, ['space']);
+  assert.equal(prepared.definitions.length, 6); assert.equal(prepared.binding.runtime.enabled, false); prepared.close();
+});

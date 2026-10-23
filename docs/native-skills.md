@@ -141,3 +141,50 @@ remain separate acceptance requirements.
 目录扫描通过有界迭代限制为 2048 项、64 层和全包 64 MiB，单次资源返回最多 32768 字节。来源固定原根目录对象，拒绝根及祖先、后代符号链接和特殊文件；文件通过 `O_NOFOLLOW`、文件描述符身份及大小、时间、模式复查读取。每次披露前后重验全包；未读取文件的新增、删除、修改和执行权限变化也会失效。合法 `__proto__` 文件名保留为真正的资源键，错误不会公开宿主绝对路径。inline Skill 只提供原指令和 manifest，没有资源文件。
 
 来源模块在 Node 26.5.0、22.19.0 各通过 31 项真实文件测试；独立探针另验证资源特殊键、规范 JSON 绑定重建、相同字节替换根目录和删除根后的路径脱敏。该模块尚未接入生产 Host 的正式四个披露工具或子任务 Skills 继承，当前证据不代表这些路径已完成。
+
+## 远程 Skill Service 的生产组装
+
+Native 整轮 Harness 现在按启用的 `skill-space` 资源绑定，以及 Host 的
+`KSADK_SKILL_SPACE_IDS`（兼容 `SKILL_SPACE_ID`）、`KSADK_PUBLIC_SKILL_SPACE_IDS`
+和 `KSADK_PUBLIC_SKILL_ALLOWLIST` 挂载六个正式工具：`list_skill_spaces`、
+`list_skills`、`search_skills`、`preview_skill`、`load_skill`、`execute_skills`。
+未绑定任何空间时不挂载这组工具。所有实际调用通过原 DSH 工具注册、权限与审批管线，
+同时核对原 Native Run 的 SQLite 执行意图、权限和有效执行者；模型不能自行指定未绑定的空间。
+
+`createNativeSkillConnection` 在 Host 启动时固定服务地址、区域、账户与凭据。
+无专用覆盖配置时复用 Studio 已有的云端 Skill GET 接口及内部账户回退；全局配置
+随后改变不会重定向已经接纳的连接，修改这些配置后须重启 Host。恢复绑定只保存
+不透明摘要，不保存 AK/SK、token 或签名下载 URL；连接摘要变化时须按原恢复规则
+重新核对，不能用新配置继续旧调用。
+
+专用覆盖保留 Python 参考实现的 `KSADK_SKILL_SERVICE_URL`、`ENDPOINT`、`SCHEME`、
+`TOKEN`、`ACCESS_KEY`、`SECRET_KEY`、`ACCOUNT_ID`、`REGION`、`API_VERSION`、
+`SIGN_SERVICE` 配置（后十项均使用 `KSADK_SKILL_SERVICE_` 前缀），以及现有 KSYUN/KS3
+凭据后备和显式 `KSADK_AICP_ENDPOINT_MODE=public|inner|internal`。
+未显式选择 endpoint 时使用 Studio 配置，不在每次工具调用时探测网络并改变来源。
+`pre-online` 固定为控制区域并保留 custom-source。
+
+只有精确的三个 AICP 官方域名获得 KOP 签名；自定义服务使用配置的专用 Bearer token，
+不向它签出全局云端 AK/SK，也不携带云端 session token。自定义 REST 的 `/docs`
+转为 `/api/v1`，`/openapi.json` 转为所在根路径。REST 目录请求只传 `SpaceId`，
+即使返回 100 项以上也不臆造分页；已知总数超过返回数量时报告
+`pagination_unavailable`。服务元数据按 UTF-8 字节有界读取，并响应原取消信号。
+
+加载端口下载真实 ZIP、检查 SHA-256 并使用现有安全原子包缓存。缓存位于工作区外，
+按完整 scope 和 Session 隔离；Host 与 Session 关闭会撤销各自端口。下载请求不继承
+服务认证头。组件状态如实显示已挂载工具和空间；**工作流执行后端仍未接入**，
+`execute_skills` 当前明确返回 `skill_runtime_unavailable`，不把指令加载当作执行成功。
+
+新增定向命令：
+
+```sh
+node --test tests/native-skill-connection.test.mjs tests/native-remote-skills-host.test.mjs \
+  tests/native-skill-service.test.mjs tests/studio-native-components.test.mjs
+```
+
+Node 26.5.0 / 22.19.0 各 57 项通过、无失败或跳过。实际本机 HTTP 请求通过生产
+gateway、签名连接、加载器、NativeKernel 与 SQLite；DSH registry 是明确的测试替身。
+Host 状态测试使用实际 Host 服务和账本，模型/会话传输边界有明确替身。
+冷验证是 SQLite 重开，不能当作新 Host PID 证明。尚待完整工作流本地/E2B 执行、
+实际打包 Host 的远程 Skills 与进程恢复、Frozen 配置与目标独立执行，以及全新无 Python
+安装验收。本文早先各阶段的“尚未接入”描述只代表当时证据，不替代当前完整验收。
