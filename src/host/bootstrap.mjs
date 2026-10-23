@@ -194,6 +194,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     })), 'agentkit-studio: Native tool environment');
   }
   let nativeHostPromise;
+  let dshA2aPromise;
+  const dshA2aControls = () => dshA2aPromise ||= ownAsyncResource(ctx,
+    Promise.all([import('./services/dsh-a2a-control.mjs'), import('@deepseek-ai/dsh-agent')])
+      .then(([{ createStudioDshA2aControls }, { agentEvents }]) => createStudioDshA2aControls({ ctx, agentEvents, signal: bridge.signal })),
+    'agentkit-studio: DSH A2A controls');
   const nativeHost = () => nativeHostPromise ||= ownAsyncResource(ctx,
     Promise.all([import('./services/native-harness.mjs'), import('@deepseek-ai/dsh-system-prompt'), agentStorePromise, studioBuildPromise, resourceAdaptersPromise,
       import('@deepseek-ai/dsh-agent')])
@@ -396,6 +401,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission, getNativeHost: nativeHost,
+    getDshA2aControls: dshA2aControls,
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
   const getLegacyLocalConversationHandler = createLegacyLocalConversationFactory(ctx, services);

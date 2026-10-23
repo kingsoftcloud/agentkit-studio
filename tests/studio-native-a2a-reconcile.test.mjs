@@ -77,7 +77,9 @@ async function setup(t) {
     sessionController: { resolveAgent: async id => { assert.equal(id, session.id); return { agent }; } },
     sessionProjections: {
       register(value) { projections.set(value.key, value); return () => projections.delete(value.key); },
-      stateOf: (_, id) => id === 'agentPreset' ? preset : projections.has(id)
+      stateOf: (_, id) => id === 'agentPreset' ? preset : id === 'turnBoundary'
+        ? events.reduce((state, event) => event.type === 'turn/start' ? { lastTurn: event.data.turn, openTurnStartSeq: event.seq }
+          : event.type === 'turn/end' ? { ...state, openTurnStartSeq: null } : state, { lastTurn: 0, openTurnStartSeq: null }) : projections.has(id)
         ? events.reduce(projections.get(id).apply, projections.get(id).init()) : undefined,
     } };
   const ctx = { effect: install => install(), get: key => services[key], tools: {

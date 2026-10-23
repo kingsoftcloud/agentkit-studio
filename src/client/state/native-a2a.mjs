@@ -10,14 +10,19 @@ const rejectedBeforeEffect = new Set(['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A
 /** An uncertain response retains the exact command. Refresh is read-only;
  * sending a fresh prompt is never a recovery operation. */
 export function createNativeA2aTaskState({ hostRemote, task, commandId = () => globalThis.crypto.randomUUID() }) {
-  const identity = Object.fromEntries(['agentId', 'sessionId', 'runId', 'operationKey', 'callId'].map(key => [key, task[key]]));
+  const dsh = task.ownerKind === 'dsh';
+  const keys = dsh ? ['agentId', 'sessionId', 'agentRevision', 'buildId', 'operationKey', 'callId']
+    : ['agentId', 'sessionId', 'runId', 'operationKey', 'callId'];
+  const identity = Object.fromEntries(keys.map(key => [key, task[key]]));
+  const control = dsh ? hostRemote.controlDshA2aTask : hostRemote.controlNativeA2aTask;
   const lifetime = new AbortController(), listeners = new Set(); let disposed = false;
   let state = { task: null, loading: false, sending: false, pending: null, outcome: '', error: '' };
   const set = update => { if (!disposed) { state = { ...state, ...update }; for (const listener of listeners) listener(state); } };
   const validate = value => {
     const locator = value?.operation_locator;
-    check(value?.contract === 'agentkit.studio-a2a-task-control/v1' && locator?.scope?.agentId === identity.agentId
-      && ['sessionId', 'runId', 'operationKey', 'callId'].every(key => locator[key] === identity[key])
+    check(value?.contract === 'agentkit.studio-a2a-task-control/v1' && (dsh
+      ? keys.every(key => locator?.[key] === identity[key]) && !['scope', 'runId', 'executionFence'].some(key => Object.hasOwn(locator, key))
+      : locator?.scope?.agentId === identity.agentId && ['sessionId', 'runId', 'operationKey', 'callId'].every(key => locator[key] === identity[key]))
       && typeof value.bindingDigest === 'string' && /^[a-f0-9]{64}$/u.test(value.bindingDigest)
       && (!state.task || state.task.bindingDigest === value.bindingDigest)
       && typeof value.task_id === 'string' && value.task_id.length > 0
@@ -32,7 +37,7 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
     if (disposed || state.sending || state.loading || !state.pending) return;
     const pending = structuredClone(state.pending); set({ sending: true, error: '' });
     try {
-      const result = validate(await hostRemote.controlNativeA2aTask(pending, lifetime.signal));
+      const result = validate(await control(pending, lifetime.signal));
       check(result.commandId === pending.commandId, '远端任务命令回执不一致。');
       const unknown = ['unknown', 'cancel_requested_but_remote_unknown'].includes(result.outcome);
       set({ task: result, pending: unknown ? pending : null, outcome: result.outcome });
@@ -49,7 +54,7 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
     set({ loading: true, error: '' });
     try {
       const request = { ...identity, kind: 'get', commandId: commandId() };
-      const result = validate(await hostRemote.controlNativeA2aTask(request, lifetime.signal));
+      const result = validate(await control(request, lifetime.signal));
       check(result.commandId === request.commandId, '远端任务查询回执不一致。');
       const pending = state.pending;
       set({ task: result, pending: pending && !ended.has(result.state)

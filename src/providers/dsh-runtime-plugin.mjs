@@ -102,6 +102,7 @@ function registerBuiltinTools(ctx, contracts, config, bridge) {
   };
   if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: builtin tool bindings');
   else install();
+  return nodeTools;
 }
 
 function registerMcpTools(ctx, contracts, config, bridge) {
@@ -211,7 +212,7 @@ export function apply(ctx, config = {}) {
   }
   const wholeNativeTurn = config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT;
   const nativeToolBindings = wholeNativeTurn ? bridge.createNativeTools({ ctx, config }) : null;
-  if (!wholeNativeTurn) registerBuiltinTools(ctx, config.toolContracts, config, bridge);
+  const builtinToolBindings = !wholeNativeTurn ? registerBuiltinTools(ctx, config.toolContracts, config, bridge) : null;
   if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, [...toolNames(config.toolBindings),
     ...(!wholeNativeTurn && config.a2aBindings?.length ? nativeA2aToolDefinitions().map(tool => tool.name) : [])]);
@@ -234,6 +235,12 @@ export function apply(ctx, config = {}) {
     return { agentId, runtime: config.runtime, local: true,
       agentRevision: config.agentRevision, ...(config.buildId ? { buildId: config.buildId } : {}),
       nativeEngineContract: config.nativeEngineContract, nativeTools: nativeToolBindings };
+  });
+  if (!wholeNativeTurn && config.local === true && config.a2aBindings?.length) ctx.on('agentkit/dsh-a2a-binding', async () => {
+    if (config.resourcesUnavailable) throw Object.assign(new Error('A2A resources unavailable'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    return { contract: 'agentkit.studio-dsh-a2a-binding/v1', agentId, runtime: config.runtime, local: true,
+      agentRevision: config.agentRevision, buildId: config.buildId ?? null, tools: builtinToolBindings };
   });
   // The Agent loop dispatches its request waterfall through the selected Agent
   // scope, then invokes `llm.stream` from the root loop context. Bind the

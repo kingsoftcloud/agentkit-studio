@@ -2,6 +2,7 @@ import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
 import { createNativeChildrenState } from '../state/native-children.mjs';
 import { createNativeRecoveryState } from '../state/native-recovery.mjs';
 import { createNativeA2aPanel } from './native-a2a.mjs';
+import { createDshA2aPanel } from './dsh-a2a.mjs';
 
 const phases = { created: '已准备', preparing: '准备中', requesting_model: '推理中', requesting_context: '整理上下文',
   requesting_input: '读取输入', executing_tools: '执行工具', awaiting_interaction: '等待审批', paused: '已暂停',
@@ -11,6 +12,7 @@ const phases = { created: '已准备', preparing: '准备中', requesting_model:
 export function createNativeChildPanel({ ui: { React: { createElement: h, useEffect, useState, Fragment }, ResourceDialog, buttonStyle },
   hostRemote, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
   const A2aTask = createNativeA2aPanel({ React: { createElement: h, useEffect, useState }, hostRemote, buttonStyle });
+  const DshA2aPanel = createDshA2aPanel({ ui: { React: { createElement: h, useEffect, useState, Fragment }, ResourceDialog, buttonStyle }, hostRemote });
   function TaskPanel({ agentId, sessionId }) {
     const [controller, setController] = useState(null), [state, setState] = useState({ page: null, detail: null }), [open, setOpen] = useState(false);
     const [drafts, setDrafts] = useState({});
@@ -93,11 +95,13 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
           if (!next.items?.length) break; items.push(...next.items);
         }
         const id = agentFromSessionPreset(presetId, items), found = items.find(item => item.metadata?.id === id);
-        if (active && found?.metadata?.local === true && found.spec?.runtime?.type === 'harness') setAgent({ id: found.metadata.id, sessionId, presetId });
+        if (active && found?.metadata?.local === true && ['dsh-native', 'harness', 'codex'].includes(found.spec?.runtime?.type))
+          setAgent({ id: found.metadata.id, runtime: found.spec.runtime.type, sessionId, presetId });
       })().catch(() => {});
       return () => { active = false; };
     }, [sessionId, presetId]);
     return agent?.sessionId === sessionId && agent?.presetId === presetId
-      ? h(TaskPanel, { key: `${agent.id}:${sessionId}`, agentId: agent.id, sessionId }) : null;
+      ? h(Fragment, null, agent.runtime === 'harness' ? h(TaskPanel, { key: `${agent.id}:${sessionId}`, agentId: agent.id, sessionId }) : null,
+        h(DshA2aPanel, { key: `a2a:${agent.id}:${sessionId}`, agentId: agent.id, sessionId })) : null;
   };
 }

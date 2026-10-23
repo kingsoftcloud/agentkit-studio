@@ -14,7 +14,7 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
     useEffect(() => {
       const next = createNativeA2aTaskState({ hostRemote, task }); setController(next); setState(next.getSnapshot());
       const stop = next.subscribe(setState); return () => { stop(); next.dispose(); };
-    }, [task.agentId, task.sessionId, task.runId, task.operationKey, task.callId]);
+    }, [task.agentId, task.sessionId, task.runId, task.operationKey, task.callId, task.ownerKind, task.agentRevision, task.buildId]);
     const send = () => {
       try {
         if (json) JSON.parse(text); // Syntax only; the original bytes go to the Host's exact JSON parser.
@@ -41,10 +41,14 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
         h('textarea', { 'aria-label': '补充输入内容', value: text, onChange: event => setText(event.target.value), disabled: busy || Boolean(state.pending) }),
         h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending) || !text.trim(), onClick: send }, '提交补充输入'),
         inputError ? h('p', { role: 'alert' }, inputError) : null) : null,
-      h('p', { style: { fontSize: '12px' } }, '此处操作原远端任务。任务结束后，可在原运行恢复区点击“核对结果并继续原运行”。'),
+      h('p', { style: { fontSize: '12px' } }, task.ownerKind === 'dsh'
+        ? '此处操作原远端任务，不会重新发送模型提示，也不会改写已封存的工具回执。'
+        : '此处操作原远端任务。任务结束后，可在原运行恢复区点击“核对结果并继续原运行”。'),
       value?.output_refs?.length ? h('details', null, h('summary', null, '远端任务输出'),
         ...value.output_refs.map(ref => h('pre', { key: `${ref.scope_id}:${ref.item_id}`, style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } },
           Object.values(value.snapshots?.[`${ref.scope_id}:${ref.item_id}`] ?? {}).join('\n')))) : null,
-      h('details', null, h('summary', null, '原调用标识'), h('p', null, task.runId), h('p', null, task.callId)));
+      h('details', null, h('summary', null, '原调用标识'),
+        task.ownerKind === 'dsh' ? h('p', null, `Agent 版本：${task.agentRevision}${task.buildId ? ` · Build：${task.buildId}` : ''}`) : h('p', null, task.runId),
+        h('p', null, task.callId)));
   };
 }

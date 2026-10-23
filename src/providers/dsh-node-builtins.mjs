@@ -103,6 +103,12 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
   return { contract: 'agentkit.dsh-node-builtins/v1',
     get definitions() { return ports.flatMap(port => port.definitions.map(definition => copy(definition))); },
     supports: name => owners.has(name),
+    a2aTaskHistory(request, assertCurrent) {
+      invariant(a2a, 'DSH_A2A_UNAVAILABLE'); return a2a.taskHistory(request, assertCurrent);
+    },
+    controlA2aTask(request, authority) {
+      invariant(a2a, 'DSH_A2A_UNAVAILABLE'); return a2a.controlTask(request, authority);
+    },
     execute(name, args, exec) {
       invariant(owners.has(name), 'dsh_node_builtin_unbound');
       return owners.get(name).execute(name, args, exec);

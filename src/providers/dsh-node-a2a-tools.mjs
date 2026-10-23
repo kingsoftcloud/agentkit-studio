@@ -2,6 +2,7 @@
  * durable before resolution/dispatch; the shared transport checkpoints the
  * original remote task. Neither unknown receipt permits another SendMessage. */
 import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
 import { canonical, copy, invariant, toolInputRejection } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createDshA2aToolPort, nativeA2aToolDefinitions } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { prepareDshA2AHost } from './native-a2a-host.mjs';
@@ -43,9 +44,49 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
     if (!sessions.has(sessionId)) sessions.set(sessionId, new DshNodeCommandLedger({ root: state.root, agentId, sessionId, assertRoot: state.guard }));
     return sessions.get(sessionId);
   };
+  const ownedCall = (ledger, callId) => {
+    let record;
+    try { record = ledger.read(ledger.entry(callId)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    invariant(record?.request.call.name === 'call_a2a_agent'
+      && record.request.operationKey === `dsh-a2a:${callId}` && canonical(record.binding) === canonical(binding), 'DSH_A2A_CALL_NOT_OWNED');
+    return record;
+  };
   let closing;
   return { contract: DSH_NODE_A2A_CONTRACT,
     get binding() { return copy(binding); }, get definitions() { return copy(definitions); }, supports: name => formal.has(name),
+    taskHistory({ sessionId, offset = 0, limit = 64, inventoryDigest }, assertCurrent) {
+      assertOpen(); invariant(typeof sessionId === 'string' && sessionId.trim() && sessionId.length <= 256
+        && Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 64
+        && typeof assertCurrent === 'function' && assertCurrent() === true, 'DSH_A2A_HISTORY_INVALID');
+      const ledger = sessionFor(sessionId), tasks = [];
+      for (const name of readdirSync(ledger.root).filter(name => /^[a-f0-9]{64}$/u.test(name)).sort()) {
+        const record = ledger.read(join(ledger.root, name));
+        if (!record || record.request.call.name !== 'call_a2a_agent') continue;
+        invariant(record.request.operationKey === `dsh-a2a:${record.request.call.callId}`, 'DSH_A2A_CALL_NOT_OWNED');
+        tasks.push({ agentId, sessionId, agentRevision: record.request.agentRevision, buildId: record.request.buildId,
+          operationKey: record.request.operationKey, callId: record.request.call.callId });
+      }
+      const digest = commandDigest(tasks);
+      invariant(inventoryDigest === undefined || inventoryDigest === digest, 'DSH_A2A_INVENTORY_CHANGED');
+      assertOpen(); invariant(assertCurrent() === true, 'DSH_A2A_CONTROL_AUTHORITY_LOST');
+      return { contract: 'agentkit.studio-dsh-a2a-inventory/v1', applicable: true, agentId, sessionId,
+        inventoryDigest: digest, offset, total: tasks.length, complete: offset + limit >= tasks.length, items: tasks.slice(offset, offset + limit) };
+    },
+    async controlTask({ sessionId, callId, agentRevision: revision, buildId: build, ...input }, { assertCurrent, authorizeControl }) {
+      assertOpen(); invariant(prepared && typeof sessionId === 'string' && sessionId.trim() && sessionId.length <= 256
+        && typeof callId === 'string' && callId.trim() && callId.length <= 256 && revision === agentRevision && build === buildId
+        && typeof assertCurrent === 'function' && typeof authorizeControl === 'function' && assertCurrent() === true, 'DSH_A2A_CONTROL_INVALID');
+      const ledger = sessionFor(sessionId), record = ownedCall(ledger, callId);
+      const owner = prepared.forSession({ agentId, agentRevision, buildId, sessionId, workspaceRoot: state.workspace,
+        stateRoot: join(ledger.root, 'remote-calls'), assertCurrent: () => false,
+        assertControl: () => { assertOpen(); ownedCall(ledger, callId); return assertCurrent(); }, authorizeControl });
+      owners.add(owner);
+      try {
+        return await owner.control.execute({ ...input, signal: AbortSignal.any([input.signal, ownerSignal]),
+          operation_locator: { agentId, agentRevision, buildId, sessionId, operationKey: record.request.operationKey, callId } });
+      } finally { owner.close(); owners.delete(owner); }
+    },
     close() {
       if (closing) return closing;
       lifetime.abort(); for (const owner of owners) owner.close(); owners.clear(); sessions.clear();

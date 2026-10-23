@@ -9,9 +9,9 @@ import { createHostRouteFixture, normalizeRouteValue, compactRouteCalls } from '
 const recording = JSON.parse(await readFile(new URL('./fixtures/host-route-contracts.json', import.meta.url), 'utf8'));
 assert.equal(recording.baselineCommit, 'c6f97fbf36351875967fbb2ce30dc0097a8ebf63');
 const legacyIds = [...new Set(recording.cases.map(item => item.endpoint))].sort();
-// Native controls are new operations, verified by the live Host and SDK
-// tests; they did not exist in this fixed legacy recording.
-assert.deepEqual(legacyIds, [...STUDIO_OPERATION_IDS].filter(id => !/^(templates|platform|teams|team-templates|template-resources|template-workflows)\//.test(id)).filter(id => !['agents/execution-policy', 'schedules/delivery-targets', 'host/compatibility', 'host/computer', 'assistant/catalog', 'assistant/close', 'assistant/execute', 'assistant/setup-options', 'assistant/setup-start', 'assistant/setup-status', 'sessions/native-child-tasks', 'sessions/native-child-promote', 'sessions/native-child-history', 'sessions/native-child-result', 'sessions/native-child-send', 'sessions/native-child-cancel', 'sessions/native-recovery-status', 'sessions/native-recovery-resume', 'sessions/native-recovery-reconcile', 'sessions/native-a2a-control'].includes(id)).sort());
+// Native and DSH task controls are new operations with separate product-route
+// tests and mounted Host verification; absent from this fixed legacy recording.
+assert.deepEqual(legacyIds, [...STUDIO_OPERATION_IDS].filter(id => !/^(templates|platform|teams|team-templates|template-resources|template-workflows)\//.test(id)).filter(id => !['agents/execution-policy', 'schedules/delivery-targets', 'host/compatibility', 'host/computer', 'assistant/catalog', 'assistant/close', 'assistant/execute', 'assistant/setup-options', 'assistant/setup-start', 'assistant/setup-status', 'sessions/native-child-tasks', 'sessions/native-child-promote', 'sessions/native-child-history', 'sessions/native-child-result', 'sessions/native-child-send', 'sessions/native-child-cancel', 'sessions/native-recovery-status', 'sessions/native-recovery-resume', 'sessions/native-recovery-reconcile', 'sessions/native-a2a-control', 'sessions/dsh-a2a-history', 'sessions/dsh-a2a-control'].includes(id)).sort());
 for (const item of recording.cases) {
   test(`${item.endpoint}: ${item.mode} retains fixed-ref envelope and adapter calls`, async () => {
     const fixture = createHostRouteFixture(item.mode);

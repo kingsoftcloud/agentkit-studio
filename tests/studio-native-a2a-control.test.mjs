@@ -52,7 +52,8 @@ async function setup(t, { expectedAnswer = 42 } = {}) {
       return { isError: false, value, content: tool.output.render(exec.arguments, value) }; },
   } };
   const services = { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
-    sessionProjections: { stateOf: () => 'actual-preset' },
+    sessions: { flush: async () => true },
+    sessionProjections: { stateOf: (_session, name) => name === 'turnBoundary' ? { lastTurn: 1, openTurnStartSeq: 0 } : 'actual-preset' },
     sessionController: { resolveAgent: async id => { assert.equal(id, 'session'); return { agent }; } },
     approval: { request: async request => { approvals++; approvalRequests.push(request); return decision; } } };
   const config = { agentId: 'agent', a2aBindings: [{ local_name: 'remote', binding_id: 'binding', space_id: 'space',

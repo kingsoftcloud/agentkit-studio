@@ -228,8 +228,9 @@ Still required for full migration:
   manual original-task API/panel and explicit same-Run receipt reconciliation
   are implemented, including full mounted-Host busy cancellation and cold
   recovery evidence. Input/auth pauses require those explicit controls and
-  subsequent receipt reconciliation. Independent DSH owners have the
-  shared control transport, but DSH/Codex product controls remain to be wired.
+  subsequent receipt reconciliation. DSH/Codex have authenticated product
+  controls and local task inventory as described below; real browser and
+  live human/service acceptance remain separate.
 - Pre-send local cancellation semantics and required task stream subscriptions;
   busy-call durable cancellation delivery is now covered above.
 - Internal workload Actions, projected workload tokens, permits/credential
@@ -286,9 +287,10 @@ HTTP+JSON, UTF-8 chunk boundaries/duplicate event IDs, exact durable ordering,
 policy/identity/version drift, concurrent duplicates, caller/Host/timeout
 interruption, actual SIGKILL and a different Node PID opening the same records.
 This deterministic peer is not an online managed service. Remaining product
-inspect/reconcile/continue/cancel, auth/input pauses, inbound/internal control
+receipt reconciliation, automatic auth/input waiters, inbound/internal control
 plane, remote orchestration, Frozen deployment and fresh-install gates above
-still apply. Other builtin tools still retain Python fallback.
+still apply. Ordinary local builtin dispatch uses Node ports and fails closed
+when a required executor is absent.
 
 The packed production Host verifier now exercises both DSH runtimes through
 their real preset/SessionController/ToolRegistry, including policy denial,
@@ -302,3 +304,43 @@ whole-turn Native A2A checks. Native's deterministic model executes exactly
 two model requests, one discovery and one send; cold recovery preserves
 those counts and the complete Run record. These checks use a fixed installed
 dependency graph; fresh installation and DSH/Codex model/CLI remain separate.
+
+## Studio controls for DSH and Codex tasks
+
+Local DSH Native and Codex conversations expose **A2A 远端任务** in the header.
+The inventory reads only original local call records, with 64-item pages and
+an inventory digest. Opening or refreshing it never discovers a peer or sends
+GetTask. Choose an individual task to inspect its remote state, provide input
+or cancel. Native whole-turn Runs retain their **运行与子任务** controls.
+
+Authenticated operations `sessions/dsh-a2a-history` and
+`sessions/dsh-a2a-control` use `agentkit.studio-dsh-a2a-inventory/v1` and the
+shared task-control response. Their identity is the original Agent, Session,
+call, Agent revision and Build; callers cannot supply a Native Run or scope,
+authority, remote URL or credentials. Inspection may expose historical
+revisions; effects require the exact current original binding. Original DSH
+tool receipts remain immutable when the remote task is continued or canceled.
+
+Every new write requires exact-command approval, including workspace-write.
+With a closed conversation, the Host owns a separate
+`agentkit.a2a-human-control/v1` external turn, flushes ownership before asking,
+and commits the approval audit and turn ending before returning a grant.
+No model call or replacement Native Run is created. An interrupted approval
+turn is resumed only by explicit control under the same preset and asks fresh
+consent. The remote command ledger still determines whether any effect may be
+sent; confirming an entered or finished command never resends it or asks again.
+During an original open turn, approval uses that audit log; if the turn closes
+while consent is pending, the grant is discarded and the operation must be
+confirmed again. Host retirement, request cancellation, policy or binding drift,
+and failed durability checks prevent a new effect.
+
+`verify-studio-dsh-a2a-controls.mjs --source <built-maintained-Host> --archive
+<Studio.tgz> --keep` exercises the packed production preset, ToolRegistry,
+SessionController, ApprovalService and authenticated routes for DSH Native and
+Codex, including a closed-history continuation, busy cancellation, cold audit
+restoration and duplicate confirmation. Add `--crash-approval` to kill the Host
+while approval is pending, resume the same owned approval turn in a new PID,
+ask fresh consent and confirm exactly one continuation. These checks use a
+controlled HTTP peer/answerer, Node-only PATH and existing linked dependencies;
+they do not prove real browser/human, model/CLI, online service, Electron,
+Frozen deployment or a fresh installation.

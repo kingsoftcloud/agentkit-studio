@@ -130,7 +130,10 @@ for (const [name, create] of [
   await remote.promoteNativeChild({ ...input, runId: 'parent', childRunId: 'child', commandId: 'one' }, signal);
   await remote.sendNativeChildInput({ ...input, runId: 'parent', childRunId: 'child', commandId: 'two', text: 'guide', expectedGoalRevision: 0 }, signal);
   await remote.cancelNativeChild({ ...input, runId: 'parent', childRunId: 'child', commandId: 'three' }, signal);
-  assert.deepEqual(calls.map(call => call[1]), ['sessions/native-child-history', 'sessions/native-child-result', 'sessions/native-child-promote', 'sessions/native-child-send', 'sessions/native-child-cancel']);
+  await remote.dshA2aTaskHistory(input, signal);
+  await remote.controlDshA2aTask({ ...input, agentRevision: 1, buildId: null, operationKey: 'dsh-a2a:call', callId: 'call', commandId: 'four', kind: 'cancel' }, signal);
+  assert.deepEqual(calls.map(call => call[1]), ['sessions/native-child-history', 'sessions/native-child-result', 'sessions/native-child-promote', 'sessions/native-child-send', 'sessions/native-child-cancel',
+    'sessions/dsh-a2a-history', 'sessions/dsh-a2a-control']);
   assert.ok(calls.every(call => call[0] === '/agentkit' && call[3] === signal));
 });
 
@@ -173,7 +176,12 @@ test('the actual header panel renders saved history, reads results and exposes o
         nextOffset: [...'<script>untrusted task prose</script>'].length, totalChars: [...'<script>untrusted task prose</script>'].length, resultDigest: 'c'.repeat(64) }; },
     } });
   const outer = hooks(Panel, dispatcher), props = { sessionId: 'session', useSessions: select => select({ byId: { session: { projectionValues: { agentPreset: 'agentkit-studio-agent-local-agent-r1-hash' } } } }) };
-  outer.render(props); await tick(); const mounted = outer.render(props); assert.equal(typeof mounted.type, 'function');
+  outer.render(props); await tick(); const header = outer.render(props);
+  assert.equal(header.type, 'fragment'); assert.equal(header.children.length, 2);
+  const [mounted, remoteTasks] = header.children;
+  assert.equal(typeof mounted.type, 'function'); assert.equal(typeof remoteTasks.type, 'function');
+  assert.deepEqual([mounted.props.agentId, remoteTasks.props.agentId], ['local-agent', 'local-agent']);
+  assert.deepEqual([mounted.props.sessionId, remoteTasks.props.sessionId], ['session', 'session']);
   const child = hooks(mounted.type, dispatcher); child.render(mounted.props);
   let tree = child.render(mounted.props); walk(tree).find(node => node.type === 'button' && node.children.includes('运行与子任务')).props.onClick();
   child.render(mounted.props); await tick(); tree = child.render(mounted.props);

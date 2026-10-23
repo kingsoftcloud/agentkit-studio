@@ -4,6 +4,7 @@ import { canonical, copy, invariant, parseNativeJson } from '../../../packages/a
 import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 import { createHash } from 'node:crypto';
+import { requestStudioA2aApproval } from './a2a-control-approval.mjs';
 
 const id = value => typeof value === 'string' && value.trim() && value.length <= 256;
 export function validateNativeA2aControlRequest(request) {
@@ -61,7 +62,7 @@ export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime
           sessionId: original.sessionId, runId: original.runId, agentRevision: capsule.agentRevision, buildId: capsule.buildId },
         ...(inputParts !== undefined ? { parts: inputParts, pauseDigest: original.pauseDigest } : {}), signal }, {
         assertControl,
-        authorizeControl: async ({ task, spec, command, readOnly }) => {
+        authorizeControl: async ({ task, spec, command, readOnly, signal: consentSignal }) => {
           assertControl();
           if (readOnly) return 'allow';
           const policy = ctx.get('sandboxPolicy'), approval = ctx.get('approval');
@@ -72,11 +73,12 @@ export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime
           // Human remote-task controls always require exact-command consent,
           // including under workspace-write. They do not inherit the original
           // model tool's policy result or a standing filesystem write grant.
-          const outcome = await approval.request({ agent, toolName: `a2a_${original.kind}_task`,
-            callId: `a2a-control:${createHash('sha256').update(canonical({ locator, commandId: original.commandId })).digest('hex')}`, signal,
+          const outcome = await requestStudioA2aApproval({ ctx, agent, presetId, assertCurrent: assertControl,
+            request: { agent, toolName: `a2a_${original.kind}_task`,
+            callId: `a2a-control:${createHash('sha256').update(canonical({ locator, commandId: original.commandId })).digest('hex')}`, signal: consentSignal,
             reason: canonical({ action: original.kind, target: spec.local_name, targetAgentId: spec.target_agent_id,
               taskId: task.task_id, remoteTaskId: task.remote_task_id, commandId: original.commandId,
-              parts: command.parts }) });
+              parts: command.parts }) } });
           assertControl(); checkPolicy();
           invariant(typeof ctx.get('approval')?.request === 'function', 'STUDIO_NATIVE_A2A_PERMISSION_UNAVAILABLE');
           const currentBinding = await awaitA2aControl(() => agentEvents(ctx, agent).serial('agentkit/native-recovery-binding', {}), signal);
