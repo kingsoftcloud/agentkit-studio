@@ -531,7 +531,11 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 
 每个 Session 的正式浏览器工具超时包含截图与观察模型耗时，并在 Kernel、DSH gateway 和 browser owner 使用同一份完整 formal；其他字段仍严格相等。最终交付模型保留从 1 次增加到 2 次，受显式总预算上限约束；观察用量作为原工具回执中的后代资源扣减。取消之后返回的说明不写入后续调用的缓存。Frozen 导出会额外捕获该图片 profile 及独立的目标凭证引用，但不把它加入对话模型选择列表；配置保存/重开保留协议、上下文窗口、输出预算、请求超时与模型参数，禁止悄悄恢复默认值。
 
-定向证据包括实际 Host、NativeKernel、SQLite、ToolAuthority 和真实 ModelPort 的确定性 SSE 编解码；Revision/Frozen 入口分别完成主模型→截图工具→独立观察模型→主模型闭环，工具回执保存不可信说明与观察用量。包括请求漂移、关闭不合作 browser/model、晚拒绝、steering（含替换/不替换任务契约）、配置漂移、数据库重开后再次推进终态 Run、完整记录不变及 portable 导出/导入后删除源 store 的配置验证。测试中的 DSH Session 生命周期、registry 和截图 backend 使用明确替身；这些结果不代表实际 Chromium、完整打包 SDK 或在线图片模型验收。完整真实宿主和全新安装验收仍须补齐。
+定向证据包括实际 Host、NativeKernel、SQLite、ToolAuthority 和真实 ModelPort 的确定性 SSE 编解码；Revision/Frozen 入口分别完成主模型→截图工具→独立观察模型→主模型闭环，工具回执保存不可信说明与观察用量。包括请求漂移、关闭不合作 browser/model、晚拒绝、steering（含替换/不替换任务契约）、配置漂移、数据库重开后再次推进终态 Run、完整记录不变及 portable 导出/导入后删除源 store 的配置验证。这组定向测试中的 DSH Session 生命周期、registry 和截图 backend 使用明确替身。
+
+另有 `node scripts/verify-studio-native-vision.mjs --source <已构建维护 SDK> --archive <Studio.tgz> --chromium <浏览器可执行文件> --keep`：在 Node 26.5 和 22.19.0 下实际启动打包的生产 Host、完整 SDK preset/ToolRegistry/SessionController、NativeKernel/SQLite 和真实 Chromium。确定性 HTTP SSE 模型完成主模型→浏览器截图→图片观察模型→主模型闭环；精确核对两次主模型、一次观察模型和一次真实工具准入，以及主/后代用量、不可信说明、原浏览器事实和主模型不接收图片。关闭并确认原 Host PID 已退出后，用新 PID 恢复同一 Session 的历史；等待真实 preset 重组完成，确认原回答和完成事件可读，无新模型或工具调用，完整 `store.load` 记录及唯一 Run 不变。冷启动不重写原页面和配置，也不发送新 prompt。
+
+该打包验证仅将新测试 fixture 放入解包目录，生产代码来自已记录 SHA 的归档；依赖复用固定的已安装 Node/SDK 图，子进程 PATH 仅含 Node，Python bridge 配置不可用。这证明实际打包的本地 Vision 执行与历史读取边界，不能替代在线图片模型、浏览器 UI、全新依赖安装或所有 Frozen/部署路径验收。可选观察模型的作者界面仍需完善。
 
 ## Legacy DSH/Codex 的 Node Web 接入
 
