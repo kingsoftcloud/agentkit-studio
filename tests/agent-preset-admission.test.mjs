@@ -26,6 +26,10 @@ test('local presets pin public component bindings for DSH Native, Codex and Harn
     const config = preset.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin')).config;
     assert.deepEqual(config.componentBindings, { contract: 'agentkit.dsh-component-bindings/v1',
       knowledgeBaseBound: true, longTermMemoryBound: true, skillSpaceIds: ['space'] });
+    assert.deepEqual(config.knowledgeBindings, { contract: 'agentkit.studio-knowledge-bindings/v1', datasetIds: ['kb'] });
+    record.spec.bindings.plugins[2].config.binding.resource.id = 'changed-kb-after-admission';
+    assert.deepEqual(config.knowledgeBindings.datasetIds, ['kb']);
+    assert.equal(JSON.stringify(config.knowledgeBindings).includes('never-copy'), false);
     record.spec.bindings.plugins[0].config.binding.resource.id = 'edited-after-admission';
     assert.deepEqual(config.componentBindings.skillSpaceIds, ['space']);
     assert.equal(JSON.stringify(config.componentBindings).includes('never-copy'), false);

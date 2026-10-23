@@ -3,6 +3,10 @@
 Skill 管理的 Node 实现、持久化边界、验证范围与尚未闭环的行为差异见
 [Skill management checkpoint](native-skill-management.md)。该阶段不能视为完整无损迁移完成。
 
+模型可调用的 `search_knowledge_base` 已接入 Node 宿主及 Native、DSH Native/Codex，
+独立于原有上下文注入。配置快照、回执、验证范围及仍有的端点配置差异见
+[Knowledge tool checkpoint](native-knowledge-tools.md)。可选旧记忆工具仍待迁移。
+
 Studio 的 Native 整轮执行现在先通过 `Agent.externalTurns` 写入版本化 `turn/owner`，等待会话持久刷新，再创建 Native Run。归属记录包含原 scope、Session、轮次、Run、Build、前序 Run、任务链、完整冻结配置及摘要、原始输入和模型来源，不包含端口或模型凭证。刷新失败或超时不会执行模型和工具；取消发生在此窗口时，先保存原 Run 的取消命令。重建 Agent 保留原未结束轮次，认证接口 `sessions/native-recovery-status/resume` 由可信 Host 重新绑定端口并核对完整配置后独占同一轮次、推进同一 Run。会话“子任务”面板已有明确的“恢复原运行”操作，读取和刷新不会自动执行；重复恢复请求不会新建 Run。普通 DSH 轮次与 fork 继续原修复路径。普通 Revision 与 Frozen Build 的真实进程退出、认证冷恢复已验证，完整浏览器和全部产品恢复流程仍待验收。
 
 当前迁移尚未完成，Studio 的默认 Harness 仍沿用既有执行路径。生产 Host 已加入可显式启用的 Native 整轮执行与 Node 工作区工具组装；这不代表全部 Python 正式能力、各产品入口或安装方式已通过验收。

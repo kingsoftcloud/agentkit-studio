@@ -287,6 +287,16 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable Skil
   bridge.close();
 });
 
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable knowledge port never enters Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'knowledge-agent', runtime, local: true, toolBindings: ['search_knowledge_base'],
+    spawnImpl: () => assert.fail('Knowledge lookup cannot spawn Python') });
+  assert.equal(registered.length, 1);
+  await assert.rejects(registered[0].execute({}, {}), { code: 'KNOWLEDGE_NODE_PORT_UNAVAILABLE' }); bridge.close();
+});
+
 for (const runtime of ['dsh-native', 'codex']) test(`${runtime} explicit managed binding admits three A2A formals and rejects executor collisions`, () => {
   const bridge = createRuntimeBridge(), tools = [];
   const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,

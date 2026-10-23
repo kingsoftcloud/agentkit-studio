@@ -110,6 +110,7 @@ function createBuiltinExecutor(config = {}, nodeTools) {
     if (name === 'browser_inspect_workspace') throw builtinError('BROWSER_NODE_PORT_UNAVAILABLE', 'Node browser environment is unavailable');
     if (['skill_discover_github', 'skill_install', 'skill_bind_agent'].includes(name))
       throw builtinError('SKILL_MANAGEMENT_NODE_PORT_UNAVAILABLE', 'Node Skill management environment is unavailable');
+    if (name === 'search_knowledge_base') throw builtinError('KNOWLEDGE_NODE_PORT_UNAVAILABLE', 'Node knowledge environment is unavailable');
     if (name === SANDBOX_CODE_NAME) throw builtinError('SANDBOX_CODE_NODE_PORT_UNAVAILABLE', 'Node sandbox code environment is unavailable');
     const { signal } = exec, agentId = config.agentId;
     const timeoutMs = Math.min(3_600_000, Math.max(1_000, Number(contract.timeoutSeconds || 20) * 1000));

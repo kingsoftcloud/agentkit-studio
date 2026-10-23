@@ -14,6 +14,7 @@ import { NATIVE_DSH_TURN_CONTRACT } from '../packages/agentkit-harness/src/nativ
 import { selectedNativeBuildContract } from './build-engine.mjs';
 import { nativeChildRoles } from './providers/native-subagents.mjs';
 import { dshComponentBindings } from './providers/dsh-component-bindings.mjs';
+import { knowledgeBindings } from './knowledge-tools.mjs';
 
 function encodedId(value) {
   return encodeURIComponent(String(value))
@@ -290,7 +291,7 @@ export class DshPresetAdmission {
           agentId: eligibility.agentId,
           runtime: eligibility.runtime,
           local: eligibility.local,
-          ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec) } : {}),
+          ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec), knowledgeBindings: knowledgeBindings(agent.spec) } : {}),
           ...(resourcesUnavailable ? { resourcesUnavailable: true } : {}),
           ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
           ...(eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract

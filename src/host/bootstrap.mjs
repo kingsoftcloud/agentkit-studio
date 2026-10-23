@@ -156,13 +156,18 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const githubSkills = createGithubSkillSource({ fetchImpl: githubSkillSourceFetch });
   const getSkillManagement = agentId => createStudioSkillManagement({ workspaceRoot,
     stateDir: join(studioStoreDir, 'builtin-workspace'), agentId, skillDiscovery, agents: skillAgents, source: githubSkills });
+  const { createKnowledgeConnection, createStudioKnowledgeTools } = await import('../knowledge-tools.mjs');
+  const knowledgeConnection = await createKnowledgeConnection({ configuration: await configurationPromise, env: runtimeEnv,
+    serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || '', sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '', ...cloudEndpointOptions });
+  const getKnowledgeTools = config => createStudioKnowledgeTools({ agentId: config.agentId,
+    bindings: config.knowledgeBindings, connection: knowledgeConnection, env: runtimeEnv });
   {
     const { createDshNodeBuiltins } = await import('../providers/dsh-node-builtins.mjs');
     ctx.effect(() => bridge.setBuiltinToolsFactory(({ ctx: toolsCtx, config, isClosed, signal }) => createDshNodeBuiltins({
       ctx: toolsCtx, workspaceRoot, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
       isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
-      getSkillManagement,
+      getSkillManagement, getKnowledgeTools, knowledgeBindings: config.knowledgeBindings,
       toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
       skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [], a2aBindings: config.a2aBindings ?? [],
     })), 'agentkit-studio: Node builtin environment');
@@ -176,7 +181,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
       commandEnvironment: runtimeEnv,
       skillConnection,
-      getSkillManagement,
+      getSkillManagement, getKnowledgeTools,
       executeMcpTool: request => bridge.executeResourceTool(request),
     })), 'agentkit-studio: Native tool environment');
   }

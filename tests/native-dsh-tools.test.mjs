@@ -11,6 +11,37 @@ import { NATIVE_PYTHON_SYNTAX } from '../packages/agentkit-harness/src/native/py
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createSkillDiscovery } from '../src/skill-discovery.mjs';
 import { createStudioSkillManagement, SKILL_MANAGEMENT_CONTRACT } from '../src/skill-management.mjs';
+import { createStudioKnowledgeTools, knowledgeBindings } from '../src/knowledge-tools.mjs';
+
+test('actual Native kernel owns the knowledge intent, original read receipt and post-policy model view', async t => {
+  const name = 'search_knowledge_base', root = realpathSync(mkdtempSync(join(tmpdir(), 'native-knowledge-'))), workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close()); let calls = 0;
+  const knowledge = createStudioKnowledgeTools({ agentId: scope.agentId,
+    bindings: knowledgeBindings({ bindings: { plugins: [{ config: { binding: { resource: { kind: 'knowledge-base', id: 'kb' } } } }] } }),
+    connection: { bindingDigest: 'a'.repeat(64), client: { action: async (action, payload) => {
+      calls++; assert.equal(action, 'RetrieveKnowledge'); assert.equal(payload.Query, '完整查询😀');
+      const current = store.load(scope, 'run'), intent = current.intents.find(item => item.operationKey === current.snapshot.pendingIntent);
+      assert.equal(intent.status, 'running'); assert.equal(intent.kind, 'tool'); assert.equal(intent.claimedFence, current.lease.fence);
+      return { data: { Records: [{ Segment: { Content: '原始知识内容', Document: { Name: '来源文档' } } }] } };
+    } } } });
+  const h = setup(t, [name], [], { workspaceRoot, stateDir: join(root, 'state'), getKnowledgeTools: () => knowledge });
+  const original = h.ctx.tools.execute;
+  h.ctx.tools.execute = async request => ({ ...await original(request), content: [{ type: 'text', text: 'Host-filtered knowledge' }] });
+  const tools = h.gateway.definitions(h.agent, [...h.registry.values()]); assert.equal(tools[0].readOnly, true);
+  assert.equal(h.gateway.knowledgeBinding.datasetIds[0], 'kb');
+  const data = fixture({ tools, limits: { effectTimeoutMs: 200000 } }); let models = 0;
+  const kernel = new NativeKernel({ store, digest, owner: 'knowledge-worker', ports: { ...h.gateway.forAgent(h.agent, { scope, store }),
+    model: { generate: async request => {
+      if (++models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'knowledge-call', name, arguments: { query: '完整查询😀' } }] };
+      assert.equal(request.messages.at(-1).content, 'Host-filtered knowledge');
+      return { kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() };
+    } } } });
+  kernel.start(data.snapshot, data.config); assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+  const before = store.load(scope, 'run');
+  assert.ok(before.receipts.some(receipt => receipt.result.results?.some(item => item.content === '[1] (来源: 来源文档) 原始知识内容')));
+  await kernel.runUntilIdle(scope, 'run'); assert.deepEqual(store.load(scope, 'run'), before); assert.equal(calls, 1); assert.equal(models, 2);
+});
 test('only an owned lint builtin pins the workspace syntax engine', t => {
   assert.deepEqual(setup(t, ['lint_workspace_file']).gateway.workspaceSyntax, NATIVE_PYTHON_SYNTAX);
   assert.equal(setup(t).gateway.workspaceSyntax, null);

@@ -16,6 +16,8 @@ import { createDshNodeA2aTools } from './dsh-node-a2a-tools.mjs';
 import { createDshNodeBrowserTools } from './dsh-node-browser-tools.mjs';
 import { createDshNodeSkillManagement } from './dsh-node-skill-management.mjs';
 import { skillManagementDefinitions } from '../skill-management.mjs';
+import { createDshNodeKnowledgeTools } from './dsh-node-knowledge-tools.mjs';
+import { knowledgeToolDefinitions } from '../knowledge-tools.mjs';
 import { nativeA2aToolDefinitions } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { createDshNodeSkillTools } from './dsh-node-skill-tools.mjs';
 import { createDshNodeSkillWorkflowTools, DSH_NODE_SKILL_WORKFLOW } from './dsh-node-skill-workflow-tools.mjs';
@@ -27,7 +29,7 @@ import { createSsrfPinnedFetch, resolveWebSearchConfig, resolveWebSsrfPolicy } f
 
 export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, agentRevision, buildId, isClosed, signal,
   env = process.env, fetchImpl = hostFetch, persistOutput, toolBindings, toolContracts = [], componentBindings, skillConnection,
-  skillDefinitions = [], a2aBindings = [], browserExecutablePath, getSkillManagement } = {}) {
+  skillDefinitions = [], a2aBindings = [], browserExecutablePath, getSkillManagement, getKnowledgeTools, knowledgeBindings } = {}) {
   invariant(persistOutput === undefined || typeof persistOutput === 'function', 'dsh_node_output_store_invalid');
   env = { ...env };
   const facts = readDshComponentBindings(componentBindings);
@@ -65,7 +67,10 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
   const management = getSkillManagement && (!requested || skillManagementDefinitions().some(tool => requested.has(tool.name)))
     ? createDshNodeSkillManagement({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir,
       management: getSkillManagement(agentId), isClosed, signal }) : null;
-  const ports = [workspace, web, ...(a2a ? [a2a] : []), ...(browser ? [browser] : []), ...(management ? [management] : []), ...(commands ? [commands] : []), ...(code ? [code] : []), ...(skills ? [skills] : []), ...(workflows ? [workflows] : [])], owners = new Map();
+  const knowledge = getKnowledgeTools && (!requested || knowledgeToolDefinitions().some(tool => requested.has(tool.name)))
+    ? createDshNodeKnowledgeTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir,
+      knowledge: getKnowledgeTools({ agentId, knowledgeBindings }), isClosed, signal }) : null;
+  const ports = [workspace, web, ...(a2a ? [a2a] : []), ...(browser ? [browser] : []), ...(management ? [management] : []), ...(knowledge ? [knowledge] : []), ...(commands ? [commands] : []), ...(code ? [code] : []), ...(skills ? [skills] : []), ...(workflows ? [workflows] : [])], owners = new Map();
   const admitted = requested ?? new Set(ports.flatMap(port => port.definitions.map(tool => tool.name)));
   const names = ports.flatMap(port => port.definitions.map(tool => tool.name)).filter(name => admitted.has(name));
   const skillBinding = skills?.binding ?? workflows?.binding;

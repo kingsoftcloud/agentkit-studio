@@ -18,7 +18,7 @@ export async function apply(ctx, options) {
   const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
   const sha256 = value => createHash('sha256').update(value).digest('hex');
   let networkCalls = 0, pendingRequest; const skillRequests = [], a2aRequests = [];
-  const githubRequests = [], githubCommit = 'c'.repeat(40), githubTree = 'd'.repeat(40);
+  const githubRequests = [], knowledgeRequests = [], githubCommit = 'c'.repeat(40), githubTree = 'd'.repeat(40);
   const githubFiles = [['SKILL.md', Buffer.from('---\nname: packed-github-skill\ndescription: GitHub immutable 技能\nversion: 1.2.3\n---\nInstructions')],
     ['assets/.binary', Buffer.from([0, 255, 128, 13, 10])]];
   const githubBlob = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
@@ -64,6 +64,16 @@ export async function apply(ctx, options) {
         res.end('id: 1\r\ndata: ' + JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { task } }) + '\r\n\r\n');
       }); return;
     }
+    if (url.pathname === '/agentengine/api/v1/RetrieveKnowledge') {
+      let raw = ''; req.on('data', bytes => { raw += bytes; }); req.on('end', () => {
+        assert.equal(previous, null, 'cold knowledge receipt must not issue another request');
+        const payload = JSON.parse(raw); assert.equal(payload.DatasetId, 'packed-kb'); assert.equal(payload.Query, '完整知识查询😀'.repeat(60));
+        assert.deepEqual(payload.RetrievalModel, { SearchMethod: 'intelligence_search', TopK: 5, RerankingEnable: false });
+        knowledgeRequests.push(payload);
+        res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ Records: [{ Segment: {
+          Content: 'Packed Knowledge 😀', Answer: '实际回答', Document: { Name: '来源文档' } } }] }));
+      }); return;
+    }
     networkCalls++;
     if (url.pathname.startsWith('/skills/')) {
       skillRequests.push(req.url); assert.equal(req.headers.authorization, 'Bearer builtin-skill-read-token');
@@ -107,13 +117,15 @@ export async function apply(ctx, options) {
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
     'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'run_code', 'component_status', 'browser_inspect_workspace',
     'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills', 'list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent',
-    'skill_discover_github', 'skill_install', 'skill_bind_agent'];
+    'skill_discover_github', 'skill_install', 'skill_bind_agent', 'search_knowledge_base'];
   const records = [];
   if (previous) for (const row of previous.runtimes) { const record = await agents.get(row.agentId); assert.ok(record); records.push(record); }
   else for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
-    runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof', a2a: [a2aSpec] } } }));
+    runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof', a2a: [a2aSpec],
+      plugins: [{ config: { binding: { resource: { kind: 'knowledge-base', id: 'packed-kb' } } } }] } } }));
   await mountStudioHost(ctx, { configurationHome: home, githubSkillSourceFetch: githubFetch, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
+    KSADK_KB_ENDPOINT: webOrigin,
     AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE: options.browserExecutablePath,
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
     KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
@@ -154,12 +166,18 @@ export async function apply(ctx, options) {
       return result.value;
     };
     if (previous) {
-      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [], restoredBrowsers = [], restoredManagement = [];
+      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [], restoredBrowsers = [], restoredManagement = [], restoredKnowledge = [];
       for (const row of previous.runtimes) {
         const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, found.error?.message || JSON.stringify(found.error));
         const agent = found.agent; assert.equal(agent.session.id, row.sessionId); setSandboxMode(agent.session, 'workspace-write');
         agent.session.append('turn/start', { turn: 2 });
         try {
+          const knowledgeBytes = await readFile(row.knowledge.record), knowledgeSaved = JSON.parse(knowledgeBytes);
+          const knowledgeRecovered = await agent.ctx.get('tools').execute({ agent, callId: knowledgeSaved.request.call.callId,
+            name: 'search_knowledge_base', arguments: knowledgeSaved.request.call.arguments, signal: new AbortController().signal });
+          assert.equal(knowledgeRecovered.isError, false); assert.equal(knowledgeRecovered.value.result, knowledgeSaved.result.content);
+          assert.ok((await readFile(row.knowledge.record)).equals(knowledgeBytes));
+          restoredKnowledge.push({ runtime: row.runtime, unchanged: true });
           for (const file of [row.management.installRecord, row.management.bindRecord]) {
             const bytes = await readFile(file), saved = JSON.parse(bytes);
             const recovered = await agent.ctx.get('tools').execute({ agent, callId: saved.request.call.callId,
@@ -225,7 +243,7 @@ export async function apply(ctx, options) {
       assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0); assert.equal(a2aRequests.length, 0);
       assert.equal(githubRequests.length, 0);
       return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, restoredA2a, restoredBrowsers,
-        restoredManagement, githubRequests: 0, networkCalls, skillRequests: 0, a2aRequests: 0 };
+        restoredManagement, restoredKnowledge, knowledgeRequests: knowledgeRequests.length, githubRequests: 0, networkCalls, skillRequests: 0, a2aRequests: 0 };
     }
     const report = { passed: false, pid: process.pid, webOrigin, node: process.version, path: process.env.PATH, runtimes: [] };
     let serial = 0;
@@ -254,7 +272,7 @@ export async function apply(ctx, options) {
         // configured Agent default; the proof deliberately makes no model call.
         assert.equal(agent.options.model, 'deepseek-flash');
         assert.equal(components.ok, true); assert.equal(components.summary.model, agent.options.model);
-        assert.equal(components.summary.knowledge_base_bound, false); assert.equal(components.summary.long_term_memory_bound, false);
+        assert.equal(components.summary.knowledge_base_bound, true); assert.equal(components.summary.long_term_memory_bound, false);
         assert.equal(components.summary.skill_space_bound, true); assert.equal(components.summary.isolated_execution, e2b || e2bCommands ? 'enabled' : 'not_enabled');
         assert.equal(components.skill_runtime.backend, skillBackend); assert.equal(components.skill_runtime.template_bound, e2b);
         assert.equal(components.sandbox.backend, commandBackend); assert.equal(components.sandbox.enabled, true);
@@ -724,6 +742,31 @@ export async function apply(ctx, options) {
             canvasUniform: true, policyDenied: true, postPolicyPreserved: true, oneShotApprovals: approvals };
         }
         setSandboxMode(agent.session, 'workspace-write');
+        const knowledgeId = `builtin-proof-knowledge-${runtime}`, knowledgeArgs = { query: '完整知识查询😀'.repeat(60) };
+        const lookup = () => registry.execute({ agent, callId: knowledgeId, name: 'search_knowledge_base', arguments: knowledgeArgs, signal: new AbortController().signal });
+        const knowledgeStart = knowledgeRequests.length, knowledgeResult = await lookup(); assert.equal(knowledgeResult.isError, false);
+        assert.equal(knowledgeResult.value.result, '[1] (来源: 来源文档) Packed Knowledge 😀\n    答案: 实际回答');
+        assert.deepEqual(await lookup(), knowledgeResult);
+        const denyKnowledge = agent.ctx.on('tools/pre-execute', async (exec, next) => exec.name === 'search_knowledge_base'
+          ? { kind: 'deny', reason: 'Knowledge policy proof' } : next());
+        try { assert.equal((await lookup()).isError, true); } finally { denyKnowledge(); }
+        const postKnowledge = agent.ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'search_knowledge_base'
+          ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted knowledge' }] } : next());
+        try { assert.deepEqual((await lookup()).content, [{ type: 'text', text: 'Host-redacted knowledge' }]); } finally { postKnowledge(); }
+        assert.equal(knowledgeRequests.length - knowledgeStart, 1);
+        let knowledgeRecord;
+        const knowledgeRoot = join(home, 'studio/builtin-workspace/knowledge-calls');
+        for (const relative of await readdir(knowledgeRoot, { recursive: true })) if (relative.endsWith('record.json')) {
+          const file = join(knowledgeRoot, relative), value = JSON.parse(await readFile(file, 'utf8'));
+          if (value.request.call.callId === knowledgeId) {
+            assert.equal(value.binding.contract, 'agentkit.dsh-node-knowledge/v1'); assert.equal(value.owner.agentId, record.metadata.id);
+            assert.equal(value.owner.sessionId, created.sessionId); assert.equal(value.request.runId, undefined);
+            assert.equal(value.result.content, knowledgeResult.value.result); knowledgeRecord = file;
+          }
+        }
+        assert.ok(knowledgeRecord);
+        const knowledgeProof = { record: knowledgeRecord, actualRequests: 1, originalDshOwner: true,
+          duplicateSuppressed: true, policyDenied: true, postPolicyPreserved: true };
         const githubStart = githubRequests.length;
         const searched = await call('skill_discover_github', { source: 'packed skill' });
         assert.equal(searched.mode, 'search'); assert.equal(searched.repositories[0].url, 'https://github.com/packed/repository');
@@ -785,6 +828,7 @@ export async function apply(ctx, options) {
         report.runtimes.at(-1).a2a = a2aProof;
         report.runtimes.at(-1).browser = browserProof;
         report.runtimes.at(-1).management = managementProof;
+        report.runtimes.at(-1).knowledge = knowledgeProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

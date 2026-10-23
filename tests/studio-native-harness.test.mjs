@@ -905,6 +905,21 @@ test('Studio Native pins Skill management capability and rejects adopting an exi
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
 });
 
+test('Studio Native pins knowledge datasets, retrieval parameters and connection across an existing Run', async t => {
+  const fixture = await setup(t, { sqlite: true }), binding = { contract: 'agentkit.studio-knowledge-tools/v1',
+    agentId: fixture.record.metadata.id, datasetIds: ['kb'], retrieval: { SearchMethod: 'intelligence_search', TopK: 5, RerankingEnable: false },
+    connectionDigest: 'a'.repeat(64) };
+  fixture.payload.binding.nativeTools.knowledgeBinding = binding;
+  await fixture.host.executeTurn(fixture.payload);
+  const head = fixture.head(), before = fixture.ledger.load(head.scope, head.runId);
+  await fixture.host.executeTurn(fixture.payload); assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
+  for (const change of [{ datasetIds: ['other'] }, { connectionDigest: 'b'.repeat(64) }, { retrieval: { ...binding.retrieval, TopK: 9 } }]) {
+    fixture.payload.binding.nativeTools.knowledgeBinding = { ...binding, ...change };
+    await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+    assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
+  }
+});
+
 test('Studio Native pins its browser task policy and explicit execution limits in the Run configuration', async t => {
   const fixture = await setup(t, { spec: { execution: { nativeLimits: { maxModelCalls: 20, maxToolCalls: 0 } } } });
   fixture.payload.binding.nativeTools.definitions = () => [studioBrowserDefinition()];
