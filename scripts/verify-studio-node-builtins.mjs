@@ -9,8 +9,10 @@ import { parseArgs } from 'node:util';
 import { createServer as createHttpsServer } from 'node:https';
 import { createHash } from 'node:crypto';
 import { createZip } from '../src/zip.mjs';
-const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' } } });
+const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
+  'skill-backend': { type: 'string', default: 'local_process' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
+const skillBackend = values['skill-backend']; assert.ok(['local_process', 'e2b'].includes(skillBackend));
 const repository = fileURLToPath(new URL('..', import.meta.url)), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-node-builtins-'));
 console.log(`Studio Node builtin evidence: ${root}`);
@@ -60,13 +62,15 @@ try {
     '      config:', `        directory: ${JSON.stringify(root)}`,
     `        skillDownloadUrl: ${JSON.stringify(skillDownloadUrl)}`, `        skillArchiveHash: ${JSON.stringify(sha256(skillArchive))}`,
     `        skillBody: ${JSON.stringify(skillBody)}`, `        skillScript: ${JSON.stringify(skillScript)}`, '',
+    `        skillBackend: ${JSON.stringify(skillBackend)}`, '',
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
-  harness = new DeepSeekHarness({ dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
+  const harnessOptions = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
     patches: [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch], dshHome: join(root, 'home'),
     cwd: root, processCwd: root, provider: 'agentkit-studio-builtin-proof', model: 'unused', initializeTimeoutMs: 30000, requestTimeoutMs: 30000,
     env: { ...process.env, PATH: nodeBin, NODE_EXTRA_CA_CERTS: cert, DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents'),
-      AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk' } });
+      AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk' } };
+  harness = new DeepSeekHarness(harnessOptions);
   await harness.start();
   await writeFile(join(root, 'start-proof'), 'Execute the actual Host proof after initialization.');
   const deadline = Date.now() + 30000; let report;
@@ -87,20 +91,47 @@ try {
     && row.commands.backgroundCanceled && row.commands.oneShotApprovals === 2));
   assert.ok(report.runtimes.every(row => row.components.ok === true && row.components.summary.model === 'deepseek-flash'
     && row.components.workspace.tools.length === 10 && row.components.sandbox.tools.length === 4
-    && row.components.skill_runtime.enabled === true && row.components.skill_runtime.backend === 'local_process'
+    && row.components.skill_runtime.enabled === true && row.components.skill_runtime.backend === skillBackend
     && row.components.skill_runtime.request_protocol === 'agentkit.dsh-node-skill-workflow/v1'
-    && row.components.summary.isolated_execution === 'not_enabled'));
+    && row.components.summary.isolated_execution === (skillBackend === 'e2b' ? 'enabled' : 'not_enabled')));
   assert.equal(downloads, 4);
   assert.ok(report.runtimes.every(row => row.skills.instructionsSha256 === sha256(skillBody) && row.skills.serviceRequests === 7
     && row.skills.policyDeniedWithoutRequest && row.skills.postPolicyPreserved && row.skills.scriptsNotExecuted));
   assert.equal(new Set(report.runtimes.map(row => row.skills.rootDir)).size, 2);
-  assert.ok(report.runtimes.every(row => row.workflows.executedOnce && row.workflows.serviceRequests === 2
-    && row.workflows.exactArtifacts && row.workflows.originalDshOwner && row.workflows.oneShotApprovals === 2
+  assert.ok(report.runtimes.every(row => row.workflows.backend === skillBackend && row.workflows.serviceRequests === 2
+    && row.workflows.originalDshOwner && row.workflows.oneShotApprovals === 2
     && row.workflows.policyDeniedWithoutRequest && row.workflows.postPolicyPreserved));
+  if (skillBackend === 'local_process') assert.ok(report.runtimes.every(row => row.workflows.executedOnce && row.workflows.exactArtifacts));
+  else assert.ok(report.runtimes.every(row => row.workflows.refusedSdkCreation && row.workflows.commands === 0
+    && row.workflows.outcomeUnknown));
   assert.equal(new Set(report.runtimes.map(row => row.workflows.runtimeId)).size, 2);
-  await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, downloads,
-    archiveSha256: sha256(await readFile(resolve(values.archive))), skillArchiveHash: sha256(skillArchive), report }, null, 2));
-  console.log('PASS: packed Host registers Node workspace + web + commands + component_status + five Skill reads + durable local execute_skills for DSH Native and Codex; real HTTP service/CA-verified HTTPS ZIP/scripts/exact text+binary artifacts; stable real DSH identity and duplicate suppression; policy, one-shot approval and post policy retained; Node/bash PATH with invalid Python. Model/Codex CLI and fresh dependency installation are separate acceptance.');
+  let cold;
+  if (skillBackend === 'e2b') {
+    await rm(join(root, 'start-proof')); await harness.close();
+    const goneBy = Date.now() + 15000;
+    for (;;) {
+      try { process.kill(report.pid, 0); } catch (error) { assert.equal(error.code, 'ESRCH'); break; }
+      assert.ok(Date.now() < goneBy, 'original Host must actually exit before cold restore');
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    harness = new DeepSeekHarness(harnessOptions); await harness.start();
+    await writeFile(join(root, 'start-proof'), 'Restore original calls after original Host PID exited.');
+    const coldBy = Date.now() + 30000;
+    while (Date.now() < coldBy) {
+      try { cold = JSON.parse(await readFile(join(root, 'cold-proof.json'), 'utf8')); break; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(cold?.passed, true, JSON.stringify(cold)); assert.notEqual(cold.pid, report.pid); assert.equal(cold.previousPid, report.pid);
+    assert.equal(cold.node, process.version); assert.equal(cold.networkCalls, 0); assert.equal(cold.skillRequests, 0); assert.equal(downloads, 4);
+    assert.deepEqual(cold.restored.map(row => [row.runtime, row.agentId, row.sessionId, row.runtimeId, row.taskId, row.unchanged]),
+      report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.workflows.runtimeId, row.workflows.taskId, true]));
+  }
+  await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, skillBackend, downloads,
+    archiveSha256: sha256(await readFile(resolve(values.archive))), skillArchiveHash: sha256(skillArchive), report, ...(cold ? { cold } : {}) }, null, 2));
+  console.log(skillBackend === 'local_process'
+    ? 'PASS: packed Host registers Node workspace + web + commands + component_status + five Skill reads + durable local execute_skills for DSH Native and Codex; real HTTP service/CA-verified HTTPS ZIP/scripts/exact text+binary artifacts; stable real DSH identity and duplicate suppression; policy, one-shot approval and post policy retained; Node/bash PATH with invalid Python. Model/Codex CLI and fresh dependency installation are separate acceptance.'
+    : 'PASS: packed Host DSH Native/Codex E2B Skill workflow uses actual installed SDK with an explicitly refused endpoint; durable real DSH creation intent/unknown outcome, unchanged cold owner replay and zero commands; HTTP Skill Service + CA-verified HTTPS ZIP and original local command/workspace/Web/approvals remain intact. Node/bash PATH, Python unavailable. This is refusal/recovery acceptance, not online E2B success, fresh installation or model/Codex CLI proof.');
 } finally {
   await harness?.close();
   download?.closeAllConnections(); if (download) await new Promise(resolve => download.close(resolve));

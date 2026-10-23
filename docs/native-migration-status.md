@@ -14,7 +14,7 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 | 全部恢复产品流程 | 意图/回执、lease/fence、实际进程中断与不盲目重放已有专项；多个实际 Host 重启路径已验证 | 各后端结果未知时的显式核对/清理/继续，以及全部审批和恢复界面闭环 |
 | Studio 所有执行入口 | 本地对话、历史、部分 Frozen/后台通知路径已有真实 Host 证据 | 自动化、定时、Frozen HTTP/部署和完整浏览器消费的全部组合验收 |
 | 安装和执行不依赖 Python | 多条打包验证在受限 PATH 和无效 Python 配置下成功 | dsh-runtime-plugin 仍保留实际 Python builtin fallback；完整替换以及全新无 Python 安装/启动/执行未通过 |
-| DSH Native 与 Codex 保持正常 | 工作区、Web、本地命令、component_status、五个 Skill 读取及本地 execute_skills 的正式管线已打包验证 | 两种 runtime 的完整模型/CLI 回归；DSH 的 E2B 工作流及其余 builtin 迁移 |
+| DSH Native 与 Codex 保持正常 | 工作区、Web、本地命令、component_status、五个 Skill 读取及本地 execute_skills 已打包验证；E2B 工作流已接入 Node 并验证实际 SDK 拒绝连接后的跨进程恢复 | 两种 runtime 的完整模型/CLI 回归；DSH 的交互式 E2B 命令及其余 builtin 迁移 |
 | 默认切换及最终交付 | Native 仍通过显式版本开关启用 | 所有前置验收闭环后切换默认；最终能力差异表、配置恢复说明和最终验证记录 |
 
 直接反证“只剩少量验收”的当前代码：
@@ -38,6 +38,12 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 超时、并发、真实 Host SIGKILL 后冷恢复，以及 NativeKernel/SQLite 网关和组件状态。
 E2B SDK 控制面/文件 API 在这些测试中是明确替身；不能据此宣称线上 E2B 或远程 OS
 边界已经验收。完整 Skill 事件、输入文件、显式核对和全产品入口仍在原目标内。
+
+DSH Native / Codex 的 E2B 工作流现已使用真实 Agent/Session/call 的独立持久契约，
+不构造 Native Run/fence。实际安装 SDK 的拒绝连接、旧 Host 退出与新 PID 恢复已有
+打包证据；控制面替身下另有真实脚本、精确产物和 SIGKILL 验证。证明范围见
+[DSH E2B Skills](native-skills.md#dsh-native--codex-的-e2b-skill-工作流)。
+线上 E2B、交互命令及全新安装等缺口仍保留。
 
 完整参考清单见 [native-reference-capabilities.md](native-reference-capabilities.md)，
 实现和历史验证详见 [native-harness-migration.md](native-harness-migration.md)。后续进度

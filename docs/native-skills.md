@@ -325,7 +325,7 @@ DSH 的 pre/guard/around/post/result 管线继续生效；策略拒绝不发起�
 
 定向验证在 Node 26.5.0 / 22.19.0 各通过 75 项；新增公共空间反例和真正新 Node 进程重开缓存后，只重跑变化的两个模块，各 39 项通过。生产安装包通过真实 Host、SessionController、两个 runtime 的 ToolRegistry、HTTP REST 目录和可信 CA 的 HTTPS ZIP 验证，逐字节核对完整指令及脚本资源，证明加载时脚本未执行；每个 runtime 恰好 7 次服务请求、1 次 HTTPS 下载，拒绝调用为零新增请求。原文件、Web、命令、完整输出与审批断言保留。Host PATH 只有 Node，Python 路径不可用。此证据使用固定依赖图，不包含全新安装、模型/Codex CLI 对话或整个 Host 的崩溃恢复。
 
-随后本地 `execute_skills` 的 DSH 接线已补齐，见下节。Skill 管理工具、DSH 的 E2B 工作流、Browser、A2A、记忆/知识库等尚未全部替换 Python builtin。整个 Python fallback 尚未移除，整体迁移仍未完成。
+随后本地 `execute_skills` 的 DSH 接线已补齐，见下节。DSH 的 E2B 工作流也已接入 Node，见后节；Skill 管理工具、Browser、A2A、记忆/知识库等尚未全部替换 Python builtin。整个 Python fallback 尚未移除，整体迁移仍未完成。
 
 ## DSH Native / Codex 的本地 Skill 工作流
 
@@ -334,7 +334,7 @@ DSH 的 pre/guard/around/post/result 管线继续生效；策略拒绝不发起�
 无需 Skill Service；远程包复用固定连接、空间、目录与校验下载器。调用先走原 DSH
 pre/guard/around/post/result 管线及真实 sandboxPolicy/一次审批，再进入持久工作流。
 `component_status` 报告已挂载的本地执行器，仍明确不具备 OS 隔离。
-显式 E2B 选择保留原后端，绝不降级为 Host 执行；它的 DSH Node 适配仍待迁移。
+显式 E2B 选择使用独立的 DSH Node 后端，见后节；绝不降级为 Host 执行。
 
 本地执行器共用 Native 的命令监督和包/产物算法，但身份契约独立：
 `agentkit.dsh-local-skill-runtime/v1` 记录实际 Agent、Session、callId 和完整参数，
@@ -357,3 +357,43 @@ runtime 的实际 Host/SessionController/ToolRegistry 中执行远程包脚本�
 加上五个读取工具，每个 runtime 总计九次服务请求、两次 HTTPS 下载。
 Host/脚本 PATH 仅 Node/bash，Python 配置不可用；复用固定依赖图，没有模型/Codex CLI、
 全新安装、线上 E2B 或整个打包 Host SIGKILL 的验收声明。
+
+
+## DSH Native / Codex 的 E2B Skill 工作流
+
+`execute_skills` 现在也支持 DSH 的显式 E2B 选择。它复用 Native 的 SDK 适配器、
+工作流编排、逐命令监督、文件传输与产物交付，使用独立版本契约
+`agentkit.dsh-skill-e2b-runtime/v1`、`agentkit.dsh-e2b-sandbox-owner/v1` 和
+`agentkit.studio-dsh-e2b-host/v1`。持久身份来自真实 Agent、Session、call；不会构造
+Native Run、turn 或 executionFence。原 Native 的契约、定位算法和记录字段保持兼容。
+
+配置沿用上文 E2B 的显式 HTTPS API、domain、key、template 与超时要求。Skills 后端
+独立于交互命令后端：`KSADK_SKILL_RUNTIME_BACKEND=e2b` 可以和本地 `run_command`
+并存。状态只在配置通过实际工厂准入后报告 E2B 工作流就绪，不加载 SDK 或探测服务。
+Agent revision、Frozen Build、后端及连接摘要均固定在绑定中；改变绑定不能复用旧回执。
+凭据不写入记录。每个调用独占沙箱，创建、命令和清理前均保存意图；创建晚返回的
+真实 ID 保留用于核对。未知、取消、超时或未确认清理均不会触发重新创建和自动执行。
+显式沙箱采用必须验证 DSH 专用远程 metadata，且不代表命令效果已经核对。
+
+定向用例覆盖实际 Bash 脚本、精确 Unicode/二进制产物、确认与未确认清理、脚本错误、
+取消、Host 关闭、超时、并发、绑定漂移、真实子进程 SIGKILL、冷恢复及严格同步权限。
+其中 E2B 控制面与文件 SDK 是明确替身，不能证明线上 E2B 或远程 OS 隔离。
+受影响三个模块在 Node 26.5.0 / 22.19.0 各通过 44 项。初轮并行验证暴露的临时记录
+扫描竞态已改为只读取工作流正式记录；超时测试仍要求脚本实际产生效果后才验收未知
+结果，给进程启动留出时间，没有删除“不重跑”的关键断言。
+
+打包验收命令为：
+
+```sh
+node scripts/verify-studio-node-builtins.mjs --source <已构建维护 SDK> --archive <Studio.tgz> --skill-backend e2b --keep
+```
+
+该模式通过实际安装的 E2B SDK 请求明确拒绝连接的 HTTPS 地址，验证两个 runtime 的
+真实 Host/preset/ToolRegistry/SessionController、一次审批、HTTP Skill Service 与可信
+HTTPS ZIP。创建失败保留原 DSH 意图和 unknown；旧 Host PID 确认退出后，新 PID 恢复
+同一会话和 call，记录字节不变、零新增服务请求/下载/命令。未指定后端的原本地模式
+保留真实脚本和精确产物断言。Host PATH 只含 Node/bash，Python 配置不可用；复用固定
+依赖图，不代表全新安装、线上 E2B 成功、模型/Codex CLI 或完整产品验收。
+
+DSH 的交互式 E2B 命令、其他剩余 builtin、Skill 输入文件与完整专用事件，以及未知
+结果的产品核对/清理入口仍需继续迁移和验收。完整 Python fallback 尚未移除。

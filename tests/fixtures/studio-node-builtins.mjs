@@ -12,6 +12,8 @@ export const name = 'studio-node-builtin-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'credentials', 'connection', 'webServer', 'sessionController'];
 export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
+  const skillBackend = options.skillBackend ?? 'local_process', e2b = skillBackend === 'e2b';
+  const previous = e2b && existsSync(join(home, 'proof.json')) ? JSON.parse(await readFile(join(home, 'proof.json'), 'utf8')) : null;
   const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
   const sha256 = value => createHash('sha256').update(value).digest('hex');
   let networkCalls = 0, pendingRequest; const skillRequests = [];
@@ -42,7 +44,7 @@ export async function apply(ctx, options) {
     }
     res.writeHead(200, { 'content-type': 'text/html' }); res.end('<script>Never render this</script><p>真实网页 😀</p>');
   });
-  await new Promise(resolve => web.listen(0, '127.0.0.1', resolve));
+  await new Promise(resolve => web.listen(previous ? Number(new URL(previous.webOrigin).port) : 0, '127.0.0.1', resolve));
   ctx.effect(() => () => { web.closeAllConnections(); return new Promise(resolve => web.close(resolve)); }, 'Node web proof server');
   const webOrigin = `http://127.0.0.1:${web.address().port}`;
   await mkdir(workspaceRoot, { recursive: true });
@@ -57,14 +59,16 @@ export async function apply(ctx, options) {
     'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'component_status',
     'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills'];
   const records = [];
-  for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
+  if (previous) for (const row of previous.runtimes) { const record = await agents.get(row.agentId); assert.ok(record); records.push(record); }
+  else for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
     runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof' } } }));
   await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
     KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
-    KSADK_SKILL_SERVICE_TOKEN: 'builtin-skill-read-token', KSADK_SKILL_RUNTIME_BACKEND: 'local_process',
-    KSADK_SKILL_RUNTIME_TIMEOUT: '20' } });
+    KSADK_SKILL_SERVICE_TOKEN: 'builtin-skill-read-token', KSADK_SKILL_RUNTIME_BACKEND: skillBackend,
+    KSADK_SKILL_RUNTIME_TIMEOUT: '20', ...(e2b ? { KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'node-skill-proof-template',
+      E2B_API_URL: 'https://127.0.0.1:9', E2B_DOMAIN: 'e2b-proof.synthetic', E2B_API_KEY: 'e2b-proof-not-a-real-key' } : {}) } });
   ctx.llm.registerAdapter(['agentkit-studio-builtin-proof'], {
     providerInfo: provider => ({ id: provider, name: 'Node builtin registry proof' }), providerRetryPolicy: () => undefined,
     listModels: async provider => [{ provider, id: 'unused', name: 'unused' }],
@@ -75,8 +79,9 @@ export async function apply(ctx, options) {
   const timer = setInterval(() => {
     if (started || !existsSync(join(home, 'start-proof'))) return;
     started = true; clearInterval(timer);
-    void prove().then(report => writeFile(join(home, 'proof.json'), JSON.stringify(report, null, 2)),
-      error => writeFile(join(home, 'proof.json'), JSON.stringify({ passed: false, code: error.code,
+    const proofFile = previous ? 'cold-proof.json' : 'proof.json';
+    void prove().then(report => writeFile(join(home, proofFile), JSON.stringify(report, null, 2)),
+      error => writeFile(join(home, proofFile), JSON.stringify({ passed: false, code: error.code,
         message: error.message, stack: error.stack }, null, 2))).catch(() => {});
   }, 25);
   ctx.effect(() => () => clearInterval(timer), 'Node builtin proof trigger');
@@ -95,7 +100,29 @@ export async function apply(ctx, options) {
       assert.equal(response.status, 200); assert.equal(result?.ok, true, JSON.stringify(result));
       return result.value;
     };
-    const report = { passed: false, node: process.version, path: process.env.PATH, runtimes: [] };
+    if (previous) {
+      const restored = [];
+      for (const row of previous.runtimes) {
+        const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, JSON.stringify(found.error));
+        const agent = found.agent; assert.equal(agent.session.id, row.sessionId); setSandboxMode(agent.session, 'workspace-write');
+        const recordBytes = await readFile(row.workflows.record), record = JSON.parse(recordBytes);
+        const ownerRoot = join(dirname(row.workflows.record), 'sandbox'), owners = await readdir(ownerRoot); assert.equal(owners.length, 1);
+        const ownerPath = join(ownerRoot, owners[0], 'owner.json'), ownerBytes = await readFile(ownerPath);
+        assert.equal(record.request.call.callId, `workflow-original-${row.runtime}`);
+        agent.session.append('turn/start', { turn: 2 });
+        try {
+          const cold = await agent.ctx.get('tools').execute({ agent, callId: record.request.call.callId, name: 'execute_skills',
+            arguments: record.request.call.arguments, signal: new AbortController().signal });
+          assert.equal(cold.isError, false); assert.deepEqual(JSON.parse(cold.value.result), record.result);
+          assert.ok((await readFile(row.workflows.record)).equals(recordBytes)); assert.ok((await readFile(ownerPath)).equals(ownerBytes));
+          restored.push({ runtime: row.runtime, agentId: row.agentId, sessionId: row.sessionId, runtimeId: record.runtimeId,
+            taskId: record.taskId, recordSha256: sha256(recordBytes), ownerSha256: sha256(ownerBytes), unchanged: true });
+        } finally { agent.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } }); assert.equal(await ctx.sessions.flush(agent.session), true); }
+      }
+      assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0);
+      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, networkCalls, skillRequests: 0 };
+    }
+    const report = { passed: false, pid: process.pid, webOrigin, node: process.version, path: process.env.PATH, runtimes: [] };
     let serial = 0;
     for (const record of records) {
       const runtime = record.spec.runtime.type;
@@ -123,7 +150,8 @@ export async function apply(ctx, options) {
         assert.equal(agent.options.model, 'deepseek-flash');
         assert.equal(components.ok, true); assert.equal(components.summary.model, agent.options.model);
         assert.equal(components.summary.knowledge_base_bound, false); assert.equal(components.summary.long_term_memory_bound, false);
-        assert.equal(components.summary.skill_space_bound, true); assert.equal(components.summary.isolated_execution, 'not_enabled');
+        assert.equal(components.summary.skill_space_bound, true); assert.equal(components.summary.isolated_execution, e2b ? 'enabled' : 'not_enabled');
+        assert.equal(components.skill_runtime.backend, skillBackend); assert.equal(components.skill_runtime.template_bound, e2b);
         assert.equal(components.sandbox.backend, 'local_process'); assert.equal(components.sandbox.enabled, true);
         assert.deepEqual(components.sandbox.tools, ['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
         assert.deepEqual([...components.workspace.tools].sort(), tools.filter(name => name.includes('workspace')).sort());
@@ -173,29 +201,44 @@ export async function apply(ctx, options) {
         try {
           workflowId = `workflow-original-${runtime}`;
           const first = await invokeWorkflow(); assert.equal(first.isError, false); workflowResult = JSON.parse(first.value.result);
-          assert.equal(workflowResult.ok, true, JSON.stringify(workflowResult)); assert.equal(workflowResult.command_ids.length, 1);
-          assert.equal(workflowResult.backend, 'local_process'); assert.equal(workflowResult.isolated, false);
+          assert.equal(workflowResult.backend, skillBackend); assert.equal(workflowResult.isolated, e2b);
+          if (e2b) {
+            assert.equal(workflowResult.ok, false); assert.equal(workflowResult.status, 'uncertain');
+            assert.equal(workflowResult.error_type, 'e2b_sandbox_outcome_unknown'); assert.deepEqual(workflowResult.command_ids, []);
+          } else { assert.equal(workflowResult.ok, true, JSON.stringify(workflowResult)); assert.equal(workflowResult.command_ids.length, 1); }
           const deniedAgain = await call('execute_skills', workflowArgs); assert.equal(deniedAgain.ok, false);
           assert.equal(workflowApprovals, 2);
         } finally { removeWorkflowApproval(); }
         setSandboxMode(agent.session, 'workspace-write');
         const duplicateWorkflow = await invokeWorkflow(); assert.equal(duplicateWorkflow.isError, false);
         assert.deepEqual(JSON.parse(duplicateWorkflow.value.result), workflowResult);
-        const artifactBytes = await Promise.all(workflowResult.output_files.map(file => readFile(file)));
-        assert.equal(artifactBytes.length, 2);
-        assert.ok(artifactBytes.some(bytes => bytes.equals(Buffer.from('Packed workflow 😀'))));
-        assert.ok(artifactBytes.some(bytes => bytes.equals(Buffer.from([0, 1, 255]))));
+        if (e2b) { assert.equal(workflowResult.output_files, undefined); assert.equal(workflowResult.sandbox.creation_status, 'unknown'); }
+        else {
+          const artifactBytes = await Promise.all(workflowResult.output_files.map(file => readFile(file)));
+          assert.equal(artifactBytes.length, 2);
+          assert.ok(artifactBytes.some(bytes => bytes.equals(Buffer.from('Packed workflow 😀'))));
+          assert.ok(artifactBytes.some(bytes => bytes.equals(Buffer.from([0, 1, 255]))));
+        }
         const workflowRoot = join(home, 'studio/builtin-workspace/skill-workflows');
         const workflowRecords = [];
         for (const path of await readdir(workflowRoot, { recursive: true })) if (path.endsWith('record.json')) {
           const file = join(workflowRoot, path), value = JSON.parse(await readFile(file, 'utf8'));
-          if (value.contract === 'agentkit.dsh-local-skill-runtime/v1' && value.request.agentId === record.metadata.id) workflowRecords.push({ file, value });
+          if (value.contract === (e2b ? 'agentkit.dsh-skill-e2b-runtime/v1' : 'agentkit.dsh-local-skill-runtime/v1')
+            && value.request.agentId === record.metadata.id) workflowRecords.push({ file, value });
         }
         assert.equal(workflowRecords.length, 1); const workflowRecord = workflowRecords[0];
         assert.equal(workflowRecord.value.request.sessionId, created.sessionId); assert.equal(workflowRecord.value.request.callId, workflowId);
         assert.equal(workflowRecord.value.runtimeId, workflowResult.runtime_id); assert.equal(workflowRecord.value.phase, 'finished');
         for (const key of ['scope', 'runId', 'turnId', 'buildId', 'executionFence']) assert.equal(key in workflowRecord.value.request, false);
-        assert.equal(await readFile(join(dirname(workflowRecord.file), 'work/effect'), 'utf8'), 'x');
+        if (e2b) {
+          assert.equal(existsSync(join(dirname(workflowRecord.file), 'work/effect')), false);
+          const owners = join(dirname(workflowRecord.file), 'sandbox'), names = await readdir(owners);
+          assert.equal(names.length, 1); const owner = JSON.parse(await readFile(join(owners, names[0], 'owner.json'), 'utf8'));
+          assert.equal(owner.schemaVersion, 'agentkit.dsh-e2b-sandbox-owner/v1'); assert.equal(owner.phase, 'unknown');
+          assert.equal(owner.agentId, record.metadata.id); assert.equal(owner.sessionId, created.sessionId);
+          assert.equal(owner.createIdentity.callId, workflowId); assert.equal(owner.sandboxId, null);
+          assert.equal(owner.scope, undefined); assert.equal(owner.createIdentity.executionFence, undefined);
+        } else assert.equal(await readFile(join(dirname(workflowRecord.file), 'work/effect'), 'utf8'), 'x');
         const removeWorkflowPost = agent.ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'execute_skills'
           ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted workflow result' }] } : next());
         try {
@@ -203,8 +246,9 @@ export async function apply(ctx, options) {
           assert.deepEqual(redacted.content, [{ type: 'text', text: 'Host-redacted workflow result' }]);
         } finally { removeWorkflowPost(); }
         assert.equal(skillRequests.length - startWorkflowRequests, 2);
-        const workflowProof = { runtimeId: workflowResult.runtime_id, taskId: workflowResult.task_id, executedOnce: true,
-          serviceRequests: 2, exactArtifacts: true, originalDshOwner: true, oneShotApprovals: workflowApprovals,
+        const workflowProof = { runtimeId: workflowResult.runtime_id, taskId: workflowResult.task_id, backend: skillBackend,
+          ...(e2b ? { refusedSdkCreation: true, commands: 0, outcomeUnknown: true } : { executedOnce: true, exactArtifacts: true }),
+          serviceRequests: 2, originalDshOwner: true, oneShotApprovals: workflowApprovals,
           policyDeniedWithoutRequest: true, postPolicyPreserved: true, record: workflowRecord.file };
         setSandboxMode(agent.session, 'workspace-write');
         const path = `${runtime}.txt`;

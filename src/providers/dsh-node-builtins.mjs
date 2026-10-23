@@ -40,22 +40,23 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
     ? createDshNodeSkillTools({ agentId, workspaceRoot, stateDir, connection: skillConnection,
       skillSpaceIds: facts.skillSpaceIds, env, fetchImpl, isClosed, signal }) : null;
   const skillSettings = !requested || requested.has('execute_skills') ? nativeSkillRuntimeSettings(env) : null;
-  const workflows = skillSettings?.backend === 'local_process' && supportsLocalProcessPlatform()
+  const workflows = skillSettings?.backend === 'e2b' || skillSettings?.backend === 'local_process' && supportsLocalProcessPlatform()
     ? createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir, connection: skillConnection,
       skillSpaceIds: facts.skillSpaceIds, skillDefinitions, env, fetchImpl, isClosed, signal }) : null;
   const ports = [workspace, web, ...(commands ? [commands] : []), ...(skills ? [skills] : []), ...(workflows ? [workflows] : [])], owners = new Map();
   const admitted = requested ?? new Set(ports.flatMap(port => port.definitions.map(tool => tool.name)));
   const names = ports.flatMap(port => port.definitions.map(tool => tool.name)).filter(name => admitted.has(name));
   const skillBinding = skills?.binding ?? workflows?.binding;
+  const workflowBinding = workflows?.binding.runtime;
   const spaces = [...new Set([...facts.skillSpaceIds, ...(skillBinding?.userSpaceIds ?? []), ...(skillBinding?.publicSpaceIds ?? [])])].sort();
   const commandNames = commands ? names.filter(name => commands.supports(name)) : [];
   ports.push(createDshNodeComponentTools({ agentId, isClosed, signal, status: {
     summary: { model: '', knowledge_base_bound: facts.knowledgeBaseBound, long_term_memory_bound: facts.longTermMemoryBound,
-      skill_space_bound: spaces.length > 0, isolated_execution: 'not_enabled',
+      skill_space_bound: spaces.length > 0, isolated_execution: workflowBinding?.isolated ? 'enabled' : 'not_enabled',
       sandbox_direct_tools: commandNames.length ? 'enabled' : 'not_enabled' },
     skill_space: { space_ids: spaces, user_space_ids: skillBinding?.userSpaceIds ?? [], public_space_ids: skillBinding?.publicSpaceIds ?? [],
       tools: names.filter(name => skills?.supports(name) || workflows?.supports(name)) },
-    skill_runtime: { backend: workflows ? 'local_process' : 'disabled', enabled: Boolean(workflows), template_bound: false,
+    skill_runtime: { backend: workflowBinding?.backend ?? 'disabled', enabled: Boolean(workflows), template_bound: Boolean(workflowBinding?.host?.template),
       ...(workflows ? { request_protocol: DSH_NODE_SKILL_WORKFLOW } : {}) },
     sandbox: { backend: commandNames.length ? 'local_process' : 'disabled', enabled: commandNames.length > 0,
       template_bound: false, tools: commandNames },

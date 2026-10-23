@@ -98,7 +98,7 @@ test('resource facts are versioned, independent of secrets, and honor disabled b
   assert.throws(() => readDshComponentBindings({ ...facts, contract: 'other' }), /dsh_component_bindings_invalid/);
 });
 
-test('composition reports only admitted mounted Node tools, never env-only E2B/Skills executors', async t => {
+test('composition reports admitted E2B Skill readiness separately from unmounted E2B command tools', async t => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-components-')), workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot);
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const config = { ctx: {}, workspaceRoot, stateDir: join(root, 'state'), agentId: 'agent',
@@ -106,13 +106,16 @@ test('composition reports only admitted mounted Node tools, never env-only E2B/S
     componentBindings: dshComponentBindings({ bindings: { plugins: [{ config: { binding: { resource: { kind: 'skill-space', id: 'space' } } } }] } }) };
   for (const backend of ['local_process', 'e2b']) {
     const port = createDshNodeBuiltins({ ...config, env: { KSADK_SANDBOX_BACKEND: backend,
-      KSADK_SKILL_RUNTIME_BACKEND: 'e2b', E2B_API_KEY: 'never-copy', KSADK_SANDBOX_TEMPLATE_ID: 'env-only' } });
+      KSADK_SKILL_RUNTIME_BACKEND: 'e2b', E2B_API_KEY: 'never-copy', KSADK_SANDBOX_TEMPLATE_ID: 'explicit-template',
+      E2B_API_URL: 'https://fixture.invalid', E2B_DOMAIN: 'fixture.invalid' },
+      skillConnection: { client: { skillAction: () => assert.fail('status cannot call a service') }, bindingDigest: 'b'.repeat(64) } });
     t.after(() => port.close());
     const result = await port.execute('component_status', {}, execution());
     assert.equal(result.status, 'ok'); assert.deepEqual(result.content.workspace.tools, ['read_workspace_file']);
     assert.equal(result.content.summary.model, 'selected-model'); assert.equal(result.content.summary.skill_space_bound, true);
-    assert.deepEqual(result.content.skill_space.space_ids, ['space']); assert.deepEqual(result.content.skill_space.tools, []);
-    assert.equal(result.content.skill_runtime.enabled, false); assert.equal(result.content.summary.isolated_execution, 'not_enabled');
+    assert.deepEqual(result.content.skill_space.space_ids, ['space']); assert.deepEqual(result.content.skill_space.tools, ['execute_skills']);
+    assert.equal(result.content.skill_runtime.enabled, true); assert.equal(result.content.skill_runtime.backend, 'e2b');
+    assert.equal(result.content.skill_runtime.template_bound, true); assert.equal(result.content.summary.isolated_execution, 'enabled');
     assert.equal(result.content.sandbox.enabled, backend === 'local_process');
     assert.deepEqual(result.content.sandbox.tools, backend === 'local_process' ? ['run_command'] : []);
     assert.equal(JSON.stringify(result).includes('never-copy'), false);

@@ -26,6 +26,15 @@ function setup(t, extra = {}) {
   return { root, config, owner, created, killed, reopen: changes => createNativeE2BSandboxOwner({ ...config, ...changes }) };
 }
 
+test('a synchronous authority cannot mutate the Native call or signal and then authorize creation; rejected thenables are observed', async t => {
+  for (const authority of [value => { value.call.arguments.command = 'changed'; return true; },
+    value => { value.signal = signal(); return true; }, () => Promise.reject(Error('observed async authority'))]) {
+    const fixture = setup(t, { assertAuthority: authority });
+    await assert.rejects(fixture.owner.ensure(request()));
+    assert.deepEqual(fixture.created, []); assert.equal(fixture.owner.inspect(), null);
+  }
+});
+
 test('creation has a durable intent before the API, then reopens the same sandbox without another API call', async t => {
   const fixture = setup(t);
   const owner = fixture.reopen({ createSandbox: async input => {

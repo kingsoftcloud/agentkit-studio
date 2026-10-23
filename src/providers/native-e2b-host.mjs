@@ -4,10 +4,11 @@
  */
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
-import { createNativeE2BSandboxOwner } from '../../packages/agentkit-harness/src/native/e2b-sandbox-owner.mjs';
+import { createNativeE2BSandboxOwner, createDshE2BSandboxOwner } from '../../packages/agentkit-harness/src/native/e2b-sandbox-owner.mjs';
 import { createNativeE2BSdkLifecycle, createNativeE2BSdkTransport, createNativeE2BSdkFileSession, describeNativeE2BSdkLifecycle, NATIVE_E2B_SDK_TRANSPORT } from './native-e2b-sdk-transport.mjs';
 
 export const STUDIO_NATIVE_E2B_HOST = 'agentkit.studio-native-e2b-host/v1';
+export const STUDIO_DSH_E2B_HOST = 'agentkit.studio-dsh-e2b-host/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const nonempty = value => typeof value === 'string' && !!value.trim();
 const types = new Map([['', 'aio'], ['aio', 'aio'], ['allinone', 'aio'], ['code', 'code'],
@@ -56,40 +57,55 @@ function configuration(env, sandboxEnvironment) {
 
 /** Preset-wide immutable configuration. Validation and the public Build pin
  * happen synchronously, before registration, approval or an SDK import. */
-export function prepareNativeE2BHost({ env = {}, sandboxEnvironment = {}, loadSdk } = {}) {
+export function prepareNativeE2BHost(options = {}) {
+  return prepareE2BHost(options, STUDIO_NATIVE_E2B_HOST, createNativeE2BHostBinding);
+}
+export function prepareDshE2BHost(options = {}) {
+  return prepareE2BHost(options, STUDIO_DSH_E2B_HOST, createDshE2BHostBinding);
+}
+function prepareE2BHost({ env = {}, sandboxEnvironment = {}, loadSdk }, contract, bind) {
   const fixedEnv = { ...env }, fixedEnvironment = copy(sandboxEnvironment);
   const fixed = configuration(fixedEnv, fixedEnvironment);
   const lifecycle = describeNativeE2BSdkLifecycle({ connection: fixed.connection, template: fixed.template,
     timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess, env: fixed.env });
-  const binding = Object.freeze({ contract: STUDIO_NATIVE_E2B_HOST, backend: 'e2b',
-    bindingDigest: hash({ contract: STUDIO_NATIVE_E2B_HOST, lifecycle: lifecycle.bindingDigest, sandboxType: fixed.sandboxType }),
+  const binding = Object.freeze({ contract, backend: 'e2b',
+    bindingDigest: hash({ contract, lifecycle: lifecycle.bindingDigest, sandboxType: fixed.sandboxType }),
     transportContract: NATIVE_E2B_SDK_TRANSPORT, template: fixed.template, sandboxType: fixed.sandboxType,
     timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess });
   return Object.freeze({ binding,
-    forSession: options => createNativeE2BHostBinding({ ...options, env: fixedEnv,
+    forSession: options => bind({ ...options, env: fixedEnv,
       sandboxEnvironment: fixedEnvironment, ...(loadSdk ? { loadSdk } : {}) }) });
 }
 
-export async function createNativeE2BHostBinding({ env, scope, sessionId, workspaceRoot, stateRoot,
+export function createNativeE2BHostBinding(options = {}) {
+  scopeKey(options.scope);
+  return createE2BHostBinding({ ...options, ownership: { contract: STUDIO_NATIVE_E2B_HOST,
+    fields: { scope: copy(options.scope) }, create: createNativeE2BSandboxOwner, runtime: 'agentkit' } });
+}
+export function createDshE2BHostBinding(options = {}) {
+  invariant(nonempty(options.agentId), 'studio_dsh_e2b_agent_required');
+  return createE2BHostBinding({ ...options, ownership: { contract: STUDIO_DSH_E2B_HOST,
+    fields: { agentId: options.agentId }, create: createDshE2BSandboxOwner, runtime: 'agentkit-dsh' } });
+}
+async function createE2BHostBinding({ env, ownership, sessionId, workspaceRoot, stateRoot,
   assertAuthority, assertReconciliationAuthority = null, sandboxEnvironment = {}, loadSdk } = {}) {
-  scopeKey(scope);
   invariant(nonempty(sessionId) && typeof assertAuthority === 'function', 'studio_native_e2b_host_authority_required');
   invariant(assertReconciliationAuthority === null || typeof assertReconciliationAuthority === 'function',
     'studio_native_e2b_reconciliation_authority_invalid');
   // Capture all settings before importing the SDK; the source object can be
   // changed by another Host operation while the asynchronous import is pending.
-  const fixedScope = copy(scope), fixed = configuration(env ?? {}, sandboxEnvironment);
+  const fixed = configuration(env ?? {}, sandboxEnvironment);
   const options = { connection: fixed.connection, ...(loadSdk ? { loadSdk } : {}) };
   const lifecycle = await createNativeE2BSdkLifecycle({ ...options, template: fixed.template,
     timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess, env: fixed.env });
-  const bindingDigest = hash({ contract: STUDIO_NATIVE_E2B_HOST, lifecycle: lifecycle.bindingDigest,
-    sandboxType: fixed.sandboxType, scope: fixedScope, sessionId });
-  const owner = createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope: fixedScope, sessionId, bindingDigest,
+  const bindingDigest = hash({ contract: ownership.contract, lifecycle: lifecycle.bindingDigest,
+    sandboxType: fixed.sandboxType, ...ownership.fields, sessionId });
+  const owner = ownership.create({ stateRoot, workspaceRoot, ...ownership.fields, sessionId, bindingDigest,
     assertAuthority, assertReconciliationAuthority, inspectSandbox: lifecycle.inspectSandbox,
     createSandbox: input => lifecycle.createSandbox({ ...input,
-      metadata: { ...input.metadata, runtime: 'agentkit', sandbox_type: fixed.sandboxType, session_id: sessionId } }),
+      metadata: { ...input.metadata, runtime: ownership.runtime, sandbox_type: fixed.sandboxType, session_id: sessionId } }),
     killSandbox: lifecycle.killSandbox });
-  const binding = Object.freeze({ contract: STUDIO_NATIVE_E2B_HOST, backend: 'e2b', bindingDigest,
+  const binding = Object.freeze({ contract: ownership.contract, backend: 'e2b', bindingDigest,
     transportContract: NATIVE_E2B_SDK_TRANSPORT, template: fixed.template, sandboxType: fixed.sandboxType,
     timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess });
   // Options are returned only when the trusted Host constructs a supervisor.

@@ -31,10 +31,28 @@ function read(path) {
 }
 function freeze(value) { if (value && typeof value === 'object') { Object.freeze(value); Object.values(value).forEach(freeze); } return value; }
 
-export function createNativeE2BSkillRuntime({ stateRoot, workspaceRoot, scope, sessionId, bindingDigest,
+export function createNativeE2BSkillRuntime(options = {}) {
+  scopeKey(options.scope); const scope = copy(options.scope), sessionId = options.sessionId;
+  return createE2BSkillRuntime({ ...options, owner: { contract: NATIVE_SKILL_RUNTIME, backendContract: NATIVE_SKILL_E2B_RUNTIME,
+    prefix: 'e2b-skill', fields: { scope }, key: request => ({ scope, sessionId, runId: request.runId, operationKey: request.operationKey }),
+    check: request => invariant(canonical(request.scope) === canonical(scope) && request.sessionId === sessionId, 'SKILL_RUNTIME_OWNER_MISMATCH') } });
+}
+
+export const DSH_SKILL_E2B_RUNTIME = 'agentkit.dsh-skill-e2b-runtime/v1';
+export function createDshE2BSkillRuntime(options = {}) {
+  const { agentId, sessionId } = options;
+  invariant(typeof agentId === 'string' && agentId.trim() && typeof sessionId === 'string' && sessionId.trim(), 'SKILL_RUNTIME_OWNER_MISMATCH');
+  return createE2BSkillRuntime({ ...options, owner: { contract: DSH_SKILL_E2B_RUNTIME, backendContract: DSH_SKILL_E2B_RUNTIME,
+    prefix: 'dsh-e2b-skill', fields: { agentId }, key: request => ({ agentId, sessionId, callId: request.callId, operationKey: request.operationKey }),
+    check: request => invariant(request.agentId === agentId && request.sessionId === sessionId
+      && typeof request.callId === 'string' && request.callId.trim() && request.callId === request.call?.callId
+      && ['scope', 'runId', 'turnId', 'buildId', 'executionFence', 'parentRunId', 'taskChainId'].every(key => request[key] === undefined),
+    'SKILL_RUNTIME_OWNER_MISMATCH') } });
+}
+
+function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bindingDigest,
   settings, prepared, loadPackages, assertStorage = () => true, inProcessTransport = false,
   createFiles = createNativeSkillE2BFiles } = {}) {
-  scopeKey(scope);
   invariant(settings?.backend === 'e2b' && settings.enabled && prepared?.binding?.backend === 'e2b'
     && typeof prepared.forSession === 'function' && typeof loadPackages === 'function', 'SKILL_RUNTIME_BINDING_INVALID');
   invariant(typeof sessionId === 'string' && sessionId.trim() && /^[a-f0-9]{64}$/u.test(bindingDigest ?? '')
@@ -42,9 +60,9 @@ export function createNativeE2BSkillRuntime({ stateRoot, workspaceRoot, scope, s
   'SKILL_RUNTIME_BINDING_INVALID');
   const workspace = realpathSync(workspaceRoot), root = resolve(stateRoot);
   invariant(!inside(root, workspace) && !inside(workspace, root), 'SKILL_RUNTIME_STATE_OVERLAP'); privateDirectory(root, true);
-  const pinnedRoot = lstatSync(root), pinnedWorkspace = lstatSync(workspace), fixedScope = copy(scope), fixedSettings = copy(settings);
-  const binding = { scope: fixedScope, sessionId, bindingDigest, settings: fixedSettings, e2b: copy(prepared.binding),
-    backendContract: NATIVE_SKILL_E2B_RUNTIME, fileContract: NATIVE_SKILL_E2B_FILES };
+  const pinnedRoot = lstatSync(root), pinnedWorkspace = lstatSync(workspace), fixedSettings = copy(settings);
+  const binding = { ...copy(owner.fields), sessionId, bindingDigest, settings: fixedSettings, e2b: copy(prepared.binding),
+    backendContract: owner.backendContract, fileContract: NATIVE_SKILL_E2B_FILES };
   const ownerId = hash([workspace, 'e2b', sessionId]);
   const storage = () => {
     invariant(assertStorage() !== false, 'SKILL_RUNTIME_STORAGE_CHANGED'); privateDirectory(root);
@@ -53,16 +71,16 @@ export function createNativeE2BSkillRuntime({ stateRoot, workspaceRoot, scope, s
       && currentWorkspace.dev === pinnedWorkspace.dev && currentWorkspace.ino === pinnedWorkspace.ino, 'SKILL_RUNTIME_ROOT_CHANGED');
   };
   function locate(request) {
-    invariant(canonical(request.scope) === canonical(fixedScope) && request.sessionId === sessionId, 'SKILL_RUNTIME_OWNER_MISMATCH');
-    const id = hash({ scope: fixedScope, sessionId, runId: request.runId, operationKey: request.operationKey });
-    return { runtime_id: `e2b-skill:${id}`, task_id: hash([ownerId, `skill-runtime:${id}`]) };
+    owner.check(request);
+    const id = hash(owner.key(request));
+    return { runtime_id: `${owner.prefix}:${id}`, task_id: hash([ownerId, `skill-runtime:${id}`]) };
   }
   async function execute(request) {
     const originalSignal = request.signal, authority = request.assertCurrent, original = canonical(body(request));
     invariant(Buffer.byteLength(original) <= 2 * 1024 ** 2, 'SKILL_RUNTIME_REQUEST_TOO_LARGE');
     invariant(originalSignal instanceof AbortSignal && typeof authority === 'function', 'SKILL_RUNTIME_AUTHORITY_REQUIRED');
     const { runtime_id: runtimeId, task_id: taskId } = locate(request);
-    const id = runtimeId.slice('e2b-skill:'.length), operationKey = `skill-runtime:${id}`;
+    const id = runtimeId.slice(owner.prefix.length + 1), operationKey = `skill-runtime:${id}`;
     const deadline = new AbortController(), signal = AbortSignal.any([originalSignal, deadline.signal]);
     const timer = setTimeout(() => deadline.abort(Object.assign(new Error('Skill runtime deadline exceeded'), { code: 'SKILL_RUNTIME_DEADLINE' })),
       fixedSettings.timeoutSeconds * 1000); timer.unref?.();
@@ -70,7 +88,8 @@ export function createNativeE2BSkillRuntime({ stateRoot, workspaceRoot, scope, s
       'SKILL_RUNTIME_REQUEST_CHANGED');
     function guard() {
       storage(); signal.throwIfAborted(); unchanged();
-      invariant(canonical(request.scope) === canonical(fixedScope) && request.sessionId === sessionId && typeof request.operationKey === 'string'
+      owner.check(request);
+      invariant(typeof request.operationKey === 'string'
         && request.call?.name === 'execute_skills' && request.callId === request.call.callId, 'SKILL_RUNTIME_OWNER_MISMATCH');
       const verdict = authority(); if (verdict && typeof verdict.then === 'function') Promise.resolve(verdict).catch(() => {});
       invariant(verdict === true, 'SKILL_RUNTIME_AUTHORITY_LOST'); unchanged(); signal.throwIfAborted(); return true;
@@ -93,14 +112,14 @@ export function createNativeE2BSkillRuntime({ stateRoot, workspaceRoot, scope, s
       instruction: 'Inspect and reconcile this original runtime and sandbox; do not launch it again.' });
     try {
       guard(); const directory = join(root, id); privateDirectory(directory, true); guard(); recordPath = join(directory, 'record.json');
-      const matches = previous => invariant(previous.contract === NATIVE_SKILL_RUNTIME && canonical(previous.binding) === canonical(binding)
+      const matches = previous => invariant(previous.contract === owner.contract && canonical(previous.binding) === canonical(binding)
         && canonical(previous.request) === original && previous.runtimeId === runtimeId && previous.taskId === taskId, 'SKILL_RUNTIME_IDENTITY_CONFLICT');
       release = tryLock(join(directory, 'owner.sqlite'));
       if (!release || existsSync(recordPath)) {
         const previous = read(recordPath); matches(previous); guard(); intent = previous; remoteId = previous.sandboxId;
         return previous.phase === 'finished' ? copy(previous.result) : unknown(release ? 'skill_runtime_outcome_unknown' : 'skill_runtime_in_progress');
       }
-      intent = { contract: NATIVE_SKILL_RUNTIME, binding, request: body(request), runtimeId, taskId,
+      intent = { contract: owner.contract, binding, request: body(request), runtimeId, taskId,
         phase: 'executing', commands: [], sandboxId: null, createdAt: Date.now() };
       guard(); save(recordPath, intent); dispatched = true;
       const packageRequest = { ...body(request), signal };
@@ -118,7 +137,7 @@ export function createNativeE2BSkillRuntime({ stateRoot, workspaceRoot, scope, s
       save(recordPath, intent);
       // The owner is per INVOCATION, rather than the shared interactive command
       // sandbox. No executable content or credentials enter the owner identity.
-      host = await boundary(() => prepared.forSession({ scope: fixedScope, sessionId, workspaceRoot: workspace,
+      host = await boundary(() => prepared.forSession({ ...copy(owner.fields), sessionId, workspaceRoot: workspace,
         stateRoot: join(directory, 'sandbox'), assertAuthority: guard }));
       ownerRequest = Object.freeze({ ...freeze(body(request)), definition: freeze(copy(request.lockedDefinition)), signal });
       const created = await boundary(() => host.owner.ensure(ownerRequest)); remoteId = created.sandboxId;
@@ -271,5 +290,5 @@ export function createNativeE2BSkillRuntime({ stateRoot, workspaceRoot, scope, s
       storage(); save(recordPath, { ...intent, sandboxId: remoteId ?? null, phase: 'finished', result, completedAt: Date.now() }); return result;
     } finally { clearTimeout(timer); release?.(); }
   }
-  return Object.freeze({ contract: NATIVE_SKILL_E2B_RUNTIME, execute, locate });
+  return Object.freeze({ contract: owner.backendContract, execute, locate });
 }

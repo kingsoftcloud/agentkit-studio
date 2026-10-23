@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync, existsSync, readdirSync, symlinkSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
@@ -23,7 +23,8 @@ async function waitFor(predicate) {
 }
 function records(root) {
   if (!existsSync(root)) return [];
-  return readdirSync(root, { recursive: true }).filter(path => path.endsWith('record.json')).flatMap(path => {
+  return readdirSync(root, { recursive: true })
+    .filter(path => /^skill-workflows\/[a-f0-9]{64}\/runtime\/[a-f0-9]{64}\/record\.json$/u.test(path.split(sep).join('/'))).flatMap(path => {
     const file = join(root, path), record = JSON.parse(readFileSync(file, 'utf8'));
     return record.contract === DSH_LOCAL_SKILL_RUNTIME ? [{ file, record }] : [];
   });
@@ -198,7 +199,7 @@ test('two actual runtime owners cannot duplicate a running workflow or return su
 test('cancellation, Host retirement and workflow timeout retain original locators and never restart effects', async t => {
   for (const boundary of ['cancel', 'retire', 'timeout']) {
     const host = new AbortController(), h = setup(t, { script: 'printf x > "$KSADK_SKILL_WORKDIR/effect"\n/bin/sleep 30', signal: host.signal });
-    const env = { ...h.config.env, KSADK_SKILL_RUNTIME_TIMEOUT: boundary === 'timeout' ? '1' : '15' };
+    const env = { ...h.config.env, KSADK_SKILL_RUNTIME_TIMEOUT: boundary === 'timeout' ? '5' : '15' };
     const port = h.open({ env }), controller = new AbortController(), exec = h.execution(); exec.signal = controller.signal;
     const pending = h.run(h.args, exec, port);
     await waitFor(() => h.records().some(({ file }) => existsSync(join(file, '../work/effect'))));
@@ -247,16 +248,19 @@ test('shared runtime rejects foreign/fabricated ownership before any package adm
   }
 });
 
-test('composition mounts only an admitted local workflow; explicit E2B never falls back to Host execution', async t => {
+test('composition mounts admitted local/E2B workflows independently and never substitutes the selected backend', async t => {
   const h = setup(t);
   for (const backend of ['local_process', 'e2b']) {
     const port = createDshNodeBuiltins({ ...h.config, toolBindings: ['component_status', 'execute_skills'],
-      env: { ...h.config.env, KSADK_SKILL_RUNTIME_BACKEND: backend } }); t.after(() => port.close());
-    assert.equal(port.supports('execute_skills'), backend === 'local_process');
+      env: { ...h.config.env, KSADK_SKILL_RUNTIME_BACKEND: backend, KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'explicit-skill-template',
+        E2B_API_URL: 'https://fixture.invalid', E2B_DOMAIN: 'fixture.invalid', E2B_API_KEY: 'test-only-key' } }); t.after(() => port.close());
+    assert.equal(port.supports('execute_skills'), true);
     const exec = h.execution({}); exec.name = 'component_status'; const result = await port.execute(exec.name, {}, exec);
-    assert.equal(result.content.skill_runtime.enabled, backend === 'local_process');
-    assert.deepEqual(result.content.skill_space.tools, backend === 'local_process' ? ['execute_skills'] : []);
-    if (backend === 'local_process') assert.equal(result.content.skill_runtime.request_protocol, DSH_NODE_SKILL_WORKFLOW);
+    assert.equal(result.content.skill_runtime.enabled, true); assert.equal(result.content.skill_runtime.backend, backend);
+    assert.equal(result.content.skill_runtime.template_bound, backend === 'e2b');
+    assert.equal(result.content.summary.isolated_execution, backend === 'e2b' ? 'enabled' : 'not_enabled');
+    assert.deepEqual(result.content.skill_space.tools, ['execute_skills']);
+    assert.equal(result.content.skill_runtime.request_protocol, DSH_NODE_SKILL_WORKFLOW);
   }
   const readsOnly = createDshNodeBuiltins({ ...h.config, toolBindings: ['component_status'], env: h.config.env }); t.after(() => readsOnly.close());
   assert.equal(readsOnly.supports('execute_skills'), false);

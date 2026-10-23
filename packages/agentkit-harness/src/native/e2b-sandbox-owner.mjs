@@ -16,10 +16,49 @@ const outcomeUnknown = () => Object.assign(new Error('Sandbox outcome requires r
   code: 'e2b_sandbox_outcome_unknown', uncertain: true,
 });
 
-export function createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope, sessionId, bindingDigest,
+export function createNativeE2BSandboxOwner(options = {}) {
+  const scopeIdentity = scopeKey(options.scope), fixedScope = copy(options.scope), sessionId = options.sessionId;
+  return createSandboxOwner({ ...options, owner: { contract: NATIVE_E2B_SANDBOX_OWNER, fields: { scope: fixedScope },
+    metadata: { owner: 'nativeOwner', operation: 'nativeCreateOperation' },
+    snapshot(request) {
+      invariant(request && scopeKey(request.scope) === scopeIdentity && request.sessionId === sessionId, 'e2b_owner_scope_mismatch');
+      invariant([request.runId, request.turnId, request.buildId, request.taskChainId, request.operationKey, request.call?.callId]
+        .every(value => typeof value === 'string' && value.trim()), 'e2b_owner_identity_required');
+      invariant(request.parentRunId === null || typeof request.parentRunId === 'string' && request.parentRunId.trim(), 'e2b_owner_parent_required');
+      invariant(Number.isSafeInteger(request.executionFence) && request.executionFence > 0
+        && request.signal instanceof AbortSignal && request.definition?.name === request.call.name, 'e2b_owner_authority_required');
+      return { requestDigest: hash({ scope: request.scope, sessionId: request.sessionId,
+        runId: request.runId, turnId: request.turnId, buildId: request.buildId, parentRunId: request.parentRunId,
+        taskChainId: request.taskChainId, operationKey: request.operationKey, executionFence: request.executionFence,
+        call: request.call, definition: request.definition }), signal: request.signal,
+      identity: { runId: request.runId, operationKey: request.operationKey, callId: request.call.callId,
+        executionFence: request.executionFence } };
+    } } });
+}
+
+export const DSH_E2B_SANDBOX_OWNER = 'agentkit.dsh-e2b-sandbox-owner/v1';
+/** Same durable lifecycle, owned by the real DSH Agent/Session/call. Native
+ * Runs and execution fences are neither required nor fabricated. */
+export function createDshE2BSandboxOwner(options = {}) {
+  const { agentId, sessionId } = options;
+  invariant(typeof agentId === 'string' && agentId.trim(), 'e2b_owner_agent_required');
+  return createSandboxOwner({ ...options, owner: { contract: DSH_E2B_SANDBOX_OWNER, fields: { agentId },
+    metadata: { owner: 'dshOwner', operation: 'dshCreateOperation' },
+    snapshot(request) {
+      invariant(request?.agentId === agentId && request.sessionId === sessionId, 'e2b_owner_scope_mismatch');
+      invariant([request.operationKey, request.call?.callId, request.call?.name].every(value => typeof value === 'string' && value.trim())
+        && (request.callId === undefined || request.callId === request.call.callId)
+        && ['scope', 'runId', 'turnId', 'buildId', 'executionFence', 'parentRunId', 'taskChainId'].every(key => request[key] === undefined),
+      'e2b_owner_identity_required');
+      invariant(request.signal instanceof AbortSignal && request.definition?.name === request.call.name, 'e2b_owner_authority_required');
+      const { signal, ...json } = request;
+      return { requestDigest: hash(json), signal, identity: { agentId, sessionId, operationKey: request.operationKey, callId: request.call.callId } };
+    } } });
+}
+
+function createSandboxOwner({ stateRoot, workspaceRoot, owner, sessionId, bindingDigest,
   assertAuthority, createSandbox, killSandbox, inspectSandbox = null, assertReconciliationAuthority = null,
   lockTimeoutMs = 5000 } = {}) {
-  const scopeIdentity = scopeKey(scope), fixedScope = copy(scope);
   invariant(typeof sessionId === 'string' && sessionId.trim(), 'e2b_owner_session_required');
   invariant(typeof bindingDigest === 'string' && /^[a-f0-9]{64}$/.test(bindingDigest), 'e2b_owner_binding_required');
   invariant(typeof assertAuthority === 'function' && typeof createSandbox === 'function' && typeof killSandbox === 'function', 'e2b_owner_capabilities_required');
@@ -31,40 +70,32 @@ export function createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope, s
   privateDirectory(dirname(lexical), false); privateDirectory(lexical, true);
   const root = realpathSync(lexical);
   invariant(root !== workspace && !root.startsWith(workspace + sep), 'e2b_owner_state_inside_workspace');
-  const ownerKey = hash({ scope: fixedScope, sessionId, workspace });
+  const ownerKey = hash({ ...owner.fields, sessionId, workspace });
   const directory = join(root, ownerKey); privateDirectory(directory, true);
   const filename = join(directory, 'owner.json');
   const write = record => atomicPrivate(filename, canonical(record) + '\n');
   function read() {
     if (!existsSync(filename)) return null;
     const record = JSON.parse(readAll(filename));
-    invariant(record.schemaVersion === NATIVE_E2B_SANDBOX_OWNER && record.ownerKey === ownerKey
-      && canonical(record.scope) === canonical(fixedScope) && record.sessionId === sessionId
+    invariant(record.schemaVersion === owner.contract && record.ownerKey === ownerKey
+      && Object.entries(owner.fields).every(([key, value]) => canonical(record[key]) === canonical(value)) && record.sessionId === sessionId
       && phases.has(record.phase) && (record.sandboxId === null || validId(record.sandboxId)), 'e2b_owner_record_invalid');
     invariant(record.bindingDigest === bindingDigest, 'e2b_owner_binding_changed');
     invariant(record.phase !== 'ready' || validId(record.sandboxId), 'e2b_owner_record_invalid');
     return record;
   }
-  function snapshot(request) {
-    invariant(request && scopeKey(request.scope) === scopeIdentity && request.sessionId === sessionId, 'e2b_owner_scope_mismatch');
-    invariant([request.runId, request.turnId, request.buildId, request.taskChainId, request.operationKey, request.call?.callId]
-      .every(value => typeof value === 'string' && value.trim()), 'e2b_owner_identity_required');
-    invariant(request.parentRunId === null || typeof request.parentRunId === 'string' && request.parentRunId.trim(), 'e2b_owner_parent_required');
-    invariant(Number.isSafeInteger(request.executionFence) && request.executionFence > 0
-      && request.signal instanceof AbortSignal && request.definition?.name === request.call.name, 'e2b_owner_authority_required');
-    return { requestDigest: hash({ scope: request.scope, sessionId: request.sessionId,
-      runId: request.runId, turnId: request.turnId, buildId: request.buildId, parentRunId: request.parentRunId,
-      taskChainId: request.taskChainId, operationKey: request.operationKey, executionFence: request.executionFence,
-      call: request.call, definition: request.definition }), signal: request.signal,
-    identity: { runId: request.runId, operationKey: request.operationKey, callId: request.call.callId,
-      executionFence: request.executionFence } };
-  }
+  const snapshot = owner.snapshot;
   function guard(request, before, authority = assertAuthority) {
     invariant(realpathSync(workspaceRoot) === workspace && realpathSync(lexical) === root, 'e2b_owner_root_changed');
     const current = snapshot(request);
     invariant(current.requestDigest === before.requestDigest && current.signal === before.signal, 'e2b_owner_context_drift');
     before.signal.throwIfAborted();
-    invariant(authority?.(request) === true, 'e2b_owner_authority_unproven');
+    const verdict = authority?.(request);
+    if (verdict && typeof verdict.then === 'function') Promise.resolve(verdict).catch(() => {});
+    invariant(verdict === true, 'e2b_owner_authority_unproven');
+    const after = snapshot(request);
+    invariant(after.requestDigest === before.requestDigest && after.signal === before.signal, 'e2b_owner_context_drift');
+    before.signal.throwIfAborted();
   }
   const unknown = (record, reason, sandboxId = record.sandboxId) => ({ ...record, phase: 'unknown', sandboxId,
     outcomeReason: reason, updatedAt: Date.now() });
@@ -84,15 +115,15 @@ export function createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope, s
         invariant(record.phase !== 'closed', 'e2b_sandbox_owner_closed');
         invariant(false, 'e2b_owner_record_invalid');
       }
-      record = { schemaVersion: NATIVE_E2B_SANDBOX_OWNER, ownerKey, scope: fixedScope, sessionId,
+      record = { schemaVersion: owner.contract, ownerKey, ...owner.fields, sessionId,
         bindingDigest, phase: 'creating', sandboxId: null, createIdentity: before.identity,
         requestDigest: before.requestDigest, createdAt: Date.now(), updatedAt: Date.now() };
       // Creation intent is durable before the external API is entered.
       write(record); guard(request, before);
       let created;
       try {
-        created = await createSandbox({ signal: before.signal, metadata: { nativeOwner: ownerKey,
-          nativeCreateOperation: hash(before.identity) } });
+        created = await createSandbox({ signal: before.signal, metadata: { [owner.metadata.owner]: ownerKey,
+          [owner.metadata.operation]: hash(before.identity) } });
         invariant(validId(created?.sandboxId), 'e2b_created_identity_invalid');
       } catch (error) {
         write(unknown(record, 'sandbox_create_outcome_unknown', validId(error?.sandboxId) ? error.sandboxId : null));
@@ -177,8 +208,8 @@ export function createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope, s
       }
       check();
       invariant(observed?.sandboxId === fixedDecision.sandboxId && observed.state === 'running'
-        && observed.metadata?.nativeOwner === ownerKey
-        && observed.metadata?.nativeCreateOperation === hash(record.createIdentity), 'e2b_owner_reconciliation_proof_invalid');
+        && observed.metadata?.[owner.metadata.owner] === ownerKey
+        && observed.metadata?.[owner.metadata.operation] === hash(record.createIdentity), 'e2b_owner_reconciliation_proof_invalid');
       // Keep the old unknown outcome and the reviewed record hash in the audit
       // record. No "not created" conclusion or permission to create anew.
       const reconciliation = { identity: before.identity, previousRecordDigest: fixedDecision.expectedRecordDigest,
@@ -189,7 +220,7 @@ export function createNativeE2BSandboxOwner({ stateRoot, workspaceRoot, scope, s
       return { sandboxId: fixedDecision.sandboxId, adopted: true, commandsReconciled: false };
     } finally { release(); }
   }
-  return Object.freeze({ contract: NATIVE_E2B_SANDBOX_OWNER, ownerKey, ensure, close,
+  return Object.freeze({ contract: owner.contract, ownerKey, ensure, close,
     reconcileAdoption,
     inspectReconciliation: () => { const record = read(); return record ? { record: copy(record), recordDigest: hash(record) } : null; },
     inspect: () => { const record = read(); return record ? copy(record) : null; } });

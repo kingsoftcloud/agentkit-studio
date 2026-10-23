@@ -663,4 +663,8 @@ DSH Native / Codex 的五个 Skill 读取工具现复用完整 Native 的共享�
 在 DSH Native/Codex 中运行包脚本、交付精确文本/二进制、复用原回执，并保留一次审批
 及后置结果策略。定向验证另覆盖真实 SIGKILL、不合作服务取消、绑定漂移、冷恢复和
 缓存身份；版本与证据范围见 [DSH 本地 Skills](native-skills.md#dsh-native--codex-的本地-skill-工作流)。
-DSH 的 E2B 工作流、管理工具等剩余 builtin 仍保留 Python fallback；没有默认切换或整体完成声明。
+DSH 的 E2B 工作流随后也通过独立 DSH 持久契约接入 Node，复用 SDK/文件/命令监督器；
+实际打包 Host 在拒绝连接后退出，新 PID 恢复原 call 不新增请求或命令，记录字节不变。
+成功执行/精确产物/SIGKILL 另由明确 SDK 控制面替身下的实际 Bash 验证，不能合称线上
+E2B 成功验收。配置与证据见 [DSH E2B Skills](native-skills.md#dsh-native--codex-的-e2b-skill-工作流)。
+DSH 的交互式 E2B 命令、管理工具等剩余 builtin 仍保留 Python fallback；没有默认切换或整体完成声明。

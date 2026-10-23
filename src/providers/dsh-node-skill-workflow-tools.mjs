@@ -1,9 +1,12 @@
-/** Durable local Skill workflows admitted by the real DSH ToolRegistry. */
+/** Durable local/E2B Skill workflows admitted by the real DSH ToolRegistry. */
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { canonical, copy, invariant, toolInputRejection } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { nativeSkillWorkflowToolDefinitions, normalizeSkillNames } from '../../packages/agentkit-harness/src/native/skill-tools.mjs';
 import { createDshLocalSkillRuntime, nativeSkillRuntimeSettings } from './native-skill-runtime.mjs';
+import { prepareDshE2BHost } from './native-e2b-host.mjs';
+import { createDshE2BSkillRuntime, DSH_SKILL_E2B_RUNTIME } from './native-skill-e2b-runtime.mjs';
+import { NATIVE_SKILL_E2B_FILES } from './native-skill-e2b-files.mjs';
 import { nativeSkillSessionCache, nativeSkillSpaceSettings, loadSkillRuntimePackages } from './native-skill-host.mjs';
 import { createStudioNativeSkillSource } from './native-skill-source.mjs';
 import { createNativeSkillService } from './native-skill-service.mjs';
@@ -25,13 +28,17 @@ function abortable(pending, signal) {
 }
 
 export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
-  connection, skillSpaceIds = [], skillDefinitions = [], env = {}, fetchImpl, isClosed = () => false, signal: hostSignal } = {}) {
+  connection, skillSpaceIds = [], skillDefinitions = [], env = {}, fetchImpl, loadSdk, isClosed = () => false, signal: hostSignal } = {}) {
   invariant(ctx && typeof agentId === 'string' && agentId.trim() && typeof isClosed === 'function', 'dsh_skill_workflow_binding_invalid');
   invariant(hostSignal === undefined || hostSignal instanceof AbortSignal, 'dsh_skill_workflow_host_signal_invalid');
   invariant(Number.isSafeInteger(agentRevision) && agentRevision >= 1
     && (buildId === null || typeof buildId === 'string' && buildId.trim()), 'dsh_skill_workflow_revision_invalid');
-  const environment = { ...env }, settings = nativeSkillRuntimeSettings(environment);
-  invariant(settings.backend === 'local_process' && settings.enabled, 'dsh_skill_workflow_backend_unmounted');
+  const environment = { ...env }, selected = nativeSkillRuntimeSettings(environment);
+  invariant(selected.enabled, 'dsh_skill_workflow_backend_unmounted');
+  const e2b = selected.backend === 'e2b' ? prepareDshE2BHost({ env: { ...environment,
+    KSADK_SANDBOX_BACKEND: 'e2b', KSADK_SANDBOX_TIMEOUT: String(selected.timeoutSeconds) }, ...(loadSdk ? { loadSdk } : {}) }) : null;
+  const settings = Object.freeze({ ...selected, ...(e2b ? { host: e2b.binding,
+    backendContract: DSH_SKILL_E2B_RUNTIME, fileContract: NATIVE_SKILL_E2B_FILES } : {}) });
   const { userSpaces, publicSpaces, publicAllowlist } = nativeSkillSpaceSettings({ skillSpaceIds }, environment);
   invariant(!userSpaces.length && !publicSpaces.length || connection?.client && /^[a-f0-9]{64}$/u.test(connection.bindingDigest ?? ''),
     'dsh_skill_workflow_connection_missing');
@@ -57,8 +64,9 @@ export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 
         owner: { contract: DSH_NODE_SKILL_WORKFLOW, agentId, sessionId } });
       const load = service ? createNativeSkillLoader({ serviceClient: service, cacheDir: cache.cacheDir,
         ...(fetchImpl ? { fetchImpl } : {}) }) : undefined;
-      const runtime = createDshLocalSkillRuntime({ stateRoot: join(cache.cacheDir, 'runtime'), workspaceRoot,
+      const runtime = (e2b ? createDshE2BSkillRuntime : createDshLocalSkillRuntime)({ stateRoot: join(cache.cacheDir, 'runtime'), workspaceRoot,
         agentId, sessionId, bindingDigest, settings, env: environment, assertStorage: cache.assertStorage,
+        ...(e2b ? { prepared: e2b, inProcessTransport: Boolean(loadSdk) } : {}),
         loadPackages: request => loadSkillRuntimePackages({ request, localSource, localDefinitions,
           userSpaces, publicSpaces, publicAllowlist, service, load, assertStorage: cache.assertStorage }) });
       sessions.set(sessionId, { ...cache, runtime });
@@ -108,6 +116,7 @@ export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 
         return { status: result.status === 'uncertain' || result.uncertain ? 'uncertain' : result.ok ? 'ok' : 'error', content: result };
       } catch (error) {
         if (dispatched) return { status: 'uncertain', content: { ok: false, status: 'uncertain', uncertain: true, ...locator,
+          backend: settings.backend, isolated: settings.isolated,
           error_type: 'dsh_skill_workflow_outcome_unknown', instruction: 'Reconcile the original workflow; do not automatically execute it again.' } };
         try { assertCurrent?.(); } catch (current) { error = current; }
         return errorResult(error?.code ?? 'dsh_skill_workflow_failed');
