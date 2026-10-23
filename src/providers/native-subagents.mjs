@@ -7,6 +7,7 @@ import { createStudioNativeChildMerge } from './native-child-merge.mjs';
 import { previousChildPublication } from '../../packages/agentkit-harness/src/native/child-publication.mjs';
 
 export const STUDIO_NATIVE_CHILD_CONTRACT = 'agentkit.studio-native-children/v2';
+export const STUDIO_NATIVE_CHILD_SKILLS_CONTRACT = 'agentkit.studio-child-borrowed-skills/v1';
 const workspaceTools = new Set(['workspace_status', 'list_workspace_files', 'read_workspace_file', 'lint_workspace_file',
   'search_workspace_files', 'write_workspace_file', 'write_workspace_files', 'edit_workspace_file',
   'multi_edit_workspace_file', 'delete_workspace_file']);
@@ -70,13 +71,17 @@ export function nativeChildRoles(spec = {}) {
 }
 
 /** Bind every child to a declared role and its own scoped tool state. */
-export async function createStudioNativeChildren({ roles, scope, sessionId, store, tools, hasSkills, hasMcp, mcpBinding,
+export async function createStudioNativeChildren({ roles, scope, sessionId, store, tools, hasSkills, hasMcp, mcpBinding, skillBinding, skillInstructions,
   resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, mediaSources = new Map() }) {
   if (!roles.length) return null;
   const byName = new Map(roles.map(role => [role.name, role]));
   const bindings = new Map();
   for (const role of roles) {
-    invariant(!role.inheritSkills || !hasSkills, 'studio_native_child_skill_binding_unavailable');
+    const inheritedSkills = role.inheritSkills && hasSkills;
+    invariant(!inheritedSkills || skillBinding?.contract === STUDIO_NATIVE_CHILD_SKILLS_CONTRACT
+      && /^[a-f0-9]{64}$/.test(skillBinding.bindingDigest) && Array.isArray(skillBinding.toolNames)
+      && skillBinding.toolNames.length === 4 && new Set(skillBinding.toolNames).size === 4
+      && typeof skillInstructions === 'string', 'studio_native_child_skill_binding_unavailable');
     const inheritedMcp = role.inheritMcp && hasMcp;
     invariant(!inheritedMcp || mcpBinding?.contract === 'agentkit.studio-child-borrowed-mcp/v1'
       && /^[a-f0-9]{64}$/.test(mcpBinding.bindingDigest) && Array.isArray(mcpBinding.toolNames)
@@ -92,7 +97,12 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
     invariant(mcpTools.every(tool => tool && !granted.some(item => item.name === tool.name)
       && (!role.concurrentSafe || tool.readOnly === true)), 'studio_native_child_mcp_role_unsafe');
     const model = await resolveModel(role.modelProfileId);
-    bindings.set(role.name, { model, tools: [...granted, ...mcpTools], isolatedWrite,
+    const skillTools = inheritedSkills ? skillBinding.toolNames.map(name => tools.find(tool => tool.name === name)) : [];
+    invariant(skillTools.every(tool => tool?.readOnly === true && tool.concurrentSafe === true
+      && !granted.some(item => item.name === tool.name) && !mcpTools.some(item => item.name === tool.name)),
+    'studio_native_child_skill_binding_unavailable');
+    bindings.set(role.name, { model, tools: [...granted, ...mcpTools, ...skillTools], isolatedWrite,
+      ...(inheritedSkills ? { skillBinding: structuredClone(skillBinding) } : {}),
       ...(inheritedMcp ? { mcpBinding: structuredClone(mcpBinding) } : {}) });
   }
   const childScope = role => ({ ...scope, agentId: `${scope.agentId}:child:${role.name}` });
@@ -123,11 +133,15 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         contract.finalSubmissionPayloadKey = 'output'; contract.finalOutputFormat = submissionOutputFormat(contract.finalSubmissionSchema, 'output');
       }
       const source = args.continuation_of === undefined ? null : store.load(child, args.continuation_of);
+      const childSkills = bound.skillBinding ? { ...bound.skillBinding, role: structuredClone(role), buildId: request.parent.buildId } : null;
+      invariant(!source || canonical(source.configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills),
+        'studio_native_child_skill_binding_changed');
       const isolated = bound.isolatedWrite ? fileWorkspaces.bind({ scope: child, sessionId: request.childSessionId, role,
         existing: Boolean(source), ...(source ? { expectedBinding: source.configuration.hostRecoveryBinding?.childWorkspace } : {}) }) : null;
       invariant(!source || !bound.isolatedWrite || source.configuration.hostRecoveryBinding?.childWorkspace,
         'studio_native_child_workspace_binding_changed');
       const ports = bindTools({ scope: child, store, sessionId: request.childSessionId, toolNames: bound.tools.map(tool => tool.name),
+        ...(childSkills ? { childSkills } : {}),
         ...(bound.mcpBinding ? { mcpBinding: bound.mcpBinding } : {}),
         ...(isolated ? { workspaceRoot: isolated.root, workspaceBinding: isolated.binding } : {}) });
       const verification = await verificationFactory({ scope: child, sessionId: request.childSessionId,
@@ -136,11 +150,14 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       return { scope: child, configuration: configure({ profile: bound.model.profile, contextPolicy: bound.model.contextPolicy,
         guidancePolicy: 'boundary-guide/v1',
         ...(media.length ? { inputMessages: [{ role: 'user', kind: 'user_input', content: request.task, media }] } : {}),
-        instructions: role.instructions, contract, tools: bound.tools,
+        instructions: [role.instructions, ...(childSkills ? [skillInstructions] : [])].filter(Boolean).join('\n\n'), contract, tools: bound.tools,
         modelRecoveryPolicy: bound.model.modelRecoveryPolicy ?? 'manual',
-        ...(isolated ? { hostRecoveryBinding: { childWorkspace: isolated.binding } } : {}),
+        ...(isolated || childSkills ? { hostRecoveryBinding: {
+          ...(isolated ? { childWorkspace: isolated.binding } : {}), ...(childSkills ? { childSkills } : {}),
+        } } : {}),
         hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools,
           ...(bound.mcpBinding ? { inheritedMcp: bound.mcpBinding } : {}),
+          ...(childSkills ? { inheritedSkills: childSkills } : {}),
           ...(isolated ? { childWorkspace: isolated.binding } : {}),
           ...(parentOutputDigest ? { parentOutputDigest } : {}) }),
         delegationDepth: request.depth, limits: { maxModelCalls: role.maxTurns, maxToolCalls: role.maxToolCalls ?? (bound.tools.length ? role.maxTurns * 4 : 0),
@@ -155,6 +172,9 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         ?.find(item => item.callId === binding.parentToolCallId);
       invariant(call && role, 'studio_native_child_restore_binding_changed');
       const { parentOutputDigest } = outputSchema(role, call.arguments, parent.snapshot.taskContract ?? parent.configuration.contract);
+      const childSkills = bound?.skillBinding ? { ...bound.skillBinding, role: structuredClone(role), buildId: identity.buildId } : null;
+      invariant(canonical(configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills),
+        'studio_native_child_skill_binding_changed');
       const isolated = bound?.isolatedWrite ? fileWorkspaces.bind({ scope: identity.scope, sessionId: identity.sessionId,
         role, existing: true, expectedBinding: configuration.hostRecoveryBinding?.childWorkspace }) : null;
       invariant(!bound?.isolatedWrite || configuration.hostRecoveryBinding?.childWorkspace,
@@ -170,9 +190,11 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         && configuration.hostBindingDigest === hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role,
           profile: bound.model.profile, scope: childScope(role), tools: bound.tools,
           ...(bound.mcpBinding ? { inheritedMcp: bound.mcpBinding } : {}),
+          ...(childSkills ? { inheritedSkills: childSkills } : {}),
           ...(isolated ? { childWorkspace: isolated.binding } : {}),
           ...(parentOutputDigest ? { parentOutputDigest } : {}) }), 'studio_native_child_restore_binding_changed');
       return { ...bindTools({ scope: identity.scope, store, sessionId: identity.sessionId, toolNames: bound.tools.map(tool => tool.name),
+        ...(childSkills ? { childSkills } : {}),
         ...(bound.mcpBinding ? { mcpBinding: bound.mcpBinding } : {}),
         ...(isolated ? { workspaceRoot: isolated.root, workspaceBinding: isolated.binding } : {}) }),
         model: bound.model.model, context: bound.model.context,

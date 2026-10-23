@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
@@ -19,9 +20,16 @@ import { previousChildPublication } from '../packages/agentkit-harness/src/nativ
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
   inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan,
-  childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch } = {}) {
+  childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch, skills = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-children-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
+  let skillDefinitions;
+  if (skills) {
+    const path = join(realpathSync(root), 'alpha'); await mkdir(path);
+    const content = '---\nname: alpha\ndescription: Child skill metadata\n---\nINHERITED_SKILL_INSTRUCTIONS_BODY';
+    await writeFile(join(path, 'SKILL.md'), content); await writeFile(join(path, 'data.txt'), 'CHILD_SKILL_RESOURCE');
+    skillDefinitions = [{ name: 'alpha', content, path: join(path, 'SKILL.md'), resourceBase: { kind: 'directory', path } }];
+  }
   const roles = [{ name: 'reader', instructions: 'Read the requested workspace evidence.', tools: ['read_workspace_file'],
     modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2, ...role }];
   const agents = createAgentStore({ storeDir: join(root, 'agents') });
@@ -45,7 +53,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
     },
   } };
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id, subAgents: roles, toolBindings: boundTools,
-    toolContracts: mcp?.contracts }, workspaceRoot, stateDir: join(root, 'tools'), executeMcpTool: mcp?.execute });
+    toolContracts: mcp?.contracts, skillDefinitions }, workspaceRoot, stateDir: join(root, 'tools'), executeMcpTool: mcp?.execute });
   const values = { modelProfiles: [{ id: 'parent-profile', provider: 'openai-compatible', modelName: 'parent-model', baseUrl: 'https://parent.invalid/v1' },
     { id: 'child-profile', provider: 'openai-compatible', modelName: 'child-model', baseUrl: 'https://child.invalid/v1', input: childInput }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: 'fixture-secret' }) } });
@@ -60,7 +68,8 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         childModels++;
         await beforeChildModel?.(childModels, body);
         assert.equal(url, 'https://child.invalid/v1/chat/completions');
-        const expectedTools = [...roles[0].tools, ...(roles[0].inheritMcp && mcp ? mcp.contracts.map(item => item.name).sort() : [])];
+        const expectedTools = [...roles[0].tools, ...(roles[0].inheritMcp && mcp ? mcp.contracts.map(item => item.name).sort() : []),
+          ...(roles[0].inheritSkills !== false && skills ? gateway.childSkillBinding.toolNames : [])];
         const offeredTools = body.tools ?? [];
         assert.deepEqual(offeredTools.map(item => item.function.name).filter(name => name !== 'submit_final_output'),
           childModels > 1 && !offeredTools.length ? [] : expectedTools);
@@ -117,6 +126,108 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
 
 const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
   parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
+
+test('SQLite Host borrows formal Skills into a child without inheriting the parent disclosure cursor', async t => {
+  const skillId = 'skill://alpha@1.0.0', captured = [];
+  const f = await setup(t, { sqlite: true, skills: true, boundTools: [], childTool: 'native_delegate',
+    role: { tools: [], inheritSkills: true, maxTurns: 5, maxToolCalls: 3 },
+    parentPlan: async (_body, index) => index === 1 ? { call: { name: 'skill_read_instructions', arguments: { skill_id: skillId } } }
+      : index === 2 ? { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Read the bound alpha resource.' } } }
+        : { text: 'Parent used the child Skill result.' },
+    childPlan: async (body, index) => {
+      if (index === 1) {
+        assert.match(JSON.stringify(body.messages), /native_bound_skill_metadata/);
+        assert.equal(JSON.stringify(body.messages).includes('INHERITED_SKILL_INSTRUCTIONS_BODY'), false);
+        return { call: { name: 'skill_read_resource', arguments: { skill_id: skillId, resource_ref: 'data.txt' } } };
+      }
+      if (index === 2) {
+        assert.match(JSON.stringify(body.messages), /skill_disclosure_order_invalid/);
+        assert.equal(JSON.stringify(body.messages).includes('CHILD_SKILL_RESOURCE'), false);
+        return { call: { name: 'skill_read_instructions', arguments: { skill_id: skillId } } };
+      }
+      if (index === 3) return { call: { name: 'skill_read_resource', arguments: { skill_id: skillId, resource_ref: 'data.txt' } } };
+      assert.match(JSON.stringify(body.messages), /CHILD_SKILL_RESOURCE/);
+      return { text: 'Child inspected its own admitted Skill resource.' };
+    } });
+  const bind = f.gateway.forChild.bind(f.gateway);
+  f.gateway.forChild = (agent, authority) => {
+    assert.throws(() => bind(agent, { ...authority, childSkills: { ...authority.childSkills,
+      role: { ...authority.childSkills.role, maxTurns: 2 } } }), /child_skill_binding_changed/);
+    const port = bind(agent, authority), execute = port.tools.execute;
+    port.tools.execute = async request => {
+      const saved = { ...structuredClone(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))), signal: request.signal };
+      captured.push({ request: saved, execute });
+      await assert.rejects(execute({ ...saved, scope: { ...saved.scope, tenantId: 'foreign' } }), /child_tool_not_bound/);
+      const foreignBuild = await execute({ ...saved, buildId: 'foreign-build' });
+      assert.notEqual(foreignBuild.status, 'ok');
+      return execute(request);
+    };
+    return port;
+  };
+  await f.host.executeTurn(f.payload);
+  const parent = f.ledger.load(f.scope, f.ledger.sessionHead(f.scope, f.payload.agent.session.id).runId);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+  const [child] = f.ledger.list(childScope), saved = f.ledger.load(childScope, child.runId);
+  assert.equal(parent.snapshot.phase, 'completed'); assert.equal(child.phase, 'completed');
+  assert.equal(child.buildId, parent.snapshot.buildId);
+  assert.notEqual(child.sessionId, parent.snapshot.sessionId);
+  assert.equal(saved.configuration.hostRecoveryBinding.childSkills.buildId, child.buildId);
+  assert.equal(saved.configuration.hostRecoveryBinding.childSkills.role.maxTurns, 5);
+  const results = saved.receipts.filter(receipt => saved.intents.some(intent => intent.kind === 'tool'
+    && intent.operationKey === receipt.operationKey)).flatMap(receipt => receipt.result.results ?? []);
+  assert.deepEqual(results.map(result => result.status), ['error', 'ok', 'ok']);
+  assert.equal(results[2].content.text, 'CHILD_SKILL_RESOURCE');
+  assert.ok(captured.length >= 3);
+  assert.notEqual((await captured.at(-1).execute(captured.at(-1).request)).status, 'ok', 'completed child cannot replay a disclosure');
+});
+
+test('Host inheritSkills false omits formal Skills and discovery metadata from the child', async t => {
+  const f = await setup(t, { sqlite: true, skills: true, boundTools: [], childTool: 'native_delegate',
+    role: { tools: [], inheritSkills: false, maxToolCalls: 0 }, childPlan: async body => {
+      assert.equal(JSON.stringify(body.messages).includes('native_bound_skill_metadata'), false);
+      return { text: 'No inherited Skills are available.' };
+    } });
+  await f.host.executeTurn(f.payload);
+  const [child] = f.ledger.list({ ...f.scope, agentId: `${f.scope.agentId}:child:reader` });
+  assert.equal(child.phase, 'completed');
+  const saved = f.ledger.load(child.scope, child.runId);
+  assert.deepEqual(saved.configuration.tools, []);
+  assert.equal(saved.configuration.hostRecoveryBinding?.childSkills, undefined);
+});
+
+test('SQLite child continuation keeps the borrowed source but requires its own committed Skill disclosure', async t => {
+  const skillId = 'skill://alpha@1.0.0';
+  const f = await setup(t, { sqlite: true, skills: true, boundTools: [], childTool: 'native_delegate',
+    role: { tools: [], inheritSkills: true, maxTurns: 5, maxToolCalls: 3 },
+    parentPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Inspect alpha.' } } };
+      if (index === 2) {
+        const id = /native-child-[a-f0-9]{64}/.exec(JSON.stringify(body.messages))?.[0]; assert.ok(id);
+        return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Continue alpha.', continuation_of: id } } };
+      }
+      return { text: 'Both child Runs inspected their own admitted resource.' };
+    },
+    childPlan: async (body, index) => {
+      if ([1, 5].includes(index)) return { call: { name: 'skill_read_instructions', arguments: { skill_id: skillId } } };
+      if ([2, 4, 6].includes(index)) return { call: { name: 'skill_read_resource', arguments: { skill_id: skillId, resource_ref: 'data.txt' } } };
+      if (index === 7) {
+        assert.match(JSON.stringify(body.messages), /skill_disclosure_order_invalid/);
+        assert.match(JSON.stringify(body.messages), /CHILD_SKILL_RESOURCE/);
+      }
+      return { text: 'Child has the resource.' };
+    } });
+  await f.host.executeTurn(f.payload);
+  const scope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` }, children = f.ledger.list(scope);
+  assert.equal(children.length, 2); assert.equal(f.childModels(), 7);
+  const [first, second] = children.map(child => f.ledger.load(scope, child.runId));
+  assert.equal(first.snapshot.phase, 'completed'); assert.equal(second.snapshot.phase, 'completed');
+  assert.equal(first.snapshot.sessionId, second.snapshot.sessionId);
+  assert.equal(second.snapshot.parentRunId, first.snapshot.runId);
+  assert.deepEqual(first.configuration.hostRecoveryBinding.childSkills, second.configuration.hostRecoveryBinding.childSkills);
+  const results = second.receipts.filter(receipt => second.intents.some(intent => intent.kind === 'tool'
+    && intent.operationKey === receipt.operationKey)).flatMap(receipt => receipt.result.results ?? []);
+  assert.deepEqual(results.map(result => result.status), ['error', 'ok', 'ok']);
+});
 
 test('SQLite Host grants inherited MCP through each child intent and rejects foreign or completed replay', async t => {
   const effects = [], captured = [];

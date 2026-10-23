@@ -21,7 +21,7 @@ import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-sc
 import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from './native-tool-policy.mjs';
 import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/child-tools.mjs';
 import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
-import { nativeChildRoles } from './native-subagents.mjs';
+import { nativeChildRoles, STUDIO_NATIVE_CHILD_SKILLS_CONTRACT } from './native-subagents.mjs';
 import { createNativeToolAuthority } from './native-tool-authority.mjs';
 import { WORKSPACE_MUTATION_LOCK } from '../../packages/agentkit-harness/src/native/workspace-mutation-lock.mjs';
 import { STUDIO_NATIVE_CHILD_WORKSPACE_BINDING } from './native-child-workspace-host.mjs';
@@ -41,6 +41,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const pinnedRoot = realpathSync(workspace), hasSkills = Boolean(config.skillDefinitions?.length);
   const skillSource = hasSkills ? createStudioNativeSkillSource({ definitions: structuredClone(config.skillDefinitions) }) : null;
   const disclosureNames = new Set(skillSource?.source.refs.length ? nativeSkillDisclosureDefinitions().map(tool => tool.name) : []);
+  const disclosureBindingDigest = disclosureNames.size ? hash({ contract: SKILL_DISCLOSURE_CONTRACT, source: skillSource.binding }) : null;
+  const childSkillBinding = disclosureBindingDigest ? { contract: STUDIO_NATIVE_CHILD_SKILLS_CONTRACT,
+    bindingDigest: disclosureBindingDigest, toolNames: [...disclosureNames] } : null;
   // DSH's complete pre/guard/around/post pipeline owns authorization. This
   // callback runs only inside an accepted registry invocation bound below.
   const state = (agent, sessionId = String(agent.session.id)) => {
@@ -382,8 +385,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     argumentEncoding,
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     componentContract: builtinNames.has('component_status') ? NATIVE_COMPONENT_TOOLS_CONTRACT : null,
-    skillDisclosureBindingDigest: disclosureNames.size ? hash({ contract: SKILL_DISCLOSURE_CONTRACT,
-      source: skillSource.binding }) : null,
+    skillDisclosureBindingDigest: disclosureBindingDigest,
+    get childSkillBinding() { return structuredClone(childSkillBinding); },
     async skillInstructions(signal) {
       if (!disclosureNames.size) return '';
       const entries = [];
@@ -503,8 +506,15 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       const inheritsMcp = authority.mcpBinding !== undefined;
       invariant(!inheritsMcp || childMcpBinding && canonical(authority.mcpBinding) === canonical(childMcpBinding),
         'studio_native_child_mcp_binding_changed');
+      const inheritedSkills = authority.childSkills;
+      if (inheritedSkills) {
+        const role = childRoles.find(item => item.name === inheritedSkills.role?.name);
+        invariant(childSkillBinding && role?.inheritSkills === true && typeof inheritedSkills.buildId === 'string'
+          && inheritedSkills.buildId.trim() && canonical(inheritedSkills) === canonical({ ...childSkillBinding,
+            role, buildId: inheritedSkills.buildId }), 'studio_native_child_skill_binding_changed');
+      }
       invariant(Array.isArray(authority.toolNames) && authority.toolNames.every(name => allowed.has(name)
-        && (inheritsMcp && mcpContracts.has(name) || formal.has(name) && (formal.get(name).readOnly === true || isolated)
+        && (inheritedSkills && disclosureNames.has(name) || inheritsMcp && mcpContracts.has(name) || formal.has(name) && (formal.get(name).readOnly === true || isolated)
         && template.definitions.some(definition => definition.name === name)
         && !mcpContracts.has(name) && !memoryNames.has(name))),
         'studio_native_child_tools_not_bound');
@@ -518,15 +528,22 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         ? createNativeWorkspaceTools({ workspaceRoot: commandAuthority.workspaceRoot,
           stateDir: join(stateDir, 'child-tool-state', commandAuthority.workspaceBinding.isolationId),
           sessionId, authorize: async () => 'allow' }) : state(agent, sessionId);
-      const assertCurrent = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
+      const ledgerAuthority = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
         isClosed: () => closed }) : undefined;
+      const childSkills = commandAuthority?.childSkills ? structuredClone(commandAuthority.childSkills) : null;
+      const assertCurrent = ledgerAuthority ? request => ledgerAuthority(request) && (!childSkills
+        || request.buildId === childSkills.buildId && canonical(commandAuthority.store.load(commandAuthority.scope, request.runId)
+          .configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills)) : undefined;
       let disclosure;
-      if (disclosureNames.size && commandAuthority?.store && !commandAuthority.childSessionId) {
+      if (disclosureNames.size && commandAuthority?.store && (!commandAuthority.childSessionId || childSkills)) {
         disclosure = createNativeSkillDisclosurePort({ scope: commandAuthority.scope, sessionId,
           store: commandAuthority.store, source: skillSource.source, skillRefs: skillSource.source.refs,
           authorize: async () => 'allow', assertCurrent });
-        if (!disclosureOwners.has(sessionId)) disclosureOwners.set(sessionId, new Set());
-        disclosureOwners.get(sessionId).add(disclosure);
+        // Child ports borrow the source, never a parent's disclosure cursor.
+        // Their lifetime belongs to the parent Session that owns the child.
+        const ownerSessionId = String(agent.session.id);
+        if (!disclosureOwners.has(ownerSessionId)) disclosureOwners.set(ownerSessionId, new Set());
+        disclosureOwners.get(ownerSessionId).add(disclosure);
       }
       let components;
       if (builtinNames.has('component_status') && commandAuthority?.componentBinding
