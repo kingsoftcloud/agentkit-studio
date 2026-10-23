@@ -280,7 +280,7 @@ Python 语法目标与前述文件语法检查一样固定为 3.12。AST 中间�
 
 发布配置显式登记四个平台启动器为可执行文件，包完整性检查从真实 tarball 解压并检查权限，不能用 checkout 权限代替发布证据。一次真实 Host 验证发现 pack 规范化丢失权限，修正后重新打包并通过 Host 验证及包内前台/后台冷执行；没有在测试中补 chmod。
 
-剩余命令能力包括 E2B/其他正式后端的产品选择和恢复、源 sandbox registry/TTL 状态字段、前台输出增量展示，以及后台持续写入与验收/工作集的完整联动。这批实现不等于所有 sandbox 能力或全部 builtin bridge 迁移完成。
+剩余命令能力包括 E2B/其他正式后端的产品选择和恢复、源 sandbox registry/TTL 状态字段、前台输出增量展示，以及后台持续写入与验收/工作集的完整联动。这批实现不等于所有 sandbox 能力或全部 builtin bridge 迁移完成。E2B Node 命令端口的进展见文末对应节。
 
 ## Frozen Build 的引擎固定
 
@@ -538,3 +538,13 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 宿主 builtin 环境组合原十个 Node workspace 工具与 `web_fetch`、`web_search`，复用共享网络实现，不生成伪造 Native Run 或另一执行循环。显式 Studio Web 绑定会移除标准预设内同名插件，避免正式 SDK 准入时重复注册；普通未覆盖的预设保留原环境。实际打包验证曾在两种 Node 上因该冲突失败，修复后两条 runtime 均经过真实 DSH 注册、pre/guard/around/post/result、HTTP 搜索/抓取、进行中取消及 Node-only PATH 验证；拒绝调用没有网络请求，后置策略的内容替换仍生效。原工作区安全、一次性审批及 Session 隔离验证保留。此验证不执行模型或 Codex CLI，不是全新依赖安装验收。
 
 独立适配器定向验证还覆盖公开 schema 篡改、原调用身份在网络/正文读取期间漂移、重定向前复核、关闭/取消/注册退役与不合作网络 Promise 的晚拒绝。DSH legacy Web 现默认在工作区外保存超出展示预算的完整提取正文，原 Agent、Session、call、完整 JSON 参数和元数据绑定保存引用；正文和元数据一次发布，冷重开核对完整身份与正文摘要。两种 Node 的实际打包 Host、DSH Native 与 Codex 均已验证 Unicode 全文和隔离，定向文件用例包含真实并发与发布边界 SIGKILL。其余 builtin Python fallback、Frozen 导出分类及完整模型回归仍是未完成范围；完整目标保持不变。详见 `docs/native-web.md`。
+
+## E2B Node 命令与监督进程
+
+Node 层新增 `E2BCommandStore`、独立监督进程、正式 `sandbox_status/run_command/read_command_output/stop_command` 端口和已拥有命令的只读观察器。启动前持久化操作记录，重开同一操作只连接既有记录；监督进程丢失、流缺口或未证实的停止均明确报告未知，不能重新执行原命令。沙箱、Session、工作区及原操作键共同约束后续读取；后台启动回执保留原 Run、操作键和 task ID。取消权限使用 `sandbox:cancel`，与执行权限分开。
+
+监督进程持有跨进程 SQLite 锁，以代次和恢复声明拒绝旧进程追加输出、覆盖终态或继续发起停止。正文按完整 UTF-8 字节写入并刷盘，再发布状态；重连使用原沙箱和剩余截止时间。已绑定沙箱身份在首次命令前落盘，重开不能替换；恢复和清理需要严格同步授权，异步授权失败会被观察并拒绝。清理只能接受远端明确确认，授权回调不能借修改参数或持久记录改变目标。
+
+工具端口封存完整 JSON 请求，只排除原顶层 `AbortSignal`；审批、权限回调、沙箱创建、存储构造和输出边界均复核身份。非合作异步创建/启动也能响应原取消信号，未知结果保留已知沙箱和预先确定的 task ID。输出预算必须预留完整归属和有效远端 ID 的空间；不足时在创建/执行前拒绝。执行后的摘要可以缩短正文，不能截断归属或把未知副作用改成 `executed:false`。
+
+四个直接相关模块在 Node 26.5 与 22.19.0 各通过 61 项；随后加强清理目标、读取后身份及传输配置封存，最后分别复验请求边界 9 项和存储边界 3 项，两个版本均通过。覆盖真实 Kernel、SQLite、ToolAuthority，两个实际 detached 监督进程 SIGKILL 边界，以及 UTF-8、并发恢复声明、旧代次、取消、未知结果与预算。故障测试的远端传输使用明确的本地子进程替身；这证明 Node 状态/进程边界，不代表线上 E2B 服务或实际打包 Studio 的 E2B 集成已验收。真实 E2B JS SDK 适配器和沙箱生命周期端口另有既有验证；产品工具组装、后台唤醒、`run_code`、Frozen 配置和 legacy builtin 的 E2B 接线仍待完成，不能据此移除所有 Python fallback 或开启最终默认路径。
