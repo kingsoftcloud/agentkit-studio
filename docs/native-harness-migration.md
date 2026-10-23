@@ -488,4 +488,23 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 
 `native-harness/background-watches/registry.sqlite` 使用独立私有目录、跨进程所有者锁和严格版本/行身份校验，仅保存必要身份与观察状态。`admitted` 保留待重驱动，原 notice Run 身份只能写入一次；确认终态后 `discarded` 不再调度。损坏库不清空或重置。关闭等待被中断的当前轮询收敛；非协作回调迟到返回或拒绝均被观察，不能继续写注册库。真实子进程持有已刷新的注册记录后被 `SIGKILL`，新进程可取得所有权并读回同一待处理任务。
 
-相关 Host 61、watcher 31、生命周期 5、scope 2 项分别在 Node 26.5/22.19 通过。最后补充的行结构与服务依赖检查只复验对应的六项；watcher 关闭实现调整后仅复验受影响的三项 Host 用例。Host 用例使用真实模型 HTTP 编解码、Kernel 和 SQLite，Session 控制器、SDK 空闲接口及命令运输是明确替身；真实 Cordis 生命周期与 watcher 跨进程锁分别另测。类型及可移植检查通过，未跑全量。完整打包 Host 的自动唤醒、归属刷新前后进程强杀及 Frozen/部署冷启动仍需进一步验收，不能将上述分层测试视为全部端到端完成。
+此前分层验证包含 Host 61、watcher 31、生命周期 5、scope 2 项，分别在 Node 26.5/22.19 通过。Host 分层用例使用真实模型 HTTP 编解码、Kernel 和 SQLite，Session 控制器、SDK 空闲接口及命令运输是明确替身；真实 Cordis 生命周期与 watcher 跨进程锁分别另测。不能将这些分层测试视为全部端到端完成。
+
+### 真实打包 Host 后台生命周期验收
+
+`scripts/verify-studio-native-background.mjs` 使用真实 Studio 归档、维护版 DSH SDK、`mountStudioHost`、已认证的生产预设准入、SessionController、权限及审批服务。确定性 HTTP 模型调用正式 `run_command`，由实际 Node 子进程等待释放文件后完成；启动计数文件位于测试主目录，避免观察器自身改变工作区而触发候选结果重新验证。整个 Host 使用只含 Node 的 PATH，Python 路径不可用。脚本不发送替代用户提示、不手动调用 Native 通知接口、不预置崩溃数据库行，也不提供替代执行器。
+
+四个独立边界在 Node 26.5/22.19 上通过：
+
+- `--boundary warm`：当前 Host 自动发现真实完成结果并开启空闲通知轮次。
+- `--boundary cold`：源 Run 和 SDK 轮次都已持久化、命令仍运行时强杀 Host，释放命令后仅启动新 Host，由其自动冷加载原 Session。
+- `--boundary prepare`：包装真实 `SqliteRunStore.createNotification`，原事务提交后立即挂起，父进程发送 SIGKILL；新 Host 复用原通知 Run 和配置，SDK 修复无归属轮次后建立合法的新投递位置。
+- `--boundary owner`：原 SDK 所有权通过真实 Session flush 落盘后挂起并强杀；新 Host 沿用完整原所有权和数字轮次，无需重新准入通知。
+
+断言同时检查 Native 账本和持久 JSONL：唯一命令启动/工具回执、唯一类型化通知、原 source/task/operationKey/Build/taskChain/hostBinding、不重置通知配置、已知模型用量、模型实际收到完成输出，以及所有 SDK 轮次终态。Native 终态提交早于 SDK 轮次关闭，因此验证等待实际持久 turn/end 再关闭 Host，不用账本终态冒充宿主已空闲。早期验证在该间隔关闭 Host 导致缺失 turn/end 的失败日志保留，最终验证未放宽终态断言。
+
+真实归档验证发现 macOS 正常临时主目录的 `/var → /private/var` 别名导致 watcher 以 `background_state_symlink` 启动失败。Host 现仅规范化可信配置根目录，仍拒绝其内部状态目录和文件中的软链接。两个针对性目录用例及完整受影响 Host 模块 63 项在两种 Node 版本通过，未跑全量。
+
+可重复命令：`node scripts/verify-studio-native-background.mjs --source <built-maintained-dsh> --archive <studio.tgz> --boundary <warm|cold|prepare|owner> --keep`。`--frozen` 另外构建并固定原 Build，修改最新草稿且不设置 Native 引擎环境开关；在冷启动与 owner 强杀边界验证原 Build、系统指令和恢复绑定不变。这是本地已导入 Frozen 存储的交互式 SDK 执行验证；保留归档的 Frozen HTTP、无人值守权限与全新依赖安装仍有独立验收要求。
+
+此轮归档 SHA-256 为 `afa7230047626877758b44a8953a30c20ededc7967d1fc2dd75b20ba221f751b`，DSH 固定 `570ad6033c4d0954451ad8822ab47bfb2160ed4c`。脚本仅复制独立观察 fixture 到归档安装目录，生产代码保持归档原样，并记录 fixture、归档摘要和 SDK 提交。普通依赖来自固定本地图，不能作为全新安装或全部迁移完成的证明。

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -22,8 +22,10 @@ import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-s
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT } from '../src/providers/native-context-sources.mjs';
 
-async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
+  const storeDir = storeAlias ? join(root, 'configured-home') : root;
+  if (storeAlias) await symlink(root, storeDir, 'dir');
   const workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root }), ledger = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
@@ -45,7 +47,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     resolutions.push({ agentId, buildId }); return { ...structuredClone(record),
       executionEngine: buildExecutionEngine(record.spec, 'agentkit.native-dsh-turn/v1') };
   } };
-  const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
+  const host = await createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, ledger,
     ...(recovery ? { agentEvents: () => ({ serial: async () => payload.binding }), assembleContextFor: agent => ({ agent }) } : {}),
     contextSourceRegistry: bridge?.nativeContextSources,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
@@ -372,6 +374,22 @@ test('idle background Host requires a real advertised idle capability and the or
 
 const backgroundWatchRequest = h => ({ scope: structuredClone(h.source.snapshot.scope), sessionId: 'session',
   sourceRunId: h.source.snapshot.runId, taskId: h.request.taskId });
+
+test('background registry accepts a trusted configured home alias', async t => {
+  const h = await setup(t, { storeAlias: true });
+  const watcher = await h.host.startBackgroundWatcher();
+  assert.equal(watcher.status().running, true);
+  await access(join(h.root, 'native-harness/background-watches/registry.sqlite'));
+  await watcher.close();
+});
+
+test('background registry still rejects a symlink inside the configured home', async t => {
+  const h = await setup(t, { storeAlias: true });
+  const outside = join(h.root, 'other-private-state');
+  await mkdir(outside, { mode: 0o700 });
+  await symlink(outside, join(h.root, 'native-harness'), 'dir');
+  await assert.rejects(h.host.startBackgroundWatcher(), { code: 'background_state_symlink' });
+});
 
 test('production watcher discovers a committed SQLite source and automatically delivers its completion once', async t => {
   const h = await idleBackgroundHost(t);

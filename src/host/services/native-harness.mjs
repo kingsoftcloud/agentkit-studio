@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { canonical, copy, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
@@ -451,7 +452,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       ]);
       invariant(!closed, 'studio_native_host_closed');
       signal?.throwIfAborted();
-      backgroundRegistry ??= createNativeBackgroundWatchStore(join(storeDir, 'native-harness', 'background-watches', 'registry.sqlite'));
+      // The configured home is a trusted root and may use a platform alias
+      // (macOS /var -> /private/var). Canonicalize only that root; the registry
+      // still rejects symlinks in every owned descendant and state file.
+      const backgroundRoot = await realpath(storeDir);
+      invariant(!closed, 'studio_native_host_closed');
+      signal?.throwIfAborted();
+      backgroundRegistry ??= createNativeBackgroundWatchStore(join(backgroundRoot, 'native-harness', 'background-watches', 'registry.sqlite'));
       const controller = new AbortController();
       const watcher = createStudioNativeBackgroundWatcher({ store, watches: backgroundRegistry,
         signal: AbortSignal.any([lifetime.signal, controller.signal, ...(signal ? [signal] : [])]),
