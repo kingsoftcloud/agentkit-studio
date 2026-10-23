@@ -582,3 +582,11 @@ DSH Native 和 Codex 的默认 builtin 组合现在直接提供 Node `sandbox_st
 最终真实打包复查发现监督进程原子替换输出/记录时，读取 fd 与当前路径的 inode 校验存在竞态：命令已经完成，读取却报 `background_state_changed`。通过一次真实 rename 的确定性故障注入复现后，私有文件读取现最多尝试四次打开，每次重新核对私有目录、文件类型、权限、链接数及 inode；不重试写入、非法链接/权限或持续替换。七个独立进程用例分别覆盖窗口/全文/记录读取、持续替换上限、符号链接、公开权限和禁止重试写入，并核对 fd 无泄漏。
 
 显式 E2B 选择不进入这个本地 Node 适配器，保留原后端，绝不悄悄改为本地执行。没有随包 POSIX launcher 的平台也保留旧桥接，避免让未绑定命令的 legacy runtime 因初始化本地命令目录而失败；这不是这些平台已完成 Node 命令迁移的证明。Legacy E2B、`run_code`、browser、Skills/A2A 等剩余 Python builtin 路径仍需替换。未知命令有持久记录与禁止重放语义，但产品中的显式核对/修复入口仍未闭环；不要以新 call ID 重新发同一未知命令。全部能力闭环前保留 Python fallback，不能宣布整个安装与运行已消除 Python 依赖。
+
+### A2A AgentCard Node 服务与真实 HTTP/进程边界
+
+已实现并挂载全轮 Native 的三项 A2A 工具：预设接收 `spec.bindings.a2a` 版本锁定配置，实际 Node 服务执行公开 `ListAToASpaceAgents` 发现、AgentCard 1.0 JSONRPC/HTTP+JSON 调用、SSE 投影和原任务 GetTask 核对；配置摘要进入 plugin lock 与恢复胶囊。DSH 权限流水线和真实 Native ledger authority 保留，不再只是注入空 discovery/invocation 的工具壳。
+
+在 Native 原始意图之外，真实网络发送前另写 fsynced marker 与本地管理句柄；远端 task/context 及时检查点，未知发送不重发。定向验证使用真实本机 HTTP、NativeKernel/SQLite 和双 Node 进程 SIGKILL；不以 registry double 冒充真实 DSH Host，不以数据库重开冒充进程强杀。具体范围、命令文件、安装配置和明确未迁能力见 [native-a2a.md](native-a2a.md)。
+
+尚未完成 A2A 整体迁移：真实 packed Host/历史/Frozen/deploy，产品核对/继续/远端取消，内部工作负载控制面与入站服务，远程编排暴露，以及 legacy DSH Native/Codex Python A2A 桥接替代仍待闭环。Input/auth pause 当前保留原检查点并中断等待，不冒充已支持续接。完整迁移仍未完成，工程完成度先前94%偏乐观，整体暂粗估85%～90%，不是测试通过率或验收完成率。

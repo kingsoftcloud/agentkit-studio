@@ -1,0 +1,270 @@
+/** Node AgentCard discovery and managed A2A calls for the Native Host.
+ * Native owns scheduling/approval and its durable tool intent. This service
+ * additionally checkpoints the original remote task before consuming later
+ * stream events. An unfinished send is never sent a second time.
+ */
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
+import { isIP } from 'node:net';
+import aws4 from 'aws4';
+import { canonical, copy, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { atomicPrivate, privateDirectory, readAll, tryLock } from '../../packages/agentkit-harness/src/native/local-command-state.mjs';
+import { isBlockedAddress } from '../../packages/agentkit-harness/src/native/web-tools.mjs';
+import { hostFetch } from '../http-fetch.mjs';
+import { createSsrfPinnedFetch } from './native-dsh-web.mjs';
+import { a2aSse, a2aTerminal, createA2AProjection, NATIVE_A2A_PROTOCOL } from './native-a2a-protocol.mjs';
+
+export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
+const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
+const text = (value, code) => { invariant(typeof value === 'string' && value.trim() && value.length <= 4096, code); return value; };
+const normalized = value => value.trim().toLowerCase().replace(/^a2a-agent-/u, '');
+const read = (env, name, fallback = '') => { const value = env[name] ?? fallback; invariant(typeof value === 'string', 'A2A_ENV_INVALID'); return value.trim(); };
+const kopHosts = new Set(['aicp.api.ksyun.com', 'aicp.inner.api.ksyun.com', 'aicp.internal.api.ksyun.com']);
+function endpoint(value, allowPrivate = false) {
+  const url = new URL(value);
+  invariant(['https:', 'http:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash,
+    'A2A_ENDPOINT_INVALID');
+  const host = url.hostname.replace(/^\[|\]$/gu, '');
+  invariant(allowPrivate || url.protocol === 'https:' && (!isIP(host) || !isBlockedAddress(host)), 'A2A_ENDPOINT_BLOCKED');
+  return url;
+}
+async function jsonBody(response, limit = 8 * 1024 * 1024) {
+  invariant(response.ok && response.body?.getReader, 'A2A_HTTP_FAILED');
+  const reader = response.body.getReader(), chunks = []; let bytes = 0;
+  try {
+    for (;;) {
+      const next = await reader.read(); if (next.done) break;
+      bytes += next.value.byteLength; invariant(bytes <= limit, 'A2A_RESPONSE_LIMIT'); chunks.push(next.value);
+    }
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+function strictSpecs(input) {
+  invariant(Array.isArray(input) && input.length <= 100, 'A2A_BINDINGS_INVALID');
+  const allowed = new Set(['local_name', 'binding_id', 'space_id', 'target_agent_id', 'expected_version_id', 'description', 'exposure', 'timeout_seconds', 'policy_ref']);
+  const unique = { local_name: new Set(), binding_id: new Set(), target_agent_id: new Set() };
+  return input.map(raw => {
+    invariant(raw && typeof raw === 'object' && Object.keys(raw).every(key => allowed.has(key)), 'A2A_BINDING_FIELD_INVALID');
+    for (const key of ['local_name', 'binding_id', 'space_id', 'target_agent_id', 'expected_version_id']) text(raw[key], 'A2A_BINDING_ID_REQUIRED');
+    const spec = copy(raw);
+    invariant(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(spec.local_name), 'A2A_LOCAL_NAME_INVALID');
+    invariant(spec.exposure === undefined || ['tool', 'auto'].includes(spec.exposure), 'A2A_NATIVE_EXPOSURE_UNSUPPORTED');
+    invariant(spec.policy_ref == null || ['policy://a2a/runtime', 'policy://a2a/strict'].includes(spec.policy_ref), 'A2A_POLICY_REF_UNSUPPORTED');
+    invariant(spec.timeout_seconds === undefined || Number.isFinite(spec.timeout_seconds) && spec.timeout_seconds > 0 && spec.timeout_seconds <= 86400,
+      'A2A_TIMEOUT_INVALID');
+    for (const [key, seen] of Object.entries(unique)) { invariant(!seen.has(spec[key]), 'A2A_EXPOSURE_CONFLICT'); seen.add(spec[key]); }
+    return Object.freeze(spec);
+  });
+}
+
+export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {}) {
+  const fixed = { ...env }, specs = strictSpecs(bindings);
+  let spaceId = read(fixed, 'KSADK_A2A_SPACE_ID');
+  if (!spaceId && read(fixed, 'KSADK_A2A_SPACE_IDS')) {
+    const ids = JSON.parse(read(fixed, 'KSADK_A2A_SPACE_IDS'));
+    invariant(Array.isArray(ids) && ids.every(id => typeof id === 'string' && id.trim()), 'A2A_SPACES_INVALID');
+    spaceId = ids[0] ?? '';
+  }
+  spaceId ||= specs[0]?.space_id ?? '';
+  if (!spaceId) return null;
+  text(spaceId, 'A2A_SPACE_REQUIRED');
+  const allowPrivate = ['1', 'true'].includes(read(fixed, 'KSADK_A2A_ALLOW_PRIVATE').toLowerCase());
+  const base = endpoint(read(fixed, 'KSADK_A2A_SERVICE_URL', 'https://aicp.api.ksyun.com'), true);
+  invariant(base.pathname === '/', 'A2A_SERVICE_ORIGIN_REQUIRED');
+  const token = read(fixed, 'KSADK_A2A_SERVICE_TOKEN');
+  const ak = read(fixed, 'KSADK_A2A_ACCESS_KEY', read(fixed, 'KSYUN_ACCESS_KEY'));
+  const sk = read(fixed, 'KSADK_A2A_SECRET_KEY', read(fixed, 'KSYUN_SECRET_KEY'));
+  const sessionToken = read(fixed, 'KSYUN_SESSION_TOKEN');
+  const logicalRegion = read(fixed, 'KSADK_A2A_SERVICE_REGION', read(fixed, 'KSYUN_REGION', 'cn-beijing-6'));
+  const region = logicalRegion === 'pre-online' ? 'cn-beijing-6' : logicalRegion;
+  const source = logicalRegion === 'pre-online' ? read(fixed, 'AGENTENGINE_PRE_CUSTOM_SOURCE', 'pre') : '';
+  const accountId = read(fixed, 'KSADK_A2A_ACCOUNT_ID', read(fixed, 'KSYUN_ACCOUNT_ID'));
+  const isKop = kopHosts.has(base.hostname);
+  invariant(base.protocol === 'https:' || isKop || ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname), 'A2A_SERVICE_HTTP_FORBIDDEN');
+  const planDigest = hash(specs), sourceDigest = hash({ source: 'ksadk-python', revision: '355059d78e47ed764bbdb3606304cdf34e9838a3' });
+  const binding = Object.freeze({ contract: STUDIO_NATIVE_A2A_HOST, protocol: NATIVE_A2A_PROTOCOL, spaceId,
+    bindingDigest: hash({ base: base.href, spaceId, specs, allowPrivate, region, source, accountId,
+      credentialFingerprint: hash({ token, ak, sk, sessionToken }) }), planDigest });
+  const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: allowPrivate ? null : isBlockedAddress });
+  let closed = false;
+  const lifetime = new AbortController();
+  const close = async () => { closed = true; lifetime.abort(new Error('A2A_HOST_CLOSED')); await pinned.close(); };
+  async function list({ spaceId: selectedSpace, signal }) {
+    invariant(!closed, 'A2A_HOST_CLOSED'); signal.throwIfAborted();
+    const name = 'ListAToASpaceAgents', version = '2024-06-12';
+    const body = JSON.stringify({ A2ASpaceId: text(selectedSpace, 'A2A_SPACE_REQUIRED'), Status: 'available', PageSize: 100 });
+    const url = new URL(isKop ? `/?Action=${name}&Version=${version}` : `/agentengine/api/v1/${name}`, base);
+    const headers = { 'Content-Type': 'application/json', Accept: 'application/json',
+      ...(accountId ? { 'X-Ksc-Account-Id': accountId } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+    if (isKop) {
+      Object.assign(headers, { 'X-Ksc-Request-Id': randomUUID(), 'X-Ksc-Region': region, 'X-Ksc-Source': 'agentkit-studio',
+        'X-Action': name, 'X-Version': version, ...(source ? { 'X-KSC-CUSTOM-SOURCE': source } : {}) });
+      if (!token) {
+        invariant(ak && sk, 'A2A_SERVICE_CREDENTIAL_REQUIRED');
+        Object.assign(headers, aws4.sign({ host: url.host, path: url.pathname + url.search, method: 'POST', service: 'aicp', region, body, headers },
+          { accessKeyId: ak, secretAccessKey: sk, ...(sessionToken ? { sessionToken } : {}) }).headers);
+      }
+    }
+    const result = await jsonBody(await fetchImpl(url, { method: 'POST', body, headers, redirect: 'error',
+      signal: AbortSignal.any([signal, lifetime.signal, AbortSignal.timeout(30000)]) }));
+    signal.throwIfAborted(); invariant(!closed, 'A2A_HOST_CLOSED');
+    invariant(result && [undefined, 0, 200].includes(result.Code) && Array.isArray(result.Data?.Agents), 'A2A_DISCOVERY_RESPONSE_INVALID');
+    invariant(result.Data.Agents.length <= 100, 'A2A_DISCOVERY_LIMIT');
+    return result.Data.Agents.filter(item => item && (!item.InvocationStatus || item.InvocationStatus === 'available'))
+      .map(item => ({ agent_id: String(item.A2AAgentId ?? ''), name: String(item.AgentCard?.name ?? item.Name ?? ''),
+        description: String(item.AgentCard?.description ?? item.Description ?? ''),
+        version_id: String(item.VersionId ?? item.LatestVersionId ?? ''), card_sha256: String(item.CardSha256 ?? ''),
+        source: String(item.Source ?? 'hosted'), url: String(item.AgentCard?.supportedInterfaces?.[0]?.url ?? ''), card: copy(item.AgentCard ?? {}) }));
+  }
+  function forSession({ scope, sessionId, stateRoot, workspaceRoot, assertCurrent }) {
+    scopeKey(scope); const fixedScope = copy(scope);
+    text(sessionId, 'A2A_SESSION_REQUIRED'); invariant(typeof assertCurrent === 'function', 'A2A_AUTHORITY_REQUIRED');
+    const workspace = realpathSync(workspaceRoot), lexical = resolve(stateRoot);
+    invariant(lexical !== workspace && !lexical.startsWith(workspace + sep), 'A2A_STATE_INSIDE_WORKSPACE');
+    privateDirectory(dirname(lexical), true); privateDirectory(lexical, true);
+    const root = realpathSync(lexical), owner = { scope: fixedScope, sessionId, bindingDigest: binding.bindingDigest };
+    const directory = join(root, hash({ scope: fixedScope, sessionId })); privateDirectory(directory, true);
+    const pinnedDirectory = lstatSync(directory), sessionLifetime = new AbortController();
+    function storageGuard() {
+      invariant(realpathSync(lexical) === root && realpathSync(workspaceRoot) === workspace, 'A2A_OWNER_CHANGED');
+      privateDirectory(directory);
+      const current = lstatSync(directory);
+      invariant(current.ino === pinnedDirectory.ino && current.dev === pinnedDirectory.dev, 'A2A_OWNER_CHANGED');
+    }
+    function check(native, signal) {
+      invariant(!closed && !sessionLifetime.signal.aborted, 'A2A_OWNER_CLOSED'); storageGuard(); signal.throwIfAborted();
+      invariant(canonical(native.scope) === canonical(fixedScope) && native.sessionId === sessionId, 'A2A_SCOPE_CONFLICT');
+      const current = assertCurrent({ ...native, signal });
+      if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+      invariant(current === true, 'A2A_AUTHORITY_LOST'); signal.throwIfAborted();
+    }
+    async function resolveCall({ agent, message, signal, nativeRequest }) {
+      check(nativeRequest, signal);
+      const native = copy(Object.fromEntries(Object.entries(nativeRequest).filter(([key]) => key !== 'signal')));
+      const spec = specs.find(spec => normalized(spec.target_agent_id) === normalized(agent) || normalized(spec.local_name) === normalized(agent));
+      invariant(spec, 'A2A_TARGET_NOT_BOUND');
+      const identity = { scope: fixedScope, sessionId, runId: native.runId, operationKey: native.operationKey, callId: native.call.callId };
+      const previous = readIdentity(identity);
+      if (previous) {
+        invariant(canonical(previous.request.native) === canonical(native) && canonical(previous.request.spec) === canonical(spec)
+          && previous.request.message.parts.length === 1 && previous.request.message.parts[0].text === message, 'A2A_CALL_IDENTITY_CONFLICT');
+        check(native, signal); return copy(previous.request);
+      }
+      const agents = await list({ spaceId: spec.space_id, signal: AbortSignal.any([signal, sessionLifetime.signal]) }); check(native, signal);
+      const found = agents.find(item => item.agent_id === spec.target_agent_id);
+      invariant(found && found.version_id === spec.expected_version_id, 'A2A_VERSION_DRIFT');
+      const iface = found.card.supportedInterfaces?.[0];
+      invariant(iface?.protocolVersion === '1.0' && ['JSONRPC', 'HTTP+JSON'].includes(iface.protocolBinding), 'A2A_INTERFACE_UNSUPPORTED');
+      endpoint(iface.url, allowPrivate);
+      const scopeId = `a2a-${hash(identity)}`;
+      const wireMessage = { messageId: hash({ identity, kind: 'initial-message' }), role: 'ROLE_USER', parts: [{ text: message }] };
+      invariant(Buffer.byteLength(canonical(wireMessage)) <= 1024 * 1024, 'A2A_MESSAGE_LIMIT');
+      return { spec, trigger: { scope_id: native.runId, item_id: native.call.callId, call_id: native.call.callId },
+        native, scopeId, identity, message: wireMessage,
+        route: { url: iface.url, protocolBinding: iface.protocolBinding, streaming: found.card.capabilities?.streaming === true,
+          source: found.source } };
+    }
+    function file(request) { return join(directory, `${hash(request.identity)}.json`); }
+    function readIdentity(identity) {
+      storageGuard(); const path = file({ identity }); if (!existsSync(path)) return null;
+      const record = JSON.parse(readAll(path));
+      invariant(record.contract === STUDIO_NATIVE_A2A_HOST && canonical(record.owner) === canonical(owner)
+        && canonical(record.request.identity) === canonical(identity) && record.requestDigest === hash(record.request)
+        && ['sending', 'unknown', 'terminal', 'paused'].includes(record.phase), 'A2A_CALL_IDENTITY_CONFLICT');
+      return record;
+    }
+    function readRecord(request) {
+      const record = readIdentity(request.identity); if (!record) return null;
+      invariant(record.requestDigest === hash(request) && canonical(record.request) === canonical(request), 'A2A_CALL_IDENTITY_CONFLICT');
+      return record;
+    }
+    function save(request, record) { storageGuard(); atomicPrivate(file(request), canonical(record) + '\n'); }
+    async function wire(request, method, params, signal, streaming = false) {
+      check(request.native, signal);
+      const url = endpoint(request.route.url, allowPrivate), rpc = request.route.protocolBinding === 'JSONRPC';
+      const id = randomUUID();
+      const rest = method === 'GetTask' ? { method: 'GET', path: `/tasks/${encodeURIComponent(params.id)}` }
+        : method === 'CancelTask' ? { method: 'POST', path: `/tasks/${encodeURIComponent(params.id)}:cancel` }
+        : { method: 'POST', path: streaming ? '/message:stream' : '/message:send' };
+      const body = rpc ? JSON.stringify({ jsonrpc: '2.0', id, method, params }) : rest.method === 'GET' ? undefined : JSON.stringify(params);
+      const target = rpc ? url : new URL(url.href.replace(/\/$/u, '') + rest.path);
+      const response = await pinned.fetch(target, { method: rpc ? 'POST' : rest.method, headers: {
+        'Content-Type': 'application/json', Accept: streaming ? 'text/event-stream' : 'application/json',
+        // Card-driven Python path uses the configured service token for hosted
+        // calls; cloud signing credentials are never sent to a card endpoint.
+        ...(token && request.route.source === 'hosted' ? { Authorization: `Bearer ${token}` } : {}) }, body, redirect: 'error',
+        signal: AbortSignal.any([signal, lifetime.signal, sessionLifetime.signal]) });
+      invariant(response.ok, 'A2A_REMOTE_HTTP_FAILED');
+      const unwrap = payload => {
+        if (!rpc) return payload;
+        invariant(payload?.jsonrpc === '2.0' && payload.id === id && !payload.error && payload.result, 'A2A_JSONRPC_FAILED');
+        return payload.result;
+      };
+      return streaming ? { stream: a2aSse(response.body, signal), unwrap } : unwrap(await jsonBody(response));
+    }
+    async function dispatch({ request, signal }) {
+      check(request.native, signal);
+      const release = tryLock(join(directory, `${hash(request.identity)}.sqlite`));
+      invariant(release, 'A2A_CALL_BUSY');
+      let record;
+      try {
+        check(request.native, signal); record = readRecord(request);
+        if (record) return record.result ?? { state: 'unknown', task_id: record.platformTaskId,
+          operation_locator: request.identity, error_type: 'A2A_SEND_OUTCOME_UNKNOWN' };
+        const projection = createA2AProjection(request.scopeId);
+        record = { contract: STUDIO_NATIVE_A2A_HOST, owner, request, requestDigest: hash(request),
+          phase: 'sending', platformTaskId: `a2a-task-${randomUUID().replaceAll('-', '')}`,
+          createdAt: Date.now(), projection: projection.snapshot() };
+        check(request.native, signal); save(request, record);
+        // Once this fsynced marker exists, no replacement may send again,
+        // including a crash between intent commit and entering fetch().
+        const timeout = Math.min(90000, (request.spec.timeout_seconds ?? 90) * 1000);
+        const activeSignal = AbortSignal.any([signal, lifetime.signal, sessionLifetime.signal, AbortSignal.timeout(Math.ceil(timeout))]);
+        const params = { message: request.message, configuration: { returnImmediately: false } };
+        const streaming = request.route.streaming;
+        const result = await wire(request, streaming ? 'SendStreamingMessage' : 'SendMessage', params, activeSignal, streaming);
+        if (streaming) {
+          for await (const event of result.stream) {
+            check(request.native, signal); projection.apply(result.unwrap(event.payload), event.id);
+            record.projection = projection.snapshot(); save(request, record);
+          }
+        } else { projection.apply(result); record.projection = projection.snapshot(); save(request, record); }
+        // A stream may finish before its remote Task does. Read that original
+        // Task; neither a stream reconnect nor a new SendMessage is inferred.
+        while (!a2aTerminal.has(record.projection.state) && !['input_required', 'auth_required'].includes(record.projection.state)
+          && record.projection.taskId) {
+          const task = await wire(request, 'GetTask', { id: record.projection.taskId }, activeSignal);
+          check(request.native, signal); projection.task(task); record.projection = projection.snapshot(); save(request, record);
+          if (!a2aTerminal.has(record.projection.state)) await new Promise((resolve, reject) => {
+            const abort = () => { clearTimeout(timer); reject(activeSignal.reason); };
+            const timer = setTimeout(() => { activeSignal.removeEventListener('abort', abort); resolve(); }, 100);
+            activeSignal.addEventListener('abort', abort, { once: true }); if (activeSignal.aborted) abort();
+          });
+        }
+        check(request.native, signal);
+        const snapshot = record.projection;
+        const output = { state: snapshot.state, task_id: record.platformTaskId,
+          output_refs: snapshot.output_refs, snapshots: snapshot.snapshots, item_kinds: snapshot.item_kinds };
+        record.phase = a2aTerminal.has(snapshot.state) ? 'terminal' : 'paused'; record.result = output;
+        save(request, record); return copy(output);
+      } catch (error) {
+        // Keep the latest checkpoint after abort, timeout, process/service
+        // failure. This publication never turns uncertainty into permission
+        // to send again. Errors/remote diagnostics cannot expose credentials.
+        if (!record) throw error;
+        record.phase = 'unknown'; record.error = 'A2A_SEND_OUTCOME_UNKNOWN';
+        save(request, record);
+        return { state: 'unknown', task_id: record.platformTaskId,
+          operation_locator: request.identity, error_type: 'A2A_SEND_OUTCOME_UNKNOWN' };
+      } finally { release(); }
+    }
+    const exposurePlan = { assertGenericTargetAllowed(target) { invariant(specs.some(spec => spec.target_agent_id === target), 'A2A_TARGET_NOT_BOUND'); } };
+    return { discovery: { list: input => list({ ...input, signal: AbortSignal.any([input.signal, sessionLifetime.signal]) }) },
+      invocation: { resolve: resolveCall, dispatch }, exposurePlan,
+      close: () => sessionLifetime.abort(new Error('A2A_SESSION_CLOSED')),
+      bindingDescription: { sourceRef: 'ksadk-python:355059d', sourceDigest: hash({ sourceDigest, hostBinding: binding.bindingDigest }), spaceId, planDigest,
+        transport: NATIVE_A2A_PROTOCOL, version: '1.0' } };
+  }
+  return Object.freeze({ binding, spaceId, forSession, close });
+}

@@ -32,12 +32,15 @@ import { createStudioNativeSkillSource } from './native-skill-source.mjs';
 import { e2bCommandToolDefinitions, E2B_COMMAND_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
 import { nativeCommandBackend, prepareNativeE2BHost } from './native-e2b-host.mjs';
 import { createNativeDshE2BCommands } from './native-dsh-e2b-commands.mjs';
+import { prepareNativeA2AHost } from './native-a2a-host.mjs';
+import { createNativeDshA2aTools } from './native-dsh-a2a.mjs';
+import { nativeA2aToolDefinitions, NATIVE_A2A_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
 export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
-  commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch, e2bLoadSdk }) {
+  commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch, e2bLoadSdk, a2aFetch }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
@@ -64,6 +67,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   for (const definition of nativeComponentToolDefinitions()) formal.set(definition.name, definition);
   for (const definition of nativeSkillDisclosureDefinitions()) if (disclosureNames.has(definition.name)) formal.set(definition.name, definition);
   const commandEnvironmentSnapshot = { ...commandEnvironment }, commandBackend = nativeCommandBackend(commandEnvironmentSnapshot);
+  const a2a = prepareNativeA2AHost({ env: commandEnvironmentSnapshot, bindings: config.a2aBindings ?? [],
+    ...(a2aFetch ? { fetchImpl: a2aFetch } : {}) });
+  const a2aNames = new Set(a2a ? nativeA2aToolDefinitions().map(definition => {
+    formal.set(definition.name, definition); return definition.name;
+  }) : []);
   const controls = commandBackend === 'local_process' ? localControlSettings(commandSettings) : null;
   const commandEnv = controls ? buildScriptEnvironment(commandEnvironmentSnapshot, { settings: controls }) : null;
   const commandNames = new Set((controls ? localCommandToolDefinitions(controls) : e2bCommandToolDefinitions()).map(definition => {
@@ -92,8 +100,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     const matching = declared.filter(contract => contract.name === ref || contract.resourceId === ref);
     return matching.length ? matching.filter(contract => contract.enabled !== false).map(contract => contract.name) : [ref];
   });
-  const allowed = new Set([...boundNames, ...contracts.keys(), ...childNames, ...disclosureNames]);
+  const allowed = new Set([...boundNames, ...contracts.keys(), ...childNames, ...disclosureNames, ...a2aNames]);
   invariant([...childNames].every(name => !contracts.has(name)), 'studio_native_child_tool_collision');
+  invariant([...a2aNames].every(name => !contracts.has(name) || contracts.get(name).executor === 'builtin'), 'studio_native_a2a_tool_collision');
   const builtin = [...allowed].filter(name => contracts.get(name)?.executor === 'builtin'
     || formal.has(name) && contracts.get(name)?.executor !== 'mcp');
   const builtinNames = new Set(builtin);
@@ -132,6 +141,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   // definitions() selects the caller-session's locked formal. The preset
   // gateway is shared across sessions, so this map is keyed by sessionId.
   const memoryNames = new Set();
+  const a2aOwners = new Map();
   const componentOwners = new Map();
   const disclosureOwners = new Map();
   const memoryOwners = new Map(); // sessionId -> { memoryHost, definitions: Map }
@@ -160,9 +170,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     if (webTemplate) webClosing.push(webTemplate.close());
     for (const owners of componentOwners.values()) for (const owner of owners) owner.close();
     componentOwners.clear();
+    for (const owners of a2aOwners.values()) for (const owner of owners) owner.close();
+    a2aOwners.clear();
     for (const owners of disclosureOwners.values()) for (const owner of owners) owner.close();
     disclosureOwners.clear();
-    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, ...memoryClosing, ...webClosing, browserTools.close()]).then(results => {
+    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, ...memoryClosing, ...webClosing, browserTools.close(), a2a?.close()]).then(results => {
       const failed = results.find(result => result.status === 'rejected');
       if (failed) throw failed.reason;
     });
@@ -215,6 +227,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             outcome = await (await invocation.commands()).execute({ ...invocation.request, signal: exec.signal });
           } else if (webNames.has(name)) {
             outcome = await (await invocation.web()).execute({ ...invocation.request, signal: exec.signal });
+          } else if (a2aNames.has(name)) {
+            invariant(invocation.a2a, 'studio_native_a2a_binding_missing');
+            outcome = await invocation.a2a.execute({ ...invocation.request, signal: exec.signal });
           } else if (name === 'component_status') {
             invariant(invocation.components, 'studio_native_component_binding_missing');
             outcome = await invocation.components.execute({ ...invocation.request, signal: exec.signal });
@@ -418,6 +433,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     argumentEncoding,
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     componentContract: builtinNames.has('component_status') ? NATIVE_COMPONENT_TOOLS_CONTRACT : null,
+    a2aBinding: a2a ? { ...a2a.binding, toolContract: NATIVE_A2A_TOOLS_CONTRACT } : null,
     skillDisclosureBindingDigest: disclosureBindingDigest,
     get childSkillBinding() { return structuredClone(childSkillBinding); },
     async skillInstructions(signal) {
@@ -481,6 +497,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     mcpSchemaContract: mcpSchemas.size ? NATIVE_MCP_SCHEMA_CONTRACT : null,
     mcpBindingDigest,
     async releaseSession(request) {
+      const a2aSessions = a2aOwners.get(request.sessionId);
+      if (a2aSessions) { for (const owner of a2aSessions) owner.close(); a2aOwners.delete(request.sessionId); }
       const skillOwners = disclosureOwners.get(request.sessionId);
       if (skillOwners) { for (const owner of skillOwners) owner.close(); disclosureOwners.delete(request.sessionId); }
       const owners = componentOwners.get(request.sessionId);
@@ -591,6 +609,16 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       const assertCurrent = ledgerAuthority ? request => ledgerAuthority(request) && (!childSkills
         || request.buildId === childSkills.buildId && canonical(commandAuthority.store.load(commandAuthority.scope, request.runId)
           .configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills)) : undefined;
+      const a2aService = a2a && commandAuthority?.scope && assertCurrent ? a2a.forSession({ scope: commandAuthority.scope, sessionId,
+        stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, assertCurrent }) : null;
+      if (a2aService) {
+        if (!a2aOwners.has(sessionId)) a2aOwners.set(sessionId, new Set());
+        a2aOwners.get(sessionId).add(a2aService);
+      }
+      const a2aPort = a2aService ? createNativeDshA2aTools({ config: {
+        ...a2aService,
+        scope: commandAuthority.scope, sessionId, spaceId: a2a.spaceId, assertCurrent, authorize: async () => 'allow',
+      } }) : null;
       let disclosure;
       if (disclosureNames.size && commandAuthority?.store && (!commandAuthority.childSessionId || childSkills)) {
         disclosure = createNativeSkillDisclosurePort({ scope: commandAuthority.scope, sessionId,
@@ -661,7 +689,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } };
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
-        const invocation = { agent, request, workspaceTools, assertCurrent, components, disclosure, children: commandAuthority?.children,
+        const invocation = { agent, request, workspaceTools, assertCurrent, components, disclosure, a2a: a2aPort, children: commandAuthority?.children,
           argumentEncoding: exactNumbers ? argumentEncoding : null, commands, web, assertMcpCurrent };
         calls.set(callId, invocation);
         try {

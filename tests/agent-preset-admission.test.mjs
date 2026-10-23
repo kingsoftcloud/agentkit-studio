@@ -14,6 +14,21 @@ function agent(overrides = {}) {
   };
 }
 
+test('pinned A2A specs reach only the local whole-turn Native preset without sharing mutable Agent objects', async () => {
+  const specs = [{ local_name: 'remote', binding_id: 'binding', space_id: 'space', target_agent_id: 'remote-id', expected_version_id: 'version' }];
+  for (const runtime of ['harness', 'codex', 'dsh-native']) {
+    let registered;
+    const record = agent({ spec: { runtime: { type: runtime }, bindings: { a2a: specs } } });
+    const admission = new DshPresetAdmission({ nativeEngineContract: 'agentkit.native-dsh-turn/v1',
+      getAgent: async () => record, registry: { register: async value => { registered = value; } } });
+    await admission.ensure('demo/agent');
+    const config = registered.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin'))?.config;
+    if (runtime === 'harness') {
+      assert.deepEqual(config.a2aBindings, specs); assert.notEqual(config.a2aBindings, specs);
+    } else assert.equal(config?.a2aBindings, undefined);
+  }
+});
+
 test('Skill-bound presets reuse DSH loader and shell and register definitions in their scope', async () => {
   let definition;
   const skill = { name: 'demo-skill', description: 'Check JSON', content: 'Run the script', source: 'custom', resourceBase: { kind: 'directory', path: '/tmp/test-skill' } };
