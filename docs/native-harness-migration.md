@@ -4,6 +4,10 @@ Studio 的 Native 整轮执行现在先通过 `Agent.externalTurns` 写入版本
 
 当前迁移尚未完成，Studio 的默认 Harness 仍沿用既有执行路径。生产 Host 已加入可显式启用的 Native 整轮执行与 Node 工作区工具组装；这不代表全部 Python 正式能力、各产品入口或安装方式已通过验收。
 
+进度口径已纠正：之前的 85%–94% 属于未按完整验收清单加权的工程估计，不能作为
+剩余工作量或验收完成率。目前没有可复核的整体百分比；当前硬性缺口和证据范围见
+[当前验收状态](native-migration-status.md)。下文历史阶段的通过数量只证明各自覆盖的行为。
+
 工作区 builtin 的同步写入现在使用 `agentkit.workspace-mutation-lock/v1`：同一规范工作区的预检与发布持同一个 SQLite 进程锁，等待结束及每次实际写入前重新核验当前 Native intent、完整工具调用、冻结定义和有效 lease/fence。该契约进入 Host 与插件绑定摘要。持锁进程退出后由 OS 释放；不会按文件年龄或 PID 猜测接管。子任务隔离工作区已接入同一锁，并已贯通 Host 的文件写入、同 Session 续跑、显式受控合并和原始凭证增量恢复，详见 [子任务工作区](native-child-workspaces.md)。编辑器与任意外部命令不参与这个协作锁，因此它不代表整个文件系统的原子事务。
 
 行为参考固定为 KsADK 的 `feat-ksadk-harness-2` 分支提交 `355059d78e47ed764bbdb3606304cdf34e9838a3`。目标为现有 `runtime.type = "harness"`，保留 DSH Native 和 Codex runtime。没有 Python 历史会话数据，只免除历史数据兼容要求；新运行的持久化和恢复属于必备能力。
@@ -408,7 +412,7 @@ Native 工具的 `approval_required` 和原始 `interactionId` 现在通过生�
 
 ## Native 组件状态工具
 
-显式绑定的 `component_status` 已通过实际 Native Kernel、SQLite 工具权限和 Studio Host 执行，保留 `summary`、`skill_space`、`skill_runtime`、`sandbox`、`workspace` 分组。Host 按本轮实际模型、已启用资源、记忆服务、工作区和已挂载工具生成固定快照，并将其纳入恢复绑定摘要。服务目录中的条目不会使尚未挂载的执行服务显示为可执行；Skills 执行服务目前仍报告未启用。
+显式绑定的 `component_status` 已通过实际 Native Kernel、SQLite 工具权限和 Studio Host 执行，保留 `summary`、`skill_space`、`skill_runtime`、`sandbox`、`workspace` 分组。Host 按本轮实际模型、已启用资源、记忆服务、工作区和已挂载工具生成固定快照，并将其纳入恢复绑定摘要。服务目录中的条目不会使尚未挂载的执行服务显示为可执行；后续本地 Skills 后端已接通，当前状态根据实际后端配置和工具挂载生成，见本文末节。
 
 端口核对完整作用域、会话、正式定义、原请求和信号；完成后重放、撤权、取消或请求漂移不会返回成功。共享 gateway 按会话持有和释放端口，不串用另一会话的模型和工具状态。端口 30 项测试在 Node 26.5.0 / 22.19.0 各通过；Host、gateway 及相邻集成共 98 项在两版本各通过，随后新增取消检查后的 Host 模块 4 项各通过，契约类型检查通过。未运行全量测试；打包 Host 的独立运行验证和正式 Skills 服务接入仍待验收。
 
@@ -624,3 +628,11 @@ Skill 不需要远程 Skill 服务。每条脚本命令执行前核验原意图�
 定向范围与配置见 [native-skills.md](native-skills.md)。八个相关模块在 Node 26.5.0 /
 22.19.0 各通过 144 项，未运行全量；后续微调仅重跑受影响模块。该结果不表示
 E2B Skill、所有产品核对/部署入口、legacy Python bridge 或全新安装已经完成。
+
+`node scripts/verify-studio-native-skill-workflow.mjs --source <已构建维护 SDK> --archive <Studio.tgz> --keep`
+已在 Node 26.5.0 和 22.19.0 通过实际打包 Host、认证 preset、DSH ToolRegistry、模型 HTTP、
+Skill 目录 HTTP 和可信测试证书 HTTPS ZIP 的完整执行。两次模型、一次目录、一次下载地址、
+一次 HTTPS、一次实际脚本均精确核对；文本和二进制产物逐字节一致。原 Host 退出后，新 PID
+恢复同一 Session 历史，完整 Native 记录、工作流和命令记录字节不变，效果计数仍为一次。
+Host/脚本 PATH 仅提供 Node 和 bash，Python 配置指向不存在的位置；依赖复用固定已安装图，
+这不是全新安装、线上 E2B、Frozen 部署或进程 SIGKILL 验收。

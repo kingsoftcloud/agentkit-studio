@@ -250,5 +250,17 @@ runtime 定位信息。错误路径使用独立深拷贝与深冻结的定位快
 之后仅按实际变更重跑受影响模块。包括真实本地进程与 SIGKILL、并发重复调用、
 第二条命令前权限失效、真实 NativeKernel/SQLite 网关的远程和纯本地执行、完整
 产物字节以及重开不重放。网关用例的 DSH registry 是明确替身，不能替代完整打包
-Host 验收。仍待 E2B Skill 后端、产品显式核对/清理、完整 Skill 专用事件、打包 Host
-工作流、Frozen/部署入口及全新无 Python 安装验收。
+Host 验收。后续请求上限和同步定位检查分别定向复验运行时 10 项、工具边界 27 项，
+两个 Node 版本均通过，没有为这些微调重复运行全量。
+
+实际打包 Host 工作流已通过：
+`node scripts/verify-studio-native-skill-workflow.mjs --source <已构建维护 SDK> --archive <Studio.tgz> --keep`。
+它使用实际生产 mount、认证 preset 接纳、ToolRegistry、SessionController、SQLite、
+HTTP 模型和目录、可信测试证书的 HTTPS ZIP，验证一次脚本执行、精确文本/二进制
+产物和原意图/fence/命令身份。Host PATH 与脚本 PATH 只提供 Node 和 bash。旧 Host
+实际退出后启动新 PID，恢复历史不新增 HTTP 请求或脚本，不改变完整 Native/工作流/
+命令记录和包文件；原效果文件仍只有一条。两个 Node 版本均通过。
+
+此证明使用固定已安装依赖图与正常退出重启；真实 SIGKILL 的不重放由定向运行时
+测试另行覆盖，不能合称打包 Host 已通过 SIGKILL。仍待 E2B Skill 后端、产品显式
+核对/清理、完整 Skill 专用事件、Frozen/部署入口及全新无 Python 安装验收。
