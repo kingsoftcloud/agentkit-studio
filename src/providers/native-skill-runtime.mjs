@@ -1,5 +1,5 @@
-/** Host-private local Skill execution. The original Native intent remains the
- * authority; a separate fsynced record precedes staging/process dispatch, and
+/** Host-private local Skill execution under the original caller's authority.
+ * Native and DSH have distinct owner contracts; a separate fsynced record precedes staging/process dispatch, and
  * the existing process supervisor retains the original command locator. */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -117,13 +117,33 @@ export function publishArtifacts(result, workDir, workspace, runtimeId, guard) {
     output_files: (result.output_files ?? []).map(path => mapping.get(path)), artifact_metadata: metadata };
 }
 
-export function createNativeLocalSkillRuntime({ stateRoot, workspaceRoot, scope, sessionId, bindingDigest,
+export function createNativeLocalSkillRuntime(options = {}) {
+  scopeKey(options.scope); const scope = copy(options.scope), sessionId = options.sessionId;
+  return createLocalSkillRuntime({ ...options, owner: { contract: NATIVE_SKILL_RUNTIME, prefix: 'local-skill', fields: { scope },
+    check: request => invariant(canonical(request.scope) === canonical(scope) && request.sessionId === sessionId, 'SKILL_RUNTIME_OWNER_MISMATCH'),
+    key: request => ({ scope, sessionId, runId: request.runId, operationKey: request.operationKey }) } });
+}
+
+export const DSH_LOCAL_SKILL_RUNTIME = 'agentkit.dsh-local-skill-runtime/v1';
+/** DSH supplies its real Agent/Session/call. There is no Native Run or fence. */
+export function createDshLocalSkillRuntime(options = {}) {
+  const { agentId, sessionId } = options;
+  invariant(typeof agentId === 'string' && agentId.trim() && typeof sessionId === 'string' && sessionId.trim(), 'SKILL_RUNTIME_OWNER_MISMATCH');
+  return createLocalSkillRuntime({ ...options, owner: { contract: DSH_LOCAL_SKILL_RUNTIME, prefix: 'dsh-local-skill', fields: { agentId },
+    check: request => invariant(request.agentId === agentId && request.sessionId === sessionId
+      && typeof request.callId === 'string' && request.callId.trim() && request.callId === request.call?.callId
+      && typeof request.operationKey === 'string' && request.operationKey.trim()
+      && ['scope', 'runId', 'turnId', 'buildId', 'executionFence', 'parentRunId', 'taskChainId'].every(key => request[key] === undefined),
+    'SKILL_RUNTIME_OWNER_MISMATCH'),
+    key: request => ({ agentId, sessionId, callId: request.callId, operationKey: request.operationKey }) } });
+}
+
+function createLocalSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bindingDigest,
   settings, env = {}, loadPackages, assertStorage = () => true } = {}) {
-  scopeKey(scope);
   invariant(settings?.backend === 'local_process' && settings.enabled && typeof loadPackages === 'function', 'SKILL_RUNTIME_BINDING_INVALID');
   const workspace = realpathSync(workspaceRoot), root = resolve(stateRoot);
   invariant(!inside(root, workspace) && !inside(workspace, root), 'SKILL_RUNTIME_STATE_OVERLAP'); privateDirectory(root, true);
-  const pinnedRoot = lstatSync(root), pinnedWorkspace = lstatSync(workspace), fixedScope = copy(scope), fixedSettings = copy(settings);
+  const pinnedRoot = lstatSync(root), pinnedWorkspace = lstatSync(workspace), fixedSettings = copy(settings);
   const controls = localControlSettings({ wallSeconds: settings.timeoutSeconds, maxOutputBytes: 2 * 1024 ** 2 });
   const environment = buildScriptEnvironment({ ...env }, { settings: controls });
   const processes = new LocalCommandStore({ stateRoot: join(root, 'processes'), workspaceRoot: workspace, sessionId });
@@ -133,11 +153,11 @@ export function createNativeLocalSkillRuntime({ stateRoot, workspaceRoot, scope,
     invariant(current.dev === pinnedRoot.dev && current.ino === pinnedRoot.ino && realpathSync(workspaceRoot) === workspace
       && currentWorkspace.dev === pinnedWorkspace.dev && currentWorkspace.ino === pinnedWorkspace.ino, 'SKILL_RUNTIME_ROOT_CHANGED');
   };
-  const binding = { scope: fixedScope, sessionId, bindingDigest, settings: fixedSettings, environmentDigest: hash(environment), nodeExecutable: process.execPath };
+  const binding = { ...copy(owner.fields), sessionId, bindingDigest, settings: fixedSettings, environmentDigest: hash(environment), nodeExecutable: process.execPath };
   function locate(request) {
-    invariant(canonical(request.scope) === canonical(fixedScope) && request.sessionId === sessionId, 'SKILL_RUNTIME_OWNER_MISMATCH');
-    const id = hash({ scope: fixedScope, sessionId, runId: request.runId, operationKey: request.operationKey });
-    return { runtime_id: `local-skill:${id}`, task_id: processes.commandId(`skill-runtime:${id}`) };
+    owner.check(request);
+    const id = hash(owner.key(request));
+    return { runtime_id: `${owner.prefix}:${id}`, task_id: processes.commandId(`skill-runtime:${id}`) };
   }
   async function execute(request) {
     const signal = request.signal, authority = request.assertCurrent, original = canonical(requestBody(request));
@@ -146,18 +166,19 @@ export function createNativeLocalSkillRuntime({ stateRoot, workspaceRoot, scope,
     function guard() {
       storage(); signal.throwIfAborted();
       invariant(request.signal === signal && request.assertCurrent === authority && canonical(requestBody(request)) === original, 'SKILL_RUNTIME_REQUEST_CHANGED');
-      invariant(canonical(request.scope) === canonical(fixedScope) && request.sessionId === sessionId && typeof request.operationKey === 'string'
+      owner.check(request);
+      invariant(typeof request.operationKey === 'string'
         && request.call?.name === 'execute_skills' && request.callId === request.call.callId, 'SKILL_RUNTIME_OWNER_MISMATCH');
       const verdict = authority(); if (verdict && typeof verdict.then === 'function') Promise.resolve(verdict).catch(() => {});
       invariant(verdict === true, 'SKILL_RUNTIME_AUTHORITY_LOST');
       invariant(request.signal === signal && request.assertCurrent === authority && canonical(requestBody(request)) === original, 'SKILL_RUNTIME_REQUEST_CHANGED'); signal.throwIfAborted(); return true;
     }
     guard();
-    const id = hash({ scope: fixedScope, sessionId, runId: request.runId, operationKey: request.operationKey });
-    const runtimeId = `local-skill:${id}`, operationKey = `skill-runtime:${id}`, taskId = processes.commandId(operationKey);
+    const id = hash(owner.key(request));
+    const runtimeId = `${owner.prefix}:${id}`, operationKey = `skill-runtime:${id}`, taskId = processes.commandId(operationKey);
     const directory = join(root, id); privateDirectory(directory, true); guard();
     const recordPath = join(directory, 'record.json');
-    const matches = previous => invariant(previous.contract === NATIVE_SKILL_RUNTIME && canonical(previous.binding) === canonical(binding)
+    const matches = previous => invariant(previous.contract === owner.contract && canonical(previous.binding) === canonical(binding)
       && canonical(previous.request) === original && previous.runtimeId === runtimeId && previous.taskId === taskId, 'SKILL_RUNTIME_IDENTITY_CONFLICT');
     const release = tryLock(join(directory, 'owner.sqlite'));
     if (!release) {
@@ -174,7 +195,7 @@ export function createNativeLocalSkillRuntime({ stateRoot, workspaceRoot, scope,
         return previous.phase === 'finished' ? copy(previous.result) : { ...unknown(runtimeId, taskId),
           command_ids: previous.commands.map(command => command.taskId) };
       }
-      intent = { contract: NATIVE_SKILL_RUNTIME, binding, request: requestBody(request), runtimeId, taskId,
+      intent = { contract: owner.contract, binding, request: requestBody(request), runtimeId, taskId,
         phase: 'executing', commands: [], createdAt: Date.now() };
       guard(); saveRecord(recordPath, intent); dispatched = true;
       const loaded = await loadPackages(request); guard();
@@ -234,5 +255,5 @@ export function createNativeLocalSkillRuntime({ stateRoot, workspaceRoot, scope,
       storage(); saveRecord(recordPath, { ...intent, phase: 'finished', result, completedAt: Date.now() }); return result;
     } finally { release(); }
   }
-  return { execute, locate };
+  return { contract: owner.contract, execute, locate };
 }

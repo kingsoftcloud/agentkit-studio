@@ -1,6 +1,6 @@
 /** Actual packed Host/preset/DSH ToolRegistry proof, without a model request. */
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -55,7 +55,7 @@ export async function apply(ctx, options) {
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
     'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'component_status',
-    'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill'];
+    'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills'];
   const records = [];
   for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
     runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof' } } }));
@@ -63,7 +63,8 @@ export async function apply(ctx, options) {
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
     KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
-    KSADK_SKILL_SERVICE_TOKEN: 'builtin-skill-read-token' } });
+    KSADK_SKILL_SERVICE_TOKEN: 'builtin-skill-read-token', KSADK_SKILL_RUNTIME_BACKEND: 'local_process',
+    KSADK_SKILL_RUNTIME_TIMEOUT: '20' } });
   ctx.llm.registerAdapter(['agentkit-studio-builtin-proof'], {
     providerInfo: provider => ({ id: provider, name: 'Node builtin registry proof' }), providerRetryPolicy: () => undefined,
     listModels: async provider => [{ provider, id: 'unused', name: 'unused' }],
@@ -126,9 +127,9 @@ export async function apply(ctx, options) {
         assert.equal(components.sandbox.backend, 'local_process'); assert.equal(components.sandbox.enabled, true);
         assert.deepEqual(components.sandbox.tools, ['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
         assert.deepEqual([...components.workspace.tools].sort(), tools.filter(name => name.includes('workspace')).sort());
-        assert.equal(components.workspace.root, workspaceRoot); assert.equal(components.skill_runtime.enabled, false);
+        assert.equal(components.workspace.root, workspaceRoot); assert.equal(components.skill_runtime.enabled, true);
         assert.deepEqual(components.skill_space.user_space_ids, ['packed-space']);
-        assert.deepEqual(components.skill_space.tools, ['list_skill_spaces', 'list_skills', 'load_skill', 'preview_skill', 'search_skills']);
+        assert.deepEqual(components.skill_space.tools, ['list_skill_spaces', 'list_skills', 'load_skill', 'preview_skill', 'search_skills', 'execute_skills']);
         setSandboxMode(agent.session, 'read-only'); setApprovalPolicy(agent.session, 'never');
         const startSkillRequests = skillRequests.length;
         assert.equal((await call('list_skill_spaces', {})).spaces[0].space_name, 'Packed space');
@@ -160,6 +161,51 @@ export async function apply(ctx, options) {
           serviceRequests: skillRequests.length - startSkillRequests, policyDeniedWithoutRequest: true,
           postPolicyPreserved: true, scriptsNotExecuted: true };
         assert.equal(skillsProof.serviceRequests, 7);
+        const startWorkflowRequests = skillRequests.length;
+        const workflowArgs = { workflow_prompt: 'Use packed-alpha', skill_names: ['packed-alpha'] };
+        assert.equal((await call('execute_skills', workflowArgs)).ok, false);
+        assert.equal(skillRequests.length, startWorkflowRequests, 'denied workflow cannot load packages or execute');
+        setApprovalPolicy(agent.session, 'ask');
+        let workflowApprovals = 0, workflowResult, workflowId;
+        const removeWorkflowApproval = agent.ctx.on('approval/request', async () => ++workflowApprovals === 1 ? 'allowed-once' : 'rejected');
+        const invokeWorkflow = () => registry.execute({ agent, callId: workflowId, name: 'execute_skills',
+          arguments: workflowArgs, signal: new AbortController().signal });
+        try {
+          workflowId = `workflow-original-${runtime}`;
+          const first = await invokeWorkflow(); assert.equal(first.isError, false); workflowResult = JSON.parse(first.value.result);
+          assert.equal(workflowResult.ok, true, JSON.stringify(workflowResult)); assert.equal(workflowResult.command_ids.length, 1);
+          assert.equal(workflowResult.backend, 'local_process'); assert.equal(workflowResult.isolated, false);
+          const deniedAgain = await call('execute_skills', workflowArgs); assert.equal(deniedAgain.ok, false);
+          assert.equal(workflowApprovals, 2);
+        } finally { removeWorkflowApproval(); }
+        setSandboxMode(agent.session, 'workspace-write');
+        const duplicateWorkflow = await invokeWorkflow(); assert.equal(duplicateWorkflow.isError, false);
+        assert.deepEqual(JSON.parse(duplicateWorkflow.value.result), workflowResult);
+        const artifactBytes = await Promise.all(workflowResult.output_files.map(file => readFile(file)));
+        assert.equal(artifactBytes.length, 2);
+        assert.ok(artifactBytes.some(bytes => bytes.equals(Buffer.from('Packed workflow 😀'))));
+        assert.ok(artifactBytes.some(bytes => bytes.equals(Buffer.from([0, 1, 255]))));
+        const workflowRoot = join(home, 'studio/builtin-workspace/skill-workflows');
+        const workflowRecords = [];
+        for (const path of await readdir(workflowRoot, { recursive: true })) if (path.endsWith('record.json')) {
+          const file = join(workflowRoot, path), value = JSON.parse(await readFile(file, 'utf8'));
+          if (value.contract === 'agentkit.dsh-local-skill-runtime/v1' && value.request.agentId === record.metadata.id) workflowRecords.push({ file, value });
+        }
+        assert.equal(workflowRecords.length, 1); const workflowRecord = workflowRecords[0];
+        assert.equal(workflowRecord.value.request.sessionId, created.sessionId); assert.equal(workflowRecord.value.request.callId, workflowId);
+        assert.equal(workflowRecord.value.runtimeId, workflowResult.runtime_id); assert.equal(workflowRecord.value.phase, 'finished');
+        for (const key of ['scope', 'runId', 'turnId', 'buildId', 'executionFence']) assert.equal(key in workflowRecord.value.request, false);
+        assert.equal(await readFile(join(dirname(workflowRecord.file), 'work/effect'), 'utf8'), 'x');
+        const removeWorkflowPost = agent.ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'execute_skills'
+          ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted workflow result' }] } : next());
+        try {
+          const redacted = await invokeWorkflow(); assert.equal(redacted.isError, false);
+          assert.deepEqual(redacted.content, [{ type: 'text', text: 'Host-redacted workflow result' }]);
+        } finally { removeWorkflowPost(); }
+        assert.equal(skillRequests.length - startWorkflowRequests, 2);
+        const workflowProof = { runtimeId: workflowResult.runtime_id, taskId: workflowResult.task_id, executedOnce: true,
+          serviceRequests: 2, exactArtifacts: true, originalDshOwner: true, oneShotApprovals: workflowApprovals,
+          policyDeniedWithoutRequest: true, postPolicyPreserved: true, record: workflowRecord.file };
         setSandboxMode(agent.session, 'workspace-write');
         const path = `${runtime}.txt`;
         assert.equal((await call('write_workspace_file', { path, content: 'Original bytes.' })).ok, true);
@@ -377,13 +423,14 @@ export async function apply(ctx, options) {
         }
         assert.deepEqual(before, after, 'Both actual DSH policy phases must observe every admitted call.');
         const audits = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').map(event => event.data.outcome);
-        assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected']);
+        assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected']);
         report.runtimes.push({ runtime, agentId: record.metadata.id, sessionId: created.sessionId,
           registeredCalls: before.length, approvals: audits, crossSessionReadStateIsolated: true, parser: lint.syntax_engine.parser });
         report.runtimes.at(-1).web = webProof;
         report.runtimes.at(-1).commands = commandProof;
         report.runtimes.at(-1).components = components;
         report.runtimes.at(-1).skills = skillsProof;
+        report.runtimes.at(-1).workflows = workflowProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

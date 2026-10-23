@@ -77,41 +77,8 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
     const runtime = runtimeSettings.enabled ? createRuntime({ stateRoot: join(cacheDir, 'runtime'),
       workspaceRoot: workspace, scope, sessionId, bindingDigest, settings: runtimeSettings, env: environment,
       ...(e2b ? { prepared: e2b, inProcessTransport: Boolean(loadSdk) } : {}),
-      assertStorage, async loadPackages(request) {
-        const check = () => { assertStorage(); return request.assertCurrent(); };
-        // Reuse the admitted SkillSource's complete content/mode digest. A
-        // later edit cannot silently change an already pinned workflow.
-        for (const ref of localSource?.source.refs ?? []) { check(); await localSource.source.fullText(ref); check(); }
-        const packages = localDefinitions.filter(item => item.resourceBase?.kind === 'directory')
-          .map(item => ({ name: item.name, body: item.content, rootDir: item.resourceBase.path }));
-        const seen = new Set(packages.map(item => item.name.toLowerCase()));
-        const select = async (skills, spaceId, publicOnly = false) => {
-          const allowed = publicOnly ? skills.filter(skill => !publicAllowlist.length
-            || publicAllowlist.some(name => name.toLowerCase() === skill.name.toLowerCase())) : skills;
-          const matches = publicOnly ? allowed.map(skill => ({ skill }))
-            : matchSkillRefs(allowed, request.workflowPrompt, { skillNames: request.skillNames });
-          for (const { skill } of matches) {
-            if (seen.has(skill.name.toLowerCase())) continue;
-            check();
-            const loaded = await load({ skillId: skill.skillId, versionId: skill.versionId, name: skill.name,
-              spaceId, contentHash: skill.contentHash ?? '', signal: request.signal, assertCurrent: check });
-            check(); seen.add(skill.name.toLowerCase());
-            packages.push({ name: loaded.name, body: loaded.content, rootDir: loaded.rootDir,
-              skillId: loaded.skillId, versionId: loaded.versionId, spaceId: loaded.spaceId, archiveHash: loaded.archiveHash });
-          }
-        };
-        for (const spaceId of userSpaces) {
-          const listing = await service.listSkillsBySpaceId(spaceId, { signal: request.signal, assertCurrent: check }); check();
-          invariant(!listing.truncated, 'SKILL_RUNTIME_DIRECTORY_INCOMPLETE');
-          await select(listing.activeSkills, spaceId);
-        }
-        if (publicSpaces.length) {
-          const listing = await service.listAvailablePremadeSkills({ signal: request.signal, assertCurrent: check }); check();
-          invariant(!listing.truncated && publicSpaces.includes(listing.spaceId), 'SKILL_RUNTIME_PUBLIC_DIRECTORY_INVALID');
-          await select(listing.activeSkills, listing.spaceId, true);
-        }
-        return packages;
-      } }) : null;
+      assertStorage, loadPackages: request => loadSkillRuntimePackages({ request, localSource, localDefinitions,
+        userSpaces, publicSpaces, publicAllowlist, service, load, assertStorage }) }) : null;
     const bound = provider(load && (request => {
       assertStorage();
       const authority = request.assertCurrent;
@@ -155,4 +122,42 @@ export function nativeSkillSpaceSettings(config = {}, env = {}) {
     ...(!env.KSADK_SKILL_SPACE_IDS ? csv(env, 'SKILL_SPACE_ID') : [])]);
   const publicSpaces = ids(csv(env, 'KSADK_PUBLIC_SKILL_SPACE_IDS'));
   return { userSpaces, publicSpaces, publicAllowlist: ids(csv(env, 'KSADK_PUBLIC_SKILL_ALLOWLIST')) };
+}
+
+/** Shared package selection under the caller's actual runtime authority. */
+export async function loadSkillRuntimePackages({ request, localSource, localDefinitions = [], userSpaces = [], publicSpaces = [],
+  publicAllowlist = [], service, load, assertStorage }) {
+  const check = () => { assertStorage(); return request.assertCurrent(); };
+  // Reuse the admitted SkillSource's complete content/mode digest. A
+  // later edit cannot silently change an already pinned workflow.
+  for (const ref of localSource?.source.refs ?? []) { check(); await localSource.source.fullText(ref); check(); }
+  const packages = localDefinitions.filter(item => item.resourceBase?.kind === 'directory')
+    .map(item => ({ name: item.name, body: item.content, rootDir: item.resourceBase.path }));
+  const seen = new Set(packages.map(item => item.name.toLowerCase()));
+  const select = async (skills, spaceId, publicOnly = false) => {
+    const allowed = publicOnly ? skills.filter(skill => !publicAllowlist.length
+      || publicAllowlist.some(name => name.toLowerCase() === skill.name.toLowerCase())) : skills;
+    const matches = publicOnly ? allowed.map(skill => ({ skill }))
+      : matchSkillRefs(allowed, request.workflowPrompt, { skillNames: request.skillNames });
+    for (const { skill } of matches) {
+      if (seen.has(skill.name.toLowerCase())) continue;
+      check();
+      const loaded = await load({ skillId: skill.skillId, versionId: skill.versionId, name: skill.name,
+        spaceId, contentHash: skill.contentHash ?? '', signal: request.signal, assertCurrent: check });
+      check(); seen.add(skill.name.toLowerCase());
+      packages.push({ name: loaded.name, body: loaded.content, rootDir: loaded.rootDir,
+        skillId: loaded.skillId, versionId: loaded.versionId, spaceId: loaded.spaceId, archiveHash: loaded.archiveHash });
+    }
+  };
+  for (const spaceId of userSpaces) {
+    const listing = await service.listSkillsBySpaceId(spaceId, { signal: request.signal, assertCurrent: check }); check();
+    invariant(!listing.truncated, 'SKILL_RUNTIME_DIRECTORY_INCOMPLETE');
+    await select(listing.activeSkills, spaceId);
+  }
+  if (publicSpaces.length) {
+    const listing = await service.listAvailablePremadeSkills({ signal: request.signal, assertCurrent: check }); check();
+    invariant(!listing.truncated && publicSpaces.includes(listing.spaceId), 'SKILL_RUNTIME_PUBLIC_DIRECTORY_INVALID');
+    await select(listing.activeSkills, listing.spaceId, true);
+  }
+  return packages;
 }

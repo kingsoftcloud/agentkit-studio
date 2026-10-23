@@ -325,4 +325,35 @@ DSH 的 pre/guard/around/post/result 管线继续生效；策略拒绝不发起�
 
 定向验证在 Node 26.5.0 / 22.19.0 各通过 75 项；新增公共空间反例和真正新 Node 进程重开缓存后，只重跑变化的两个模块，各 39 项通过。生产安装包通过真实 Host、SessionController、两个 runtime 的 ToolRegistry、HTTP REST 目录和可信 CA 的 HTTPS ZIP 验证，逐字节核对完整指令及脚本资源，证明加载时脚本未执行；每个 runtime 恰好 7 次服务请求、1 次 HTTPS 下载，拒绝调用为零新增请求。原文件、Web、命令、完整输出与审批断言保留。Host PATH 只有 Node，Python 路径不可用。此证据使用固定依赖图，不包含全新安装、模型/Codex CLI 对话或整个 Host 的崩溃恢复。
 
-DSH legacy 的 `execute_skills`、Skill 管理工具、E2B、Browser、A2A、记忆/知识库等尚未全部替换 Python builtin。完整 Native 的工作流运行时已有独立实现，但不能把它的验收当成 DSH 接线已完成。整个 Python fallback 尚未移除，整体迁移仍未完成。
+随后本地 `execute_skills` 的 DSH 接线已补齐，见下节。Skill 管理工具、DSH 的 E2B 工作流、Browser、A2A、记忆/知识库等尚未全部替换 Python builtin。整个 Python fallback 尚未移除，整体迁移仍未完成。
+
+## DSH Native / Codex 的本地 Skill 工作流
+
+显式选择 `KSADK_SKILL_RUNTIME_BACKEND=local_process`，并准入 `execute_skills`，
+生产 builtin 工厂会挂载 `agentkit.dsh-node-skill-workflow/v1`。本地已绑定 Skill
+无需 Skill Service；远程包复用固定连接、空间、目录与校验下载器。调用先走原 DSH
+pre/guard/around/post/result 管线及真实 sandboxPolicy/一次审批，再进入持久工作流。
+`component_status` 报告已挂载的本地执行器，仍明确不具备 OS 隔离。
+显式 E2B 选择保留原后端，绝不降级为 Host 执行；它的 DSH Node 适配仍待迁移。
+
+本地执行器共用 Native 的命令监督和包/产物算法，但身份契约独立：
+`agentkit.dsh-local-skill-runtime/v1` 记录实际 Agent、Session、callId 和完整参数，
+不制造 Native Run、turn 或 fence。定位为 `dsh-local-skill:<摘要>` 与原 command ID。
+Host 的 revision、实际 Build ID、Skill 文件内容、运行设置和服务摘要固定在绑定中；
+相同调用 ID 的参数或绑定变化不能读取旧成功回执。缓存位于工作区外，按 Agent/Session
+隔离，每次访问检查目录身份；本地脚本变更也不能悄悄替换已准入内容。
+
+工作流意图先 fsync，再加载包、固定文件和启动脚本；逐条命令也先持久化定位。
+完成调用复用原回执，执行中或被杀的调用返回原定位的结果未知，禁止自动重跑。
+审批和不合作网络调用也受整次超时/取消约束，晚批准或晚响应不能启动后续命令。
+取消请求不把可能已发生的效果报告成“未执行”。未知调用的显式产品核对/继续仍待补齐。
+
+定向回归五模块在 Node 26.5.0 / 22.19.0 各通过 52 项，随后仅重跑变化的工作流
+模块，各 13 项通过。包含真实 bash、精确文本/二进制产物、新 Node PID 重开、
+真实 SIGKILL 后不重跑、并发、重复、取消/Host 退出/超时、审批与源/缓存替换。
+打包验证仍使用 `scripts/verify-studio-node-builtins.mjs`，在两个 Node 版本和两个
+runtime 的实际 Host/SessionController/ToolRegistry 中执行远程包脚本：每个 runtime
+恰好两次工作流目录/下载地址请求、一次脚本效果；重复和后置策略重放不增加请求。
+加上五个读取工具，每个 runtime 总计九次服务请求、两次 HTTPS 下载。
+Host/脚本 PATH 仅 Node/bash，Python 配置不可用；复用固定依赖图，没有模型/Codex CLI、
+全新安装、线上 E2B 或整个打包 Host SIGKILL 的验收声明。

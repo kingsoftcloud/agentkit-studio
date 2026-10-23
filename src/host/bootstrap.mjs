@@ -156,7 +156,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       ctx: toolsCtx, workspaceRoot, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
       isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
       toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
-      skillConnection,
+      skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [],
     })), 'agentkit-studio: Node builtin environment');
   }
   // A frozen Native Build retains its engine when the live-preset default is

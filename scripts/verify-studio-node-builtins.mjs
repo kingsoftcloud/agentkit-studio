@@ -17,7 +17,9 @@ console.log(`Studio Node builtin evidence: ${root}`);
 let harness, download, downloads = 0;
 const skillBody = '---\nname: packed-alpha\ndescription: Packed Alpha task\n---\n# Packed Alpha 😀\nRead the supplied JSON.\n';
 const skillScript = 'printf forbidden > must-not-execute';
-const skillArchive = createZip([{ name: 'SKILL.md', data: skillBody }, { name: 'scripts/run.sh', data: skillScript }]);
+const workflowScript = 'printf x >> "$KSADK_SKILL_WORKDIR/effect"\nprintf "Packed workflow 😀" > "$KSADK_SKILL_OUTPUT_DIR/result.txt"\nprintf "\\000\\001\\377" > "$KSADK_SKILL_OUTPUT_DIR/raw.bin"\nprintf "artifact=artifacts/result.txt\\nartifact=artifacts/raw.bin\\n"';
+const skillArchive = createZip([{ name: 'SKILL.md', data: skillBody }, { name: 'scripts/run.sh', data: skillScript },
+  { name: 'scripts/run-workflow.sh', data: workflowScript }]);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 try {
   const certs = join(root, 'certs'); await mkdir(certs);
@@ -41,7 +43,8 @@ try {
   for (const name of await readdir(publicPackages)) await symlink(join(publicPackages, name), join(dependencies, '@deepseek-ai', name));
   const pluginDirectory = join(root, 'home/profiles/sdk/node_modules/@kingsoftcloud');
   await mkdir(pluginDirectory, { recursive: true }); await symlink(installed, join(pluginDirectory, 'agentkit-studio'));
-  const nodeBin = join(root, 'node-only-bin'); await mkdir(nodeBin); await symlink(process.execPath, join(nodeBin, 'node'));
+  const nodeBin = join(root, 'node-shell-bin'); await mkdir(nodeBin); await symlink(process.execPath, join(nodeBin, 'node'));
+  await symlink('/bin/bash', join(nodeBin, 'bash'));
   const patch = join(root, 'builtins.patch.yml');
   await writeFile(patch, [
     '- id: session-persistence-jsonl', '  config:', `    root: ${JSON.stringify(join(root, 'sessions'))}`, '    compression: none',
@@ -84,14 +87,20 @@ try {
     && row.commands.backgroundCanceled && row.commands.oneShotApprovals === 2));
   assert.ok(report.runtimes.every(row => row.components.ok === true && row.components.summary.model === 'deepseek-flash'
     && row.components.workspace.tools.length === 10 && row.components.sandbox.tools.length === 4
-    && row.components.skill_runtime.enabled === false && row.components.summary.isolated_execution === 'not_enabled'));
-  assert.equal(downloads, 2);
+    && row.components.skill_runtime.enabled === true && row.components.skill_runtime.backend === 'local_process'
+    && row.components.skill_runtime.request_protocol === 'agentkit.dsh-node-skill-workflow/v1'
+    && row.components.summary.isolated_execution === 'not_enabled'));
+  assert.equal(downloads, 4);
   assert.ok(report.runtimes.every(row => row.skills.instructionsSha256 === sha256(skillBody) && row.skills.serviceRequests === 7
     && row.skills.policyDeniedWithoutRequest && row.skills.postPolicyPreserved && row.skills.scriptsNotExecuted));
   assert.equal(new Set(report.runtimes.map(row => row.skills.rootDir)).size, 2);
+  assert.ok(report.runtimes.every(row => row.workflows.executedOnce && row.workflows.serviceRequests === 2
+    && row.workflows.exactArtifacts && row.workflows.originalDshOwner && row.workflows.oneShotApprovals === 2
+    && row.workflows.policyDeniedWithoutRequest && row.workflows.postPolicyPreserved));
+  assert.equal(new Set(report.runtimes.map(row => row.workflows.runtimeId)).size, 2);
   await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, downloads,
     archiveSha256: sha256(await readFile(resolve(values.archive))), skillArchiveHash: sha256(skillArchive), report }, null, 2));
-  console.log('PASS: packed Host registers Node workspace + web + commands + component_status + five Skill reads for DSH Native and Codex; actual HTTP Skill service, CA-verified HTTPS ZIP/exact instructions and resources/private caches/no script execution/policy denial and post policy; original command deduplication, full outputs, approvals and Session isolation; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
+  console.log('PASS: packed Host registers Node workspace + web + commands + component_status + five Skill reads + durable local execute_skills for DSH Native and Codex; real HTTP service/CA-verified HTTPS ZIP/scripts/exact text+binary artifacts; stable real DSH identity and duplicate suppression; policy, one-shot approval and post policy retained; Node/bash PATH with invalid Python. Model/Codex CLI and fresh dependency installation are separate acceptance.');
 } finally {
   await harness?.close();
   download?.closeAllConnections(); if (download) await new Promise(resolve => download.close(resolve));

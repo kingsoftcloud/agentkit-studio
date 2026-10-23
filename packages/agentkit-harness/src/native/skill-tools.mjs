@@ -805,3 +805,5 @@ export function createSkillReadTransport({ serviceClient, loadSkillFn, skillSpac
     } catch (error) { return { ok: false, error_type: signal.aborted ? 'REQUEST_CANCELLED' : error.code || 'SKILL_READ_FAILED', executed: false }; }
   } };
 }
+
+export function nativeSkillWorkflowToolDefinitions() { return copy(TOOL_DEFINITIONS.filter(definition => definition.name === 'execute_skills')); }
