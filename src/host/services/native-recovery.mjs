@@ -1,5 +1,6 @@
 import { canonical, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { readNativeDshOwnership } from '../../../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
+import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, verifyNativeDshBackgroundOwnership } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 
 export const STUDIO_NATIVE_RECOVERY_CONTRACT = 'agentkit.studio-native-recovery/v1';
 const text = value => typeof value === 'string' && value.trim() && value.length <= 256;
@@ -43,13 +44,16 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       }
       return { agent, scope, admission: null, record };
     }
-    const admission = readNativeDshOwnership(owner, { sessionId: request.sessionId, turn: owner.turn });
+    const background = owner.engine === NATIVE_DSH_BACKGROUND_TURN_CONTRACT;
+    const verified = background ? await verifyNativeDshBackgroundOwnership(owner, { store, scope,
+      sessionId: request.sessionId, turn: owner.turn, signal }) : null;
+    const admission = verified?.admission ?? readNativeDshOwnership(owner, { sessionId: request.sessionId, turn: owner.turn });
     invariant(canonical(admission.identity.scope) === canonical(scope)
       && (!request.runId || request.runId === admission.identity.runId), 'studio_native_recovery_identity_mismatch');
     let record = null;
     try { record = store.load(scope, admission.identity.runId); }
     catch (error) { if (error.code !== 'run_not_found') throw error; }
-    return { agent, scope, admission, record };
+    return { agent, scope, admission, record, turn: owner.turn, background };
   };
   const summary = (request, inspected) => {
     const { admission, record } = inspected;
@@ -57,7 +61,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     const applicable = attempt?.runId === (admission?.identity.runId ?? request.runId) ? attempt : null;
     const driving = applicable?.running || Boolean(admission && controls.get(controlKey(request.agentId, request.sessionId))?.runId === admission.identity.runId);
     return { contract: STUDIO_NATIVE_RECOVERY_CONTRACT, agentId: request.agentId, sessionId: request.sessionId,
-      runId: admission?.identity.runId ?? request.runId ?? null, turn: admission ? Number(admission.identity.turnId) : null,
+      runId: admission?.identity.runId ?? request.runId ?? null, turn: admission ? inspected.turn : null,
       state: driving ? 'recovering' : !admission ? 'closed'
         : record?.snapshot.phase === 'interrupted' ? 'reconciliation_required' : applicable?.error ? 'failed' : 'available',
       phase: record?.snapshot.phase ?? (admission ? 'admitted' : null),
@@ -86,7 +90,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       invariant(inspected.record?.snapshot.phase !== 'interrupted', 'studio_native_recovery_reconciliation_required');
       invariant(!controls.has(key), 'studio_native_recovery_already_active');
       signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
-      return execute.resume({ agent: inspected.agent, signal: lifetime.signal,
+      return execute[inspected.background ? 'resumeBackground' : 'resume']({ agent: inspected.agent, signal: lifetime.signal,
         recoveryStarted: control => {
           invariant(control.runId === request.runId, 'studio_native_recovery_identity_mismatch');
           acknowledgment.resolve({ ...summary(request, inspected), state: 'recovering', canResume: false });

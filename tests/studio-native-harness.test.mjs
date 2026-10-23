@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { SqliteNativeMemoryProvider } from '../packages/agentkit-harness/src/native/memory-store.mjs';
 import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } from '../packages/agentkit-harness/src/native/memory-candidate.mjs';
-import { MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { MemoryRunStore, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotification, backgroundCommandObservation } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { digest, tool } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { nativeDshBackgroundOwnership } from '../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
+import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
@@ -18,7 +21,7 @@ import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-s
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT } from '../src/providers/native-context-sources.mjs';
 
-async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
   const workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
@@ -34,7 +37,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
   session.append('turn/start', { turn: 1 });
   const services = { sessions: { flush: async () => true }, llm: {}, sessionProjections: {
     register(definition) { definitions.set(definition.key, definition); return () => { definitions.delete(definition.key); unregisters++; }; },
-    stateOf(_session, id) { const definition = definitions.get(id); return events.reduce(definition.apply, definition.init()); },
+    stateOf(_session, id) { const definition = definitions.get(id); return definition ? events.reduce(definition.apply, definition.init()) : undefined; },
   } };
   const ctx = { get: id => services[id] };
   const resolutions = [], builds = { resolve: async (agentId, buildId) => {
@@ -42,6 +45,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
       executionEngine: buildExecutionEngine(record.spec, 'agentkit.native-dsh-turn/v1') };
   } };
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
+    ...(recovery ? { agentEvents: () => ({ serial: async () => payload.binding }), assembleContextFor: agent => ({ agent }) } : {}),
     contextSourceRegistry: bridge?.nativeContextSources,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
       requests.push({ url, options });
@@ -56,6 +60,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     binding: { agentId: record.metadata.id, agentRevision: 1, runtime: 'harness', local: true,
       nativeEngineContract: 'agentkit.native-dsh-turn/v1',
       nativeTools: { definitions: () => [], forAgent: () => ({ tools: { execute: async () => assert.fail('No tool dispatched') } }) } } };
+  if (recovery) services.systemPrompt = { assemble: async () => payload.input.assembly };
   const head = () => {
     const scope = { tenantId: 'local', workspaceId: ledgerScope(), userId: 'local-user', agentId: record.metadata.id };
     return ledger.sessionHead(scope, 'session');
@@ -73,6 +78,137 @@ const contextRegistration = (record, extra = {}) => ({ sourceRef: 'plugin://host
   configuration: { contract: STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT, sources: [{ sourceId: 'host.proof',
     priority: 3, timeoutMs: 1000, required: true, maxTokens: 1000, maxBytes: 16000 }] },
   authorize: async () => 'allow', callback: async () => ({ items: [{ content: 'SOURCE_DATA_CANNOT_GRANT_APPROVAL' }] }), ...extra });
+
+// Actual Host, model HTTP codec, NativeKernel, canonical receipts and SQLite;
+// command transport and DSH Session lifecycle are explicit test doubles.
+async function backgroundHost(t, { frozen = false, nested = false } = {}) {
+  const h = await setup(t, { sqlite: true, recovery: true,
+    spec: { execution: { nativeLimits: { maxModelCalls: 12, maxToolCalls: 8 } } },
+    respond: count => ({ choices: [{ index: 0, delta: count === 1 || nested && count === 3
+      ? { tool_calls: [{ index: 0, id: `launch-${count}`, type: 'function', function: { name: 'run_command', arguments: '{}' } }] }
+      : { content: 'Complete' }, finish_reason: count === 1 || nested && count === 3 ? 'tool_calls' : 'stop' }] }) });
+  const launch = tool({ name: 'run_command', readOnly: false, concurrentSafe: false,
+    backgroundCommandPolicy: 'owned-command-launch/v1' });
+  let launches = 0, releases = 0;
+  h.payload.binding.nativeTools = { definitions: () => [structuredClone(launch)],
+    commandBinding: { contract: 'fixture/owned-command/v1' }, releaseSession: async () => { releases++; },
+    forAgent: () => ({ tools: { execute: async request => ({ status: 'ok', content: { backend: 'sandbox/local_process' },
+      backgroundCommandRef: { taskId: (++launches).toString(16).padStart(64, '0'),
+        sourceRunId: request.runId, operationKey: request.operationKey } }) },
+      background: { contract: BACKGROUND_COMMAND_CONTRACT, observe: async () => [] } }) };
+  if (frozen) h.payload.binding.buildId = 'frozen-background-build';
+  await h.host.executeTurn(h.payload);
+  const source = h.ledger.load(h.head().scope, h.head().runId);
+  assert.equal(source.snapshot.phase, 'completed'); assert.equal(launches, 1);
+  h.payload.agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
+  const notice = async (record, turn) => {
+    const command = record.snapshot.backgroundCommands.find(row => row.ref.sourceRunId === record.snapshot.runId);
+    assert.ok(command);
+    const admitted = await admitBackgroundNotification({ store: h.ledger, scope: record.snapshot.scope,
+      sourceRunId: record.snapshot.runId, taskId: command.ref.taskId, digest, signal: h.payload.signal,
+      observe: async request => backgroundCommandObservation({ ref: request.ref, status: 'completed', exitCode: 0,
+        stdout: 'COMMAND_OUTPUT_IS_UNTRUSTED' }) });
+    const saved = h.ledger.load(record.snapshot.scope, admitted.snapshot.runId);
+    const ownership = nativeDshBackgroundOwnership({ record: saved, turn });
+    h.payload.agent.session.append('turn/start', { turn });
+    h.payload.agent.externalTurns.claim(ownership);
+    return { saved, payload: { agent: h.payload.agent, turn, ownership, signal: h.payload.signal,
+      prepareInput: h.payload.prepareInput } };
+  };
+  return { ...h, source, notice, counts: () => ({ launches, releases }) };
+}
+
+for (const frozen of [false, true]) test(`background Host restores ${frozen ? 'Frozen Build' : 'Revision'} ports and reduced budgets without replaying user input`, async t => {
+  const h = await backgroundHost(t, { frozen }), n = await h.notice(h.source, 17);
+  h.rotate('rotated-background-key');
+  assert.deepEqual(await h.host.executeBackgroundTurn(n.payload), { reason: { kind: 'completed' } });
+  const result = h.ledger.load(h.source.snapshot.scope, n.saved.snapshot.runId);
+  assert.equal(result.snapshot.phase, 'completed'); assert.equal(result.snapshot.usage.modelCalls, 1);
+  assert.equal(result.snapshot.turnId, n.saved.snapshot.runId);
+  assert.equal(result.configuration.limits.maxModelCalls, 10);
+  assert.deepEqual(result.configuration, n.saved.configuration);
+  assert.deepEqual(h.ledger.load(h.source.snapshot.scope, h.source.snapshot.runId), h.source);
+  assert.equal(h.requests.length, 3); assert.equal(h.counts().launches, 1);
+  assert.equal(new Headers(h.requests[2].options.headers).get('authorization'), 'Bearer rotated-background-key');
+  const wire = JSON.parse(h.requests[2].options.body);
+  assert.ok(wire.messages.some(message => message.role === 'user' && message.content.includes('COMMAND_OUTPUT_IS_UNTRUSTED')));
+  assert.equal(h.events.filter(event => event.type === 'user/message' && event.data.source?.kind === 'agentkit-native-background-notification').length, 1);
+  assert.equal(h.events.filter(event => event.type === 'user/message' && event.data.source?.kind === 'user').length, 1);
+  await h.host.executeBackgroundTurn(n.payload);
+  assert.equal(h.requests.length, 3); assert.equal(h.counts().launches, 1);
+  if (frozen) assert.ok(h.resolutions.every(item => item.buildId === 'frozen-background-build'));
+});
+
+test('background Host resolves original input across a completed notice ancestor', async t => {
+  const h = await backgroundHost(t, { nested: true }), first = await h.notice(h.source, 17);
+  await h.host.executeBackgroundTurn(first.payload);
+  const firstResult = h.ledger.load(h.source.snapshot.scope, first.saved.snapshot.runId);
+  assert.equal(firstResult.snapshot.phase, 'completed'); assert.equal(h.counts().launches, 2);
+  h.payload.agent.session.append('turn/end', { turn: 17, reason: { kind: 'completed' } });
+  const second = await h.notice(firstResult, 23);
+  await h.host.executeBackgroundTurn(second.payload);
+  const result = h.ledger.load(h.source.snapshot.scope, second.saved.snapshot.runId);
+  assert.equal(result.snapshot.phase, 'completed'); assert.equal(result.configuration.limits.maxModelCalls, 8);
+  assert.equal(result.snapshot.parentRunId, firstResult.snapshot.runId);
+  assert.deepEqual(h.ledger.load(h.source.snapshot.scope, h.source.snapshot.runId), h.source);
+  assert.equal(h.requests.length, 5); assert.equal(h.counts().launches, 2);
+});
+
+for (const drift of ['revision', 'model', 'tools']) test(`background Host rejects actual ${drift} binding drift before another model effect`, async t => {
+  const h = await backgroundHost(t), n = await h.notice(h.source, 17), before = h.counts().releases;
+  if (drift === 'revision') h.payload.binding.agentRevision++;
+  if (drift === 'model') h.values.modelProfiles[0].parameters = { temperature: .7 };
+  if (drift === 'tools') h.payload.binding.nativeTools.definitions = () => [];
+  await assert.rejects(h.host.executeBackgroundTurn(n.payload), /recovery_(preset_changed|configuration_changed)/);
+  assert.equal(h.requests.length, 2); assert.equal(h.counts().launches, 1);
+  assert.equal(h.ledger.load(h.source.snapshot.scope, n.saved.snapshot.runId).snapshot.phase, 'created');
+  if (drift !== 'revision') assert.equal(h.counts().releases, before + 1);
+});
+
+test('background Host product recovery keeps the numeric DSH position and original notice across an owner flush failure', async t => {
+  const h = await backgroundHost(t), n = await h.notice(h.source, 17);
+  h.services.sessionController = { resolveAgent: async id => { assert.equal(id, h.payload.agent.session.id); return { agent: h.payload.agent }; } };
+  let running, resumes = 0;
+  h.payload.agent.externalTurns.resume = async (engine, execute) => {
+    resumes++; assert.equal(engine, n.payload.ownership.engine);
+    running = execute({ ownership: h.payload.agent.externalTurns.pending(), turn: 17,
+      signal: n.payload.signal, prepareInput: h.payload.prepareInput });
+    const ending = await running;
+    h.payload.agent.session.append('turn/end', { turn: 17, ...ending });
+    return ending;
+  };
+  const request = { agentId: h.record.metadata.id, sessionId: 'session', runId: n.saved.snapshot.runId };
+  const route = createSessionRoutes({ getNativeHost: async () => h.host });
+  const status = await h.host.recoveryStatus(request);
+  assert.equal(status.turn, 17); assert.equal(status.state, 'available'); assert.equal(status.canResume, true);
+  h.services.sessions.flush = async () => false;
+  await assert.rejects(route('sessions/native-recovery-resume', request), /ownership_not_durable/);
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.payload.agent.externalTurns.pending().turn, 17);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.host.recoveryStatus(request)).state, 'failed');
+  h.services.sessions.flush = async () => true;
+  const ack = (await route('sessions/native-recovery-resume', request)).value;
+  assert.equal(ack.state, 'recovering'); assert.equal(ack.turn, 17);
+  await running; await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.host.recoveryStatus(request)).state, 'closed');
+  assert.equal(h.ledger.load(h.source.snapshot.scope, request.runId).snapshot.phase, 'completed');
+  assert.equal(resumes, 2); assert.equal(h.requests.length, 3); assert.equal(h.counts().launches, 1);
+  assert.equal(h.events.filter(event => event.type === 'turn/start').length, 2);
+  assert.equal(h.events.filter(event => event.type === 'turn/end' && event.data.turn === 17).length, 1);
+});
+
+test('background Host close during prompt rebinding cancels the existing notice without executing a model', async t => {
+  const h = await backgroundHost(t), n = await h.notice(h.source, 17), entered = Promise.withResolvers(), release = Promise.withResolvers();
+  h.services.systemPrompt.assemble = async () => { entered.resolve(); await release.promise; return h.payload.input.assembly; };
+  const executing = h.host.executeBackgroundTurn(n.payload), failed = assert.rejects(executing, /Studio Native host closed/);
+  await entered.promise; await h.host.close(); await failed;
+  release.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.requests.length, 2); assert.equal(h.counts().launches, 1);
+  const saved = h.ledger.load(h.source.snapshot.scope, n.saved.snapshot.runId);
+  assert.ok(saved.commands.some(row => row.command.commandId === `${saved.snapshot.runId}:dsh-turn-cancel`));
+  assert.equal(saved.snapshot.phase, 'created');
+});
 
 test('actual Host composes registered context and local Memory recall in the SQLite context effect', async t => {
   let calls = 0, sourceRequest;
