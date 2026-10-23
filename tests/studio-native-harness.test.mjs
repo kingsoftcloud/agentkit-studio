@@ -877,6 +877,20 @@ test('Studio Native executes Web through its ledger, replays its result and reje
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), run);
 });
 
+test('Studio Native pins the snippet registry name contract and rejects a changed transport on an existing Run', async t => {
+  const fixture = await setup(t), binding = { contract: 'agentkit.native-e2b-code-tools/v1', backend: 'e2b',
+    registryNameContract: 'agentkit.sandbox-code-registry-name/v1', registryName: 'sandbox_run_code',
+    host: { bindingDigest: 'a'.repeat(64), template: 'fixed' } };
+  fixture.payload.binding.nativeTools.codeBinding = binding;
+  await fixture.host.executeTurn(fixture.payload);
+  const head = fixture.head(), before = fixture.ledger.load(head.scope, head.runId);
+  await fixture.host.executeTurn(fixture.payload);
+  assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before, 'unchanged code binding reuses the original Run');
+  fixture.payload.binding.nativeTools.codeBinding = { ...binding, registryName: 'foreign_code_transport' };
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+  assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
+});
+
 test('Studio Native pins its browser task policy and explicit execution limits in the Run configuration', async t => {
   const fixture = await setup(t, { spec: { execution: { nativeLimits: { maxModelCalls: 20, maxToolCalls: 0 } } } });
   fixture.payload.binding.nativeTools.definitions = () => [studioBrowserDefinition()];

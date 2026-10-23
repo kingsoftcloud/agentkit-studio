@@ -15,6 +15,7 @@ import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { migrateLegacyCodexObservations } from './codex-observation.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
+import { sandboxRegistryName, SANDBOX_CODE_NAME } from './sandbox-code-name.mjs';
 
 // Keep the builtin executor in the Studio host. The Python toolset remains
 // the source of truth for AgentEngine tool semantics (workspace confinement,
@@ -104,6 +105,7 @@ function createBuiltinExecutor(config = {}, nodeTools) {
       if (result?.status === 'uncertain') return { ...result.content, ok: false, status: 'uncertain' };
       throw builtinError('BUILTIN_TOOL_INVALID_OUTPUT', `Node builtin ${name} 返回了无效结果`, { name });
     }
+    if (name === SANDBOX_CODE_NAME) throw builtinError('SANDBOX_CODE_NODE_PORT_UNAVAILABLE', 'Node sandbox code environment is unavailable');
     const { signal } = exec, agentId = config.agentId;
     const timeoutMs = Math.min(3_600_000, Math.max(1_000, Number(contract.timeoutSeconds || 20) * 1000));
     const session = `${String(agentId || 'agent')}:${String(config.sessionId || 'default')}`;
@@ -194,7 +196,9 @@ function registerBuiltinTools(ctx, contracts, config, bridge) {
       timeoutSeconds: 20,
       enabled: true,
     }));
-  const values = [...declared, ...fallback];
+  const values = [...declared, ...fallback].map(contract => ({ ...contract, name: sandboxRegistryName(String(contract.name)) }));
+  if (new Set(values.map(contract => contract.name)).size !== values.length)
+    throw builtinError('BUILTIN_TOOL_NAME_COLLISION', 'Sandbox code bindings resolve to the same registry name');
   if (!values.length) return;
   if (typeof ctx.tools?.register !== 'function') return;
   const nodeTools = bridge.createBuiltinTools?.({ ctx, config }) ?? null;
@@ -257,11 +261,11 @@ function toolNames(values) {
 }
 
 function createToolAdapter(ctx, bindings) {
-  const allowed = new Set(toolNames(bindings));
+  const allowed = new Set(toolNames(bindings).map(sandboxRegistryName));
   if (!allowed.size) return undefined;
   const schemas = agent => (ctx.tools.schemas?.(agent) || []).filter(schema => allowed.has(String(schema.name)));
   const resolve = (name, agent) => {
-    const candidate = String(name || '');
+    const candidate = sandboxRegistryName(String(name || ''));
     const schema = schemas(agent).find(item => item.name === candidate);
     if (!schema) throw Object.assign(new Error(`DSH Tool 未注册或不在当前 Agent 绑定范围内：${candidate}`), { code: 'TOOL_NOT_FOUND' });
     return schema;

@@ -82,6 +82,28 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} builtin registry
   disposers.reverse().forEach(dispose => dispose?.()); assert.equal(closed, 1); bridge.close();
 });
 
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} maps legacy snippets without shadowing PTC and cannot fall back to Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [], disposers = [], listeners = new Map();
+  const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { assert.notEqual(tool.name, 'run_code'); registered.push(tool); return () => {}; },
+      schemas: () => [...registered, { name: 'run_code', parameters: { type: 'object' } }],
+      execute: exec => { assert.equal(exec.name, 'sandbox_run_code'); return registered[0].execute(exec.arguments, exec); } },
+    on: (name, listener) => { listeners.set(name, listener); return () => {}; }, effect: install => disposers.push(install()) };
+  applyPreset(ctx, { agentId: 'code-agent', runtime, local: true, toolBindings: ['run_code'],
+    spawnImpl: () => assert.fail('missing Node snippet port cannot enter Python') });
+  assert.deepEqual(registered.map(tool => tool.name), ['sandbox_run_code']);
+  const args = { code: 'printf forbidden', language: 'bash' }, exec = { name: 'sandbox_run_code', arguments: args, callId: 'code',
+    agent: { session: { id: 'session' } }, signal: new AbortController().signal };
+  await assert.rejects(registered[0].execute(args, exec), { code: 'SANDBOX_CODE_NODE_PORT_UNAVAILABLE' });
+  exec.agent.id = 'code-session';
+  await listeners.get('agent/request')({ agent: exec.agent }, async () => ({}));
+  const adapter = bridge.getRoute('code-session').toolAdapter;
+  assert.deepEqual(adapter.listTools([], exec.agent).map(tool => tool.name), ['sandbox_run_code']);
+  await assert.rejects(adapter.callTool('run_code', args, { agent: exec.agent, callId: 'legacy-call', signal: exec.signal }),
+    { code: 'SANDBOX_CODE_NODE_PORT_UNAVAILABLE' });
+  disposers.reverse().forEach(dispose => dispose?.()); bridge.close();
+});
+
 test('a Harness preset claims the whole turn and rejects model-step fallback', async () => {
   const bridge = createRuntimeBridge(), listeners = new Map(), disposers = [];
   const nativeTools = {};

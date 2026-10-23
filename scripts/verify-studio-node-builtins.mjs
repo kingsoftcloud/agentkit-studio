@@ -95,12 +95,15 @@ try {
   else assert.ok(report.runtimes.every(row => row.commands.creationUnknown && row.commands.duplicateSuppressed
     && row.commands.noLocalEffect && row.commands.originalDshOwner));
   assert.ok(report.runtimes.every(row => row.components.ok === true && row.components.summary.model === 'deepseek-flash'
-    && row.components.workspace.tools.length === 10 && row.components.sandbox.tools.length === 4
+    && row.components.workspace.tools.length === 10 && row.components.sandbox.tools.length === (commandBackend === 'e2b' ? 5 : 4)
     && row.components.skill_runtime.enabled === true && row.components.skill_runtime.backend === skillBackend
     && row.components.skill_runtime.request_protocol === 'agentkit.dsh-node-skill-workflow/v1'
     && row.components.sandbox.backend === commandBackend && row.components.sandbox.template_bound === (commandBackend === 'e2b')
     && row.components.summary.isolated_execution === (skillBackend === 'e2b' || commandBackend === 'e2b' ? 'enabled' : 'not_enabled')));
   assert.equal(downloads, 4);
+  assert.ok(report.runtimes.every(row => row.code.backend === commandBackend && (commandBackend === 'e2b'
+    ? row.code.creationUnknown && row.code.duplicateSuppressed && row.code.originalDshOwner
+    : row.code.isolatedSandboxRequired && row.code.executed === false)));
   assert.ok(report.runtimes.every(row => row.skills.instructionsSha256 === sha256(skillBody) && row.skills.serviceRequests === 7
     && row.skills.policyDeniedWithoutRequest && row.skills.postPolicyPreserved && row.skills.scriptsNotExecuted));
   assert.equal(new Set(report.runtimes.map(row => row.skills.rootDir)).size, 2);
@@ -134,6 +137,8 @@ try {
       skillBackend === 'e2b' ? report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.workflows.runtimeId, row.workflows.taskId, true]) : []);
     assert.deepEqual(cold.restoredCommands.map(row => [row.runtime, row.agentId, row.sessionId, row.taskId, row.unchanged]),
       commandBackend === 'e2b' ? report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.commands.taskId, true]) : []);
+    assert.deepEqual(cold.restoredCodes.map(row => [row.runtime, row.agentId, row.sessionId, row.taskId, row.unchanged]),
+      commandBackend === 'e2b' ? report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.code.taskId, true]) : []);
   }
   await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, skillBackend, commandBackend, downloads,
     archiveSha256: sha256(await readFile(resolve(values.archive))), skillArchiveHash: sha256(skillArchive), report, ...(cold ? { cold } : {}) }, null, 2));

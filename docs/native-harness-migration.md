@@ -670,4 +670,8 @@ E2B 成功验收。配置与证据见 [DSH E2B Skills](native-skills.md#dsh-nati
 DSH 的交互式 E2B 命令随后已通过独立 DSH 所有权接入 Node，复用 SDK 与持久命令
 监督器，保留真实审批/策略和不可盲目重放的任务归属，并修复超过 64 KiB 的完整输出
 附件截断。验证范围与剩余空闲/容量回收等差异见 [E2B 命令](native-e2b.md#dsh-native--codex-的交互式-node-命令)。
-`run_code`、管理工具等剩余 builtin 仍保留 Python fallback；没有默认切换或整体完成声明。
+随后 Node 隔离代码片段也接入了 Native 和 DSH/Codex。Native 保留 `run_code`，DSH
+正式注册为 `sandbox_run_code`，保留 SDK 的 PTC 同名工具；名字映射有独立版本并固定
+到 Host/Build/恢复绑定。旧 builtin 配置会映射到独立名称。本地后端明确拒绝片段，
+E2B 的发布/执行受原持久意图与命令监督约束。详见 [代码片段](native-e2b.md#node-隔离代码片段)。
+其他管理工具等 builtin 仍保留 Python fallback；没有默认切换或整体完成声明。

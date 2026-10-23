@@ -76,6 +76,42 @@ Host/preset/SessionController/ToolRegistry、持久未知创建、重复抑制�
 文件和 Web 断言。Host PATH 仅含 Node/bash，Python 配置不可用；复用固定依赖图，
 不是全新安装、线上 E2B 成功执行、模型对话或 Codex CLI 验收。
 
-尚未闭环：线上创建/执行/重连/清理、显式人工核对/接管/清理产品入口、`run_code`、
+尚未闭环：线上创建/执行/重连/清理、显式人工核对/接管/清理产品入口、
 参考实现的空闲回收/会话容量控制及相关时间状态字段、Frozen 配置导出和全产品入口。
 其他 builtin 的 Python fallback 仍在，不能据此宣称整体迁移完成。
+
+DSH 的 owner 本地状态读取不再要求导入 E2B SDK。生命周期 SDK 在实际创建、检查或
+清理操作时才加载；`sandbox_status` 在 SDK 导入不可用时仍可读取本地 owner 证据，
+不创建沙箱或命令。独立 Claude 审查指出此缺陷后，增加了拒绝任何 SDK 导入的反例。
+
+## Node 隔离代码片段
+
+Native 的正式工具仍叫 `run_code`。DSH 保留同名工具用于 PTC，不允许任何插件覆盖；
+因此沙箱代码通过 DSH 注册名 `sandbox_run_code` 进入正式权限和事件管线。
+映射契约为 `agentkit.sandbox-code-registry-name/v1`，并进入 Native 的 Host/Build/
+恢复绑定。DSH Native/Codex 的旧 builtin 配置 `run_code` 映射到该独立名称，模型工具
+列表展示 `sandbox_run_code`；调用适配器也接受旧名称。原 PTC `run_code` 不被替换。
+两个名字同时绑定到同一个 builtin 或与另一资源冲突时明确拒绝配置。
+
+参数为 `code`、可选 `language`、`timeout` 和显式 `env`。保留 Python 默认语言及
+py/python3、JavaScript 的 js/node/nodejs、Bash 的 sh/shell 别名。Python 是远端
+沙箱的可选解释器；Host 不导入或启动 Python。选择本地后端时返回
+`isolated_sandbox_required`，不把片段改为本地命令执行。
+
+片段使用独立于交互命令的沙箱所有者。Host 通过实际 SDK 文件接口发布原始 UTF-8
+字节，再用受监督命令限制文件权限并启动指定解释器；代码不进入 shell 参数，避免
+大代码片段超过 OS 参数限制。文件发布和执行均位于包含原始来源的持久意图之后，
+发布完成到命令启动之间的中断也不能重放。路径由原调用身份确定，目录不是 Host 工作区。完成结果保留
+`execution_model=snippet_runner`、规范语言、路径、解释器命令、stdout/stderr 和
+确认退出码。超出展示预算的完整输出进入同一 Session 的附件。
+
+Native 契约为 `agentkit.native-e2b-code-tools/v1`；DSH 使用独立的
+`agentkit.dsh-node-e2b-code-tools/v1` 和真实 Agent/Session/call。重复的完成调用
+返回原回执；SIGKILL、超时、取消或创建/执行证据不完整时保留原 task，不自动写文件
+或执行第二次。停止等待不等于远程进程已经终止，明确进程期限仍由监督器执行。
+审批、Host 关闭、Agent revision/Frozen Build/后端绑定改变均不能授予重放权限。
+
+专项验证使用实际 Bash/Node、真实文件、精确 120000 字节输出、进程超时及真实
+SIGKILL/新 PID 重开；E2B 网络与控制面是显式替身。Python 语言只验证远端命令编码，
+不借用 Host Python 来制造运行通过。实际安装 SDK 的拒绝连接和原始记录冷恢复另由
+打包 Host 验证。线上解释器执行、重连、清理、空闲回收及全新安装仍须验收。

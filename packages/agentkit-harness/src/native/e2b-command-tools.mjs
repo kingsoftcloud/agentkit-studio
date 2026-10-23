@@ -14,6 +14,7 @@
 //   truncated or dropped to fit a budget.
 import { canonical, copy, invariant, scopeKey, toolInputRejection } from '../../../agentkit-harness-core/dist/index.mjs';
 import { TERMINAL, delay } from './e2b-command-state.mjs';
+import { createHash } from 'node:crypto';
 
 export const E2B_COMMAND_TOOLS_CONTRACT = 'agentkit.native-e2b-command-tools/v1';
 
@@ -46,6 +47,27 @@ export function e2bCommandToolDefinitions(foregroundTimeoutSeconds = 300) {
   ];
 }
 
+export const E2B_CODE_TOOLS_CONTRACT = 'agentkit.native-e2b-code-tools/v1';
+export const DSH_E2B_CODE_TOOLS_CONTRACT = 'agentkit.dsh-e2b-code-tools/v1';
+export function e2bCodeToolDefinitions(timeoutSeconds = 300, name = 'run_code') {
+  e2bCommandToolDefinitions(timeoutSeconds); // Same Host timeout bounds.
+  invariant(['run_code', 'sandbox_run_code'].includes(name), 'e2b_code_name_invalid');
+  return [base(name, 'Execute a Python, JavaScript or Bash snippet in an isolated remote sandbox. Requires E2B; never runs a snippet on the Host. Unknown outcomes require reconciliation of the original task.',
+    { code: { type: 'string', minLength: 1 }, language: { type: 'string' }, timeout: schemas.nullableSeconds,
+      env: { anyOf: [{ type: 'object', additionalProperties: { type: 'string' } }, { type: 'null' }] } },
+    ['code'], true, timeoutSeconds * 1000 + 20000)];
+}
+
+function snippetCommand(args, before) {
+  const aliases = { py: 'python', python3: 'python', js: 'javascript', node: 'javascript', nodejs: 'javascript', sh: 'bash', shell: 'bash' };
+  const selected = (args.language || 'python').trim().toLowerCase(), language = aliases[selected] ?? selected;
+  const runner = { python: ['.py', 'python'], javascript: ['.js', 'node'], bash: ['.sh', 'bash'] }[language];
+  if (!runner) return null;
+  const path = `/tmp/ksadk-run-code-${createHash('sha256').update(before.body).digest('hex')}${runner[0]}`;
+  return { path, language, command: `${runner[1]} '${path}'`,
+    launch: `chmod 600 '${path}' && exec ${runner[1]} '${path}'` };
+}
+
 const commandOutput = result => ({ status: result.status, stdout: result.stdout, stderr: result.stderr,
   exit_code: result.exitCode, stdout_cursor: result.stdoutCursor, stderr_cursor: result.stderrCursor,
   cancel_requested: result.cancelRequested, output_may_be_truncated: result.outputMayBeTruncated,
@@ -75,9 +97,15 @@ function abortable(promise, signal) {
 }
 
 export function createNativeE2BCommandTools(options = {}) {
+  return createNativeTools(options, false);
+}
+export function createNativeE2BCodeTools(options = {}) {
+  return createNativeTools(options, true);
+}
+function createNativeTools(options, codeOnly) {
   invariant(options.scope, 'e2b_command_scope_required');
   const fixedScope = copy(options.scope); scopeKey(fixedScope);
-  return createCommandTools(options, { contract: E2B_COMMAND_TOOLS_CONTRACT, fields: { scope: fixedScope },
+  return createCommandTools(options, { codeOnly, contract: codeOnly ? E2B_CODE_TOOLS_CONTRACT : E2B_COMMAND_TOOLS_CONTRACT, fields: { scope: fixedScope },
     identity(request) {
       invariant(request.scope && canonical(request.scope) === canonical(fixedScope), 'e2b_command_scope_unbound');
       invariant(['runId','turnId','buildId','taskChainId'].every(k => typeof request[k] === 'string' && request[k].trim()),
@@ -93,9 +121,15 @@ export function createNativeE2BCommandTools(options = {}) {
 export const DSH_E2B_COMMAND_TOOLS_CONTRACT = 'agentkit.dsh-e2b-command-tools/v1';
 /** Share command semantics with Native, using real DSH ownership only. */
 export function createDshE2BCommandTools(options = {}) {
+  return createDshTools(options, false);
+}
+export function createDshE2BCodeTools(options = {}) {
+  return createDshTools(options, true);
+}
+function createDshTools(options, codeOnly) {
   const { agentId } = options;
   invariant(typeof agentId === 'string' && agentId.trim(), 'e2b_command_agent_required');
-  return createCommandTools(options, { contract: DSH_E2B_COMMAND_TOOLS_CONTRACT, fields: { agentId },
+  return createCommandTools(options, { codeOnly, contract: codeOnly ? DSH_E2B_CODE_TOOLS_CONTRACT : DSH_E2B_COMMAND_TOOLS_CONTRACT, fields: { agentId },
     identity(request) {
       invariant(request.agentId === agentId && ['scope','runId','turnId','buildId','taskChainId','parentRunId','executionFence']
         .every(key => request[key] === undefined), 'e2b_command_identity_required');
@@ -105,18 +139,20 @@ export function createDshE2BCommandTools(options = {}) {
 }
 
 function createCommandTools({ sessionId, owner, storeFactory,
-  authorize, assertAuthority, resolveOwnedCommand, artifacts, maxOutputBytes = 24000,
+  authorize, assertAuthority, resolveOwnedCommand, artifacts, publishSnippet, maxOutputBytes = 24000,
   allowInternetAccess = false, foregroundTimeoutSeconds = 300, backgroundTimeoutSeconds = 300 }, ownership) {
   invariant(typeof sessionId === 'string' && !!sessionId.trim(), 'e2b_command_scope_required');
   invariant(Number.isSafeInteger(maxOutputBytes) && maxOutputBytes >= 256, 'e2b_command_max_output_bytes_invalid');
   invariant(owner && typeof owner.ensure === 'function' && typeof owner.inspect === 'function', 'e2b_command_owner_required');
   invariant(typeof storeFactory === 'function', 'e2b_command_store_factory_required');
+  invariant(!ownership.codeOnly || typeof publishSnippet === 'function', 'e2b_code_publication_required');
   invariant(typeof authorize === 'function', 'e2b_command_authorize_required');
   invariant(typeof assertAuthority === 'function', 'e2b_command_assert_authority_required');
   invariant(typeof resolveOwnedCommand === 'function', 'e2b_command_resolve_owned_required');
   invariant(Number.isSafeInteger(backgroundTimeoutSeconds) && backgroundTimeoutSeconds > 0
     && backgroundTimeoutSeconds <= 86400, 'e2b_command_background_limit_invalid');
-  const definitions = e2bCommandToolDefinitions(foregroundTimeoutSeconds);
+  const definitions = ownership.codeOnly ? e2bCodeToolDefinitions(foregroundTimeoutSeconds, ownership.fields.agentId ? 'sandbox_run_code' : 'run_code')
+    : e2bCommandToolDefinitions(foregroundTimeoutSeconds);
   const formal = new Map(definitions.map(d => [d.name, copy(d)]));
   let store = null;
 
@@ -325,14 +361,18 @@ function createCommandTools({ sessionId, owner, storeFactory,
         return await budget(known, request, before, undefined, taskId);
       }
 
-      // run_command — PRE-CHECK budget before any side-effect.
+      // The original durable tool intent surrounds both source publication
+      // and its supervised execution. Never put source in a shell argument:
+      // even a valid large snippet can exceed the remote OS argv limit.
       const args = request.call.arguments;
-      const command = args.command.trim();
+      const snippet = ownership.codeOnly ? snippetCommand(args, before) : null;
+      if (ownership.codeOnly && !snippet) return errorResult('unsupported_language', { executed: false });
+      const command = snippet?.launch ?? args.command.trim();
       if (!command) return errorResult('command_required');
       if (!args.background && args.background_timeout != null) return errorResult('background_timeout_requires_background');
 
       known = { content: { ...originLocator(before) } };
-      const ownerRequest = { ...request, definition: formal.get('run_command') };
+      const ownerRequest = { ...request, definition: formal.get(request.call.name) };
       const guardResult0 = guard(request, before, false, known);
       if (guardResult0) return guardResult0;
       let ensured;
@@ -359,6 +399,11 @@ function createCommandTools({ sessionId, owner, storeFactory,
         invariant(typeof taskId === 'string' && /^[a-f0-9]{64}$/.test(taskId), 'e2b_command_identity_invalid');
         known = { content: { ...originLocator(before, sandboxId, taskId) } };
         const afterId = guard(request, before, dispatched, known); if (afterId) return afterId;
+      }
+      if (snippet) {
+        const assertCurrent = () => { invariant(!guard(request, before, dispatched, known), 'e2b_code_authority_lost'); return true; };
+        await abortable(publishSnippet({ request, sandboxId, path: snippet.path, source: args.code, assertCurrent }), before.signal);
+        const afterPublish = guard(request, before, dispatched, known); if (afterPublish) return afterPublish;
       }
       const handle = await abortable(store.start({ operationKey: before.operationKey, command,
         cwd: args.cwd ?? null, env: args.env ?? null, timeoutSeconds,
@@ -414,6 +459,7 @@ function createCommandTools({ sessionId, owner, storeFactory,
           || (['timed_out', 'canceled'].includes(output.status) && output.exitCode === null);
         known = { status: uncertain ? 'uncertain' : 'ok',
           content: { ok: !uncertain, status: output.status, backend: 'sandbox/e2b', sandbox_id: sandboxId, command,
+            ...(snippet ? { execution_model: 'snippet_runner', language: snippet.language, path: snippet.path, command: snippet.command } : {}),
             task_id: taskId, ...originLocator(before, sandboxId, taskId),
             stdout: output.stdout, stderr: output.stderr,
             exit_code: uncertain ? null : output.exitCode,

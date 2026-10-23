@@ -87,6 +87,13 @@ test('concurrent owners cannot execute one call twice; distinct Agent/Session ow
   assert.equal(h.peer.calls.filter(call => call.method === 'create').length, 3);
 });
 
+test('sandbox_status reads local owner evidence even if SDK import is unavailable', async t => {
+  const h = setup(t), port = h.open({ loadSdk: () => assert.fail('status cannot import SDK') });
+  const result = await h.run('sandbox_status', {}, 'offline-status', 'session', port);
+  assert.equal(result.status, 'ok'); assert.equal(result.content.sandbox_phase, 'absent'); assert.equal(h.loads, 0);
+  assert.equal(h.peer.calls.length, 0); assert.equal(existsSync(h.ledgerFile('offline-status')), false);
+});
+
 test('background UTF-8 byte cursors, cold reads, task ownership and confirmed cancel keep the original command deadline', async t => {
   const h = setup(t), args = { command: 'printf "你好😀"; sleep 30', background: true, background_timeout: 10 };
   const launch = await h.run('run_command', args); assert.equal(launch.status, 'ok'); const task_id = launch.content.task_id;

@@ -7,6 +7,8 @@ import { createDshNodeWebTools } from './dsh-node-web-tools.mjs';
 import { createDshNodeToolOutputStore } from './dsh-node-tool-output-store.mjs';
 import { createDshNodeCommandTools } from './dsh-node-command-tools.mjs';
 import { createDshNodeE2BCommandTools } from './dsh-node-e2b-command-tools.mjs';
+import { createDshNodeCodeTools } from './dsh-node-code-tools.mjs';
+import { sandboxRegistryName, SANDBOX_CODE_NAME } from './sandbox-code-name.mjs';
 import { e2bCommandToolDefinitions } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
 import { createDshNodeComponentTools } from './dsh-node-component-tools.mjs';
 import { readDshComponentBindings } from './dsh-component-bindings.mjs';
@@ -26,7 +28,7 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
   const facts = readDshComponentBindings(componentBindings);
   const requested = toolBindings === undefined ? null : new Set([
     ...toolBindings.map(value => typeof value === 'string' ? value : value?.resourceId || value?.id || value?.name),
-    ...toolContracts.filter(tool => tool.executor === 'builtin' && tool.enabled !== false).map(tool => tool.name)]);
+    ...toolContracts.filter(tool => tool.executor === 'builtin' && tool.enabled !== false).map(tool => tool.name)].map(sandboxRegistryName));
   const workspace = createDshNodeWorkspaceTools({ ctx, workspaceRoot, stateDir, agentId, isClosed });
   const output = persistOutput === undefined ? createDshNodeToolOutputStore({ directory: stateDir, agentId, isClosed, signal }) : null;
   const ssrf = resolveWebSsrfPolicy(env);
@@ -40,6 +42,8 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
     ? createDshNodeE2BCommandTools({ ctx, workspaceRoot, stateDir, agentId, agentRevision, buildId, isClosed, signal, env, persistOutput })
     : supportsLocalProcessPlatform()
       ? createDshNodeCommandTools({ ctx, workspaceRoot, stateDir, agentId, isClosed, signal, env, persistOutput }) : null;
+  const code = !requested || requested.has(SANDBOX_CODE_NAME) ? createDshNodeCodeTools({ ctx, workspaceRoot, stateDir, agentId,
+    agentRevision, buildId, isClosed, signal, env, persistOutput }) : null;
   const skills = skillConnection && (!requested || nativeSkillReadToolDefinitions().some(tool => requested.has(tool.name)))
     ? createDshNodeSkillTools({ agentId, workspaceRoot, stateDir, connection: skillConnection,
       skillSpaceIds: facts.skillSpaceIds, env, fetchImpl, isClosed, signal }) : null;
@@ -47,13 +51,13 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
   const workflows = skillSettings?.backend === 'e2b' || skillSettings?.backend === 'local_process' && supportsLocalProcessPlatform()
     ? createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir, connection: skillConnection,
       skillSpaceIds: facts.skillSpaceIds, skillDefinitions, env, fetchImpl, isClosed, signal }) : null;
-  const ports = [workspace, web, ...(commands ? [commands] : []), ...(skills ? [skills] : []), ...(workflows ? [workflows] : [])], owners = new Map();
+  const ports = [workspace, web, ...(commands ? [commands] : []), ...(code ? [code] : []), ...(skills ? [skills] : []), ...(workflows ? [workflows] : [])], owners = new Map();
   const admitted = requested ?? new Set(ports.flatMap(port => port.definitions.map(tool => tool.name)));
   const names = ports.flatMap(port => port.definitions.map(tool => tool.name)).filter(name => admitted.has(name));
   const skillBinding = skills?.binding ?? workflows?.binding;
   const workflowBinding = workflows?.binding.runtime;
   const spaces = [...new Set([...facts.skillSpaceIds, ...(skillBinding?.userSpaceIds ?? []), ...(skillBinding?.publicSpaceIds ?? [])])].sort();
-  const commandNames = commands ? names.filter(name => commands.supports(name)) : [];
+  const commandNames = names.filter(name => commands?.supports(name) || code?.binding?.backend === 'e2b' && code.supports(name));
   ports.push(createDshNodeComponentTools({ agentId, isClosed, signal, status: {
     summary: { model: '', knowledge_base_bound: facts.knowledgeBaseBound, long_term_memory_bound: facts.longTermMemoryBound,
       skill_space_bound: spaces.length > 0, isolated_execution: workflowBinding?.isolated || commandNames.length && commandBackend === 'e2b'
@@ -64,7 +68,7 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
     skill_runtime: { backend: workflowBinding?.backend ?? 'disabled', enabled: Boolean(workflows), template_bound: Boolean(workflowBinding?.host?.template),
       ...(workflows ? { request_protocol: DSH_NODE_SKILL_WORKFLOW } : {}) },
     sandbox: { backend: commandNames.length ? commandBackend : 'disabled', enabled: commandNames.length > 0,
-      template_bound: Boolean(commandNames.length && commands?.binding?.host?.template), tools: commandNames },
+      template_bound: Boolean(commandNames.length && (commands?.binding?.host?.template || code?.binding?.host?.template)), tools: commandNames },
     workspace: { root: workspaceRoot, tools: names.filter(name => workspace.supports(name)) },
   } }));
   for (const port of ports) for (const definition of port.definitions) {

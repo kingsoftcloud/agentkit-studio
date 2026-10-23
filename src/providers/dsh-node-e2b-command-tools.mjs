@@ -3,14 +3,16 @@
  * after the requesting turn ends. No Native Run or execution fence is invented. */
 import { join } from 'node:path';
 import { canonical, copy, invariant, toolInputRejection } from '../../packages/agentkit-harness-core/dist/index.mjs';
-import { createDshE2BCommandTools, e2bCommandToolDefinitions } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
+import { createDshE2BCommandTools, createDshE2BCodeTools, e2bCommandToolDefinitions, e2bCodeToolDefinitions } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
 import { E2BCommandStore, e2bCommandId, e2bCommandOwner } from '../../packages/agentkit-harness/src/native/e2b-background.mjs';
 import { DshNodeCommandLedger, commandDigest, commandStateRoot } from './dsh-node-command-ledger.mjs';
 import { createDshNodeToolOutputStore } from './dsh-node-tool-output-store.mjs';
 import { prepareDshE2BHost } from './native-e2b-host.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
+import { SANDBOX_CODE_NAME, SANDBOX_CODE_NAME_CONTRACT } from './sandbox-code-name.mjs';
 
 export const DSH_NODE_E2B_COMMAND_CONTRACT = 'agentkit.dsh-node-e2b-command-tools/v1';
+export const DSH_NODE_E2B_CODE_CONTRACT = 'agentkit.dsh-node-e2b-code-tools/v1';
 const transportModule = new URL('./native-e2b-sdk-transport.mjs', import.meta.url).href;
 const fail = code => Object.assign(new Error(code), { code });
 const errorResult = code => ({ status: 'error', content: { ok: false, error_type: code, executed: false } });
@@ -24,8 +26,10 @@ function abortable(pending, signal) {
   });
 }
 
-export function createDshNodeE2BCommandTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
-  env = {}, loadSdk, isClosed = () => false, signal: hostSignal, persistOutput } = {}) {
+export function createDshNodeE2BCommandTools(options = {}) { return createE2BTools(options, false); }
+export function createDshNodeE2BCodeTools(options = {}) { return createE2BTools(options, true); }
+function createE2BTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
+  env = {}, loadSdk, isClosed = () => false, signal: hostSignal, persistOutput }, codeOnly) {
   invariant(['darwin', 'linux'].includes(process.platform), 'dsh_e2b_command_platform_unsupported');
   invariant(ctx && typeof agentId === 'string' && agentId.trim() && typeof isClosed === 'function'
     && (hostSignal === undefined || hostSignal instanceof AbortSignal), 'dsh_e2b_command_binding_invalid');
@@ -34,11 +38,14 @@ export function createDshNodeE2BCommandTools({ ctx, agentId, agentRevision = 1, 
   invariant(persistOutput === undefined || typeof persistOutput === 'function', 'dsh_e2b_command_output_invalid');
   const prepared = prepareDshE2BHost({ env: { ...env }, ...(loadSdk ? { loadSdk } : {}) });
   const state = commandStateRoot(stateDir, workspaceRoot, agentId);
-  const definitions = e2bCommandToolDefinitions(prepared.binding.timeoutSeconds), formal = new Map(definitions.map(d => [d.name, copy(d)]));
-  const binding = Object.freeze({ contract: DSH_NODE_E2B_COMMAND_CONTRACT, backend: 'e2b',
+  const contract = codeOnly ? DSH_NODE_E2B_CODE_CONTRACT : DSH_NODE_E2B_COMMAND_CONTRACT;
+  const definitions = codeOnly ? e2bCodeToolDefinitions(prepared.binding.timeoutSeconds, SANDBOX_CODE_NAME) : e2bCommandToolDefinitions(prepared.binding.timeoutSeconds);
+  const formal = new Map(definitions.map(d => [d.name, copy(d)]));
+  const binding = Object.freeze({ contract, backend: 'e2b',
+    ...(codeOnly ? { registryName: SANDBOX_CODE_NAME, registryNameContract: SANDBOX_CODE_NAME_CONTRACT } : {}),
     digest: commandDigest({ agentId, agentRevision, buildId, host: prepared.binding }) });
   const lifetime = new AbortController(), ownerSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
-  const output = persistOutput === undefined ? createDshNodeToolOutputStore({ directory: join(state.root, 'e2b-output'), agentId,
+  const output = persistOutput === undefined ? createDshNodeToolOutputStore({ directory: join(state.root, codeOnly ? 'code-output' : 'e2b-output'), agentId,
     isClosed, signal: ownerSignal, toolDefinitions: definitions }) : null;
   const persist = persistOutput ?? output.persistOutput, sessions = new Map();
   const assertOpen = () => {
@@ -53,7 +60,7 @@ export function createDshNodeE2BCommandTools({ ctx, agentId, agentRevision = 1, 
       new DshNodeCommandLedger({ root: state.root, agentId, sessionId, assertRoot: state.guard }));
     return sessions.get(sessionId);
   }
-  return { contract: DSH_NODE_E2B_COMMAND_CONTRACT,
+  return { contract,
     get binding() { return { ...copy(binding), host: copy(prepared.binding) }; },
     get definitions() { return copy(definitions); },
     supports: name => formal.has(name),
@@ -70,7 +77,7 @@ export function createDshNodeE2BCommandTools({ ctx, agentId, agentRevision = 1, 
         if (rejection) return { status: 'error', content: rejection };
         const original = { agent: exec.agent, session: exec.agent.session, sessionId: exec.agent.session.id,
           callId: exec.callId, signal: exec.signal, args: canonical(args) };
-        request = { agentId, sessionId: original.sessionId, operationKey: `dsh-e2b-command:${original.callId}`,
+        request = { agentId, sessionId: original.sessionId, operationKey: `${codeOnly ? 'dsh-e2b-code' : 'dsh-e2b-command'}:${original.callId}`,
           call: { callId: original.callId, name, arguments: copy(args) }, definition: copy(definition),
           signal: AbortSignal.any([original.signal, ownerSignal, AbortSignal.timeout(definition.timeoutMs)]) };
         const assertCurrent = () => {
@@ -85,7 +92,7 @@ export function createDshNodeE2BCommandTools({ ctx, agentId, agentRevision = 1, 
         assertCurrent(); await abortable(authorizeNativeBuiltin(ctx, exec, definition), request.signal); assertCurrent();
         const ledger = sessionFor(original.sessionId);
         if (name === 'read_command_output' || name === 'stop_command') ledger.resolveOwned(request, args.task_id, binding);
-        taskId = name === 'run_command' ? e2bCommandId(e2bCommandOwner(state.workspace, original.sessionId), request.operationKey)
+        taskId = name === 'run_command' || name === SANDBOX_CODE_NAME ? e2bCommandId(e2bCommandOwner(state.workspace, original.sessionId), request.operationKey)
           : args.task_id;
         const dispatch = async () => {
           assertCurrent();
@@ -94,21 +101,25 @@ export function createDshNodeE2BCommandTools({ ctx, agentId, agentRevision = 1, 
           if (name === 'read_command_output' || name === 'stop_command') ledger.resolveOwned(request, args.task_id, binding);
           dispatched = definition.readOnly !== true;
           const host = await abortable(prepared.forSession({ agentId, sessionId: original.sessionId, workspaceRoot: state.workspace,
-            stateRoot: join(ledger.root, 'e2b-sandbox'), assertAuthority: assertCurrent }), request.signal);
+            stateRoot: join(ledger.root, codeOnly ? 'code-sandbox' : 'e2b-sandbox'), assertAuthority: assertCurrent }), request.signal);
           assertCurrent(); host.owner.inspect();
-          const transport = loadSdk ? await abortable(host.createTransport(), request.signal) : null;
+          const transport = loadSdk && name !== 'sandbox_status' ? await abortable(host.createTransport(), request.signal) : null;
           assertCurrent(); let store;
-          const tools = createDshE2BCommandTools({ agentId, sessionId: original.sessionId, owner: host.owner,
+          const tools = (codeOnly ? createDshE2BCodeTools : createDshE2BCommandTools)({ agentId, sessionId: original.sessionId, owner: host.owner,
             foregroundTimeoutSeconds: prepared.binding.timeoutSeconds, backgroundTimeoutSeconds: prepared.binding.timeoutSeconds,
             allowInternetAccess: prepared.binding.allowInternetAccess, assertAuthority: assertCurrent,
             authorize: async () => { assertCurrent(); return 'allow'; },
             resolveOwnedCommand: (value, id) => ledger.resolveOwned(value, id, binding),
+            ...(codeOnly ? { async publishSnippet({ request: originalRequest, sandboxId, path, source, assertCurrent: current }) {
+              current(); const files = await host.createFileSession(sandboxId, { ...originalRequest, assertCurrent: current });
+              current(); await files.files.write(path, Buffer.from(source, 'utf8'), { signal: originalRequest.signal, requestTimeoutMs: 30000 }); current();
+            } } : {}),
             storeFactory(input) {
               assertCurrent(); invariant(input.agentId === agentId && input.sessionId === original.sessionId, 'dsh_e2b_command_store_unbound');
               const owner = host.owner.inspect(); invariant(owner?.sandboxId, 'dsh_e2b_command_sandbox_unavailable');
               if (input.sandboxId !== undefined) invariant(owner.phase === 'ready' && owner.sandboxId === input.sandboxId,
                 'dsh_e2b_command_sandbox_unproven');
-              return store ??= new E2BCommandStore({ stateRoot: join(ledger.root, 'e2b-processes'), workspaceRoot: state.workspace,
+              return store ??= new E2BCommandStore({ stateRoot: join(ledger.root, codeOnly ? 'code-processes' : 'e2b-processes'), workspaceRoot: state.workspace,
                 sessionId: original.sessionId, sandboxId: owner.sandboxId, launchAuthorized: false,
                 transportModule, transportConfig: host.transportOptions(), ...(transport ? { transport } : {}),
                 authority: frozen => { assertCurrent(); const current = host.owner.inspect();

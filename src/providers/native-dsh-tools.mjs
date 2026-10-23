@@ -29,13 +29,14 @@ import { nativeChildMergeDefinition } from './native-child-merge.mjs';
 import { createNativeComponentTools, nativeComponentToolDefinitions, NATIVE_COMPONENT_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/component-tools.mjs';
 import { createNativeSkillDisclosurePort, nativeSkillDisclosureDefinitions, SKILL_DISCLOSURE_CONTRACT } from '../../packages/agentkit-harness/src/native/skill-disclosure.mjs';
 import { createStudioNativeSkillSource } from './native-skill-source.mjs';
-import { e2bCommandToolDefinitions, E2B_COMMAND_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
+import { e2bCommandToolDefinitions, e2bCodeToolDefinitions, E2B_COMMAND_TOOLS_CONTRACT, E2B_CODE_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
 import { nativeCommandBackend, prepareNativeE2BHost } from './native-e2b-host.mjs';
-import { createNativeDshE2BCommands } from './native-dsh-e2b-commands.mjs';
+import { createNativeDshE2BCommands, createNativeDshE2BCodeTools } from './native-dsh-e2b-commands.mjs';
 import { prepareNativeA2AHost } from './native-a2a-host.mjs';
 import { createNativeDshA2aTools } from './native-dsh-a2a.mjs';
 import { nativeA2aToolDefinitions, NATIVE_A2A_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { prepareNativeSkillHost } from './native-skill-host.mjs';
+import { sandboxRegistryName, SANDBOX_CODE_NAME_CONTRACT } from './sandbox-code-name.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
@@ -85,6 +86,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const commandNames = new Set((controls ? localCommandToolDefinitions(controls) : e2bCommandToolDefinitions()).map(definition => {
     formal.set(definition.name, definition); return definition.name;
   }));
+  const codeNames = new Set(e2bCodeToolDefinitions().map(definition => { formal.set(definition.name, definition); return definition.name; }));
   const browserTools = createNativeDshBrowserTools({ workspaceRoot: workspace, createBrowser, browserExecutablePath,
     toolTimeoutForSession: sessionId => visionTimeouts.get(sessionId)?.timeoutMs ?? 110000,
     evidenceRoot: join(stateDir, 'browser-evidence') });
@@ -115,9 +117,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const builtin = [...allowed].filter(name => contracts.get(name)?.executor === 'builtin'
     || formal.has(name) && contracts.get(name)?.executor !== 'mcp');
   const builtinNames = new Set(builtin);
-  const e2b = commandBackend === 'e2b' && [...commandNames].some(name => builtinNames.has(name))
+  invariant(!builtinNames.has('run_code') || !allowed.has(sandboxRegistryName('run_code')), 'studio_native_code_registry_collision');
+  const e2b = commandBackend === 'e2b' && [...commandNames, ...codeNames].some(name => builtinNames.has(name))
     ? prepareNativeE2BHost({ env: commandEnvironmentSnapshot, ...(e2bLoadSdk ? { loadSdk: e2bLoadSdk } : {}) }) : null;
   if (e2b) for (const definition of e2bCommandToolDefinitions(e2b.binding.timeoutSeconds)) formal.set(definition.name, definition);
+  if (e2b) for (const definition of e2bCodeToolDefinitions(e2b.binding.timeoutSeconds)) formal.set(definition.name, definition);
   // Sample the environment once per preset, including its SSRF policy. A later
   // environment edit cannot change an already admitted Build's tool behavior.
   const webEnvironmentSnapshot = { ...webEnvironment };
@@ -195,7 +199,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const install = () => {
     disposers = [...builtin, ...mcpContracts.keys()].map(name => {
       const definition = mcpContracts.has(name) ? mcpContracts.get(name) : formal.get(name) ?? contracts.get(name);
-      return ctx.tools.register({ name, description: definition.description ?? '',
+      return ctx.tools.register({ name: codeNames.has(name) ? sandboxRegistryName(name) : name, description: definition.description ?? '',
         parameters: structuredClone(mcpSchemas.get(name)?.registryParameters ?? definition.parameters ?? { type: 'object', properties: {} }),
         output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
         execute: async (args, exec) => {
@@ -238,6 +242,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           } else if (commandNames.has(name)) {
             invariant(typeof invocation.commands === 'function', 'studio_native_command_ledger_unavailable');
             outcome = await (await invocation.commands()).execute({ ...invocation.request, signal: exec.signal });
+          } else if (codeNames.has(name)) {
+            invocation.assertCurrent(invocation.request);
+            outcome = commandBackend === 'e2b'
+              ? await (await invocation.code()).execute({ ...invocation.request, signal: exec.signal })
+              : { status: 'error', content: { ok: false, error_type: 'isolated_sandbox_required', backend: 'local_process',
+                executed: false, boundary: 'run_code requires an isolated sandbox; local snippet execution is disabled.' } };
           } else if (webNames.has(name)) {
             outcome = await (await invocation.web()).execute({ ...invocation.request, signal: exec.signal });
           } else if (a2aNames.has(name)) {
@@ -434,6 +444,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         sessionId: authority.childSessionId ?? String(agent.session.id), isClosed: () => closed }),
       captureWorkspace: request => state(agent).capture(request), resolveOwnedCommand: createOwnedCommandResolver(authority) });
   };
+  const codeToolsFor = async (agent, authority) => {
+    invariant(!closed && authority?.scope && authority?.store && e2b, 'studio_native_code_ledger_unavailable');
+    const artifacts = await createNativeArtifactStore({ directory: join(stateDir, 'code-artifacts'), scope: authority.scope });
+    invariant(!closed, 'studio_native_tools_closed');
+    return createNativeDshE2BCodeTools({ prepared: e2b, workspaceRoot: workspace, stateDir, scope: authority.scope,
+      sessionId: authority.childSessionId ?? String(agent.session.id), store: authority.store,
+      artifacts, isClosed: () => closed, inProcessTransport: Boolean(e2bLoadSdk) });
+  };
   return {
     close,
     bindMemory,
@@ -482,6 +500,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     workspaceMutationContract: [...builtinNames].some(name => ['write_workspace_file', 'write_workspace_files',
       'edit_workspace_file', 'multi_edit_workspace_file', 'delete_workspace_file'].includes(name)) ? WORKSPACE_MUTATION_LOCK : null,
     webBinding: webTemplate ? { contract: webTemplate.contract, bindingDigest: webTemplate.bindingDigest } : null,
+    codeBinding: [...codeNames].some(name => builtinNames.has(name))
+      ? { contract: E2B_CODE_TOOLS_CONTRACT, backend: commandBackend, registryNameContract: SANDBOX_CODE_NAME_CONTRACT,
+        registryName: sandboxRegistryName('run_code'), ...(e2b ? { host: { ...e2b.binding } } : {}) } : null,
     commandBinding: [...commandNames].some(name => builtinNames.has(name)) ? e2b ? {
       contract: E2B_COMMAND_TOOLS_CONTRACT, backend: 'e2b', host: { ...e2b.binding },
     } : {
@@ -668,6 +689,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       }
       let commandsPromise;
       const commands = () => commandsPromise ||= commandToolsFor(agent, commandAuthority);
+      let codePromise;
+      const code = () => codePromise ||= codeToolsFor(agent, commandAuthority);
       let webPromise;
       const web = () => {
         if (webPromise) return webPromise;
@@ -716,7 +739,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
         const invocation = { agent, request, workspaceTools, assertCurrent, components, disclosure, a2a: a2aPort, remoteSkills: remoteSkillPort, children: commandAuthority?.children,
-          argumentEncoding: exactNumbers ? argumentEncoding : null, commands, web, assertMcpCurrent };
+          argumentEncoding: exactNumbers ? argumentEncoding : null, commands, code, web, assertMcpCurrent };
         calls.set(callId, invocation);
         try {
           // Numeric raw tokens retain their intrinsic brand through the negotiated
@@ -726,7 +749,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             invariant(typeof context?.source === 'string', 'studio_native_raw_number_source_missing');
             return JSON.rawJSON(context.source);
           }) : structuredClone(request.call.arguments);
-          const result = await ctx.tools.execute({ callId, name: request.call.name,
+          const result = await ctx.tools.execute({ callId, name: codeNames.has(request.call.name) ? sandboxRegistryName(request.call.name) : request.call.name,
             arguments: args, ...(exactNumbers ? { argumentEncoding } : {}), signal: request.signal, agent });
           request.signal.throwIfAborted();
           invariant(typeof result?.isError === 'boolean' && Array.isArray(result.content), 'studio_native_tool_result_invalid');

@@ -57,7 +57,7 @@ export async function apply(ctx, options) {
   const tools = ['workspace_status', 'list_workspace_files', 'read_workspace_file', 'write_workspace_file',
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
-    'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'component_status',
+    'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'run_code', 'component_status',
     'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills'];
   const records = [];
   if (previous) for (const row of previous.runtimes) { const record = await agents.get(row.agentId); assert.ok(record); records.push(record); }
@@ -103,7 +103,7 @@ export async function apply(ctx, options) {
       return result.value;
     };
     if (previous) {
-      const restored = [], restoredCommands = [];
+      const restored = [], restoredCommands = [], restoredCodes = [];
       for (const row of previous.runtimes) {
         const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, JSON.stringify(found.error));
         const agent = found.agent; assert.equal(agent.session.id, row.sessionId); setSandboxMode(agent.session, 'workspace-write');
@@ -131,11 +131,20 @@ export async function apply(ctx, options) {
             assert.ok((await readFile(row.commands.record)).equals(bytes)); assert.ok((await readFile(ownerPath)).equals(ownerBytes));
             restoredCommands.push({ runtime: row.runtime, agentId: row.agentId, sessionId: row.sessionId, taskId: record.taskId,
               recordSha256: sha256(bytes), ownerSha256: sha256(ownerBytes), unchanged: true });
+            const codeBytes = await readFile(row.code.record), code = JSON.parse(codeBytes);
+            const codeOwnerRoot = join(dirname(dirname(row.code.record)), 'code-sandbox'), codeNames = await readdir(codeOwnerRoot);
+            assert.equal(codeNames.length, 1); const codeOwnerPath = join(codeOwnerRoot, codeNames[0], 'owner.json'), codeOwnerBytes = await readFile(codeOwnerPath);
+            const coldCode = await agent.ctx.get('tools').execute({ agent, callId: code.request.call.callId, name: 'sandbox_run_code',
+              arguments: code.request.call.arguments, signal: new AbortController().signal });
+            assert.equal(coldCode.isError, false); assert.deepEqual(JSON.parse(coldCode.value.result), code.result.content);
+            assert.ok((await readFile(row.code.record)).equals(codeBytes)); assert.ok((await readFile(codeOwnerPath)).equals(codeOwnerBytes));
+            restoredCodes.push({ runtime: row.runtime, agentId: row.agentId, sessionId: row.sessionId, taskId: code.taskId,
+              recordSha256: sha256(codeBytes), ownerSha256: sha256(codeOwnerBytes), unchanged: true });
           }
         } finally { agent.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } }); assert.equal(await ctx.sessions.flush(agent.session), true); }
       }
       assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0);
-      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, networkCalls, skillRequests: 0 };
+      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, networkCalls, skillRequests: 0 };
     }
     const report = { passed: false, pid: process.pid, webOrigin, node: process.version, path: process.env.PATH, runtimes: [] };
     let serial = 0;
@@ -169,7 +178,7 @@ export async function apply(ctx, options) {
         assert.equal(components.skill_runtime.backend, skillBackend); assert.equal(components.skill_runtime.template_bound, e2b);
         assert.equal(components.sandbox.backend, commandBackend); assert.equal(components.sandbox.enabled, true);
         assert.equal(components.sandbox.template_bound, e2bCommands);
-        assert.deepEqual(components.sandbox.tools, ['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
+        assert.deepEqual(components.sandbox.tools, ['sandbox_status', 'run_command', 'read_command_output', 'stop_command', ...(e2bCommands ? ['sandbox_run_code'] : [])]);
         assert.deepEqual([...components.workspace.tools].sort(), tools.filter(name => name.includes('workspace')).sort());
         assert.equal(components.workspace.root, workspaceRoot); assert.equal(components.skill_runtime.enabled, true);
         assert.deepEqual(components.skill_space.user_space_ids, ['packed-space']);
@@ -529,6 +538,31 @@ export async function apply(ctx, options) {
         } finally {
           removeCommandPre(); removeCommandGuard(); removeCommandAround(); removeCommandPost(); removeCommandResult();
         }
+        let codeProof;
+        setSandboxMode(agent.session, 'workspace-write');
+        const snippet = { code: 'printf must-not-run-locally', language: 'bash' }, codeCallId = `code-original-${runtime}`;
+        const invokeCode = () => registry.execute({ agent, callId: codeCallId, name: 'sandbox_run_code', arguments: snippet, signal: new AbortController().signal });
+        const codeResult = await invokeCode(); assert.equal(codeResult.isError, false);
+        const code = JSON.parse(codeResult.value.result); assert.equal(code.ok, false);
+        if (e2bCommands) {
+          assert.equal(code.status, 'uncertain'); assert.match(code.task_id, /^[a-f0-9]{64}$/u);
+          const base = join(home, 'studio/builtin-workspace/commands');
+          const records = (await readdir(base, { recursive: true })).filter(path => /^[a-f0-9]{64}\/[a-f0-9]{64}\/[a-f0-9]{64}\/record\.json$/u.test(path));
+          const found = [];
+          for (const path of records) { const file = join(base, path), saved = JSON.parse(await readFile(file, 'utf8'));
+            if (saved.owner.agentId === record.metadata.id && saved.request.call.callId === codeCallId) found.push({ file, saved }); }
+          assert.equal(found.length, 1); const original = found[0]; assert.equal(original.saved.request.call.name, 'sandbox_run_code');
+          assert.equal(original.saved.taskId, code.task_id); assert.equal(original.saved.binding.contract, 'agentkit.dsh-node-e2b-code-tools/v1');
+          assert.deepEqual(JSON.parse((await invokeCode()).value.result), code);
+          assert.equal(original.saved.request.agentId, record.metadata.id); assert.equal(original.saved.request.scope, undefined);
+          const ownerRoot = join(dirname(dirname(original.file)), 'code-sandbox'), ownerNames = await readdir(ownerRoot); assert.equal(ownerNames.length, 1);
+          const owner = JSON.parse(await readFile(join(ownerRoot, ownerNames[0], 'owner.json'), 'utf8'));
+          assert.equal(owner.phase, 'unknown'); assert.equal(owner.sandboxId, null);
+          codeProof = { backend: 'e2b', record: original.file, taskId: code.task_id, creationUnknown: true, duplicateSuppressed: true, originalDshOwner: true };
+        } else {
+          assert.equal(code.error_type, 'isolated_sandbox_required'); assert.equal(code.executed, false);
+          codeProof = { backend: 'local_process', isolatedSandboxRequired: true, executed: false };
+        }
         assert.deepEqual(before, after, 'Both actual DSH policy phases must observe every admitted call.');
         const audits = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').map(event => event.data.outcome);
         assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected']);
@@ -536,6 +570,7 @@ export async function apply(ctx, options) {
           registeredCalls: before.length, approvals: audits, crossSessionReadStateIsolated: true, parser: lint.syntax_engine.parser });
         report.runtimes.at(-1).web = webProof;
         report.runtimes.at(-1).commands = commandProof;
+        report.runtimes.at(-1).code = codeProof;
         report.runtimes.at(-1).components = components;
         report.runtimes.at(-1).skills = skillsProof;
         report.runtimes.at(-1).workflows = workflowProof;

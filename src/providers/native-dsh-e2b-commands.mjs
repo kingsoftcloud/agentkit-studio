@@ -6,15 +6,17 @@ import { mkdirSync, realpathSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { canonical, copy, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { E2BCommandStore, createE2BBackgroundReader } from '../../packages/agentkit-harness/src/native/e2b-background.mjs';
-import { createNativeE2BCommandTools } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
+import { createNativeE2BCommandTools, createNativeE2BCodeTools } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
 import { createOwnedCommandResolver } from '../../packages/agentkit-harness/src/native/owned-command.mjs';
 import { createNativeToolAuthority } from './native-tool-authority.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const transportModule = new URL('./native-e2b-sdk-transport.mjs', import.meta.url).href;
 
-export async function createNativeDshE2BCommands({ prepared, workspaceRoot, stateDir,
-  scope, sessionId, store: ledger, artifacts, isClosed, inProcessTransport = false }) {
+export const createNativeDshE2BCommands = options => createE2BTools(options, false);
+export const createNativeDshE2BCodeTools = options => createE2BTools(options, true);
+async function createE2BTools({ prepared, workspaceRoot, stateDir,
+  scope, sessionId, store: ledger, artifacts, isClosed, inProcessTransport = false }, codeOnly) {
   scopeKey(scope);
   const fixedScope = copy(scope), workspace = realpathSync(workspaceRoot);
   invariant(prepared?.binding?.backend === 'e2b' && typeof prepared.forSession === 'function'
@@ -28,7 +30,7 @@ export async function createNativeDshE2BCommands({ prepared, workspaceRoot, stat
   mkdirSync(lexical, { recursive: true, mode: 0o700 });
   const root = realpathSync(lexical);
   invariant(root !== workspace && !root.startsWith(workspace + sep), 'background_state_inside_workspace');
-  const scopeRoot = join(root, 'e2b-commands', hash(fixedScope));
+  const scopeRoot = join(root, codeOnly ? 'e2b-code' : 'e2b-commands', hash(fixedScope));
   mkdirSync(scopeRoot, { recursive: true, mode: 0o700 });
   const assertAuthority = createNativeToolAuthority({ scope: fixedScope, sessionId, store: ledger, isClosed });
   const host = await prepared.forSession({ scope: fixedScope, sessionId, workspaceRoot: workspace,
@@ -61,7 +63,11 @@ export async function createNativeDshE2BCommands({ prepared, workspaceRoot, stat
     });
     return commandStore;
   };
-  const tools = createNativeE2BCommandTools({ scope: fixedScope, sessionId, owner: host.owner, storeFactory,
+  const tools = (codeOnly ? createNativeE2BCodeTools : createNativeE2BCommandTools)({ scope: fixedScope, sessionId, owner: host.owner, storeFactory,
+    ...(codeOnly ? { async publishSnippet({ request, sandboxId, path, source, assertCurrent }) {
+      assertCurrent(); const files = await host.createFileSession(sandboxId, { ...request, assertCurrent });
+      assertCurrent(); await files.files.write(path, Buffer.from(source, 'utf8'), { signal: request.signal, requestTimeoutMs: 30000 }); assertCurrent();
+    } } : {}),
     artifacts, authorize: async () => 'allow', assertAuthority,
     resolveOwnedCommand: createOwnedCommandResolver({ scope: fixedScope, store: ledger }),
     allowInternetAccess: prepared.binding.allowInternetAccess, foregroundTimeoutSeconds: prepared.binding.timeoutSeconds,

@@ -84,11 +84,11 @@ export function createNativeE2BHostBinding(options = {}) {
 }
 export function createDshE2BHostBinding(options = {}) {
   invariant(nonempty(options.agentId), 'studio_dsh_e2b_agent_required');
-  return createE2BHostBinding({ ...options, ownership: { contract: STUDIO_DSH_E2B_HOST,
+  return createE2BHostBinding({ ...options, deferLifecycle: true, ownership: { contract: STUDIO_DSH_E2B_HOST,
     fields: { agentId: options.agentId }, create: createDshE2BSandboxOwner, runtime: 'agentkit-dsh' } });
 }
 async function createE2BHostBinding({ env, ownership, sessionId, workspaceRoot, stateRoot,
-  assertAuthority, assertReconciliationAuthority = null, sandboxEnvironment = {}, loadSdk } = {}) {
+  assertAuthority, assertReconciliationAuthority = null, sandboxEnvironment = {}, loadSdk, deferLifecycle = false } = {}) {
   invariant(nonempty(sessionId) && typeof assertAuthority === 'function', 'studio_native_e2b_host_authority_required');
   invariant(assertReconciliationAuthority === null || typeof assertReconciliationAuthority === 'function',
     'studio_native_e2b_reconciliation_authority_invalid');
@@ -96,15 +96,18 @@ async function createE2BHostBinding({ env, ownership, sessionId, workspaceRoot, 
   // changed by another Host operation while the asynchronous import is pending.
   const fixed = configuration(env ?? {}, sandboxEnvironment);
   const options = { connection: fixed.connection, ...(loadSdk ? { loadSdk } : {}) };
-  const lifecycle = await createNativeE2BSdkLifecycle({ ...options, template: fixed.template,
-    timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess, env: fixed.env });
+  const lifecycleOptions = { ...options, template: fixed.template,
+    timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess, env: fixed.env };
+  const lifecycle = deferLifecycle ? describeNativeE2BSdkLifecycle(lifecycleOptions) : await createNativeE2BSdkLifecycle(lifecycleOptions);
+  let loaded;
+  const liveLifecycle = () => deferLifecycle ? loaded ??= createNativeE2BSdkLifecycle(lifecycleOptions) : Promise.resolve(lifecycle);
   const bindingDigest = hash({ contract: ownership.contract, lifecycle: lifecycle.bindingDigest,
     sandboxType: fixed.sandboxType, ...ownership.fields, sessionId });
   const owner = ownership.create({ stateRoot, workspaceRoot, ...ownership.fields, sessionId, bindingDigest,
-    assertAuthority, assertReconciliationAuthority, inspectSandbox: lifecycle.inspectSandbox,
-    createSandbox: input => lifecycle.createSandbox({ ...input,
+    assertAuthority, assertReconciliationAuthority, inspectSandbox: async (...args) => (await liveLifecycle()).inspectSandbox(...args),
+    createSandbox: async input => (await liveLifecycle()).createSandbox({ ...input,
       metadata: { ...input.metadata, runtime: ownership.runtime, sandbox_type: fixed.sandboxType, session_id: sessionId } }),
-    killSandbox: lifecycle.killSandbox });
+    killSandbox: async (...args) => (await liveLifecycle()).killSandbox(...args) });
   const binding = Object.freeze({ contract: ownership.contract, backend: 'e2b', bindingDigest,
     transportContract: NATIVE_E2B_SDK_TRANSPORT, template: fixed.template, sandboxType: fixed.sandboxType,
     timeoutSeconds: fixed.timeoutSeconds, allowInternetAccess: fixed.allowInternetAccess });
