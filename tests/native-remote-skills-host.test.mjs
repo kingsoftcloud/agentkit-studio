@@ -16,12 +16,13 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createNativeSkillConnection, prepareNativeSkillHost } from '../src/providers/native-skill-host.mjs';
 import { createZip } from '../src/zip.mjs';
 import { runtimeSkill } from '../src/skill-files.mjs';
+import { skillE2BSdk } from './fixtures/native-skill-e2b-sdk.mjs';
 
 const instructions = '---\nname: alpha\ndescription: Alpha task\n---\n# Alpha\nRead the supplied JSON.';
 const zip = createZip([{ name: 'SKILL.md', data: instructions }, { name: 'scripts/run.mjs', data: 'console.log(42)' }]);
 const sha = createHash('sha256').update(zip).digest('hex');
 const final = () => ({ kind: 'final_candidate', text: 'Done.', toolCalls: [], usage: emptyUsage() });
-async function setup(t, { wrongHash = false, denied = false, rest = false, workflow = false, localOnly = false } = {}) {
+async function setup(t, { wrongHash = false, denied = false, rest = false, workflow = false, localOnly = false, e2b = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'remote-skills-host-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot);
   const stateDir = join(root, 'state'), filename = join(root, 'runs.sqlite');
@@ -91,6 +92,12 @@ async function setup(t, { wrongHash = false, denied = false, rest = false, workf
       },
     } };
   const config = { agentId: scope.agentId, agentRevision: 1, skillSpaceIds: localOnly ? [] : ['space'] };
+  const peer = e2b ? skillE2BSdk(t, { root: join(root, 'e2b-peer'), before(method) {
+    if (!['create', 'run', 'write', 'kill'].includes(method)) return;
+    const saved = store.load(scope, 'run'); assert.equal(saved.snapshot.phase, 'executing_tools');
+    const intent = saved.intents.find(item => item.operationKey === saved.snapshot.pendingIntent);
+    assert.equal(intent.status, 'running'); assert.equal(intent.claimedFence, saved.lease.fence);
+  } }) : null;
   if (localOnly) {
     const directory = join(root, 'local-alpha'); mkdirSync(join(directory, 'scripts'), { recursive: true });
     const path = join(directory, 'SKILL.md'); writeFileSync(path, instructions);
@@ -98,7 +105,10 @@ async function setup(t, { wrongHash = false, denied = false, rest = false, workf
     config.skillDefinitions = [runtimeSkill({ name: 'alpha', content: instructions, path })];
   }
   const bind = () => { gateway = createNativeDshTools({ ctx, config, workspaceRoot, stateDir,
-    commandEnvironment: workflow || localOnly ? { KSADK_SKILL_RUNTIME_BACKEND: 'local_process' } : {},
+    commandEnvironment: e2b ? { KSADK_SKILL_RUNTIME_BACKEND: 'e2b', KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'node-only-skills',
+      E2B_API_URL: 'https://api.fixture.invalid', E2B_DOMAIN: 'fixture.invalid', E2B_API_KEY: 'never-save-peer-key' }
+      : workflow || localOnly ? { KSADK_SKILL_RUNTIME_BACKEND: 'local_process' } : {},
+    ...(peer ? { e2bLoadSdk: async () => peer.sdk } : {}),
     ...(!localOnly ? { skillConnection: connection } : {}), skillFetch: proxy }); };
   bind();
   async function run(calls) {
@@ -122,7 +132,7 @@ async function setup(t, { wrongHash = false, denied = false, rest = false, workf
   }
   t.after(async () => { await gateway.close(); store.close(); server.closeAllConnections();
     await new Promise(resolve => server.close(resolve)); rmSync(root, { recursive: true, force: true }); });
-  return { run, requests, outputs, root, config, connection, get approvals() { return approvals; }, get gateway() { return gateway; },
+  return { run, requests, outputs, root, config, connection, peer, get approvals() { return approvals; }, get gateway() { return gateway; },
     get store() { return store; }, async reopen() {
       const original = canonical(store.load(scope, 'run')); const count = requests.length;
       await gateway.close(); store.close(); store = new SqliteRunStore(filename); bind();
@@ -222,4 +232,34 @@ test('a bound local Skill executes through the Native gateway with no Skill Serv
   assert.equal(readFileSync(h.outputs[0].output_files[0], 'utf8'), h.outputs[0].output_text);
   assert.equal(h.requests.length, 0); assert.equal(h.gateway.remoteSkillBinding.serviceBindingDigest, null);
   await h.reopen();
+});
+
+test('E2B Skills are mounted through the actual Native gateway, pin the independent backend and restore without another SDK effect', async t => {
+  const h = await setup(t, { workflow: true, e2b: true });
+  const result = await h.run([['execute_skills', { workflow_prompt: 'Use alpha', skill_names: ['alpha'] }]]);
+  assert.equal(result.phase, 'completed'); const executed = h.outputs[0];
+  assert.equal(executed.ok, true, JSON.stringify(executed)); assert.equal(executed.backend, 'e2b');
+  assert.equal(executed.isolated, true); assert.equal(executed.workflow_status, 'ok');
+  assert.equal(executed.output_text, 'Executed in Native Node runtime');
+  assert.equal(readFileSync(executed.output_files[0], 'utf8'), executed.output_text);
+  assert.match(executed.runtime_id, /^e2b-skill:/); assert.equal(executed.remote_runtime_id, 'skill-peer-1');
+  assert.equal(executed.command_ids.length, 2); assert.equal(executed.sandbox.cleanup_status, 'completed');
+  assert.equal(h.gateway.remoteSkillBinding.runtime.backend, 'e2b');
+  assert.equal(h.gateway.remoteSkillBinding.runtime.host.template, 'node-only-skills');
+  assert.equal(h.peer.calls.filter(call => call.method === 'create').length, 1);
+  assert.equal(h.peer.calls.filter(call => call.method === 'run').length, 2);
+  assert.equal(h.peer.calls.filter(call => call.method === 'kill').length, 1);
+  const saved = h.store.load(scope, 'run'), intent = saved.intents.find(item => item.kind === 'tool');
+  assert.equal(saved.receipts.filter(item => item.operationKey === intent.operationKey && item.status === 'committed').length, 1);
+  assert.doesNotMatch(canonical(saved), /never-save-peer-key|original-secret|private-download/u);
+  const count = h.peer.calls.length; await h.reopen(); assert.equal(h.peer.calls.length, count);
+});
+
+test('a local Skill can use the independent E2B runtime without mounting a remote Skill Service', async t => {
+  const h = await setup(t, { localOnly: true, e2b: true });
+  const result = await h.run([['execute_skills', { workflow_prompt: 'Use alpha', skill_names: ['alpha'] }]]);
+  assert.equal(result.phase, 'completed'); assert.equal(h.outputs[0].ok, true, JSON.stringify(h.outputs[0]));
+  assert.equal(h.outputs[0].backend, 'e2b'); assert.equal(h.outputs[0].output_text, 'Local Skill without remote service');
+  assert.equal(h.requests.length, 0); assert.equal(h.gateway.remoteSkillBinding.serviceBindingDigest, null);
+  assert.equal(h.peer.calls.filter(call => call.method === 'create').length, 1);
 });

@@ -14,6 +14,9 @@ import { SKILL_TOOL_CONTRACT, matchSkillRefs } from '../../packages/agentkit-har
 import { nativeSkillConnectionSettings, createExplicitNativeSkillClient } from './native-skill-connection.mjs';
 import { createNativeLocalSkillRuntime, nativeSkillRuntimeSettings } from './native-skill-runtime.mjs';
 import { createStudioNativeSkillSource } from './native-skill-source.mjs';
+import { prepareNativeE2BHost } from './native-e2b-host.mjs';
+import { createNativeE2BSkillRuntime, NATIVE_SKILL_E2B_RUNTIME } from './native-skill-e2b-runtime.mjs';
+import { NATIVE_SKILL_E2B_FILES } from './native-skill-e2b-files.mjs';
 
 export const STUDIO_NATIVE_REMOTE_SKILLS = 'agentkit.studio-native-remote-skills/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -41,13 +44,17 @@ const csv = (env, key) => {
   return value.split(',').map(value => value.trim()).filter(Boolean);
 };
 
-export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl = hostFetch }) {
+export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl = hostFetch, loadSdk }) {
   const userSpaces = ids([...(config.skillSpaceIds ?? []), ...csv(env, 'KSADK_SKILL_SPACE_IDS'),
     ...(!env.KSADK_SKILL_SPACE_IDS ? csv(env, 'SKILL_SPACE_ID') : [])]);
   const publicSpaces = ids(csv(env, 'KSADK_PUBLIC_SKILL_SPACE_IDS'));
   const localDefinitions = copy(config.skillDefinitions ?? []).filter(item => item.invocation?.modelInvocable !== false), environment = { ...env };
   if (!userSpaces.length && !publicSpaces.length && !localDefinitions.length) return null;
-  const runtimeSettings = nativeSkillRuntimeSettings(env);
+  const selectedRuntime = nativeSkillRuntimeSettings(env);
+  const e2b = selectedRuntime.backend === 'e2b' ? prepareNativeE2BHost({ env: { ...environment,
+    KSADK_SANDBOX_BACKEND: 'e2b', KSADK_SANDBOX_TIMEOUT: String(selectedRuntime.timeoutSeconds) }, ...(loadSdk ? { loadSdk } : {}) }) : null;
+  const runtimeSettings = Object.freeze({ ...selectedRuntime, ...(e2b ? { host: e2b.binding,
+    backendContract: NATIVE_SKILL_E2B_RUNTIME, fileContract: NATIVE_SKILL_E2B_FILES } : {}) });
   if (!userSpaces.length && !publicSpaces.length && !(runtimeSettings.enabled && localDefinitions.length)) return null;
   invariant(!userSpaces.length && !publicSpaces.length || connection?.client && /^[a-f0-9]{64}$/u.test(connection.bindingDigest), 'NATIVE_SKILL_CONNECTION_REQUIRED');
   const publicAllowlist = ids(csv(env, 'KSADK_PUBLIC_SKILL_ALLOWLIST'));
@@ -85,8 +92,10 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
     };
     const service = connection?.client ? createNativeSkillService(connection.client) : null;
     const load = service ? createNativeSkillLoader({ serviceClient: service, cacheDir, fetchImpl }) : undefined;
-    const runtime = runtimeSettings.enabled ? createNativeLocalSkillRuntime({ stateRoot: join(cacheDir, 'runtime'),
+    const createRuntime = e2b ? createNativeE2BSkillRuntime : createNativeLocalSkillRuntime;
+    const runtime = runtimeSettings.enabled ? createRuntime({ stateRoot: join(cacheDir, 'runtime'),
       workspaceRoot: workspace, scope, sessionId, bindingDigest, settings: runtimeSettings, env: environment,
+      ...(e2b ? { prepared: e2b, inProcessTransport: Boolean(loadSdk) } : {}),
       assertStorage, async loadPackages(request) {
         const check = () => { assertStorage(); return request.assertCurrent(); };
         // Reuse the admitted SkillSource's complete content/mode digest. A

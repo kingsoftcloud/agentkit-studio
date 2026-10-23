@@ -629,6 +629,16 @@ Skill 不需要远程 Skill 服务。每条脚本命令执行前核验原意图�
 22.19.0 各通过 144 项，未运行全量；后续微调仅重跑受影响模块。该结果不表示
 E2B Skill、所有产品核对/部署入口、legacy Python bridge 或全新安装已经完成。
 
+## 后续：E2B Skills 基础后端
+
+E2B Skills 已按 [独立 Node 后端](native-skills.md#node-e2b-工作流后端) 接入生产 Skill Host。
+固定包上传、独立沙箱、逐命令持久监督、精确产物交付和确认清理均有实际 Node/Bash
+测试；SDK 控制面/文件 API 为明确替身。原调用未知时不重新创建或执行，真实 SIGKILL
+后冷恢复不新增 SDK 效果。组件状态在实际 Host/Kernel 路径验证了独立 E2B Skills 与
+本地命令并存，也修复了启用 Skills 时给状态契约传入未声明字段的接线问题。
+线上 E2B、输入文件、完整专用事件、显式核对界面及全部产品入口仍待闭环；该推进
+不改变默认切换、去除 Python bridge 和全新安装的最终验收门槛。
+
 `node scripts/verify-studio-native-skill-workflow.mjs --source <已构建维护 SDK> --archive <Studio.tgz> --keep`
 已在 Node 26.5.0 和 22.19.0 通过实际打包 Host、认证 preset、DSH ToolRegistry、模型 HTTP、
 Skill 目录 HTTP 和可信测试证书 HTTPS ZIP 的完整执行。两次模型、一次目录、一次下载地址、

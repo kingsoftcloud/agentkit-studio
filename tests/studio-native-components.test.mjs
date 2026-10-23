@@ -151,6 +151,33 @@ test('Host pins the mounted remote Skill connection and projects actual bound sp
     assert.equal(JSON.stringify(saved).includes(privateValue), false);
 });
 
+test('Host status pins E2B Skills independently of local command tools and does not allocate or load the SDK', async t => {
+  const skillConnection = await createNativeSkillConnection({ configuration: { resolve: async () => ({ values: {} }) } });
+  let loads = 0;
+  const environment = { KSADK_SKILL_RUNTIME_BACKEND: 'e2b', KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'skills-template',
+    E2B_API_URL: 'https://api.fixture.invalid', E2B_DOMAIN: 'fixture.invalid', E2B_API_KEY: 'private-skills-e2b-key' };
+  const h = await setup(t, { commandEnvironment: environment, skillConnection, skillSpaceIds: ['bound-space'],
+    e2bLoadSdk: async () => { loads++; assert.fail('status cannot import the execution SDK'); } });
+  environment.KSADK_SKILL_RUNTIME_TEMPLATE_ID = 'changed-template'; environment.E2B_API_KEY = 'changed-secret';
+  await h.host.executeTurn(h.payload('skills-e2b-status'));
+  const { result, saved, snapshot } = h.result('skills-e2b-status'); assert.equal(snapshot.phase, 'completed');
+  assert.equal(loads, 0); assert.equal(result.skill_runtime.backend, 'e2b'); assert.equal(result.skill_runtime.enabled, true);
+  assert.equal(result.skill_runtime.request_protocol, 'agentkit.native-skill-e2b-runtime/v1'); assert.equal(result.skill_runtime.template_bound, true);
+  assert.equal(result.summary.isolated_execution, 'enabled'); assert.equal(result.sandbox.backend, 'local_process');
+  assert.equal(h.gateway.remoteSkillBinding.runtime.host.template, 'skills-template');
+  assert.doesNotMatch(JSON.stringify(saved), /private-skills-e2b-key|changed-template|changed-secret/);
+});
+
+test('Host status accepts a mounted local Skill runtime through the existing component contract and reports its Node protocol', async t => {
+  const skillConnection = await createNativeSkillConnection({ configuration: { resolve: async () => ({ values: {} }) } });
+  const h = await setup(t, { commandEnvironment: { KSADK_SKILL_RUNTIME_BACKEND: 'local_process' }, skillConnection, skillSpaceIds: ['bound-space'] });
+  await h.host.executeTurn(h.payload('local-skill-status'));
+  const { result, snapshot } = h.result('local-skill-status'); assert.equal(snapshot.phase, 'completed');
+  assert.equal(result.skill_runtime.backend, 'local_process'); assert.equal(result.skill_runtime.enabled, true);
+  assert.equal(result.skill_runtime.template_bound, false); assert.equal(result.summary.isolated_execution, 'not_enabled');
+  assert.equal(result.skill_runtime.request_protocol, 'agentkit.native-skill-runtime/v1');
+});
+
 test('overlapping sessions keep their own model/status snapshots through the shared gateway', async t => {
   const entered = Promise.withResolvers(), release = Promise.withResolvers();
   const h = await setup(t, { intercept: async input => {

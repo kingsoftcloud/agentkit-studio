@@ -31,6 +31,14 @@ async function waitFor(predicate) {
 }
 function entry(h) { return readdirSync(h.options.stateRoot).filter(name => /^[a-f0-9]{64}$/u.test(name)).map(name => join(h.options.stateRoot, name))[0]; }
 
+test('runtime settings preserve the reference project-name alias and explicit backend choice', () => {
+  const selected = nativeSkillRuntimeSettings({ KSADK_SKILL_RUNTIME_BACKEND: 'e2b', KSADK_SKILL_ARTIFACT_PROJECT: 'custom-project' });
+  assert.equal(selected.backend, 'e2b'); assert.equal(selected.enabled, true); assert.equal(selected.isolated, true);
+  assert.equal(selected.projectName, 'custom-project');
+  assert.throws(() => nativeSkillRuntimeSettings({ KSADK_SKILL_ARTIFACT_PROJECT: 1 }), /SKILL_RUNTIME_PROJECT_INVALID/);
+  assert.equal(nativeSkillRuntimeSettings({ KSADK_SKILL_RUNTIME_BACKEND: 'off' }).enabled, false);
+});
+
 test('real supervised Node workflow stages its package, delivers exact bytes and reopens without another process', async t => {
   const h = setup(t), req = request();
   const first = await h.runtime.execute(req);

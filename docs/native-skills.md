@@ -210,11 +210,12 @@ runtime 定位信息。错误路径使用独立深拷贝与深冻结的定位快
 
 ## Node 本地工作流后端与工具契约 v3
 
-当前实现已接通显式 `KSADK_SKILL_RUNTIME_BACKEND=local_process`。未配置时仍按
-参考实现保持禁用；同时保留 `KSADK_SANDBOX_BACKEND` 后备选择。
+当前实现已接通显式 `KSADK_SKILL_RUNTIME_BACKEND=local_process`。没有选择后端且没有
+模板时保持禁用；保留 `KSADK_SANDBOX_BACKEND` 后备选择，以及仅配置模板时选择 E2B。
 `KSADK_SKILL_RUNTIME_TIMEOUT` 为 1–900 秒，默认 900 秒，
-`KSADK_SKILL_PROJECT_NAME` 固定网页项目名。`e2b` 选择目前如实报告未挂载，
-不会改为本地执行。组件状态只在后端和正式工具均已挂载时显示可用。
+`KSADK_SKILL_PROJECT_NAME` 固定网页项目名，兼容参考变量 `KSADK_SKILL_ARTIFACT_PROJECT`。
+`e2b` 走下面的独立后端；配置不完整时拒绝，不会改为本地执行。
+组件状态只在后端和正式工具均已挂载时显示可用。
 
 这层复用 Studio 现有的服务客户端、ZIP 解包器、已绑定本地 SkillSource 和持久命令
 监督器。绑定本地 Skill 并启用本地后端时，无需远程服务或 Skill Space；绑定远程空间
@@ -262,5 +263,54 @@ HTTP 模型和目录、可信测试证书的 HTTPS ZIP，验证一次脚本执�
 命令记录和包文件；原效果文件仍只有一条。两个 Node 版本均通过。
 
 此证明使用固定已安装依赖图与正常退出重启；真实 SIGKILL 的不重放由定向运行时
-测试另行覆盖，不能合称打包 Host 已通过 SIGKILL。仍待 E2B Skill 后端、产品显式
-核对/清理、完整 Skill 专用事件、Frozen/部署入口及全新无 Python 安装验收。
+测试另行覆盖，不能合称打包 Host 已通过 SIGKILL。E2B 基础后端的后续接线见下节；
+产品显式核对/清理、完整 Skill 专用事件、Frozen/部署入口及全新无 Python 安装仍待验收。
+
+## Node E2B 工作流后端
+
+`native-skill-e2b-runtime.mjs` 挂载 `agentkit.native-skill-e2b-runtime/v1`，文件传输端口为
+`agentkit.native-skill-e2b-files/v1`。两者与原工具 v3、模板和连接摘要一起进入 Host 绑定。
+组件状态沿用已有字段，通过 `request_protocol` 报告 Node 后端契约；启用本地或 E2B
+Skills 时不会再传入该状态契约未声明的 `isolated` 字段。
+
+选择 `KSADK_SKILL_RUNTIME_BACKEND=e2b`，提供 `KSADK_SKILL_RUNTIME_TEMPLATE_ID`
+或 `KSADK_SANDBOX_TEMPLATE_ID`，以及明确的 `E2B_API_URL`（HTTPS 根地址）、
+`E2B_DOMAIN`、`E2B_API_KEY`。Skills 的选择可独立于交互命令后端；只绑定本地 Skill
+时不要求远程 Skill Service。模板须提供 bash 和 Skill 脚本自身依赖，后端不安装、
+探测或启动 Python，也不在沙箱内运行另一个 agent 循环。SDK 在执行时才加载；
+读取组件状态不会加载 SDK、创建或连接沙箱。凭证只在可信闭包/监督器配置中传递，
+不进入模型回执、组件状态或调用记录。
+
+原 Native 调用首先持久保存完整意图和稳定的 `e2b-skill:<摘要>` / command 定位，再
+加载固定包、创建单次调用独占沙箱。真实沙箱 ID 作为 `remote_runtime_id` / `sandbox_id`
+单独保存，不能替换工具契约提前保留的定位。生命周期所有者先保存创建意图才调用
+SDK；迟到创建响应的真实 ID 仍留在原 owner 记录中。SDK `connect` 可能恢复同一个
+沙箱，因此它属于已记录原调用内的执行操作，不用于历史展示或自动恢复探测。
+
+包先在 Host 私有目录按逐文件摘要固定，再上传到独占的远程私有目录，保存可执行位。
+上传批次预校验路径、规范 Base64、摘要、文件和总量上限；拒绝已有目标，核对 SDK
+响应身份，并重新下载核验实际字节。每条准备、权限设置和工作流命令均先保存定位，
+再通过现有 E2B 持久命令监督器执行。网页初始化与打包分别重新检查原 intent/fence，
+初始化阶段的临时 bundle 不被当作最终产物。通用工作流收集 artifacts 与显式声明，
+网页工作流按参考实现仅交付最终 bundle，不把 node_modules 下载回 Host。
+
+文件操作固定原沙箱、files 对象、方法、完整请求、函数和 signal；严格同步授权必须
+返回 true。SDK 调用与每次流读取前后复核；不合作的 Promise 或 reader.cancel 不会
+阻塞取消，迟到拒绝被观察、迟到流被关闭。规范路径、祖先类型和权限、清单直接子项、
+传输前后元数据、字节数与摘要均核对。上限为单文件 20 MiB、总计 50 MiB、4000 条
+枚举和 500 个产物。这些是 SDK 可观察值的约束，不能承诺远程 OS 原子 no-follow，
+也不消除同一沙箱用户并发替换文件的 TOCTOU 风险。
+
+产物按原始字节写入 Host 私有目录，再复用本地产物交付端口。成功必须取得对原沙箱
+清理的明确 true；丢失响应、真假不明或权限失效不会报告成功，也不会自动再次清理。
+未完成、取消、超时和真实进程被杀后的调用返回未知，保留原沙箱/命令记录，不重新
+创建、上传或执行。取消后的沙箱和结果未知的外部副作用需要显式核对流程；相应产品
+界面尚未全部完成。迟到创建身份可从该 runtime 原目录的 sandbox owner 记录核对。
+
+测试使用真实 Node 编排、SDK 适配器、生命周期和命令监督器、真实 bash 与精确文件；
+E2B 控制面及 SDK 文件 API 是明确替身。原 NativeKernel、SQLite、HTTP Skill Service、
+网关和组件工具也有实际接线用例。覆盖通用/网页/说明模式、退出 7、超时、取消、
+并发冲突、清理未确认、完整请求漂移、真实 SIGKILL 及重开不重放。日志位于
+`.artifacts/native-migration/skill-e2b-reviewed/`；这不是线上 E2B 或全新安装证明。
+输入文件、完整 Skill 专用事件、线上创建/重连/清理、显式核对产品入口、Frozen 和
+部署组合仍需完成，不从原迁移范围中移除。

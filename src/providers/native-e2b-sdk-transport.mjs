@@ -177,6 +177,48 @@ export async function createNativeE2BSdkTransport({ connection, sandboxId = null
 /** Detached supervisor module factory; config arrives through its stdin. */
 export const factory = config => createNativeE2BSdkTransport(config);
 
+/** File connection for a sandbox whose creation intent and identity have already
+ * been committed by the Host. connect may resume that SAME sandbox in the SDK;
+ * this is an effectful port, never a discovery/reconciliation read. */
+export async function createNativeE2BSdkFileSession({ connection, sandboxId, request,
+  loadSdk = () => import('e2b') } = {}) {
+  const bound = connectionOptions(connection);
+  invariant(validId(sandboxId), 'e2b_sandbox_identity_invalid');
+  const signal = request?.signal, authority = request?.assertCurrent;
+  invariant(signal instanceof AbortSignal && typeof authority === 'function', 'e2b_file_authority_required');
+  const body = () => canonical(Object.fromEntries(Object.keys(request)
+    .filter(key => !['signal', 'assertCurrent'].includes(key)).map(key => [key, copy(request[key])])));
+  const original = body();
+  const unchanged = () => invariant(request.signal === signal && request.assertCurrent === authority && body() === original,
+    'e2b_file_context_changed');
+  const guard = () => {
+    signal.throwIfAborted(); checkSdkEnvironment(); unchanged();
+    const verdict = authority();
+    if (verdict && typeof verdict.then === 'function') Promise.resolve(verdict).catch(() => {});
+    invariant(verdict === true, 'e2b_file_authority_lost'); unchanged(); signal.throwIfAborted();
+  };
+  async function boundary(effect) {
+    guard();
+    let abort;
+    const canceled = new Promise((_, reject) => {
+      abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true });
+    });
+    try {
+      signal.throwIfAborted();
+      const result = await Promise.race([Promise.resolve().then(() => { guard(); return effect(); }), canceled]);
+      guard(); return result;
+    } finally { signal.removeEventListener('abort', abort); }
+  }
+  const sdk = await boundary(loadSdk);
+  invariant(typeof sdk.Sandbox?.connect === 'function', 'e2b_sdk_file_contract_invalid');
+  const sandbox = await boundary(() => sdk.Sandbox.connect(sandboxId, { ...bound, headers: { ...bound.headers },
+    signal, requestTimeoutMs: 30000 }));
+  invariant(sandbox?.sandboxId === sandboxId && sandbox.files
+    && ['read', 'write', 'list', 'getInfo', 'makeDir'].every(name => typeof sandbox.files[name] === 'function'),
+  'e2b_connected_file_sandbox_mismatch');
+  guard(); return sandbox;
+}
+
 function lifecycleConfiguration({ connection, template = 'base', timeoutSeconds = 300,
   env = {}, allowInternetAccess = true } = {}) {
   const bound = connectionOptions(connection);

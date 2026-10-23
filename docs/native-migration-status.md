@@ -10,7 +10,7 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 | 完成门槛 | 当前可确认状态 | 尚未闭环 |
 | --- | --- | --- |
 | 完整正式能力对应 | 独立 TS 核心、Node 多种端口及多个 Host 路径已实现和专项验证 | 对参考能力表逐项核对当前实现、事件及产品组装；不能用历史阶段日志代替当前完整审计 |
-| 可选后端及服务能力 | 本地 Skills 工作流已打包执行；E2B 命令有持久监督及拒绝边界证明；A2A 有真实 HTTP 执行和历史恢复 | E2B Skills 后端当前明确未挂载；E2B 成功执行/重连/清理验收，run_code、A2A 继续/取消/内部控制面等仍有实现或接线缺口 |
+| 可选后端及服务能力 | 本地 Skills 工作流已打包执行；E2B Skills 已接入独立沙箱、逐命令监督和产物交付，SDK 控制面替身下有真实脚本与 Host 证据；A2A 有真实 HTTP 执行和历史恢复 | 线上 E2B 成功执行/重连/清理验收；Skill 输入文件和完整专用事件；run_code、A2A 继续/取消/内部控制面等仍有实现或接线缺口 |
 | 全部恢复产品流程 | 意图/回执、lease/fence、实际进程中断与不盲目重放已有专项；多个实际 Host 重启路径已验证 | 各后端结果未知时的显式核对/清理/继续，以及全部审批和恢复界面闭环 |
 | Studio 所有执行入口 | 本地对话、历史、部分 Frozen/后台通知路径已有真实 Host 证据 | 自动化、定时、Frozen HTTP/部署和完整浏览器消费的全部组合验收 |
 | 安装和执行不依赖 Python | 多条打包验证在受限 PATH 和无效 Python 配置下成功 | dsh-runtime-plugin 仍保留实际 Python builtin fallback；完整替换以及全新无 Python 安装/启动/执行未通过 |
@@ -20,7 +20,6 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 直接反证“只剩少量验收”的当前代码：
 
 - `src/providers/dsh-runtime-plugin.mjs` 的 `createBuiltinExecutor` 在未覆盖的工具上仍调用 Python。
-- `src/providers/native-skill-runtime.mjs` 的设置对 `e2b` 明确返回 `e2b_skill_runtime_not_mounted`。
 - 主迁移文档仍明确默认 Harness 沿用原路径，需要完整验收后切换。
 
 最近已完成的具体推进是 `5631729`：本地 Skills 工作流、原调用的持久记录、命令监督、
@@ -32,6 +31,13 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 真实脚本、SQLite/JSONL、文本及二进制原始字节、实际旧 PID 退出/新 PID 历史恢复。
 精确次数为模型 2、目录 1、下载地址 1、HTTPS 1、脚本 1；恢复后不增加。
 这仍复用固定依赖图，不能支持全新安装、线上服务或全部产品入口完成的结论。
+
+后续 E2B Skills 已补齐基础生产接线，详见 [Skills 的 E2B 后端](native-skills.md#node-e2b-工作流后端)。
+它复用实际 SDK 适配器、生命周期所有者和命令监督器，单次 Native 调用独占一个沙箱；
+未完成调用和未确认清理不会自动重试。定向用例包含真实脚本、二进制产物、取消、
+超时、并发、真实 Host SIGKILL 后冷恢复，以及 NativeKernel/SQLite 网关和组件状态。
+E2B SDK 控制面/文件 API 在这些测试中是明确替身；不能据此宣称线上 E2B 或远程 OS
+边界已经验收。完整 Skill 事件、输入文件、显式核对和全产品入口仍在原目标内。
 
 完整参考清单见 [native-reference-capabilities.md](native-reference-capabilities.md)，
 实现和历史验证详见 [native-harness-migration.md](native-harness-migration.md)。后续进度

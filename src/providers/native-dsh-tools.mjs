@@ -70,6 +70,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   for (const definition of nativeSkillDisclosureDefinitions()) if (disclosureNames.has(definition.name)) formal.set(definition.name, definition);
   const commandEnvironmentSnapshot = { ...commandEnvironment }, commandBackend = nativeCommandBackend(commandEnvironmentSnapshot);
   const remoteSkills = prepareNativeSkillHost({ config, env: commandEnvironmentSnapshot, connection: skillConnection,
+    ...(e2bLoadSdk ? { loadSdk: e2bLoadSdk } : {}),
     ...(skillFetch ? { fetchImpl: skillFetch } : {}) });
   const remoteSkillNames = new Set((remoteSkills?.definitions ?? []).map(definition => {
     formal.set(definition.name, definition); return definition.name;

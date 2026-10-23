@@ -32,12 +32,12 @@ export function nativeSkillRuntimeSettings(env = {}) {
   invariant(typeof timeout === 'string' && /^\d+$/u.test(timeout) && Number.isSafeInteger(Number(timeout))
     && Number(timeout) >= 1 && Number(timeout) <= 900, 'SKILL_RUNTIME_TIMEOUT_INVALID');
   invariant(env.KSADK_SKILL_PROJECT_NAME === undefined || typeof env.KSADK_SKILL_PROJECT_NAME === 'string', 'SKILL_RUNTIME_PROJECT_INVALID');
+  invariant(env.KSADK_SKILL_ARTIFACT_PROJECT === undefined || typeof env.KSADK_SKILL_ARTIFACT_PROJECT === 'string', 'SKILL_RUNTIME_PROJECT_INVALID');
   return Object.freeze({ contract: NATIVE_SKILL_RUNTIME, workflowContract: NATIVE_SKILL_WORKFLOW,
     backend: backend === 'local_process' ? backend : backend === 'e2b' ? 'e2b' : 'disabled',
-    enabled: backend === 'local_process', isolated: false, timeoutSeconds: Number(timeout),
-    projectName: env.KSADK_SKILL_PROJECT_NAME || 'ksadk-artifact',
-    environmentBindingDigest: hash(buildScriptEnvironment(env)),
-    ...(backend === 'e2b' ? { unavailableReason: 'e2b_skill_runtime_not_mounted' } : {}) });
+    enabled: ['local_process', 'e2b'].includes(backend), isolated: backend === 'e2b', timeoutSeconds: Number(timeout),
+    projectName: env.KSADK_SKILL_PROJECT_NAME || env.KSADK_SKILL_ARTIFACT_PROJECT || 'ksadk-artifact',
+    environmentBindingDigest: hash(buildScriptEnvironment(env)) });
 }
 function readJson(path, max = RECORD_LIMIT) {
   const fd = openPrivate(path, constants.O_RDONLY);
@@ -49,7 +49,9 @@ function saveRecord(path, record) {
   invariant(Buffer.byteLength(serialized) <= RECORD_LIMIT, 'SKILL_RUNTIME_RECORD_TOO_LARGE');
   atomicPrivate(path, serialized);
 }
-function stagePackages(packages, root, guard) {
+// Trusted Host helpers shared by local and remote runtimes. Neither is a model
+// tool; both require the original runtime's synchronous authority guard.
+export function stagePackages(packages, root, guard) {
   invariant(Array.isArray(packages) && packages.length <= 100, 'SKILL_RUNTIME_PACKAGES_INVALID');
   let count = 0, total = 0;
   return packages.map((pkg, index) => {
@@ -89,7 +91,7 @@ function stagePackages(packages, root, guard) {
     return { ...copy(pkg), rootDir: destination, stagedManifest: manifest };
   });
 }
-function publishArtifacts(result, workDir, workspace, runtimeId, guard) {
+export function publishArtifacts(result, workDir, workspace, runtimeId, guard) {
   const paths = [...new Set([...(result.artifacts ?? []), ...(result.output_files ?? [])])];
   invariant(paths.length <= 500, 'SKILL_RUNTIME_ARTIFACT_COUNT');
   if (!paths.length) return { ...result, artifacts: [], output_files: [], artifact_metadata: [] };

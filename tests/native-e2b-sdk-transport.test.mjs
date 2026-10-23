@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeE2BSdkTransport, createNativeE2BSdkLifecycle, NATIVE_E2B_SDK_TRANSPORT } from '../src/providers/native-e2b-sdk-transport.mjs';
+import { createNativeE2BSdkTransport, createNativeE2BSdkLifecycle, createNativeE2BSdkFileSession, NATIVE_E2B_SDK_TRANSPORT } from '../src/providers/native-e2b-sdk-transport.mjs';
 
 const connection = () => ({ apiUrl: 'https://api.fixture.invalid', domain: 'fixture.invalid', apiKey: 'test-e2b-secret', headers: { 'x-source': 'studio' } });
 function gate() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -239,4 +239,37 @@ test('lifecycle never retries an unknown create and a rejected or truthy kill ca
   await assert.rejects(lifecycle.createSandbox({ signal: new AbortController().signal, metadata: { nativeOwner: 'owner' } }), /create response lost/);
   assert.equal(creates, 1); assert.equal(await lifecycle.killSandbox('sandbox-A', { signal: new AbortController().signal }), false);
   assert.equal(kills, 1);
+});
+
+test('file connection binds the original sandbox and full exact Native context before/after SDK boundaries', async () => {
+  const calls = [], files = Object.fromEntries(['read', 'write', 'list', 'getInfo', 'makeDir'].map(key => [key, () => {}]));
+  const request = { scope: { user: 'one' }, future: { integer: 9007199254740993n },
+    signal: new AbortController().signal, assertCurrent: () => true };
+  const sandbox = { sandboxId: 'original', files };
+  const result = await createNativeE2BSdkFileSession({ connection: connection(), sandboxId: 'original', request,
+    loadSdk: async () => ({ Sandbox: { connect(id, options) { calls.push({ id, options }); return sandbox; } } }) });
+  assert.equal(result, sandbox); assert.equal(calls.length, 1); assert.equal(calls[0].id, 'original');
+  assert.equal(calls[0].options.signal, request.signal); assert.equal(calls[0].options.retries, 0);
+  assert.equal(calls[0].options.requestTimeoutMs, 30000);
+  assert.equal(calls[0].options.apiUrl, 'https://api.fixture.invalid');
+  const bad = { ...request, assertCurrent: () => { bad.future = { integer: 9007199254740992n }; return true; } };
+  await assert.rejects(createNativeE2BSdkFileSession({ connection: connection(), sandboxId: 'original', request: bad,
+    loadSdk: () => assert.fail('reentrant mutation must fail before import') }), /e2b_file_context_changed/);
+});
+
+test('file connection rejects substituted IDs and authority functions; cancellation never waits for an uncooperative SDK', async () => {
+  const controller = new AbortController(), entered = gate(), returned = gate();
+  const request = { signal: controller.signal, assertCurrent: () => true, future: 'fixed' };
+  const pending = createNativeE2BSdkFileSession({ connection: connection(), sandboxId: 'original', request,
+    loadSdk: async () => ({ Sandbox: { connect() { entered.resolve(); return returned.promise; } } }) });
+  await entered.promise; controller.abort(new Error('cancel noncooperative connect'));
+  await assert.rejects(Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error('cancel hung')), 1000))]),
+    /cancel noncooperative connect/);
+  returned.reject(new Error('late SDK rejection must be observed')); await new Promise(resolve => setImmediate(resolve));
+  const wrong = { signal: new AbortController().signal, assertCurrent: () => true };
+  await assert.rejects(createNativeE2BSdkFileSession({ connection: connection(), sandboxId: 'original', request: wrong,
+    loadSdk: async () => ({ Sandbox: { connect() { return { sandboxId: 'foreign', files: {} }; } } }) }), /e2b_connected_file_sandbox_mismatch/);
+  wrong.assertCurrent = () => Promise.reject(new Error('invalid asynchronous authority'));
+  await assert.rejects(createNativeE2BSdkFileSession({ connection: connection(), sandboxId: 'original', request: wrong,
+    loadSdk: () => assert.fail('invalid authority cannot import SDK') }), /e2b_file_authority_lost/);
 });

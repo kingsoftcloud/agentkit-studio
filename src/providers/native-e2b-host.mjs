@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeE2BSandboxOwner } from '../../packages/agentkit-harness/src/native/e2b-sandbox-owner.mjs';
-import { createNativeE2BSdkLifecycle, createNativeE2BSdkTransport, describeNativeE2BSdkLifecycle, NATIVE_E2B_SDK_TRANSPORT } from './native-e2b-sdk-transport.mjs';
+import { createNativeE2BSdkLifecycle, createNativeE2BSdkTransport, createNativeE2BSdkFileSession, describeNativeE2BSdkLifecycle, NATIVE_E2B_SDK_TRANSPORT } from './native-e2b-sdk-transport.mjs';
 
 export const STUDIO_NATIVE_E2B_HOST = 'agentkit.studio-native-e2b-host/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -96,5 +96,6 @@ export async function createNativeE2BHostBinding({ env, scope, sessionId, worksp
   // They are freshly copied; mutating one cannot retarget another transport.
   const transportOptions = () => ({ connection: copy(fixed.connection) });
   return Object.freeze({ binding, owner, transportOptions,
+    createFileSession: (sandboxId, request) => createNativeE2BSdkFileSession({ ...options, sandboxId, request }),
     createTransport: () => createNativeE2BSdkTransport({ ...transportOptions(), ...(loadSdk ? { loadSdk } : {}) }) });
 }
