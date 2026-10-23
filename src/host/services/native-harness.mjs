@@ -21,6 +21,7 @@ import { createStudioNativeChildWorkspaces } from '../../providers/native-child-
 import { modelInput } from '../../model-service.mjs';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
+import { createStudioNativeA2aControl } from './native-a2a-control.mjs';
 import { createStudioNativeBackgroundAdmission, createStudioNativeBackgroundDispatcher } from './native-background-admission.mjs';
 import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../providers/native-hooks.mjs';
 import { bindStudioNativeMemoryFlush, composeStudioNativeHooks } from '../../providers/native-memory.mjs';
@@ -478,6 +479,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     resolveBackgroundTurn: resolveBackgroundBinding,
   });
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute });
+  const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents });
   const notifyBackgroundCompletion = createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents });
   const dispatchBackgroundCompletion = createStudioNativeBackgroundDispatcher({ ctx, store, workspaceId, lifetime, active, notify: notifyBackgroundCompletion });
   const startBackgroundWatcher = ({ signal } = {}) => {
@@ -542,6 +544,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     dispatchBackgroundCompletion,
     recoveryStatus: recovery.status,
     resumeTurn: recovery.resume,
+    controlA2aTask,
     childHistory(request) { return childHistory(request).list(request); },
     childResult(request) { return childHistory(request).result(request); },
     childTasks(request) {

@@ -79,6 +79,75 @@ permission for a replacement send. Cancellation aborts local waiting and
 preserves the original remote locator; it does not assert that the remote
 agent was cancelled. Do not create a new call ID to retry an unknown effect.
 
+## Explicit original-task controls
+
+The shared Node Host now exposes `owner.control.execute()` under
+`agentkit.studio-a2a-task-control/v1` for Native **and independent DSH** owners.
+It accepts `get`, `continue`, and `cancel`, a stable `commandId`, the original
+`operation_locator`, and a fresh Host authority. Both `assertControl` and
+`authorizeControl` must be provided by the trusted Host. A retired Native tool
+fence cannot authorize a control; the original execution guard remains required
+for the original tool path. No control accepts a caller-selected route,
+credentials, remote task ID, or replacement target/version.
+
+The Studio Native product route is `sessions/native-a2a-control`, exposed as
+`controlNativeA2aTask(payload, signal)` on HTTP and authenticated DSH RPC clients.
+Its payload has `agentId`, `sessionId`, `runId`, `operationKey`, `callId`,
+`kind`, and `commandId`. A continuation additionally supplies the current
+`pauseDigest` and either `parts` or `json`. `json` is the **original JSON text**
+for one data part: the Host parses it with its exact-number parser, preserving
+unsafe integer tokens through approval, persistence, cold replay, and wire
+serialization. Text, object, scalar, array, and null data inputs are supported.
+There is a 64-part / 1 MiB complete-message limit, matching the reference.
+
+The product service resolves the actual Session, checks the original Native
+tool intent and recovery capsule, and requires the same trusted preset revision
+and Frozen Build. Fresh human `continue`/`cancel` commands always request exact
+command consent through the real approval service, including under
+`workspace-write`. Confirming an existing intent/receipt is a read and does not
+request another approval. The shared transport still checks current authority,
+private storage identity, the original remote task/context pair, and the
+original pinned route. A changed binding cannot reuse a checkpoint.
+
+Before a continuation/cancel can enter the network, its complete DTO, stable
+message ID and command digest are fsynced under the original call's SQLite
+lock. An identical command confirms its stored outcome; changed reuse rejects.
+A crashed/lost command is never sent again, even after cold restart. `get`
+observes the original task without rewriting the unknown effect's intent.
+Another continuation ID cannot retry an unresolved send for the same remote
+pause. A confirmed continuation can legitimately return the identical question;
+the persisted pause generation distinguishes that new input opportunity from
+the old command, even when the peer reuses its message ID. A new continuation
+also retains the original admitted absolute deadline; approval and Host restart
+do not reset it. Legacy records derive that deadline from their creation time
+and original timeout. Records are limited to 64 MiB, projections to 8 MiB, and
+the per-call command inventory to 10,000 entries; exceeding limits fails closed.
+
+Remote cancellation is confirmed only after `CancelTask` **and a validating
+`GetTask`**. Concurrent completion is reported as `already_terminal`;
+unsupported cancellation and uncertain cancellation remain distinct outcomes.
+The CancelTask reply's terminal observation is persisted before confirmation;
+a subsequent contradictory terminal is rejected rather than overwriting it.
+Aborting local waiting never fabricates a remote cancelled state. A busy call
+currently rejects with `A2A_CALL_BUSY`; durable cancellation requests while
+another process owns the call still need implementation.
+
+In Studio, open **运行与子任务**. The original Run's A2A calls have explicit
+**核对远端任务**, **请求远端取消**, and text/JSON supplemental-input controls.
+Remote questions and output are visible. A lost response retains the original
+command for **确认原操作回执**; refresh never sends a replacement message.
+These controls manage the remote task. They deliberately do not invent a
+successful Native tool receipt or resume an interrupted Native Run. The
+remaining Kernel interaction/reconciliation flow must consume the verified
+outcome through a real execution boundary before that Run can continue.
+
+Control verification is in `tests/native-a2a-controls.test.mjs` (actual HTTP,
+both bindings and both owner contracts), `tests/native-a2a-control-process.test.mjs`
+(four actual SIGKILL/replacement cases), `tests/studio-native-a2a-control.test.mjs`
+(production Kernel/SQLite/gateway/service/route with declared narrow DSH
+doubles), and `tests/native-a2a-panel.test.mjs` (state, deterministic hook render,
+HTTP/RPC contracts). This is not a browser/Electron or cloud-service proof.
+
 ## Executed verification and remaining work
 
 `tests/native-a2a-host.test.mjs` uses actual local HTTP/SSE, the production
@@ -117,17 +186,23 @@ Still required for full migration:
 
 - Frozen export/deployment coverage and the remaining product operations for
   this binding; the local packed Host and history path above is now verified.
-- Authenticated product operations/UI to inspect, reconcile, continue and
-  request cancellation of the original managed remote task. Input/auth pauses
-  currently stop the Native call with an uncertain result and preserve its
-  checkpoint; the product continuation flow is not implemented yet.
+- Full browser/mounted-Host acceptance of the new authenticated task controls,
+  automatic structured-input/remote-approval waiters in the original Native
+  Run, and explicit Native receipt reconciliation/continuation. The manual
+  original-task API and panel are implemented; an input/auth pause still stops
+  the original Native call with uncertainty. Independent DSH owners have the
+  shared control transport, but DSH/Codex product controls remain to be wired.
+- Durable cancellation requests while the original call is busy, pre-send
+  local cancellation semantics, and required task stream subscriptions.
 - Internal workload Actions, projected workload tokens, permits/credential
   broker, inbound A2A serving, and remote orchestration/handoff exposures.
 - External peer credential schemes beyond the current hosted token path and
   any required v0.3 compatibility surface.
-- Fresh Node-only dependency installation and the remaining legacy Python
-  builtin replacement. The DSH Native/Codex A2A Node adapter is now present; its validation scope is
-  described below. Other unmigrated builtin tools still use the old bridge.
+- A fresh full installation/proof of the current maintained Host graph, full
+  Electron/other-platform checks and real model/CLI regressions. Ordinary
+  Python builtin fallback has already been removed; Desktop Node Office and
+  resources have separate evidence. That does not prove every backend,
+  configuration or product combination; see [current status](native-migration-status.md).
 
 These are explicit remaining capabilities, not supported fallback paths.
 

@@ -72,8 +72,12 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       snapshotRevision: snapshot.revision, own: copy(snapshot.usage), descendant: copy(snapshot.descendantUsage),
       total: addUsage(snapshot.usage, snapshot.descendantUsage), final: terminal(snapshot.phase),
       incomplete, complete: terminal(snapshot.phase) && !incomplete } : null;
+    const a2aTasks = record?.intents.filter(intent => intent.kind === 'tool').flatMap(intent =>
+      (intent.payload.calls ?? []).filter(call => call.name === 'call_a2a_agent').map(call => ({ runId: snapshot.runId,
+        operationKey: intent.operationKey, callId: call.callId }))) ?? [];
     return { contract: STUDIO_NATIVE_RECOVERY_CONTRACT, agentId: request.agentId, sessionId: request.sessionId,
       runId, turn: admission ? inspected.turn : null, accounting,
+      ...(a2aTasks.length ? { a2aTasks } : {}),
       state: driving ? 'recovering' : !admission ? 'closed'
         : record?.snapshot.phase === 'interrupted' ? 'reconciliation_required' : applicable?.error ? 'failed' : 'available',
       phase: record?.snapshot.phase ?? (admission ? 'admitted' : null),

@@ -16,6 +16,10 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId }) {
       && ['available', 'recovering', 'reconciliation_required', 'failed', 'closed'].includes(value.state)
       && typeof value.canResume === 'boolean' && (!value.canResume || typeof value.runId === 'string' && value.runId.trim())
       && (!runId || value.runId === runId), '恢复记录与原会话或运行不一致，请刷新核对。');
+    if (value.a2aTasks !== undefined) check(Array.isArray(value.a2aTasks) && value.a2aTasks.length <= 10000
+      && value.a2aTasks.every(task => task?.runId === value.runId && ['runId', 'operationKey', 'callId']
+        .every(key => typeof task[key] === 'string' && task[key].trim() && task[key].length <= 256)),
+    '远端任务清单与原运行不一致，请刷新核对。');
     const accounting = value.accounting;
     if (accounting != null) {
       check(accounting.contract === 'agentkit.studio-native-usage/v1' && accounting.runId === value.runId

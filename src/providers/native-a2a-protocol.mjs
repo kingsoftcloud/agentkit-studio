@@ -56,9 +56,12 @@ export function createA2AProjection(scopeId, checkpoint = null) {
     const next = a2aState(value.state);
     invariant(!a2aTerminal.has(state.state) || state.state === next, 'A2A_TERMINAL_STATE_CONFLICT');
     state.state = next;
+    if (['input_required', 'auth_required'].includes(next)) state.pause = value.message ? copy(value.message) : null;
+    else delete state.pause;
     if (value.message) message(value.message);
   }
   function task(value) {
+    invariant(object(value) && Array.isArray(value.artifacts ?? []) && Array.isArray(value.history ?? []), 'A2A_TASK_INVALID');
     bind(value.id, value.contextId);
     const present = new Set((value.artifacts ?? []).map(artifact => `${scopeId}:${canonical(['artifact', artifact.artifactId])}`));
     for (const key of Object.keys(state.artifacts)) if (!present.has(key)) {
@@ -73,6 +76,7 @@ export function createA2AProjection(scopeId, checkpoint = null) {
     }
     for (const entry of value.history ?? []) message(entry);
     status(value.status);
+    invariant(Buffer.byteLength(canonical(state)) <= 8 * 1024 * 1024, 'A2A_CHECKPOINT_LIMIT');
   }
   function apply(payload, eventId = '') {
     invariant(object(payload), 'A2A_WIRE_PAYLOAD_INVALID');

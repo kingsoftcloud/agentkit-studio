@@ -1,6 +1,16 @@
+import { validateNativeA2aControlRequest } from '../services/native-a2a-control.mjs';
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-a2a-control') {
+            validateNativeA2aControlRequest(payload);
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native A2A controls unavailable'), { code: 'STUDIO_NATIVE_A2A_CONTROL_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: await host.controlA2aTask(payload, signal) };
+        }
         if (endpoint === 'sessions/native-recovery-status' || endpoint === 'sessions/native-recovery-resume') {
             const resume = endpoint === 'sessions/native-recovery-resume';
             if (!payload || Array.isArray(payload) || Object.keys(payload).some(key => !['agentId', 'sessionId', 'runId'].includes(key))

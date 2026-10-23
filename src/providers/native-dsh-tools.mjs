@@ -524,6 +524,16 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     componentContract: builtinNames.has('component_status') ? NATIVE_COMPONENT_TOOLS_CONTRACT : null,
     a2aBinding: a2a ? { ...a2a.binding, toolContract: NATIVE_A2A_TOOLS_CONTRACT } : null,
+    async controlA2aTask({ scope, sessionId, ...request }, { assertControl, authorizeControl }) {
+      invariant(!closed && a2a && scope?.agentId === config.agentId, 'studio_native_a2a_control_unavailable');
+      invariant(typeof assertControl === 'function' && typeof authorizeControl === 'function', 'A2A_CONTROL_AUTHORITY_REQUIRED');
+      const owner = a2a.forSession({ scope, sessionId, stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace,
+        // A product control owns new authority, never the retired tool fence.
+        assertCurrent: () => false, assertControl: input => { invariant(!closed, 'studio_native_tools_closed'); return assertControl(input); },
+        authorizeControl });
+      try { return await owner.control.execute(request); }
+      finally { owner.close(); }
+    },
     remoteSkillBinding: remoteSkills?.binding ?? null,
     skillManagementBinding: management ? structuredClone(management.binding) : null,
     knowledgeBinding: knowledge ? structuredClone(knowledge.binding) : null,

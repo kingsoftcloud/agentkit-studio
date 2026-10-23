@@ -185,6 +185,7 @@ export function createStudioHostRemote(options = {}) {
     nativeChildHistory: (payload, signal) => nativeChildOperation('sessions/native-child-history', payload, signal),
     nativeRecoveryStatus: (payload, signal) => nativeChildOperation('sessions/native-recovery-status', payload, signal),
     resumeNativeRun: (payload, signal) => nativeChildOperation('sessions/native-recovery-resume', payload, signal),
+    controlNativeA2aTask: (payload, signal) => nativeChildOperation('sessions/native-a2a-control', payload, signal),
     nativeChildResult: (payload, signal) => nativeChildOperation('sessions/native-child-result', payload, signal),
     promoteNativeChild: (payload, signal) => nativeChildOperation('sessions/native-child-promote', payload, signal),
     sendNativeChildInput: (payload, signal) => nativeChildOperation('sessions/native-child-send', payload, signal),

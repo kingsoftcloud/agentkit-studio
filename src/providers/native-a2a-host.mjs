@@ -8,12 +8,13 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { isIP } from 'node:net';
 import aws4 from 'aws4';
-import { canonical, copy, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, scopeKey, parseNativeJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { atomicPrivate, privateDirectory, readAll, tryLock } from '../../packages/agentkit-harness/src/native/local-command-state.mjs';
 import { isBlockedAddress } from '../../packages/agentkit-harness/src/native/web-tools.mjs';
 import { hostFetch } from '../http-fetch.mjs';
 import { createSsrfPinnedFetch } from './native-dsh-web.mjs';
 import { a2aSse, a2aTerminal, createA2AProjection, NATIVE_A2A_PROTOCOL } from './native-a2a-protocol.mjs';
+import { createA2ATaskControl } from './native-a2a-controls.mjs';
 
 export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
 export const STUDIO_DSH_A2A_HOST = 'agentkit.studio-dsh-a2a-host/v1';
@@ -121,7 +122,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         version_id: String(item.VersionId ?? item.LatestVersionId ?? ''), card_sha256: String(item.CardSha256 ?? ''),
         source: String(item.Source ?? 'hosted'), url: String(item.AgentCard?.supportedInterfaces?.[0]?.url ?? ''), card: copy(item.AgentCard ?? {}) }));
   }
-  function forSession({ scope, agentId, agentRevision, buildId = null, sessionId, stateRoot, workspaceRoot, assertCurrent }) {
+  function forSession({ scope, agentId, agentRevision, buildId = null, sessionId, stateRoot, workspaceRoot, assertCurrent,
+    assertControl, authorizeControl }) {
     if (dsh) invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
       && (buildId === null || typeof buildId === 'string' && buildId.trim()), 'A2A_DSH_OWNER_REQUIRED');
     else scopeKey(scope);
@@ -139,8 +141,11 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       const current = lstatSync(directory);
       invariant(current.ino === pinnedDirectory.ino && current.dev === pinnedDirectory.dev, 'A2A_OWNER_CHANGED');
     }
-    function check(native, signal) {
+    function checkOwner(signal) {
       invariant(!closed && !sessionLifetime.signal.aborted, 'A2A_OWNER_CLOSED'); storageGuard(); signal.throwIfAborted();
+    }
+    function check(native, signal) {
+      checkOwner(signal);
       invariant(native.sessionId === sessionId && (dsh ? native.agentId === agentId && native.agentRevision === agentRevision
         && native.buildId === buildId && !['scope', 'runId', 'turnId', 'executionFence', 'taskChainId', 'parentRunId'].some(key => Object.hasOwn(native, key))
         : canonical(native.scope) === canonical(fixedScope)), 'A2A_SCOPE_CONFLICT');
@@ -178,7 +183,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
     function file(request) { return join(directory, `${hash(request.identity)}.json`); }
     function readIdentity(identity) {
       storageGuard(); const path = file({ identity }); if (!existsSync(path)) return null;
-      const record = JSON.parse(readAll(path));
+      invariant(lstatSync(path).size <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
+      const record = parseNativeJson(readAll(path));
       invariant(record.contract === contract && canonical(record.owner) === canonical(owner)
         && canonical(record.request.identity) === canonical(identity) && record.requestDigest === hash(record.request)
         && ['sending', 'unknown', 'terminal', 'paused'].includes(record.phase), 'A2A_CALL_IDENTITY_CONFLICT');
@@ -189,15 +195,19 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       invariant(record.requestDigest === hash(request) && canonical(record.request) === canonical(request), 'A2A_CALL_IDENTITY_CONFLICT');
       return record;
     }
-    function save(request, record) { storageGuard(); atomicPrivate(file(request), canonical(record) + '\n'); }
-    async function wire(request, method, params, signal, streaming = false) {
-      check(request[dsh ? 'dsh' : 'native'], signal);
+    function save(request, record) {
+      storageGuard(); const bytes = canonical(record) + '\n';
+      invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
+      atomicPrivate(file(request), bytes);
+    }
+    async function wire(request, method, params, signal, streaming = false, authority = () => check(request[dsh ? 'dsh' : 'native'], signal)) {
+      authority();
       const url = endpoint(request.route.url, allowPrivate), rpc = request.route.protocolBinding === 'JSONRPC';
       const id = randomUUID();
       const rest = method === 'GetTask' ? { method: 'GET', path: `/tasks/${encodeURIComponent(params.id)}` }
         : method === 'CancelTask' ? { method: 'POST', path: `/tasks/${encodeURIComponent(params.id)}:cancel` }
         : { method: 'POST', path: streaming ? '/message:stream' : '/message:send' };
-      const body = rpc ? JSON.stringify({ jsonrpc: '2.0', id, method, params }) : rest.method === 'GET' ? undefined : JSON.stringify(params);
+      const body = rpc ? canonical({ jsonrpc: '2.0', id, method, params }) : rest.method === 'GET' ? undefined : canonical(params);
       const target = rpc ? url : new URL(url.href.replace(/\/$/u, '') + rest.path);
       const response = await pinned.fetch(target, { method: rpc ? 'POST' : rest.method, headers: {
         'Content-Type': 'application/json', Accept: streaming ? 'text/event-stream' : 'application/json',
@@ -205,14 +215,28 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         // calls; cloud signing credentials are never sent to a card endpoint.
         ...(token && request.route.source === 'hosted' ? { Authorization: `Bearer ${token}` } : {}) }, body, redirect: 'error',
         signal: AbortSignal.any([signal, lifetime.signal, sessionLifetime.signal]) });
-      invariant(response.ok, 'A2A_REMOTE_HTTP_FAILED');
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        invariant(false, method === 'CancelTask' && [405, 501].includes(response.status) ? 'A2A_CANCEL_UNSUPPORTED' : 'A2A_REMOTE_HTTP_FAILED');
+      }
       const unwrap = payload => {
         if (!rpc) return payload;
-        invariant(payload?.jsonrpc === '2.0' && payload.id === id && !payload.error && payload.result, 'A2A_JSONRPC_FAILED');
+        invariant(payload?.jsonrpc === '2.0' && payload.id === id, 'A2A_JSONRPC_FAILED');
+        if (payload.error) {
+          // Only protocol codes are classified. Remote error messages/data may
+          // contain credentials and never become local diagnostics.
+          const code = method === 'CancelTask' && [-32601, -32002, -32004].includes(payload.error.code)
+            ? 'A2A_CANCEL_UNSUPPORTED' : 'A2A_JSONRPC_FAILED';
+          invariant(false, code);
+        }
+        invariant(payload.result, 'A2A_JSONRPC_FAILED');
         return payload.result;
       };
       return streaming ? { stream: a2aSse(response.body, signal), unwrap } : unwrap(await jsonBody(response));
     }
+    const control = createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
+      signal: AbortSignal.any([lifetime.signal, sessionLifetime.signal]), readIdentity, save, wire,
+      lock: identity => tryLock(join(directory, `${hash(identity)}.sqlite`)) });
     async function dispatch({ request, signal }) {
       check(request[dsh ? 'dsh' : 'native'], signal);
       const release = tryLock(join(directory, `${hash(request.identity)}.sqlite`));
@@ -226,6 +250,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         record = { contract, owner, request, requestDigest: hash(request),
           phase: 'sending', platformTaskId: `a2a-task-${randomUUID().replaceAll('-', '')}`,
           createdAt: Date.now(), projection: projection.snapshot() };
+        record.deadlineAt = record.createdAt + Math.min(90000, Math.ceil((request.spec.timeout_seconds ?? 90) * 1000));
         check(request[dsh ? 'dsh' : 'native'], signal); save(request, record);
         // Once this fsynced marker exists, no replacement may send again,
         // including a crash between intent commit and entering fetch().
@@ -271,7 +296,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
     }
     const exposurePlan = { assertGenericTargetAllowed(target) { invariant(specs.some(spec => spec.target_agent_id === target), 'A2A_TARGET_NOT_BOUND'); } };
     return { discovery: { list: input => list({ ...input, signal: AbortSignal.any([input.signal, sessionLifetime.signal]) }) },
-      invocation: { resolve: resolveCall, dispatch }, exposurePlan,
+      invocation: { resolve: resolveCall, dispatch }, control, exposurePlan,
       close: () => sessionLifetime.abort(new Error('A2A_SESSION_CLOSED')),
       bindingDescription: { sourceRef: 'ksadk-python:355059d', sourceDigest: hash({ sourceDigest, hostBinding: binding.bindingDigest }), spaceId, planDigest,
         transport: NATIVE_A2A_PROTOCOL, version: '1.0' } };
