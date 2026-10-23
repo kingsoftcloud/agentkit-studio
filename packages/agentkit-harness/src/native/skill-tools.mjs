@@ -14,7 +14,7 @@ import { canonical, copy, invariant, scopeKey, toolInputRejection } from '../../
 import { realpath, lstat, stat, readdir } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
-export const SKILL_TOOL_CONTRACT = 'agentkit.native-skill-tools/v1';
+export const SKILL_TOOL_CONTRACT = 'agentkit.native-skill-tools/v2';
 
 function uncertainOutcome(content) {
   const result = { ...content, uncertain: true };
@@ -164,15 +164,46 @@ function validateRequestIdentity(request) {
 }
 
 /** Snapshot the full request identity + call + definition into a sealed
- * string for drift comparison. Re-reads from the request object, not
- * destructured locals. */
+ *  string for drift comparison. Canonicalizes ALL enumerable own keys of the
+ *  request body excluding `signal` (which is not JSON-cloneable). This
+ *  catches drift in any field — budget, interaction, tokens, tools, or
+ *  future fields — without manually enumerating a subset. */
 function snapshotRequest(request, internalDefinition) {
-  const { scope, runId, sessionId, turnId, buildId, parentRunId, taskChainId, operationKey, executionFence, call, definition } = request;
-  return canonical({
-    scope: scopeKey(scope), runId, sessionId, turnId, buildId, parentRunId, taskChainId, operationKey, executionFence,
-    call: canonical(call), definition: definition ? canonical(definition) : null,
-    internalDefinition: canonical(internalDefinition),
+  const body = Object.create(null);
+  for (const key of Object.keys(request)) {
+    if (key === 'signal') continue;
+    const value = request[key];
+    if (value !== undefined) body[key] = copy(value);
+  }
+  return canonical({ body, internalDefinition });
+}
+
+/** Race an async operation against an AbortSignal. Removes the abort
+ *  listener in finally to prevent leaks. A late rejection from the
+ *  operation is observed via the returned promise. */
+function raceAbort(signal, operation) {
+  if (signal.aborted) return Promise.reject(Object.assign(new Error('REQUEST_CANCELLED'), { code: 'REQUEST_CANCELLED' }));
+  let listener = null;
+  const stopped = new Promise((_, reject) => {
+    // Let a result already settled by the dispatching callback retain known
+    // remote identity. A callback that never settles still loses this race.
+    listener = () => queueMicrotask(() => reject(Object.assign(new Error('REQUEST_CANCELLED'), { code: 'REQUEST_CANCELLED' })));
+    signal.addEventListener('abort', listener, { once: true });
   });
+  let pending;
+  try { pending = Promise.resolve(operation()); } catch (error) { pending = Promise.reject(error); }
+  return Promise.race([pending, stopped]).finally(() => {
+    if (listener) signal.removeEventListener('abort', listener);
+  });
+}
+
+function frozenCopy(value) {
+  const result = copy(value);
+  const freeze = item => {
+    if (item && typeof item === 'object') { Object.values(item).forEach(freeze); Object.freeze(item); }
+    return item;
+  };
+  return freeze(result);
 }
 
 // --- ToolPort factory --------------------------------------------------------
@@ -236,6 +267,9 @@ export function createNativeSkillTools({
           if (verdict && typeof verdict.then === 'function') Promise.resolve(verdict).catch(() => {});
           if (verdict !== true)
             return { code: 'NATIVE_SKILL_AUTHORITY_EXPIRED', message: 'The original tool intent is no longer current' };
+          if (originalSignal.aborted) return { code: 'REQUEST_CANCELLED', message: 'Cancelled during authorization check' };
+          if (request.signal !== originalSignal || snapshotRequest(request, internalDef) !== sealed)
+            return { code: 'NATIVE_SKILL_DRIFT', message: 'Request changed inside authorization check' };
         } catch {
           return { code: 'NATIVE_SKILL_AUTHORITY_EXPIRED', message: 'The original tool intent cannot be verified' };
         }
@@ -453,28 +487,27 @@ export function createNativeSkillTools({
     let result;
     try {
       const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
+      // effectStarted is set only immediately before the real backend call,
+      // not before validation or guard checks.
       effectStarted = true;
       ctx.effectStarted = true;
-      result = await executeWorkflow({
+      result = await raceAbort(guard.signal, () => executeWorkflow({
         workflowPrompt: prompt, skillNames: names, skillSpaceIds: allSpaceIds, env: {}, timeout: 900,
         signal: guard.signal, scope: ctx.scope, runId: ctx.runId, sessionId: ctx.sessionId,
         turnId: ctx.turnId, buildId: ctx.buildId, parentRunId: ctx.parentRunId,
         taskChainId: ctx.taskChainId, operationKey: ctx.operationKey,
         executionFence: ctx.executionFence, callId: ctx.callId, call: ctx.call,
         lockedDefinition: copy(ctx.lockedDefinition), approval, assertCurrent: () => guard.assertCurrent(),
-      });
+      }));
     } catch (error) {
       // After effectStarted, any throw is uncertain — the workflow may have
-      // had side effects before the throw. Approval-required is NOT uncertain.
+      // had side effects before the throw. This includes approval_required:
+      // the workflow may have started side effects before requesting approval,
+      // so we cannot prove no side effects occurred.
       if (effectStarted) {
-        if (error.code === 'approval_required' || error.approvalRequired) {
-          if (!error.interactionId) return { ok: false, status: 'uncertain', uncertain: true, error_type: 'invalid_skill_approval' };
-          return { ok: false, status: 'approval_required', error_type: 'approval_required',
-            interactionId: error.interactionId || '', error_message: error.message || 'Approval required' };
-        }
-        return { ok: false, status: 'uncertain', error_type: 'skill_runtime_uncertain',
-          error_message: error.message || 'Skill runtime outcome is unknown; the workflow may have side effects.',
-          uncertain: true };
+        return { ok: false, status: 'uncertain', uncertain: true,
+          error_type: error.code === 'approval_required' || error.approvalRequired ? 'invalid_skill_approval' : 'skill_runtime_uncertain',
+          error_message: error.message || 'Skill runtime outcome is unknown; the workflow may have side effects.' };
       }
       return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error) };
     }
@@ -497,11 +530,13 @@ export function createNativeSkillTools({
         error_message: `skill runtime returned ${typeof result}, expected object` };
     }
 
-    // Approval-required result: preserve as-is.
+    // Approval-required result from backend: cannot prove no side effects —
+    // the backend may have started side effects before requesting approval.
+    // Return uncertain, not approval_required.
     if (result.approval_required || result.status === 'approval_required') {
-      if (typeof result.interactionId !== 'string' || !result.interactionId.trim())
-        return { ok: false, status: 'uncertain', uncertain: true, error_type: 'invalid_skill_approval' };
-      return { ...result, ok: false, status: 'approval_required' };
+      return { ok: false, status: 'uncertain', uncertain: true, error_type: 'invalid_skill_approval',
+        interactionId: typeof result.interactionId === 'string' ? result.interactionId : '',
+        error_message: result.error_message || 'Skill runtime requested approval after potential side effects.' };
     }
 
     // Uncertain result.
@@ -593,10 +628,10 @@ export function createNativeSkillTools({
             const initial = guard.check();
             if (initial) return { status: 'error', content: { ...initial, executed: false } };
 
-            // --- explicit authorization callback ---
+            // --- explicit authorization callback (raced against signal) ---
             let decision;
             try {
-              decision = await authorize(call.name, { call, signal: guard.signal, scope, runId, sessionId, turnId, buildId, parentRunId, taskChainId, operationKey, executionFence, definition: internalDef });
+              decision = await raceAbort(guard.signal, () => authorize(call.name, { call, signal: guard.signal, scope, runId, sessionId, turnId, buildId, parentRunId, taskChainId, operationKey, executionFence, definition: internalDef }));
             } catch (error) {
               if (guard.signal.aborted) return { status: 'error', content: { code: 'REQUEST_CANCELLED', executed: false, message: 'Cancelled during authorization' } };
               return { status: 'error', content: { code: error.code || 'NATIVE_SKILL_ERROR', executed: false, message: error.message || String(error) } };
@@ -618,10 +653,20 @@ export function createNativeSkillTools({
                 taskChainId: request.taskChainId, operationKey: request.operationKey,
                 executionFence: request.executionFence, callId: request.call.callId,
                 call: copy(request.call), lockedDefinition: copy(internalDef), guard, effectStarted: false };
-            const locator = { scope: ctx.scope, runId: ctx.runId, sessionId: ctx.sessionId, operationKey: ctx.operationKey };
+            // Deep-copy and freeze the locator BEFORE any handler callback can
+            // mutate ctx.scope/call/etc. The backend receives ctx which may be
+            // mutated, but the locator retains the original sealed values.
+            const locator = frozenCopy({ scope: ctx.scope, runId: ctx.runId, sessionId: ctx.sessionId,
+                turnId: ctx.turnId, buildId: ctx.buildId, parentRunId: ctx.parentRunId,
+                taskChainId: ctx.taskChainId, operationKey: ctx.operationKey,
+                executionFence: ctx.executionFence, callId: ctx.callId, call: ctx.call });
             try {
               guard.signal.throwIfAborted();
-              const result = await handlers[call.name](ctx.call.arguments ?? {}, ctx);
+              // executeSkills owns the backend race and retains an already
+              // known runtime locator on cancellation. Racing it a second
+              // time here could discard that evidence before it returns.
+              const invoke = () => handlers[call.name](ctx.call.arguments ?? {}, ctx);
+              const result = await (call.name === 'execute_skills' ? invoke() : raceAbort(guard.signal, invoke));
               const late = guard.check();
               if (late) return ctx.effectStarted
                 ? uncertainOutcome({ ...result, ...locator, error_type: late.code })

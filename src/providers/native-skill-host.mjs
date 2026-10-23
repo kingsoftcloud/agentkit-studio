@@ -10,6 +10,7 @@ import { hostFetch } from '../http-fetch.mjs';
 import { createNativeSkillService } from './native-skill-service.mjs';
 import { createNativeSkillLoader } from './native-skill-loader.mjs';
 import { createStudioNativeSkills } from './native-dsh-skills.mjs';
+import { SKILL_TOOL_CONTRACT } from '../../packages/agentkit-harness/src/native/skill-tools.mjs';
 import { nativeSkillConnectionSettings, createExplicitNativeSkillClient } from './native-skill-connection.mjs';
 
 export const STUDIO_NATIVE_REMOTE_SKILLS = 'agentkit.studio-native-remote-skills/v1';
@@ -46,7 +47,7 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
   invariant(connection?.client && /^[a-f0-9]{64}$/u.test(connection.bindingDigest), 'NATIVE_SKILL_CONNECTION_REQUIRED');
   const publicAllowlist = ids(csv(env, 'KSADK_PUBLIC_SKILL_ALLOWLIST'));
   const agentRevision = config.agentRevision ?? 1;
-  const binding = Object.freeze({ contract: STUDIO_NATIVE_REMOTE_SKILLS, userSpaceIds: userSpaces,
+  const binding = Object.freeze({ contract: STUDIO_NATIVE_REMOTE_SKILLS, toolContract: SKILL_TOOL_CONTRACT, userSpaceIds: userSpaces,
     publicSpaceIds: publicSpaces, publicAllowlist, serviceBindingDigest: connection.bindingDigest,
     runtime: { backend: 'disabled', enabled: false } });
   const bindingDigest = hash(binding), lifetime = new AbortController();

@@ -124,14 +124,16 @@ test('backend throw after effectStarted → uncertain', async () => {
   assert.equal(r.content.uncertain, true);
 });
 
-test('approval_required result → preserved, not uncertain', async () => {
-  const s = setup({ executeWorkflow: async () => ({ approval_required: true, interactionId: 'appr-1' }) });
+test('dispatched workflow approval result preserves interaction evidence without claiming no execution', async () => {
+  let effects = 0;
+  const s = setup({ executeWorkflow: async () => { effects++; return { approval_required: true, interactionId: 'appr-1' }; } });
   const r = await s.exec('execute_skills', { workflow_prompt: 'test' });
-  assert.equal(r.status, 'approval_required');
-  assert.equal(r.interactionId, 'appr-1');
-  assert.equal(r.content.approval_required, true);
+  assert.equal(effects, 1);
+  assert.equal(r.status, 'uncertain');
+  assert.equal(r.content.error_type, 'invalid_skill_approval');
   assert.equal(r.content.interactionId, 'appr-1');
-  assert.equal(r.content.uncertain, undefined);
+  assert.equal(r.content.uncertain, true);
+  assert.equal(r.content.executed, undefined);
 });
 
 // --- space binding ---

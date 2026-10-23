@@ -95,7 +95,7 @@ test('known workflow failure is executed while pre-dispatch denial is not', asyn
   assert.equal(denied.content.executed, false);
 });
 
-test('Native approval envelopes preserve interaction identity before dispatch and from backend', async () => {
+test('approval before dispatch preserves interaction while backend approval after dispatch remains uncertain', async () => {
   let calls = 0;
   const f = setup({ authorize: async () => ({ status: 'approval_required', interactionId: 'consent' }),
     executeWorkflow: async () => { calls++; } });
@@ -104,7 +104,9 @@ test('Native approval envelopes preserve interaction identity before dispatch an
   assert.equal(calls, 0);
   const g = setup({ executeWorkflow: async () => ({ status: 'approval_required', interactionId: 'remote-consent' }) });
   const result = await g.port().execute(g.request('execute_skills', { workflow_prompt: 'run' }));
-  assert.equal(result.status, 'approval_required'); assert.equal(result.interactionId, 'remote-consent');
+  assert.equal(result.status, 'uncertain'); assert.equal(result.content.interactionId, 'remote-consent');
+  assert.equal(result.content.operationKey, 'operation'); assert.equal(result.content.executed, undefined);
+  assert.equal(result.content.error_type, 'invalid_skill_approval');
 });
 
 test('provider binds Agent revision and Build alongside trusted session authority', async () => {

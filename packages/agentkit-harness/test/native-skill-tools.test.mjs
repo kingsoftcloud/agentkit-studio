@@ -180,14 +180,17 @@ test('cancel after actual workflow dispatch preserves uncertain locator', async 
   assert.notEqual(r.content.executed, false);
 });
 
-test('approval_required result → preserved, not uncertain', async () => {
-  const { tools } = makeTools({ executeWorkflow: async () => ({ approval_required: true, interactionId: 'appr-1' }) });
+test('a dispatched backend cannot claim a clean approval pause after side effects', async () => {
+  let effects = 0;
+  const { tools } = makeTools({ executeWorkflow: async () => { effects++; return { approval_required: true, interactionId: 'appr-1' }; } });
   const r = await exec(tools, 'execute_skills', { workflow_prompt: 'test' });
-  assert.equal(r.status, 'approval_required');
-  assert.equal(r.interactionId, 'appr-1');
-  assert.equal(r.content.approval_required, true);
+  assert.equal(effects, 1);
+  assert.equal(r.status, 'uncertain');
+  assert.equal(r.content.error_type, 'invalid_skill_approval');
   assert.equal(r.content.interactionId, 'appr-1');
-  assert.equal(r.content.uncertain, undefined);
+  assert.equal(r.content.uncertain, true);
+  assert.equal(r.content.executed, undefined);
+  assert.equal(r.content.operationKey, 'op1');
 });
 
 test('execute_skills passes full call and definition to backend', async () => {
