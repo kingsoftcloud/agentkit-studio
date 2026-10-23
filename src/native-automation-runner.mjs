@@ -4,6 +4,24 @@ import { readNativeRequestEvents } from './native-request-history.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
 
+async function persistCompletedSession(persistence, session, signal) {
+  signal.throwIfAborted();
+  let abort;
+  const canceled = new Promise((_, reject) => {
+    abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    // whenIdle observes the SDK's in-memory terminal. The public flush must
+    // also persist turn/end before a presentation-only crash can lose it.
+    const flushed = await Promise.race([Promise.resolve().then(() => {
+      signal.throwIfAborted(); return persistence.flush(session);
+    }), canceled]);
+    signal.throwIfAborted();
+    if (flushed !== true) throw Object.assign(new Error('Completed Session is not durable'),
+      { code: 'AUTOMATION_SESSION_NOT_DURABLE', status: 409 });
+  } finally { signal.removeEventListener('abort', abort); }
+}
+
 export function createNativeAutomationRunner({ getService, admit, observe, selectModel, loadReplay, assertHostCompatible, timeoutMs = 300000, reuseSession = false } = {}) {
   const lanes = new Map();
   const service = name => {
@@ -42,6 +60,9 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (resolved.error) throw resolved.error;
     const agent = resolved.agent;
     signal.throwIfAborted();
+    const persistence = service('sessions');
+    if (typeof persistence.flush !== 'function') throw Object.assign(new Error('Session persistence unavailable'),
+      { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     // The command is a user action and would misattribute its approval notice.
     service('permissionPresets').set(agent.session, UNATTENDED_EXECUTION_POLICY.permissionMode);
     // Headless runs have no person to answer the Host's interactive approval UI.
@@ -58,6 +79,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
         signal.addEventListener('abort', onAbort, { once: true });
         agent.whenIdle().then(() => { signal.removeEventListener('abort', onAbort); resolve(); }, error => { signal.removeEventListener('abort', onAbort); reject(error); });
       });
+      await persistCompletedSession(persistence, agent.session, signal);
       let events;
       if (reuseSession) events = await readNativeRequestEvents(controller, sessionId, occurrenceId, signal);
       else {

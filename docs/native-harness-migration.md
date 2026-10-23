@@ -513,7 +513,11 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 
 实际保留 `portable-bundle.zip` 的打包验收发现：重复请求虽然没有重新执行模型和工具，但 Responses 丢失原工具输出项、输出项 ID 和创建时间。Frozen HTTP 现将完整响应及其公开 SSE 展示事件作为 `studio/runtime-response-projection` 扩展事实保存在原 DSH Session 日志，标记 `ignorable`，并等待公开 `sessions.flush` 明确成功后才发布完成。重复请求和 Host 重启后的回放保留原时间、输出项 ID、位置、工具结果、拒绝结果和用量。持久化失败或取消不得返回完成；已追加但 flush 失败的展示记录重试时必须再次确认持久化，不覆盖原记录。
 
-展示记录绑定原 Session、Agent、Build、响应句柄及输入和模型的指纹，仅用于交付。回放仍先核对原请求历史；展示记录不能授权创建新 Session、调用模型或执行工具。若执行已完成而尚无展示记录，则从持久请求事实恢复展示，不重新执行。该间隔的进程强杀验收仍需单独补齐。
+展示记录绑定原 Session、Agent、Build、响应句柄及输入和模型的指纹，仅用于交付。回放仍先核对原请求历史；展示记录不能授权创建新 Session、调用模型或执行工具。若执行已完成而尚无展示记录，则从持久请求事实恢复展示，不重新执行。
+
+真实故障验证进一步发现：SDK `whenIdle` 仅表示内存中的轮次已结束，响应展示追加前崩溃时 `turn/end` 可能尚未落盘，重启后返回 `CHANNEL_TURN_INCOMPLETE`。无人值守执行现必须在 `whenIdle` 后等待原 Session 的公开 `sessions.flush` 严格返回 `true`，才读取完成历史并开始交付。失败、未知返回值或取消不得报告完成，不合作的 flush 晚拒绝会被观察。
+
+`scripts/verify-studio-native-response-crash.mjs --source <built-maintained-dsh> --archive <Studio.tgz> --boundary <before-append|after-flush> --keep` 对实际 Host PID 发 SIGKILL 并确认原进程退出，在两个展示边界恢复：追加前没有展示记录时重建并落盘，落盘后复用原完整响应。杀前核对真实 SDK 完成终态，杀后要求 HTTP 200、原完整 Native SQLite 记录不变、重复 JSON 与所有已持久 SSE 展示事实相等、模型和工具不重新执行。原候选将 HTTP 500 计为通过的断言已替换，不能以零模型调用掩盖无法交付的响应。该验证使用保留归档的 Frozen HTTP、正式 SDK 和固定本地依赖图，不代表全新安装或全部迁移完成。
 
 `scripts/verify-studio-native-portable-runtime.mjs --source <built-maintained-dsh> --archive <Studio.tgz> --keep` 在 Node 26.5/22.19 的实际打包 Host 上验证：完整 JSON 暖/冷回放相等、暖/冷 SSE 相等、原 Native SQLite 记录不变、恰好两个 Run、每个 SDK 数字轮次与 Native 身份对应、工具意图/回执/公开调用按正式 Session delivery 身份配对、原 Build 的模型和权限不变。第一轮读、写入拒绝、回读共四次模型调用；重启后的新请求两次模型调用；回放零新调用。固定 DSH 为 `570ad6033c4d0954451ad8822ab47bfb2160ed4c`。五个受影响测试模块在两版本各 27 项通过；未跑全量。依赖仍来自固定本地图，不能作为全新安装、云端部署或全部迁移完成的证明。
 
