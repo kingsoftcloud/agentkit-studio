@@ -2180,12 +2180,74 @@
         "scripts/type-equiv.manifest.json"
       ],
       "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e"
+    },
+    {
+      "id": "051",
+      "file": "051-external-turn-idle-admission.patch",
+      "category": "lifecycle",
+      "risk": "high",
+      "dependsOn": [
+        "050"
+      ],
+      "removeWhen": "The pinned upstream provides equivalent exclusive idle Host admission, parked failure recovery and cancellation semantics.",
+      "contracts": [
+        "Optional dsh.external-turn-start/v1 capability and start(prepare, execute) exclusively reserve a true idle Agent without synthetic user input or a default model request.",
+        "Preparation and execution share the running phase, cancellation signal and whenIdle settlement. Existing ownership, open turns, maintenance and queued input refuse without mutations.",
+        "Host admission records the exact detached owner before execution; model or tool effects require its durable flush and independent current authority.",
+        "Failures preserve owned turns for explicit recovery. Failed unowned ending writes preserve the open turn, report both errors and park queued input. Disposal does not release queued human work.",
+        "Actual built Loader subprocess SIGKILL before and after ownership verifies persisted JSONL repair and same-turn recovery; no Session event format changes."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent",
+        "@deepseek-ai/dsh-agent-loop"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained SDK 570ad603; parent reviewed source and executed 38 related tests plus one disposal test on Node 26/22, real built Loader SIGKILL and TypeScript SDK external-turn snapshot replay. No upstream submission receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/external-turn-idle-start.spec.ts",
+          "packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts",
+          "packages/core/agent-loop/tests/external-turn-recovery.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn-loader.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/architecture.i18n.yaml",
+        "docs/architecture.md",
+        "docs/architecture.zh.md",
+        "docs/event-producer-consumer.md",
+        "docs/event-producer-consumer.zh.md",
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/core/agent-loop/README.i18n.yaml",
+        "packages/core/agent-loop/README.md",
+        "packages/core/agent-loop/README.zh.md",
+        "packages/core/agent-loop/package.json",
+        "packages/core/agent-loop/src/agent.ts",
+        "packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts",
+        "packages/core/agent-loop/tests/external-turn-idle-start.spec.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/idle-driver.ts",
+        "packages/core/agent/README.i18n.yaml",
+        "packages/core/agent/README.md",
+        "packages/core/agent/README.zh.md",
+        "packages/core/agent/src/runtime-types.ts",
+        "pnpm-lock.yaml"
+      ],
+      "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e"
     }
   ],
-  "patchedTree": "394dda034ed92d2ec62458e94ea7f8d9dabc49bd",
-  "patchedSourceSha256": "fb8f1ea5b94ceddb638ea46c17289f19a2b69815dcad8fa39d225ebf8cfdc0f4",
+  "patchedTree": "a2b92fbf875488e38c1709a6af13f4ca39ff5b9d",
+  "patchedSourceSha256": "fd0321b7996aed5e6f9ce58a62b0ec02a0c15380fd32ecba137b9a5a167cfc03",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "2a59202e46d4dc28d95ced00ccb07986723f2efac78b4aaff389b6a7b1c53226"
+    "sha256": "2003d450d2d4fd63819ea54946df5bb1c2fa196937efaccdaa54fb6b9eae360f"
   }
 }

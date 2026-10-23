@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "f4bccbf1c3b6c5dcf15a874424aca00f1895461c",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-numeric",
-  "tree": "394dda034ed92d2ec62458e94ea7f8d9dabc49bd",
-  "sourceSha256": "fb8f1ea5b94ceddb638ea46c17289f19a2b69815dcad8fa39d225ebf8cfdc0f4",
+  "headCommit": "570ad6033c4d0954451ad8822ab47bfb2160ed4c",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-idle",
+  "tree": "a2b92fbf875488e38c1709a6af13f4ca39ff5b9d",
+  "sourceSha256": "fd0321b7996aed5e6f9ce58a62b0ec02a0c15380fd32ecba137b9a5a167cfc03",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "c15cd3a7309f2859dfcbd6a6491a331416fc0747237e66767de6faa838a6ec05"
+    "sha256": "05ee588646617d9c5a13b313bfea9ba80b27c4968c7cf6858765f7dfc113483e"
   },
   "commits": [
     {
@@ -268,6 +268,12 @@
       "file": "050-external-turn-ownership.patch",
       "commit": "f4bccbf1c3b6c5dcf15a874424aca00f1895461c",
       "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e"
+    },
+    {
+      "id": "051",
+      "file": "051-external-turn-idle-admission.patch",
+      "commit": "570ad6033c4d0954451ad8822ab47bfb2160ed4c",
+      "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e"
     }
   ]
 }
