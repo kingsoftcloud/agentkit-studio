@@ -599,8 +599,8 @@ ZIP 加载器。Host 固定服务与凭据并把不透明摘要纳入恢复配�
 真实 HTTP、NativeKernel/SQLite 与 Host 组件状态的四个定向模块，在 Node 26.5.0 /
 22.19.0 各通过 57 项、无失败或跳过，契约类型检查通过；未运行全量套件。
 完整配置、证据边界与未完成能力见 [native-skills.md](native-skills.md)。
-当前 `execute_skills` 仍明确未启用；这次接线不表示工作流、全部 Frozen/部署入口、
-legacy Python bridge 替换或全新无 Python 安装已经完成。
+后续已接通显式本地 Node `execute_skills`，见本文末节；该接线不表示 E2B Skill、
+全部 Frozen/部署入口、legacy Python bridge 替换或全新无 Python 安装已经完成。
 
 ## A2A 的实际打包 Host 与冷历史
 
@@ -612,3 +612,15 @@ JSONRPC/SSE 服务通信；两个模型请求、一次发现和一次发送均�
 执行事件和工具准入保持原值，回答与终态轮次仍在历史中。具体命令及证据范围见
 [native-a2a.md](native-a2a.md)。这仍不覆盖线上服务、全新安装、Frozen 部署及尚未实现的
 核对/继续/远端取消等产品能力。
+
+## Skills 本地 Node 工作流接通
+
+当前显式本地 Skill 后端已接入 Native 的正式 `execute_skills`、权限管线和状态投影。
+复用现有 Studio 服务客户端、解包器、本地 SkillSource 与独立命令监督器；纯本地
+Skill 不需要远程 Skill 服务。每条脚本命令执行前核验原意图和权限，执行意图及
+命令定位先落盘，重复调用和宿主 SIGKILL 后的未知调用不会自动重跑。
+
+工具契约升级为 `agentkit.native-skill-tools/v3`，派发前保留原 runtime/task 定位。
+定向范围与配置见 [native-skills.md](native-skills.md)。八个相关模块在 Node 26.5.0 /
+22.19.0 各通过 144 项，未运行全量；后续微调仅重跑受影响模块。该结果不表示
+E2B Skill、所有产品核对/部署入口、legacy Python bridge 或全新安装已经完成。

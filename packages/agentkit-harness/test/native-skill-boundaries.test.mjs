@@ -359,3 +359,31 @@ test('a request key matching an internal snapshot label is still sealed', async 
   const result = await port.tools.execute(req);
   assert.equal(result.content.code, 'NATIVE_SKILL_DRIFT');
 });
+
+test('the reserved runtime locator survives cancellation of a non-cooperative workflow', async () => {
+  const backend = gate(), controller = new AbortController();
+  const locator = { runtime_id: 'local-skill:original', task_id: 'a'.repeat(64) };
+  const h = setup({ executeWorkflow: () => backend.invoke(), locateWorkflow: () => locator });
+  const pending = h.execute('execute_skills', { workflow_prompt: 'test' }, { signal: controller.signal });
+  await backend.entered; controller.abort();
+  const result = await within(pending, 500);
+  assert.equal(result.status, 'uncertain'); assert.equal(result.content.runtime_id, locator.runtime_id);
+  assert.equal(result.content.task_id, locator.task_id); assert.equal(result.content.runId, 'run');
+  backend.reject(new Error('late backend rejection')); await new Promise(resolve => setImmediate(resolve));
+});
+
+test('a backend cannot replace the reserved runtime or command identity with a foreign result', async () => {
+  const h = setup({ locateWorkflow: () => ({ runtime_id: 'original', task_id: 'a'.repeat(64) }),
+    executeWorkflow: async () => ({ runtime_id: 'foreign', task_id: 'b'.repeat(64), exit_code: 0, ok: true }) });
+  const result = await h.execute('execute_skills', { workflow_prompt: 'test' });
+  assert.equal(result.status, 'uncertain'); assert.equal(result.content.runtime_id, 'original'); assert.equal(result.content.task_id, 'a'.repeat(64));
+});
+
+test('a rejecting asynchronous locator cannot authorize workflow dispatch through synchronous identity fields', async () => {
+  let calls = 0;
+  const locator = Object.assign(Promise.reject(new Error('locator rejected')), { runtime_id: 'original', task_id: 'a'.repeat(64) });
+  const h = setup({ locateWorkflow: () => locator, executeWorkflow: async () => { calls++; return { exit_code: 0, ok: true }; } });
+  const result = await h.execute('execute_skills', { workflow_prompt: 'test' });
+  assert.equal(result.status, 'uncertain'); assert.equal(calls, 0);
+  await new Promise(resolve => setImmediate(resolve));
+});

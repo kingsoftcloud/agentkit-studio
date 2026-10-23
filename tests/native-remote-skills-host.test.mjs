@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canonical, NativeKernel, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
@@ -15,17 +15,21 @@ import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-s
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createNativeSkillConnection, prepareNativeSkillHost } from '../src/providers/native-skill-host.mjs';
 import { createZip } from '../src/zip.mjs';
+import { runtimeSkill } from '../src/skill-files.mjs';
 
 const instructions = '---\nname: alpha\ndescription: Alpha task\n---\n# Alpha\nRead the supplied JSON.';
 const zip = createZip([{ name: 'SKILL.md', data: instructions }, { name: 'scripts/run.mjs', data: 'console.log(42)' }]);
 const sha = createHash('sha256').update(zip).digest('hex');
 const final = () => ({ kind: 'final_candidate', text: 'Done.', toolCalls: [], usage: emptyUsage() });
-async function setup(t, { wrongHash = false, denied = false, rest = false } = {}) {
+async function setup(t, { wrongHash = false, denied = false, rest = false, workflow = false, localOnly = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'remote-skills-host-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot);
   const stateDir = join(root, 'state'), filename = join(root, 'runs.sqlite');
   let store = new SqliteRunStore(filename), gateway, approvals = 0, modelCalls = 0;
   const requests = [], outputs = [], registry = new Map(), agent = { session: { id: 'session' } };
+  const archive = workflow ? createZip([{ name: 'SKILL.md', data: instructions }, { name: 'scripts/run-workflow.sh',
+    data: 'printf "Executed in Native Node runtime" > "$KSADK_SKILL_OUTPUT_DIR/result.txt"\nprintf "artifact=artifacts/result.txt\\n"' }]) : zip;
+  const archiveSha = createHash('sha256').update(archive).digest('hex');
   const server = createServer((req, res) => {
     requests.push({ url: req.url, headers: req.headers });
     const saved = store.load(scope, 'run');
@@ -34,7 +38,7 @@ async function setup(t, { wrongHash = false, denied = false, rest = false } = {}
     assert.equal(intent.status, 'running'); assert.equal(intent.claimedFence, saved.lease.fence);
     if (req.url.startsWith('/archive')) {
       assert.equal(req.headers.authorization, undefined, 'cloud credentials cannot accompany archive downloads');
-      res.end(zip); return;
+      res.end(archive); return;
     }
     assert.equal(req.method, 'GET');
     if (rest) {
@@ -51,7 +55,7 @@ async function setup(t, { wrongHash = false, denied = false, rest = false } = {}
       assert.equal(url.searchParams.get('SpaceId'), 'space');
       assert.equal(url.searchParams.get('PageNumber'), rest ? null : '1');
       data = { SkillSpaceId: 'space', TotalCount: 1, Skills: [{ SkillId: 'skill-alpha', VersionId: 'v1', Name: 'alpha',
-        Description: 'Alpha task', Status: 'active', ContentHash: `sha256:${wrongHash ? '0'.repeat(64) : sha}` }] };
+        Description: 'Alpha task', Status: 'active', ContentHash: `sha256:${wrongHash ? '0'.repeat(64) : archiveSha}` }] };
     } else {
       assert.equal(action, 'GetSkillDownloadUrl'); assert.equal(url.searchParams.get('SkillId'), 'skill-alpha');
       assert.equal(url.searchParams.get('VersionId'), 'v1');
@@ -86,9 +90,16 @@ async function setup(t, { wrongHash = false, denied = false, rest = false } = {}
         catch (error) { return { isError: true, content: [{ type: 'text', text: error.code ?? error.message }] }; }
       },
     } };
-  const config = { agentId: scope.agentId, agentRevision: 1, skillSpaceIds: ['space'] };
+  const config = { agentId: scope.agentId, agentRevision: 1, skillSpaceIds: localOnly ? [] : ['space'] };
+  if (localOnly) {
+    const directory = join(root, 'local-alpha'); mkdirSync(join(directory, 'scripts'), { recursive: true });
+    const path = join(directory, 'SKILL.md'); writeFileSync(path, instructions);
+    writeFileSync(join(directory, 'scripts/run-workflow.sh'), 'printf "Local Skill without remote service" > "$KSADK_SKILL_OUTPUT_DIR/local.txt"');
+    config.skillDefinitions = [runtimeSkill({ name: 'alpha', content: instructions, path })];
+  }
   const bind = () => { gateway = createNativeDshTools({ ctx, config, workspaceRoot, stateDir,
-    commandEnvironment: {}, skillConnection: connection, skillFetch: proxy }); };
+    commandEnvironment: workflow || localOnly ? { KSADK_SKILL_RUNTIME_BACKEND: 'local_process' } : {},
+    ...(!localOnly ? { skillConnection: connection } : {}), skillFetch: proxy }); };
   bind();
   async function run(calls) {
     const definitions = gateway.definitions(agent, [...registry.values()]);
@@ -182,4 +193,33 @@ test('remote Skill mounting requires an actual connection, snapshots spaces, and
   const prepared = prepareNativeSkillHost({ config, env: {}, connection: first });
   config.skillSpaceIds.push('injected'); assert.deepEqual(prepared.binding.userSpaceIds, ['space']);
   assert.equal(prepared.definitions.length, 6); assert.equal(prepared.binding.runtime.enabled, false); prepared.close();
+});
+
+test('execute_skills enters the actual Native intent and delivers a remote package through supervised Node execution', async t => {
+  const h = await setup(t, { workflow: true });
+  const result = await h.run([['execute_skills', { workflow_prompt: 'Use alpha', skill_names: ['alpha'] }]]);
+  assert.equal(result.phase, 'completed'); assert.equal(h.outputs.length, 1);
+  const executed = h.outputs[0]; assert.equal(executed.ok, true, JSON.stringify(executed));
+  assert.equal(executed.workflow_status, 'ok'); assert.equal(executed.executed_skill, 'alpha');
+  assert.equal(executed.output_text, 'Executed in Native Node runtime');
+  assert.equal(readFileSync(executed.output_files[0], 'utf8'), executed.output_text);
+  assert.match(executed.runtime_id, /^local-skill:/); assert.match(executed.task_id, /^[a-f0-9]{64}$/);
+  const saved = h.store.load(scope, 'run'); assert.equal(saved.intents.filter(item => item.kind === 'tool').length, 1);
+  const intent = saved.intents.find(item => item.kind === 'tool');
+  const receipts = saved.receipts.filter(item => item.operationKey === intent.operationKey);
+  assert.equal(receipts.length, 1); assert.equal(receipts[0].status, 'committed');
+  assert.equal(h.gateway.remoteSkillBinding.runtime.backend, 'local_process'); assert.equal(h.gateway.remoteSkillBinding.runtime.enabled, true);
+  assert.equal(h.requests.filter(row => row.url.startsWith('/archive')).length, 1);
+  assert.doesNotMatch(canonical(saved), /original-secret|original-key|private-download/u);
+  await h.reopen();
+});
+
+test('a bound local Skill executes through the Native gateway with no Skill Service connection or HTTP', async t => {
+  const h = await setup(t, { localOnly: true });
+  const result = await h.run([['execute_skills', { workflow_prompt: 'Use alpha', skill_names: ['alpha'] }]]);
+  assert.equal(result.phase, 'completed'); assert.equal(h.outputs[0].ok, true, JSON.stringify(h.outputs[0]));
+  assert.equal(h.outputs[0].output_text, 'Local Skill without remote service');
+  assert.equal(readFileSync(h.outputs[0].output_files[0], 'utf8'), h.outputs[0].output_text);
+  assert.equal(h.requests.length, 0); assert.equal(h.gateway.remoteSkillBinding.serviceBindingDigest, null);
+  await h.reopen();
 });

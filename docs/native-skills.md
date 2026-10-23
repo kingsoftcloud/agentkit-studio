@@ -148,7 +148,7 @@ Native 整轮 Harness 现在按启用的 `skill-space` 资源绑定，以及 Hos
 `KSADK_SKILL_SPACE_IDS`（兼容 `SKILL_SPACE_ID`）、`KSADK_PUBLIC_SKILL_SPACE_IDS`
 和 `KSADK_PUBLIC_SKILL_ALLOWLIST` 挂载六个正式工具：`list_skill_spaces`、
 `list_skills`、`search_skills`、`preview_skill`、`load_skill`、`execute_skills`。
-未绑定任何空间时不挂载这组工具。所有实际调用通过原 DSH 工具注册、权限与审批管线，
+未绑定空间且没有启用本地 Skill 后端时不挂载这组工具。所有实际调用通过原 DSH 工具注册、权限与审批管线，
 同时核对原 Native Run 的 SQLite 执行意图、权限和有效执行者；模型不能自行指定未绑定的空间。
 
 `createNativeSkillConnection` 在 Host 启动时固定服务地址、区域、账户与凭据。
@@ -172,8 +172,8 @@ Native 整轮 Harness 现在按启用的 `skill-space` 资源绑定，以及 Hos
 
 加载端口下载真实 ZIP、检查 SHA-256 并使用现有安全原子包缓存。缓存位于工作区外，
 按完整 scope 和 Session 隔离；Host 与 Session 关闭会撤销各自端口。下载请求不继承
-服务认证头。组件状态如实显示已挂载工具和空间；**工作流执行后端仍未接入**，
-`execute_skills` 当前明确返回 `skill_runtime_unavailable`，不把指令加载当作执行成功。
+服务认证头。组件状态如实显示已挂载工具、空间和实际执行后端；显式本地 Node
+执行见下文 v3。未启用执行后端时返回 `skill_runtime_unavailable`。
 
 新增定向命令：
 
@@ -207,3 +207,48 @@ runtime 定位信息。错误路径使用独立深拷贝与深冻结的定位快
 碰撞假设不成立，没有按这个假设改动作用域算法。五个直接相关模块在 Node 26.5.0 /
 22.19.0 各通过 103 项、无失败或跳过；其中真实 Kernel/SQLite 权限验证继续保留，
 非合作后端用例是明确的端口反例，不当作线上服务或完整打包 Host 执行证明。
+
+## Node 本地工作流后端与工具契约 v3
+
+当前实现已接通显式 `KSADK_SKILL_RUNTIME_BACKEND=local_process`。未配置时仍按
+参考实现保持禁用；同时保留 `KSADK_SANDBOX_BACKEND` 后备选择。
+`KSADK_SKILL_RUNTIME_TIMEOUT` 为 1–900 秒，默认 900 秒，
+`KSADK_SKILL_PROJECT_NAME` 固定网页项目名。`e2b` 选择目前如实报告未挂载，
+不会改为本地执行。组件状态只在后端和正式工具均已挂载时显示可用。
+
+这层复用 Studio 现有的服务客户端、ZIP 解包器、已绑定本地 SkillSource 和持久命令
+监督器。绑定本地 Skill 并启用本地后端时，无需远程服务或 Skill Space；绑定远程空间
+时，按固定空间、版本和内容哈希获取包。没有新增服务进程，也没有依赖 Python/uv
+实现工作流。Skill 自身脚本如需额外语言或软件，仍须由该 Skill 的运行环境提供。
+
+确定性选择保留通用 `scripts/run-workflow.sh`、`web-artifacts-builder` 初始化及打包、
+纯说明 Skill 和无入口的结果。网页项目已存在时报告冲突并保留原文件。纯说明结果
+表示 Node 工作流求值完成，没有伪造脚本命令或进程回执；`workflow_status`、
+`commands`、`command_ids` 和 sandbox 创建状态分别说明实际行为。
+
+实际执行前先保存完整原请求、scope/Session/Run/Build/fence、配置及原 runtime 定位，
+再把有界、无符号链接的包资源复制到单次调用目录。包版本、存档/清单和逐文件摘要
+进入私有记录。每条脚本命令都在 Host 内重新验证原 Native intent 和权限，经过已有
+命令策略后，先持久保存命令定位，再进入独立监督器。整体时限覆盖多条命令，进程
+控制与退出核验使用现有机制。本地后端共享 Host 文件系统和网络，不是 OS 沙箱。
+
+`agentkit.native-skill-tools/v3` 在派发前固定 runtime/command 定位；即使后端不响应取消，
+未知结果仍保留原定位。后端不能替换这些身份。重复调用命中原记录；活跃并发调用
+只附着原意图，宿主被杀后留下未完成记录会返回未知，绝不自动重发。完整请求包含
+扩展字段并保留超出安全整数范围的精确整数。配置摘要包含后端、超时、环境摘要、
+本地来源和工具版本。取消或权限丢失后，后续命令不会获得新的执行权限。
+单次请求限制为 2 MiB，运行记录读写使用相同的 16 MiB 上限；超限请求在包加载和
+意图创建前拒绝，避免写入重开时无法读取的记录。
+
+产物仅收集工作目录内的普通文件，拒绝根及祖先符号链接和硬链接；文件枚举、深度、
+总字节与文本读取有明确上限。文本以完整 UTF-8 边界截断；HTML 等非文本白名单
+文件保留为实际产物。产物原始字节经独占创建、fsync 交付到工作区
+`.agentkit/skill-results/<runtime摘要>/`，回执包含 SHA-256 和字节数。它不是与外部
+文件编辑器共享的跨文件系统事务；中断的部分交付需要核对原调用，不能盲目重试。
+
+本阶段八个直接相关模块在 Node 26.5.0 / 22.19.0 各通过 144 项，无失败或跳过；
+之后仅按实际变更重跑受影响模块。包括真实本地进程与 SIGKILL、并发重复调用、
+第二条命令前权限失效、真实 NativeKernel/SQLite 网关的远程和纯本地执行、完整
+产物字节以及重开不重放。网关用例的 DSH registry 是明确替身，不能替代完整打包
+Host 验收。仍待 E2B Skill 后端、产品显式核对/清理、完整 Skill 专用事件、打包 Host
+工作流、Frozen/部署入口及全新无 Python 安装验收。

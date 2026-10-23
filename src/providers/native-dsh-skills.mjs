@@ -19,7 +19,7 @@ export const STUDIO_NATIVE_SKILLS_BINDING = 'agentkit.studio-native-skills/v1';
  * boundSkillNames, and the Host-provided backend binding digest; it never
  * contains credentials or function source code. */
 export function createStudioNativeSkills({
-  serviceClient: rawServiceClient, skillDiscovery, loadSkillFn, executeWorkflow, authorize,
+  serviceClient: rawServiceClient, skillDiscovery, loadSkillFn, executeWorkflow, locateWorkflow, authorize,
   skillSpaceIds = [], publicSpaceIds = [], publicAllowlist = [], boundSkillNames = [], manifestLimit = 30,
   agentId, agentRevision, buildId = null, sealedBinding = {}, backendBindingDigest = '',
 } = {}) {
@@ -50,7 +50,7 @@ export function createStudioNativeSkills({
   })).digest('hex');
 
   const tools = createNativeSkillTools({
-    serviceClient, skillDiscovery, loadSkillFn, executeWorkflow, authorize,
+    serviceClient, skillDiscovery, loadSkillFn, executeWorkflow, locateWorkflow, authorize,
     skillSpaceIds: sealedSkillSpaceIds, publicSpaceIds: sealedPublicSpaceIds,
     publicAllowlist: sealedPublicAllowlist, boundSkillNames: sealedBoundSkillNames,
     manifestLimit, binding: { ...sealedBindingCopy, agentId, agentRevision, buildId },

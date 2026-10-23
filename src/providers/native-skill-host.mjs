@@ -10,8 +10,10 @@ import { hostFetch } from '../http-fetch.mjs';
 import { createNativeSkillService } from './native-skill-service.mjs';
 import { createNativeSkillLoader } from './native-skill-loader.mjs';
 import { createStudioNativeSkills } from './native-dsh-skills.mjs';
-import { SKILL_TOOL_CONTRACT } from '../../packages/agentkit-harness/src/native/skill-tools.mjs';
+import { SKILL_TOOL_CONTRACT, matchSkillRefs } from '../../packages/agentkit-harness/src/native/skill-tools.mjs';
 import { nativeSkillConnectionSettings, createExplicitNativeSkillClient } from './native-skill-connection.mjs';
+import { createNativeLocalSkillRuntime, nativeSkillRuntimeSettings } from './native-skill-runtime.mjs';
+import { createStudioNativeSkillSource } from './native-skill-source.mjs';
 
 export const STUDIO_NATIVE_REMOTE_SKILLS = 'agentkit.studio-native-remote-skills/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -43,18 +45,23 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
   const userSpaces = ids([...(config.skillSpaceIds ?? []), ...csv(env, 'KSADK_SKILL_SPACE_IDS'),
     ...(!env.KSADK_SKILL_SPACE_IDS ? csv(env, 'SKILL_SPACE_ID') : [])]);
   const publicSpaces = ids(csv(env, 'KSADK_PUBLIC_SKILL_SPACE_IDS'));
-  if (!userSpaces.length && !publicSpaces.length) return null;
-  invariant(connection?.client && /^[a-f0-9]{64}$/u.test(connection.bindingDigest), 'NATIVE_SKILL_CONNECTION_REQUIRED');
+  const localDefinitions = copy(config.skillDefinitions ?? []).filter(item => item.invocation?.modelInvocable !== false), environment = { ...env };
+  if (!userSpaces.length && !publicSpaces.length && !localDefinitions.length) return null;
+  const runtimeSettings = nativeSkillRuntimeSettings(env);
+  if (!userSpaces.length && !publicSpaces.length && !(runtimeSettings.enabled && localDefinitions.length)) return null;
+  invariant(!userSpaces.length && !publicSpaces.length || connection?.client && /^[a-f0-9]{64}$/u.test(connection.bindingDigest), 'NATIVE_SKILL_CONNECTION_REQUIRED');
   const publicAllowlist = ids(csv(env, 'KSADK_PUBLIC_SKILL_ALLOWLIST'));
   const agentRevision = config.agentRevision ?? 1;
+  const localSource = localDefinitions.length ? createStudioNativeSkillSource({ definitions: localDefinitions }) : null;
   const binding = Object.freeze({ contract: STUDIO_NATIVE_REMOTE_SKILLS, toolContract: SKILL_TOOL_CONTRACT, userSpaceIds: userSpaces,
-    publicSpaceIds: publicSpaces, publicAllowlist, serviceBindingDigest: connection.bindingDigest,
-    runtime: { backend: 'disabled', enabled: false } });
+    publicSpaceIds: publicSpaces, publicAllowlist, serviceBindingDigest: connection?.bindingDigest ?? null,
+    localSkillBindingDigest: localSource ? hash(localSource.binding) : null,
+    runtime: runtimeSettings });
   const bindingDigest = hash(binding), lifetime = new AbortController();
-  const provider = loadSkillFn => createStudioNativeSkills({ serviceClient: connection.client,
-    loadSkillFn, authorize: async () => 'allow', agentId: config.agentId, agentRevision,
+  const provider = (loadSkillFn, executeWorkflow, locateWorkflow) => createStudioNativeSkills({ serviceClient: connection?.client,
+    loadSkillFn, executeWorkflow, locateWorkflow, authorize: async () => 'allow', agentId: config.agentId, agentRevision,
     buildId: config.buildId ?? null, skillSpaceIds: userSpaces, publicSpaceIds: publicSpaces,
-    publicAllowlist, backendBindingDigest: bindingDigest, sealedBinding: { serviceBindingDigest: connection.bindingDigest } });
+    publicAllowlist, backendBindingDigest: bindingDigest, sealedBinding: { serviceBindingDigest: connection?.bindingDigest ?? null } });
   const definitions = provider(undefined).definitions;
   function forSession({ agent, scope, sessionId, stateRoot, workspaceRoot, assertCurrent }) {
     scopeKey(scope);
@@ -76,12 +83,50 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
       const current = lstatSync(cacheDir);
       invariant(current.ino === pinned.ino && current.dev === pinned.dev, 'NATIVE_SKILL_CACHE_CHANGED');
     };
-    const load = createNativeSkillLoader({ serviceClient: createNativeSkillService(connection.client), cacheDir, fetchImpl });
-    const bound = provider(request => {
+    const service = connection?.client ? createNativeSkillService(connection.client) : null;
+    const load = service ? createNativeSkillLoader({ serviceClient: service, cacheDir, fetchImpl }) : undefined;
+    const runtime = runtimeSettings.enabled ? createNativeLocalSkillRuntime({ stateRoot: join(cacheDir, 'runtime'),
+      workspaceRoot: workspace, scope, sessionId, bindingDigest, settings: runtimeSettings, env: environment,
+      assertStorage, async loadPackages(request) {
+        const check = () => { assertStorage(); return request.assertCurrent(); };
+        // Reuse the admitted SkillSource's complete content/mode digest. A
+        // later edit cannot silently change an already pinned workflow.
+        for (const ref of localSource?.source.refs ?? []) { check(); await localSource.source.fullText(ref); check(); }
+        const packages = localDefinitions.filter(item => item.resourceBase?.kind === 'directory')
+          .map(item => ({ name: item.name, body: item.content, rootDir: item.resourceBase.path }));
+        const seen = new Set(packages.map(item => item.name.toLowerCase()));
+        const select = async (skills, spaceId, publicOnly = false) => {
+          const allowed = publicOnly ? skills.filter(skill => !publicAllowlist.length
+            || publicAllowlist.some(name => name.toLowerCase() === skill.name.toLowerCase())) : skills;
+          const matches = publicOnly ? allowed.map(skill => ({ skill }))
+            : matchSkillRefs(allowed, request.workflowPrompt, { skillNames: request.skillNames });
+          for (const { skill } of matches) {
+            if (seen.has(skill.name.toLowerCase())) continue;
+            check();
+            const loaded = await load({ skillId: skill.skillId, versionId: skill.versionId, name: skill.name,
+              spaceId, contentHash: skill.contentHash ?? '', signal: request.signal, assertCurrent: check });
+            check(); seen.add(skill.name.toLowerCase());
+            packages.push({ name: loaded.name, body: loaded.content, rootDir: loaded.rootDir,
+              skillId: loaded.skillId, versionId: loaded.versionId, spaceId: loaded.spaceId, archiveHash: loaded.archiveHash });
+          }
+        };
+        for (const spaceId of userSpaces) {
+          const listing = await service.listSkillsBySpaceId(spaceId, { signal: request.signal, assertCurrent: check }); check();
+          invariant(!listing.truncated, 'SKILL_RUNTIME_DIRECTORY_INCOMPLETE');
+          await select(listing.activeSkills, spaceId);
+        }
+        if (publicSpaces.length) {
+          const listing = await service.listAvailablePremadeSkills({ signal: request.signal, assertCurrent: check }); check();
+          invariant(!listing.truncated && publicSpaces.includes(listing.spaceId), 'SKILL_RUNTIME_PUBLIC_DIRECTORY_INVALID');
+          await select(listing.activeSkills, listing.spaceId, true);
+        }
+        return packages;
+      } }) : null;
+    const bound = provider(load && (request => {
       assertStorage();
       const authority = request.assertCurrent;
       return load({ ...request, assertCurrent: () => { assertStorage(); return authority(); } });
-    }).forAgent(agent, { scope, sessionId, agentRevision, assertCurrent });
+    }), runtime?.execute, runtime?.locate).forAgent(agent, { scope, sessionId, agentRevision, assertCurrent });
     return { execute(request) {
       assertStorage();
       const signal = AbortSignal.any([request.signal, lifetime.signal, sessionLifetime.signal]);

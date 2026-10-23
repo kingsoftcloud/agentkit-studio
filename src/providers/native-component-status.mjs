@@ -35,9 +35,9 @@ export function studioNativeComponentStatus({ record, modelName, workspaceRoot, 
     skill_space: { space_ids: spaces, user_space_ids: remoteSkills?.userSpaceIds ?? [], public_space_ids: remoteSkills?.publicSpaceIds ?? [],
       service_url: '', aicp_endpoint_mode: 'auto',
       tools: ['list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills'].filter(name => names.has(name)) },
-    // Local indexed Skills and a command backend do not prove a mounted Skill
-    // execution service. Its formal binding will supply its own status later.
-    skill_runtime: { backend: 'disabled', enabled: false, template_bound: false },
+    skill_runtime: remoteSkills?.runtime?.enabled && names.has('execute_skills')
+      ? { backend: remoteSkills.runtime.backend, enabled: true, isolated: remoteSkills.runtime.isolated,
+        template_bound: false } : { backend: 'disabled', enabled: false, template_bound: false },
     sandbox: { backend: commandsEnabled ? commandBinding.backend : 'disabled', enabled: commandsEnabled,
       template_bound: Boolean(isolated), tools: commandsEnabled ? commandNames : [] },
     workspace: { root: resolve(workspaceRoot), tools: workspaceNames },

@@ -14,7 +14,7 @@ import { canonical, copy, invariant, scopeKey, toolInputRejection } from '../../
 import { realpath, lstat, stat, readdir } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
-export const SKILL_TOOL_CONTRACT = 'agentkit.native-skill-tools/v2';
+export const SKILL_TOOL_CONTRACT = 'agentkit.native-skill-tools/v3';
 
 function uncertainOutcome(content) {
   const result = { ...content, uncertain: true };
@@ -209,7 +209,7 @@ function frozenCopy(value) {
 // --- ToolPort factory --------------------------------------------------------
 
 export function createNativeSkillTools({
-  serviceClient, loadSkillFn, executeWorkflow, authorize,
+  serviceClient, loadSkillFn, executeWorkflow, locateWorkflow, authorize,
   skillSpaceIds = [], publicSpaceIds = [], publicAllowlist = [], boundSkillNames = [], manifestLimit = 30,
   binding = {},
 } = {}) {
@@ -485,27 +485,42 @@ export function createNativeSkillTools({
     // Any subsequent abort/throw/guard-failure returns uncertain, not error.
     let effectStarted = false;
     let result;
+    let runtimeLocator = {};
     try {
       const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
       // effectStarted is set only immediately before the real backend call,
       // not before validation or guard checks.
       effectStarted = true;
       ctx.effectStarted = true;
-      result = await raceAbort(guard.signal, () => executeWorkflow({
+      const workflowRequest = {
         workflowPrompt: prompt, skillNames: names, skillSpaceIds: allSpaceIds, env: {}, timeout: 900,
         signal: guard.signal, scope: ctx.scope, runId: ctx.runId, sessionId: ctx.sessionId,
         turnId: ctx.turnId, buildId: ctx.buildId, parentRunId: ctx.parentRunId,
         taskChainId: ctx.taskChainId, operationKey: ctx.operationKey,
         executionFence: ctx.executionFence, callId: ctx.callId, call: ctx.call,
-        lockedDefinition: copy(ctx.lockedDefinition), approval, assertCurrent: () => guard.assertCurrent(),
-      }));
+        lockedDefinition: copy(ctx.lockedDefinition), ...(approval === undefined ? {} : { approval }), assertCurrent: () => guard.assertCurrent(),
+      };
+      if (typeof locateWorkflow === 'function') {
+        const locator = locateWorkflow(workflowRequest);
+        if (locator && typeof locator.then === 'function') Promise.resolve(locator).catch(() => {});
+        invariant(locator && typeof locator.then !== 'function' && typeof locator.runtime_id === 'string' && locator.runtime_id.length <= 4096
+          && typeof locator.task_id === 'string' && /^[a-f0-9]{64}$/u.test(locator.task_id), 'SKILL_RUNTIME_LOCATOR_INVALID');
+        runtimeLocator = { runtime_id: locator.runtime_id, task_id: locator.task_id };
+        guard.assertCurrent();
+      }
+      result = await raceAbort(guard.signal, () => executeWorkflow(workflowRequest));
+      if (runtimeLocator.runtime_id && result && typeof result === 'object') {
+        invariant((result.runtime_id ?? runtimeLocator.runtime_id) === runtimeLocator.runtime_id
+          && (result.task_id ?? runtimeLocator.task_id) === runtimeLocator.task_id, 'SKILL_RUNTIME_LOCATOR_CHANGED');
+        result = { ...result, ...runtimeLocator };
+      }
     } catch (error) {
       // After effectStarted, any throw is uncertain — the workflow may have
       // had side effects before the throw. This includes approval_required:
       // the workflow may have started side effects before requesting approval,
       // so we cannot prove no side effects occurred.
       if (effectStarted) {
-        return { ok: false, status: 'uncertain', uncertain: true,
+        return { ...runtimeLocator, ok: false, status: 'uncertain', uncertain: true,
           error_type: error.code === 'approval_required' || error.approvalRequired ? 'invalid_skill_approval' : 'skill_runtime_uncertain',
           error_message: error.message || 'Skill runtime outcome is unknown; the workflow may have side effects.' };
       }
@@ -515,8 +530,8 @@ export function createNativeSkillTools({
     // Post-workflow guard: if the request drifted after the workflow completed,
     // the result is uncertain (side effects may have happened).
     const g3 = guard.check();
-    if (g3) return { ok: false, status: 'uncertain', error_type: g3.code, error_message: g3.message, uncertain: true,
-      runtime_id: typeof result?.runtime_id === 'string' ? result.runtime_id : '', exit_code: result?.exit_code ?? null };
+    if (g3) return { ...runtimeLocator, ok: false, status: 'uncertain', error_type: g3.code, error_message: g3.message, uncertain: true,
+      runtime_id: typeof result?.runtime_id === 'string' ? result.runtime_id : runtimeLocator.runtime_id ?? '', exit_code: result?.exit_code ?? null };
 
     // Post-workflow abort: uncertain, not error+executed:false.
     if (guard.signal.aborted) {
@@ -526,7 +541,7 @@ export function createNativeSkillTools({
     }
 
     if (!result || typeof result !== 'object') {
-      return { ok: false, status: 'uncertain', uncertain: true, error_type: 'invalid_skill_runtime_result',
+      return { ...runtimeLocator, ok: false, status: 'uncertain', uncertain: true, error_type: 'invalid_skill_runtime_result',
         error_message: `skill runtime returned ${typeof result}, expected object` };
     }
 
@@ -534,7 +549,7 @@ export function createNativeSkillTools({
     // the backend may have started side effects before requesting approval.
     // Return uncertain, not approval_required.
     if (result.approval_required || result.status === 'approval_required') {
-      return { ok: false, status: 'uncertain', uncertain: true, error_type: 'invalid_skill_approval',
+      return { ...runtimeLocator, ok: false, status: 'uncertain', uncertain: true, error_type: 'invalid_skill_approval',
         interactionId: typeof result.interactionId === 'string' ? result.interactionId : '',
         error_message: result.error_message || 'Skill runtime requested approval after potential side effects.' };
     }
@@ -543,9 +558,12 @@ export function createNativeSkillTools({
     if (result.uncertain === true || result.status === 'uncertain' ||
       result.executed === false && result.ok === true ||
       (!Number.isSafeInteger(result.exit_code) && result.executed !== false)) {
-      return { ok: false, status: 'uncertain', error_type: 'skill_runtime_uncertain',
+      return { ...runtimeLocator, ok: false, status: 'uncertain', error_type: 'skill_runtime_uncertain',
         error_message: result.error_message || 'Skill runtime outcome is unknown.',
-        uncertain: true, runtime_id: result.runtime_id || '', exit_code: result.exit_code ?? null };
+        uncertain: true, runtime_id: result.runtime_id || '', exit_code: result.exit_code ?? null,
+        ...(Array.isArray(result.command_ids) && result.command_ids.length <= 1000
+          && result.command_ids.every(id => typeof id === 'string' && /^[a-f0-9]{64}$/u.test(id))
+          ? { command_ids: copy(result.command_ids) } : {}) };
     }
 
     return { ...result, executed: result.executed !== false,
