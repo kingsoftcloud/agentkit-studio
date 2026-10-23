@@ -321,6 +321,84 @@ test('idle background Host requires a real advertised idle capability and the or
   assert.equal(h.ledger.list(h.source.snapshot.scope, 'session').length, 1);
 });
 
+const backgroundWatchRequest = h => ({ scope: structuredClone(h.source.snapshot.scope), sessionId: 'session',
+  sourceRunId: h.source.snapshot.runId, taskId: h.request.taskId });
+
+test('persisted background dispatch resolves the original Session and reuses its source and notice', async t => {
+  const h = await idleBackgroundHost(t), lookups = [];
+  h.services.sessionController = { resolveAgent: async id => { lookups.push(id); return { agent: h.payload.agent }; } };
+  const request = backgroundWatchRequest(h);
+  assert.equal((await h.host.dispatchBackgroundCompletion(request)).status, 'watching');
+  h.setStatus('completed');
+  const result = await h.host.dispatchBackgroundCompletion(request);
+  assert.equal(result.status, 'admitted');
+  assert.equal(h.ledger.load(request.scope, result.runId).snapshot.phase, 'completed');
+  assert.equal((await h.host.dispatchBackgroundCompletion(request)).status, 'discarded');
+  assert.deepEqual(lookups, ['session', 'session', 'session']);
+  assert.equal(h.requests.length, 3); assert.equal(h.counts().launches, 1);
+  assert.deepEqual(h.ledger.load(request.scope, request.sourceRunId), h.source);
+});
+
+test('persisted background dispatch fences foreign scope, Session and task facts before cold loading', async t => {
+  const h = await idleBackgroundHost(t), request = backgroundWatchRequest(h);
+  let lookups = 0;
+  h.services.sessionController = { resolveAgent: async () => { lookups++; assert.fail('Invalid watch cannot load a Session'); } };
+  const variants = [
+    { ...request, scope: { ...request.scope, workspaceId: 'foreign' } },
+    { ...request, scope: { ...request.scope, userId: 'foreign' } },
+    { ...request, scope: { ...request.scope, agentId: 'foreign' } },
+    { ...request, scope: { ...request.scope, extra: true } },
+    { ...request, sessionId: 'foreign' }, { ...request, taskId: 'f'.repeat(64) },
+    { ...request, taskId: 'not-a-task' }, { ...request, agent: h.payload.agent },
+    { ...request, signal: {} },
+  ];
+  for (const invalid of variants) await assert.rejects(h.host.dispatchBackgroundCompletion(invalid));
+  assert.equal(lookups, 0); assert.deepEqual(h.countsIdle(), { starts: 0, reads: 0 });
+  assert.equal(h.requests.length, 2); assert.equal(h.ledger.list(request.scope, 'session').length, 1);
+});
+
+test('persisted background dispatch refuses an unavailable or mismatched controller without new authority', async t => {
+  const h = await idleBackgroundHost(t), request = backgroundWatchRequest(h);
+  await assert.rejects(h.host.dispatchBackgroundCompletion(request), /background_controller_unavailable/);
+  for (const result of [undefined, { agent: { session: { id: 'foreign' } } }]) {
+    h.services.sessionController = { resolveAgent: async () => result };
+    await assert.rejects(h.host.dispatchBackgroundCompletion(request), /background_session_mismatch/);
+  }
+  const failure = Object.assign(Error('Session locked'), { code: 'fixture_session_busy' });
+  h.services.sessionController = { resolveAgent: async () => ({ error: failure }) };
+  await assert.rejects(h.host.dispatchBackgroundCompletion(request), error => error === failure);
+  assert.deepEqual(h.countsIdle(), { starts: 0, reads: 0 }); assert.equal(h.requests.length, 2);
+});
+
+test('persisted background dispatch captures identity before an asynchronous Session lookup', async t => {
+  const h = await idleBackgroundHost(t), request = backgroundWatchRequest(h);
+  const entered = Promise.withResolvers(), released = Promise.withResolvers();
+  h.services.sessionController = { resolveAgent: async id => {
+    assert.equal(id, 'session'); entered.resolve(); await released.promise; return { agent: h.payload.agent };
+  } };
+  const pending = h.host.dispatchBackgroundCompletion(request);
+  await entered.promise;
+  request.scope.agentId = 'changed'; request.sessionId = 'changed'; request.sourceRunId = 'changed'; request.taskId = 'f'.repeat(64);
+  released.resolve();
+  assert.equal((await pending).status, 'watching');
+  assert.deepEqual(h.countsIdle(), { starts: 0, reads: 1 }); assert.equal(h.requests.length, 2);
+});
+
+for (const late of ['return', 'reject']) test(`Host close fences a noncooperative cold background lookup and its late ${late}`, async t => {
+  const h = await idleBackgroundHost(t), request = backgroundWatchRequest(h);
+  const entered = Promise.withResolvers(), released = Promise.withResolvers();
+  h.services.sessionController = { resolveAgent: async () => {
+    entered.resolve(); await released.promise;
+    if (late === 'reject') throw Error('Late lookup failed');
+    return { agent: h.payload.agent };
+  } };
+  const pending = h.host.dispatchBackgroundCompletion(request), refused = assert.rejects(pending, /Studio Native host closed/);
+  await entered.promise; await h.host.close(); await refused;
+  released.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(h.countsIdle(), { starts: 0, reads: 0 }); assert.equal(h.requests.length, 2);
+  assert.equal(h.ledger.list(request.scope, 'session').length, 1);
+});
+
 test('actual Host composes registered context and local Memory recall in the SQLite context effect', async t => {
   let calls = 0, sourceRequest;
   const h = await setup(t, { sqlite: true, spec: { memory: { enabled: true, provider: { kind: 'local-default' },

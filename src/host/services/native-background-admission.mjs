@@ -118,3 +118,41 @@ export function createStudioNativeBackgroundAdmission({ ctx, store, workspaceId,
     return promise;
   };
 }
+
+/** Resolve only the original Session for a persisted watch. Registry entries
+ * are recovery facts, never authority to select another workspace or Agent.
+ * Keep the lookup inside the Host lifetime, including a noncooperative cold
+ * Session load that returns after shutdown.
+ */
+export function createStudioNativeBackgroundDispatcher({ ctx, store, workspaceId, lifetime, active, notify }) {
+  const drive = async request => {
+    invariant(request && typeof request === 'object' && !Array.isArray(request)
+      && Object.keys(request).every(key => ['scope', 'sessionId', 'sourceRunId', 'taskId', 'signal'].includes(key))
+      && text(request.sessionId) && text(request.sourceRunId) && /^[a-f0-9]{64}$/.test(request.taskId)
+      && text(request.scope?.agentId), 'studio_native_background_watch_invalid');
+    const { sessionId, sourceRunId, taskId } = request;
+    const agentId = request.scope.agentId;
+    const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId };
+    invariant(canonical(request.scope) === canonical(scope), 'studio_native_background_scope_mismatch');
+    invariant(request.signal === undefined || request.signal instanceof AbortSignal, 'studio_native_background_signal_invalid');
+    const signal = request.signal ? AbortSignal.any([request.signal, lifetime.signal]) : lifetime.signal;
+    signal.throwIfAborted();
+    const source = store.load(scope, sourceRunId);
+    readNativeRecoveryBinding(source, { agentId, sessionId, runId: sourceRunId });
+    invariant(source.snapshot.phase === 'completed' && source.configuration.backgroundNotificationPolicy === 'completed-before-model/v1'
+      && source.snapshot.backgroundCommands.some(row => row.ref.sourceRunId === sourceRunId && row.ref.taskId === taskId),
+    'studio_native_background_source_unavailable');
+    const controller = ctx.get('sessionController');
+    invariant(typeof controller?.resolveAgent === 'function', 'studio_native_background_controller_unavailable');
+    const found = await live(() => controller.resolveAgent(sessionId), signal);
+    if (found?.error) throw found.error;
+    invariant(found?.agent?.session?.id === sessionId, 'studio_native_background_session_mismatch');
+    return notify({ agent: found.agent, agentId, sourceRunId, taskId, signal });
+  };
+  return request => {
+    lifetime.signal.throwIfAborted();
+    const promise = drive(request);
+    active.add(promise); void promise.finally(() => active.delete(promise)).catch(() => {});
+    return promise;
+  };
+}

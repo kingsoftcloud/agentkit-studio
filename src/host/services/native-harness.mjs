@@ -20,7 +20,7 @@ import { createStudioNativeChildWorkspaces } from '../../providers/native-child-
 import { modelInput } from '../../model-service.mjs';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
-import { createStudioNativeBackgroundAdmission } from './native-background-admission.mjs';
+import { createStudioNativeBackgroundAdmission, createStudioNativeBackgroundDispatcher } from './native-background-admission.mjs';
 import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../providers/native-hooks.mjs';
 import { bindStudioNativeMemoryFlush, composeStudioNativeHooks } from '../../providers/native-memory.mjs';
 import { bindStudioNativeMemoryHost, extendNativeMemoryGoal } from '../../providers/native-memory-host.mjs';
@@ -438,8 +438,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   });
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute });
   const notifyBackgroundCompletion = createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents });
+  const dispatchBackgroundCompletion = createStudioNativeBackgroundDispatcher({ ctx, store, workspaceId, lifetime, active, notify: notifyBackgroundCompletion });
   return {
     notifyBackgroundCompletion,
+    dispatchBackgroundCompletion,
     recoveryStatus: recovery.status,
     resumeTurn: recovery.resume,
     childHistory(request) { return childHistory(request).list(request); },
