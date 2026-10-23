@@ -114,6 +114,8 @@ try {
     && row.management.duplicateSuppressed && row.management.oldRevisionPreserved && row.management.nextRevisionAdmitted));
   assert.ok(report.runtimes.every(row => row.knowledge.actualRequests === 1 && row.knowledge.originalDshOwner
     && row.knowledge.duplicateSuppressed && row.knowledge.policyDenied && row.knowledge.postPolicyPreserved));
+  assert.ok(report.runtimes.every(row => row.memory.actualRequests === 2 && row.memory.originalDshOwner
+    && row.memory.duplicateSuppressed && row.memory.policyDenied && row.memory.postPolicyPreserved));
   assert.ok(report.runtimes.every(row => row.workflows.backend === skillBackend && row.workflows.serviceRequests === 2
     && row.workflows.originalDshOwner && row.workflows.oneShotApprovals === 2
     && row.workflows.policyDeniedWithoutRequest && row.workflows.postPolicyPreserved));
@@ -150,6 +152,8 @@ try {
     assert.equal(cold.a2aRequests, 0);
     assert.equal(cold.githubRequests, 0);
     assert.equal(cold.knowledgeRequests, 0);
+    assert.equal(cold.memoryRequests, 0);
+    assert.deepEqual(cold.restoredMemory, report.runtimes.map(row => ({ runtime: row.runtime, unchanged: true })));
     assert.deepEqual(cold.restoredKnowledge, report.runtimes.map(row => ({ runtime: row.runtime, unchanged: true })));
     assert.deepEqual(cold.restoredManagement, report.runtimes.map(row => ({ runtime: row.runtime, resourceId: row.management.resourceId, revision: 2, unchanged: true })));
     assert.equal(cold.restoredBrowsers.length, commandBackend === 'local_process' ? 2 : 0);

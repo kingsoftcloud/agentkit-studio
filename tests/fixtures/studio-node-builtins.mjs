@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { mountStudioHost } from '../../src/host/bootstrap.mjs';
+import { bindDshInvocationContext } from '../../src/providers/dsh-invocation-context.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
 export const name = 'studio-node-builtin-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'credentials', 'connection', 'webServer', 'sessionController'];
@@ -19,6 +21,10 @@ export async function apply(ctx, options) {
   const sha256 = value => createHash('sha256').update(value).digest('hex');
   let networkCalls = 0, pendingRequest; const skillRequests = [], a2aRequests = [];
   const githubRequests = [], knowledgeRequests = [], githubCommit = 'c'.repeat(40), githubTree = 'd'.repeat(40);
+  const memoryRequests = [], memoryRows = () => {
+    const db = new DatabaseSync(join(home, 'studio/legacy-memory/effects/effects.sqlite'));
+    try { return db.prepare('SELECT * FROM legacy_memory_effects ORDER BY identity').all(); } finally { db.close(); }
+  };
   const githubFiles = [['SKILL.md', Buffer.from('---\nname: packed-github-skill\ndescription: GitHub immutable 技能\nversion: 1.2.3\n---\nInstructions')],
     ['assets/.binary', Buffer.from([0, 255, 128, 13, 10])]];
   const githubBlob = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
@@ -62,6 +68,15 @@ export async function apply(ctx, options) {
         const task = { id: 'packed-remote-task', contextId: 'packed-context', status: { state: 'TASK_STATE_COMPLETED' },
           artifacts: [{ artifactId: 'result', parts: [{ text: 'Packed A2A reply 😀' }] }] };
         res.end('id: 1\r\ndata: ' + JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { task } }) + '\r\n\r\n');
+      }); return;
+    }
+    if (url.pathname === '/ltm/memories' || url.pathname === '/ltm/memories/search') {
+      assert.equal(previous, null, 'cold Memory receipt must not issue another request');
+      const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => {
+        const payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); memoryRequests.push({ path: url.pathname, payload });
+        assert.equal(payload.user_id, 'packed-user');
+        if (url.pathname.endsWith('/search')) { assert.equal(payload.query, 'Packed Memory 😀'); res.end(JSON.stringify({ memories: ['Packed Memory 😀'] })); }
+        else { assert.equal(JSON.parse(payload.events[0]).parts[0].text, 'Packed Memory 😀'); assert.equal(payload.flush, true); res.end('{}'); }
       }); return;
     }
     if (url.pathname === '/agentengine/api/v1/RetrieveKnowledge') {
@@ -117,7 +132,7 @@ export async function apply(ctx, options) {
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
     'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'run_code', 'component_status', 'browser_inspect_workspace',
     'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills', 'list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent',
-    'skill_discover_github', 'skill_install', 'skill_bind_agent', 'search_knowledge_base'];
+    'skill_discover_github', 'skill_install', 'skill_bind_agent', 'search_knowledge_base', 'load_memory', 'save_memory'];
   const records = [];
   if (previous) for (const row of previous.runtimes) { const record = await agents.get(row.agentId); assert.ok(record); records.push(record); }
   else for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
@@ -126,6 +141,7 @@ export async function apply(ctx, options) {
   await mountStudioHost(ctx, { configurationHome: home, githubSkillSourceFetch: githubFetch, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
     KSADK_KB_ENDPOINT: webOrigin,
+    KSADK_LTM_BACKEND: 'http', KSADK_LTM_HTTP_URL: `${webOrigin}/ltm`,
     AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE: options.browserExecutablePath,
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
     KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
@@ -166,12 +182,23 @@ export async function apply(ctx, options) {
       return result.value;
     };
     if (previous) {
-      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [], restoredBrowsers = [], restoredManagement = [], restoredKnowledge = [];
+      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [], restoredBrowsers = [], restoredManagement = [], restoredKnowledge = [], restoredMemory = [];
       for (const row of previous.runtimes) {
         const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, found.error?.message || JSON.stringify(found.error));
         const agent = found.agent; assert.equal(agent.session.id, row.sessionId); setSandboxMode(agent.session, 'workspace-write');
+        bindDshInvocationContext(agent, { userId: 'packed-user', runnerType: row.runtime });
         agent.session.append('turn/start', { turn: 2 });
         try {
+          const beforeMemory = memoryRows();
+          for (const saved of row.memory.rows) {
+            const original = JSON.parse(saved.request), content = JSON.parse(saved.result).content;
+            const recovered = await agent.ctx.get('tools').execute({ agent, callId: original.owner.identity.callId,
+              name: original.request.name, arguments: original.request.arguments, signal: new AbortController().signal });
+            assert.equal(recovered.isError, false, JSON.stringify(recovered));
+            assert.deepEqual(typeof content === 'string' ? recovered.value.result : JSON.parse(recovered.value.result), content);
+          }
+          assert.deepEqual(memoryRows(), beforeMemory);
+          restoredMemory.push({ runtime: row.runtime, unchanged: true });
           const knowledgeBytes = await readFile(row.knowledge.record), knowledgeSaved = JSON.parse(knowledgeBytes);
           const knowledgeRecovered = await agent.ctx.get('tools').execute({ agent, callId: knowledgeSaved.request.call.callId,
             name: 'search_knowledge_base', arguments: knowledgeSaved.request.call.arguments, signal: new AbortController().signal });
@@ -243,7 +270,7 @@ export async function apply(ctx, options) {
       assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0); assert.equal(a2aRequests.length, 0);
       assert.equal(githubRequests.length, 0);
       return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, restoredA2a, restoredBrowsers,
-        restoredManagement, restoredKnowledge, knowledgeRequests: knowledgeRequests.length, githubRequests: 0, networkCalls, skillRequests: 0, a2aRequests: 0 };
+        restoredManagement, restoredKnowledge, restoredMemory, memoryRequests: memoryRequests.length, knowledgeRequests: knowledgeRequests.length, githubRequests: 0, networkCalls, skillRequests: 0, a2aRequests: 0 };
     }
     const report = { passed: false, pid: process.pid, webOrigin, node: process.version, path: process.env.PATH, runtimes: [] };
     let serial = 0;
@@ -742,6 +769,32 @@ export async function apply(ctx, options) {
             canvasUniform: true, policyDenied: true, postPolicyPreserved: true, oneShotApprovals: approvals };
         }
         setSandboxMode(agent.session, 'workspace-write');
+        bindDshInvocationContext(agent, { userId: 'packed-user', runnerType: runtime });
+        const memoryStart = memoryRequests.length, memoryIds = [];
+        for (const [memoryName, memoryArgs] of [['save_memory', { content: 'Packed Memory 😀' }], ['load_memory', { query: 'Packed Memory 😀' }]]) {
+          const callId = `builtin-proof-${memoryName}-${runtime}`; memoryIds.push(callId);
+          const invoke = () => registry.execute({ agent, callId, name: memoryName, arguments: memoryArgs, signal: new AbortController().signal });
+          const result = await invoke(); assert.equal(result.isError, false, JSON.stringify(result));
+          if (memoryName === 'save_memory') assert.equal(JSON.parse(result.value.result).status, 'persisted');
+          else assert.equal(result.value.result, '[1] Packed Memory 😀');
+          assert.deepEqual(await invoke(), result);
+          const deny = agent.ctx.on('tools/pre-execute', async (exec, next) => exec.name === memoryName ? { kind: 'deny', reason: 'Memory policy proof' } : next());
+          try { assert.equal((await invoke()).isError, true); } finally { deny(); }
+          const post = agent.ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === memoryName
+            ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted Memory' }] } : next());
+          try { assert.deepEqual((await invoke()).content, [{ type: 'text', text: 'Host-redacted Memory' }]); } finally { post(); }
+        }
+        assert.equal(memoryRequests.length - memoryStart, 2);
+        const ownedMemoryRows = memoryRows().filter(row => memoryIds.includes(JSON.parse(row.request).owner.identity.callId));
+        assert.equal(ownedMemoryRows.length, 2);
+        for (const saved of ownedMemoryRows) {
+          const original = JSON.parse(saved.request);
+          assert.equal(original.owner.kind, 'dsh'); assert.equal(original.owner.identity.agentId, record.metadata.id);
+          assert.equal(original.owner.identity.sessionId, agent.session.id); assert.equal(original.request.context.userId, 'packed-user');
+          assert.equal(original.owner.request.binding.contract, 'agentkit.dsh-node-legacy-memory/v1');
+        }
+        const memoryProof = { rows: ownedMemoryRows, actualRequests: 2, originalDshOwner: true,
+          duplicateSuppressed: true, policyDenied: true, postPolicyPreserved: true };
         const knowledgeId = `builtin-proof-knowledge-${runtime}`, knowledgeArgs = { query: '完整知识查询😀'.repeat(60) };
         const lookup = () => registry.execute({ agent, callId: knowledgeId, name: 'search_knowledge_base', arguments: knowledgeArgs, signal: new AbortController().signal });
         const knowledgeStart = knowledgeRequests.length, knowledgeResult = await lookup(); assert.equal(knowledgeResult.isError, false);
@@ -829,6 +882,7 @@ export async function apply(ctx, options) {
         report.runtimes.at(-1).browser = browserProof;
         report.runtimes.at(-1).management = managementProof;
         report.runtimes.at(-1).knowledge = knowledgeProof;
+        report.runtimes.at(-1).memory = memoryProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

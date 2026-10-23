@@ -12,8 +12,10 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 执行 fence，DSH/Codex 使用原 Agent/Session/call 的独立持久记录。定向测试和真实
 打包 Host 的跨 PID 回执恢复已有证据；仍不代表全新安装或真实模型/CLI 验收。
 配置与剩余差异见 [知识库工具](native-knowledge-tools.md) 和
-[Skill 管理](native-skill-management.md)。`load_memory` / `save_memory`、知识库端点
-自动选择和自定义端点等差异仍在原迁移范围内，不能以已有上下文注入代替工具迁移。
+[Skill 管理](native-skill-management.md)。`load_memory` / `save_memory` 也已接入
+Node local/HTTP/SDK 服务、真实 Native/DSH 所有权及提前持久化的写 DTO；详情和限制
+见 [长期记忆工具](native-legacy-memory.md)。配置差异、真实云服务及完整产品组合
+仍待验收，不能以模块通过或已有上下文注入代替整体完成。
 
 | 完成门槛 | 当前可确认状态 | 尚未闭环 |
 | --- | --- | --- |

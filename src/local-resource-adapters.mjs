@@ -7,23 +7,13 @@ import { join } from 'node:path';
 import { materializeCloudSkill, runtimeSkill } from './skill-files.mjs';
 import { fetchNativeSkillArchive } from './providers/native-skill-loader.mjs';
 import { MCP_JSON_PARSER_CONTRACT, NATIVE_MCP_JSON_CODEC, nativeMcpJsonParser, nativeMcpSchemaValidator } from './providers/native-mcp-json.mjs';
+import { memorySubjectId, memorySessionId } from './memory-identity.mjs';
 
 export class LocalResourceError extends Error {
   constructor(code, message, details = {}) { super(message); this.name = 'LocalResourceError'; this.code = code; this.details = details; }
 }
 
 function resourceId(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
-
-/** AICP bounds AgentUserId and SessionId to 64 characters. */
-function memorySubjectId(collectionId, userId, agentId = '') {
-  const encoded = JSON.stringify([
-    'memory-partition/v1',
-    String(collectionId || ''),
-    String(agentId || ''),
-    String(userId || 'studio-anonymous').trim() || 'studio-anonymous',
-  ]);
-  return `mp1-${createHash('sha256').update(encoded).digest('hex').slice(0, 60)}`;
-}
 
 function memoryReply(reply, requireReceipt = false) {
   let data = reply?.data;
@@ -38,10 +28,6 @@ function memoryReply(reply, requireReceipt = false) {
   return { data, requestId };
 }
 
-function memorySessionId(sessionId) {
-  const raw = String(sessionId || '').trim();
-  return raw ? createHash('sha256').update(`memory-session/v1|${raw}`).digest('hex') : '';
-}
 function contentHash(value, skillId) {
   const raw = String(value || '').trim().toLowerCase().replace(/^sha256:/, '');
   if (!raw) return '';

@@ -297,6 +297,16 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable know
   await assert.rejects(registered[0].execute({}, {}), { code: 'KNOWLEDGE_NODE_PORT_UNAVAILABLE' }); bridge.close();
 });
 
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable legacy Memory ports never enter Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'memory-agent', runtime, local: true, toolBindings: ['load_memory', 'save_memory'],
+    spawnImpl: () => assert.fail('Memory cannot spawn Python') });
+  assert.equal(registered.length, 2);
+  for (const tool of registered) await assert.rejects(tool.execute({}, {}), { code: 'MEMORY_NODE_PORT_UNAVAILABLE' }); bridge.close();
+});
+
 for (const runtime of ['dsh-native', 'codex']) test(`${runtime} explicit managed binding admits three A2A formals and rejects executor collisions`, () => {
   const bridge = createRuntimeBridge(), tools = [];
   const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,

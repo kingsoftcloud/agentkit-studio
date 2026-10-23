@@ -920,6 +920,21 @@ test('Studio Native pins knowledge datasets, retrieval parameters and connection
   }
 });
 
+test('Studio Native pins legacy Memory backend, user partition mode, settings and connection across an existing Run', async t => {
+  const fixture = await setup(t, { sqlite: true }), binding = { contract: 'agentkit.legacy-memory-tools/v1',
+    agentId: fixture.record.metadata.id, backend: 'sdk', bound: true, collectionIds: ['memory'], index: 'default_app', topK: 5,
+    sceneId: '_sys_general', volatile: false, connectionDigest: 'a'.repeat(64) };
+  fixture.payload.binding.nativeTools.legacyMemoryBinding = binding;
+  await fixture.host.executeTurn(fixture.payload);
+  const head = fixture.head(), before = fixture.ledger.load(head.scope, head.runId);
+  await fixture.host.executeTurn(fixture.payload); assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
+  for (const change of [{ collectionIds: ['other'] }, { backend: 'http' }, { bound: false }, { topK: 9 }, { connectionDigest: 'b'.repeat(64) }]) {
+    fixture.payload.binding.nativeTools.legacyMemoryBinding = { ...binding, ...change };
+    await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+    assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
+  }
+});
+
 test('Studio Native pins its browser task policy and explicit execution limits in the Run configuration', async t => {
   const fixture = await setup(t, { spec: { execution: { nativeLimits: { maxModelCalls: 20, maxToolCalls: 0 } } } });
   fixture.payload.binding.nativeTools.definitions = () => [studioBrowserDefinition()];

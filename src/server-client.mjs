@@ -268,7 +268,7 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
     return { ...normalizeAgent(payload.draft || payload.agent || payload), requestId: String(response.headers.get('x-request-id') || '') };
   }
 
-  async function action(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID(), templateEnvironment } = {}) {
+  async function action(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID(), templateEnvironment, preserveEnvelope = false } = {}) {
     if (!/^[A-Z][A-Za-z0-9]+$/.test(name)) throw new AgentEngineError('INVALID_ACTION', '无效 Server Action');
     if (!allowedActions.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw new AgentEngineError('INVALID_REQUEST_ID', '请求 ID 必须是 UUID');
@@ -370,7 +370,8 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
         return requestAgainst(endpoints.innerKop, false);
       }
       if (!envelope) throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server 未返回有效 JSON', { status: response.status, action: name });
-      const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListMemories', 'UpdateMemory', 'DeleteMemory'].includes(name);
+      const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListMemories', 'UpdateMemory', 'DeleteMemory'].includes(name)
+        || (preserveEnvelope && name === 'ListSessions');
       const codeValid = envelope?.Code == null ? nativeResource : [0, 200].includes(Number(envelope.Code));
       if (!response.ok || !envelope || !codeValid || envelope.Error || envelope.ResponseMetadata?.Error) {
         if (kop && ['InvalidActionOrVesion', 'InvalidActionOrVersion'].includes(envelope?.Error?.Code)) {
@@ -383,7 +384,8 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
         throw new AgentEngineError(status === 429 ? 'SERVER_RATE_LIMITED' : 'SERVER_ACTION_FAILED',
           `${name} 请求失败（${status}）`, { status, requestId: String(envelope?.RequestId || ''), action: name });
       }
-      return { data: nativeResource ? (envelope.Data ?? envelope) : envelope.Data, requestId: String(envelope.RequestId || envelope.ResponseMetadata?.RequestId || '') };
+      return { data: preserveEnvelope ? envelope : nativeResource ? (envelope.Data ?? envelope) : envelope.Data,
+        requestId: String(envelope.RequestId || envelope.ResponseMetadata?.RequestId || '') };
     };
     return requestAgainst(base);
   }

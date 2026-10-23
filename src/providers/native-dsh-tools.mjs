@@ -39,13 +39,14 @@ import { prepareNativeSkillHost } from './native-skill-host.mjs';
 import { sandboxRegistryName, SANDBOX_CODE_NAME_CONTRACT } from './sandbox-code-name.mjs';
 import { skillManagementDefinitions, SKILL_MANAGEMENT_CONTRACT } from '../skill-management.mjs';
 import { knowledgeToolDefinitions, STUDIO_KNOWLEDGE_TOOLS } from '../knowledge-tools.mjs';
+import { legacyMemoryToolDefinitions, LEGACY_MEMORY_TOOLS } from '../legacy-memory-tools.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
 export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
   commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch, e2bLoadSdk, a2aFetch,
-  skillConnection, skillFetch, getSkillManagement, getKnowledgeTools }) {
+  skillConnection, skillFetch, getSkillManagement, getKnowledgeTools, getLegacyMemoryTools }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
@@ -83,6 +84,13 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   invariant(!knowledge || knowledge.contract === STUDIO_KNOWLEDGE_TOOLS && knowledge.binding.agentId === config.agentId,
     'studio_native_knowledge_binding_invalid');
   const knowledgeNames = new Set(knowledge ? knowledgeDefinitions.map(tool => { formal.set(tool.name, tool); return tool.name; }) : []);
+  const legacyMemoryDefinitions = legacyMemoryToolDefinitions();
+  const wantsLegacyMemory = legacyMemoryDefinitions.some(tool => names(config.toolBindings).includes(tool.name)
+    || config.toolContracts?.some(contract => contract.executor === 'builtin' && contract.enabled !== false && contract.name === tool.name));
+  const legacyMemory = wantsLegacyMemory && getLegacyMemoryTools ? getLegacyMemoryTools(config) : null;
+  invariant(!legacyMemory || legacyMemory.contract === LEGACY_MEMORY_TOOLS && legacyMemory.binding.agentId === config.agentId,
+    'studio_native_legacy_memory_binding_invalid');
+  const legacyMemoryNames = new Set(legacyMemory ? legacyMemoryDefinitions.map(tool => { formal.set(tool.name, tool); return tool.name; }) : []);
   for (const definition of nativeComponentToolDefinitions()) formal.set(definition.name, definition);
   for (const definition of nativeSkillDisclosureDefinitions()) if (disclosureNames.has(definition.name)) formal.set(definition.name, definition);
   const commandEnvironmentSnapshot = { ...commandEnvironment }, commandBackend = nativeCommandBackend(commandEnvironmentSnapshot);
@@ -132,6 +140,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   invariant([...remoteSkillNames].every(name => !contracts.has(name) || contracts.get(name).executor === 'builtin'), 'studio_native_skill_tool_collision');
   invariant([...managementNames].every(name => !contracts.has(name) || contracts.get(name).executor === 'builtin'), 'studio_native_skill_management_collision');
   invariant([...knowledgeNames].every(name => !contracts.has(name) || contracts.get(name).executor === 'builtin'), 'studio_native_knowledge_collision');
+  invariant([...legacyMemoryNames].every(name => !contracts.has(name) || contracts.get(name).executor === 'builtin'), 'studio_native_legacy_memory_collision');
   const builtin = [...allowed].filter(name => contracts.get(name)?.executor === 'builtin'
     || formal.has(name) && contracts.get(name)?.executor !== 'mcp');
   const builtinNames = new Set(builtin);
@@ -209,7 +218,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     remoteSkills?.close();
     for (const owners of disclosureOwners.values()) for (const owner of owners) owner.close();
     disclosureOwners.clear();
-    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, ...memoryClosing, ...webClosing, browserTools.close(), a2a?.close(), knowledge?.close()]).then(results => {
+    return closing = Promise.allSettled([...unregistering, ...memoryUnregistering, ...memoryClosing, ...webClosing, browserTools.close(), a2a?.close(), knowledge?.close(), legacyMemory?.close()]).then(results => {
       const failed = results.find(result => result.status === 'rejected');
       if (failed) throw failed.reason;
     });
@@ -274,7 +283,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           } else if (remoteSkillNames.has(name)) {
             invariant(invocation.remoteSkills, 'studio_native_skill_binding_missing');
             outcome = await invocation.remoteSkills.execute({ ...invocation.request, signal: exec.signal });
-          } else if (managementNames.has(name) || knowledgeNames.has(name)) {
+          } else if (managementNames.has(name) || knowledgeNames.has(name) || legacyMemoryNames.has(name)) {
             invariant(typeof invocation.assertCurrent === 'function', 'studio_native_skill_management_authority_missing');
             const original = invocation.request, originalSignal = original.signal, executionSignal = exec.signal,
               sealed = canonical(Object.fromEntries(Object.entries(original).filter(([key]) => key !== 'signal'))),
@@ -291,7 +300,13 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
                 && invocation.assertCurrent(original) === true, 'studio_native_skill_management_authority_lost'); return true;
             };
             guard();
-            if (knowledgeNames.has(name)) outcome = await knowledge.execute(name, structuredClone(args), { signal: exec.signal, assertCurrent: guard });
+            if (legacyMemoryNames.has(name)) outcome = await legacyMemory.execute(name, structuredClone(args), {
+              signal: exec.signal, assertCurrent: guard,
+              context: { agentId: config.agentId, userId: original.scope.userId, sessionId: original.sessionId, runnerType: 'native-harness' },
+              owner: { kind: 'native', identity: { scope: structuredClone(original.scope), runId: original.runId,
+                sessionId: original.sessionId, operationKey: original.operationKey, callId: original.call.callId }, request: parseNativeJson(sealed) },
+            });
+            else if (knowledgeNames.has(name)) outcome = await knowledge.execute(name, structuredClone(args), { signal: exec.signal, assertCurrent: guard });
             else {
               const content = await management.execute(name, structuredClone(args), { signal: exec.signal, assertCurrent: guard });
               outcome = { status: content.ok === false ? 'error' : 'ok', content };
@@ -512,6 +527,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     remoteSkillBinding: remoteSkills?.binding ?? null,
     skillManagementBinding: management ? structuredClone(management.binding) : null,
     knowledgeBinding: knowledge ? structuredClone(knowledge.binding) : null,
+    legacyMemoryBinding: legacyMemory ? structuredClone(legacyMemory.binding) : null,
     skillDisclosureBindingDigest: disclosureBindingDigest,
     get childSkillBinding() { return structuredClone(childSkillBinding); },
     async skillInstructions(signal) {

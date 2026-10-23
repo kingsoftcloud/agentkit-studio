@@ -27,6 +27,10 @@ test('local presets pin public component bindings for DSH Native, Codex and Harn
     assert.deepEqual(config.componentBindings, { contract: 'agentkit.dsh-component-bindings/v1',
       knowledgeBaseBound: true, longTermMemoryBound: true, skillSpaceIds: ['space'] });
     assert.deepEqual(config.knowledgeBindings, { contract: 'agentkit.studio-knowledge-bindings/v1', datasetIds: ['kb'] });
+    assert.deepEqual(config.legacyMemoryBindings, { contract: 'agentkit.legacy-memory-bindings/v1', collectionIds: ['memory'] });
+    record.spec.bindings.plugins[3].config.binding.resource.id = 'changed-memory-after-admission';
+    assert.deepEqual(config.legacyMemoryBindings.collectionIds, ['memory']);
+    assert.equal(JSON.stringify(config.legacyMemoryBindings).includes('never-copy'), false);
     record.spec.bindings.plugins[2].config.binding.resource.id = 'changed-kb-after-admission';
     assert.deepEqual(config.knowledgeBindings.datasetIds, ['kb']);
     assert.equal(JSON.stringify(config.knowledgeBindings).includes('never-copy'), false);

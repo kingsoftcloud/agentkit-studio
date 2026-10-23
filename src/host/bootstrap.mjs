@@ -5,6 +5,7 @@ import { hostFetch } from '../http-fetch.mjs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { NATIVE_MCP_JSON_CODEC } from '../providers/native-mcp-json.mjs';
 import { snapshotNativeMcpSchema } from '../providers/native-mcp-schema.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
@@ -161,6 +162,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || '', sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '', ...cloudEndpointOptions });
   const getKnowledgeTools = config => createStudioKnowledgeTools({ agentId: config.agentId,
     bindings: config.knowledgeBindings, connection: knowledgeConnection, env: runtimeEnv });
+  const { createLegacyMemoryConnection, createLegacyMemoryTools } = await import('../legacy-memory-tools.mjs');
+  const memoryConnection = await createLegacyMemoryConnection({ configuration: await configurationPromise, env: runtimeEnv,
+    serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || '', sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '', ...cloudEndpointOptions });
+  const getLegacyMemoryTools = config => createLegacyMemoryTools({ agentId: config.agentId,
+    root: join(realpathSync(studioStoreDir), 'legacy-memory'), workspaceRoot: realpathSync(workspaceRoot),
+    bindings: config.legacyMemoryBindings, connection: memoryConnection, env: runtimeEnv });
   {
     const { createDshNodeBuiltins } = await import('../providers/dsh-node-builtins.mjs');
     ctx.effect(() => bridge.setBuiltinToolsFactory(({ ctx: toolsCtx, config, isClosed, signal }) => createDshNodeBuiltins({
@@ -168,6 +175,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
       getSkillManagement, getKnowledgeTools, knowledgeBindings: config.knowledgeBindings,
+      getLegacyMemoryTools, legacyMemoryBindings: config.legacyMemoryBindings,
       toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
       skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [], a2aBindings: config.a2aBindings ?? [],
     })), 'agentkit-studio: Node builtin environment');
@@ -181,7 +189,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
       commandEnvironment: runtimeEnv,
       skillConnection,
-      getSkillManagement, getKnowledgeTools,
+      getSkillManagement, getKnowledgeTools, getLegacyMemoryTools,
       executeMcpTool: request => bridge.executeResourceTool(request),
     })), 'agentkit-studio: Native tool environment');
   }
