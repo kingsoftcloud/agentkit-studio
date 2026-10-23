@@ -516,3 +516,9 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 展示记录绑定原 Session、Agent、Build、响应句柄及输入和模型的指纹，仅用于交付。回放仍先核对原请求历史；展示记录不能授权创建新 Session、调用模型或执行工具。若执行已完成而尚无展示记录，则从持久请求事实恢复展示，不重新执行。该间隔的进程强杀验收仍需单独补齐。
 
 `scripts/verify-studio-native-portable-runtime.mjs --source <built-maintained-dsh> --archive <Studio.tgz> --keep` 在 Node 26.5/22.19 的实际打包 Host 上验证：完整 JSON 暖/冷回放相等、暖/冷 SSE 相等、原 Native SQLite 记录不变、恰好两个 Run、每个 SDK 数字轮次与 Native 身份对应、工具意图/回执/公开调用按正式 Session delivery 身份配对、原 Build 的模型和权限不变。第一轮读、写入拒绝、回读共四次模型调用；重启后的新请求两次模型调用；回放零新调用。固定 DSH 为 `570ad6033c4d0954451ad8822ab47bfb2160ed4c`。五个受影响测试模块在两版本各 27 项通过；未跑全量。依赖仍来自固定本地图，不能作为全新安装、云端部署或全部迁移完成的证明。
+
+## 可选视觉观察端口
+
+`createNativeVisionBrowser` 对应参考 `browser_adapters/native_vision.py`，通过宿主绑定的独立图片模型描述已捕获截图。说明标为不可信模型输出，不能改变原浏览器结果、授予执行权限或宣告任务完成。模型必须明确接受 native 图片；当前工具预算不足、浏览器结果未知或需审批时不额外调用。缓存固定完整 profile、Run、Session、目标修订及截图内容；命中不新增模型用量。已知 token/cost 下界与“用量是否完整”分开记录，未知不能变成零；缓存命中保留原浏览器用量状态。说明及观察文本的长度按 Unicode 码点计算。
+
+真实 Claude `4cf2f0a` 两个交付文件经父级审查、补充缓存完整性、图片能力和 Unicode 边界后，在 Node 26.5/22.19 各通过 36 项定向验证。包含实际 NativeKernel、SQLite、ToolAuthority 及真实 ModelPort 的确定性 SSE 编解码；数据库重开后再次推进终态 Run 不执行模型或工具，记录不变。浏览器端口在这些测试中使用确定性截图替身，此处不作为真实浏览器验收。Studio 独立视觉模型选择、Frozen 绑定、预算保留及生产端口组装尚未接通；此模块不能作为视觉产品能力已完成的证明。
