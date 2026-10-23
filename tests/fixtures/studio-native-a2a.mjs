@@ -106,6 +106,8 @@ async function applyProof(ctx, options) {
       KSADK_A2A_SERVICE_URL: options.a2aServiceUrl,
       KSADK_A2A_SERVICE_TOKEN: options.a2aServiceToken,
       KSADK_A2A_ALLOW_PRIVATE: 'true',
+      ...(options.a2aControlPlaneUrl ? { KSADK_A2A_CONTROL_PLANE_URL: options.a2aControlPlaneUrl,
+        KSADK_A2A_TOKEN_DIR: options.a2aTokenDirectory } : {}),
     },
   });
 

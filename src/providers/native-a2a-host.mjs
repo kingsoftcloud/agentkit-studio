@@ -15,6 +15,9 @@ import { hostFetch } from '../http-fetch.mjs';
 import { createSsrfPinnedFetch } from './native-dsh-web.mjs';
 import { a2aSse, a2aTerminal, createA2AProjection, NATIVE_A2A_PROTOCOL } from './native-a2a-protocol.mjs';
 import { a2aControlView, createA2ATaskControl } from './native-a2a-controls.mjs';
+import { createInternalA2AControlPlane } from './native-a2a-control-plane.mjs';
+import { createInternalA2AWire, A2A_INTERNAL_WIRE } from './native-a2a-internal-wire.mjs';
+import { createFileWorkloadTokenProvider } from './native-a2a-workload-token.mjs';
 
 export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
 export const STUDIO_DSH_A2A_HOST = 'agentkit.studio-dsh-a2a-host/v1';
@@ -24,9 +27,9 @@ const text = (value, code) => { invariant(typeof value === 'string' && value.tri
 const normalized = value => value.trim().toLowerCase().replace(/^a2a-agent-/u, '');
 const read = (env, name, fallback = '') => { const value = env[name] ?? fallback; invariant(typeof value === 'string', 'A2A_ENV_INVALID'); return value.trim(); };
 const kopHosts = new Set(['aicp.api.ksyun.com', 'aicp.inner.api.ksyun.com', 'aicp.internal.api.ksyun.com']);
-function endpoint(value, allowPrivate = false) {
+function endpoint(value, allowPrivate = false, allowQuery = false) {
   const url = new URL(value);
-  invariant(['https:', 'http:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash,
+  invariant(['https:', 'http:'].includes(url.protocol) && !url.username && !url.password && (allowQuery || !url.search) && !url.hash,
     'A2A_ENDPOINT_INVALID');
   const host = url.hostname.replace(/^\[|\]$/gu, '');
   invariant(allowPrivate || url.protocol === 'https:' && (!isIP(host) || !isBlockedAddress(host)), 'A2A_ENDPOINT_BLOCKED');
@@ -63,7 +66,7 @@ function strictSpecs(input) {
 
 export function prepareNativeA2AHost(options = {}) { return prepareA2AHost(options, false); }
 export function prepareDshA2AHost(options = {}) { return prepareA2AHost(options, true); }
-function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {}, dsh) {
+function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, workloadTokenProvider } = {}, dsh) {
   const contract = dsh ? STUDIO_DSH_A2A_HOST : STUDIO_NATIVE_A2A_HOST;
   const fixed = { ...env }, specs = strictSpecs(bindings);
   let spaceId = read(fixed, 'KSADK_A2A_SPACE_ID');
@@ -76,7 +79,12 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
   if (!spaceId) return null;
   text(spaceId, 'A2A_SPACE_REQUIRED');
   const allowPrivate = ['1', 'true'].includes(read(fixed, 'KSADK_A2A_ALLOW_PRIVATE').toLowerCase());
-  const base = endpoint(read(fixed, 'KSADK_A2A_SERVICE_URL', 'https://aicp.api.ksyun.com'), true);
+  const controlPlaneUrl = read(fixed, 'KSADK_A2A_CONTROL_PLANE_URL');
+  const internal = controlPlaneUrl ? createInternalA2AControlPlane({ baseUrl: controlPlaneUrl, fetchImpl, allowPrivate,
+    tokenProvider: workloadTokenProvider ?? createFileWorkloadTokenProvider({
+      tokenDirectory: read(fixed, 'KSADK_A2A_TOKEN_DIR', '/var/run/secrets/agentengine/a2a') }) }) : null;
+  const publicEgressEnabled = ['1', 'true', 'yes', 'on'].includes(read(fixed, 'KSADK_A2A_ENABLE_PUBLIC_EGRESS').toLowerCase());
+  const base = endpoint(internal ? 'https://aicp.api.ksyun.com' : read(fixed, 'KSADK_A2A_SERVICE_URL', 'https://aicp.api.ksyun.com'), true);
   invariant(base.pathname === '/', 'A2A_SERVICE_ORIGIN_REQUIRED');
   const token = read(fixed, 'KSADK_A2A_SERVICE_TOKEN');
   const ak = read(fixed, 'KSADK_A2A_ACCESS_KEY', read(fixed, 'KSYUN_ACCESS_KEY'));
@@ -90,14 +98,28 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
   invariant(base.protocol === 'https:' || isKop || ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname), 'A2A_SERVICE_HTTP_FORBIDDEN');
   const planDigest = hash(specs), sourceDigest = hash({ source: 'ksadk-python', revision: '355059d78e47ed764bbdb3606304cdf34e9838a3' });
   const binding = Object.freeze({ contract, protocol: NATIVE_A2A_PROTOCOL, spaceId,
-    bindingDigest: hash({ base: base.href, spaceId, specs, allowPrivate, region, source, accountId,
-      credentialFingerprint: hash({ token, ak, sk, sessionToken }) }), planDigest });
+    bindingDigest: hash(internal ? { spaceId, specs, allowPrivate, publicEgressEnabled, controlPlane: internal.binding }
+      : { base: base.href, spaceId, specs, allowPrivate, region, source, accountId,
+        credentialFingerprint: hash({ token, ak, sk, sessionToken }) }), planDigest });
   const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: allowPrivate ? null : isBlockedAddress });
   let closed = false;
   const lifetime = new AbortController();
-  const close = async () => { closed = true; lifetime.abort(new Error('A2A_HOST_CLOSED')); await pinned.close(); };
-  async function list({ spaceId: selectedSpace, signal }) {
+  const close = async () => { closed = true; lifetime.abort(new Error('A2A_HOST_CLOSED')); internal?.close(); await pinned.close(); };
+  async function list({ spaceId: selectedSpace, signal, assertCurrent: authority }) {
     invariant(!closed, 'A2A_HOST_CLOSED'); signal.throwIfAborted();
+    if (internal) {
+      const agents = [], seen = new Set(), cursors = new Set(); let cursor;
+      do {
+        invariant(cursors.size < 100 && !cursors.has(cursor), 'A2A_DISCOVERY_LIMIT'); cursors.add(cursor);
+        const page = await internal.listSpaceAgents({ spaceId: selectedSpace, signal, assertCurrent: authority, ...(cursor ? { cursor } : {}), pageSize: 100 });
+        for (const item of page.agents) {
+          invariant(!seen.has(item.agent_id) && agents.length < 10000, 'A2A_DISCOVERY_LIMIT'); seen.add(item.agent_id);
+          if (item.callable) agents.push(item);
+        }
+        cursor = page.nextCursor;
+      } while (cursor);
+      return agents;
+    }
     const name = 'ListAToASpaceAgents', version = '2024-06-12';
     const body = JSON.stringify({ A2ASpaceId: text(selectedSpace, 'A2A_SPACE_REQUIRED'), Status: 'available', PageSize: 100 });
     const url = new URL(isKop ? `/?Action=${name}&Version=${version}` : `/agentengine/api/v1/${name}`, base);
@@ -167,17 +189,19 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
           && previous.request.message.parts.length === 1 && previous.request.message.parts[0].text === message, 'A2A_CALL_IDENTITY_CONFLICT');
         check(native, signal); return copy(previous.request);
       }
-      const agents = await list({ spaceId: spec.space_id, signal: AbortSignal.any([signal, sessionLifetime.signal]) }); check(native, signal);
+      const agents = await list({ spaceId: spec.space_id, signal: AbortSignal.any([signal, sessionLifetime.signal]),
+        assertCurrent: () => { check(native, signal); return true; } }); check(native, signal);
       const found = agents.find(item => item.agent_id === spec.target_agent_id);
       invariant(found && found.version_id === spec.expected_version_id, 'A2A_VERSION_DRIFT');
       const iface = found.card.supportedInterfaces?.[0];
       invariant(iface?.protocolVersion === '1.0' && ['JSONRPC', 'HTTP+JSON'].includes(iface.protocolBinding), 'A2A_INTERFACE_UNSUPPORTED');
-      endpoint(iface.url, allowPrivate);
+      endpoint(iface.url, allowPrivate, Boolean(internal));
       const scopeId = `a2a-${hash(identity)}`;
       const wireMessage = { messageId: hash({ identity, kind: 'initial-message' }), role: 'ROLE_USER', parts: [{ text: message }] };
       invariant(Buffer.byteLength(canonical(wireMessage)) <= 1024 * 1024, 'A2A_MESSAGE_LIMIT');
       const request = { spec, trigger: { scope_id: dsh ? scopeId : native.runId, item_id: native.call.callId, call_id: native.call.callId },
         [dsh ? 'dsh' : 'native']: native, scopeId, identity, message: wireMessage,
+        ...(internal ? { cardSha256: text(found.card_sha256, 'A2A_CARD_DIGEST_REQUIRED') } : {}),
         route: { url: iface.url, protocolBinding: iface.protocolBinding, streaming: found.card.capabilities?.streaming === true,
           source: found.source } };
       const record = newRecord(request, 'prepared');
@@ -189,7 +213,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       return { contract, owner, request, requestDigest: hash(request), phase, sendAdmission,
         platformTaskId: `a2a-task-${randomUUID().replaceAll('-', '')}`, createdAt,
         deadlineAt: createdAt + Math.min(90000, Math.ceil((request.spec.timeout_seconds ?? 90) * 1000)),
-        projection: createA2AProjection(request.scopeId).snapshot() };
+        projection: createA2AProjection(request.scopeId).snapshot(),
+        ...(internal ? { managed: { contract: A2A_INTERNAL_WIRE, operations: {} } } : {}) };
     }
     function file(request) { return join(directory, `${hash(request.identity)}.json`); }
     function readIdentity(identity) {
@@ -227,6 +252,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
           record.phase = 'sending';
         }
         if (current) {
+          if (current.managed) { record.managed = copy(current.managed); record.platformTaskId = current.platformTaskId; }
           if (current.localCancel) record.localCancel = copy(current.localCancel);
           const previous = current.projection;
           if (previous.taskId && !record.projection.taskId) record.projection = copy(previous);
@@ -284,20 +310,58 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         return true;
       } finally { release(); }
     }
-    async function wire(request, method, params, signal, streaming = false, authority = () => check(request[dsh ? 'dsh' : 'native'], signal)) {
+    function commitManaged(request, mutate) {
+      storageGuard();
+      const release = tryLock(join(directory, `${hash(request.identity)}.state.sqlite`), 5000);
+      invariant(release, 'A2A_RECORD_BUSY');
+      try {
+        const current = readRecord(request);
+        invariant(current?.managed?.contract === A2A_INTERNAL_WIRE, 'A2A_INTERNAL_RECORD_REQUIRED');
+        mutate(current.managed);
+        if (current.managed.taskId) current.platformTaskId = current.managed.taskId;
+        const remote = current.managed.remote;
+        if (remote?.phase === 'bound') {
+          invariant(!current.projection.taskId || current.projection.taskId === remote.id
+            && current.projection.contextId === remote.contextId, 'A2A_REMOTE_BINDING_CONFLICT');
+          current.projection.taskId = remote.id; current.projection.contextId = remote.contextId;
+        }
+        const bytes = canonical(current) + '\n'; invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
+        atomicPrivate(file(request), bytes);
+      } finally { release(); }
+    }
+    const internalWire = internal ? createInternalA2AWire({ controlPlane: internal, readRecord, commit: commitManaged,
+      validateRoute: url => endpoint(url, allowPrivate, true), publicEgressEnabled }) : null;
+    function privateWireError(error) {
+      const safe = new Set(['A2A_CANCEL_UNSUPPORTED', 'A2A_REMOTE_BINDING_CONFLICT', 'A2A_INTERNAL_BIND_OUTCOME_UNKNOWN',
+        'A2A_CONTROL_PLANE_AUTHORITY_LOST', 'A2A_CONTROL_AUTHORITY_LOST', 'A2A_OWNER_CLOSED', 'A2A_OWNER_CHANGED',
+        'A2A_CONTROL_REQUEST_DRIFTED', 'A2A_WORKLOAD_TOKEN_INVALID']);
+      invariant(false, safe.has(error?.code) ? error.code : 'A2A_REMOTE_HTTP_FAILED');
+    }
+    async function wire(...args) {
+      if (!internal) return wireUnsafe(...args);
+      try { return await wireUnsafe(...args); } catch (error) { privateWireError(error); }
+    }
+    async function wireUnsafe(request, method, params, signal, streaming = false, authority = () => check(request[dsh ? 'dsh' : 'native'], signal), commandId) {
       authority();
-      const url = endpoint(request.route.url, allowPrivate), rpc = request.route.protocolBinding === 'JSONRPC';
+      const prepared = internalWire ? await internalWire.prepare(request, method, params, signal,
+        () => { authority(); return true; }, commandId) : null;
+      const route = prepared?.route ?? request.route;
+      const actualStreaming = streaming && !prepared?.existingInitialTask && (!prepared || route.streaming);
+      if (prepared) { method = prepared.method; params = prepared.params; }
+      if (method === 'SendStreamingMessage' && !actualStreaming) method = 'SendMessage';
+      const url = endpoint(route.url, allowPrivate, Boolean(prepared)), rpc = route.protocolBinding === 'JSONRPC';
       const id = randomUUID();
       const rest = method === 'GetTask' ? { method: 'GET', path: `/tasks/${encodeURIComponent(params.id)}` }
         : method === 'CancelTask' ? { method: 'POST', path: `/tasks/${encodeURIComponent(params.id)}:cancel` }
-        : { method: 'POST', path: streaming ? '/message:stream' : '/message:send' };
+        : { method: 'POST', path: actualStreaming ? '/message:stream' : '/message:send' };
       const body = rpc ? canonical({ jsonrpc: '2.0', id, method, params }) : rest.method === 'GET' ? undefined : canonical(params);
-      const target = rpc ? url : new URL(url.href.replace(/\/$/u, '') + rest.path);
+      const target = new URL(url); if (!rpc) target.pathname = target.pathname.replace(/\/$/u, '') + rest.path;
+      prepared?.admit(); authority();
       const response = await pinned.fetch(target, { method: rpc ? 'POST' : rest.method, headers: {
-        'Content-Type': 'application/json', Accept: streaming ? 'text/event-stream' : 'application/json',
+        'Content-Type': 'application/json', Accept: actualStreaming ? 'text/event-stream' : 'application/json',
         // Card-driven Python path uses the configured service token for hosted
         // calls; cloud signing credentials are never sent to a card endpoint.
-        ...(token && request.route.source === 'hosted' ? { Authorization: `Bearer ${token}` } : {}) }, body, redirect: 'error',
+        ...(prepared ? prepared.headers : token && request.route.source === 'hosted' ? { Authorization: `Bearer ${token}` } : {}) }, body, redirect: 'error',
         signal: AbortSignal.any([signal, lifetime.signal, sessionLifetime.signal]) });
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
@@ -316,7 +380,18 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         invariant(payload.result, 'A2A_JSONRPC_FAILED');
         return payload.result;
       };
-      return streaming ? { stream: a2aSse(response.body, signal), unwrap } : unwrap(await jsonBody(response));
+      if (actualStreaming) {
+        const stream = a2aSse(response.body, signal);
+        if (!prepared) return { stream, unwrap };
+        return { stream: (async function* () { try { for await (const event of stream) {
+          const payload = unwrap(event.payload); await prepared.observe(payload); yield { ...event, payload };
+        } } catch (error) { privateWireError(error); } })(), unwrap: payload => payload };
+      }
+      const payload = unwrap(await jsonBody(response)); authority(); await prepared?.observe(payload);
+      if (streaming) return { stream: (async function* () {
+        yield { id: '', payload: prepared?.existingInitialTask ? { task: payload } : payload };
+      })(), unwrap: value => value };
+      return payload;
     }
     const control = createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
       signal: AbortSignal.any([lifetime.signal, sessionLifetime.signal]), readIdentity, save, wire,
@@ -400,14 +475,17 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         // failure. This publication never turns uncertainty into permission
         // to send again. Errors/remote diagnostics cannot expose credentials.
         if (!record || record.phase === 'prepared') throw error;
+        if (internal) record = readRecord(request) ?? record;
         record.phase = 'unknown'; record.error = 'A2A_SEND_OUTCOME_UNKNOWN';
         save(request, record);
+        if (internal && record.phase === 'terminal') return copy(record.result);
         return { state: 'unknown', task_id: record.platformTaskId,
           operation_locator: request.identity, error_type: 'A2A_SEND_OUTCOME_UNKNOWN' };
       } finally { release(); }
     }
     const exposurePlan = { assertGenericTargetAllowed(target) { invariant(specs.some(spec => spec.target_agent_id === target), 'A2A_TARGET_NOT_BOUND'); } };
-    return { discovery: { list: input => list({ ...input, signal: AbortSignal.any([input.signal, sessionLifetime.signal]) }) },
+    return { discovery: { list: input => list({ ...input, signal: AbortSignal.any([input.signal, sessionLifetime.signal]),
+      assertCurrent: () => { checkOwner(input.signal); return true; } }) },
       invocation: { resolve: resolveCall, dispatch }, control, observeReceipt, exposurePlan,
       close: () => sessionLifetime.abort(new Error('A2A_SESSION_CLOSED')),
       bindingDescription: { sourceRef: 'ksadk-python:355059d', sourceDigest: hash({ sourceDigest, hostBinding: binding.bindingDigest }), spaceId, planDigest,

@@ -66,6 +66,7 @@ const { values } = parseArgs({
     'reconcile-cold': { type: 'boolean', default: false },
     'receipt-crash': { type: 'boolean', default: false },
     'busy-cancel': { type: 'boolean', default: false },
+    'internal-control-plane': { type: 'boolean', default: false },
   },
 });
 
@@ -73,6 +74,7 @@ assert.ok(values.source, 'Use --source <built DSH SDK checkout>');
 assert.ok(values.archive, 'Use --archive <packed studio .tgz>');
 assert.ok(!values['receipt-crash'] || values['reconcile-cold'], '--receipt-crash requires --reconcile-cold');
 assert.ok(!values['busy-cancel'] || !values['reconcile-cold'], '--busy-cancel and --reconcile-cold are separate scenarios');
+assert.ok(!values['internal-control-plane'] || !values['busy-cancel'] && !values['reconcile-cold'], 'internal mode currently proves the normal mounted turn/history scenario');
 
 const source = resolve(values.source);
 const archive = resolve(values.archive);
@@ -103,6 +105,10 @@ const a2aSpec = {
 const a2aReply = 'The remote agent found 3 relevant documents.';
 const remoteTaskId = 'remote-task-a2a-proof-001';
 const remoteContextId = 'remote-context-a2a-proof-001';
+const platformTaskId = 'a2a-task-00000000000040008000000000000004';
+const internalActions = [];
+const workloadTokens = Object.fromEntries(['a2a-registry', 'a2a-task-sink', 'a2a-gateway'].map(aud => [aud,
+  'e30.' + Buffer.from(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.c2ln']));
 
 // Track all HTTP calls for exact counting.
 let modelCalls = 0, discoveryCalls = 0, a2aSends = 0, a2aGets = 0, a2aCancels = 0;
@@ -131,6 +137,27 @@ const server = createHttpServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
     const body = raw ? JSON.parse(raw) : null;
+    if (values['internal-control-plane'] && request.url.startsWith('/agentengine/internal/v1/a2a/')) {
+      const action = request.url.split('/').at(-1); internalActions.push(action);
+      const audience = action === 'BindA2ARemoteTask' ? 'a2a-task-sink' : 'a2a-registry';
+      assert.equal(request.headers.authorization, 'Bearer ' + workloadTokens[audience]);
+      if (action !== 'ListA2ASpaceAgents') {
+        const original = JSON.parse((await managedRecords(root))[0].content); let data = {};
+        if (action === 'PrepareA2ACall') {
+          assert.equal(original.phase, 'sending'); assert.ok(Object.values(original.managed.operations).some(value => value.phase === 'preparing'));
+          assert.equal(body.MessageId, original.request.message.messageId); assert.equal(body.ExpectedVersionId, a2aSpec.expected_version_id);
+          data = { A2ATaskId: platformTaskId, Target: { A2AAgentId: a2aSpec.target_agent_id,
+            VersionId: a2aSpec.expected_version_id, CardSha256: 'c'.repeat(64) },
+            Route: { Kind: 'hosted_gateway', Interface: { Url: `http://127.0.0.1:${server.address().port}/rpc`,
+              ProtocolVersion: '1.0', ProtocolBinding: 'JSONRPC' }, Capabilities: { Streaming: true } },
+            CallPermit: 'mounted-private-permit', CallPermitExpiresAt: new Date(Date.now() + 60000).toISOString() };
+        } else {
+          assert.equal(action, 'BindA2ARemoteTask'); assert.equal(original.managed.remote.phase, 'binding');
+          assert.equal(body.A2ATaskId, platformTaskId); assert.equal(body.RemoteTaskId, remoteTaskId);
+        }
+        response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ Code: 0, Data: data })); return;
+      }
+    }
 
     if (values['busy-cancel'] && request.url === '/approval') {
       assert.equal(body.toolName, 'a2a_cancel_task');
@@ -188,7 +215,7 @@ const server = createHttpServer(async (request, response) => {
     }
 
     // === A2A discovery ===
-    if (request.url === '/agentengine/api/v1/ListAToASpaceAgents') {
+    if (request.url === (values['internal-control-plane'] ? '/agentengine/internal/v1/a2a/ListA2ASpaceAgents' : '/agentengine/api/v1/ListAToASpaceAgents')) {
       discoveryCalls++;
       discoveryRequests.push(body);
       console.log(`[discovery] call ${discoveryCalls}: space=${body?.A2ASpaceId}`);
@@ -199,6 +226,7 @@ const server = createHttpServer(async (request, response) => {
         A2AAgentId: a2aSpec.target_agent_id,
         VersionId: a2aSpec.expected_version_id,
         Source: 'hosted',
+        ...(values['internal-control-plane'] ? { RouteKind: 'hosted_gateway', Callable: true, CardSha256: 'c'.repeat(64) } : {}),
         AgentCard: {
           name: 'research',
           description: 'Research agent',
@@ -211,6 +239,13 @@ const server = createHttpServer(async (request, response) => {
 
     // === A2A JSONRPC peer ===
     if (request.url === '/rpc') {
+      if (values['internal-control-plane']) {
+        assert.equal(request.headers.authorization, 'Bearer ' + workloadTokens['a2a-gateway']);
+        assert.equal(request.headers['x-agentengine-a2a-permit'], 'mounted-private-permit');
+        const original = JSON.parse((await managedRecords(root))[0].content);
+        assert.equal(original.platformTaskId, platformTaskId);
+        assert.ok(Object.values(original.managed.operations).some(value => value.phase === 'transport'));
+      }
       a2aPeerRequests.push({ method: body?.method, params: body?.params, id: body?.id });
       const rpcId = body?.id;
       const wrap = result => ({ jsonrpc: '2.0', id: rpcId, result });
@@ -283,6 +318,11 @@ try {
   const serverPort = server.address().port;
   const modelUrl = `http://127.0.0.1:${serverPort}/v1`;
   const a2aServiceUrl = `http://127.0.0.1:${serverPort}`;
+  const tokenDirectory = join(root, 'workload-tokens');
+  if (values['internal-control-plane']) {
+    await mkdir(tokenDirectory);
+    for (const [aud, token] of Object.entries(workloadTokens)) await writeFile(join(tokenDirectory, aud + '.jwt'), token, { mode: 0o400 });
+  }
   console.log(`Model server: ${modelUrl}`);
   console.log(`A2A service: ${a2aServiceUrl}`);
 
@@ -350,6 +390,8 @@ try {
     `        modelUrl: ${JSON.stringify(modelUrl)}`,
     `        a2aServiceUrl: ${JSON.stringify(a2aServiceUrl)}`,
     `        a2aServiceToken: ${JSON.stringify('a2a-fixture-token')}`,
+    ...(values['internal-control-plane'] ? [`        a2aControlPlaneUrl: ${JSON.stringify(a2aServiceUrl)}`,
+      `        a2aTokenDirectory: ${JSON.stringify(tokenDirectory)}`] : []),
     `        a2aBindings: ${JSON.stringify(JSON.stringify([a2aSpec]))}`,
     `        mountHost: true`,
     `        exportControl: ${values['reconcile-cold'] || values['busy-cancel']}`,
@@ -548,12 +590,21 @@ try {
   // === Verify no credentials leaked into the SQLite record ===
   const recordStr = canonical(coldRecord);
   assert.equal(recordStr.includes('a2a-fixture-token'), false, 'A2A service token not leaked into SQLite record');
+  if (values['internal-control-plane']) {
+    assert.deepEqual(internalActions, ['ListA2ASpaceAgents', 'PrepareA2ACall', 'BindA2ARemoteTask']);
+    assert.equal(managed.managed.remote.phase, 'bound'); assert.equal(managed.platformTaskId, platformTaskId);
+    for (const bytes of [recordStr, managedBefore[0].content]) {
+      assert.equal(bytes.includes('mounted-private-permit'), false);
+      for (const token of Object.values(workloadTokens)) assert.equal(bytes.includes(token), false);
+    }
+  }
 
   // === Save evidence ===
   const evidence = {
     archive: { path: archive, sha256: archiveSha },
     sdk: { source, commit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() },
     node: process.version,
+    internalControlPlane: values['internal-control-plane'], internalActions,
     proofRoot: root,
     originalPid, restartedPid,
     httpCalls: { model: modelCalls, discovery: discoveryCalls, a2aSend: a2aSends, a2aGet: a2aGets },

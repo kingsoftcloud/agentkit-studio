@@ -135,13 +135,13 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
           entry.phase = 'resolved'; entry.result = result; check(); publishRecord(); return result;
         }
       }
-      if (kind === 'get' && !record.projection.taskId) {
+      if (kind === 'get' && !record.projection.taskId && !record.managed?.taskId) {
         const result = { ...view(record), commandId, outcome: 'remote_task_not_bound' };
         record.controls[key] = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest,
           command, phase: 'resolved', createdAt: Date.now() };
         check(); publishRecord(); return result;
       }
-      invariant(record.projection.taskId, 'A2A_REMOTE_TASK_NOT_KNOWN');
+      invariant(record.projection.taskId || kind === 'get' && record.managed?.taskId, 'A2A_REMOTE_TASK_NOT_KNOWN');
       const cancelObservation = Object.values(record.controls).find(value => value.cancelReply
         && a2aTerminal.has(value.cancelReply.state))?.cancelReply;
       let projection = createA2AProjection(record.request.scopeId, cancelObservation ?? record.projection);
@@ -156,7 +156,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         publishRecord();
       };
       const observe = async () => {
-        const task = await wire(record.request, 'GetTask', { id: record.projection.taskId }, signal, false, check);
+        const task = await wire(record.request, 'GetTask', { id: record.projection.taskId }, signal, false, check, commandId);
         check(); projection.task(task); publish();
       };
       if (kind === 'get') {
@@ -192,7 +192,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       record.controls[key] = entry;
       check(); publishRecord(); effectStarted = true;
       if (kind === 'continue') {
-        const result = await wire(record.request, 'SendMessage', { message, configuration: { returnImmediately: false } }, signal, false, check);
+        const result = await wire(record.request, 'SendMessage', { message, configuration: { returnImmediately: false } }, signal, false, check, commandId);
         check(); projection.apply(result);
         // A confirmed reply can ask the same question again (e.g. validation
         // failed), without a distinct message ID. It is a new input opportunity.
@@ -201,7 +201,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         projection = createA2AProjection(record.request.scopeId, next); publish();
       } else {
         // A CancelTask reply alone is insufficient: confirm with GetTask.
-        const task = await wire(record.request, 'CancelTask', { id: record.projection.taskId }, signal, false, check);
+        const task = await wire(record.request, 'CancelTask', { id: record.projection.taskId }, signal, false, check, commandId);
         check();
         const validated = createA2AProjection(record.request.scopeId, record.projection); validated.task(task);
         // Keep a terminal CancelTask observation even if confirmation crashes.
