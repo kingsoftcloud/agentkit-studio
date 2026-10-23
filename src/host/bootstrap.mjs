@@ -153,7 +153,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ctx.effect(() => bridge.setBuiltinToolsFactory(({ ctx: toolsCtx, config, isClosed, signal }) => createDshNodeBuiltins({
       ctx: toolsCtx, workspaceRoot, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
       isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
-    })), 'agentkit-studio: Node builtin workspace and web environment');
+      toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
+    })), 'agentkit-studio: Node builtin environment');
   }
   // A frozen Native Build retains its engine when the live-preset default is
   // disabled. Register the capability; selection remains explicit per preset.

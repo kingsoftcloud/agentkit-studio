@@ -40,7 +40,7 @@ export async function apply(ctx, options) {
   const tools = ['workspace_status', 'list_workspace_files', 'read_workspace_file', 'write_workspace_file',
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
-    'sandbox_status', 'run_command', 'read_command_output', 'stop_command'];
+    'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'component_status'];
   const records = [];
   for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
     runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof' } } }));
@@ -99,6 +99,18 @@ export async function apply(ctx, options) {
       const removeBefore = agent.ctx.on('tools/pre-execute', async (exec, next) => { before.push(exec.name); return next(); });
       const removeAfter = agent.ctx.on('tools/post-execute', async (exec, result, next) => { after.push(exec.name); return next(result); });
       try {
+        const components = await call('component_status', {});
+        // Before any request, SessionController uses the maintained SDK's
+        // configured Agent default; the proof deliberately makes no model call.
+        assert.equal(agent.options.model, 'deepseek-flash');
+        assert.equal(components.ok, true); assert.equal(components.summary.model, agent.options.model);
+        assert.equal(components.summary.knowledge_base_bound, false); assert.equal(components.summary.long_term_memory_bound, false);
+        assert.equal(components.summary.skill_space_bound, false); assert.equal(components.summary.isolated_execution, 'not_enabled');
+        assert.equal(components.sandbox.backend, 'local_process'); assert.equal(components.sandbox.enabled, true);
+        assert.deepEqual(components.sandbox.tools, ['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
+        assert.deepEqual([...components.workspace.tools].sort(), tools.filter(name => name.includes('workspace')).sort());
+        assert.equal(components.workspace.root, workspaceRoot); assert.equal(components.skill_runtime.enabled, false);
+        assert.deepEqual(components.skill_space.tools, []);
         const path = `${runtime}.txt`;
         assert.equal((await call('write_workspace_file', { path, content: 'Original bytes.' })).ok, true);
         assert.equal((await call('read_workspace_file', { path })).ok, true);
@@ -320,6 +332,7 @@ export async function apply(ctx, options) {
           registeredCalls: before.length, approvals: audits, crossSessionReadStateIsolated: true, parser: lint.syntax_engine.parser });
         report.runtimes.at(-1).web = webProof;
         report.runtimes.at(-1).commands = commandProof;
+        report.runtimes.at(-1).components = components;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

@@ -14,6 +14,24 @@ function agent(overrides = {}) {
   };
 }
 
+test('local presets pin public component bindings for DSH Native, Codex and Harness without copying credentials', async () => {
+  const plugin = (kind, id, enabled = true) => ({ enabled, config: { binding: { resource: { kind, id, apiKey: 'never-copy' } } } });
+  for (const runtime of ['harness', 'codex', 'dsh-native']) {
+    let preset;
+    const record = agent({ spec: { runtime: { type: runtime }, bindings: { plugins: [plugin('skill-space', 'space'),
+      plugin('skill-space', 'hidden', false), plugin('knowledge-base', 'kb'), plugin('memory-instance', 'memory')] } } });
+    const admission = new DshPresetAdmission({ getAgent: async () => record,
+      registry: { register: async value => { preset = value; } } });
+    await admission.ensure('demo/agent');
+    const config = preset.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin')).config;
+    assert.deepEqual(config.componentBindings, { contract: 'agentkit.dsh-component-bindings/v1',
+      knowledgeBaseBound: true, longTermMemoryBound: true, skillSpaceIds: ['space'] });
+    record.spec.bindings.plugins[0].config.binding.resource.id = 'edited-after-admission';
+    assert.deepEqual(config.componentBindings.skillSpaceIds, ['space']);
+    assert.equal(JSON.stringify(config.componentBindings).includes('never-copy'), false);
+  }
+});
+
 test('pinned A2A specs reach only the local whole-turn Native preset without sharing mutable Agent objects', async () => {
   const specs = [{ local_name: 'remote', binding_id: 'binding', space_id: 'space', target_agent_id: 'remote-id', expected_version_id: 'version' }];
   for (const runtime of ['harness', 'codex', 'dsh-native']) {

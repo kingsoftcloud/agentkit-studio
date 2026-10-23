@@ -33,7 +33,7 @@ function rejectUnknownKeys(object, allow, prefix) {
  *  never silently dropped. Returns a frozen deep clone the caller cannot
  *  mutate after construction. Missing tool lists default to empty — the port
  *  never claims tools are available that the Host did not bind. */
-function buildStatus(raw) {
+export function componentStatusSnapshot(raw) {
   invariant(raw && typeof raw === 'object' && !Array.isArray(raw), 'component_status_invalid');
   rejectUnknownKeys(raw, new Set(['summary', 'skill_space', 'skill_runtime', 'sandbox', 'workspace']), '');
 
@@ -46,7 +46,7 @@ function buildStatus(raw) {
   const sandbox = group(raw.sandbox, new Set(['backend', 'enabled', 'template_bound', 'tools']), 'sandbox.');
   const workspace = group(raw.workspace, new Set(['root', 'tools', 'boundary', 'editing_model']), 'workspace.');
 
-  return deepFreeze(copy({
+  const result = deepFreeze(copy({
     // ok:true is a Host-fixed read-only result the port always emits (mirrors
     // the Python component_status return). It is NOT accepted from the input
     // status snapshot — the model cannot set it.
@@ -89,6 +89,8 @@ function buildStatus(raw) {
           + 'replacement; lint_workspace_file provides lightweight built-in checks.',
     },
   }));
+  invariant(Buffer.byteLength(canonical(result), 'utf-8') <= MAX_RESULT_BYTES, 'component_status_oversized');
+  return result;
 }
 
 function group(value, allow, prefix) {
@@ -178,7 +180,7 @@ export function createNativeComponentTools({ scope, sessionId, status, assertCur
 
   const boundScope = deepFreeze(copy(scope));
   const boundSessionId = String(sessionId);
-  const frozenStatus = buildStatus(status);
+  const frozenStatus = componentStatusSnapshot(status);
   const statusCanonical = canonical(frozenStatus);
   invariant(Buffer.byteLength(statusCanonical, 'utf-8') <= MAX_RESULT_BYTES, 'component_status_oversized');
 

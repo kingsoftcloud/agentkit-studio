@@ -593,7 +593,7 @@ DSH Native 和 Codex 的默认 builtin 组合现在直接提供 Node `sandbox_st
 
 在 Native 原始意图之外，真实网络发送前另写 fsynced marker 与本地管理句柄；远端 task/context 及时检查点，未知发送不重发。定向验证使用真实本机 HTTP、NativeKernel/SQLite 和双 Node 进程 SIGKILL；不以 registry double 冒充真实 DSH Host，不以数据库重开冒充进程强杀。具体范围、命令文件、安装配置和明确未迁能力见 [native-a2a.md](native-a2a.md)。
 
-尚未完成 A2A 整体迁移：真实 packed Host/历史/Frozen/deploy，产品核对/继续/远端取消，内部工作负载控制面与入站服务，远程编排暴露，以及 legacy DSH Native/Codex Python A2A 桥接替代仍待闭环。Input/auth pause 当前保留原检查点并中断等待，不冒充已支持续接。完整迁移仍未完成，工程完成度先前94%偏乐观，整体暂粗估85%～90%，不是测试通过率或验收完成率。
+尚未完成 A2A 整体迁移：真实 packed Host/历史/Frozen/deploy，产品核对/继续/远端取消，内部工作负载控制面与入站服务，远程编排暴露，以及 legacy DSH Native/Codex Python A2A 桥接替代仍待闭环。Input/auth pause 当前保留原检查点并中断等待，不冒充已支持续接。完整迁移仍未完成；先前给出的整体百分比已撤回，以当前验收状态表和实际证据为准。
 
 ## 远程 Skills 的 Host 接线与专用服务配置
 
@@ -646,3 +646,11 @@ Skill 目录 HTTP 和可信测试证书 HTTPS ZIP 的完整执行。两次模型
 恢复同一 Session 历史，完整 Native 记录、工作流和命令记录字节不变，效果计数仍为一次。
 Host/脚本 PATH 仅提供 Node 和 bash，Python 配置指向不存在的位置；依赖复用固定已安装图，
 这不是全新安装、线上 E2B、Frozen 部署或进程 SIGKILL 验收。
+
+## DSH Native / Codex 的 Node 组件状态接入
+
+生产 builtin 环境新增 `agentkit.dsh-node-component-tools/v1`。`component_status` 经过原 DSH ToolRegistry 和策略钩子执行，沿用真实 Session/call/signal；它复用 Native 的字段白名单与 64 KiB 输出上限，不构造 Native Run 或 lease，不启动 Python、网络探测或 E2B SDK。优先报告实际请求头中的模型；首个请求前使用当前 Agent 的模型选项。关闭、取消、异步生命周期回调及调用身份在回调内变化均拒绝发布状态。
+
+准入阶段从 Agent revision / Frozen Build 绑定生成 `agentkit.dsh-component-bindings/v1`，只保存知识库、记忆与 Skill Space 的公开绑定事实，过滤禁用资源并去重 Space ID，不复制原配置或凭据。状态中的工具列表只包含该 preset 已准入并接入 Node 环境的工具；绑定资源与执行器就绪分开报告。DSH legacy 的 E2B、Skill 工作流等尚未接入 Node builtin 的能力不会因为环境变量存在就被报告为已就绪。其他工具仍可能进入原 Python fallback，这次没有移除该桥。
+
+定向验证：五个相关模块在 Node 26.5.0 / 22.19.0 各通过 109 项；补充真实请求头模型优先级与漂移用例后，只重跑变化模块，各 8 项通过。新的实际安装包在两种 Node 下均通过 `scripts/verify-studio-node-builtins.mjs`：生产 Host、鉴权准入、SessionController、DSH Native / Codex 的真实注册与组件调用，原文件/Web/命令/审批/隔离验证全部保留。Host PATH 仅提供 Node，Python 路径不可用；这是固定依赖图上的工具管线验收，不包含模型调用、Codex CLI 或全新依赖安装。初次外层 verifier 错把模型适配器名当作 Session 初始模型而失败，实际 SDK 的无请求默认模型为 `deepseek-flash`；现严格核对该值及真实 Agent 选项，失败日志保留。

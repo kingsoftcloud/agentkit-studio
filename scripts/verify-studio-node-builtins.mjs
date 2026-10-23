@@ -63,7 +63,10 @@ try {
   assert.ok(report.runtimes.every(row => row.commands.duplicateCount === 1 && row.commands.fullOutputBytes === 120000
     && row.commands.sessionOwnership && row.commands.policyDenial && row.commands.postPolicyPreserved
     && row.commands.backgroundCanceled && row.commands.oneShotApprovals === 2));
-  console.log('PASS: packed Host registers Node workspace + web + commands for DSH Native and Codex; actual pre/guard/around/post/output, command deduplication, foreground/background/scoped stop, full UTF-8 outputs, policies, one-shot approvals and Agent/Session isolation; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
+  assert.ok(report.runtimes.every(row => row.components.ok === true && row.components.summary.model === 'deepseek-flash'
+    && row.components.workspace.tools.length === 10 && row.components.sandbox.tools.length === 4
+    && row.components.skill_runtime.enabled === false && row.components.summary.isolated_execution === 'not_enabled'));
+  console.log('PASS: packed Host registers Node workspace + web + commands + component_status for DSH Native and Codex; actual pre/guard/around/post/output, selected model and admitted component facts, command deduplication, foreground/background/scoped stop, full UTF-8 outputs, policies, one-shot approvals and Agent/Session isolation; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
 } finally {
   await harness?.close();
   if (!values.keep) await rm(root, { recursive: true, force: true });
