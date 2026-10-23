@@ -7,6 +7,7 @@ export type { BackgroundCommandPort } from './background-contract.mjs';
 /** Serializable contracts. No Host services, filesystem handles or credentials. */
 export const NATIVE_SCHEMA = 'agentkit.native-run/v1' as const;
 export const NATIVE_ENGINE = 'agentkit.native/v1' as const;
+export const TOOL_RESOURCE_USAGE_CONTRACT = 'agentkit.tool-resource-usage/v1' as const;
 /** bigint represents a JSON integer outside the safe Number range, never a string or object wrapper. */
 export type Json = null | boolean | number | bigint | string | Json[] | { [key: string]: Json };
 export type ObjectValue = { [key: string]: Json };
@@ -198,6 +199,9 @@ export interface ToolResult {
   additionalContexts?: ToolContextMessage[];
   interactionId?: string; workspaceChangedPaths?: string[]; artifactRefs?: ArtifactRef[];
   resourceUsage?: Usage; childRunIds?: string[]; metadata?: ObjectValue;
+  /** Paired with resourceUsage. False means these are only the known counters;
+   * zero never implies that an unreported nested model request was free. */
+  resourceUsageReported?: boolean;
   childBudgetReservation?: ChildBudgetReservation; childBudgetSettlement?: ChildBudgetSettlement;
   /** Only a tool pinned with observationRole=browser can admit these host capabilities. */
   browserSessionRef?: BrowserSessionRef; browserSessionClosed?: boolean;

@@ -26,6 +26,8 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 日常小步修改和模块合入只执行受影响的定向验证；全量回归留到一批能力接通后的阶段验收，或出现明确跨模块回归迹象时执行，不按每次提交或合入重复运行。
 
+工具内部的模型等资源调用采用 `agentkit.tool-resource-usage/v1`：回执可将 `resourceUsageReported` 与 `resourceUsage` 一起提交。`false` 表示计数只包含已知部分，未知 token 或费用不被声明为实际零用量；已知调用仍扣减共享预算。回执、资源增量、`usage.reported/unavailable` 事件和不完整诊断在同一事务提交，重复驱动不重记。子任务沿用原有独立结算事件，新的完整性标记进入结算摘要，不能重复收费或事后改变。工具结果未知、取消或进程丢失回执时明确保留不完整诊断；所有终态（包括取消）按最终诊断输出 `usageComplete`。真实 SQLite 故障用例分别在工具副作用后、回执提交前，以及回执提交后执行 SIGKILL：前者进入核对且不重放工具，后者沿用已提交用量继续执行。恢复通过公开测试时钟使被杀进程的持久 lease 过期，没有编辑数据库记录。最后受影响的用量、Kernel 和恢复四模块在 Node 26.5 与 22.19 各通过 59 项；构建和类型检查通过，没有运行全量。Vision 适配器及产品展示仍须独立接入和验收，这些核心证据不能代替该集成。
+
 生产 Host 的 `createStudioNativeHarness` 从 Studio Agent 修订或 Frozen Build 解析可信配置，绑定已选模型与工作区身份，通过宿主 attachment 服务解析用户图片和文件引用。凭证只在模型端口调用时重新读取，不进入 Native 配置或账本。`createNativeDshTools` 将 Native 工具意图交给实际 DSH ToolRegistry，保留其权限管线；被允许的十种工作区工具及本地命令工具使用 Node 实现。工具名与资源 ID 分开处理，停用契约不能重新获得 builtin 执行权限。写入成功后管线报错时保留未知结果状态，新轮次不能绕过未知写或中断状态继续执行。
 
 开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时，普通 Revision 保持原有 Harness 路径；Frozen Build 使用构建时固定的引擎，见下文。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`。本地记忆已接通压缩前消费、轮次后消费、管理工具和显式记忆验收；共享 preset 的多 Session 绑定与关闭防护见 `native-memory.md`。云端记忆写入仍显式拒绝组装，完整记忆能力尚未完成。

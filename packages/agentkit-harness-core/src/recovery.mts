@@ -1,5 +1,6 @@
 import type { CommitBatch, EffectIntent, RunConfiguration, RunSnapshot, ToolCall } from './contracts.mjs';
 import { settle } from './machine.mjs';
+import { unknownToolResourceUsageFacts } from './tool-resource-usage.mjs';
 
 function replayPolicy(intent: EffectIntent, configuration: RunConfiguration): string | null {
   if (intent.kind === 'workspace') return 'workspace-observation/v1';
@@ -30,12 +31,13 @@ export function recoverClaimed(snapshot: RunSnapshot, configuration: RunConfigur
     // A read whose result was lost still spent an attempt. Inference was charged before dispatch.
     usage: { ...snapshot.usage, toolCalls: snapshot.usage.toolCalls + (intent.kind === 'tool'
       ? (intent.payload.calls as unknown as ToolCall[]).length : 0) },
-    diagnostics: { ...snapshot.diagnostics, ...(uncertainModelCalls ? { uncertainModelCalls, providerUsageIncomplete: true } : {}) },
+    diagnostics: { ...snapshot.diagnostics, ...(uncertainModelCalls ? { uncertainModelCalls, providerUsageIncomplete: true } : {}),
+      ...(intent.kind === 'tool' ? { descendantUsageIncomplete: true } : {}) },
   };
   return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'uncertain',
     result: { code: 'effect_outcome_unknown', recoveryPolicy: policy, retryScheduled: retry } }, changes, elapsed,
   [{ kind: retry ? 'effect.recovery_scheduled' : 'effect.recovery_required', payload: {
     operationKey: intent.operationKey, kind: intent.kind, policy, retriesUsed: changes.recoveryRetriesUsed!,
     reason: changes.reason ?? 'safe_replay_admitted',
-  } }]);
+  } }, ...(intent.kind === 'tool' ? unknownToolResourceUsageFacts(intent.operationKey, intent.payload.calls as unknown as ToolCall[]) : [])]);
 }

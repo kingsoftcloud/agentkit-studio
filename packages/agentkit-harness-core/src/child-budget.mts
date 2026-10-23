@@ -1,6 +1,7 @@
 import { emptyUsage } from './contracts.mjs';
 import type { ChildBudgetReservation, RunConfiguration, RunSnapshot, ToolBudget, ToolCall, ToolDefinition, ToolResult, Usage } from './contracts.mjs';
 import { canonical, copy, invariant, scopeKey } from './values.mjs';
+import { toolResourceUsage } from './tool-resource-usage.mjs';
 
 /** Compaction, cancellation and replacement workers cannot discard allocated liability. */
 export function validateChildBudgetTransition(previous: RunSnapshot, next: RunSnapshot): void {
@@ -66,12 +67,7 @@ export function reduceChildBudget(snapshot: RunSnapshot, result: ToolResult, def
   } {
   const reservations = copy(snapshot.childBudgetReservations ?? []), childRunIds = copy(snapshot.childRunIds ?? []);
   const reservation = result.childBudgetReservation, settlement = result.childBudgetSettlement;
-  const usage = copy(result.resourceUsage ?? emptyUsage());
-  for (const key of ['inputTokens', 'outputTokens', 'modelCalls', 'toolCalls', 'cost', 'cachedInputTokens', 'reasoningTokens'] as const) {
-    const value = usage[key];
-    invariant(value === undefined && ['cachedInputTokens', 'reasoningTokens'].includes(key)
-      || typeof value === 'number' && Number.isFinite(value) && value >= 0 && (key === 'cost' || Number.isSafeInteger(value)), 'invalid_usage');
-  }
+  const usage = toolResourceUsage(result);
   if (reservation) {
     validateReservation(reservation);
     const foreground = reservation.deliveryMode === 'foreground' && settlement
@@ -107,7 +103,8 @@ export function reduceChildBudget(snapshot: RunSnapshot, result: ToolResult, def
     && result.childRunIds?.filter(id => id === settlement.childRunId).length === 1
     && usage.modelCalls <= reserved.maxModelCalls && usage.toolCalls <= reserved.maxToolCalls,
   'child_budget_settlement_identity_or_limit_conflict');
-  const sealed = digest({ settlement, usage, childRunIds: result.childRunIds });
+  const sealed = digest({ settlement, usage, childRunIds: result.childRunIds,
+    ...(result.resourceUsageReported === undefined ? {} : { resourceUsageReported: result.resourceUsageReported }) });
   invariant(reserved.settledUsageDigest === null || reserved.settledUsageDigest === sealed, 'child_budget_settlement_changed');
   const delta = reserved.settledUsageDigest === null ? usage : emptyUsage();
   reserved.settledUsageDigest = sealed;

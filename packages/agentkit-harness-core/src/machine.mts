@@ -13,6 +13,7 @@ import { effectiveGuidanceResponse } from './guidance.mjs';
 import { rememberCommand } from './background-runtime.mjs';
 import { admittedToolBudget, outstandingChildCalls, reduceChildBudget } from './child-budget.mjs';
 import { prepareChildLifecycle, unsettledChildren } from './child-runtime.mjs';
+import { toolResourceUsage, toolUsageIncomplete } from './tool-resource-usage.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -92,7 +93,6 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
       : outcome === 'failed' || !text.trim() ? 'failed' : 'completed');
     return transition(snapshot, { phase, finalText: snapshot.candidate?.text ?? snapshot.finalText, pendingTools: [] }, [{ kind: 'run.terminal', payload: {
       phase, outcome, reason: snapshot.reason, finalText: snapshot.candidate?.text ?? snapshot.finalText, usage: objectValue(snapshot.usage),
-      usageComplete: snapshot.diagnostics.providerUsageIncomplete !== true && snapshot.diagnostics.descendantUsageIncomplete !== true,
     } }]);
   }
   if (config.limits.maxWallMs !== null && snapshot.activeElapsedMs >= config.limits.maxWallMs) {
@@ -311,6 +311,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   digest: (value: unknown) => string = canonical): Partial<RunSnapshot> {
   invariant(results.length === calls.length && calls.length > 0
     && canonical(snapshot.pendingTools.slice(0, calls.length)) === canonical(calls), 'tool_receipt_mismatch');
+  const resources = results.map(toolResourceUsage);
   let updated = { ...copy(snapshot), browserSessionRefs: copy(snapshot.browserSessionRefs ?? []),
     backgroundCommands: copy(snapshot.backgroundCommands),
     browserReobservationRefs: copy(snapshot.browserReobservationRefs ?? []), lastBrowserObservation: snapshot.lastBrowserObservation ?? null,
@@ -326,11 +327,14 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       || result.workspaceChangedPaths?.length || result.childRunIds?.length || result.childBudgetReservation || result.childBudgetSettlement || result.browserSessionRef || result.browserObservation || result.backgroundCommandRef
       || (result.resourceUsage?.modelCalls ?? 0) > 0)) {
       return { pendingIntent: null, phase: 'finalizing', outcome: 'blocked', reason: 'parallel_readonly_contract_violation',
-        usage: { ...snapshot.usage, toolCalls: snapshot.usage.toolCalls + calls.length } };
+        usage: { ...snapshot.usage, toolCalls: snapshot.usage.toolCalls + calls.length },
+        descendantUsage: resources.reduce(addUsage, snapshot.descendantUsage),
+        diagnostics: { ...snapshot.diagnostics, ...(results.some(toolUsageIncomplete) ? { descendantUsageIncomplete: true } : {}) } };
     }
     if (result.status === 'approval_required') {
       invariant(result.backgroundCommandRef === undefined, 'background_command_before_approval');
       invariant(!result.childBudgetReservation && !result.childBudgetSettlement, 'child_budget_before_approval');
+      invariant(!toolUsageIncomplete(result) && Object.values(resources[index]!).every(value => value === 0), 'tool_resource_usage_before_approval');
       invariant(typeof result.interactionId === 'string' && result.interactionId.trim(), 'approval_identity_missing');
       return { pendingIntent: null, phase: 'awaiting_interaction', pendingInteraction: {
         interactionId: `${intent.operationKey}:approval`, hostInteractionId: result.interactionId, callId: call.callId, operationKey: intent.operationKey } };
@@ -345,6 +349,8 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       admittedToolBudget(snapshot, config, calls.length), digest);
     updated.childBudgetReservations = childBudget.childBudgetReservations;
     updated.childRunIds = childBudget.childRunIds;
+    updated.descendantUsage = addUsage(updated.descendantUsage, childBudget.usage);
+    if (toolUsageIncomplete(result)) updated.diagnostics.descendantUsageIncomplete = true;
     updated.backgroundCommands = rememberCommand(updated, result, definition);
     if (invalidatesBrowserObservation(result, config)) updated.lastWebMutationToolCall = updated.usage.toolCalls;
     if (definition) {
@@ -355,7 +361,9 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     const browserFields = { backgroundCommands: updated.backgroundCommands,
       browserSessionRefs: updated.browserSessionRefs, browserReobservationRefs: updated.browserReobservationRefs,
       lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall,
-      lastWebMutationToolCall: updated.lastWebMutationToolCall, unresolvedInteractionObservation: updated.unresolvedInteractionObservation };
+      lastWebMutationToolCall: updated.lastWebMutationToolCall, unresolvedInteractionObservation: updated.unresolvedInteractionObservation,
+      descendantUsage: updated.descendantUsage, diagnostics: updated.diagnostics,
+      childBudgetReservations: updated.childBudgetReservations, childRunIds: updated.childRunIds };
     if (updated.phase === 'finalizing') return { ...browserFields, pendingIntent: null, phase: 'finalizing',
       outcome: updated.outcome, reason: updated.reason, preparedContext: updated.preparedContext, contextState: updated.contextState,
       candidate: updated.candidate, verification: updated.verification, finalText: updated.finalText, usage: updated.usage };
@@ -369,8 +377,6 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       updated.toolErrorStreak = { signature, count: same ? prior.count + Number(prior.modelCall !== snapshot.usage.modelCalls) : 1,
         modelCall: snapshot.usage.modelCalls, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision };
     }
-    updated.descendantUsage = addUsage(updated.descendantUsage, childBudget.usage);
-    if (result.childBudgetSettlement && result.metadata?.usageReported === false) updated.diagnostics.descendantUsageIncomplete = true;
     updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
       role: 'tool', callId: call.callId, name: call.name,
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });

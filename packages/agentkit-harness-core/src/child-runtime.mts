@@ -4,6 +4,7 @@ import { addUsage } from './machine.mjs';
 import { admittedToolBudget, reduceChildBudget } from './child-budget.mjs';
 import { canonical, copy, invariant } from './values.mjs';
 import { prepareEffect, transition } from './transitions.mjs';
+import { toolUsageIncomplete } from './tool-resource-usage.mjs';
 
 const settlementAuthority: ToolDefinition = { name: 'host_child_collection', description: 'Collect already owned children',
   parameters: { type: 'object' }, readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 1,
@@ -30,7 +31,7 @@ export function childUsageFacts(snapshot: RunSnapshot, operationKey: string, res
     const child = item.childBudgetSettlement?.childRunId;
     if (!child || !snapshot.childBudgetReservations.some(value => value.childRunId === child && value.settledUsageDigest === null)
       && !(item.childBudgetReservation?.childRunId === child && !snapshot.childRunIds.includes(child))) return [];
-    return [{ kind: item.metadata?.usageReported === false ? 'usage.unavailable' : 'usage.reported', payload: {
+    return [{ kind: toolUsageIncomplete(item) ? 'usage.unavailable' : 'usage.reported', payload: {
       semantics: 'delta', source: 'descendant_runs', requestId: operationKey, attemptId: `${operationKey}:child:${child}`,
       childRunId: child, usage: copy(item.resourceUsage ?? {}) as unknown as ObjectValue,
     } }];
@@ -108,7 +109,7 @@ export function reduceChildLifecycle(snapshot: RunSnapshot, config: RunConfigura
       { callId: before.parentToolCallId, name: settlementAuthority.name, arguments: {} }, admittedToolBudget(snapshot, config, 0), digest);
     updated.childBudgetReservations = ledger.childBudgetReservations; updated.childRunIds = ledger.childRunIds;
     updated.descendantUsage = addUsage(updated.descendantUsage, ledger.usage);
-    if (item.metadata?.usageReported === false) updated.diagnostics.descendantUsageIncomplete = true;
+    if (toolUsageIncomplete(item)) updated.diagnostics.descendantUsageIncomplete = true;
     if (before.settledUsageDigest !== null || request.action === 'cancel') continue;
     const content = canonical(item.content), truncated = sliceUnicode(content, 8192);
     updated.messages.push({ role: 'user', kind: 'background_child_observation', content: canonical({ source: 'child_result', trust: 'data',

@@ -33,6 +33,7 @@ import { admitChildPromotion, childLifecycleRequest, childReadyProbe, childUsage
 import type { ChildLifecycleResult, ChildTaskControlState } from './child-contract.mjs';
 import { childControlDelivery } from './child-control.mjs';
 import type { BackgroundCommandRequest } from './background-contract.mjs';
+import { toolResourceUsageFacts, unknownToolResourceUsageFacts } from './tool-resource-usage.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -434,7 +435,7 @@ export class NativeKernel {
           return { ...settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed', result: {
             results: results as never, recoveryPolicy: 'owned-child-start/v1' } }, { ...changes, ...promotion?.changes }, elapsedMs,
           [...promotion?.facts ?? [], { kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: 'owned-child-start/v1' } },
-            ...childUsageFacts(snapshot, intent.operationKey, results),
+            ...childUsageFacts(snapshot, intent.operationKey, results), ...toolResourceUsageFacts(intent.operationKey, calls, results),
             ...(promotion ? [{ kind: 'command.applied', payload: { commandId: promotion.commandId, kind: 'promote_child', reason: 'applied' } }] : []),
             { kind: 'tool.completed', payload: { callId: calls[0]!.callId, name: calls[0]!.name, status: results[0]!.status, content: results[0]!.content } }]),
           consumedCommandId: promotion?.commandId ?? null };
@@ -526,7 +527,7 @@ export class NativeKernel {
             facts.push(...promotion.facts, { kind: 'command.applied', payload: {
               commandId: promotion.commandId, kind: 'promote_child', reason: 'applied' } });
           }
-          facts.push(...childUsageFacts(snapshot, intent.operationKey, results));
+          facts.push(...childUsageFacts(snapshot, intent.operationKey, results), ...toolResourceUsageFacts(intent.operationKey, calls, results));
           for (const [index, result] of results.entries()) facts.push({ kind: result.status === 'approval_required' ? 'approval.requested' : 'tool.completed',
             payload: { callId: calls[index]!.callId, name: calls[index]!.name, status: result.status,
               ...(result.status === 'uncertain' ? {} : { content: result.content }),
@@ -645,7 +646,9 @@ export class NativeKernel {
           // A claimed tool batch has spent its attempt even when cancellation
           // wins the outer effect race before reduceTools receives results.
           ...(intent.kind === 'tool' ? { usage: { ...snapshot.usage,
-            toolCalls: snapshot.usage.toolCalls + (intent.payload.calls as unknown as ToolCall[]).length } } : {}) };
+            toolCalls: snapshot.usage.toolCalls + (intent.payload.calls as unknown as ToolCall[]).length },
+            diagnostics: { ...snapshot.diagnostics, descendantUsageIncomplete: true } } : {}) };
+        if (intent.kind === 'tool') facts.push(...unknownToolResourceUsageFacts(intent.operationKey, calls!));
         status = 'uncertain';
       }
     } finally {

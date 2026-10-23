@@ -16,6 +16,10 @@ export function transition(snapshot: RunSnapshot, changes: Partial<RunSnapshot>,
       kind: 'input.guidance_discarded', payload: { inputId, reason: changes.reason ?? changes.phase ?? snapshot.phase },
     })), ...facts.filter(fact => fact.kind === 'run.terminal')];
   }
+  const diagnostics = changes.diagnostics ?? snapshot.diagnostics;
+  facts = facts.map(fact => fact.kind === 'run.terminal' ? { ...fact, payload: { ...fact.payload,
+    usageComplete: diagnostics.providerUsageIncomplete !== true && diagnostics.descendantUsageIncomplete !== true,
+  } } : fact);
   const prefix = runKey(snapshot.scope, snapshot.runId);
   const events: NativeEvent[] = facts.map((fact, index) => ({ ...copy(fact),
     eventId: `${prefix}:event:${snapshot.eventSeq + index + 1}`, runId: snapshot.runId,
