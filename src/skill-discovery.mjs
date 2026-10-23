@@ -9,7 +9,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, rm, stat, writeFile, rename } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { existsSync, lstatSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
+import { atomicPrivate, lockUntil, privateDirectory, syncDirectory } from '../packages/agentkit-harness/src/native/local-command-state.mjs';
 
 const DEFAULT_SCAN_RELATIVES = ['skills', '.agents/skills', '.codex/skills', '.claude/skills'];
 const MAX_DEPTH = 4;
@@ -258,19 +260,44 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
 
   async function bundleRecords() { try { return JSON.parse(await readFile(join(store, '.catalog-skills.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return {}; throw error; } }
   let registration = Promise.resolve();
-  function registerBundleSkills(entries) {
+  function registerBundleSkills(entries, { assertCurrent = () => true, overwrite = false, rejectNameConflict = false } = {}) {
+    const guard = () => {
+      const current = assertCurrent();
+      if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+      if (current !== true) throw new SkillDiscoveryError('SKILL_PUBLICATION_AUTHORITY_LOST', 'Skill publication authority is no longer current');
+    };
+    const sealed = structuredClone(entries);
     const pending = registration.then(async () => {
-      const records = await bundleRecords();
-      for (const item of entries) {
-        if (!/^skill-catalog-[a-f0-9]{24}$/.test(item.resourceId) || !item.directory || !item.digest) throw new SkillDiscoveryError('SKILL_BUNDLE_INVALID', '目录 Skill 声明无效');
-        if (records[item.resourceId] && JSON.stringify(records[item.resourceId]) !== JSON.stringify(item)) throw new SkillDiscoveryError('SKILL_BUNDLE_CONFLICT', '目录 Skill 内容发生冲突');
-        records[item.resourceId] = item;
-      }
-      await mkdir(store, { recursive: true, mode: 0o700 });
-      const temporary = join(store, `.catalog-skills-${randomUUID()}.tmp`);
-      await writeFile(temporary, JSON.stringify(records), { mode: 0o600 });
-      await rename(temporary, join(store, '.catalog-skills.json'));
-      return entries.map(({ directory, ...item }) => item);
+      guard(); await mkdir(store, { recursive: true, mode: 0o700 }); guard();
+      // Existing explicit Skill stores may be readable by other users. Keep
+      // their permissions; lock and staging data have their own private root.
+      const root = realpathSync(store), inode = lstatSync(store);
+      const publication = join(root, '.catalog-publication'); privateDirectory(publication, true);
+      const live = () => {
+        guard(); const current = lstatSync(store);
+        if (!current.isDirectory() || current.isSymbolicLink() || realpathSync(store) !== root
+          || current.dev !== inode.dev || current.ino !== inode.ino)
+          throw new SkillDiscoveryError('SKILL_PUBLICATION_ROOT_CHANGED', 'Skill store changed during publication');
+        privateDirectory(publication);
+      };
+      live(); const unlock = await lockUntil(join(publication, 'lock.sqlite'), performance.now() + 5000);
+      try {
+        live(); const records = await bundleRecords(); live();
+        const installed = rejectNameConflict ? (await listInstalled()).items : []; live();
+        for (const item of sealed) {
+          if (!/^skill-catalog-[a-f0-9]{24}$/.test(item.resourceId) || !item.directory || !item.digest) throw new SkillDiscoveryError('SKILL_BUNDLE_INVALID', '目录 Skill 声明无效');
+          if (records[item.resourceId] && JSON.stringify(records[item.resourceId]) !== JSON.stringify(item)) throw new SkillDiscoveryError('SKILL_BUNDLE_CONFLICT', '目录 Skill 内容发生冲突');
+          if (rejectNameConflict && !overwrite && installed.some(previous => previous.name === item.name && previous.resourceId !== item.resourceId))
+            throw new SkillDiscoveryError('SKILL_ALREADY_EXISTS', '同名 Skill 已安装，请确认覆盖后重试');
+          records[item.resourceId] = item;
+        }
+        const temporary = join(publication, `${randomUUID()}.json`);
+        try {
+          live(); atomicPrivate(temporary, JSON.stringify(records)); live();
+          renameSync(temporary, join(store, '.catalog-skills.json')); syncDirectory(store); syncDirectory(publication);
+        } finally { if (existsSync(temporary)) unlinkSync(temporary); }
+        return sealed.map(({ directory, ...item }) => item);
+      } finally { unlock(); }
     });
     registration = pending.catch(() => {}); return pending;
   }

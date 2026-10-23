@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSkillDiscovery, parseFrontmatter, skillSlug } from '../src/skill-discovery.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { statSync } from 'node:fs';
 
 async function makeHome() {
   return mkdtemp(join(tmpdir(), 'agentkit-skills-'));
@@ -116,4 +118,19 @@ test('equal Skill directory names in different explicit roots remain distinct ca
     assert.equal(result.candidates.length, 2);
     assert.equal(new Set(result.candidates.map(item => item.candidateId)).size, 2);
   } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+test('catalog publication preserves an existing readable store and rejects lost authority after cross-Host lock wait', async t => {
+  const root = await makeHome(); t.after(() => rm(root, { recursive: true, force: true }));
+  const storeDir = join(root, 'readable-store'); await mkdir(storeDir, { mode: 0o755 });
+  const before = statSync(storeDir).mode, discovery = createSkillDiscovery({ storeDir });
+  const first = { resourceId: `skill-catalog-${'a'.repeat(24)}`, directory: root, digest: 'a', name: 'first', kind: 'skill', status: 'ready' };
+  await discovery.registerBundleSkills([first]); assert.equal(statSync(storeDir).mode, before);
+  const db = new DatabaseSync(join(storeDir, '.catalog-publication/lock.sqlite')); db.exec('BEGIN IMMEDIATE');
+  let current = true;
+  const pending = discovery.registerBundleSkills([{ ...first, resourceId: `skill-catalog-${'b'.repeat(24)}`, name: 'second' }], { assertCurrent: () => current });
+  await new Promise(resolve => setTimeout(resolve, 35)); current = false; db.exec('ROLLBACK'); db.close();
+  await assert.rejects(pending, { code: 'SKILL_PUBLICATION_AUTHORITY_LOST' });
+  assert.deepEqual((await discovery.listInstalled()).items.map(item => item.name), ['first']);
+  await assert.rejects(discovery.registerBundleSkills([first], { assertCurrent: async () => true }), { code: 'SKILL_PUBLICATION_AUTHORITY_LOST' });
 });

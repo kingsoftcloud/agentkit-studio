@@ -11,6 +11,8 @@ import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { syncDirectory } from '../packages/agentkit-harness/src/native/local-command-state.mjs';
 
 export class AgentStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -175,23 +177,31 @@ export function createAgentStore({ storeDir } = {}) {
     try { return normalizeRecord(JSON.parse(await readFile(pathFor(agentId), 'utf8'))); } catch { return null; }
   }
 
-  async function update(agentId, patch = {}) {
+  async function update(agentId, patch = {}, { assertCurrent = () => true } = {}) {
     // An approved binding proposal is based on a particular revision. Retain
     // its exact bytes across the async lock rather than reading a mutable object.
     const fixed = structuredClone(patch);
     if (fixed.expectedRevision !== undefined && (!Number.isSafeInteger(fixed.expectedRevision) || fixed.expectedRevision < 1))
       throw new AgentStoreError('INVALID_EXPECTED_AGENT_REVISION', '预期 Agent Revision 无效');
-    return withMutationLock(agentId, () => updateLocked(agentId, fixed));
+    const guard = () => {
+      const value = assertCurrent();
+      if (value && typeof value.then === 'function') Promise.resolve(value).catch(() => {});
+      if (value !== true) throw new AgentStoreError('AGENT_UPDATE_AUTHORITY_LOST', 'Agent update authority is no longer current');
+    };
+    guard(); return withMutationLock(agentId, () => updateLocked(agentId, fixed, guard));
   }
 
-  async function updateLocked(agentId, patch) {
+  async function updateLocked(agentId, patch, guard) {
+    guard();
     const record = await get(agentId);
+    guard();
     if (!record) throw new AgentStoreError('AGENT_NOT_FOUND', '本地 Agent 不存在', { agentId });
     if (patch.expectedRevision !== undefined && record.metadata.revision !== patch.expectedRevision)
       throw new AgentStoreError('AGENT_EXPECTED_REVISION_CONFLICT', 'Agent 已更新，请重新核对绑定', {
         agentId, expectedRevision: patch.expectedRevision, actualRevision: record.metadata.revision,
       });
     await captureRevision(record);
+    guard();
     if (patch.name) record.metadata.name = String(patch.name);
     if (patch.description !== undefined) record.metadata.description = String(patch.description);
     if (patch.spec) record.spec = { ...record.spec, ...patch.spec, runtime: patch.spec?.runtime || record.spec?.runtime || { type: 'dsh-native' } };
@@ -203,11 +213,29 @@ export function createAgentStore({ storeDir } = {}) {
     record.bindings = normalized;
     record.metadata.revision = (Number(record.metadata.revision) || 1) + 1;
     record.metadata.updatedAt = new Date().toISOString();
-    await captureRevision(record);
+    // No await between the final live-authority check and durable publication.
+    // Cancellation during asynchronous preparation cannot publish a new draft.
+    // A crash after revision publication but before pointer publication leaves
+    // an immutable revision for explicit recovery, never silent replacement.
     const target = pathFor(agentId);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
-    await writeFile(tmp, JSON.stringify(record, null, 2));
-    await rename(tmp, target);
+    const revision = revisionPath(agentId, record.metadata.revision), text = JSON.stringify(record, null, 2);
+    guard(); mkdirSync(dirname(revision), { recursive: true, mode: 0o700 });
+    const fd = openSync(tmp, 'wx', 0o600);
+    try {
+      writeFileSync(fd, text); fsyncSync(fd);
+      try { linkSync(tmp, revision); }
+      catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        if (!isDeepStrictEqual(JSON.parse(readFileSync(revision, 'utf8')), JSON.parse(text)))
+          throw new AgentStoreError('AGENT_REVISION_CONFLICT', '已保存的 Agent Revision 不能被覆盖');
+      }
+      syncDirectory(dirname(revision));
+      // The editable pointer and immutable history must not share an inode.
+      const pointer = `${tmp}.pointer`, pointerFd = openSync(pointer, 'wx', 0o600);
+      try { writeFileSync(pointerFd, text); fsyncSync(pointerFd); renameSync(pointer, target); syncDirectory(dirname(target)); }
+      finally { closeSync(pointerFd); if (existsSync(pointer)) unlinkSync(pointer); }
+    } finally { closeSync(fd); if (existsSync(tmp)) unlinkSync(tmp); }
     return record;
   }
 

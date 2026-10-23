@@ -276,6 +276,17 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable migr
   await assert.rejects(registered[0].execute({}, {}), { code: 'BROWSER_NODE_PORT_UNAVAILABLE' }); bridge.close();
 });
 
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable Skill management port never enters Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'skill-manager', runtime, local: true, toolBindings: ['skill_discover_github', 'skill_install', 'skill_bind_agent'],
+    spawnImpl: () => assert.fail('Skill management cannot spawn Python') });
+  assert.equal(registered.length, 3);
+  for (const tool of registered) await assert.rejects(tool.execute({}, {}), { code: 'SKILL_MANAGEMENT_NODE_PORT_UNAVAILABLE' });
+  bridge.close();
+});
+
 for (const runtime of ['dsh-native', 'codex']) test(`${runtime} explicit managed binding admits three A2A formals and rejects executor collisions`, () => {
   const bridge = createRuntimeBridge(), tools = [];
   const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,

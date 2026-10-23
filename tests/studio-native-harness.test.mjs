@@ -891,6 +891,20 @@ test('Studio Native pins the snippet registry name contract and rejects a change
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
 });
 
+test('Studio Native pins Skill management capability and rejects adopting an existing Run under another management source', async t => {
+  const fixture = await setup(t, { sqlite: true }), binding = { contract: 'agentkit.studio-skill-management/v1',
+    agentId: fixture.record.metadata.id, workspace: join(fixture.root, 'workspace'), source: 'public-github-immutable/v1' };
+  fixture.payload.binding.nativeTools.skillManagementBinding = binding;
+  await fixture.host.executeTurn(fixture.payload);
+  const head = fixture.head(), before = fixture.ledger.load(head.scope, head.runId);
+  assert.equal(typeof before.configuration.hostBindingDigest, 'string');
+  await fixture.host.executeTurn(fixture.payload);
+  assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
+  fixture.payload.binding.nativeTools.skillManagementBinding = { ...binding, source: 'changed-source/v2' };
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+  assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
+});
+
 test('Studio Native pins its browser task policy and explicit execution limits in the Run configuration', async t => {
   const fixture = await setup(t, { spec: { execution: { nativeLimits: { maxModelCalls: 20, maxToolCalls: 0 } } } });
   fixture.payload.binding.nativeTools.definitions = () => [studioBrowserDefinition()];

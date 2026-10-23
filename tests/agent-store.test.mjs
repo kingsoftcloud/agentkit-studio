@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentStore, normalizeAgentBindings } from '../src/agent-store.mjs';
 import { spawn, spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 
 test('editing and reopening preserve immutable Agent revisions for older native Sessions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-revisions-'));
@@ -114,5 +115,20 @@ test('an invalid expected revision is rejected without changing the Agent', asyn
   const store = createAgentStore({ storeDir: root }), first = await store.create({ name: 'before' });
   for (const expectedRevision of [0, -1, 1.5, '1', null])
     await assert.rejects(store.update(first.metadata.id, { name: 'must not change', expectedRevision }), { code: 'INVALID_EXPECTED_AGENT_REVISION' });
+  assert.deepEqual(await store.get(first.metadata.id), first);
+});
+
+test('lost live authority while queued on publication lock cannot create a new Agent revision', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'agent-guard-lock-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const store = createAgentStore({ storeDir: root }), first = await store.create({ name: 'before' });
+  await mkdir(join(root, '.mutation-locks'));
+  const db = new DatabaseSync(join(root, '.mutation-locks', `${first.metadata.id}.sqlite`));
+  db.exec('BEGIN IMMEDIATE'); let current = true;
+  const pending = store.update(first.metadata.id, { name: 'late forbidden', expectedRevision: 1 }, { assertCurrent: () => current });
+  await new Promise(resolve => setTimeout(resolve, 35)); current = false; db.exec('ROLLBACK'); db.close();
+  await assert.rejects(pending, { code: 'AGENT_UPDATE_AUTHORITY_LOST' });
+  assert.deepEqual(await store.get(first.metadata.id), first);
+  assert.deepEqual(await store.listRevisions(first.metadata.id), [first]);
+  await assert.rejects(store.update(first.metadata.id, { name: 'async guard forbidden' }, { assertCurrent: async () => true }), { code: 'AGENT_UPDATE_AUTHORITY_LOST' });
   assert.deepEqual(await store.get(first.metadata.id), first);
 });

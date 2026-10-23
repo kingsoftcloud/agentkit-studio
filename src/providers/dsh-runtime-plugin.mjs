@@ -108,6 +108,8 @@ function createBuiltinExecutor(config = {}, nodeTools) {
     if (['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent'].includes(name))
       throw builtinError('A2A_NODE_PORT_UNAVAILABLE', 'Node A2A environment is unavailable');
     if (name === 'browser_inspect_workspace') throw builtinError('BROWSER_NODE_PORT_UNAVAILABLE', 'Node browser environment is unavailable');
+    if (['skill_discover_github', 'skill_install', 'skill_bind_agent'].includes(name))
+      throw builtinError('SKILL_MANAGEMENT_NODE_PORT_UNAVAILABLE', 'Node Skill management environment is unavailable');
     if (name === SANDBOX_CODE_NAME) throw builtinError('SANDBOX_CODE_NODE_PORT_UNAVAILABLE', 'Node sandbox code environment is unavailable');
     const { signal } = exec, agentId = config.agentId;
     const timeoutMs = Math.min(3_600_000, Math.max(1_000, Number(contract.timeoutSeconds || 20) * 1000));

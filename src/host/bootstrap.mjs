@@ -26,7 +26,7 @@ import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/agentkit-harness/src/skill-bindings.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
-  nativeHookRegistrations = [], nativeContextSourceRegistrations = [] } = {}) {
+  nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch } = {}) {
   const hostCompatibility = await loadHostCompatibility(ctx);
   ctx.provide('studioHostCompatibility', hostCompatibility);
   const cloudEndpointOptions = {
@@ -150,12 +150,19 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const workspaceRoot = resolve(runtimeEnv.AGENTKIT_STUDIO_WORKSPACE || process.cwd());
   const { createNativeSkillConnection } = await import('../providers/native-skill-host.mjs');
   const skillConnection = await createNativeSkillConnection({ configuration: await configurationPromise, env: runtimeEnv, ...cloudEndpointOptions });
+  const [{ createStudioSkillManagement }, { createGithubSkillSource }, skillDiscovery, skillAgents] = await Promise.all([
+    import('../skill-management.mjs'), import('../skill-github-source.mjs'), skillDiscoveryPromise, agentStorePromise,
+  ]);
+  const githubSkills = createGithubSkillSource({ fetchImpl: githubSkillSourceFetch });
+  const getSkillManagement = agentId => createStudioSkillManagement({ workspaceRoot,
+    stateDir: join(studioStoreDir, 'builtin-workspace'), agentId, skillDiscovery, agents: skillAgents, source: githubSkills });
   {
     const { createDshNodeBuiltins } = await import('../providers/dsh-node-builtins.mjs');
     ctx.effect(() => bridge.setBuiltinToolsFactory(({ ctx: toolsCtx, config, isClosed, signal }) => createDshNodeBuiltins({
       ctx: toolsCtx, workspaceRoot, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
       isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
+      getSkillManagement,
       toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
       skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [], a2aBindings: config.a2aBindings ?? [],
     })), 'agentkit-studio: Node builtin environment');
@@ -169,6 +176,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
       commandEnvironment: runtimeEnv,
       skillConnection,
+      getSkillManagement,
       executeMcpTool: request => bridge.executeResourceTool(request),
     })), 'agentkit-studio: Native tool environment');
   }

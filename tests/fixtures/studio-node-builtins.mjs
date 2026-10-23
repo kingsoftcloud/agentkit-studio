@@ -18,6 +18,29 @@ export async function apply(ctx, options) {
   const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
   const sha256 = value => createHash('sha256').update(value).digest('hex');
   let networkCalls = 0, pendingRequest; const skillRequests = [], a2aRequests = [];
+  const githubRequests = [], githubCommit = 'c'.repeat(40), githubTree = 'd'.repeat(40);
+  const githubFiles = [['SKILL.md', Buffer.from('---\nname: packed-github-skill\ndescription: GitHub immutable 技能\nversion: 1.2.3\n---\nInstructions')],
+    ['assets/.binary', Buffer.from([0, 255, 128, 13, 10])]];
+  const githubBlob = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+  const githubFetch = async (input, init) => {
+    assert.equal(previous, null, 'cold original management receipts must not fetch GitHub again');
+    const url = new URL(input); assert.equal(url.origin, 'https://api.github.com');
+    assert.equal(init.redirect, 'error'); assert.equal(init.method, 'GET'); assert.equal(init.headers.Authorization, undefined);
+    init.signal.throwIfAborted(); githubRequests.push(url.pathname + url.search);
+    let data;
+    if (url.pathname === '/search/repositories') data = { items: [{ full_name: 'packed/repository', html_url: 'https://github.com/packed/repository',
+      description: 'Packed GitHub source', default_branch: 'main', stargazers_count: 1, archived: false }] };
+    else if (url.pathname === '/repos/packed/repository/commits/main') data = { sha: githubCommit };
+    else if (url.pathname === `/repos/packed/repository/git/commits/${githubCommit}`) data = { sha: githubCommit, tree: { sha: githubTree } };
+    else if (url.pathname === `/repos/packed/repository/git/trees/${githubTree}`) data = { sha: githubTree, truncated: false, tree: [
+      { path: 'assets', mode: '040000', type: 'tree', sha: 'e'.repeat(40) },
+      ...githubFiles.map(([path, bytes]) => ({ path, mode: '100644', type: 'blob', sha: githubBlob(bytes), size: bytes.length }))] };
+    else if (url.pathname.startsWith('/repos/packed/repository/git/blobs/')) {
+      const file = githubFiles.find(([, bytes]) => url.pathname.endsWith('/' + githubBlob(bytes))); assert.ok(file, url.pathname);
+      data = { sha: githubBlob(file[1]), size: file[1].length, encoding: 'base64', content: file[1].toString('base64') + '\n' };
+    } else assert.fail(`Unexpected GitHub endpoint: ${url.pathname}`);
+    return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
+  };
   const a2aSpec = { local_name: 'research', binding_id: 'packed-a2a', space_id: 'packed-a2a-space',
     target_agent_id: 'a2a-agent-packed', expected_version_id: 'packed-v1', exposure: 'tool' };
   const web = createServer((req, res) => {
@@ -83,12 +106,13 @@ export async function apply(ctx, options) {
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
     'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'run_code', 'component_status', 'browser_inspect_workspace',
-    'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills', 'list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent'];
+    'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills', 'list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent',
+    'skill_discover_github', 'skill_install', 'skill_bind_agent'];
   const records = [];
   if (previous) for (const row of previous.runtimes) { const record = await agents.get(row.agentId); assert.ok(record); records.push(record); }
   else for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
     runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof', a2a: [a2aSpec] } } }));
-  await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
+  await mountStudioHost(ctx, { configurationHome: home, githubSkillSourceFetch: githubFetch, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
     AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE: options.browserExecutablePath,
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
@@ -130,12 +154,22 @@ export async function apply(ctx, options) {
       return result.value;
     };
     if (previous) {
-      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [], restoredBrowsers = [];
+      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [], restoredBrowsers = [], restoredManagement = [];
       for (const row of previous.runtimes) {
         const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, found.error?.message || JSON.stringify(found.error));
         const agent = found.agent; assert.equal(agent.session.id, row.sessionId); setSandboxMode(agent.session, 'workspace-write');
         agent.session.append('turn/start', { turn: 2 });
         try {
+          for (const file of [row.management.installRecord, row.management.bindRecord]) {
+            const bytes = await readFile(file), saved = JSON.parse(bytes);
+            const recovered = await agent.ctx.get('tools').execute({ agent, callId: saved.request.call.callId,
+              name: saved.request.call.name, arguments: saved.request.call.arguments, signal: new AbortController().signal });
+            assert.equal(recovered.isError, false, JSON.stringify(recovered));
+            assert.deepEqual(JSON.parse(recovered.value.result), saved.result.content);
+            assert.ok((await readFile(file)).equals(bytes));
+          }
+          assert.equal((await agents.get(row.agentId)).metadata.revision, 2);
+          restoredManagement.push({ runtime: row.runtime, resourceId: row.management.resourceId, revision: 2, unchanged: true });
           if (row.browser.enabled) {
             const recordBytes = await readFile(row.browser.record), saved = JSON.parse(recordBytes);
             const image = await readFile(join(workspaceRoot, saved.result.content.screenshot_path));
@@ -189,7 +223,9 @@ export async function apply(ctx, options) {
         } finally { agent.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } }); assert.equal(await ctx.sessions.flush(agent.session), true); }
       }
       assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0); assert.equal(a2aRequests.length, 0);
-      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, restoredA2a, restoredBrowsers, networkCalls, skillRequests: 0, a2aRequests: 0 };
+      assert.equal(githubRequests.length, 0);
+      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, restoredA2a, restoredBrowsers,
+        restoredManagement, githubRequests: 0, networkCalls, skillRequests: 0, a2aRequests: 0 };
     }
     const report = { passed: false, pid: process.pid, webOrigin, node: process.version, path: process.env.PATH, runtimes: [] };
     let serial = 0;
@@ -687,6 +723,54 @@ export async function apply(ctx, options) {
           browserProof = { enabled: true, record: saved.file, imageSha256: sha256(image), duplicateSuppressed: true,
             canvasUniform: true, policyDenied: true, postPolicyPreserved: true, oneShotApprovals: approvals };
         }
+        setSandboxMode(agent.session, 'workspace-write');
+        const githubStart = githubRequests.length;
+        const searched = await call('skill_discover_github', { source: 'packed skill' });
+        assert.equal(searched.mode, 'search'); assert.equal(searched.repositories[0].url, 'https://github.com/packed/repository');
+        const inspection = await call('skill_discover_github', { source: 'https://github.com/packed/repository' });
+        assert.equal(inspection.commit, githubCommit); assert.equal(inspection.candidates.length, 1);
+        const installArgs = { inspection_token: inspection.inspectionToken, candidate_id: inspection.candidates[0].candidateId };
+        const installId = `builtin-proof-${++serial}`, install = () => registry.execute({ agent, callId: installId, name: 'skill_install',
+          arguments: installArgs, signal: new AbortController().signal });
+        const installedResult = await install(); assert.equal(installedResult.isError, false, JSON.stringify(installedResult));
+        const installedSkill = JSON.parse(installedResult.value.result).installed_resource; assert.equal(installedSkill.name, 'packed-github-skill');
+        assert.deepEqual(JSON.parse((await install()).value.result), JSON.parse(installedResult.value.result));
+        const resource = await rpc('skills/list', {});
+        assert.ok(resource.items.some(item => item.resourceId === installedSkill.resourceId));
+        const bindArgs = { resource_id: installedSkill.resourceId }, bindId = `builtin-proof-${++serial}`;
+        const bind = () => registry.execute({ agent, callId: bindId, name: 'skill_bind_agent', arguments: bindArgs, signal: new AbortController().signal });
+        const boundResult = await bind(); assert.equal(boundResult.isError, false, JSON.stringify(boundResult));
+        const boundSkill = JSON.parse(boundResult.value.result); assert.equal(boundSkill.revision, 2); assert.equal(boundSkill.effective_from, 'next_run');
+        assert.deepEqual(JSON.parse((await bind()).value.result), boundSkill);
+        assert.deepEqual(await agents.getRevision(record.metadata.id, 1), record);
+        assert.equal((await agents.get(record.metadata.id)).metadata.revision, 2);
+        const nextPreset = await rpc('agents/ensure-preset', { agentId: record.metadata.id });
+        assert.notEqual(nextPreset.presetId, presetId);
+        const nextSession = await ctx.sessionController.create({ sessionId: `node-managed-next-${runtime}`, cwd: workspaceRoot, agentPreset: nextPreset.presetId });
+        const nextAgent = (await ctx.sessionController.resolveAgent(nextSession.sessionId)).agent; assert.ok(nextAgent);
+        const nextSkill = await nextAgent.ctx.get('skills').get('packed-github-skill', { cwd: workspaceRoot, scope: nextAgent });
+        assert.ok(nextSkill, 'new Agent revision must admit the installed Skill into the actual DSH SkillRegistry');
+        assert.match(nextSkill.content, /Instructions/);
+        const managementRoot = join(home, 'studio/builtin-workspace/skill-management-calls'), managementRecords = [];
+        for (const relative of await readdir(managementRoot, { recursive: true })) if (relative.endsWith('record.json')) {
+          const file = join(managementRoot, relative), value = JSON.parse(await readFile(file, 'utf8'));
+          if (value.owner.agentId === record.metadata.id) managementRecords.push({ file, value });
+        }
+        assert.equal(managementRecords.length, 4);
+        for (const { value } of managementRecords) {
+          assert.equal(value.request.sessionId, created.sessionId); assert.equal(value.request.agentId, record.metadata.id);
+          assert.equal(value.request.scope, undefined); assert.equal(value.request.runId, undefined); assert.equal(value.phase, 'finished');
+          assert.equal(value.binding.contract, 'agentkit.dsh-skill-management/v1');
+        }
+        const privateRoot = join(home, 'studio/builtin-workspace/skill-management'), installedFiles = await readdir(privateRoot, { recursive: true });
+        const binary = installedFiles.filter(path => path.endsWith('/assets/.binary'));
+        assert.ok(binary.length >= 1);
+        for (const path of binary) assert.deepEqual(await readFile(join(privateRoot, path)), githubFiles[1][1]);
+        assert.equal(githubRequests.length - githubStart, 6);
+        const managementProof = { commit: githubCommit, resourceId: installedSkill.resourceId, revision: 2, githubRequests: 6,
+          exactBinary: true, originalDshOwner: true, duplicateSuppressed: true, oldRevisionPreserved: true, nextRevisionAdmitted: true,
+          installRecord: managementRecords.find(item => item.value.request.call.callId === installId).file,
+          bindRecord: managementRecords.find(item => item.value.request.call.callId === bindId).file };
         assert.deepEqual(before, after, 'Both actual DSH policy phases must observe every admitted call.');
         const audits = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').map(event => event.data.outcome);
         assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected', 'allowed-once', 'rejected', ...(!e2bCommands ? ['allowed-once', 'rejected'] : [])]);
@@ -700,6 +784,7 @@ export async function apply(ctx, options) {
         report.runtimes.at(-1).workflows = workflowProof;
         report.runtimes.at(-1).a2a = a2aProof;
         report.runtimes.at(-1).browser = browserProof;
+        report.runtimes.at(-1).management = managementProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

@@ -8,11 +8,68 @@ import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/f
 import { NativeKernel, MemoryRunStore, emptyUsage, BACKGROUND_COMMAND_CONTRACT, BACKGROUND_NOTIFICATION_ADMISSION } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
 import { NATIVE_PYTHON_SYNTAX } from '../packages/agentkit-harness/src/native/python-syntax.mjs';
+import { createAgentStore } from '../src/agent-store.mjs';
+import { createSkillDiscovery } from '../src/skill-discovery.mjs';
+import { createStudioSkillManagement, SKILL_MANAGEMENT_CONTRACT } from '../src/skill-management.mjs';
 test('only an owned lint builtin pins the workspace syntax engine', t => {
   assert.deepEqual(setup(t, ['lint_workspace_file']).gateway.workspaceSyntax, NATIVE_PYTHON_SYNTAX);
   assert.equal(setup(t).gateway.workspaceSyntax, null);
   assert.equal(setup(t, ['lint_workspace_file'], [{ name: 'lint_workspace_file', executor: 'mcp', resourceId: 'remote' }],
     { executeMcpTool: async () => ({ content: [] }) }).gateway.workspaceSyntax, null);
+});
+
+test('actual Native kernel owns all three Skill management effects and preserves old Agent revision and post-policy views', async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-management-'))), workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const agents = createAgentStore({ storeDir: join(root, 'agents') }), first = await agents.create({ name: 'Native managed', runtimeType: 'harness' });
+  const skillDiscovery = createSkillDiscovery({ storeDir: join(root, 'skills') }), nativeScope = { ...scope, agentId: first.metadata.id };
+  const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close());
+  let network = 0;
+  const management = createStudioSkillManagement({ workspaceRoot, stateDir: join(root, 'state'), agentId: first.metadata.id, agents, skillDiscovery,
+    source: { search: async () => ({ repositories: [] }), inspect: async (_source, request) => {
+      assert.equal(request.assertCurrent(), true); network++;
+      const current = store.load(nativeScope, 'run'), intent = current.intents.find(item => item.operationKey === current.snapshot.pendingIntent);
+      assert.equal(current.snapshot.phase, 'executing_tools'); assert.equal(intent.kind, 'tool'); assert.equal(intent.status, 'running');
+      assert.equal(intent.claimedFence, current.lease.fence, 'live Native execution fence owns network dispatch');
+      return { repository: { owner: 'owner', name: 'repo', url: 'https://github.com/owner/repo' }, commit: 'a'.repeat(40),
+        candidates: [{ candidateId: 'candidate', path: '', files: [{ path: 'SKILL.md', bytes: Buffer.from('---\nname: kernel-skill\ndescription: Native receipt\n---\nInstructions') }] }] };
+    } } });
+  const names = ['skill_discover_github', 'skill_install', 'skill_bind_agent'];
+  const host = setup(t, names, [], { workspaceRoot, stateDir: join(root, 'state'), config: { agentId: first.metadata.id, toolBindings: names },
+    getSkillManagement: id => { assert.equal(id, first.metadata.id); return management; } });
+  assert.equal(host.gateway.skillManagementBinding.contract, SKILL_MANAGEMENT_CONTRACT);
+  const ports = host.gateway.forAgent(host.agent, { scope: nativeScope, store }), tools = host.gateway.definitions(host.agent, [...host.registry.values()]);
+  assert.deepEqual(tools.map(tool => tool.name).sort(), [...names].sort());
+  const { config, snapshot } = fixture({ tools, limits: { effectTimeoutMs: 200000 } }); snapshot.scope = nativeScope;
+  let models = 0, inspection, installed;
+  const originalExecute = host.ctx.tools.execute;
+  host.ctx.tools.execute = async input => {
+    const result = await originalExecute(input);
+    if (input.name === 'skill_discover_github') inspection = JSON.parse(result.value.result);
+    if (input.name === 'skill_install') installed = JSON.parse(result.value.result).installed_resource;
+    return { ...result, content: [{ type: 'text', text: `Host post-policy: ${input.name}` }] };
+  };
+  const kernel = new NativeKernel({ store, digest, owner: 'management-owner', ports: { ...ports, model: { generate: async input => {
+    models++;
+    if (models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'discover', name: names[0], arguments: { source: 'https://github.com/owner/repo' } }] };
+    assert.match(input.messages.filter(message => message.role === 'tool').at(-1).content, /Host post-policy:/);
+    if (models === 2) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'install', name: names[1], arguments: { inspection_token: inspection.inspectionToken, candidate_id: 'candidate' } }] };
+    if (models === 3) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'bind', name: names[2], arguments: { resource_id: installed.resourceId } }] };
+    return { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] };
+  } } } });
+  kernel.start(snapshot, config); const done = await kernel.runUntilIdle(nativeScope, 'run');
+  assert.equal(done.phase, 'completed'); assert.equal(models, 4); assert.equal(network, 1); assert.equal(host.calls.length, 3);
+  const record = store.load(nativeScope, 'run'), receipts = record.receipts.flatMap(receipt => receipt.result.results ?? []);
+  assert.equal(record.intents.filter(intent => intent.kind === 'tool').length, 3);
+  assert.equal(receipts.filter(receipt => receipt.status === 'ok').length, 3);
+  assert.equal(receipts.find(receipt => receipt.content?.effective_from).content.revision, 2);
+  assert.deepEqual(await agents.getRevision(first.metadata.id, 1), first);
+  assert.equal((await agents.get(first.metadata.id)).spec.bindings.skills[0].resourceId, installed.resourceId);
+  assert.deepEqual(record.configuration.tools, config.tools);
+  assert.equal(done.buildId, snapshot.buildId);
+  await kernel.runUntilIdle(nativeScope, 'run'); assert.equal(models, 4); assert.equal(network, 1); assert.equal(host.calls.length, 3);
+  const forged = host.request({ source: 'https://github.com/owner/repo' }, names[0]); forged.scope = nativeScope;
+  await assert.rejects(ports.tools.execute(forged), /authority|unbound|stale/); assert.equal(network, 1);
 });
 function setup(t, names = ['write_workspace_file'], contracts = [], options = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'studio-native-tools-')), workspaceRoot = join(root, 'workspace');

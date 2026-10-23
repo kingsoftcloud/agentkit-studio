@@ -109,6 +109,9 @@ try {
   assert.ok(report.runtimes.every(row => row.skills.instructionsSha256 === sha256(skillBody) && row.skills.serviceRequests === 7
     && row.skills.policyDeniedWithoutRequest && row.skills.postPolicyPreserved && row.skills.scriptsNotExecuted));
   assert.equal(new Set(report.runtimes.map(row => row.skills.rootDir)).size, 2);
+  assert.ok(report.runtimes.every(row => row.management.commit === 'c'.repeat(40) && row.management.revision === 2
+    && row.management.githubRequests === 6 && row.management.exactBinary && row.management.originalDshOwner
+    && row.management.duplicateSuppressed && row.management.oldRevisionPreserved && row.management.nextRevisionAdmitted));
   assert.ok(report.runtimes.every(row => row.workflows.backend === skillBackend && row.workflows.serviceRequests === 2
     && row.workflows.originalDshOwner && row.workflows.oneShotApprovals === 2
     && row.workflows.policyDeniedWithoutRequest && row.workflows.postPolicyPreserved));
@@ -143,6 +146,8 @@ try {
     assert.deepEqual(cold.restoredA2a.map(row => [row.runtime, row.agentId, row.sessionId, row.taskId, row.unchanged]),
       report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.a2a.taskId, true]));
     assert.equal(cold.a2aRequests, 0);
+    assert.equal(cold.githubRequests, 0);
+    assert.deepEqual(cold.restoredManagement, report.runtimes.map(row => ({ runtime: row.runtime, resourceId: row.management.resourceId, revision: 2, unchanged: true })));
     assert.equal(cold.restoredBrowsers.length, commandBackend === 'local_process' ? 2 : 0);
     assert.equal(cold.node, process.version); assert.equal(cold.networkCalls, 0); assert.equal(cold.skillRequests, 0); assert.equal(downloads, 4);
     assert.deepEqual(cold.restored.map(row => [row.runtime, row.agentId, row.sessionId, row.runtimeId, row.taskId, row.unchanged]),
