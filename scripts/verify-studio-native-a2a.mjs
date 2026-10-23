@@ -9,7 +9,13 @@
  *   node scripts/verify-studio-native-a2a.mjs \
  *     --source <built DSH SDK checkout> \
  *     --archive <packed studio .tgz> \
- *     [--keep]
+ *     [--keep] [--reconcile-cold [--receipt-crash]]
+ *
+ * --reconcile-cold uses the real mounted SessionController and authenticated
+ * recovery RPC after SIGKILL, without a new prompt or Send. --receipt-crash
+ * additionally kills the replacement while GetTask is pending, then verifies
+ * duplicate command confirmation cannot repeat that lost read. These modes
+ * use the same controlled HTTP peer/model and existing dependency graph.
  *
  * The mounted Host wires the A2A tool binding for an Agent spec with:
  *   bindings.modelProfileIds = ['fixture']   (text-only primary, modelName 'main')
@@ -47,17 +53,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
+import { verifyMountedA2aRecovery } from './verify-studio-native-a2a-recovery.mjs';
 
 const { values } = parseArgs({
   options: {
     source: { type: 'string' },
     archive: { type: 'string' },
     keep: { type: 'boolean', default: false },
+    'reconcile-cold': { type: 'boolean', default: false },
+    'receipt-crash': { type: 'boolean', default: false },
   },
 });
 
 assert.ok(values.source, 'Use --source <built DSH SDK checkout>');
 assert.ok(values.archive, 'Use --archive <packed studio .tgz>');
+assert.ok(!values['receipt-crash'] || values['reconcile-cold'], '--receipt-crash requires --reconcile-cold');
 
 const source = resolve(values.source);
 const archive = resolve(values.archive);
@@ -92,6 +102,7 @@ const remoteContextId = 'remote-context-a2a-proof-001';
 // Track all HTTP calls for exact counting.
 let modelCalls = 0, discoveryCalls = 0, a2aSends = 0, a2aGets = 0;
 const modelRequests = [], a2aPeerRequests = [], discoveryRequests = [], serverFailures = [];
+const recoveryPeer = { complete: false, holdNextGet: false };
 const jsonl = async path => (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 async function managedRecords(root) {
   const base = join(root, 'studio/native-harness/workspace-state');
@@ -200,6 +211,11 @@ const server = createHttpServer(async (request, response) => {
         const event = (id, payload) => `id: ${id}\r\ndata: ${JSON.stringify(wrap(payload))}\r\n\r\n`;
         // Stream: WORKING → artifact → COMPLETED
         response.write(event('1', { task: { id: remoteTaskId, contextId: remoteContextId, status: { state: 'TASK_STATE_WORKING' } } }));
+        if (values['reconcile-cold']) {
+          response.end(event('2', { statusUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
+            status: { state: 'TASK_STATE_INPUT_REQUIRED' } } }));
+          return;
+        }
         response.write(event('2', { artifactUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
           artifact: { artifactId: 'result-docs', parts: [{ text: a2aReply }] } } }));
         response.write(event('3', { statusUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
@@ -210,12 +226,16 @@ const server = createHttpServer(async (request, response) => {
 
       if (body.method === 'GetTask') {
         a2aGets++;
+        assert.equal(body.params.id, remoteTaskId);
+        if (recoveryPeer.holdNextGet) { recoveryPeer.holdNextGet = false; return; }
         console.log(`[a2a-peer] GetTask: id=${body.params?.id}`);
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify(wrap({
           id: remoteTaskId, contextId: remoteContextId,
-          status: { state: 'TASK_STATE_COMPLETED' },
-          artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }],
+          status: { state: values['reconcile-cold'] && !recoveryPeer.complete ? 'TASK_STATE_INPUT_REQUIRED' : 'TASK_STATE_COMPLETED' },
+          ...(values['reconcile-cold'] && !recoveryPeer.complete ? {} : {
+            artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }],
+          }),
         })));
         return;
       }
@@ -292,6 +312,11 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
+    ...(values['reconcile-cold'] ? [
+      '    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
+      '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
+      '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'",
+    ] : []),
     '    - id: studio-proof-preset-registry', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:',
     "        default: standard",
     '    - id: studio-native-a2a-proof', `      name: ${JSON.stringify(fixturePath)}`, '      config:',
@@ -302,6 +327,7 @@ try {
     `        a2aServiceToken: ${JSON.stringify('a2a-fixture-token')}`,
     `        a2aBindings: ${JSON.stringify(JSON.stringify([a2aSpec]))}`,
     `        mountHost: true`,
+    `        exportControl: ${values['reconcile-cold']}`,
     '',
   ].join('\n'));
 
@@ -328,6 +354,13 @@ try {
   };
 
   harness = new DeepSeekHarness(options);
+  if (values['reconcile-cold']) {
+    await verifyMountedA2aRecovery({ root, installed, repository, source, archive, archiveSha,
+      harness, makeHarness: () => new DeepSeekHarness(options), recoveryPeer,
+      receiptCrash: values['receipt-crash'], nodeOnlyBin,
+      counts: () => ({ model: modelCalls, discovery: discoveryCalls, send: a2aSends, get: a2aGets }),
+      requests: { modelRequests, a2aPeerRequests, discoveryRequests, serverFailures }, a2aReply, remoteTaskId, remoteContextId });
+  } else {
   const session = harness.session('a2a-session');
   const result = await session.run('Ask the research agent to find documents about A2A.');
   // After the turn, the DSH subprocess is alive — capture its real PID.
@@ -517,6 +550,7 @@ try {
     + 'real Host restart + SessionController history replay with no new calls, '
     + 'entire store.load record canonical unchanged, '
     + 'A2A call identity record terminal, no credential leak\n');
+  }
 } catch (error) {
   failed = true;
   const detail = { code: error.code, message: error.message, stack: error.stack,

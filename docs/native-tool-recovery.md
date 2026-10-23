@@ -47,6 +47,24 @@ SessionController、工具注册与审批使用明确的窄替身；不代表完
 实际 SIGKILL 后的独立新进程还验证生产 A2A 网关：已知远端 task 才能 GetTask 并继续；
 发送已发生但 task 未知时继续等待，既不重新发现也不重发 Send。
 
+完整挂载 Host 的专项验证现在也覆盖真实 SessionController、预设恢复、认证 HTTP
+接口与持久会话。等待时 SIGKILL 后，新进程只恢复历史和读取状态，不改动原 Native
+账本；明确核对才查询原远端任务并继续同一 Run/turn。查询途中再次 SIGKILL 后，
+显式恢复将丢失的读取归为等待；确认同一命令不会再查，新命令才重新 GetTask。
+每条流程仅有一个原 Send、一次发现、两个模型请求；原工具意图和未知回执保留，
+原产品回合最终只结束一次。Node 22/26 均已执行这两条流程。
+
+```sh
+node scripts/verify-studio-native-a2a.mjs --source <维护版DSH目录> --archive <Studio.tgz> --reconcile-cold --keep
+node scripts/verify-studio-native-a2a.mjs --source <维护版DSH目录> --archive <Studio.tgz> --reconcile-cold --receipt-crash --keep
+```
+
+验证进程使用只有 Node 的 PATH 及无效 Python 路径。模型和 A2A 是真实本地 HTTP
+确定性服务，依赖链接到已有安装；夹具从当前源码覆盖到提取包并记录摘要，不能把
+它当作全新安装、线上模型、Electron 或真实人机审批验收。该场景由独立远端服务
+完成原任务，未模拟人工批准补充输入。证据输出在控制台标明的私有临时目录，
+包括原账本、进程 PID/退出信号、HTTP 计数与 `mounted-a2a-recovery-evidence.json`。
+
 这些不代表真实模型、其他远程后端或 Electron 已验收。整体状态见
 [native-migration-status.md](native-migration-status.md)。
 
@@ -68,5 +86,5 @@ SessionController、工具注册与审批使用明确的窄替身；不代表完
 请求响应丢失时，界面保留同一 commandId 用于确认；已消费命令不会再次查询。
 再次主动核对使用新 commandId。查询不追加未知远端用量为零的断言。
 
-仍待闭环：完整挂载 Host 的此项恢复验收、在线 A2A 服务、并发远端取消投递、内部
+仍待闭环：真实人机审批与完整浏览器消费、在线 A2A 服务、并发远端取消投递、内部
 控制面和编排、文件/data 输出的完整对照，以及所有其他未知副作用的清理/继续流程。

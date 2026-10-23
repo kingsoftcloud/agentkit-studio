@@ -177,12 +177,21 @@ async function applyProof(ctx, options) {
       await ctx.agentPresets.recompose(agent.ctx, presetId);
     } else await ctx.agentPresets.select(agent, presetId);
     const history = agent.session.snapshotEvents();
+    if (options.exportControl) {
+      const deadline = Date.now() + 15000;
+      while (!ctx.get('sessionController')) {
+        if (Date.now() >= deadline) throw Error('Actual SessionController did not mount');
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
     await appendFile(join(options.directory, 'mounted-host-http.jsonl'), JSON.stringify({
       source, pid: process.pid, sessionId: agent.session.id, agentId: record.metadata.id, presetId,
       unauthorizedStatus: unauthorized.status, compatible: true, historyEvents: history.length,
       historyHasAnswer: JSON.stringify(history).includes('The remote agent found 3 relevant documents.'),
       historyHasCompletedTurn: history.some(event => event.type === 'turn/end' && event.data.reason?.kind === 'completed'),
     }) + '\n');
+    if (options.exportControl) await writeFile(join(options.directory, 'control-auth.json'),
+      JSON.stringify({ origin, cookie, pid: process.pid }), { mode: 0o600 });
   });
 
   ctx.on('agent/execute-turn', async (payload, next) => {
