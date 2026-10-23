@@ -472,10 +472,20 @@ Gateway 的只读观察入口携带正式观察契约版本，仅暴露 `observe
 
 新增真实子进程测试通过 Loader 加载已构建的 SDK，在准备阶段和归属写入后分别刷新实际 JSONL，再由父进程发送 `SIGKILL`。重开相同 Session 后，前者修复未认领轮次并可接纳下一轮；后者保留原归属、恢复原数字轮次并仅关闭一次。没有手工生成崩溃日志，没有以普通取消或 dispose 代替进程中断。夹具的执行结果为确定性外部引擎输出，不作为完整 Native Host 或真实模型调用证明。
 
-相关五个模块在 Node 26.5/22.19 各通过 38 项；最后补充的释放后停放输入用例在两版本各通过一项，仅重跑该新增用例。SDK 官方构建、Host 类型检查、受影响文件 lint、双语配对和生成索引检查通过；原 TypeScript SDK 的 external-turn 快照回放通过一项。文档全检查先通过 42 项、失败一项过期事件索引，刷新后仅复验该失败项及受影响类型/配对。初次进程夹具缺少 workspace 声明依赖和测试类型问题均已修复，失败日志保留。Python SDK 未运行，持久 watcher、生产冷启动调度及打包 Native 后台唤醒仍待集成，当前不宣称自动唤醒已完成。
+相关五个模块在 Node 26.5/22.19 各通过 38 项；最后补充的释放后停放输入用例在两版本各通过一项，仅重跑该新增用例。SDK 官方构建、Host 类型检查、受影响文件 lint、双语配对和生成索引检查通过；原 TypeScript SDK 的 external-turn 快照回放通过一项。文档全检查先通过 42 项、失败一项过期事件索引，刷新后仅复验该失败项及受影响类型/配对。初次进程夹具缺少 workspace 声明依赖和测试类型问题均已修复，失败日志保留。Python SDK 未运行，此处的 SDK 证据不作为打包 Native Host 自动唤醒验收。
 
 ## 可移植 Frozen Build 的实际账本验收
 
 `scripts/verify-studio-native-portable.mjs --source <已构建维护版 DSH> --archive <Studio.tgz> --keep` 通过实际打包 Host、模型 HTTP 编解码和 Node 工作区工具执行导入的 Frozen Native Build；运行进程只提供 Node PATH，原来源目录删除，归档解压内容检查不含来源路径和凭据。实际 SQLite 记录与 Session 的每个数字轮次、完整归属、配置摘要和 Build 精确对应；工具意图按 operationKey 和结果位置匹配已提交回执。首次读取、写入和回读，新 Host 继续相同 Session，以及策略拒绝和路径越界分别核验原回执、文件字节和用量。
 
 固定 Studio `3b0ea26` 归档及 DSH `f4bccbf1` 基线在 Node 26.5/22.19 独立复验通过。此用例导入后移除目标侧 `portable-bundle.zip`，验证导入后的 Frozen 存储与实际执行；依赖使用固定本地图，不作为全新依赖安装、保留归档时的 Frozen HTTP 启动或最新全部功能的证明。后两项仍需独立验收；无人值守 HTTP 运行原有只读/禁止交互审批策略保持有效。
+
+## 持久后台任务调度与 Host 启动
+
+Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及权限服务就绪后启动 watcher，无须新的用户输入。可移植运行还等待正式 Frozen 资源初始化完成；依赖更换时中断并等待旧 watcher 退出，再启动下一代。Host 关闭依次停止 watcher、等待自身活动、关闭私有注册库和 RunStore。
+
+生产 SQLite 从已提交账本发现当前 Host 主体的 scope，精确过滤 tenant/workspace/user，返回分离的身份数据；可变 Agent 列表或已删除草稿不再隐藏已有账本。发现身份本身不授予恢复或执行权限，原 Session、预设、Build、源配置和命令回执仍由 Host 准入重新核验。扫描完成源 Run 可补齐“源 Run 已提交、尚未注册 watcher”期间的进程中断；旧 watch 即使目录扫描失败也会继续尝试，随后显式报告扫描失败。
+
+`native-harness/background-watches/registry.sqlite` 使用独立私有目录、跨进程所有者锁和严格版本/行身份校验，仅保存必要身份与观察状态。`admitted` 保留待重驱动，原 notice Run 身份只能写入一次；确认终态后 `discarded` 不再调度。损坏库不清空或重置。关闭等待被中断的当前轮询收敛；非协作回调迟到返回或拒绝均被观察，不能继续写注册库。真实子进程持有已刷新的注册记录后被 `SIGKILL`，新进程可取得所有权并读回同一待处理任务。
+
+相关 Host 61、watcher 31、生命周期 5、scope 2 项分别在 Node 26.5/22.19 通过。最后补充的行结构与服务依赖检查只复验对应的六项；watcher 关闭实现调整后仅复验受影响的三项 Host 用例。Host 用例使用真实模型 HTTP 编解码、Kernel 和 SQLite，Session 控制器、SDK 空闲接口及命令运输是明确替身；真实 Cordis 生命周期与 watcher 跨进程锁分别另测。类型及可移植检查通过，未跑全量。完整打包 Host 的自动唤醒、归属刷新前后进程强杀及 Frozen/部署冷启动仍需进一步验收，不能将上述分层测试视为全部端到端完成。

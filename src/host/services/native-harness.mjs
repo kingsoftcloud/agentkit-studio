@@ -63,6 +63,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   catch (error) { if (!ledger) store.close(); throw error; }
   const lifetime = new AbortController(), active = new Set(), childOwners = new Set(), controls = new Map();
   let closed = false, closing;
+  let backgroundRegistry, backgroundOwner, backgroundStart = Promise.resolve();
   const workspaceId = hash(resolve(workspaceRoot));
   const controlKey = (agentId, sessionId) => canonical({ agentId, sessionId });
   const controlFor = request => {
@@ -439,7 +440,58 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute });
   const notifyBackgroundCompletion = createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents });
   const dispatchBackgroundCompletion = createStudioNativeBackgroundDispatcher({ ctx, store, workspaceId, lifetime, active, notify: notifyBackgroundCompletion });
+  const startBackgroundWatcher = ({ signal } = {}) => {
+    invariant(signal === undefined || signal instanceof AbortSignal, 'studio_native_background_signal_invalid');
+    const starting = backgroundStart.then(async () => {
+      invariant(!closed, 'studio_native_host_closed');
+      signal?.throwIfAborted();
+      await backgroundOwner?.close();
+      const [{ createNativeBackgroundWatchStore }, { createStudioNativeBackgroundWatcher }] = await Promise.all([
+        import('./native-background-watch-store.mjs'), import('./native-background-watcher.mjs'),
+      ]);
+      invariant(!closed, 'studio_native_host_closed');
+      signal?.throwIfAborted();
+      backgroundRegistry ??= createNativeBackgroundWatchStore(join(storeDir, 'native-harness', 'background-watches', 'registry.sqlite'));
+      const controller = new AbortController();
+      const watcher = createStudioNativeBackgroundWatcher({ store, watches: backgroundRegistry,
+        signal: AbortSignal.any([lifetime.signal, controller.signal, ...(signal ? [signal] : [])]),
+        listScopes: async () => {
+          if (typeof store.listScopes === 'function') return store.listScopes({ tenantId: 'local', workspaceId, userId: 'local-user' });
+          // Injected test/custom stores without the Host discovery extension
+          // can enumerate current local Agents; production SQLite uses durable
+          // ledger identities, including deleted Agent drafts and team roles.
+          const rows = await agents.list({ includeTeamRoles: true });
+          invariant(Array.isArray(rows), 'studio_native_background_agent_list_invalid');
+          const ids = rows.filter(row => row.metadata?.local === true).map(row => row.metadata.id);
+          invariant(ids.every(id => typeof id === 'string' && id.trim() && id.length <= 256),
+            'studio_native_background_agent_list_invalid');
+          return [...new Set(ids)].map(agentId => ({ tenantId: 'local', workspaceId, userId: 'local-user', agentId }));
+        },
+        dispatch: dispatchBackgroundCompletion,
+        onError: error => console.error('[agentkit-studio] Native background watcher:', error.code),
+      });
+      let stopped;
+      const owner = { status: () => watcher.status(), close() {
+        if (stopped) return stopped;
+        controller.abort(new Error('Studio background watcher retired'));
+        return stopped = Promise.resolve().then(() => watcher.close()).finally(() => {
+          if (backgroundOwner === owner) backgroundOwner = undefined;
+        });
+      } };
+      backgroundOwner = owner;
+      try {
+        await watcher.start();
+        lifetime.signal.throwIfAborted(); signal?.throwIfAborted();
+        return owner;
+      }
+      catch (error) { await owner.close(); throw error; }
+    });
+    backgroundStart = starting.then(() => {}, () => {});
+    return starting;
+  };
   return {
+    startBackgroundWatcher,
+    backgroundStatus: () => backgroundOwner?.status() ?? { running: false, started: false },
     notifyBackgroundCompletion,
     dispatchBackgroundCompletion,
     recoveryStatus: recovery.status,
@@ -486,13 +538,16 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       if (closing) return closing;
       closed = true; lifetime.abort(new Error('Studio Native host closed'));
       return closing = (async () => {
+        await backgroundStart;
+        const background = await Promise.allSettled([backgroundOwner?.close()]);
         await Promise.allSettled([...active]);
         const children = await Promise.allSettled([...childOwners].flatMap(item => [...item.runIds]
           .map(runId => item.owner.releaseRun({ scope: item.scope, runId }))));
         childOwners.clear();
-        try { unregister(); } finally { if (!ledger) store.close(); }
-        const failures = children.filter(result => result.status === 'rejected').map(result => result.reason);
-        if (failures.length) throw new AggregateError(failures, 'Studio child cleanup requires recovery');
+        try { backgroundRegistry?.close(); }
+        finally { try { unregister(); } finally { if (!ledger) store.close(); } }
+        const failures = [...background, ...children].filter(result => result.status === 'rejected').map(result => result.reason);
+        if (failures.length) throw new AggregateError(failures, 'Studio Native cleanup requires recovery');
       })();
     },
   };

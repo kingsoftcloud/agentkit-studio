@@ -110,6 +110,26 @@ export class SqliteRunStore extends TransactionalRunStore {
         } catch (error) { db.exec('ROLLBACK'); throw error; }
       },
     });
+    // Host-only recovery discovery. The caller supplies its trusted principal;
+    // a deleted mutable Agent draft must not hide a committed background Run.
+    // Return only scope identities, never configurations, inputs or receipts.
+    this.listScopes = principal => {
+      open();
+      invariant(principal && typeof principal === 'object' && !Array.isArray(principal)
+        && Object.keys(principal).length === 3
+        && ['tenantId', 'workspaceId', 'userId'].every(key => Object.hasOwn(principal, key)
+          && typeof principal[key] === 'string' && principal[key].trim()), 'invalid_recovery_principal');
+      return db.prepare(`SELECT DISTINCT json_extract(data,'$.snapshot.scope') AS scope FROM native_runs
+        WHERE json_extract(data,'$.snapshot.scope.tenantId')=?
+          AND json_extract(data,'$.snapshot.scope.workspaceId')=?
+          AND json_extract(data,'$.snapshot.scope.userId')=? ORDER BY scope`)
+        .all(principal.tenantId, principal.workspaceId, principal.userId).map(row => {
+          const scope = parseNativeJson(row.scope);
+          scopeKey(scope);
+          invariant(['tenantId', 'workspaceId', 'userId'].every(key => scope[key] === principal[key]), 'recovery_scope_mismatch');
+          return scope;
+        });
+    };
     this.close = () => { if (!closed) { db.close(); closed = true; } };
   }
 }

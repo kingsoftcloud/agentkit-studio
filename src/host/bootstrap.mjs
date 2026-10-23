@@ -22,6 +22,7 @@ import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
+import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/agentkit-harness/src/skill-bindings.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
@@ -359,6 +360,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   } else {
     await bindRuntime();
   }
+  bindNativeBackgroundRuntime(ctx, { getHost: nativeHost,
+    readyService: portableRuntime ? FROZEN_RUNTIME_READY : undefined,
+    onError: error => console.error('[agentkit-studio] Native background startup failed:', error?.code || 'NATIVE_BACKGROUND_STARTUP_FAILED'),
+  });
   const routes = createStudioRoutes(ctx, {
     ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),

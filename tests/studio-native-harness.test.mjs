@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -23,7 +23,7 @@ import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT } from '../src/providers/native-context-sources.mjs';
 
 async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'studio-native-host-unit-'));
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
   const workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root }), ledger = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
@@ -372,6 +372,84 @@ test('idle background Host requires a real advertised idle capability and the or
 
 const backgroundWatchRequest = h => ({ scope: structuredClone(h.source.snapshot.scope), sessionId: 'session',
   sourceRunId: h.source.snapshot.runId, taskId: h.request.taskId });
+
+test('production watcher discovers a committed SQLite source and automatically delivers its completion once', async t => {
+  const h = await idleBackgroundHost(t);
+  h.agents.list = () => assert.fail('production recovery must discover committed ledger scopes, not mutable drafts');
+  h.services.sessionController = { resolveAgent: async id => {
+    assert.equal(id, 'session'); return { agent: h.payload.agent };
+  } };
+  const watcher = await h.host.startBackgroundWatcher();
+  assert.equal(watcher.status().running, true); assert.equal(watcher.status().pendingCount, 1);
+  assert.equal(h.requests.length, 2); assert.equal(h.counts().launches, 1);
+  h.setStatus('completed');
+  const deadline = Date.now() + 5000;
+  while (h.head().runId === h.source.snapshot.runId || h.head().phase !== 'completed') {
+    assert.ok(Date.now() < deadline, 'automatic completion did not settle');
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(h.requests.length, 3); assert.equal(h.counts().launches, 1);
+  const notice = h.head();
+  assert.equal(notice.backgroundNotification.sourceRunId, h.source.snapshot.runId);
+  assert.equal(notice.backgroundNotification.taskId, h.request.taskId);
+  assert.deepEqual(h.ledger.load(h.source.snapshot.scope, h.source.snapshot.runId), h.source);
+  await watcher.close(); await watcher.close();
+  const replacement = await h.host.startBackgroundWatcher();
+  assert.equal(h.requests.length, 3); assert.equal(h.head().runId, notice.runId);
+  assert.equal(replacement.status().pendingCount, 0, 'terminal delivery is not dispatched again');
+  await replacement.close();
+});
+
+test('cold Host reopens the registry and original SQLite source before any new user input', async t => {
+  const h = await idleBackgroundHost(t);
+  h.services.sessionController = { resolveAgent: async id => {
+    assert.equal(id, 'session'); return { agent: h.payload.agent };
+  } };
+  await h.host.startBackgroundWatcher();
+  await h.host.close(); h.ledger.close();
+  const ledger = new SqliteRunStore(join(h.root, 'runs.sqlite'));
+  let modelCalls = 0;
+  const cold = await createStudioNativeHarness({ ctx: { get: id => h.services[id] }, storeDir: h.root,
+    workspaceRoot: join(h.root, 'workspace'), agents: h.agents, models: h.models, ledger,
+    renderPrompt: () => 'Trusted Host instructions',
+    agentEvents: () => ({ serial: async () => h.payload.binding }), assembleContextFor: agent => ({ agent }),
+    fetchImpl: async () => {
+      modelCalls++;
+      return new Response('data: ' + JSON.stringify({ choices: [{ index: 0,
+        delta: { content: 'Recovered completion' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 2, completion_tokens: 3 } }) + '\n\ndata: [DONE]\n\n',
+      { headers: { 'content-type': 'text/event-stream' } });
+    } });
+  t.after(async () => { await cold.close(); ledger.close(); });
+  h.setStatus('completed');
+  const watcher = await cold.startBackgroundWatcher();
+  const notice = ledger.sessionHead(h.source.snapshot.scope, 'session');
+  assert.equal(notice.phase, 'completed'); assert.equal(notice.finalText, 'Recovered completion');
+  assert.equal(notice.backgroundNotification.sourceRunId, h.source.snapshot.runId);
+  assert.equal(modelCalls, 1); assert.equal(h.counts().launches, 1);
+  assert.equal(watcher.status().pendingCount, 1, 'admitted watch remains durable until terminal acknowledgement');
+  await watcher.close();
+  const second = await cold.startBackgroundWatcher();
+  assert.equal(second.status().pendingCount, 0); assert.equal(modelCalls, 1);
+  assert.equal(h.events.filter(row => row.type === 'user/message' && row.data.source?.kind === 'user').length, 1);
+  assert.deepEqual(ledger.load(h.source.snapshot.scope, h.source.snapshot.runId), h.source);
+  await cold.close(); ledger.close();
+});
+
+test('Host shutdown cancels a watcher cold lookup before closing its registry and ignores late return', async t => {
+  const h = await idleBackgroundHost(t), entered = Promise.withResolvers(), released = Promise.withResolvers();
+  h.services.sessionController = { resolveAgent: async () => {
+    entered.resolve(); await released.promise; return { agent: h.payload.agent };
+  } };
+  const starting = h.host.startBackgroundWatcher();
+  const refused = assert.rejects(starting, /Studio Native host closed/);
+  await entered.promise; await h.host.close(); await refused;
+  released.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.requests.length, 2); assert.equal(h.counts().launches, 1);
+  assert.equal(h.ledger.list(h.source.snapshot.scope, 'session').length, 1);
+  assert.deepEqual(h.countsIdle(), { starts: 0, reads: 0 });
+  await assert.rejects(h.host.startBackgroundWatcher(), /studio_native_host_closed/);
+});
 
 test('persisted background dispatch resolves the original Session and reuses its source and notice', async t => {
   const h = await idleBackgroundHost(t), lookups = [];
