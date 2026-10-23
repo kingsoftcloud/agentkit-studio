@@ -6,6 +6,10 @@ DSH builtin 的 Python 脚本、解释器查找和子进程 fallback 已删除�
 下文较早阶段的“仍保留 Python fallback”是历史记录，不代表当前源码；
 本次删除不证明全部工具行为、扩展 executor、完整安装或默认切换已完成。
 
+维护版 headless Host 的全新正常安装、Native 整轮执行及跨进程恢复，已在 macOS
+arm64 的 Node 22.19.0/26.5.0 验证通过，见 [无 Python 安装验证](native-node-installation.md)。
+Desktop 资源边界、其他平台、真实模型/CLI 和完整产品入口仍须分别验收。
+
 Skill 管理的 Node 实现、持久化边界、验证范围与尚未闭环的行为差异见
 [Skill management checkpoint](native-skill-management.md)。该阶段不能视为完整无损迁移完成。
 

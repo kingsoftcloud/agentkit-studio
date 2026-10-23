@@ -10,7 +10,9 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 近期已接入 Node 的模型工具还包括 Browser、Skill 发现/安装/绑定，以及
 `search_knowledge_base`。知识库保留完整查询、来源与答案，Native 使用实际意图和
 执行 fence，DSH/Codex 使用原 Agent/Session/call 的独立持久记录。定向测试和真实
-打包 Host 的跨 PID 回执恢复已有证据；仍不代表全新安装或真实模型/CLI 验收。
+打包 Host 的跨 PID 回执恢复已有证据。维护版无 Python 的全新安装、完整 Host 挂载及
+确定性 Native 整轮执行已在 macOS arm64 的 Node 22/26 通过，见
+[Node 安装验证](native-node-installation.md)；真实模型/CLI 和全部产品验收仍待完成。
 配置与剩余差异见 [知识库工具](native-knowledge-tools.md) 和
 [Skill 管理](native-skill-management.md)。`load_memory` / `save_memory` 也已接入
 Node local/HTTP/SDK 服务、真实 Native/DSH 所有权及提前持久化的写 DTO；详情和限制
@@ -23,14 +25,14 @@ Node local/HTTP/SDK 服务、真实 Native/DSH 所有权及提前持久化的写
 | 可选后端及服务能力 | 本地 Skills 工作流已打包执行；E2B Skills 已接入独立沙箱、逐命令监督和产物交付；Node 隔离代码片段已接入 Native 与独立 DSH 工具名；A2A 有真实 HTTP 执行和历史恢复 | 线上 E2B 成功执行/解释器/重连/清理验收；Skill 输入文件和完整专用事件；A2A 继续/取消/内部控制面等仍有实现或接线缺口 |
 | 全部恢复产品流程 | 意图/回执、lease/fence、实际进程中断与不盲目重放已有专项；多个实际 Host 重启路径已验证 | 各后端结果未知时的显式核对/清理/继续，以及全部审批和恢复界面闭环 |
 | Studio 所有执行入口 | 本地对话、历史、部分 Frozen/后台通知路径已有真实 Host 证据 | 自动化、定时、Frozen HTTP/部署和完整浏览器消费的全部组合验收 |
-| 安装和执行不依赖 Python | 普通工具目录的 31 项及平台额外 3 项已有 Node 端口，dsh-runtime-plugin 的 Python 脚本、查找和子进程 fallback 已删除；多条打包验证在受限 PATH 和无效 Python 配置下成功 | 名称覆盖不证明全部后端/行为；自定义 executor 和资源 authority 扩展仍需审计，全新无 Python 安装/启动/执行未通过 |
+| 安装和执行不依赖 Python | 普通工具目录的 31 项及平台额外 3 项已有 Node 端口，Python fallback 已删除；维护版 Host 在 macOS arm64 的 Node 22/26 全新正常安装、挂载、Native 整轮执行及恢复均通过 | 名称覆盖不证明全部后端/行为；自定义 executor 和资源 authority 扩展仍需审计，Desktop Python/Office 前置依赖及其他平台仍待闭环 |
 | DSH Native 与 Codex 保持正常 | 工作区、Web、本地命令、component_status、五个 Skill 读取及本地 execute_skills 已打包验证；A2A 已增加真实 DSH 身份的 Node 端口与独立持久记录；E2B 工作流已接入 Node 并验证实际 SDK 拒绝连接后的跨进程恢复 | 两种 runtime 的完整模型/CLI 回归；所有工具的完整行为对照；交互 E2B 的线上验收和空闲/容量回收 |
 | 默认切换及最终交付 | Native 仍通过显式版本开关启用 | 所有前置验收闭环后切换默认；最终能力差异表、配置恢复说明和最终验证记录 |
 
 当前仍不能判定“只剩少量验收”：
 
 - 普通 builtin 的 Python fallback 已删除；缺少端口会明确失败，不代表缺少的后端能力已补齐。
-- `scripts/desktop-dev-resources.mjs` 的完整 Desktop 开发资源检查仍要求 Python 资源；该宿主/Office 依赖边界和全新安装尚需处理。
+- `scripts/desktop-dev-resources.mjs` 的完整 Desktop 开发资源检查仍要求 Python 资源；该宿主/Office 依赖边界尚需处理，已有 headless Host 安装证据不覆盖 Desktop。
 - 主迁移文档仍明确默认 Harness 沿用原路径，需要完整验收后切换。
 
 先前阶段提交 `5631729` 完成了本地 Skills 工作流、原调用的持久记录、命令监督、

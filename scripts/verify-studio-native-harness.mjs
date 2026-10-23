@@ -15,7 +15,7 @@ import { respondToMemoryProof, runMemoryProof } from './native-memory-proof.mjs'
 import { createManagedMemoryProof } from './native-memory-managed-proof.mjs';
 import { createParallelMemoryProof } from './native-memory-parallel-proof.mjs';
 import { createWebProof } from './native-web-proof.mjs';
-const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { type: 'boolean', default: false },
+const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
   automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
@@ -23,7 +23,9 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, keep: { ty
   'memory-managed': { type: 'boolean', default: false },
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
   'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false } } });
-assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
+assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source <built maintained DSH checkout> OR --installation <fresh installed Host>');
+assert.ok(!values.installation || values.archive && values['mount-host'] && !values['studio-dependencies'],
+  '--installation requires --archive --mount-host and owns the complete dependency graph');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
 assert.ok(!values.frozen || values['mount-host'], '--frozen requires --mount-host');
@@ -45,7 +47,8 @@ assert.ok(!values.web || values['mount-host'] && !values.memory && !managedMemor
   '--web is a separate mounted Host proof; --frozen is supported');
 const webProof = values.web ? createWebProof() : null;
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
-const source = resolve(values.source), repository = fileURLToPath(new URL('..', import.meta.url));
+const source = values.source ? resolve(values.source) : null, repository = fileURLToPath(new URL('..', import.meta.url));
+const installation = values.installation ? resolve(values.installation) : null;
 const root = await mkdtemp(join(tmpdir(), 'studio-native-host-')), requests = [], failures = [];
 const exactInteger = 9007199254740993n, mcpEffects = [];
 const automationCalls = []; let automationProof;
@@ -157,7 +160,8 @@ const server = createServer(async (request, response) => {
 let harness;
 try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
+  const { DeepSeekHarness } = await import(pathToFileURL(installation
+    ? join(installation, 'node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js') : join(source, 'packages/sdk/client/lib/index.js')).href);
   // Install the actual packed Studio files into an isolated Host graph. DSH
   // owns its maintained public packages; ordinary Studio dependencies can come
   // from a fresh registry install, without falling back to this checkout.
@@ -166,20 +170,29 @@ try {
   assert.ok(packedName, 'Studio package was produced');
   const archive = values.archive ? resolve(packedName) : join(root, packedName);
   const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
-  const studioDependencies = values['studio-dependencies'] ? resolve(values['studio-dependencies']) : join(repository, 'node_modules');
+  const studioDependencies = installation ? join(installation, 'node_modules')
+    : values['studio-dependencies'] ? resolve(values['studio-dependencies']) : join(repository, 'node_modules');
   await mkdir(graph);
   execFileSync('tar', ['-xzf', archive, '-C', graph]);
-  await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
-  for (const entry of await readdir(studioDependencies)) {
-    if (entry === '@deepseek-ai' || entry.startsWith('.')) continue;
-    await symlink(join(studioDependencies, entry), join(dependencies, entry));
-  }
-  const dshDependencies = values['mount-host'] ? join(source, 'apps/cli/node_modules/@deepseek-ai') : join(repository, 'node_modules/@deepseek-ai');
-  for (const entry of await readdir(dshDependencies)) {
-    await symlink(join(dshDependencies, entry), join(dependencies, '@deepseek-ai', entry));
+  const dshDependencies = installation ? join(installation, 'node_modules/@deepseek-ai')
+    : values['mount-host'] ? join(source, 'apps/cli/node_modules/@deepseek-ai') : join(repository, 'node_modules/@deepseek-ai');
+  if (installation) {
+    const lock = JSON.parse(await readFile(join(installation, 'package-lock.json'), 'utf8'));
+    assert.ok(Object.entries(lock.packages).filter(([path]) => path.startsWith('node_modules/')).every(([, value]) => !value.link));
+    await symlink(studioDependencies, dependencies);
+  } else {
+    await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
+    for (const entry of await readdir(studioDependencies)) {
+      if (entry === '@deepseek-ai' || entry.startsWith('.')) continue;
+      await symlink(join(studioDependencies, entry), join(dependencies, entry));
+    }
+    for (const entry of await readdir(dshDependencies)) {
+      await symlink(join(dshDependencies, entry), join(dependencies, '@deepseek-ai', entry));
+    }
   }
   await writeFile(join(root, 'dependency-graph.json'), JSON.stringify({ archive, studioDependencies, dshDependencies,
-    scope: 'Packed Studio execution with selected installed dependencies; maintained DSH Host remains supplied by --source.' }, null, 2));
+    scope: installation ? 'Complete freshly installed Host dependency graph; no repository/source dependency links.'
+      : 'Packed Studio execution with selected installed dependencies; maintained DSH Host remains supplied by --source.' }, null, 2));
   if (!values['mount-host']) {
     await symlink(join(source, 'packages/core/system-prompt'), join(dependencies, '@deepseek-ai/dsh-system-prompt'));
     await symlink(join(source, 'packages/core/agent'), join(dependencies, '@deepseek-ai/dsh-agent'));
@@ -224,10 +237,12 @@ try {
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
   ].join('\n'));
-  const patches = values['mount-host'] ? [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch] : [patch];
-  const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches, dshHome: join(root, 'home'),
+  const patches = values['mount-host'] ? [installation ? join(installation, 'node_modules/@deepseek-ai/dsh-web-app/presets/standard.patch.yml')
+    : join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch] : [patch];
+  const options = { dshBin: installation ? join(installation, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
+    : join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches, dshHome: join(root, 'home'),
     cwd: root, processCwd: root, provider: 'agentkit-studio-fixture', model: 'pinned', initializeTimeoutMs: 30_000, requestTimeoutMs: 30_000,
-    env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_PYTHON: '/unavailable/python', AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk',
+    env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
   if (webProof) {
@@ -432,6 +447,12 @@ try {
     console.log('Studio Native Hooks PASS: trusted exact-Agent registration; durable Pre/Post/Stop intents and receipts; actual rewritten workspace bytes; no denied write; original provider arguments retained; no callbacks on default DSH.');
   }
   }
+  await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ passed: true, node: process.version,
+    archiveSha256: createHash('sha256').update(await readFile(archive)).digest('hex'),
+    dependencies: installation ? { kind: 'fresh-installation', installation,
+      lockSha256: createHash('sha256').update(await readFile(join(installation, 'package-lock.json'))).digest('hex') }
+      : { kind: 'maintained-source', source },
+    flags: values, modelHttpRequests: requests.length, scope: 'Selected actual mounted Native scenario; real model/CLI and complete product acceptance remain separate.' }, null, 2));
 } finally {
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });

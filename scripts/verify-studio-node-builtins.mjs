@@ -11,12 +11,14 @@ import { createHash } from 'node:crypto';
 import { createZip } from '../src/zip.mjs';
 import { browserExecutable } from '../tests/fixtures/browser-executable.mjs';
 import { DSH_NODE_BUILTIN_NAMES } from '../src/providers/dsh-node-builtin-catalog.mjs';
-const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
+const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   'skill-backend': { type: 'string', default: 'local_process' }, 'command-backend': { type: 'string', default: 'local_process' } } });
-assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
+assert.ok(Boolean(values.source) !== Boolean(values.installation) && values.archive,
+  'Use --source <built maintained DSH> OR --installation <fresh registry project>, plus --archive <Studio.tgz>');
 const skillBackend = values['skill-backend']; assert.ok(['local_process', 'e2b'].includes(skillBackend));
 const commandBackend = values['command-backend']; assert.ok(['local_process', 'e2b'].includes(commandBackend));
-const repository = fileURLToPath(new URL('..', import.meta.url)), source = resolve(values.source);
+const repository = fileURLToPath(new URL('..', import.meta.url)), source = values.source ? resolve(values.source) : null;
+const installation = values.installation ? resolve(values.installation) : null;
 const root = await mkdtemp(join(tmpdir(), 'studio-node-builtins-'));
 console.log(`Studio Node builtin evidence: ${root}`);
 let harness, download, downloads = 0;
@@ -39,13 +41,19 @@ try {
   const skillDownloadUrl = `https://127.0.0.1:${download.address().port}/skill.zip`;
   const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
   await mkdir(graph); execFileSync('tar', ['-xzf', resolve(values.archive), '-C', graph]);
-  await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
-  for (const name of await readdir(join(repository, 'node_modules'))) {
-    if (name.startsWith('.') || name === '@deepseek-ai') continue;
-    await symlink(join(repository, 'node_modules', name), join(dependencies, name));
+  if (installation) {
+    const lock = JSON.parse(await readFile(join(installation, 'package-lock.json'), 'utf8'));
+    assert.ok(Object.entries(lock.packages).filter(([path]) => path.startsWith('node_modules/')).every(([, value]) => !value.link));
+    await symlink(join(installation, 'node_modules'), dependencies);
+  } else {
+    await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
+    for (const name of await readdir(join(repository, 'node_modules'))) {
+      if (name.startsWith('.') || name === '@deepseek-ai') continue;
+      await symlink(join(repository, 'node_modules', name), join(dependencies, name));
+    }
+    const publicPackages = join(source, 'apps/cli/node_modules/@deepseek-ai');
+    for (const name of await readdir(publicPackages)) await symlink(join(publicPackages, name), join(dependencies, '@deepseek-ai', name));
   }
-  const publicPackages = join(source, 'apps/cli/node_modules/@deepseek-ai');
-  for (const name of await readdir(publicPackages)) await symlink(join(publicPackages, name), join(dependencies, '@deepseek-ai', name));
   const pluginDirectory = join(root, 'home/profiles/sdk/node_modules/@kingsoftcloud');
   await mkdir(pluginDirectory, { recursive: true }); await symlink(installed, join(pluginDirectory, 'agentkit-studio'));
   const nodeBin = join(root, 'node-shell-bin'); await mkdir(nodeBin); await symlink(process.execPath, join(nodeBin, 'node'));
@@ -69,9 +77,12 @@ try {
     `        commandBackend: ${JSON.stringify(commandBackend)}`, '',
     ...(commandBackend === 'local_process' ? [`        browserExecutablePath: ${JSON.stringify(browserExecutable())}`, ''] : []),
   ].join('\n'));
-  const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
-  const harnessOptions = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
-    patches: [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch], dshHome: join(root, 'home'),
+  const { DeepSeekHarness } = await import(pathToFileURL(installation
+    ? join(installation, 'node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js') : join(source, 'packages/sdk/client/lib/index.js')).href);
+  const harnessOptions = { dshBin: installation
+    ? join(installation, 'node_modules/@deepseek-ai/dsh/lib/bin.js') : join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
+    patches: [installation ? join(installation, 'node_modules/@deepseek-ai/dsh-web-app/presets/standard.patch.yml')
+      : join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch], dshHome: join(root, 'home'),
     cwd: root, processCwd: root, provider: 'agentkit-studio-builtin-proof', model: 'unused', initializeTimeoutMs: 30000, requestTimeoutMs: 30000,
     env: { ...process.env, PATH: nodeBin, NODE_EXTRA_CA_CERTS: cert, DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents'),
       AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk' } };
@@ -168,8 +179,12 @@ try {
       commandBackend === 'e2b' ? report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.code.taskId, true]) : []);
   }
   await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, skillBackend, commandBackend, downloads,
+    dependencies: installation ? { kind: 'fresh-installation', installation,
+      lockSha256: sha256(await readFile(join(installation, 'package-lock.json'))) }
+      : { kind: 'maintained-source', source },
     archiveSha256: sha256(await readFile(resolve(values.archive))), skillArchiveHash: sha256(skillArchive), report, ...(cold ? { cold } : {}) }, null, 2));
-  console.log(skillBackend === 'local_process' && commandBackend === 'local_process'
+  if (installation) console.log('PASS: freshly installed Host mounts packed Studio, registers all 34 Node builtins for DSH Native/Codex, executes the actual tool/policy pipeline and restores original records in a new PID. No repository/source dependency links. Node/bash Host PATH, Python unavailable. Chromium is an existing test prerequisite; model/CLI, Native full turns and online services remain separate acceptance.');
+  else console.log(skillBackend === 'local_process' && commandBackend === 'local_process'
     ? 'PASS: packed Host registers Node managed A2A + workspace + web + commands + component_status + five Skill reads + durable local execute_skills for DSH Native and Codex; real HTTP service/CA-verified HTTPS ZIP/scripts/exact text+binary artifacts; stable real DSH identity and duplicate suppression; policy, one-shot approval and post policy retained; Node/bash PATH with invalid Python. Model/Codex CLI and fresh dependency installation are separate acceptance.'
     : `PASS: packed Host DSH Native/Codex selected commands=${commandBackend}, Skills=${skillBackend}; E2B uses actual installed SDK with an explicitly refused endpoint, durable original DSH creation/unknown intent and distinct-PID cold restore with unchanged records. Real HTTP Skill Service + CA-verified HTTPS ZIP, workspace/Web and approvals retained. Node/bash PATH, Python unavailable. Refusal/recovery acceptance; online E2B success, fresh install and model/Codex CLI are separate gates.`);
 } finally {
