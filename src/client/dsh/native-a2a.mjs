@@ -3,6 +3,7 @@ const terminal = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const states = { submitted: '已提交', working: '处理中', completed: '已完成', failed: '失败', cancelled: '已取消',
   rejected: '已拒绝', input_required: '等待补充输入', auth_required: '等待认证或授权输入' };
 const outcomes = { submitted: '补充输入已提交。', remote_cancelled: '已核实远端取消。', already_terminal: '远端任务已结束。',
+  local_cancelled_before_send: '已在发送前取消，请求未发送到远端。',
   remote_task_not_bound: '原调用尚未确认远端任务 ID。可请求取消，待原任务绑定后投递。',
   unknown: '操作结果未知，请核对原任务。', cancel_requested_but_remote_unknown: '取消尚未得到远端确认。',
   cancel_requested_but_remote_unsupported: '远端不支持取消该任务。' };

@@ -27,16 +27,20 @@ export async function awaitA2aControl(work, signal) {
   } finally { signal.removeEventListener('abort', abort); }
 }
 
-export function createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
-  signal: lifetime, readIdentity, save, wire, lock }) {
-  const view = record => ({ contract: STUDIO_A2A_CONTROL_CONTRACT, bindingDigest: binding.bindingDigest,
+export function a2aControlView(binding, record) {
+  return { contract: STUDIO_A2A_CONTROL_CONTRACT, bindingDigest: binding.bindingDigest,
     operation_locator: copy(record.request.identity), task_id: record.platformTaskId,
     remote_task_id: record.projection.taskId, remote_context_id: record.projection.contextId,
     state: record.projection.state, phase: record.phase,
     pause: paused(record.projection.state) ? copy(record.projection.pause ?? null) : null,
     pauseDigest: paused(record.projection.state) ? pauseDigest(record.projection) : null,
     output_refs: copy(record.projection.output_refs), snapshots: copy(record.projection.snapshots),
-    item_kinds: copy(record.projection.item_kinds) });
+    item_kinds: copy(record.projection.item_kinds) };
+}
+
+export function createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
+  signal: lifetime, readIdentity, save, wire, lock }) {
+  const view = record => a2aControlView(binding, record);
   async function execute(input) {
     invariant(object(input) && ['get', 'continue', 'cancel'].includes(input.kind) && id(input.commandId)
       && object(input.operation_locator) && object(input.authority) && input.signal instanceof AbortSignal
@@ -115,6 +119,10 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
           entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command, phase: 'queued', createdAt: Date.now() };
           record.controls[key] = entry; check(); publishRecord();
         }
+        // The same state transaction that queues a cancellation may settle an
+        // original send which has not entered. No remote task or HTTP is needed.
+        entry = record.controls[key];
+        if (entry.phase === 'resolved') return copy(entry.result);
         // Queued means no CancelTask has begun. An explicit retry after a Host
         // exit rechecks authority AND asks fresh consent before delivery.
         while (!record.projection.taskId && !a2aTerminal.has(record.projection.state)) {

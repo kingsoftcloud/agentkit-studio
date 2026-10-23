@@ -123,12 +123,18 @@ test('lost stream and same-call concurrent entries never resend and cold-open pr
 });
 
 for (const cause of ['caller', 'host', 'timeout']) test(`actual ${cause} interruption checkpoints unknown remote Task without retry`, async t => {
-  const h = await setup(t, { mode: 'hold', ...(cause === 'timeout' ? { timeout: 0.15 } : {}) }), controller = new AbortController();
+  // Allow real DNS/HTTP/fsync scheduling under concurrent process tests before
+  // requiring a bound Task. The actual original deadline must still expire;
+  // no fake clock, database edit or relaxed unknown/no-replay assertion.
+  const h = await setup(t, { mode: 'hold', ...(cause === 'timeout' ? { timeout: 3 } : {}) }), controller = new AbortController();
   const pending = h.port.execute('call_a2a_agent', args, h.exec('call_a2a_agent', args, { signal: controller.signal }));
   await waitUntil(() => h.sends === 1 && h.records().some(row => row.value.projection?.taskId === 'remote-task'));
+  const admitted = h.records().find(row => row.value.contract === 'agentkit.studio-dsh-a2a-host/v1').value;
+  if (cause === 'timeout') assert.ok(Date.now() < admitted.deadlineAt, 'remote binding must be observed before the original deadline');
   if (cause === 'caller') controller.abort(new Error('caller canceled'));
   if (cause === 'host') await h.port.close();
   const result = await pending; assert.equal(result.status, 'uncertain', canonical(result));
+  if (cause === 'timeout') assert.ok(Date.now() >= admitted.deadlineAt, 'actual original absolute deadline elapsed');
   const remote = h.records().find(row => row.value.contract === 'agentkit.studio-dsh-a2a-host/v1').value;
   assert.equal(remote.phase, 'unknown'); assert.equal(remote.projection.taskId, 'remote-task');
   const count = h.requests.length; await h.port.close();

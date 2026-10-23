@@ -1,7 +1,7 @@
 const check = (condition, message) => { if (!condition) throw Error(message); };
 const ended = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const paused = value => ['input_required', 'auth_required'].includes(value);
-const outcomes = new Set(['observed', 'submitted', 'already_terminal', 'remote_cancelled', 'unknown', 'remote_task_not_bound',
+const outcomes = new Set(['observed', 'submitted', 'already_terminal', 'remote_cancelled', 'local_cancelled_before_send', 'unknown', 'remote_task_not_bound',
   'cancel_requested_but_remote_unknown', 'cancel_requested_but_remote_unsupported']);
 const rejectedBeforeEffect = new Set(['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A_CONTINUATION_NOT_ALLOWED',
   'A2A_CONTROL_TASK_ALREADY_TERMINAL', 'A2A_CANCEL_ALREADY_REQUESTED',

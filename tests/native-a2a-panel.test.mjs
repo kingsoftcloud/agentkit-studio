@@ -80,6 +80,24 @@ test('disposing a task aborts the call and suppresses late responses and sends',
   const read = state.refresh(); state.dispose(); resolve(); await read; await state.cancel(); await state.retry();
   assert.equal(signal.aborted, true); assert.equal(calls, 1); assert.equal(state.getSnapshot().task, null);
 });
+for (const ownerKind of ['native', 'dsh']) test(`${ownerKind} UI accepts durable local cancellation with no remote task ID`, async () => {
+  const identity = ownerKind === 'dsh' ? { agentId: 'agent', sessionId: 'session', operationKey: 'operation', callId: 'call',
+    ownerKind, agentRevision: 1, buildId: 'build' } : task;
+  const calls = [], control = async input => {
+    calls.push(input.kind);
+    return response(input, { operation_locator: ownerKind === 'dsh' ? {
+      agentId: 'agent', sessionId: 'session', operationKey: 'operation', callId: 'call', agentRevision: 1, buildId: 'build',
+    } : response(input).operation_locator,
+    state: input.kind === 'get' ? 'submitted' : 'cancelled', phase: input.kind === 'get' ? 'prepared' : 'terminal',
+    remote_task_id: null, remote_context_id: null, pauseDigest: null,
+    outcome: input.kind === 'get' ? 'remote_task_not_bound' : 'local_cancelled_before_send' });
+  };
+  const state = createNativeA2aTaskState({ task: identity, hostRemote: { controlNativeA2aTask: control, controlDshA2aTask: control } });
+  await state.refresh(); await state.cancel();
+  assert.equal(state.getSnapshot().outcome, 'local_cancelled_before_send'); assert.equal(state.getSnapshot().task.state, 'cancelled');
+  assert.equal(state.getSnapshot().pending, null); assert.equal(state.getSnapshot().error, '');
+  await state.cancel(); await state.retry(); assert.deepEqual(calls, ['get', 'cancel']); state.dispose();
+});
 test('recovery inventory rejects task locators belonging to a different Run', async () => {
   const valid = { contract: 'agentkit.studio-native-recovery/v1', agentId: 'agent', sessionId: 'session', runId: 'run',
     state: 'reconciliation_required', canResume: false, a2aTasks: [{ runId: 'run', operationKey: 'operation', callId: 'call' }] };

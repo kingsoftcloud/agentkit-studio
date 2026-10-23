@@ -12,16 +12,18 @@ const scope = { tenantId: 'local', workspaceId: 'workspace', userId: 'user', age
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check) { const end = Date.now() + 5000; for (;;) { const result = check(); if (result) return result;
   assert.ok(Date.now() < end, 'busy A2A checkpoint timeout'); await wait(10); } }
-async function fixture(t, { dsh = false, protocol = 'JSONRPC', known = true } = {}) {
+async function fixture(t, { dsh = false, protocol = 'JSONRPC', known = true, deferSend = false, timeoutSeconds = 90 } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'a2a-busy-cancel-'))), workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot);
   let stream, envelope, running, seq = 0, allow = true, authorized = true, approvalReadOnly = [], state = 'TASK_STATE_WORKING', readGate;
+  let currentCheck = () => true;
   const counts = { send: 0, get: 0, cancel: 0, discovery: 0 }, failures = [], owners = [];
   const task = () => ({ id: 'busy-task', contextId: 'busy-context', status: { state } });
   const emit = payload => stream.write(`id: ${++seq}\ndata: ${JSON.stringify(envelope(payload))}\n\n`);
   const bind = () => emit({ task: task() });
   const record = () => {
     const directory = join(root, 'state', readdirSync(join(root, 'state'))[0]);
-    return JSON.parse(readFileSync(join(directory, readdirSync(directory).find(name => name.endsWith('.json')))));
+    const name = readdirSync(directory).find(name => name.endsWith('.json'));
+    return name ? JSON.parse(readFileSync(join(directory, name))) : null;
   };
   const server = createServer((req, res) => void (async () => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -56,10 +58,11 @@ async function fixture(t, { dsh = false, protocol = 'JSONRPC', known = true } = 
   })().catch(error => { failures.push(error); res.statusCode = 500; res.end('{}'); }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const origin = `http://127.0.0.1:${server.address().port}`;
   const prepared = (dsh ? prepareDshA2AHost : prepareNativeA2AHost)({ env: { KSADK_A2A_SERVICE_URL: origin, KSADK_A2A_ALLOW_PRIVATE: 'true' },
-    bindings: [{ local_name: 'remote', binding_id: 'binding', space_id: 'space', target_agent_id: 'remote', expected_version_id: 'version' }] });
+    bindings: [{ local_name: 'remote', binding_id: 'binding', space_id: 'space', target_agent_id: 'remote', expected_version_id: 'version',
+      timeout_seconds: timeoutSeconds }] });
   const ownerBinding = dsh ? { agentId: 'agent', agentRevision: 1, buildId: 'build' } : { scope };
   const owner = () => { const value = prepared.forSession({ ...ownerBinding, sessionId: 'session', stateRoot: join(root, 'state'), workspaceRoot,
-    assertCurrent: () => true, assertControl: () => authorized, authorizeControl: async ({ readOnly }) => {
+    assertCurrent: () => currentCheck(), assertControl: () => authorized, authorizeControl: async ({ readOnly }) => {
       approvalReadOnly.push(readOnly); return allow ? 'allow' : 'deny';
     } }); owners.push(value); return value; };
   t.after(async () => { for (const value of owners) value.close(); await prepared.close(); await running?.catch(() => {});
@@ -68,15 +71,72 @@ async function fixture(t, { dsh = false, protocol = 'JSONRPC', known = true } = 
   const request = await original.invocation.resolve({ agent: 'remote', message: 'initial', signal,
     [dsh ? 'dshRequest' : 'nativeRequest']: { ...ownerBinding, sessionId: 'session', ...(!dsh ? { runId: 'run' } : {}),
       operationKey: 'operation', call: { callId: 'call' } } });
-  running = original.invocation.dispatch({ request, signal }); running.catch(() => {});
-  await until(() => counts.send === 1); if (known) await until(() => record().projection.taskId);
+  const start = async () => {
+    running = original.invocation.dispatch({ request, signal }); running.catch(() => {});
+    await until(() => counts.send === 1); if (known) await until(() => record().projection.taskId);
+  };
+  if (!deferSend) await start();
   const input = (commandId, signal = new AbortController().signal) => ({ kind: 'cancel', commandId, signal,
     operation_locator: request.identity, authority: { source: 'fresh-human-control' } });
-  return { counts, record, owner, input, bind, running, approvalReadOnly, readGate: value => { readGate = value; },
+  return { counts, record, owner, input, bind, running, start, request, original, signal, approvalReadOnly, readGate: value => { readGate = value; },
     remoteState: value => { state = value; },
+    currentCheck: value => { currentCheck = value; },
     allow: value => { allow = value; }, authority: value => { authorized = value; },
     finish: terminal => { emit({ statusUpdate: { taskId: 'busy-task', contextId: 'busy-context', status: { state: terminal ?? state } } }); stream.end(); } };
 }
+for (const dsh of [false, true]) for (const protocol of ['JSONRPC', 'HTTP+JSON']) {
+  test(`${dsh ? 'DSH' : 'Native'} ${protocol} prepared call cancels durably before any send`, async t => {
+    const f = await fixture(t, { dsh, protocol, deferSend: true });
+    assert.ok(f.record(), 'resolve must persist the prepared original call before dispatch');
+    assert.equal(f.record().phase, 'prepared'); const initial = f.record();
+    const inspected = await f.owner().control.execute({ ...f.input('before'), kind: 'get' });
+    assert.equal(inspected.outcome, 'remote_task_not_bound');
+    const result = await f.owner().control.execute(f.input('local-cancel'));
+    assert.equal(result.outcome, 'local_cancelled_before_send'); assert.equal(result.state, 'cancelled');
+    assert.equal(result.remote_task_id, null); assert.equal(result.task_id, initial.platformTaskId);
+    assert.deepEqual(await f.owner().control.execute(f.input('local-cancel')), result);
+    assert.equal((await f.owner().invocation.dispatch({ request: f.request, signal: f.signal })).state, 'cancelled');
+    assert.equal((await f.original.invocation.dispatch({ request: f.request, signal: f.signal })).state, 'cancelled');
+    assert.deepEqual(f.counts, { discovery: 1, send: 0, get: 0, cancel: 0 });
+    assert.equal(f.record().localCancel.state, 'local_confirmed');
+    assert.equal(f.record().phase, 'terminal');
+    assert.deepEqual(f.approvalReadOnly, [true, false, true]);
+    const observed = await f.owner().control.execute({ ...f.input('after'), kind: 'get' });
+    assert.equal(observed.state, 'cancelled'); assert.equal(observed.outcome, 'observed');
+    assert.deepEqual(f.counts, { discovery: 1, send: 0, get: 0, cancel: 0 });
+  });
+}
+test('denied pre-send cancellation leaves the original admissible and later cancels remotely', async t => {
+  const f = await fixture(t, { deferSend: true }); f.allow(false);
+  await assert.rejects(f.owner().control.execute(f.input('denied')), { code: 'A2A_CONTROL_PERMISSION_DENIED' });
+  assert.equal(f.record().phase, 'prepared'); assert.equal(f.record().controls, undefined);
+  f.allow(true); await f.start();
+  const result = await f.owner().control.execute(f.input('denied'));
+  assert.equal(result.outcome, 'remote_cancelled'); f.finish();
+  assert.deepEqual(f.counts, { discovery: 1, send: 1, get: 2, cancel: 1 });
+});
+test('prepared deadline is retained across owner reopen and expiry cannot authorize a late first send', async t => {
+  const f = await fixture(t, { deferSend: true, timeoutSeconds: 0.15 }), initial = f.record();
+  await until(() => Date.now() > initial.deadlineAt);
+  await assert.rejects(f.owner().invocation.dispatch({ request: f.request, signal: f.signal }), { code: 'A2A_SEND_DEADLINE_EXCEEDED' });
+  assert.equal(f.record().phase, 'prepared'); assert.equal(f.record().deadlineAt, initial.deadlineAt);
+  assert.equal((await f.owner().control.execute(f.input('expired-cancel'))).outcome, 'local_cancelled_before_send');
+  assert.deepEqual(f.counts, { discovery: 1, send: 0, get: 0, cancel: 0 });
+});
+test('expiry during the final authority check is rejected inside atomic send admission', async t => {
+  const f = await fixture(t, { deferSend: true, timeoutSeconds: 0.25 }), deadline = f.record().deadlineAt;
+  let checks = 0;
+  f.currentCheck(() => {
+    if (++checks === 3) {
+      const buffer = new Int32Array(new SharedArrayBuffer(4));
+      while (Date.now() <= deadline) Atomics.wait(buffer, 0, 0, 5);
+    }
+    return true;
+  });
+  await assert.rejects(f.original.invocation.dispatch({ request: f.request, signal: f.signal }), { code: 'A2A_SEND_DEADLINE_EXCEEDED' });
+  assert.equal(checks, 3); assert.equal(f.record().phase, 'prepared');
+  assert.deepEqual(f.counts, { discovery: 1, send: 0, get: 0, cancel: 0 });
+});
 for (const dsh of [false, true]) for (const protocol of ['JSONRPC', 'HTTP+JSON']) for (const known of [false, true]) {
   test(`${dsh ? 'DSH' : 'Native'} ${protocol} cancel while original stream holds its lock, task ${known ? 'bound' : 'not yet bound'}`, async t => {
     const f = await fixture(t, { dsh, protocol, known }), controller = f.owner();

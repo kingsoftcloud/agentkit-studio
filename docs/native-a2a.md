@@ -57,9 +57,11 @@ server. Tool arguments cannot alter this policy or select an arbitrary URL.
 
 ## Persistence and cancellation
 
-Native commits its tool intent before entering the gateway. The A2A service
-then writes an atomic fsynced `sending` marker and allocates an immutable local
-`a2a-task-*` handle before entering the network. State is stored outside the
+Native commits its tool intent before entering the gateway. After trusted
+discovery the A2A service allocates an immutable local `a2a-task-*` handle and
+persists `prepared`, with the explicit `agentkit.a2a-send-admission/v1` storage
+contract and original absolute deadline. Dispatch must atomically admit
+`prepared` to an fsynced `sending` marker before entering the network. State is stored outside the
 workspace, under the Host's `native-harness/workspace-state/<agent>/a2a-calls`.
 The record binds the complete original request, Host configuration, scope and
 Session. Per-call SQLite OS locks serialize competing processes.
@@ -72,7 +74,15 @@ Terminal reply selection preserves the reference's last-artifact preference,
 then last-agent-message fallback. Stream EOF with an unfinished known task
 polls that original task with `GetTask` until terminal or input pause.
 
-Repeated admission of the identical call replays its stored result. It does
+An approved cancel that wins the same short state lock before send admission
+commits a local terminal and the command receipt together. Its outcome is
+`local_cancelled_before_send`; there is no SendMessage, GetTask or CancelTask.
+If send admission wins, cancellation uses the existing remote-task path.
+Interrupted prepared calls require an explicit original dispatch, with its
+original authority and deadline; opening history alone never sends them.
+Existing `sending`/unknown records are never reclassified as prepared.
+
+Repeated admission after send entry replays its stored result. It does
 not rediscover or send again. Interrupted sends remain unknown, including a
 crash after the marker but before the actual send. Unknown state never grants
 permission for a replacement send. Cancellation aborts local waiting and
@@ -165,6 +175,13 @@ both bindings and both owner contracts), `tests/native-a2a-control-process.test.
 (production Kernel/SQLite/gateway/service/route with declared narrow DSH
 doubles), and `tests/native-a2a-panel.test.mjs` (state, deterministic hook render,
 HTTP/RPC contracts). This is not a browser/Electron or cloud-service proof.
+
+Pre-send coverage lives in `tests/native-a2a-busy-cancel.test.mjs` (Native/DSH,
+JSONRPC/HTTP+JSON, denial and deadline) and `tests/native-a2a-presend-process.test.mjs`
+(independent processes: either admission wins, SIGKILL after preparation,
+local terminal before acknowledgement, and sending marker before transport).
+These tests use real private storage, SQLite locks and local HTTP/SSE peers;
+they do not claim browser or online-service acceptance.
 
 Busy coverage additionally lives in `tests/native-a2a-busy-cancel.test.mjs`
 (both transports/owner contracts, unknown/bound task, late reads/streams and

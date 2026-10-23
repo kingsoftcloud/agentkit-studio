@@ -14,11 +14,12 @@ import { isBlockedAddress } from '../../packages/agentkit-harness/src/native/web
 import { hostFetch } from '../http-fetch.mjs';
 import { createSsrfPinnedFetch } from './native-dsh-web.mjs';
 import { a2aSse, a2aTerminal, createA2AProjection, NATIVE_A2A_PROTOCOL } from './native-a2a-protocol.mjs';
-import { createA2ATaskControl } from './native-a2a-controls.mjs';
+import { a2aControlView, createA2ATaskControl } from './native-a2a-controls.mjs';
 
 export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
 export const STUDIO_DSH_A2A_HOST = 'agentkit.studio-dsh-a2a-host/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
+const sendAdmission = 'agentkit.a2a-send-admission/v1';
 const text = (value, code) => { invariant(typeof value === 'string' && value.trim() && value.length <= 4096, code); return value; };
 const normalized = value => value.trim().toLowerCase().replace(/^a2a-agent-/u, '');
 const read = (env, name, fallback = '') => { const value = env[name] ?? fallback; invariant(typeof value === 'string', 'A2A_ENV_INVALID'); return value.trim(); };
@@ -175,10 +176,20 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       const scopeId = `a2a-${hash(identity)}`;
       const wireMessage = { messageId: hash({ identity, kind: 'initial-message' }), role: 'ROLE_USER', parts: [{ text: message }] };
       invariant(Buffer.byteLength(canonical(wireMessage)) <= 1024 * 1024, 'A2A_MESSAGE_LIMIT');
-      return { spec, trigger: { scope_id: dsh ? scopeId : native.runId, item_id: native.call.callId, call_id: native.call.callId },
+      const request = { spec, trigger: { scope_id: dsh ? scopeId : native.runId, item_id: native.call.callId, call_id: native.call.callId },
         [dsh ? 'dsh' : 'native']: native, scopeId, identity, message: wireMessage,
         route: { url: iface.url, protocolBinding: iface.protocolBinding, streaming: found.card.capabilities?.streaming === true,
           source: found.source } };
+      const record = newRecord(request, 'prepared');
+      check(native, signal); save(request, record, undefined, 'prepare');
+      return copy(record.request);
+    }
+    function newRecord(request, phase) {
+      const createdAt = Date.now();
+      return { contract, owner, request, requestDigest: hash(request), phase, sendAdmission,
+        platformTaskId: `a2a-task-${randomUUID().replaceAll('-', '')}`, createdAt,
+        deadlineAt: createdAt + Math.min(90000, Math.ceil((request.spec.timeout_seconds ?? 90) * 1000)),
+        projection: createA2AProjection(request.scopeId).snapshot() };
     }
     function file(request) { return join(directory, `${hash(request.identity)}.json`); }
     function readIdentity(identity) {
@@ -187,7 +198,9 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       const record = parseNativeJson(readAll(path));
       invariant(record.contract === contract && canonical(record.owner) === canonical(owner)
         && canonical(record.request.identity) === canonical(identity) && record.requestDigest === hash(record.request)
-        && ['sending', 'unknown', 'terminal', 'paused'].includes(record.phase), 'A2A_CALL_IDENTITY_CONFLICT');
+        && ['prepared', 'sending', 'unknown', 'terminal', 'paused'].includes(record.phase), 'A2A_CALL_IDENTITY_CONFLICT');
+      if (record.phase === 'prepared') invariant(record.sendAdmission === sendAdmission
+        && record.projection?.state === 'submitted' && record.projection.taskId === null, 'A2A_SEND_ADMISSION_INVALID');
       return record;
     }
     function readRecord(request) {
@@ -195,7 +208,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       invariant(record.requestDigest === hash(request) && canonical(record.request) === canonical(request), 'A2A_CALL_IDENTITY_CONFLICT');
       return record;
     }
-    function save(request, record, controlKey) {
+    function save(request, record, controlKey, mode) {
       storageGuard();
       // The effect/stream lock is long lived. State publication has a separate,
       // short transaction so an approved cancel can reach a busy remote Task.
@@ -203,7 +216,18 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       invariant(release, 'A2A_RECORD_BUSY');
       try {
         const current = readRecord(request);
+        if (current && (mode === 'prepare' || mode === 'admit' && current.phase !== 'prepared')) {
+          Object.assign(record, current); return false;
+        }
+        if (mode === 'admit') {
+          invariant(current?.sendAdmission === sendAdmission && current.phase === 'prepared', 'A2A_SEND_ADMISSION_INVALID');
+          invariant(current.deadlineAt > Date.now(), 'A2A_SEND_DEADLINE_EXCEEDED');
+          // This marker and local cancellation compete under this SAME lock.
+          // Only the winner of prepared -> sending may enter the transport.
+          record.phase = 'sending';
+        }
         if (current) {
+          if (current.localCancel) record.localCancel = copy(current.localCancel);
           const previous = current.projection;
           if (previous.taskId && !record.projection.taskId) record.projection = copy(previous);
           const next = record.projection;
@@ -238,6 +262,16 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
           // its own command; stale snapshots cannot erase a concurrent intent.
           record.controls = { ...(current.controls ?? {}), ...(controlKey && Object.hasOwn(record.controls ?? {}, controlKey)
             ? { [controlKey]: record.controls[controlKey] } : {}) };
+          if (record.phase === 'prepared' && current.phase !== 'prepared') record.phase = current.phase;
+          const queuedCancel = controlKey && record.controls[controlKey];
+          if (current.phase === 'prepared' && queuedCancel?.command.kind === 'cancel' && queuedCancel.phase === 'queued') {
+            record.projection = { ...copy(current.projection), state: 'cancelled' };
+            record.phase = 'terminal';
+            record.localCancel = { contract: sendAdmission, commandId: queuedCancel.command.commandId, state: 'local_confirmed' };
+            queuedCancel.phase = 'resolved';
+            queuedCancel.result = { ...a2aControlView(binding, record), commandId: queuedCancel.command.commandId,
+              outcome: 'local_cancelled_before_send' };
+          }
           if (a2aTerminal.has(record.projection.state)) {
             record.phase = 'terminal'; delete record.error;
             record.result = { state: record.projection.state, task_id: record.platformTaskId,
@@ -247,6 +281,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         const bytes = canonical(record) + '\n';
         invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
         atomicPrivate(file(request), bytes);
+        return true;
       } finally { release(); }
     }
     async function wire(request, method, params, signal, streaming = false, authority = () => check(request[dsh ? 'dsh' : 'native'], signal)) {
@@ -306,7 +341,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         && canonical(original.definition) === canonical(query.definition)
         && original.operationKey === query.originalOperationKey
         && specs.some(spec => canonical(spec) === canonical(record.request.spec)), 'A2A_RECEIPT_SOURCE_CONFLICT');
-      if (!record.projection.taskId) return null;
+      if (!record.projection.taskId && !a2aTerminal.has(record.projection.state)) return null;
       const observed = await control.execute({ kind: 'get', commandId: `receipt:${hash(query.operationKey)}`,
         operation_locator: identity, authority: { contract: 'agentkit.native-a2a-receipt-read/v1',
           operationKey: query.operationKey }, signal: query.signal });
@@ -320,17 +355,18 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       let record;
       try {
         check(request[dsh ? 'dsh' : 'native'], signal); record = readRecord(request);
-        if (record) return record.result ?? { state: 'unknown', task_id: record.platformTaskId,
+        if (record && record.phase !== 'prepared') return record.result ?? { state: 'unknown', task_id: record.platformTaskId,
           operation_locator: request.identity, error_type: 'A2A_SEND_OUTCOME_UNKNOWN' };
-        const projection = createA2AProjection(request.scopeId);
-        record = { contract, owner, request, requestDigest: hash(request),
-          phase: 'sending', platformTaskId: `a2a-task-${randomUUID().replaceAll('-', '')}`,
-          createdAt: Date.now(), projection: projection.snapshot() };
-        record.deadlineAt = record.createdAt + Math.min(90000, Math.ceil((request.spec.timeout_seconds ?? 90) * 1000));
-        check(request[dsh ? 'dsh' : 'native'], signal); save(request, record);
+        if (!record) { record = newRecord(request, 'prepared'); save(request, record, undefined, 'prepare'); }
+        invariant(record.deadlineAt > Date.now(), 'A2A_SEND_DEADLINE_EXCEEDED');
+        check(request[dsh ? 'dsh' : 'native'], signal);
+        if (!save(request, record, undefined, 'admit')) return record.result ?? { state: 'unknown', task_id: record.platformTaskId,
+          operation_locator: request.identity, error_type: 'A2A_SEND_OUTCOME_UNKNOWN' };
+        const projection = createA2AProjection(request.scopeId, record.projection);
         // Once this fsynced marker exists, no replacement may send again,
         // including a crash between intent commit and entering fetch().
-        const timeout = Math.min(90000, (request.spec.timeout_seconds ?? 90) * 1000);
+        const timeout = record.deadlineAt - Date.now();
+        invariant(timeout > 0, 'A2A_SEND_DEADLINE_EXCEEDED');
         const activeSignal = AbortSignal.any([signal, lifetime.signal, sessionLifetime.signal, AbortSignal.timeout(Math.ceil(timeout))]);
         const params = { message: request.message, configuration: { returnImmediately: false } };
         const streaming = request.route.streaming;
@@ -363,7 +399,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         // Keep the latest checkpoint after abort, timeout, process/service
         // failure. This publication never turns uncertainty into permission
         // to send again. Errors/remote diagnostics cannot expose credentials.
-        if (!record) throw error;
+        if (!record || record.phase === 'prepared') throw error;
         record.phase = 'unknown'; record.error = 'A2A_SEND_OUTCOME_UNKNOWN';
         save(request, record);
         return { state: 'unknown', task_id: record.platformTaskId,
