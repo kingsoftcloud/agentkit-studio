@@ -17,11 +17,13 @@ const invalid = error => error.code === 'PATCH_MANIFEST_INVALID';
 
 test('all shipped patches have exact content, paths, ordered dependencies and verification ownership', async () => {
   const { report } = await checkPatchManifest(fileURLToPath(directory));
-  assert.equal(report.patches, 44); assert.equal(report.paths, 287); assert.ok(report.hostTests.length > 0);
+  assert.equal(report.patches, 45); assert.equal(report.paths, 305); assert.ok(report.hostTests.length > 0);
   assert.ok(report.hostTests.includes('packages/core/agent-loop/tests/execute-turn-loader.spec.ts'));
   assert.ok(report.hostTests.includes('packages/core/agent-loop/tests/external-turn-recovery.spec.ts'));
   assert.ok(report.hostTests.includes('packages/core/agent-loop/tests/external-turn-idle-start.spec.ts'));
   assert.ok(report.hostTests.includes('packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts'));
+  assert.ok(report.hostTests.includes('packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts'));
+  assert.ok(report.hostTests.includes('scripts/primary-runtime/prepare.spec.ts'));
 });
 
 test('unregistered patch files and modified content cannot enter a build', async () => {

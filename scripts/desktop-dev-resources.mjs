@@ -1,5 +1,5 @@
 /** Preflight disposable Desktop resources before starting a native window. */
-import { realpath, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -27,12 +27,21 @@ export async function assertDesktopDevResources({ source, primaryRuntime }) {
     throw new Error('Specify absolute DSH source and prepared primary runtime paths; run prepare-studio-desktop-dev.mjs first');
   }
   const assets = join(dirname(primaryRuntime), 'office-skills');
-  // Check the same mandatory resources used by Desktop Office, without starting Electron.
-  const required = [join(assets, 'scripts/check_office.py'),
-    ...['office-docx', 'office-pptx', 'office-xlsx'].map(name => join(assets, name, 'SKILL.md')),
+  const manifest = JSON.parse(await readFile(join(primaryRuntime, 'runtime.json'), 'utf8'));
+  if (manifest.schemaVersion !== undefined && manifest.schemaVersion !== 2)
+    throw new Error('Unsupported Desktop primary runtime resource format');
+  const nodeOnly = manifest.schemaVersion === 2;
+  if (nodeOnly && (manifest.python !== undefined || manifest.components !== undefined ||
+    Object.keys(manifest.pythonPackages ?? {}).length !== 0 || typeof manifest.node !== 'string'))
+    throw new Error('Node-only Desktop resources must declare Node and contain no Python metadata');
+  // The Host validates full metadata. This preflight checks files consumed by
+  // its Office composition; the current assets have no check_office.py helper.
+  const required = [
+    ...['office', 'office-docx', 'office-pptx', 'office-xlsx', 'office-render', 'office-recalculate', 'office-export-pdf']
+      .map(name => join(assets, name, 'SKILL.md')),
     join(primaryRuntime, 'runtime.json'),
     join(primaryRuntime, 'dependencies/node/bin', process.platform === 'win32' ? 'node.exe' : 'node'),
-    join(primaryRuntime, 'dependencies/python', ...(process.platform === 'win32' ? ['python.exe'] : ['bin/python3'])),
+    ...(nodeOnly ? [] : [join(primaryRuntime, 'dependencies/python', ...(process.platform === 'win32' ? ['python.exe'] : ['bin/python3']))]),
     join(primaryRuntime, 'dependencies/pnpm/bin/pnpm.mjs')];
   for (const path of required) {
     if (!(await stat(path)).isFile()) throw new Error(`Desktop development resource is not a file: ${path}`);

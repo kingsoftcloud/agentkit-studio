@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "570ad6033c4d0954451ad8822ab47bfb2160ed4c",
+  "headCommit": "594077b72ae7398531f340564e80e88169a43c94",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-idle",
-  "tree": "a2b92fbf875488e38c1709a6af13f4ca39ff5b9d",
-  "sourceSha256": "fd0321b7996aed5e6f9ce58a62b0ec02a0c15380fd32ecba137b9a5a167cfc03",
+  "tree": "98a4631a52e82692978960b955562aae83327455",
+  "sourceSha256": "ce7b4217db5b3da4531cff84fd7dba8243cd7d7cf0d65313f0c764506086677b",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "05ee588646617d9c5a13b313bfea9ba80b27c4968c7cf6858765f7dfc113483e"
+    "sha256": "caf646e3f7fdefc6a1f333607ba0709f9c7047f74a156a7874eb19be9ea003cf"
   },
   "commits": [
     {
@@ -274,6 +274,12 @@
       "file": "051-external-turn-idle-admission.patch",
       "commit": "570ad6033c4d0954451ad8822ab47bfb2160ed4c",
       "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e"
+    },
+    {
+      "id": "052",
+      "file": "052-node-only-primary-runtime.patch",
+      "commit": "594077b72ae7398531f340564e80e88169a43c94",
+      "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee"
     }
   ]
 }

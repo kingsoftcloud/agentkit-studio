@@ -2242,12 +2242,72 @@
         "pnpm-lock.yaml"
       ],
       "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e"
+    },
+    {
+      "id": "052",
+      "file": "052-node-only-primary-runtime.patch",
+      "category": "packaging",
+      "risk": "medium",
+      "dependsOn": [
+        "031",
+        "051"
+      ],
+      "removeWhen": "The pinned upstream supports explicit Node-only primary resources, optional Python result paths and equivalent native payload verification.",
+      "contracts": [
+        "schemaVersion 2 declares Node-only metadata and rejects Python fields, distributions, legacy components and missing Node. Existing Python payload formats remain supported.",
+        "Explicit --node-only preparation skips Python archives and wheels; incompatible Python-only and Node-only options fail before output mutation. Desktop defaults retain Python pending Office authoring parity.",
+        "Workspace dependency installation and real Cordis tool execution return only declared runtime paths, preserve environment, validate supplied files, reuse offline resources and unregister on disposal.",
+        "Native payload smoke runs in its own directory and checks exact Node/pnpm versions, avoiding unrelated project package-manager selection. Missing Python cannot silently pass the existing Office authoring smoke."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tool-workspace-dependencies",
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Node runtime integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained source 594077b7; 113 affected cases passed each Node 26.5/22.19, including actual Cordis execution; latest affected modules and output snapshots passed, native artifacts and aggregate checks passed. Real macOS arm64 Node24/pnpm11 resource preparation, offline install and separate PID execution passed with PATH=/nonexistent. Office authoring and Electron not accepted."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts",
+          "packages/skill/tool-workspace-dependencies/tests/primary-runtime-copy.spec.ts",
+          "scripts/primary-runtime/prepare.spec.ts",
+          "scripts/build-exe-for-python-sdk-resources.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "apps/desktop/scripts/prepare-primary-runtime.ts",
+        "apps/desktop/scripts/smoke-runtime.ts",
+        "docs/subsystems/skills.i18n.yaml",
+        "docs/subsystems/skills.md",
+        "docs/subsystems/skills.zh.md",
+        "docs/tool-catalog.i18n.yaml",
+        "docs/tool-catalog.md",
+        "docs/tool-catalog.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md",
+        "packages/skill/tool-workspace-dependencies/README.i18n.yaml",
+        "packages/skill/tool-workspace-dependencies/README.md",
+        "packages/skill/tool-workspace-dependencies/README.zh.md",
+        "packages/skill/tool-workspace-dependencies/src/index.ts",
+        "packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts",
+        "scripts/build-exe-for-python-sdk-resources.spec.ts",
+        "scripts/primary-runtime/prepare.spec.ts",
+        "scripts/primary-runtime/prepare.ts"
+      ],
+      "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee"
     }
   ],
-  "patchedTree": "a2b92fbf875488e38c1709a6af13f4ca39ff5b9d",
-  "patchedSourceSha256": "fd0321b7996aed5e6f9ce58a62b0ec02a0c15380fd32ecba137b9a5a167cfc03",
+  "patchedTree": "98a4631a52e82692978960b955562aae83327455",
+  "patchedSourceSha256": "ce7b4217db5b3da4531cff84fd7dba8243cd7d7cf0d65313f0c764506086677b",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "2003d450d2d4fd63819ea54946df5bb1c2fa196937efaccdaa54fb6b9eae360f"
+    "sha256": "5f293749602ae56cbff9cb65611c2568c51bfd9a20fa222868f72f578000822a"
   }
 }

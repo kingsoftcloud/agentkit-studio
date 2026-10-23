@@ -66,7 +66,22 @@ Native 路径各完成两轮成功对话、一次策略拒绝、跨进程恢复�
 复核记录位于 `.artifacts/native-migration/fresh-node-install/`。因此无需为字节相同的包
 重复执行完整 Host 安装回归。
 
+维护版资源构建器现支持显式 `--node-only`，输出 `schemaVersion: 2` 元数据，仅准备
+Node 和 pnpm；Python 资源仍保留原格式和默认行为。资源查询与安装接口允许 Python
+路径缺省，拒绝混合元数据和缺失的声明文件。Studio Desktop 预检按实际七个 Office
+Skill 检查资源，删除已不存在的 `check_office.py` 前置要求，并按清单选择 Python 检查。
+macOS arm64 已验证锁定的 Node 24.21.0 和 pnpm 11.28.5：无系统命令的 PATH 下准备
+资源、离线安装、跨 PID 查询并执行，产物没有 Python 目录。检查在资源目录运行并核对
+pnpm 版本，防止被启动目录的另一项目配置切换。证据保留在
+`.artifacts/native-migration/node-primary-runtime/`。
+
+这是显式资源格式支持；Desktop 默认资源尚未切换。Office 的 DOCX/XLSX/PPTX 编写
+指令仍使用 Python 库，完整 Desktop 冒烟检查会明确拒绝缺少 Python 的这条验证路径。
+Node LibreOffice 的渲染、重算、转换能力不能代替文档编写兼容性验收。
+资源改造绑定维护源码 `594077b7`；上述 31 包全新安装证据绑定此前 `570ad603`。
+资源格式、路径查询和定向测试的通过，不表示新版整个 Host 已重新完成全新安装验收。
+
 这仍不等于完整迁移验收。真实模型/Codex CLI、线上 E2B/云服务、全部自动化/Frozen/
-部署/恢复界面组合及最终默认切换分别验收；完整 Desktop 开发安装中 Python/Office
-资源的强制前置条件也仍待处理。当前实际结论以
+部署/恢复界面组合及最终默认切换分别验收；Desktop Office 编写能力及其他平台的
+纯 Node 安装仍待闭环。当前实际结论以
 [验收状态](native-migration-status.md) 和保留的具体验证记录为准。

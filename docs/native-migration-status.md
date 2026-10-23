@@ -32,7 +32,7 @@ Node local/HTTP/SDK 服务、真实 Native/DSH 所有权及提前持久化的写
 当前仍不能判定“只剩少量验收”：
 
 - 普通 builtin 的 Python fallback 已删除；缺少端口会明确失败，不代表缺少的后端能力已补齐。
-- `scripts/desktop-dev-resources.mjs` 的完整 Desktop 开发资源检查仍要求 Python 资源；该宿主/Office 依赖边界尚需处理，已有 headless Host 安装证据不覆盖 Desktop。
+- Desktop 资源新增显式纯 Node 格式；构建、离线安装、跨 PID 查询及 Node/pnpm 执行已验证，资源预检按声明检查 Python，并检查实际七个 Office Skill。默认资源尚未切换，Office 编写仍使用 Python 库，完整 Desktop/Electron 和 Office 能力尚未验收；已有 headless Host 安装证据不覆盖这些路径。详见[安装验证](native-node-installation.md)。
 - 主迁移文档仍明确默认 Harness 沿用原路径，需要完整验收后切换。
 
 先前阶段提交 `5631729` 完成了本地 Skills 工作流、原调用的持久记录、命令监督、
