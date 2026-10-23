@@ -4,6 +4,8 @@ import { createNativeSessionDelivery } from './session-delivery.mjs';
 import { nativeLiveStream } from './assistant-stream.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from './dsh-turn-contract.mjs';
 import { nativeDshOwnership, nativeDshOwnershipHost, readNativeDshOwnership } from './dsh-turn-ownership.mjs';
+import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, nativeDshBackgroundOwnership, readNativeDshBackgroundOwnership,
+  verifyNativeDshBackgroundOwnership } from './dsh-background-ownership.mjs';
 
 export { NATIVE_DSH_TURN_CONTRACT };
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -126,37 +128,48 @@ async function consumeCompletedTurn(binding, record, signal) {
  * complete admission is flushed before creating the Run. resolveRecoveryTurn
  * must independently rebind trusted ports to those original facts; persisted
  * admission never grants execution authority. resume() uses the original turn.
+ * Optional resolveBackgroundTurn(payload, {admission,record,source}) independently
+ * binds trusted ports to an already persisted background notification and its
+ * source. It must return the exact reduced configuration, without recompiling
+ * input or resetting budgets. The source's original hostRecoveryBinding.source
+ * pins provider/model attribution; missing or changed source facts are refused.
+ * background() requires an already owned DSH turn;
+ * resumeBackground() explicitly reserves that same background engine's turn.
+ * Omitting the resolver refuses both operations and leaves normal turns intact.
  */
-export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecoveryTurn, projections, flush,
+export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecoveryTurn, resolveBackgroundTurn, projections, flush,
   owner = `native-dsh-${randomUUID()}`, durableOwnership = false, ownershipFlushTimeoutMs = 30_000,
   onStream, publishStreamFrame, onIdle, onCheckpoint, onActive } = {}) {
   invariant((onActive === undefined || typeof onActive === 'function') && store && typeof resolveTurn === 'function' && typeof flush === 'function'
     && typeof projections?.stateOf === 'function' && typeof owner === 'string' && owner.trim()
-    && typeof durableOwnership === 'boolean' && (resolveRecoveryTurn === undefined || typeof resolveRecoveryTurn === 'function'),
+    && typeof durableOwnership === 'boolean' && (resolveRecoveryTurn === undefined || typeof resolveRecoveryTurn === 'function')
+    && (resolveBackgroundTurn === undefined || typeof resolveBackgroundTurn === 'function'),
   'native_dsh_host_binding_invalid');
   invariant(Number.isSafeInteger(ownershipFlushTimeoutMs) && ownershipFlushTimeoutMs > 0
     && ownershipFlushTimeoutMs <= 2_147_483_647, 'native_dsh_ownership_flush_timeout_invalid');
-  const active = new Set(), revisions = new WeakMap();
-  const run = async (payload, admission) => {
+  const active = new Set(), backgroundDrivers = new Set(), revisions = new WeakMap();
+  const run = async (payload, admission, background = null) => {
     const { agent, input, turn, signal } = payload;
     invariant(agent?.session && typeof agent.session.id === 'string' && agent.session.id.trim()
       && input?.kind === 'enter' && Array.isArray(input.messages)
       && Number.isSafeInteger(turn) && turn > 0 && signal instanceof AbortSignal, 'native_dsh_turn_input_invalid');
-    const binding = await resolveWhileLive(admission
+    const binding = await resolveWhileLive(background ? request => resolveBackgroundTurn(request, structuredClone(background)) : admission
       ? request => resolveRecoveryTurn(request, structuredClone(admission)) : resolveTurn, payload);
     if (binding === null) {
       invariant(!admission, 'native_dsh_recovery_binding_unavailable');
       return undefined;
     }
     invariant(binding && binding.scope && binding.configuration
-      && Array.isArray(binding.configuration.inputMessages) && binding.configuration.inputMessages.length > 0
+      && (background ? binding.configuration.inputMessages === null
+        : Array.isArray(binding.configuration.inputMessages) && binding.configuration.inputMessages.length > 0)
       && typeof binding.buildId === 'string' && binding.buildId.trim()
       && typeof binding.source?.provider === 'string' && binding.source.provider.trim()
       && typeof binding.source?.model === 'string' && binding.source.model.trim()
       && binding.ports && typeof binding.ports.model?.generate === 'function'
       && typeof binding.ports.tools?.execute === 'function', 'native_dsh_turn_binding_invalid');
     const sessionId = String(agent.session.id), scope = structuredClone(binding.scope);
-    const runId = `native-dsh-${hash({ contract: NATIVE_DSH_TURN_CONTRACT, scope, sessionId, turn })}`;
+    const runId = background ? admission.identity.runId
+      : `native-dsh-${hash({ contract: NATIVE_DSH_TURN_CONTRACT, scope, sessionId, turn })}`;
     invariant(binding.taskContractFactory === undefined || typeof binding.taskContractFactory === 'function', 'native_dsh_contract_factory_invalid');
     invariant(binding.releaseResources === undefined || typeof binding.releaseResources === 'function', 'native_dsh_resource_release_invalid');
     invariant(binding.consumeCompletedTurn === undefined || typeof binding.consumeCompletedTurn === 'function', 'native_dsh_completed_turn_consumer_invalid');
@@ -166,6 +179,9 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
     let live, failed = false, originalError, releaseControls, cancelListener, admittedRun = false;
     try {
       signal.throwIfAborted();
+      if (background) invariant(background.source.configuration.hostRecoveryBinding?.source
+        && canonical(binding.source) === canonical(background.source.configuration.hostRecoveryBinding.source),
+      'native_dsh_background_source_changed');
       const head = store.sessionHead(scope, sessionId);
       if (head && head.runId !== runId) {
         const previous = store.load(scope, head.runId);
@@ -182,7 +198,10 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
       try { const record = store.load(scope, runId); existing = record.snapshot; existingConfiguration = record.configuration; }
       catch (error) { if (!(error instanceof NativeError && error.code === 'run_not_found')) throw error; }
       if (admission) {
-        invariant(binding.taskChainId === undefined ? admission.identity.taskChainId === sessionId
+        invariant(background ? canonical(scope) === canonical(admission.identity.scope)
+          && sessionId === admission.identity.sessionId && binding.buildId === admission.identity.buildId
+          && binding.taskChainId === admission.identity.taskChainId
+          : binding.taskChainId === undefined ? admission.identity.taskChainId === sessionId
           : binding.taskChainId === admission.identity.taskChainId, 'native_dsh_recovery_identity_mismatch');
         invariant(existing ? head?.runId === runId && existing.parentRunId === admission.identity.parentRunId
           : (head?.runId ?? null) === admission.identity.parentRunId, 'native_dsh_recovery_superseded');
@@ -210,12 +229,15 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
         const legacy = { ...binding.configuration }; delete legacy.hostRecoveryBinding;
         frozenBinding = { ...binding, configuration: legacy };
       }
-      const configuration = admission ? rebindNativeDshConfiguration({ configuration: admission.configuration,
+      const configuration = background ? configure(binding.configuration) : admission ? rebindNativeDshConfiguration({ configuration: admission.configuration,
         snapshot: { ...admission.identity, configDigest: admission.configDigest } }, binding, payload)
         : freezeNativeDshConfiguration(frozenBinding, input, contract);
+      if (background) invariant(existing && hash(configuration) === admission.configDigest
+        && canonical(configuration) === canonical(admission.configuration), 'native_dsh_recovery_configuration_changed');
       if (durableOwnership && existing) invariant(hash(configuration) === existing.configDigest, 'run_creation_conflict');
       const delivery = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn, projections, flush,
         inputMessages: input.messages, systemText: configuration.instructions, source: binding.source,
+        ...(background ? { backgroundOwnership: nativeDshBackgroundOwnership({ record: background.record, turn }) } : {}),
         onStreamSettled: (...args) => live.settled(...args) });
       live = nativeLiveStream({ agent, runId, turn, revisions, beginStep: delivery.beginStream,
         publish: publishStreamFrame ? frame => publishStreamFrame(payload, frame) : undefined });
@@ -230,9 +252,9 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
             () => onCheckpoint(payload, structuredClone(snapshot)), payload);
         },
       });
-      const identity = { scope, runId, sessionId, turnId: String(turn), buildId: binding.buildId, parentRunId,
+      const identity = background ? admission.identity : { scope, runId, sessionId, turnId: String(turn), buildId: binding.buildId, parentRunId,
         taskChainId: binding.taskChainId ?? sessionId };
-      const start = () => kernel.start({ ...identity, parentRunId: null }, configuration,
+      const start = () => background ? store.load(scope, runId).snapshot : kernel.start({ ...identity, parentRunId: null }, configuration,
         durableOwnership || binding.taskContractFactory ? { expectedParentRunId: parentRunId } : {});
       const persistCancel = () => {
         const commandId = `${runId}:dsh-turn-cancel`;
@@ -242,7 +264,8 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
       };
       if (durableOwnership) {
         const host = nativeDshOwnershipHost(agent);
-        host.claim(nativeDshOwnership({ identity, configuration, input, source: binding.source }));
+        host.claim(background ? nativeDshBackgroundOwnership({ record: background.record, turn })
+          : nativeDshOwnership({ identity, configuration, input, source: binding.source }));
         try {
           invariant(await flushOwnership(flush, payload, ownershipFlushTimeoutMs) === true, 'native_dsh_ownership_not_durable');
         } catch (error) {
@@ -342,6 +365,46 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
         signal: request.signal ? AbortSignal.any([request.signal, resumed.signal]) : resumed.signal,
         input: { kind: 'enter', messages: structuredClone(admission.messages) } }, admission);
     });
+  };
+  /** Drive only the persisted notification identified by an already claimed owner. */
+  execute.background = async ({ ownership, ...payload }) => {
+    invariant(durableOwnership && typeof resolveBackgroundTurn === 'function', 'native_dsh_background_resolver_required');
+    const pending = nativeDshOwnershipHost(payload.agent).pending();
+    invariant(pending && canonical(pending) === canonical(ownership), 'native_dsh_background_owner_required');
+    const admission = readNativeDshBackgroundOwnership(ownership, { sessionId: payload.agent?.session?.id, turn: payload.turn });
+    const facts = { store, scope: admission.identity.scope, sessionId: payload.agent.session.id, turn: payload.turn };
+    const key = canonical({ scope: facts.scope, sessionId: facts.sessionId });
+    invariant(!backgroundDrivers.has(key), 'native_dsh_session_already_driving');
+    backgroundDrivers.add(key);
+    let verified;
+    try {
+      verified = await verifyNativeDshBackgroundOwnership(ownership, { ...facts, signal: payload.signal });
+      return await run({ ...payload, input: { kind: 'enter', messages: [] } }, verified.admission, verified);
+    } catch (error) {
+      if (payload.signal?.aborted) {
+        try {
+          // Cancellation before port rebinding must also survive a restart.
+          // This local ledger reconciliation has no observer/model/tool port;
+          // it can only validate the existing notice and enqueue its cancel.
+          verified ??= await verifyNativeDshBackgroundOwnership(ownership, { ...facts, signal: new AbortController().signal });
+          const { identity } = verified.admission, record = store.load(identity.scope, identity.runId);
+          if (!['completed', 'failed', 'canceled'].includes(record.snapshot.phase)) {
+            const commandId = `${identity.runId}:dsh-turn-cancel`;
+            const previous = record.commands.find(row => row.command.commandId === commandId)?.command;
+            new NativeKernel({ store, digest: hash, owner, ports: {} }).submit(identity.scope, identity.runId,
+              previous ?? { commandId, kind: 'cancel', payload: { dshCancelReason: cancelReason(payload.signal.reason) ?? { kind: 'disposed' } } });
+          }
+        } catch (recoveryError) { throw new AggregateError([error, recoveryError], 'Native background cancellation requires recovery'); }
+      }
+      throw error;
+    } finally { backgroundDrivers.delete(key); }
+  };
+  /** Recover an unclosed background delivery position without admitting a new task. */
+  execute.resumeBackground = ({ agent, ...request }) => {
+    invariant(durableOwnership && typeof resolveBackgroundTurn === 'function', 'native_dsh_background_resolver_required');
+    return nativeDshOwnershipHost(agent).resume(NATIVE_DSH_BACKGROUND_TURN_CONTRACT, resumed => execute.background({
+      ...request, ...resumed, agent, signal: request.signal ? AbortSignal.any([request.signal, resumed.signal]) : resumed.signal,
+    }));
   };
   return execute;
 }

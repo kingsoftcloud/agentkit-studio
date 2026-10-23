@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { nativeDurableStream } from './assistant-stream.mjs';
 import { canonical, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
 import { NATIVE_DSH_CONTENT_FORMAT } from './dsh-turn-contract.mjs';
+import { readNativeDshBackgroundOwnership } from './dsh-background-ownership.mjs';
 
 export const NATIVE_DELIVERY_PROJECTION = 'agentkitNativeDelivery';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -61,9 +62,12 @@ export function nativeDeliveryProjection() {
  * nativeDeliveryProjection first. `flush` must call the Host's sessions.flush.
  * The Native cursor is acknowledged only after a durable flush. Replaying the
  * complete plan deduplicates an append that succeeded before acknowledgment.
+ * Without backgroundOwnership the Native turn ID must equal the numeric DSH
+ * position. A validated background owner instead pins its stable Native ID,
+ * exact stored admission and a typed notice; inputMessages must then be empty.
  */
 export function createNativeSessionDelivery({ store, scope, runId, session, turn, projections,
-  flush, systemText, inputMessages, source, onStreamSettled, flushTimeoutMs = 30_000 } = {}) {
+  flush, systemText, inputMessages, source, onStreamSettled, flushTimeoutMs = 30_000, backgroundOwnership = null } = {}) {
   invariant(typeof flush === 'function' && typeof systemText === 'string' && Array.isArray(inputMessages)
     && Number.isSafeInteger(turn) && turn > 0 && typeof source?.provider === 'string' && source.provider
     && typeof source?.model === 'string' && source.model, 'native_delivery_binding_invalid');
@@ -71,12 +75,19 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
   const input = structuredClone(inputMessages);
   canonical(input);
   invariant(input.every(message => message.role === 'user' && typeof message.id === 'string'), 'native_delivery_input_invalid');
+  // Only the explicit background contract permits a Native identity that is
+  // independent of the numeric DSH delivery position. Ordinary turns keep v1.
+  const background = backgroundOwnership === null ? null
+    : readNativeDshBackgroundOwnership(backgroundOwnership, { sessionId: String(session.id), turn });
+  if (background) invariant(input.length === 0 && background.identity.runId === runId
+    && canonical(background.identity.scope) === canonical(scope) && background.configuration.instructions === systemText,
+  'native_delivery_background_admission_invalid');
   source = { provider: source.provider, model: source.model };
   const identity = hash({ scope, runId });
   const id = key => `ak-native-${hash({ identity, key })}`;
   const projectedCallId = callId => id(`call:${callId}`);
   const projectionPrefix = `dsh:${session.id}:${turn}:v1:`;
-  const projectionName = `${projectionPrefix}${hash({ systemText, input, source })}`;
+  const projectionName = `${projectionPrefix}${hash({ systemText, input, source, ...(background ? { background } : {}) })}`;
   let chain = Promise.resolve();
   const state = () => {
     const value = projections.stateOf(session, NATIVE_DELIVERY_PROJECTION);
@@ -100,7 +111,13 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     invariant(record.snapshot.revision === snapshot.revision && record.snapshot.eventSeq === snapshot.eventSeq,
       'native_delivery_checkpoint_stale');
     invariant(canonical(snapshot.scope) === canonical(scope) && snapshot.runId === runId
-      && snapshot.sessionId === String(session.id) && snapshot.turnId === String(turn), 'native_delivery_identity_mismatch');
+      && snapshot.sessionId === String(session.id) && snapshot.turnId === (background ? background.identity.turnId : String(turn)),
+    'native_delivery_identity_mismatch');
+    if (background) invariant(record.snapshot.configDigest === background.configDigest
+      && canonical(record.configuration) === canonical(background.configuration)
+      && canonical(record.snapshot.backgroundNotification ?? null) === canonical(background.notification)
+      && ['buildId', 'parentRunId', 'taskChainId'].every(key => snapshot[key] === background.identity[key]),
+    'native_delivery_background_admission_invalid');
     invariant(store.sessionHead(scope, snapshot.sessionId)?.runId === runId, 'native_delivery_run_superseded');
     invariant(Object.keys(record.projections).filter(key => key.startsWith(projectionPrefix))
       .every(key => key === projectionName), 'native_delivery_admission_changed');
@@ -119,6 +136,15 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     }
     for (const message of input) {
       append('user/message', message, { surfaceOp: 'append' });
+    }
+    if (background) {
+      const notices = snapshot.messages.filter(message => message.role === 'user'
+        && message.kind === 'background_command_observation' && !message.history);
+      invariant(notices.length === 1, 'native_delivery_background_notice_missing');
+      append('user/message', { id: id('background-notification'), role: 'user',
+        source: { kind: 'agentkit-native-background-notification', form: 'notice', summary: 'Background command result',
+          sourceRunId: background.notification.sourceRunId, taskId: background.notification.taskId },
+        content: [{ type: 'text', text: notices[0].content }] }, { surfaceOp: 'append' });
     }
 
     const messages = snapshot.messages, events = record.events.filter(event => event.seq <= snapshot.eventSeq);
