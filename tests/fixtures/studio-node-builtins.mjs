@@ -39,11 +39,12 @@ export async function apply(ctx, options) {
   const agents = createAgentStore({ storeDir: join(home, 'studio/agents') });
   const tools = ['workspace_status', 'list_workspace_files', 'read_workspace_file', 'write_workspace_file',
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
-    'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search'];
+    'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
+    'sandbox_status', 'run_command', 'read_command_output', 'stop_command'];
   const records = [];
   for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
     runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof' } } }));
-  await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home,
+  await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search` } });
   ctx.llm.registerAdapter(['agentkit-studio-builtin-proof'], {
@@ -234,12 +235,91 @@ export async function apply(ctx, options) {
         } finally {
           removeWebPre(); removeWebGuard(); removeWebAround(); removeWebPost(); removeWebResult(); pendingRequest = undefined;
         }
+        setSandboxMode(agent.session, 'workspace-write');
+        const commandPhases = [], commandNames = new Set(['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
+        let commandDeny = false, commandRedact = false;
+        const removeCommandPre = agent.ctx.on('tools/pre-execute', async (exec, next) => {
+          if (commandNames.has(exec.name)) commandPhases.push('pre'); return next();
+        });
+        const removeCommandGuard = registry.guard(exec => {
+          if (commandNames.has(exec.name)) {
+            commandPhases.push('guard'); if (commandDeny) return 'command denied before Node dispatch';
+          }
+        });
+        const removeCommandAround = agent.ctx.on('tools/execute', async (exec, next) => {
+          if (commandNames.has(exec.name)) commandPhases.push('around'); return next();
+        });
+        const removeCommandPost = agent.ctx.on('tools/post-execute', async (exec, _result, next) => {
+          if (commandNames.has(exec.name)) {
+            commandPhases.push('post');
+            if (commandRedact) return { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted command output' }] };
+          }
+          return next();
+        });
+        const removeCommandResult = agent.ctx.on('tools/result', exec => { if (commandNames.has(exec.name)) commandPhases.push('result'); });
+        let commandProof;
+        try {
+          const status = await call('sandbox_status', {});
+          assert.equal(status.backend, 'local_process'); assert.equal(status.isolated, false);
+          commandPhases.length = 0;
+          const counter = `${runtime}-command-counter`, command = `printf x >> ${counter}; printf "$PATH:$CI"`;
+          const callId = `command-duplicate-${runtime}`;
+          const invoke = (args, id = callId) => registry.execute({ agent, callId: id, name: 'run_command',
+            arguments: args, signal: new AbortController().signal });
+          const first = await invoke({ command }); assert.equal(first.isError, false);
+          const foreground = JSON.parse(first.value.result);
+          assert.equal(foreground.ok, true); assert.equal(foreground.stdout, `${process.env.PATH}:1`);
+          const normalPhases = [...commandPhases]; assert.deepEqual(normalPhases, ['pre', 'guard', 'around', 'post', 'result']);
+          const duplicate = await invoke({ command }); assert.equal(duplicate.isError, false);
+          assert.deepEqual(JSON.parse(duplicate.value.result), foreground);
+          assert.equal(await readFile(join(workspaceRoot, counter), 'utf8'), 'x');
+          const conflict = await invoke({ command: `printf wrong >> ${counter}` });
+          assert.equal(JSON.parse(conflict.value.result).error_type, 'dsh_node_command_call_identity_conflict');
+          assert.equal(await readFile(join(workspaceRoot, counter), 'utf8'), 'x');
+          commandDeny = true;
+          const deniedCommand = await invoke({ command: `printf no > ${runtime}-command-denied` }, `command-guard-${runtime}`);
+          assert.equal(deniedCommand.isError, true); assert.equal(existsSync(join(workspaceRoot, `${runtime}-command-denied`)), false);
+          commandDeny = false; commandRedact = true;
+          const redacted = await invoke({ command: 'printf original' }, `command-redact-${runtime}`);
+          assert.equal(redacted.isError, false); assert.deepEqual(redacted.content, [{ type: 'text', text: 'Host-redacted command output' }]);
+          commandRedact = false;
+          const large = await call('run_command', { command: "/usr/bin/awk 'BEGIN { for (i=0;i<40000;i++) printf \"界\" }'" });
+          assert.equal(large.ok, true); assert.equal(large.output_budget.truncated, true);
+          const fullCommand = JSON.parse(await readFile(large.output_budget.artifact_uri, 'utf8'));
+          assert.equal(fullCommand.stdout, '界'.repeat(40000));
+          const facts = JSON.parse(await readFile(join(dirname(large.output_budget.artifact_uri), 'metadata.json'), 'utf8'));
+          assert.equal(facts.request.agentId, record.metadata.id); assert.equal(facts.request.sessionId, created.sessionId);
+          assert.equal(facts.request.definition.name, 'run_command');
+          for (const key of ['runId', 'turnId', 'scope', 'executionFence']) assert.equal(key in facts.request, false);
+          const launched = await call('run_command', { command: 'printf background; /bin/sleep 5', background: true });
+          assert.equal(launched.ok, true); const taskId = launched.task_id;
+          const foreign = await second.ctx.get('tools').execute({ agent: second, callId: `foreign-command-${runtime}`,
+            name: 'read_command_output', arguments: { task_id: taskId }, signal: new AbortController().signal });
+          assert.equal(JSON.parse(foreign.value.result).ok, false);
+          assert.equal((await call('stop_command', { task_id: taskId })).ok, true);
+          const stopped = await call('read_command_output', { task_id: taskId, wait_seconds: 2 });
+          assert.equal(stopped.status, 'canceled');
+          setSandboxMode(agent.session, 'read-only'); setApprovalPolicy(agent.session, 'ask');
+          let commandApprovals = 0;
+          const removeCommandApproval = agent.ctx.on('approval/request', async () => ++commandApprovals === 1 ? 'allowed-once' : 'rejected');
+          try {
+            assert.equal((await call('run_command', { command: `printf once > ${runtime}-command-approved` })).ok, true);
+            assert.equal((await call('run_command', { command: `printf no > ${runtime}-command-second` })).ok, false);
+            assert.equal(commandApprovals, 2); assert.equal(existsSync(join(workspaceRoot, `${runtime}-command-second`)), false);
+          } finally { removeCommandApproval(); }
+          commandProof = { normalPhases, duplicateCount: (await readFile(join(workspaceRoot, counter), 'utf8')).length,
+            fullOutputBytes: Buffer.byteLength(fullCommand.stdout), sessionOwnership: true, policyDenial: true,
+            postPolicyPreserved: true, backgroundCanceled: stopped.status === 'canceled', oneShotApprovals: commandApprovals };
+        } finally {
+          removeCommandPre(); removeCommandGuard(); removeCommandAround(); removeCommandPost(); removeCommandResult();
+        }
         assert.deepEqual(before, after, 'Both actual DSH policy phases must observe every admitted call.');
         const audits = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').map(event => event.data.outcome);
-        assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'cancelled']);
+        assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected']);
         report.runtimes.push({ runtime, agentId: record.metadata.id, sessionId: created.sessionId,
           registeredCalls: before.length, approvals: audits, crossSessionReadStateIsolated: true, parser: lint.syntax_engine.parser });
         report.runtimes.at(-1).web = webProof;
+        report.runtimes.at(-1).commands = commandProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

@@ -45,9 +45,12 @@ export function buildScriptEnvironment(source, { settings = localControlSettings
   for (const [name, value] of Object.entries(required)) { check(namePattern.test(name), 'invalid_local_process_environment'); result[name] = String(value); }
   return result;
 }
+export function supportsLocalProcessPlatform({ platform = process.platform, arch = process.arch } = {}) {
+  return ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64'].includes(`${platform}-${arch}`);
+}
 export function resolveLocalProcessLauncher({ platform = process.platform, arch = process.arch } = {}) {
   const target = `${platform}-${arch}`;
-  check(['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64'].includes(target), 'unsupported_local_process_platform');
+  check(supportsLocalProcessPlatform({ platform, arch }), 'unsupported_local_process_platform');
   const manifest = JSON.parse(readFileSync(join(directory, 'local-process-manifest.json'), 'utf8'));
   check(manifest.schemaVersion === 'agentkit.local-process-binary/v1'
     && manifest.sourceSha256 === hash(readFileSync(join(directory, 'local-process-launcher.c'))), 'local_process_source_digest_mismatch');

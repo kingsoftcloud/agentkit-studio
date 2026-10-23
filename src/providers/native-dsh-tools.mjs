@@ -399,6 +399,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       artifacts, isClosed: () => closed, inProcessTransport: Boolean(e2bLoadSdk) });
     return createNativeLocalCommandTools({ workspaceRoot: workspace, stateRoot: join(stateDir, 'background-commands'),
       sessionId: authority.childSessionId ?? String(agent.session.id), settings: controls, sourceEnv: commandEnv, artifacts, authorize: async () => 'allow',
+      assertAuthority: createNativeToolAuthority({ ...authority,
+        sessionId: authority.childSessionId ?? String(agent.session.id), isClosed: () => closed }),
       captureWorkspace: request => state(agent).capture(request), resolveOwnedCommand: createOwnedCommandResolver(authority) });
   };
   return {

@@ -43,13 +43,21 @@ export function privateFile(path, allowMissing = false) {
   } catch (error) { if (allowMissing && error.code === 'ENOENT') return null; throw error; }
 }
 export function openPrivate(path, flags) {
-  privateDirectory(dirname(path)); privateFile(path, true);
-  const fd = openSync(path, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
-  try {
-    const stat = fstatSync(fd), current = privateFile(path);
-    check(stat.isFile() && stat.dev === current.dev && stat.ino === current.ino, 'background_state_changed');
-    return fd;
-  } catch (error) { closeSync(fd); throw error; }
+  for (let attempt = 0; ; attempt++) {
+    privateDirectory(dirname(path)); privateFile(path, true);
+    const fd = openSync(path, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+    try {
+      const stat = fstatSync(fd), current = privateFile(path);
+      check(stat.isFile() && stat.dev === current.dev && stat.ino === current.ino, 'background_state_changed');
+      return fd;
+    } catch (error) {
+      closeSync(fd);
+      // The supervisor atomically replaces outputs and records. A read opened
+      // across that publication must retry the newly verified private inode.
+      // Never retry writes, unsafe permissions/links, or persistent churn.
+      if (flags !== constants.O_RDONLY || error.code !== 'background_state_changed' || attempt >= 3) throw error;
+    }
+  }
 }
 export function syncDirectory(directory) {
   const fd = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);

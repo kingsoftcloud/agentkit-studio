@@ -72,7 +72,8 @@ function writePrivate(path, bytes, guard) {
   } finally { closeSync(fd); }
 }
 
-export function createDshNodeToolOutputStore({ directory, agentId, isClosed = () => false, signal } = {}) {
+export function createDshNodeToolOutputStore({ directory, agentId, isClosed = () => false, signal,
+  toolDefinitions = nativeWebToolDefinitions().filter(item => item.name === 'web_fetch') } = {}) {
   invariant(typeof directory === 'string' && directory.trim() && typeof agentId === 'string' && agentId.trim()
     && typeof isClosed === 'function', 'output_binding_invalid');
   invariant(signal === undefined || signal instanceof AbortSignal, 'output_host_signal_invalid');
@@ -83,7 +84,10 @@ export function createDshNodeToolOutputStore({ directory, agentId, isClosed = ()
   const root = realpathSync(configured), rootIdentity = identity(lstatSync(root));
   invariant(lstatSync(root).isDirectory(), 'output_root_invalid');
   const knownDirectories = new Map();
-  const definition = nativeWebToolDefinitions().find(item => item.name === 'web_fetch');
+  invariant(Array.isArray(toolDefinitions) && toolDefinitions.length > 0
+    && toolDefinitions.every(item => typeof item?.name === 'string')
+    && new Set(toolDefinitions.map(item => item.name)).size === toolDefinitions.length, 'output_definitions_invalid');
+  const definitions = new Map(toolDefinitions.map(item => [item.name, copy(item)]));
   let closed = false;
   const assertOpen = () => {
     if (closed || signal?.aborted) throw failure('output_closed');
@@ -116,7 +120,8 @@ export function createDshNodeToolOutputStore({ directory, agentId, isClosed = ()
       invariant(request?.agentId === agentId && typeof request.sessionId === 'string' && request.sessionId.trim()
         && request.signal instanceof AbortSignal && typeof request.call?.callId === 'string' && request.call.callId.trim(),
       'output_request_unbound');
-      invariant(canonical(request.definition) === canonical(definition)
+      const definition = definitions.get(request.call.name);
+      invariant(definition && canonical(request.definition) === canonical(definition)
         && request.call.name === definition.name && !toolInputRejection(definition, request.call), 'output_definition_invalid');
       invariant(typeof text === 'string', 'output_text_invalid');
       const bytes = Buffer.from(text, 'utf8');

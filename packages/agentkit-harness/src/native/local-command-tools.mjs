@@ -1,6 +1,6 @@
 import { lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { canonical, invariant, toolInputRejection } from '../../../agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, toolInputRejection } from '../../../agentkit-harness-core/dist/index.mjs';
 import { constants as osConstants } from 'node:os';
 import { LocalCommandStore, createLocalBackgroundReader } from './local-background.mjs';
 import { TERMINAL, delay, readRecord } from './local-command-state.mjs';
@@ -48,12 +48,14 @@ function utf8Preview(text, maxBytes) {
  * canonical ledger receipts; a bare task ID or a backend environment switch
  * grants no access. The caller keeps the surrounding Native intent/lease.
  */
-export function createNativeLocalCommandTools({ workspaceRoot, stateRoot, sessionId, settings = {}, sourceEnv = {},
-  authorize, resolveOwnedCommand, captureWorkspace, artifacts } = {}) {
+export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionId, settings = {}, sourceEnv = {},
+  authorize, resolveOwnedCommand, captureWorkspace, artifacts, assertAuthority = () => true,
+  durableForeground = false } = {}) {
   invariant(typeof authorize === 'function' && typeof resolveOwnedCommand === 'function'
-    && typeof captureWorkspace === 'function', 'local_command_host_capabilities_missing');
+    && typeof captureWorkspace === 'function' && typeof assertAuthority === 'function'
+    && typeof durableForeground === 'boolean', 'local_command_host_capabilities_missing');
   const root = realpathSync(workspaceRoot), policy = localControlSettings(settings), definitions = localCommandToolDefinitions(policy);
-  const environment = { ...sourceEnv }, formal = new Map(definitions.map(item => [item.name, item]));
+  const environment = { ...sourceEnv }, formal = new Map(definitions.map(item => [item.name, copy(item)]));
   // Exact model integers may be bigint. Clamp before converting rather than
   // throwing after claiming a dispatch for an otherwise valid large timeout.
   const deadline = seconds => (seconds == null || seconds > policy.wallSeconds ? policy.wallSeconds : Number(seconds)) * 1000;
@@ -85,14 +87,30 @@ export function createNativeLocalCommandTools({ workspaceRoot, stateRoot, sessio
     return { ...result, content, artifactRefs: [...result.artifactRefs ?? [], ref] };
   }
   async function execute(request) {
-    let dispatched = false, known;
+    let dispatched = false, known, original, sealed;
+    const guard = () => {
+      checkRoot();
+      invariant(request.signal === original && !original.aborted, 'local_command_signal_stale');
+      const { signal: _, ...body } = request;
+      invariant(canonical(body) === sealed, 'local_command_request_drifted');
+      const current = assertAuthority(request);
+      if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+      invariant(current === true, 'local_command_authority_stale');
+      const { signal: liveSignal, ...live } = request;
+      invariant(liveSignal === original && canonical(live) === sealed, 'local_command_request_drifted');
+      original.throwIfAborted(); return true;
+    };
     try {
+      invariant(request.signal instanceof AbortSignal, 'local_command_signal_required');
+      original = request.signal;
+      const { signal: _, ...body } = request; sealed = canonical(body);
       invariant(request.sessionId === sessionId, 'local_command_session_mismatch'); checkRoot(); request.signal.throwIfAborted();
+      guard();
       const definition = formal.get(request.call?.name); invariant(definition, 'local_command_tool_unbound');
       const rejection = toolInputRejection(definition, request.call);
       if (rejection) return { status: 'error', content: rejection };
       const args = structuredClone(request.call.arguments);
-      const decision = await authorize(request); request.signal.throwIfAborted(); checkRoot();
+      const decision = await authorize(request); guard();
       if (decision !== 'allow') return decision?.status === 'approval_required' && typeof decision.interactionId === 'string'
         ? decision : errorResult('policy_denied');
       if (request.call.name === 'sandbox_status') return { status: 'ok', content: { ok: true, backend: 'local_process', enabled: true,
@@ -101,40 +119,61 @@ export function createNativeLocalCommandTools({ workspaceRoot, stateRoot, sessio
         contracts: [LOCAL_COMMAND_TOOLS_CONTRACT, LOCAL_PROCESS_CONTRACT, LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY] } };
       if (request.call.name === 'read_command_output' || request.call.name === 'stop_command') {
         const owned = resolveOwnedCommand(request, args.task_id);
+        guard();
         invariant(owned.backend === 'local_process' && owned.ref.taskId === store.commandId(owned.ref.operationKey), 'local_command_backend_mismatch');
         const handle = store.connect(owned.ref.taskId);
         if (request.call.name === 'stop_command') {
+          guard();
           dispatched = true; known = { status: 'ok', content: { ok: true, task_id: args.task_id, ...output(handle.requestCancel()) } };
         } else {
           const until = performance.now() + (args.wait_seconds ?? 0) * 1000;
           let interval = 50;
           while (!TERMINAL.has(handle.readOutput().status) && performance.now() < until) {
-            request.signal.throwIfAborted(); await delay(Math.min(interval, Math.max(0, until - performance.now()))); interval = Math.min(1000, interval * 2);
+            guard(); await delay(Math.min(interval, Math.max(0, until - performance.now()))); interval = Math.min(1000, interval * 2);
           }
           request.signal.throwIfAborted();
           known = { status: 'ok', content: { ok: true, task_id: args.task_id, ...output(handle.readOutput({
             stdoutCursor: args.stdout_cursor ?? 0, stderrCursor: args.stderr_cursor ?? 0, maxBytes: args.max_bytes ?? 65536 })) } };
         }
-        return await budget(known, request);
+        guard(); const result = await budget(known, request); guard(); return result;
       }
       const command = args.command.trim();
       if (!command) return errorResult('command_required');
       if (!args.background && args.background_timeout != null) return errorResult('background_timeout_requires_background');
       const cwd = cwdFor(args.cwd || args.env?.KSADK_COMMAND_CWD);
       const finding = await checkGovernedCommand(command, { cwd, allowedRoots: [root], signal: request.signal });
+      guard();
       if (finding) return errorResult('command_policy_blocked', { finding, exit_code: 126, executed: false });
       request.signal.throwIfAborted(); checkRoot(); cwdFor(args.cwd || args.env?.KSADK_COMMAND_CWD);
       const env = buildScriptEnvironment({ ...environment, ...args.env }, { settings: policy });
       const before = captureWorkspace(request);
-      if (args.background) {
+      guard();
+      if (args.background || durableForeground) {
         dispatched = true;
-        const handle = await store.start({ operationKey: request.operationKey, command, cwd, env, settings: policy,
-          timeoutMs: deadline(args.background_timeout) });
-        const observed = handle.readOutput();
-        known = { status: 'ok', content: { ok: true, backend: 'sandbox/local_process', sandbox_id: `local_process:${sessionId}`,
+        const operationKey = request.operationKey, expectedTaskId = store.commandId(operationKey);
+        known = { content: { backend: 'sandbox/local_process', task_id: expectedTaskId } };
+        const handle = await store.start({ operationKey, command, cwd, env, settings: policy,
+          timeoutMs: deadline(args.background ? args.background_timeout : args.timeout), assertCurrent: guard });
+        if (!args.background) {
+          const cancel = () => { try { handle.requestCancel(); } catch { /* retain unknown */ } };
+          original.addEventListener('abort', cancel, { once: true });
+          if (original.aborted) cancel();
+          try {
+            const until = performance.now() + deadline(args.timeout) + 15000;
+            while (!TERMINAL.has(handle.readOutput().status) && performance.now() < until) { guard(); await delay(20); }
+          } catch (error) { cancel(); throw error;
+          } finally { original.removeEventListener('abort', cancel); }
+        }
+        let observed = handle.readOutput();
+        if (!args.background && TERMINAL.has(observed.status) && observed.status !== 'unknown')
+          observed = await handle.wait({ timeoutMs: 100 });
+        const uncertain = observed.status === 'unknown' || observed.evidenceIncomplete
+          || !args.background && !TERMINAL.has(observed.status);
+        known = { status: uncertain ? 'uncertain' : 'ok', content: { ok: !uncertain, backend: 'sandbox/local_process', sandbox_id: `local_process:${sessionId}`,
           task_id: handle.commandId, ...output(observed), process_timeout_seconds: readRecord(handle.directory, store.owner, handle.commandId).timeoutMs / 1000,
+          ...(!args.background ? { command, controls: readRecord(handle.directory, store.owner, handle.commandId).controls ?? null } : {}),
           instruction: 'Use read_command_output with task_id; stop_command cancels this task only. Do not relaunch unknown outcomes.' },
-        backgroundCommandRef: { taskId: handle.commandId, sourceRunId: request.runId, operationKey: request.operationKey } };
+        ...(args.background ? { launchedCommand: { taskId: handle.commandId, operationKey } } : {}) };
       } else {
         dispatched = true;
         const result = await runBoundedProcess({ argv: ['/bin/sh', '-c', command], cwd, env, settings: policy, signal: request.signal,
@@ -151,15 +190,29 @@ export function createNativeLocalCommandTools({ workspaceRoot, stateRoot, sessio
           exit_code: incomplete ? null : result.timedOut ? 124 : result.outputLimitExceeded ? 122 : result.exitCode,
           observed_exit_code: incomplete ? result.exitCode : null, evidence_incomplete: incomplete, controls: result.controls } };
       }
+      guard();
       const after = captureWorkspace(request); known.workspaceChangedPaths = changed(before, after);
-      return await budget(known, request);
+      guard(); const result = await budget(known, request); guard(); return result;
     } catch (error) {
       // After dispatch, an exception cannot prove that a command did not run.
       // Keep any known result, including its exit code and background locator.
       return dispatched ? { ...known, status: 'uncertain', content: { ...known?.content, ok: false,
         error_type: 'command_evidence_incomplete', evidence_incomplete: true, observed_result: known?.content?.status ?? null } }
-        : errorResult(request.signal?.aborted ? 'canceled' : error.code ?? 'local_command_error', { executed: false });
+        : errorResult(request?.signal?.aborted ? 'canceled' : error.code ?? 'local_command_error', { executed: false });
     }
   }
-  return Object.freeze({ definitions, execute, reader: createLocalBackgroundReader(store) });
+  return Object.freeze({ get definitions() { return copy(definitions); }, execute,
+    commandId: operationKey => store.commandId(operationKey), reader: createLocalBackgroundReader(store) });
+}
+
+/** Native adds its real launch Run only here. The shared transport also serves
+ * DSH/Codex calls with their actual Session/call identity, without a fake Run. */
+export function createNativeLocalCommandTools(options = {}) {
+  const transport = createLocalCommandTransport(options);
+  return Object.freeze({ get definitions() { return transport.definitions; }, reader: transport.reader,
+    async execute(request) {
+      const sourceRunId = request?.runId;
+      const { launchedCommand, ...result } = await transport.execute(request);
+      return { ...result, ...(launchedCommand ? { backgroundCommandRef: { ...launchedCommand, sourceRunId } } : {}) };
+    } });
 }

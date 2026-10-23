@@ -556,3 +556,19 @@ Studio 的 Native 工具组装现根据 Host 环境中的 `KSADK_SANDBOX_BACKEND
 `sandbox_status/run_command/read_command_output/stop_command` 进入原 DSH 注册、权限与输出管线，由真实 Native 工具意图包围。后台观察端口只提供原回执拥有的非阻塞读取；Session 释放或普通 Host 关闭不会杀死持久远程命令。监督进程丢失仍报告未知，读取不会自动创建沙箱、重连进程或重发命令。远端已创建但 Host 权限随后失效时，已知沙箱身份保存在未知记录中，需要后续显式核对。组件状态仅在正式 E2B 工具和配置同时挂载时显示隔离执行及模板绑定；这不代表独立 Skills 执行服务已挂载。
 
 接线定向验证使用真实 Studio Host/NativeKernel/SQLite/ToolAuthority，以及明确的 DSH registry 与远程 SDK 替身，覆盖环境配置固定、非零退出、权限拒绝、scope/Session 隔离、后台只读观察、数据库与 gateway 重开、配置变化拒绝和创建中关闭。超时接线修正后，五个受影响模块在两种 Node 各通过 44 项；先前本地命令和后台运行的相关回归也通过。完整打包 SDK 的 E2B 入口、线上 E2B、显式恢复/清理的产品入口、`run_code`、Frozen 配置导出和 legacy builtin 接线仍待验收或实现，不能据此移除所有 Python fallback 或宣布完整迁移完成。
+
+## Legacy runtime 的 Node 本地命令接入
+
+DSH Native 和 Codex 的默认 builtin 组合现在直接提供 Node `sandbox_status`、`run_command`、`read_command_output` 和 `stop_command`，与十个工作区工具及两个 Web 工具共用原注册入口。执行仍经过真实 DSH pre/guard/around/post/result，不额外启动 Native 执行循环，不伪造 Run、turn、scope 或 fence。正式输入 schema 与现有 Native 命令后端共用，公开 schema 副本不能修改内部准入条件。本地命令共享 Host 文件系统与网络，不是隔离沙箱。
+
+每次变更调用绑定真实 Agent、Session、call ID、完整参数、正式定义及固定执行配置摘要。工作区外的私有记录用刷盘与原子发布提交意图和结果；每次调用的 SQLite 内核锁覆盖整个执行过程。意图先于启动或取消命令。重复调用返回原结果，原 call ID 改变内容会拒绝；执行者丢失而没有结果时返回明确的未知状态和预先确定的 task ID，不自动重跑。另一次仍持有锁的调用不能被判断成已经失联。配置摘要含允许传入命令的环境和资源限制，不将 Host 密钥写入调用记录。
+
+前台调用使用现有独立 Node 监督进程，完整保存输出后提交终态；大输出仍保存完整 UTF-8 文件，只缩短模型展示。原调用取消、Host 关闭或身份漂移时，请求取消自己拥有的前台进程，并保留不确定证据。已接纳的后台命令继续独立存活。读输出不缓存观察结果，不延长命令期限；读取和停止必须解析原 Session 的已提交启动记录，裸 task ID、另一 Agent/Session 或变化的后端配置均不能授予访问权。状态目录和工作区不得互相包含。
+
+`tests/dsh-node-command-tools.test.mjs` 在 Node 26.5 与 22.19.0 各验证 21 项，包括真实监督进程、重复调用、重开、UTF-8 游标和完整输出、一次性审批、原调用身份变化、非合作审批取消、前台取消，以及意图后/实际执行中两处真实 SIGKILL。前一边界验证生产调用记录，后一边界经过实际 DSH Node 命令适配器；它们不是整个 Studio HTTP 进程的崩溃验收。原 Native 命令、工作区、Web 及输出存储模块做定向回归，没有每次运行全量套件。
+
+实际打包 Host 验收：先 `pnpm pack --pack-destination <archive-dir>`，再分别用两种 Node 执行 `scripts/verify-studio-node-builtins.mjs --source <built-maintained-dsh> --archive <Studio.tgz> --keep`。真实 Host、预设、SessionController 和 DSH ToolRegistry 在两个 runtime 各检查 29 个主 Session 调用，包含命令重复不再写入、后置策略替换、后台取消、12 万字节完整命令输出、Session 隔离及两次分别决定的审批。宿主 PATH 仅提供 Node，Python 路径不可用；这不代表模型/Codex CLI 或全新依赖安装已验收。
+
+最终真实打包复查发现监督进程原子替换输出/记录时，读取 fd 与当前路径的 inode 校验存在竞态：命令已经完成，读取却报 `background_state_changed`。通过一次真实 rename 的确定性故障注入复现后，私有文件读取现最多尝试四次打开，每次重新核对私有目录、文件类型、权限、链接数及 inode；不重试写入、非法链接/权限或持续替换。七个独立进程用例分别覆盖窗口/全文/记录读取、持续替换上限、符号链接、公开权限和禁止重试写入，并核对 fd 无泄漏。
+
+显式 E2B 选择不进入这个本地 Node 适配器，保留原后端，绝不悄悄改为本地执行。没有随包 POSIX launcher 的平台也保留旧桥接，避免让未绑定命令的 legacy runtime 因初始化本地命令目录而失败；这不是这些平台已完成 Node 命令迁移的证明。Legacy E2B、`run_code`、browser、Skills/A2A 等剩余 Python builtin 路径仍需替换。未知命令有持久记录与禁止重放语义，但产品中的显式核对/修复入口仍未闭环；不要以新 call ID 重新发同一未知命令。全部能力闭环前保留 Python fallback，不能宣布整个安装与运行已消除 Python 依赖。

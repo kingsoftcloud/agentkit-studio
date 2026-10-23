@@ -113,11 +113,18 @@ export class LocalCommandStore {
     check(validId(commandId), 'invalid_background_command_identity');
     return new LocalBackgroundCommand(join(this.directory, commandId), this.owner, commandId);
   }
-  async start({ operationKey = randomUUID(), ...input }) {
+  async start({ operationKey = randomUUID(), assertCurrent = () => true, ...input }) {
+    check(typeof assertCurrent === 'function', 'background_command_guard_invalid');
+    const guard = () => {
+      const allowed = assertCurrent();
+      if (allowed && typeof allowed.then === 'function') Promise.resolve(allowed).catch(() => {});
+      check(allowed === true, 'background_command_authority_lost');
+    };
     const request = commandRequest(input), commandId = this.commandId(operationKey), requestDigest = digest(request);
     const release = await lockUntil(join(this.directory, 'launch.sqlite'), deadline());
     let handle;
     try {
+      guard();
       const directory = join(this.directory, commandId);
       if (existsSync(directory)) {
         handle = this.connect(commandId);
@@ -139,6 +146,7 @@ export class LocalCommandStore {
       } finally { if (existsSync(preparing)) rmSync(preparing, { recursive: true, force: true }); }
       // Intent is durable BEFORE the first spawn.
       handle = this.connect(commandId);
+      guard();
       let child;
       try {
         child = spawn(process.execPath, [supervisor, directory, this.owner, commandId], {
