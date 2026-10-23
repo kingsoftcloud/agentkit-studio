@@ -208,3 +208,16 @@ test('projection rejects foreign tasks, terminal overwrite, missing append base 
   p.apply({ statusUpdate: { taskId: 'task', contextId: 'context', status: { state: 'TASK_STATE_COMPLETED' } } });
   assert.throws(() => p.apply(task), /A2A_TERMINAL_STATE_CONFLICT/);
 });
+
+test('a direct A2A reply must come from an agent and cannot complete an already bound task', () => {
+  const echo = createA2AProjection('echo');
+  assert.throws(() => echo.apply({ message: { messageId: 'echo', role: 'ROLE_USER', parts: [{ text: 'echo' }] } }), /A2A_DIRECT_MESSAGE_INVALID/u);
+  assert.equal(echo.snapshot().state, 'submitted');
+  const bound = createA2AProjection('bound');
+  bound.apply({ task: { id: 'remote', contextId: 'context', status: { state: 'TASK_STATE_WORKING' } } });
+  assert.throws(() => bound.apply({ message: { messageId: 'reply', role: 'ROLE_AGENT', parts: [{ text: 'premature' }] } }), /A2A_DIRECT_MESSAGE_INVALID/u);
+  assert.equal(bound.snapshot().state, 'working');
+  const direct = createA2AProjection('direct');
+  direct.apply({ message: { messageId: 'reply', role: 'ROLE_AGENT', parts: [{ text: 'valid' }] } });
+  assert.equal(direct.snapshot().state, 'completed');
+});

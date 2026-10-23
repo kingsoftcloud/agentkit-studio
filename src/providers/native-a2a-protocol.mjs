@@ -87,6 +87,7 @@ export function createA2AProjection(scopeId, checkpoint = null) {
     invariant(fields.length === 1, 'A2A_WIRE_PAYLOAD_AMBIGUOUS');
     if (fields[0] === 'task') task(payload.task);
     else if (fields[0] === 'message') {
+      invariant(state.taskId === null && object(payload.message) && payload.message.role === 'ROLE_AGENT', 'A2A_DIRECT_MESSAGE_INVALID');
       invariant(!a2aTerminal.has(state.state) || state.state === 'completed', 'A2A_TERMINAL_STATE_CONFLICT');
       message(payload.message); state.directMessage = true; state.state = 'completed';
     }
