@@ -9,6 +9,7 @@ import { parseArgs } from 'node:util';
 import { createServer as createHttpsServer } from 'node:https';
 import { createHash } from 'node:crypto';
 import { createZip } from '../src/zip.mjs';
+import { browserExecutable } from '../tests/fixtures/browser-executable.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   'skill-backend': { type: 'string', default: 'local_process' }, 'command-backend': { type: 'string', default: 'local_process' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
@@ -65,6 +66,7 @@ try {
     `        skillBody: ${JSON.stringify(skillBody)}`, `        skillScript: ${JSON.stringify(skillScript)}`, '',
     `        skillBackend: ${JSON.stringify(skillBackend)}`, '',
     `        commandBackend: ${JSON.stringify(commandBackend)}`, '',
+    ...(commandBackend === 'local_process' ? [`        browserExecutablePath: ${JSON.stringify(browserExecutable())}`, ''] : []),
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   const harnessOptions = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
@@ -116,6 +118,9 @@ try {
   assert.equal(new Set(report.runtimes.map(row => row.workflows.runtimeId)).size, 2);
   assert.ok(report.runtimes.every(row => row.a2a.sends === 1 && row.a2a.serviceRequests === 3 && row.a2a.originalDshOwner
     && row.a2a.duplicateSuppressed && row.a2a.policyDeniedWithoutRequest && row.a2a.postPolicyPreserved && row.a2a.oneShotApprovals === 2));
+  assert.ok(report.runtimes.every(row => commandBackend === 'e2b' ? row.browser.disabledUnderE2b === true
+    : row.browser.enabled && row.browser.duplicateSuppressed && row.browser.canvasUniform && row.browser.policyDenied
+      && row.browser.postPolicyPreserved && row.browser.oneShotApprovals === 2));
   let cold;
   if (report.runtimes.every(row => row.a2a)) {
     await rm(join(root, 'start-proof')); await harness.close();
@@ -125,6 +130,7 @@ try {
       assert.ok(Date.now() < goneBy, 'original Host must actually exit before cold restore');
       await new Promise(resolve => setTimeout(resolve, 25));
     }
+    if (commandBackend === 'local_process') await writeFile(join(root, 'workspace/browser-proof.html'), '<!doctype html><title>must-not-replay</title><p>Cold recovery must return the original receipt.</p>');
     harness = new DeepSeekHarness(harnessOptions); await harness.start();
     await writeFile(join(root, 'start-proof'), 'Restore original calls after original Host PID exited.');
     const coldBy = Date.now() + 30000;
@@ -137,6 +143,7 @@ try {
     assert.deepEqual(cold.restoredA2a.map(row => [row.runtime, row.agentId, row.sessionId, row.taskId, row.unchanged]),
       report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.a2a.taskId, true]));
     assert.equal(cold.a2aRequests, 0);
+    assert.equal(cold.restoredBrowsers.length, commandBackend === 'local_process' ? 2 : 0);
     assert.equal(cold.node, process.version); assert.equal(cold.networkCalls, 0); assert.equal(cold.skillRequests, 0); assert.equal(downloads, 4);
     assert.deepEqual(cold.restored.map(row => [row.runtime, row.agentId, row.sessionId, row.runtimeId, row.taskId, row.unchanged]),
       skillBackend === 'e2b' ? report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.workflows.runtimeId, row.workflows.taskId, true]) : []);

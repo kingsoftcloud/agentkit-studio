@@ -8,7 +8,7 @@ const text = value => typeof value === 'string' && value.length > 0;
 const allowed = (value, keys) => record(value) && Object.keys(value).every(key => keys.includes(key));
 const target = ['selector', 'element_ref'];
 
-export function browserInspectParameters() {
+export function browserInspectParameters({ maxActions = 20 } = {}) {
   const fields = { selector: { type: 'string', minLength: 1 }, element_ref: { type: 'string', minLength: 1, maxLength: 64 },
     value: { type: 'string' }, key: { type: 'string', minLength: 1 }, button: { enum: ['left', 'right', 'middle'] },
     duration_ms: { type: 'integer', minimum: 0, maximum: 5000 }, x: { type: 'integer', minimum: 0, maximum: 1279 },
@@ -23,7 +23,7 @@ export function browserInspectParameters() {
     ...(type === 'scroll' ? { dependentRequired: { x: ['y'], y: ['x'] } } : {}) });
   return { type: 'object', properties: {
     path: { type: 'string', minLength: 1 }, screenshot_path: { type: 'string', minLength: 1 },
-    wait_ms: { type: 'integer', minimum: 0, maximum: 30000 }, actions: { type: 'array', maxItems: 20, items: { oneOf: [
+    wait_ms: { type: 'integer', minimum: 0, maximum: 30000 }, actions: { type: 'array', maxItems: maxActions, items: { oneOf: [
       variant('click', [], [...target, 'button', 'duration_ms']), variant('fill', ['value'], target),
       variant('press', ['key'], [...target, 'duration_ms']), variant('move', ['x', 'y'], ['steps']),
       variant('scroll', ['delta_x', 'delta_y'], ['x', 'y']), variant('reload'), variant('wait', [], ['ms']),
@@ -43,7 +43,7 @@ function relativePath(value, code) {
   return value;
 }
 
-export function parseWorkspaceBrowserInput(value, operationKey) {
+export function parseWorkspaceBrowserInput(value, operationKey, { maxActions = 20 } = {}) {
   if (!text(operationKey)) fail('browser_operation_key_invalid');
   if (!allowed(value, ['path', 'actions', 'wait_ms', 'screenshot_path']) || !Object.hasOwn(value, 'path')) fail('browser_input_invalid');
   const path = relativePath(value.path, 'workspace_path_invalid');
@@ -52,7 +52,7 @@ export function parseWorkspaceBrowserInput(value, operationKey) {
   const waitMs = value.wait_ms === undefined ? 1000 : value.wait_ms;
   if (!integer(waitMs, 0, 30000)) fail('browser_wait_invalid');
   const raw = value.actions === undefined ? [] : value.actions;
-  if (!Array.isArray(raw) || raw.length > 20) fail('browser_actions_invalid');
+  if (!integer(maxActions, 1, 50) || !Array.isArray(raw) || raw.length > maxActions) fail('browser_actions_invalid');
   const actions = []; let explicitWait = waitMs;
   for (let index = 0; index < raw.length; index++) {
     if (!Object.hasOwn(raw, index)) fail('browser_action_invalid');

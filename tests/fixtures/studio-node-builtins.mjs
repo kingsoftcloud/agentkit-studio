@@ -70,6 +70,10 @@ export async function apply(ctx, options) {
   ctx.effect(() => () => { web.closeAllConnections(); return new Promise(resolve => web.close(resolve)); }, 'Node web proof server');
   const webOrigin = `http://127.0.0.1:${web.address().port}`;
   await mkdir(workspaceRoot, { recursive: true });
+  if (!previous) await writeFile(join(workspaceRoot, 'browser-proof.html'), `<!doctype html><title>Packed Browser 😀</title>
+    <button id="count" onclick="this.textContent='clicked:'+ ++window.count">Start</button>
+    <canvas width="1000" height="400" style="background:#112233"></canvas><div style="position:absolute;top:150px;left:50px">HUD</div>
+    <script>window.count=0;</script>`);
   await writeFile(join(home, 'outside.txt'), 'Outside the workspace.');
   await writeFile(join(home, 'config.yaml'), JSON.stringify({ modelProfiles: [{ id: 'builtin-proof',
     provider: 'openai-compatible', modelName: 'unused', baseUrl: 'http://127.0.0.1:9/v1', default: true,
@@ -78,7 +82,7 @@ export async function apply(ctx, options) {
   const tools = ['workspace_status', 'list_workspace_files', 'read_workspace_file', 'write_workspace_file',
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
-    'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'run_code', 'component_status',
+    'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'run_code', 'component_status', 'browser_inspect_workspace',
     'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills', 'list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent'];
   const records = [];
   if (previous) for (const row of previous.runtimes) { const record = await agents.get(row.agentId); assert.ok(record); records.push(record); }
@@ -86,6 +90,7 @@ export async function apply(ctx, options) {
     runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof', a2a: [a2aSpec] } } }));
   await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
+    AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE: options.browserExecutablePath,
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
     KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
     KSADK_SKILL_SERVICE_TOKEN: 'builtin-skill-read-token', KSADK_SKILL_RUNTIME_BACKEND: skillBackend,
@@ -125,12 +130,23 @@ export async function apply(ctx, options) {
       return result.value;
     };
     if (previous) {
-      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [];
+      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [], restoredBrowsers = [];
       for (const row of previous.runtimes) {
         const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, found.error?.message || JSON.stringify(found.error));
         const agent = found.agent; assert.equal(agent.session.id, row.sessionId); setSandboxMode(agent.session, 'workspace-write');
         agent.session.append('turn/start', { turn: 2 });
         try {
+          if (row.browser.enabled) {
+            const recordBytes = await readFile(row.browser.record), saved = JSON.parse(recordBytes);
+            const image = await readFile(join(workspaceRoot, saved.result.content.screenshot_path));
+            const recovered = await agent.ctx.get('tools').execute({ agent, callId: saved.request.call.callId,
+              name: 'browser_inspect_workspace', arguments: saved.request.call.arguments, signal: new AbortController().signal });
+            assert.equal(recovered.isError, false); assert.deepEqual(JSON.parse(recovered.value.result), saved.result.content);
+            assert.equal(saved.result.content.title, 'Packed Browser 😀');
+            assert.ok((await readFile(row.browser.record)).equals(recordBytes));
+            assert.ok((await readFile(join(workspaceRoot, saved.result.content.screenshot_path))).equals(image));
+            restoredBrowsers.push({ runtime: row.runtime, recordSha256: sha256(recordBytes), imageSha256: sha256(image), unchanged: true });
+          }
           const a2aBytes = await readFile(row.a2a.record), a2aRecord = JSON.parse(a2aBytes), remoteBytes = await readFile(row.a2a.remoteRecord);
           const a2aCold = await agent.ctx.get('tools').execute({ agent, callId: a2aRecord.request.call.callId, name: 'call_a2a_agent',
             arguments: a2aRecord.request.call.arguments, signal: new AbortController().signal });
@@ -173,7 +189,7 @@ export async function apply(ctx, options) {
         } finally { agent.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } }); assert.equal(await ctx.sessions.flush(agent.session), true); }
       }
       assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0); assert.equal(a2aRequests.length, 0);
-      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, restoredA2a, networkCalls, skillRequests: 0, a2aRequests: 0 };
+      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, restoredA2a, restoredBrowsers, networkCalls, skillRequests: 0, a2aRequests: 0 };
     }
     const report = { passed: false, pid: process.pid, webOrigin, node: process.version, path: process.env.PATH, runtimes: [] };
     let serial = 0;
@@ -208,7 +224,7 @@ export async function apply(ctx, options) {
         assert.equal(components.sandbox.backend, commandBackend); assert.equal(components.sandbox.enabled, true);
         assert.equal(components.sandbox.template_bound, e2bCommands);
         assert.deepEqual(components.sandbox.tools, ['sandbox_status', 'run_command', 'read_command_output', 'stop_command', ...(e2bCommands ? ['sandbox_run_code'] : [])]);
-        assert.deepEqual([...components.workspace.tools].sort(), tools.filter(name => name.includes('workspace')).sort());
+        assert.deepEqual([...components.workspace.tools].sort(), tools.filter(name => name.includes('workspace') && name !== 'browser_inspect_workspace').sort());
         assert.equal(components.workspace.root, workspaceRoot); assert.equal(components.skill_runtime.enabled, true);
         assert.deepEqual(components.skill_space.user_space_ids, ['packed-space']);
         assert.deepEqual(components.skill_space.tools, ['list_skill_spaces', 'list_skills', 'load_skill', 'preview_skill', 'search_skills', 'execute_skills']);
@@ -631,9 +647,49 @@ export async function apply(ctx, options) {
         const a2aProof = { taskId: a2aResult.task_id, reply: a2aResult.reply, record: dshA2a.file, remoteRecord: remoteA2a.file,
           serviceRequests: 3, sends: 1, originalDshOwner: true, duplicateSuppressed: true, policyDeniedWithoutRequest: true,
           postPolicyPreserved: true, oneShotApprovals: a2aApprovals };
+        setSandboxMode(agent.session, 'workspace-write');
+        let browserProof;
+        const browserArgs = { path: 'browser-proof.html', wait_ms: 0, screenshot_path: `.artifacts/browser-${runtime}.png`,
+          actions: [{ type: 'click', selector: '#count', button: 'left', duration_ms: 10 }] };
+        if (e2bCommands) {
+          const disabled = await call('browser_inspect_workspace', browserArgs);
+          assert.equal(disabled.error_type, 'BROWSER_LOCAL_BACKEND_REQUIRED'); browserProof = { enabled: false, disabledUnderE2b: true };
+        } else {
+          const browserCall = `browser-original-${runtime}`;
+          const inspect = () => registry.execute({ agent, callId: browserCall, name: 'browser_inspect_workspace',
+            arguments: browserArgs, signal: new AbortController().signal });
+          const first = await inspect(); assert.equal(first.isError, false);
+          const value = JSON.parse(first.value.result); assert.equal(value.ok, true, JSON.stringify(value));
+          assert.equal(value.title, 'Packed Browser 😀'); assert.match(value.body_text_preview, /clicked:1/);
+          assert.equal(value.canvas_metrics[0].visually_uniform, true); assert.equal(value.visual_warnings.length, 1);
+          const image = await readFile(join(workspaceRoot, value.screenshot_path)); assert.equal(image.subarray(1, 4).toString(), 'PNG');
+          assert.deepEqual(JSON.parse((await inspect()).value.result), value);
+          assert.ok((await readFile(join(workspaceRoot, value.screenshot_path))).equals(image));
+          const paths = await readdir(join(home, 'studio/builtin-workspace/browser'), { recursive: true });
+          let saved;
+          for (const path of paths.filter(path => path.endsWith('record.json'))) {
+            const file = join(home, 'studio/builtin-workspace/browser', path), record = JSON.parse(await readFile(file));
+            if (record.request.call.callId === browserCall) saved = { file, record };
+          }
+          assert.ok(saved); assert.equal(saved.record.binding.contract, 'agentkit.dsh-node-browser/v1');
+          assert.equal(saved.record.owner.sessionId, created.sessionId); assert.equal(saved.record.request.runId, undefined);
+          const denyBrowser = agent.ctx.on('tools/pre-execute', async (exec, next) => exec.name === 'browser_inspect_workspace'
+            ? { kind: 'deny', reason: 'Browser policy proof' } : next());
+          try { assert.equal((await inspect()).isError, true); } finally { denyBrowser(); }
+          const postBrowser = agent.ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'browser_inspect_workspace'
+            ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted Browser result' }] } : next());
+          try { assert.deepEqual((await inspect()).content, [{ type: 'text', text: 'Host-redacted Browser result' }]); } finally { postBrowser(); }
+          setSandboxMode(agent.session, 'read-only'); setApprovalPolicy(agent.session, 'ask'); let approvals = 0;
+          const approveBrowser = agent.ctx.on('approval/request', async () => ++approvals === 1 ? 'allowed-once' : 'rejected');
+          try { assert.deepEqual(JSON.parse((await inspect()).value.result), value);
+            assert.equal((await call('browser_inspect_workspace', browserArgs)).ok, false); assert.equal(approvals, 2);
+          } finally { approveBrowser(); }
+          browserProof = { enabled: true, record: saved.file, imageSha256: sha256(image), duplicateSuppressed: true,
+            canvasUniform: true, policyDenied: true, postPolicyPreserved: true, oneShotApprovals: approvals };
+        }
         assert.deepEqual(before, after, 'Both actual DSH policy phases must observe every admitted call.');
         const audits = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').map(event => event.data.outcome);
-        assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected', 'allowed-once', 'rejected']);
+        assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected', 'allowed-once', 'rejected', ...(!e2bCommands ? ['allowed-once', 'rejected'] : [])]);
         report.runtimes.push({ runtime, agentId: record.metadata.id, sessionId: created.sessionId,
           registeredCalls: before.length, approvals: audits, crossSessionReadStateIsolated: true, parser: lint.syntax_engine.parser });
         report.runtimes.at(-1).web = webProof;
@@ -643,6 +699,7 @@ export async function apply(ctx, options) {
         report.runtimes.at(-1).skills = skillsProof;
         report.runtimes.at(-1).workflows = workflowProof;
         report.runtimes.at(-1).a2a = a2aProof;
+        report.runtimes.at(-1).browser = browserProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

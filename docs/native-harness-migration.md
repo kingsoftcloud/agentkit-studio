@@ -685,3 +685,12 @@ Frozen Build，独立 DSH 合约与持久记录复用 Native 的 AgentCard/HTTP/
 检查点在 HTTP 副作用前持久化，重复/未知调用不重发，真实审批和前后策略保留。
 缺失 Node 端口直接报错，不进入 Python A2A fallback。验证范围与仍待补齐的继续、
 取消、内部控制面和产品恢复操作见 [native-a2a.md](native-a2a.md#dsh-native-and-codex-node-a2a-tools)。
+
+### DSH Native/Codex 的 Browser Node 接入
+
+一次性 `browser_inspect_workspace` 已使用独立 DSH Node 端口，保留真实 Agent/Session/call，
+在浏览器创建前持久化原始意图，未知动作不重放。包含真实 Chromium、Canvas 像素诊断、
+50 动作输入、策略/审批/后置处理和旧 Host 退出后的冷回执恢复。显式 E2B 配置拒绝本地
+浏览器；缺少 Node 端口不能进入 Python fallback。与 Native 持久 Browser 的关系、明确
+差异、运行资产及定向验证范围见 [native-browser.md](native-browser.md)。这一批完成不代表
+剩余 Python bridge、在线服务、全新安装或全部 Studio 产品入口已验收。

@@ -266,6 +266,16 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable migr
   assert.equal(registered.length, 3); bridge.close();
 });
 
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable migrated browser port never enters Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'browser-agent', runtime, local: true, toolBindings: ['browser_inspect_workspace'],
+    spawnImpl: () => assert.fail('migrated Browser cannot spawn Python') });
+  assert.equal(registered.length, 1);
+  await assert.rejects(registered[0].execute({}, {}), { code: 'BROWSER_NODE_PORT_UNAVAILABLE' }); bridge.close();
+});
+
 for (const runtime of ['dsh-native', 'codex']) test(`${runtime} explicit managed binding admits three A2A formals and rejects executor collisions`, () => {
   const bridge = createRuntimeBridge(), tools = [];
   const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
