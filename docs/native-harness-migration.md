@@ -473,3 +473,9 @@ Gateway 的只读观察入口携带正式观察契约版本，仅暴露 `observe
 新增真实子进程测试通过 Loader 加载已构建的 SDK，在准备阶段和归属写入后分别刷新实际 JSONL，再由父进程发送 `SIGKILL`。重开相同 Session 后，前者修复未认领轮次并可接纳下一轮；后者保留原归属、恢复原数字轮次并仅关闭一次。没有手工生成崩溃日志，没有以普通取消或 dispose 代替进程中断。夹具的执行结果为确定性外部引擎输出，不作为完整 Native Host 或真实模型调用证明。
 
 相关五个模块在 Node 26.5/22.19 各通过 38 项；最后补充的释放后停放输入用例在两版本各通过一项，仅重跑该新增用例。SDK 官方构建、Host 类型检查、受影响文件 lint、双语配对和生成索引检查通过；原 TypeScript SDK 的 external-turn 快照回放通过一项。文档全检查先通过 42 项、失败一项过期事件索引，刷新后仅复验该失败项及受影响类型/配对。初次进程夹具缺少 workspace 声明依赖和测试类型问题均已修复，失败日志保留。Python SDK 未运行，持久 watcher、生产冷启动调度及打包 Native 后台唤醒仍待集成，当前不宣称自动唤醒已完成。
+
+## 可移植 Frozen Build 的实际账本验收
+
+`scripts/verify-studio-native-portable.mjs --source <已构建维护版 DSH> --archive <Studio.tgz> --keep` 通过实际打包 Host、模型 HTTP 编解码和 Node 工作区工具执行导入的 Frozen Native Build；运行进程只提供 Node PATH，原来源目录删除，归档解压内容检查不含来源路径和凭据。实际 SQLite 记录与 Session 的每个数字轮次、完整归属、配置摘要和 Build 精确对应；工具意图按 operationKey 和结果位置匹配已提交回执。首次读取、写入和回读，新 Host 继续相同 Session，以及策略拒绝和路径越界分别核验原回执、文件字节和用量。
+
+固定 Studio `3b0ea26` 归档及 DSH `f4bccbf1` 基线在 Node 26.5/22.19 独立复验通过。此用例导入后移除目标侧 `portable-bundle.zip`，验证导入后的 Frozen 存储与实际执行；依赖使用固定本地图，不作为全新依赖安装、保留归档时的 Frozen HTTP 启动或最新全部功能的证明。后两项仍需独立验收；无人值守 HTTP 运行原有只读/禁止交互审批策略保持有效。
