@@ -508,3 +508,11 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 可重复命令：`node scripts/verify-studio-native-background.mjs --source <built-maintained-dsh> --archive <studio.tgz> --boundary <warm|cold|prepare|owner> --keep`。`--frozen` 另外构建并固定原 Build，修改最新草稿且不设置 Native 引擎环境开关；在冷启动与 owner 强杀边界验证原 Build、系统指令和恢复绑定不变。这是本地已导入 Frozen 存储的交互式 SDK 执行验证；保留归档的 Frozen HTTP、无人值守权限与全新依赖安装仍有独立验收要求。
 
 此轮归档 SHA-256 为 `afa7230047626877758b44a8953a30c20ededc7967d1fc2dd75b20ba221f751b`，DSH 固定 `570ad6033c4d0954451ad8822ab47bfb2160ed4c`。脚本仅复制独立观察 fixture 到归档安装目录，生产代码保持归档原样，并记录 fixture、归档摘要和 SDK 提交。普通依赖来自固定本地图，不能作为全新安装或全部迁移完成的证明。
+
+## Frozen HTTP 完整响应的持久回放
+
+实际保留 `portable-bundle.zip` 的打包验收发现：重复请求虽然没有重新执行模型和工具，但 Responses 丢失原工具输出项、输出项 ID 和创建时间。Frozen HTTP 现将完整响应及其公开 SSE 展示事件作为 `studio/runtime-response-projection` 扩展事实保存在原 DSH Session 日志，标记 `ignorable`，并等待公开 `sessions.flush` 明确成功后才发布完成。重复请求和 Host 重启后的回放保留原时间、输出项 ID、位置、工具结果、拒绝结果和用量。持久化失败或取消不得返回完成；已追加但 flush 失败的展示记录重试时必须再次确认持久化，不覆盖原记录。
+
+展示记录绑定原 Session、Agent、Build、响应句柄及输入和模型的指纹，仅用于交付。回放仍先核对原请求历史；展示记录不能授权创建新 Session、调用模型或执行工具。若执行已完成而尚无展示记录，则从持久请求事实恢复展示，不重新执行。该间隔的进程强杀验收仍需单独补齐。
+
+`scripts/verify-studio-native-portable-runtime.mjs --source <built-maintained-dsh> --archive <Studio.tgz> --keep` 在 Node 26.5/22.19 的实际打包 Host 上验证：完整 JSON 暖/冷回放相等、暖/冷 SSE 相等、原 Native SQLite 记录不变、恰好两个 Run、每个 SDK 数字轮次与 Native 身份对应、工具意图/回执/公开调用按正式 Session delivery 身份配对、原 Build 的模型和权限不变。第一轮读、写入拒绝、回读共四次模型调用；重启后的新请求两次模型调用；回放零新调用。固定 DSH 为 `570ad6033c4d0954451ad8822ab47bfb2160ed4c`。五个受影响测试模块在两版本各 27 项通过；未跑全量。依赖仍来自固定本地图，不能作为全新安装、云端部署或全部迁移完成的证明。

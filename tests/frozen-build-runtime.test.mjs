@@ -15,7 +15,8 @@ test('Responses selects each bound model on the native session and preserves its
     projections: async ({ sessionId }) => history.has(sessionId) ? { asOfSeq: history.get(sessionId).length - 1 } : null,
     create: async ({ sessionId }) => history.set(sessionId, []),
     selectModel: async ({ sessionId, model }) => models.set(sessionId, model),
-    resolveAgent: async sessionId => ({ agent: { whenIdle: async () => {}, cancel() {}, session: { append: (type, data, options) => {
+    resolveAgent: async sessionId => ({ agent: { whenIdle: async () => {}, cancel() {}, session: { id: sessionId,
+      snapshotEvents: () => history.get(sessionId), append: (type, data, options) => {
       assert.equal(options?.ignorable, true, 'extension facts require the public DSH cold-history marker');
       history.get(sessionId).push({ type, data, seq: history.get(sessionId).length });
     } } } }),
@@ -32,7 +33,7 @@ test('Responses selects each bound model on the native session and preserves its
     },
     page: async ({ address }) => ({ records: history.get(address.sessionId).map(event => ({ type: 'event', event })) }),
   };
-  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} }, approval: { setPolicy() {} } };
+  const services = { sessionController: controller, sessions: { flush: async () => true }, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} }, approval: { setPolicy() {} } };
   const frozen = { spec: { bindings: { modelProfileId: 'profile-a', modelProfileIds: ['profile-a', 'profile-b'] } } };
   const start = () => startFrozenBuildRuntime({ ctx: { get: name => services[name], on: () => () => {} }, build: { resolve: async () => frozen },
     modelService: { profile: async id => ({ modelName: id === 'profile-a' ? 'model-a' : 'model-b' }) },
@@ -50,6 +51,7 @@ test('Responses selects each bound model on the native session and preserves its
   assert.equal(next.output_text, 'profile-a'); assert.equal(history.size, 1);
   await runtime.close(); runtime = await start();
   const replay = await (await post(firstRequest)).json();
+  assert.deepEqual(replay, first);
   assert.equal(replay.output_text, first.output_text); assert.equal(replay.id, first.id);
   assert.deepEqual(replay.metadata.agentkit.resourceChecks, first.metadata.agentkit.resourceChecks);
   assert.equal((await post({ ...firstRequest, model: 'model-a' })).status, 409);

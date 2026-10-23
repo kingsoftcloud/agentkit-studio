@@ -12,6 +12,7 @@ import { createAssistantNativeCarrierService } from './assistant-native-carrier.
 import { createFrozenHostedActions } from './frozen-hosted-actions.mjs';
 import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
 import { createAssistantPermissionModel } from './assistant-permission-model.mjs';
+import { createFrozenResponseProjection } from './frozen-response-projection.mjs';
 
 const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, 'step/end', 'turn/end']);
 
@@ -83,7 +84,8 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
   const hosted = createFrozenHostedActions({ ctx, agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, frozen, admit, model,
     models: catalog.length ? catalog.map(item => item.id) : [model], bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
     responses: createRuntimeResponsesContract({ agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, model, models: catalog.length ? catalog.map(item => item.id) : [model] }) });
-  return startBuildRuntimeHttp({ hosted, agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: nativeRun.executionPolicy, validatePrevious, assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
+  return startBuildRuntimeHttp({ hosted, agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: nativeRun.executionPolicy, validatePrevious,
+    responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 

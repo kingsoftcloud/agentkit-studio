@@ -50,3 +50,30 @@ test('Codex tool presentation facts are counted once without executing the tool 
   assert.deepEqual(result.toolCalls, [{ name: 'card', callId: 'codex:one' }]);
   assert.equal(calls.filter(call => call[0] === 'prompt').length, 1);
 });
+
+test('completed request history reconstructs presentation only; a delivery cache cannot authorize execution', async () => {
+  const events = [
+    { seq: 1, type: 'tool/call', data: { callId: 'original', name: 'read_file', arguments: '{}' } },
+    { seq: 2, type: 'tool/result', data: { message: { source: { callId: 'original' }, content: [{ type: 'text', text: 'bytes' }] } } },
+    { seq: 3, type: 'assistant/attempt', data: { message: { content: [{ type: 'text', text: 'discarded' }] } } },
+    { seq: 4, type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'checked' }, { type: 'text', text: 'done' }] } } },
+    { seq: 5, type: 'turn/end', data: { reason: { kind: 'completed' } } },
+  ];
+  let history = events;
+  const services = { agents: { withoutInitiator: work => work() }, sessionController: {
+    projections: async () => ({}), create: () => assert.fail('no new session'), prompt: () => assert.fail('no model or tool execution'),
+    resolveAgent: () => assert.fail('no new permission/model mutation'),
+  } };
+  const run = createNativeAutomationRunner({ getService: name => services[name], reuseSession: true,
+    loadReplay: async () => history, admit: () => assert.fail('no new admission') });
+  const frames = [], request = { agentId: 'a', sessionId: 's', input: 'original', occurrenceId: 'once', onFrame: frame => frames.push(frame) };
+  assert.equal((await run(request)).output, 'done');
+  assert.equal(frames.filter(frame => frame.kind === 'event' && frame.value.type === 'tool/result').length, 1);
+  assert.ok(frames.some(frame => frame.value.chunk?.text === 'checked'));
+  assert.ok(frames.some(frame => frame.value.outcome?.eventType === 'assistant/attempt'));
+  frames.length = 0;
+  assert.equal((await run({ ...request, requireReplay: true })).output, 'done');
+  assert.equal(frames.length, 0);
+  history = null;
+  await assert.rejects(run({ ...request, requireReplay: true }), { code: 'RUNTIME_REQUEST_HISTORY_UNAVAILABLE' });
+});

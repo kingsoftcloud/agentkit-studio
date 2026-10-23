@@ -11,7 +11,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (!value) throw Object.assign(new Error(`自动化需要 DSH ${name} 服务`), { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     return value;
   };
-  const run = async ({ agentId, sessionId, occurrenceId, input, model, requestFingerprint, buildId = '', timeoutSeconds, signal: callerSignal, onFrame }) => service('agents').withoutInitiator(async () => {
+  const run = async ({ agentId, sessionId, occurrenceId, input, model, requestFingerprint, requireReplay = false, buildId = '', timeoutSeconds, signal: callerSignal, onFrame }) => service('agents').withoutInitiator(async () => {
     const startedAt = Date.now();
     const controller = service('sessionController');
     const expiry = AbortSignal.timeout(timeoutSeconds ? Math.max(1000, Number(timeoutSeconds) * 1000) : timeoutMs);
@@ -21,8 +21,14 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (existing && loadReplay) {
       const replay = await loadReplay({ controller, sessionId, occurrenceId, input, model, requestFingerprint, signal });
       signal.throwIfAborted();
-      if (replay) return nativeRunResult(replay, sessionId, startedAt);
+      if (replay) {
+        if (!requireReplay && onFrame) replayNativeRequestFrames(replay, onFrame);
+        return nativeRunResult(replay, sessionId, startedAt);
+      }
     }
+    // A committed delivery projection restricts execution; it never grants
+    // permission to replace missing original engine/request history.
+    if (requireReplay) throw Object.assign(new Error('Original request history unavailable'), { code: 'RUNTIME_REQUEST_HISTORY_UNAVAILABLE', status: 409 });
     if (!existing) {
       const admission = await admit(agentId, buildId);
       await controller.create({ sessionId, agentPreset: admission.presetId });
@@ -71,6 +77,22 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
   };
   runner.executionPolicy = UNATTENDED_EXECUTION_POLICY;
   return runner;
+}
+
+function replayNativeRequestFrames(events, onFrame) {
+  for (const event of events) {
+    if (['assistant/message', 'assistant/attempt'].includes(event.type)) {
+      const attemptId = `durable-request-${event.seq}`;
+      const chunks = event.data.stream?.filter(frame => frame.type === 'chunk') ?? [];
+      if (chunks.length) for (const frame of chunks) onFrame({ kind: 'assistant', value: { ...frame, attemptId } });
+      else for (const [index, block] of (event.data.message?.content || []).entries()) {
+        const type = block.type === 'text' ? 'text-delta' : block.type === 'reasoning' ? 'reasoning-delta' : null;
+        if (type) onFrame({ kind: 'assistant', value: { type: 'chunk', attemptId, chunk: { type, index, text: block.text || '' } } });
+      }
+      onFrame({ kind: 'assistant', value: { type: 'end', attemptId, outcome: { kind: 'committed', eventType: event.type } } });
+    }
+    onFrame({ kind: 'event', value: event });
+  }
 }
 
 function nativeRunResult(events, sessionId, startedAt) {
