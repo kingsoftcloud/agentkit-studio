@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdir, lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolvePortableNativeBuiltins } from './portable-native-tools.mjs';
+import { nativeVisionProfileId } from './native-vision-model.mjs';
 
 export const portableError = (code, message) => Object.assign(new Error(message), { code });
 export const sha256 = data => createHash('sha256').update(data).digest('hex');
@@ -83,6 +84,8 @@ export async function capturePortableResources({ record, models, adapters, confi
   }
   const boundModels = [...new Set([bindings.modelProfileId, ...(bindings.modelProfileIds || []).map(idOf)].filter(Boolean))];
   if (!boundModels.length) throw portableError('PORTABLE_MODEL_REQUIRED', '请先为 Agent 显式绑定模型，再导出运行包');
+  const visionId = nativeVisionProfileId(record);
+  if (visionId && !boundModels.includes(visionId)) boundModels.push(visionId);
   const profiles = [];
   for (const id of boundModels) {
     let profile;
@@ -94,9 +97,12 @@ export async function capturePortableResources({ record, models, adapters, confi
       throw error;
     }
     const credentialName = requireEnv(refName(profile.credentialName) || `AGENTKIT_BUNDLE_MODEL_${sha256(id).slice(0, 12).toUpperCase()}`, id, 'model');
+    rejectInlineSecrets(profile.parameters);
     profiles.push({ id, provider: profile.provider, modelName: profile.modelName, baseUrl: endpoint(profile.baseUrl),
       credentialName, enabled: true, default: profiles.length === 0, ...(profile.input ? { input: profile.input } : {}),
-      ...(profile.codexApi ? { codexApi: profile.codexApi } : {}) });
+      ...(profile.codexApi ? { codexApi: profile.codexApi } : {}),
+      ...Object.fromEntries(['protocol', 'contextWindow', 'maxOutputTokens', 'requestTimeoutMs', 'parameters']
+        .filter(key => profile[key] !== undefined).map(key => [key, structuredClone(profile[key])])) });
   }
   const mcps = [];
   for (const binding of bindings.mcpServers || []) {

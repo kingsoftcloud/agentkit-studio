@@ -8,7 +8,7 @@ import { studioBrowserDefinition } from '../../packages/agentkit-harness/src/nat
 
 /** Preset-owned resources; session and ledger scope, never model arguments, select the owner. */
 export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, browserExecutablePath, evidenceRoot,
-  createOwner = createStudioBrowserWorkspacePort } = {}) {
+  createOwner = createStudioBrowserWorkspacePort, toolTimeoutForSession = () => 110000 } = {}) {
   const workspace = resolve(workspaceRoot), pinnedRoot = realpathSync(workspace);
   invariant(browserExecutablePath === undefined || typeof browserExecutablePath === 'string'
     && isAbsolute(browserExecutablePath), 'studio_native_browser_executable_invalid');
@@ -23,18 +23,21 @@ export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, brow
     scopeKey(scope);
     return `studio-browser-${createHash('sha256').update(canonical({
       schema: 'agentkit.studio-browser-owner/v1', root: pinnedRoot, sessionId, scope,
+      ...(toolTimeoutForSession(sessionId) !== 110000 ? { toolTimeoutMs: toolTimeoutForSession(sessionId) } : {}),
     })).digest('hex')}`;
   };
   const owner = (sessionId, scope) => {
     invariant(!closed, 'studio_native_browser_closed');
     invariant(realpathSync(workspace) === pinnedRoot, 'workspace_root_changed');
     const runtimeId = identity(sessionId, scope);
+    const toolTimeoutMs = toolTimeoutForSession(sessionId);
     if (!owners.has(runtimeId)) {
       const record = { lifetime: new AbortController(), active: new Set(), closing: null };
       const pending = Promise.resolve().then(() => {
         invariant(!closed, 'studio_native_browser_closed');
         record.lifetime.signal.throwIfAborted();
         return createOwner({ scope: structuredClone(scope), root: workspace, runtimeId,
+          toolTimeoutMs,
           reobserveAfterLoss: true, createBrowser: backend, ...(evidenceRoot ? { evidenceRoot: join(evidenceRoot, runtimeId) } : {}) });
       });
       record.pending = pending;

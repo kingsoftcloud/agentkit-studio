@@ -39,3 +39,11 @@ test('the bound Studio profile actually restricts core tools when web observatio
   assert.equal(webObservationDue(due, config), true);
   assert.deepEqual(browserTaskTools(due, config, config.tools).map(tool => tool.name), [browser.name]);
 });
+
+test('vision reserves one observation and one final model call within the explicit cap', () => {
+  for (const cap of [null, 1, 2, 8]) {
+    const policy = bindNativeTaskPolicy({ tools: [], vision: true, nativeLimits: { maxModelCalls: cap } });
+    assert.equal(policy.limits.finalizationReserveModelCalls, cap === null ? 2 : Math.min(2, cap));
+  }
+  assert.throws(() => bindNativeTaskPolicy({ tools: [], vision: 'yes' }), /vision_invalid/);
+});

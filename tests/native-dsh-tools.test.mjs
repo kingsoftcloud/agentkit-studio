@@ -43,6 +43,20 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
 
+test('separate vision deadlines are Session-owned formal definitions and dispose independently', async t => {
+  const h = setup(t, ['browser_inspect_workspace']);
+  const before = h.gateway.definitions(h.agent, []);
+  const dispose = h.gateway.bindVision({ sessionId: 'session', requestTimeoutMs: 150000 });
+  assert.equal(h.gateway.definitions(h.agent, [])[0].timeoutMs, 261000);
+  assert.equal(h.gateway.definitions({ session: { id: 'other' } }, [])[0].timeoutMs, 110000);
+  assert.throws(() => h.gateway.bindVision({ sessionId: 'session', requestTimeoutMs: 1 }), /already_bound/);
+  const otherDispose = h.gateway.bindVision({ sessionId: 'other', requestTimeoutMs: 200000 });
+  dispose(); dispose();
+  assert.deepEqual(h.gateway.definitions(h.agent, []), before);
+  assert.equal(h.gateway.definitions({ session: { id: 'other' } }, [])[0].timeoutMs, 311000);
+  otherDispose();
+});
+
 test('readonly completion gateway reconnects to a real local command using the original SQLite launch receipt', async t => {
   const h = setup(t, ['run_command', 'read_command_output']), store = new SqliteRunStore(join(h.workspaceRoot, '..', 'runs.sqlite'));
   t.after(() => store.close());

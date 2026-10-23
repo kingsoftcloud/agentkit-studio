@@ -1,0 +1,11 @@
+import { invariant } from '../packages/agentkit-harness-core/dist/index.mjs';
+
+/** Separate screenshot observer; it is never a conversation model selection. */
+export function nativeVisionProfileId(record) {
+  const id = record.spec?.bindings?.visionModelProfileId;
+  if (id === undefined || id === null) return null;
+  invariant(typeof id === 'string' && id.trim() === id && id.length > 0 && id.length <= 256,
+    'studio_native_vision_model_binding_invalid');
+  invariant(record.spec?.runtime?.type === 'harness', 'studio_native_vision_runtime_invalid');
+  return id;
+}

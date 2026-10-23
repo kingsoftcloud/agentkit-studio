@@ -60,6 +60,20 @@ async function owner(t, options = {}) {
     hooks(value) { hooks = value; }, get disposed() { return disposed; } };
 }
 
+test('trusted combined vision deadline preserves strict full formal admission at the browser owner', async t => {
+  const h = await owner(t, { toolTimeoutMs: 261000 });
+  assert.equal(h.port.definition.timeoutMs, 261000);
+  const original = request('vision-page');
+  assert.equal((await h.port.execute(original)).content.code, 'scope_or_tool_mismatch');
+  const bound = { ...original, definition: h.port.definition };
+  const ok = await h.port.execute(bound);
+  assert.equal(ok.status, 'ok'); assert.ok(ok.browserObservation.screenshot);
+  const forged = { ...bound, definition: { ...bound.definition, description: 'foreign' } };
+  const count = h.trace.length;
+  assert.equal((await h.port.execute(forged)).content.code, 'scope_or_tool_mismatch');
+  assert.equal(h.trace.length, count, 'changing a non-timeout formal field cannot execute');
+});
+
 test('the public schema and parser agree on the complete Studio action protocol', () => {
   const actions = [{ type: 'click', selector: '#start', button: 'right', duration_ms: 20 }, { type: 'fill', element_ref: 'e1', value: '你好' },
     { type: 'press', key: 'Enter' }, { type: 'move', x: 1279, y: 719, steps: 30 },

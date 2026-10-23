@@ -54,6 +54,33 @@ test('Native export/import retain the frozen engine when the target Host live de
   assert.deepEqual(restored.executionEngine, (await verifyPortableBundle(zip)).definition.executionEngine);
 });
 
+test('portable Native captures a separate vision profile with protocol, budgets and target credentials', async t => {
+  const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { visionModelProfileId: 'vision-only' } });
+  const prior = f.models.profile;
+  const options = { protocol: 'openai-chat', contextWindow: 32000, maxOutputTokens: 2048,
+    requestTimeoutMs: 140000, parameters: { temperature: 0.1 } };
+  f.models.profile = async id => id === 'vision-only' ? { ...await prior(id), modelName: 'image-observer',
+    credentialName: 'VISION_TARGET_KEY', input: ['text', 'image'], ...options } : prior(id);
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  const { manifest } = verifyPortableBundle(zip);
+  assert.deepEqual(manifest.resources.profiles.map(profile => profile.id), ['configured-model', 'vision-only']);
+  assert.deepEqual(manifest.resources.profiles.find(profile => profile.id === 'vision-only').parameters, options.parameters);
+  assert.equal(zip.includes(Buffer.from('source-model-secret')), false);
+  const target = join(f.root, 'target-vision'), imported = await importPortableBundle(zip, target);
+  await rm(join(f.root, 'source-store'), { recursive: true });
+  const env = { AGENTKIT_HOME: target };
+  for (const requirement of imported.requirements) env[requirement.name] = 'target-only-key';
+  const configuration = createGlobalConfiguration({ env, home: target, inheritLegacy: false });
+  const resolved = await createModelService({ configuration, credentials: { resolve: async name => ({ value: env[name] }) } }).profile('vision-only');
+  assert.equal(resolved.modelName, 'image-observer'); assert.deepEqual(resolved.input, ['text', 'image']);
+  for (const [key, value] of Object.entries(options)) assert.deepEqual(resolved[key], value);
+  assert.equal(resolved.apiKey, 'target-only-key');
+  assert.equal(manifest.resources.profiles[1].default, false, 'observer is not a conversation picker default');
+  const restored = await createStudioBuild({ storeDir: join(target, 'studio') }).resolve(imported.agentId, imported.buildId);
+  assert.equal(restored.spec.bindings.visionModelProfileId, 'vision-only');
+});
+
 test('export and import retain exact build, file modes, resource identity and target-only credentials', async t => {
   const f = await fixture(t), result = await f.portable.prepare(f.agentId, f.record.id);
   const downloaded = await f.portable.download(f.agentId, f.record.id, result.bundleId), zip = Buffer.from(downloaded.base64, 'base64');

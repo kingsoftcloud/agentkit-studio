@@ -26,6 +26,8 @@ import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../providers/native-hooks.mjs';
 import { bindStudioNativeMemoryFlush, composeStudioNativeHooks } from '../../providers/native-memory.mjs';
 import { bindStudioNativeMemoryHost, extendNativeMemoryGoal } from '../../providers/native-memory-host.mjs';
 import { studioNativeComponentStatus } from '../../providers/native-component-status.mjs';
+import { nativeVisionProfileId } from '../../native-vision-model.mjs';
+import { createStudioNativeVisionBinding } from '../../providers/native-vision-binding.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -98,7 +100,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         && record.metadata.revision === binding.agentRevision && record.spec?.runtime?.type === 'harness', 'studio_native_revision_binding_changed');
       if (binding.buildId) invariant(selectedNativeBuildContract({ ...record, buildId: binding.buildId }) === NATIVE_DSH_TURN_CONTRACT,
         'studio_native_build_engine_mismatch');
-      const ids = profileIds(record), profiles = await Promise.all((ids.length ? ids : ['']).map(id => models.profile(id)));
+      const ids = profileIds(record), profiles = await Promise.all((ids.length ? ids : [''])
+        .map(async id => structuredClone(await models.profile(id))));
       signal.throwIfAborted();
       const selection = original ? { ...original.capsule.source,
         ...(original.capsule.maxTokens === null ? {} : { maxTokens: original.capsule.maxTokens }) }
@@ -115,6 +118,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       }
       invariant(selected, 'studio_native_bound_model_unavailable');
       const description = profileDescription(selected);
+      const visionId = nativeVisionProfileId(record);
+      const visionProfile = visionId ? structuredClone(await models.profile(visionId)) : null;
+      signal.throwIfAborted();
+      const visionDescription = visionProfile ? profileDescription(visionProfile) : null;
+      invariant(!visionDescription || visionDescription.input.includes('image'), 'studio_native_vision_model_image_input_required');
       const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens });
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
       const inputSelection = original ? admittedModelSelection(agent, input.assembly) : { ...selection, ...source };
@@ -138,6 +146,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
       const sessionId = String(agent.session.id);
       const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
+      // Pin the combined browser + observer deadline in the same formal tool
+      // definition used by the Kernel, registry gateway and browser owner.
+      const visionDispose = visionDescription && typeof binding.nativeTools.bindVision === 'function'
+        ? binding.nativeTools.bindVision({ sessionId, requestTimeoutMs: visionDescription.requestTimeoutMs }) : undefined;
+      try {
       // Lock the non-memory tool bundle before Memory tools are bound so the
       // Memory locked digest can bind it without a circular dependency. The
       // profile/plugin digests pin the Build's model and non-hook bindings.
@@ -148,6 +161,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ...(binding.nativeTools.skillDisclosureBindingDigest ? { skillDisclosureBindingDigest: binding.nativeTools.skillDisclosureBindingDigest } : {}),
         commandBinding: binding.nativeTools.commandBinding ?? null,
         ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
+        ...(visionDescription ? { visionModel: visionDescription } : {}),
         ...(binding.nativeTools.workspaceMutationContract ? { workspaceMutationContract: binding.nativeTools.workspaceMutationContract } : {}),
         workspaceSyntax: binding.nativeTools.workspaceSyntax ?? null });
       // Compose the local-default Memory owner for this Build (Revision or
@@ -165,14 +179,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const sealedCapsule = nativeRecoveryBinding({ binding, input, source, selection, systemPrompt });
       const memoryHost = bindStudioNativeMemoryHost({ record, scope, sessionId, store, storeDir,
         buildId: binding.buildId ?? null, context, ctx, bundleDigest, profileDigest, pluginLockDigest, sealedCapsule });
-      let memoryDispose, registeredContext;
+      let memoryDispose, registeredContext, vision;
       try {
         if (memoryHost?.port && typeof binding.nativeTools.bindMemory === 'function')
           memoryDispose = binding.nativeTools.bindMemory(memoryHost);
-      } catch (error) { memoryHost?.close(); throw error; }
+      } catch (error) { visionDispose?.(); memoryHost?.close(); throw error; }
       try {
       const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
-      const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits });
+      const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits, vision: !!visionDescription });
       const materialized = original ? { memoryWrite: false } : await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
         toolAdapter: {}, agent, agentId: binding.agentId, userId: 'local-user', resourceMode: 'context-only' });
       // A memory write is an external effect and must get its own Native intent.
@@ -205,6 +219,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           } }) };
       };
       const parentModel = modelBinding(selected, selectedId, context), roles = nativeChildRoles(record.spec);
+      if (visionProfile) {
+        const observer = modelBinding(visionProfile, visionId);
+        vision = createStudioNativeVisionBinding({ scope, sessionId, store, model: observer.model,
+          profile: { ...observer.profile, imageInputMode: 'native' }, isClosed: () => lifetime.signal.aborted });
+      }
       invariant(!roles.length || canonical(binding.nativeTools.childBinding?.roles) === canonical(roles), 'studio_native_child_revision_binding_changed');
       const children = await createStudioNativeChildren({ roles, scope, sessionId, store, tools, mediaSources: childMediaSources,
         isClosed: () => lifetime.signal.aborted,
@@ -247,6 +266,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const componentBinding = binding.nativeTools.componentContract ? studioNativeComponentStatus({ record,
         modelName: selected.modelName, workspaceRoot, tools, commandBinding: binding.nativeTools.commandBinding,
         localMemoryBound: Boolean(memoryHost?.policy.enabled) }) : null;
+      const toolPorts = binding.nativeTools.forAgent(agent, { scope, store,
+        ...(componentBinding ? { componentBinding } : {}), ...(children ? { children } : {}) });
+      if (vision) toolPorts.tools = vision.wrapTools(toolPorts.tools);
       return { scope, buildId, source,
         // Optional completed-Turn consumption: the Memory owner consumes only
         // original current-Run human inputs after the committed terminal. It
@@ -287,7 +309,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             }
             await binding.nativeTools.releaseSession?.(request);
           } finally {
-            registeredContext?.close(); memoryDispose?.(); memoryHost?.close();
+            vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close();
           }
         },
         taskContractFactory: facts => extendNativeMemoryGoal(facts.goal,
@@ -313,6 +335,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(binding.nativeTools.commandBinding ? { commandBinding: binding.nativeTools.commandBinding } : {}),
           ...(componentBinding ? { componentBinding } : {}),
           ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
+          ...(vision ? { visionBinding: vision.binding } : {}),
           mcpResultContract: binding.nativeTools.mcpResultContract ?? null,
           ...(binding.nativeTools.skillDisclosureBindingDigest ? { skillDisclosureBindingDigest: binding.nativeTools.skillDisclosureBindingDigest } : {}),
           mcpJsonCodec: binding.nativeTools.mcpJsonCodec ?? null,
@@ -329,9 +352,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           nativeGoalContract({ sessionId, goal: admission.objective }), { providerRef: memoryProviderRef }),
         instructions, inputMessages: admission.messages,
         tools, limits: { ...taskPolicy.limits, effectTimeoutMs: Math.max(120000, description.requestTimeoutMs + 10000,
+          ...(visionDescription ? [description.requestTimeoutMs + visionDescription.requestTimeoutMs + 10000,
+            ...tools.filter(tool => tool.name === 'browser_inspect_workspace').map(tool => tool.timeoutMs + visionDescription.requestTimeoutMs + 10000)] : []),
           (hooks?.requiredEffectTimeoutMs ?? 0) + 1,
           ...roles.map(role => role.timeoutSeconds * 1000 + 15000), ...tools.map(tool => tool.timeoutMs + 10000)) } },
-        ports: { ...binding.nativeTools.forAgent(agent, { scope, store, ...(componentBinding ? { componentBinding } : {}), ...(children ? { children } : {}) }),
+        ports: { ...toolPorts,
           ...(hooks ? { hooks } : {}),
           ...(children ? { children: children.owner } : {}), verification: memoryVerification ?? verification,
           context: { ...context.port, ...(contextSources.length ? { readSource: readContextSource } : {}) }, input: { prepare: async request => {
@@ -362,7 +387,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           return { status: 'admitted', messages };
         } }, model: parentModel.model },
       };
-      } catch (error) { registeredContext?.close(); memoryDispose?.(); memoryHost?.close(); throw error; }
+      } catch (error) { vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close(); throw error; }
+      } catch (error) { visionDispose?.(); throw error; }
   };
   const resolveRestoredBinding = async (payload, original) => {
     invariant(typeof agentEvents === 'function' && typeof assembleContextFor === 'function', 'studio_native_recovery_dispatch_unavailable');

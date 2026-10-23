@@ -29,13 +29,14 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
   const workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root }), ledger = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
-  const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: { ...spec, bindings: { modelProfileIds: ['fixture'] } } });
+  const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: { ...spec, bindings: { modelProfileIds: ['fixture'], ...spec.bindings } } });
   const bridge = contextSources ? createRuntimeBridge() : null;
   const retireContext = (contextSources?.(record) ?? []).map(source => bridge.nativeContextSources.register(source));
   const events = [], definitions = new Map(), requests = [];
   let apiKey = 'secret-one', unregisters = 0;
   const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned', baseUrl: 'https://model.invalid/v1', ...profile }] };
-  const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: apiKey }) } });
+  const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: apiKey }) },
+    fetchImpl: async () => new Response('{"data":[]}', { headers: { 'content-type': 'application/json' } }) });
   const session = { id: 'session', append: (type, data, options) => events.push({ type, data, ...options, seq: events.length + 1 }) };
   session.append('turn/start', { turn: 1 });
   const services = { sessions: { flush: async () => true }, llm: {}, sessionProjections: {
@@ -81,6 +82,80 @@ const contextRegistration = (record, extra = {}) => ({ sourceRef: 'plugin://host
   configuration: { contract: STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT, sources: [{ sourceId: 'host.proof',
     priority: 3, timeoutMs: 1000, required: true, maxTokens: 1000, maxBytes: 16000 }] },
   authorize: async () => 'allow', callback: async () => ({ items: [{ content: 'SOURCE_DATA_CANNOT_GRANT_APPROVAL' }] }), ...extra });
+
+for (const frozen of [false, true]) test(`Native Host binds a separate screenshot model to the original tool receipt (Frozen=${frozen})`, async t => {
+  const h = await setup(t, { sqlite: true, spec: { bindings: { visionModelProfileId: 'observer' } },
+    respond: (_count, body) => ({ choices: [{ index: 0,
+      delta: body.model === 'screenshot-model' ? { content: 'Visible login form' }
+        : body.messages.some(message => message.role === 'tool') ? { content: 'Finished' }
+          : { tool_calls: [{ index: 0, id: 'inspect-page', type: 'function',
+            function: { name: 'browser_inspect_workspace', arguments: '{"path":"app.html"}' } }] },
+      finish_reason: body.model === 'screenshot-model' || body.messages.some(message => message.role === 'tool') ? 'stop' : 'tool_calls' }] }) });
+  h.values.modelProfiles.push({ id: 'observer', provider: 'openai-compatible', modelName: 'screenshot-model',
+    baseUrl: 'https://observer.invalid/v1', input: ['text', 'image'], requestTimeoutMs: 150000 });
+  let browserCalls = 0, releases = 0;
+  h.payload.binding.nativeTools = { definitions: () => [studioBrowserDefinition()], releaseSession: async () => { releases++; },
+    forAgent: () => ({ tools: { execute: async () => {
+      browserCalls++;
+      return { status: 'ok', content: { page: 'app.html' }, context: { content: 'Observed page', media: [{
+        type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' } }] },
+        resourceUsage: { modelCalls: 0, toolCalls: 1, inputTokens: 0, outputTokens: 0, cost: 0 } };
+    } } }) };
+  if (frozen) h.payload.binding.buildId = 'vision-build';
+  await h.host.executeTurn(h.payload);
+  const original = h.ledger.load(h.head().scope, h.head().runId);
+  assert.equal(original.snapshot.phase, 'completed');
+  assert.deepEqual(h.requests.map(request => JSON.parse(request.options.body).model), ['pinned', 'screenshot-model', 'pinned']);
+  assert.equal(h.requests[1].url, 'https://observer.invalid/v1/chat/completions');
+  const observed = JSON.parse(h.requests[1].options.body);
+  assert.match(JSON.stringify(observed.messages), /observation_context/);
+  assert.match(JSON.stringify(observed.messages), /Finish/);
+  assert.equal(JSON.stringify(observed.tools ?? []).includes('browser_inspect_workspace'), false);
+  const receipt = original.receipts.flatMap(receipt => receipt.result?.results ?? []).find(result => result.content?.vision_description);
+  assert.equal(receipt.content.vision_description, 'Visible login form');
+  assert.equal(receipt.content.vision_description_trust, 'untrusted_model_output');
+  assert.equal(receipt.resourceUsage.modelCalls, 1);
+  assert.equal(original.snapshot.usage.modelCalls, 2);
+  assert.equal(original.snapshot.descendantUsage.modelCalls, 1);
+  assert.equal(original.configuration.limits.finalizationReserveModelCalls, 2);
+  assert.ok(original.configuration.limits.effectTimeoutMs >= 270000);
+  assert.equal(original.configuration.profile.profileId, 'fixture');
+  assert.equal(JSON.stringify(original.configuration).includes('secret-one'), false);
+  assert.equal(browserCalls, 1); assert.equal(releases, 1);
+  if (frozen) assert.equal(h.resolutions[0].buildId, 'vision-build');
+});
+
+test('Native Host rejects a missing or non-image observer before starting a Run', async t => {
+  const h = await setup(t, { spec: { bindings: { visionModelProfileId: 'observer' } } });
+  await assert.rejects(h.host.executeTurn(h.payload), { code: 'MODEL_NOT_FOUND' });
+  h.values.modelProfiles.push({ id: 'observer', provider: 'openai-compatible', modelName: 'text-only', baseUrl: 'https://observer.invalid/v1' });
+  await assert.rejects(h.host.executeTurn(h.payload), /studio_native_vision_model_image_input_required/);
+  assert.equal(h.head(), null); assert.equal(h.requests.length, 0);
+});
+
+test('observer configuration drift after browser execution cannot call a replacement endpoint', async t => {
+  const h = await setup(t, { sqlite: true, spec: { bindings: { visionModelProfileId: 'observer' } },
+    respond: count => ({ choices: [{ index: 0, delta: count === 1
+      ? { tool_calls: [{ index: 0, id: 'browser', type: 'function', function: { name: 'browser_inspect_workspace', arguments: '{"path":"app.html"}' } }] }
+      : { content: 'Finished' }, finish_reason: count === 1 ? 'tool_calls' : 'stop' }] }) });
+  const profile = { id: 'observer', provider: 'openai-compatible', modelName: 'screenshot-model',
+    baseUrl: 'https://observer.invalid/v1', input: ['text', 'image'] };
+  h.values.modelProfiles.push(profile);
+  let browserCalls = 0;
+  h.payload.binding.nativeTools = { definitions: () => [studioBrowserDefinition()], forAgent: () => ({ tools: {
+    execute: async () => { browserCalls++; profile.baseUrl = 'https://replacement.invalid/v1';
+      return { status: 'ok', content: { page: 'app.html' }, context: { content: 'Observed', media: [{
+        type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' } }] } }; },
+  } }) };
+  await h.host.executeTurn(h.payload);
+  assert.equal(browserCalls, 1); assert.equal(h.requests.length, 2);
+  assert.ok(h.requests.every(request => request.url === 'https://model.invalid/v1/chat/completions'));
+  const record = h.ledger.load(h.head().scope, h.head().runId);
+  const result = record.receipts.flatMap(receipt => receipt.result?.results ?? []).find(result => result.content?.page);
+  assert.equal(result.status, 'ok', 'known browser execution remains the authoritative result');
+  assert.equal(result.content.vision_description_status, 'unavailable');
+  assert.equal(result.resourceUsageReported, false, 'missing model usage is not presented as known zero');
+});
 
 for (const reported of [true, false]) test(`Native usage view preserves tool counters and completeness=${reported} after SQLite reopen without execution`, async t => {
   const h = await setup(t, { sqlite: true, respond: count => ({ choices: [{ index: 0,

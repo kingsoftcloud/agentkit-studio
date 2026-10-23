@@ -192,6 +192,19 @@ test('model abort after generate → valid usage KEPT as lower bounds, modelCall
   assert.equal(r.resourceUsageReported, true, 'usage known because model returned valid data');
 });
 
+test('a caption returned after cancellation does not populate a later request cache', async () => {
+  const ac = new AbortController(); let calls = 0;
+  const image = makeBrowserResult({ media: makeImageBlock() });
+  const port = createNativeVisionBrowser({ browser: makeBrowser([image, image]),
+    model: { generate: async () => { calls++; if (calls === 1) ac.abort();
+      return { kind: 'final_candidate', text: calls === 1 ? 'late caption' : 'current caption', toolCalls: [], usage: emptyUsage() }; } },
+    profile: makeVisionProfile(), assertCurrent: assertCurrentTrue });
+  await port.execute(makeRequest({ signal: ac.signal }));
+  const current = await port.execute(makeRequest());
+  assert.equal(calls, 2); assert.equal(current.content.vision_description, 'current caption');
+  assert.equal(current.content.vision_description_cache_hit, false);
+});
+
 test('signal abort after browser → browser result preserved, no model call', async () => {
   const ac = new AbortController();
   let called = false;

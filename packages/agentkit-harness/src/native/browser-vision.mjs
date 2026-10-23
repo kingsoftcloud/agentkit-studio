@@ -323,7 +323,7 @@ export function createNativeVisionBrowser({ browser, model, profile, actions = D
       // If signal aborted after model returned, we still keep valid usage.
       // visionUsageKnown stays true if we got valid tokens; abort doesn't discard them.
 
-      if (description && imageDigest) {
+      if (description && imageDigest && !sealedSignal.aborted) {
         if (captionCache.size >= MAX_CACHE) captionCache.delete(captionCache.keys().next().value);
         captionCache.set(imageDigest, description);
       }

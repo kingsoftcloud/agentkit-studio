@@ -36,8 +36,11 @@ function launchLabel(value) {
 
 export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, runtimeId, createBrowser,
   reobserveAfterLoss = false, evidenceRoot, serverFactory = createBrowserWorkspaceServer,
+  toolTimeoutMs = 110000,
   sleep = (ms, signal) => delay(ms, undefined, { signal }) } = {}) {
   scopeKey(rawScope);
+  if (!Number.isSafeInteger(toolTimeoutMs) || toolTimeoutMs < 110000) fail('browser_owner_timeout_invalid');
+  const definition = { ...studioBrowserDefinition(), timeoutMs: toolTimeoutMs };
   if (typeof reobserveAfterLoss !== 'boolean' || typeof createBrowser !== 'function'
     || typeof runtimeId !== 'string' || !runtimeId.trim() || !isAbsolute(root ?? '')) fail('browser_owner_configuration_invalid');
   const scope = structuredClone(rawScope), workspace = realpathSync(root), workspaceRevision = hash(workspace);
@@ -137,10 +140,10 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
   }
 
   return {
-    definition: studioBrowserDefinition(),
+    get definition() { return structuredClone(definition); },
     async execute(request) {
       if (!same(request.scope, scope) || request.call?.name !== 'browser_inspect_workspace'
-        || !same(request.definition, studioBrowserDefinition())) return { status: 'error', content: { code: 'scope_or_tool_mismatch' } };
+        || !same(request.definition, definition)) return { status: 'error', content: { code: 'scope_or_tool_mismatch' } };
       const signal = combine(request.signal); signal.throwIfAborted();
       let input, entry, target;
       try {

@@ -38,6 +38,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
+  const visionTimeouts = new Map();
   const pinnedRoot = realpathSync(workspace), hasSkills = Boolean(config.skillDefinitions?.length);
   const skillSource = hasSkills ? createStudioNativeSkillSource({ definitions: structuredClone(config.skillDefinitions) }) : null;
   const disclosureNames = new Set(skillSource?.source.refs.length ? nativeSkillDisclosureDefinitions().map(tool => tool.name) : []);
@@ -64,6 +65,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     formal.set(definition.name, definition); return definition.name;
   }));
   const browserTools = createNativeDshBrowserTools({ workspaceRoot: workspace, createBrowser, browserExecutablePath,
+    toolTimeoutForSession: sessionId => visionTimeouts.get(sessionId)?.timeoutMs ?? 110000,
     evidenceRoot: join(stateDir, 'browser-evidence') });
   const browserName = browserTools.definition.name;
   formal.set(browserName, browserTools.definition);
@@ -391,6 +393,15 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   return {
     close,
     bindMemory,
+    bindVision({ sessionId, requestTimeoutMs }) {
+      invariant(!closed && typeof sessionId === 'string' && sessionId.trim()
+        && Number.isSafeInteger(requestTimeoutMs) && requestTimeoutMs > 0
+        && Number.isSafeInteger(110000 + requestTimeoutMs + 1000), 'studio_native_vision_timeout_invalid');
+      invariant(!visionTimeouts.has(sessionId), 'studio_native_vision_session_already_bound');
+      const owner = { timeoutMs: 110000 + requestTimeoutMs + 1000 };
+      visionTimeouts.set(sessionId, owner);
+      return () => { if (visionTimeouts.get(sessionId) === owner) visionTimeouts.delete(sessionId); };
+    },
     argumentEncoding,
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     componentContract: builtinNames.has('component_status') ? NATIVE_COMPONENT_TOOLS_CONTRACT : null,
@@ -512,7 +523,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           if (memDef) return structuredClone(memDef);
         }
         const exact = builtinNames.has(name) ? formal.get(name) : null;
-        if (exact) return structuredClone(exact);
+        if (exact) return { ...structuredClone(exact), ...(name === browserName && visionTimeouts.has(String(agent?.session?.id))
+          ? { timeoutMs: visionTimeouts.get(String(agent.session.id)).timeoutMs } : {}) };
         const schema = schemas.get(name);
         invariant(schema, `studio_native_tool_schema_missing:${name}`);
         const mcpSchema = mcpSchemas.get(name);

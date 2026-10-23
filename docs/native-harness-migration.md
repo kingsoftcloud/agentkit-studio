@@ -525,7 +525,13 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 
 `createNativeVisionBrowser` 对应参考 `browser_adapters/native_vision.py`，通过宿主绑定的独立图片模型描述已捕获截图。说明标为不可信模型输出，不能改变原浏览器结果、授予执行权限或宣告任务完成。模型必须明确接受 native 图片；当前工具预算不足、浏览器结果未知或需审批时不额外调用。缓存固定完整 profile、Run、Session、目标修订及截图内容；命中不新增模型用量。已知 token/cost 下界与“用量是否完整”分开记录，未知不能变成零；缓存命中保留原浏览器用量状态。说明及观察文本的长度按 Unicode 码点计算。
 
-真实 Claude `4cf2f0a` 两个交付文件经父级审查、补充缓存完整性、图片能力和 Unicode 边界后，在 Node 26.5/22.19 各通过 36 项定向验证。包含实际 NativeKernel、SQLite、ToolAuthority 及真实 ModelPort 的确定性 SSE 编解码；数据库重开后再次推进终态 Run 不执行模型或工具，记录不变。浏览器端口在这些测试中使用确定性截图替身，此处不作为真实浏览器验收。Studio 独立视觉模型选择、Frozen 绑定、预算保留及生产端口组装尚未接通；此模块不能作为视觉产品能力已完成的证明。
+真实 Claude `4cf2f0a` 的底层端口及 `0ba5cec` 的宿主包装器经父级实际审查、修正后，接入 `createStudioNativeHarness`。在 Agent 的 `spec.bindings.visionModelProfileId` 显式填写图片模型的资源 ID；普通 `modelProfileId/modelProfileIds` 仍选择对话模型。观察模型的 Host profile 必须声明 `input: ["text", "image"]`，其凭证继续由 Host 解析。未指定观察模型时沿用原行为。这里只给 `browser_inspect_workspace` 增加截图说明，其他工具及原端口的恢复接口保持可用；说明不替代浏览器事实或 Host 验收结论。
+
+观察 profile 的完整配置摘要进入宿主绑定及 Memory plugin lock，运行时每次重新解析凭据并校验模型配置；端点、协议或预算漂移不能改用新配置执行。接受 steering 后，从当前 Run 的 `goal/goalRevision` 构建观察上下文，同时验证任务契约摘要；不能用最初的验收目标替代用户已修改的目标。包装器固定完整 JSON 请求及原 signal，任一字段漂移后不调用观察模型、不发布迟到说明。关闭会取消自身工作，不关闭共享浏览器或模型端口；不合作的 Promise 晚拒绝仍被观察。浏览器已执行后发生身份丢失时，由真实 Kernel 将结果记为 unknown 并中断，不谎称未执行，也不自动重做。
+
+每个 Session 的正式浏览器工具超时包含截图与观察模型耗时，并在 Kernel、DSH gateway 和 browser owner 使用同一份完整 formal；其他字段仍严格相等。最终交付模型保留从 1 次增加到 2 次，受显式总预算上限约束；观察用量作为原工具回执中的后代资源扣减。取消之后返回的说明不写入后续调用的缓存。Frozen 导出会额外捕获该图片 profile 及独立的目标凭证引用，但不把它加入对话模型选择列表；配置保存/重开保留协议、上下文窗口、输出预算、请求超时与模型参数，禁止悄悄恢复默认值。
+
+定向证据包括实际 Host、NativeKernel、SQLite、ToolAuthority 和真实 ModelPort 的确定性 SSE 编解码；Revision/Frozen 入口分别完成主模型→截图工具→独立观察模型→主模型闭环，工具回执保存不可信说明与观察用量。包括请求漂移、关闭不合作 browser/model、晚拒绝、steering（含替换/不替换任务契约）、配置漂移、数据库重开后再次推进终态 Run、完整记录不变及 portable 导出/导入后删除源 store 的配置验证。测试中的 DSH Session 生命周期、registry 和截图 backend 使用明确替身；这些结果不代表实际 Chromium、完整打包 SDK 或在线图片模型验收。完整真实宿主和全新安装验收仍须补齐。
 
 ## Legacy DSH/Codex 的 Node Web 接入
 
