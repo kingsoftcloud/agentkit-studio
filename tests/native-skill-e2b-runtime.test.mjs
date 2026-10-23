@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeE2BSkillRuntime } from '../src/providers/native-skill-e2b-runtime.mjs';
@@ -43,6 +44,123 @@ function setup(t, peerOptions = {}) {
     settings: { backend: 'e2b', enabled: true, isolated: true, timeoutSeconds: 20, projectName: 'artifact-project' },
     prepared, inProcessTransport: true, loadPackages: async () => packages };
   return { root, workspace, pkg, peer, options, runtime: createNativeE2BSkillRuntime(options) };
+}
+test('trusted workspace inputs are pinned before create, uploaded exactly, consumed by a real script and never replayed', async t => {
+  const bytes = Buffer.from([0, 255, 1, 128]), digest = createHash('sha256').update(bytes).digest('hex');
+  const h = setup(t, { before(method) {
+    if (method !== 'create') return;
+    const dir = readdirSync(h.options.stateRoot).find(name => /^[a-f0-9]{64}$/u.test(name));
+    const record = parseNativeJson(readFileSync(join(h.options.stateRoot, dir, 'record.json'), 'utf8'));
+    assert.equal(record.inputs.contract, 'agentkit.native-skill-input-files/v1');
+    assert.equal(record.inputs.files[0].sha256, digest, 'pinned manifest precedes sandbox creation');
+    writeFileSync(join(h.workspace, 'input.bin'), 'later source edit');
+  } });
+  writeFileSync(join(h.workspace, 'input.bin'), bytes); writeFileSync(join(h.workspace, 'empty'), '');
+  writeFileSync(join(h.pkg, 'scripts/run-workflow.sh'),
+    'cat "$KSADK_SKILL_INPUT_DIR/nested/input.bin" > "$KSADK_SKILL_OUTPUT_DIR/result.bin"\n'
+    + 'test -f "$KSADK_SKILL_INPUT_DIR/empty" && test ! -s "$KSADK_SKILL_INPUT_DIR/empty"\n'
+    + 'printf "%s" "$KSADK_SKILL_INPUT_FILES" > "$KSADK_SKILL_OUTPUT_DIR/paths.json"');
+  const req = request(); req.inputFiles = [{ source: 'input.bin', targetPath: '/workspace/inputs/nested/input.bin', sha256: digest },
+    { source: 'empty', targetPath: '/workspace/inputs/empty' }];
+  const result = await h.runtime.execute(req); assert.equal(result.ok, true, canonical(result));
+  assert.deepEqual(readFileSync(result.output_files.find(path => path.endsWith('result.bin'))), bytes);
+  assert.deepEqual(JSON.parse(readFileSync(result.output_files.find(path => path.endsWith('paths.json')), 'utf8')),
+    req.inputFiles.map(item => item.targetPath));
+  assert.deepEqual(result.input_files.files.map(item => [item.path, item.size_bytes]), [['/workspace/inputs/nested/input.bin', 4], ['/workspace/inputs/empty', 0]]);
+  const uploaded = h.peer.calls.filter(call => call.method === 'write' && call.path.startsWith('/workspace/inputs/'));
+  assert.deepEqual(uploaded.map(item => [item.path, item.size]), [['/workspace/inputs/nested/input.bin', 4], ['/workspace/inputs/empty', 0]]);
+  const before = h.peer.calls.length; rmSync(join(h.workspace, 'input.bin'));
+  assert.deepEqual(await createNativeE2BSkillRuntime(h.options).execute(req), result);
+  assert.equal(h.peer.calls.length, before, 'cold duplicate does not read original source, create, upload or run');
+});
+test('an input outside the actual workspace fails without creating or uploading to a sandbox', async t => {
+  const h = setup(t), req = request(); writeFileSync(join(h.root, 'private'), 'private');
+  req.inputFiles = [{ source: '../private', targetPath: '/workspace/inputs/private' }];
+  const result = await h.runtime.execute(req); assert.equal(result.status, 'uncertain');
+  assert.equal(result.error_type, 'SKILL_INPUT_SOURCE_OUTSIDE_WORKSPACE'); assert.deepEqual(h.peer.calls, []);
+});
+
+test('existing template input directories are usable without overwriting a template file', async t => {
+  const h = setup(t, { afterCreate(local) { mkdirSync(join(local, 'workspace/inputs/nested'), { recursive: true, mode: 0o700 }); } });
+  writeFileSync(join(h.workspace, 'source.bin'), 'original'); const req = request();
+  req.inputFiles = [{ source: 'source.bin', targetPath: '/workspace/inputs/nested/source.bin' }];
+  const result = await h.runtime.execute(req); assert.equal(result.ok, true, canonical(result));
+  assert.equal(h.peer.calls.filter(call => call.method === 'write' && call.path === req.inputFiles[0].targetPath).length, 1);
+});
+
+test('a template input ancestor symlink cannot redirect directory creation or an upload', async t => {
+  let outside;
+  const h = setup(t, { afterCreate(local) {
+    outside = join(local, 'foreign'); mkdirSync(outside); mkdirSync(join(local, 'workspace/inputs'), { recursive: true, mode: 0o700 });
+    symlinkSync(outside, join(local, 'workspace/inputs/nested'));
+  } });
+  writeFileSync(join(h.workspace, 'source.bin'), 'private'); const req = request();
+  req.inputFiles = [{ source: 'source.bin', targetPath: '/workspace/inputs/nested/child/source.bin' }];
+  const result = await h.runtime.execute(req); assert.equal(result.ok, false);
+  assert.equal(result.error_type, 'SKILL_RUNTIME_REMOTE_PREPARATION_FAILED');
+  assert.deepEqual(readdirSync(outside), []); assert.equal(h.peer.calls.filter(call => call.method === 'write').length, 0);
+});
+
+for (const boundary of ['before-create', 'after-upload']) {
+  test(`SIGKILL ${boundary} keeps the exact pinned input intent and a fresh process performs no SDK replay`, async t => {
+    const h = setup(t), bytes = Buffer.from([0, 255, 128, 1]); writeFileSync(join(h.workspace, 'source.bin'), bytes);
+    const req = request(); req.inputFiles = [{ source: 'source.bin', targetPath: '/workspace/inputs/source.bin' }];
+    const id = h.runtime.locate(req).runtime_id.slice('e2b-skill:'.length), recordPath = join(h.options.stateRoot, id, 'record.json');
+    const { signal, assertCurrent, ...requestBody } = req;
+    const input = { boundary, root: h.root, options: Object.fromEntries(['stateRoot', 'workspaceRoot', 'scope', 'sessionId', 'bindingDigest', 'settings']
+      .map(key => [key, h.options[key]])), request: requestBody, packages: [{ name: 'alpha', body: '# Alpha', rootDir: h.pkg }] };
+    const marker = join(h.root, 'boundary.json'), audit = join(h.root, 'sdk.log');
+    const code = `
+      import {createNativeE2BSkillRuntime} from ${JSON.stringify(new URL('../src/providers/native-skill-e2b-runtime.mjs', import.meta.url).href)};
+      import {prepareNativeE2BHost} from ${JSON.stringify(new URL('../src/providers/native-e2b-host.mjs', import.meta.url).href)};
+      import {skillE2BSdk} from ${JSON.stringify(new URL('./fixtures/native-skill-e2b-sdk.mjs', import.meta.url).href)};
+      import {parseNativeJson,canonical} from ${JSON.stringify(new URL('../packages/agentkit-harness-core/dist/index.mjs', import.meta.url).href)};
+      import {appendFileSync,writeFileSync} from 'node:fs';
+      const input=parseNativeJson(process.argv[1]), recover=process.argv[2]==='recover';
+      const blocked=new Promise(()=>{}), marker=()=>writeFileSync(input.root+'/boundary.json',JSON.stringify({pid:process.pid,boundary:input.boundary}));
+      const peer=skillE2BSdk({after(){}},{root:input.root+'/remote',
+        before(method){appendFileSync(input.root+'/sdk.log',method+'\\n'); if(recover)throw Error('cold recovery cannot touch SDK');
+          if(input.boundary==='before-create' && method==='create')marker();},
+        ...(input.boundary==='before-create'?{createGate:{promise:blocked}}:{}),
+        async afterWrite(path){if(input.boundary==='after-upload' && path.startsWith('/workspace/inputs/')){marker();await blocked;}}});
+      const prepared=prepareNativeE2BHost({env:{KSADK_SANDBOX_BACKEND:'e2b',KSADK_SANDBOX_TEMPLATE_ID:'node-only-template',
+        E2B_API_URL:'https://api.fixture.invalid',E2B_DOMAIN:'fixture.invalid',E2B_API_KEY:'never-persist-this'},loadSdk:async()=>peer.sdk});
+      const timer=setInterval(()=>{},1000);
+      try{const result=await createNativeE2BSkillRuntime({...input.options,prepared,inProcessTransport:true,
+        loadPackages:async()=>{if(recover)throw Error('cold recovery cannot reload packages');return input.packages;}})
+        .execute({...input.request,signal:new AbortController().signal,assertCurrent:()=>true});
+        if(recover)process.stdout.write(canonical({pid:process.pid,result}));}finally{clearInterval(timer);}`;
+    const start = mode => spawn(process.execPath, ['--input-type=module', '-e', code, canonical(input), mode], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = start('execute'); let stderr = ''; child.stderr.on('data', bytes => stderr += bytes);
+    t.after(() => { try { child.kill('SIGKILL'); } catch {} });
+    await until(() => existsSync(marker)); const reached = JSON.parse(readFileSync(marker, 'utf8'));
+    assert.equal(reached.pid, child.pid); assert.equal(reached.boundary, boundary);
+    const intent = parseNativeJson(readFileSync(recordPath, 'utf8')); assert.equal(intent.phase, 'executing');
+    assert.equal(intent.inputs.contract, 'agentkit.native-skill-input-files/v1');
+    assert.equal(intent.inputs.files[0].sha256, createHash('sha256').update(bytes).digest('hex'));
+    assert.deepEqual(readFileSync(join(h.options.stateRoot, id, 'inputs', '0')), bytes);
+    if (boundary === 'after-upload') assert.deepEqual(readFileSync(join(h.root, 'remote/skill-peer-1/workspace/inputs/source.bin')), bytes);
+    else assert.equal(existsSync(join(h.root, 'remote')), false);
+    const exiting = once(child, 'exit'); child.kill('SIGKILL'); const [exitCode, exitSignal] = await exiting;
+    assert.equal(exitCode, null, stderr); assert.equal(exitSignal, 'SIGKILL');
+    const saved = readFileSync(recordPath, 'utf8'), sdkSaved = readFileSync(audit, 'utf8'); rmSync(join(h.workspace, 'source.bin'));
+    const cold = start('recover'); let output = '', coldError = '';
+    cold.stdout.on('data', bytes => output += bytes); cold.stderr.on('data', bytes => coldError += bytes);
+    t.after(() => { try { cold.kill('SIGKILL'); } catch {} });
+    const [coldCode] = await once(cold, 'exit'); assert.equal(coldCode, 0, coldError);
+    const recovered = parseNativeJson(output); assert.notEqual(recovered.pid, reached.pid);
+    assert.equal(recovered.result.status, 'uncertain'); assert.equal(recovered.result.runtime_id, intent.runtimeId);
+    assert.equal(recovered.result.task_id, intent.taskId); assert.deepEqual(recovered.result.command_ids, intent.commands.map(item => item.taskId));
+    assert.equal(recovered.result.error_type, 'skill_runtime_outcome_unknown');
+    assert.equal(readFileSync(recordPath, 'utf8'), saved); assert.equal(readFileSync(audit, 'utf8'), sdkSaved);
+    if (process.env.NATIVE_SKILL_INPUT_PROOF_DIR) {
+      mkdirSync(process.env.NATIVE_SKILL_INPUT_PROOF_DIR, { recursive: true });
+      writeFileSync(join(process.env.NATIVE_SKILL_INPUT_PROOF_DIR, `${process.versions.node}-${boundary}.json`), JSON.stringify({
+        boundary, originalPid: reached.pid, recoveryPid: recovered.pid, signal: exitSignal,
+        inputSha256: intent.inputs.files[0].sha256, sdkCalls: sdkSaved.trim().split('\n'), result: recovered.result,
+        originalIntentUnchanged: true, noSdkReplay: true }, null, 2));
+    }
+  });
 }
 
 test('E2B workflow uses production lifecycle/SDK adapter/command store, exact binary artifacts and confirmed cleanup; reopen never reruns', async t => {

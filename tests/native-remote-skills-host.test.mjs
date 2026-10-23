@@ -22,14 +22,16 @@ const instructions = '---\nname: alpha\ndescription: Alpha task\n---\n# Alpha\nR
 const zip = createZip([{ name: 'SKILL.md', data: instructions }, { name: 'scripts/run.mjs', data: 'console.log(42)' }]);
 const sha = createHash('sha256').update(zip).digest('hex');
 const final = () => ({ kind: 'final_candidate', text: 'Done.', toolCalls: [], usage: emptyUsage() });
-async function setup(t, { wrongHash = false, denied = false, rest = false, workflow = false, localOnly = false, e2b = false } = {}) {
+async function setup(t, { wrongHash = false, denied = false, rest = false, workflow = false, localOnly = false, e2b = false, inputs = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'remote-skills-host-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot);
+  if (inputs) writeFileSync(join(workspaceRoot, 'source.bin'), Buffer.from([0, 255, 128, 1]));
   const stateDir = join(root, 'state'), filename = join(root, 'runs.sqlite');
   let store = new SqliteRunStore(filename), gateway, approvals = 0, modelCalls = 0;
   const requests = [], outputs = [], registry = new Map(), agent = { session: { id: 'session' } };
   const archive = workflow ? createZip([{ name: 'SKILL.md', data: instructions }, { name: 'scripts/run-workflow.sh',
-    data: 'printf "Executed in Native Node runtime" > "$KSADK_SKILL_OUTPUT_DIR/result.txt"\nprintf "artifact=artifacts/result.txt\\n"' }]) : zip;
+    data: inputs ? 'cat "$KSADK_SKILL_INPUT_DIR/nested/source.bin" > "$KSADK_SKILL_OUTPUT_DIR/result.bin"'
+      : 'printf "Executed in Native Node runtime" > "$KSADK_SKILL_OUTPUT_DIR/result.txt"\nprintf "artifact=artifacts/result.txt\\n"' }]) : zip;
   const archiveSha = createHash('sha256').update(archive).digest('hex');
   const server = createServer((req, res) => {
     requests.push({ url: req.url, headers: req.headers });
@@ -109,7 +111,8 @@ async function setup(t, { wrongHash = false, denied = false, rest = false, workf
       E2B_API_URL: 'https://api.fixture.invalid', E2B_DOMAIN: 'fixture.invalid', E2B_API_KEY: 'never-save-peer-key' }
       : workflow || localOnly ? { KSADK_SKILL_RUNTIME_BACKEND: 'local_process' } : {},
     ...(peer ? { e2bLoadSdk: async () => peer.sdk } : {}),
-    ...(!localOnly ? { skillConnection: connection } : {}), skillFetch: proxy }); };
+    ...(!localOnly ? { skillConnection: connection } : {}), skillFetch: proxy,
+    ...(inputs ? { skillInputFiles: [{ source: 'source.bin', targetPath: '/workspace/inputs/nested/source.bin' }] } : {}) }); };
   bind();
   async function run(calls) {
     const definitions = gateway.definitions(agent, [...registry.values()]);
@@ -262,4 +265,17 @@ test('a local Skill can use the independent E2B runtime without mounting a remot
   assert.equal(h.outputs[0].backend, 'e2b'); assert.equal(h.outputs[0].output_text, 'Local Skill without remote service');
   assert.equal(h.requests.length, 0); assert.equal(h.gateway.remoteSkillBinding.serviceBindingDigest, null);
   assert.equal(h.peer.calls.filter(call => call.method === 'create').length, 1);
+});
+
+test('trusted Native gateway inputs pass through the real intent, approval and Skill Host into the E2B workflow', async t => {
+  const h = await setup(t, { workflow: true, e2b: true, inputs: true });
+  const result = await h.run([['execute_skills', { workflow_prompt: 'Use alpha', skill_names: ['alpha'] }]]);
+  assert.equal(result.phase, 'completed'); const executed = h.outputs[0]; assert.equal(executed.ok, true, canonical(executed));
+  assert.deepEqual(readFileSync(executed.output_files[0]), Buffer.from([0, 255, 128, 1]));
+  assert.equal(h.approvals, 1); assert.equal(executed.input_files.files[0].path, '/workspace/inputs/nested/source.bin');
+  assert.equal(h.gateway.remoteSkillBinding.inputs.contract, 'agentkit.native-skill-input-files/v1');
+  const saved = h.store.load(scope, 'run'), intent = saved.intents.find(item => item.kind === 'tool');
+  assert.equal(saved.receipts.filter(item => item.operationKey === intent.operationKey && item.status === 'committed').length, 1);
+  const count = h.peer.calls.length; rmSync(join(h.root, 'workspace', 'source.bin')); await h.reopen();
+  assert.equal(h.peer.calls.length, count, 'completed Native Run cannot reload input or replay the SDK');
 });

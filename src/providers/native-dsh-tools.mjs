@@ -47,7 +47,7 @@ const names = values => (values ?? []).map(value => typeof value === 'string' ? 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
 export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
   commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch, e2bLoadSdk, a2aFetch,
-  skillConnection, skillFetch, getSkillManagement, getKnowledgeTools, getLegacyMemoryTools }) {
+  skillConnection, skillFetch, skillInputFiles = [], getSkillManagement, getKnowledgeTools, getLegacyMemoryTools }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
@@ -95,7 +95,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   for (const definition of nativeComponentToolDefinitions()) formal.set(definition.name, definition);
   for (const definition of nativeSkillDisclosureDefinitions()) if (disclosureNames.has(definition.name)) formal.set(definition.name, definition);
   const commandEnvironmentSnapshot = { ...commandEnvironment }, commandBackend = nativeCommandBackend(commandEnvironmentSnapshot);
-  const remoteSkills = prepareNativeSkillHost({ config, env: commandEnvironmentSnapshot, connection: skillConnection,
+  const remoteSkills = prepareNativeSkillHost({ config, env: commandEnvironmentSnapshot, connection: skillConnection, inputFiles: skillInputFiles,
     ...(e2bLoadSdk ? { loadSdk: e2bLoadSdk } : {}),
     ...(skillFetch ? { fetchImpl: skillFetch } : {}) });
   const remoteSkillNames = new Set((remoteSkills?.definitions ?? []).map(definition => {

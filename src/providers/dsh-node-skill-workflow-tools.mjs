@@ -12,6 +12,7 @@ import { createStudioNativeSkillSource } from './native-skill-source.mjs';
 import { createNativeSkillService } from './native-skill-service.mjs';
 import { createNativeSkillLoader } from './native-skill-loader.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
+import { NATIVE_SKILL_INPUT_FILES, normalizeSkillInputFiles } from './native-skill-inputs.mjs';
 
 export const DSH_NODE_SKILL_WORKFLOW = 'agentkit.dsh-node-skill-workflow/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -28,7 +29,8 @@ function abortable(pending, signal) {
 }
 
 export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
-  connection, skillSpaceIds = [], skillDefinitions = [], env = {}, fetchImpl, loadSdk, isClosed = () => false, signal: hostSignal } = {}) {
+  connection, skillSpaceIds = [], skillDefinitions = [], env = {}, fetchImpl, loadSdk, inputFiles = [], isClosed = () => false, signal: hostSignal } = {}) {
+  const fixedInputs = normalizeSkillInputFiles(inputFiles);
   invariant(ctx && typeof agentId === 'string' && agentId.trim() && typeof isClosed === 'function', 'dsh_skill_workflow_binding_invalid');
   invariant(hostSignal === undefined || hostSignal instanceof AbortSignal, 'dsh_skill_workflow_host_signal_invalid');
   invariant(Number.isSafeInteger(agentRevision) && agentRevision >= 1
@@ -46,7 +48,8 @@ export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 
   const localSource = localDefinitions.length ? createStudioNativeSkillSource({ definitions: localDefinitions }) : null;
   const binding = { contract: DSH_NODE_SKILL_WORKFLOW, agentId, agentRevision, buildId, runtime: settings,
     userSpaceIds: userSpaces, publicSpaceIds: publicSpaces, publicAllowlist,
-    localSourceBinding: localSource?.binding ?? null, serviceBindingDigest: connection?.bindingDigest ?? null };
+    localSourceBinding: localSource?.binding ?? null, serviceBindingDigest: connection?.bindingDigest ?? null,
+    ...(fixedInputs.length ? { inputs: { contract: NATIVE_SKILL_INPUT_FILES, digest: hash(fixedInputs) } } : {}) };
   const bindingDigest = hash(binding), [definition] = nativeSkillWorkflowToolDefinitions();
   const service = connection?.client ? createNativeSkillService(connection.client) : null;
   const lifetime = new AbortController(), ownerSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
@@ -107,6 +110,7 @@ export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 
           operationKey: `dsh-skill-workflow:${original.callId}`, call: { callId: original.callId, name, arguments: copy(args) },
           workflowPrompt: args.workflow_prompt.trim(), skillNames: normalizeSkillNames(args.skill_names),
           skillSpaceIds: [...userSpaces, ...publicSpaces], env: {}, timeout: settings.timeoutSeconds,
+          ...(fixedInputs.length ? { inputFiles: copy(fixedInputs) } : {}),
           lockedDefinition: copy(definition), ...(args.approval === undefined ? {} : { approval: copy(args.approval) }), signal, assertCurrent };
         locator = session.runtime.locate(request); assertCurrent(); dispatched = true;
         const result = await abortable(session.runtime.execute(request), signal);

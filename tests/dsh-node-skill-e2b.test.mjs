@@ -56,6 +56,20 @@ function setup(t, { script, peer: peerOptions = {}, ...extra } = {}) {
     rmSync(root, { recursive: true, force: true }); });
   return { root, workspaceRoot, pkg, stateDir, config, peer, port, args, execution, run, open, get loads() { return loads; }, records: () => runtimeRecords(stateDir) };
 }
+test('DSH/Codex workflow Host inputs are immutable configuration and retain original DSH ownership', async t => {
+  const h = setup(t, { script: 'cat "$KSADK_SKILL_INPUT_DIR/data.bin" > "$KSADK_SKILL_OUTPUT_DIR/result.bin"' });
+  const bytes = Buffer.from([0, 255, 128, 7]); writeFileSync(join(h.workspaceRoot, 'source.bin'), bytes);
+  const inputs = [{ source: 'source.bin', targetPath: '/workspace/inputs/data.bin' }], port = h.open({ inputFiles: inputs });
+  inputs[0].source = '../private';
+  const result = await h.run(h.args, h.execution(), port); assert.equal(result.status, 'ok', canonical(result));
+  assert.deepEqual(readFileSync(result.content.output_files[0]), bytes);
+  const [saved] = h.records(); assert.equal(saved.record.request.agentId, 'agent'); assert.equal(saved.record.request.scope, undefined);
+  assert.equal(saved.record.request.inputFiles[0].source, 'source.bin'); assert.equal(port.binding.inputs.contract, 'agentkit.native-skill-input-files/v1');
+  const count = h.peer.calls.length; rmSync(join(h.workspaceRoot, 'source.bin'));
+  assert.deepEqual(await h.run(h.args, h.execution(), port), result); assert.equal(h.peer.calls.length, count);
+  const forbidden = { ...h.args, input_files: [{ source: '/etc/passwd', targetPath: '/workspace/inputs/private' }] };
+  assert.equal((await h.run(forbidden, h.execution(forbidden, 'foreign-input'), port)).status, 'error'); assert.equal(h.peer.calls.length, count);
+});
 
 test('DSH E2B uses real Agent/Session/call, exact file bytes and confirmed cleanup; completed call never makes another SDK request', async t => {
   const h = setup(t); assert.equal(h.loads, 0); assert.equal(h.port.binding.runtime.backend, 'e2b');

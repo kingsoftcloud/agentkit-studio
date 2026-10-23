@@ -7,7 +7,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileS
 import { dirname, join, posix } from 'node:path';
 import { constants } from 'node:os';
 
-export function skillE2BSdk(t, { root, before = () => {}, killResult = true, createGate, commandGate, afterCommand, corruptFile,
+export function skillE2BSdk(t, { root, before = () => {}, killResult = true, createGate, commandGate, afterCommand, afterCreate, afterWrite, corruptFile,
   signalExitCodes = false, commandPath = '/usr/bin:/bin' } = {}) {
   const calls = [], sandboxes = new Map(), processes = new Map();
   class CommandExitError extends Error { constructor(exitCode) { super('command failed'); this.exitCode = exitCode; } }
@@ -18,7 +18,7 @@ export function skillE2BSdk(t, { root, before = () => {}, killResult = true, cre
       if (createGate) await createGate.promise;
       const id = `skill-peer-${sandboxes.size + 1}`, local = join(root, id);
       mkdirSync(join(local, 'tmp'), { recursive: true });
-      sandboxes.set(id, { local, metadata: options.metadata }); return { sandboxId: id };
+      sandboxes.set(id, { local, metadata: options.metadata }); await afterCreate?.(local); return { sandboxId: id };
     },
     async connect(id, options) {
       before('connect'); calls.push({ method: 'connect', id, options });
@@ -28,7 +28,7 @@ export function skillE2BSdk(t, { root, before = () => {}, killResult = true, cre
         assert.ok(!path.split('/').includes('..')); return join(peer.local, path.slice(1));
       };
       const remotePath = path => path.replaceAll(peer.local, '');
-      const mapValue = text => text.replaceAll(/\/tmp\/(?:agentkit-skill-[a-f0-9]{64}|ksadk-run-code-[a-f0-9]{64}\.(?:py|js|sh))/gu, match => localPath(match));
+      const mapValue = text => text.replaceAll(/\/tmp\/(?:agentkit-skill-[a-f0-9]{64}|ksadk-run-code-[a-f0-9]{64}\.(?:py|js|sh))|\/workspace(?=\/|[\s'"\])]|$)/gu, match => localPath(match));
       const info = path => {
         const st = lstatSync(localPath(path));
         return { path, name: posix.basename(path), type: st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'dir' : 'file',
@@ -40,7 +40,8 @@ export function skillE2BSdk(t, { root, before = () => {}, killResult = true, cre
           if (existsSync(localPath(path))) return false; mkdirSync(localPath(path), { recursive: true, mode: 0o700 }); return true; },
         async write(path, bytes, opts) {
           before('write'); calls.push({ method: 'write', path, opts, size: bytes.byteLength });
-          mkdirSync(dirname(localPath(path)), { recursive: true }); writeFileSync(localPath(path), Buffer.from(bytes)); return info(path);
+          mkdirSync(dirname(localPath(path)), { recursive: true }); writeFileSync(localPath(path), Buffer.from(bytes));
+          await afterWrite?.(path); return info(path);
         },
         async read(path, opts) {
           before('read'); calls.push({ method: 'read', path, opts }); assert.equal(opts.format, 'stream');
@@ -55,7 +56,8 @@ export function skillE2BSdk(t, { root, before = () => {}, killResult = true, cre
         async run(command, opts) {
           before('run'); calls.push({ method: 'run', id, command, opts });
           if (commandGate) await commandGate(command, opts);
-          const env = { PATH: commandPath, ...Object.fromEntries(Object.entries(opts.envs ?? {}).map(([key, value]) => [key, mapValue(value)])) };
+          const env = { PATH: commandPath, ...Object.fromEntries(Object.entries(opts.envs ?? {}).map(([key, value]) => [key,
+            key === 'KSADK_SKILL_INPUT_FILES' ? value : mapValue(value)])) };
           const child = spawn('/bin/bash', ['-c', mapValue(command)], { cwd: localPath(opts.cwd ?? '/tmp'), env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
           // Like the real SDK, callbacks receive decoded strings; a pipe chunk
           // can split a multibyte character, so decoding each Buffer loses bytes.

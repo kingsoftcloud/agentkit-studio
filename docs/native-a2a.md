@@ -248,8 +248,8 @@ Still required for full migration:
   subsequent receipt reconciliation. DSH/Codex have authenticated product
   controls and local task inventory as described below; real browser and
   live human/service acceptance remain separate.
-- Pre-send local cancellation semantics and required task stream subscriptions;
-  busy-call durable cancellation delivery is now covered above.
+- Required task stream subscriptions; pre-send local cancellation and busy-call
+  durable cancellation delivery are now implemented with separate process proofs.
 - Internal workload Actions, projected workload tokens, permits/credential
   broker, inbound A2A serving, and remote orchestration/handoff exposures.
 - External peer credential schemes beyond the current hosted token path and

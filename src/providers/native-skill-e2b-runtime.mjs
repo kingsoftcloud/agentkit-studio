@@ -12,6 +12,7 @@ import { E2BCommandStore } from '../../packages/agentkit-harness/src/native/e2b-
 import { stagePackages, publishArtifacts, NATIVE_SKILL_RUNTIME } from './native-skill-runtime.mjs';
 import { createNativeSkillWorkflowExecutor, readSkillWorkflowArtifact } from './native-skill-workflow.mjs';
 import { createNativeSkillE2BFiles, NATIVE_SKILL_E2B_FILES } from './native-skill-e2b-files.mjs';
+import { NATIVE_SKILL_INPUT_FILES, SKILL_INPUT_ROOT, normalizeSkillInputFiles, stageSkillInputFiles } from './native-skill-inputs.mjs';
 
 export const NATIVE_SKILL_E2B_RUNTIME = 'agentkit.native-skill-e2b-runtime/v1';
 
@@ -79,6 +80,7 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
     const originalSignal = request.signal, authority = request.assertCurrent, original = canonical(body(request));
     invariant(Buffer.byteLength(original) <= 2 * 1024 ** 2, 'SKILL_RUNTIME_REQUEST_TOO_LARGE');
     invariant(originalSignal instanceof AbortSignal && typeof authority === 'function', 'SKILL_RUNTIME_AUTHORITY_REQUIRED');
+    const inputFiles = normalizeSkillInputFiles(request.inputFiles);
     const { runtime_id: runtimeId, task_id: taskId } = locate(request);
     const id = runtimeId.slice(owner.prefix.length + 1), operationKey = `skill-runtime:${id}`;
     const deadline = new AbortController(), signal = AbortSignal.any([originalSignal, deadline.signal]);
@@ -134,6 +136,8 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
       intent.packages = packages.map(pkg => Object.fromEntries(Object.entries({ name: pkg.name, skillId: pkg.skillId,
         versionId: pkg.versionId, spaceId: pkg.spaceId, archiveHash: pkg.archiveHash, manifestHash: hash(pkg.body), files: pkg.stagedManifest })
         .filter(([, value]) => value !== undefined)));
+      const inputs = stageSkillInputFiles(inputFiles, workspace, join(directory, 'inputs'), guard);
+      if (inputs.length) intent.inputs = { contract: NATIVE_SKILL_INPUT_FILES, files: inputs.map(({ stagedPath, ...item }) => item) };
       save(recordPath, intent);
       // The owner is per INVOCATION, rather than the shared interactive command
       // sandbox. No executable content or credentials enter the owner identity.
@@ -183,11 +187,26 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
           finally { dir.closeSync(); } };
         walk(pkg.rootDir);
       }
-      const preparation = `umask 077; mkdir -m 700 -- ${quote(remoteRoot)} && mkdir -p -- ${[...directories].map(quote).join(' ')}`;
+      const inputDirectories = new Set();
+      for (const item of inputs) for (let path = posix.dirname(item.targetPath); path !== SKILL_INPUT_ROOT; path = posix.dirname(path)) inputDirectories.add(path);
+      // Templates may already contain input directories. Check each component
+      // before mkdir so a preexisting nested symlink cannot redirect staging.
+      const inputPreparation = inputs.length ? ['/workspace', SKILL_INPUT_ROOT, ...[...inputDirectories].sort((a, b) => a.length - b.length)]
+        .map(path => ` && test ! -L ${quote(path)} && (test -d ${quote(path)} || mkdir -m 700 -- ${quote(path)})`).join('') : '';
+      const preparation = `umask 077; mkdir -m 700 -- ${quote(remoteRoot)} && mkdir -p -- ${[...directories].map(quote).join(' ')}${inputPreparation}`;
       invariant((await runRemote(preparation, '/tmp', {})).exit_code === 0, 'SKILL_RUNTIME_REMOTE_PREPARATION_FAILED');
       const sandbox = await boundary(() => host.createFileSession(remoteId, { ...body(request), signal, assertCurrent: guard }));
       const files = await boundary(() => createFiles({ sandbox, remoteRoot }));
       const fileRequest = fields => ({ ...body(request), ...fields, signal, assertCurrent: guard });
+      if (inputs.length) {
+        const inputPort = await boundary(() => createFiles({ sandbox, remoteRoot: SKILL_INPUT_ROOT }));
+        for (const item of inputs) {
+          guard(); const data = readSkillWorkflowArtifact(item.stagedPath, join(directory, 'inputs'), 20 * 1024 ** 2);
+          invariant(!data.truncated && data.size === item.sizeBytes && hash(data.bytes) === item.sha256, 'SKILL_INPUT_STAGING_CHANGED');
+          await boundary(() => inputPort.upload(fileRequest({ files: [{ path: item.targetPath,
+            base64: data.bytes.toString('base64'), sha256: item.sha256 }] })));
+        }
+      }
       const executable = [];
       for (const pkg of packages) for (const item of pkg.stagedManifest) {
         guard(); const path = join(pkg.rootDir, item.path), data = readSkillWorkflowArtifact(path, pkg.rootDir, 20 * 1024 ** 2);
@@ -235,6 +254,8 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
           const remoteArgs = argv.map(value => value.startsWith('/') ? mapPath(value) : value);
           const remoteEnvironment = { KSADK_SKILL_SPACE_IDS: (request.skillSpaceIds ?? []).join(','),
             SKILL_SPACE_ID: request.skillSpaceIds?.[0] ?? '', KSADK_SELECTED_SKILL_NAMES: (request.skillNames ?? []).join(','),
+            ...(inputs.length ? { KSADK_SKILL_INPUT_DIR: SKILL_INPUT_ROOT,
+              KSADK_SKILL_INPUT_FILES: canonical(inputs.map(item => item.targetPath)) } : {}),
             ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key,
             ['KSADK_SKILL_WORKDIR', 'KSADK_SKILL_OUTPUT_DIR', 'KSADK_SKILL_ROOT_DIR'].includes(key) ? mapPath(value) : value])) };
           const output = await runRemote(remoteArgs.map(quote).join(' '), mapPath(cwd), remoteEnvironment, check, timeoutSeconds); check();
@@ -269,6 +290,8 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
         ...(workflow.status === 'failed' ? { error_type: workflow.error_type ?? 'skill_workflow_failed' } : {}),
         runtime_id: runtimeId, task_id: taskId, remote_runtime_id: remoteId, sandbox_id: remoteId, backend: 'e2b', isolated: true,
         command_ids: intent.commands.map(command => command.taskId),
+        ...(inputs.length ? { input_files: { contract: NATIVE_SKILL_INPUT_FILES,
+          files: inputs.map(({ targetPath, sha256, sizeBytes }) => ({ path: targetPath, sha256, size_bytes: sizeBytes })) } } : {}),
         sandbox: { creation_status: 'completed', instance_status: 'created', cleanup_status: 'completed' } };
       save(recordPath, { ...intent, phase: 'finished', result, completedAt: Date.now() }); return result;
     } catch (error) {

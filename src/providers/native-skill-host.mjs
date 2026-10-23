@@ -17,6 +17,7 @@ import { createStudioNativeSkillSource } from './native-skill-source.mjs';
 import { prepareNativeE2BHost } from './native-e2b-host.mjs';
 import { createNativeE2BSkillRuntime, NATIVE_SKILL_E2B_RUNTIME } from './native-skill-e2b-runtime.mjs';
 import { NATIVE_SKILL_E2B_FILES } from './native-skill-e2b-files.mjs';
+import { NATIVE_SKILL_INPUT_FILES, normalizeSkillInputFiles } from './native-skill-inputs.mjs';
 
 export const STUDIO_NATIVE_REMOTE_SKILLS = 'agentkit.studio-native-remote-skills/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -44,7 +45,8 @@ const csv = (env, key) => {
   return value.split(',').map(value => value.trim()).filter(Boolean);
 };
 
-export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl = hostFetch, loadSdk }) {
+export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl = hostFetch, loadSdk, inputFiles = [] }) {
+  const fixedInputs = normalizeSkillInputFiles(inputFiles);
   const { userSpaces, publicSpaces, publicAllowlist } = nativeSkillSpaceSettings(config, env);
   const localDefinitions = copy(config.skillDefinitions ?? []).filter(item => item.invocation?.modelInvocable !== false), environment = { ...env };
   if (!userSpaces.length && !publicSpaces.length && !localDefinitions.length) return null;
@@ -60,7 +62,7 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
   const binding = Object.freeze({ contract: STUDIO_NATIVE_REMOTE_SKILLS, toolContract: SKILL_TOOL_CONTRACT, userSpaceIds: userSpaces,
     publicSpaceIds: publicSpaces, publicAllowlist, serviceBindingDigest: connection?.bindingDigest ?? null,
     localSkillBindingDigest: localSource ? hash(localSource.binding) : null,
-    runtime: runtimeSettings });
+    runtime: runtimeSettings, ...(fixedInputs.length ? { inputs: { contract: NATIVE_SKILL_INPUT_FILES, digest: hash(fixedInputs) } } : {}) });
   const bindingDigest = hash(binding), lifetime = new AbortController();
   const provider = (loadSkillFn, executeWorkflow, locateWorkflow) => createStudioNativeSkills({ serviceClient: connection?.client,
     loadSkillFn, executeWorkflow, locateWorkflow, authorize: async () => 'allow', agentId: config.agentId, agentRevision,
@@ -83,7 +85,8 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
       assertStorage();
       const authority = request.assertCurrent;
       return load({ ...request, assertCurrent: () => { assertStorage(); return authority(); } });
-    }), runtime?.execute, runtime?.locate).forAgent(agent, { scope, sessionId, agentRevision, assertCurrent });
+    }), runtime && (request => runtime.execute(fixedInputs.length ? { ...request, inputFiles: copy(fixedInputs) } : request)),
+    runtime?.locate).forAgent(agent, { scope, sessionId, agentRevision, assertCurrent });
     return { execute(request) {
       assertStorage();
       const signal = AbortSignal.any([request.signal, lifetime.signal, sessionLifetime.signal]);
