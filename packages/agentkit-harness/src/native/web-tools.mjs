@@ -483,6 +483,51 @@ function contextDrifted(request, snapshot) {
     || (request.signal ?? null) !== snapshot.signalIdentity;
 }
 
+/** Shared HTTP/search implementation, after the owning Host has authorized
+ * the call. This transport does not grant Native authority or own a Run.
+ * DSH callers supply their actual Session/call identity; Native callers keep
+ * the full intent/lease checks in createNativeWebTools below. */
+export function createWebToolTransport({ fetch: fetchImpl, searchFetch = fetchImpl, providerConfig = {},
+  ssrfPolicy = {}, persistOutput } = {}) {
+  invariant(typeof fetchImpl === 'function', 'native_web_fetch_missing');
+  invariant(typeof searchFetch === 'function', 'native_web_search_fetch_missing');
+  const sealedProvider = Object.freeze(copy(providerConfig));
+  const sealedSsrf = Object.freeze({ allowPrivate: ssrfPolicy?.allowPrivate === true });
+  const definitions = nativeWebToolDefinitions(), formal = new Map(definitions.map(item => [item.name, item]));
+  return {
+    contract: 'agentkit.web-tool-transport/v1', definitions: definitions.map(item => copy(item)),
+    async execute(request) {
+      const call = request?.call, definition = formal.get(call?.name);
+      if (!definition) return { status: 'error', content: { code: 'unknown_tool' } };
+      if (!(request.signal instanceof AbortSignal)) return { status: 'error', content: { code: 'invalid_request' } };
+      if (request.definition == null || canonical(request.definition) !== canonical(definition)) {
+        return { status: 'error', content: { code: 'web_definition_mismatch', executed: false } };
+      }
+      const rejection = toolInputRejection(definition, call);
+      if (rejection) return { status: 'error', content: rejection };
+      const signal = request.signal;
+      // All transport context except the signal is JSON data, captured before
+      // the first await. In particular persistOutput cannot borrow a changed
+      // Session or operation identity from the caller's mutable request.
+      const bound = { ...copy(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))), signal };
+      const args = bound.call.arguments;
+      signal.throwIfAborted();
+      try {
+        const content = call.name === 'web_fetch'
+          ? await webFetch({ fetch: fetchImpl, url: args.url, maxChars: args.max_chars, timeout: args.timeout,
+            ssrfPolicy: sealedSsrf, signal, persistOutput, request: bound })
+          : await webSearch({ fetch: searchFetch, providerConfig: sealedProvider, query: args.query,
+            maxResults: args.max_results, recencyDays: args.recency_days, signal });
+        signal.throwIfAborted();
+        return { status: content.ok ? 'ok' : 'error', content };
+      } catch (error) {
+        if (signal.aborted) throw error;
+        return { status: 'error', content: { ok: false, error_type: 'WebToolError', error_message: 'web tool failed' } };
+      }
+    },
+  };
+}
+
 export function createNativeWebTools({
   fetch: fetchImpl, searchFetch = fetchImpl, providerConfig = {}, authorize, ssrfPolicy = {}, sessionId, persistOutput,
 } = {}) {
@@ -490,11 +535,8 @@ export function createNativeWebTools({
   invariant(typeof searchFetch === 'function', 'native_web_search_fetch_missing');
   invariant(typeof authorize === 'function', 'native_web_authorize_required');
   invariant(typeof sessionId === 'string' && sessionId, 'native_web_session_required');
-  // Deep-copy and freeze the bound configuration so external mutation of the
-  // original references cannot change frozen behavior.
-  const sealedProvider = Object.freeze(copy(providerConfig));
-  const sealedSsrf = Object.freeze({ allowPrivate: ssrfPolicy?.allowPrivate === true });
-  const definitions = nativeWebToolDefinitions();
+  const transport = createWebToolTransport({ fetch: fetchImpl, searchFetch, providerConfig, ssrfPolicy, persistOutput });
+  const definitions = transport.definitions;
   const formal = new Map(definitions.map(item => [item.name, item]));
 
   async function execute(request) {
@@ -559,21 +601,7 @@ export function createNativeWebTools({
       if (decision?.status === 'approval_required' && typeof decision.interactionId === 'string') return decision;
       return { status: 'error', content: { code: 'policy_denied', executed: false } };
     }
-    const args = copy(call.arguments);
-    try {
-      if (call.name === 'web_fetch') {
-        const content = await webFetch({ fetch: fetchImpl, url: args.url, maxChars: args.max_chars, timeout: args.timeout, ssrfPolicy: sealedSsrf, signal: request.signal, persistOutput, request });
-        return { status: content.ok ? 'ok' : 'error', content };
-      }
-      if (call.name === 'web_search') {
-        const content = await webSearch({ fetch: searchFetch, providerConfig: sealedProvider, query: args.query, maxResults: args.max_results, recencyDays: args.recency_days, signal: request.signal });
-        return { status: content.ok ? 'ok' : 'error', content };
-      }
-    } catch (error) {
-      if (request.signal?.aborted) throw error; // cancellation propagates; never swallow a ledger abort
-      return { status: 'error', content: { ok: false, error_type: 'WebToolError', error_message: 'web tool failed' } };
-    }
-    return { status: 'error', content: { code: 'unknown_tool', message: `unknown tool: ${call.name}` } };
+    return transport.execute(request);
   }
 
   // Return fresh deep copies of the definitions so callers cannot mutate the
