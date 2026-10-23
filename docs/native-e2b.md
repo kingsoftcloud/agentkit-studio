@@ -18,8 +18,12 @@ Node SDK 依赖固定为 `e2b@2.58.0`。`src/providers/native-e2b-sdk-transport.
 
 `src/providers/native-e2b-host.mjs` 提供 Host 组装工厂，将显式配置、SDK 生命周期和持久 sandbox 拥有者绑定到 scope 与 Session。配置在异步 SDK 加载前快照，保留 KsADK 的 template/timeout/internet/type/traffic-source 配置与 Skill Runtime 的回退字段。只把显式 `sandboxEnvironment` 送进 sandbox，不复制 Host 环境。公开 binding 仅含策略与不透明摘要；凭据只通过可信的 supervisor 构造端口传递，不能归档到 Build 或工具结果。地址、凭据、模板、策略或 sandbox 环境变化后，原 sandbox 记录拒绝借用。
 
-Studio 的命令后端默认仍为 `local_process`，显式 `KSADK_SANDBOX_BACKEND=e2b` 需要 `E2B_API_URL`（HTTPS origin）、`E2B_DOMAIN`、`E2B_API_KEY` 和 `KSADK_SANDBOX_TEMPLATE_ID`（或 `KSADK_SKILL_RUNTIME_TEMPLATE_ID`）。后端选择器拒绝不支持的值，不回退本地；E2B 工厂也不探测或改写 API 地址。配置与生命周期的组装已有定向验证，工厂尚未挂到生产 gateway 的命令选择入口，因此设置这些变量还不能启用 Studio E2B 命令。
+Studio 的 Native Harness 命令后端默认仍为 `local_process`，显式 `KSADK_SANDBOX_BACKEND=e2b` 需要 `E2B_API_URL`（HTTPS origin）、`E2B_DOMAIN`、`E2B_API_KEY` 和 `KSADK_SANDBOX_TEMPLATE_ID`（或 `KSADK_SKILL_RUNTIME_TEMPLATE_ID`）。后端选择器拒绝不支持的值，不回退本地；E2B 工厂也不探测或改写 API 地址。生产 Native gateway 已组装命令选择、正式工具、原 DSH 权限管线及持久后台 store；配置摘要参与 Build 与恢复绑定。普通 legacy DSH/Codex builtin 的 E2B 适配仍待迁移。
 
-Host 的命令工具选择、审批与后台 store 接线仍未完成；上述核对接口的 Studio 人工操作入口还需补齐。后台命令状态与恢复模块另行审查。当前不能把这些模块视为 Studio E2B 已完成迁移。
+上述核对接口的 Studio 人工操作入口还需补齐；线上执行、远端进程恢复、`run_code` 和 Frozen 配置导出仍未闭环。当前不能把这些模块视为 Studio E2B 已完成迁移。
 
-定向验证覆盖 SDK 适配与拥有者，并包含真实 Node 进程在创建或核对查询过程中退出后重开、未知状态禁止重新创建、精确核对授权、元数据不匹配、已审核记录变化、迟到权限撤销和清理未知禁止接管。SDK 验证包含实际安装包的离线加载与确定性接口替身；未使用云端密钥发起在线请求，也未宣称远端进程或完整 Host E2B 验收通过。
+定向验证覆盖 SDK 适配与拥有者，并包含真实 Node 进程在创建或核对查询过程中退出后重开、未知状态禁止重新创建、精确核对授权、元数据不匹配、已审核记录变化、迟到权限撤销和清理未知禁止接管。
+
+实际打包验证：`node scripts/verify-studio-native-e2b.mjs --source <已构建维护 SDK> --archive <Studio.tgz> --keep`。Node 26.5 与 22.19.0 下通过真实 Host、DSH SDK 和 E2B JS SDK（无传输替身），使用合成凭据和不可用的 HTTPS 地址，验证组件/沙箱状态、创建结果未知、绝对路径本地回退标记未写入，以及原进程退出后新 Host 读取同一历史。精确核对两次模型、三次真实工具准入、持久 unknown owner/原意图/回执；新进程恢复后公开未知结果和定位信息、整个账本及 owner 字节不变，没有新 prompt 或派发。失败或超时不被包装成成功恢复；只将测试 fixture 放入解包目录，生产代码来自记录了 SHA 的归档。
+
+该验证也复现并修复了 unknown 工具回执在会话中被错误显示为 `not_dispatched` 的问题。中断轮次保留原所有权以供显式恢复。此验证使用已安装的固定依赖图，不能作为全新安装、线上 E2B 成功执行或远端进程恢复证明；没有使用云端密钥发起在线请求。

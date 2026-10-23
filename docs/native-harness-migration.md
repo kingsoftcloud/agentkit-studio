@@ -559,7 +559,13 @@ Studio 的 Native 工具组装现根据 Host 环境中的 `KSADK_SANDBOX_BACKEND
 
 `sandbox_status/run_command/read_command_output/stop_command` 进入原 DSH 注册、权限与输出管线，由真实 Native 工具意图包围。后台观察端口只提供原回执拥有的非阻塞读取；Session 释放或普通 Host 关闭不会杀死持久远程命令。监督进程丢失仍报告未知，读取不会自动创建沙箱、重连进程或重发命令。远端已创建但 Host 权限随后失效时，已知沙箱身份保存在未知记录中，需要后续显式核对。组件状态仅在正式 E2B 工具和配置同时挂载时显示隔离执行及模板绑定；这不代表独立 Skills 执行服务已挂载。
 
-接线定向验证使用真实 Studio Host/NativeKernel/SQLite/ToolAuthority，以及明确的 DSH registry 与远程 SDK 替身，覆盖环境配置固定、非零退出、权限拒绝、scope/Session 隔离、后台只读观察、数据库与 gateway 重开、配置变化拒绝和创建中关闭。超时接线修正后，五个受影响模块在两种 Node 各通过 44 项；先前本地命令和后台运行的相关回归也通过。完整打包 SDK 的 E2B 入口、线上 E2B、显式恢复/清理的产品入口、`run_code`、Frozen 配置导出和 legacy builtin 接线仍待验收或实现，不能据此移除所有 Python fallback 或宣布完整迁移完成。
+接线定向验证使用真实 Studio Host/NativeKernel/SQLite/ToolAuthority，以及明确的 DSH registry 与远程 SDK 替身，覆盖环境配置固定、非零退出、权限拒绝、scope/Session 隔离、后台只读观察、数据库与 gateway 重开、配置变化拒绝和创建中关闭。超时接线修正后，五个受影响模块在两种 Node 各通过 44 项；先前本地命令和后台运行的相关回归也通过。
+
+另有 `node scripts/verify-studio-native-e2b.mjs --source <已构建维护 SDK> --archive <Studio.tgz> --keep`，通过实际打包的完整 Host/preset/ToolRegistry/SessionController、NativeKernel/SQLite 和已安装的 E2B JS SDK 验证拒绝边界。使用合成凭据和不可用的 HTTPS 地址，先读取真实组件/E2B 状态，再请求一条若落到本地就会写出绝对路径标记的命令。Node 26.5/22.19.0 均精确核对两次模型、三次工具准入、实际创建意图及原所有权记录进入 unknown、没有本地标记或命令监督进程；关闭原 Host 并确认 PID 退出后，新进程成功恢复原 preset/历史，没有发送新输入，原所有权字节与完整 Native 记录保持不变。
+
+该验证实际发现并修复会话投影错误：批次回执已经提交不代表每个工具都成功，不能把其中的 `uncertain` 显示成 `not_dispatched`。终态投影现在保留该工具经验证的公开上下文、原定位信息和错误标志；冷回放不重复追加或执行工具。中断轮次保留原 `turn/owner`，供显式恢复，不伪造完成事件。投影及生命周期两个模块在两种 Node 各通过 75 项，未跑全量。
+
+此证据只覆盖真实 SDK 拒绝及无新输入的历史恢复，依赖使用固定已安装图；它不是线上 E2B 执行成功、远端进程重连、全新安装或全部入口完成的证明。线上 E2B、显式恢复/清理的产品入口、`run_code`、Frozen 配置导出和 legacy builtin 接线仍待验收或实现，不能据此移除所有 Python fallback 或宣布完整迁移完成。
 
 ## Legacy runtime 的 Node 本地命令接入
 

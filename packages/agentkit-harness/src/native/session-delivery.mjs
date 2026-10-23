@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { nativeDurableStream } from './assistant-stream.mjs';
 import { canonical, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
+import { toolContext } from '../../../agentkit-harness-core/dist/tool-context.mjs';
 import { NATIVE_DSH_CONTENT_FORMAT } from './dsh-turn-contract.mjs';
 import { readNativeDshBackgroundOwnership } from './dsh-background-ownership.mjs';
 
@@ -248,6 +249,16 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       for (const [callId] of pending) {
         const intent = record.intents.find(item => item.kind === 'tool' && item.payload.calls?.some(call => call.callId === callId));
         const receipt = intent && record.receipts.find(item => item.operationKey === intent.operationKey);
+        // A committed effect receipt can contain an uncertain per-call result.
+        // The state machine stops before adding that result to the transcript;
+        // publish its actual public context rather than calling it undispatched.
+        const index = intent?.payload.calls.findIndex(call => call.callId === callId);
+        const observed = receipt?.status === 'committed' && index >= 0 ? receipt.result.results?.[index] : null;
+        if (observed) {
+          const context = observed.context === undefined ? { content: canonical(observed.content) } : toolContext(observed.context);
+          result(`closure:${callId}`, callId, context, observed.status !== 'ok');
+          continue;
+        }
         const unknown = intent?.status === 'running' && (!receipt || receipt.status === 'uncertain');
         result(`closure:${callId}`, callId, { content: canonical({ status: unknown ? 'uncertain' : 'not_dispatched',
           reason: unknown ? 'effect_outcome_unknown' : snapshot.reason ?? 'run_ended' }) }, true);

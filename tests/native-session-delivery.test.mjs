@@ -215,6 +215,47 @@ test('canceling an undispatched tool closes the displayed pair with a definite n
   assert.equal(JSON.parse(output.data.message.content[0].text).status, 'not_dispatched');
 });
 
+test('an uncertain per-call result in an acknowledged batch retains its actual public evidence on cold delivery', async t => {
+  const storage = setup(t);
+  const sink = consumer();
+  const unknownBlocks = [{ type: 'text', text: 'Remote outcome unknown; reconcile task original-task before retrying.' }];
+  const knownBlocks = [{ type: 'text', text: 'The independent operation completed.' }];
+  let models = 0, effects = 0;
+  const adapters = { model: { generate: async () => {
+    models++;
+    return { ...final(), kind: 'tool_calls', toolCalls: [
+      { callId: models === 1 ? 'known-call' : 'unknown-call', name: 'read', arguments: {} },
+    ] };
+  } }, tools: { execute: async request => {
+    effects++;
+    const unknown = request.call.callId === 'unknown-call';
+    return { status: unknown ? 'uncertain' : 'ok', content: { privateReceipt: 'not public execution context' },
+      context: { content: unknown ? 'Remote outcome unknown' : 'Independent operation completed',
+        presentation: { format: 'agentkit.dsh-content/v1', content: unknown ? unknownBlocks : knownBlocks } } };
+  } } };
+  const deliver = delivery(storage.store, sink);
+  const snapshot = await new NativeKernel({ store: storage.store, digest, owner: 'before', ports: adapters, onCheckpoint: deliver })
+    .runUntilIdle(scope, 'run');
+  assert.equal(snapshot.phase, 'interrupted'); assert.equal(snapshot.reason, 'effect_outcome_unknown');
+  const record = storage.store.load(scope, 'run');
+  const batch = record.receipts.find(receipt => receipt.result?.results?.[0]?.status === 'uncertain');
+  assert.equal(batch.status, 'committed');
+  assert.deepEqual(batch.result.results.map(result => result.status), ['uncertain']);
+  assert.equal(models, 2); assert.equal(effects, 2);
+  const results = sink.events.filter(event => event.type === 'tool/result').map(event => event.data.message);
+  assert.equal(results.length, 2);
+  assert.deepEqual(results.map(result => result.content), [knownBlocks, unknownBlocks]);
+  assert.deepEqual(results.map(result => result.isError), [false, true]);
+  assert.equal(JSON.stringify(sink.events).includes('not_dispatched'), false);
+  assert.equal(JSON.stringify(sink.events).includes('privateReceipt'), false);
+  const reopened = storage.reopen(), restored = consumer(sink.durable);
+  const before = canonical(reopened.load(scope, 'run'));
+  await delivery(reopened, restored)(reopened.load(scope, 'run').snapshot);
+  assert.deepEqual(restored.events, sink.events);
+  assert.equal(canonical(reopened.load(scope, 'run')), before);
+  assert.equal(models, 2); assert.equal(effects, 2);
+});
+
 test('a prior system head is reused or replaced at its actual surface sequence', async t => {
   const { store } = setup(t), seed = [
     { type: 'system/message', data: { turn: 0, step: 1, message: { id: 'previous-head', role: 'system', content: [{ type: 'text', text: 'Old instructions' }], source: { kind: 'system-prompt' } } }, surfaceOp: 'append', seq: 1 },
