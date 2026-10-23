@@ -28,3 +28,36 @@ export function createNativeToolAuthority({ scope, sessionId, store, isClosed = 
     } catch { return false; }
   };
 }
+
+/** Current read intent authority never grants execution rights to the old tool. */
+export function createNativeToolReceiptAuthority({ scope, sessionId, store, isClosed = () => false }) {
+  scopeKey(scope); const fixedScope = copy(scope);
+  invariant(typeof sessionId === 'string' && sessionId.trim() && typeof store?.load === 'function',
+    'studio_native_tool_receipt_binding_invalid');
+  return request => {
+    try {
+      if (isClosed() || !(request.signal instanceof AbortSignal) || request.signal.aborted
+        || request.contract !== 'agentkit.tool-receipt-observation/v1'
+        || canonical(request.scope) !== canonical(fixedScope) || request.sessionId !== sessionId) return false;
+      const record = store.load(fixedScope, request.runId), snapshot = record.snapshot;
+      if (snapshot.phase !== 'reconciling_tool' || !record.lease || record.lease.expiresAt <= Date.now()
+        || record.lease.fence !== request.executionFence
+        || !['sessionId', 'runId', 'turnId', 'buildId', 'parentRunId', 'taskChainId'].every(key => request[key] === snapshot[key])
+        || snapshot.toolReconciliation?.operationKey !== request.originalOperationKey
+        || snapshot.toolReconciliation?.callId !== request.call?.callId) return false;
+      const query = record.intents.find(item => item.operationKey === snapshot.pendingIntent);
+      if (query?.kind !== 'tool_receipt' || query.status !== 'running' || query.claimedFence !== request.executionFence
+        || query.operationKey !== request.operationKey || query.payload.contract !== request.contract
+        || query.payload.originalOperationKey !== request.originalOperationKey
+        || query.payload.originalClaimedFence !== request.originalClaimedFence || query.payload.callId !== request.call.callId) return false;
+      const original = record.intents.find(item => item.operationKey === request.originalOperationKey);
+      const receipt = record.receipts.find(item => item.operationKey === request.originalOperationKey);
+      const definition = record.configuration.tools.find(item => item.name === request.call.name);
+      return original?.kind === 'tool' && original.status === 'running' && original.claimedFence === request.originalClaimedFence
+        && Array.isArray(original.payload.calls) && original.payload.calls.length === 1
+        && canonical(original.payload.calls[0]) === canonical(request.call)
+        && Boolean(receipt && (receipt.status === 'uncertain' || receipt.result.results?.[0]?.status === 'uncertain'))
+        && definition?.recoveryPolicy === 'receipt-observation/v1' && canonical(definition) === canonical(request.definition);
+    } catch { return false; }
+  };
+}

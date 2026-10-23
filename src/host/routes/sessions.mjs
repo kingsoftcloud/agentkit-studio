@@ -1,7 +1,17 @@
 import { validateNativeA2aControlRequest } from '../services/native-a2a-control.mjs';
+import { validateNativeReconciliationRequest } from '../services/native-recovery.mjs';
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-recovery-reconcile') {
+            validateNativeReconciliationRequest(payload);
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native recovery unavailable'), { code: 'STUDIO_NATIVE_RECOVERY_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: await host.reconcileTool(payload, signal) };
+        }
         if (endpoint === 'sessions/native-a2a-control') {
             validateNativeA2aControlRequest(payload);
             if (typeof getNativeHost !== 'function')

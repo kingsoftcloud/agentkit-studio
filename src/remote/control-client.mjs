@@ -473,6 +473,7 @@ export function createProductClient(connection, { window = globalThis.window } =
         nativeChildHistory: (payload, signal) => studioBridgeOperation('sessions/native-child-history', payload, signal),
         nativeRecoveryStatus: (payload, signal) => studioBridgeOperation('sessions/native-recovery-status', payload, signal),
         resumeNativeRun: (payload, signal) => studioBridgeOperation('sessions/native-recovery-resume', payload, signal),
+        reconcileNativeTool: (payload, signal) => studioBridgeOperation('sessions/native-recovery-reconcile', payload, signal),
         controlNativeA2aTask: (payload, signal) => studioBridgeOperation('sessions/native-a2a-control', payload, signal),
         nativeChildResult: (payload, signal) => studioBridgeOperation('sessions/native-child-result', payload, signal),
         promoteNativeChild: (payload, signal) => studioBridgeOperation('sessions/native-child-promote', payload, signal),

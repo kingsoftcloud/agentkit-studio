@@ -123,7 +123,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
         source: String(item.Source ?? 'hosted'), url: String(item.AgentCard?.supportedInterfaces?.[0]?.url ?? ''), card: copy(item.AgentCard ?? {}) }));
   }
   function forSession({ scope, agentId, agentRevision, buildId = null, sessionId, stateRoot, workspaceRoot, assertCurrent,
-    assertControl, authorizeControl }) {
+    assertControl, authorizeControl, assertReceipt }) {
     if (dsh) invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
       && (buildId === null || typeof buildId === 'string' && buildId.trim()), 'A2A_DSH_OWNER_REQUIRED');
     else scopeKey(scope);
@@ -237,6 +237,33 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
     const control = createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
       signal: AbortSignal.any([lifetime.signal, sessionLifetime.signal]), readIdentity, save, wire,
       lock: identity => tryLock(join(directory, `${hash(identity)}.sqlite`)) });
+    async function observeReceipt(query) {
+      invariant(!dsh && typeof assertReceipt === 'function', 'A2A_RECEIPT_AUTHORITY_REQUIRED');
+      const checkReceipt = () => {
+        checkOwner(query.signal);
+        const current = assertReceipt(query);
+        if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+        invariant(current === true, 'A2A_RECEIPT_AUTHORITY_LOST');
+      };
+      checkReceipt();
+      const identity = { scope: fixedScope, sessionId, runId: query.runId,
+        operationKey: query.originalOperationKey, callId: query.call.callId };
+      const record = readIdentity(identity);
+      if (!record) return null;
+      const original = record.request.native;
+      invariant(original && original.executionFence === query.originalClaimedFence
+        && ['sessionId', 'runId', 'turnId', 'buildId', 'parentRunId', 'taskChainId'].every(key => original[key] === query[key])
+        && canonical(original.scope) === canonical(query.scope) && canonical(original.call) === canonical(query.call)
+        && canonical(original.definition) === canonical(query.definition)
+        && original.operationKey === query.originalOperationKey
+        && specs.some(spec => canonical(spec) === canonical(record.request.spec)), 'A2A_RECEIPT_SOURCE_CONFLICT');
+      if (!record.projection.taskId) return null;
+      const observed = await control.execute({ kind: 'get', commandId: `receipt:${hash(query.operationKey)}`,
+        operation_locator: identity, authority: { contract: 'agentkit.native-a2a-receipt-read/v1',
+          operationKey: query.operationKey }, signal: query.signal });
+      checkReceipt();
+      return { ...observed, agent: record.request.spec.target_agent_id };
+    }
     async function dispatch({ request, signal }) {
       check(request[dsh ? 'dsh' : 'native'], signal);
       const release = tryLock(join(directory, `${hash(request.identity)}.sqlite`));
@@ -296,7 +323,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
     }
     const exposurePlan = { assertGenericTargetAllowed(target) { invariant(specs.some(spec => spec.target_agent_id === target), 'A2A_TARGET_NOT_BOUND'); } };
     return { discovery: { list: input => list({ ...input, signal: AbortSignal.any([input.signal, sessionLifetime.signal]) }) },
-      invocation: { resolve: resolveCall, dispatch }, control, exposurePlan,
+      invocation: { resolve: resolveCall, dispatch }, control, observeReceipt, exposurePlan,
       close: () => sessionLifetime.abort(new Error('A2A_SESSION_CLOSED')),
       bindingDescription: { sourceRef: 'ksadk-python:355059d', sourceDigest: hash({ sourceDigest, hostBinding: binding.bindingDigest }), spaceId, planDigest,
         transport: NATIVE_A2A_PROTOCOL, version: '1.0' } };

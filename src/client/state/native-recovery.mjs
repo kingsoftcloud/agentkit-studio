@@ -7,7 +7,7 @@ const validUsage = usage => usage && typeof usage === 'object' && !Array.isArray
     && Number.isFinite(usage[key]) && usage[key] >= 0 && (key === 'cost' || Number.isSafeInteger(usage[key])));
 
 /** Reads never resume work. A lost response retains the original Run identity. */
-export function createNativeRecoveryState({ hostRemote, agentId, sessionId }) {
+export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newCommandId = () => globalThis.crypto.randomUUID() }) {
   const identity = { agentId, sessionId }, lifetime = new AbortController(), listeners = new Set();
   let disposed = false, state = { status: null, loading: false, sending: false, pending: null, error: '' };
   const set = change => { if (!disposed) { state = { ...state, ...change }; for (const listener of listeners) listener(state); } };
@@ -16,6 +16,13 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId }) {
       && ['available', 'recovering', 'reconciliation_required', 'failed', 'closed'].includes(value.state)
       && typeof value.canResume === 'boolean' && (!value.canResume || typeof value.runId === 'string' && value.runId.trim())
       && (!runId || value.runId === runId), '恢复记录与原会话或运行不一致，请刷新核对。');
+    if (value.canReconcile !== undefined) check(typeof value.canReconcile === 'boolean'
+      && (!value.canReconcile || value.state === 'reconciliation_required' && !value.canResume
+        && value.phase === 'awaiting_reconciliation' && typeof value.runId === 'string' && value.runId.trim()
+        && value.reconciliation?.contract === 'agentkit.tool-receipt-observation/v1'
+        && ['operationKey', 'callId'].every(key => typeof value.reconciliation[key] === 'string'
+          && value.reconciliation[key].trim() && value.reconciliation[key].length <= 256)),
+    '核对记录与原运行不一致，请刷新核对。');
     if (value.a2aTasks !== undefined) check(Array.isArray(value.a2aTasks) && value.a2aTasks.length <= 10000
       && value.a2aTasks.every(task => task?.runId === value.runId && ['runId', 'operationKey', 'callId']
         .every(key => typeof task[key] === 'string' && task[key].trim() && task[key].length <= 256)),
@@ -46,7 +53,8 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId }) {
     const pending = state.pending;
     set({ sending: true, error: '' });
     try {
-      const status = validate(await hostRemote.resumeNativeRun(pending, lifetime.signal), pending.runId);
+      const operation = pending.operationKey ? hostRemote.reconcileNativeTool : hostRemote.resumeNativeRun;
+      const status = validate(await operation(pending, lifetime.signal), pending.runId);
       set({ status, pending: null });
       await refresh();
     } catch { set({ error: '恢复请求尚未确认。可确认原运行的请求，请勿创建替代任务。' }); }
@@ -57,6 +65,11 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId }) {
     resume() {
       if (disposed || state.pending || !state.status?.canResume) return;
       set({ pending: { ...identity, runId: state.status.runId } }); return send();
+    },
+    reconcile() {
+      if (disposed || state.pending || !state.status?.canReconcile) return;
+      set({ pending: { ...identity, runId: state.status.runId, operationKey: state.status.reconciliation.operationKey,
+        commandId: newCommandId() } }); return send();
     },
     dispose() { disposed = true; lifetime.abort(); listeners.clear(); },
   };

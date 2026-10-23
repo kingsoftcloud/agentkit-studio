@@ -10,10 +10,19 @@ export const STUDIO_NATIVE_INTERACTION_CONTRACT = 'agentkit.native-host-interact
 export function createNativeHostInteraction({ ctx, store }) {
   return async ({ agent, signal }, snapshot) => {
     signal.throwIfAborted();
-    if (snapshot.phase !== 'awaiting_interaction' || !snapshot.pendingInteraction) return null;
+    if (snapshot.phase !== 'awaiting_reconciliation' && snapshot.phase !== 'awaiting_interaction') return null;
     invariant(String(agent?.session?.id) === snapshot.sessionId, 'studio_native_approval_session_mismatch');
     const record = store.load(snapshot.scope, snapshot.runId);
     invariant(same(record.snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
+    if (snapshot.phase === 'awaiting_reconciliation' && snapshot.toolReconciliation) {
+      // Product controls wake this same executor after durably enqueuing a
+      // receipt query. No new prompt, automatic polling, or remote effect.
+      return new Promise((_, reject) => {
+        const abort = () => reject(signal.reason);
+        if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+      });
+    }
+    if (snapshot.phase !== 'awaiting_interaction' || !snapshot.pendingInteraction) return null;
     const pending = snapshot.pendingInteraction;
     let call, definition, childRunId;
     if (snapshot.childApproval) {

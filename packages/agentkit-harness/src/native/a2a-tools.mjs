@@ -99,7 +99,7 @@ function def(name, description, parameters, opts) {
   };
 }
 
-export function nativeA2aToolDefinitions() {
+export function nativeA2aToolDefinitions({ receiptObservation = false } = {}) {
   return [
     def('list_a2a_agents', 'List remote A2A agents in the configured A2A Space. Returns each agent\'s id, name, description and version. No remote calls are made to the agents themselves — only discovery metadata.', {
       type: 'object', properties: {}, additionalProperties: false,
@@ -117,7 +117,8 @@ export function nativeA2aToolDefinitions() {
       },
       required: ['agent', 'message'], additionalProperties: false,
     }, { readOnly: false, concurrentSafe: false, permissions: ['a2a:call'], timeoutMs: 90_000 }),
-  ];
+  ].map(tool => receiptObservation && tool.name === 'call_a2a_agent'
+    ? { ...tool, recoveryPolicy: 'receipt-observation/v1' } : tool);
 }
 
 /** Normalize an agent reference: strip, lower, remove a2a-agent- prefix. */
@@ -233,6 +234,15 @@ function selectTerminalReply(outputRefs, snapshots, itemKinds) {
   const candidates = ordered.artifact.length ? ordered.artifact : ordered.message;
   if (!candidates.length) return '';
   return selected.get(candidates[candidates.length - 1]).join('');
+}
+
+/** Same result semantics for execution and an independently verified old receipt. */
+export function nativeA2aTerminalResult(observation, agent) {
+  invariant(TERMINAL_STATUSES.has(observation?.state), 'a2a_terminal_receipt_required');
+  const content = { ok: observation.state === 'completed', agent, task_id: observation.task_id,
+    state: observation.state, reply: observation.state === 'completed'
+      ? selectTerminalReply(observation.output_refs, observation.snapshots, observation.item_kinds) : '' };
+  return { status: content.ok ? 'ok' : 'error', content };
 }
 
 // ---- Identity guard --------------------------------------------------------
@@ -390,7 +400,7 @@ export function createDshA2aToolPort(options = {}) { return createA2aToolPort(op
 
 function createA2aToolPort({
   agentId, agentRevision, buildId = null, scope: boundScopeInput, sessionId, spaceId, discovery, invocation, exposurePlan,
-  authorize, assertCurrent, bindingDescription,
+  authorize, assertCurrent, bindingDescription, receiptObservation = false,
 } = {}, dsh) {
   invariant(typeof sessionId === 'string' && sessionId, 'a2a_session_required');
   invariant(typeof discovery?.list === 'function', 'a2a_discovery_required');
@@ -410,7 +420,8 @@ function createA2aToolPort({
   invariant(typeof bindingDescription.transport === 'string' && bindingDescription.transport, 'a2a_transport_required');
   invariant(typeof bindingDescription.version === 'string' && bindingDescription.version, 'a2a_version_required');
   const boundScope = dsh ? null : Object.freeze(copy(boundScopeInput));
-  const definitions = nativeA2aToolDefinitions();
+  invariant(!dsh || !receiptObservation, 'a2a_native_receipt_policy_not_dsh');
+  const definitions = nativeA2aToolDefinitions({ receiptObservation });
   const formal = new Map(definitions.map(item => [item.name, item]));
 
   async function execute(request) {

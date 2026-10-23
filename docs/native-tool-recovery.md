@@ -2,8 +2,8 @@
 
 独立 TS 核心新增显式策略 `ToolDefinition.recoveryPolicy = "receipt-observation/v1"`，
 用于可能已产生副作用、但执行结果尚未确认的单次工具调用。它与 `safe-read/v1`
-不同：原调用永远不重发。该策略目前是核心能力，Studio A2A 的生产适配、认证操作
-和等待界面仍需接入；不能据此宣称完整产品恢复已完成。
+不同：原调用永远不重发。Studio 的 Native A2A 工具已接入此策略、认证核对操作和
+原运行等待界面；其他工具与后端仍需分别验收，不能据此宣称全部恢复产品能力完成。
 
 ## 账本契约
 
@@ -40,6 +40,33 @@
 真实本地 HTTP 与 SQLite 子进程在三处执行 SIGKILL：原效果请求后、等待提交后、
 回执查询途中；新 PID 核对后继续同一运行，原效果始终只有一次。
 
-这些证明独立核心与明确的 HTTP 测试适配器，不代表 Studio 正式 Host、真实模型、
-A2A 输入等待、其他远程后端或 Electron 已验收。整体状态见
+Studio 定向测试使用实际 Native Host 服务、SQLite、Kernel、工具网关和 HTTP 模型/
+A2A 协议，覆盖远端补充输入后继续同一 Run、响应丢失后的同命令确认、非终态等待、
+错误操作和修改后的 preset/revision 拒绝，以及取消后迟到回执不能恢复运行。
+SessionController、工具注册与审批使用明确的窄替身；不代表完整挂载 Host/Electron。
+实际 SIGKILL 后的独立新进程还验证生产 A2A 网关：已知远端 task 才能 GetTask 并继续；
+发送已发生但 task 未知时继续等待，既不重新发现也不重发 Send。
+
+这些不代表真实模型、其他远程后端或 Electron 已验收。整体状态见
 [native-migration-status.md](native-migration-status.md)。
+
+## Studio 操作与配置
+
+新建 Native A2A 配置的 `call_a2a_agent` 正式定义启用该策略。DSH Native/Codex
+继续使用各自的原调用控制契约。已冻结的旧配置不自动补策略或改摘要，旧 `interrupted`
+终态不会重开；变更绑定导致恢复配置摘要不一致时明确拒绝。
+
+在“运行与子任务”查看原远端任务，通过现有审批补充输入或取消远端任务。远端终态
+封存后点击“核对结果并继续原运行”。该操作不接受结果、远端 URL、权限或替代运行；
+认证路由 `sessions/native-recovery-reconcile` 只接受 `agentId/sessionId/runId/operationKey/commandId`。
+它复核原会话归属、持久配置和可信 preset，持久化命令后唤醒原执行者，或通过现有
+可信恢复入口接管原运行。接收命令不等于核对完成，界面需继续读取状态。
+
+新 `tool_receipt` 的 lease/fence 只授权 GetTask。适配器固定原完整调用、原 fence、
+原服务绑定、route/task/context，不复用旧执行权。核对成功追加新回执，原意图和未知
+回执保留。远端尚未完成、task ID 未知或核对失败时仍等待，不自动重复查询。
+请求响应丢失时，界面保留同一 commandId 用于确认；已消费命令不会再次查询。
+再次主动核对使用新 commandId。查询不追加未知远端用量为零的断言。
+
+仍待闭环：完整挂载 Host 的此项恢复验收、在线 A2A 服务、并发远端取消投递、内部
+控制面和编排、文件/data 输出的完整对照，以及所有其他未知副作用的清理/继续流程。

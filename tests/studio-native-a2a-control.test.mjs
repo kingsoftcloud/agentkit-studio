@@ -66,6 +66,10 @@ async function setup(t, { expectedAnswer = 42 } = {}) {
     control = createStudioNativeA2aControl({ ctx, store, workspaceId: 'workspace', lifetime, active,
       agentEvents: () => ({ serial: async name => { assert.equal(name, 'agentkit/native-recovery-binding'); return { ...binding, agentRevision: revision }; } }) });
   }
+  t.after(async () => {
+    lifetime.abort(); await Promise.allSettled([...active]); await gateway.close(); store.close(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve)); rmSync(root, { recursive: true, force: true }); assert.deepEqual(failures, []);
+  });
   bind();
   const capsule = nativeRecoveryBinding({ binding, input: { messages: [{ id: 'user', role: 'user', content: [{ type: 'text', text: 'call remote' }] }] },
     source: { provider: 'fixture', model: 'fixture' }, selection: {}, systemPrompt: 'fixture' });
@@ -75,15 +79,12 @@ async function setup(t, { expectedAnswer = 42 } = {}) {
       toolCalls: [{ callId: 'actual-call', name: 'call_a2a_agent', arguments: { agent: 'remote', message: 'initial' } }] }; },
   } } });
   kernel.start({ ...data.snapshot, scope }, data.config); const snapshot = await kernel.runUntilIdle(scope, 'run');
-  assert.equal(snapshot.phase, 'interrupted');
+  assert.equal(snapshot.phase, 'awaiting_reconciliation');
   const intent = store.load(scope, 'run').intents.find(intent => intent.kind === 'tool');
   const request = { agentId: 'agent', sessionId: 'session', runId: 'run', operationKey: intent.operationKey, callId: 'actual-call' };
   const route = createSessionRoutes({ getNativeHost: async () => ({ controlA2aTask: (...args) => control(...args) }) });
   const invoke = async (kind, commandId, more = {}) => (await route('sessions/native-a2a-control', { ...request, kind, commandId, ...more })).value;
-  t.after(async () => {
-    lifetime.abort(); await Promise.allSettled([...active]); await gateway.close(); store.close(); server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve)); rmSync(root, { recursive: true, force: true }); assert.deepEqual(failures, []);
-  });
+
   return { request, invoke, route, approvalRequests, services, peerBodies,
     status: () => createStudioNativeRecovery({ ctx, store, workspaceId: 'workspace', lifetime, active, controls: new Map(),
       controlKey: () => 'key', execute: {} }).status(request),

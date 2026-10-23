@@ -47,7 +47,8 @@ export function createNativeDshA2aTools({ config = {} } = {}) {
   if (!bindingDescription || typeof bindingDescription !== 'object') {
     throw Object.assign(new Error('native-dsh-a2a requires a binding description'), { code: 'NATIVE_A2A_BINDING_DESCRIPTION_REQUIRED' });
   }
-  return createNativeA2aToolPort({ scope, sessionId, spaceId, discovery, invocation, exposurePlan, authorize, assertCurrent, bindingDescription });
+  return createNativeA2aToolPort({ scope, sessionId, spaceId, discovery, invocation, exposurePlan, authorize, assertCurrent, bindingDescription,
+    receiptObservation: config.receiptObservation === true });
 }
 
 export { NATIVE_A2A_TOOLS_CONTRACT };

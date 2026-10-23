@@ -39,7 +39,7 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
         h('textarea', { 'aria-label': '补充输入内容', value: text, onChange: event => setText(event.target.value), disabled: busy || Boolean(state.pending) }),
         h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending) || !text.trim(), onClick: send }, '提交补充输入'),
         inputError ? h('p', { role: 'alert' }, inputError) : null) : null,
-      h('p', { style: { fontSize: '12px' } }, '此处操作原远端任务。核对结果不会自动恢复 Native 运行。'),
+      h('p', { style: { fontSize: '12px' } }, '此处操作原远端任务。任务结束后，可在原运行恢复区点击“核对结果并继续原运行”。'),
       value?.output_refs?.length ? h('details', null, h('summary', null, '远端任务输出'),
         ...value.output_refs.map(ref => h('pre', { key: `${ref.scope_id}:${ref.item_id}`, style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } },
           Object.values(value.snapshots?.[`${ref.scope_id}:${ref.item_id}`] ?? {}).join('\n')))) : null,

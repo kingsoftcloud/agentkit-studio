@@ -118,12 +118,17 @@ async function setup(t, { protocol = 'JSONRPC', streaming = true, source = 'host
     get sends() { return remoteSends; }, get models() { return models; }, get approvals() { return approvals; },
     repeat() { repeat = true; }, readOnly() { policy = 'read-only'; }, drift() { version = 'foreign-version'; },
     async reopen(runId = 'run') {
-      const before = canonical(store.load(scope, runId)); await gateway.close(); store.close(); store = new SqliteRunStore(filename); bind();
+      const before = store.load(scope, runId); await gateway.close(); store.close(); store = new SqliteRunStore(filename); bind();
       const kernel = new NativeKernel({ store, digest, owner: 'replacement', ports: {
         tools: { execute: () => assert.fail('cold recovery cannot re-execute tools') },
         model: { generate: () => assert.fail('cold recovery cannot call a model') },
       } });
-      await kernel.runUntilIdle(scope, runId); assert.equal(canonical(store.load(scope, runId)), before);
+      await kernel.runUntilIdle(scope, runId);
+      const after = store.load(scope, runId);
+      assert.equal(after.fence, before.fence + (before.snapshot.phase === 'awaiting_reconciliation' ? 1 : 0));
+      assert.equal(after.lease, null);
+      assert.equal(canonical({ ...after, fence: before.fence }), canonical(before),
+        'reopening a waiting Run only acquires/releases a new lease; all ledger facts stay unchanged');
     },
   };
 }
@@ -154,7 +159,7 @@ test('stream EOF reconciles the original task with GetTask without a second Send
 
 test('broken stream leaves a durable unknown call and cold recovery never sends again', async t => {
   const h = await setup(t, { mode: 'lost' });
-  const result = await h.run(); assert.equal(result.phase, 'interrupted'); assert.equal(result.reason, 'effect_outcome_unknown');
+  const result = await h.run(); assert.equal(result.phase, 'awaiting_reconciliation'); assert.equal(result.reason, 'effect_outcome_unknown');
   assert.equal(h.sends, 1); assert.equal(h.records()[0].phase, 'unknown');
   const count = h.requests.length; await h.reopen(); assert.equal(h.requests.length, count); assert.equal(h.sends, 1);
 });

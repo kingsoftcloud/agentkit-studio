@@ -5,6 +5,7 @@ import { createNativeA2aPanel } from './native-a2a.mjs';
 
 const phases = { created: '已准备', preparing: '准备中', requesting_model: '推理中', requesting_context: '整理上下文',
   requesting_input: '读取输入', executing_tools: '执行工具', awaiting_interaction: '等待审批', paused: '已暂停',
+  awaiting_reconciliation: '等待核对结果', reconciling_tool: '正在核对结果',
   completed: '已完成', failed: '已失败', interrupted: '需要恢复核对', canceled: '已取消', finalizing: '收尾中' };
 
 export function createNativeChildPanel({ ui: { React: { createElement: h, useEffect, useState, Fragment }, ResourceDialog, buttonStyle },
@@ -46,7 +47,9 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
             : recoveryState.status.state === 'reconciliation_required' ? '有执行结果未知的操作，需要核对；不会自动重跑。'
               : recoveryState.status.state === 'failed' ? '恢复未完成，请核对原配置后重试。' : '检测到尚未结束的原运行，可继续原任务。'),
           recoveryState.status.canResume && !recoveryState.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: recoveryState.sending,
-            onClick: () => void recovery.resume() }, '恢复原运行') : null) : null,
+            onClick: () => void recovery.resume() }, '恢复原运行') : null,
+          recoveryState.status.canReconcile && !recoveryState.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: recoveryState.sending,
+            onClick: () => void recovery.reconcile() }, '核对结果并继续原运行') : null) : null,
         recoveryState.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: recoveryState.sending,
           onClick: () => void recovery.retry() }, recoveryState.sending ? '正在确认…' : '确认原运行恢复请求') : null,
         ...(recoveryState.status?.a2aTasks ?? []).map(task => h(A2aTask, { key: `${task.runId}:${task.operationKey}:${task.callId}`,

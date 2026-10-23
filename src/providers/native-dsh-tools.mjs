@@ -34,6 +34,7 @@ import { nativeCommandBackend, prepareNativeE2BHost } from './native-e2b-host.mj
 import { createNativeDshE2BCommands, createNativeDshE2BCodeTools } from './native-dsh-e2b-commands.mjs';
 import { prepareNativeA2AHost } from './native-a2a-host.mjs';
 import { createNativeDshA2aTools } from './native-dsh-a2a.mjs';
+import { createNativeA2aReceiptObserver } from './native-a2a-receipt.mjs';
 import { nativeA2aToolDefinitions, NATIVE_A2A_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { prepareNativeSkillHost } from './native-skill-host.mjs';
 import { sandboxRegistryName, SANDBOX_CODE_NAME_CONTRACT } from './sandbox-code-name.mjs';
@@ -102,7 +103,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   }));
   const a2a = prepareNativeA2AHost({ env: commandEnvironmentSnapshot, bindings: config.a2aBindings ?? [],
     ...(a2aFetch ? { fetchImpl: a2aFetch } : {}) });
-  const a2aNames = new Set(a2a ? nativeA2aToolDefinitions().map(definition => {
+  const a2aNames = new Set(a2a ? nativeA2aToolDefinitions({ receiptObservation: true }).map(definition => {
     formal.set(definition.name, definition); return definition.name;
   }) : []);
   const controls = commandBackend === 'local_process' ? localControlSettings(commandSettings) : null;
@@ -726,7 +727,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       }
       const a2aPort = a2aService ? createNativeDshA2aTools({ config: {
         ...a2aService,
-        scope: commandAuthority.scope, sessionId, spaceId: a2a.spaceId, assertCurrent, authorize: async () => 'allow',
+        scope: commandAuthority.scope, sessionId, spaceId: a2a.spaceId, assertCurrent, authorize: async () => 'allow', receiptObservation: true,
       } }) : null;
       const remoteSkillPort = remoteSkills && commandAuthority?.scope && assertCurrent ? remoteSkills.forSession({
         agent: { session: { id: sessionId } }, scope: commandAuthority.scope, sessionId,
@@ -781,7 +782,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             readers: { [commandBackend]: async request => (await commands()).reader(request) } }),
         } : {}),
         ...(builtinNames.has(browserName) ? { browser: { recoverSessions: request => browserTools.forSession(sessionId).recoverSessions(request) } } : {}),
-        tools: { execute: async request => {
+        tools: {
+          ...(a2a && commandAuthority?.store ? { observeReceipt: createNativeA2aReceiptObserver({ a2a,
+            scope: commandAuthority.scope, sessionId, store: commandAuthority.store,
+            stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed }) } : {}),
+          execute: async request => {
         invariant(!closed, 'studio_native_tools_closed');
         invariant(request.sessionId === sessionId && (allowed.has(request.call.name)
           || hasSkills && ['skill', 'bash', 'pwsh'].includes(request.call.name)),

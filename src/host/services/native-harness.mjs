@@ -478,7 +478,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     resolveRecoveryTurn: resolveRestoredBinding,
     resolveBackgroundTurn: resolveBackgroundBinding,
   });
-  const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute });
+  const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents });
   const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents });
   const notifyBackgroundCompletion = createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents });
   const dispatchBackgroundCompletion = createStudioNativeBackgroundDispatcher({ ctx, store, workspaceId, lifetime, active, notify: notifyBackgroundCompletion });
@@ -544,6 +544,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     dispatchBackgroundCompletion,
     recoveryStatus: recovery.status,
     resumeTurn: recovery.resume,
+    reconcileTool: recovery.reconcile,
     controlA2aTask,
     childHistory(request) { return childHistory(request).list(request); },
     childResult(request) { return childHistory(request).result(request); },

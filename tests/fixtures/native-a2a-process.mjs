@@ -6,7 +6,7 @@ import { NativeKernel, emptyUsage } from '../../packages/agentkit-harness-core/d
 import { fixture, scope, digest } from '../../packages/agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
-const [mode, root, origin] = process.argv.slice(2), workspaceRoot = join(root, 'workspace');
+const [mode, root, origin, queryId = 'cold-query'] = process.argv.slice(2), workspaceRoot = join(root, 'workspace');
 const store = new SqliteRunStore(join(root, 'runs.sqlite'));
 if (mode === 'recover') {
   const forbidden = () => { appendFileSync(join(root, 'forbidden.jsonl'), 'called\n'); throw Error('cold recovery re-entered an effect'); };
@@ -31,15 +31,31 @@ if (mode === 'recover') {
     workspaceRoot, stateDir: join(root, 'state'), commandEnvironment: {
       KSADK_A2A_SERVICE_URL: origin, KSADK_A2A_ALLOW_PRIVATE: 'true',
     } });
-  const data = fixture({ tools: gateway.definitions(agent, [...registry.values()]), limits: { leaseMs: 1000 } });
+  const data = fixture({ tools: gateway.definitions(agent, [...registry.values()]), limits: { leaseMs: 3000 } });
   const kernel = new NativeKernel({ store, digest, owner: 'doomed', ports: {
-    ...gateway.forAgent(agent, { scope, store }), model: { generate: async () => {
+    ...gateway.forAgent(agent, { scope, store }), model: { generate: async request => {
       appendFileSync(join(root, 'models.jsonl'), 'model\n');
+      if (mode === 'observe') {
+        if (!request.messages.some(message => message.role === 'tool' && message.content.includes('cold verified result')))
+          throw Error('missing original reconciled tool message');
+        return { kind: 'final_candidate', text: 'Original task completed', toolCalls: [], usage: emptyUsage() };
+      }
       return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'real-call', name: 'call_a2a_agent',
         arguments: { agent: 'remote', message: 'one original send' } }] };
     } },
   } });
-  kernel.start(data.snapshot, data.config);
-  await kernel.runUntilIdle(scope, 'run');
+  if (mode === 'observe') {
+    const original = store.load(scope, 'run'), operationKey = original.snapshot.toolReconciliation.operationKey;
+    const command = kernel.reconcileTool(scope, 'run', operationKey, queryId);
+    const snapshot = await kernel.runUntilIdle(scope, 'run');
+    process.stdout.write(JSON.stringify({ pid: process.pid, runId: snapshot.runId, phase: snapshot.phase, command,
+      original: original.intents.find(intent => intent.kind === 'tool'),
+      retained: store.load(scope, 'run').intents.find(intent => intent.kind === 'tool'),
+      usage: snapshot.usage, receiptReads: store.load(scope, 'run').intents.filter(intent => intent.kind === 'tool_receipt').length }) + '\n');
+    await gateway.close(); store.close(); process.exitCode = 0;
+  } else {
+    kernel.start(data.snapshot, data.config);
+    await kernel.runUntilIdle(scope, 'run');
   throw Error('fixture must be SIGKILLed before it returns');
+  }
 }
