@@ -126,7 +126,66 @@ Still required for full migration:
 - External peer credential schemes beyond the current hosted token path and
   any required v0.3 compatibility surface.
 - Fresh Node-only dependency installation and the remaining legacy Python
-  builtin replacement. Existing DSH Native/Codex A2A tools still use the old
-  bridge until their separate adapter migration is complete.
+  builtin replacement. The DSH Native/Codex A2A Node adapter is now present; its validation scope is
+  described below. Other unmigrated builtin tools still use the old bridge.
 
 These are explicit remaining capabilities, not supported fallback paths.
+
+## DSH Native and Codex Node A2A tools
+
+The local DSH/Codex preset now retains a copy of `spec.bindings.a2a` as well.
+An explicit managed binding admits `list_a2a_agents`, `get_a2a_agent_card` and
+`call_a2a_agent`, including an Agent with no other tool bindings. A conflicting
+MCP/resource executor under one of those names rejects admission. The names
+also remain available as explicitly selected builtins. A missing Node factory
+fails with `A2A_NODE_PORT_UNAVAILABLE`, without trying the Python bridge.
+
+`createDshNodeA2aTools` uses the original DSH Agent, Session, call ID and
+arguments, with Host-fixed revision, Frozen Build and endpoint/credential/plan
+bindings. It shares the AgentCard, HTTP+JSON/JSONRPC, SSE and terminal artifact
+selection implementation with Native. Its contracts are distinct:
+
+- `agentkit.dsh-node-a2a-tools/v1` for the Host port and locked binding;
+- `agentkit.dsh-a2a-tools/v1` for the shared tool implementation;
+- `agentkit.studio-dsh-a2a-host/v1` for managed remote-call checkpoints.
+
+There is no fabricated Native Run, scope, task chain or execution fence. The
+Host-private `builtin-workspace/a2a/` tree contains original DSH intents and
+receipts and separate managed remote-call checkpoints. Both the original tool
+intent and send marker precede sending HTTP. A duplicate finished call returns
+its exact receipt; a lost owner or interrupted send returns uncertainty and
+never resends. Changed Agent revision, Frozen Build, arguments or service
+binding cannot reuse an old call. Another Agent/Session owns a separate call.
+These records do not replace or rewrite the existing Native record format or
+Native identity/binding digest.
+
+The real DSH pre/guard/around/post pipeline remains in charge. Node dispatch
+also checks the current sandbox standing policy and exact-call approval.
+Cancellation, Host retirement or authority drift during approval/discovery
+cannot continue into a send. Once sending may have started, uncertainty stays
+JSON-persistable even if no task ID has arrived (`task_id: null`); the original
+call locator remains authoritative. Remote task/context/projection checkpoints
+are preserved separately. Never submit a new call ID merely to retry an
+unknown send.
+
+`tests/dsh-node-a2a-tools.test.mjs` uses real localhost HTTP/SSE, JSONRPC and
+HTTP+JSON, UTF-8 chunk boundaries/duplicate event IDs, exact durable ordering,
+policy/identity/version drift, concurrent duplicates, caller/Host/timeout
+interruption, actual SIGKILL and a different Node PID opening the same records.
+This deterministic peer is not an online managed service. Remaining product
+inspect/reconcile/continue/cancel, auth/input pauses, inbound/internal control
+plane, remote orchestration, Frozen deployment and fresh-install gates above
+still apply. Other builtin tools still retain Python fallback.
+
+The packed production Host verifier now exercises both DSH runtimes through
+their real preset/SessionController/ToolRegistry, including policy denial,
+exact-call approval, duplicate receipts and a different Host PID restoring
+the original A2A records with zero new HTTP calls. Cold startup exposed an
+async preset-registration race (`Unknown agent preset`); Host readiness now
+awaits actual historical preset reconciliation. Deliberately delayed,
+failed and retired registration tests cover that boundary. Node 26.5.0 and
+22.19.0 each pass 138 affected tests and the packed local, refused-E2B and
+whole-turn Native A2A checks. Native's deterministic model executes exactly
+two model requests, one discovery and one send; cold recovery preserves
+those counts and the complete Run record. These checks use a fixed installed
+dependency graph; fresh installation and DSH/Codex model/CLI remain separate.

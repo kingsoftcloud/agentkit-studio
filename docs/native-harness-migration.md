@@ -675,3 +675,13 @@ DSH 的交互式 E2B 命令随后已通过独立 DSH 所有权接入 Node，复�
 到 Host/Build/恢复绑定。旧 builtin 配置会映射到独立名称。本地后端明确拒绝片段，
 E2B 的发布/执行受原持久意图与命令监督约束。详见 [代码片段](native-e2b.md#node-隔离代码片段)。
 其他管理工具等 builtin 仍保留 Python fallback；没有默认切换或整体完成声明。
+
+### DSH Native/Codex 的 A2A Node 接入
+
+`spec.bindings.a2a` 现在也固定到 DSH Native/Codex 预设；只有 A2A 绑定的 Agent 同样
+进入资源组装路径并获得三项工具。Node 端口保留实际 Agent/Session/call、revision 和
+Frozen Build，独立 DSH 合约与持久记录复用 Native 的 AgentCard/HTTP/SSE 服务；
+没有伪造 Native Run/fence，也没有更改 Native 原有记录和摘要。原始意图和远端发送
+检查点在 HTTP 副作用前持久化，重复/未知调用不重发，真实审批和前后策略保留。
+缺失 Node 端口直接报错，不进入 Python A2A fallback。验证范围与仍待补齐的继续、
+取消、内部控制面和产品恢复操作见 [native-a2a.md](native-a2a.md#dsh-native-and-codex-node-a2a-tools)。

@@ -156,7 +156,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       ctx: toolsCtx, workspaceRoot, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
       isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
       toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
-      skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [],
+      skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [], a2aBindings: config.a2aBindings ?? [],
     })), 'agentkit-studio: Node builtin environment');
   }
   // A frozen Native Build retains its engine when the live-preset default is
@@ -337,7 +337,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // Cordis unloads and reruns this scope when the registry changes. An old
   // scope must dispose its own admission, never whichever admission is current
   // after an asynchronous reload. Catalog-only profiles retain typed failures.
-  bindPresetRegistry(ctx, { createAdmission: createPresetAdmission,
+  const presetRegistryStartup = bindPresetRegistry(ctx, { createAdmission: createPresetAdmission,
     publishAdmission: admission => { presetAdmission = admission; },
     reconcile: async admission => { await reconciler.run(admission); await studioTeams.restore(admission); },
   });
@@ -384,4 +384,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   ctx.effect(async () => { const channels = await studioChannelsPromise; await channels?.ensureReady(); return () => channels?.dispose(); }, 'agentkit-studio: channels lifetime');
   ctx.effect(async () => { const scheduler = await studioSchedulerPromise; await scheduler?.ensureReady(); return () => scheduler?.dispose(); }, 'agentkit-studio: scheduler lifetime');
   ctx.effect(() => () => bridge.close(), 'agentkit-studio: stop owned runtime requests');
+  // A registry service may already exist while its asynchronously injected
+  // Studio definitions are still being recovered. Do not expose a completed
+  // Host mount before its persisted Session presets are registered. Keep the
+  // optional-registry catalog profile independent from this native startup.
+  if (ctx.get('agentPresets')) await presetRegistryStartup.ready;
 }

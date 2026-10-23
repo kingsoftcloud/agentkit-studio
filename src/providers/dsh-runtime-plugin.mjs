@@ -15,12 +15,12 @@ import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { migrateLegacyCodexObservations } from './codex-observation.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
+import { nativeA2aToolDefinitions } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { sandboxRegistryName, SANDBOX_CODE_NAME } from './sandbox-code-name.mjs';
 
-// Keep the builtin executor in the Studio host. The Python toolset remains
-// the source of truth for AgentEngine tool semantics (workspace confinement,
-// read-before-edit state and approval policy); this short bridge only supplies
-// the process boundary that DSH's native ToolRegistry needs.
+// Node environments own migrated builtins through the complete DSH registry.
+// The remaining Python fallback must be removed as each corresponding Host
+// capability is migrated; a missing migrated port never re-enters Python.
 const EXECUTE_BUILTIN = `
 import contextlib, json, sqlite3, sys
 from dataclasses import asdict
@@ -105,6 +105,8 @@ function createBuiltinExecutor(config = {}, nodeTools) {
       if (result?.status === 'uncertain') return { ...result.content, ok: false, status: 'uncertain' };
       throw builtinError('BUILTIN_TOOL_INVALID_OUTPUT', `Node builtin ${name} 返回了无效结果`, { name });
     }
+    if (['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent'].includes(name))
+      throw builtinError('A2A_NODE_PORT_UNAVAILABLE', 'Node A2A environment is unavailable');
     if (name === SANDBOX_CODE_NAME) throw builtinError('SANDBOX_CODE_NODE_PORT_UNAVAILABLE', 'Node sandbox code environment is unavailable');
     const { signal } = exec, agentId = config.agentId;
     const timeoutMs = Math.min(3_600_000, Math.max(1_000, Number(contract.timeoutSeconds || 20) * 1000));
@@ -185,6 +187,13 @@ function registerBuiltinTools(ctx, contracts, config, bridge) {
   // A persisted DSH preset can outlive the catalog request that originally
   // admitted it. Preserve the Agent's explicit builtin bindings in that case;
   // the Python executor still validates the name against ksadk toolsets.
+  const a2aDefinitions = config.a2aBindings?.length ? nativeA2aToolDefinitions() : [];
+  for (const definition of a2aDefinitions) {
+    if ((contracts ?? []).some(contract => contract.name === definition.name && contract.enabled !== false && contract.executor !== 'builtin'))
+      throw builtinError('A2A_TOOL_NAME_COLLISION', 'A managed A2A name is already bound to another executor');
+    if (!declared.some(contract => contract.name === definition.name)) declared.push({ name: definition.name,
+      description: definition.description, parameters: definition.parameters, executor: 'builtin', enabled: true });
+  }
   const declaredNames = new Set(declared.map(contract => String(contract.name)));
   const fallback = toolNames(config.toolBindings)
     .filter(name => !declaredNames.has(name))
@@ -331,7 +340,8 @@ export function apply(ctx, config = {}) {
   const nativeToolBindings = wholeNativeTurn ? bridge.createNativeTools({ ctx, config }) : null;
   if (!wholeNativeTurn) registerBuiltinTools(ctx, config.toolContracts, config, bridge);
   if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
-  const boundToolAdapter = createToolAdapter(ctx, config.toolBindings);
+  const boundToolAdapter = createToolAdapter(ctx, [...toolNames(config.toolBindings),
+    ...(!wholeNativeTurn && config.a2aBindings?.length ? nativeA2aToolDefinitions().map(tool => tool.name) : [])]);
   const toolAdapter = config.runtime === 'codex'
     ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) } : boundToolAdapter;
   // Legacy resource adapters retain their existing per-model-step ownership.

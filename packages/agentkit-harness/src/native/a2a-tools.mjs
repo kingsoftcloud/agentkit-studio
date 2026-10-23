@@ -63,6 +63,7 @@ import { createHash } from 'node:crypto';
 import { canonical, copy, invariant, toolInputRejection } from '../../../agentkit-harness-core/dist/index.mjs';
 
 export const NATIVE_A2A_TOOLS_CONTRACT = 'agentkit.native-a2a-tools/v1';
+export const DSH_A2A_TOOLS_CONTRACT = 'agentkit.dsh-a2a-tools/v1';
 const lockFailure = code => Object.assign(new Error(code), { code });
 const MAX_AGENT_LIST_BYTES = 256 * 1024; // 256 KiB total JSON budget
 const MAX_AGENT_FIELD_BYTES = 4096; // per-field byte limit
@@ -278,6 +279,19 @@ function validateStrictIdentity(request, definition) {
   return errors;
 }
 
+function validateDshIdentity(request, definition, owner) {
+  const errors = [];
+  for (const key of ['scope', 'runId', 'turnId', 'taskChainId', 'executionFence', 'parentRunId'])
+    if (Object.hasOwn(request, key)) errors.push('Native identity is not a DSH call');
+  if (request.agentId !== owner.agentId || request.agentRevision !== owner.agentRevision || request.buildId !== owner.buildId)
+    errors.push('DSH owner binding mismatch');
+  if (typeof request.operationKey !== 'string' || !request.operationKey.trim()
+    || typeof request.call?.callId !== 'string' || !request.call.callId.trim()) errors.push('DSH call identity required');
+  if (!(request.signal instanceof AbortSignal)) errors.push('signal must be an AbortSignal instance');
+  if (canonical(request.definition) !== canonical(definition)) errors.push('definition mismatch');
+  return errors;
+}
+
 // ---- Tool implementations --------------------------------------------------
 
 async function listA2aAgents({ discovery, spaceId, signal, guard }) {
@@ -302,7 +316,7 @@ async function getA2aAgentCard({ discovery, spaceId, agent, signal, guard }) {
   return { ok: true, agent: sanitizeAgent(matched) };
 }
 
-async function callA2aAgent({ invocation, exposurePlan, agent, message, frozenLocator, frozenSignal, guard, request, effect }) {
+async function callA2aAgent({ invocation, exposurePlan, agent, message, frozenLocator, frozenSignal, guard, request, effect, dsh }) {
   if (!invocation || typeof invocation.resolve !== 'function' || typeof invocation.dispatch !== 'function') {
     return { ok: false, error_type: 'A2A_MANAGED_INVOCATION_CONTEXT_REQUIRED', error_message: 'Managed A2A invocation context is required' };
   }
@@ -314,7 +328,8 @@ async function callA2aAgent({ invocation, exposurePlan, agent, message, frozenLo
   try { guard(); } catch (e) { if (frozenSignal.aborted) throw e; return { ok: false, error_type: e.code, error_message: 'Lease lost before resolve' }; }
   let resolved;
   try {
-    resolved = await abortable(frozenSignal, () => invocation.resolve({ agent, message, scope: request.scope, sessionId: request.sessionId, runId: request.runId, callId: request.call?.callId, operationKey: request.operationKey, signal: frozenSignal, nativeRequest: request }));
+    resolved = await abortable(frozenSignal, () => invocation.resolve({ agent, message, scope: request.scope, sessionId: request.sessionId, runId: request.runId, callId: request.call?.callId, operationKey: request.operationKey, signal: frozenSignal,
+      ...(dsh ? { dshRequest: request } : { nativeRequest: request }) }));
   } catch (error) {
     if (frozenSignal.aborted) throw error;
     return { ok: false, error_type: 'A2A_INVOCATION_FAILED', error_message: 'Managed A2A invocation failed' };
@@ -346,7 +361,7 @@ async function callA2aAgent({ invocation, exposurePlan, agent, message, frozenLo
     effect.started = true; // shared with the outer final guard, before dispatch
     const dispatchResult = await abortable(frozenSignal, () => invocation.dispatch({ request: sealedResolved, trigger: sealedTrigger, signal: frozenSignal }));
     // Preserve a known remote task even if later result interpretation aborts.
-    effect.taskId = dispatchResult?.task_id;
+    effect.taskId = dispatchResult?.task_id ?? null;
     // Guard after dispatch using frozen signal.
     try { guard(); } catch (e) {
       return { ok: false, error_type: 'A2A_INVOCATION_UNCERTAIN', error_message: 'Lease lost after dispatch; the remote call may have completed', agent: effect.agent, executed: true, task_id: effect.taskId, operation_locator: frozenLocator };
@@ -370,15 +385,21 @@ async function callA2aAgent({ invocation, exposurePlan, agent, message, frozenLo
 
 // ---- Factory ---------------------------------------------------------------
 
-export function createNativeA2aToolPort({
-  scope: boundScopeInput, sessionId, spaceId, discovery, invocation, exposurePlan,
+export function createNativeA2aToolPort(options = {}) { return createA2aToolPort(options, false); }
+export function createDshA2aToolPort(options = {}) { return createA2aToolPort(options, true); }
+
+function createA2aToolPort({
+  agentId, agentRevision, buildId = null, scope: boundScopeInput, sessionId, spaceId, discovery, invocation, exposurePlan,
   authorize, assertCurrent, bindingDescription,
-} = {}) {
+} = {}, dsh) {
   invariant(typeof sessionId === 'string' && sessionId, 'a2a_session_required');
   invariant(typeof discovery?.list === 'function', 'a2a_discovery_required');
   invariant(typeof authorize === 'function', 'a2a_authorize_required');
   invariant(typeof assertCurrent === 'function', 'a2a_assert_current_required');
-  invariant(boundScopeInput && boundScopeInput.tenantId && boundScopeInput.workspaceId && boundScopeInput.userId && boundScopeInput.agentId, 'a2a_bound_scope_required');
+  if (dsh) invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
+    && (buildId === null || typeof buildId === 'string' && buildId.trim()), 'a2a_dsh_owner_required');
+  else invariant(boundScopeInput && boundScopeInput.tenantId && boundScopeInput.workspaceId && boundScopeInput.userId && boundScopeInput.agentId, 'a2a_bound_scope_required');
+  const contract = dsh ? DSH_A2A_TOOLS_CONTRACT : NATIVE_A2A_TOOLS_CONTRACT;
   // bindingDescription is a serializable object from the Host containing
   // sourceRef, sourceDigest, spaceId, planDigest, transport, version.
   // Required for a stable bindingDigest that detects plan/transport changes.
@@ -388,15 +409,16 @@ export function createNativeA2aToolPort({
   invariant(typeof bindingDescription.planDigest === 'string' && bindingDescription.planDigest, 'a2a_plan_digest_required');
   invariant(typeof bindingDescription.transport === 'string' && bindingDescription.transport, 'a2a_transport_required');
   invariant(typeof bindingDescription.version === 'string' && bindingDescription.version, 'a2a_version_required');
-  const boundScope = Object.freeze(copy(boundScopeInput));
+  const boundScope = dsh ? null : Object.freeze(copy(boundScopeInput));
   const definitions = nativeA2aToolDefinitions();
   const formal = new Map(definitions.map(item => [item.name, item]));
 
   async function execute(request) {
     if (!request || typeof request !== 'object') return { status: 'error', content: { code: 'invalid_request', message: 'request object required' } };
     if (request.sessionId !== sessionId) return { status: 'error', content: { code: 'a2a_session_mismatch' } };
-    if (canonical(request.scope) !== canonical(boundScope)) return { status: 'error', content: { code: 'invalid_identity', message: 'request.scope must match the trusted bound scope' } };
-    const idErrors = validateStrictIdentity(request, formal.get(request.call?.name) || {});
+    if (!dsh && canonical(request.scope) !== canonical(boundScope)) return { status: 'error', content: { code: 'invalid_identity', message: 'request.scope must match the trusted bound scope' } };
+    const idErrors = dsh ? validateDshIdentity(request, formal.get(request.call?.name) || {}, { agentId, agentRevision, buildId })
+      : validateStrictIdentity(request, formal.get(request.call?.name) || {});
     if (idErrors.length) return { status: 'error', content: { code: 'invalid_identity', message: idErrors.join('; ') } };
     const call = request.call;
     const definition = formal.get(call.name);
@@ -409,7 +431,8 @@ export function createNativeA2aToolPort({
     // await. Callback tampering of the mutable request cannot pollute the
     // uncertain receipt. The frozen signal is captured by createIdentityGuard
     // and used for all abort checks (not the mutable request.signal).
-    const frozenLocator = Object.freeze({
+    const frozenLocator = Object.freeze(dsh ? { contract, agentId, agentRevision, buildId, sessionId,
+      operationKey: request.operationKey, callId: request.call.callId } : {
       scope: boundScope, sessionId: request.sessionId, runId: request.runId,
       turnId: request.turnId, buildId: request.buildId, parentRunId: request.parentRunId ?? null,
       taskChainId: request.taskChainId, operationKey: request.operationKey,
@@ -429,7 +452,7 @@ export function createNativeA2aToolPort({
     const args = copy(call.arguments);
     // Dispatch records effect state directly. Return content is not an
     // authority for deciding whether an external call has already started.
-    const effect = { started: false, taskId: undefined, agent: args.agent };
+    const effect = { started: false, taskId: null, agent: args.agent };
     const uncertain = content => ({ status: 'uncertain', content: {
       ...content, ok: false, error_type: 'A2A_INVOCATION_UNCERTAIN',
       agent: effect.agent, executed: true, task_id: effect.taskId, operation_locator: frozenLocator,
@@ -446,7 +469,7 @@ export function createNativeA2aToolPort({
         return { status: content.ok ? 'ok' : 'error', content };
       }
       if (call.name === 'call_a2a_agent') {
-        const content = await callA2aAgent({ invocation, exposurePlan, agent: args.agent, message: args.message, frozenLocator, frozenSignal, guard, request, effect });
+        const content = await callA2aAgent({ invocation, exposurePlan, agent: args.agent, message: args.message, frozenLocator, frozenSignal, guard, request, effect, dsh });
         // Final guard after all operations — uses frozen signal.
         try { guard(); } catch (e) {
           if (frozenSignal.aborted && !effect.started) throw e;
@@ -468,16 +491,16 @@ export function createNativeA2aToolPort({
 
   // Binding digest from the serializable binding description — no secrets.
   const bindingDigest = createHash('sha256').update(canonical({
-    contract: NATIVE_A2A_TOOLS_CONTRACT,
+    contract,
     sourceRef: bindingDescription.sourceRef,
     sourceDigest: bindingDescription.sourceDigest,
     spaceId: bindingDescription.spaceId || spaceId || '',
     planDigest: bindingDescription.planDigest,
     transport: bindingDescription.transport,
     version: bindingDescription.version,
-    scope: boundScope,
+    ...(dsh ? { agentId, agentRevision, buildId } : { scope: boundScope }),
     sessionId,
   })).digest('hex');
 
-  return { definitions: definitions.map(item => copy(item)), execute, contract: NATIVE_A2A_TOOLS_CONTRACT, bindingDigest };
+  return { definitions: definitions.map(item => copy(item)), execute, contract, bindingDigest };
 }

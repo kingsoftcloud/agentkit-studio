@@ -14,7 +14,7 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 | 全部恢复产品流程 | 意图/回执、lease/fence、实际进程中断与不盲目重放已有专项；多个实际 Host 重启路径已验证 | 各后端结果未知时的显式核对/清理/继续，以及全部审批和恢复界面闭环 |
 | Studio 所有执行入口 | 本地对话、历史、部分 Frozen/后台通知路径已有真实 Host 证据 | 自动化、定时、Frozen HTTP/部署和完整浏览器消费的全部组合验收 |
 | 安装和执行不依赖 Python | 多条打包验证在受限 PATH 和无效 Python 配置下成功 | dsh-runtime-plugin 仍保留实际 Python builtin fallback；完整替换以及全新无 Python 安装/启动/执行未通过 |
-| DSH Native 与 Codex 保持正常 | 工作区、Web、本地命令、component_status、五个 Skill 读取及本地 execute_skills 已打包验证；E2B 工作流已接入 Node 并验证实际 SDK 拒绝连接后的跨进程恢复 | 两种 runtime 的完整模型/CLI 回归；其余 builtin 迁移；交互 E2B 的线上验收和空闲/容量回收 |
+| DSH Native 与 Codex 保持正常 | 工作区、Web、本地命令、component_status、五个 Skill 读取及本地 execute_skills 已打包验证；A2A 已增加真实 DSH 身份的 Node 端口与独立持久记录；E2B 工作流已接入 Node 并验证实际 SDK 拒绝连接后的跨进程恢复 | 两种 runtime 的完整模型/CLI 回归；其余 builtin 迁移；交互 E2B 的线上验收和空闲/容量回收 |
 | 默认切换及最终交付 | Native 仍通过显式版本开关启用 | 所有前置验收闭环后切换默认；最终能力差异表、配置恢复说明和最终验证记录 |
 
 直接反证“只剩少量验收”的当前代码：
@@ -50,3 +50,19 @@ DSH Native / Codex 的 E2B 工作流现已使用真实 Agent/Session/call 的独
 完整参考清单见 [native-reference-capabilities.md](native-reference-capabilities.md)，
 实现和历史验证详见 [native-harness-migration.md](native-harness-migration.md)。后续进度
 应报告已闭环能力和未闭环验收项；只有逐项审计建立完整分母后才能给出可解释的比例。
+
+## 当前 DSH/Codex A2A 实现
+
+三项 A2A builtin 已由 Node 端口接入两种 legacy runtime，固定实际 Agent/Session/call、
+Agent revision、Frozen Build 和服务绑定，独立 DSH 意图/远端记录不伪造 Native Run。
+只绑定 A2A 的 Agent 也会组装完整预设；缺少 Node 端口不会调用 Python。真实 HTTP+
+SSE、并发去重、权限、取消/超时/Host 退役和 SIGKILL/新 PID 恢复已有定向证据。
+实际打包 Host 的恢复扩展验证保留了最初冷启动失败记录；进一步复现得到明确错误
+`Unknown agent preset`：Host 挂载完成时，异步注册的历史会话预设尚未恢复完成。
+现增加注册作用域的显式就绪信号，Host 在已有 registry 时等待恢复完成；注册失败或
+途中退役会拒绝启动就绪，catalog-only 配置仍不强制依赖 registry。两个 Node 版本
+各通过 138 项受影响模块测试，含故意延迟注册的反例。修复后的实际安装包在两个
+Node 版本各通过本地 DSH/Codex、E2B 拒绝连接恢复、Native 完整回合 A2A 三条验证；
+均用真实新 PID 冷恢复原记录，未增加远端调用。E2B 验证不代表线上成功执行；DSH/
+Codex 工具管线验证不代表模型或 CLI 回归。其他 Python builtin、产品恢复操作、线上服务、全新安装、
+完整模型/CLI/入口组合和默认切换仍是实质门槛。

@@ -14,13 +14,34 @@ export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
   const skillBackend = options.skillBackend ?? 'local_process', e2b = skillBackend === 'e2b';
   const commandBackend = options.commandBackend ?? 'local_process', e2bCommands = commandBackend === 'e2b';
-  const previous = (e2b || e2bCommands) && existsSync(join(home, 'proof.json')) ? JSON.parse(await readFile(join(home, 'proof.json'), 'utf8')) : null;
+  const previous = existsSync(join(home, 'proof.json')) ? JSON.parse(await readFile(join(home, 'proof.json'), 'utf8')) : null;
   const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
   const sha256 = value => createHash('sha256').update(value).digest('hex');
-  let networkCalls = 0, pendingRequest; const skillRequests = [];
+  let networkCalls = 0, pendingRequest; const skillRequests = [], a2aRequests = [];
+  const a2aSpec = { local_name: 'research', binding_id: 'packed-a2a', space_id: 'packed-a2a-space',
+    target_agent_id: 'a2a-agent-packed', expected_version_id: 'packed-v1', exposure: 'tool' };
   const web = createServer((req, res) => {
-    networkCalls++;
     const url = new URL(req.url, 'http://localhost');
+    if (url.pathname === '/agentengine/api/v1/ListAToASpaceAgents' || url.pathname === '/a2a/rpc') {
+      a2aRequests.push({ method: req.method, url: req.url, authorization: req.headers.authorization });
+      let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
+        const body = JSON.parse(raw); a2aRequests.at(-1).body = body;
+        assert.equal(req.headers.authorization, 'Bearer packed-a2a-synthetic-token');
+        if (url.pathname.startsWith('/agentengine/')) {
+          assert.equal(body.A2ASpaceId, a2aSpec.space_id);
+          res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ Code: 0, Data: { Agents: [{
+            A2AAgentId: a2aSpec.target_agent_id, VersionId: a2aSpec.expected_version_id, Source: 'hosted', AgentCard: {
+              name: 'research', description: 'Packed remote', capabilities: { streaming: true }, supportedInterfaces: [{
+                url: webOrigin + '/a2a/rpc', protocolBinding: 'JSONRPC', protocolVersion: '1.0' }] } }] } })); return;
+        }
+        assert.equal(body.method, 'SendStreamingMessage'); assert.equal(body.params.message.parts[0].text, 'Packed remote 😀');
+        res.setHeader('Content-Type', 'text/event-stream');
+        const task = { id: 'packed-remote-task', contextId: 'packed-context', status: { state: 'TASK_STATE_COMPLETED' },
+          artifacts: [{ artifactId: 'result', parts: [{ text: 'Packed A2A reply 😀' }] }] };
+        res.end('id: 1\r\ndata: ' + JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { task } }) + '\r\n\r\n');
+      }); return;
+    }
+    networkCalls++;
     if (url.pathname.startsWith('/skills/')) {
       skillRequests.push(req.url); assert.equal(req.headers.authorization, 'Bearer builtin-skill-read-token');
       const action = url.pathname.split('/').at(-1); let data;
@@ -58,17 +79,18 @@ export async function apply(ctx, options) {
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
     'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'run_code', 'component_status',
-    'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills'];
+    'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill', 'execute_skills', 'list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent'];
   const records = [];
   if (previous) for (const row of previous.runtimes) { const record = await agents.get(row.agentId); assert.ok(record); records.push(record); }
   else for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
-    runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof' } } }));
+    runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof', a2a: [a2aSpec] } } }));
   await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
     KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
     KSADK_SKILL_SERVICE_TOKEN: 'builtin-skill-read-token', KSADK_SKILL_RUNTIME_BACKEND: skillBackend,
     KSADK_SANDBOX_BACKEND: commandBackend, KSADK_SANDBOX_TIMEOUT: '20',
+    KSADK_A2A_SERVICE_URL: webOrigin, KSADK_A2A_SERVICE_TOKEN: 'packed-a2a-synthetic-token', KSADK_A2A_ALLOW_PRIVATE: 'true',
     KSADK_SKILL_RUNTIME_TIMEOUT: '20', ...(e2b || e2bCommands ? { KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'node-skill-proof-template',
       E2B_API_URL: 'https://127.0.0.1:9', E2B_DOMAIN: 'e2b-proof.synthetic', E2B_API_KEY: 'e2b-proof-not-a-real-key' } : {}) } });
   ctx.llm.registerAdapter(['agentkit-studio-builtin-proof'], {
@@ -103,12 +125,19 @@ export async function apply(ctx, options) {
       return result.value;
     };
     if (previous) {
-      const restored = [], restoredCommands = [], restoredCodes = [];
+      const restored = [], restoredCommands = [], restoredCodes = [], restoredA2a = [];
       for (const row of previous.runtimes) {
-        const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, JSON.stringify(found.error));
+        const found = await ctx.sessionController.resolveAgent(row.sessionId); assert.ok(found.agent, found.error?.message || JSON.stringify(found.error));
         const agent = found.agent; assert.equal(agent.session.id, row.sessionId); setSandboxMode(agent.session, 'workspace-write');
         agent.session.append('turn/start', { turn: 2 });
         try {
+          const a2aBytes = await readFile(row.a2a.record), a2aRecord = JSON.parse(a2aBytes), remoteBytes = await readFile(row.a2a.remoteRecord);
+          const a2aCold = await agent.ctx.get('tools').execute({ agent, callId: a2aRecord.request.call.callId, name: 'call_a2a_agent',
+            arguments: a2aRecord.request.call.arguments, signal: new AbortController().signal });
+          assert.equal(a2aCold.isError, false); assert.deepEqual(JSON.parse(a2aCold.value.result), a2aRecord.result.content);
+          assert.ok((await readFile(row.a2a.record)).equals(a2aBytes)); assert.ok((await readFile(row.a2a.remoteRecord)).equals(remoteBytes));
+          restoredA2a.push({ runtime: row.runtime, agentId: row.agentId, sessionId: row.sessionId, taskId: row.a2a.taskId,
+            recordSha256: sha256(a2aBytes), remoteSha256: sha256(remoteBytes), unchanged: true });
           if (e2b) {
             const recordBytes = await readFile(row.workflows.record), record = JSON.parse(recordBytes);
             const ownerRoot = join(dirname(row.workflows.record), 'sandbox'), owners = await readdir(ownerRoot); assert.equal(owners.length, 1);
@@ -143,8 +172,8 @@ export async function apply(ctx, options) {
           }
         } finally { agent.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } }); assert.equal(await ctx.sessions.flush(agent.session), true); }
       }
-      assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0);
-      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, networkCalls, skillRequests: 0 };
+      assert.equal(networkCalls, 0); assert.equal(skillRequests.length, 0); assert.equal(a2aRequests.length, 0);
+      return { passed: true, pid: process.pid, previousPid: previous.pid, node: process.version, restored, restoredCommands, restoredCodes, restoredA2a, networkCalls, skillRequests: 0, a2aRequests: 0 };
     }
     const report = { passed: false, pid: process.pid, webOrigin, node: process.version, path: process.env.PATH, runtimes: [] };
     let serial = 0;
@@ -563,9 +592,48 @@ export async function apply(ctx, options) {
           assert.equal(code.error_type, 'isolated_sandbox_required'); assert.equal(code.executed, false);
           codeProof = { backend: 'local_process', isolatedSandboxRequired: true, executed: false };
         }
+        setSandboxMode(agent.session, 'workspace-write');
+        const startA2a = a2aRequests.length;
+        assert.equal((await call('list_a2a_agents', {})).agents[0].agent_id, a2aSpec.target_agent_id);
+        assert.equal((await call('get_a2a_agent_card', { agent: 'research' })).agent.agent_id, a2aSpec.target_agent_id);
+        const a2aArgs = { agent: 'research', message: 'Packed remote 😀' }, a2aCallId = 'a2a-original-' + runtime;
+        const invokeA2a = () => registry.execute({ agent, callId: a2aCallId, name: 'call_a2a_agent', arguments: a2aArgs, signal: new AbortController().signal });
+        const a2aFirst = await invokeA2a(); assert.equal(a2aFirst.isError, false);
+        const a2aResult = JSON.parse(a2aFirst.value.result); assert.equal(a2aResult.ok, true, JSON.stringify(a2aResult));
+        assert.equal(a2aResult.reply, 'Packed A2A reply 😀'); assert.equal(a2aRequests.length - startA2a, 4);
+        assert.deepEqual(JSON.parse((await invokeA2a()).value.result), a2aResult); assert.equal(a2aRequests.length - startA2a, 4);
+        const a2aFiles = [];
+        const a2aRoot = join(home, 'studio/builtin-workspace/a2a');
+        for (const path of await readdir(a2aRoot, { recursive: true })) if (path.endsWith('.json')) {
+          const file = join(a2aRoot, path), value = JSON.parse(await readFile(file, 'utf8'));
+          if (value.owner?.agentId === record.metadata.id) a2aFiles.push({ file, value });
+        }
+        const dshA2a = a2aFiles.find(row => row.value.request?.call?.callId === a2aCallId);
+        const remoteA2a = a2aFiles.find(row => row.value.contract === 'agentkit.studio-dsh-a2a-host/v1');
+        assert.ok(dshA2a); assert.ok(remoteA2a); assert.equal(dshA2a.value.phase, 'finished'); assert.equal(remoteA2a.value.phase, 'terminal');
+        assert.equal(dshA2a.value.binding.contract, 'agentkit.dsh-node-a2a-tools/v1');
+        assert.equal(dshA2a.value.request.sessionId, created.sessionId); assert.equal(dshA2a.value.request.agentRevision, record.metadata.revision);
+        assert.equal(remoteA2a.value.request.dsh.call.callId, a2aCallId); assert.equal(remoteA2a.value.request.native, undefined);
+        assert.equal(remoteA2a.value.platformTaskId, a2aResult.task_id);
+        const a2aDenied = agent.ctx.on('tools/pre-execute', async (exec, next) => exec.name === 'call_a2a_agent' ? { kind: 'deny', reason: 'A2A policy proof' } : next());
+        try { assert.equal((await invokeA2a()).isError, true); } finally { a2aDenied(); }
+        assert.equal(a2aRequests.length - startA2a, 4);
+        const a2aPost = agent.ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'call_a2a_agent'
+          ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted A2A result' }] } : next());
+        try { assert.deepEqual((await invokeA2a()).content, [{ type: 'text', text: 'Host-redacted A2A result' }]); } finally { a2aPost(); }
+        setSandboxMode(agent.session, 'read-only'); setApprovalPolicy(agent.session, 'ask'); let a2aApprovals = 0;
+        const a2aApproval = agent.ctx.on('approval/request', async () => ++a2aApprovals === 1 ? 'allowed-once' : 'rejected');
+        try {
+          assert.deepEqual(JSON.parse((await invokeA2a()).value.result), a2aResult);
+          assert.equal((await call('call_a2a_agent', a2aArgs)).ok, false); assert.equal(a2aApprovals, 2);
+        } finally { a2aApproval(); }
+        assert.equal(a2aRequests.length - startA2a, 4);
+        const a2aProof = { taskId: a2aResult.task_id, reply: a2aResult.reply, record: dshA2a.file, remoteRecord: remoteA2a.file,
+          serviceRequests: 3, sends: 1, originalDshOwner: true, duplicateSuppressed: true, policyDeniedWithoutRequest: true,
+          postPolicyPreserved: true, oneShotApprovals: a2aApprovals };
         assert.deepEqual(before, after, 'Both actual DSH policy phases must observe every admitted call.');
         const audits = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').map(event => event.data.outcome);
-        assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected']);
+        assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'rejected', 'allowed-once', 'rejected', 'cancelled', 'allowed-once', 'rejected', 'allowed-once', 'rejected']);
         report.runtimes.push({ runtime, agentId: record.metadata.id, sessionId: created.sessionId,
           registeredCalls: before.length, approvals: audits, crossSessionReadStateIsolated: true, parser: lint.syntax_engine.parser });
         report.runtimes.at(-1).web = webProof;
@@ -574,6 +642,7 @@ export async function apply(ctx, options) {
         report.runtimes.at(-1).components = components;
         report.runtimes.at(-1).skills = skillsProof;
         report.runtimes.at(-1).workflows = workflowProof;
+        report.runtimes.at(-1).a2a = a2aProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

@@ -396,3 +396,16 @@ test('terminal selection never treats inherited object properties as output kind
   const result = await tools.execute(makeRequest({ callId: 'c', name: 'call_a2a_agent', arguments: { agent: 'research', message: 'hello' } }));
   assert.equal(result.status, 'ok'); assert.equal(result.content.reply, '');
 });
+
+test('unknown remote task is JSON-persistable after interruption before receipt', async () => {
+  const { canonical } = await import('../../agentkit-harness-core/dist/index.mjs');
+  const controller = new AbortController();
+  const port = createNativeA2aToolPort({ scope: SCOPE, sessionId: SESSION_ID, spaceId: 'a2a-space-1',
+    discovery: makeDiscovery([]), exposurePlan: makeExposurePlan(), authorize: allowAuthorize, assertCurrent: assertCurrentTrue,
+    bindingDescription: BINDING_DESC, invocation: { resolve: makeInvocation().resolve,
+      dispatch: async () => { controller.abort(new Error('interrupted after send')); throw controller.signal.reason; } } });
+  setDefinitions(port.definitions);
+  const result = await port.execute(makeRequest({ callId: 'json-unknown', name: 'call_a2a_agent', arguments: { agent: 'remote', message: 'message' } }, { signal: controller.signal }));
+  assert.equal(result.status, 'uncertain'); assert.equal(result.content.task_id, null);
+  assert.equal(JSON.parse(canonical(result)).content.executed, true);
+});

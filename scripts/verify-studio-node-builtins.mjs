@@ -114,8 +114,10 @@ try {
   else assert.ok(report.runtimes.every(row => row.workflows.refusedSdkCreation && row.workflows.commands === 0
     && row.workflows.outcomeUnknown));
   assert.equal(new Set(report.runtimes.map(row => row.workflows.runtimeId)).size, 2);
+  assert.ok(report.runtimes.every(row => row.a2a.sends === 1 && row.a2a.serviceRequests === 3 && row.a2a.originalDshOwner
+    && row.a2a.duplicateSuppressed && row.a2a.policyDeniedWithoutRequest && row.a2a.postPolicyPreserved && row.a2a.oneShotApprovals === 2));
   let cold;
-  if (skillBackend === 'e2b' || commandBackend === 'e2b') {
+  if (report.runtimes.every(row => row.a2a)) {
     await rm(join(root, 'start-proof')); await harness.close();
     const goneBy = Date.now() + 15000;
     for (;;) {
@@ -132,6 +134,9 @@ try {
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     assert.equal(cold?.passed, true, JSON.stringify(cold)); assert.notEqual(cold.pid, report.pid); assert.equal(cold.previousPid, report.pid);
+    assert.deepEqual(cold.restoredA2a.map(row => [row.runtime, row.agentId, row.sessionId, row.taskId, row.unchanged]),
+      report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.a2a.taskId, true]));
+    assert.equal(cold.a2aRequests, 0);
     assert.equal(cold.node, process.version); assert.equal(cold.networkCalls, 0); assert.equal(cold.skillRequests, 0); assert.equal(downloads, 4);
     assert.deepEqual(cold.restored.map(row => [row.runtime, row.agentId, row.sessionId, row.runtimeId, row.taskId, row.unchanged]),
       skillBackend === 'e2b' ? report.runtimes.map(row => [row.runtime, row.agentId, row.sessionId, row.workflows.runtimeId, row.workflows.taskId, true]) : []);
@@ -143,7 +148,7 @@ try {
   await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, skillBackend, commandBackend, downloads,
     archiveSha256: sha256(await readFile(resolve(values.archive))), skillArchiveHash: sha256(skillArchive), report, ...(cold ? { cold } : {}) }, null, 2));
   console.log(skillBackend === 'local_process' && commandBackend === 'local_process'
-    ? 'PASS: packed Host registers Node workspace + web + commands + component_status + five Skill reads + durable local execute_skills for DSH Native and Codex; real HTTP service/CA-verified HTTPS ZIP/scripts/exact text+binary artifacts; stable real DSH identity and duplicate suppression; policy, one-shot approval and post policy retained; Node/bash PATH with invalid Python. Model/Codex CLI and fresh dependency installation are separate acceptance.'
+    ? 'PASS: packed Host registers Node managed A2A + workspace + web + commands + component_status + five Skill reads + durable local execute_skills for DSH Native and Codex; real HTTP service/CA-verified HTTPS ZIP/scripts/exact text+binary artifacts; stable real DSH identity and duplicate suppression; policy, one-shot approval and post policy retained; Node/bash PATH with invalid Python. Model/Codex CLI and fresh dependency installation are separate acceptance.'
     : `PASS: packed Host DSH Native/Codex selected commands=${commandBackend}, Skills=${skillBackend}; E2B uses actual installed SDK with an explicitly refused endpoint, durable original DSH creation/unknown intent and distinct-PID cold restore with unchanged records. Real HTTP Skill Service + CA-verified HTTPS ZIP, workspace/Web and approvals retained. Node/bash PATH, Python unavailable. Refusal/recovery acceptance; online E2B success, fresh install and model/Codex CLI are separate gates.`);
 } finally {
   await harness?.close();

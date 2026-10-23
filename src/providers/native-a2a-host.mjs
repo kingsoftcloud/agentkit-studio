@@ -16,6 +16,7 @@ import { createSsrfPinnedFetch } from './native-dsh-web.mjs';
 import { a2aSse, a2aTerminal, createA2AProjection, NATIVE_A2A_PROTOCOL } from './native-a2a-protocol.mjs';
 
 export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
+export const STUDIO_DSH_A2A_HOST = 'agentkit.studio-dsh-a2a-host/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const text = (value, code) => { invariant(typeof value === 'string' && value.trim() && value.length <= 4096, code); return value; };
 const normalized = value => value.trim().toLowerCase().replace(/^a2a-agent-/u, '');
@@ -58,7 +59,10 @@ function strictSpecs(input) {
   });
 }
 
-export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {}) {
+export function prepareNativeA2AHost(options = {}) { return prepareA2AHost(options, false); }
+export function prepareDshA2AHost(options = {}) { return prepareA2AHost(options, true); }
+function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {}, dsh) {
+  const contract = dsh ? STUDIO_DSH_A2A_HOST : STUDIO_NATIVE_A2A_HOST;
   const fixed = { ...env }, specs = strictSpecs(bindings);
   let spaceId = read(fixed, 'KSADK_A2A_SPACE_ID');
   if (!spaceId && read(fixed, 'KSADK_A2A_SPACE_IDS')) {
@@ -83,7 +87,7 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
   const isKop = kopHosts.has(base.hostname);
   invariant(base.protocol === 'https:' || isKop || ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname), 'A2A_SERVICE_HTTP_FORBIDDEN');
   const planDigest = hash(specs), sourceDigest = hash({ source: 'ksadk-python', revision: '355059d78e47ed764bbdb3606304cdf34e9838a3' });
-  const binding = Object.freeze({ contract: STUDIO_NATIVE_A2A_HOST, protocol: NATIVE_A2A_PROTOCOL, spaceId,
+  const binding = Object.freeze({ contract, protocol: NATIVE_A2A_PROTOCOL, spaceId,
     bindingDigest: hash({ base: base.href, spaceId, specs, allowPrivate, region, source, accountId,
       credentialFingerprint: hash({ token, ak, sk, sessionToken }) }), planDigest });
   const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: allowPrivate ? null : isBlockedAddress });
@@ -117,14 +121,17 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
         version_id: String(item.VersionId ?? item.LatestVersionId ?? ''), card_sha256: String(item.CardSha256 ?? ''),
         source: String(item.Source ?? 'hosted'), url: String(item.AgentCard?.supportedInterfaces?.[0]?.url ?? ''), card: copy(item.AgentCard ?? {}) }));
   }
-  function forSession({ scope, sessionId, stateRoot, workspaceRoot, assertCurrent }) {
-    scopeKey(scope); const fixedScope = copy(scope);
+  function forSession({ scope, agentId, agentRevision, buildId = null, sessionId, stateRoot, workspaceRoot, assertCurrent }) {
+    if (dsh) invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
+      && (buildId === null || typeof buildId === 'string' && buildId.trim()), 'A2A_DSH_OWNER_REQUIRED');
+    else scopeKey(scope);
+    const fixedScope = dsh ? null : copy(scope), ownerBinding = dsh ? { agentId, agentRevision, buildId } : { scope: fixedScope };
     text(sessionId, 'A2A_SESSION_REQUIRED'); invariant(typeof assertCurrent === 'function', 'A2A_AUTHORITY_REQUIRED');
     const workspace = realpathSync(workspaceRoot), lexical = resolve(stateRoot);
     invariant(lexical !== workspace && !lexical.startsWith(workspace + sep), 'A2A_STATE_INSIDE_WORKSPACE');
     privateDirectory(dirname(lexical), true); privateDirectory(lexical, true);
-    const root = realpathSync(lexical), owner = { scope: fixedScope, sessionId, bindingDigest: binding.bindingDigest };
-    const directory = join(root, hash({ scope: fixedScope, sessionId })); privateDirectory(directory, true);
+    const root = realpathSync(lexical), owner = { ...ownerBinding, sessionId, bindingDigest: binding.bindingDigest };
+    const directory = join(root, hash({ ...ownerBinding, sessionId })); privateDirectory(directory, true);
     const pinnedDirectory = lstatSync(directory), sessionLifetime = new AbortController();
     function storageGuard() {
       invariant(realpathSync(lexical) === root && realpathSync(workspaceRoot) === workspace, 'A2A_OWNER_CHANGED');
@@ -134,20 +141,23 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
     }
     function check(native, signal) {
       invariant(!closed && !sessionLifetime.signal.aborted, 'A2A_OWNER_CLOSED'); storageGuard(); signal.throwIfAborted();
-      invariant(canonical(native.scope) === canonical(fixedScope) && native.sessionId === sessionId, 'A2A_SCOPE_CONFLICT');
+      invariant(native.sessionId === sessionId && (dsh ? native.agentId === agentId && native.agentRevision === agentRevision
+        && native.buildId === buildId && !['scope', 'runId', 'turnId', 'executionFence', 'taskChainId', 'parentRunId'].some(key => Object.hasOwn(native, key))
+        : canonical(native.scope) === canonical(fixedScope)), 'A2A_SCOPE_CONFLICT');
       const current = assertCurrent({ ...native, signal });
       if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
       invariant(current === true, 'A2A_AUTHORITY_LOST'); signal.throwIfAborted();
     }
-    async function resolveCall({ agent, message, signal, nativeRequest }) {
-      check(nativeRequest, signal);
-      const native = copy(Object.fromEntries(Object.entries(nativeRequest).filter(([key]) => key !== 'signal')));
+    async function resolveCall({ agent, message, signal, nativeRequest, dshRequest }) {
+      const original = dsh ? dshRequest : nativeRequest;
+      check(original, signal);
+      const native = copy(Object.fromEntries(Object.entries(original).filter(([key]) => key !== 'signal')));
       const spec = specs.find(spec => normalized(spec.target_agent_id) === normalized(agent) || normalized(spec.local_name) === normalized(agent));
       invariant(spec, 'A2A_TARGET_NOT_BOUND');
-      const identity = { scope: fixedScope, sessionId, runId: native.runId, operationKey: native.operationKey, callId: native.call.callId };
+      const identity = { ...ownerBinding, sessionId, ...(!dsh ? { runId: native.runId } : {}), operationKey: native.operationKey, callId: native.call.callId };
       const previous = readIdentity(identity);
       if (previous) {
-        invariant(canonical(previous.request.native) === canonical(native) && canonical(previous.request.spec) === canonical(spec)
+        invariant(canonical(previous.request[dsh ? 'dsh' : 'native']) === canonical(native) && canonical(previous.request.spec) === canonical(spec)
           && previous.request.message.parts.length === 1 && previous.request.message.parts[0].text === message, 'A2A_CALL_IDENTITY_CONFLICT');
         check(native, signal); return copy(previous.request);
       }
@@ -160,8 +170,8 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
       const scopeId = `a2a-${hash(identity)}`;
       const wireMessage = { messageId: hash({ identity, kind: 'initial-message' }), role: 'ROLE_USER', parts: [{ text: message }] };
       invariant(Buffer.byteLength(canonical(wireMessage)) <= 1024 * 1024, 'A2A_MESSAGE_LIMIT');
-      return { spec, trigger: { scope_id: native.runId, item_id: native.call.callId, call_id: native.call.callId },
-        native, scopeId, identity, message: wireMessage,
+      return { spec, trigger: { scope_id: dsh ? scopeId : native.runId, item_id: native.call.callId, call_id: native.call.callId },
+        [dsh ? 'dsh' : 'native']: native, scopeId, identity, message: wireMessage,
         route: { url: iface.url, protocolBinding: iface.protocolBinding, streaming: found.card.capabilities?.streaming === true,
           source: found.source } };
     }
@@ -169,7 +179,7 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
     function readIdentity(identity) {
       storageGuard(); const path = file({ identity }); if (!existsSync(path)) return null;
       const record = JSON.parse(readAll(path));
-      invariant(record.contract === STUDIO_NATIVE_A2A_HOST && canonical(record.owner) === canonical(owner)
+      invariant(record.contract === contract && canonical(record.owner) === canonical(owner)
         && canonical(record.request.identity) === canonical(identity) && record.requestDigest === hash(record.request)
         && ['sending', 'unknown', 'terminal', 'paused'].includes(record.phase), 'A2A_CALL_IDENTITY_CONFLICT');
       return record;
@@ -181,7 +191,7 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
     }
     function save(request, record) { storageGuard(); atomicPrivate(file(request), canonical(record) + '\n'); }
     async function wire(request, method, params, signal, streaming = false) {
-      check(request.native, signal);
+      check(request[dsh ? 'dsh' : 'native'], signal);
       const url = endpoint(request.route.url, allowPrivate), rpc = request.route.protocolBinding === 'JSONRPC';
       const id = randomUUID();
       const rest = method === 'GetTask' ? { method: 'GET', path: `/tasks/${encodeURIComponent(params.id)}` }
@@ -204,19 +214,19 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
       return streaming ? { stream: a2aSse(response.body, signal), unwrap } : unwrap(await jsonBody(response));
     }
     async function dispatch({ request, signal }) {
-      check(request.native, signal);
+      check(request[dsh ? 'dsh' : 'native'], signal);
       const release = tryLock(join(directory, `${hash(request.identity)}.sqlite`));
       invariant(release, 'A2A_CALL_BUSY');
       let record;
       try {
-        check(request.native, signal); record = readRecord(request);
+        check(request[dsh ? 'dsh' : 'native'], signal); record = readRecord(request);
         if (record) return record.result ?? { state: 'unknown', task_id: record.platformTaskId,
           operation_locator: request.identity, error_type: 'A2A_SEND_OUTCOME_UNKNOWN' };
         const projection = createA2AProjection(request.scopeId);
-        record = { contract: STUDIO_NATIVE_A2A_HOST, owner, request, requestDigest: hash(request),
+        record = { contract, owner, request, requestDigest: hash(request),
           phase: 'sending', platformTaskId: `a2a-task-${randomUUID().replaceAll('-', '')}`,
           createdAt: Date.now(), projection: projection.snapshot() };
-        check(request.native, signal); save(request, record);
+        check(request[dsh ? 'dsh' : 'native'], signal); save(request, record);
         // Once this fsynced marker exists, no replacement may send again,
         // including a crash between intent commit and entering fetch().
         const timeout = Math.min(90000, (request.spec.timeout_seconds ?? 90) * 1000);
@@ -226,7 +236,7 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
         const result = await wire(request, streaming ? 'SendStreamingMessage' : 'SendMessage', params, activeSignal, streaming);
         if (streaming) {
           for await (const event of result.stream) {
-            check(request.native, signal); projection.apply(result.unwrap(event.payload), event.id);
+            check(request[dsh ? 'dsh' : 'native'], signal); projection.apply(result.unwrap(event.payload), event.id);
             record.projection = projection.snapshot(); save(request, record);
           }
         } else { projection.apply(result); record.projection = projection.snapshot(); save(request, record); }
@@ -235,14 +245,14 @@ export function prepareNativeA2AHost({ env = {}, bindings = [], fetchImpl = host
         while (!a2aTerminal.has(record.projection.state) && !['input_required', 'auth_required'].includes(record.projection.state)
           && record.projection.taskId) {
           const task = await wire(request, 'GetTask', { id: record.projection.taskId }, activeSignal);
-          check(request.native, signal); projection.task(task); record.projection = projection.snapshot(); save(request, record);
+          check(request[dsh ? 'dsh' : 'native'], signal); projection.task(task); record.projection = projection.snapshot(); save(request, record);
           if (!a2aTerminal.has(record.projection.state)) await new Promise((resolve, reject) => {
             const abort = () => { clearTimeout(timer); reject(activeSignal.reason); };
             const timer = setTimeout(() => { activeSignal.removeEventListener('abort', abort); resolve(); }, 100);
             activeSignal.addEventListener('abort', abort, { once: true }); if (activeSignal.aborted) abort();
           });
         }
-        check(request.native, signal);
+        check(request[dsh ? 'dsh' : 'native'], signal);
         const snapshot = record.projection;
         const output = { state: snapshot.state, task_id: record.platformTaskId,
           output_refs: snapshot.output_refs, snapshots: snapshot.snapshots, item_kinds: snapshot.item_kinds };

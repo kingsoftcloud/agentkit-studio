@@ -255,3 +255,24 @@ test('preset cleanup is owned by its exact Cordis scope, not the Agent id', asyn
     assert.equal(bridge.getRoute('same-session'), undefined);
   } finally { await ctx.fiber.dispose(); }
 });
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable migrated A2A port never enters Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'a2a-agent', runtime, local: true, toolBindings: ['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent'],
+    spawnImpl: () => assert.fail('migrated A2A port cannot spawn Python') });
+  for (const tool of registered) await assert.rejects(tool.execute({}, {}), { code: 'A2A_NODE_PORT_UNAVAILABLE' });
+  assert.equal(registered.length, 3); bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} explicit managed binding admits three A2A formals and rejects executor collisions`, () => {
+  const bridge = createRuntimeBridge(), tools = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { tools.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  const config = { agentId: 'managed-agent', runtime, local: true, a2aBindings: [{ binding_id: 'binding' }] };
+  applyPreset(ctx, config);
+  assert.deepEqual(tools.map(tool => tool.name), ['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent']);
+  assert.throws(() => applyPreset(ctx, { ...config, toolContracts: [{ name: 'call_a2a_agent', executor: 'mcp' }] }), { code: 'A2A_TOOL_NAME_COLLISION' });
+  bridge.close();
+});

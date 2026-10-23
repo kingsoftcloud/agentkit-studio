@@ -32,7 +32,7 @@ test('local presets pin public component bindings for DSH Native, Codex and Harn
   }
 });
 
-test('pinned A2A specs reach only the local whole-turn Native preset without sharing mutable Agent objects', async () => {
+test('pinned A2A specs reach each local runtime without sharing mutable Agent objects', async () => {
   const specs = [{ local_name: 'remote', binding_id: 'binding', space_id: 'space', target_agent_id: 'remote-id', expected_version_id: 'version' }];
   for (const runtime of ['harness', 'codex', 'dsh-native']) {
     let registered;
@@ -41,9 +41,9 @@ test('pinned A2A specs reach only the local whole-turn Native preset without sha
       getAgent: async () => record, registry: { register: async value => { registered = value; } } });
     await admission.ensure('demo/agent');
     const config = registered.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin'))?.config;
-    if (runtime === 'harness') {
-      assert.deepEqual(config.a2aBindings, specs); assert.notEqual(config.a2aBindings, specs);
-    } else assert.equal(config?.a2aBindings, undefined);
+    assert.deepEqual(config.a2aBindings, specs); assert.notEqual(config.a2aBindings, specs);
+    record.spec.bindings.a2a = [{ ...specs[0], expected_version_id: 'changed-after-admission' }];
+    assert.deepEqual(config.a2aBindings, specs);
   }
 });
 

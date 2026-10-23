@@ -12,6 +12,8 @@ import { sandboxRegistryName, SANDBOX_CODE_NAME } from './sandbox-code-name.mjs'
 import { e2bCommandToolDefinitions } from '../../packages/agentkit-harness/src/native/e2b-command-tools.mjs';
 import { createDshNodeComponentTools } from './dsh-node-component-tools.mjs';
 import { readDshComponentBindings } from './dsh-component-bindings.mjs';
+import { createDshNodeA2aTools } from './dsh-node-a2a-tools.mjs';
+import { nativeA2aToolDefinitions } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { createDshNodeSkillTools } from './dsh-node-skill-tools.mjs';
 import { createDshNodeSkillWorkflowTools, DSH_NODE_SKILL_WORKFLOW } from './dsh-node-skill-workflow-tools.mjs';
 import { nativeSkillRuntimeSettings } from './native-skill-runtime.mjs';
@@ -22,11 +24,12 @@ import { createSsrfPinnedFetch, resolveWebSearchConfig, resolveWebSsrfPolicy } f
 
 export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, agentRevision, buildId, isClosed, signal,
   env = process.env, fetchImpl = hostFetch, persistOutput, toolBindings, toolContracts = [], componentBindings, skillConnection,
-  skillDefinitions = [] } = {}) {
+  skillDefinitions = [], a2aBindings = [] } = {}) {
   invariant(persistOutput === undefined || typeof persistOutput === 'function', 'dsh_node_output_store_invalid');
   env = { ...env };
   const facts = readDshComponentBindings(componentBindings);
   const requested = toolBindings === undefined ? null : new Set([
+    ...(a2aBindings.length ? nativeA2aToolDefinitions().map(tool => tool.name) : []),
     ...toolBindings.map(value => typeof value === 'string' ? value : value?.resourceId || value?.id || value?.name),
     ...toolContracts.filter(tool => tool.executor === 'builtin' && tool.enabled !== false).map(tool => tool.name)].map(sandboxRegistryName));
   const workspace = createDshNodeWorkspaceTools({ ctx, workspaceRoot, stateDir, agentId, isClosed });
@@ -51,7 +54,10 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
   const workflows = skillSettings?.backend === 'e2b' || skillSettings?.backend === 'local_process' && supportsLocalProcessPlatform()
     ? createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir, connection: skillConnection,
       skillSpaceIds: facts.skillSpaceIds, skillDefinitions, env, fetchImpl, isClosed, signal }) : null;
-  const ports = [workspace, web, ...(commands ? [commands] : []), ...(code ? [code] : []), ...(skills ? [skills] : []), ...(workflows ? [workflows] : [])], owners = new Map();
+  const a2a = !requested || nativeA2aToolDefinitions().some(tool => requested.has(tool.name))
+    ? createDshNodeA2aTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir, env, bindings: a2aBindings,
+      fetchImpl, isClosed, signal }) : null;
+  const ports = [workspace, web, ...(a2a ? [a2a] : []), ...(commands ? [commands] : []), ...(code ? [code] : []), ...(skills ? [skills] : []), ...(workflows ? [workflows] : [])], owners = new Map();
   const admitted = requested ?? new Set(ports.flatMap(port => port.definitions.map(tool => tool.name)));
   const names = ports.flatMap(port => port.definitions.map(tool => tool.name)).filter(name => admitted.has(name));
   const skillBinding = skills?.binding ?? workflows?.binding;
@@ -84,9 +90,11 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
     },
     close() {
       if (closing) return closing;
-      for (const port of ports) port.close();
+      const tasks = ports.map(port => { try { return Promise.resolve(port.close()); } catch (error) { return Promise.reject(error); } });
       output?.close();
-      return closing = Promise.resolve(pinned.close());
+      return closing = Promise.allSettled([...tasks, pinned.close()]).then(results => {
+        const failed = results.find(result => result.status === 'rejected'); if (failed) throw failed.reason;
+      });
     },
   };
 }
