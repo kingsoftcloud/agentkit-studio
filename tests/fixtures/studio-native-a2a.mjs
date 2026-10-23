@@ -198,6 +198,16 @@ async function applyProof(ctx, options) {
     if (payload.agent.session.id === 'default-session') delegate = true;
     return next();
   });
+  if (options.approvalUrl) ctx.on('approval/request', async request => {
+    if (request.agent.session.id !== 'a2a-session' || request.toolName !== 'a2a_cancel_task') return;
+    // Controlled human answerer, through the real ApprovalService and a real
+    // HTTP boundary. This is not the browser/gateway approval UI.
+    const response = await fetch(options.approvalUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ toolName: request.toolName, callId: request.callId, reason: request.reason }), signal: request.signal });
+    if (!response.ok) throw Error('Approval peer failed');
+    const result = await response.json();
+    return result.outcome === 'allowed-once' ? 'allowed-once' : 'rejected';
+  }, { prepend: true });
 
   // The Native tool port re-enters ctx.tools.execute, so pre-execute fires for
   // the a2a tool. Log the admission; never deny the a2a tool here.

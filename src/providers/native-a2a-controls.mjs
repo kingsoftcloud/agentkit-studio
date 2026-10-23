@@ -68,8 +68,9 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       invariant(current === true, 'A2A_CONTROL_AUTHORITY_LOST'); signal.throwIfAborted();
     };
     check();
-    const release = lock(locator); invariant(release, 'A2A_CALL_BUSY');
+    const release = lock(locator, kind); invariant(release, 'A2A_CALL_BUSY');
     let entry, effectStarted = false;
+    const publishRecord = () => save(record.request, record, key);
     try {
       check(); record = readIdentity(locator); invariant(record, 'A2A_CALL_NOT_FOUND');
       invariant(record.request.spec && record.projection?.scopeId === record.request.scopeId, 'A2A_CONTROL_RECORD_INVALID');
@@ -85,12 +86,19 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         signal = AbortSignal.any([signal, AbortSignal.timeout(deadlineAt - Date.now())]);
       }
       const consent = await awaitA2aControl(() => authorizeControl({ authority: copy(authority), owner: copy(owner), command: copy(command),
-        spec: copy(record.request.spec), task: view(record), readOnly: kind === 'get' || Boolean(entry) || a2aTerminal.has(record.projection.state), signal }), signal);
+        spec: copy(record.request.spec), task: view(record), readOnly: kind === 'get'
+          || Boolean(entry && entry.phase !== 'queued') || a2aTerminal.has(record.projection.state), signal }), signal);
       check(); invariant(consent === 'allow', 'A2A_CONTROL_PERMISSION_DENIED');
+      // Consent can wait while the original stream publishes a remote Task or
+      // terminal. Re-read it rather than publishing that pre-approval snapshot.
+      record = readIdentity(locator); invariant(record, 'A2A_CALL_NOT_FOUND'); record.controls ??= {};
+      entry = record.controls[key];
+      if (entry) invariant(entry.contract === STUDIO_A2A_CONTROL_CONTRACT && entry.digest === commandDigest
+        && canonical(entry.command) === canonical(command), 'A2A_CONTROL_IDEMPOTENCY_CONFLICT');
       if (entry) {
         // Reads may be repeated. Potential effects are never retried, even
         // after a crash between this marker and entering the network stack.
-        if (kind !== 'get') return copy(entry.result ?? { ...view(record), commandId, outcome: 'unknown',
+        if (kind !== 'get' && entry.phase !== 'queued') return copy(entry.result ?? { ...view(record), commandId, outcome: 'unknown',
           error_type: 'A2A_CONTROL_OUTCOME_UNKNOWN' });
       }
       invariant(entry || Object.keys(record.controls).length < 10000, 'A2A_CONTROL_COMMAND_LIMIT');
@@ -98,7 +106,32 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         const result = { ...view(record), commandId, outcome: kind === 'get' ? 'observed' : 'already_terminal' };
         record.controls[key] = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest,
           command, phase: 'resolved', ...(kind === 'get' ? {} : { result }), createdAt: Date.now() };
-        check(); save(record.request, record); return result;
+        check(); publishRecord(); return result;
+      }
+      if (kind === 'cancel') {
+        invariant(!Object.entries(record.controls).some(([otherKey, value]) => otherKey !== key
+          && value.command.kind === 'cancel' && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
+        if (!entry) {
+          entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command, phase: 'queued', createdAt: Date.now() };
+          record.controls[key] = entry; check(); publishRecord();
+        }
+        // Queued means no CancelTask has begun. An explicit retry after a Host
+        // exit rechecks authority AND asks fresh consent before delivery.
+        while (!record.projection.taskId && !a2aTerminal.has(record.projection.state)) {
+          await awaitA2aControl(() => new Promise(resolve => setTimeout(resolve, 25)), signal);
+          check(); record = readIdentity(locator); invariant(record, 'A2A_CALL_NOT_FOUND'); entry = record.controls[key];
+          invariant(entry?.phase === 'queued' && entry.digest === commandDigest, 'A2A_CONTROL_IDEMPOTENCY_CONFLICT');
+        }
+        if (a2aTerminal.has(record.projection.state)) {
+          const result = { ...view(record), commandId, outcome: 'already_terminal' };
+          entry.phase = 'resolved'; entry.result = result; check(); publishRecord(); return result;
+        }
+      }
+      if (kind === 'get' && !record.projection.taskId) {
+        const result = { ...view(record), commandId, outcome: 'remote_task_not_bound' };
+        record.controls[key] = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest,
+          command, phase: 'resolved', createdAt: Date.now() };
+        check(); publishRecord(); return result;
       }
       invariant(record.projection.taskId, 'A2A_REMOTE_TASK_NOT_KNOWN');
       const cancelObservation = Object.values(record.controls).find(value => value.cancelReply
@@ -112,7 +145,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
             output_refs: record.projection.output_refs, snapshots: record.projection.snapshots, item_kinds: record.projection.item_kinds };
           delete record.error;
         } else delete record.result;
-        save(record.request, record);
+        publishRecord();
       };
       const observe = async () => {
         const task = await wire(record.request, 'GetTask', { id: record.projection.taskId }, signal, false, check);
@@ -123,7 +156,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         const result = { ...view(record), commandId, outcome: 'observed' };
         record.controls[key] = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest,
           command, phase: 'resolved', createdAt: Date.now() };
-        check(); save(record.request, record); return result;
+        check(); publishRecord(); return result;
       }
       // Re-read the bound task before admitting a new effect. Never discover
       // a replacement route/version or accept remote task/context drift.
@@ -132,22 +165,24 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         const result = { ...view(record), commandId, outcome: 'already_terminal' };
         record.controls[key] = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest,
           command, phase: 'resolved', result, createdAt: Date.now() };
-        check(); save(record.request, record); return result;
+        check(); publishRecord(); return result;
       }
       if (kind === 'continue') {
+        invariant(!Object.values(record.controls).some(value => value.command.kind === 'cancel'
+          && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
         invariant(paused(record.projection.state) && pauseDigest(record.projection) === command.pauseDigest, 'A2A_CONTINUATION_NOT_ALLOWED');
         invariant(!Object.values(record.controls).some(value => value.command.kind === 'continue'
           && value.command.pauseDigest === command.pauseDigest), 'A2A_CONTINUATION_ALREADY_REQUESTED');
-      } else invariant(!Object.values(record.controls).some(value => value.command.kind === 'cancel'
-        && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
-      invariant(Object.keys(record.controls).length < 10000, 'A2A_CONTROL_COMMAND_LIMIT');
+      } else invariant(!Object.entries(record.controls).some(([otherKey, value]) => otherKey !== key
+        && value.command.kind === 'cancel' && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
+      invariant(record.controls[key] || Object.keys(record.controls).length < 10000, 'A2A_CONTROL_COMMAND_LIMIT');
       const message = kind === 'continue' ? { messageId: hash({ identity: locator, commandId }), role: 'ROLE_USER',
         taskId: record.projection.taskId, ...(record.projection.contextId ? { contextId: record.projection.contextId } : {}), parts } : null;
       if (message) invariant(Buffer.byteLength(canonical(message)) <= 1024 * 1024, 'A2A_CONTROL_INPUT_INVALID');
       entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command, message,
-        phase: 'sending', createdAt: Date.now() };
+        phase: 'sending', createdAt: entry?.createdAt ?? Date.now() };
       record.controls[key] = entry;
-      check(); save(record.request, record); effectStarted = true;
+      check(); publishRecord(); effectStarted = true;
       if (kind === 'continue') {
         const result = await wire(record.request, 'SendMessage', { message, configuration: { returnImmediately: false } }, signal, false, check);
         check(); projection.apply(result);
@@ -163,7 +198,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         const validated = createA2AProjection(record.request.scopeId, record.projection); validated.task(task);
         // Keep a terminal CancelTask observation even if confirmation crashes.
         // A later GetTask cannot silently replace that terminal with another.
-        entry.cancelReply = validated.snapshot(); check(); save(record.request, record);
+        entry.cancelReply = validated.snapshot(); check(); publishRecord();
         projection = validated;
         await observe();
       }
@@ -171,7 +206,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         : a2aTerminal.has(record.projection.state) ? 'already_terminal' : 'cancel_requested_but_remote_unknown';
       const result = { ...view(record), commandId, outcome };
       entry.phase = outcome === 'cancel_requested_but_remote_unknown' ? 'unknown' : 'resolved'; entry.result = result;
-      check(); save(record.request, record); return copy(result);
+      check(); publishRecord(); return copy(result);
     } catch (error) {
       if (!effectStarted) throw error;
       // Stale/aborted control authority cannot publish a confirmed result, but
@@ -180,7 +215,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       entry.phase = unsupported ? 'resolved' : 'unknown';
       entry.result = { ...view(record), commandId, outcome: unsupported ? 'cancel_requested_but_remote_unsupported' : 'unknown',
         ...(!unsupported ? { error_type: 'A2A_CONTROL_OUTCOME_UNKNOWN' } : {}) };
-      save(record.request, record); return copy(entry.result);
+      publishRecord(); return copy(entry.result);
     } finally { release(); }
   }
   return Object.freeze({ contract: STUDIO_A2A_CONTROL_CONTRACT, execute });

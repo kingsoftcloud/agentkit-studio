@@ -9,13 +9,15 @@
  *   node scripts/verify-studio-native-a2a.mjs \
  *     --source <built DSH SDK checkout> \
  *     --archive <packed studio .tgz> \
- *     [--keep] [--reconcile-cold [--receipt-crash]]
+ *     [--keep] [--reconcile-cold [--receipt-crash] | --busy-cancel]
  *
  * --reconcile-cold uses the real mounted SessionController and authenticated
  * recovery RPC after SIGKILL, without a new prompt or Send. --receipt-crash
  * additionally kills the replacement while GetTask is pending, then verifies
  * duplicate command confirmation cannot repeat that lost read. These modes
  * use the same controlled HTTP peer/model and existing dependency graph.
+ * --busy-cancel verifies cancellation while the original stream remains open,
+ * through actual ApprovalService with a deterministic HTTP approval answerer.
  *
  * The mounted Host wires the A2A tool binding for an Agent spec with:
  *   bindings.modelProfileIds = ['fixture']   (text-only primary, modelName 'main')
@@ -54,6 +56,7 @@ import { parseArgs } from 'node:util';
 import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { verifyMountedA2aRecovery } from './verify-studio-native-a2a-recovery.mjs';
+import { verifyMountedA2aBusyCancel } from './verify-studio-native-a2a-busy-cancel.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -62,12 +65,14 @@ const { values } = parseArgs({
     keep: { type: 'boolean', default: false },
     'reconcile-cold': { type: 'boolean', default: false },
     'receipt-crash': { type: 'boolean', default: false },
+    'busy-cancel': { type: 'boolean', default: false },
   },
 });
 
 assert.ok(values.source, 'Use --source <built DSH SDK checkout>');
 assert.ok(values.archive, 'Use --archive <packed studio .tgz>');
 assert.ok(!values['receipt-crash'] || values['reconcile-cold'], '--receipt-crash requires --reconcile-cold');
+assert.ok(!values['busy-cancel'] || !values['reconcile-cold'], '--busy-cancel and --reconcile-cold are separate scenarios');
 
 const source = resolve(values.source);
 const archive = resolve(values.archive);
@@ -100,9 +105,9 @@ const remoteTaskId = 'remote-task-a2a-proof-001';
 const remoteContextId = 'remote-context-a2a-proof-001';
 
 // Track all HTTP calls for exact counting.
-let modelCalls = 0, discoveryCalls = 0, a2aSends = 0, a2aGets = 0;
+let modelCalls = 0, discoveryCalls = 0, a2aSends = 0, a2aGets = 0, a2aCancels = 0;
 const modelRequests = [], a2aPeerRequests = [], discoveryRequests = [], serverFailures = [];
-const recoveryPeer = { complete: false, holdNextGet: false };
+const recoveryPeer = { complete: false, holdNextGet: false, cancelled: false, finishStream: null };
 const jsonl = async path => (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 async function managedRecords(root) {
   const base = join(root, 'studio/native-harness/workspace-state');
@@ -126,6 +131,14 @@ const server = createHttpServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
     const body = raw ? JSON.parse(raw) : null;
+
+    if (values['busy-cancel'] && request.url === '/approval') {
+      assert.equal(body.toolName, 'a2a_cancel_task');
+      const reason = JSON.parse(body.reason); assert.equal(reason.action, 'cancel');
+      assert.equal(reason.remoteTaskId, remoteTaskId); assert.equal(reason.commandId, 'mounted-busy-cancel');
+      await writeFile(join(root, 'approval-http.json'), JSON.stringify(body));
+      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ outcome: 'allowed-once' })); return;
+    }
 
     // === Model SSE server ===
     if (request.url === '/v1/chat/completions') {
@@ -161,7 +174,8 @@ const server = createHttpServer(async (request, response) => {
 
       const answerChunk = {
         id: 'model-2', model: 'main',
-        choices: [{ index: 0, delta: { content: 'I called the remote research agent and it reported: ' + a2aReply }, finish_reason: null }],
+        choices: [{ index: 0, delta: { content: values['busy-cancel'] ? 'Original remote task was cancelled.'
+          : 'I called the remote research agent and it reported: ' + a2aReply }, finish_reason: null }],
       };
       response.write('data: ' + JSON.stringify(answerChunk) + '\n\n');
       const answerEnd = {
@@ -211,6 +225,11 @@ const server = createHttpServer(async (request, response) => {
         const event = (id, payload) => `id: ${id}\r\ndata: ${JSON.stringify(wrap(payload))}\r\n\r\n`;
         // Stream: WORKING → artifact → COMPLETED
         response.write(event('1', { task: { id: remoteTaskId, contextId: remoteContextId, status: { state: 'TASK_STATE_WORKING' } } }));
+        if (values['busy-cancel']) {
+          recoveryPeer.finishStream = () => { response.end(event('2', { statusUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
+            status: { state: 'TASK_STATE_WORKING' } } })); };
+          return; // Original stream remains open during the authenticated cancel.
+        }
         if (values['reconcile-cold']) {
           response.end(event('2', { statusUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
             status: { state: 'TASK_STATE_INPUT_REQUIRED' } } }));
@@ -232,12 +251,18 @@ const server = createHttpServer(async (request, response) => {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify(wrap({
           id: remoteTaskId, contextId: remoteContextId,
-          status: { state: values['reconcile-cold'] && !recoveryPeer.complete ? 'TASK_STATE_INPUT_REQUIRED' : 'TASK_STATE_COMPLETED' },
-          ...(values['reconcile-cold'] && !recoveryPeer.complete ? {} : {
+          status: { state: values['busy-cancel'] ? recoveryPeer.cancelled ? 'TASK_STATE_CANCELED' : 'TASK_STATE_WORKING'
+            : values['reconcile-cold'] && !recoveryPeer.complete ? 'TASK_STATE_INPUT_REQUIRED' : 'TASK_STATE_COMPLETED' },
+          ...(values['busy-cancel'] || values['reconcile-cold'] && !recoveryPeer.complete ? {} : {
             artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }],
           }),
         })));
         return;
+      }
+      if (values['busy-cancel'] && body.method === 'CancelTask') {
+        a2aCancels++; assert.equal(body.params.id, remoteTaskId); recoveryPeer.cancelled = true;
+        response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(wrap({ id: remoteTaskId,
+          contextId: remoteContextId, status: { state: 'TASK_STATE_CANCELED' } }))); return;
       }
 
       throw new Error(`Unexpected JSONRPC method: ${body.method}`);
@@ -312,7 +337,7 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
-    ...(values['reconcile-cold'] ? [
+    ...(values['reconcile-cold'] || values['busy-cancel'] ? [
       '    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
       '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
       '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'",
@@ -327,7 +352,8 @@ try {
     `        a2aServiceToken: ${JSON.stringify('a2a-fixture-token')}`,
     `        a2aBindings: ${JSON.stringify(JSON.stringify([a2aSpec]))}`,
     `        mountHost: true`,
-    `        exportControl: ${values['reconcile-cold']}`,
+    `        exportControl: ${values['reconcile-cold'] || values['busy-cancel']}`,
+    ...(values['busy-cancel'] ? [`        approvalUrl: ${JSON.stringify(`http://127.0.0.1:${serverPort}/approval`)}`] : []),
     '',
   ].join('\n'));
 
@@ -354,7 +380,11 @@ try {
   };
 
   harness = new DeepSeekHarness(options);
-  if (values['reconcile-cold']) {
+  if (values['busy-cancel']) {
+    await verifyMountedA2aBusyCancel({ root, installed, repository, source, archive, archiveSha, harness, recoveryPeer,
+      counts: () => ({ model: modelCalls, discovery: discoveryCalls, send: a2aSends, get: a2aGets, cancel: a2aCancels }),
+      requests: { modelRequests, a2aPeerRequests, serverFailures } });
+  } else if (values['reconcile-cold']) {
     await verifyMountedA2aRecovery({ root, installed, repository, source, archive, archiveSha,
       harness, makeHarness: () => new DeepSeekHarness(options), recoveryPeer,
       receiptCrash: values['receipt-crash'], nodeOnlyBin,

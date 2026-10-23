@@ -104,15 +104,18 @@ The product service resolves the actual Session, checks the original Native
 tool intent and recovery capsule, and requires the same trusted preset revision
 and Frozen Build. Fresh human `continue`/`cancel` commands always request exact
 command consent through the real approval service, including under
-`workspace-write`. Confirming an existing intent/receipt is a read and does not
-request another approval. The shared transport still checks current authority,
+`workspace-write`. Confirming an existing sending/unknown/resolved command is
+a read and does not request another approval. A queued, not-yet-delivered cancel
+requires fresh consent on explicit retry. The shared transport still checks current authority,
 private storage identity, the original remote task/context pair, and the
 original pinned route. A changed binding cannot reuse a checkpoint.
 
 Before a continuation/cancel can enter the network, its complete DTO, stable
-message ID and command digest are fsynced under the original call's SQLite
-lock. An identical command confirms its stored outcome; changed reuse rejects.
-A crashed/lost command is never sent again, even after cold restart. `get`
+message ID and command digest are fsynced under a short state transaction.
+The original send/continuation, task reads, and cancellation have separate
+long-lived SQLite locks. An identical sending/unknown/resolved command confirms
+its stored outcome; changed reuse rejects. A crashed/lost send is never sent
+again, even after cold restart. `get`
 observes the original task without rewriting the unknown effect's intent.
 Another continuation ID cannot retry an unresolved send for the same remote
 pause. A confirmed continuation can legitimately return the identical question;
@@ -128,9 +131,24 @@ Remote cancellation is confirmed only after `CancelTask` **and a validating
 unsupported cancellation and uncertain cancellation remain distinct outcomes.
 The CancelTask reply's terminal observation is persisted before confirmation;
 a subsequent contradictory terminal is rejected rather than overwriting it.
-Aborting local waiting never fabricates a remote cancelled state. A busy call
-currently rejects with `A2A_CALL_BUSY`; durable cancellation requests while
-another process owns the call still need implementation.
+Aborting local waiting never fabricates a remote cancelled state. Reads and
+cancellation can proceed while the original stream or continuation is busy.
+Before the remote task ID is known, `get` returns the local checkpoint with
+`outcome=remote_task_not_bound`; it does not send a remote query. The Studio
+state accepts this explicit outcome and enables cancellation. An approved cancel
+is durably `queued` before waiting for the original task binding. After a caller
+or Host exits, the exact same queued command can be explicitly retried with
+fresh authority and consent; it is not automatically delivered on startup.
+The fsynced `sending` marker is the no-retry boundary before CancelTask.
+Denied cancellation retains the client command ID so a retry can obtain fresh
+consent rather than creating an unrelated command.
+
+Every state write re-reads the original record under the short lock, preserves
+other commands, checks command-ID conflicts, and retains a newly bound task and
+confirmed terminal against stale stream/read snapshots. A different terminal
+is rejected. Continuation admission checks pending cancellation atomically
+under that same lock; an already admitted continuation may subsequently be
+canceled. This does not promise exactly-once effects or atomic remote execution.
 
 In Studio, open **运行与子任务**. The original Run's A2A calls have explicit
 **核对远端任务**, **请求远端取消**, and text/JSON supplemental-input controls.
@@ -147,6 +165,25 @@ both bindings and both owner contracts), `tests/native-a2a-control-process.test.
 (production Kernel/SQLite/gateway/service/route with declared narrow DSH
 doubles), and `tests/native-a2a-panel.test.mjs` (state, deterministic hook render,
 HTTP/RPC contracts). This is not a browser/Electron or cloud-service proof.
+
+Busy coverage additionally lives in `tests/native-a2a-busy-cancel.test.mjs`
+(both transports/owner contracts, unknown/bound task, late reads/streams and
+command conflicts) and `tests/native-a2a-busy-process.test.mjs` (a separate
+original stream process remains live while the control process is SIGKILLed
+before delivery or during an applied/unapplied CancelTask). Replacement PIDs
+reapprove only queued commands and never resend an entered cancel. Two further
+cross-process cases pause a continuation after its observation is persisted:
+a concurrent queued cancellation or confirmed terminal prevents its sending
+marker and HTTP request. Admission also validates the latest pause generation.
+
+`verify-studio-native-a2a.mjs --busy-cancel` uses the full mounted Host, actual
+SessionController and ApprovalService, authenticated HTTP controls and the
+product UI state controller. A controlled HTTP human answerer produces the
+real durable approval asked/decided pair. The original stream remains open
+during cancellation; after confirmation it emits a stale WORKING event. The
+original Native Run completes with the verified cancelled tool result, one
+Send and one CancelTask. This is deterministic integration, not live human or
+browser approval, Electron, fresh installation or an online A2A service.
 
 ## Executed verification and remaining work
 
@@ -186,14 +223,15 @@ Still required for full migration:
 
 - Frozen export/deployment coverage and the remaining product operations for
   this binding; the local packed Host and history path above is now verified.
-- Full browser/mounted-Host acceptance of the new authenticated task controls,
-  automatic structured-input/remote-approval waiters in the original Native
-  Run, and explicit Native receipt reconciliation/continuation. The manual
-  original-task API and panel are implemented; an input/auth pause still stops
-  the original Native call with uncertainty. Independent DSH owners have the
+- Full browser acceptance of the authenticated task controls and automatic
+  structured-input/remote-approval waiters in the original Native Run. The
+  manual original-task API/panel and explicit same-Run receipt reconciliation
+  are implemented, including full mounted-Host busy cancellation and cold
+  recovery evidence. Input/auth pauses require those explicit controls and
+  subsequent receipt reconciliation. Independent DSH owners have the
   shared control transport, but DSH/Codex product controls remain to be wired.
-- Durable cancellation requests while the original call is busy, pre-send
-  local cancellation semantics, and required task stream subscriptions.
+- Pre-send local cancellation semantics and required task stream subscriptions;
+  busy-call durable cancellation delivery is now covered above.
 - Internal workload Actions, projected workload tokens, permits/credential
   broker, inbound A2A serving, and remote orchestration/handoff exposures.
 - External peer credential schemes beyond the current hosted token path and

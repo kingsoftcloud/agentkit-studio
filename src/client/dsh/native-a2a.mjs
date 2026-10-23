@@ -3,6 +3,7 @@ const terminal = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const states = { submitted: '已提交', working: '处理中', completed: '已完成', failed: '失败', cancelled: '已取消',
   rejected: '已拒绝', input_required: '等待补充输入', auth_required: '等待认证或授权输入' };
 const outcomes = { submitted: '补充输入已提交。', remote_cancelled: '已核实远端取消。', already_terminal: '远端任务已结束。',
+  remote_task_not_bound: '原调用尚未确认远端任务 ID。可请求取消，待原任务绑定后投递。',
   unknown: '操作结果未知，请核对原任务。', cancel_requested_but_remote_unknown: '取消尚未得到远端确认。',
   cancel_requested_but_remote_unsupported: '远端不支持取消该任务。' };
 
@@ -23,13 +24,14 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
       } catch { setInputError('请输入有效的 JSON 值。'); }
     };
     const value = state.task, busy = state.sending || state.loading;
+    const outcomeText = outcomes[value?.outcome === 'remote_task_not_bound' ? value.outcome : state.outcome];
     const waiting = value && ['input_required', 'auth_required'].includes(value.state);
     return h('article', { 'aria-label': 'A2A 远端任务', style: { borderTop: '1px solid var(--border, #ddd)', padding: '14px 0' } },
       h('strong', null, 'A2A 远端任务'), h('p', null, value ? states[value.state] : '尚未核对远端状态'),
       h('button', { type: 'button', style: buttonStyle(), disabled: !controller || busy, onClick: () => void controller.refresh() }, '核对远端任务'),
       value && !terminal.has(value.state) ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending),
         onClick: () => void controller.cancel() }, '请求远端取消') : null,
-      outcomes[state.outcome] ? h('p', { role: 'status' }, outcomes[state.outcome]) : null,
+      outcomeText ? h('p', { role: 'status' }, outcomeText) : null,
       state.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: busy, onClick: () => void controller.retry() }, '确认原操作回执') : null,
       state.error ? h('p', { role: 'alert' }, state.error) : null,
       waiting ? h('section', { 'aria-label': '远端补充输入' },

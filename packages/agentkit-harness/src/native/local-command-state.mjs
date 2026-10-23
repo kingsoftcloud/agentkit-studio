@@ -116,7 +116,8 @@ export function unknownRecord(directory, record, outcomeReason) {
 // independently readable. A crash releases the kernel lock, with no PID test.
 // node:sqlite has no O_NOFOLLOW option. Private ancestors and inode checks
 // reject persistent substitutions; this is not isolation from a malicious uid.
-export function tryLock(path) {
+export function tryLock(path, busyTimeoutMs = 0) {
+  check(Number.isSafeInteger(busyTimeoutMs) && busyTimeoutMs >= 0 && busyTimeoutMs <= 5000, 'invalid_lock_timeout');
   privateDirectory(dirname(path));
   if (!privateFile(path, true)) {
     try { createPrivate(path); } catch (error) { if (error.code !== 'EEXIST') throw error; }
@@ -128,7 +129,7 @@ export function tryLock(path) {
     db = new DatabaseSync(path);
     const after = privateFile(path);
     check(before.dev === after.dev && before.ino === after.ino, 'background_state_changed');
-    db.exec('PRAGMA busy_timeout=0; PRAGMA synchronous=FULL; BEGIN IMMEDIATE;');
+    db.exec(`PRAGMA busy_timeout=${busyTimeoutMs}; PRAGMA synchronous=FULL; BEGIN IMMEDIATE;`);
     return () => { try { db.exec('ROLLBACK'); } finally { db.close(); } };
   } catch (error) {
     db?.close();

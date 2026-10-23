@@ -59,6 +59,19 @@ test('a foreign task, changed binding or command cannot replace the accepted rem
   }
   state.dispose();
 });
+test('denied queued cancellation keeps the original command ID for a freshly approved retry', async () => {
+  let denied = true; const calls = [];
+  const state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: async input => {
+    calls.push(structuredClone(input));
+    if (input.kind === 'cancel' && denied) throw Object.assign(Error('not approved'), { code: 'A2A_CONTROL_PERMISSION_DENIED' });
+    return response(input, input.kind === 'cancel' ? { state: 'cancelled', outcome: 'remote_cancelled', pauseDigest: null } : {
+      state: 'submitted', phase: 'sending', outcome: 'remote_task_not_bound', remote_task_id: null, remote_context_id: null, pauseDigest: null });
+  } } });
+  await state.refresh(); await state.cancel(); const command = structuredClone(state.getSnapshot().pending);
+  assert.equal(command.kind, 'cancel'); assert.match(state.getSnapshot().error, /再次请求批准/);
+  denied = false; await state.retry(); assert.deepEqual(calls[1], calls[2]);
+  assert.equal(state.getSnapshot().pending, null); assert.equal(state.getSnapshot().task.state, 'cancelled'); state.dispose();
+});
 test('disposing a task aborts the call and suppresses late responses and sends', async () => {
   let resolve, signal, calls = 0;
   const state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: (input, current) => {

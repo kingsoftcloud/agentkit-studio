@@ -1,9 +1,10 @@
 const check = (condition, message) => { if (!condition) throw Error(message); };
 const ended = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const paused = value => ['input_required', 'auth_required'].includes(value);
-const outcomes = new Set(['observed', 'submitted', 'already_terminal', 'remote_cancelled', 'unknown',
+const outcomes = new Set(['observed', 'submitted', 'already_terminal', 'remote_cancelled', 'unknown', 'remote_task_not_bound',
   'cancel_requested_but_remote_unknown', 'cancel_requested_but_remote_unsupported']);
 const rejectedBeforeEffect = new Set(['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A_CONTINUATION_NOT_ALLOWED',
+  'A2A_CONTROL_TASK_ALREADY_TERMINAL', 'A2A_CANCEL_ALREADY_REQUESTED',
   'A2A_CONTROL_PERMISSION_DENIED', 'A2A_CONTROL_INPUT_INVALID', 'STUDIO_NATIVE_A2A_PERMISSION_UNAVAILABLE']);
 
 /** An uncertain response retains the exact command. Refresh is read-only;
@@ -36,7 +37,9 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
       const unknown = ['unknown', 'cancel_requested_but_remote_unknown'].includes(result.outcome);
       set({ task: result, pending: unknown ? pending : null, outcome: result.outcome });
     } catch (error) {
-      if (rejectedBeforeEffect.has(error?.code)) set({ pending: null, error: '本次操作未执行，请核对输入、权限或原任务的截止时间。' });
+      if (error?.code === 'A2A_CONTROL_PERMISSION_DENIED' && pending.kind === 'cancel')
+        set({ error: '本次取消未获得批准。原取消命令已保留，重新确认将再次请求批准。' });
+      else if (rejectedBeforeEffect.has(error?.code)) set({ pending: null, error: '本次操作未执行，请核对输入、权限或原任务的截止时间。' });
       else set({ error: '操作回执尚未确认，请核对远端任务或确认原请求。' });
     }
     finally { set({ sending: false }); }

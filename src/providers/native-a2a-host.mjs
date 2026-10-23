@@ -195,10 +195,59 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
       invariant(record.requestDigest === hash(request) && canonical(record.request) === canonical(request), 'A2A_CALL_IDENTITY_CONFLICT');
       return record;
     }
-    function save(request, record) {
-      storageGuard(); const bytes = canonical(record) + '\n';
-      invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
-      atomicPrivate(file(request), bytes);
+    function save(request, record, controlKey) {
+      storageGuard();
+      // The effect/stream lock is long lived. State publication has a separate,
+      // short transaction so an approved cancel can reach a busy remote Task.
+      const release = tryLock(join(directory, `${hash(request.identity)}.state.sqlite`), 5000);
+      invariant(release, 'A2A_RECORD_BUSY');
+      try {
+        const current = readRecord(request);
+        if (current) {
+          const previous = current.projection;
+          if (previous.taskId && !record.projection.taskId) record.projection = copy(previous);
+          const next = record.projection;
+          invariant(previous.scopeId === next.scopeId && (!previous.taskId
+            || previous.taskId === next.taskId && previous.contextId === next.contextId), 'A2A_REMOTE_BINDING_CONFLICT');
+          if (a2aTerminal.has(previous.state)) {
+            invariant(!a2aTerminal.has(next.state) || previous.state === next.state, 'A2A_TERMINAL_STATE_CONFLICT');
+            if (!a2aTerminal.has(next.state)) record.projection = copy(previous);
+          }
+          record.projection.pauseGeneration = Math.max(previous.pauseGeneration ?? 0, record.projection.pauseGeneration ?? 0);
+          if (controlKey && current.controls?.[controlKey] && record.controls?.[controlKey]) {
+            const oldEntry = current.controls[controlKey], nextEntry = record.controls[controlKey];
+            invariant(oldEntry.contract === nextEntry.contract && oldEntry.digest === nextEntry.digest
+              && canonical(oldEntry.command) === canonical(nextEntry.command), 'A2A_CONTROL_IDEMPOTENCY_CONFLICT');
+          }
+          const admission = controlKey && record.controls?.[controlKey];
+          const admitting = admission?.phase === 'sending' && current.controls?.[controlKey]?.phase !== 'sending';
+          if (admitting) {
+            invariant(!a2aTerminal.has(previous.state), 'A2A_CONTROL_TASK_ALREADY_TERMINAL');
+          }
+          if (admitting && admission.command.kind === 'continue') {
+            // This is the effect admission point, under the short state lock.
+            // A prior queued/unknown cancellation wins even across processes;
+            // a cancel admitted AFTER this marker may cancel an in-flight send.
+            invariant(!Object.values(current.controls ?? {}).some(entry => entry.command.kind === 'cancel'
+              && entry.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
+            invariant(['input_required', 'auth_required'].includes(previous.state)
+              && admission.command.pauseDigest === hash({ state: previous.state, pause: previous.pause ?? null,
+                generation: previous.pauseGeneration ?? 0 }), 'A2A_CONTINUATION_NOT_ALLOWED');
+          }
+          // A stream never owns control entries. Each control publishes only
+          // its own command; stale snapshots cannot erase a concurrent intent.
+          record.controls = { ...(current.controls ?? {}), ...(controlKey && Object.hasOwn(record.controls ?? {}, controlKey)
+            ? { [controlKey]: record.controls[controlKey] } : {}) };
+          if (a2aTerminal.has(record.projection.state)) {
+            record.phase = 'terminal'; delete record.error;
+            record.result = { state: record.projection.state, task_id: record.platformTaskId,
+              output_refs: record.projection.output_refs, snapshots: record.projection.snapshots, item_kinds: record.projection.item_kinds };
+          }
+        }
+        const bytes = canonical(record) + '\n';
+        invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
+        atomicPrivate(file(request), bytes);
+      } finally { release(); }
     }
     async function wire(request, method, params, signal, streaming = false, authority = () => check(request[dsh ? 'dsh' : 'native'], signal)) {
       authority();
@@ -236,7 +285,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch } = {},
     }
     const control = createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
       signal: AbortSignal.any([lifetime.signal, sessionLifetime.signal]), readIdentity, save, wire,
-      lock: identity => tryLock(join(directory, `${hash(identity)}.sqlite`)) });
+      lock: (identity, kind) => tryLock(join(directory, `${hash(identity)}${kind === 'cancel' ? '.cancel' : kind === 'get' ? '.read' : ''}.sqlite`)) });
     async function observeReceipt(query) {
       invariant(!dsh && typeof assertReceipt === 'function', 'A2A_RECEIPT_AUTHORITY_REQUIRED');
       const checkReceipt = () => {
