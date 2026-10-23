@@ -314,3 +314,15 @@ E2B 控制面及 SDK 文件 API 是明确替身。原 NativeKernel、SQLite、HT
 `.artifacts/native-migration/skill-e2b-reviewed/`；这不是线上 E2B 或全新安装证明。
 输入文件、完整 Skill 专用事件、线上创建/重连/清理、显式核对产品入口、Frozen 和
 部署组合仍需完成，不从原迁移范围中移除。
+
+## DSH Native / Codex 的 Node Skill 读取
+
+这两条 runtime 的 builtin 注册现接入 `agentkit.dsh-node-skill-read/v1`：`list_skill_spaces`、`list_skills`、`search_skills`、`preview_skill`、`load_skill` 直接使用 Node。完整 Native 与 DSH 共用读取层、服务客户端和 ZIP loader；各自的外层保留真实执行身份与权限检查，不用伪造 Native Run/fence 接入 DSH。
+
+Host 固定的 Skill 连接支持既有签名客户端与自定义 REST 服务；两种 runtime 共用激活时的连接快照。Agent revision 的 Space 绑定与原有环境配置共同决定可访问空间，公开目录必须匹配已绑定空间和显式选择的空间。工具参数不能更改地址、凭据或绑定。预览不下载；加载校验包摘要、版本、清单名称与路径，完整返回指令和资源路径，不执行、安装或绑定脚本。内容缓存位于工作区外，按真实 Agent/Session 分隔，重开和每次服务/缓存操作都复核原信号、调用身份与根路径。目录不完整和摘要不符明确失败。
+
+DSH 的 pre/guard/around/post/result 管线继续生效；策略拒绝不发起服务请求，后置结果替换保留。取消、关闭及不合作网络 Promise 的晚返回不能发布失效结果或继续下载。`component_status` 只列出已准入的 Node Skill 工具，并区分 Space 绑定与工作流执行器就绪。
+
+定向验证在 Node 26.5.0 / 22.19.0 各通过 75 项；新增公共空间反例和真正新 Node 进程重开缓存后，只重跑变化的两个模块，各 39 项通过。生产安装包通过真实 Host、SessionController、两个 runtime 的 ToolRegistry、HTTP REST 目录和可信 CA 的 HTTPS ZIP 验证，逐字节核对完整指令及脚本资源，证明加载时脚本未执行；每个 runtime 恰好 7 次服务请求、1 次 HTTPS 下载，拒绝调用为零新增请求。原文件、Web、命令、完整输出与审批断言保留。Host PATH 只有 Node，Python 路径不可用。此证据使用固定依赖图，不包含全新安装、模型/Codex CLI 对话或整个 Host 的崩溃恢复。
+
+DSH legacy 的 `execute_skills`、Skill 管理工具、E2B、Browser、A2A、记忆/知识库等尚未全部替换 Python builtin。完整 Native 的工作流运行时已有独立实现，但不能把它的验收当成 DSH 接线已完成。整个 Python fallback 尚未移除，整体迁移仍未完成。

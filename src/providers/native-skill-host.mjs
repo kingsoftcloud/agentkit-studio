@@ -45,9 +45,7 @@ const csv = (env, key) => {
 };
 
 export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl = hostFetch, loadSdk }) {
-  const userSpaces = ids([...(config.skillSpaceIds ?? []), ...csv(env, 'KSADK_SKILL_SPACE_IDS'),
-    ...(!env.KSADK_SKILL_SPACE_IDS ? csv(env, 'SKILL_SPACE_ID') : [])]);
-  const publicSpaces = ids(csv(env, 'KSADK_PUBLIC_SKILL_SPACE_IDS'));
+  const { userSpaces, publicSpaces, publicAllowlist } = nativeSkillSpaceSettings(config, env);
   const localDefinitions = copy(config.skillDefinitions ?? []).filter(item => item.invocation?.modelInvocable !== false), environment = { ...env };
   if (!userSpaces.length && !publicSpaces.length && !localDefinitions.length) return null;
   const selectedRuntime = nativeSkillRuntimeSettings(env);
@@ -57,7 +55,6 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
     backendContract: NATIVE_SKILL_E2B_RUNTIME, fileContract: NATIVE_SKILL_E2B_FILES } : {}) });
   if (!userSpaces.length && !publicSpaces.length && !(runtimeSettings.enabled && localDefinitions.length)) return null;
   invariant(!userSpaces.length && !publicSpaces.length || connection?.client && /^[a-f0-9]{64}$/u.test(connection.bindingDigest), 'NATIVE_SKILL_CONNECTION_REQUIRED');
-  const publicAllowlist = ids(csv(env, 'KSADK_PUBLIC_SKILL_ALLOWLIST'));
   const agentRevision = config.agentRevision ?? 1;
   const localSource = localDefinitions.length ? createStudioNativeSkillSource({ definitions: localDefinitions }) : null;
   const binding = Object.freeze({ contract: STUDIO_NATIVE_REMOTE_SKILLS, toolContract: SKILL_TOOL_CONTRACT, userSpaceIds: userSpaces,
@@ -72,24 +69,8 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
   const definitions = provider(undefined).definitions;
   function forSession({ agent, scope, sessionId, stateRoot, workspaceRoot, assertCurrent }) {
     scopeKey(scope);
-    // Canonicalize the trusted Host's existing prefix once (e.g. macOS /var
-    // aliases /private/var). New private descendants still reject links, and
-    // every later operation revalidates the original supplied path too.
-    let ancestor = resolve(stateRoot); const missing = [];
-    while (!existsSync(ancestor)) { missing.unshift(basename(ancestor)); ancestor = dirname(ancestor); }
-    const lexical = join(realpathSync(ancestor), ...missing), workspace = realpathSync(workspaceRoot);
-    invariant(lexical !== workspace && !lexical.startsWith(workspace + sep), 'NATIVE_SKILL_CACHE_INSIDE_WORKSPACE');
-    privateDirectory(lexical, true);
-    const root = realpathSync(lexical);
-    const cacheDir = join(root, hash({ scope, sessionId })); privateDirectory(cacheDir, true);
-    const pinned = lstatSync(cacheDir), sessionLifetime = new AbortController();
-    const assertStorage = () => {
-      invariant(realpathSync(stateRoot) === root && realpathSync(lexical) === root
-        && realpathSync(workspaceRoot) === workspace, 'NATIVE_SKILL_CACHE_CHANGED');
-      privateDirectory(cacheDir);
-      const current = lstatSync(cacheDir);
-      invariant(current.ino === pinned.ino && current.dev === pinned.dev, 'NATIVE_SKILL_CACHE_CHANGED');
-    };
+    const { workspace, cacheDir, assertStorage } = nativeSkillSessionCache({ stateRoot, workspaceRoot, owner: { scope, sessionId } });
+    const sessionLifetime = new AbortController();
     const service = connection?.client ? createNativeSkillService(connection.client) : null;
     const load = service ? createNativeSkillLoader({ serviceClient: service, cacheDir, fetchImpl }) : undefined;
     const createRuntime = e2b ? createNativeE2BSkillRuntime : createNativeLocalSkillRuntime;
@@ -144,4 +125,34 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
   }
   return { definitions, binding: { ...copy(binding), bindingDigest }, forSession,
     close: () => lifetime.abort(new Error('NATIVE_SKILL_HOST_CLOSED')) };
+}
+
+/** Shared Host-private cache boundary; owner is the caller's actual identity. */
+export function nativeSkillSessionCache({ stateRoot, workspaceRoot, owner }) {
+  // Canonicalize the trusted Host's existing prefix once (e.g. macOS /var
+  // aliases /private/var). New private descendants still reject links, and
+  // every later operation revalidates the original supplied path too.
+  let ancestor = resolve(stateRoot); const missing = [];
+  while (!existsSync(ancestor)) { missing.unshift(basename(ancestor)); ancestor = dirname(ancestor); }
+  const lexical = join(realpathSync(ancestor), ...missing), workspace = realpathSync(workspaceRoot);
+  invariant(lexical !== workspace && !lexical.startsWith(workspace + sep), 'NATIVE_SKILL_CACHE_INSIDE_WORKSPACE');
+  privateDirectory(lexical, true);
+  const root = realpathSync(lexical);
+  const cacheDir = join(root, hash(owner)); privateDirectory(cacheDir, true);
+  const pinned = lstatSync(cacheDir);
+  const assertStorage = () => {
+    invariant(realpathSync(stateRoot) === root && realpathSync(lexical) === root
+      && realpathSync(workspaceRoot) === workspace, 'NATIVE_SKILL_CACHE_CHANGED');
+    privateDirectory(cacheDir);
+    const current = lstatSync(cacheDir);
+    invariant(current.ino === pinned.ino && current.dev === pinned.dev, 'NATIVE_SKILL_CACHE_CHANGED');
+  };
+  return { workspace, cacheDir, assertStorage };
+}
+
+export function nativeSkillSpaceSettings(config = {}, env = {}) {
+  const userSpaces = ids([...(config.skillSpaceIds ?? []), ...csv(env, 'KSADK_SKILL_SPACE_IDS'),
+    ...(!env.KSADK_SKILL_SPACE_IDS ? csv(env, 'SKILL_SPACE_ID') : [])]);
+  const publicSpaces = ids(csv(env, 'KSADK_PUBLIC_SKILL_SPACE_IDS'));
+  return { userSpaces, publicSpaces, publicAllowlist: ids(csv(env, 'KSADK_PUBLIC_SKILL_ALLOWLIST')) };
 }

@@ -654,3 +654,7 @@ Host/脚本 PATH 仅提供 Node 和 bash，Python 配置指向不存在的位置
 准入阶段从 Agent revision / Frozen Build 绑定生成 `agentkit.dsh-component-bindings/v1`，只保存知识库、记忆与 Skill Space 的公开绑定事实，过滤禁用资源并去重 Space ID，不复制原配置或凭据。状态中的工具列表只包含该 preset 已准入并接入 Node 环境的工具；绑定资源与执行器就绪分开报告。DSH legacy 的 E2B、Skill 工作流等尚未接入 Node builtin 的能力不会因为环境变量存在就被报告为已就绪。其他工具仍可能进入原 Python fallback，这次没有移除该桥。
 
 定向验证：五个相关模块在 Node 26.5.0 / 22.19.0 各通过 109 项；补充真实请求头模型优先级与漂移用例后，只重跑变化模块，各 8 项通过。新的实际安装包在两种 Node 下均通过 `scripts/verify-studio-node-builtins.mjs`：生产 Host、鉴权准入、SessionController、DSH Native / Codex 的真实注册与组件调用，原文件/Web/命令/审批/隔离验证全部保留。Host PATH 仅提供 Node，Python 路径不可用；这是固定依赖图上的工具管线验收，不包含模型调用、Codex CLI 或全新依赖安装。初次外层 verifier 错把模型适配器名当作 Session 初始模型而失败，实际 SDK 的无请求默认模型为 `deepseek-flash`；现严格核对该值及真实 Agent 选项，失败日志保留。
+
+## Legacy Skill 读取已接入 Node
+
+DSH Native / Codex 的五个 Skill 读取工具现复用完整 Native 的共享读取实现与受约束的包 loader，按真实 Session/Agent 分隔缓存，并保留 DSH 策略管线。公开目录的返回空间必须与准入及显式选择匹配。生产打包验证覆盖真实 HTTP 服务与可信 HTTPS ZIP、精确指令/资源、拒绝零请求、后置策略及 Node-only PATH；新进程缓存重开另有适配器级证据。配置与证明范围见 [Skills 文档](native-skills.md#dsh-native--codex-的-node-skill-读取)。`execute_skills` 等剩余 legacy builtin 仍保留 Python fallback；没有默认切换或整体完成声明。

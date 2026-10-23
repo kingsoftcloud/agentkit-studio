@@ -220,8 +220,8 @@ export function createNativeSkillTools({
   const sealedPublicAllowlist = copy(publicAllowlist);
   const sealedBoundSkillNames = new Set(copy(boundSkillNames).map(n => n.toLowerCase()));
   const allSpaceIds = [...sealedSpaceIds, ...sealedPublicSpaceIds];
-  const userSpaceIdSet = new Set(sealedSpaceIds);
-  const publicSpaceIdSet = new Set(sealedPublicSpaceIds);
+  const readTransport = createSkillReadTransport({ serviceClient, loadSkillFn, skillSpaceIds: sealedSpaceIds,
+    publicSpaceIds: sealedPublicSpaceIds, publicAllowlist: sealedPublicAllowlist, manifestLimit });
 
   // Fix #1, #4: Internal definition map is an independent deep copy. The
   // public definitions array returns separate copies so mutating the public
@@ -233,16 +233,6 @@ export function createNativeSkillTools({
   const sealedBinding = copy(binding);
 
   // --- space validation (fix #5) -------------------------------------------
-
-  function resolveSpaceId(spaceId) {
-    if (spaceId == null) return { type: 'all' };
-    const key = String(spaceId).trim();
-    if (!key) return { error: 'space_id is empty' };
-    if (key === 'public') { if (!publicSpaceIdSet.size) return { error: 'public space is not configured' }; return { type: 'public' }; }
-    if (publicSpaceIdSet.has(key)) return { type: 'public', explicitId: key };
-    if (userSpaceIdSet.has(key)) return { type: 'user', id: key };
-    return { error: `space_id "${key}" is not a bound Skill Space` };
-  }
 
   function validateSkillNames(names) {
     if (!names.length || !sealedBoundSkillNames.size) return null;
@@ -282,189 +272,6 @@ export function createNativeSkillTools({
         return true;
       },
     };
-  }
-
-  // --- space iteration -------------------------------------------------------
-
-  async function iterRemoteSkills(spaceResolution, guard) {
-    if (!serviceClient) throw new SkillToolError('SKILL_SERVICE_UNAVAILABLE', 'Skill Service adapter is not configured');
-    if (spaceResolution.error) throw new SkillToolError('SKILL_SPACE_NOT_BOUND', spaceResolution.error);
-    const pairs = [];
-    const spaces = spaceResolution.type === 'all'
-      ? [...sealedSpaceIds.map(id => ({ type: 'user', id })), ...(publicSpaceIdSet.size ? [{ type: 'public' }] : [])]
-      : [spaceResolution];
-    for (const space of spaces) {
-      guard.assertCurrent();
-      if (space.type === 'public') {
-        const listing = await serviceClient.listAvailablePremadeSkills({ signal: guard.signal, assertCurrent: () => guard.assertCurrent() });
-        guard.assertCurrent();
-        if (listing.truncated) throw new SkillToolError('SKILL_LISTING_INCOMPLETE', 'Public Skill listing is incomplete');
-        const active = selectPublicSkillRefs(listing.activeSkills ?? [], sealedPublicAllowlist);
-        const resolvedSpaceId = listing.spaceId || 'public';
-        for (const skill of active) pairs.push({ spaceId: resolvedSpaceId, skill });
-      } else {
-        const listing = await serviceClient.listSkillsBySpaceId(space.id, { signal: guard.signal, assertCurrent: () => guard.assertCurrent() });
-        guard.assertCurrent();
-        if (listing.truncated) throw new SkillToolError('SKILL_LISTING_INCOMPLETE', 'Skill Space listing is incomplete');
-        for (const skill of listing.activeSkills ?? []) pairs.push({ spaceId: space.id, skill });
-      }
-    }
-    return pairs;
-  }
-
-  // --- list_skill_spaces -----------------------------------------------------
-
-  async function listSkillSpaces(_args, { guard }) {
-    const configured = new Set(allSpaceIds);
-    let spaces = [];
-    if (serviceClient?.listSkillSpaces) {
-      try {
-        guard.assertCurrent();
-        spaces = parseSkillSpaces(await serviceClient.listSkillSpaces({ signal: guard.signal, assertCurrent: () => guard.assertCurrent() }));
-      } catch (error) { guard.assertCurrent(); /* configured spaces remain available during a service outage */ }
-    }
-    guard.assertCurrent();
-    for (const space of spaces) space.configured = configured.has(space.space_id);
-    if (!spaces.length) spaces = [...configured].map(sid => ({ space_id: sid, space_name: '', description: '', configured: true }));
-    return { ok: true, configured_space_ids: allSpaceIds, spaces };
-  }
-
-  function parseSkillSpaces(payload) {
-    const data = payload?.data || payload?.Data || {};
-    const raw = data.SkillSpaces || data.skill_spaces || data.Spaces || data.spaces || data.Items || data.items || [];
-    return raw.filter(item => item && typeof item === 'object').map(item => ({
-      space_id: String(item.SkillSpaceId || item.skill_space_id || item.SpaceId || item.space_id || ''),
-      space_name: String(item.SkillSpaceName || item.skill_space_name || item.SpaceName || item.space_name || ''),
-      description: String(item.Description || item.description || ''),
-    }));
-  }
-
-  // --- list_skills ------------------------------------------------------------
-
-  async function listSkills({ space_id: spaceId } = {}, ctx) {
-    const guard = ctx.guard;
-    const res = resolveSpaceId(spaceId);
-    const spaceIds = spaceId ? [spaceId] : allSpaceIds;
-    const g = guard.check(); if (g) return { ok: false, error_type: g.code, error_message: g.message };
-    try {
-      const pairs = await iterRemoteSkills(res, guard);
-      const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
-      const seen = new Set(), skills = [];
-      for (const { spaceId: sid, skill } of pairs) {
-        if (!skill.name) continue;
-        const key = skill.name.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        skills.push(skillManifestItem(skill, sid));
-        if (skills.length >= manifestLimit) break;
-      }
-      return { ok: true, skills, truncated: pairs.length > skills.length, skill_space_ids: spaceIds, space_id: spaceId ?? null };
-    } catch (error) {
-      return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error), skill_space_ids: spaceIds, space_id: spaceId ?? null };
-    }
-  }
-
-  // --- load_skill / preview_skill --------------------------------------------
-
-  async function findSkillByName(skillName, spaceId, guard) {
-    const target = String(skillName || '').trim().toLowerCase();
-    if (!target) return null;
-    const pairs = await iterRemoteSkills(resolveSpaceId(spaceId), guard);
-    const g = guard.check(); if (g) throw new SkillToolError(g.code, g.message);
-    const available = [];
-    for (const { spaceId: sid, skill } of pairs) {
-      if (!skill.name) continue;
-      available.push(skill.name);
-      if (skill.name.trim().toLowerCase() === target) return { spaceId: sid, skill, available };
-    }
-    return { available };
-  }
-
-  async function loadSkill({ skill_name: skillName, space_id: spaceId } = {}, ctx) {
-    const guard = ctx.guard;
-    const target = String(skillName || '').trim().toLowerCase();
-    if (!target) return { ok: false, error_message: 'skill_name is required' };
-    const g = guard.check(); if (g) return { ok: false, error_type: g.code, error_message: g.message };
-    try {
-      const found = await findSkillByName(skillName, spaceId, guard);
-      const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
-      if (!found?.skill) return { ok: false, error_message: `Skill not found: ${skillName}`, space_id: spaceId ?? null, available_skills: found?.available ?? [] };
-      const { spaceId: sid, skill } = found;
-      if (typeof loadSkillFn !== 'function') {
-        return { ok: false, error_type: 'SKILL_LOADER_UNAVAILABLE',
-          error_message: 'No skill loader is configured on this Host.',
-          space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '' };
-      }
-      const g3 = guard.check(); if (g3) return { ok: false, error_type: g3.code, error_message: g3.message };
-      const loaded = await loadSkillFn({ skillId: skill.skillId, versionId: skill.versionId, name: skill.name, spaceId: sid,
-        contentHash: skill.contentHash || '', signal: guard.signal, assertCurrent: () => guard.assertCurrent() });
-      const g4 = guard.check(); if (g4) return { ok: false, error_type: g4.code, error_message: g4.message };
-      if (!loaded || !loaded.content) {
-        return { ok: false, error_type: 'SKILL_MANIFEST_MISSING',
-          error_message: `Skill "${skillName}" was found but its SKILL.md could not be loaded.`,
-          space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '' };
-      }
-      if (loaded.skillId !== skill.skillId || loaded.versionId !== skill.versionId || loaded.spaceId !== sid ||
-        skill.contentHash && loaded.contentHash !== skill.contentHash)
-        return { ok: false, error_type: 'SKILL_LOADER_IDENTITY_MISMATCH',
-          error_message: 'The loader did not attest the selected Skill identity, version and content hash.' };
-      const rootDir = loaded.rootDir || '';
-      const { hasScripts, files } = await scanScripts(rootDir);
-      const g5 = guard.check(); if (g5) return { ok: false, error_type: g5.code, error_message: g5.message };
-      return { ok: true, execution_context: 'outer_agent', name: skill.name, description: skill.description || '',
-        space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '', version: skill.version || '',
-        cache_hit: !!loaded.cacheHit, root_dir: rootDir, has_scripts_dir: hasScripts, script_files: files,
-        instructions: loaded.content, usage: "Read these instructions and complete the user's task in the outer agent unless the skill explicitly requires isolated execution." };
-    } catch (error) {
-      return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error) };
-    }
-  }
-
-  async function previewSkill({ skill_name: skillName, space_id: spaceId } = {}, ctx) {
-    const guard = ctx.guard;
-    const target = String(skillName || '').trim().toLowerCase();
-    if (!target) return { ok: false, error_message: 'skill_name is required' };
-    const g = guard.check(); if (g) return { ok: false, error_type: g.code, error_message: g.message };
-    try {
-      const found = await findSkillByName(skillName, spaceId, guard);
-      const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
-      if (!found?.skill) return { ok: false, error_message: `Skill not found: ${skillName}`, space_id: spaceId ?? null, available_skills: found?.available ?? [] };
-      const { spaceId: sid, skill } = found;
-      return { ok: true, execution_context: 'manifest_preview', name: skill.name, description: skill.description || '',
-        space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '', version: skill.version || '',
-        cache_hit: false, has_scripts_dir: false, script_files: [], instructions: skill.description || '',
-        usage: 'Manifest-level preview. For full SKILL.md instructions, use load_skill.' };
-    } catch (error) {
-      return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error) };
-    }
-  }
-
-  // --- search_skills ----------------------------------------------------------
-
-  async function searchSkills({ query, max_results: maxResults = 10, space_id: spaceId } = {}, ctx) {
-    const guard = ctx.guard;
-    const queryText = String(query || '').trim();
-    if (!queryText) return { ok: false, error_message: 'query is required' };
-    const g = guard.check(); if (g) return { ok: false, error_type: g.code, error_message: g.message };
-    try {
-      const pairs = await iterRemoteSkills(resolveSpaceId(spaceId), guard);
-      const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
-      const spaceOf = {};
-      for (const { spaceId: sid, skill } of pairs) {
-        const key = skill.cacheKey || skill.skillId || skill.name;
-        if (key && !(key in spaceOf)) spaceOf[key] = sid;
-      }
-      const refs = pairs.map(({ skill }) => skill);
-      const matches = matchSkillRefs(refs, queryText, { limit: maxResults });
-      const results = matches.map(match => ({
-        name: match.skill.name, description: match.skill.description, version: match.skill.version,
-        score: match.score, reason: match.reason, aliases: match.skill.aliases ?? [], tags: match.skill.tags ?? [],
-        space_id: spaceOf[match.skill.cacheKey || match.skill.skillId || match.skill.name] || '',
-      }));
-      return { ok: true, query: queryText, space_id: spaceId ?? null, results };
-    } catch (error) {
-      return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error) };
-    }
   }
 
   // --- execute_skills (fix #4: effectStarted, uncertain, approval) ------------
@@ -573,11 +380,8 @@ export function createNativeSkillTools({
   // --- dispatch table ---------------------------------------------------------
 
   const handlers = {
-    list_skill_spaces: listSkillSpaces,
-    list_skills: listSkills,
-    load_skill: loadSkill,
-    preview_skill: previewSkill,
-    search_skills: searchSkills,
+    ...Object.fromEntries(nativeSkillReadToolDefinitions().map(definition => [definition.name, (_args, ctx) =>
+      readTransport.execute({ call: ctx.call, signal: ctx.guard.signal, assertCurrent: () => ctx.guard.assertCurrent() })])),
     execute_skills: executeSkills,
   };
 
@@ -757,4 +561,247 @@ async function scanDir(dir, root, files, depth = 0) {
 
 export class SkillToolError extends Error {
   constructor(code, message) { super(message); this.name = 'SkillToolError'; this.code = code; }
+}
+
+/** Formal schemas shared by the Native and DSH read-only adapters. */
+export function nativeSkillReadToolDefinitions() { return copy(TOOL_DEFINITIONS.filter(definition => definition.readOnly)); }
+
+/** Neutral Skill discovery/loading transport. The caller supplies its real
+ * authority; this layer neither creates an execution identity nor runs scripts.
+ * Download/cache publication is content addressed and guarded by the loader. */
+export function createSkillReadTransport({ serviceClient, loadSkillFn, skillSpaceIds = [], publicSpaceIds = [],
+  publicAllowlist = [], manifestLimit = 30 } = {}) {
+  invariant(Number.isSafeInteger(manifestLimit) && manifestLimit > 0 && manifestLimit <= 4096, 'skill_read_manifest_limit_invalid');
+  const sealedSpaceIds = copy(skillSpaceIds), sealedPublicSpaceIds = copy(publicSpaceIds), sealedPublicAllowlist = copy(publicAllowlist);
+  const allSpaceIds = [...sealedSpaceIds, ...sealedPublicSpaceIds];
+  const userSpaceIdSet = new Set(sealedSpaceIds), publicSpaceIdSet = new Set(sealedPublicSpaceIds);
+  const formal = new Map(nativeSkillReadToolDefinitions().map(definition => [definition.name, definition]));
+  function resolveSpaceId(spaceId) {
+    if (spaceId == null) return { type: 'all' };
+    const key = String(spaceId).trim();
+    if (!key) return { error: 'space_id is empty' };
+    if (key === 'public') { if (!publicSpaceIdSet.size) return { error: 'public space is not configured' }; return { type: 'public' }; }
+    if (publicSpaceIdSet.has(key)) return { type: 'public', explicitId: key };
+    if (userSpaceIdSet.has(key)) return { type: 'user', id: key };
+    return { error: `space_id "${key}" is not a bound Skill Space` };
+  }
+
+  // --- space iteration -------------------------------------------------------
+
+  async function iterRemoteSkills(spaceResolution, guard) {
+    if (!serviceClient) throw new SkillToolError('SKILL_SERVICE_UNAVAILABLE', 'Skill Service adapter is not configured');
+    if (spaceResolution.error) throw new SkillToolError('SKILL_SPACE_NOT_BOUND', spaceResolution.error);
+    const pairs = [];
+    const spaces = spaceResolution.type === 'all'
+      ? [...sealedSpaceIds.map(id => ({ type: 'user', id })), ...(publicSpaceIdSet.size ? [{ type: 'public' }] : [])]
+      : [spaceResolution];
+    for (const space of spaces) {
+      guard.assertCurrent();
+      if (space.type === 'public') {
+        const listing = await serviceClient.listAvailablePremadeSkills({ signal: guard.signal, assertCurrent: () => guard.assertCurrent() });
+        guard.assertCurrent();
+        if (listing.truncated) throw new SkillToolError('SKILL_LISTING_INCOMPLETE', 'Public Skill listing is incomplete');
+        const active = selectPublicSkillRefs(listing.activeSkills ?? [], sealedPublicAllowlist);
+        const resolvedSpaceId = listing.spaceId || 'public';
+        if (!publicSpaceIdSet.has(resolvedSpaceId) || space.explicitId && space.explicitId !== resolvedSpaceId)
+          throw new SkillToolError('SKILL_SPACE_NOT_BOUND', 'Public directory does not match the bound and selected Skill Space');
+        for (const skill of active) pairs.push({ spaceId: resolvedSpaceId, skill });
+      } else {
+        const listing = await serviceClient.listSkillsBySpaceId(space.id, { signal: guard.signal, assertCurrent: () => guard.assertCurrent() });
+        guard.assertCurrent();
+        if (listing.truncated) throw new SkillToolError('SKILL_LISTING_INCOMPLETE', 'Skill Space listing is incomplete');
+        for (const skill of listing.activeSkills ?? []) pairs.push({ spaceId: space.id, skill });
+      }
+    }
+    return pairs;
+  }
+
+  // --- list_skill_spaces -----------------------------------------------------
+
+  async function listSkillSpaces(_args, { guard }) {
+    const configured = new Set(allSpaceIds);
+    let spaces = [];
+    if (serviceClient?.listSkillSpaces) {
+      try {
+        guard.assertCurrent();
+        spaces = parseSkillSpaces(await serviceClient.listSkillSpaces({ signal: guard.signal, assertCurrent: () => guard.assertCurrent() }));
+      } catch (error) { guard.assertCurrent(); /* configured spaces remain available during a service outage */ }
+    }
+    guard.assertCurrent();
+    for (const space of spaces) space.configured = configured.has(space.space_id);
+    if (!spaces.length) spaces = [...configured].map(sid => ({ space_id: sid, space_name: '', description: '', configured: true }));
+    return { ok: true, configured_space_ids: allSpaceIds, spaces };
+  }
+
+  function parseSkillSpaces(payload) {
+    const data = payload?.data || payload?.Data || {};
+    const raw = data.SkillSpaces || data.skill_spaces || data.Spaces || data.spaces || data.Items || data.items || [];
+    return raw.filter(item => item && typeof item === 'object').map(item => ({
+      space_id: String(item.SkillSpaceId || item.skill_space_id || item.SpaceId || item.space_id || ''),
+      space_name: String(item.SkillSpaceName || item.skill_space_name || item.SpaceName || item.space_name || ''),
+      description: String(item.Description || item.description || ''),
+    }));
+  }
+
+  // --- list_skills ------------------------------------------------------------
+
+  async function listSkills({ space_id: spaceId } = {}, ctx) {
+    const guard = ctx.guard;
+    const res = resolveSpaceId(spaceId);
+    const spaceIds = spaceId ? [spaceId] : allSpaceIds;
+    const g = guard.check(); if (g) return { ok: false, error_type: g.code, error_message: g.message };
+    try {
+      const pairs = await iterRemoteSkills(res, guard);
+      const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
+      const seen = new Set(), skills = [];
+      for (const { spaceId: sid, skill } of pairs) {
+        if (!skill.name) continue;
+        const key = skill.name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        skills.push(skillManifestItem(skill, sid));
+        if (skills.length >= manifestLimit) break;
+      }
+      return { ok: true, skills, truncated: pairs.length > skills.length, skill_space_ids: spaceIds, space_id: spaceId ?? null };
+    } catch (error) {
+      return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error), skill_space_ids: spaceIds, space_id: spaceId ?? null };
+    }
+  }
+
+  // --- load_skill / preview_skill --------------------------------------------
+
+  async function findSkillByName(skillName, spaceId, guard) {
+    const target = String(skillName || '').trim().toLowerCase();
+    if (!target) return null;
+    const pairs = await iterRemoteSkills(resolveSpaceId(spaceId), guard);
+    const g = guard.check(); if (g) throw new SkillToolError(g.code, g.message);
+    const available = [];
+    for (const { spaceId: sid, skill } of pairs) {
+      if (!skill.name) continue;
+      available.push(skill.name);
+      if (skill.name.trim().toLowerCase() === target) return { spaceId: sid, skill, available };
+    }
+    return { available };
+  }
+
+  async function loadSkill({ skill_name: skillName, space_id: spaceId } = {}, ctx) {
+    const guard = ctx.guard;
+    const target = String(skillName || '').trim().toLowerCase();
+    if (!target) return { ok: false, error_message: 'skill_name is required' };
+    const g = guard.check(); if (g) return { ok: false, error_type: g.code, error_message: g.message };
+    try {
+      const found = await findSkillByName(skillName, spaceId, guard);
+      const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
+      if (!found?.skill) return { ok: false, error_message: `Skill not found: ${skillName}`, space_id: spaceId ?? null, available_skills: found?.available ?? [] };
+      const { spaceId: sid, skill } = found;
+      if (typeof loadSkillFn !== 'function') {
+        return { ok: false, error_type: 'SKILL_LOADER_UNAVAILABLE',
+          error_message: 'No skill loader is configured on this Host.',
+          space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '' };
+      }
+      const g3 = guard.check(); if (g3) return { ok: false, error_type: g3.code, error_message: g3.message };
+      const loaded = await loadSkillFn({ skillId: skill.skillId, versionId: skill.versionId, name: skill.name, spaceId: sid,
+        contentHash: skill.contentHash || '', signal: guard.signal, assertCurrent: () => guard.assertCurrent() });
+      const g4 = guard.check(); if (g4) return { ok: false, error_type: g4.code, error_message: g4.message };
+      if (!loaded || !loaded.content) {
+        return { ok: false, error_type: 'SKILL_MANIFEST_MISSING',
+          error_message: `Skill "${skillName}" was found but its SKILL.md could not be loaded.`,
+          space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '' };
+      }
+      if (loaded.skillId !== skill.skillId || loaded.versionId !== skill.versionId || loaded.spaceId !== sid ||
+        skill.contentHash && loaded.contentHash !== skill.contentHash)
+        return { ok: false, error_type: 'SKILL_LOADER_IDENTITY_MISMATCH',
+          error_message: 'The loader did not attest the selected Skill identity, version and content hash.' };
+      const rootDir = loaded.rootDir || '';
+      const { hasScripts, files } = await scanScripts(rootDir);
+      const g5 = guard.check(); if (g5) return { ok: false, error_type: g5.code, error_message: g5.message };
+      return { ok: true, execution_context: 'outer_agent', name: skill.name, description: skill.description || '',
+        space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '', version: skill.version || '',
+        cache_hit: !!loaded.cacheHit, root_dir: rootDir, has_scripts_dir: hasScripts, script_files: files,
+        instructions: loaded.content, usage: "Read these instructions and complete the user's task in the outer agent unless the skill explicitly requires isolated execution." };
+    } catch (error) {
+      return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error) };
+    }
+  }
+
+  async function previewSkill({ skill_name: skillName, space_id: spaceId } = {}, ctx) {
+    const guard = ctx.guard;
+    const target = String(skillName || '').trim().toLowerCase();
+    if (!target) return { ok: false, error_message: 'skill_name is required' };
+    const g = guard.check(); if (g) return { ok: false, error_type: g.code, error_message: g.message };
+    try {
+      const found = await findSkillByName(skillName, spaceId, guard);
+      const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
+      if (!found?.skill) return { ok: false, error_message: `Skill not found: ${skillName}`, space_id: spaceId ?? null, available_skills: found?.available ?? [] };
+      const { spaceId: sid, skill } = found;
+      return { ok: true, execution_context: 'manifest_preview', name: skill.name, description: skill.description || '',
+        space_id: sid, skill_id: skill.skillId || '', version_id: skill.versionId || '', version: skill.version || '',
+        cache_hit: false, has_scripts_dir: false, script_files: [], instructions: skill.description || '',
+        usage: 'Manifest-level preview. For full SKILL.md instructions, use load_skill.' };
+    } catch (error) {
+      return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error) };
+    }
+  }
+
+  // --- search_skills ----------------------------------------------------------
+
+  async function searchSkills({ query, max_results: maxResults = 10, space_id: spaceId } = {}, ctx) {
+    const guard = ctx.guard;
+    const queryText = String(query || '').trim();
+    if (!queryText) return { ok: false, error_message: 'query is required' };
+    const g = guard.check(); if (g) return { ok: false, error_type: g.code, error_message: g.message };
+    try {
+      const pairs = await iterRemoteSkills(resolveSpaceId(spaceId), guard);
+      const g2 = guard.check(); if (g2) return { ok: false, error_type: g2.code, error_message: g2.message };
+      const spaceOf = {};
+      for (const { spaceId: sid, skill } of pairs) {
+        const key = skill.cacheKey || skill.skillId || skill.name;
+        if (key && !(key in spaceOf)) spaceOf[key] = sid;
+      }
+      const refs = pairs.map(({ skill }) => skill);
+      const matches = matchSkillRefs(refs, queryText, { limit: maxResults });
+      const results = matches.map(match => ({
+        name: match.skill.name, description: match.skill.description, version: match.skill.version,
+        score: match.score, reason: match.reason, aliases: match.skill.aliases ?? [], tags: match.skill.tags ?? [],
+        space_id: spaceOf[match.skill.cacheKey || match.skill.skillId || match.skill.name] || '',
+      }));
+      return { ok: true, query: queryText, space_id: spaceId ?? null, results };
+    } catch (error) {
+      return { ok: false, error_type: error.code || error.name || 'Error', error_message: error.message || String(error) };
+    }
+  }
+
+
+  const handlers = { list_skill_spaces: listSkillSpaces, list_skills: listSkills, load_skill: loadSkill,
+    preview_skill: previewSkill, search_skills: searchSkills };
+  return { async execute(request) {
+    const definition = formal.get(request?.call?.name);
+    if (!definition) return { ok: false, error_type: 'skill_read_tool_unbound', executed: false };
+    const rejection = toolInputRejection(definition, request.call);
+    if (rejection) return { ...rejection, ok: false, executed: false };
+    const signal = request.signal, assertCurrent = request.assertCurrent;
+    invariant(signal instanceof AbortSignal && typeof assertCurrent === 'function', 'skill_read_authority_required');
+    const body = ({ signal: _, assertCurrent: __, ...json }) => canonical(json);
+    const sealed = body(request);
+    const stable = () => {
+      signal.throwIfAborted();
+      invariant(request.signal === signal && request.assertCurrent === assertCurrent && body(request) === sealed,
+        'skill_read_request_drifted');
+    };
+    const guard = { signal, check() {
+      try {
+        stable(); const verdict = assertCurrent();
+        if (verdict && typeof verdict.then === 'function') Promise.resolve(verdict).catch(() => {});
+        invariant(verdict === true, 'skill_read_authority_expired'); stable(); return null;
+      } catch (error) { return { code: signal.aborted ? 'REQUEST_CANCELLED' : error.code || 'skill_read_authority_expired',
+        message: signal.aborted ? 'Skill read cancelled' : 'Skill read authority or identity changed' }; }
+    }, assertCurrent() {
+      const failure = this.check(); if (failure) throw new SkillToolError(failure.code, failure.message); return true;
+    } };
+    try {
+      guard.assertCurrent();
+      const result = await raceAbort(signal, () => handlers[request.call.name](copy(request.call.arguments ?? {}), { guard }));
+      guard.assertCurrent(); return result;
+    } catch (error) { return { ok: false, error_type: signal.aborted ? 'REQUEST_CANCELLED' : error.code || 'SKILL_READ_FAILED', executed: false }; }
+  } };
 }

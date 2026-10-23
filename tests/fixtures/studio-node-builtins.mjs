@@ -14,10 +14,24 @@ export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
   const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
   const sha256 = value => createHash('sha256').update(value).digest('hex');
-  let networkCalls = 0, pendingRequest;
+  let networkCalls = 0, pendingRequest; const skillRequests = [];
   const web = createServer((req, res) => {
     networkCalls++;
     const url = new URL(req.url, 'http://localhost');
+    if (url.pathname.startsWith('/skills/')) {
+      skillRequests.push(req.url); assert.equal(req.headers.authorization, 'Bearer builtin-skill-read-token');
+      const action = url.pathname.split('/').at(-1); let data;
+      if (action === 'ListSkillSpaces') data = { SkillSpaces: [{ SkillSpaceId: 'packed-space', SkillSpaceName: 'Packed space' }] };
+      else if (action === 'ListSkillsBySpaceId') {
+        assert.equal(url.searchParams.get('SpaceId'), 'packed-space');
+        data = { SkillSpaceId: 'packed-space', TotalCount: 1, Skills: [{ SkillId: 'packed-alpha-id', VersionId: 'v1',
+          Name: 'packed-alpha', Description: 'Packed Alpha task', Status: 'active', ContentHash: 'sha256:' + options.skillArchiveHash }] };
+      } else {
+        assert.equal(action, 'GetSkillDownloadUrl'); assert.equal(url.searchParams.get('SkillId'), 'packed-alpha-id');
+        assert.equal(url.searchParams.get('VersionId'), 'v1'); data = { DownloadUrl: options.skillDownloadUrl };
+      }
+      res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ Code: 0, Data: data })); return;
+    }
     if (url.pathname === '/wait') { pendingRequest?.(); return; }
     if (url.pathname === '/large') {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(fullWebText);
@@ -40,13 +54,16 @@ export async function apply(ctx, options) {
   const tools = ['workspace_status', 'list_workspace_files', 'read_workspace_file', 'write_workspace_file',
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
     'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search',
-    'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'component_status'];
+    'sandbox_status', 'run_command', 'read_command_output', 'stop_command', 'component_status',
+    'list_skill_spaces', 'list_skills', 'search_skills', 'preview_skill', 'load_skill'];
   const records = [];
   for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
     runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof' } } }));
   await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
-    KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search` } });
+    KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
+    KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
+    KSADK_SKILL_SERVICE_TOKEN: 'builtin-skill-read-token' } });
   ctx.llm.registerAdapter(['agentkit-studio-builtin-proof'], {
     providerInfo: provider => ({ id: provider, name: 'Node builtin registry proof' }), providerRetryPolicy: () => undefined,
     listModels: async provider => [{ provider, id: 'unused', name: 'unused' }],
@@ -105,12 +122,45 @@ export async function apply(ctx, options) {
         assert.equal(agent.options.model, 'deepseek-flash');
         assert.equal(components.ok, true); assert.equal(components.summary.model, agent.options.model);
         assert.equal(components.summary.knowledge_base_bound, false); assert.equal(components.summary.long_term_memory_bound, false);
-        assert.equal(components.summary.skill_space_bound, false); assert.equal(components.summary.isolated_execution, 'not_enabled');
+        assert.equal(components.summary.skill_space_bound, true); assert.equal(components.summary.isolated_execution, 'not_enabled');
         assert.equal(components.sandbox.backend, 'local_process'); assert.equal(components.sandbox.enabled, true);
         assert.deepEqual(components.sandbox.tools, ['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
         assert.deepEqual([...components.workspace.tools].sort(), tools.filter(name => name.includes('workspace')).sort());
         assert.equal(components.workspace.root, workspaceRoot); assert.equal(components.skill_runtime.enabled, false);
-        assert.deepEqual(components.skill_space.tools, []);
+        assert.deepEqual(components.skill_space.user_space_ids, ['packed-space']);
+        assert.deepEqual(components.skill_space.tools, ['list_skill_spaces', 'list_skills', 'load_skill', 'preview_skill', 'search_skills']);
+        setSandboxMode(agent.session, 'read-only'); setApprovalPolicy(agent.session, 'never');
+        const startSkillRequests = skillRequests.length;
+        assert.equal((await call('list_skill_spaces', {})).spaces[0].space_name, 'Packed space');
+        assert.equal((await call('list_skills', {})).skills[0].name, 'packed-alpha');
+        assert.equal((await call('search_skills', { query: 'packed-alpha' })).results[0].name, 'packed-alpha');
+        assert.equal((await call('preview_skill', { skill_name: 'packed-alpha' })).execution_context, 'manifest_preview');
+        const loadedSkill = await call('load_skill', { skill_name: 'packed-alpha' });
+        assert.equal(loadedSkill.ok, true); assert.equal(loadedSkill.instructions, options.skillBody);
+        assert.equal(await readFile(join(loadedSkill.root_dir, 'scripts/run.sh'), 'utf8'), options.skillScript);
+        assert.ok(loadedSkill.root_dir.startsWith(await realpath(home) + sep));
+        assert.equal(loadedSkill.root_dir.startsWith(await realpath(workspaceRoot) + sep), false);
+        assert.equal(existsSync(join(workspaceRoot, 'must-not-execute')), false);
+        const beforeDenied = skillRequests.length;
+        const removeSkillDeny = agent.ctx.on('tools/pre-execute', async (exec, next) => exec.name === 'load_skill'
+          ? { kind: 'deny', reason: 'Skill read policy proof' } : next());
+        try {
+          const deniedSkill = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'load_skill',
+            arguments: { skill_name: 'packed-alpha' }, signal: new AbortController().signal });
+          assert.equal(deniedSkill.isError, true); assert.equal(skillRequests.length, beforeDenied);
+        } finally { removeSkillDeny(); }
+        const removeSkillPost = agent.ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'preview_skill'
+          ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted Skill preview' }] } : next());
+        try {
+          const redacted = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'preview_skill',
+            arguments: { skill_name: 'packed-alpha' }, signal: new AbortController().signal });
+          assert.equal(redacted.isError, false); assert.deepEqual(redacted.content, [{ type: 'text', text: 'Host-redacted Skill preview' }]);
+        } finally { removeSkillPost(); }
+        const skillsProof = { instructionsSha256: sha256(loadedSkill.instructions), rootDir: loadedSkill.root_dir,
+          serviceRequests: skillRequests.length - startSkillRequests, policyDeniedWithoutRequest: true,
+          postPolicyPreserved: true, scriptsNotExecuted: true };
+        assert.equal(skillsProof.serviceRequests, 7);
+        setSandboxMode(agent.session, 'workspace-write');
         const path = `${runtime}.txt`;
         assert.equal((await call('write_workspace_file', { path, content: 'Original bytes.' })).ok, true);
         assert.equal((await call('read_workspace_file', { path })).ok, true);
@@ -333,6 +383,7 @@ export async function apply(ctx, options) {
         report.runtimes.at(-1).web = webProof;
         report.runtimes.at(-1).commands = commandProof;
         report.runtimes.at(-1).components = components;
+        report.runtimes.at(-1).skills = skillsProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

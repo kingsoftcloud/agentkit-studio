@@ -6,13 +6,30 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createServer as createHttpsServer } from 'node:https';
+import { createHash } from 'node:crypto';
+import { createZip } from '../src/zip.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 const repository = fileURLToPath(new URL('..', import.meta.url)), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-node-builtins-'));
 console.log(`Studio Node builtin evidence: ${root}`);
-let harness;
+let harness, download, downloads = 0;
+const skillBody = '---\nname: packed-alpha\ndescription: Packed Alpha task\n---\n# Packed Alpha 😀\nRead the supplied JSON.\n';
+const skillScript = 'printf forbidden > must-not-execute';
+const skillArchive = createZip([{ name: 'SKILL.md', data: skillBody }, { name: 'scripts/run.sh', data: skillScript }]);
+const sha256 = value => createHash('sha256').update(value).digest('hex');
 try {
+  const certs = join(root, 'certs'); await mkdir(certs);
+  const key = join(certs, 'key.pem'), cert = join(certs, 'cert.pem');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=127.0.0.1',
+    '-addext', 'subjectAltName=IP:127.0.0.1', '-keyout', key, '-out', cert], { stdio: 'pipe' });
+  download = createHttpsServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {
+    assert.equal(req.url, '/skill.zip'); assert.equal(req.headers.authorization, undefined); downloads++;
+    res.end(skillArchive);
+  });
+  await new Promise(resolve => download.listen(0, '127.0.0.1', resolve));
+  const skillDownloadUrl = `https://127.0.0.1:${download.address().port}/skill.zip`;
   const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
   await mkdir(graph); execFileSync('tar', ['-xzf', resolve(values.archive), '-C', graph]);
   await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
@@ -37,13 +54,15 @@ try {
     '    - id: builtin-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'",
     '    - id: builtin-proof-presets', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:', '        default: standard',
     '    - id: builtin-proof-fixture', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-node-builtins.mjs')).href)}`,
-    '      config:', `        directory: ${JSON.stringify(root)}`, '',
+    '      config:', `        directory: ${JSON.stringify(root)}`,
+    `        skillDownloadUrl: ${JSON.stringify(skillDownloadUrl)}`, `        skillArchiveHash: ${JSON.stringify(sha256(skillArchive))}`,
+    `        skillBody: ${JSON.stringify(skillBody)}`, `        skillScript: ${JSON.stringify(skillScript)}`, '',
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   harness = new DeepSeekHarness({ dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
     patches: [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch], dshHome: join(root, 'home'),
     cwd: root, processCwd: root, provider: 'agentkit-studio-builtin-proof', model: 'unused', initializeTimeoutMs: 30000, requestTimeoutMs: 30000,
-    env: { ...process.env, PATH: nodeBin, DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents'),
+    env: { ...process.env, PATH: nodeBin, NODE_EXTRA_CA_CERTS: cert, DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents'),
       AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk' } });
   await harness.start();
   await writeFile(join(root, 'start-proof'), 'Execute the actual Host proof after initialization.');
@@ -66,8 +85,15 @@ try {
   assert.ok(report.runtimes.every(row => row.components.ok === true && row.components.summary.model === 'deepseek-flash'
     && row.components.workspace.tools.length === 10 && row.components.sandbox.tools.length === 4
     && row.components.skill_runtime.enabled === false && row.components.summary.isolated_execution === 'not_enabled'));
-  console.log('PASS: packed Host registers Node workspace + web + commands + component_status for DSH Native and Codex; actual pre/guard/around/post/output, selected model and admitted component facts, command deduplication, foreground/background/scoped stop, full UTF-8 outputs, policies, one-shot approvals and Agent/Session isolation; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
+  assert.equal(downloads, 2);
+  assert.ok(report.runtimes.every(row => row.skills.instructionsSha256 === sha256(skillBody) && row.skills.serviceRequests === 7
+    && row.skills.policyDeniedWithoutRequest && row.skills.postPolicyPreserved && row.skills.scriptsNotExecuted));
+  assert.equal(new Set(report.runtimes.map(row => row.skills.rootDir)).size, 2);
+  await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify({ node: process.version, downloads,
+    archiveSha256: sha256(await readFile(resolve(values.archive))), skillArchiveHash: sha256(skillArchive), report }, null, 2));
+  console.log('PASS: packed Host registers Node workspace + web + commands + component_status + five Skill reads for DSH Native and Codex; actual HTTP Skill service, CA-verified HTTPS ZIP/exact instructions and resources/private caches/no script execution/policy denial and post policy; original command deduplication, full outputs, approvals and Session isolation; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
 } finally {
   await harness?.close();
+  download?.closeAllConnections(); if (download) await new Promise(resolve => download.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });
 }
