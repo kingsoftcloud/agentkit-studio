@@ -97,3 +97,8 @@ Studio Native 的认证控制接口和“运行与子任务”面板已接线，
 核对与继续、忙碌时持久取消投递、DSH/Codex 产品控制接线，以及内部 broker、入站
 协议与编排能力。新面板的状态/渲染测试不等于真实浏览器或 Electron 已验收。
 契约、操作说明、验证范围及剩余项见 [A2A Node 接入](native-a2a.md#explicit-original-task-controls)。
+
+独立核心现已实现显式的原工具回执等待与核对：以新只读意图追加确认结果后继续同一
+运行，保留原未知回执并禁止重发原副作用。真实 HTTP、SQLite 和三处 SIGKILL 验证
+覆盖核心行为；Studio 的 A2A 正式适配与产品操作仍未接通。详见
+[原工具回执核对](native-tool-recovery.md)。

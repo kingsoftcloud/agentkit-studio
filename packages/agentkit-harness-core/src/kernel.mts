@@ -11,6 +11,7 @@ import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { effectiveRunConfiguration } from './task-contract.mjs';
+import { prepareToolReceipt, reduceToolReceipt, toolReceiptRequest, waitingToolReceipt } from './tool-receipt.mjs';
 import { recoverClaimed } from './recovery.mjs';
 import { toolInputRejection } from './tool-input.mjs';
 import { contextSourceDigest, modelContextMessages, validateContextMessages } from './context-view.mjs';
@@ -108,6 +109,9 @@ export class NativeKernel {
         new NativeError(command.kind === 'pause' ? 'child_observation_paused' : 'child_observation_promoted'));
     }
     return result;
+  }
+  reconcileTool(scope: RunScope, runId: string, originalOperationKey: string, commandId: string) {
+    return this.submit(scope, runId, { commandId, kind: 'reconcile_tool', payload: { originalOperationKey } });
   }
   childTasks(scope: RunScope, runId: string): ChildTaskControlState[] {
     const record = this.store.load(scope, runId);
@@ -231,6 +235,10 @@ export class NativeKernel {
         const commands = runnableCommands(record);
         const command = commands[0];
         if (command) {
+          if (command.kind === 'reconcile_tool') {
+            this.commit(snapshot, lease, prepareToolReceipt(record, command));
+            continue;
+          }
           if (['message_child', 'cancel_child'].includes(command.kind)) {
             await this.consumeChildControl(snapshot, config, command, lease);
             continue;
@@ -275,7 +283,7 @@ export class NativeKernel {
             continue;
           }
         }
-        if (snapshot.phase === 'paused' || snapshot.phase === 'awaiting_interaction') return snapshot;
+        if (snapshot.phase === 'paused' || snapshot.phase === 'awaiting_interaction' || snapshot.phase === 'awaiting_reconciliation') return snapshot;
         if (snapshot.retryNotBefore > this.now()) {
           if (!waitForRetry) return snapshot;
           await new Promise(resolve => setTimeout(resolve, Math.min(50, snapshot.retryNotBefore - this.now())));
@@ -517,6 +525,19 @@ export class NativeKernel {
           facts.push({ kind: 'input.completed', payload: { step: intent.payload.step!, status: raw.status!,
             messageCursor: changes.messages?.length ?? snapshot.messages.length } });
           break;
+        case 'tool_receipt': {
+          const observation = raw as unknown as import('./contracts.mjs').ToolReceiptObservation;
+          changes = reduceToolReceipt(this.store.load(snapshot.scope, snapshot.runId), intent, observation, this.digest);
+          facts.push({ kind: changes.toolReconciliation === null ? 'tool.receipt_reconciled' : 'tool.receipt_unavailable',
+            payload: { originalOperationKey: intent.payload.originalOperationKey!, callId: intent.payload.callId! } });
+          if (changes.toolReconciliation === null) facts.push(...toolResourceUsageFacts(intent.operationKey,
+            [snapshot.pendingTools[0]!], [observation.result!]));
+          if (changes.toolReconciliation === null) facts.push({ kind: 'tool.completed', payload: {
+            callId: intent.payload.callId!, name: snapshot.pendingTools[0]!.name,
+            status: observation.result!.status, content: observation.result!.content,
+            originalOperationKey: intent.payload.originalOperationKey! } });
+          break;
+        }
         case 'tool': {
           const calls = intent.payload.calls as unknown as ToolCall[];
           const results = raw.results as unknown as ToolResult[];
@@ -617,7 +638,10 @@ export class NativeKernel {
         && this.ports.children?.interruptedReceipts) {
         return await this.recoverEffect(snapshot, configuration, intent, Math.max(0, this.now() - started));
       }
-      if (intent.kind === 'child') {
+      if (intent.kind === 'tool_receipt') {
+        raw = { code }; status = 'failed'; changes = { pendingIntent: null, phase: 'awaiting_reconciliation' };
+        facts.push({ kind: 'tool.receipt_unavailable', payload: { originalOperationKey: intent.payload.originalOperationKey!, reason: code } });
+      } else if (intent.kind === 'child') {
         if (['child_observation_paused', 'child_observation_promoted'].includes(code) && configuration.childLifecyclePolicy === 'owned-background/v2'
           && ['poll', 'wait'].includes(String(intent.payload.action)) && (code === 'child_observation_promoted' || !intent.payload.interaction)) {
           raw = { reason: code }; status = 'failed';
@@ -648,7 +672,10 @@ export class NativeKernel {
           ...(intent.kind === 'tool' ? { usage: { ...snapshot.usage,
             toolCalls: snapshot.usage.toolCalls + (intent.payload.calls as unknown as ToolCall[]).length },
             diagnostics: { ...snapshot.diagnostics, descendantUsageIncomplete: true } } : {}) };
-        if (intent.kind === 'tool') facts.push(...unknownToolResourceUsageFacts(intent.operationKey, calls!));
+        if (intent.kind === 'tool') {
+          changes = waitingToolReceipt(snapshot, configuration, intent) ?? changes;
+          facts.push(...unknownToolResourceUsageFacts(intent.operationKey, calls!));
+        }
         status = 'uncertain';
       }
     } finally {
@@ -676,6 +703,11 @@ export class NativeKernel {
     emit: (event: ModelStreamEvent) => void): Promise<unknown> {
     context.signal.throwIfAborted();
     switch (intent.kind) {
+      case 'tool_receipt': {
+        invariant(this.ports.tools.observeReceipt, 'tool_receipt_port_missing');
+        const request = toolReceiptRequest(context, this.store.load(snapshot.scope, snapshot.runId), intent);
+        return this.ports.tools.observeReceipt(request);
+      }
       case 'child': {
         invariant(this.ports.children, 'child_owner_unavailable');
         const observer = new AbortController(), key = runKey(snapshot.scope, snapshot.runId);

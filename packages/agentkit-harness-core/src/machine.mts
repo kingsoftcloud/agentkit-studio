@@ -312,6 +312,14 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   invariant(results.length === calls.length && calls.length > 0
     && canonical(snapshot.pendingTools.slice(0, calls.length)) === canonical(calls), 'tool_receipt_mismatch');
   const resources = results.map(toolResourceUsage);
+  if (results.length === 1 && results[0]!.status === 'uncertain'
+    && config.tools.find(tool => tool.name === calls[0]!.name)?.recoveryPolicy === 'receipt-observation/v1') {
+    return { pendingIntent: null, phase: 'awaiting_reconciliation', outcome: null, reason: 'effect_outcome_unknown',
+      toolReconciliation: { contract: 'agentkit.tool-receipt-observation/v1', operationKey: intent.operationKey, callId: calls[0]!.callId },
+      usage: { ...snapshot.usage, toolCalls: snapshot.usage.toolCalls + 1 },
+      descendantUsage: addUsage(snapshot.descendantUsage, resources[0]!),
+      diagnostics: { ...snapshot.diagnostics, descendantUsageIncomplete: true } };
+  }
   let updated = { ...copy(snapshot), browserSessionRefs: copy(snapshot.browserSessionRefs ?? []),
     backgroundCommands: copy(snapshot.backgroundCommands),
     browserReobservationRefs: copy(snapshot.browserReobservationRefs ?? []), lastBrowserObservation: snapshot.lastBrowserObservation ?? null,

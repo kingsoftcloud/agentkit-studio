@@ -1,5 +1,6 @@
 import type { CommitBatch, EffectIntent, RunConfiguration, RunSnapshot, ToolCall } from './contracts.mjs';
 import { settle } from './machine.mjs';
+import { waitingToolReceipt } from './tool-receipt.mjs';
 import { unknownToolResourceUsageFacts } from './tool-resource-usage.mjs';
 
 function replayPolicy(intent: EffectIntent, configuration: RunConfiguration): string | null {
@@ -18,6 +19,17 @@ function replayPolicy(intent: EffectIntent, configuration: RunConfiguration): st
 
 /** Retire a lost claim before preparing a new operation; never reclaim the old key. */
 export function recoverClaimed(snapshot: RunSnapshot, configuration: RunConfiguration, intent: EffectIntent, now: number): CommitBatch {
+  const waiting = waitingToolReceipt(snapshot, configuration, intent);
+  if (waiting) return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'uncertain',
+    result: { code: 'effect_outcome_unknown', recoveryPolicy: 'receipt-observation/v1' } }, waiting,
+  intent.claimedAtMs === undefined ? 0 : Math.max(0, now - intent.claimedAtMs),
+  [{ kind: 'effect.recovery_required', payload: { operationKey: intent.operationKey, kind: intent.kind,
+    policy: 'receipt-observation/v1', reason: 'effect_outcome_unknown' } }]);
+  if (intent.kind === 'tool_receipt') return settle(snapshot, intent, { operationKey: intent.operationKey,
+    status: 'uncertain', result: { code: 'receipt_observation_lost' } },
+  { pendingIntent: null, phase: 'awaiting_reconciliation' },
+  intent.claimedAtMs === undefined ? 0 : Math.max(0, now - intent.claimedAtMs),
+  [{ kind: 'tool.receipt_unavailable', payload: { originalOperationKey: intent.payload.originalOperationKey! } }]);
   const policy = replayPolicy(intent, configuration);
   const elapsed = intent.claimedAtMs === undefined ? 0 : Math.max(0, now - intent.claimedAtMs);
   const exhausted = policy !== null && snapshot.recoveryRetriesUsed >= configuration.limits.maxRecoveryRetries;

@@ -12,7 +12,7 @@ export const TOOL_RESOURCE_USAGE_CONTRACT = 'agentkit.tool-resource-usage/v1' as
 export type Json = null | boolean | number | bigint | string | Json[] | { [key: string]: Json };
 export type ObjectValue = { [key: string]: Json };
 export type Phase = 'created' | 'preparing_context' | 'requesting_model' | 'executing_tools'
-  | 'awaiting_interaction' | 'compacting' | 'verifying' | 'finalizing' | 'paused'
+  | 'awaiting_interaction' | 'awaiting_reconciliation' | 'reconciling_tool' | 'compacting' | 'verifying' | 'finalizing' | 'paused'
   | 'completed' | 'failed' | 'canceled' | 'interrupted';
 export type Outcome = 'verified' | 'unverified' | 'partial' | 'blocked' | 'failed' | 'budget_exhausted';
 export interface RunScope { tenantId: string; workspaceId: string; userId: string; agentId: string }
@@ -47,8 +47,9 @@ export interface ToolDefinition {
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';
   delegatedReadOnly?: boolean; deliveryWrite?: boolean;
-  /** Explicit Host guarantee of repeatable reads; readOnly alone never grants replay. */
-  recoveryPolicy?: 'manual' | 'safe-read/v1';
+  /** safe-read permits a fresh repeatable read; receipt-observation waits for a
+   * separately persisted lookup of the original effect and never re-executes it. */
+  recoveryPolicy?: 'manual' | 'safe-read/v1' | 'receipt-observation/v1';
 }
 export interface ModelProfile {
   profileId: string; profileVersion: string; providerFamily: string;
@@ -264,6 +265,8 @@ export interface RunSnapshot extends RunIdentity {
   messages: Message[]; preparedContext: PreparedContext | null; queuedGuidance: Message[];
   pendingGuidanceIds?: string[];
   pendingTools: ToolCall[]; pendingIntent: string | null;
+  /** An uncertain receipt remains immutable; only a new read-only observation can resolve it. */
+  toolReconciliation?: { contract: 'agentkit.tool-receipt-observation/v1'; operationKey: string; callId: string } | null;
   pendingInteraction: PendingInteraction | null; interaction: ObjectValue | null;
   usage: Usage; descendantUsage: Usage; modelErrors: number; providerErrors: number;
   continuations: number; outputRestarts: number; repairs: number;
@@ -299,11 +302,11 @@ export interface BrowserEvidence {
   entryPath?: string;
 }
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
-export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child' | 'input';
+export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child' | 'input' | 'tool_receipt';
 export interface EffectIntent { operationKey: string; kind: EffectKind; payload: ObjectValue; status: 'prepared' | 'running'; claimedAtMs?: number; claimedFence?: number }
 export interface EffectReceipt { operationKey: string; status: 'committed' | 'failed' | 'uncertain' | 'not_dispatched'; result: ObjectValue }
 export type CommandKind = 'cancel' | 'policy_revoked' | 'pause' | 'resume' | 'submit_interaction'
-  | 'steer' | 'guide' | 'promote_child' | 'message_child' | 'cancel_child';
+  | 'reconcile_tool' | 'steer' | 'guide' | 'promote_child' | 'message_child' | 'cancel_child';
 export interface RunCommand { commandId: string; kind: CommandKind; payload: ObjectValue }
 export interface CommandReceipt { commandId: string; status: 'accepted' | 'duplicate' | 'rejected'; reason: string | null }
 export interface Lease { owner: string; fence: number; expiresAt: number }
@@ -355,7 +358,20 @@ export interface ToolRequest extends PortContext {
   /** Host-derived allowance after the invoking call and parent finalization reserve. */
   budget: ToolBudget;
 }
-export interface ToolPort { execute(request: ToolRequest): Promise<ToolResult> }
+/** Read-only lookup of the original effect; this grants no execution authority for it. */
+export interface ToolReceiptRequest extends PortContext {
+  contract: 'agentkit.tool-receipt-observation/v1'; originalOperationKey: string;
+  originalClaimedFence: number; call: ToolCall; definition: ToolDefinition;
+}
+export interface ToolReceiptObservation {
+  contract: 'agentkit.tool-receipt-observation/v1'; originalOperationKey: string; callId: string;
+  /** Additional resourceUsage delta since the original immutable uncertain receipt, never its cumulative total. */
+  result: ToolResult | null;
+}
+export interface ToolPort {
+  execute(request: ToolRequest): Promise<ToolResult>;
+  observeReceipt?(request: ToolReceiptRequest): Promise<ToolReceiptObservation>;
+}
 export interface WorkspaceObservation { revision: string | null; changedPaths: string[]; status: 'ok' | 'unavailable'; reason: string | null }
 export interface WorkspacePort { observe(request: PortContext): Promise<WorkspaceObservation> }
 /** Claim Host-admitted input only after its Native intent has been persisted. */
@@ -408,5 +424,5 @@ export const terminal = (phase: Phase): boolean => ['completed', 'failed', 'canc
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, modelCalls: 0, toolCalls: 0, cost: 0 });
 export const commandPriority: Record<CommandKind, number> = {
   cancel: 100, policy_revoked: 95, submit_interaction: 90, cancel_child: 85,
-  pause: 80, resume: 80, promote_child: 70, message_child: 70, steer: 60, guide: 60,
+  pause: 80, resume: 80, reconcile_tool: 75, promote_child: 70, message_child: 70, steer: 60, guide: 60,
 };

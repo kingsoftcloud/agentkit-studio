@@ -131,9 +131,12 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(!tool.childBudgetPolicy || !tool.concurrentSafe, 'invalid_child_budget_concurrency');
     invariant(!tool.backgroundCommandPolicy || !tool.readOnly && !tool.concurrentSafe, 'invalid_background_launcher');
     invariant(tool.backgroundCommandPolicy === undefined || tool.backgroundCommandPolicy === 'owned-command-launch/v1', 'invalid_background_launcher_policy');
-    invariant(tool.recoveryPolicy === undefined || ['manual', 'safe-read/v1'].includes(tool.recoveryPolicy), 'invalid_tool_recovery_policy');
+    invariant(tool.recoveryPolicy === undefined || ['manual', 'safe-read/v1', 'receipt-observation/v1'].includes(tool.recoveryPolicy), 'invalid_tool_recovery_policy');
     invariant(tool.recoveryPolicy !== 'safe-read/v1' || tool.readOnly && tool.observationRole === 'none'
       && !tool.delegatedReadOnly && !tool.childBudgetPolicy && !tool.backgroundCommandPolicy, 'invalid_safe_read_recovery');
+    invariant(tool.recoveryPolicy !== 'receipt-observation/v1' || !tool.concurrentSafe
+      && !tool.childBudgetPolicy && !tool.backgroundCommandPolicy && tool.observationRole === 'none'
+      && !tool.delegatedReadOnly, 'invalid_tool_receipt_recovery');
     invariant(!['workspace_read', 'workspace_search', 'artifact_read'].includes(tool.contextRole) || tool.readOnly, 'invalid_context_reader');
   }
   invariant(config.contract.allowedToolNames === null || config.contract.allowedToolNames.every(name => names.has(name)), 'unbound_allowed_tool');

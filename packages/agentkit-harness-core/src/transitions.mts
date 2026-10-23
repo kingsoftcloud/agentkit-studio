@@ -40,6 +40,10 @@ export function prepareEffect(snapshot: RunSnapshot, kind: EffectKind, phase: Ph
 }
 export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pending: EffectIntent | null = null,
   bindings: SteeringBindings = {}): CommitBatch {
+  if (snapshot.toolReconciliation && !['cancel', 'policy_revoked', 'pause', 'resume'].includes(command.kind)) {
+    return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
+      kind: command.kind, reason: 'recovery_required' } }], { commandId: command.commandId, requireNoPendingCommands: false });
+  }
   const original = snapshot;
   if (command.kind === 'guide' && Object.hasOwn(command.payload, 'expectedGoalRevision')
     && (!Number.isSafeInteger(command.payload.expectedGoalRevision) || command.payload.expectedGoalRevision !== snapshot.goalRevision)) {

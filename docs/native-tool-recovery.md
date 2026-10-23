@@ -1,0 +1,45 @@
+# Native 原工具回执核对
+
+独立 TS 核心新增显式策略 `ToolDefinition.recoveryPolicy = "receipt-observation/v1"`，
+用于可能已产生副作用、但执行结果尚未确认的单次工具调用。它与 `safe-read/v1`
+不同：原调用永远不重发。该策略目前是核心能力，Studio A2A 的生产适配、认证操作
+和等待界面仍需接入；不能据此宣称完整产品恢复已完成。
+
+## 账本契约
+
+工具返回 `uncertain`、异常、超时，或运行进程丢失已领取的调用后，核心保存原回执，
+进入非终态 `awaiting_reconciliation`。原工具调用、规范调用 ID、待处理工具队列和
+模型协议配对保留；原尝试只记一次工具用量。已有 `interrupted` 等终态不会重开。
+未启用该策略的历史配置仍保持原行为，不自动升级配置或改写配置摘要。
+
+调用 `kernel.reconcileTool(scope, runId, originalOperationKey, commandId)` 只提交命令，
+不接受客户端提供的结果。下一次驱动原运行时，核心先持久化独立的 `tool_receipt`
+意图并消费命令，然后以新的 lease/fence 调用 `tools.observeReceipt(request)`。
+契约为 `agentkit.tool-receipt-observation/v1`，请求包含原操作键、原 claim fence、
+完整原工具调用、定义及原运行身份。新的操作键仅授权只读核对；原 fence 不被复用。
+
+宿主必须从实际持久化服务或外部系统核对原调用，固定原归属、服务绑定及远端任务，
+不能重新发现替代目标、发起原工具或将界面显示当作成功回执。响应必须绑定原操作键
+和规范调用 ID，只可包含 `ok` / `error` 的实际结果；`null` 表示仍未确认。
+子任务、Browser 和后台命令等独立所有权能力不通过这个契约生成。
+
+确认结果以新查询回执、`tool.receipt_reconciled`、原工具完成事件及模型工具消息在
+同一事务追加。原未知回执保留不变，后续工具、PostToolUse 和模型继续沿用原运行。
+`result.resourceUsage` 是相对原未知回执的**新增用量增量**，不是包含已上报用量的
+累计值；适配器必须明确换算。已知用量、用量事件和不完整诊断不会因核对而清零。
+
+未知、无端口、错误身份、无效结果、查询超时和查询进程丢失均回到显式等待；同一
+命令不会自动重查，新的人工核对使用新命令 ID。取消和权限撤销可终止原运行；
+迟到回执与过期执行者不能继续它。暂停不会隐式发起查询，steer/guide 不能绕过等待。
+外部任务的输入、审批及绝对 deadline 仍由宿主的原任务控制契约负责。
+
+## 当前验证范围
+
+确定性 Memory/SQLite 用例覆盖重复命令、数据库重开、身份拒绝、UTF-8 大小约束、
+无端口、原用量与新增用量、PostToolUse、取消与租约丢失后的迟到结果。
+真实本地 HTTP 与 SQLite 子进程在三处执行 SIGKILL：原效果请求后、等待提交后、
+回执查询途中；新 PID 核对后继续同一运行，原效果始终只有一次。
+
+这些证明独立核心与明确的 HTTP 测试适配器，不代表 Studio 正式 Host、真实模型、
+A2A 输入等待、其他远程后端或 Electron 已验收。整体状态见
+[native-migration-status.md](native-migration-status.md)。
