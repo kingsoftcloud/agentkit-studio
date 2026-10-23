@@ -229,11 +229,12 @@ export class DshPresetAdmission {
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
     const basePlugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins(agent) : [];
-    // The whole-turn Native gateway owns explicitly bound Web tools. The
-    // standard preset's Web plugin registers the same names in this scope;
-    // inheriting both would fail admission before a Session can execute.
-    const plugins = eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
-      ? basePlugins.filter(row => row.name !== '@deepseek-ai/dsh-tool-web') : basePlugins;
+    // A Studio-owned Web binding replaces the standard preset's Web plugin;
+    // duplicate names in the same scope fail admission. An ordinary legacy
+    // preset without that binding retains its existing DSH Web environment.
+    const ownsWeb = eligibility.local && (eligibility.runtime === 'harness' && nativeEngineContract
+      || toolBindingRefs(agent).some(name => ['web_fetch', 'web_search'].includes(name)));
+    const plugins = basePlugins.filter(row => !ownsWeb || row.name !== '@deepseek-ai/dsh-tool-web');
     let resourcesUnavailable = false;
     if (prefix) {
       const persona = plugins.find(row => row.id === 'persona');
@@ -266,6 +267,12 @@ export class DshPresetAdmission {
       const toolContracts = eligibility.local && typeof this.getToolContracts === 'function'
         ? await recoverResources(() => this.getToolContracts(agent))
         : [];
+      // Catalog resource IDs can differ from their formal builtin names.
+      if (toolContracts.some(tool => tool.executor === 'builtin' && tool.enabled !== false
+        && ['web_fetch', 'web_search'].includes(tool.name))) {
+        for (let index = plugins.length - 1; index >= 0; index--)
+          if (plugins[index].name === '@deepseek-ai/dsh-tool-web') plugins.splice(index, 1);
+      }
       const skillDefinitions = eligibility.local && typeof this.getSkillDefinitions === 'function'
         ? await recoverResources(() => this.getSkillDefinitions(agent))
         : [];

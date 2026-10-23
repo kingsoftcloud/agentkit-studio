@@ -112,7 +112,7 @@ test('local runtime presets reuse the official composition including delivery to
   }
 });
 
-test('only the whole-turn Native preset replaces the base Web plugin with its locked tools', async () => {
+test('whole-turn Native owns Web; ordinary legacy presets retain their base Web plugin', async () => {
   const base = [{ id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true } },
     { id: 'present', name: '@deepseek-ai/dsh-tool-present' }];
   for (const [runtime, nativeEngineContract, keepWeb] of [
@@ -121,7 +121,7 @@ test('only the whole-turn Native preset replaces the base Web plugin with its lo
   ]) {
     let definition;
     const admission = new DshPresetAdmission({ nativeEngineContract,
-      getAgent: async () => agent({ spec: { runtime: { type: runtime }, bindings: { tools: ['web_fetch', 'web_search'] } } }),
+      getAgent: async () => agent({ spec: { runtime: { type: runtime }, bindings: { tools: ['workspace_status'] } } }),
       getBasePlugins: async () => base.map(row => structuredClone(row)),
       registry: { register: async value => { definition = value; } },
     });
@@ -130,6 +130,24 @@ test('only the whole-turn Native preset replaces the base Web plugin with its lo
     assert.ok(definition.plugins.some(row => row.name === '@deepseek-ai/dsh-tool-present'));
   }
   assert.equal(base.length, 2);
+});
+
+test('explicit Studio Web bindings replace the same-scope base plugin for both legacy runtimes', async () => {
+  for (const runtime of ['dsh-native', 'codex']) for (const catalogId of [false, true]) {
+    let definition;
+    const base = [{ id: 'tool-web', name: '@deepseek-ai/dsh-tool-web' }, { id: 'fs', name: '@deepseek-ai/dsh-tool-fs' }];
+    const admission = new DshPresetAdmission({
+      getAgent: async () => agent({ spec: { runtime: { type: runtime },
+        bindings: { tools: [catalogId ? 'catalog-resource-web' : 'web_fetch'] } } }),
+      getBasePlugins: async () => base,
+      getToolContracts: async () => catalogId ? [{ name: 'web_fetch', executor: 'builtin', enabled: true }] : [],
+      registry: { register: async value => { definition = value; } },
+    });
+    await admission.ensure('demo/agent');
+    assert.equal(definition.plugins.some(row => row.name === '@deepseek-ai/dsh-tool-web'), false);
+    assert.ok(definition.plugins.some(row => row.name === '@deepseek-ai/dsh-tool-fs'));
+    assert.equal(base.length, 2, 'Do not mutate the Host base preset array');
+  }
 });
 
 test('a single Agent model resolves to the Studio-published DSH session route', () => {

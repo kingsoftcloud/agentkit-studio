@@ -24,4 +24,10 @@ HTML 使用现有 parse5 解析器提取文本，排除脚本、样式等节点�
 
 `node scripts/verify-studio-native-harness.mjs --source <维护宿主构建目录> --mount-host --web --keep` 实际打包并挂载 Studio Host，通过公开 SDK 与认证 preset RPC 连续执行搜索、抓取及模型回放，重启 Host 后续聊。它核对两个 completed Run、四个成功工具调用的持久化 intent/receipt、完整 Unicode ArtifactStore 内容、六次模型请求的公开流与 Session 落盘字节，并验证默认 DSH。Node 26 Revision 与 Node 22 Frozen Build 两种场景均已通过；后者添加 `--frozen`。验证使用 Node-only PATH 和现有本地依赖图。搜索协议使用确定性本地 HTTP 响应；未宣称已验证线上搜索服务、完整冷安装或浏览器 UI，整个 Native 迁移仍有其他能力待完成。
 
-`createWebToolTransport` 是已授权调用共用的 Node 网络实现，供 DSH builtin 适配层使用。它接受真实 Session/call、正式工具定义、JSON 上下文及取消信号，不创建 Native Run 或授予执行权。`createNativeWebTools` 仍在调用该实现前核对完整 Native 身份、冻结定义、授权及上下文；DSH 适配层必须保留实际 ToolRegistry 管线和自己的调用生命周期。共享实现保留 DNS/SSRF、DOM、按秒超时、搜索提供方及输出持久化行为，未配置搜索返回明确错误。两个 Node 版本各通过原四模块 51 项及新增共用接口 3 项定向验证；此处尚不表示 DSH builtin 适配层已接入或 Python bridge 已移除。
+`createWebToolTransport` 是已授权调用共用的 Node 网络实现，供 DSH builtin 适配层使用。它接受真实 Session/call、正式工具定义、JSON 上下文及取消信号，不创建 Native Run 或授予执行权。`createNativeWebTools` 仍在调用该实现前核对完整 Native 身份、冻结定义、授权及上下文。共享实现保留 DNS/SSRF、DOM、按秒超时、搜索提供方及输出持久化回调，未配置搜索返回明确错误。两个 Node 版本各通过原四模块 51 项及新增共用接口 3 项定向验证。
+
+Studio Host 的 DSH Native、Codex builtin 现通过 `createDshNodeBuiltins` 组合原十个 workspace 工具与 Node Web 适配器，沿用实际 DSH ToolRegistry 注册和权限/展示管线。显式 Studio Web 绑定替换标准预设中同名的 Web 插件；没有绑定的普通预设保留原插件。Web 适配器在每个网络、重定向及持久化边界核对原 Agent、Session、callId、参数和原取消信号，公开定义不能修改内部 schema。宿主或注册退役会取消实际 fetch；不合作的网络 Promise 也不能阻止调用及时结束或晚返回成功。
+
+`node scripts/verify-studio-node-builtins.mjs --source <built-maintained-dsh> --archive <Studio.tgz> --keep` 在实际打包 Host、维护版 SDK、生产预设和实际 Session 上，同时检查 DSH Native 与 Codex：本地 HTTP 网页/搜索协议，真实 `pre → guard → around → post → result`，两种拒绝均零 HTTP 请求，后置内容替换及进行中取消。两种 Node 版本均通过，工作区权限、一次性审批和跨 Session 读取状态的原验证保留。仅含 Node 的 PATH、不可用 Python 路径下完成这些工具调用；没有模型请求、没有调用 Codex CLI，普通依赖仍来自固定本地图，不能替代完整模型回归或全新依赖安装。
+
+剩余范围：Native 路径已绑定 ArtifactStore；DSH Web 工厂支持受原调用身份约束的 `persistOutput`，但 Host 的 legacy 组合尚未配置该回调，因此超长网页的自动全文落盘仍待补齐。其他 builtin 的 Python fallback 及 Frozen 导出能力分类也须继续迁移，不能凭这些 Web 工具的通过宣称 Python bridge 已完整移除。

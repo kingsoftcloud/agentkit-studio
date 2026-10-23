@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { mountStudioHost } from '../../src/host/bootstrap.mjs';
 
@@ -10,6 +11,20 @@ export const name = 'studio-node-builtin-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'credentials', 'connection', 'webServer', 'sessionController'];
 export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
+  let networkCalls = 0, pendingRequest;
+  const web = createServer((req, res) => {
+    networkCalls++;
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname === '/wait') { pendingRequest?.(); return; }
+    if (url.pathname === '/search') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ results: [{ title: '确定性检索结果', url: 'https://example.com/result', snippet: url.searchParams.get('q') }] }));
+    }
+    res.writeHead(200, { 'content-type': 'text/html' }); res.end('<script>Never render this</script><p>真实网页 😀</p>');
+  });
+  await new Promise(resolve => web.listen(0, '127.0.0.1', resolve));
+  ctx.effect(() => () => { web.closeAllConnections(); return new Promise(resolve => web.close(resolve)); }, 'Node web proof server');
+  const webOrigin = `http://127.0.0.1:${web.address().port}`;
   await mkdir(workspaceRoot, { recursive: true });
   await writeFile(join(home, 'outside.txt'), 'Outside the workspace.');
   await writeFile(join(home, 'config.yaml'), JSON.stringify({ modelProfiles: [{ id: 'builtin-proof',
@@ -18,12 +33,13 @@ export async function apply(ctx, options) {
   const agents = createAgentStore({ storeDir: join(home, 'studio/agents') });
   const tools = ['workspace_status', 'list_workspace_files', 'read_workspace_file', 'write_workspace_file',
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
-    'search_workspace_files', 'delete_workspace_file'];
+    'search_workspace_files', 'delete_workspace_file', 'web_fetch', 'web_search'];
   const records = [];
   for (const runtime of ['dsh-native', 'codex']) records.push(await agents.create({ name: `Node builtin ${runtime}`,
     runtimeType: runtime, spec: { bindings: { tools, modelProfileId: 'builtin-proof' } } }));
   await mountStudioHost(ctx, { configurationHome: home, env: { AGENTKIT_HOME: home,
-    AGENTKIT_STUDIO_WORKSPACE: workspaceRoot } });
+    AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
+    KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search` } });
   ctx.llm.registerAdapter(['agentkit-studio-builtin-proof'], {
     providerInfo: provider => ({ id: provider, name: 'Node builtin registry proof' }), providerRetryPolicy: () => undefined,
     listModels: async provider => [{ provider, id: 'unused', name: 'unused' }],
@@ -120,11 +136,71 @@ export async function apply(ctx, options) {
           await waiting; controller.abort(); release('allowed-once'); await pending;
           assert.equal(existsSync(join(workspaceRoot, canceledPath)), false);
         } finally { removeWaiting(); }
+        // Both legacy runtimes must use the production Node web factory inside
+        // the actual DSH pre/guard/around/post/output pipeline.
+        const phases = []; let preDeny = false, guardDeny = false, redact = false;
+        const isWeb = exec => exec.name === 'web_fetch' || exec.name === 'web_search';
+        const removeWebPre = agent.ctx.on('tools/pre-execute', async (exec, next) => {
+          if (isWeb(exec)) { phases.push('pre'); if (preDeny) return { kind: 'deny', reason: 'test web policy' }; }
+          return next();
+        });
+        const removeWebGuard = registry.guard(exec => {
+          if (isWeb(exec)) { phases.push('guard'); if (guardDeny) return 'test web guard'; }
+        });
+        const removeWebAround = agent.ctx.on('tools/execute', async (exec, next) => {
+          if (isWeb(exec)) phases.push('around'); return next();
+        });
+        const removeWebPost = agent.ctx.on('tools/post-execute', async (exec, _result, next) => {
+          if (isWeb(exec)) {
+            phases.push('post');
+            if (redact) return { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted web content' }] };
+          }
+          return next();
+        });
+        const removeWebResult = agent.ctx.on('tools/result', (exec) => { if (isWeb(exec)) phases.push('result'); });
+        let webProof;
+        try {
+          const startCalls = networkCalls;
+          const fetched = await call('web_fetch', { url: `${webOrigin}/page` });
+          assert.equal(fetched.ok, true); assert.equal(fetched.text, '真实网页 😀');
+          assert.equal(phases[0], 'pre'); assert.ok(phases.indexOf('guard') > 0);
+          assert.ok(phases.indexOf('around') > phases.indexOf('guard'));
+          assert.ok(phases.indexOf('post') > phases.indexOf('around')); assert.equal(phases.at(-1), 'result');
+          const normalPhases = [...phases];
+          const searched = await call('web_search', { query: `${runtime} query`, recency_days: 2 });
+          assert.equal(searched.ok, true); assert.equal(searched.results[0].snippet, `${runtime} query`);
+          for (const gate of ['pre', 'guard']) {
+            phases.length = 0; preDeny = gate === 'pre'; guardDeny = gate === 'guard';
+            const beforeDeny = networkCalls;
+            const deniedWeb = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
+              arguments: { url: `${webOrigin}/forbidden` }, signal: new AbortController().signal });
+            assert.equal(deniedWeb.isError, true); assert.equal(networkCalls, beforeDeny);
+            assert.equal(phases.includes('around'), false);
+          }
+          preDeny = false; guardDeny = false; redact = true;
+          const redactedWeb = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
+            arguments: { url: `${webOrigin}/redacted` }, signal: new AbortController().signal });
+          assert.equal(redactedWeb.isError, false);
+          assert.deepEqual(redactedWeb.content, [{ type: 'text', text: 'Host-redacted web content' }]);
+          redact = false;
+          const waiting = new Promise(resolve => { pendingRequest = resolve; }), abort = new AbortController();
+          const canceledWeb = registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
+            arguments: { url: `${webOrigin}/wait` }, signal: abort.signal });
+          await waiting; abort.abort();
+          const canceledResult = await canceledWeb;
+          assert.ok(canceledResult.isError || JSON.parse(canceledResult.value.result).ok === false);
+          assert.equal(networkCalls - startCalls, 4, 'Two policy denials must dispatch zero HTTP requests');
+          webProof = { normalPhases, calls: networkCalls - startCalls, searchProvider: searched.provider,
+            preAndGuardDeniedWithoutFetch: true, postPolicyPreserved: true, canceled: true };
+        } finally {
+          removeWebPre(); removeWebGuard(); removeWebAround(); removeWebPost(); removeWebResult(); pendingRequest = undefined;
+        }
         assert.deepEqual(before, after, 'Both actual DSH policy phases must observe every admitted call.');
         const audits = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').map(event => event.data.outcome);
         assert.deepEqual(audits, ['rejected', 'allowed-once', 'rejected', 'cancelled']);
         report.runtimes.push({ runtime, agentId: record.metadata.id, sessionId: created.sessionId,
           registeredCalls: before.length, approvals: audits, crossSessionReadStateIsolated: true, parser: lint.syntax_engine.parser });
+        report.runtimes.at(-1).web = webProof;
       } finally {
         removeBefore(); removeAfter();
         agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });

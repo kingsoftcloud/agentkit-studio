@@ -90,6 +90,7 @@ export function createRuntimeBridge() {
       const registration = builtinToolsFactory;
       if (!registration) return null;
       return registration.value({ ...input,
+        signal: AbortSignal.any([lifetime.signal, registration.controller.signal]),
         isClosed: () => lifetime.signal.aborted || registration.controller.signal.aborted });
     },
     async executeNativeTurn(input) {

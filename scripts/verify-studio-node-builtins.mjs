@@ -57,7 +57,9 @@ try {
   assert.equal(report.node, process.version); assert.equal(report.path, nodeBin);
   assert.deepEqual(report.runtimes.map(row => row.runtime), ['dsh-native', 'codex']);
   assert.ok(report.runtimes.every(row => row.crossSessionReadStateIsolated && row.parser === 'ruff-wasm'));
-  console.log('PASS: packed Host registers real Node workspace tools for DSH Native and Codex; actual policies, one-shot approvals, cancellation and cross-Session state; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
+  assert.ok(report.runtimes.every(row => row.web.calls === 4 && row.web.preAndGuardDeniedWithoutFetch
+    && row.web.postPolicyPreserved && row.web.canceled));
+  console.log('PASS: packed Host registers Node workspace + web tools for DSH Native and Codex; actual pre/guard/around/post/output, HTTP/search, policies, approvals, cancellation and Session isolation; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
 } finally {
   await harness?.close();
   if (!values.keep) await rm(root, { recursive: true, force: true });

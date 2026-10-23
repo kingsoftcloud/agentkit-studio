@@ -522,3 +522,9 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 `createNativeVisionBrowser` 对应参考 `browser_adapters/native_vision.py`，通过宿主绑定的独立图片模型描述已捕获截图。说明标为不可信模型输出，不能改变原浏览器结果、授予执行权限或宣告任务完成。模型必须明确接受 native 图片；当前工具预算不足、浏览器结果未知或需审批时不额外调用。缓存固定完整 profile、Run、Session、目标修订及截图内容；命中不新增模型用量。已知 token/cost 下界与“用量是否完整”分开记录，未知不能变成零；缓存命中保留原浏览器用量状态。说明及观察文本的长度按 Unicode 码点计算。
 
 真实 Claude `4cf2f0a` 两个交付文件经父级审查、补充缓存完整性、图片能力和 Unicode 边界后，在 Node 26.5/22.19 各通过 36 项定向验证。包含实际 NativeKernel、SQLite、ToolAuthority 及真实 ModelPort 的确定性 SSE 编解码；数据库重开后再次推进终态 Run 不执行模型或工具，记录不变。浏览器端口在这些测试中使用确定性截图替身，此处不作为真实浏览器验收。Studio 独立视觉模型选择、Frozen 绑定、预算保留及生产端口组装尚未接通；此模块不能作为视觉产品能力已完成的证明。
+
+## Legacy DSH/Codex 的 Node Web 接入
+
+宿主 builtin 环境组合原十个 Node workspace 工具与 `web_fetch`、`web_search`，复用共享网络实现，不生成伪造 Native Run 或另一执行循环。显式 Studio Web 绑定会移除标准预设内同名插件，避免正式 SDK 准入时重复注册；普通未覆盖的预设保留原环境。实际打包验证曾在两种 Node 上因该冲突失败，修复后两条 runtime 均经过真实 DSH 注册、pre/guard/around/post/result、HTTP 搜索/抓取、进行中取消及 Node-only PATH 验证；拒绝调用没有网络请求，后置策略的内容替换仍生效。原工作区安全、一次性审批及 Session 隔离验证保留。此验证不执行模型或 Codex CLI，不是全新依赖安装验收。
+
+独立适配器定向验证还覆盖公开 schema 篡改、原调用身份在网络/正文读取期间漂移、重定向前复核、关闭/取消/注册退役与不合作网络 Promise 的晚拒绝。DSH legacy Web 自动全文持久化、其余 builtin Python fallback、Frozen 导出分类及完整模型回归仍是未完成范围；完整目标保持不变。详见 `docs/native-web.md`。
