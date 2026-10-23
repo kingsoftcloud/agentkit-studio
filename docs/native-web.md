@@ -30,4 +30,8 @@ Studio Host 的 DSH Native、Codex builtin 现通过 `createDshNodeBuiltins` 组
 
 `node scripts/verify-studio-node-builtins.mjs --source <built-maintained-dsh> --archive <Studio.tgz> --keep` 在实际打包 Host、维护版 SDK、生产预设和实际 Session 上，同时检查 DSH Native 与 Codex：本地 HTTP 网页/搜索协议，真实 `pre → guard → around → post → result`，两种拒绝均零 HTTP 请求，后置内容替换及进行中取消。两种 Node 版本均通过，工作区权限、一次性审批和跨 Session 读取状态的原验证保留。仅含 Node 的 PATH、不可用 Python 路径下完成这些工具调用；没有模型请求、没有调用 Codex CLI，普通依赖仍来自固定本地图，不能替代完整模型回归或全新依赖安装。
 
-剩余范围：Native 路径已绑定 ArtifactStore；DSH Web 工厂支持受原调用身份约束的 `persistOutput`，但 Host 的 legacy 组合尚未配置该回调，因此超长网页的自动全文落盘仍待补齐。其他 builtin 的 Python fallback 及 Frozen 导出能力分类也须继续迁移，不能凭这些 Web 工具的通过宣称 Python bridge 已完整移除。
+Legacy Host 已默认绑定 Node 全文存储。`web_fetch` 超过 `max_chars` 后，在工作区外的私有 Host 状态目录保存完整提取正文和元数据，返回 `persisted.path`；如果响应达到网络字节上限，仍保留原 `body_truncated_by_byte_ceiling` 标记，不能把已截断的网络响应说成完整网页。存储按真实 Agent、Session、call、完整参数及正文摘要隔离，原请求与元数据共同决定不可变条目，不创建 Native Run。正文与元数据各自刷盘后，以一次目录重命名发布；并发写入使用各自的暂存目录，冷重开核对完整元数据、字节数及 SHA-256，再复用同一引用。损坏、不完整、链接替换或权限不合要求的已有条目返回保存失败，不覆盖原条目。取消、关闭与原调用漂移同样失败关闭。
+
+定向五模块在 Node 26 与 22 各通过 104 项，另一个嵌套 Node 22 用例首次因探测路径跳过，指定实际二进制后单独通过。文件存储验证包含八个真实进程竞争，以及发布前、发布后真实 SIGKILL 后重开。上述打包验收器也在两种 Node 上，通过实际两条 runtime 和各两个 Session 核对 Unicode 全文、摘要与隔离路径；两种拒绝仍没有 HTTP 请求。验证运行于 macOS，进程强杀证据不等同于所有操作系统或断电持久性证明。
+
+Native 路径继续绑定原 ArtifactStore。其他 builtin 的 Python fallback 及 Frozen 导出能力分类仍须迁移，不能凭这些 Web 工具的通过宣称 Python bridge 已完整移除。

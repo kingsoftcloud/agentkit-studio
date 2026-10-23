@@ -4,16 +4,19 @@ import { isBlockedAddress } from '../../packages/agentkit-harness/src/native/web
 import { hostFetch } from '../http-fetch.mjs';
 import { createDshNodeWorkspaceTools } from './dsh-node-workspace-tools.mjs';
 import { createDshNodeWebTools } from './dsh-node-web-tools.mjs';
+import { createDshNodeToolOutputStore } from './dsh-node-tool-output-store.mjs';
 import { createSsrfPinnedFetch, resolveWebSearchConfig, resolveWebSsrfPolicy } from './native-dsh-web.mjs';
 
 export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, isClosed, signal,
   env = process.env, fetchImpl = hostFetch, persistOutput } = {}) {
+  invariant(persistOutput === undefined || typeof persistOutput === 'function', 'dsh_node_output_store_invalid');
   const workspace = createDshNodeWorkspaceTools({ ctx, workspaceRoot, stateDir, agentId, isClosed });
+  const output = persistOutput === undefined ? createDshNodeToolOutputStore({ directory: stateDir, agentId, isClosed, signal }) : null;
   const ssrf = resolveWebSsrfPolicy(env);
   const ssrfPolicy = { allowPrivate: ssrf.allowPrivate === true || ssrf.allow_private === true };
   const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: ssrfPolicy.allowPrivate ? null : isBlockedAddress });
   const web = createDshNodeWebTools({ agentId, isClosed, signal, fetchImpl: pinned.fetch, searchFetch: fetchImpl,
-    providerConfig: resolveWebSearchConfig(env), ssrfPolicy, persistOutput });
+    providerConfig: resolveWebSearchConfig(env), ssrfPolicy, persistOutput: persistOutput ?? output?.persistOutput });
   const owners = new Map();
   for (const port of [workspace, web]) for (const definition of port.definitions) {
     invariant(!owners.has(definition.name), 'dsh_node_builtin_duplicate'); owners.set(definition.name, port);
@@ -28,7 +31,7 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, i
     },
     close() {
       if (closing) return closing;
-      workspace.close(); web.close();
+      workspace.close(); web.close(); output?.close();
       return closing = Promise.resolve(pinned.close());
     },
   };

@@ -1,8 +1,9 @@
 /** Actual packed Host/preset/DSH ToolRegistry proof, without a model request. */
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join, sep } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { mountStudioHost } from '../../src/host/bootstrap.mjs';
@@ -11,11 +12,16 @@ export const name = 'studio-node-builtin-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'credentials', 'connection', 'webServer', 'sessionController'];
 export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
+  const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
+  const sha256 = value => createHash('sha256').update(value).digest('hex');
   let networkCalls = 0, pendingRequest;
   const web = createServer((req, res) => {
     networkCalls++;
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/wait') { pendingRequest?.(); return; }
+    if (url.pathname === '/large') {
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(fullWebText);
+    }
     if (url.pathname === '/search') {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ results: [{ title: '确定性检索结果', url: 'https://example.com/result', snippet: url.searchParams.get('q') }] }));
@@ -167,6 +173,38 @@ export async function apply(ctx, options) {
           assert.ok(phases.indexOf('around') > phases.indexOf('guard'));
           assert.ok(phases.indexOf('post') > phases.indexOf('around')); assert.equal(phases.at(-1), 'result');
           const normalPhases = [...phases];
+          const largeArgs = { url: `${webOrigin}/large`, max_chars: 100 };
+          const largeCallId = `builtin-proof-${serial + 1}`;
+          const large = await call('web_fetch', largeArgs);
+          assert.equal(large.ok, true); assert.equal(large.truncated, true);
+          assert.ok(Array.from(large.text).length <= 100);
+          const fullOutput = async (result, sessionId, callId) => {
+            const path = result.persisted?.path;
+            assert.equal(result.persisted?.failed, undefined); assert.ok(isAbsolute(path));
+            assert.ok(path.startsWith(await realpath(home) + sep));
+            assert.equal(path.startsWith(await realpath(workspaceRoot) + sep), false);
+            const bytes = await readFile(path);
+            assert.ok(bytes.equals(Buffer.from(fullWebText)), 'The file must contain the entire original UTF-8 output');
+            const facts = JSON.parse(await readFile(join(dirname(path), 'metadata.json'), 'utf8'));
+            assert.equal(facts.contract, 'agentkit.dsh-node-tool-output/v1');
+            assert.equal(facts.sha256, sha256(bytes)); assert.equal(facts.sizeBytes, bytes.length);
+            assert.equal(facts.request.agentId, record.metadata.id); assert.equal(facts.request.sessionId, sessionId);
+            assert.deepEqual(facts.request.call, { callId, name: 'web_fetch', arguments: largeArgs });
+            assert.equal(facts.request.definition.name, 'web_fetch'); assert.equal(facts.request.signal, undefined);
+            assert.deepEqual(facts.metadata, { toolName: 'web_fetch', mediaType: 'text/plain; charset=utf-8',
+              fullBytes: bytes.length, reachedByteCeiling: false });
+            assert.equal(basename(dirname(dirname(path))), sha256(sessionId));
+            assert.equal(basename(dirname(dirname(dirname(path)))), sha256(record.metadata.id));
+            return { path, sha256: facts.sha256, sizeBytes: bytes.length };
+          };
+          const firstOutput = await fullOutput(large, created.sessionId, largeCallId);
+          const secondCallId = `builtin-proof-${++serial}`;
+          const secondLarge = await second.ctx.get('tools').execute({ agent: second, callId: secondCallId,
+            name: 'web_fetch', arguments: largeArgs, signal: new AbortController().signal });
+          assert.equal(secondLarge.isError, false);
+          const otherOutput = await fullOutput(JSON.parse(secondLarge.value.result), other.sessionId, secondCallId);
+          assert.notEqual(firstOutput.path, otherOutput.path);
+          assert.equal(firstOutput.sha256, otherOutput.sha256);
           const searched = await call('web_search', { query: `${runtime} query`, recency_days: 2 });
           assert.equal(searched.ok, true); assert.equal(searched.results[0].snippet, `${runtime} query`);
           for (const gate of ['pre', 'guard']) {
@@ -189,9 +227,10 @@ export async function apply(ctx, options) {
           await waiting; abort.abort();
           const canceledResult = await canceledWeb;
           assert.ok(canceledResult.isError || JSON.parse(canceledResult.value.result).ok === false);
-          assert.equal(networkCalls - startCalls, 4, 'Two policy denials must dispatch zero HTTP requests');
+          assert.equal(networkCalls - startCalls, 6, 'Two policy denials must dispatch zero HTTP requests');
           webProof = { normalPhases, calls: networkCalls - startCalls, searchProvider: searched.provider,
-            preAndGuardDeniedWithoutFetch: true, postPolicyPreserved: true, canceled: true };
+            preAndGuardDeniedWithoutFetch: true, postPolicyPreserved: true, canceled: true,
+            fullOutputPersisted: true, crossSessionOutputIsolated: true, outputs: [firstOutput, otherOutput] };
         } finally {
           removeWebPre(); removeWebGuard(); removeWebAround(); removeWebPost(); removeWebResult(); pendingRequest = undefined;
         }

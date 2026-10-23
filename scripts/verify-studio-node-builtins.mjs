@@ -57,9 +57,10 @@ try {
   assert.equal(report.node, process.version); assert.equal(report.path, nodeBin);
   assert.deepEqual(report.runtimes.map(row => row.runtime), ['dsh-native', 'codex']);
   assert.ok(report.runtimes.every(row => row.crossSessionReadStateIsolated && row.parser === 'ruff-wasm'));
-  assert.ok(report.runtimes.every(row => row.web.calls === 4 && row.web.preAndGuardDeniedWithoutFetch
-    && row.web.postPolicyPreserved && row.web.canceled));
-  console.log('PASS: packed Host registers Node workspace + web tools for DSH Native and Codex; actual pre/guard/around/post/output, HTTP/search, policies, approvals, cancellation and Session isolation; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
+  assert.ok(report.runtimes.every(row => row.web.calls === 6 && row.web.preAndGuardDeniedWithoutFetch
+    && row.web.postPolicyPreserved && row.web.canceled && row.web.fullOutputPersisted && row.web.crossSessionOutputIsolated));
+  assert.equal(new Set(report.runtimes.flatMap(row => row.web.outputs.map(output => output.path))).size, 4);
+  console.log('PASS: packed Host registers Node workspace + web tools for DSH Native and Codex; actual pre/guard/around/post/output, HTTP/search, full UTF-8 output files, policies, approvals, cancellation and Agent/Session isolation; Node-only PATH. Model/Codex CLI and fresh dependency installation are separate acceptance.');
 } finally {
   await harness?.close();
   if (!values.keep) await rm(root, { recursive: true, force: true });

@@ -211,6 +211,20 @@ test('web_fetch reports persisted.failed when persistOutput throws (never claims
   assert.equal(r.content.persisted.failed, true);
 });
 
+test('web_fetch rejects malformed persistence references instead of reporting an empty success', async t => {
+  const { url, ready, close } = localServer((_req, res) => { res.setHeader('content-type', 'text/plain'); res.end('B'.repeat(600)); });
+  await ready; t.after(close);
+  for (const ref of [undefined, null, { status: 'error' }, { uri: '' }, { path: 42 }, { uri: 'bad\0path' }]) {
+    const tools = createNativeWebTools({ fetch, providerConfig: {}, ssrfPolicy: { allowPrivate: true },
+      authorize: allowAuthorize, sessionId: 's1', persistOutput: async () => ref });
+    const r = await tools.execute(webRequest({ sessionId: 's1', signal: sig(),
+      call: { callId: 'c', name: 'web_fetch', arguments: { url: url(), max_chars: 100 } } }));
+    assert.equal(r.content.persisted.failed, true);
+    assert.equal(r.content.persisted.error, 'persist_output_failed');
+    assert.equal(r.content.persisted.path, undefined);
+  }
+});
+
 test('web_fetch reports body_truncated_by_byte_ceiling for an oversized stream', async t => {
   const { url, ready, close } = localServer((req, res) => { res.setHeader('content-type', 'text/plain'); res.end('C'.repeat(11 * 1024 * 1024)); });
   await ready; t.after(close);

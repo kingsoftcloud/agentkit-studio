@@ -537,4 +537,4 @@ Host 通过 `bindNativeBackgroundRuntime` 在真实 Session、模型、预设及
 
 宿主 builtin 环境组合原十个 Node workspace 工具与 `web_fetch`、`web_search`，复用共享网络实现，不生成伪造 Native Run 或另一执行循环。显式 Studio Web 绑定会移除标准预设内同名插件，避免正式 SDK 准入时重复注册；普通未覆盖的预设保留原环境。实际打包验证曾在两种 Node 上因该冲突失败，修复后两条 runtime 均经过真实 DSH 注册、pre/guard/around/post/result、HTTP 搜索/抓取、进行中取消及 Node-only PATH 验证；拒绝调用没有网络请求，后置策略的内容替换仍生效。原工作区安全、一次性审批及 Session 隔离验证保留。此验证不执行模型或 Codex CLI，不是全新依赖安装验收。
 
-独立适配器定向验证还覆盖公开 schema 篡改、原调用身份在网络/正文读取期间漂移、重定向前复核、关闭/取消/注册退役与不合作网络 Promise 的晚拒绝。DSH legacy Web 自动全文持久化、其余 builtin Python fallback、Frozen 导出分类及完整模型回归仍是未完成范围；完整目标保持不变。详见 `docs/native-web.md`。
+独立适配器定向验证还覆盖公开 schema 篡改、原调用身份在网络/正文读取期间漂移、重定向前复核、关闭/取消/注册退役与不合作网络 Promise 的晚拒绝。DSH legacy Web 现默认在工作区外保存超出展示预算的完整提取正文，原 Agent、Session、call、完整 JSON 参数和元数据绑定保存引用；正文和元数据一次发布，冷重开核对完整身份与正文摘要。两种 Node 的实际打包 Host、DSH Native 与 Codex 均已验证 Unicode 全文和隔离，定向文件用例包含真实并发与发布边界 SIGKILL。其余 builtin Python fallback、Frozen 导出分类及完整模型回归仍是未完成范围；完整目标保持不变。详见 `docs/native-web.md`。

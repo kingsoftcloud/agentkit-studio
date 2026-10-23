@@ -321,7 +321,9 @@ async function fetchPage({ fetchImpl, url, current, limit, ssrfPolicy, signal, p
     if (budget.truncated && typeof persistOutput === 'function') {
       try {
         const ref = await persistOutput(request, text, { toolName: 'web_fetch', mediaType: contentType || 'text/plain', fullBytes, reachedByteCeiling });
-        if (ref && typeof ref === 'object') result.persisted = { path: String(ref.uri || ref.path || ''), mime_type: contentType || 'text/plain' };
+        const path = ref?.uri ?? ref?.path;
+        if (typeof path !== 'string' || !path.trim() || path.includes('\0')) throw new Error('persist_output_reference_invalid');
+        result.persisted = { path, mime_type: contentType || 'text/plain' };
       } catch (error) {
         if (signal?.aborted) throw error;
         result.persisted = { failed: true, error: 'persist_output_failed' };
