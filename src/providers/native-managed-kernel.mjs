@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { NativeKernel, canonical, configure, copy, invariant, parseNativeJson, scopeKey, terminal } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../../packages/agentkit-harness/src/native/sqlite-store.mjs';
+import { createNativeChildHistory } from '../../packages/agentkit-harness/src/native/child-history.mjs';
 import { privateDirectory, privateFile, createPrivate } from '../../packages/agentkit-harness/src/native/local-command-state.mjs';
 import { nativeKernelFactId, projectNativeKernelEvent } from './native-kernel-events.mjs';
 
@@ -393,7 +394,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           const identity = { scope, runId: id, sessionId, turnId: command.command_id, buildId: run.build_id,
             parentRunId, taskChainId: id };
           let executed = false, boundaryOpen = true, snapshot;
-          const execute = async ({ signal, replayOnly = false, cancelOnly = false, onCheckpoint, onStream } = {}) => {
+          const execute = async ({ signal, replayOnly = false, cancelOnly = false, onCheckpoint, onStream, onActive } = {}) => {
             guard(); invariant(boundaryOpen && !executed, 'NATIVE_KERNEL_EXECUTION_REENTERED'); executed = true;
             invariant(!cancelOnly || signal?.aborted && !replayOnly, 'NATIVE_KERNEL_CANCEL_SIGNAL_REQUIRED');
             if (replayOnly) {
@@ -402,6 +403,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
             }
             invariant(onCheckpoint === undefined || typeof onCheckpoint === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
             invariant(onStream === undefined || typeof onStream === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
+            invariant(onActive === undefined || typeof onActive === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
             deliverCheckpoint = onCheckpoint;
             deliverStream = onStream;
             executing.add(id);
@@ -411,8 +413,11 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
               kernel.submit(scope, id, { commandId: `${id}:host-session-cancel`, kind: 'cancel', payload: {} }); wake();
             };
             signal?.addEventListener('abort', cancel, { once: true });
+            let releaseControls;
             try {
               if (signal?.aborted) cancel();
+              releaseControls = onActive?.({ kernel, scope: copy(scope), sessionId, runId: id, wake });
+              invariant(releaseControls === undefined || typeof releaseControls === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
               for (;;) {
                 guard(); const version = generation; applyControls(sessionId);
                 snapshot = await kernel.runUntilIdle(scope, id); guard(); project(run);
@@ -421,7 +426,8 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
                 // Only this Native kernel consumes the durable next command.
                 await waitForCommand(version, snapshot);
               }
-            } finally { signal?.removeEventListener('abort', cancel); }
+            } finally { try { if (typeof releaseControls === 'function') releaseControls(); }
+              finally { signal?.removeEventListener('abort', cancel); } }
           };
           invariant(resolved.withExecution === undefined || typeof resolved.withExecution === 'function', 'NATIVE_KERNEL_BINDING_CHANGED');
           if (resolved.withExecution) {
@@ -529,6 +535,12 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     void start(query.sessionId).catch(() => {});
     return inspectSession(query);
   }
+  function readChildHistory(query, { result = false, liveTasks } = {}) {
+    const inspected = inspectSession(query);
+    invariant(inspected, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    const history = createNativeChildHistory({ scope: inspected.scope, store: runStore, liveTasks });
+    return history[result ? 'result' : 'list'](query);
+  }
   function facts(sessionId, after = 0) {
     guard(); invariant(text(sessionId) && Number.isSafeInteger(after) && after >= 0, 'NATIVE_KERNEL_CURSOR_INVALID');
     projectAll(); return db.prepare('SELECT data FROM managed_events WHERE session_id=? AND seq>? ORDER BY seq').all(sessionId, after)
@@ -544,7 +556,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   } });
   try { guard(); projectAll(); wake(); }
   catch (error) { runStore.close(); db.close(); throw error; }
-  return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun,
+  return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun, readChildHistory,
     startRecovery() { guard(); schedulingEnabled = true; schedule(); },
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
       enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),

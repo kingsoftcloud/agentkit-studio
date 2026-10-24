@@ -432,6 +432,36 @@ test('managed delivery checkpoints precede model dispatch and the second owner p
   assert.equal(identities[0].parentRunId, null); assert.equal(identities[1].parentRunId, managedNativeRunId(first));
 });
 
+for (const failCheckpoint of [false, true]) test(`managed live controls release before binding ports, including checkpoint failure=${failCheckpoint}`, async t => {
+  let current = null, models = 0;
+  const order = [];
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { assert.equal(current.runId, managedNativeRunId(command)); models++; return response(); } },
+  }), release: ({ stage }) => { if (stage === 'execute') { assert.equal(current, null); order.push(`ports:${command.command_id}`); } },
+  withExecution: ({ identity, execute }) => execute({
+    onActive(control) {
+      assert.equal(current, null, 'the previous exclusive Run must release before another one installs');
+      assert.deepEqual(control.scope, scope); assert.equal(control.runId, identity.runId); assert.equal(control.sessionId, identity.sessionId);
+      assert.equal(typeof control.wake, 'function'); assert.equal(typeof control.kernel.cancelChild, 'function');
+      assert.equal(f.runtime.inspectSession({ scope, sessionId: identity.sessionId, runId: identity.runId }).record.snapshot.runId, identity.runId);
+      current = control; order.push(`active:${command.command_id}`);
+      return () => { assert.equal(current, control); current = null; order.push(`release:${command.command_id}`); };
+    }, onCheckpoint() { if (failCheckpoint) throw Error('delivery checkpoint failed'); },
+  }),
+  }) });
+  const commands = [command(), command(), command()];
+  for (const cmd of commands) cmd.session_id = commands[0].session_id;
+  for (const cmd of commands) await f.receive(cmd);
+  if (failCheckpoint) {
+    await assert.rejects(f.runtime.drain(commands[0].session_id), /delivery checkpoint failed/);
+    assert.equal(models, 0); assert.deepEqual(order, [`active:${commands[0].command_id}`, `release:${commands[0].command_id}`, `ports:${commands[0].command_id}`]);
+  } else {
+    await f.runtime.drain(commands[0].session_id); assert.equal(models, 3);
+    assert.deepEqual(order, commands.flatMap(cmd => [`active:${cmd.command_id}`, `release:${cmd.command_id}`, `ports:${cmd.command_id}`]));
+  }
+  assert.equal(current, null);
+});
+
 test('managed live model observers receive the original identity before completion without controlling effects', async t => {
   const streamed = [];
   const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
@@ -503,7 +533,7 @@ test('a committed Session terminal with a lost receiver ACK replays the original
   assert.equal(calls, 1);
   f.config.resolveBinding = ({ command }) => ({ ...binding(command, {
     model: { generate: async () => assert.fail('A closed Session must not call the model') } }),
-    withExecution: ({ execute }) => execute({ replayOnly: true }),
+    withExecution: ({ execute }) => execute({ replayOnly: true, onActive: () => assert.fail('terminal replay cannot install live controls') }),
   });
   await f.reopen(); await f.runtime.drain(cmd.session_id); assert.equal(calls, 1);
   assert.deepEqual(await f.facts(cmd.session_id), original);

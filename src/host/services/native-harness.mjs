@@ -32,6 +32,7 @@ import { nativeVisionProfileId } from '../../native-vision-model.mjs';
 import { createStudioNativeVisionBinding } from '../../providers/native-vision-binding.mjs';
 import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
 import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
+import { readNativeDshManagedOwnership } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -94,22 +95,73 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   let waitRecoveryOwner, waitRecoveryStart = Promise.resolve();
   const workspaceId = hash(resolve(workspaceRoot));
   const controlKey = (agentId, sessionId) => canonical({ agentId, sessionId });
+  const installControl = (payload, control) => {
+    invariant(!closed && !lifetime.signal.aborted, 'studio_native_host_closed');
+    const key = controlKey(control.scope.agentId, control.sessionId);
+    invariant(!controls.has(key), 'studio_native_child_control_already_active');
+    controls.set(key, control);
+    try { payload.recoveryStarted?.(control); }
+    catch (error) { controls.delete(key); throw error; }
+    return () => { if (controls.get(key) === control) controls.delete(key); };
+  };
   const controlFor = request => {
     invariant(!closed && typeof request?.agentId === 'string' && request.agentId.trim()
       && typeof request.sessionId === 'string' && request.sessionId.trim(), 'studio_native_child_control_invalid');
     const control = controls.get(controlKey(request.agentId, request.sessionId));
     invariant(control && (request.runId === undefined || request.runId === control.runId), 'studio_native_child_control_run_unavailable');
+    control.assertCurrent?.();
     return control;
+  };
+  const childCommand = (request, command, invoke) => {
+    const current = controls.get(controlKey(request.agentId, request.sessionId));
+    if (current?.runId === request.runId) return invoke(controlFor(request));
+    // A lost reply may be confirmed after the original turn releases its live
+    // ports. Only an exact already-persisted command is a read-only duplicate;
+    // history cannot authorize a new child operation or install another driver.
+    invariant(!closed && typeof request.runId === 'string' && request.runId.trim(), 'studio_native_child_control_run_unavailable');
+    const managed = ctx.get('studioManagedNativeSessionControl');
+    let record = managed?.agentId === request.agentId ? managed.inspect({ agentId: request.agentId,
+      sessionId: request.sessionId, runId: request.runId, workspaceId })?.record : null;
+    if (!record) {
+      try { record = localStore.load({ tenantId: 'local', workspaceId, userId: 'local-user', agentId: request.agentId }, request.runId); }
+      catch (error) { if (error.code !== 'run_not_found') throw error; }
+    }
+    invariant(record?.snapshot.sessionId === request.sessionId, 'studio_native_child_control_run_unavailable');
+    const existing = record.commands.find(row => row.command.commandId === command.commandId);
+    invariant(existing, 'studio_native_child_control_run_unavailable');
+    invariant(canonical(existing.command) === canonical(command), 'command_replay_conflict');
+    return { commandId: command.commandId, status: 'duplicate', reason: null };
+  };
+  const liveChildTasks = (request, scope, selectedStore) => runId => {
+    const control = controls.get(controlKey(request.agentId, request.sessionId));
+    if (!control || control.runId !== runId || canonical(control.scope) !== canonical(scope)
+      || (control.store ?? localStore) !== selectedStore) return [];
+    control.assertCurrent?.();
+    return selectedStore.load(scope, runId).configuration.childLifecyclePolicy === 'owned-background/v2'
+      ? control.kernel.childTasks(scope, runId) : [];
   };
   const childHistory = request => {
     invariant(!closed && typeof request?.agentId === 'string' && request.agentId.trim()
       && request.agentId.length <= 256, 'studio_native_child_history_invalid');
     const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: request.agentId };
-    return createNativeChildHistory({ scope, store, liveTasks: runId => {
-      const control = controls.get(controlKey(request.agentId, request.sessionId));
-      return control?.runId === runId && store.load(scope, runId).configuration.childLifecyclePolicy === 'owned-background/v2'
-        ? control.kernel.childTasks(scope, runId) : [];
-    } });
+    return createNativeChildHistory({ scope, store, liveTasks: liveChildTasks(request, scope, store) });
+  };
+  const readChildren = (request, signal, result = false) => {
+    signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
+    const service = ctx.get('studioManagedNativeSessionControl');
+    if (service?.agentId !== request.agentId || !service.inspect({ agentId: request.agentId,
+      sessionId: request.sessionId, workspaceId, ...(request.runId === undefined ? {} : { runId: request.runId }) }))
+      return childHistory(request)[result ? 'result' : 'list'](request);
+    const original = copy(request), bytes = canonical(request);
+    return recovery.inspect({ agentId: original.agentId, sessionId: original.sessionId,
+      ...(original.runId === undefined ? {} : { runId: original.runId }) }, signal).then(inspected => {
+      signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
+      invariant(canonical(request) === bytes, 'studio_native_child_history_invalid');
+      if (!inspected.managed) return childHistory(original)[result ? 'result' : 'list'](original);
+      const control = controls.get(controlKey(original.agentId, original.sessionId));
+      return inspected.managedControl.childHistory({ ...original, workspaceId }, { result,
+        liveTasks: control?.store ? liveChildTasks(original, inspected.scope, control.store) : undefined });
+    });
   };
   const resolveBinding = async ({ agent, input, binding, signal, prepareInput }, original, execution) => {
       // Both entrypoints assemble identical ports; managed Runs must use the
@@ -527,14 +579,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   };
   const execute = createNativeDshTurnExecutor({ store, projections, durableOwnership: true, flush: session => sessions.flush(session),
     publishStreamFrame, streamRevisions, onIdle: createNativeHostInteraction({ ctx, store }),
-    onActive: (payload, control) => {
-      const key = controlKey(control.scope.agentId, control.sessionId);
-      invariant(!controls.has(key), 'studio_native_child_control_already_active');
-      controls.set(key, control);
-      try { payload.recoveryStarted?.(control); }
-      catch (error) { controls.delete(key); throw error; }
-      return () => { if (controls.get(key) === control) controls.delete(key); };
-    },
+    onActive: installControl,
     resolveTurn: payload => resolveBinding(payload),
     resolveRecoveryTurn: resolveRestoredBinding,
     resolveBackgroundTurn: resolveBackgroundBinding,
@@ -694,6 +739,26 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         invariant(!admission || resolved.buildId === admission.buildId
           && canonical(configuration) === canonical(admission.configuration), 'native_dsh_recovery_configuration_changed');
         return { ...resolved, configuration,
+          bindControls: ({ ownership, signal }, control) => {
+            const owned = readNativeDshManagedOwnership(ownership, { sessionId: payload.agent.session.id });
+            invariant(control.runId === runId && control.sessionId === payload.agent.session.id
+              && canonical(control.scope) === canonical(scope) && owned.identity.runId === runId
+              && canonical(owned.identity.scope) === canonical(scope) && owned.configDigest === hash(configuration),
+            'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+            const session = payload.agent.session, expectedOwner = canonical(ownership);
+            const assertCurrent = () => {
+              signal.throwIfAborted(); lifetime.signal.throwIfAborted();
+              invariant(!closed && payload.agent.session === session
+                && canonical(payload.agent.externalTurns?.pending() ?? null) === expectedOwner
+                && managedStore.load(scope, runId).snapshot.configDigest === owned.configDigest,
+              'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+              const snapshot = managedStore.load(scope, runId).snapshot;
+              invariant(['runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId']
+                .every(key => snapshot[key] === owned.identity[key]), 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+            };
+            assertCurrent();
+            return installControl(payload, { ...control, store: managedStore, assertCurrent });
+          },
           createLiveStream: ({ turn, beginStep }) => nativeLiveStream({ agent: payload.agent, runId, turn,
             beginStep, revisions: streamRevisions,
             publish: publishStreamFrame ? frame => publishStreamFrame(payload, frame) : undefined }) };
@@ -712,31 +777,33 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     resumeTurn: recovery.resume,
     reconcileTool: recovery.reconcile,
     controlA2aTask,
-    childHistory(request) { return childHistory(request).list(request); },
-    childResult(request) { return childHistory(request).result(request); },
+    childHistory(request, signal) { return readChildren(request, signal); },
+    childResult(request, signal) { return readChildren(request, signal, true); },
     childTasks(request) {
       const { kernel, scope, runId } = controlFor(request);
       return { contract: 'agentkit.studio-native-child-control/v1', runId, tasks: kernel.childTasks(scope, runId) };
     },
     promoteChild(request) {
       invariant(typeof request?.runId === 'string' && request.runId.trim(), 'studio_native_child_control_invalid');
-      const { kernel, scope, runId } = controlFor(request);
-      return kernel.promoteChild(scope, runId, request.childRunId, request.commandId);
+      return childCommand(request, { commandId: request.commandId, kind: 'promote_child', payload: { childRunId: request.childRunId } },
+        ({ kernel, scope, runId, wake }) => {
+          const receipt = kernel.promoteChild(scope, runId, request.childRunId, request.commandId);
+          if (receipt.status === 'accepted') wake(); return receipt;
+        });
     },
     sendChildInput(request) {
-      const control = controlFor(request);
-      invariant(request.runId === control.runId, 'studio_native_child_control_run_unavailable');
-      const receipt = control.kernel.sendChildInput(control.scope, control.runId, request.childRunId,
-        request.text, request.expectedGoalRevision, request.commandId);
-      if (receipt.status === 'accepted') control.wake();
-      return receipt;
+      return childCommand(request, { commandId: request.commandId, kind: 'message_child', payload: {
+        childRunId: request.childRunId, text: request.text, expectedGoalRevision: request.expectedGoalRevision } }, control => {
+        const receipt = control.kernel.sendChildInput(control.scope, control.runId, request.childRunId,
+          request.text, request.expectedGoalRevision, request.commandId);
+        if (receipt.status === 'accepted') control.wake(); return receipt;
+      });
     },
     cancelChild(request) {
-      const control = controlFor(request);
-      invariant(request.runId === control.runId, 'studio_native_child_control_run_unavailable');
-      const receipt = control.kernel.cancelChild(control.scope, control.runId, request.childRunId, request.commandId);
-      if (receipt.status === 'accepted') control.wake();
-      return receipt;
+      return childCommand(request, { commandId: request.commandId, kind: 'cancel_child', payload: { childRunId: request.childRunId } }, control => {
+        const receipt = control.kernel.cancelChild(control.scope, control.runId, request.childRunId, request.commandId);
+        if (receipt.status === 'accepted') control.wake(); return receipt;
+      });
     },
     executeTurn(input) {
       invariant(!closed, 'studio_native_host_closed');

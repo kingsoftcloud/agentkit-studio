@@ -223,11 +223,15 @@ for (const failFlush of [false, true]) test(`managed receiver live preview settl
     : { choices: [{ index: 0, delta: { content: 'Managed complete' }, finish_reason: 'stop' }] } });
   h.agentBinding.nativeTools = { definitions: () => [tool({ name: 'inspect' })],
     forAgent: () => ({ tools: { execute: async () => { toolCalls++; return { status: 'ok', content: 'Inspected' }; } } }) };
-  const execution = { run: async request => request.execute({ signal: request.signal,
-    prepareInput: async () => ({ kind: 'enter', messages: [], assembly: h.assembly }), turn: 1,
-    ownership: { contract: 'dsh.external-turn/v1', engine: NATIVE_DSH_MANAGED_TURN_CONTRACT, turn: 1,
+  h.agent.externalTurns = nativeOwnershipHost(h.session, h.events);
+  const execution = { run: async request => {
+    const ownership = { contract: 'dsh.external-turn/v1', engine: NATIVE_DSH_MANAGED_TURN_CONTRACT, turn: 1,
       binding: canonical({ contract: NATIVE_DSH_MANAGED_TURN_CONTRACT, identity: request.identity,
-        configDigest: hash(request.configuration) }) } }) };
+        configDigest: hash(request.configuration) }) };
+    h.agent.externalTurns.claim(ownership);
+    return request.execute({ signal: request.signal,
+    prepareInput: async () => ({ kind: 'enter', messages: [], assembly: h.assembly }), turn: 1,
+    ownership }); } };
   const resolveBinding = createStudioManagedNativeBinding({ ctx: h.ctx, target: h.target, principal: h.principal,
     resolveHost: async () => h.host, execution });
   const issuer = permitIssuer({ target: h.target });

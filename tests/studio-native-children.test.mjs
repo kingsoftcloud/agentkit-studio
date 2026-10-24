@@ -4,8 +4,8 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { createHash, randomUUID } from 'node:crypto';
+import { canonical, MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
@@ -18,11 +18,17 @@ import { readNativeRecoveryBinding } from '../src/providers/native-recovery-bind
 import { previousChildPublication } from '../packages/agentkit-harness/src/native/child-publication.mjs';
 import { internalPeer, spec as a2aSpec } from './fixtures/native-a2a-internal-peer.mjs';
 import { hasUnsafeChildReceipt } from '../packages/agentkit-harness/src/native/owned-child.mjs';
+import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
+import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
+import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
+import { managedNativeOwnerProjection, STUDIO_MANAGED_NATIVE_EXECUTION } from '../src/host/services/native-managed-execution.mjs';
+import { command as managedCommand, permitIssuer } from './fixtures/native-managed-kernel.mjs';
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
   inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan,
-  childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch, skills = false, a2a } = {}) {
+  childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch, skills = false, a2a,
+  managed = false, releasePending } = {}) {
   const root = realpathSync(await mkdtemp(join(tmpdir(), 'studio-native-children-'))), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   let skillDefinitions;
@@ -44,7 +50,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   const services = { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, sessions: { flush: async () => true }, llm: {},
     attachments: { readImageRequest: async ref => ({ mediaType: 'image/png', data: Buffer.from(ref.attachmentId) }) },
     sessionProjections: { register: definition => { projections.set(definition.key, definition); return () => projections.delete(definition.key); },
-      stateOf: (_session, key) => { const projection = projections.get(key); return events.reduce(projection.apply, projection.init()); } } };
+      stateOf: (_session, key) => { const projection = projections.get(key); return projection ? events.reduce(projection.apply, projection.init()) : undefined; } } };
   const ctx = { get: name => services[name], effect: install => install(), tools: {
     register: definition => { registered.set(definition.name, definition); return () => registered.delete(definition.name); },
     execute: async request => {
@@ -63,6 +69,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: 'fixture-secret' }) } });
   let parentModels = 0, childModels = 0;
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, models, ledger,
+    ...(managed ? { agentEvents: () => ({ serial: async () => payload.binding }), assembleContextFor: () => ({ agent: payload.agent }) } : {}),
     renderPrompt: () => 'Delegate a bounded read; use its evidence without treating it as parent acceptance.',
     fetchImpl: async (url, options) => {
       const body = JSON.parse(options.body); requests.push({ url, body });
@@ -113,7 +120,9 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`,
       { headers: { 'content-type': 'text/event-stream' } });
     } });
-  t.after(async () => { await host.close(); await gateway.close(); ledger.close?.(); await rm(root, { recursive: true, force: true }); });
+  let receiver, managedLedger;
+  t.after(async () => { releasePending?.(); await receiver?.close(); await host.close(); await gateway.close();
+    managedLedger?.close(); ledger.close?.(); await rm(root, { recursive: true, force: true }); });
   const payload = { agent: { session, externalTurns: nativeOwnershipHost(session, events), options: { provider: 'agentkit-studio-parent-profile', model: 'parent-model' } },
     signal: new AbortController().signal, turn: 1,
     input: { kind: 'enter', messages: [{ id: 'user', role: 'user', source: { kind: 'user' }, content: inputParts ?? [{ type: 'text', text: goal }] }],
@@ -124,12 +133,110 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   payload.prepareInput = async () => ({ kind: 'enter', messages: [], assembly: payload.input.assembly });
   const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex'),
     userId: 'local-user', agentId: record.metadata.id };
+  let managedConfig, issuer, target, principal;
+  const openManaged = () => {
+    receiver = createManagedNativeKernel(managedConfig);
+    managedLedger = new SqliteRunStore(join(root, 'managed-receiver/runs.sqlite'));
+    services.studioManagedNativeSessionControl = createStudioManagedNativeSessionControl({ runtime: receiver, target, principal });
+  };
+  if (managed) {
+    target = { tenantId: 'managed-tenant', agentInstanceId: record.metadata.id }; principal = { userId: 'managed-user' };
+    issuer = permitIssuer({ target }); payload.agent.whenIdle = async () => {};
+    payload.input.assembly.variables = { provider: payload.agent.options.provider, model: payload.agent.options.model };
+    services.sessionController = { resolveAgent: async id => {
+      assert.equal(id, session.id); return { agent: payload.agent }; } };
+    services.systemPrompt = { assemble: async () => payload.input.assembly };
+    services.sessionProjections.register(managedNativeOwnerProjection());
+    const execution = { run: async request => {
+      const turn = events.findLast(event => event.type === 'turn/start').data.turn;
+      const ownership = { contract: 'dsh.external-turn/v1', engine: STUDIO_MANAGED_NATIVE_EXECUTION, turn,
+        binding: canonical({ contract: STUDIO_MANAGED_NATIVE_EXECUTION, identity: request.identity,
+          configDigest: createHash('sha256').update(canonical(request.configuration)).digest('hex') }) };
+      payload.agent.externalTurns.claim(ownership);
+      const snapshot = await request.execute({ signal: request.signal, ownership, turn, prepareInput: payload.prepareInput });
+      session.append('turn/end', { turn, reason: { kind: snapshot.phase === 'completed' ? 'completed' : 'error' } });
+      return snapshot;
+    } };
+    managedConfig = { directory: join(root, 'managed-receiver'), target, permitVerifier: issuer.verifier,
+      autoStart: false, assertCurrent: () => true,
+      resolveBinding: createStudioManagedNativeBinding({ ctx, target, principal, execution, resolveHost: async () => host }) };
+    openManaged();
+  }
   return { root, workspaceRoot, host, payload, ledger, gateway, roles, requests, dispatches, record, scope, services, ctx, events,
-    modelValues: values, childModels: () => childModels };
+    modelValues: values, childModels: () => childModels,
+    get managedLedger() { return managedLedger; }, get receiver() { return receiver; },
+    managedScope: managed ? { ...scope, tenantId: target.tenantId, userId: principal.userId } : undefined,
+    async admitManaged() {
+      const command = managedCommand({ tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId,
+        session_id: session.id, payload: { content: goal } });
+      return receiver.receive(command, issuer.issue(command));
+    },
+    async reopenManaged() { await receiver.close(); managedLedger.close(); openManaged(); } };
 }
 
 const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
   parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
+
+for (const action of ['send', 'cancel', 'promote']) test(`managed: original child ${action}, exact retry and cold history use the receiver ledger`, { timeout: 20000 }, async t => {
+  const entered = Promise.withResolvers(), finishChild = Promise.withResolvers(), parentEntered = Promise.withResolvers(), finishParent = Promise.withResolvers();
+  const f = await setup(t, { managed: true, childTool: 'native_delegate',
+    releasePending: () => { finishChild.resolve(); finishParent.resolve(); },
+    beforeChildModel: async index => { if (index === 1) { entered.resolve(); await finishChild.promise; } },
+    onParentContinuation: async () => { parentEntered.resolve(); await finishParent.promise; } });
+  const accepted = await f.admitManaged(), running = f.receiver.drain('parent-session');
+  await entered.promise;
+  const route = createSessionRoutes({ getNativeHost: async () => f.host });
+  const identity = { agentId: f.record.metadata.id, sessionId: 'parent-session' };
+  const history = (await route('sessions/native-child-history', identity)).value, task = history.tasks[0];
+  assert.equal(history.runId, accepted.run_id); assert.equal(history.tasks.length, 1);
+  assert.equal(task.canSendInput, true); assert.equal(task.canCancel, true); assert.equal(task.canPromote, true);
+  const counts = { models: f.requests.length, tools: f.dispatches.length };
+  const waiting = (await route('sessions/native-child-result', { ...identity, runId: history.runId, childRunId: task.childRunId })).value;
+  assert.equal(waiting.task.resultAvailable, false); assert.equal(waiting.text, '');
+  assert.equal((await route('sessions/native-child-tasks', identity)).value.tasks[0].childRunId, task.childRunId);
+  assert.deepEqual({ models: f.requests.length, tools: f.dispatches.length }, counts, 'reads cannot advance the held child');
+  assert.deepEqual(f.ledger.list(f.scope), []); assert.deepEqual(f.ledger.list(f.managedScope), []);
+  const command = { ...identity, runId: history.runId, childRunId: task.childRunId, commandId: randomUUID(),
+    ...(action === 'send' ? { text: 'Read the original file with this guidance', expectedGoalRevision: task.goalRevision } : {}) };
+  await assert.rejects(route(`sessions/native-child-${action}`, { ...command, agentId: 'other' }), /control_run_unavailable/);
+  await assert.rejects(route(`sessions/native-child-${action}`, { ...command, runId: 'stale' }), /control_run_unavailable/);
+  const carrier = f.payload.agent.externalTurns, pending = carrier.pending.bind(carrier);
+  carrier.pending = () => null;
+  await assert.rejects(route(`sessions/native-child-${action}`, command), { code: 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH' });
+  carrier.pending = pending;
+  assert.equal(f.managedLedger.load(f.managedScope, history.runId).commands.some(row => row.command.commandId === command.commandId), false);
+  assert.equal((await route(`sessions/native-child-${action}`, command)).value.status, 'accepted');
+  assert.equal((await route(`sessions/native-child-${action}`, command)).value.status, 'duplicate');
+  if (action === 'promote') {
+    await parentEntered.promise;
+    assert.equal(f.childModels(), 1, 'promotion continues the parent before the held child model completes');
+  }
+  // Keep the model pending for cancellation: the parent must observe the
+  // canceled child without a late provider result authorizing another effect.
+  if (action !== 'cancel') finishChild.resolve();
+  await parentEntered.promise; finishParent.resolve(); await running; finishChild.resolve();
+  const settled = (await route('sessions/native-child-history', identity)).value;
+  assert.equal(settled.tasks[0].phase, action === 'cancel' ? 'canceled' : 'completed');
+  assert.equal(settled.tasks[0].canSendInput, false); assert.equal(settled.tasks[0].canCancel, false);
+  assert.equal(settled.tasks[0].usageIncludedInParent, true);
+  if (action === 'cancel') assert.equal(f.dispatches.filter(row => row.name === 'read_workspace_file').length, 0);
+  assert.equal(settled.tasks[0].lastControl.commandId, command.commandId); assert.equal(settled.tasks[0].lastControl.status, 'delivered');
+  const detail = (await route('sessions/native-child-result', { ...identity, runId: history.runId, childRunId: task.childRunId })).value;
+  assert.equal(detail.task.resultAvailable, true); assert.equal(detail.text, action === 'cancel' ? '' : 'Child read actual workspace evidence');
+  const parent = f.managedLedger.load(f.managedScope, history.runId), counters = { models: f.requests.length, tools: f.dispatches.length };
+  assert.equal(parent.snapshot.phase, 'completed');
+  assert.equal(parent.commands.filter(row => row.command.commandId === command.commandId).length, 1);
+  assert.equal((await route(`sessions/native-child-${action}`, command)).value.status, 'duplicate', 'lost reply confirms after control release');
+  await f.reopenManaged();
+  assert.deepEqual((await route('sessions/native-child-history', identity)).value, settled);
+  assert.deepEqual((await route('sessions/native-child-result', { ...identity, runId: history.runId, childRunId: task.childRunId })).value, detail);
+  assert.equal((await route(`sessions/native-child-${action}`, command)).value.status, 'duplicate');
+  await assert.rejects(route(`sessions/native-child-${action}`, { ...command, commandId: randomUUID() }), /control_run_unavailable/);
+  if (action === 'send') await assert.rejects(route('sessions/native-child-send', { ...command, text: 'changed replay' }), /command_replay_conflict/);
+  assert.deepEqual(f.managedLedger.load(f.managedScope, history.runId), parent);
+  assert.deepEqual({ models: f.requests.length, tools: f.dispatches.length }, counters);
+  await assert.rejects(route('sessions/native-child-tasks', identity), /control_run_unavailable/);
+});
 
 // Product assembly + real Kernel/SQLite/HTTP. The live root, question service
 // and approval audit emitter below are declared Host-service doubles, not the

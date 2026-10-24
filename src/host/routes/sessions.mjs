@@ -58,7 +58,7 @@ export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost,
             signal?.throwIfAborted();
             const host = await getNativeHost();
             signal?.throwIfAborted();
-            return { ok: true, value: result ? host.childResult(payload) : host.childHistory(payload) };
+            return { ok: true, value: await (result ? host.childResult(payload, signal) : host.childHistory(payload, signal)) };
         }
         if (['sessions/native-child-tasks', 'sessions/native-child-promote', 'sessions/native-child-send', 'sessions/native-child-cancel'].includes(endpoint)) {
             const promote = endpoint === 'sessions/native-child-promote';

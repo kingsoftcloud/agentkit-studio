@@ -326,5 +326,5 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     store.acknowledge(scope, request.runId, NATIVE_A2A_QUESTION_CLEANUP, record.snapshot.eventSeq);
     return { status: 'cleaned' };
   };
-  return { status, resume, reconcile, automatic };
+  return { status, resume, reconcile, automatic, inspect };
 }

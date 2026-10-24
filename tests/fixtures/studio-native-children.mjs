@@ -10,8 +10,10 @@ export const name = 'studio-native-children-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'credentials', 'connection', 'webServer'];
 export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
+  if (options.managedProofPath) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
+    node: process.version, path: process.env.PATH }) + '\n');
   await mkdir(workspaceRoot, { recursive: true });
-  await writeFile(join(workspaceRoot, 'proof.txt'), 'Evidence from the actual child workspace');
+  if (!existsSync(join(workspaceRoot, 'proof.txt'))) await writeFile(join(workspaceRoot, 'proof.txt'), 'Evidence from the actual child workspace');
   await writeFile(join(home, 'config.yaml'), JSON.stringify({ modelProfiles: [
     { id: 'parent-profile', provider: 'openai-compatible', modelName: 'parent-proof', baseUrl: options.modelUrl, default: true,
       credentialName: 'CHILD_PROOF_KEY' },
@@ -40,7 +42,16 @@ export async function apply(ctx, options) {
       ...deps, resourceStore: { get: id => id === 'child-proof-mcp'
         ? { resourceId: id, endpointUrl: options.mcpUrl } : deps.resourceStore?.get(id) },
     })) } : {};
-  await mountStudioHost(ctx, { configurationHome: home, ...resourceOptions, env: { AGENTKIT_HOME: home,
+  let nativeManagedKernel;
+  if (options.managedProofPath) {
+    const proof = JSON.parse(await readFile(options.managedProofPath, 'utf8'));
+    const target = { tenantId: 'managed-child-tenant', agentInstanceId: record.metadata.id };
+    const { createNativeKernelPermitVerifier } = await import('../../src/providers/native-kernel-permit.mjs');
+    nativeManagedKernel = { target, principal: { userId: 'managed-child-user' }, assertCurrent: () => ctx.fiber.uid !== null,
+      permitVerifier: createNativeKernelPermitVerifier({ target, verificationKeys: async () => ({ server: proof.publicKeyPem }) }) };
+  }
+  await mountStudioHost(ctx, { configurationHome: home, ...resourceOptions,
+    ...(nativeManagedKernel ? { nativeManagedKernel } : {}), env: { AGENTKIT_HOME: home,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } });
   const presetId = dshPresetId(record.metadata.id, record.metadata.revision);
   let activeAgent;
@@ -72,7 +83,21 @@ export async function apply(ctx, options) {
       if (ctx.sessionProjections.stateOf(agent.session, 'agentPreset') !== presetId) throw Error('Child proof persisted preset changed');
       await ctx.agentPresets.recompose(agent.ctx, presetId);
     } else await ctx.agentPresets.select(agent, presetId);
+    if (options.managedProofPath) await writeFile(join(home, 'managed-session-history.json'), JSON.stringify(agent.session.snapshotEvents()));
   });
+  if (options.managedProofPath) {
+    ctx.on('session/event', (session) => {
+      if (session.id === 'native-child-parent') writeFileSync(join(home, 'managed-session-history.json'), JSON.stringify(session.snapshotEvents()));
+    });
+    ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+      if (agent.session.id === 'native-child-parent') writeFileSync(join(home, 'managed-stream-latest.json'), JSON.stringify(frame));
+    });
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      await appendFile(join(home, 'managed-tool-admissions.jsonl'), JSON.stringify({ pid: process.pid, name: exec.name,
+        callId: exec.callId, sessionId: exec.agent.session.id }) + '\n');
+      return next();
+    });
+  }
   // Any entry into the DSH model loop would violate Native loop ownership.
   ctx.llm.registerAdapter(['agentkit-studio-parent-profile'], {
     providerInfo: provider => ({ id: provider, name: 'Native child proof' }), providerRetryPolicy: () => undefined,

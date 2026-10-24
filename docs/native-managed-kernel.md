@@ -218,11 +218,28 @@ owner 固定真实 Native parent，SDK numeric turn 与 Server command-id 始终
 inject、scoped interrupt、checkpoint/continuation resume、结构化输入回复、
 execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
 
+## 托管子任务的现有产品入口
+
+正式 binding 沿用现有 `sessions/native-child-history`、`native-child-result`、
+`native-child-tasks`、`native-child-send`、`native-child-cancel` 与 `native-child-promote`。
+历史和结果从该托管 Run 的真实 SQLite scope 读取，不能退回 local-user 账本。
+活跃控制句柄引用接收器已经启动的原 Kernel，在整个 SDK owner 内注册，结束或失败时
+先注销句柄再释放绑定资源；不会为产品查询创建新 Kernel、Run 或租约。
+每次实时操作检查当前 SDK owner、会话、配置摘要和运行身份，切换后的旧句柄不能继续操作。
+
+指导、取消和转后台属于现有已认证会话所有者的子任务命令，权限边界与 SDK 用户取消
+一致。它们不能授权 Server pause/resume/approval，也不能解除未知副作用的恢复状态。
+在原控制句柄已释放或 Host 重启后，只允许确认一个逐字段相同且已持久化的 commandId；
+该确认只读、返回 duplicate，新的控制命令仍需原活跃 owner。已完成的历史和分页结果
+不会重新绑定工具或唤醒任务，且不显示可执行操作。普通和托管 Run 混用时默认列表的
+跨账本合并仍需后续实现；显式 runId 可读取对应历史，不能据此声称所有混合历史已统一。
+
 事实源从已提交 Native 事件生成 runtime/v2、control/v1 和 interaction/v1；包含文本、
 终态、每次模型用量增量、已提交的工具调用/结果、已提交 thinking 捕获以及暂停/恢复。
 未知工具结果投影为失败条目，保留 interrupted 终态，不能伪造成功结果；A2A Task 消费者
-等待匹配的 control 终态后关闭任务。运行态原始 token 流、完整 reasoning/media、公共工具
-活动和所有诊断投影尚未闭环。共用 Agent/Build binding 的全部资源组合与并发边界、
+等待匹配的 control 终态后关闭任务。标准 Studio 公共实时流已接线并验证；Server 的
+runtime/v2 事实投影与完整 reasoning/media、公共工具活动和所有诊断尚未全部闭环。
+共用 Agent/Build binding 的全部资源组合与并发边界、
 审批资源的产品流程、部署中的 Server 传输适配与线上认证仍需补齐。此模块不能替代这些验收。
 
 ## 已执行的验证与复验入口
@@ -238,6 +255,8 @@ node --test tests/native-kernel-permit.test.mjs tests/native-managed-kernel*.tes
 node scripts/verify-studio-native-a2a.mjs --source .artifacts/dsh-native-idle \
   --archive <正常打包的 tgz> --internal-control-plane --inbound-protocol \
   --inbound-execution --keep
+node scripts/verify-studio-native-managed-children.mjs --source .artifacts/dsh-native-idle \
+  --archive <正常打包的 tgz> --keep
 ```
 
 实际打包 Host 已证明：带签名的 Server HTTP 回调驱动 NativeKernel，经真实模型 HTTP

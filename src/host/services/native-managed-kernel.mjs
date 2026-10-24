@@ -17,7 +17,10 @@ export function createStudioManagedNativeSessionControl({ runtime, target, princ
   };
   return Object.freeze({ agentId: boundTarget.agentInstanceId,
     inspect: request => runtime.inspectSession(query(request)),
-    retry: request => runtime.retryAcceptedRun(query(request)) });
+    retry: request => runtime.retryAcceptedRun(query(request)),
+    childHistory: (request, options) => runtime.readChildHistory({ ...query(request),
+      ...Object.fromEntries(['offset', 'limit', 'inventoryDigest', 'childRunId'].filter(key => request[key] !== undefined)
+        .map(key => [key, request[key]])) }, options) });
 }
 
 /** Optional trusted composition; a workspace or public Agent spec cannot
