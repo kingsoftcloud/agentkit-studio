@@ -37,13 +37,13 @@ test('host-wide delivery projection admits multiple standard DSH attempts within
   assert.equal(projection.stateSchema.parse(state), state);
   assert.throws(() => projection.stateSchema.parse({ ...state, seqs: {} }), { code: 'native_delivery_state_invalid' });
 });
-function setup(t, options, configuration = {}) {
+function setup(t, options, configuration = {}, turnId = '1') {
   const directory = mkdtempSync(join(tmpdir(), 'native-delivery-')), filename = join(directory, 'run.sqlite');
   let store = new SqliteRunStore(filename, options);
   const value = { get store() { return store; }, reopen() { store.close(); store = new SqliteRunStore(filename); return store; } };
   t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
   const { config, snapshot } = fixture({ tools: [tool({ readOnly: false, concurrentSafe: false })], ...configuration });
-  store.create(config, { ...snapshot, turnId: '1' });
+  store.create(config, { ...snapshot, turnId });
   return value;
 }
 function delivery(store, sink, overrides = {}) {
@@ -60,6 +60,46 @@ function ports() {
   } },
   tools: { execute: async () => { calls.write++; return { status: 'ok', content: 'Published once' }; } } };
 }
+
+test('managed ownership delivers the sealed user/media, tools and usage at an independent SDK turn and deduplicates a lost flush', async t => {
+  const messages = [{ id: 'remote-command', role: 'user', source: { kind: 'user', rpcId: 'remote-command' }, content: [
+    { type: 'text', text: 'Complete the task' }, { type: 'image', attachment: { attachmentId: 'sealed-image' } },
+    { type: 'file', attachment: { attachmentId: 'sealed-file', name: 'original.txt' } },
+  ] }];
+  const f = setup(t, undefined, { instructions: 'Pinned instructions', hostRecoveryBinding: {
+    messages, source, systemPrompt: 'Pinned instructions',
+  } }, 'remote-command');
+  const record = f.store.load(scope, 'run');
+  const identity = Object.fromEntries(['scope', 'runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId']
+    .map(key => [key, record.snapshot[key]]));
+  const contract = 'agentkit.native-managed-dsh-turn/v1';
+  const managedOwnership = { engine: contract, contract: 'dsh.external-turn/v1', turn: 1,
+    binding: canonical({ contract, identity, configDigest: record.snapshot.configDigest }) };
+  const sink = consumer(), adapters = ports();
+  let failFlush = true;
+  const deliver = () => delivery(f.store, sink, { managedOwnership, inputMessages: messages,
+    flush: async () => { if (failFlush) throw new Error('Host flush interrupted'); return sink.flush(); } });
+  await assert.rejects(deliver()(record.snapshot), /Host flush interrupted/u);
+  assert.deepEqual(sink.events.filter(event => event.type === 'user/message').map(event => event.data), messages);
+  assert.equal(Object.values(f.store.load(scope, 'run').projections)[0], 0);
+  failFlush = false;
+  const worker = new NativeKernel({ store: f.store, digest, owner: 'worker', ports: adapters, onCheckpoint: deliver() });
+  const result = await worker.runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed');
+  assert.equal(sink.events.filter(event => event.type === 'user/message').length, 1);
+  assert.equal(sink.events.filter(event => event.type === 'tool/result').length, 1);
+  assert.equal(sink.events.filter(event => event.type === 'assistant/message' && event.data.usage).length, 2);
+  const durable = structuredClone(sink.durable);
+  f.reopen(); await deliver()(f.store.load(scope, 'run').snapshot);
+  assert.deepEqual(sink.durable, durable); assert.deepEqual(adapters.calls, { model: 2, write: 1 });
+  const before = structuredClone(sink.events);
+  await assert.rejects(delivery(f.store, sink, { managedOwnership, inputMessages: [{ ...messages[0], content: [] }] })(result),
+    { code: 'native_delivery_managed_admission_invalid' });
+  const changed = { ...managedOwnership, binding: canonical({ contract, identity, configDigest: 'f'.repeat(64) }) };
+  await assert.rejects(delivery(f.store, sink, { managedOwnership: changed, inputMessages: messages })(result),
+    { code: 'native_delivery_managed_admission_invalid' });
+  assert.deepEqual(sink.events, before);
+});
 
 test('typed Host tool blocks and deferred context replay to Session without JSON envelopes', async t => {
   const { store } = setup(t), sink = consumer(), adapters = ports();

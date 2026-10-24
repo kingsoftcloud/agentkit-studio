@@ -1,24 +1,15 @@
 /** Whole-Session lifecycle for a managed Native Run. This owns delivery, not
  * model/tool execution or permission assembly, which remain separate ports. */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, parseNativeJson, terminal } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, terminal } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { nativeDshIdleOwnershipHost } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
+import { NATIVE_DSH_MANAGED_TURN_CONTRACT, readNativeDshManagedOwnership } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
 
-export const STUDIO_MANAGED_NATIVE_EXECUTION = 'agentkit.native-managed-dsh-turn/v1';
+export const STUDIO_MANAGED_NATIVE_EXECUTION = NATIVE_DSH_MANAGED_TURN_CONTRACT;
 export const STUDIO_MANAGED_NATIVE_OWNER_PROJECTION = 'agentkitManagedNativeOwner';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
-const text = value => typeof value === 'string' && value.trim();
-function admission(owner) {
-  invariant(owner?.engine === STUDIO_MANAGED_NATIVE_EXECUTION && owner.contract === 'dsh.external-turn/v1'
-    && Number.isSafeInteger(owner.turn) && owner.turn > 0 && text(owner.binding), 'NATIVE_MANAGED_OWNER_INVALID');
-  const value = parseNativeJson(owner.binding);
-  invariant(value.contract === STUDIO_MANAGED_NATIVE_EXECUTION && object(value.identity)
-    && ['runId', 'sessionId', 'turnId', 'buildId', 'taskChainId'].every(key => text(value.identity[key]))
-    && object(value.identity.scope) && /^[a-f0-9]{64}$/u.test(value.configDigest)
-    && canonical(value) === owner.binding, 'NATIVE_MANAGED_OWNER_INVALID');
-  return value;
-}
+const admission = readNativeDshManagedOwnership;
 export function managedNativeOwnerProjection() {
   return { key: STUDIO_MANAGED_NATIVE_OWNER_PROJECTION, stateVersion: 1,
     init: () => ({ current: null, lastClosed: null }),
@@ -83,7 +74,8 @@ export function createStudioManagedNativeExecution({ ctx, flushTimeoutMs = 10000
         guard(signal); admission(payload.ownership);
         invariant(payload.ownership.binding === expected, 'NATIVE_MANAGED_OWNER_CONFLICT');
         invariant(await owned(() => sessions.flush(agent.session), signal, flushTimeoutMs) === true, 'NATIVE_MANAGED_OWNER_NOT_DURABLE');
-        result = await execute({ signal: payload.signal, prepareInput: payload.prepareInput });
+        result = await execute({ signal: payload.signal, prepareInput: payload.prepareInput,
+          ownership: copy(payload.ownership), turn: payload.turn });
         invariant(terminal(result.phase), 'NATIVE_MANAGED_OWNER_NOT_TERMINAL');
         return { reason: result.phase === 'completed' ? { kind: 'completed' }
           : result.phase === 'canceled' ? { kind: 'aborted', reason: { kind: 'user' } }

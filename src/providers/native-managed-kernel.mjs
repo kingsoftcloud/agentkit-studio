@@ -229,7 +229,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       || command.command_type === 'resume' && (command.payload.target.kind !== 'run' || command.payload.input != null)
       || command.command_type === 'enqueue' && ['legacy_history', 'execution_grant_id', 'execution_grant_attempt_epoch', 'execution_policy_ref', 'teams_context_ref']
         .some(key => command.payload[key] != null)) return rejection(command, 'native_control_unsupported', 'unsupported');
-    let binding, interactionDigest;
+    let binding, interactionDigest, admitted = false;
     try {
       if (command.command_type === 'submit_interaction') {
         const row = runRow(command.payload.run_id);
@@ -290,10 +290,11 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
             accepted_seq: seq, status: 'accepted', command_type: command.command_type } }], command);
         return result;
       });
-      if (accepted.status === 'accepted') applyControls(command.session_id);
+      admitted = accepted.status === 'accepted';
+      if (admitted) applyControls(command.session_id);
       wake(); return accepted;
     } finally { await binding?.release?.({ scope: binding.scope === undefined ? undefined : copy(binding.scope), sessionId: command.session_id,
-      runId: managedNativeRunId(command), stage: 'admit', signal: lifetime.signal }); }
+      runId: managedNativeRunId(command), stage: 'admit', admitted, signal: lifetime.signal }); }
   }
   function nativeCommand(command) {
     const payload = command.payload;
@@ -377,20 +378,28 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           const tokens = ownedPort(ownedPort(ports.context.tokens, 'countRequest'), 'countText');
           ports.context = portView(ports.context, { tokens });
         }
+        let deliverCheckpoint;
         const kernel = new NativeKernel({ store: runStore, ports, owner, digest: hash,
-          onCheckpoint: async snapshot => { guard(); await beforeProjection?.(copy(snapshot)); guard(); project(run); } });
+          onCheckpoint: async snapshot => { guard(); await deliverCheckpoint?.(copy(snapshot));
+            guard(); await beforeProjection?.(copy(snapshot)); guard(); project(run); } });
         kernels.set(id, kernel);
         try {
+          let parentRunId;
+          try { parentRunId = runStore.load(scope, id).snapshot.parentRunId; }
+          catch (error) { if (error.code !== 'run_not_found') throw error;
+            parentRunId = runStore.sessionHead(scope, sessionId)?.runId ?? null; }
           const identity = { scope, runId: id, sessionId, turnId: command.command_id, buildId: run.build_id,
-            parentRunId: null, taskChainId: id };
+            parentRunId, taskChainId: id };
           let executed = false, boundaryOpen = true, snapshot;
-          const execute = async ({ signal, replayOnly = false, cancelOnly = false } = {}) => {
+          const execute = async ({ signal, replayOnly = false, cancelOnly = false, onCheckpoint } = {}) => {
             guard(); invariant(boundaryOpen && !executed, 'NATIVE_KERNEL_EXECUTION_REENTERED'); executed = true;
             invariant(!cancelOnly || signal?.aborted && !replayOnly, 'NATIVE_KERNEL_CANCEL_SIGNAL_REQUIRED');
             if (replayOnly) {
               snapshot = runStore.load(scope, id).snapshot;
               invariant(terminal(snapshot.phase), 'NATIVE_KERNEL_OWNER_TERMINAL_MISMATCH'); project(run); return copy(snapshot);
             }
+            invariant(onCheckpoint === undefined || typeof onCheckpoint === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
+            deliverCheckpoint = onCheckpoint;
             kernel.start(identity, parseNativeJson(run.config));
             const cancel = () => {
               if (closed || lifetime.signal.aborted) return;
@@ -460,6 +469,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   catch (error) { runStore.close(); db.close(); throw error; }
   return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events,
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
+      enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),
       inject: false, scopedInterrupt: false, resumeTargets: Object.freeze(['run']), structuredInput: false,
       approval: typeof authorizeInteraction === 'function', executionGrants: false }),
     async getStatus(query, permit) {

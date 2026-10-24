@@ -31,7 +31,9 @@
   `{scope, buildId, configuration}` 的独立副本。应从它恢复已准入的消息及恢复胶囊，重新
   校验当前可信资源和权限，不能用当前可变文件、附件或默认模型重新生成原始输入。
   修改这个副本不能改写数据库，返回不同配置会在执行前被拒绝。
-  `release({scope, sessionId, runId, stage, signal, reason?})` 收到对应的原运行身份。Host
+  `release({scope, sessionId, runId, stage, signal, reason?, admitted?})` 收到对应的原运行身份。
+  `stage='admit'` 正常结束时，`admitted` 表示命令已持久化接收，队列拒绝或准入异常为 false。
+  Host
   退役会停止等待未完成的解析；之后返回的资源仅调用释放，`reason='owner_retired'`，
   不再进入准入或执行。迟到清理不得依赖仍打开的账本。第三方忽略信号或清理失败时，
   不承诺其外部资源已经释放；已有 `release()` 的等待仍要求宿主合作。
@@ -123,8 +125,37 @@ SDK 独占回合后再重建完整 binding 并核对原配置；只有这时端�
 
 现有接收器支持 enqueue、普通 Run interrupt、pause、Run resume、文本 steer，
 以及经过可信引用校验的 approval 回复。`capabilities` 明确暴露支持集。
-共用 Studio binding 当前只接受文本 enqueue；附件/结构化内容需要显式输入 codec，遇到
-其他形状返回 `NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED`，不使用 JSON 字符串化冒充迁移。
+共用 Studio binding 接受文本 enqueue，以及显式版本的 Session prompt 多部分输入：
+
+```json
+{"format":"agentkit.managed-studio-input/v1","parts":[
+  {"type":"text","text":"检查附件"},
+  {"type":"file","receiptId":"当前接收会话的上传凭据 UUID"},
+  {"type":"image","mediaType":"image/png","data":"图片的 canonical base64","name":"input.png"}
+]}
+```
+
+以上对象放在 `payload.content`。文件凭据通过公开的 `fileUploads.resolve(agent, receiptId)`
+按接收 Agent 的确切会话解析，图片通过 `attachments.admitPromptContent` 验证并持久化。
+不接受调用方提供的 Host attachment 引用、本地路径、远程图片 URL 或消息角色。
+上限为 64 部分、八个附件，结构化内容不超过 2 MiB；图片还受 Host 解码及模型能力检查。
+解析后的模型输入字节和展示引用分别固定在 Native configuration 与恢复 capsule 中；
+恢复从原准入记录读取，不依赖已经失效的上传凭据或再次读取附件文件。
+文件凭据仅在首次准入期间经公开的 `bindPrompt` 暂时绑定；接收事务成功后提交绑定并
+调用 `retirePrompt`，让已固定到 Native 的附件不再占用 staged receipt。接收失败则撤销
+临时绑定，保留凭据供用户重试；冷恢复不再绑定或消费原凭据。
+
+正式 SDK owner 把真实 numeric turn 和 `agentkit.native-managed-dsh-turn/v1` ownership
+传给共用 binding。后者使用既有 `createNativeSessionDelivery` 投递已提交 Native 检查点，
+把原始用户消息（含附件展示引用和 command-id/rpcId）、助手、工具结果及模型用量写入
+公开 Session 事件。投递会对照原 Run 身份、配置摘要及恢复 capsule，不能用新输入替换
+原消息。Session 持久化 flush 成功后才确认 Native 消费游标；消息已追加但确认丢失时，
+按既有事件投影中的稳定 atom 身份去重。完整执行循环仍由 Native 驱动。后续托管 Run 的
+owner 固定真实 Native parent，SDK numeric turn 与 Server command-id 始终分别保存。
+
+`capabilities.enqueueContentFormats` 暴露这个输入版本；原 `structuredInput: false` 保留，
+表示下述结构化交互/恢复输入回复仍不支持，不应解释为拒绝此版本的 enqueue。
+未知格式仍返回 `NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED`，不使用 JSON 字符串化降级。
 inject、scoped interrupt、checkpoint/continuation resume、结构化输入回复、
 execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
 

@@ -14,6 +14,8 @@ import { createBackgroundCommandPort } from '../packages/agentkit-harness/src/na
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
+import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
+import { STUDIO_MANAGED_NATIVE_INPUT } from '../src/host/services/native-managed-input.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 import { buildExecutionEngine } from '../src/build-engine.mjs';
@@ -114,6 +116,55 @@ test('managed discovery releases its Session resources before an ordinary Native
   await bound.releaseResources?.({ scope: bound.scope, sessionId: f.payload.agent.session.id, runId: 'preview-run' });
   await ordinary;
   assert.equal(f.requests.length, 1); assert.equal(f.head().phase, 'completed');
+});
+
+test('managed multipart admission persists image bytes and file context; SQLite recovery never reopens expired receipts', async t => {
+  const f = await setup(t, { recovery: true, profile: { input: ['text', 'image'] } });
+  const store = new SqliteRunStore(join(f.root, 'managed.sqlite'));
+  const target = { tenantId: 'managed-tenant', agentInstanceId: f.record.metadata.id };
+  const agent = f.payload.agent; agent.whenIdle = async () => {};
+  f.services.sessionController = { resolveAgent: async () => ({ agent }) };
+  const receiptId = '08719d71-2117-40f9-9a74-b59ca0337194';
+  let uploads = 0, admissions = 0, images = 0, files = 0;
+  const ref = { attachmentId: 'owned-file', bytes: 10, name: 'source.txt' };
+  f.services.fileUploads = { resolve(receiver, id) { uploads++; assert.equal(receiver, agent); assert.equal(id, receiptId); return ref; },
+    bindPrompt: () => ({ commit() {}, [Symbol.dispose]() {} }), retirePrompt() {} };
+  f.services.attachments = { async admitPromptContent(parts) {
+    admissions++; assert.deepEqual(parts[2], { type: 'file', attachment: ref });
+    return parts.map(part => part.type === 'image' ? { type: 'image', attachment: { attachmentId: 'owned-image' } } : part);
+  }, async readImageRequest(image) { images++; assert.equal(image.attachmentId, 'owned-image'); return { mediaType: 'image/png', data: Uint8Array.of(1, 2, 3) }; } };
+  f.services.llm.fileRequestText = file => { files++; assert.deepEqual(file, ref); return 'Original admitted file context'; };
+  const resolve = createStudioManagedNativeBinding({ ctx: { get: id => f.services[id] }, target, principal: { userId: 'managed-user' },
+    resolveHost: async () => f.host, execution: { run: request => request.execute({ signal: f.payload.signal,
+      prepareInput: async () => ({ kind: 'enter', messages: [], assembly: f.payload.input.assembly }) }) } });
+  const command = { command_id: 'managed-media-command', tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId,
+    session_id: agent.session.id, command_type: 'enqueue', payload: { content: { format: STUDIO_MANAGED_NATIVE_INPUT,
+      parts: [{ type: 'text', text: 'Inspect original attachments' },
+        { type: 'image', mediaType: 'image/png', data: 'AQID' }, { type: 'file', receiptId }] } } };
+  const request = { command, signal: f.payload.signal, store, runId: 'managed-media-run', stage: 'admit', admission: null };
+  const initial = await resolve(request), scope = initial.scope;
+  const identity = { scope, runId: request.runId, sessionId: agent.session.id, turnId: command.command_id,
+    buildId: initial.buildId, parentRunId: null, taskChainId: request.runId };
+  new NativeKernel({ store, ports: initial.ports, owner: 'managed-media-owner', digest }).start(identity, initial.configuration);
+  const admission = { scope, buildId: initial.buildId, configuration: initial.configuration };
+  await initial.release(request); store.close();
+  const expired = () => assert.fail('recovery must use the original admitted input');
+  f.services.fileUploads.resolve = expired; f.services.attachments.admitPromptContent = expired;
+  f.services.attachments.readImageRequest = expired; f.services.llm.fileRequestText = expired;
+  const reopened = new SqliteRunStore(join(f.root, 'managed.sqlite')); t.after(() => reopened.close());
+  const resumedRequest = { ...request, store: reopened, stage: 'execute', admission };
+  const resumed = await resolve(resumedRequest);
+  const kernel = new NativeKernel({ store: reopened, ports: resumed.ports, owner: 'managed-media-owner', digest });
+  const done = await resumed.withExecution({ identity, configuration: resumed.configuration, signal: f.payload.signal,
+    execute: () => kernel.runUntilIdle(scope, request.runId) });
+  await resumed.release(resumedRequest);
+  assert.equal(done.phase, 'completed'); assert.equal(f.head(), null); assert.equal(f.requests.length, 1);
+  assert.deepEqual({ uploads, admissions, images, files }, { uploads: 1, admissions: 1, images: 1, files: 1 });
+  const user = JSON.parse(f.requests[0].options.body).messages.findLast(message => message.role === 'user');
+  assert.deepEqual(user.content, [{ type: 'text', text: 'Inspect original attachments\nOriginal admitted file context' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,AQID', detail: 'auto' } }]);
+  assert.deepEqual(reopened.load(scope, request.runId).configuration.inputMessages[0].media,
+    [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } }]);
 });
 
 const contextRegistration = (record, extra = {}) => ({ sourceRef: 'plugin://host-context-proof@1',

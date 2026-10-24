@@ -1,5 +1,7 @@
 import { canonical, copy, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { consumeNativeCompletedTurn } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
+import { createNativeSessionDelivery } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
+import { managedNativeInputParts, admitManagedNativeInput, STUDIO_MANAGED_NATIVE_INPUT } from './native-managed-input.mjs';
 
 /** Trusted product composition. Server permits select a Session; its live
  * preset supplies resources. Neither persisted facts nor command payloads
@@ -10,7 +12,7 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
     && typeof boundTarget.agentInstanceId === 'string' && boundTarget.agentInstanceId.trim()
     && typeof boundPrincipal?.userId === 'string' && boundPrincipal.userId.trim()
     && typeof resolveHost === 'function' && typeof execution?.run === 'function', 'NATIVE_MANAGED_STUDIO_BINDING_INVALID');
-  return async request => {
+  const resolveBinding = async request => {
     const { command, signal, store, admission, runId } = request;
     signal.throwIfAborted();
     invariant(command.tenant_id === boundTarget.tenantId && command.agent_instance_id === boundTarget.agentInstanceId
@@ -22,24 +24,33 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
     if (found.error) throw found.error;
     invariant(found.agent?.session.id === command.session_id && typeof found.agent.whenIdle === 'function', 'NATIVE_MANAGED_OWNER_SESSION_CHANGED');
     await found.agent.whenIdle(); signal.throwIfAborted();
-    // Structured content needs its explicit Host codec. Refuse unsupported
-    // shapes rather than stringify them and silently lose attachment semantics.
-    invariant(typeof command.payload.content === 'string', 'NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED');
+    const parts = managedNativeInputParts(command.payload.content);
+    // The shared assembler restores input from the sealed original capsule.
+    // Upload receipts may already have expired after admission or a restart.
+    const content = admission ? [] : await admitManagedNativeInput({ ctx, agent: found.agent, parts, signal });
     const host = await resolveHost(); signal.throwIfAborted();
     let prepareInput;
     const payload = { agent: found.agent, signal,
       input: { kind: 'enter', messages: [{ id: command.command_id, role: 'user',
-        source: { kind: 'user' }, content: [{ type: 'text', text: command.payload.content }] }] },
+        source: { kind: 'user', rpcId: command.command_id }, content }] },
       prepareInput: step => {
         invariant(typeof prepareInput === 'function', 'NATIVE_MANAGED_OWNER_INPUT_UNAVAILABLE');
         return prepareInput(step);
       } };
     const binding = await host.resolveManagedBinding(payload, { store, admission, runId,
       target: boundTarget, principal: boundPrincipal });
+    let promptFiles;
+    const uploads = ctx.get('fileUploads');
     try {
       signal.throwIfAborted();
       invariant(binding.scope.tenantId === boundTarget.tenantId && binding.scope.agentId === boundTarget.agentInstanceId
         && binding.scope.userId === boundPrincipal.userId, 'NATIVE_MANAGED_STUDIO_TARGET_CHANGED');
+      const receiptIds = [...new Set(parts.filter(part => part.type === 'file').map(part => part.receiptId))];
+      if (!admission && receiptIds.length) {
+        invariant(typeof uploads?.bindPrompt === 'function' && typeof uploads?.retirePrompt === 'function',
+          'NATIVE_MANAGED_STUDIO_ATTACHMENT_UNAVAILABLE');
+        promptFiles = uploads.bindPrompt(found.agent, receiptIds, command.command_id);
+      }
     } catch (error) {
       await binding.releaseResources?.({ scope: binding.scope, sessionId: command.session_id, runId, stage: request.stage, signal });
       throw error;
@@ -47,7 +58,18 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
     let released = false, activeBinding;
     const release = async request => {
       if (released) return;
-      released = true; await binding.releaseResources?.(request);
+      released = true;
+      try { await binding.releaseResources?.(request); }
+      finally {
+        // The managed admission now durably owns the file references/bytes.
+        // Like a consumed inbox occurrence, it no longer needs staged receipts.
+        // Rejected admissions roll back the temporary receipt binding instead.
+        try {
+          if (promptFiles && request.admitted === true) {
+            promptFiles.commit(); uploads.retirePrompt(found.agent, command.command_id);
+          }
+        } finally { promptFiles?.[Symbol.dispose](); }
+      }
     };
     // Resource discovery cannot retain a Session-scoped Memory/vision owner
     // while waiting for SDK ownership. Release the preview, then reconstruct
@@ -83,7 +105,17 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
           invariant(canonical(activeBinding.configuration) === canonical(binding.configuration)
             && canonical(activeBinding.scope) === canonical(binding.scope) && activeBinding.buildId === binding.buildId,
           'native_dsh_recovery_configuration_changed');
-          const snapshot = await request.execute(options);
+          let onCheckpoint = options?.onCheckpoint;
+          if (options?.ownership) {
+            const capsule = activeBinding.configuration.hostRecoveryBinding, sessions = ctx.get('sessions');
+            const deliver = createNativeSessionDelivery({ store, scope: binding.scope, runId,
+              session: found.agent.session, turn: options.turn, managedOwnership: options.ownership,
+              projections: ctx.get('sessionProjections'), flush: session => sessions.flush(session),
+              inputMessages: capsule.messages, systemText: capsule.systemPrompt, source: capsule.source });
+            onCheckpoint = async snapshot => { effectSignal.throwIfAborted(); await deliver(snapshot);
+              effectSignal.throwIfAborted(); await options.onCheckpoint?.(snapshot); };
+          }
+          const snapshot = await request.execute({ ...options, onCheckpoint });
           if (activeBinding.consumeCompletedTurn)
             await consumeNativeCompletedTurn(activeBinding, store.load(binding.scope, runId), effectSignal);
           return snapshot;
@@ -96,4 +128,7 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
       release,
     };
   };
+  return Object.freeze(Object.assign(resolveBinding, {
+    enqueueContentFormats: Object.freeze(['text/plain', STUDIO_MANAGED_NATIVE_INPUT]),
+  }));
 }

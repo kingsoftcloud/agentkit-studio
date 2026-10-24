@@ -4,6 +4,7 @@ import { canonical, invariant, terminal } from '../../../agentkit-harness-core/d
 import { toolContext } from '../../../agentkit-harness-core/dist/tool-context.mjs';
 import { NATIVE_DSH_CONTENT_FORMAT } from './dsh-turn-contract.mjs';
 import { readNativeDshBackgroundOwnership } from './dsh-background-ownership.mjs';
+import { readNativeDshManagedOwnership } from './dsh-managed-ownership.mjs';
 
 export const NATIVE_DELIVERY_PROJECTION = 'agentkitNativeDelivery';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -68,7 +69,8 @@ export function nativeDeliveryProjection() {
  * exact stored admission and a typed notice; inputMessages must then be empty.
  */
 export function createNativeSessionDelivery({ store, scope, runId, session, turn, projections,
-  flush, systemText, inputMessages, source, onStreamSettled, flushTimeoutMs = 30_000, backgroundOwnership = null } = {}) {
+  flush, systemText, inputMessages, source, onStreamSettled, flushTimeoutMs = 30_000,
+  backgroundOwnership = null, managedOwnership = null } = {}) {
   invariant(typeof flush === 'function' && typeof systemText === 'string' && Array.isArray(inputMessages)
     && Number.isSafeInteger(turn) && turn > 0 && typeof source?.provider === 'string' && source.provider
     && typeof source?.model === 'string' && source.model, 'native_delivery_binding_invalid');
@@ -76,10 +78,15 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
   const input = structuredClone(inputMessages);
   canonical(input);
   invariant(input.every(message => message.role === 'user' && typeof message.id === 'string'), 'native_delivery_input_invalid');
-  // Only the explicit background contract permits a Native identity that is
-  // independent of the numeric DSH delivery position. Ordinary turns keep v1.
+  // Explicit external-owner contracts separate Native identity from the SDK's
+  // numeric delivery position. Ordinary turns retain their original contract.
+  invariant(backgroundOwnership === null || managedOwnership === null, 'native_delivery_binding_invalid');
   const background = backgroundOwnership === null ? null
     : readNativeDshBackgroundOwnership(backgroundOwnership, { sessionId: String(session.id), turn });
+  const managed = managedOwnership === null ? null
+    : readNativeDshManagedOwnership(managedOwnership, { sessionId: String(session.id), turn });
+  if (managed) invariant(managed.identity.runId === runId && canonical(managed.identity.scope) === canonical(scope),
+    'native_delivery_managed_admission_invalid');
   if (background) invariant(input.length === 0 && background.identity.runId === runId
     && canonical(background.identity.scope) === canonical(scope) && background.configuration.instructions === systemText,
   'native_delivery_background_admission_invalid');
@@ -88,7 +95,8 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
   const id = key => `ak-native-${hash({ identity, key })}`;
   const projectedCallId = callId => id(`call:${callId}`);
   const projectionPrefix = `dsh:${session.id}:${turn}:v1:`;
-  const projectionName = `${projectionPrefix}${hash({ systemText, input, source, ...(background ? { background } : {}) })}`;
+  const projectionName = `${projectionPrefix}${hash({ systemText, input, source, ...(background ? { background } : {}),
+    ...(managed ? { managed } : {}) })}`;
   let chain = Promise.resolve();
   const state = () => {
     const value = projections.stateOf(session, NATIVE_DELIVERY_PROJECTION);
@@ -112,8 +120,16 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     invariant(record.snapshot.revision === snapshot.revision && record.snapshot.eventSeq === snapshot.eventSeq,
       'native_delivery_checkpoint_stale');
     invariant(canonical(snapshot.scope) === canonical(scope) && snapshot.runId === runId
-      && snapshot.sessionId === String(session.id) && snapshot.turnId === (background ? background.identity.turnId : String(turn)),
+      && snapshot.sessionId === String(session.id) && snapshot.turnId === (background?.identity.turnId ?? managed?.identity.turnId ?? String(turn)),
     'native_delivery_identity_mismatch');
+    if (managed) {
+      const capsule = record.configuration.hostRecoveryBinding;
+      invariant(snapshot.configDigest === managed.configDigest && hash(record.configuration) === managed.configDigest
+        && Object.entries(managed.identity).every(([key, value]) => canonical(snapshot[key]) === canonical(value))
+        && capsule && canonical(capsule.messages) === canonical(input) && canonical(capsule.source) === canonical(source)
+        && capsule.systemPrompt === systemText && record.configuration.instructions === systemText,
+      'native_delivery_managed_admission_invalid');
+    }
     if (background) invariant(record.snapshot.configDigest === background.configDigest
       && canonical(record.configuration) === canonical(background.configuration)
       && canonical(record.snapshot.backgroundNotification ?? null) === canonical(background.notification)

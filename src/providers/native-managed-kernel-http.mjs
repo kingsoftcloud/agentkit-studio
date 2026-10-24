@@ -55,6 +55,7 @@ export function createManagedNativeKernelHttp(runtime) {
       else {
         const forbidden = ['NATIVE_KERNEL_PERMIT_INVALID', 'NATIVE_KERNEL_NONCE_REUSED'].includes(error.code);
         const bad = ['NATIVE_KERNEL_COMMAND_INVALID', 'NATIVE_KERNEL_HTTP_BODY_LIMIT', 'NATIVE_KERNEL_CURSOR_INVALID',
+          'NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED', 'NATIVE_MANAGED_STUDIO_ATTACHMENT_EXPIRED', 'NATIVE_MANAGED_STUDIO_IMAGE_INVALID',
           'invalid_model_json', 'duplicate_model_json_key', 'model_json_nesting_exceeded', 'model_json_integer_digits_exceeded',
           'non_finite_model_json_number', 'non_json_value'].includes(error.code)
           || error instanceof SyntaxError || error instanceof TypeError;

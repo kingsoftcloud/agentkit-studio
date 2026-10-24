@@ -34,6 +34,8 @@ function fixture({ change, abortAfterLookup } = {}) {
 
 test('preview ports cannot execute; live resources are reconstructed exclusively inside the Session owner', async () => {
   const f = fixture(), binding = await f.resolve(f.request);
+  assert.deepEqual(f.resolve.enqueueContentFormats, ['text/plain', 'agentkit.managed-studio-input/v1']);
+  assert.equal(Object.isFrozen(f.resolve.enqueueContentFormats), true);
   assert.throws(() => binding.ports.model.generate(), { code: 'NATIVE_MANAGED_OWNER_PORT_UNAVAILABLE' });
   assert.deepEqual(await f.drive(binding), { phase: 'completed' });
   await binding.release(f.request); await binding.release(f.request);
@@ -57,4 +59,26 @@ test('Host retirement after resource discovery releases a late binding without e
   const f = fixture({ abortAfterLookup: true });
   await assert.rejects(f.resolve(f.request), /retired/u);
   assert.deepEqual(f.counts(), { leases: 0, lookups: 1, releases: 1, effects: 0 });
+});
+
+for (const admitted of [false, true]) test(`staged file receipts retire only after durable managed admission (admitted=${admitted})`, async () => {
+  const cmd = command(), agent = { session: { id: cmd.session_id }, whenIdle: async () => {} };
+  const receiptId = '08719d71-2117-40f9-9a74-b59ca0337194';
+  cmd.payload.content = { format: 'agentkit.managed-studio-input/v1', parts: [{ type: 'file', receiptId }] };
+  const calls = [], scope = { tenantId: target.tenantId, agentId: target.agentInstanceId, userId: 'user', workspaceId: 'workspace' };
+  const services = { sessionController: { resolveAgent: async () => ({ agent }) },
+    attachments: { admitPromptContent: async parts => parts }, fileUploads: {
+      resolve: () => ({ attachmentId: 'file' }),
+      bindPrompt(receiver, ids, requestId) {
+        assert.equal(receiver, agent); assert.deepEqual(ids, [receiptId]); assert.equal(requestId, cmd.command_id);
+        calls.push('bind'); return { commit: () => calls.push('commit'), [Symbol.dispose]: () => calls.push('dispose') };
+      }, retirePrompt(receiver, requestId) { assert.equal(receiver, agent); assert.equal(requestId, cmd.command_id); calls.push('retire'); },
+    } };
+  const resolve = createStudioManagedNativeBinding({ ctx: { get: key => services[key] }, target, principal: { userId: 'user' },
+    resolveHost: async () => ({ resolveManagedBinding: async () => ({ scope, buildId: 'build', configuration: {}, ports: {},
+      releaseResources: async () => calls.push('release') }) }), execution: { run() {} } });
+  const request = { command: cmd, stage: 'admit', runId: 'run', signal: new AbortController().signal, store: new MemoryRunStore() };
+  const binding = await resolve(request);
+  await binding.release({ ...request, admitted }); await binding.release({ ...request, admitted });
+  assert.deepEqual(calls, ['bind', 'release', ...(admitted ? ['commit', 'retire'] : []), 'dispose']);
 });

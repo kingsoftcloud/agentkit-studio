@@ -23,7 +23,7 @@
  * registers tool admission logging. It does NOT call host.executeTurn directly.
  */
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';
@@ -125,6 +125,7 @@ async function applyProof(ctx, options) {
       { id: 'fixture', provider: 'openai-compatible', modelName: 'main',
         baseUrl: options.modelUrl, default: true, credentialName: 'STUDIO_NATIVE_A2A_KEY' },
       ...(managedRecord ? [{ id: 'inbound-fixture', provider: 'openai-compatible', modelName: 'inbound-model',
+        ...(inboundProof?.structuredInput ? { input: ['text', 'image'] } : {}),
         baseUrl: options.a2aControlPlaneUrl + '/native-inbound-model', credentialName: 'STUDIO_NATIVE_INBOUND_KEY' }] : []),
       ...(options.childQuestion ? [{ id: 'child-fixture', provider: 'openai-compatible', modelName: 'child',
         baseUrl: options.modelUrl, credentialName: 'STUDIO_NATIVE_A2A_KEY' }] : []),
@@ -307,8 +308,26 @@ async function applyProof(ctx, options) {
         managedAgent = managedAgentHandle.agent;
         await ctx.agentPresets.select(managedAgent, managedRecord ? dshPresetId(managedRecord.metadata.id, 1) : presetId);
       }
+      if (inboundProof?.structuredInput) {
+        if (source === 'resume') {
+          const previous = JSON.parse(await readFile(join(options.directory, 'managed-input-upload.json'), 'utf8'));
+          await writeFile(join(options.directory, 'managed-input-cold.json'), JSON.stringify({ pid: process.pid,
+            receiptAvailable: ctx.get('fileUploads').resolve(managedAgent, previous.receiptId) !== undefined }));
+        } else {
+          const { PNG } = await import('pngjs');
+          const imageData = PNG.sync.write(new PNG({ width: 1, height: 1 })).toString('base64');
+          const uploaded = await ctx.get('fileUploads').upload(managedAgent, {
+            data: Buffer.from('Original managed file input.\n').toString('base64'), name: 'managed-input.txt' }, new AbortController().signal);
+          const foreign = await ctx.get('fileUploads').upload(agent, {
+            data: Buffer.from('Different Session private input.\n').toString('base64'), name: 'foreign-input.txt' }, new AbortController().signal);
+          await writeFile(join(options.directory, 'managed-input-upload.json'), JSON.stringify({ receiptId: uploaded.receiptId,
+            foreignReceiptId: foreign.receiptId, imageData }));
+        }
+      }
       const managedStatus = () => managedExecution ? managedExecution.status(managedAgent)
         : ctx.get('sessionProjections').stateOf(managedAgent.session, 'agentkitManagedNativeOwner');
+      if (inboundProof?.formalBinding && source === 'resume')
+        await writeFile(join(options.directory, 'managed-session-history-cold.json'), JSON.stringify(managedAgent.session.snapshotEvents()));
       await appendFile(join(options.directory, 'managed-session-owner.jsonl'), JSON.stringify({ phase: 'loaded', pid: process.pid,
         source, state: managedStatus() }) + '\n');
       if (managedRecord && source !== 'resume') {
@@ -322,6 +341,15 @@ async function applyProof(ctx, options) {
           const state = managedStatus();
           if (observed || !state.lastClosed) return;
           observed = true;
+          if (inboundProof.formalBinding) {
+            const history = managedAgent.session.snapshotEvents();
+            const persisted = { history, receiptAvailable: false };
+            if (inboundProof.structuredInput) {
+              const uploaded = JSON.parse(readFileSync(join(options.directory, 'managed-input-upload.json'), 'utf8'));
+              persisted.receiptAvailable = ctx.get('fileUploads').resolve(managedAgent, uploaded.receiptId) !== undefined;
+            }
+            writeFileSync(join(options.directory, 'managed-session-history.json'), JSON.stringify(persisted));
+          }
           appendFileSync(join(options.directory, 'managed-session-owner.jsonl'), JSON.stringify({ phase: 'closed', pid: process.pid,
             runId: JSON.parse(state.lastClosed.binding).identity.runId, state }) + '\n');
         }, 20);

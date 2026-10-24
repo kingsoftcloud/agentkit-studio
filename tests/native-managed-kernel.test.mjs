@@ -318,6 +318,38 @@ test('a whole-Session execution boundary starts no effects before its owner perm
   allowed.resolve(); await driving; assert.equal(calls, 1); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
 });
 
+test('binding cleanup distinguishes durable acceptance from a full queue without executing either input', async t => {
+  const released = [];
+  const f = fixture(t, { queueLimit: 1, resolveBinding: ({ command }) => ({ ...binding(command),
+    release: request => released.push({ command: command.command_id, stage: request.stage, admitted: request.admitted }),
+  }) });
+  const first = command(), second = command({ session_id: first.session_id });
+  assert.equal((await f.receive(first)).status, 'accepted');
+  assert.equal((await f.receive(second)).status, 'queue_full');
+  assert.deepEqual(released, [{ command: first.command_id, stage: 'admit', admitted: true },
+    { command: second.command_id, stage: 'admit', admitted: false }]);
+});
+
+test('managed delivery checkpoints precede model dispatch and the second owner pins its actual Native parent', async t => {
+  const identities = [], delivered = new Set();
+  let models = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { assert.ok(delivered.has(managedNativeRunId(command))); models++; return response(); } } }),
+    withExecution: async ({ identity, execute }) => {
+      identities.push(identity);
+      return execute({ onCheckpoint: async snapshot => {
+        assert.equal(snapshot.runId, identity.runId); assert.equal(snapshot.parentRunId, identity.parentRunId);
+        delivered.add(snapshot.runId);
+      } });
+    },
+  }) });
+  const first = command(); await f.receive(first); await f.runtime.drain(first.session_id);
+  await f.reopen();
+  const second = command({ session_id: first.session_id }); await f.receive(second); await f.runtime.drain(second.session_id);
+  assert.equal(models, 2); assert.equal(identities.length, 2);
+  assert.equal(identities[0].parentRunId, null); assert.equal(identities[1].parentRunId, managedNativeRunId(first));
+});
+
 test('a whole-Session owner stays open while Native is paused and resumes the same Run', { timeout: 5000 }, async t => {
   let owners = 0, closed = 0, calls = 0;
   const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {

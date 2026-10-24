@@ -78,6 +78,7 @@ const { values } = parseArgs({
     'inbound-protocol': { type: 'boolean', default: false },
     'inbound-execution': { type: 'boolean', default: false },
     'inbound-formal-binding': { type: 'boolean', default: false },
+    'inbound-structured-input': { type: 'boolean', default: false },
   },
 });
 
@@ -90,6 +91,7 @@ assert.ok(!values['internal-control-plane'] || !values['busy-cancel'] && !values
 assert.ok(!values['public-tool-activity'] || values['internal-control-plane'], 'public tool activity requires the internal canonical path');
 assert.ok(!values['inbound-protocol'] || values['internal-control-plane'], 'inbound protocol proof requires the internal mounted regression');
 assert.ok(!values['inbound-formal-binding'] || values['inbound-execution'], 'formal binding requires the actual inbound execution proof');
+assert.ok(!values['inbound-structured-input'] || values['inbound-formal-binding'], 'structured input requires the formal Studio binding');
 assert.ok(!values['child-question-cold'] || !values['busy-cancel'] && !values['reconcile-cold'] && !values['internal-control-plane'], 'child question recovery is a separate mounted scenario');
 assert.ok(!values['child-question-approval'] || values['child-question-cold'], 'child remote approval requires --child-question-cold');
 assert.ok(!values['child-answer-crash'] || values['child-question-cold'], 'child answer crash requires --child-question-cold');
@@ -112,7 +114,8 @@ console.log(`Archive SHA256: ${archiveSha}`);
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-native-a2a-')));
 console.log(`A2A proof root: ${root}`);
 assert.ok(!values['inbound-execution'] || values['inbound-protocol'], '--inbound-execution requires --inbound-protocol');
-const inboundProof = values['inbound-execution'] ? createMountedNativeKernelProof(root, { formalBinding: values['inbound-formal-binding'] })
+const inboundProof = values['inbound-execution'] ? createMountedNativeKernelProof(root, {
+  formalBinding: values['inbound-formal-binding'], structuredInput: values['inbound-structured-input'] })
   : values['inbound-protocol'] ? createMountedInboundProof(root) : null;
 const inboundProofPath = await inboundProof?.prepare();
 
