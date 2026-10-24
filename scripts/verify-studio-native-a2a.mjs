@@ -57,6 +57,7 @@ import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { verifyMountedA2aRecovery } from './verify-studio-native-a2a-recovery.mjs';
 import { verifyMountedA2aBusyCancel } from './verify-studio-native-a2a-busy-cancel.mjs';
+import { verifyMountedChildA2aRecovery } from './verify-studio-native-child-a2a-recovery.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -67,6 +68,7 @@ const { values } = parseArgs({
     'receipt-crash': { type: 'boolean', default: false },
     'terminal-close-crash': { type: 'boolean', default: false },
     'busy-cancel': { type: 'boolean', default: false },
+    'child-question-cold': { type: 'boolean', default: false },
     'internal-control-plane': { type: 'boolean', default: false },
     'public-tool-activity': { type: 'boolean', default: false },
   },
@@ -79,6 +81,9 @@ assert.ok(!values['terminal-close-crash'] || values['reconcile-cold'], '--termin
 assert.ok(!values['busy-cancel'] || !values['reconcile-cold'], '--busy-cancel and --reconcile-cold are separate scenarios');
 assert.ok(!values['internal-control-plane'] || !values['busy-cancel'] && !values['reconcile-cold'], 'internal mode currently proves the normal mounted turn/history scenario');
 assert.ok(!values['public-tool-activity'] || values['internal-control-plane'], 'public tool activity requires the internal canonical path');
+assert.ok(!values['child-question-cold'] || !values['busy-cancel'] && !values['reconcile-cold'] && !values['internal-control-plane'], 'child question recovery is a separate mounted scenario');
+
+const managedMode = values['internal-control-plane'] || values['child-question-cold'];
 
 const source = resolve(values.source);
 const archive = resolve(values.archive);
@@ -125,6 +130,9 @@ const workloadTokens = Object.fromEntries(['a2a-registry', 'a2a-task-sink', 'a2a
 let modelCalls = 0, discoveryCalls = 0, a2aSends = 0, a2aGets = 0, a2aCancels = 0;
 const modelRequests = [], a2aPeerRequests = [], discoveryRequests = [], serverFailures = [];
 const recoveryPeer = { complete: false, holdNextGet: false, cancelled: false, finishStream: null };
+const childPeer = { questions: [], approvals: [], releaseAnswers: false, answer: 'Shanghai' };
+const pausedQuestion = { state: 'TASK_STATE_INPUT_REQUIRED', message: { messageId: 'mounted-child-question', role: 'ROLE_AGENT',
+  parts: [{ text: 'Which city should the child research?' }], metadata: { input_schema: { type: 'string' } } } };
 const jsonl = async path => (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 async function managedRecords(root) {
   const base = join(root, 'studio/native-harness/workspace-state');
@@ -148,17 +156,20 @@ const server = createHttpServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
     const body = raw ? JSON.parse(raw) : null;
-    if (values['internal-control-plane'] && request.url.startsWith('/agentengine/internal/v1/a2a/')) {
+    if (managedMode && request.url.startsWith('/agentengine/internal/v1/a2a/')) {
       const action = request.url.split('/').at(-1); internalActions.push(action);
       const audience = ['BindA2ARemoteTask', 'AppendA2ATaskEvents'].includes(action) ? 'a2a-task-sink' : 'a2a-registry';
       assert.equal(request.headers.authorization, 'Bearer ' + workloadTokens[audience]);
       if (action !== 'ListA2ASpaceAgents') {
         const original = JSON.parse((await managedRecords(root))[0].content); let data = {};
         if (action === 'PrepareA2ACall' || action === 'PrepareA2ATaskOperation') {
-          assert.equal(original.phase, 'sending'); assert.ok(Object.values(original.managed.operations).some(value => value.phase === 'preparing'));
+          if (!values['child-question-cold'] || action === 'PrepareA2ACall') assert.equal(original.phase, 'sending');
+          const method = action === 'PrepareA2ACall' ? 'SendStreamingMessage' : body.Operation === 'send_message' ? 'SendMessage' : 'GetTask';
+          assert.ok(Object.values(original.managed.operations).some(value => value.phase === 'preparing' && value.method === method),
+            'the exact managed operation intent must precede its grant HTTP');
           if (action === 'PrepareA2ACall') {
             assert.equal(body.MessageId, original.request.message.messageId); assert.equal(body.ExpectedVersionId, a2aSpec.expected_version_id);
-          } else { assert.equal(body.A2ATaskId, platformTaskId); assert.equal(body.Operation, 'get_task'); }
+          } else { assert.equal(body.A2ATaskId, platformTaskId); assert.ok((values['child-question-cold'] ? ['get_task', 'send_message'] : ['get_task']).includes(body.Operation), 'only the expected managed task operation'); }
           data = { A2ATaskId: platformTaskId, Target: { A2AAgentId: a2aSpec.target_agent_id,
             VersionId: a2aSpec.expected_version_id, CardSha256: 'c'.repeat(64) },
             Route: { Kind: 'hosted_gateway', Interface: { Url: `http://127.0.0.1:${server.address().port}/rpc`,
@@ -193,6 +204,18 @@ const server = createHttpServer(async (request, response) => {
       response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ outcome: 'allowed-once' })); return;
     }
 
+    if (values['child-question-cold'] && request.url === '/question') {
+      assert.equal(body.sessionId, 'a2a-session'); assert.equal(body.questions.length, 1);
+      childPeer.questions.push({ body, response });
+      if (childPeer.releaseAnswers) { response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ answers: [{ id: body.questions[0].id, selected: [], custom: childPeer.answer }] })); }
+      return;
+    }
+    if (values['child-question-cold'] && request.url === '/approval') {
+      assert.equal(body.toolName, 'a2a_continue_task'); childPeer.approvals.push(body);
+      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ outcome: 'allowed-once' })); return;
+    }
+
     // === Model SSE server ===
     if (request.url === '/v1/chat/completions') {
       modelCalls++;
@@ -200,6 +223,22 @@ const server = createHttpServer(async (request, response) => {
       console.log(`[model] call ${modelCalls}: ${body.messages.length} messages, tools=${body.tools?.length || 0}`);
 
       response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+
+      if (values['child-question-cold']) {
+        const own = modelRequests.filter(row => row.model === body.model).length;
+        let tool, text;
+        if (body.model === 'main' && own === 1) tool = { name: 'native_start_child', arguments: { role: 'researcher',
+          task: 'Ask research to find documents about A2A.', background: true, model_call_limit: 3, tool_call_limit: 2 } };
+        else if (body.model === 'child' && own === 1) tool = { name: 'call_a2a_agent', arguments: { agent: 'research', message: 'Find documents about A2A' } };
+        else { assert.ok(own <= (body.model === 'main' ? 3 : 2), 'no unbounded model retry'); text = a2aReply; }
+        const delta = tool ? { tool_calls: [{ index: 0, id: body.model + '-tool', type: 'function',
+          function: { name: tool.name, arguments: JSON.stringify(tool.arguments) } }] } : { content: text };
+        response.write('data: ' + JSON.stringify({ id: `${body.model}-${own}`, model: body.model,
+          choices: [{ index: 0, delta, finish_reason: null }] }) + '\n\n');
+        response.end('data: ' + JSON.stringify({ id: `${body.model}-${own}`, model: body.model,
+          choices: [{ index: 0, delta: {}, finish_reason: tool ? 'tool_calls' : 'stop' }],
+          usage: { prompt_tokens: 15, completion_tokens: 8 } }) + '\n\ndata: [DONE]\n\n'); return;
+      }
 
       if (modelCalls === 1) {
         // First call: emit a tool call to call_a2a_agent.
@@ -241,7 +280,7 @@ const server = createHttpServer(async (request, response) => {
     }
 
     // === A2A discovery ===
-    if (request.url === (values['internal-control-plane'] ? '/agentengine/internal/v1/a2a/ListA2ASpaceAgents' : '/agentengine/api/v1/ListAToASpaceAgents')) {
+    if (request.url === (managedMode ? '/agentengine/internal/v1/a2a/ListA2ASpaceAgents' : '/agentengine/api/v1/ListAToASpaceAgents')) {
       discoveryCalls++;
       discoveryRequests.push(body);
       console.log(`[discovery] call ${discoveryCalls}: space=${body?.A2ASpaceId}`);
@@ -252,7 +291,7 @@ const server = createHttpServer(async (request, response) => {
         A2AAgentId: a2aSpec.target_agent_id,
         VersionId: a2aSpec.expected_version_id,
         Source: 'hosted',
-        ...(values['internal-control-plane'] ? { RouteKind: 'hosted_gateway', Callable: true, CardSha256: 'c'.repeat(64) } : {}),
+        ...(managedMode ? { RouteKind: 'hosted_gateway', Callable: true, CardSha256: 'c'.repeat(64) } : {}),
         AgentCard: {
           name: 'research',
           description: 'Research agent',
@@ -265,7 +304,7 @@ const server = createHttpServer(async (request, response) => {
 
     // === A2A JSONRPC peer ===
     if (request.url === '/rpc') {
-      if (values['internal-control-plane']) {
+      if (managedMode) {
         assert.equal(request.headers.authorization, 'Bearer ' + workloadTokens['a2a-gateway']);
         assert.equal(request.headers['x-agentengine-a2a-permit'], 'mounted-private-permit');
         const original = JSON.parse((await managedRecords(root))[0].content);
@@ -275,6 +314,14 @@ const server = createHttpServer(async (request, response) => {
       a2aPeerRequests.push({ method: body?.method, params: body?.params, id: body?.id });
       const rpcId = body?.id;
       const wrap = result => ({ jsonrpc: '2.0', id: rpcId, result });
+
+      if (values['child-question-cold'] && body.method === 'SendMessage') {
+        a2aSends++; assert.equal(a2aSends, 2, 'only the independently approved continuation');
+        assert.equal(childPeer.approvals.length, 1); assert.equal(body.params.message.taskId, remoteTaskId);
+        assert.deepEqual(body.params.message.parts, [{ data: childPeer.answer }]); recoveryPeer.complete = true;
+        response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(wrap({ task: { id: remoteTaskId, contextId: remoteContextId,
+          status: { state: 'TASK_STATE_COMPLETED' }, artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }] } }))); return;
+      }
 
       if (body.method === 'SendStreamingMessage') {
         a2aSends++;
@@ -286,6 +333,9 @@ const server = createHttpServer(async (request, response) => {
         const event = (id, payload) => `id: ${id}\r\ndata: ${JSON.stringify(wrap(payload))}\r\n\r\n`;
         // Stream: WORKING → artifact → COMPLETED
         response.write(event('1', { task: { id: remoteTaskId, contextId: remoteContextId, status: { state: 'TASK_STATE_WORKING' } } }));
+        if (values['child-question-cold']) {
+          response.end(event('2', { statusUpdate: { taskId: remoteTaskId, contextId: remoteContextId, status: pausedQuestion } })); return;
+        }
         if (values['busy-cancel']) {
           recoveryPeer.finishStream = () => { response.end(event('2', { statusUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
             status: { state: 'TASK_STATE_WORKING' } } })); };
@@ -318,8 +368,9 @@ const server = createHttpServer(async (request, response) => {
         response.end(JSON.stringify(wrap({
           id: remoteTaskId, contextId: remoteContextId,
           status: { state: values['busy-cancel'] ? recoveryPeer.cancelled ? 'TASK_STATE_CANCELED' : 'TASK_STATE_WORKING'
-            : values['reconcile-cold'] && !recoveryPeer.complete ? 'TASK_STATE_INPUT_REQUIRED' : 'TASK_STATE_COMPLETED' },
-          ...(values['busy-cancel'] || values['reconcile-cold'] && !recoveryPeer.complete ? {} : {
+            : (values['reconcile-cold'] || values['child-question-cold']) && !recoveryPeer.complete ? 'TASK_STATE_INPUT_REQUIRED' : 'TASK_STATE_COMPLETED',
+            ...(values['child-question-cold'] && !recoveryPeer.complete ? { message: pausedQuestion.message } : {}) },
+          ...(values['busy-cancel'] || (values['reconcile-cold'] || values['child-question-cold']) && !recoveryPeer.complete ? {} : {
             artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }, ...(values['public-tool-activity'] ? [publicToolArtifact(true)] : [])],
           }),
         })));
@@ -350,7 +401,7 @@ try {
   const modelUrl = `http://127.0.0.1:${serverPort}/v1`;
   const a2aServiceUrl = `http://127.0.0.1:${serverPort}`;
   const tokenDirectory = join(root, 'workload-tokens');
-  if (values['internal-control-plane']) {
+  if (managedMode) {
     await mkdir(tokenDirectory);
     for (const [aud, token] of Object.entries(workloadTokens)) await writeFile(join(tokenDirectory, aud + '.jwt'), token, { mode: 0o400 });
   }
@@ -365,7 +416,9 @@ try {
 
   // Copy the new fixture into the extracted package.
   await mkdir(join(installed, 'tests/fixtures'), { recursive: true });
-  await copyFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'),
+  if (values['child-question-cold']) assert.deepEqual(await readFile(join(installed, 'tests/fixtures/studio-native-a2a.mjs')),
+    await readFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs')), 'child verifier uses the actual packed fixture');
+  else await copyFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'),
     join(installed, 'tests/fixtures/studio-native-a2a.mjs'));
 
   // Symlink the SDK's built @deepseek-ai packages.
@@ -408,7 +461,7 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
-    ...(values['reconcile-cold'] || values['busy-cancel'] ? [
+    ...(values['reconcile-cold'] || values['busy-cancel'] || values['child-question-cold'] ? [
       '    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
       '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
       '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'",
@@ -421,13 +474,16 @@ try {
     `        modelUrl: ${JSON.stringify(modelUrl)}`,
     `        a2aServiceUrl: ${JSON.stringify(a2aServiceUrl)}`,
     `        a2aServiceToken: ${JSON.stringify('a2a-fixture-token')}`,
-    ...(values['internal-control-plane'] ? [`        a2aControlPlaneUrl: ${JSON.stringify(a2aServiceUrl)}`,
+    ...(managedMode ? [`        a2aControlPlaneUrl: ${JSON.stringify(a2aServiceUrl)}`,
       `        a2aTokenDirectory: ${JSON.stringify(tokenDirectory)}`] : []),
     `        a2aBindings: ${JSON.stringify(JSON.stringify([a2aSpec]))}`,
     `        mountHost: true`,
-    `        exportControl: ${values['reconcile-cold'] || values['busy-cancel']}`,
+    `        exportControl: ${values['reconcile-cold'] || values['busy-cancel'] || values['child-question-cold']}`,
     `        holdTerminalClose: ${values['terminal-close-crash']}`,
     ...(values['busy-cancel'] ? [`        approvalUrl: ${JSON.stringify(`http://127.0.0.1:${serverPort}/approval`)}`] : []),
+    ...(values['child-question-cold'] ? ['        childQuestion: true',
+      `        approvalUrl: ${JSON.stringify(`http://127.0.0.1:${serverPort}/approval`)}`,
+      `        questionUrl: ${JSON.stringify(`http://127.0.0.1:${serverPort}/question`)}`] : []),
     '',
   ].join('\n'));
 
@@ -454,7 +510,11 @@ try {
   };
 
   harness = new DeepSeekHarness(options);
-  if (values['busy-cancel']) {
+  if (values['child-question-cold']) {
+    await verifyMountedChildA2aRecovery({ root, installed, repository, source, archiveSha, harness,
+      makeHarness: () => new DeepSeekHarness(options), childPeer, requests: { modelRequests, a2aPeerRequests, serverFailures },
+      counts: () => ({ model: modelCalls, discovery: discoveryCalls, send: a2aSends, get: a2aGets, cancel: a2aCancels }), a2aReply });
+  } else if (values['busy-cancel']) {
     await verifyMountedA2aBusyCancel({ root, installed, repository, source, archive, archiveSha, harness, recoveryPeer,
       counts: () => ({ model: modelCalls, discovery: discoveryCalls, send: a2aSends, get: a2aGets, cancel: a2aCancels }),
       requests: { modelRequests, a2aPeerRequests, serverFailures } });
@@ -479,7 +539,7 @@ try {
   assert.equal(modelCalls, 2, `model HTTP calls: expected exactly 2, got ${modelCalls}`);
   assert.equal(discoveryCalls, 1, `discovery HTTP calls: expected exactly 1, got ${discoveryCalls}`);
   assert.equal(a2aSends, 1, `A2A peer Send calls: expected exactly 1, got ${a2aSends}`);
-  assert.equal(a2aGets, values['internal-control-plane'] ? 1 : 0, 'exact authoritative reads for the selected transport');
+  assert.equal(a2aGets, managedMode ? 1 : 0, 'exact authoritative reads for the selected transport');
   assert.deepEqual(serverFailures, []);
 
   // === Verify the tool result contains the A2A reply ===
@@ -520,7 +580,7 @@ try {
   assert.equal(toolResults.length, 1); assert.equal(toolResults[0].status, 'ok');
   assert.equal(toolResults[0].content.reply, a2aReply);
   let managedBefore = await managedRecords(root);
-  if (values['internal-control-plane']) {
+  if (managedMode) {
     const deadline = Date.now() + 10000;
     while (true) {
       const journal = JSON.parse(managedBefore[0].content).managed.events;
@@ -549,7 +609,7 @@ try {
   assert.equal(admissions.length, 1); assert.equal(admissions[0].name, 'call_a2a_agent');
   const durableBefore = await history(root), owners = durableBefore.filter(event => event.type === 'turn/owner');
   const sessionObservations = durableBefore.filter(event => event.type === 'agentkit/a2a-observation');
-  if (values['internal-control-plane']) {
+  if (managedMode) {
     assert.equal(sessionObservations.length, managed.managed.events.log.length);
     assert.deepEqual(sessionObservations.map(event => event.data.eventJson), managed.managed.events.log.map(canonical));
     assert.equal(new Set(sessionObservations.map(event => event.seq)).size, sessionObservations.length);
@@ -646,7 +706,7 @@ try {
   // === Verify no credentials leaked into the SQLite record ===
   const recordStr = canonical(coldRecord);
   assert.equal(recordStr.includes('a2a-fixture-token'), false, 'A2A service token not leaked into SQLite record');
-  if (values['internal-control-plane']) {
+  if (managedMode) {
     assert.deepEqual(internalActions.filter(action => action !== 'AppendA2ATaskEvents'), ['ListA2ASpaceAgents', 'PrepareA2ACall', 'BindA2ARemoteTask', 'PrepareA2ATaskOperation']);
     assert.equal(internalEventBatches.length, values['public-tool-activity'] ? 6 : 5);
     assert.equal(acceptedInternalEvents.size, values['public-tool-activity'] ? 9 : 6);
@@ -680,8 +740,8 @@ try {
     archive: { path: archive, sha256: archiveSha },
     sdk: { source, commit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() },
     node: process.version,
-    internalControlPlane: values['internal-control-plane'], publicToolActivity: values['public-tool-activity'], internalActions,
-    internalEvents: values['internal-control-plane'] ? { batches: internalEventBatches.length, accepted: acceptedInternalEvents.size,
+    internalControlPlane: managedMode, publicToolActivity: values['public-tool-activity'], internalActions,
+    internalEvents: managedMode ? { batches: internalEventBatches.length, accepted: acceptedInternalEvents.size,
       pending: managed.managed.events.pending.length, sessionDelivery: managed.managed.events.sessionDelivery,
       sessionObservationCount: sessionObservations.length, log: managed.managed.events.log } : null,
     proofRoot: root,

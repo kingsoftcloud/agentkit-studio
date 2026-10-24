@@ -510,9 +510,17 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       const { signal: ignored, ...plain } = request;
       check(same(expected, plain), 'child_recovery_not_owned');
       const records = request.reservations.map(reservation => ownedChild(request, reservation));
-      if (records.some(record => !terminal(record.snapshot.phase) || record.snapshot.phase === 'interrupted' || unsafeReceipt(record))) return null;
-      return { operationKey: request.operationKey, results: records.map((record, index) => terminalReceipt(record, request.reservations[index])),
-        pendingChildRunIds: [], approvals: [], errorCode: null, children: records.map((record, index) => projection(record, request.reservations[index])) };
+      // Reconcile observes ledgers only. A proven original receipt wait may
+      // remain pending after the parent collector died; it is not a failed
+      // collection and grants no authority to query/send/drive that child.
+      // Rebinding and execution happen later in a fresh fenced collect.
+      if (records.some(record => terminal(record.snapshot.phase)
+        ? record.snapshot.phase === 'interrupted' || unsafeReceipt(record)
+        : request.action === 'cancel' || !canWaitForReceipt?.(record))) return null;
+      return { operationKey: request.operationKey,
+        results: records.flatMap((record, index) => terminal(record.snapshot.phase) ? [terminalReceipt(record, request.reservations[index])] : []),
+        pendingChildRunIds: records.filter(record => !terminal(record.snapshot.phase)).map(record => record.snapshot.runId),
+        approvals: [], errorCode: null, children: records.map((record, index) => projection(record, request.reservations[index])) };
     },
     async interruptedReceipts(request) {
       check(same(request.scope, parentScope), 'child_parent_scope_mismatch');

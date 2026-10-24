@@ -77,7 +77,7 @@ export function validateChildApproval(reservations: ChildLifecycleRequest['reser
 }
 
 export function reduceChildLifecycle(snapshot: RunSnapshot, config: RunConfiguration, request: ChildLifecycleRequest,
-  result: ChildLifecycleResult, digest: (value: unknown) => string): Partial<RunSnapshot> {
+  result: ChildLifecycleResult, digest: (value: unknown) => string, { observationOnly = false } = {}): Partial<RunSnapshot> {
   invariant(request.runId === snapshot.runId && canonical(request.scope) === canonical(snapshot.scope)
     && request.operationKey === snapshot.pendingIntent && canonical(request.reservations) === canonical(unsettledChildren(snapshot)), 'child_observation_identity_conflict');
   if (request.waitForChildRunIds) invariant(request.action === 'wait' && request.waitForChildRunIds.length > 0
@@ -145,7 +145,7 @@ export function reduceChildLifecycle(snapshot: RunSnapshot, config: RunConfigura
     updated.pendingInteraction = { interactionId: `${request.operationKey}:approval`, hostInteractionId: `native-child-${digest(approval)}`,
       callId: approval.toolCall.callId, operationKey: request.operationKey };
     updated.interaction = null;
-  } else if (result.errorCode || request.action !== 'poll'
+  } else if (result.errorCode || !observationOnly && request.action !== 'poll'
     && pending.some(id => !request.waitForChildRunIds || request.waitForChildRunIds.includes(id))) {
     updated.phase = 'finalizing'; updated.candidate = null; updated.verification = null;
     updated.childLifecycleFailure = request.action; updated.outcome = 'unverified';

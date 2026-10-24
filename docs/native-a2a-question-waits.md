@@ -119,10 +119,28 @@ missing or still-unknown observations cannot authorize result delivery.
 The product-assembly tests cover foreground/background input and remote approval,
 parent/child cancellation, stale root/preset/parent ownership, and binding forgery
 using real Kernel/SQLite and controlled HTTP. Agent, question and approval audit
-services in these child tests are explicit doubles. Full mounted child question
-presentation, cold parent/child recovery, SIGKILL at those child boundaries and
-browser/human acceptance remain open; root startup recovery does not adopt child
-Runs independently.
+services in these child tests are explicit doubles.
+
+`scripts/verify-studio-native-a2a.mjs --child-question-cold --source <built DSH>
+--archive <packed studio .tgz> --keep` additionally verifies a typed input through
+the fully mounted question/approval/Session services. It kills the actual Host
+while the original parent is collecting its waiting child, waits for the actual
+lease expiry and explicitly resumes that parent through the authenticated
+recovery RPC. A lost collector records the same child's known pending observation;
+a fresh fenced collector reconstructs its sealed ports and local question wait.
+This does not rerun the child tool. Unknown writes outside the classified original
+receipt wait remain unavailable, and cancellation is not inferred from observation.
+
+The mounted scenario passes on Node 26 and 22 with a Node-only PATH. Before
+answering, reattachment leaves model/discovery/Send/Get/Cancel counts unchanged;
+the original child checkpoint and question identity survive. The separately
+audited continuation then settles one child allocation and closes the original
+DSH turn once. HTTP model, managed remote control plane/peer and human answerer
+are controlled fixtures; the dependency graph is linked from the maintained SDK.
+Mounted remote-approval-type questions, other child crash/cancellation boundaries,
+automatic parent adoption, browser/human acceptance, fresh installation and other
+product entry combinations remain open. Root startup recovery does not adopt
+child Runs independently.
 
 ## Verification scope and remaining migration work
 
@@ -144,8 +162,8 @@ this does not prove a mounted cold typed-question/human/browser flow. Closed-tur
 typed-question cleanup uses real journals, Kernel/SQLite and SIGKILL with declared
 minimal closed-Session/root/preset authority doubles.
 
-These checks do not establish the full migration's completion. Full child cold
-recovery, subscriptions/inbound assembly, full mounted question/browser flows, fresh
+These checks do not establish the full migration's completion. Remaining child cold
+recovery boundaries, subscriptions/inbound assembly, full mounted question/browser flows, fresh
 installation/Electron, online providers and the broader capability/configuration
 and execution-entry audit remain separate gates. Explicit DSH/Codex task control
 remains available; this automatic waiter belongs to the Native owning Run.

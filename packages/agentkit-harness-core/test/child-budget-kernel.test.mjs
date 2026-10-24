@@ -39,6 +39,27 @@ test('a resumed foreground child blocks the next model without waiting for an un
     /child_foreground_wait_identity_conflict/);
 });
 
+test('recovering a lost child collector observes pending children without declaring their wait failed or settling their budget', () => {
+  const { config, snapshot } = fixture({ childLifecyclePolicy: 'owned-background/v2' });
+  const allocation = reservation({ operationKey: 'start', call: call('start', 'start_child') });
+  const waiting = { ...snapshot, phase: 'verifying', childRunIds: ['child'], childBudgetReservations: [allocation] };
+  const batch = prepareChildLifecycle(waiting, config), intent = batch.intents[0];
+  const request = childLifecycleRequest(batch.snapshot, intent, new AbortController().signal);
+  assert.equal(request.action, 'wait');
+  const observed = { operationKey: request.operationKey, results: [], pendingChildRunIds: ['child'], approvals: [], errorCode: null };
+  const recovered = reduceChildLifecycle(batch.snapshot, config, request, observed, digest, { observationOnly: true });
+  assert.equal(recovered.phase, 'verifying'); assert.equal(recovered.pendingIntent, null);
+  assert.equal(recovered.childLifecycleFailure, null); assert.deepEqual(recovered.childBudgetReservations, [allocation]);
+  const next = prepareChildLifecycle(recovered, config);
+  assert.equal(next.intents[0].payload.action, 'wait'); assert.notEqual(next.intents[0].operationKey, intent.operationKey);
+  assert.deepEqual(next.intents[0].payload.reservations, [allocation]);
+  // Normal execution still must finish its selected wait. A real unavailable
+  // receipt remains a failure even when discovered by recovery.
+  assert.equal(reduceChildLifecycle(batch.snapshot, config, request, observed, digest).reason, 'background_children_unsettled');
+  assert.equal(reduceChildLifecycle(batch.snapshot, config, request, { ...observed, errorCode: 'child_receipt_unavailable' }, digest,
+    { observationOnly: true }).reason, 'child_receipt_unavailable');
+});
+
 for (const backend of ['memory', 'sqlite']) {
   test(`${backend}: cancellation and compaction cannot discard allocations; the store fences model claims`, t => {
     const dir = mkdtempSync(join(tmpdir(), 'native-child-budget-ledger-'));

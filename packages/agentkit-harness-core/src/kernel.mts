@@ -412,7 +412,11 @@ export class NativeKernel {
         const request = childLifecycleRequest(snapshot, intent, abort.signal);
         const result = await Promise.race([this.ports.children.reconcile(request), timeout]);
         if (result !== null) {
-          const changes = reduceChildLifecycle(snapshot, config, request, result, this.digest);
+          // A lost collector is an observation, not an unfinished child. Seal
+          // its known facts first; a fresh fenced collect can wait on those
+          // same children without replaying their external effects. Ordinary
+          // collect results still require the requested wait/cancel to finish.
+          const changes = reduceChildLifecycle(snapshot, config, request, result, this.digest, { observationOnly: true });
           return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed',
             result: { ...objectValue(result), recoveryPolicy: 'owned-child-observation/v1' } }, changes, 0,
           [{ kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: 'owned-child-observation/v1' } },

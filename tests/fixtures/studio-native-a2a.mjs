@@ -80,9 +80,11 @@ async function applyProof(ctx, options) {
     record = await agents.create({
       name: 'A2A Proof Agent',
       runtimeType: 'harness',
-      spec: { context: { maxInputTokens: 8000, reserveOutputTokens: 256 } },
+      spec: { context: { maxInputTokens: 8000, reserveOutputTokens: 256 },
+        ...(options.childQuestion ? { subAgents: [{ name: 'researcher', instructions: 'Ask the remote research agent. Report its exact reply.',
+          tools: ['call_a2a_agent'], modelProfileId: 'child-fixture', maxTurns: 3, maxToolCalls: 2 }] } : {}) },
       bindings: {
-        modelProfileIds: ['fixture'],
+        modelProfileIds: ['fixture', ...(options.childQuestion ? ['child-fixture'] : [])],
         tools: ['call_a2a_agent'],
         a2a: typeof options.a2aBindings === 'string' ? JSON.parse(options.a2aBindings) : options.a2aBindings,
       },
@@ -107,6 +109,8 @@ async function applyProof(ctx, options) {
     modelProfiles: [
       { id: 'fixture', provider: 'openai-compatible', modelName: 'main',
         baseUrl: options.modelUrl, default: true, credentialName: 'STUDIO_NATIVE_A2A_KEY' },
+      ...(options.childQuestion ? [{ id: 'child-fixture', provider: 'openai-compatible', modelName: 'child',
+        baseUrl: options.modelUrl, credentialName: 'STUDIO_NATIVE_A2A_KEY' }] : []),
     ],
     modelProfileKeys: { STUDIO_NATIVE_A2A_KEY: 'sk-studio-a2a-secret' },
   }), { mode: 0o600 });
@@ -217,7 +221,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   if (options.approvalUrl) ctx.on('approval/request', async request => {
-    if (request.agent.session.id !== 'a2a-session' || request.toolName !== 'a2a_cancel_task') return;
+    if (request.agent.session.id !== 'a2a-session' || !['a2a_cancel_task', ...(options.childQuestion ? ['a2a_continue_task'] : [])].includes(request.toolName)) return;
     // Controlled human answerer, through the real ApprovalService and a real
     // HTTP boundary. This is not the browser/gateway approval UI.
     const response = await fetch(options.approvalUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -225,6 +229,16 @@ async function applyProof(ctx, options) {
     if (!response.ok) throw Error('Approval peer failed');
     const result = await response.json();
     return result.outcome === 'allowed-once' ? 'allowed-once' : 'rejected';
+  }, { prepend: true });
+
+  if (options.questionUrl) ctx.on('user-questions/request', async request => {
+    if (request.agent.session.id !== 'a2a-session') return;
+    // Deterministic human answerer only. Production userQuestions, approval,
+    // Session, projection and Native services remain fully mounted.
+    const response = await fetch(options.questionUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pid: process.pid, sessionId: request.agent.session.id, questions: request.questions }), signal: request.signal });
+    if (!response.ok) throw Error('Question answer peer failed');
+    return response.json();
   }, { prepend: true });
 
   // The Native tool port re-enters ctx.tools.execute, so pre-execute fires for
