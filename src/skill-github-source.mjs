@@ -31,6 +31,7 @@
  */
 import { createHash } from 'node:crypto';
 import { skillSlug, parseFrontmatter, SkillDiscoveryError } from './skill-discovery.mjs';
+import { skillCandidateExcluded } from './skill-candidate-metadata.mjs';
 
 export const GITHUB_SKILL_SOURCE_CONTRACT = 'agentkit.github-skill-source/v1';
 
@@ -42,11 +43,12 @@ const SAFE_OWNER_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const EXACT_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 const MAX_TREE_ENTRIES = 10000;
-const MAX_CANDIDATES = 16;
-const MAX_FILES_PER_CANDIDATE = 256;
-const MAX_FILE_BYTES = 512 * 1024;
-const MAX_TOTAL_INSPECTION_BYTES = 8 * 1024 * 1024;
-const MAX_BLOB_REQUESTS = 256;
+const MAX_CANDIDATES = 5000;
+const MAX_FILES_PER_CANDIDATE = 1000;
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
+const MAX_CANDIDATE_BYTES = 100 * 1024 * 1024;
+const MAX_TOTAL_INSPECTION_BYTES = 200 * 1024 * 1024;
+const MAX_BLOB_REQUESTS = 5000;
 const MAX_SEARCH_LIMIT = 10;
 
 // Git tree entry modes.
@@ -354,6 +356,7 @@ export function createGithubSkillSource({ fetchImpl } = {}) {
       const type = String(entry.type || '');
       const mode = String(entry.mode || '');
       const base = path.split('/').pop();
+      if (skillCandidateExcluded(path)) continue;
       if (base !== 'SKILL.md') continue;
       // After validateTreeEntries, type is 'blob' or 'tree'. SKILL.md must be a blob.
       if (type !== 'blob') throw fail('skill_github_unsafe_entry', 'SKILL.md is not a regular file');
@@ -379,13 +382,18 @@ export function createGithubSkillSource({ fetchImpl } = {}) {
       const type = String(entry.type || '');
       const mode = String(entry.mode || '');
       if (root && !path.startsWith(prefix)) continue;
+      if (skillCandidateExcluded(path)) continue;
       if (mode === MODE_SYMLINK || mode === MODE_SUBMODULE)
         throw fail('skill_github_unsafe_entry', 'Candidate contains a symlink or submodule');
       if (type === 'tree') continue;
       const rel = root ? path.slice(prefix.length) : path;
-      files.push({ rel, sha: String(entry.sha).toLowerCase(), mode });
+      if (entry.size !== undefined && (!Number.isSafeInteger(entry.size) || entry.size < 0))
+        throw fail('skill_github_tree_invalid', 'Git tree size metadata is invalid');
+      files.push({ rel, sha: String(entry.sha).toLowerCase(), mode, size: entry.size });
     }
     if (files.length > MAX_FILES_PER_CANDIDATE) throw fail('skill_github_file_limit', 'Candidate exceeds the file count limit');
+    if (files.reduce((n, file) => n + (file.size ?? 0), 0) > MAX_CANDIDATE_BYTES)
+      throw fail('skill_github_candidate_bytes_limit', 'Skill candidate exceeds the byte limit');
     if (!files.some(f => f.rel === 'SKILL.md')) throw fail('skill_github_manifest_missing', 'Candidate root has no SKILL.md');
     return files;
   }
@@ -438,63 +446,95 @@ export function createGithubSkillSource({ fetchImpl } = {}) {
     checkAuthority(assertCurrent, signal);
 
     const blobBudget = { count: 0, spend() { this.count++; if (this.count > MAX_BLOB_REQUESTS) throw fail('skill_github_blob_request_limit', 'Exceeded the maximum blob request count'); } };
-    const totalBytes = { count: 0, add(n) { this.count += n; if (this.count > MAX_TOTAL_INSPECTION_BYTES) throw fail('skill_github_inspection_limit', 'Total inspection bytes exceeded the limit'); } };
+    const blobs = new Map(); let totalBytes = 0;
+    const blob = async sha => {
+      if (blobs.has(sha)) return blobs.get(sha);
+      const bytes = await fetchBlob(parsed.owner, parsed.repo, sha, signal, assertCurrent, blobBudget);
+      totalBytes += bytes.byteLength;
+      if (totalBytes > MAX_TOTAL_INSPECTION_BYTES) throw fail('skill_github_inspection_limit', 'Total inspection bytes exceeded the limit');
+      const value = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      blobs.set(sha, value); return value;
+    };
 
-    const candidates = [];
+    const candidates = [], repositoryFiles = new Set(); let repositoryBytes = 0;
     for (const { root } of candidateRoots) {
       checkAuthority(assertCurrent, signal);
       if (parsed.subdir) {
         if (root !== parsed.subdir && !(root.startsWith(parsed.subdir + '/'))) continue;
       }
-      const files = collectCandidateFiles(entries, root);
-      checkAuthority(assertCurrent, signal);
-
-      // Fetch manifest once; reuse for both metadata and file list.
-      const manifestFile = files.find(f => f.rel === 'SKILL.md');
-      if (!manifestFile) throw fail('skill_github_manifest_missing', 'Candidate root has no SKILL.md');
-      const manifestBytes = await fetchBlob(parsed.owner, parsed.repo, manifestFile.sha, signal, assertCurrent, blobBudget);
-      checkAuthority(assertCurrent, signal);
-      totalBytes.add(manifestBytes.byteLength); // count once
-
-      let metadata, slug, description, version;
       try {
-        const manifestText = new TextDecoder('utf-8', { fatal: true }).decode(manifestBytes);
-        metadata = parseFrontmatter(manifestText);
-      } catch { throw fail('skill_github_manifest_invalid', 'SKILL.md is not valid UTF-8'); }
-      if (!metadata || typeof metadata !== 'object')
-        throw fail('skill_github_manifest_invalid', 'SKILL.md frontmatter is missing or invalid');
-      if (typeof metadata.name !== 'string' || !metadata.name.trim())
-        throw fail('skill_github_manifest_invalid', 'SKILL.md frontmatter must contain a name');
-      if (typeof metadata.description !== 'string' || !metadata.description.trim())
-        throw fail('skill_github_manifest_invalid', 'SKILL.md frontmatter must contain a description');
-      version = String(metadata.version || '1.0.0');
-      requireExactVersion(version);
-      slug = skillSlug(String(metadata.name));
-      description = String(metadata.description);
-      checkAuthority(assertCurrent, signal);
+        const files = collectCandidateFiles(entries, root);
+        checkAuthority(assertCurrent, signal);
 
-      // Fetch remaining files (manifest already fetched and counted).
-      const fileResults = [{ path: 'SKILL.md', bytes: new Uint8Array(manifestBytes) }];
-      for (const file of files) {
-        if (file.rel === 'SKILL.md') continue; // reuse
+        // Fetch manifest once; reuse for both metadata and file list.
+        const manifestFile = files.find(f => f.rel === 'SKILL.md');
+        if (!manifestFile) throw fail('skill_github_manifest_missing', 'Candidate root has no SKILL.md');
+        const manifestBytes = await blob(manifestFile.sha);
+        if (manifestFile.size !== undefined && manifestFile.size !== manifestBytes.byteLength)
+          throw fail('skill_github_blob_invalid', 'Git tree and blob sizes disagree');
         checkAuthority(assertCurrent, signal);
-        const bytes = await fetchBlob(parsed.owner, parsed.repo, file.sha, signal, assertCurrent, blobBudget);
+        let candidateBytes = manifestBytes.byteLength;
+
+        let metadata, slug, description, version;
+        try {
+          const manifestText = new TextDecoder('utf-8', { fatal: true }).decode(manifestBytes);
+          metadata = parseFrontmatter(manifestText);
+        } catch { throw fail('skill_github_manifest_invalid', 'SKILL.md is not valid UTF-8'); }
+        if (!metadata || typeof metadata !== 'object')
+          throw fail('skill_github_manifest_invalid', 'SKILL.md frontmatter is missing or invalid');
+        if (typeof metadata.name !== 'string' || !metadata.name.trim())
+          throw fail('skill_github_manifest_invalid', 'SKILL.md frontmatter must contain a name');
+        if (typeof metadata.description !== 'string' || !metadata.description.trim())
+          throw fail('skill_github_manifest_invalid', 'SKILL.md frontmatter must contain a description');
+        version = String(metadata.version || '1.0.0');
+        requireExactVersion(version);
+        slug = skillSlug(String(metadata.name));
+        description = String(metadata.description);
         checkAuthority(assertCurrent, signal);
-        totalBytes.add(bytes.byteLength);
-        fileResults.push({ path: file.rel, bytes: new Uint8Array(bytes) });
+
+        // Fetch remaining files (manifest already fetched and counted).
+        const fileResults = [{ path: 'SKILL.md', bytes: manifestBytes }];
+        for (const file of files) {
+          if (file.rel === 'SKILL.md') continue; // reuse
+          checkAuthority(assertCurrent, signal);
+          const bytes = await blob(file.sha);
+          if (file.size !== undefined && file.size !== bytes.byteLength)
+            throw fail('skill_github_blob_invalid', 'Git tree and blob sizes disagree');
+          checkAuthority(assertCurrent, signal);
+          candidateBytes += bytes.byteLength;
+          if (candidateBytes > MAX_CANDIDATE_BYTES) throw fail('skill_github_candidate_bytes_limit', 'Candidate exceeds the byte limit');
+          fileResults.push({ path: file.rel, bytes });
+        }
+        for (const file of fileResults) {
+          const path = root ? `${root}/${file.path}` : file.path;
+          if (!repositoryFiles.has(path)) {
+            repositoryFiles.add(path); repositoryBytes += file.bytes.byteLength;
+            if (repositoryBytes > MAX_TOTAL_INSPECTION_BYTES || repositoryFiles.size > MAX_BLOB_REQUESTS)
+              throw fail('skill_github_inspection_limit', 'Total inspection files or bytes exceeded the limit');
+          }
+        }
+
+        fileResults.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+
+        // 3. Root path is empty string, matching parent interface.
+        candidates.push({
+          candidateId: candidateId(parsed.owner, parsed.repo, commit, root),
+          path: root,
+          name: slug,
+          description,
+          version,
+          files: fileResults,
+        });
+      } catch (error) {
+        checkAuthority(assertCurrent, signal);
+        // Candidate validation must not hide healthy siblings. Transport,
+        // authority, repository integrity and global budgets still fail closed.
+        if (!['skill_github_manifest_invalid', 'skill_github_file_limit', 'skill_github_candidate_bytes_limit',
+          'skill_github_blob_limit', 'SKILL_NAME_INVALID'].includes(error?.code)) throw error;
+        candidates.push({ candidateId: candidateId(parsed.owner, parsed.repo, commit, root), path: root,
+          status: 'invalid', name: root.split('/').pop() || parsed.repo, version: '', description: '', files: [],
+          diagnostics: [{ code: error.code, message: 'Skill candidate could not be inspected.' }] });
       }
-
-      fileResults.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-
-      // 3. Root path is empty string, matching parent interface.
-      candidates.push({
-        candidateId: candidateId(parsed.owner, parsed.repo, commit, root),
-        path: root,
-        name: slug,
-        description,
-        version,
-        files: fileResults,
-      });
     }
 
     return {

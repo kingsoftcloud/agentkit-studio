@@ -29,7 +29,11 @@ export async function apply(ctx, options) {
     try { return db.prepare('SELECT * FROM legacy_memory_effects ORDER BY identity').all(); } finally { db.close(); }
   };
   const githubFiles = [['SKILL.md', Buffer.from('---\nname: packed-github-skill\ndescription: GitHub immutable 技能\nversion: 1.2.3\n---\nInstructions')],
-    ['assets/.binary', Buffer.from([0, 255, 128, 13, 10])]];
+    ['assets/.binary', Buffer.alloc(9 * 1024 * 1024 + 1, 0xff)]];
+  // Identical content at distinct paths exercises request deduplication without
+  // reducing the logical file count or bypassing candidate byte budgets.
+  githubFiles.push(['scripts/review.SH', githubFiles[0][1]]);
+  for (let i = githubFiles.length; i < 1000; i++) githubFiles.push([`assets/file-${i}.txt`, githubFiles[0][1]]);
   const githubBlob = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
   const githubFetch = async (input, init) => {
     assert.equal(previous, null, 'cold original management receipts must not fetch GitHub again');
@@ -43,6 +47,8 @@ export async function apply(ctx, options) {
     else if (url.pathname === `/repos/packed/repository/git/commits/${githubCommit}`) data = { sha: githubCommit, tree: { sha: githubTree } };
     else if (url.pathname === `/repos/packed/repository/git/trees/${githubTree}`) data = { sha: githubTree, truncated: false, tree: [
       { path: 'assets', mode: '040000', type: 'tree', sha: 'e'.repeat(40) },
+      { path: 'node_modules/ignored.js', mode: '100644', type: 'blob', sha: 'f'.repeat(40), size: 200 * 1024 * 1024 },
+      { path: 'dist/SKILL.md', mode: '100644', type: 'blob', sha: 'f'.repeat(40), size: 100 },
       ...githubFiles.map(([path, bytes]) => ({ path, mode: '100644', type: 'blob', sha: githubBlob(bytes), size: bytes.length }))] };
     else if (url.pathname.startsWith('/repos/packed/repository/git/blobs/')) {
       const file = githubFiles.find(([, bytes]) => url.pathname.endsWith('/' + githubBlob(bytes))); assert.ok(file, url.pathname);
@@ -850,6 +856,9 @@ export async function apply(ctx, options) {
         assert.equal(searched.mode, 'search'); assert.equal(searched.repositories[0].url, 'https://github.com/packed/repository');
         const inspection = await call('skill_discover_github', { source: 'https://github.com/packed/repository' });
         assert.equal(inspection.commit, githubCommit); assert.equal(inspection.candidates.length, 1);
+        assert.equal(inspection.candidates[0].fileCount, 1000); assert.ok(inspection.candidates[0].totalBytes > 9 * 1024 * 1024);
+        assert.deepEqual(inspection.candidates[0].risk, { containsScripts: true, scripts: ['scripts/review.SH'],
+          networkMarkers: [], requiresReview: true });
         const installArgs = { inspection_token: inspection.inspectionToken, candidate_id: inspection.candidates[0].candidateId };
         const installId = `builtin-proof-${++serial}`, install = () => registry.execute({ agent, callId: installId, name: 'skill_install',
           arguments: installArgs, signal: new AbortController().signal });
@@ -889,6 +898,7 @@ export async function apply(ctx, options) {
         for (const path of binary) assert.deepEqual(await readFile(join(privateRoot, path)), githubFiles[1][1]);
         assert.equal(githubRequests.length - githubStart, 6);
         const managementProof = { commit: githubCommit, resourceId: installedSkill.resourceId, revision: 2, githubRequests: 6,
+          candidateFiles: 1000, binaryBytes: githubFiles[1][1].length, riskPresented: true,
           exactBinary: true, originalDshOwner: true, duplicateSuppressed: true, oldRevisionPreserved: true, nextRevisionAdmitted: true,
           installRecord: managementRecords.find(item => item.value.request.call.callId === installId).file,
           bindRecord: managementRecords.find(item => item.value.request.call.callId === bindId).file };

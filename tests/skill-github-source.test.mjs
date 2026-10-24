@@ -73,6 +73,68 @@ function standardRoutes(entries, opts = {}) {
   return routes;
 }
 
+test('1000-file Skill excludes build/dependency directories and downloads identical blobs only once per inspection', async () => {
+  const entries = [treeEntry('SKILL.md', SKILL_SHA)];
+  for (let i = 0; i < 999; i++) entries.push(treeEntry(`assets/f${i}`, SCRIPT_SHA));
+  for (const dir of ['.git', '.venv', 'venv', 'node_modules', 'dist', 'build', '__pycache__']) {
+    entries.push(treeEntry(`${dir}/SKILL.md`, SKILL_SHA), treeEntry(`${dir}/bad-link`, 'f'.repeat(40), '120000'));
+  }
+  const routes = standardRoutes(entries);
+  routes[`https://api.github.com/repos/o/r/git/blobs/${SKILL_SHA}`] = blobRoute(SKILL_SHA, SKILL_MD);
+  routes[`https://api.github.com/repos/o/r/git/blobs/${SCRIPT_SHA}`] = blobRoute(SCRIPT_SHA, SCRIPT);
+  const { fetchImpl, calls } = makeTransport(routes), src = createGithubSkillSource({ fetchImpl });
+  const result = await src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority });
+  assert.equal(result.candidates.length, 1); assert.equal(result.candidates[0].files.length, 1000);
+  assert.equal(calls.filter(call => call.url.includes('/git/blobs/')).length, 2);
+  assert.ok(result.candidates[0].files.every(file => file.path === 'SKILL.md' || file.path.startsWith('assets/')));
+});
+
+test('bad candidate metadata preserves healthy siblings; oversized tree metadata needs no blob download', async () => {
+  const invalid = Buffer.from('---\nname: incomplete\n---'), invalidSha = gitBlobSha1(invalid);
+  const entries = [treeEntry('good/SKILL.md', SKILL_SHA), treeEntry('bad/SKILL.md', invalidSha),
+    { ...treeEntry('large/SKILL.md', SKILL_SHA), size: 100 * 1024 * 1024 + 1 }];
+  const routes = standardRoutes(entries);
+  routes[`https://api.github.com/repos/o/r/git/blobs/${SKILL_SHA}`] = blobRoute(SKILL_SHA, SKILL_MD);
+  routes[`https://api.github.com/repos/o/r/git/blobs/${invalidSha}`] = blobRoute(invalidSha, invalid);
+  const { fetchImpl, calls } = makeTransport(routes), src = createGithubSkillSource({ fetchImpl });
+  const result = await src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority });
+  assert.equal(result.candidates.length, 3);
+  assert.equal(result.candidates.find(candidate => candidate.path === 'good').name, 'my-skill');
+  for (const [path, code] of [['bad', 'skill_github_manifest_invalid'], ['large', 'skill_github_candidate_bytes_limit']]) {
+    const candidate = result.candidates.find(candidate => candidate.path === path);
+    assert.equal(candidate.status, 'invalid'); assert.deepEqual(candidate.files, []); assert.equal(candidate.diagnostics[0].code, code);
+  }
+  assert.equal(calls.filter(call => call.url.includes('/git/blobs/')).length, 2);
+});
+
+test('repository byte budget counts distinct paths even when identical Git blobs share one HTTP response', async () => {
+  const bytes = Buffer.alloc(9 * 1024 * 1024, 0xab), sha = gitBlobSha1(bytes), entries = [];
+  for (const root of ['one', 'two', 'three']) {
+    entries.push(treeEntry(`${root}/SKILL.md`, SKILL_SHA));
+    for (let i = 0; i < 8; i++) entries.push(treeEntry(`${root}/asset-${i}`, sha));
+  }
+  const routes = standardRoutes(entries);
+  routes[`https://api.github.com/repos/o/r/git/blobs/${SKILL_SHA}`] = blobRoute(SKILL_SHA, SKILL_MD);
+  routes[`https://api.github.com/repos/o/r/git/blobs/${sha}`] = blobRoute(sha, bytes);
+  const { fetchImpl, calls } = makeTransport(routes), src = createGithubSkillSource({ fetchImpl });
+  await assert.rejects(src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }),
+    { code: 'skill_github_inspection_limit' });
+  assert.equal(calls.filter(call => call.url.includes('/git/blobs/')).length, 2);
+});
+
+test('verified blob bytes must also match declared Git tree sizes', async () => {
+  for (const manifest of [true, false]) {
+    const entries = [{ ...treeEntry('SKILL.md', SKILL_SHA), size: Buffer.byteLength(SKILL_MD) + (manifest ? 1 : 0) },
+      { ...treeEntry('script.sh', SCRIPT_SHA), size: Buffer.byteLength(SCRIPT) + (manifest ? 0 : 1) }];
+    const routes = standardRoutes(entries);
+    routes[`https://api.github.com/repos/o/r/git/blobs/${SKILL_SHA}`] = blobRoute(SKILL_SHA, SKILL_MD);
+    routes[`https://api.github.com/repos/o/r/git/blobs/${SCRIPT_SHA}`] = blobRoute(SCRIPT_SHA, SCRIPT);
+    const { fetchImpl } = makeTransport(routes), src = createGithubSkillSource({ fetchImpl });
+    await assert.rejects(src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }),
+      { code: 'skill_github_blob_invalid' });
+  }
+});
+
 test('inspect fetches commit→git/commits→tree by tree SHA, verifying identity at each step', async () => {
   const entries = [treeEntry('SKILL.md', SKILL_SHA), treeEntry('scripts/run.sh', SCRIPT_SHA), treeEntry('assets/data.bin', BINARY_SHA)];
   const routes = standardRoutes(entries);
@@ -247,8 +309,8 @@ test('inspect rejects a blob whose size metadata does not match decoded bytes', 
   await assert.rejects(() => src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }), { code: 'skill_github_blob_invalid' });
 });
 
-test('inspect rejects a 512KiB+1 blob with skill_github_blob_limit', async () => {
-  const big = Buffer.alloc(512 * 1024 + 1, 65);
+test('inspect preserves a binary above the old 512KiB/file and 8MiB/inspection caps', async () => {
+  const big = Buffer.alloc(9 * 1024 * 1024 + 1, 0xff);
   const bigSha = gitBlobSha1(big);
   const entries = [treeEntry('SKILL.md', SKILL_SHA), treeEntry('big.txt', bigSha)];
   const routes = standardRoutes(entries);
@@ -256,7 +318,8 @@ test('inspect rejects a 512KiB+1 blob with skill_github_blob_limit', async () =>
   routes[`https://api.github.com/repos/o/r/git/blobs/${bigSha}`] = blobRoute(bigSha, big);
   const { fetchImpl } = makeTransport(routes);
   const src = createGithubSkillSource({ fetchImpl });
-  await assert.rejects(() => src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }), { code: 'skill_github_blob_limit' });
+  const result = await src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority });
+  assert.deepEqual(Buffer.from(result.candidates[0].files.find(file => file.path === 'big.txt').bytes), big);
 });
 
 test('inspect rejects a blob whose sha1 does not match the content', async () => {
@@ -295,7 +358,10 @@ test('inspect rejects SKILL.md with missing name', async () => {
   routes[`https://api.github.com/repos/o/r/git/blobs/${badSha}`] = blobRoute(badSha, badMd);
   const { fetchImpl } = makeTransport(routes);
   const src = createGithubSkillSource({ fetchImpl });
-  await assert.rejects(() => src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }), { code: 'skill_github_manifest_invalid' });
+  const result = await src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority });
+  assert.equal(result.candidates[0].status, 'invalid');
+  assert.deepEqual(result.candidates[0].files, []);
+  assert.equal(result.candidates[0].diagnostics[0].code, 'skill_github_manifest_invalid');
 });
 
 test('inspect rejects SKILL.md with invalid semver version', async () => {
@@ -306,7 +372,10 @@ test('inspect rejects SKILL.md with invalid semver version', async () => {
   routes[`https://api.github.com/repos/o/r/git/blobs/${badSha}`] = blobRoute(badSha, badMd);
   const { fetchImpl } = makeTransport(routes);
   const src = createGithubSkillSource({ fetchImpl });
-  await assert.rejects(() => src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }), { code: 'skill_github_manifest_invalid' });
+  const result = await src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority });
+  assert.equal(result.candidates[0].status, 'invalid');
+  assert.deepEqual(result.candidates[0].files, []);
+  assert.equal(result.candidates[0].diagnostics[0].code, 'skill_github_manifest_invalid');
 });
 
 test('inspect rejects non-UTF-8 manifest', async () => {
@@ -317,7 +386,10 @@ test('inspect rejects non-UTF-8 manifest', async () => {
   routes[`https://api.github.com/repos/o/r/git/blobs/${badSha}`] = blobRoute(badSha, badBytes);
   const { fetchImpl } = makeTransport(routes);
   const src = createGithubSkillSource({ fetchImpl });
-  await assert.rejects(() => src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }), { code: 'skill_github_manifest_invalid' });
+  const result = await src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority });
+  assert.equal(result.candidates[0].status, 'invalid');
+  assert.deepEqual(result.candidates[0].files, []);
+  assert.equal(result.candidates[0].diagnostics[0].code, 'skill_github_manifest_invalid');
 });
 
 test('inspect rejects a truncated tree', async () => {
@@ -555,18 +627,20 @@ test('inspect races a hanging reader.cancel (fire-and-forget, no unbounded await
   // If we reach here, the hanging cancel did not block the caller
 });
 
-test('inspect rejects more than 256 files in a candidate', async () => {
+test('inspect reports more than 1000 files as an invalid candidate before blob fetch', async () => {
   const entries = [treeEntry('SKILL.md', SKILL_SHA)];
-  for (let i = 0; i < 256; i++) { const b = Buffer.from(String(i)); entries.push(treeEntry(`f${i}`, gitBlobSha1(b))); }
+  for (let i = 0; i < 1000; i++) { const b = Buffer.from(String(i)); entries.push(treeEntry(`f${i}`, gitBlobSha1(b))); }
   const routes = standardRoutes(entries);
   const { fetchImpl } = makeTransport(routes);
   const src = createGithubSkillSource({ fetchImpl });
-  await assert.rejects(() => src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }), { code: 'skill_github_file_limit' });
+  const result = await src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority });
+  assert.equal(result.candidates[0].status, 'invalid');
+  assert.equal(result.candidates[0].diagnostics[0].code, 'skill_github_file_limit');
 });
 
-test('inspect rejects more than 16 candidates', async () => {
+test('inspect rejects more than 5000 candidates', async () => {
   const entries = [];
-  for (let i = 0; i < 17; i++) entries.push(treeEntry(`skill${i}/SKILL.md`, SKILL_SHA));
+  for (let i = 0; i < 5001; i++) entries.push(treeEntry(`skill${i}/SKILL.md`, SKILL_SHA));
   const routes = standardRoutes(entries);
   const { fetchImpl } = makeTransport(routes);
   const src = createGithubSkillSource({ fetchImpl });

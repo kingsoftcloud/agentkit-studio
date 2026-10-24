@@ -1,17 +1,17 @@
 /** Host-owned Skill discovery/install/binding. No model-selected local paths,
  * runtime code execution, Python, or fabricated Native execution identity. */
 import { createHash, randomBytes } from 'node:crypto';
-import { constants, closeSync, fstatSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, join, posix } from 'node:path';
-import { canonical, copy, invariant, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
-import { atomicPrivate, openPrivate, privateDirectory } from '../packages/agentkit-harness/src/native/local-command-state.mjs';
+import { realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { canonical, copy, invariant } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { atomicPrivate, privateDirectory } from '../packages/agentkit-harness/src/native/local-command-state.mjs';
 import { commandStateRoot } from './providers/dsh-node-command-ledger.mjs';
-import { parseFrontmatter, skillSlug } from './skill-discovery.mjs';
+import { createSkillInspectionStore, MAX_SKILL_CANDIDATES } from './skill-inspection-store.mjs';
 
 export const SKILL_MANAGEMENT_CONTRACT = 'agentkit.studio-skill-management/v1';
 const sha = value => createHash('sha256').update(value).digest('hex');
 const text = { type: 'string', minLength: 1, maxLength: 2048 };
-const ids = { type: 'array', minItems: 1, maxItems: 16, uniqueItems: true, items: text };
+const ids = { type: 'array', minItems: 1, maxItems: MAX_SKILL_CANDIDATES, uniqueItems: true, items: text };
 const definition = (name, description, properties, required = [], extra = {}) => ({ name, description,
   parameters: { type: 'object', properties, required, additionalProperties: false, ...extra },
   readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 120000 });
@@ -25,8 +25,6 @@ export const skillManagementDefinitions = () => copy([
     { resource_id: text, resource_ids: ids }, [], { anyOf: [{ required: ['resource_id'] }, { required: ['resource_ids'] }] }),
 ]);
 const selected = (one, many) => [...new Set([one, ...(many ?? [])].filter(Boolean))];
-const safePath = value => typeof value === 'string' && value && value.length <= 1024 && !/[\\\x00-\x1f\x7f]/u.test(value)
-  && !posix.isAbsolute(value) && value.split('/').every(p => p && p !== '.' && p !== '..');
 function guardRequest(request) {
   invariant(request?.signal instanceof AbortSignal && typeof request.assertCurrent === 'function', 'skill_management_authority_missing');
   request.signal.throwIfAborted(); const current = request.assertCurrent();
@@ -53,49 +51,10 @@ export function createStudioSkillManagement({ workspaceRoot, stateDir, agentId, 
   // Inspections belong to one Agent, while immutable content belongs to the
   // shared installed-resource catalog. The same resource cannot point to two
   // different Agent-private directories when another Agent installs it.
-  const root = state.root, inspections = join(root, 'inspections'), packages = join(realpathSync(join(stateDir, 'skill-management')), 'packages');
-  privateDirectory(inspections, true); privateDirectory(packages, true);
+  const root = state.root, packages = join(realpathSync(join(stateDir, 'skill-management')), 'packages');
+  privateDirectory(packages, true);
   const guard = request => { guardRequest(request); state.guard(); };
-  const readInspection = token => {
-    invariant(/^skg_[a-f0-9]{64}$/.test(token), 'skill_management_inspection_invalid'); state.guard();
-    const fd = openPrivate(join(inspections, `${token}.json`), constants.O_RDONLY);
-    try {
-      invariant(fstatSync(fd).size <= 16 * 1024 * 1024, 'skill_management_inspection_limit');
-      const record = parseNativeJson(readFileSync(fd, 'utf8'));
-      invariant(record.contract === SKILL_MANAGEMENT_CONTRACT && record.agentId === agentId
-        && record.token === token && record.digest === sha(canonical(record.snapshot)), 'skill_management_inspection_invalid');
-      return record.snapshot;
-    } finally { closeSync(fd); }
-  };
-  function snapshot(value) {
-    invariant(/^[a-f0-9]{40}$/.test(value?.commit) && Array.isArray(value.candidates)
-      && value.candidates.length <= 16, 'skill_management_source_invalid');
-    let total = 0;
-    const ids = new Set();
-    const candidates = value.candidates.map(candidate => {
-      invariant(typeof candidate.candidateId === 'string' && candidate.candidateId && !ids.has(candidate.candidateId)
-        && (candidate.path === '' || safePath(candidate.path)) && Array.isArray(candidate.files)
-        && candidate.files.length > 0 && candidate.files.length <= 256, 'skill_management_source_invalid');
-      ids.add(candidate.candidateId); const paths = new Set();
-      const files = candidate.files.map(file => {
-        invariant(safePath(file.path) && !paths.has(file.path) && file.bytes instanceof Uint8Array
-          && file.bytes.length <= 512 * 1024, 'skill_management_source_invalid');
-        paths.add(file.path); total += file.bytes.length;
-        invariant(total <= 8 * 1024 * 1024, 'skill_management_source_limit');
-        const bytes = Buffer.from(file.bytes);
-        return { path: file.path, body: bytes.toString('base64'), sha256: sha(bytes) };
-      });
-      invariant([...paths].every(path => path.split('/').slice(0, -1)
-        .every((_, i, parts) => !paths.has(parts.slice(0, i + 1).join('/')))), 'skill_management_source_invalid');
-      const manifest = files.find(file => file.path === 'SKILL.md'); invariant(manifest, 'skill_management_manifest_missing');
-      const metadata = parseFrontmatter(Buffer.from(manifest.body, 'base64').toString('utf8'));
-      const name = skillSlug(metadata.name), version = String(metadata.version || '1.0.0');
-      invariant(version.length <= 128 && !/[\x00-\x1f]/.test(version), 'skill_management_manifest_invalid');
-      return { candidateId: candidate.candidateId, path: candidate.path, name, version,
-        displayName: String(metadata.name), description: String(metadata.description || '').slice(0, 4096), files };
-    });
-    return { repository: copy(value.repository), commit: value.commit, candidates };
-  }
+  const inspections = createSkillInspectionStore({ root, agentId, contract: SKILL_MANAGEMENT_CONTRACT, guard });
   const descriptor = (record, candidate) => {
     const digest = sha(canonical({ repository: record.repository, commit: record.commit, candidate }));
     return { resourceId: `skill-catalog-${digest.slice(0, 24)}`, name: candidate.name, displayName: candidate.displayName,
@@ -117,25 +76,22 @@ export function createStudioSkillManagement({ workspaceRoot, stateDir, agentId, 
         }
         const result = await guarded(request, () => source.inspect(value, { ref: args.ref ?? 'main', signal: request.signal,
           assertCurrent: () => { guard(request); return true; } })); guard(request);
-        const content = snapshot(result), token = `skg_${randomBytes(32).toString('hex')}`;
-        const record = { contract: SKILL_MANAGEMENT_CONTRACT, agentId, token, snapshot: content, digest: sha(canonical(content)) };
-        guard(request); atomicPrivate(join(inspections, `${token}.json`), canonical(record)); guard(request);
-        return { ok: true, mode: 'inspection', inspectionToken: token, repository: content.repository, commit: content.commit,
-          requiresConfirmation: true, candidates: content.candidates.map(({ files, ...candidate }) => ({ ...candidate,
-            fileCount: files.length, totalBytes: files.reduce((n, file) => n + Buffer.from(file.body, 'base64').length, 0) })) };
+        const token = `skg_${randomBytes(32).toString('hex')}`;
+        const content = inspections.persist(result, token, request);
+        return { ok: true, mode: 'inspection', inspectionToken: token, ...content, requiresConfirmation: true };
       }
       if (name === 'skill_install') {
-        const chosen = selected(args.candidate_id, args.candidate_ids); invariant(chosen.length && chosen.length <= 16, 'candidate_required');
-        const record = readInspection(args.inspection_token), installed = [], failures = [];
+        const chosen = selected(args.candidate_id, args.candidate_ids); invariant(chosen.length && chosen.length <= MAX_SKILL_CANDIDATES, 'candidate_required');
+        const record = inspections.read(args.inspection_token), installed = [], failures = [];
         for (const candidateId of chosen) {
-          const candidate = record.candidates.find(item => item.candidateId === candidateId);
+          const candidate = inspections.candidate(record, args.inspection_token, candidateId);
           if (!candidate) { failures.push({ candidate_id: candidateId, ok: false, error_type: 'skill_management_candidate_not_found' }); continue; }
+          if (candidate.status === 'invalid') { failures.push({ candidate_id: candidateId, ok: false, error_type: 'skill_management_candidate_invalid' }); continue; }
           guard(request); const item = descriptor(record, candidate);
           try {
             privateDirectory(item.directory, true);
             for (const file of candidate.files) {
-              guard(request); invariant(safePath(file.path), 'skill_management_inspection_invalid');
-              const bytes = Buffer.from(file.body, 'base64'); invariant(sha(bytes) === file.sha256, 'skill_management_inspection_invalid');
+              guard(request); const bytes = inspections.bytes(file);
               const path = join(item.directory, file.path); privateDirectory(dirname(path), true); guard(request); atomicPrivate(path, bytes);
             }
             guard(request);
@@ -154,7 +110,7 @@ export function createStudioSkillManagement({ workspaceRoot, stateDir, agentId, 
           next: 'Call skill_bind_agent with installed resourceIds to bind them.' };
       }
       invariant(name === 'skill_bind_agent', 'skill_management_tool_unbound');
-      const chosen = selected(args.resource_id, args.resource_ids); invariant(chosen.length && chosen.length <= 16, 'resource_required');
+      const chosen = selected(args.resource_id, args.resource_ids); invariant(chosen.length && chosen.length <= MAX_SKILL_CANDIDATES, 'resource_required');
       const catalog = await guarded(request, () => skillDiscovery.listInstalled()); guard(request);
       invariant(chosen.every(id => catalog.items.some(item => item.resourceId === id && item.kind === 'skill' && item.status === 'ready')),
         'skill_not_ready');

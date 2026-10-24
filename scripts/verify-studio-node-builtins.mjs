@@ -92,13 +92,14 @@ try {
   harness = new DeepSeekHarness(harnessOptions);
   await harness.start();
   await writeFile(join(root, 'start-proof'), 'Execute the actual Host proof after initialization.');
-  const deadline = Date.now() + 30000; let report;
+  // Two 1000-file installs fsync each private file before publication.
+  const deadline = Date.now() + 90000; let report;
   while (Date.now() < deadline) {
     try { report = JSON.parse(await readFile(join(root, 'proof.json'), 'utf8')); break; }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.equal(report?.passed, true, JSON.stringify(report));
+  assert.equal(report?.passed, true, report ? JSON.stringify(report) : 'Mounted proof did not finish within 90 seconds');
   assert.equal(report.node, process.version); assert.equal(report.path, nodeBin);
   assert.deepEqual(report.runtimes.map(row => row.runtime), ['dsh-native', 'codex']);
   for (const row of report.runtimes) assert.deepEqual(row.builtinNames, [...DSH_NODE_BUILTIN_NAMES].sort());
@@ -126,7 +127,8 @@ try {
     && row.skills.policyDeniedWithoutRequest && row.skills.postPolicyPreserved && row.skills.scriptsNotExecuted));
   assert.equal(new Set(report.runtimes.map(row => row.skills.rootDir)).size, 2);
   assert.ok(report.runtimes.every(row => row.management.commit === 'c'.repeat(40) && row.management.revision === 2
-    && row.management.githubRequests === 6 && row.management.exactBinary && row.management.originalDshOwner
+    && row.management.githubRequests === 6 && row.management.candidateFiles === 1000 && row.management.binaryBytes === 9 * 1024 * 1024 + 1
+    && row.management.riskPresented && row.management.exactBinary && row.management.originalDshOwner
     && row.management.duplicateSuppressed && row.management.oldRevisionPreserved && row.management.nextRevisionAdmitted));
   assert.ok(report.runtimes.every(row => row.knowledge.actualRequests === 1 && row.knowledge.originalDshOwner
     && row.knowledge.duplicateSuppressed && row.knowledge.policyDenied && row.knowledge.postPolicyPreserved));

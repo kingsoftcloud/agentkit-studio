@@ -21,7 +21,7 @@ if (input.killAfterEffect) management.execute = async (...args) => {
 const port = createDshNodeSkillManagement({ agentId: input.agentId, agentRevision: 1, buildId: 'build-1',
   workspaceRoot: join(input.root, 'workspace'), stateDir: join(input.root, 'state'), management,
   ctx: { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) } } });
-const exec = { name: input.name, arguments: input.args, callId: input.callId, signal: AbortSignal.timeout(15000),
+const exec = { name: input.name, arguments: input.args, callId: input.callId, signal: AbortSignal.timeout(input.timeoutMs ?? 15000),
   agent: { session: { id: 'session-1' } } };
 if (input.waitForGo) { const go = once(process, 'message'); process.send({ ready: true }); await go; }
 try {

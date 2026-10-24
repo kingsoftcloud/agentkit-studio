@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fork, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createAgentStore } from '../src/agent-store.mjs';
@@ -56,10 +56,10 @@ async function setup(t) {
 
 function cold(h, name, args, callId, extra = {}) {
   const child = spawnSync(process.execPath, [new URL('./fixtures/skill-management-owner.mjs', import.meta.url).pathname], {
-    input: JSON.stringify({ root: h.root, agentId: h.first.metadata.id, name, args, callId, ...extra }), encoding: 'utf8', timeout: 20000,
+    input: JSON.stringify({ root: h.root, agentId: h.first.metadata.id, name, args, callId, ...extra }), encoding: 'utf8', timeout: extra.timeoutMs ?? 20000,
     env: { ...process.env, STUDIO_PYTHON: '/python-unavailable' },
   });
-  assert.equal(child.status, 0, child.stderr); const value = JSON.parse(child.stdout); assert.notEqual(value.pid, process.pid); return value.result;
+  assert.equal(child.status, 0, child.stderr || child.error?.message); const value = JSON.parse(child.stdout); assert.notEqual(value.pid, process.pid); return value.result;
 }
 
 test('inspection survives another Node PID; install uses exact cached binary and binds only a new immutable Agent revision', async t => {
@@ -86,6 +86,69 @@ test('inspection survives another Node PID; install uses exact cached binary and
   assert.notEqual(pointer.ino, revision.ino, 'editable pointer cannot mutate immutable revision through a shared inode');
   const again = cold(h, 'skill_bind_agent', binding, 'new-bind-call'); assert.equal(again.content.already_bound, true);
   assert.equal((await h.agents.listRevisions(h.first.metadata.id)).length, 2); assert.equal(h.inspections, 1);
+});
+
+test('1000-file inspection with a 9MiB binary survives cold installation using small v2 indexes and verified raw blobs', async t => {
+  const h = await setup(t), source = snapshot(), files = source.candidates[0].files;
+  const large = Buffer.alloc(9 * 1024 * 1024 + 1, 0xff);
+  files.push({ path: 'assets/large.bin', bytes: large }, { path: 'scripts/review.SH', bytes: Buffer.from('exit 99') });
+  for (let i = files.length; i < 1000; i++) files.push({ path: `assets/file-${i}.txt`, bytes: Buffer.from('immutable shared bytes') });
+  files.push({ path: 'node_modules/ignored.js', bytes: large }, { path: 'dist/SKILL.md', bytes: manifest('excluded') });
+  files[0].bytes = Buffer.concat([files[0].bytes, Buffer.from('\nUse CURL https://example.test for network access')]);
+  h.source(source); const inspection = await h.inspect(), candidate = inspection.candidates[0];
+  assert.equal(candidate.fileCount, 1000); assert.ok(candidate.totalBytes > 9 * 1024 * 1024);
+  assert.equal(candidate.status, 'ready'); assert.deepEqual(candidate.risk, { containsScripts: true,
+    scripts: ['scripts/review.SH'], networkMarkers: ['https://', 'curl ', 'network'], requiresReview: true });
+  const records = jsonFiles(h.stateDir), index = records.find(item => item.value.token === inspection.inspectionToken);
+  assert.equal(index.value.snapshot.storageContract, 'agentkit.skill-inspection-blobs/v2');
+  assert.ok(records.every(record => record.bytes.length < 1024 * 1024), 'raw resources must not expand JSON records');
+  assert.ok(records.every(record => !record.bytes.includes(Buffer.from('"body":'))));
+  const result = cold(h, 'skill_install', { inspection_token: inspection.inspectionToken, candidate_id: candidate.candidateId }, 'large-cold', { timeoutMs: 60000 });
+  assert.equal(result.status, 'ok', JSON.stringify(result));
+  const path = await h.skillDiscovery.resolveInstalled(result.content.installed_resource.resourceId);
+  assert.deepEqual(readFileSync(join(path, 'assets/large.bin')), large);
+  assert.equal(readdirSync(path, { recursive: true }).filter(file => statSync(join(path, file)).isFile()).length, 1000);
+  assert.equal(readdirSync(path).includes('node_modules'), false); assert.equal(readdirSync(path).includes('dist'), false);
+  assert.equal(h.inspections, 1);
+});
+
+test('invalid candidates remain visible for review but cannot be installed alongside a healthy sibling', async t => {
+  const h = await setup(t), source = snapshot();
+  source.candidates.push({ candidateId: 'bad', path: 'bad', status: 'invalid', files: [],
+    diagnostics: [{ code: 'skill_github_manifest_invalid', message: 'untrusted secret must not be echoed' }] });
+  h.source(source); const inspection = await h.inspect(), invalid = inspection.candidates.find(item => item.candidateId === 'bad');
+  assert.equal(invalid.status, 'invalid'); assert.deepEqual(invalid.risk, { requiresReview: true });
+  assert.equal(JSON.stringify(invalid).includes('untrusted secret'), false);
+  const result = cold(h, 'skill_install', { inspection_token: inspection.inspectionToken,
+    candidate_ids: inspection.candidates.map(item => item.candidateId) }, 'partial-cold');
+  assert.equal(result.status, 'error'); assert.equal(result.content.installed.length, 1);
+  assert.deepEqual(result.content.failures, [{ candidate_id: 'bad', ok: false, error_type: 'skill_management_candidate_invalid' }]);
+  assert.equal((await h.skillDiscovery.listInstalled()).total, 1);
+});
+
+for (const corrupt of ['blob', 'detail']) test(`corrupted cached ${corrupt} never publishes an installed resource`, async t => {
+  const h = await setup(t), inspection = await h.inspect(), records = jsonFiles(h.stateDir);
+  const index = records.find(item => item.value.token === inspection.inspectionToken);
+  const detail = records.find(item => item.value.candidateId === inspection.candidates[0].candidateId);
+  const path = corrupt === 'detail' ? detail.path
+    : join(dirname(index.path), '..', 'blobs', detail.value.files[0].sha256);
+  writeFileSync(path, corrupt === 'detail' ? JSON.stringify({ ...detail.value, version: '9.9.9' }) : Buffer.from('tampered bytes'));
+  await assert.rejects(h.management.execute('skill_install', { inspection_token: inspection.inspectionToken,
+    candidate_id: inspection.candidates[0].candidateId }, { signal: new AbortController().signal, assertCurrent: () => true }),
+  { code: 'skill_management_inspection_invalid' });
+  assert.equal((await h.skillDiscovery.listInstalled()).total, 0);
+});
+
+for (const boundary of ['candidate', 'repository']) test(`${boundary} byte limit counts logical files despite deduplicated storage and never publishes a token`, async t => {
+  const h = await setup(t), source = snapshot(), bytes = Buffer.alloc(9 * 1024 * 1024, 0xab);
+  source.candidates = Array.from({ length: boundary === 'candidate' ? 1 : 3 }, (_, index) => ({
+    candidateId: `candidate-${index}`, path: `skill-${index}`, files: [{ path: 'SKILL.md', bytes: manifest(`skill-${index}`) },
+      ...Array.from({ length: boundary === 'candidate' ? 12 : 8 }, (_, file) => ({ path: `asset-${file}`, bytes }))],
+  }));
+  h.source(source); const result = await h.invoke('skill_discover_github', { source: 'https://github.com/owner/repo' });
+  assert.equal(result.status, 'uncertain');
+  assert.equal(jsonFiles(h.stateDir).filter(item => item.value.token).length, 0);
+  assert.equal((await h.skillDiscovery.listInstalled()).total, 0);
 });
 
 test('known same-name conflict is partial; explicit overwrite keeps older resource bytes and bindings valid', async t => {

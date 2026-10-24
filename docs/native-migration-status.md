@@ -56,6 +56,9 @@ Node local/HTTP/SDK 服务、真实 Native/DSH 所有权及提前持久化的写
 仍待验收，不能以模块通过或已有上下文注入代替整体完成。知识库及 SDK 长期记忆的
 网络模式、自动探测、自定义签名地址和来源头现已共用 Node 连接层，并有原生内核、
 SQLite 和完整挂载 DSH Native/Codex 的定向证据；见 [AICP 连接配置](native-aicp-connections.md)。
+GitHub Skill 已补齐 1000 文件、单 Skill 100 MiB、排除目录、风险元数据和坏候选隔离；
+检查结果改用版本化私有文件缓存，避免 base64 JSON 阻止大文件安装。
+Git API 与 Python 的 Git ref/ZIP 传输仍有差异；见 [Skill 管理](native-skill-management.md)。
 
 | 完成门槛 | 当前可确认状态 | 尚未闭环 |
 | --- | --- | --- |
