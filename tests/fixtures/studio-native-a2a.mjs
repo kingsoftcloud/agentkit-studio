@@ -219,6 +219,10 @@ async function applyProof(ctx, options) {
     },
   });
 
+  if (inboundProof?.crashBoundary) {
+    const { installManagedNativeCrashFaults } = await import('./studio-native-managed-crash.mjs');
+    installManagedNativeCrashFaults(ctx, { root: options.directory, sessionId: managedSessionId, boundary: inboundProof.crashBoundary });
+  }
   const presetId = dshPresetId(record.metadata.id, record.metadata.revision, record.buildId || '');
 
   // Default-engine adapter for any non-Native (default-session) delegation.
@@ -330,10 +334,10 @@ async function applyProof(ctx, options) {
         await writeFile(join(options.directory, 'managed-session-history-cold.json'), JSON.stringify(managedAgent.session.snapshotEvents()));
       await appendFile(join(options.directory, 'managed-session-owner.jsonl'), JSON.stringify({ phase: 'loaded', pid: process.pid,
         source, state: managedStatus() }) + '\n');
-      if (managedRecord && source !== 'resume') {
+      if (managedRecord && (source !== 'resume' || inboundProof?.crashBoundary)) {
         let observed = false, draining = false;
         const observer = setInterval(() => {
-          if (!draining && existsSync(join(options.directory, 'managed-command-accepted'))) {
+          if (!inboundProof.crashBoundary && !draining && existsSync(join(options.directory, 'managed-command-accepted'))) {
             draining = true;
             void ctx.get('studioManagedNativeKernel').drain(managedSessionId).catch(error =>
               writeFile(join(options.directory, 'managed-owner-error.json'), JSON.stringify({ code: error.code, message: error.message, stack: error.stack })));
@@ -343,7 +347,7 @@ async function applyProof(ctx, options) {
           observed = true;
           if (inboundProof.formalBinding) {
             const history = managedAgent.session.snapshotEvents();
-            const persisted = { history, receiptAvailable: false };
+            const persisted = { pid: process.pid, history, receiptAvailable: false };
             if (inboundProof.structuredInput) {
               const uploaded = JSON.parse(readFileSync(join(options.directory, 'managed-input-upload.json'), 'utf8'));
               persisted.receiptAvailable = ctx.get('fileUploads').resolve(managedAgent, uploaded.receiptId) !== undefined;

@@ -60,7 +60,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   queueLimit = 100, clock = Date.now, autoStart = true, beforeCommit, beforeProjection } = {}) {
   invariant(text(directory) && object(target) && text(target.tenantId) && text(target.agentInstanceId)
     && typeof permitVerifier?.verify === 'function' && typeof resolveBinding === 'function' && typeof assertCurrent === 'function'
-    && Number.isSafeInteger(queueLimit) && queueLimit > 0, 'NATIVE_KERNEL_CONFIGURATION_INVALID');
+    && Number.isSafeInteger(queueLimit) && queueLimit > 0 && typeof autoStart === 'boolean', 'NATIVE_KERNEL_CONFIGURATION_INVALID');
   const bindingTarget = copy(target), verifyPermit = permitVerifier.verify, owner = `native-server-${randomUUID()}`;
   const initialAuthority = assertCurrent();
   if (initialAuthority && typeof initialAuthority.then === 'function') void Promise.resolve(initialAuthority).catch(() => {});
@@ -100,7 +100,8 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   try { runStore = new SqliteRunStore(join(directory, 'runs.sqlite')); }
   catch (error) { db.close(); throw error; }
   const lifetime = new AbortController(), active = new Map(), kernels = new Map(), failures = new Map(), wakeWaiters = new Set();
-  let closed = false, closing, timer, generation = 0;
+  let closed = false, closing, timer, retryTimer, generation = 0, schedulingEnabled = autoStart;
+  const retryAfter = new Map();
   function guard() {
     invariant(!closed && !lifetime.signal.aborted && permitVerifier.verify === verifyPermit, 'NATIVE_KERNEL_AUTHORITY_LOST');
     const result = assertCurrent();
@@ -435,16 +436,46 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   }
   function start(sessionId) {
     if (active.has(sessionId)) return active.get(sessionId);
+    retryAfter.delete(sessionId);
     const startedGeneration = generation;
     const work = drive(sessionId).catch(error => {
       failures.set(sessionId, ['NATIVE_KERNEL_BINDING_CHANGED', 'NATIVE_KERNEL_AUTHORITY_LOST', 'lease_busy', 'stale_fence'].includes(error.code)
-        ? error.code : 'NATIVE_KERNEL_WORKER_FAILED'); throw error;
+        ? error.code : 'NATIVE_KERNEL_WORKER_FAILED');
+      if (error.code === 'lease_busy' && schedulingEnabled && !closed) {
+        // A cold Host can be ready before the killed process's durable lease
+        // expires. Wait for that boundary; a status read or replacement user
+        // command must not be needed to wake the original accepted command.
+        let expiresAt = Date.now() + 1000;
+        try {
+          const row = db.prepare("SELECT r.* FROM managed_runs r JOIN managed_commands c ON r.command_id=c.command_id WHERE c.session_id=? AND c.state='accepted' ORDER BY c.rowid LIMIT 1").get(sessionId);
+          if (row) expiresAt = runStore.load(parseNativeJson(row.scope), row.run_id).lease?.expiresAt ?? expiresAt;
+        } catch { /* Keep bounded retry; original error remains authoritative. */ }
+        retryAfter.set(sessionId, Date.now() + Math.max(50, Math.min(60000, expiresAt - Date.now() + 25)));
+      }
+      throw error;
     })
-      .finally(() => { active.delete(sessionId); if (generation !== startedGeneration) schedule(); });
+      .finally(() => { active.delete(sessionId); planRetry(); if (generation !== startedGeneration) schedule(); });
     active.set(sessionId, work); void work.catch(() => {}); return work;
   }
+  function planRetry() {
+    clearTimeout(retryTimer); retryTimer = undefined;
+    if (!schedulingEnabled || closed || !retryAfter.size) return;
+    let next = Infinity;
+    for (const deadline of retryAfter.values()) next = Math.min(next, deadline);
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined;
+      if (closed) return;
+      try {
+        guard();
+        for (const [sessionId, deadline] of retryAfter) if (deadline <= Date.now()) {
+          retryAfter.delete(sessionId); void start(sessionId).catch(() => {});
+        }
+        planRetry();
+      } catch { /* Authority failure is visible through explicit status/drain. */ }
+    }, Math.max(0, next - Date.now()));
+  }
   function schedule() {
-    if (!autoStart || closed || timer) return;
+    if (!schedulingEnabled || closed || timer) return;
     timer = setTimeout(() => { timer = undefined; if (closed) return;
       try { guard(); for (const row of db.prepare("SELECT DISTINCT session_id FROM managed_commands WHERE state='accepted'").all()) void start(row.session_id).catch(() => {}); }
       catch { /* Explicit status/drain reports authority failure. */ }
@@ -468,6 +499,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   try { guard(); projectAll(); wake(); }
   catch (error) { runStore.close(); db.close(); throw error; }
   return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events,
+    startRecovery() { guard(); schedulingEnabled = true; schedule(); },
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
       enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),
       inject: false, scopedInterrupt: false, resumeTargets: Object.freeze(['run']), structuredInput: false,
@@ -490,7 +522,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     },
     close() {
       if (closing) return closing;
-      closed = true; clearTimeout(timer); lifetime.abort(new Error('Native owner closed'));
+      closed = true; clearTimeout(timer); clearTimeout(retryTimer); retryAfter.clear(); lifetime.abort(new Error('Native owner closed'));
       closing = Promise.allSettled([...active.values()]).then(() => { runStore.close(); db.close(); });
       return closing;
     },

@@ -64,9 +64,9 @@ export function nativeDeliveryProjection() {
  * nativeDeliveryProjection first. `flush` must call the Host's sessions.flush.
  * The Native cursor is acknowledged only after a durable flush. Replaying the
  * complete plan deduplicates an append that succeeded before acknowledgment.
- * Without backgroundOwnership the Native turn ID must equal the numeric DSH
- * position. A validated background owner instead pins its stable Native ID,
- * exact stored admission and a typed notice; inputMessages must then be empty.
+ * Without an explicit external ownership contract, Native turn ID must equal
+ * the numeric DSH position. Managed ownership pins the sealed Run and input;
+ * background ownership pins its admission/notice with empty inputMessages.
  */
 export function createNativeSessionDelivery({ store, scope, runId, session, turn, projections,
   flush, systemText, inputMessages, source, onStreamSettled, flushTimeoutMs = 30_000,

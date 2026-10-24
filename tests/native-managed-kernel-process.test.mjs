@@ -72,6 +72,24 @@ test('expired live worker cannot overwrite a takeover or cause its unknown file 
     oldWorkerFailure: error.code, fileWrites: 1, takeoverFileWrites: 0, finalState: final.status.runs[0].phase, factsUnchanged: true }));
 });
 
+test('cold automatic scheduling waits for an unexpired killed-worker lease without a new command or drain', { timeout: 15000 }, async t => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-kernel-auto-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const issuer = permitIssuer(), cmd = command();
+  const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: cmd.session_id, authorization_ref: randomUUID() };
+  const subscription = { ...query, authorization_ref: randomUUID(), after_seq: 0 };
+  const common = { directory, publicKeyPem: issuer.publicKeyPem, sessionId: cmd.session_id, query, readPermit: issuer.issue(query, 'get_status'),
+    subscription, subscribePermit: issuer.issue(subscription, 'subscribe_events') };
+  const initial = worker(t, { ...common, boundary: 'after-effect', command: cmd, permit: issuer.issue(cmd) });
+  await Promise.race([initial.boundary, initial.exited.then(exit => assert.fail(JSON.stringify({ exit, messages: initial.messages })))]);
+  initial.child.kill('SIGKILL'); assert.equal((await initial.exited).signal, 'SIGKILL');
+  const cold = worker(t, { ...common, autoStart: true, observeAutomatic: true }), exit = await cold.exited;
+  assert.equal(exit.code, 0, JSON.stringify(cold.messages));
+  const result = cold.messages.find(row => row.type === 'result');
+  assert.equal(result.status.runs[0].phase, 'interrupted'); assert.equal(result.status.workerError, null);
+  assert.equal(lines(join(directory, 'effects.jsonl')).length, 1); assert.equal(lines(join(directory, 'models.jsonl')).length, 1);
+  t.diagnostic(JSON.stringify({ killedPid: initial.child.pid, coldPid: exit.pid, noCommandOrDrain: true, models: 1, fileWrites: 1, finalState: 'interrupted' }));
+});
+
 for (const boundary of ['before-start', 'after-effect', 'before-projection']) {
   test(`SIGKILL ${boundary}: cold worker keeps original receipt/Run and never repeats an unknown write`, { timeout: 15000 }, async t => {
     const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-kernel-crash-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));

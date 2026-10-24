@@ -79,6 +79,7 @@ const { values } = parseArgs({
     'inbound-execution': { type: 'boolean', default: false },
     'inbound-formal-binding': { type: 'boolean', default: false },
     'inbound-structured-input': { type: 'boolean', default: false },
+    'inbound-crash-boundary': { type: 'string' },
   },
 });
 
@@ -92,6 +93,9 @@ assert.ok(!values['public-tool-activity'] || values['internal-control-plane'], '
 assert.ok(!values['inbound-protocol'] || values['internal-control-plane'], 'inbound protocol proof requires the internal mounted regression');
 assert.ok(!values['inbound-formal-binding'] || values['inbound-execution'], 'formal binding requires the actual inbound execution proof');
 assert.ok(!values['inbound-structured-input'] || values['inbound-formal-binding'], 'structured input requires the formal Studio binding');
+assert.ok(!values['inbound-crash-boundary'] || values['inbound-formal-binding'] && !values['inbound-structured-input']
+  && ['before-owner', 'after-owner-flush', 'after-input-flush', 'after-tool-effect', 'before-turn-end', 'after-terminal-flush']
+    .includes(values['inbound-crash-boundary']), 'managed crash proof requires formal binding and a known crash boundary');
 assert.ok(!values['child-question-cold'] || !values['busy-cancel'] && !values['reconcile-cold'] && !values['internal-control-plane'], 'child question recovery is a separate mounted scenario');
 assert.ok(!values['child-question-approval'] || values['child-question-cold'], 'child remote approval requires --child-question-cold');
 assert.ok(!values['child-answer-crash'] || values['child-question-cold'], 'child answer crash requires --child-question-cold');
@@ -115,7 +119,8 @@ const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-native-a2a-')))
 console.log(`A2A proof root: ${root}`);
 assert.ok(!values['inbound-execution'] || values['inbound-protocol'], '--inbound-execution requires --inbound-protocol');
 const inboundProof = values['inbound-execution'] ? createMountedNativeKernelProof(root, {
-  formalBinding: values['inbound-formal-binding'], structuredInput: values['inbound-structured-input'] })
+  formalBinding: values['inbound-formal-binding'], structuredInput: values['inbound-structured-input'],
+  crashBoundary: values['inbound-crash-boundary'] })
   : values['inbound-protocol'] ? createMountedInboundProof(root) : null;
 const inboundProofPath = await inboundProof?.prepare();
 
@@ -456,7 +461,7 @@ try {
 
   // Copy the new fixture into the extracted package.
   await mkdir(join(installed, 'tests/fixtures'), { recursive: true });
-  if (values['child-question-cold']) assert.deepEqual(await readFile(join(installed, 'tests/fixtures/studio-native-a2a.mjs')),
+  if (values['child-question-cold'] || values['inbound-crash-boundary']) assert.deepEqual(await readFile(join(installed, 'tests/fixtures/studio-native-a2a.mjs')),
     await readFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs')), 'child verifier uses the actual packed fixture');
   else await copyFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'),
     join(installed, 'tests/fixtures/studio-native-a2a.mjs'));
@@ -551,7 +556,10 @@ try {
   };
 
   harness = new DeepSeekHarness(options);
-  if (values['child-question-cold']) {
+  if (values['inbound-crash-boundary']) {
+    await inboundProof.crashProof({ harness, makeHarness: () => new DeepSeekHarness(options), source,
+      archiveSha, nodeOnlyBin, serverFailures });
+  } else if (values['child-question-cold']) {
     await verifyMountedChildA2aRecovery({ root, installed, repository, source, archiveSha, harness,
       makeHarness: () => new DeepSeekHarness(options), childPeer, requests: { modelRequests, a2aPeerRequests, serverFailures },
       counts: () => ({ model: modelCalls, discovery: discoveryCalls, send: a2aSends, get: a2aGets, cancel: a2aCancels }), a2aReply });

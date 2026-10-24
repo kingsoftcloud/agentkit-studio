@@ -437,4 +437,5 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // Host mount before its persisted Session presets are registered. Keep the
   // optional-registry catalog profile independent from this native startup.
   if (ctx.get('agentPresets')) await presetRegistryStartup.ready;
+  if (nativeManagedKernel?.autoStart !== false) managedKernel?.startRecovery();
 }

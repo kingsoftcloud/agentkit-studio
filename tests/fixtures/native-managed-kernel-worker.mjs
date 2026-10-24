@@ -10,7 +10,7 @@ const hold = async boundary => { await send({ type: 'boundary', boundary, pid: p
 process.once('message', async message => {
   let runtime;
   try {
-    runtime = createManagedNativeKernel({ directory: message.directory, target, autoStart: false, assertCurrent: () => true,
+    runtime = createManagedNativeKernel({ directory: message.directory, target, autoStart: message.autoStart === true, assertCurrent: () => true,
       permitVerifier: createNativeKernelPermitVerifier({ target, verificationKeys: async () => ({ server: message.publicKeyPem }) }),
       beforeProjection: async snapshot => {
         if (message.boundary === 'before-projection' && snapshot.phase === 'completed') await hold(message.boundary);
@@ -33,7 +33,15 @@ process.once('message', async message => {
     }
     for (const control of message.controls ?? []) await runtime.receive(control.command, control.permit);
     if (message.receiveOnly) { await runtime.close(); process.disconnect(); return; }
-    await runtime.drain(message.sessionId);
+    if (message.observeAutomatic) {
+      const deadline = Date.now() + 8000;
+      for (;;) {
+        const status = await runtime.getStatus(message.query, message.readPermit);
+        if (status.runs.length && ['completed', 'interrupted', 'canceled', 'failed'].includes(status.runs[0].phase)) break;
+        if (Date.now() > deadline) throw new Error('Automatic recovery did not finish');
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    } else await runtime.drain(message.sessionId);
     const status = await runtime.getStatus(message.query, message.readPermit);
     const stream = await runtime.subscribe(message.subscription, message.subscribePermit), facts = [];
     for await (const fact of stream) { facts.push(fact); if (fact.event_type === 'control.run_transition'

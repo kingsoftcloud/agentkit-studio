@@ -9,8 +9,9 @@ import { randomUUID } from 'node:crypto';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { ingressSigner, targetBinding, platformTaskId, targetVersionId } from '../tests/fixtures/native-a2a-inbound.mjs';
 import { permitIssuer, command } from '../tests/fixtures/native-managed-kernel.mjs';
+import { verifyMountedManagedCrash } from './verify-studio-native-managed-crash.mjs';
 
-export function createMountedNativeKernelProof(root, { formalBinding = false, structuredInput = false } = {}) {
+export function createMountedNativeKernelProof(root, { formalBinding = false, structuredInput = false, crashBoundary = null } = {}) {
   const boundTarget = { ...targetBinding };
   const signer = ingressSigner(), issuer = permitIssuer({ target: { tenantId: targetBinding.tenantId, agentInstanceId: targetBinding.agentId } });
   const cmd = command({ tenant_id: targetBinding.tenantId, agent_instance_id: targetBinding.agentId,
@@ -40,9 +41,11 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
   return {
     async prepare() {
       const path = join(root, 'inbound-proof.json');
-      await writeFile(path, JSON.stringify({ executeNative: true, formalBinding, structuredInput, sessionId: cmd.session_id, publicKeyPem: signer.publicKeyPem,
+      await writeFile(path, JSON.stringify({ executeNative: true, formalBinding, structuredInput, crashBoundary,
+        sessionId: cmd.session_id, publicKeyPem: signer.publicKeyPem,
         targetBinding, kernelPublicKeyPem: issuer.publicKeyPem })); return path;
     },
+    crashProof: options => verifyMountedManagedCrash({ ...options, root, boundary: crashBoundary, issuer, command: cmd, modelRequests }),
     async handle(request, response, payload, tokens) {
       if (request.url === '/native-inbound-model/chat/completions') {
         assert.equal(request.headers.authorization, 'Bearer controlled-inbound-model'); modelRequests.push(payload);

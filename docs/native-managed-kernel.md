@@ -68,6 +68,15 @@ SDK 关闭回合后再落盘，接收器才结算命令。专用 Session project
 不能另开回合或重新执行。该 projection 仅恢复事实，不授予模型、工具或审批权限。
 宿主关闭时先等待 managed runtime 退役，再关闭 execution adapter 及其 projection。
 
+正式 Host 先创建接收器，等完整控制面和 `presetRegistryStartup.ready` 完成后才调用
+`startRecovery()`。在此之前已持久化的命令保留为 accepted，不能用半恢复的 preset 装配
+资源。直接嵌入接收器的宿主可用 `autoStart: false` 配合该方法建立相同的就绪边界；
+正式 Host 显式配置 `autoStart: false` 时保留手动驱动方式。
+
+冷启动若碰到被杀进程尚未过期的 Native lease，会按账本中的真实到期时间安排重试，
+期间不派发模型或工具，也不依赖新命令或状态查询唤醒。重试仍经过原配置、SDK owner
+和 Native fence 校验；权限丢失、绑定变化和 stale fence 不通过这个定时器重试。
+
 此适配器负责 Session 生命周期。未提供自定义 `resolveBinding` 时，显式 managed 配置必须
 提供可信 `principal.userId`；宿主从真实 SessionController/preset 获取 Agent revision 或
 Frozen Build，复用原 Native Host 的完整模型、工具、Memory、Skills、MCP、Browser、
@@ -118,8 +127,28 @@ SDK 独占回合后再重建完整 binding 并核对原配置；只有这时端�
 - Host 退役中止异步端口等待，不伪造用户 cancel；非合作端口可能仍有外部副作用，
   其结果保持未知，不承诺外部副作用 exactly-once。
 
-这是单机器 SQLite 适配器。共享 managed SQL、跨 Pod 存储、产品级恢复扫描和安全 GC
-仍待实现；不能将此目录用于多机器共享部署。
+这是单机器 SQLite 适配器。本地 accepted 命令自动恢复不代表共享 managed SQL、跨 Pod
+存储、全部产品资源的恢复扫描或安全 GC 已完成；不能将此目录用于多机器共享部署。
+
+实际 SDK 故障验证使用同一正式 preset、SQLite、Node 文件工具和公开 Session 方法，
+在以下边界暂停整个 Host 事件循环，再由父进程 SIGKILL。冷进程启动早于原租约到期，
+不补发命令、不调用 drain 或恢复 RPC。检查原 Run/receipt、SDK owner、用户/工具/用量
+历史及文件派发次数；完成后重试原命令只返回原回执。
+
+| `--inbound-crash-boundary` | 验证行为 |
+| --- | --- |
+| `before-owner` | turn/start 已落盘但尚未 claim；SDK 关闭无 owner 的孤立回合，原 Native Run 在下一 SDK 位置执行一次 |
+| `after-owner-flush` | SDK owner 已落盘、Native Run 尚未创建；恢复同一 owner |
+| `after-input-flush` | 用户消息已落盘、Native 消费游标尚未确认；租约到期后恢复，不重复用户消息 |
+| `after-tool-effect` | 文件实际已写、工具回执尚未提交；进入 interrupted，保留未知结果，不再次写文件 |
+| `before-turn-end` | Native 已完成、SDK 尚未追加 turn/end；原 owner 补齐结束 |
+| `after-terminal-flush` | SDK 结束已落盘、接收器尚未结算；只读原 Native 终态，不创建替代回合 |
+
+```sh
+node scripts/verify-studio-native-a2a.mjs --source <维护版 SDK> --archive <正常打包的 tgz> \
+  --internal-control-plane --inbound-protocol --inbound-execution --inbound-formal-binding \
+  --inbound-crash-boundary after-tool-effect --keep
+```
 
 ## 支持范围与明确缺口
 

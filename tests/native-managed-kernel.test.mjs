@@ -318,6 +318,21 @@ test('a whole-Session execution boundary starts no effects before its owner perm
   allowed.resolve(); await driving; assert.equal(calls, 1); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
 });
 
+test('Host readiness explicitly starts the original persisted command without another input or drain', async t => {
+  let models = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => binding(command, { model: {
+    generate: async () => { models++; return response(); },
+  } }) });
+  const cmd = command(), receipt = await f.receive(cmd); await f.reopen();
+  await new Promise(resolve => setTimeout(resolve, 25)); assert.equal(models, 0);
+  f.runtime.startRecovery(); f.runtime.startRecovery();
+  const deadline = Date.now() + 2000;
+  while ((await f.status(cmd.session_id)).runs[0].phase !== 'completed') {
+    assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(models, 1); assert.equal((await f.status(cmd.session_id)).runs[0].runId, receipt.run_id);
+});
+
 test('binding cleanup distinguishes durable acceptance from a full queue without executing either input', async t => {
   const released = [];
   const f = fixture(t, { queueLimit: 1, resolveBinding: ({ command }) => ({ ...binding(command),

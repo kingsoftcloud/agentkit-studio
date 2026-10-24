@@ -26,7 +26,9 @@ export function registerStudioManagedNativeKernel(ctx, { storeDir, configuration
     resolveBinding = createStudioManagedNativeBinding({ ctx, target: configuration.target, principal: configuration.principal,
       resolveHost, execution });
   }
-  runtime = createManagedNativeKernel({ ...configuration, resolveBinding,
+  // Session preset restoration must finish before cold commands resolve their
+  // Agent/Build. Bootstrap explicitly starts recovery at its readiness boundary.
+  runtime = createManagedNativeKernel({ ...configuration, resolveBinding, autoStart: false,
     directory: join(storeDir, 'native-harness', 'managed-kernel'), assertCurrent });
   transport = createManagedNativeKernelHttp(runtime);
   ctx.provide('studioManagedNativeKernel', runtime);
