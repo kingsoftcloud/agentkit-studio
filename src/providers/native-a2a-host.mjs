@@ -158,7 +158,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         source: String(item.Source ?? 'hosted'), url: String(item.AgentCard?.supportedInterfaces?.[0]?.url ?? ''), card: copy(item.AgentCard ?? {}) }));
   }
   function forSession({ scope, agentId, agentRevision, buildId = null, sessionId, stateRoot, workspaceRoot, assertCurrent,
-    assertControl, authorizeControl, assertReceipt, destinationSessionId }) {
+    assertControl, authorizeControl, assertReceipt, assertReceiptWait, destinationSessionId }) {
     invariant(destinationSessionId === undefined || typeof destinationSessionId === 'string' && destinationSessionId.length > 0
       && destinationSessionId.length <= 4096, 'A2A_SESSION_DESTINATION_INVALID');
     if (dsh) invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
@@ -522,15 +522,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
     const control = createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
       signal: AbortSignal.any([lifetime.signal, sessionLifetime.signal]), readIdentity, save, wire,
       lock: (identity, kind) => tryLock(join(directory, `${hash(identity)}${['cancel', 'reject'].includes(kind) ? '.cancel' : kind === 'get' ? '.read' : ''}.sqlite`)) });
-    async function observeReceipt(query) {
-      invariant(!dsh && typeof assertReceipt === 'function', 'A2A_RECEIPT_AUTHORITY_REQUIRED');
-      const checkReceipt = () => {
-        checkOwner(query.signal);
-        const current = assertReceipt(query);
-        if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
-        invariant(current === true, 'A2A_RECEIPT_AUTHORITY_LOST');
-      };
-      checkReceipt();
+    function receiptSource(query) {
       const identity = { scope: fixedScope, sessionId, runId: query.runId,
         operationKey: query.originalOperationKey, callId: query.call.callId };
       const record = readIdentity(identity);
@@ -542,6 +534,34 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         && canonical(original.definition) === canonical(query.definition)
         && original.operationKey === query.originalOperationKey
         && specs.some(spec => canonical(spec) === canonical(record.request.spec)), 'A2A_RECEIPT_SOURCE_CONFLICT');
+      return { identity, record };
+    }
+    // This is a local observation, not authority to execute the old tool or
+    // issue HTTP. Only an independently confirmed terminal receipt wakes a
+    // new ledger-owned receipt query. Unknown effects remain asleep.
+    function peekReceipt(query) {
+      invariant(!dsh && typeof assertReceiptWait === 'function', 'A2A_RECEIPT_WAIT_AUTHORITY_REQUIRED');
+      checkOwner(query.signal);
+      const current = assertReceiptWait(query);
+      if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+      invariant(current === true, 'A2A_RECEIPT_WAIT_AUTHORITY_LOST');
+      const source = receiptSource(query);
+      if (!source || !a2aTerminal.has(source.record.projection.state) || source.record.phase !== 'terminal') return null;
+      const { record } = source;
+      return { token: hash({ requestDigest: record.requestDigest, projection: record.projection }) };
+    }
+    async function observeReceipt(query) {
+      invariant(!dsh && typeof assertReceipt === 'function', 'A2A_RECEIPT_AUTHORITY_REQUIRED');
+      const checkReceipt = () => {
+        checkOwner(query.signal);
+        const current = assertReceipt(query);
+        if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+        invariant(current === true, 'A2A_RECEIPT_AUTHORITY_LOST');
+      };
+      checkReceipt();
+      const source = receiptSource(query);
+      if (!source) return null;
+      const { identity, record } = source;
       if (!record.projection.taskId && !a2aTerminal.has(record.projection.state)) return null;
       const observed = await control.execute({ kind: 'get', commandId: `receipt:${hash(query.operationKey)}`,
         operation_locator: identity, authority: { contract: 'agentkit.native-a2a-receipt-read/v1',
@@ -612,7 +632,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
     const exposurePlan = { assertGenericTargetAllowed(target) { invariant(specs.some(spec => spec.target_agent_id === target), 'A2A_TARGET_NOT_BOUND'); } };
     return { discovery: { list: input => list({ ...input, signal: AbortSignal.any([input.signal, sessionLifetime.signal]),
       assertCurrent: () => { checkOwner(input.signal); return true; } }) },
-      invocation: { resolve: resolveCall, dispatch }, control, observeReceipt, exposurePlan,
+      invocation: { resolve: resolveCall, dispatch }, control, observeReceipt, peekReceipt, exposurePlan,
       ...(internal ? { eventDelivery: {
         flush: options => eventDispatcher.flush(options),
         status() { const records = sessionRecords(); return { pending: records.reduce((n, r) => n + (r.managed?.events?.pending.length ?? 0), 0),

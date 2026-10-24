@@ -296,7 +296,9 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
           wakeIdle = () => { woken = true; idle.abort(new NativeError('native_idle_woken')); };
           try {
             if (store.load(scope, runId).commands.some(row => !row.consumed)) wakeIdle();
-            command = await resolveWhileLive(() => onIdle(idlePayload, structuredClone(snapshot)), idlePayload);
+            command = await resolveWhileLive(() => onIdle(idlePayload, structuredClone(snapshot), {
+              waitForToolReceipt: binding.ports.tools.waitForReceipt,
+            }), idlePayload);
           } catch (error) {
             if (!woken || signal.aborted) throw error;
             snapshot = await kernel.runUntilIdle(scope, runId, { signal });

@@ -158,6 +158,31 @@ test('Studio completes a receipt query and continues the SAME active Run after a
   await f.reconcile(); assert.deepEqual(f.count(), before); assert.equal(JSON.stringify(f.load()), ledger, 'same command confirms without another query');
 });
 
+test('remote input completion automatically resumes the original Studio Run without a separate reconcile action', async t => {
+  const f = await setup(t), original = f.load();
+  const before = f.count();
+  await delay(220);
+  assert.deepEqual(f.count(), before, 'waiting inspects only local facts, never remote HTTP or the model');
+  await f.continueRemote();
+  await f.run();
+  const completed = f.load();
+  assert.equal(completed.snapshot.phase, 'completed');
+  assert.equal(completed.snapshot.runId, original.snapshot.runId);
+  assert.equal(completed.snapshot.usage.toolCalls, 1);
+  assert.deepEqual(completed.intents.find(row => row.kind === 'tool'), original.intents.find(row => row.kind === 'tool'));
+  assert.deepEqual(completed.receipts.find(row => row.operationKey === f.operationKey),
+    original.receipts.find(row => row.operationKey === f.operationKey));
+  assert.equal(completed.intents.filter(row => row.kind === 'tool_receipt').length, 1);
+  assert.equal(completed.commands.filter(row => row.command.commandId.startsWith('native-a2a-receipt-')).length, 1);
+  assert.equal(completed.events.filter(row => row.kind === 'tool.receipt_reconciled').length, 1);
+  assert.equal(f.count().sends, 1); assert.equal(f.count().continues, 1); assert.equal(f.count().modelCalls, 2);
+  assert.equal(f.count().gets, 2, 'only the two explicit continuation reads; the terminal receipt is already committed');
+  assert.equal(f.count().discovery, 1); assert.equal(f.count().approvals, 1);
+  const replay = f.bodies.filter(body => body.model)[1];
+  assert.equal(replay.messages.filter(message => message.role === 'tool' && message.tool_call_id === 'original-call'
+    && message.content.includes('remote verified answer')).length, 1);
+});
+
 test('a nonterminal receipt stays waiting; lost response confirmation cannot create another read', async t => {
   const f = await setup(t), calls = [];
   let lose = true, ids = 0;

@@ -8,15 +8,20 @@ export const STUDIO_NATIVE_INTERACTION_CONTRACT = 'agentkit.native-host-interact
 /** Ask through the live Host service only for a ledger-owned pending decision.
  * The Kernel remains responsible for accepting and applying the command. */
 export function createNativeHostInteraction({ ctx, store }) {
-  return async ({ agent, signal }, snapshot) => {
+  return async ({ agent, signal }, snapshot, { waitForToolReceipt } = {}) => {
     signal.throwIfAborted();
     if (snapshot.phase !== 'awaiting_reconciliation' && snapshot.phase !== 'awaiting_interaction') return null;
     invariant(String(agent?.session?.id) === snapshot.sessionId, 'studio_native_approval_session_mismatch');
     const record = store.load(snapshot.scope, snapshot.runId);
     invariant(same(record.snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
     if (snapshot.phase === 'awaiting_reconciliation' && snapshot.toolReconciliation) {
-      // Product controls wake this same executor after durably enqueuing a
-      // receipt query. No new prompt, automatic polling, or remote effect.
+      if (typeof waitForToolReceipt === 'function') {
+        const command = await waitForToolReceipt({ snapshot: structuredClone(snapshot), signal });
+        signal.throwIfAborted();
+        invariant(same(store.load(snapshot.scope, snapshot.runId).snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
+        if (command) return command;
+      }
+      // Other uncertain tools still require explicit product reconciliation.
       return new Promise((_, reject) => {
         const abort = () => reject(signal.reason);
         if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });

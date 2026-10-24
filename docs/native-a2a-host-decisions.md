@@ -47,8 +47,11 @@ result or an unknown outcome. Neither the durable decision nor a fresh command
 ID permits replay of that effect. An explicit original GetTask can reconcile
 remote status. This can conservatively leave an approved-but-unsent command
 unknown after a pre-transport crash; there is no exactly-once claim or automatic
-resend. The existing independent Native receipt reconciliation remains required
-before continuing an interrupted Native Run.
+resend. The independent Native receipt reconciliation remains required before
+continuing the original Run. An active Studio Native Turn now automatically
+requests that ledger-owned reconciliation after a terminal remote fact is
+committed; see [receipt waiting](native-a2a-receipt-wait.md). This does not
+automatically restart an unattached cold Host turn or query an unknown effect.
 
 A confirmed supplemental response may ask the identical question again. A
 trusted continuation command gives this a distinct canonical interaction;

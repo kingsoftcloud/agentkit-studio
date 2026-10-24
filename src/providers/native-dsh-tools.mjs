@@ -34,7 +34,7 @@ import { nativeCommandBackend, prepareNativeE2BHost } from './native-e2b-host.mj
 import { createNativeDshE2BCommands, createNativeDshE2BCodeTools } from './native-dsh-e2b-commands.mjs';
 import { prepareNativeA2AHost } from './native-a2a-host.mjs';
 import { createNativeDshA2aTools } from './native-dsh-a2a.mjs';
-import { createNativeA2aReceiptObserver } from './native-a2a-receipt.mjs';
+import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter, NATIVE_A2A_RECEIPT_WAIT } from './native-a2a-receipt.mjs';
 import { nativeA2aToolDefinitions, NATIVE_A2A_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { prepareNativeSkillHost } from './native-skill-host.mjs';
 import { sandboxRegistryName, SANDBOX_CODE_NAME_CONTRACT } from './sandbox-code-name.mjs';
@@ -526,7 +526,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     argumentEncoding,
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     componentContract: builtinNames.has('component_status') ? NATIVE_COMPONENT_TOOLS_CONTRACT : null,
-    a2aBinding: a2a ? { ...a2a.binding, toolContract: NATIVE_A2A_TOOLS_CONTRACT } : null,
+    a2aBinding: a2a ? { ...a2a.binding, toolContract: NATIVE_A2A_TOOLS_CONTRACT, receiptWaitContract: NATIVE_A2A_RECEIPT_WAIT } : null,
     async controlA2aTask({ scope, sessionId, ...request }, { assertControl, authorizeControl }) {
       invariant(!closed && a2a && scope?.agentId === config.agentId, 'studio_native_a2a_control_unavailable');
       invariant(typeof assertControl === 'function' && typeof authorizeControl === 'function', 'A2A_CONTROL_AUTHORITY_REQUIRED');
@@ -789,6 +789,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } : {}),
         ...(builtinNames.has(browserName) ? { browser: { recoverSessions: request => browserTools.forSession(sessionId).recoverSessions(request) } } : {}),
         tools: {
+          ...(a2a && commandAuthority?.store ? { waitForReceipt: createNativeA2aReceiptWaiter({ a2a,
+            scope: commandAuthority.scope, sessionId, store: commandAuthority.store,
+            stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed }) } : {}),
           ...(a2a && commandAuthority?.store ? { observeReceipt: createNativeA2aReceiptObserver({ a2a,
             scope: commandAuthority.scope, sessionId, store: commandAuthority.store,
             stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed }) } : {}),

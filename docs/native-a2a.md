@@ -249,8 +249,11 @@ Still required for full migration:
   structured-input/remote-approval waiters in the original Native Run. The
   manual original-task API/panel and explicit same-Run receipt reconciliation
   are implemented, including full mounted-Host busy cancellation and cold
-  recovery evidence. Input/auth pauses require those explicit controls and
-  subsequent receipt reconciliation. DSH/Codex have authenticated product
+  recovery evidence. Input/auth pauses require those explicit controls;
+  [active Native receipt waiting](native-a2a-receipt-wait.md) now automatically
+  requests same-Run reconciliation after a committed terminal fact. Unattached
+  cold Host turns and unknown outcomes still require explicit recovery/query.
+  DSH/Codex have authenticated product
   controls and local task inventory as described below; real browser and
   live human/service acceptance remain separate.
 - Required task stream subscriptions; pre-send local cancellation and busy-call
