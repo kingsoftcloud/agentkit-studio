@@ -20,7 +20,7 @@ async function until(check, label, timeout = 65000) {
 async function json(path) { try { return JSON.parse(await readFile(path, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
 
 export async function verifyMountedManagedCrash({ root, harness: initial, makeHarness, boundary, issuer,
-  command, modelRequests, archiveSha, source, serverFailures, nodeOnlyBin }) {
+  command, modelRequests, archiveSha, source, serverFailures, nodeOnlyBin, dependencyEvidence }) {
   let harness = initial;
   const commandDb = join(root, 'studio/native-harness/managed-kernel/commands.sqlite');
   const nativeDb = join(root, 'studio/native-harness/managed-kernel/runs.sqlite');
@@ -132,10 +132,11 @@ export async function verifyMountedManagedCrash({ root, harness: initial, makeHa
     const processes = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
     assert.deepEqual(processes.map(row => row.pid), [originalPid, coldPid]);
     assert.ok(processes.every(row => row.path === nodeOnlyBin && row.node === process.version));
-    const evidence = { archiveSha256: archiveSha, source, node: process.version, boundary, originalPid, coldPid, signal,
+    const evidence = { archiveSha256: archiveSha, source, dependencies: dependencyEvidence ?? { kind: 'maintained-source', source },
+      node: process.version, boundary, originalPid, coldPid, signal,
       receipt, duplicate, checkpoint, coldStatus, before, final: settled, history, actualSdkOwnership: true, automaticRecovery: true,
       modelHttp: modelRequests.length, fileDispatches: 1, coldFileDispatches: expectedModelsBefore ? 0 : 1,
-      limitation: 'Actual maintained SDK/packed Studio/formal preset/SQLite/Node workspace/SIGKILL/Node-only PATH. Controlled Server signing/model; not deployed Server, fresh installation, other resources or all product entries.' };
+      limitation: `Actual maintained SDK/packed Studio/formal preset/SQLite/Node workspace/SIGKILL/Node-only PATH; ${dependencyEvidence ? 'verified fresh installation' : 'linked dependencies'}. Controlled Server signing/model; not deployed Server, other resources or all product entries.` };
     await writeFile(join(root, 'managed-crash-evidence.json'), JSON.stringify(evidence, null, 2));
     console.log(`PASS: managed SDK SIGKILL ${boundary}, original Run ${receipt.run_id}, owner ${owners[0].data.turn}, model ${modelRequests.length}, file dispatch 1. Evidence ${root}`);
   } finally { await harness.close().catch(() => {}); }

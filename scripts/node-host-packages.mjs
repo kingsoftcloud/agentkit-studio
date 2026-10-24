@@ -39,3 +39,31 @@ export async function readNodeHostPackages(path, studio = fileURLToPath(new URL(
   return { dependencies, overrides, evidence: { manifest: manifestPath, sha256: sha(bytes), source: manifest.source,
     packages: manifest.packages.map(({ name, version, tarball, sha256 }) => ({ name, version, tarball, sha256 })) } };
 }
+
+/** Reuse a completed fresh Host installation for additional real-process
+ * acceptance. Require the exact Studio archive and unchanged normal npm lock;
+ * no source checkout or development dependency directory is a fallback. */
+export async function readNodeHostInstallation(path, { archive, studio = fileURLToPath(new URL('..', import.meta.url)) }) {
+  const directory = await realpath(path);
+  const proof = JSON.parse(await readFile(join(directory, 'proof.json')));
+  assert.equal(proof.format, 'agentkit.native-node-install-proof/v1');
+  assert.equal(proof.passed, true); assert.equal(proof.host, true); assert.equal(proof.installScripts, true);
+  assert.equal(proof.archiveSha256, sha(await readFile(archive)), 'Fresh installation must contain the tested Studio archive');
+  const lockBytes = await readFile(join(directory, 'package-lock.json'));
+  assert.equal(proof.lockSha256, sha(lockBytes), 'Fresh dependency lock changed');
+  const lock = JSON.parse(lockBytes);
+  assert.ok(Object.keys(lock.packages).length > 10);
+  assert.ok(Object.entries(lock.packages).filter(([path]) => path.startsWith('node_modules/')).every(([, entry]) => !entry.link));
+  const plugin = JSON.parse(await readFile(join(studio, 'studio.plugin.json')));
+  const pinned = JSON.parse(await readFile(join(studio, 'patches', `dsh-v${plugin.requiredDsh}`, 'source.json')));
+  for (const key of ['baseCommit', 'headCommit', 'tree'])
+    assert.equal(proof.maintainedHost?.source?.[key], pinned[key], `Fresh Host source ${key}`);
+  assert.equal(proof.maintainedHost.source.dshVersion, plugin.requiredDsh);
+  const dependencies = join(directory, 'node_modules');
+  for (const name of ['@kingsoftcloud/agentkit-studio', ...NODE_HOST_ROOTS]) {
+    assert.ok((await realpath(join(dependencies, name))).startsWith(directory + '/'), `Fresh package escapes installation: ${name}`);
+  }
+  return { directory, dependencies, evidence: { kind: 'fresh-installation', directory, node: proof.node,
+    archiveSha256: proof.archiveSha256, lockSha256: proof.lockSha256, installScripts: true,
+    maintainedHost: proof.maintainedHost } };
+}

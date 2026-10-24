@@ -36,7 +36,9 @@ node scripts/pack-maintained-node-host.mjs \
 ```
 
 导出器仅从 Git 已跟踪的 package.json 建立映射，沿四个根包的 production/optional/peer
-工作区依赖取闭包，只导出其中修改过的包和四个根包。每包正常执行 `pnpm pack`，前后
+工作区依赖取闭包，只导出其中修改过的包和四个根包。Node Office 和工作区依赖服务属于
+当前 Host 的正式依赖，也按此规则导出；不能因名称与 Desktop 有关而漏掉它们或借用
+registry 中旧版实现。Electron 应用本身仍使用独立打包流程。每包正常执行 `pnpm pack`，前后
 核对 HEAD、tree 和已跟踪文件状态；忽略并保留已有未跟踪文件。输出目录为 0700，清单
 为 0600，已有输出不被覆盖。归档须包含实际 lib/dist 产物、正确名称和版本及生产导出
 目标；运行时通配符也须命中实际归档文件。维护源码的 `src/*` 开发导出若被明确排除在
@@ -75,7 +77,29 @@ macOS arm64 已验证锁定的 Node 24.21.0 和 pnpm 11.28.5：无系统命令�
 pnpm 版本，防止被启动目录的另一项目配置切换。证据保留在
 `.artifacts/native-migration/node-primary-runtime/`。
 
-Desktop 资源与 Office 工作流现已切换到 Node，实际三格式创建/编辑/重开和七项原生 Office 操作已验证；详见[Node Office](native-node-office.md)。该实现绑定维护源码 `c7e43983`，没有以此前 31 包的 `570ad603` 安装证据代替当前源码的完整 Host/桌面验收。
+Desktop 资源与 Office 工作流现已切换到 Node，实际三格式创建/编辑/重开和七项原生 Office 操作已验证；详见[Node Office](native-node-office.md)。该实现绑定维护源码 `c7e43983`，此前 31 包的 `570ad603` 安装证据不能代替当前源码的验收。
+
+`c7e43983` 当前导出 33 个维护包，新增正式 Node Office 和工作区依赖服务。使用当前
+Studio 归档的 Node 22 全新安装已验证完整 Host、两种旧 runtime 工具管线、Native
+整轮执行和跨进程恢复；锁文件含 983 项。记录位于
+`.artifacts/native-migration/fresh-host-current/`。这覆盖 Node Host，不等于完整 Electron 验收。
+
+完成的安装会写入 `agentkit.native-node-install-proof/v1`，固定 Studio 归档 SHA-256、
+正常 npm 锁文件 SHA-256 和维护源码身份。后续整轮入站验收可复用该安装，先核对这些
+身份且拒绝目录链接和开发仓库依赖，再由同一依赖图启动真正的 SDK/Host；例如：
+
+```sh
+node scripts/verify-studio-native-a2a.mjs \
+  --installation /absolute/completed-fresh-host \
+  --archive /absolute/same-Studio.tgz \
+  --internal-control-plane --inbound-protocol --inbound-execution \
+  --inbound-formal-binding --inbound-structured-input --keep
+```
+
+也可去掉 `--inbound-structured-input`，改为
+`--inbound-crash-boundary after-tool-effect`，检查真实进程强杀后的未知写入不重复。
+这里只扩展了验收器的安装输入；公开产品和引擎契约未改变。其他专用恢复验收器仍使用
+`--source`，不能把上述入站路径的结果推广到所有运行组合。
 
 这仍不等于完整迁移验收。真实模型/Codex CLI、线上 E2B/云服务、全部自动化/Frozen/
 部署/恢复界面组合及最终默认切换分别验收；完整 Desktop/Electron 及其他平台的

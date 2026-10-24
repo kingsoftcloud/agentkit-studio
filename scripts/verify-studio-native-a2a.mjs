@@ -10,6 +10,8 @@
  *     --source <built DSH SDK checkout> \
  *     --archive <packed studio .tgz> \
  *     [--keep] [--reconcile-cold [--receipt-crash] | --busy-cancel]
+ * For normal/internal/inbound proofs, --installation <completed fresh Host>
+ * replaces --source and verifies the archive, dependency lock and Host pins.
  *
  * --reconcile-cold uses the real mounted SessionController and authenticated
  * recovery RPC after SIGKILL, without a new prompt or Send. --receipt-crash
@@ -60,10 +62,12 @@ import { verifyMountedA2aBusyCancel } from './verify-studio-native-a2a-busy-canc
 import { verifyMountedChildA2aRecovery } from './verify-studio-native-child-a2a-recovery.mjs';
 import { createMountedInboundProof } from './verify-studio-native-a2a-inbound.mjs';
 import { createMountedNativeKernelProof } from './verify-studio-native-kernel.mjs';
+import { readNodeHostInstallation } from './node-host-packages.mjs';
 
 const { values } = parseArgs({
   options: {
     source: { type: 'string' },
+    installation: { type: 'string' },
     archive: { type: 'string' },
     keep: { type: 'boolean', default: false },
     'reconcile-cold': { type: 'boolean', default: false },
@@ -83,7 +87,10 @@ const { values } = parseArgs({
   },
 });
 
-assert.ok(values.source, 'Use --source <built DSH SDK checkout>');
+assert.ok(Boolean(values.source) !== Boolean(values.installation),
+  'Use --source <built DSH SDK checkout> OR --installation <verified fresh Host project>');
+assert.ok(!values.installation || !values['reconcile-cold'] && !values['busy-cancel'] && !values['child-question-cold'],
+  'Fresh installation currently proves ordinary/internal/inbound execution and managed SIGKILL; other recovery verifiers require --source');
 assert.ok(values.archive, 'Use --archive <packed studio .tgz>');
 assert.ok(!values['receipt-crash'] || values['reconcile-cold'], '--receipt-crash requires --reconcile-cold');
 assert.ok(!values['terminal-close-crash'] || values['reconcile-cold'], '--terminal-close-crash requires --reconcile-cold');
@@ -102,12 +109,13 @@ assert.ok(!values['child-answer-crash'] || values['child-question-cold'], 'child
 
 const managedMode = values['internal-control-plane'] || values['child-question-cold'];
 
-const source = resolve(values.source);
+const source = values.source ? resolve(values.source) : null;
 const archive = resolve(values.archive);
 const repository = fileURLToPath(new URL('..', import.meta.url));
 
 const archiveBuf = await readFile(archive);
 const archiveSha = createHash('sha256').update(archiveBuf).digest('hex');
+const fresh = values.installation ? await readNodeHostInstallation(values.installation, { archive, studio: repository }) : null;
 console.log(`Archive: ${archive}`);
 console.log(`Archive SHA256: ${archiveSha}`);
 
@@ -453,19 +461,25 @@ try {
   console.log(`Model server: ${modelUrl}`);
   console.log(`A2A service: ${a2aServiceUrl}`);
 
-  const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
+  const { DeepSeekHarness } = await import(pathToFileURL(fresh
+    ? join(fresh.dependencies, '@deepseek-ai/dsh-sdk-client/lib/index.js') : join(source, 'packages/sdk/client/lib/index.js')).href);
   const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
   await mkdir(graph);
   execFileSync('tar', ['-xzf', archive, '-C', graph]);
-  await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
 
   // Copy the new fixture into the extracted package.
   await mkdir(join(installed, 'tests/fixtures'), { recursive: true });
-  if (values['child-question-cold'] || values['inbound-crash-boundary']) assert.deepEqual(await readFile(join(installed, 'tests/fixtures/studio-native-a2a.mjs')),
+  if (fresh || values['child-question-cold'] || values['inbound-crash-boundary']) assert.deepEqual(await readFile(join(installed, 'tests/fixtures/studio-native-a2a.mjs')),
     await readFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs')), 'child verifier uses the actual packed fixture');
   else await copyFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'),
     join(installed, 'tests/fixtures/studio-native-a2a.mjs'));
 
+  if (fresh) {
+    // The only dependency graph is the completed ordinary npm installation.
+    // The outer verifier may use this checkout; the actual Host must not.
+    await symlink(fresh.dependencies, dependencies);
+  } else {
+  await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
   // Symlink the SDK's built @deepseek-ai packages.
   const dshDeps = join(source, 'apps/cli/node_modules/@deepseek-ai');
   for (const entry of await readdir(dshDeps)) {
@@ -485,6 +499,8 @@ try {
     if (entry === '@deepseek-ai' || entry.startsWith('.')) continue;
     try { await symlink(join(repository, 'node_modules', entry), join(dependencies, entry)); } catch { /* exists */ }
   }
+  }
+  await writeFile(join(root, 'dependency-graph.json'), JSON.stringify(fresh?.evidence ?? { kind: 'maintained-source', source }, null, 2));
 
   // Node-only PATH.
   const nodeOnlyBin = join(root, 'node-only-bin');
@@ -533,9 +549,10 @@ try {
     '',
   ].join('\n'));
 
-  const patches = [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch];
+  const patches = [fresh ? join(fresh.dependencies, '@deepseek-ai/dsh-web-app/presets/standard.patch.yml')
+    : join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch];
   const options = {
-    dshBin: join(source, 'apps/cli/lib/bin.js'),
+    dshBin: fresh ? join(fresh.dependencies, '@deepseek-ai/dsh/lib/bin.js') : join(source, 'apps/cli/lib/bin.js'),
     profile: 'sdk',
     patches,
     dshHome: join(root, 'home'),
@@ -550,6 +567,9 @@ try {
       PATH: nodeOnlyBin,
       AGENTKIT_PYTHON: '/unavailable/python',
       AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk',
+      AGENTKIT_KSADK_PYTHON: '/unavailable/python',
+      AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
+      KSADK_PYTHON: '/unavailable/python', KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1',
       DSH_AGENTS_HOME: join(root, 'agents'),
     },
@@ -558,7 +578,7 @@ try {
   harness = new DeepSeekHarness(options);
   if (values['inbound-crash-boundary']) {
     await inboundProof.crashProof({ harness, makeHarness: () => new DeepSeekHarness(options), source,
-      archiveSha, nodeOnlyBin, serverFailures });
+      archiveSha, nodeOnlyBin, serverFailures, dependencyEvidence: fresh?.evidence });
   } else if (values['child-question-cold']) {
     await verifyMountedChildA2aRecovery({ root, installed, repository, source, archiveSha, harness,
       makeHarness: () => new DeepSeekHarness(options), childPeer, requests: { modelRequests, a2aPeerRequests, serverFailures },
@@ -789,7 +809,9 @@ try {
   // === Save evidence ===
   const evidence = {
     archive: { path: archive, sha256: archiveSha },
-    sdk: { source, commit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() },
+    sdk: { source, commit: fresh?.evidence.maintainedHost.source.headCommit
+      ?? execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() },
+    dependencies: fresh?.evidence ?? { kind: 'maintained-source', source },
     node: process.version,
     internalControlPlane: managedMode, publicToolActivity: values['public-tool-activity'], internalActions,
     internalEvents: managedMode ? { batches: internalEventBatches.length, accepted: acceptedInternalEvents.size,
@@ -810,7 +832,7 @@ try {
     a2aCallRecordPhase: managed.phase, managedRecordSha256: createHash('sha256').update(managedBefore[0].content).digest('hex'),
     scope, turnId: record.snapshot.turnId, buildId: record.snapshot.buildId, operationKey: toolReceipts[0].operationKey,
     fixtureSha256: createHash('sha256').update(await readFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'))).digest('hex'),
-    limitation: 'Fixed local dependency graph, actual graceful Host process restart; not SIGKILL, online service, fresh install or Frozen deployment.',
+    limitation: `${fresh ? 'Fresh normally installed maintained Host graph' : 'Fixed local dependency graph'}, actual graceful Host process restart; controlled Server/model, not online service or Frozen deployment.`,
   };
   await writeFile(join(root, 'a2a-proof-evidence.json'), JSON.stringify(evidence, null, 2));
   console.log(`\nEvidence saved: ${join(root, 'a2a-proof-evidence.json')}`);

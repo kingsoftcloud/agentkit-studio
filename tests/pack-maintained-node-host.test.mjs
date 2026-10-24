@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync, statSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { packMaintainedNodeHost } from '../scripts/pack-maintained-node-host.mjs';
-import { NODE_HOST_ROOTS, readNodeHostPackages } from '../scripts/node-host-packages.mjs';
+import { NODE_HOST_ROOTS, readNodeHostPackages, readNodeHostInstallation } from '../scripts/node-host-packages.mjs';
 
 function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'maintained-host-export-')));
@@ -63,6 +64,61 @@ test('real pnpm archives include changed production/optional/peer closure and as
   const consumed = await readNodeHostPackages(join(f.output, 'host-packages.json'), f.studio);
   assert.equal(Object.keys(consumed.dependencies).length, 7);
   await assert.rejects(packMaintainedNodeHost(f.options), /already exists/);
+});
+
+test('changed Node Office and workspace services remain in the installed Host dependency closure', async t => {
+  const f = fixture(t), names = ['@deepseek-ai/dsh-skill-office', '@deepseek-ai/dsh-tool-workspace-dependencies'];
+  const rootPath = join(f.paths.get(NODE_HOST_ROOTS[0]), 'package.json');
+  const root = JSON.parse(readFileSync(rootPath));
+  for (const name of names) {
+    const dir = join(f.source, 'packages', name.split('/').at(-1));
+    mkdirSync(join(dir, 'lib'), { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '0.2.1-rc.2',
+      type: 'module', exports: './lib/index.js', files: ['lib'] }));
+    writeFileSync(join(dir, 'lib/index.js'), 'export const runtime = "node";\n');
+    root.dependencies[name] = 'workspace:*';
+  }
+  writeFileSync(rootPath, JSON.stringify(root));
+  f.git('add', '-A'); f.git('commit', '-qm', 'Node Host services');
+  f.pins.headCommit = f.git('rev-parse', 'HEAD'); f.pins.tree = f.git('rev-parse', 'HEAD^{tree}'); f.savePins();
+  execFileSync('pnpm', ['install', '--offline', '--ignore-scripts', '--lockfile=false'], {
+    cwd: f.source, stdio: 'pipe', timeout: 30000,
+  });
+  const manifest = await packMaintainedNodeHost(f.options);
+  const consumed = await readNodeHostPackages(join(f.output, 'host-packages.json'), f.studio);
+  for (const name of names) {
+    assert.ok(manifest.packages.some(item => item.name === name));
+    assert.ok(consumed.dependencies[name].startsWith('file:'));
+    assert.equal(consumed.overrides[name], `$${name}`);
+    const item = manifest.packages.find(item => item.name === name);
+    const bytes = execFileSync('tar', ['-xOf', join(f.output, item.tarball), 'package/lib/index.js'], { encoding: 'utf8' });
+    assert.equal(bytes, 'export const runtime = "node";\n');
+  }
+});
+
+test('fresh Host acceptance refuses archive or lock drift and development-directory packages', async t => {
+  const f = fixture(t), installation = join(f.root, 'installed'), archive = join(f.root, 'studio.tgz');
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  writeFileSync(archive, 'original archive');
+  const names = ['@kingsoftcloud/agentkit-studio', ...NODE_HOST_ROOTS];
+  for (const name of names) mkdirSync(join(installation, 'node_modules', name), { recursive: true });
+  const packages = Object.fromEntries([...names, ...Array.from({ length: 8 }, (_, n) => `dep-${n}`)]
+    .map(name => [`node_modules/${name}`, { version: '0.2.1-rc.2' }]));
+  const lock = JSON.stringify({ packages }), lockPath = join(installation, 'package-lock.json');
+  writeFileSync(lockPath, lock);
+  const proof = { format: 'agentkit.native-node-install-proof/v1', passed: true, host: true, installScripts: true,
+    archiveSha256: digest('original archive'), lockSha256: digest(lock), maintainedHost: { source: { ...f.pins, dshVersion: '0.2.1-rc.2' } } };
+  writeFileSync(join(installation, 'proof.json'), JSON.stringify(proof));
+  const options = { archive, studio: f.studio };
+  assert.equal((await readNodeHostInstallation(installation, options)).evidence.kind, 'fresh-installation');
+  writeFileSync(archive, 'replacement archive');
+  await assert.rejects(readNodeHostInstallation(installation, options), /tested Studio archive/);
+  writeFileSync(archive, 'original archive'); writeFileSync(lockPath, lock + ' ');
+  await assert.rejects(readNodeHostInstallation(installation, options), /lock changed/);
+  writeFileSync(lockPath, lock);
+  const external = join(installation, 'node_modules', NODE_HOST_ROOTS[0]);
+  rmSync(external, { recursive: true }); symlinkSync(f.source, external);
+  await assert.rejects(readNodeHostInstallation(installation, options), /escapes installation/);
 });
 
 test('rejects HEAD/tree/ancestry drift and dirty tracked files before creating output', async t => {

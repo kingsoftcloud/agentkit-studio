@@ -295,8 +295,12 @@ export async function packMaintainedNodeHost({ source, output, studio }) {
   }
   for (const name of packable) {
     if (!/^@deepseek-ai\/[a-z0-9][a-z0-9-]*$/.test(name)) throw fail('pack_package_name', `Invalid Host package: ${name}`);
-    if (/^@deepseek-ai\/(?:dsh-desktop(?:-|$)|dsh-skill-office$|dsh-tool-workspace-dependencies$|libreoffice-kit)/.test(name))
-      throw fail('pack_desktop_closure', `Node Host requires Desktop/Office package ${name}; cannot silently omit it`);
+    // Office and workspace-dependency services are part of the maintained Node
+    // Host closure. Pack their changed implementation just like other services;
+    // dropping them would install the registry's older Python-based workflows.
+    // Electron application packaging still has a separate build pipeline.
+    if (/^@deepseek-ai\/dsh-desktop(?:-|$)/.test(name))
+      throw fail('pack_desktop_closure', `Node Host requires Desktop application package ${name}; cannot silently omit it`);
     if (workspaceMap.get(name).version !== dshVersion) throw fail('pack_version_mismatch', `Host version differs: ${name}`);
   }
   mkdirSync(outputAbs, { mode: 0o700 }); // Atomic exclusive ownership; never overwrite or clean another output.

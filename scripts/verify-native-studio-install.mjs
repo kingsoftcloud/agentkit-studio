@@ -3,6 +3,7 @@
  * deterministic Native full turns across restart. Real models/Codex CLI and
  * complete product acceptance remain separate. */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
@@ -16,6 +17,8 @@ const { values } = parseArgs({ options: { archive: { type: 'string' }, keep: { t
   host: { type: 'boolean', default: false }, 'host-packages': { type: 'string' } } });
 assert.ok(values.archive, 'Use --archive <packed Studio.tgz> [--host [--host-packages <manifest>]] [--keep]');
 const archive = resolve(values.archive);
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const archiveSha256 = digest(await readFile(archive));
 assert.ok(!values['host-packages'] || values.host, '--host-packages requires --host');
 const maintained = values['host-packages'] ? await readNodeHostPackages(values['host-packages']) : null;
 const npm = process.env.PATH.split(delimiter).map(dir => join(dir, 'npm')).find(existsSync);
@@ -82,7 +85,8 @@ if (values.host) {
     assert.equal(await new Promise((resolve, reject) => { host.once('error', reject); host.once('exit', resolve); }), 0);
   }
 }
-await writeFile(join(directory, 'proof.json'), JSON.stringify({ passed: true, node: process.version, directory, archive,
+await writeFile(join(directory, 'proof.json'), JSON.stringify({ format: 'agentkit.native-node-install-proof/v1', passed: true, node: process.version, directory, archive,
+  archiveSha256, lockSha256: digest(await readFile(join(directory, 'package-lock.json'))),
   packageCount: Object.keys(lock.packages).length, scope: values.host
     ? 'fresh Host dependency install, mount, Native full turns and restart, DSH/Codex builtin pipeline and cold restore; no real model/CLI or full product acceptance'
     : 'fresh install and component loading; full mounted Host execution pending', installScripts: true, host: values.host,
