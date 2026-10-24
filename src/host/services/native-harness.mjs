@@ -234,6 +234,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           profile: { ...observer.profile, imageInputMode: 'native' }, isClosed: () => lifetime.signal.aborted });
       }
       invariant(!roles.length || canonical(binding.nativeTools.childBinding?.roles) === canonical(roles), 'studio_native_child_revision_binding_changed');
+      const childQuestionPreset = roles.length && binding.nativeTools.a2aBinding
+        ? ctx.get('sessionProjections')?.stateOf?.(agent.session, 'agentPreset') : undefined;
       const children = await createStudioNativeChildren({ roles, scope, sessionId, store, tools, mediaSources: childMediaSources,
         isClosed: () => lifetime.signal.aborted,
         fileWorkspaces: roles.length ? createStudioNativeChildWorkspaces({ workspaceRoot,
@@ -241,6 +243,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         hasSkills: Boolean(record.spec.bindings?.skills?.length || binding.nativeTools.childCapabilities?.skills),
         hasMcp: Boolean(record.spec.bindings?.mcpServers?.length || binding.nativeTools.childCapabilities?.mcp),
         mcpBinding: binding.nativeTools.childMcpBinding,
+        a2aBinding: binding.nativeTools.a2aBinding,
+        waitForChildReceipt: ({ snapshot, tools: childTools, signal: childSignal }) => {
+          invariant(typeof childQuestionPreset === 'string' && childQuestionPreset
+            && ctx.get('sessionProjections')?.stateOf?.(agent.session, 'agentPreset') === childQuestionPreset,
+          'A2A_QUESTION_AUTHORITY_LOST');
+          return createNativeHostInteraction({ ctx, store })({ agent, signal: AbortSignal.any([signal, childSignal]) }, snapshot,
+            { waitForToolReceipt: childTools.waitForReceipt });
+        },
         skillBinding: binding.nativeTools.childSkillBinding, skillInstructions,
         resolveModel: async id => {
           if (id === null) return parentModel;

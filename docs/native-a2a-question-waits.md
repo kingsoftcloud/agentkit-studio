@@ -91,6 +91,39 @@ to finish its terminal delivery. The question cursor is not proof of DSH closure
 Changed or unavailable original bindings fail closed and require repair; the
 worker retains a bounded error and continues discovering other candidates.
 
+### Questions from an active Native child
+
+A declared child role may explicitly grant `list_a2a_agents`,
+`get_a2a_agent_card` or `call_a2a_agent` from the parent's bound A2A tools. Targets
+and the A2A contract are included in the child's frozen binding digest and checked
+again when restoring ports. A2A access is not inherited merely by declaring a
+child role. Filesystem isolation still applies to workspace writes; it does not
+grant remote invocation. Calls retain the existing Host tool-policy pipeline.
+
+The child owner now drives its original receipt wait through the live root's
+question and approval services. Its remote journal, intent, result and budgets
+belong to the child Run and child Session; human presentation and audited consent
+use the parent's product Session. Before each local observation and decision,
+the bridge checks the live root, fixed parent preset, exact child checkpoint,
+original parent external-turn admission, and either the unsettled committed
+reservation or the still-fenced foreground startup intent. Ordinary child tool
+approvals continue to use their existing Kernel interaction bridge.
+
+Parent cancellation, explicit child stop and Host retirement withdraw the local
+wait, drain the child's durable cancellation and reject late answers. Withdrawing
+this waiter alone sends no remote cancellation. Terminal cleanup uses the child's
+actual committed checkpoint. A separately committed matching receipt observation
+can settle an original unknown receipt without modifying that receipt; unrelated,
+missing or still-unknown observations cannot authorize result delivery.
+
+The product-assembly tests cover foreground/background input and remote approval,
+parent/child cancellation, stale root/preset/parent ownership, and binding forgery
+using real Kernel/SQLite and controlled HTTP. Agent, question and approval audit
+services in these child tests are explicit doubles. Full mounted child question
+presentation, cold parent/child recovery, SIGKILL at those child boundaries and
+browser/human acceptance remain open; root startup recovery does not adopt child
+Runs independently.
+
 ## Verification scope and remaining migration work
 
 `tests/native-a2a-question-wait.test.mjs` exercises real Kernel/SQLite/journals and
@@ -111,8 +144,8 @@ this does not prove a mounted cold typed-question/human/browser flow. Closed-tur
 typed-question cleanup uses real journals, Kernel/SQLite and SIGKILL with declared
 minimal closed-Session/root/preset authority doubles.
 
-These checks do not establish the full migration's completion. Child-managed
-waiters, subscriptions/inbound assembly, full mounted question/browser flows, fresh
+These checks do not establish the full migration's completion. Full child cold
+recovery, subscriptions/inbound assembly, full mounted question/browser flows, fresh
 installation/Electron, online providers and the broader capability/configuration
 and execution-entry audit remain separate gates. Explicit DSH/Codex task control
 remains available; this automatic waiter belongs to the Native owning Run.

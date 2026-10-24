@@ -26,7 +26,7 @@ async function observeWhileLive(operation, signal) {
  * Host bindings; they provide already admitted models/tools/workspaces, never
  * an environment/profile fallback. This service does not advertise model tools.
  */
-export function createNativeChildOwner({ scope, childScopes = [scope], store, resolveChild, restoreChild, now = Date.now,
+export function createNativeChildOwner({ scope, childScopes = [scope], store, resolveChild, restoreChild, waitForIdle, canWaitForReceipt, now = Date.now,
   owner = `native-children-${randomUUID()}` }) {
   const parentScope = copy(scope), entries = new Map();
   scopeKey(parentScope);
@@ -35,6 +35,8 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
     scopeKey(item); return ['tenantId', 'workspaceId', 'userId'].every(key => item[key] === parentScope[key]);
   }), 'invalid_child_owner_scopes');
   check(store && typeof resolveChild === 'function' && typeof owner === 'string' && owner.trim(), 'invalid_child_owner');
+  check(waitForIdle === undefined && canWaitForReceipt === undefined
+    || typeof waitForIdle === 'function' && typeof canWaitForReceipt === 'function', 'invalid_child_idle_owner');
   const effective = record => record.snapshot.taskContract ? { ...record.configuration, contract: record.snapshot.taskContract } : record.configuration;
   const parentRecord = request => {
     check(same(request.scope, parentScope), 'child_parent_scope_mismatch');
@@ -93,13 +95,40 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       }
     }
     const entry = { scope: copy(record.snapshot.scope), runId: record.snapshot.runId, configuration: copy(record.configuration),
-      kernel: new NativeKernel({ store, ports: guarded, owner: `${owner}:${record.snapshot.runId}`, digest: hash }), promise: null, error: null };
+      kernel: new NativeKernel({ store, ports: guarded, owner: `${owner}:${record.snapshot.runId}`, digest: hash }),
+      ports, admitted, idle: null, promise: null, error: null };
     entries.set(record.snapshot.runId, entry); return entry;
+  };
+  const submit = (entry, command) => {
+    const receipt = entry.kernel.submit(entry.scope, entry.runId, command);
+    // A queued child control interrupts only this local observer. The Kernel
+    // consumes the durable command, including cancellation, on the next pass.
+    entry.idle?.abort(new NativeError('child_idle_woken'));
+    return receipt;
   };
   const drive = entry => {
     if (entry.promise) return entry.promise;
     entry.error = null;
-    entry.promise = entry.kernel.runUntilIdle(entry.scope, entry.runId).catch(error => { entry.error = error; })
+    entry.promise = (async () => {
+      for (;;) {
+        const snapshot = await entry.kernel.runUntilIdle(entry.scope, entry.runId);
+        if (terminal(snapshot.phase)) { entry.ports.tools.settleQuestions?.(snapshot); return; }
+        const record = store.load(entry.scope, entry.runId);
+        if (!canWaitForReceipt?.(record) || !entry.admitted()) return;
+        const idle = new AbortController(); entry.idle = idle;
+        try {
+          const command = await observeWhileLive(Promise.resolve().then(() => waitForIdle({
+            snapshot: copy(snapshot), tools: entry.ports.tools, signal: idle.signal,
+          })), idle.signal);
+          idle.signal.throwIfAborted();
+          check(entry.admitted() && same(store.load(entry.scope, entry.runId).snapshot, snapshot), 'child_idle_authority_lost');
+          if (!command) return;
+          check(submit(entry, command).status !== 'rejected', 'child_idle_command_rejected');
+        } catch (error) {
+          if (!idle.signal.aborted || idle.signal.reason?.code !== 'child_idle_woken') throw error;
+        } finally { if (entry.idle === idle) entry.idle = null; idle.abort(); }
+      }
+    })().catch(error => { entry.error = error; })
       .finally(() => { entry.promise = null; });
     return entry.promise;
   };
@@ -165,7 +194,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
     const startup = () => startupReceipt(reservation, record.configuration.childOwnerBinding.role);
     const cancel = () => {
       if (entry && !terminal(store.load(entry.scope, entry.runId).snapshot.phase)) {
-        entry.kernel.submit(entry.scope, entry.runId, { commandId: `foreground-cancel-${hash({ parent: request.runId,
+        submit(entry, { commandId: `foreground-cancel-${hash({ parent: request.runId,
           operationKey: request.operationKey })}`, kind: 'cancel', payload: {} });
         drive(entry);
       }
@@ -191,7 +220,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
   };
   const projection = (record, reservation) => ({ runId: record.snapshot.runId, sessionId: record.snapshot.sessionId,
     operationKey: reservation.parentOperationKey, callId: reservation.parentToolCallId,
-    state: unsafeReceipt(record) ? 'interrupted' : record.snapshot.phase === 'created' ? 'prepared' : record.snapshot.phase === 'awaiting_interaction' ? 'awaiting_interaction'
+    state: unsafeReceipt(record) && !canWaitForReceipt?.(record) ? 'interrupted' : record.snapshot.phase === 'created' ? 'prepared' : record.snapshot.phase === 'awaiting_interaction' ? 'awaiting_interaction'
       : terminal(record.snapshot.phase) ? record.snapshot.phase : 'running',
     reservedModelCalls: reservation.maxModelCalls, reservedToolCalls: reservation.maxToolCalls,
     usage: addUsage(record.snapshot.usage, record.snapshot.descendantUsage), notified: false, metadata: {} });
@@ -221,7 +250,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
           ? 'foreground' : 'background';
         const live = !terminal(snapshot.phase) && snapshot.phase !== 'finalizing' && !snapshot.childTerminalPhase
           && !parent.commands.some(row => !row.consumed && ['cancel', 'policy_revoked'].includes(row.command.kind))
-          && !terminal(child.phase) && !unsafeReceipt(record) && reservation.settledUsageDigest === null;
+          && !terminal(child.phase) && (!unsafeReceipt(record) || canWaitForReceipt?.(record)) && reservation.settledUsageDigest === null;
         rows.push({ childRunId: child.runId, sessionId: child.sessionId, role: binding.role, phase: child.phase, goalRevision: child.goalRevision, delivery,
           canPromote: live && delivery === 'foreground' && effective(parent).childPromotionPolicy === 'owned-child-promotion/v1',
           canCancel: live, canSendInput: live });
@@ -255,7 +284,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       check(entry, 'child_owner_unavailable');
       // Only an exact duplicate of the transactionally admitted command may
       // notify an active Kernel. Cancellation interrupts its existing effect.
-      check(entry.kernel.submit(entry.scope, entry.runId, delivery.command).status === 'duplicate', 'child_control_delivery_missing');
+      check(submit(entry, delivery.command).status === 'duplicate', 'child_control_delivery_missing');
       if (record.snapshot.phase !== 'awaiting_interaction' || delivery.command.kind === 'cancel') drive(entry);
     },
     async start(request) {
@@ -353,7 +382,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       parent = toolInvocation(request); request.signal.throwIfAborted();
       check(entry, 'child_owner_unavailable');
       if (args.action !== 'wait') {
-        entry.kernel.submit(entry.scope, entry.runId, { commandId: `parent-control-${hash({ parent: request.runId,
+        submit(entry, { commandId: `parent-control-${hash({ parent: request.runId,
           operationKey: request.operationKey, callId: request.call.callId })}`, kind: args.action === 'send' ? 'guide' : 'cancel',
         payload: args.action === 'send' ? { text: args.message } : {} });
       }
@@ -387,7 +416,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         const entry = await liveEntry(request, reservation, record);
         request.signal.throwIfAborted();
         if (!entry || terminal(record.snapshot.phase)) continue;
-        if (request.action === 'cancel') entry.kernel.submit(entry.scope, entry.runId, {
+        if (request.action === 'cancel') submit(entry, {
           commandId: `parent-cancel-${hash({ parent: request.runId, operationKey: request.operationKey, child: entry.runId })}`, kind: 'cancel', payload: {} });
         else if (request.childApproval?.childRunId === entry.runId && request.interaction) {
           const expected = request.childApproval;
@@ -405,7 +434,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
             && same(row.command.payload, { interactionId: expected.interactionId, decision: request.interaction.decision }));
           if (!delivered) {
             check(same(childApproval(record, reservation), expected), 'child_approval_identity_conflict');
-            entry.kernel.submit(entry.scope, entry.runId, { commandId, kind: 'submit_interaction',
+            submit(entry, { commandId, kind: 'submit_interaction',
               payload: { interactionId: expected.interactionId, decision: request.interaction.decision } });
           }
         }
@@ -455,7 +484,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         else {
           result.pendingChildRunIds.push(record.snapshot.runId);
           if (record.snapshot.phase === 'awaiting_interaction' && request.action !== 'cancel') result.approvals.push(childApproval(record, reservation));
-          if (record.snapshot.phase === 'interrupted' || unsafeReceipt(record)
+          if (record.snapshot.phase === 'interrupted' || unsafeReceipt(record) && !canWaitForReceipt?.(record)
             || entries.get(record.snapshot.runId)?.error && entries.get(record.snapshot.runId).error.code !== 'lease_busy') result.errorCode = 'child_receipt_unavailable';
         }
       }
@@ -514,7 +543,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         if (entry.configuration.childOwnerBinding.parent.runId !== request.runId) continue;
         const record = store.load(entry.scope, entry.runId);
         if (!terminal(record.snapshot.phase)) {
-          entry.kernel.submit(entry.scope, entry.runId, { commandId: `owner-release-${hash({ owner, runId: request.runId })}`, kind: 'cancel', payload: {} });
+          submit(entry, { commandId: `owner-release-${hash({ owner, runId: request.runId })}`, kind: 'cancel', payload: {} });
           jobs.push(drive(entry));
         }
       }

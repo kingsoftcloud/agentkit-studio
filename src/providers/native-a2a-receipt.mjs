@@ -70,6 +70,7 @@ export function createNativeA2aReceiptWaiter({ a2a, scope, sessionId, store, sta
     const sealed = canonical({ ...query, signal: null }), checkpoint = canonical(snapshot);
     const check = input => {
       signal.throwIfAborted();
+      questionHost?.assertCurrent?.();
       invariant(!isClosed() && input === query && query.signal === signal && canonical({ ...query, signal: null }) === sealed
         && canonical(store.load(fixedScope, snapshot.runId).snapshot) === checkpoint, 'A2A_RECEIPT_WAIT_AUTHORITY_LOST');
       return true;

@@ -16,12 +16,14 @@ import { createModelService } from '../src/model-service.mjs';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { readNativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
 import { previousChildPublication } from '../packages/agentkit-harness/src/native/child-publication.mjs';
+import { internalPeer, spec as a2aSpec } from './fixtures/native-a2a-internal-peer.mjs';
+import { hasUnsafeChildReceipt } from '../packages/agentkit-harness/src/native/owned-child.mjs';
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
   inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan,
-  childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch, skills = false } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'studio-native-children-')), workspaceRoot = join(root, 'workspace');
+  childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch, skills = false, a2a } = {}) {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'studio-native-children-'))), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   let skillDefinitions;
   if (skills) {
@@ -53,7 +55,9 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
     },
   } };
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id, subAgents: roles, toolBindings: boundTools,
-    toolContracts: mcp?.contracts, skillDefinitions }, workspaceRoot, stateDir: join(root, 'tools'), executeMcpTool: mcp?.execute });
+    toolContracts: mcp?.contracts, skillDefinitions, ...(a2a ? { a2aBindings: [a2aSpec] } : {}) }, workspaceRoot,
+    ...(a2a ? { commandEnvironment: a2a.env } : {}), stateDir: join(root, 'tools'), executeMcpTool: mcp?.execute });
+  a2a?.setRecordDirectory(join(root, 'tools/a2a-calls'));
   const values = { modelProfiles: [{ id: 'parent-profile', provider: 'openai-compatible', modelName: 'parent-model', baseUrl: 'https://parent.invalid/v1' },
     { id: 'child-profile', provider: 'openai-compatible', modelName: 'child-model', baseUrl: 'https://child.invalid/v1', input: childInput }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: 'fixture-secret' }) } });
@@ -120,12 +124,161 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   payload.prepareInput = async () => ({ kind: 'enter', messages: [], assembly: payload.input.assembly });
   const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex'),
     userId: 'local-user', agentId: record.metadata.id };
-  return { root, workspaceRoot, host, payload, ledger, gateway, roles, requests, dispatches, record, scope,
+  return { root, workspaceRoot, host, payload, ledger, gateway, roles, requests, dispatches, record, scope, services, ctx, events,
     modelValues: values, childModels: () => childModels };
 }
 
 const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
   parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
+
+// Product assembly + real Kernel/SQLite/HTTP. The live root, question service
+// and approval audit emitter below are declared Host-service doubles, not the
+// mounted DSH or human/browser acceptance proof.
+function installChildQuestionHost(f, answer) {
+  const agent = f.payload.agent, handlers = new Set(), oldState = f.services.sessionProjections.stateOf;
+  agent.id = 'live-parent';
+  f.services.agents = { get: id => id === agent.id ? agent : undefined, roots: () => [agent] };
+  f.services.sessionProjections.stateOf = (session, key) => key === 'agentPreset' ? 'parent-preset'
+    : key === 'turnBoundary' ? { lastTurn: 1, openTurnStartSeq: 1 } : oldState(session, key);
+  f.ctx.on = (event, handler) => { assert.equal(event, 'session/event'); handlers.add(handler); return () => handlers.delete(handler); };
+  let asked = 0, approved = 0;
+  const publish = (type, data) => {
+    agent.session.append(type, data); const event = f.events.at(-1);
+    for (const handler of handlers) handler(agent.session, event);
+  };
+  f.services.userQuestions = { ask: async request => {
+    assert.equal(request.agent, agent); asked++;
+    return answer(request);
+  } };
+  f.services.approval = { request: async request => {
+    assert.equal(request.agent, agent); approved++;
+    publish('approval/asked', { id: 'operation-'+approved, callId: request.callId, toolName: request.toolName, reason: request.reason });
+    publish('approval/decided', { id: 'operation-'+approved, outcome: 'allowed-once' });
+    return 'allowed-once';
+  } };
+  return { asked: () => asked, approved: () => approved };
+}
+
+for (const foreground of [false, true]) for (const approval of [false, true]) test(`SQLite ${foreground ? 'foreground' : 'background'} child A2A ${approval ? 'approval' : 'input'} waits through its live root and settles the original result`, { timeout: 20000 }, async t => {
+  const peer = await internalPeer({ mode: 'pause', ...(approval ? { expectedContinuationParts: [{ data: 'approve' }],
+    initialTask: { id: 'original-remote', contextId: 'original-context', status: { state: 'TASK_STATE_INPUT_REQUIRED', message: {
+      messageId: 'remote-question', role: 'ROLE_AGENT', parts: [{ text: 'Approve remote operation?' }], metadata: {
+        input_schema: { type: 'string', enum: ['approve', 'reject'] },
+        ksadk_interaction: { version: 1, kind: 'approval', allowed_decisions: ['approve', 'reject'],
+          presentation: { title: 'remote-write', description: '{"arguments":{}}' } },
+      },
+    } } },
+  } : {}) });
+  t.after(() => peer.close());
+  const candidate = Promise.withResolvers();
+  const f = await setup(t, { sqlite: true, a2a: peer, boundTools: [], childTool: foreground ? 'native_delegate' : 'native_start_child',
+    role: { tools: ['call_a2a_agent'] },
+    onParentContinuation: () => candidate.resolve(),
+    childPlan: (_body, index) => index === 1 ? { call: { name: 'call_a2a_agent', arguments: { agent: 'research', message: 'Question in child' } } }
+      : { text: 'Child consumed original remote result' } });
+  const human = installChildQuestionHost(f, async request => {
+    if (!foreground) await candidate.promise;
+    return { answers: [{ id: request.questions[0].id, ...(approval ? { selected: ['批准远端操作'] }
+      : { selected: [], custom: '{"answer":1}' }) }] };
+  });
+  const result = await f.host.executeTurn(f.payload);
+  assert.equal(result.reason.kind, 'completed');
+  assert.equal(human.asked(), 1); assert.equal(human.approved(), 1);
+  const parent = f.ledger.list(f.scope, 'parent-session')[0];
+  const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
+  const child = f.ledger.load(reservation.childScope, reservation.childRunId);
+  assert.equal(child.snapshot.phase, 'completed'); assert.notEqual(child.snapshot.sessionId, 'parent-session');
+  assert.equal(child.configuration.tools.length, 1); assert.equal(child.configuration.tools[0].name, 'call_a2a_agent');
+  assert.equal(child.events.filter(event => event.kind === 'tool.receipt_reconciled').length, 1);
+  const recovered = structuredClone(child), originalIntent = recovered.intents.find(row => row.kind === 'tool');
+  recovered.receipts.find(row => row.operationKey === originalIntent.operationKey).status = 'uncertain';
+  assert.equal(hasUnsafeChildReceipt(recovered), false, 'confirmed result can settle without rewriting original unknown receipt');
+  const read = recovered.intents.find(row => row.kind === 'tool_receipt');
+  for (const corrupt of ['fence', 'call', 'missing', 'unknown']) {
+    const invalid = structuredClone(recovered), query = invalid.intents.find(row => row.operationKey === read.operationKey);
+    if (corrupt === 'fence') query.payload.originalClaimedFence++;
+    if (corrupt === 'call') query.payload.callId = 'foreign-call';
+    if (corrupt === 'missing') invalid.receipts = invalid.receipts.filter(row => row.operationKey !== read.operationKey);
+    if (corrupt === 'unknown') invalid.receipts.find(row => row.operationKey === read.operationKey).result.result = null;
+    assert.equal(hasUnsafeChildReceipt(invalid), true, corrupt+' cannot authorize settlement');
+  }
+  const original = peer.record();
+  assert.equal(original.request.native.runId, child.snapshot.runId);
+  assert.equal(original.sessionDestination, 'parent-session');
+  const control = Object.values(original.controls).find(row => row.command.kind === 'continue');
+  assert.equal(control.hostDecision.receipt.sessionId, 'parent-session');
+  assert.equal(peer.calls.filter(call => call.wireMethod === 'SendMessage').length, 2, 'initial and separately approved continuation only');
+  assert.equal(peer.calls.filter(call => call.wireMethod === 'CancelTask').length, 0);
+  assert.equal(f.requests.filter(row => row.body.model === 'child-model').length, 2);
+  const parentRequests = f.requests.filter(row => row.body.model === 'parent-model');
+  assert.equal(parentRequests.length, foreground ? 2 : 3);
+  assert.ok(JSON.stringify(parentRequests.at(-1).body.messages).includes('Child consumed original remote result'));
+});
+
+for (const cancel of ['parent', 'child', 'host']) test(`SQLite ${cancel} cancellation retires an active child A2A question and rejects a late answer`, { timeout: 20000 }, async t => {
+  const peer = await internalPeer({ mode: 'pause' }); t.after(() => peer.close());
+  const f = await setup(t, { sqlite: true, a2a: peer, boundTools: [], childTool: 'native_delegate',
+    role: { tools: ['call_a2a_agent'] },
+    childPlan: () => ({ call: { name: 'call_a2a_agent', arguments: { agent: 'research', message: 'Canceled child question' } } }) });
+  const entered = Promise.withResolvers(), delayed = Promise.withResolvers(), stop = new AbortController();
+  f.payload.signal = stop.signal;
+  let question;
+  const human = installChildQuestionHost(f, request => { question = request; entered.resolve(); return delayed.promise; });
+  const running = f.host.executeTurn(f.payload); running.catch(() => {});
+  await entered.promise;
+  let closing;
+  if (cancel === 'parent') stop.abort(Error('user canceled parent'));
+  else if (cancel === 'host') closing = f.host.close();
+  else {
+    const history = f.host.childHistory({ agentId: f.record.metadata.id, sessionId: 'parent-session' });
+    assert.equal(history.tasks.length, 1); assert.equal(history.tasks[0].canCancel, true);
+    const receipt = f.host.cancelChild({ agentId: f.record.metadata.id, sessionId: 'parent-session', runId: history.runId,
+      childRunId: history.tasks[0].childRunId, commandId: 'stop-question-child' });
+    assert.equal(receipt.status, 'accepted');
+  }
+  const ending = await running;
+  await closing;
+  if (cancel !== 'child') assert.equal(ending.reason.kind, 'aborted');
+  const record = peer.record(), child = f.ledger.load(record.request.native.scope, record.request.native.runId);
+  assert.equal(child.snapshot.phase, 'canceled'); assert.equal(question.signal.aborted, true);
+  delayed.resolve({ answers: [{ id: question.questions[0].id, selected: [], custom: '{"answer":1}' }] });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(human.asked(), 1); assert.equal(human.approved(), 0);
+  assert.equal(peer.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+  assert.equal(peer.calls.filter(call => call.wireMethod === 'CancelTask').length, 0);
+  assert.equal(f.childModels(), 1);
+  assert.deepEqual(Object.values(peer.record().managed.questions.entries).map(row => row.stage), ['withdrawn']);
+});
+
+for (const drift of ['root', 'preset', 'parent']) test(`SQLite child A2A answer cannot authorize an operation after ${drift} authority drift`, { timeout: 20000 }, async t => {
+  const peer = await internalPeer({ mode: 'pause' }); t.after(() => peer.close());
+  const f = await setup(t, { sqlite: true, a2a: peer, boundTools: [], childTool: 'native_delegate',
+    role: { tools: ['call_a2a_agent'] },
+    childPlan: () => ({ call: { name: 'call_a2a_agent', arguments: { agent: 'research', message: 'Original owned question' } } }) });
+  const bind = f.gateway.forChild.bind(f.gateway);
+  f.gateway.forChild = (agent, authority) => {
+    assert.throws(() => bind(agent, { ...authority, a2aBinding: { ...authority.a2aBinding, bindingDigest: 'forged' } }), /child_a2a_binding_changed/);
+    const missing = { ...authority }; delete missing.a2aBinding;
+    assert.throws(() => bind(agent, missing), /child_tools_not_bound/);
+    return bind(agent, authority);
+  };
+  const human = installChildQuestionHost(f, request => {
+    if (drift === 'root') f.services.agents.roots = () => [];
+    if (drift === 'preset') {
+      const oldState = f.services.sessionProjections.stateOf;
+      f.services.sessionProjections.stateOf = (session, key) => key === 'agentPreset' ? 'changed-preset' : oldState(session, key);
+    }
+    if (drift === 'parent') f.payload.agent.externalTurns.pending = () => null;
+    return { answers: [{ id: request.questions[0].id, selected: [], custom: '{"answer":1}' }] };
+  });
+  await assert.rejects(f.host.executeTurn(f.payload), error => error.code === 'NATIVE_TURN_FAILED'
+    && error.nativePhase === 'interrupted' && error.nativeReason === 'child_receipt_unavailable');
+  assert.equal(human.asked(), 1); assert.equal(human.approved(), 0);
+  assert.equal(peer.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+  assert.equal(peer.calls.filter(call => call.wireMethod === 'CancelTask').length, 0);
+  assert.equal(f.childModels(), 1);
+  assert.ok(Object.values(peer.record().managed.questions.entries).every(row => row.status === 'pending'));
+});
 
 test('SQLite Host borrows formal Skills into a child without inheriting the parent disclosure cursor', async t => {
   const skillId = 'skill://alpha@1.0.0', captured = [];

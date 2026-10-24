@@ -49,9 +49,29 @@ export function loadOwnedDirectChild({ store, childScopes, parent, childRunId, r
 }
 
 export function hasUnsafeChildReceipt(record) {
+  const reconciled = intent => {
+    const original = intent?.kind === 'tool_receipt'
+      ? record.intents.find(row => row.operationKey === intent.payload.originalOperationKey) : intent;
+    const call = original?.payload.calls?.[0];
+    if (original?.kind !== 'tool' || original.status !== 'running' || original.payload.calls.length !== 1
+      || !Number.isSafeInteger(original.claimedFence) || original.claimedFence <= 0
+      || record.configuration.tools.find(tool => tool.name === call.name)?.recoveryPolicy !== 'receipt-observation/v1') return false;
+    if (intent.kind === 'tool_receipt' && (intent.payload.contract !== 'agentkit.tool-receipt-observation/v1'
+      || intent.payload.callId !== call.callId || intent.payload.originalClaimedFence !== original.claimedFence)) return false;
+    return record.intents.some(query => {
+      const p = query.payload;
+      if (query.kind !== 'tool_receipt' || query.status !== 'running' || p.contract !== 'agentkit.tool-receipt-observation/v1'
+        || p.originalOperationKey !== original.operationKey || p.callId !== call.callId || p.originalClaimedFence !== original.claimedFence) return false;
+      const receipt = record.receipts.find(row => row.operationKey === query.operationKey);
+      return receipt?.status === 'committed' && receipt.result.contract === p.contract
+        && receipt.result.originalOperationKey === original.operationKey && receipt.result.callId === call.callId
+        && ['ok', 'error'].includes(receipt.result.result?.status);
+    });
+  };
   return record.receipts.some(receipt => receipt.status === 'uncertain'
     && !(receipt.result.retryScheduled === true && ['safe-read/v1', 'workspace-observation/v1'].includes(receipt.result.recoveryPolicy))
-    && record.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind !== 'model');
+    && record.intents.find(intent => intent.operationKey === receipt.operationKey)?.kind !== 'model'
+    && !reconciled(record.intents.find(intent => intent.operationKey === receipt.operationKey)));
 }
 
 /** A settled marker alone cannot authorize delivery or reuse of a Session. */

@@ -308,17 +308,26 @@ for (const answered of [false, true]) test(`SIGKILL after owning terminal commit
     thirdPid: replayed.pid, newTaskRequests: 0, originalRunId: 'run', phase: cleaned.snapshot.phase }));
 });
 
-test('an admitted unknown answer remains unresolved after the original deadline and never auto-queries or resends', async t => {
-  const f = await setup(t, { timeout: 1 }); let asks = 0, grants = 0;
+test('an admitted unknown answer remains unresolved after the original deadline and never auto-queries or resends', { timeout: 15000 }, async t => {
+  const f = await setup(t, { timeout: 5 }); let asks = 0, grants = 0;
   const initialReads = f.calls.filter(call => call.wireMethod === 'GetTask').length;
-  let readsAtSend;
-  f.setHook(call => { if (call.wireMethod === 'SendMessage') readsAtSend = f.calls.filter(item => item.wireMethod === 'GetTask').length; });
+  let readsAtSend; const sent = Promise.withResolvers();
+  f.setHook(call => { if (call.wireMethod === 'SendMessage') {
+    readsAtSend = f.calls.filter(item => item.wireMethod === 'GetTask').length; sent.resolve();
+  } });
   const controller = new AbortController();
+  t.after(() => controller.abort(Error('test cleanup')));
   const work = f.wait(host(() => { asks++; return submit(); }, input => {
     grants++; f.setMode('send-lost'); return controlConsent(input);
   }), controller.signal);
   const stopped = assert.rejects(work, error => error.code === 'ABORT_ERR' && error.cause === controller.signal.reason);
-  await delay(1400); controller.abort(Error('stop uncertain wait')); await stopped;
+  // Start measuring after the actual peer observed the admitted Send. A fixed
+  // sleep from setup can expire before admission on a busy test worker.
+  await sent.promise;
+  const deadline = Object.values(f.record().managed.questions.entries)[0].wait.deadlineAt;
+  await delay(Math.max(1, deadline - Date.now() + 100));
+  assert.ok(Date.now() > deadline);
+  controller.abort(Error('stop uncertain wait')); await stopped;
   assert.equal(asks, 1); assert.equal(grants, 1);
   assert.equal(f.record().managed.questionOutcome, undefined);
   assert.equal(Object.values(f.record().managed.questions.entries)[0].stage, 'operation_admitted');

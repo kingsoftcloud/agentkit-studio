@@ -700,6 +700,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         && /^sha256:[0-9a-f]{64}$/.test(authority.workspaceBinding.baseRevision);
       invariant(authority.workspaceRoot === undefined || isolated, 'studio_native_child_workspace_binding_missing');
       const inheritsMcp = authority.mcpBinding !== undefined;
+      const inheritsA2a = authority.a2aBinding !== undefined;
+      invariant(!inheritsA2a || a2a && canonical(authority.a2aBinding) === canonical(this.a2aBinding),
+        'studio_native_child_a2a_binding_changed');
       invariant(!inheritsMcp || childMcpBinding && canonical(authority.mcpBinding) === canonical(childMcpBinding),
         'studio_native_child_mcp_binding_changed');
       const inheritedSkills = authority.childSkills;
@@ -710,7 +713,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             role, buildId: inheritedSkills.buildId }), 'studio_native_child_skill_binding_changed');
       }
       invariant(Array.isArray(authority.toolNames) && authority.toolNames.every(name => allowed.has(name)
-        && (inheritedSkills && disclosureNames.has(name) || inheritsMcp && mcpContracts.has(name) || formal.has(name) && (formal.get(name).readOnly === true || isolated)
+        && (inheritedSkills && disclosureNames.has(name) || inheritsMcp && mcpContracts.has(name)
+          || inheritsA2a && a2aNames.has(name) || formal.has(name) && (formal.get(name).readOnly === true || isolated)
         && template.definitions.some(definition => definition.name === name)
         && !mcpContracts.has(name) && !memoryNames.has(name))),
         'studio_native_child_tools_not_bound');
@@ -734,8 +738,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         destinationSessionId: String(agent.session.id),
         stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, assertCurrent }) : null;
       if (a2aService) {
-        if (!a2aOwners.has(sessionId)) a2aOwners.set(sessionId, new Set());
-        a2aOwners.get(sessionId).add(a2aService);
+        // Child state remains in its own journal/session. Its live transport
+        // lifetime is released with the root Session after children drain.
+        const ownerSessionId = String(agent.session.id);
+        if (!a2aOwners.has(ownerSessionId)) a2aOwners.set(ownerSessionId, new Set());
+        a2aOwners.get(ownerSessionId).add(a2aService);
       }
       const a2aPort = a2aService ? createNativeDshA2aTools({ config: {
         ...a2aService,

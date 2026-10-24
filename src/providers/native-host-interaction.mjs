@@ -12,13 +12,16 @@ export function createNativeHostInteraction({ ctx, store }) {
   return async ({ agent, signal }, snapshot, { waitForToolReceipt } = {}) => {
     signal.throwIfAborted();
     if (snapshot.phase !== 'awaiting_reconciliation' && snapshot.phase !== 'awaiting_interaction') return null;
-    invariant(String(agent?.session?.id) === snapshot.sessionId, 'studio_native_approval_session_mismatch');
     const record = store.load(snapshot.scope, snapshot.runId);
+    const childWait = snapshot.phase === 'awaiting_reconciliation' && record.configuration.childOwnerBinding;
+    invariant(String(agent?.session?.id) === snapshot.sessionId || childWait, 'studio_native_approval_session_mismatch');
     invariant(same(record.snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
     if (snapshot.phase === 'awaiting_reconciliation' && snapshot.toolReconciliation) {
       if (typeof waitForToolReceipt === 'function') {
+        const questionHost = createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, signal });
+        if (childWait) questionHost.assertCurrent();
         const command = await waitForToolReceipt({ snapshot: structuredClone(snapshot), signal,
-          questionHost: createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, signal }) });
+          questionHost });
         signal.throwIfAborted();
         invariant(same(store.load(snapshot.scope, snapshot.runId).snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
         if (command) return command;
