@@ -15,7 +15,7 @@ export const token = (aud, serial) => [Buffer.from('{"alg":"fixture"}').toString
   Buffer.from(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 3600, serial })).toString('base64url'), 'c2ln'].join('.');
 export async function internalPeer({ protocol = 'JSONRPC', streaming = false, kind = 'hosted_gateway', mode = 'complete',
   preparedStreaming = streaming, initialExisting = false, publicEgress = false, dsh = false,
-  initialTask, streamUpdates, directMessage, expectedContinuationParts = [{ data: { answer: 1 } }], continuationTasks = [] } = {}) {
+  initialTask, streamUpdates, subscriptionUpdates, directMessage, expectedContinuationParts = [{ data: { answer: 1 } }], continuationTasks = [] } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'a2a-internal-'))), workspaceRoot = join(root, 'workspace'), tokenDirectory = join(root, 'tokens');
   mkdirSync(workspaceRoot); mkdirSync(tokenDirectory);
   const rotate = (aud, serial) => {
@@ -101,11 +101,23 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
       assert.equal(url.searchParams.get('route'), 'kept'); assert.equal(url.searchParams.get('key'), 'external-query');
       assert.equal(req.headers.cookie, 'session="two words\\073comma\\054quote\\"slash\\\\"');
     }
-    const method = protocol === 'JSONRPC' ? body.method : req.method === 'GET' ? 'GetTask'
+    const method = protocol === 'JSONRPC' ? body.method : url.pathname.endsWith(':subscribe') ? 'SubscribeToTask' : req.method === 'GET' ? 'GetTask'
       : url.pathname.endsWith(':cancel') ? 'CancelTask' : url.pathname.endsWith('/message:stream') ? 'SendStreamingMessage' : 'SendMessage';
     call.wireMethod = method;
     const params = protocol === 'JSONRPC' ? body.params : body;
     const wrap = result => protocol === 'JSONRPC' ? { jsonrpc: '2.0', id: body.id, result } : result;
+    if (method === 'SubscribeToTask') {
+      assert.equal(protocol === 'JSONRPC' ? params.id : decodeURIComponent(url.pathname.split('/').at(-1).replace(/:subscribe$/u, '')), task.id);
+      assert.equal(req.method, 'POST'); assert.equal(req.headers.accept, 'text/event-stream');
+      assert.ok(Object.values(record().controls).some(value => value.command.kind === 'subscribe' && value.phase === 'watching'));
+      assert.equal(calls.filter(value => value.action === 'PrepareA2ATaskOperation').at(-1).body.Operation, 'subscribe_to_task');
+      if (hook) await hook(call, res);
+      if (res.destroyed || res.writableEnded) return;
+      res.setHeader('Content-Type', 'text/event-stream');
+      for (const [index, payload] of (subscriptionUpdates ?? [{ task }]).entries())
+        res.write(`id: frame-${index}\ndata: ${JSON.stringify(wrap(payload))}\n\n`);
+      res.end(); return;
+    }
     if (method === 'GetTask' || method === 'CancelTask') {
       assert.equal(protocol === 'JSONRPC' ? params.id : decodeURIComponent(url.pathname.split('/').at(-1).replace(/:cancel$/u, '')), task.id);
       if (method === 'CancelTask') task = { ...task, status: { state: 'TASK_STATE_CANCELED' } };

@@ -13,7 +13,7 @@ export function validateDshA2aRequest(request, control = false) {
     && Object.keys(request).every(key => allowed.includes(key)) && id(request.agentId) && id(request.sessionId), 'STUDIO_DSH_A2A_REQUEST_INVALID');
   if (control) invariant(Number.isSafeInteger(request.agentRevision) && request.agentRevision > 0
     && (request.buildId === null || id(request.buildId)) && id(request.callId) && id(request.commandId)
-    && request.operationKey === `dsh-a2a:${request.callId}` && ['get', 'continue', 'cancel', 'reject'].includes(request.kind)
+    && request.operationKey === `dsh-a2a:${request.callId}` && ['get', 'subscribe', 'continue', 'cancel', 'reject'].includes(request.kind)
     && (request.kind === 'continue' ? typeof request.pauseDigest === 'string' && /^[a-f0-9]{64}$/u.test(request.pauseDigest)
       && (Array.isArray(request.parts) && request.json === undefined || request.parts === undefined
         && typeof request.json === 'string' && request.json.length <= 1024 * 1024)

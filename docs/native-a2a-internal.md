@@ -4,7 +4,9 @@ Reference: `ksadk/a2a/control_plane.py` and `space_client.py`, read-only
 `ksadk-python` revision `355059d78e47ed764bbdb3606304cdf34e9838a3`.
 This is the outgoing registry/permit/credential/task-binding adapter used by
 the existing Native and independent DSH A2A Host. It is not completion of the
-inbound server, automatic waiters, subscriptions or full canonical content mapping.
+inbound server or all canonical content/subscription consumers. The explicit
+original-task subscription now uses the same permit and credential boundary;
+see [task subscriptions](native-a2a.md#explicit-original-task-subscriptions).
 
 ## Configuration
 

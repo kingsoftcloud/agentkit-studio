@@ -1,6 +1,19 @@
 const check = (condition, message) => { if (!condition) throw Error(message); };
 const ended = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const paused = value => ['input_required', 'auth_required'].includes(value);
+async function observation(work, signal) {
+  let stop;
+  try {
+    signal.throwIfAborted();
+    const stopped = new Promise((resolve, reject) => {
+        stop = () => reject(signal.reason); signal.addEventListener('abort', stop, { once: true });
+        if (signal.aborted) stop();
+      });
+    const pending = new Promise(resolve => { signal.throwIfAborted(); resolve(work()); });
+    const result = await Promise.race([pending, stopped]);
+    signal.throwIfAborted(); return result;
+  } finally { signal.removeEventListener('abort', stop); }
+}
 const outcomes = new Set(['observed', 'submitted', 'already_terminal', 'remote_cancelled', 'local_cancelled_before_send', 'unknown', 'remote_task_not_bound',
   'cancel_requested_but_remote_unknown', 'cancel_requested_but_remote_unsupported']);
 const rejectedBeforeEffect = new Set(['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A_CONTINUATION_NOT_ALLOWED',
@@ -19,8 +32,8 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
     : ['agentId', 'sessionId', 'runId', 'operationKey', 'callId'];
   const identity = Object.fromEntries(keys.map(key => [key, task[key]]));
   const control = dsh ? hostRemote.controlDshA2aTask : hostRemote.controlNativeA2aTask;
-  const lifetime = new AbortController(), listeners = new Set(); let disposed = false;
-  let state = { task: null, loading: false, sending: false, pending: null, outcome: '', error: '' };
+  const lifetime = new AbortController(), listeners = new Set(); let disposed = false, watch;
+  let state = { task: null, loading: false, watching: false, sending: false, pending: null, outcome: '', error: '' };
   const set = update => { if (!disposed) { state = { ...state, ...update }; for (const listener of listeners) listener(state); } };
   const validate = value => {
     const locator = value?.operation_locator;
@@ -33,7 +46,10 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
       && (value.remote_task_id === null || typeof value.remote_task_id === 'string')
       && (value.remote_context_id === null || typeof value.remote_context_id === 'string')
       && ['submitted', 'working', 'input_required', 'auth_required', ...ended].includes(value.state)
-      && outcomes.has(value.outcome) && (value.pauseDigest === null || /^[a-f0-9]{64}$/u.test(value.pauseDigest)),
+      && outcomes.has(value.outcome) && (value.pauseDigest === null || /^[a-f0-9]{64}$/u.test(value.pauseDigest))
+      && (value.subscriptionContract === undefined || value.subscriptionContract === 'agentkit.studio-a2a-task-subscription/v1')
+      && (value.subscription === undefined || value.subscription?.contract === 'agentkit.studio-a2a-task-subscription/v1'
+        && Number.isSafeInteger(value.subscription.events) && value.subscription.events >= 0 && ['eof', 'boundary'].includes(value.subscription.ended)),
     '远端任务回执与原调用不一致。');
     return value;
   };
@@ -53,18 +69,21 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
     }
     finally { set({ sending: false }); }
   };
-  const refresh = async () => {
+  const refresh = async (kind = 'get') => {
     if (disposed || state.loading || state.sending) return;
-    set({ loading: true, error: '' });
+    const active = kind === 'subscribe' ? new AbortController() : null;
+    watch = active; set({ loading: true, watching: Boolean(active), error: '' });
     try {
-      const request = { ...identity, kind: 'get', commandId: commandId() };
-      const result = validate(await control(request, lifetime.signal));
+      const request = { ...identity, kind, commandId: commandId() };
+      const signal = active ? AbortSignal.any([lifetime.signal, active.signal]) : lifetime.signal;
+      const result = validate(await observation(() => control(request, signal), signal));
       check(result.commandId === request.commandId, '远端任务查询回执不一致。');
       const pending = state.pending;
       set({ task: result, pending: pending && !ended.has(result.state)
         && !(['continue', 'reject'].includes(pending.kind) && paused(result.state) && pending.pauseDigest !== result.pauseDigest) ? pending : null });
-    } catch { set({ error: '远端任务核对失败，原调用不会自动重跑。' }); }
-    finally { set({ loading: false }); }
+    } catch (error) { if (!active?.signal.aborted) set({ error: error?.code === 'A2A_SUBSCRIPTION_UNSUPPORTED'
+      ? '远端任务未提供流式订阅，可继续核对原任务。' : '远端任务核对失败，原调用不会自动重跑。' }); }
+    finally { watch = null; set({ loading: false, watching: false }); }
   };
   const prepare = (kind, parts, json) => {
     if (disposed || state.pending || state.loading || state.sending || !state.task || ended.has(state.task.state)) return;
@@ -79,7 +98,8 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
     return send();
   };
   return { getSnapshot: () => state, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    refresh, retry: send, continue: parts => prepare('continue', parts), continueJson: json => prepare('continue', undefined, json),
+    refresh: () => refresh(), watch: () => refresh('subscribe'), stopWatching: () => watch?.abort(),
+    retry: send, continue: parts => prepare('continue', parts), continueJson: json => prepare('continue', undefined, json),
     reject: () => prepare('reject'), cancel: () => prepare('cancel'),
     dispose() { disposed = true; lifetime.abort(); listeners.clear(); } };
 }

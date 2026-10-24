@@ -13,7 +13,7 @@ import { atomicPrivate, privateDirectory, readAll, tryLock } from '../../package
 import { isBlockedAddress } from '../../packages/agentkit-harness/src/native/web-tools.mjs';
 import { hostFetch } from '../http-fetch.mjs';
 import { createSsrfPinnedFetch } from './native-dsh-web.mjs';
-import { a2aSse, a2aTerminal, createA2AProjection, NATIVE_A2A_PROTOCOL } from './native-a2a-protocol.mjs';
+import { a2aSse, a2aTerminal, a2aSubscriptionEventId, createA2AProjection, NATIVE_A2A_PROTOCOL } from './native-a2a-protocol.mjs';
 import { a2aControlView, createA2ATaskControl } from './native-a2a-controls.mjs';
 import { createInternalA2AControlPlane } from './native-a2a-control-plane.mjs';
 import { createInternalA2AWire, A2A_INTERNAL_WIRE } from './native-a2a-internal-wire.mjs';
@@ -460,14 +460,15 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         commitManaged(request, (_state, current) => {
           const projection = createA2AProjection(request.scopeId, current.projection, { deferTerminal: true });
           if (observation.method === 'GetTask') projection.task(observation.payload);
-          else projection.apply(observation.method === 'CancelTask' ? { task: observation.payload } : observation.payload, observation.sourceEventId);
+          else projection.apply(observation.method === 'CancelTask' ? { task: observation.payload } : observation.payload,
+            observation.method === 'SubscribeToTask' ? a2aSubscriptionEventId(observation.observationId, observation.sourceEventId) : observation.sourceEventId);
           projectA2ACanonical(current, observation); current.projection = projection.snapshot();
         });
       } }) : null;
     function privateWireError(error) {
       const safe = new Set(['A2A_CANCEL_UNSUPPORTED', 'A2A_REMOTE_BINDING_CONFLICT', 'A2A_INTERNAL_BIND_OUTCOME_UNKNOWN',
         'A2A_CONTROL_PLANE_AUTHORITY_LOST', 'A2A_CONTROL_AUTHORITY_LOST', 'A2A_OWNER_CLOSED', 'A2A_OWNER_CHANGED',
-        'A2A_CONTROL_REQUEST_DRIFTED', 'A2A_WORKLOAD_TOKEN_INVALID']);
+        'A2A_CONTROL_REQUEST_DRIFTED', 'A2A_WORKLOAD_TOKEN_INVALID', 'A2A_SUBSCRIPTION_UNSUPPORTED']);
       invariant(false, safe.has(error?.code) ? error.code : 'A2A_REMOTE_HTTP_FAILED');
     }
     async function wire(...args) {
@@ -479,15 +480,18 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       const prepared = internalWire ? await internalWire.prepare(request, method, params, signal,
         () => { authority(); return true; }, commandId) : null;
       const route = prepared?.route ?? request.route;
-      const actualStreaming = streaming && !prepared?.existingInitialTask && (!prepared || route.streaming);
+      const actualStreaming = streaming && !prepared?.existingInitialTask && route.streaming;
       if (prepared) { method = prepared.method; params = prepared.params; }
+      invariant(method !== 'SubscribeToTask' || actualStreaming, 'A2A_SUBSCRIPTION_UNSUPPORTED');
       if (method === 'SendStreamingMessage' && !actualStreaming) method = 'SendMessage';
       const url = endpoint(route.url, allowPrivate, Boolean(prepared)), rpc = route.protocolBinding === 'JSONRPC';
       const id = randomUUID();
       const rest = method === 'GetTask' ? { method: 'GET', path: `/tasks/${encodeURIComponent(params.id)}` }
+        : method === 'SubscribeToTask' ? { method: 'POST', path: `/tasks/${encodeURIComponent(params.id)}:subscribe` }
         : method === 'CancelTask' ? { method: 'POST', path: `/tasks/${encodeURIComponent(params.id)}:cancel` }
         : { method: 'POST', path: actualStreaming ? '/message:stream' : '/message:send' };
-      const body = rpc ? canonical({ jsonrpc: '2.0', id, method, params }) : rest.method === 'GET' ? undefined : canonical(params);
+      const body = rpc ? canonical({ jsonrpc: '2.0', id, method, params })
+        : rest.method === 'GET' || method === 'SubscribeToTask' ? undefined : canonical(params);
       const target = new URL(url); if (!rpc) target.pathname = target.pathname.replace(/\/$/u, '') + rest.path;
       prepared?.admit(); authority();
       const response = await pinned.fetch(target, { method: rpc ? 'POST' : rest.method, headers: {
@@ -498,7 +502,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         signal: AbortSignal.any([signal, lifetime.signal, sessionLifetime.signal]) });
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
-        invariant(false, method === 'CancelTask' && [405, 501].includes(response.status) ? 'A2A_CANCEL_UNSUPPORTED' : 'A2A_REMOTE_HTTP_FAILED');
+        invariant(false, [405, 501].includes(response.status) && method === 'SubscribeToTask' ? 'A2A_SUBSCRIPTION_UNSUPPORTED'
+          : method === 'CancelTask' && [405, 501].includes(response.status) ? 'A2A_CANCEL_UNSUPPORTED' : 'A2A_REMOTE_HTTP_FAILED');
       }
       const unwrap = payload => {
         if (!rpc) return payload;
@@ -506,7 +511,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         if (payload.error) {
           // Only protocol codes are classified. Remote error messages/data may
           // contain credentials and never become local diagnostics.
-          const code = method === 'CancelTask' && [-32601, -32002, -32004].includes(payload.error.code)
+          const code = method === 'SubscribeToTask' && [-32601, -32004].includes(payload.error.code) ? 'A2A_SUBSCRIPTION_UNSUPPORTED'
+            : method === 'CancelTask' && [-32601, -32002, -32004].includes(payload.error.code)
             ? 'A2A_CANCEL_UNSUPPORTED' : 'A2A_JSONRPC_FAILED';
           invariant(false, code);
         }
@@ -515,8 +521,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       };
       if (actualStreaming) {
         const stream = a2aSse(response.body, signal);
-        if (!prepared) return { stream, unwrap };
-        return { stream: (async function* () { try { for await (const event of stream) {
+        if (!prepared) return { stream, unwrap, observationId: id };
+        return { observationId: prepared.observationId, stream: (async function* () { try { for await (const event of stream) {
           const payload = unwrap(event.payload); await prepared.observe(payload, event.id); yield { ...event, payload };
         } } catch (error) { privateWireError(error); } })(), unwrap: payload => payload };
       }
@@ -529,7 +535,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
     }
     const control = createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
       signal: AbortSignal.any([lifetime.signal, sessionLifetime.signal]), readIdentity, save, wire,
-      lock: (identity, kind) => tryLock(join(directory, `${hash(identity)}${['cancel', 'reject'].includes(kind) ? '.cancel' : kind === 'get' ? '.read' : ''}.sqlite`)) });
+      lock: (identity, kind) => tryLock(join(directory, `${hash(identity)}${['cancel', 'reject'].includes(kind) ? '.cancel' : ['get', 'subscribe'].includes(kind) ? '.read' : ''}.sqlite`)) });
     function receiptSource(query) {
       const identity = { scope: fixedScope, sessionId, runId: query.runId,
         operationKey: query.originalOperationKey, callId: query.call.callId };

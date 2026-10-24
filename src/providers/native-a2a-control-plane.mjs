@@ -119,7 +119,7 @@ export function createInternalA2AControlPlane({ baseUrl, tokenProvider, fetchImp
       discard(response); ctx.signal.throwIfAborted();
       // Never echo server messages, injected headers/query, JWTs or fetch causes.
       const safe = new Set(['A2A_CONTROL_PLANE_INVALID_RESPONSE', 'A2A_CONTROL_PLANE_ACTION_FAILED', 'A2A_CONTROL_PLANE_RESPONSE_LIMIT',
-        'A2A_CONTROL_PLANE_REQUEST_CHANGED', 'A2A_CONTROL_PLANE_AUTHORITY_LOST']);
+        'A2A_CONTROL_PLANE_REQUEST_CHANGED', 'A2A_CONTROL_PLANE_AUTHORITY_LOST', 'A2A_CONTROL_AUTHORITY_LOST']);
       invariant(false, safe.has(error?.code) || action === 'AppendA2ATaskEvents' && A2A_EVENT_PERMANENT_ERRORS.includes(error?.code)
         ? error.code : 'A2A_CONTROL_PLANE_UNAVAILABLE');
     }

@@ -4,10 +4,11 @@
  * is inspected with GetTask, never implicitly sent again. */
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
-import { a2aTerminal, createA2AProjection } from './native-a2a-protocol.mjs';
+import { a2aTerminal, a2aSubscriptionEventId, createA2AProjection } from './native-a2a-protocol.mjs';
 import { a2aPendingApproval, a2aPendingInput, normalizeA2aInputParts, validateA2aHostReceipt } from './native-a2a-decision.mjs';
 
 export const STUDIO_A2A_CONTROL_CONTRACT = 'agentkit.studio-a2a-task-control/v1';
+export const STUDIO_A2A_SUBSCRIPTION_CONTRACT = 'agentkit.studio-a2a-task-subscription/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const id = value => typeof value === 'string' && value.trim() && value.length <= 256;
@@ -31,6 +32,7 @@ export async function awaitA2aControl(work, signal) {
 export function a2aControlView(binding, record) {
   const question = record.managed?.questions?.entries[record.managed.events?.adapter?.activeInteraction?.id];
   return { contract: STUDIO_A2A_CONTROL_CONTRACT, bindingDigest: binding.bindingDigest,
+    subscriptionContract: STUDIO_A2A_SUBSCRIPTION_CONTRACT,
     operation_locator: copy(record.request.identity), task_id: record.platformTaskId,
     remote_task_id: record.projection.taskId, remote_context_id: record.projection.contextId,
     state: record.projection.state, phase: record.phase,
@@ -48,12 +50,13 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
   signal: lifetime, readIdentity, save, wire, lock }) {
   const view = record => a2aControlView(binding, record);
   async function execute(input) {
-    invariant(object(input) && ['get', 'continue', 'cancel', 'reject'].includes(input.kind) && id(input.commandId)
+    invariant(object(input) && ['get', 'subscribe', 'continue', 'cancel', 'reject'].includes(input.kind) && id(input.commandId)
       && object(input.operation_locator) && object(input.authority) && input.signal instanceof AbortSignal
       && Object.keys(input).every(key => ['kind', 'commandId', 'operation_locator', 'authority', 'signal', 'parts', 'pauseDigest'].includes(key)),
     'A2A_CONTROL_REQUEST_INVALID');
     invariant(typeof assertControl === 'function' && typeof authorizeControl === 'function', 'A2A_CONTROL_AUTHORITY_REQUIRED');
     const { kind, commandId } = input, locator = copy(input.operation_locator), authority = copy(input.authority);
+    const readOnly = kind === 'get' || kind === 'subscribe';
     let parts = input.parts === undefined ? null : copy(input.parts);
     if (kind === 'continue') {
       invariant(typeof input.pauseDigest === 'string' && /^[a-f0-9]{64}$/u.test(input.pauseDigest)
@@ -100,7 +103,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         signal = AbortSignal.any([signal, AbortSignal.timeout(deadlineAt - Date.now())]);
       }
       const consent = await awaitA2aControl(() => authorizeControl({ authority: copy(authority), owner: copy(owner), command: copy(command),
-        spec: copy(record.request.spec), task: view(record), readOnly: kind === 'get'
+        spec: copy(record.request.spec), task: view(record), readOnly: readOnly
           || Boolean(entry && entry.phase !== 'queued') || a2aTerminal.has(record.projection.state), signal }), signal);
       check(); invariant(consent === 'allow' || consent?.decision === 'allow', 'A2A_CONTROL_PERMISSION_DENIED');
       // Consent can wait while the original stream publishes a remote Task or
@@ -112,14 +115,14 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       if (entry) {
         // Reads may be repeated. Potential effects are never retried, even
         // after a crash between this marker and entering the network stack.
-        if (kind !== 'get' && entry.phase !== 'queued') return copy(entry.result ?? { ...view(record), commandId, outcome: 'unknown',
+        if (!readOnly && entry.phase !== 'queued') return copy(entry.result ?? { ...view(record), commandId, outcome: 'unknown',
           error_type: 'A2A_CONTROL_OUTCOME_UNKNOWN' });
       }
       invariant(entry || Object.keys(record.controls).length < 10000, 'A2A_CONTROL_COMMAND_LIMIT');
       if (a2aTerminal.has(record.projection.state)) {
-        const result = { ...view(record), commandId, outcome: kind === 'get' ? 'observed' : 'already_terminal' };
+        const result = { ...view(record), commandId, outcome: readOnly ? 'observed' : 'already_terminal' };
         record.controls[key] = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest,
-          command, phase: 'resolved', ...(kind === 'get' ? {} : { result }), createdAt: Date.now() };
+          command, phase: 'resolved', ...(readOnly ? {} : { result }), createdAt: Date.now() };
         check(); publishRecord(); return result;
       }
       if (kind === 'cancel') {
@@ -145,16 +148,17 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
           entry.phase = 'resolved'; entry.result = result; check(); publishRecord(); return result;
         }
       }
-      if (kind === 'get' && !record.projection.taskId && !record.managed?.taskId) {
+      if (readOnly && !record.projection.taskId && !record.managed?.taskId) {
         const result = { ...view(record), commandId, outcome: 'remote_task_not_bound' };
         record.controls[key] = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest,
           command, phase: 'resolved', createdAt: Date.now() };
         check(); publishRecord(); return result;
       }
-      invariant(record.projection.taskId || kind === 'get' && record.managed?.taskId, 'A2A_REMOTE_TASK_NOT_KNOWN');
+      invariant(record.projection.taskId || readOnly && record.managed?.taskId, 'A2A_REMOTE_TASK_NOT_KNOWN');
       const cancelObservation = Object.values(record.controls).find(value => value.cancelReply
         && a2aTerminal.has(value.cancelReply.state))?.cancelReply;
-      let projection = createA2AProjection(record.request.scopeId, cancelObservation ?? record.projection, { deferTerminal: Boolean(record.managed) });
+      let projection = createA2AProjection(record.request.scopeId, cancelObservation ?? record.projection,
+        { deferTerminal: Boolean(record.managed) || kind === 'subscribe' });
       const publish = () => {
         check(); record.projection = projection.snapshot();
         record.phase = a2aTerminal.has(record.projection.state) ? 'terminal' : paused(record.projection.state) ? 'paused' : 'unknown';
@@ -169,6 +173,28 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         const task = await wire(record.request, 'GetTask', { id: record.projection.taskId }, signal, false, check, commandId);
         check(); projection.task(task); publish();
       };
+      if (kind === 'subscribe') {
+        // A fresh read may reconcile an interrupted Bind. Never allocate or
+        // replace the original task just to obtain a subscription address.
+        if (!record.projection.taskId) await observe();
+        record.controls[key] = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest,
+          command, phase: 'watching', createdAt: Date.now() };
+        check(); publishRecord();
+        const stream = await wire(record.request, 'SubscribeToTask', { id: record.projection.taskId }, signal, true, check, commandId);
+        let events = 0, boundary = false;
+        for await (const event of stream.stream) {
+          check(); projection.apply(stream.unwrap(event.payload), a2aSubscriptionEventId(stream.observationId, event.id)); events++; publish();
+          const next = projection.snapshot();
+          if (next.pendingTerminal || a2aTerminal.has(next.state) || paused(next.state)) { boundary = true; break; }
+        }
+        // EOF and terminal stream hints are observations, not completion proof.
+        // Confirm the original Task once, retaining canonical content rules.
+        await observe();
+        const result = { ...view(record), commandId, outcome: 'observed', subscription: {
+          contract: STUDIO_A2A_SUBSCRIPTION_CONTRACT, events, ended: boundary ? 'boundary' : 'eof' } };
+        record.controls[key] = { ...record.controls[key], phase: 'resolved' };
+        check(); publishRecord(); return result;
+      }
       if (kind === 'get') {
         await observe();
         const result = { ...view(record), commandId, outcome: 'observed' };

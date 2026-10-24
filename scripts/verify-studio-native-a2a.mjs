@@ -370,6 +370,15 @@ const server = createHttpServer(async (request, response) => {
         return;
       }
 
+      if (values['busy-cancel'] && body.method === 'SubscribeToTask') {
+        assert.equal(body.params.id, remoteTaskId);
+        response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+        const working = { task: { id: remoteTaskId, contextId: remoteContextId, status: { state: 'TASK_STATE_WORKING' } } };
+        // IDs may restart in another stream. Repeated identical frames in this
+        // subscription remain idempotent, and EOF does not mean completion.
+        response.write('id: 1\ndata: ' + JSON.stringify(wrap(working)) + '\n\n');
+        response.end('id: 1\ndata: ' + JSON.stringify(wrap(working)) + '\n\n'); return;
+      }
       if (body.method === 'GetTask') {
         a2aGets++;
         assert.equal(body.params.id, remoteTaskId);

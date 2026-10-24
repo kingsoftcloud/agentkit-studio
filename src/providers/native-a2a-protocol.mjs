@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 import { hasA2AActivityDeclaration } from './native-a2a-tool-activity.mjs';
 
 export const NATIVE_A2A_PROTOCOL = 'agentkit.native-a2a-wire/v1';
+export const a2aSubscriptionEventId = (operationId, eventId) => eventId
+  ? 'subscription:' + createHash('sha256').update(canonical([operationId, eventId])).digest('hex') : '';
 export const a2aTerminal = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const states = new Set(['submitted', 'working', 'completed', 'failed', 'cancelled', 'input_required', 'rejected', 'auth_required']);
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -129,12 +131,27 @@ export async function* a2aSse(body, signal) {
   invariant(body?.getReader, 'A2A_STREAM_REQUIRED');
   const reader = body.getReader(), decoder = new TextDecoder('utf-8', { fatal: true });
   let buffer = '', data = [], id = '', bytes = 0;
-  const abort = () => { reader.cancel(signal.reason).catch(() => {}); };
+  let cancelled = false;
+  const abort = () => {
+    if (cancelled) return; cancelled = true;
+    try { Promise.resolve(reader.cancel(signal.reason)).catch(() => {}); } catch {}
+  };
+  async function read() {
+    let stop;
+    try {
+      return await new Promise((resolve, reject) => {
+        stop = () => reject(signal.reason);
+        signal.addEventListener('abort', stop, { once: true });
+        Promise.resolve().then(() => { signal.throwIfAborted(); return reader.read(); }).then(resolve, reject);
+        if (signal.aborted) stop();
+      });
+    } finally { signal.removeEventListener('abort', stop); }
+  }
   signal.addEventListener('abort', abort, { once: true });
   try {
     for (;;) {
       signal.throwIfAborted();
-      const next = await reader.read(); signal.throwIfAborted();
+      const next = await read(); signal.throwIfAborted();
       buffer += next.done ? decoder.decode() : decoder.decode(next.value, { stream: true });
       if (!next.done) bytes += next.value.byteLength;
       invariant(bytes <= 16 * 1024 * 1024 && Buffer.byteLength(buffer) <= 1024 * 1024, 'A2A_STREAM_LIMIT');
@@ -149,5 +166,5 @@ export async function* a2aSse(body, signal) {
       }
       if (next.done) { invariant(!buffer.trim() && !data.length, 'A2A_STREAM_TRUNCATED'); break; }
     }
-  } finally { signal.removeEventListener('abort', abort); await reader.cancel().catch(() => {}); reader.releaseLock(); }
+  } finally { signal.removeEventListener('abort', abort); abort(); try { reader.releaseLock(); } catch {} }
 }

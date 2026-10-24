@@ -5,7 +5,52 @@ Reference: read-only `ksadk-python`, branch `feat-ksadk-harness-2`, commit
 AgentCard-driven outgoing tool path and optional internal outgoing
 registry/permit/credential/task binding described in
 [internal A2A](native-a2a-internal.md). It does not yet complete the entire A2A
-product, complete canonical content mapping, subscriptions or inbound server migration.
+product, all subscription consumers or inbound server migration. Explicit
+original-task subscriptions are now wired as described below.
+
+## Explicit original-task subscriptions
+
+The authenticated Native and DSH/Codex task controls accept `kind: subscribe`.
+The existing task panel exposes **观察远端进展** after reading a Host that advertises
+`agentkit.studio-a2a-task-subscription/v1`. It observes the original remote task;
+no model prompt, replacement task or second execution loop is created.
+**停止观察** aborts only this read, without requesting remote cancellation.
+
+Public AgentCard routes use `SubscribeToTask` JSON-RPC or A2A 1.0 REST
+`POST /tasks/<id>:subscribe`. Internal routes first persist a preparation intent,
+request `PrepareA2ATaskOperation` with `subscribe_to_task`, validate the original
+target/version/task/context and obtain fresh workload/broker credentials. A
+route without streaming support fails explicitly before peer transport. Existing
+resource/permission bindings apply, and this read cannot approve or continue a
+remote interaction. The control view's additive subscription contract leaves
+existing task-control v1 consumers and sealed tool receipts intact.
+
+The private control marker is durable before network admission. Each frame is
+validated and checkpointed through the original projection; internal canonical
+facts enter the existing durable outbox and Studio Session consumer. Stream-local
+SSE IDs are scoped to this observation, while duplicate/conflicting IDs within
+one observation retain their existing checks. Terminal notifications are hints:
+one `GetTask` of the same task confirms the result and final content. EOF while
+that snapshot is working remains working. Missing/failed confirmation cannot
+invent a terminal receipt. Late observations cannot replace a confirmed terminal.
+
+Observation uses the existing bounded 90-second control lifetime and stream
+limits. It stops at EOF, a wait/terminal hint, disconnection, cancellation or
+deadline; a fresh observation is explicit. It does not provide a permanently
+reconnecting SDK subscription. A crash leaves its durable marker unresolved,
+and replacement Hosts do not reconnect or replay Send/Cancel. Remote cancellation
+uses its independent lock and still requires exact-command consent. Unknown
+write commands remain independently recorded while observations run.
+
+Directed tests cover actual Actions/JSON-RPC/REST/SSE/token files/SQLite for
+Native and independent DSH ownership, public DSH/Codex product routes, wrong
+bindings, unsupported streaming, EOF/terminal confirmation, permission loss,
+concurrent cancellation and noncooperative transport cleanup. Two real SIGKILL
+boundaries prove cold no-reconnect behavior. The packed mounted Native busy-cancel
+verifier now also observes the live original task through authenticated RPC and
+UI state before cancellation. These fixtures use controlled services and model
+responses; real browser/human, online service and all incoming/subscription
+consumers remain separate acceptance gates.
 
 ## Binding and execution
 

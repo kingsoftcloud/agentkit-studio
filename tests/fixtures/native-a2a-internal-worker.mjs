@@ -19,7 +19,7 @@ process.once('message', async input => {
     const request = input.request ?? await owner.invocation.resolve({ agent: 'research', message: 'Hello😀', signal,
       nativeRequest: { scope, sessionId: 'session', runId: 'run', operationKey: 'original-operation', call: { callId: 'call' } } });
     process.send({ type: 'request', pid: process.pid, request });
-    const result = input.action === 'get' ? await owner.control.execute({ kind: 'get', commandId: 'explicit-after-crash',
+    const result = ['get', 'subscribe'].includes(input.action) ? await owner.control.execute({ kind: input.action, commandId: 'explicit-after-crash',
       operation_locator: request.identity, authority: { user: 'approved' }, signal }) : await owner.invocation.dispatch({ request, signal });
     process.send({ type: 'result', pid: process.pid, result });
   } catch (error) { process.send({ type: 'error', code: error.code, message: error.message }); process.exitCode = 1; }

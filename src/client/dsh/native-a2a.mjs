@@ -36,6 +36,10 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
     return h('article', { 'aria-label': 'A2A 远端任务', style: { borderTop: '1px solid var(--border, #ddd)', padding: '14px 0' } },
       h('strong', null, 'A2A 远端任务'), h('p', null, value ? states[value.state] : '尚未核对远端状态'),
       h('button', { type: 'button', style: buttonStyle(), disabled: !controller || busy, onClick: () => void controller.refresh() }, '核对远端任务'),
+      value?.subscriptionContract === 'agentkit.studio-a2a-task-subscription/v1' && !terminal.has(value.state)
+        ? h('button', { type: 'button', style: buttonStyle(), disabled: busy && !state.watching,
+          onClick: () => state.watching ? controller.stopWatching() : void controller.watch() }, state.watching ? '停止观察' : '观察远端进展') : null,
+      value?.subscription ? h('p', { role: 'status' }, terminal.has(value.state) ? '已核对远端终态。' : '本次观察已结束，远端任务仍可核对。') : null,
       value && !terminal.has(value.state) ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending),
         onClick: () => void controller.cancel() }, '请求远端取消') : null,
       outcomeText ? h('p', { role: 'status' }, outcomeText) : null,

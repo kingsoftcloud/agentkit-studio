@@ -17,9 +17,10 @@ export async function verifyMountedA2aBusyCancel({ root, installed, repository, 
   try {
     const auth = await until(async () => { try { return JSON.parse(await readFile(join(root, 'control-auth.json'), 'utf8')); }
       catch (error) { if (error.code !== 'ENOENT') throw error; } });
-    const rpc = async payload => {
+    const rpc = async (payload, signal) => {
       const response = await fetch(auth.origin + '/agentkit', { method: 'POST', headers: { origin: auth.origin, cookie: auth.cookie, 'content-type': 'application/json' },
-        body: JSON.stringify({ method: 'sessions/native-a2a-control', payload }), signal: AbortSignal.timeout(15000) });
+        body: JSON.stringify({ method: 'sessions/native-a2a-control', payload }),
+        signal: AbortSignal.any([AbortSignal.timeout(15000), ...(signal ? [signal] : [])]) });
       assert.equal(response.status, 200); const result = (await response.json()).result;
       assert.equal(result?.ok, true, JSON.stringify(result)); return result.value;
     };
@@ -38,15 +39,18 @@ export async function verifyMountedA2aBusyCancel({ root, installed, repository, 
     });
     const task = { agentId, sessionId: 'a2a-session', runId, operationKey: intent.operationKey, callId: 'a2a-call-1' };
     const calls = []; let commandSequence = 0;
-    state = createNativeA2aTaskState({ task, commandId: () => ++commandSequence === 1 ? 'mounted-busy-inspect' : 'mounted-busy-cancel', hostRemote: {
-      controlNativeA2aTask: input => { calls.push(structuredClone(input)); return rpc(input); },
+    state = createNativeA2aTaskState({ task, commandId: () => ['mounted-busy-inspect', 'mounted-busy-subscribe', 'mounted-busy-cancel'][commandSequence++], hostRemote: {
+      controlNativeA2aTask: (input, signal) => { calls.push(structuredClone(input)); return rpc(input, signal); },
     } });
     await state.refresh(); assert.equal(state.getSnapshot().error, ''); assert.equal(state.getSnapshot().task.state, 'working');
+    await state.watch(); assert.equal(state.getSnapshot().error, ''); assert.equal(state.getSnapshot().task.state, 'working');
+    assert.deepEqual(state.getSnapshot().task.subscription, { contract: 'agentkit.studio-a2a-task-subscription/v1', events: 2, ended: 'eof' });
+    assert.equal(requests.a2aPeerRequests.filter(row => row.method === 'SubscribeToTask').length, 1);
     await state.cancel(); assert.equal(state.getSnapshot().error, ''); assert.equal(state.getSnapshot().outcome, 'remote_cancelled');
     assert.equal(store.load(scope, runId).snapshot.phase, 'executing_tools', 'original stream still holds its effect lock');
     const command = calls.find(row => row.kind === 'cancel'); assert.ok(command);
     assert.equal((await rpc(command)).outcome, 'remote_cancelled', 'exact duplicate confirms without a second approval or CancelTask');
-    assert.deepEqual(counts(), { model: 1, discovery: 1, send: 1, get: 3, cancel: 1 });
+    assert.deepEqual(counts(), { model: 1, discovery: 1, send: 1, get: 4, cancel: 1 });
     recoveryPeer.finishStream();
     const result = await running; assert.match(result.finalResponse, /Original remote task was cancelled/);
     const record = store.load(scope, runId); assert.equal(record.snapshot.phase, 'completed');
@@ -60,15 +64,16 @@ export async function verifyMountedA2aBusyCancel({ root, installed, repository, 
     assert.equal(asked.length, 1); assert.equal(decided.length, 1); assert.equal(decided[0].data.outcome, 'allowed-once');
     assert.equal(asked[0].data.id, decided[0].data.id); assert.equal(asked[0].data.toolName, 'a2a_cancel_task');
     assert.equal(history.filter(row => row.type === 'turn/owner').length, 1); assert.equal(history.filter(row => row.type === 'turn/end').length, 1);
-    assert.deepEqual(counts(), { model: 2, discovery: 1, send: 1, get: 3, cancel: 1 }); assert.deepEqual(requests.serverFailures, []);
+    assert.deepEqual(counts(), { model: 2, discovery: 1, send: 1, get: 4, cancel: 1 }); assert.deepEqual(requests.serverFailures, []);
     const evidence = { node: process.version, pid: harness.client.child.pid, archive: { path: archive, sha256: archiveSha },
       sdk: { source, commit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() }, scope, runId, counts: counts(),
-      command, approval: { asked, decided, http: JSON.parse(await readFile(join(root, 'approval-http.json'), 'utf8')) },
+      command, subscription: calls.find(row => row.kind === 'subscribe'),
+      approval: { asked, decided, http: JSON.parse(await readFile(join(root, 'approval-http.json'), 'utf8')) },
       fixtureSha256: sha(await readFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'))),
       verifierSha256: sha(await readFile(new URL(import.meta.url))), requests,
       limitation: 'Full authenticated mounted Host, actual SessionController/ApprovalService and UI state, controlled HTTP human answerer/model/A2A peer; existing linked dependency graph, not live human/browser/Electron, fresh install or online service.' };
     await writeFile(join(root, 'mounted-busy-cancel-evidence.json'), JSON.stringify(evidence, null, 2));
     await writeFile(join(root, 'mounted-busy-cancel-ledger.json'), JSON.stringify(record));
-    console.log(`PASS: mounted Host busy cancellation through actual ApprovalService and authenticated RPC; original send once, cancellation once, original Run completed. Evidence ${root}`);
+    console.log(`PASS: mounted Host original-task subscription and busy cancellation through actual ApprovalService and authenticated RPC; EOF stays working, original send once, cancellation once, original Run completed. Evidence ${root}`);
   } finally { state?.dispose(); await harness.close().catch(() => {}); store?.close(); }
 }

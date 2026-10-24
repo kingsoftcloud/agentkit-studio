@@ -37,6 +37,11 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
       else res.end(); return;
     }
     const task = tasks.get(body.params.id ?? body.params.message?.taskId); assert.ok(task);
+    if (body.method === 'SubscribeToTask') {
+      assert.equal(req.headers.accept, 'text/event-stream');
+      res.setHeader('content-type', 'text/event-stream');
+      res.end('id: 1\ndata: ' + JSON.stringify(wrap({ task })) + '\n\n'); return;
+    }
     if (body.method === 'GetTask') { counts.get++; res.end(JSON.stringify(wrap(task))); return; }
     if (body.method === 'CancelTask') { counts.cancel++; task.status = { state: 'TASK_STATE_CANCELED' }; }
     else { assert.equal(body.method, 'SendMessage'); counts.continue++;
@@ -86,6 +91,17 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
     finish: () => finishStream?.(), ready: async () => { const end = Date.now() + 5000; while (!finishStream) { assert.ok(Date.now() < end); await delay(); } },
     reopen: async () => { for (const port of ports) await port.close(); applyPreset(ctx, config); } };
 }
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} product routes observe the original task without approval or replacing sealed receipts`, async t => {
+  const f = await setup(t, { runtime }); await f.launch(); const receipts = f.receipts();
+  const page = await f.remote.dshA2aTaskHistory({ agentId: 'agent', sessionId: 'session' });
+  const state = createNativeA2aTaskState({ task: { ...page.items[0], ownerKind: 'dsh' }, hostRemote: f.remote });
+  t.after(() => state.dispose()); await state.watch();
+  assert.equal(state.getSnapshot().error, ''); assert.equal(state.getSnapshot().task.state, 'input_required');
+  assert.equal(state.getSnapshot().task.subscription.contract, 'agentkit.studio-a2a-task-subscription/v1');
+  assert.equal(f.counts.approval, 0); assert.equal(f.counts.send, 1); assert.equal(f.counts.get, 1);
+  assert.equal(f.bodies.map(JSON.parse).filter(body => body.method === 'SubscribeToTask').length, 1);
+  assert.deepEqual(f.receipts(), receipts); assert.equal('scope' in state.getSnapshot().task.operation_locator, false);
+});
 for (const runtime of ['dsh-native', 'codex']) for (const kind of ['continue', 'cancel']) test(`${runtime} product controls ${kind} the original call with exact consent and cold duplicate confirmation`, async t => {
   const f = await setup(t, { runtime }); await f.launch(); const receipts = f.receipts(), network = structuredClone(f.counts);
   const page = await f.remote.dshA2aTaskHistory({ agentId: 'agent', sessionId: 'session' }); assert.deepEqual(page.items, [f.request]);

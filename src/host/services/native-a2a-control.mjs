@@ -12,7 +12,7 @@ export function validateNativeA2aControlRequest(request) {
   invariant(request && typeof request === 'object' && !Array.isArray(request)
     && Object.keys(request).every(key => ['agentId', 'sessionId', 'runId', 'operationKey', 'callId', 'kind', 'commandId', 'parts', 'json', 'pauseDigest'].includes(key))
     && ['agentId', 'sessionId', 'runId', 'operationKey', 'callId', 'commandId'].every(key => id(request[key]))
-    && ['get', 'continue', 'cancel', 'reject'].includes(request.kind)
+    && ['get', 'subscribe', 'continue', 'cancel', 'reject'].includes(request.kind)
     && (request.kind === 'continue' ? typeof request.pauseDigest === 'string'
       && (Array.isArray(request.parts) && request.json === undefined || request.parts === undefined
         && typeof request.json === 'string' && request.json.length <= 1024 * 1024)

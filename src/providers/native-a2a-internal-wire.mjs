@@ -49,7 +49,8 @@ export function createInternalA2AWire({ controlPlane, readRecord, commit, valida
     async prepare(request, method, params, signal, assertCurrent, commandId) {
       invariant(assertCurrent() === true, 'A2A_CONTROL_PLANE_AUTHORITY_LOST'); signal.throwIfAborted();
       const sending = method === 'SendMessage' || method === 'SendStreamingMessage', cancel = method === 'CancelTask';
-      invariant(sending || cancel || method === 'GetTask', 'A2A_INTERNAL_METHOD_UNSUPPORTED');
+      const subscribing = method === 'SubscribeToTask';
+      invariant(sending || cancel || subscribing || method === 'GetTask', 'A2A_INTERNAL_METHOD_UNSUPPORTED');
       const original = readRecord(request), initial = sending && !params.message.taskId;
       invariant(original?.phase !== 'prepared', 'A2A_INTERNAL_SEND_NOT_ADMITTED');
       invariant(!cancel || commandId, 'A2A_INTERNAL_COMMAND_REQUIRED');
@@ -60,7 +61,7 @@ export function createInternalA2AWire({ controlPlane, readRecord, commit, valida
       const idempotencyToken = sending || cancel ? `idem-${hash({ identity: request.identity, operationId })}` : undefined;
       const fields = initial ? { spaceId: request.spec.space_id, agentId: request.spec.target_agent_id,
         versionId: request.spec.expected_version_id, messageId: message.message.messageId, messageSha256: message.sha256, idempotencyToken }
-        : { taskId: original.managed?.taskId, operation: sending ? 'send_message' : cancel ? 'cancel_task' : 'get_task',
+        : { taskId: original.managed?.taskId, operation: sending ? 'send_message' : cancel ? 'cancel_task' : subscribing ? 'subscribe_to_task' : 'get_task',
           ...(message ? { messageId: message.message.messageId, messageSha256: message.sha256 } : {}),
           ...(idempotencyToken ? { idempotencyToken } : {}) };
       invariant(initial || fields.taskId, 'A2A_INTERNAL_TASK_NOT_BOUND');
@@ -114,6 +115,7 @@ export function createInternalA2AWire({ controlPlane, readRecord, commit, valida
       const actualParams = observedExisting || method === 'GetTask' ? { id: prepared.remoteTask.id }
         : message ? { ...params, message: message.message } : params;
       return {
+        observationId: operationId,
         route: { ...prepared.route, url: route.href }, headers, method: actualMethod, params: actualParams,
         existingInitialTask: Boolean(observedExisting),
         admit() { assertCurrent(); invariant(Date.parse(prepared.expiresAt) > Date.now(), 'A2A_INTERNAL_PERMIT_EXPIRED');

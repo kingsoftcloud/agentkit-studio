@@ -27,6 +27,35 @@ test('UI refresh is read-only and a lost continuation reply retains exactly the 
   await state.retry(); assert.deepEqual(calls[1], calls[3]); assert.equal(state.getSnapshot().pending, null);
   await state.cancel(); assert.equal(calls.length, 4, 'terminal observations cannot start another effect'); state.dispose();
 });
+test('an explicit subscription is read-only, observes EOF without completion and preserves uncertain write commands', async () => {
+  const calls = [], state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: async input => {
+    calls.push(structuredClone(input)); return response(input, input.kind === 'subscribe' ? { outcome: 'observed', state: 'working', pauseDigest: null,
+      subscriptionContract: 'agentkit.studio-a2a-task-subscription/v1', subscription: { contract: 'agentkit.studio-a2a-task-subscription/v1', events: 2, ended: 'eof' } } : {});
+  } } });
+  await state.refresh(); await state.continue([{ text: 'answer' }]); const pending = structuredClone(state.getSnapshot().pending);
+  await state.watch(); assert.deepEqual(state.getSnapshot().pending, pending); assert.equal(state.getSnapshot().task.state, 'working');
+  assert.deepEqual(calls.map(row => row.kind), ['get', 'continue', 'subscribe']); assert.equal(state.getSnapshot().watching, false);
+  state.dispose();
+});
+test('stopping observation aborts only the local read and does not request remote cancellation', async () => {
+  const calls = [], state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: (input, signal) => {
+    calls.push(input.kind);
+    if (input.kind === 'get') return Promise.resolve(response(input));
+    return new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  } } });
+  await state.refresh(); const waiting = state.watch(); assert.equal(state.getSnapshot().watching, true);
+  await Promise.resolve(); state.stopWatching(); await waiting;
+  assert.deepEqual(calls, ['get', 'subscribe']); assert.equal(state.getSnapshot().error, ''); assert.equal(state.getSnapshot().pending, null);
+  assert.equal(state.getSnapshot().loading, false); state.dispose();
+});
+test('stopping observation releases UI even if its transport ignores AbortSignal', { timeout: 1000 }, async () => {
+  let requests = 0;
+  const state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: () => {
+    requests++; return new Promise(() => {});
+  } } });
+  const waiting = state.watch(); await Promise.resolve(); state.stopWatching(); await waiting;
+  assert.equal(requests, 1); assert.equal(state.getSnapshot().loading, false); assert.equal(state.getSnapshot().error, ''); state.dispose();
+});
 test('unknown control stays pending until a read confirms terminal or a different remote question', async () => {
   const calls = []; let nextPause = 'a'.repeat(64);
   const state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: async input => {
