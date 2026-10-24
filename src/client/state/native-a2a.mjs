@@ -5,7 +5,9 @@ const outcomes = new Set(['observed', 'submitted', 'already_terminal', 'remote_c
   'cancel_requested_but_remote_unknown', 'cancel_requested_but_remote_unsupported']);
 const rejectedBeforeEffect = new Set(['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A_CONTINUATION_NOT_ALLOWED',
   'A2A_CONTROL_TASK_ALREADY_TERMINAL', 'A2A_CANCEL_ALREADY_REQUESTED',
-  'A2A_CONTROL_PERMISSION_DENIED', 'A2A_CONTROL_INPUT_INVALID', 'STUDIO_NATIVE_A2A_PERMISSION_UNAVAILABLE']);
+  'A2A_CONTROL_PERMISSION_DENIED', 'A2A_CONTROL_INPUT_INVALID', 'STUDIO_NATIVE_A2A_PERMISSION_UNAVAILABLE',
+  'A2A_HOST_DECISION_REQUIRED', 'A2A_HOST_DECISION_RECEIPT_INVALID', 'A2A_APPROVAL_RESPONSE_INVALID', 'A2A_APPROVAL_ALREADY_DECIDED',
+  'A2A_APPROVAL_REJECTION_NOT_ALLOWED', 'A2A_APPROVAL_REQUEST_MISSING']);
 
 /** An uncertain response retains the exact command. Refresh is read-only;
  * sending a fresh prompt is never a recovery operation. */
@@ -58,18 +60,22 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
       check(result.commandId === request.commandId, '远端任务查询回执不一致。');
       const pending = state.pending;
       set({ task: result, pending: pending && !ended.has(result.state)
-        && !(pending.kind === 'continue' && paused(result.state) && pending.pauseDigest !== result.pauseDigest) ? pending : null });
+        && !(['continue', 'reject'].includes(pending.kind) && paused(result.state) && pending.pauseDigest !== result.pauseDigest) ? pending : null });
     } catch { set({ error: '远端任务核对失败，原调用不会自动重跑。' }); }
     finally { set({ loading: false }); }
   };
   const prepare = (kind, parts, json) => {
     if (disposed || state.pending || state.loading || state.sending || !state.task || ended.has(state.task.state)) return;
     if (kind === 'continue' && !paused(state.task.state)) return;
+    if (kind === 'reject' && (!paused(state.task.state) || state.task.approval?.contract !== 'agentkit.a2a-remote-approval-control/v1'
+      || state.task.approval.decision)) return;
     set({ pending: { ...identity, kind, commandId: commandId(), ...(kind === 'continue'
-      ? { ...(json === undefined ? { parts: structuredClone(parts) } : { json }), pauseDigest: state.task.pauseDigest } : {}) } });
+      ? { ...(json === undefined ? { parts: structuredClone(parts) } : { json }), pauseDigest: state.task.pauseDigest }
+      : kind === 'reject' ? { pauseDigest: state.task.pauseDigest } : {}) } });
     return send();
   };
   return { getSnapshot: () => state, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    refresh, retry: send, continue: parts => prepare('continue', parts), continueJson: json => prepare('continue', undefined, json), cancel: () => prepare('cancel'),
+    refresh, retry: send, continue: parts => prepare('continue', parts), continueJson: json => prepare('continue', undefined, json),
+    reject: () => prepare('reject'), cancel: () => prepare('cancel'),
     dispose() { disposed = true; lifetime.abort(); listeners.clear(); } };
 }

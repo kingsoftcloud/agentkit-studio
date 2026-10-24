@@ -54,6 +54,7 @@ export function createInternalA2AWire({ controlPlane, readRecord, commit, valida
       invariant(original?.phase !== 'prepared', 'A2A_INTERNAL_SEND_NOT_ADMITTED');
       invariant(!cancel || commandId, 'A2A_INTERNAL_COMMAND_REQUIRED');
       const message = sending ? a2aMessageDigest(params.message) : null;
+      const observationContext = !initial && sending && commandId ? { continuationCommandId: commandId } : {};
       const operationId = initial ? `initial:${params.message.messageId}`
         : `${method}:${!sending && !cancel ? randomUUID() : commandId ?? randomUUID()}:${message?.sha256 ?? ''}`;
       const idempotencyToken = sending || cancel ? `idem-${hash({ identity: request.identity, operationId })}` : undefined;
@@ -123,14 +124,14 @@ export function createInternalA2AWire({ controlPlane, readRecord, commit, valida
           if (actualMethod === 'GetTask' || actualMethod === 'CancelTask') validation.task(payload); else validation.apply(payload);
           const candidate = actualMethod === 'GetTask' || actualMethod === 'CancelTask' ? payload
             : payload.task ?? payload.statusUpdate ?? payload.artifactUpdate;
-          if (!candidate) { observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId }); return; }
+          if (!candidate) { observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId, ...observationContext }); return; }
           const remote = { id: candidate.id ?? candidate.taskId, contextId: candidate.contextId || null };
           invariant(typeof remote.id === 'string' && remote.id && remote.id.length <= 4096
             && (remote.contextId === null || typeof remote.contextId === 'string' && remote.contextId.length <= 4096), 'A2A_REMOTE_BINDING_CONFLICT');
           if (current.managed.remote) {
             invariant(current.managed.remote.id === remote.id && current.managed.remote.contextId === remote.contextId, 'A2A_REMOTE_BINDING_CONFLICT');
             invariant(current.managed.remote.phase === 'bound', 'A2A_INTERNAL_BIND_OUTCOME_UNKNOWN');
-            observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId }); return;
+            observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId, ...observationContext }); return;
           }
           const observedAt = new Date().toISOString();
           commit(request, state => { invariant(!state.remote, 'A2A_REMOTE_BINDING_CONFLICT');
@@ -139,7 +140,7 @@ export function createInternalA2AWire({ controlPlane, readRecord, commit, valida
           assertCurrent(); commit(request, state => {
             invariant(state.remote?.id === remote.id && state.remote.contextId === remote.contextId, 'A2A_REMOTE_BINDING_CONFLICT'); state.remote.phase = 'bound';
           });
-          observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId });
+          observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId, ...observationContext });
         },
       };
     },

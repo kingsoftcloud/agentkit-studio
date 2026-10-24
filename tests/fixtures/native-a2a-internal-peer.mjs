@@ -15,7 +15,7 @@ export const token = (aud, serial) => [Buffer.from('{"alg":"fixture"}').toString
   Buffer.from(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 3600, serial })).toString('base64url'), 'c2ln'].join('.');
 export async function internalPeer({ protocol = 'JSONRPC', streaming = false, kind = 'hosted_gateway', mode = 'complete',
   preparedStreaming = streaming, initialExisting = false, publicEgress = false, dsh = false,
-  initialTask, streamUpdates, directMessage } = {}) {
+  initialTask, streamUpdates, directMessage, expectedContinuationParts = [{ data: { answer: 1 } }], continuationTasks = [] } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'a2a-internal-'))), workspaceRoot = join(root, 'workspace'), tokenDirectory = join(root, 'tokens');
   mkdirSync(workspaceRoot); mkdirSync(tokenDirectory);
   const rotate = (aud, serial) => {
@@ -29,6 +29,7 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
     : mode === 'hold-stream' ? 'TASK_STATE_WORKING' : 'TASK_STATE_COMPLETED',
     ...(mode === 'pause' ? { message: { messageId: 'question', role: 'ROLE_AGENT', parts: [{ text: 'Please answer' }] } } : {}) } };
   if (initialTask) task = structuredClone(initialTask);
+  const pendingContinuationTasks = structuredClone(continuationTasks);
   let recordDirectory = join(root, 'state');
   const records = () => {
     const directory = recordDirectory;
@@ -115,8 +116,8 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
     if (params.message.taskId) {
       assert.equal(params.message.taskId, task.id); assert.equal(params.message.contextId, task.contextId);
       const entry = Object.values(record().controls).find(value => value.phase === 'sending' && value.command.kind === 'continue');
-      assert.ok(entry); assert.deepEqual(params.message.parts, [{ data: { answer: 1 } }]);
-      task = { ...task, status: { state: 'TASK_STATE_COMPLETED' } };
+      assert.ok(entry); assert.deepEqual(params.message.parts, expectedContinuationParts);
+      task = pendingContinuationTasks.length ? pendingContinuationTasks.shift() : { ...task, status: { state: 'TASK_STATE_COMPLETED' } };
     }
     if (hook) await hook(call, res);
     if (res.destroyed || res.writableEnded) return;

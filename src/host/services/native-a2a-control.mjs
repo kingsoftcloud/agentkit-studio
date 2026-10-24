@@ -5,17 +5,19 @@ import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../pro
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 import { createHash } from 'node:crypto';
 import { requestStudioA2aApproval } from './a2a-control-approval.mjs';
+import { a2aDecisionDigest } from '../../providers/native-a2a-decision.mjs';
 
 const id = value => typeof value === 'string' && value.trim() && value.length <= 256;
 export function validateNativeA2aControlRequest(request) {
   invariant(request && typeof request === 'object' && !Array.isArray(request)
     && Object.keys(request).every(key => ['agentId', 'sessionId', 'runId', 'operationKey', 'callId', 'kind', 'commandId', 'parts', 'json', 'pauseDigest'].includes(key))
     && ['agentId', 'sessionId', 'runId', 'operationKey', 'callId', 'commandId'].every(key => id(request[key]))
-    && ['get', 'continue', 'cancel'].includes(request.kind)
+    && ['get', 'continue', 'cancel', 'reject'].includes(request.kind)
     && (request.kind === 'continue' ? typeof request.pauseDigest === 'string'
       && (Array.isArray(request.parts) && request.json === undefined || request.parts === undefined
         && typeof request.json === 'string' && request.json.length <= 1024 * 1024)
-      : request.parts === undefined && request.json === undefined && request.pauseDigest === undefined), 'STUDIO_NATIVE_A2A_CONTROL_INVALID');
+      : request.parts === undefined && request.json === undefined && (request.kind === 'reject'
+        ? typeof request.pauseDigest === 'string' && /^[a-f0-9]{64}$/u.test(request.pauseDigest) : request.pauseDigest === undefined)), 'STUDIO_NATIVE_A2A_CONTROL_INVALID');
 }
 export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents }) {
   return function control(request, callerSignal) {
@@ -60,7 +62,8 @@ export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime
         kind: original.kind, commandId: original.commandId,
         authority: { contract: 'agentkit.studio-a2a-human-control/v1', agentId: original.agentId,
           sessionId: original.sessionId, runId: original.runId, agentRevision: capsule.agentRevision, buildId: capsule.buildId },
-        ...(inputParts !== undefined ? { parts: inputParts, pauseDigest: original.pauseDigest } : {}), signal }, {
+        ...(inputParts !== undefined ? { parts: inputParts } : {}),
+        ...(original.pauseDigest !== undefined ? { pauseDigest: original.pauseDigest } : {}), signal }, {
         assertControl,
         authorizeControl: async ({ task, spec, command, readOnly, signal: consentSignal }) => {
           assertControl();
@@ -74,10 +77,12 @@ export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime
           // including under workspace-write. They do not inherit the original
           // model tool's policy result or a standing filesystem write grant.
           const outcome = await requestStudioA2aApproval({ ctx, agent, presetId, assertCurrent: assertControl,
+            requireReceipt: Boolean(task.approval && !task.approval.decision),
             request: { agent, toolName: `a2a_${original.kind}_task`,
             callId: `a2a-control:${createHash('sha256').update(canonical({ locator, commandId: original.commandId })).digest('hex')}`, signal: consentSignal,
             reason: canonical({ action: original.kind, target: spec.local_name, targetAgentId: spec.target_agent_id,
               taskId: task.task_id, remoteTaskId: task.remote_task_id, commandId: original.commandId,
+              ...(task.approval ? { approval: task.approval } : {}),
               parts: command.parts }) } });
           assertControl(); checkPolicy();
           invariant(typeof ctx.get('approval')?.request === 'function', 'STUDIO_NATIVE_A2A_PERMISSION_UNAVAILABLE');
@@ -85,6 +90,8 @@ export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime
           assertNativeRecoveryPreset(capsule, currentBinding);
           invariant(currentBinding.nativeTools === binding.nativeTools, 'STUDIO_NATIVE_A2A_PRESET_CHANGED');
           assertControl();
+          if (typeof outcome === 'object') return { decision: outcome.outcome === 'allowed-once' ? 'allow' : 'deny',
+            commandDigest: a2aDecisionDigest(command), receipt: outcome.receipt };
           return outcome === 'allowed-once' ? 'allow' : 'deny';
         },
       });

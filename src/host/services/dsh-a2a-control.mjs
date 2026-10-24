@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { canonical, copy, invariant, parseNativeJson } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 import { requestStudioA2aApproval } from './a2a-control-approval.mjs';
+import { a2aDecisionDigest } from '../../providers/native-a2a-decision.mjs';
 const id = value => typeof value === 'string' && value.trim() && value.length <= 256;
 export function validateDshA2aRequest(request, control = false) {
   const allowed = control ? ['agentId', 'sessionId', 'agentRevision', 'buildId', 'operationKey', 'callId', 'kind', 'commandId', 'parts', 'json', 'pauseDigest']
@@ -12,11 +13,12 @@ export function validateDshA2aRequest(request, control = false) {
     && Object.keys(request).every(key => allowed.includes(key)) && id(request.agentId) && id(request.sessionId), 'STUDIO_DSH_A2A_REQUEST_INVALID');
   if (control) invariant(Number.isSafeInteger(request.agentRevision) && request.agentRevision > 0
     && (request.buildId === null || id(request.buildId)) && id(request.callId) && id(request.commandId)
-    && request.operationKey === `dsh-a2a:${request.callId}` && ['get', 'continue', 'cancel'].includes(request.kind)
+    && request.operationKey === `dsh-a2a:${request.callId}` && ['get', 'continue', 'cancel', 'reject'].includes(request.kind)
     && (request.kind === 'continue' ? typeof request.pauseDigest === 'string' && /^[a-f0-9]{64}$/u.test(request.pauseDigest)
       && (Array.isArray(request.parts) && request.json === undefined || request.parts === undefined
         && typeof request.json === 'string' && request.json.length <= 1024 * 1024)
-      : request.parts === undefined && request.json === undefined && request.pauseDigest === undefined), 'STUDIO_DSH_A2A_REQUEST_INVALID');
+      : request.parts === undefined && request.json === undefined && (request.kind === 'reject'
+        ? typeof request.pauseDigest === 'string' && /^[a-f0-9]{64}$/u.test(request.pauseDigest) : request.pauseDigest === undefined)), 'STUDIO_DSH_A2A_REQUEST_INVALID');
   else invariant((request.offset === undefined || Number.isSafeInteger(request.offset) && request.offset >= 0)
     && (request.limit === undefined || Number.isSafeInteger(request.limit) && request.limit >= 1 && request.limit <= 64)
     && (request.inventoryDigest === undefined || typeof request.inventoryDigest === 'string' && /^[a-f0-9]{64}$/u.test(request.inventoryDigest)),
@@ -66,17 +68,20 @@ export function createStudioDshA2aControls({ ctx, agentEvents, signal: hostSigna
         agentRevision: binding.agentRevision, buildId: binding.buildId, kind: original.kind, commandId: original.commandId,
         authority: { contract: 'agentkit.studio-dsh-a2a-human-control/v1', agentId: binding.agentId, sessionId: original.sessionId,
           agentRevision: binding.agentRevision, buildId: binding.buildId }, signal,
-        ...(parts !== undefined ? { parts, pauseDigest: original.pauseDigest } : {}) }, { assertCurrent,
+        ...(parts !== undefined ? { parts } : {}),
+        ...(original.pauseDigest !== undefined ? { pauseDigest: original.pauseDigest } : {}) }, { assertCurrent,
         authorizeControl: async ({ task, spec, command, readOnly, signal: consentSignal }) => {
           assertCurrent(); if (readOnly) return 'allow';
           const approval = ctx.get('approval');
           const checkPolicy = () => invariant(['read-only', 'workspace-write', 'danger-full-access'].includes(
             ctx.get('sandboxPolicy')?.resolve?.({ session })?.mode), 'STUDIO_DSH_A2A_PERMISSION_UNAVAILABLE');
           invariant(typeof approval?.request === 'function', 'STUDIO_DSH_A2A_PERMISSION_UNAVAILABLE'); checkPolicy();
-          const outcome = await requestStudioA2aApproval({ ctx, agent, presetId, assertCurrent, request: { agent, toolName: `a2a_${original.kind}_task`, signal: consentSignal,
+          const outcome = await requestStudioA2aApproval({ ctx, agent, presetId, assertCurrent,
+            requireReceipt: Boolean(task.approval && !task.approval.decision), request: { agent, toolName: `a2a_${original.kind}_task`, signal: consentSignal,
             callId: `dsh-a2a-control:${createHash('sha256').update(canonical({ locator: command.operation_locator, commandId: command.commandId })).digest('hex')}`,
             reason: canonical({ action: original.kind, target: spec.local_name, targetAgentId: spec.target_agent_id,
-              taskId: task.task_id, remoteTaskId: task.remote_task_id, commandId: command.commandId, parts: command.parts }) } });
+              taskId: task.task_id, remoteTaskId: task.remote_task_id, commandId: command.commandId,
+              ...(task.approval ? { approval: task.approval } : {}), parts: command.parts }) } });
           assertCurrent(); checkPolicy();
           // Cordis returns context-bound service proxies; object equality is
           // not service identity. Recheck availability, policy and the exact
@@ -87,6 +92,8 @@ export function createStudioDshA2aControls({ ctx, agentEvents, signal: hostSigna
             && current?.agentId === binding.agentId && current?.agentRevision === binding.agentRevision
             && current?.buildId === binding.buildId && current?.runtime === binding.runtime && current?.local === true,
           'STUDIO_DSH_A2A_BINDING_CHANGED');
+          if (typeof outcome === 'object') return { decision: outcome.outcome === 'allowed-once' ? 'allow' : 'deny',
+            commandDigest: a2aDecisionDigest(command), receipt: outcome.receipt };
           return outcome === 'allowed-once' ? 'allow' : 'deny';
         },
       }), signal);

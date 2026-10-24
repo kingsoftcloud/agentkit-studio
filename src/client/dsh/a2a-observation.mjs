@@ -149,10 +149,12 @@ export function createA2aObservationView({ React } = {}) {
       const kind = canonical.interaction_kind || req.request_type || 'structured_input';
       const prompt = typeof req.prompt === 'string' ? req.prompt : '';
       const detail = redactValue(req.detail);
+      const decision = canonical.response?.response_type === 'approval' ? canonical.response.decision : null;
       return h(Fragment, null,
         h('p', { style: muted }, `远端${kind === 'approval' ? '审批' : '补充输入'}提示（仅展示，不代为决定）`),
         prompt ? h('p', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, redact(prompt)) : null,
-        detail ? h('p', { style: muted }, redact(detail)) : null);
+        detail ? h('p', { style: muted }, redact(detail)) : null,
+        decision ? h('p', null, `主机已记录：${({ approved: '批准', rejected: '拒绝', canceled: '取消' })[decision] || redact(decision)}`) : null);
     }
     if (entity === 'scope') {
       // ExecutionScopeDescriptor is a data part in the snapshot.

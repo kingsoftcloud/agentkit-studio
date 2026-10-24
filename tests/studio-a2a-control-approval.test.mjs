@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { requestStudioA2aApproval } from '../src/host/services/a2a-control-approval.mjs';
 function fixture({ open = false } = {}) {
   const log = [], abort = new AbortController();
+  const auditObservers = new Set();
   let boundary = { lastTurn: open ? 1 : 0, openTurnStartSeq: open ? 0 : null }, pending = null, busy = false;
   let decide = async () => 'allowed-once', durable = async () => true, asks = 0, flushes = 0;
   const agent = { session: { id: 'session' } };
@@ -25,10 +26,14 @@ function fixture({ open = false } = {}) {
   const services = { sessionProjections: { stateOf: () => ({ ...boundary }) },
     sessions: { flush: async () => { flushes++; log.push(['flush']); return durable(); } },
     approval: { request: async req => { asks++; log.push(['ask']); assert.equal(req.agent, agent); return decide(req); } } };
-  const ctx = { get: key => services[key] };
-  const request = signal => requestStudioA2aApproval({ ctx, agent, presetId: 'preset', assertCurrent: () => true,
+  const ctx = { get: key => services[key], on(name, fn) {
+    assert.equal(name, 'session/event'); auditObservers.add(fn); return () => auditObservers.delete(fn);
+  } };
+  const request = (signal, requireReceipt = false) => requestStudioA2aApproval({ ctx, agent, presetId: 'preset', assertCurrent: () => true, requireReceipt,
     request: { agent, toolName: 'a2a_continue_task', callId: 'exact-command', signal: signal ?? new AbortController().signal } });
   return { agent, log, request, abort, services, counts: () => ({ asks, flushes }), decide: value => { decide = value; },
+    audit: (event, source = agent.session) => { for (const observer of auditObservers) observer(source, event); },
+    observers: () => auditObservers.size,
     durable: value => { durable = value; }, boundary: value => { boundary = value; }, pending: value => { pending = value; } };
 }
 test('idle approval owns and durably closes a real lifecycle before returning a grant', async () => {
@@ -74,4 +79,32 @@ test('Agent cancellation aborts an uncooperative answerer and discards a late gr
   const running = f.request(); await waiting; f.abort.abort(Error('agent-stopped'));
   await assert.rejects(running, /agent-stopped/); release('allowed-once'); await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.counts().asks, 1); assert.equal(f.agent.externalTurns.pending(), null);
+});
+test('a receipt requires the exact committed ask/decision pair; phantom and foreign audits fail closed', async () => {
+  for (const mode of ['missing', 'foreign-session', 'foreign-call', 'foreign-id', 'duplicate', 'wrong-outcome']) {
+    const f = fixture({ open: true });
+    f.decide(async () => {
+      const source = mode === 'foreign-session' ? { id: 'session' } : f.agent.session;
+      const asked = { type: 'approval/asked', seq: 0,
+        data: { id: 'real-request', toolName: 'a2a_continue_task', callId: mode === 'foreign-call' ? 'different' : 'exact-command' } };
+      if (mode !== 'missing') {
+        f.audit(asked, source); if (mode === 'duplicate') f.audit(asked, source);
+        f.audit({ type: 'approval/decided', seq: 1, data: { id: mode === 'foreign-id' ? 'different' : 'real-request',
+          outcome: mode === 'wrong-outcome' ? 'rejected' : 'allowed-once' } }, source);
+      }
+      return 'allowed-once';
+    });
+    await assert.rejects(f.request(undefined, true), { code: 'STUDIO_A2A_APPROVAL_AUDIT_MISMATCH' }); assert.equal(f.observers(), 0);
+  }
+});
+test('a live audit receipt includes physical seq zero and survives only a successful durability barrier', async () => {
+  const f = fixture({ open: true });
+  f.decide(async () => {
+    f.audit({ type: 'approval/asked', seq: 0, data: { id: 'real-request', toolName: 'a2a_continue_task', callId: 'exact-command' } });
+    f.audit({ type: 'approval/decided', seq: 1, data: { id: 'real-request', outcome: 'allowed-once' } }); return 'allowed-once';
+  });
+  const result = await f.request(undefined, true); assert.equal(result.receipt.askedSeq, 0);
+  assert.equal(result.receipt.requestId, 'real-request'); assert.equal(result.receipt.decidedSeq, 1); assert.equal(f.observers(), 0);
+  f.durable(async () => false); await assert.rejects(f.request(undefined, true), { code: 'STUDIO_A2A_APPROVAL_NOT_DURABLE' });
+  assert.equal(f.observers(), 0);
 });

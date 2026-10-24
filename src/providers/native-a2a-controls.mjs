@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { a2aTerminal, createA2AProjection } from './native-a2a-protocol.mjs';
+import { a2aPendingApproval, validateA2aHostReceipt } from './native-a2a-decision.mjs';
 
 export const STUDIO_A2A_CONTROL_CONTRACT = 'agentkit.studio-a2a-task-control/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -34,6 +35,7 @@ export function a2aControlView(binding, record) {
     state: record.projection.state, phase: record.phase,
     pause: paused(record.projection.state) ? copy(record.projection.pause ?? null) : null,
     pauseDigest: paused(record.projection.state) ? pauseDigest(record.projection) : null,
+    ...(a2aPendingApproval(record) ? { approval: a2aPendingApproval(record) } : {}),
     output_refs: copy(record.projection.output_refs), snapshots: copy(record.projection.snapshots),
     item_kinds: copy(record.projection.item_kinds) };
 }
@@ -42,7 +44,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
   signal: lifetime, readIdentity, save, wire, lock }) {
   const view = record => a2aControlView(binding, record);
   async function execute(input) {
-    invariant(object(input) && ['get', 'continue', 'cancel'].includes(input.kind) && id(input.commandId)
+    invariant(object(input) && ['get', 'continue', 'cancel', 'reject'].includes(input.kind) && id(input.commandId)
       && object(input.operation_locator) && object(input.authority) && input.signal instanceof AbortSignal
       && Object.keys(input).every(key => ['kind', 'commandId', 'operation_locator', 'authority', 'signal', 'parts', 'pauseDigest'].includes(key)),
     'A2A_CONTROL_REQUEST_INVALID');
@@ -56,7 +58,8 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
           && (!Object.hasOwn(part, 'text') || typeof part.text === 'string')
           && (!Object.hasOwn(part, 'file') || object(part.file)))
         && Buffer.byteLength(canonical(parts)) <= 1024 * 1024, 'A2A_CONTROL_INPUT_INVALID');
-    } else invariant(parts === null && input.pauseDigest === undefined, 'A2A_CONTROL_REQUEST_INVALID');
+    } else invariant(parts === null && (kind === 'reject' ? typeof input.pauseDigest === 'string'
+      && /^[a-f0-9]{64}$/u.test(input.pauseDigest) : input.pauseDigest === undefined), 'A2A_CONTROL_REQUEST_INVALID');
     const command = { kind, commandId, operation_locator: locator, parts, pauseDigest: input.pauseDigest ?? null };
     const commandDigest = hash(command), key = hash(commandId);
     const callerSignal = input.signal;
@@ -92,7 +95,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       const consent = await awaitA2aControl(() => authorizeControl({ authority: copy(authority), owner: copy(owner), command: copy(command),
         spec: copy(record.request.spec), task: view(record), readOnly: kind === 'get'
           || Boolean(entry && entry.phase !== 'queued') || a2aTerminal.has(record.projection.state), signal }), signal);
-      check(); invariant(consent === 'allow', 'A2A_CONTROL_PERMISSION_DENIED');
+      check(); invariant(consent === 'allow' || consent?.decision === 'allow', 'A2A_CONTROL_PERMISSION_DENIED');
       // Consent can wait while the original stream publishes a remote Task or
       // terminal. Re-read it rather than publishing that pre-approval snapshot.
       record = readIdentity(locator); invariant(record, 'A2A_CALL_NOT_FOUND'); record.controls ??= {};
@@ -114,7 +117,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       }
       if (kind === 'cancel') {
         invariant(!Object.entries(record.controls).some(([otherKey, value]) => otherKey !== key
-          && value.command.kind === 'cancel' && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
+          && ['cancel', 'reject'].includes(value.command.kind) && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
         if (!entry) {
           entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command, phase: 'queued', createdAt: Date.now() };
           record.controls[key] = entry; check(); publishRecord();
@@ -176,18 +179,31 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         check(); publishRecord(); return result;
       }
       if (kind === 'continue') {
-        invariant(!Object.values(record.controls).some(value => value.command.kind === 'cancel'
+        invariant(!Object.values(record.controls).some(value => ['cancel', 'reject'].includes(value.command.kind)
           && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
         invariant(paused(record.projection.state) && pauseDigest(record.projection) === command.pauseDigest, 'A2A_CONTINUATION_NOT_ALLOWED');
         invariant(!Object.values(record.controls).some(value => value.command.kind === 'continue'
           && value.command.pauseDigest === command.pauseDigest), 'A2A_CONTINUATION_ALREADY_REQUESTED');
       } else invariant(!Object.entries(record.controls).some(([otherKey, value]) => otherKey !== key
-        && value.command.kind === 'cancel' && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
+        && ['cancel', 'reject'].includes(value.command.kind) && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
       invariant(record.controls[key] || Object.keys(record.controls).length < 10000, 'A2A_CONTROL_COMMAND_LIMIT');
       const message = kind === 'continue' ? { messageId: hash({ identity: locator, commandId }), role: 'ROLE_USER',
         taskId: record.projection.taskId, ...(record.projection.contextId ? { contextId: record.projection.contextId } : {}), parts } : null;
       if (message) invariant(Buffer.byteLength(canonical(message)) <= 1024 * 1024, 'A2A_CONTROL_INPUT_INVALID');
+      const approval = a2aPendingApproval(record);
+      invariant(kind !== 'continue' || !record.managed || !record.projection.pause?.metadata?.ksadk_interaction || approval,
+        'A2A_APPROVAL_REQUEST_MISSING');
+      if (kind === 'reject') invariant(approval && !approval.decision && pauseDigest(record.projection) === command.pauseDigest,
+        'A2A_APPROVAL_REJECTION_NOT_ALLOWED');
+      let hostDecision;
+      if (approval && !approval.decision) {
+        invariant(consent?.commandDigest === commandDigest, 'A2A_HOST_DECISION_REQUIRED');
+        validateA2aHostReceipt(consent.receipt, record.sessionDestination ?? owner.sessionId);
+        if (kind === 'continue') invariant(canonical(parts) === canonical([{ data: 'approve' }]), 'A2A_APPROVAL_RESPONSE_INVALID');
+        hostDecision = { commandDigest, interactionId: approval.interactionId, receipt: copy(consent.receipt) };
+      } else if (approval) invariant(kind === 'cancel', 'A2A_APPROVAL_ALREADY_DECIDED');
       entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command, message,
+        ...(hostDecision ? { hostDecision } : {}),
         phase: 'sending', createdAt: entry?.createdAt ?? Date.now() };
       record.controls[key] = entry;
       check(); publishRecord(); effectStarted = true;
@@ -220,7 +236,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       if (!effectStarted) throw error;
       // Stale/aborted control authority cannot publish a confirmed result, but
       // its committed intent must retain uncertainty for a replacement Host.
-      const unsupported = kind === 'cancel' && error?.code === 'A2A_CANCEL_UNSUPPORTED';
+      const unsupported = ['cancel', 'reject'].includes(kind) && error?.code === 'A2A_CANCEL_UNSUPPORTED';
       entry.phase = unsupported ? 'resolved' : 'unknown';
       entry.result = { ...view(record), commandId, outcome: unsupported ? 'cancel_requested_but_remote_unsupported' : 'unknown',
         ...(!unsupported ? { error_type: 'A2A_CONTROL_OUTCOME_UNKNOWN' } : {}) };

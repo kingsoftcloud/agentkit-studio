@@ -147,3 +147,24 @@ test('rendered task panel offers explicit inspection, structured input and origi
   tree = render(); assert.equal(calls[1].json, '{"answer":42}'); assert.ok(button(tree, '确认原操作回执'));
   assert.equal(button(tree, '请求远端取消').props.disabled, true);
 });
+for (const action of ['approve', 'reject']) test(`typed remote approval panel sends only the explicit ${action} command`, async () => {
+  const slots = [], effects = [], calls = []; let index = 0, dirty = false;
+  const React = { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() }),
+    useState(initial) { const i = index++; if (!(i in slots)) slots[i] = initial;
+      return [slots[i], value => { slots[i] = value; dirty = true; }]; },
+    useEffect(effect, deps) { const i = index++; if (!slots[i] || deps.some((value, j) => value !== slots[i][j])) { slots[i] = deps; effects.push(effect); } } };
+  const Panel = createNativeA2aPanel({ React, buttonStyle: () => ({}), hostRemote: { controlNativeA2aTask: async input => {
+    calls.push(structuredClone(input)); return response(input, { approval: { contract: 'agentkit.a2a-remote-approval-control/v1',
+      interactionId: 'interaction', decision: null, request: { detail: { name: 'remote_write' } } } });
+  } } });
+  const render = () => { let tree; do { dirty = false; index = 0; tree = Panel({ task }); for (const effect of effects.splice(0)) effect(); } while (dirty); return tree; };
+  const find = (tree, predicate) => { if (!tree || typeof tree !== 'object') return null;
+    if (predicate(tree)) return tree; for (const child of tree.children ?? []) { const found = find(child, predicate); if (found) return found; } return null; };
+  const button = (tree, text) => find(tree, node => node.type === 'button' && node.children.includes(text));
+  button(render(), '核对远端任务').props.onClick(); await new Promise(resolve => setImmediate(resolve));
+  const tree = render(); assert.equal(find(tree, node => node.type === 'textarea'), null);
+  button(tree, action === 'approve' ? '批准并继续原任务' : '拒绝并请求远端取消').props.onClick();
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(calls.length, 2);
+  assert.equal(calls[1].kind, action === 'approve' ? 'continue' : 'reject'); assert.equal(calls[1].pauseDigest, 'a'.repeat(64));
+  assert.equal(calls[1].json, action === 'approve' ? '"approve"' : undefined); assert.equal(calls[1].parts, undefined);
+});

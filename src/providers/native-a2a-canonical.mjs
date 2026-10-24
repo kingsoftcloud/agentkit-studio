@@ -19,7 +19,7 @@ const string = value => {
   const text = a2aMetadataString({ id: value }, 'id'); invariant(text, 'A2A_CANONICAL_ID_INVALID'); return text;
 };
 const optional = (metadata, ...names) => a2aMetadataString(metadata, ...names);
-export function projectA2ACanonical(record, { payload, method, observationId, sourceEventId = '' }) {
+export function projectA2ACanonical(record, { payload, method, observationId, sourceEventId = '', continuationCommandId }) {
   invariant(record.managed?.taskId && typeof observationId === 'string' && observationId, 'A2A_CANONICAL_OBSERVATION_INVALID');
   const journal = a2aEventJournal(record), state = copy(journal.adapter ?? { contract: A2A_CANONICAL_ADAPTER,
     artifacts: {}, messages: {}, occurrences: [], provisional: {}, observations: [], refs: [] });
@@ -128,14 +128,26 @@ export function projectA2ACanonical(record, { payload, method, observationId, so
     invariant(object(raw.message), 'A2A_INTERACTION_MESSAGE_REQUIRED');
     const message = { ...raw.message, contextId: raw.message.contextId || remote?.contextId || scope };
     invariant(message.contextId === (remote?.contextId || scope) && (!message.taskId || message.taskId === remote?.id), 'A2A_REMOTE_BINDING_CONFLICT');
-    const id = string(message.messageId), lifecycle = key([raw.state, id]), digest = hash(message);
+    const id = string(message.messageId), baseLifecycle = key([raw.state, id]), digest = hash(message);
+    // A confirmed supplemental Send may ask the identical question again.
+    // Only its trusted transport command opens a new opportunity; repeated
+    // notifications/GetTask reads cannot create another approval or grant.
+    state.interactionGenerations ??= {};
+    let generation = state.interactionGenerations[baseLifecycle] ?? '';
+    const previous = state.activeInteraction;
+    if (continuationCommandId && previous?.kind === 'approval'
+      && state.hostDecisions?.[previous.id]?.decision === 'approved') {
+      generation = continuationCommandId; state.interactionGenerations[baseLifecycle] = generation;
+    }
+    const lifecycle = generation ? key([raw.state, id, generation]) : baseLifecycle;
     state.interactions ??= {};
     if (state.interactions[lifecycle]) { invariant(state.interactions[lifecycle] === digest, 'A2A_INTERACTION_PAYLOAD_CONFLICT'); return; }
-    const interaction = a2aIdentity('item', 'a2a', scope, 'interaction', raw.state, id);
-    const continuation = a2aIdentity('item', 'a2a', scope, 'continuation', remote.id, id);
+    const interaction = a2aIdentity('item', 'a2a', scope, 'interaction', raw.state, id, ...(generation ? [generation] : []));
+    const continuation = a2aIdentity('item', 'a2a', scope, 'continuation', remote.id, id, ...(generation ? [generation] : []));
     const metadata = message.metadata ?? {}, approval = parseA2AApproval(metadata, interaction);
     invariant(!approval || current === 'input_required', 'A2A_INTERACTION_DECLARATION_INVALID');
-    resolveInteraction('SUPERSEDED_BY_NEW_A2A_INTERACTION', src, occ);
+    resolveInteraction('SUPERSEDED_BY_NEW_A2A_INTERACTION', src, occ,
+      Boolean(previous && state.hostDecisions?.[previous.id]?.decision === 'approved'));
     const kind = approval ? 'approval' : 'structured_input';
     const prompt = (message.parts ?? []).map(part => part.text ?? '').join('') || null;
     const schema = object(metadata.input_schema) ? metadata.input_schema : { type: current === 'auth_required' ? 'object' : 'string' };
@@ -169,8 +181,9 @@ export function projectA2ACanonical(record, { payload, method, observationId, so
     if (!paused && statusMessage && !messages.some(value => value.messageId === statusMessage.messageId)) messages.push(statusMessage);
     for (const raw of messages) if (!paused || raw.messageId !== statusMessage?.messageId) message(raw, true);
     const src = source(task.id, occ, { provisional: false, consistent: true, reconciliation_reason: 'terminal', terminal });
-    if (paused) status(task.status, occ, src);
-    if (terminal) resolveInteraction(task.status.state, src, occ);
+    if (paused || ['working', 'submitted'].includes(a2aState(task.status.state))) status(task.status, occ, src);
+    if (terminal) resolveInteraction(task.status.state, src, occ,
+      state.hostDecisions?.[state.activeInteraction?.id]?.decision === 'approved');
     if (terminal) state.terminalFingerprint = digest;
   }
   if (method === 'GetTask') snapshot(wire);

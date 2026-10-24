@@ -21,6 +21,7 @@ import { createFileWorkloadTokenProvider } from './native-a2a-workload-token.mjs
 import { checkpointA2ADescriptor } from './native-a2a-events.mjs';
 import { createA2AEventDispatcher } from './native-a2a-event-dispatcher.mjs';
 import { projectA2ACanonical } from './native-a2a-canonical.mjs';
+import { checkpointA2aHostDecision } from './native-a2a-decision.mjs';
 
 export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
 export const STUDIO_DSH_A2A_HOST = 'agentkit.studio-dsh-a2a-host/v1';
@@ -382,12 +383,18 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
             // This is the effect admission point, under the short state lock.
             // A prior queued/unknown cancellation wins even across processes;
             // a cancel admitted AFTER this marker may cancel an in-flight send.
-            invariant(!Object.values(current.controls ?? {}).some(entry => entry.command.kind === 'cancel'
+            invariant(!Object.values(current.controls ?? {}).some(entry => ['cancel', 'reject'].includes(entry.command.kind)
               && entry.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
             invariant(['input_required', 'auth_required'].includes(previous.state)
               && admission.command.pauseDigest === hash({ state: previous.state, pause: previous.pause ?? null,
                 generation: previous.pauseGeneration ?? 0 }), 'A2A_CONTINUATION_NOT_ALLOWED');
           }
+          if (admitting && admission.command.kind === 'reject') {
+            invariant(['input_required', 'auth_required'].includes(previous.state)
+              && admission.command.pauseDigest === hash({ state: previous.state, pause: previous.pause ?? null,
+                generation: previous.pauseGeneration ?? 0 }), 'A2A_APPROVAL_REJECTION_NOT_ALLOWED');
+          }
+          if (admitting && internal) checkpointA2aHostDecision(record, admission);
           // A stream never owns control entries. Each control publishes only
           // its own command; stale snapshots cannot erase a concurrent intent.
           record.controls = { ...(current.controls ?? {}), ...(controlKey && Object.hasOwn(record.controls ?? {}, controlKey)
@@ -514,7 +521,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
     }
     const control = createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
       signal: AbortSignal.any([lifetime.signal, sessionLifetime.signal]), readIdentity, save, wire,
-      lock: (identity, kind) => tryLock(join(directory, `${hash(identity)}${kind === 'cancel' ? '.cancel' : kind === 'get' ? '.read' : ''}.sqlite`)) });
+      lock: (identity, kind) => tryLock(join(directory, `${hash(identity)}${['cancel', 'reject'].includes(kind) ? '.cancel' : kind === 'get' ? '.read' : ''}.sqlite`)) });
     async function observeReceipt(query) {
       invariant(!dsh && typeof assertReceipt === 'function', 'A2A_RECEIPT_AUTHORITY_REQUIRED');
       const checkReceipt = () => {

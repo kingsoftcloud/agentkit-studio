@@ -3,9 +3,10 @@
  * an approval turn never drives the model or invents a Native Run. */
 import { canonical, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
+import { A2A_HOST_DECISION, a2aDecisionDigest } from '../../providers/native-a2a-decision.mjs';
 
 const engine = 'agentkit.a2a-human-control/v1';
-export async function requestStudioA2aApproval({ ctx, agent, presetId, request, assertCurrent }) {
+export async function requestStudioA2aApproval({ ctx, agent, presetId, request, assertCurrent, requireReceipt = false }) {
   const session = agent.session, signal = request.signal;
   const projection = () => ctx.get('sessionProjections')?.stateOf?.(session, 'turnBoundary');
   const boundary = projection();
@@ -21,10 +22,37 @@ export async function requestStudioA2aApproval({ ctx, agent, presetId, request, 
   const ask = async (checkTurn, activeSignal = signal) => {
     assertCurrent(); checkTurn();
     const approval = ctx.get('approval');
+    const approvalIdentity = approval?.[Symbol.for('cordis.tracker')] ?? approval;
     invariant(typeof approval?.request === 'function', 'STUDIO_A2A_APPROVAL_UNAVAILABLE');
-    const outcome = await awaitA2aControl(() => approval.request({ ...request, signal: activeSignal }), activeSignal);
-    assertCurrent(); checkTurn(); await flush(activeSignal); checkTurn();
-    return outcome;
+    let asked, decided, conflict = false;
+    invariant(!requireReceipt || typeof ctx.on === 'function', 'STUDIO_A2A_APPROVAL_AUDIT_UNAVAILABLE');
+    const stop = requireReceipt ? ctx.on('session/event', (source, event) => {
+      if (source !== session) return;
+      if (event.type === 'approval/asked' && event.data?.callId === request.callId
+        && event.data.toolName === request.toolName && event.data.reason === request.reason) {
+        if (asked) conflict = true;
+        else asked = { id: event.data.id, seq: event.seq };
+      }
+      if (event.type === 'approval/decided' && asked && event.data?.id === asked.id) {
+        if (decided) conflict = true;
+        else decided = { outcome: event.data.outcome, seq: event.seq };
+      }
+    }) : undefined;
+    try {
+      const outcome = await awaitA2aControl(() => approval.request({ ...request, signal: activeSignal }), activeSignal);
+      assertCurrent(); checkTurn(); await flush(activeSignal); checkTurn();
+      if (!requireReceipt) return outcome;
+      const currentApproval = ctx.get('approval');
+      invariant((currentApproval?.[Symbol.for('cordis.tracker')] ?? currentApproval) === approvalIdentity,
+        'STUDIO_A2A_APPROVAL_SERVICE_CHANGED');
+      invariant(!conflict && typeof asked?.id === 'string' && asked.id && decided?.outcome === outcome
+        && Number.isSafeInteger(asked.seq) && asked.seq >= 0 && Number.isSafeInteger(decided.seq)
+        && decided.seq > asked.seq, 'STUDIO_A2A_APPROVAL_AUDIT_MISMATCH');
+      return { outcome, receipt: { contract: A2A_HOST_DECISION, sessionId: session.id, presetId,
+        requestId: asked.id, callId: request.callId, toolName: request.toolName,
+        requestDigest: a2aDecisionDigest({ toolName: request.toolName, callId: request.callId, reason: request.reason ?? null }),
+        outcome, askedSeq: asked.seq, decidedSeq: decided.seq } };
+    } finally { stop?.(); }
   };
   const host = agent.externalTurns;
   const binding = canonical({ contract: engine, sessionId: session.id, presetId });
