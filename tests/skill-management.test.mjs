@@ -158,6 +158,7 @@ test('known same-name conflict is partial; explicit overwrite keeps older resour
   const oldId = original.content.installed_resource.resourceId, oldPath = await h.skillDiscovery.resolveInstalled(oldId), before = readFileSync(join(oldPath, 'SKILL.md'));
   await h.invoke('skill_bind_agent', { resource_id: oldId });
   h.source(snapshot('b'.repeat(40))); const second = await h.inspect(), conflict = await install(second);
+  assert.equal(first.candidates[0].status, 'ready'); assert.equal(second.candidates[0].status, 'conflict');
   assert.equal(conflict.status, 'error'); assert.equal(conflict.content.failures[0].error_type, 'SKILL_ALREADY_EXISTS');
   const replacement = await h.invoke('skill_install', { inspection_token: second.inspectionToken, candidate_id: second.candidates[0].candidateId, overwrite: true });
   assert.equal(replacement.status, 'ok'); assert.notEqual(replacement.content.installed_resource.resourceId, oldId);
@@ -256,6 +257,7 @@ test('different Agents keep inspection tokens private but share identical immuta
   const request = { signal: new AbortController().signal, assertCurrent: () => true };
   await assert.rejects(manager.execute('skill_install', { inspection_token: inspection.inspectionToken, candidate_id: inspection.candidates[0].candidateId }, request), { code: 'ENOENT' });
   const own = await manager.execute('skill_discover_github', { source: 'https://github.com/owner/repo' }, request);
+  assert.equal(own.candidates[0].status, 'conflict');
   const again = await manager.execute('skill_install', { inspection_token: own.inspectionToken, candidate_id: own.candidates[0].candidateId }, request);
   assert.equal(again.ok, true); assert.deepEqual(again.installed_resource, installed.content.installed_resource);
   assert.equal((await h.skillDiscovery.listInstalled()).total, 1);

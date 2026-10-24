@@ -4,6 +4,19 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSkillDiscovery, parseFrontmatter, skillSlug } from '../src/skill-discovery.mjs';
+
+test('strict imported manifests reject malformed YAML while local-display scalar recovery remains available', () => {
+  const bad = '---\nname: sample\ndescription: valid\nbroken: [\n---\nbody';
+  assert.equal(parseFrontmatter(bad).name, 'sample');
+  assert.throws(() => parseFrontmatter(bad, { strict: true }), { code: 'SKILL_MANIFEST_INVALID' });
+  for (const source of ['---name: sample\ndescription: test\n---\nbody', '---\nname: sample\ndescription: test\n---'])
+    assert.throws(() => parseFrontmatter(source, { strict: true }), { code: 'SKILL_MANIFEST_INVALID' });
+});
+
+test('strict import frontmatter preserves universal newlines, bounded aliases and Python duplicate-key selection', () => {
+  const metadata = parseFrontmatter('---\r\nname: old\r\nname: imported\r\ndescription: &text Unicode 技能\r\ncopy: *text\r\n---\r\nbody', { strict: true });
+  assert.equal(metadata.name, 'imported'); assert.equal(metadata.description, 'Unicode 技能'); assert.equal(metadata.copy, metadata.description);
+});
 import { DatabaseSync } from 'node:sqlite';
 import { statSync } from 'node:fs';
 

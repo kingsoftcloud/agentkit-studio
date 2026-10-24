@@ -33,7 +33,19 @@ export function skillSlug(value) {
   return slug.slice(0, 64);
 }
 
-export function parseFrontmatter(source) {
+export function parseFrontmatter(source, { strict = false } = {}) {
+  if (strict) {
+    // Python read_text normalizes universal newlines before safe_load. Keep the
+    // legacy local-display recovery below, but never recover malformed imports.
+    const text = String(source || '').replace(/\r\n?/g, '\n'), end = text.indexOf('\n---\n', 4);
+    if (!text.startsWith('---\n') || end < 0) throw new SkillDiscoveryError('SKILL_MANIFEST_INVALID', 'Skill manifest frontmatter is invalid');
+    let parsed;
+    try { parsed = parseYaml(text.slice(4, end), { version: '1.1', uniqueKeys: false, maxAliasCount: 100 }); }
+    catch { throw new SkillDiscoveryError('SKILL_MANIFEST_INVALID', 'Skill manifest YAML is invalid'); }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !parsed.name || !parsed.description)
+      throw new SkillDiscoveryError('SKILL_MANIFEST_INVALID', 'Skill manifest name and description are required');
+    return parsed;
+  }
   const text = String(source || '');
   if (!text.startsWith('---')) return {};
   const end = text.indexOf('\n---', 3);

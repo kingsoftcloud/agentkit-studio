@@ -154,10 +154,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const workspaceRoot = resolve(runtimeEnv.AGENTKIT_STUDIO_WORKSPACE || process.cwd());
   const { createNativeSkillConnection } = await import('../providers/native-skill-host.mjs');
   const skillConnection = await createNativeSkillConnection({ configuration: await configurationPromise, env: runtimeEnv, ...cloudEndpointOptions });
-  const [{ createStudioSkillManagement }, { createGithubSkillSource }, skillDiscovery, skillAgents] = await Promise.all([
-    import('../skill-management.mjs'), import('../skill-github-source.mjs'), skillDiscoveryPromise, agentStorePromise,
+  const [{ createStudioSkillManagement }, { createGithubArchiveSkillSource }, skillDiscovery, skillAgents] = await Promise.all([
+    import('../skill-management.mjs'), import('../skill-github-archive-source.mjs'), skillDiscoveryPromise, agentStorePromise,
   ]);
-  const githubSkills = createGithubSkillSource({ fetchImpl: githubSkillSourceFetch });
+  const githubSkills = createGithubArchiveSkillSource({ fetchImpl: githubSkillSourceFetch });
   const getSkillManagement = agentId => createStudioSkillManagement({ workspaceRoot,
     stateDir: join(studioStoreDir, 'builtin-workspace'), agentId, skillDiscovery, agents: skillAgents, source: githubSkills });
   const { createKnowledgeConnection, createStudioKnowledgeTools } = await import('../knowledge-tools.mjs');

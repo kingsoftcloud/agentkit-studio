@@ -73,6 +73,7 @@ function checkAuthority(assertCurrent, signal) {
     observeThenable(result);
     throw fail('skill_github_authority_lost', 'assertCurrent did not return true');
   }
+  signal?.throwIfAborted();
 }
 
 /** Race a promise against a signal. On abort, reject immediately with the
@@ -477,8 +478,8 @@ export function createGithubSkillSource({ fetchImpl } = {}) {
 
         let metadata, slug, description, version;
         try {
-          const manifestText = new TextDecoder('utf-8', { fatal: true }).decode(manifestBytes);
-          metadata = parseFrontmatter(manifestText);
+          const manifestText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(manifestBytes);
+          metadata = parseFrontmatter(manifestText, { strict: true });
         } catch { throw fail('skill_github_manifest_invalid', 'SKILL.md is not valid UTF-8'); }
         if (!metadata || typeof metadata !== 'object')
           throw fail('skill_github_manifest_invalid', 'SKILL.md frontmatter is missing or invalid');
@@ -547,4 +548,5 @@ export function createGithubSkillSource({ fetchImpl } = {}) {
   return { search, inspect, contract: GITHUB_SKILL_SOURCE_CONTRACT };
 }
 
-export { skillSlug, parseFrontmatter, SkillDiscoveryError };
+export { skillSlug, parseFrontmatter, SkillDiscoveryError, parseGithubUrl, candidateId,
+  requireExactVersion, checkAuthority, raceAbort };

@@ -58,7 +58,9 @@ Node local/HTTP/SDK 服务、真实 Native/DSH 所有权及提前持久化的写
 SQLite 和完整挂载 DSH Native/Codex 的定向证据；见 [AICP 连接配置](native-aicp-connections.md)。
 GitHub Skill 已补齐 1000 文件、单 Skill 100 MiB、排除目录、风险元数据和坏候选隔离；
 检查结果改用版本化私有文件缓存，避免 base64 JSON 阻止大文件安装。
-Git API 与 Python 的 Git ref/ZIP 传输仍有差异；见 [Skill 管理](native-skill-management.md)。
+生产 Host 现已接入 REST 首选、Git ref 回退和固定 commit ZIP 下载，整仓预算、
+同名冲突展示及严格导入 YAML 已补齐；重定向、部分格式/排序和其他 Skill 接入仍有
+差异，完整打包与产品验收不能省略。见 [Skill 管理](native-skill-management.md)。
 
 | 完成门槛 | 当前可确认状态 | 尚未闭环 |
 | --- | --- | --- |

@@ -13,6 +13,8 @@ import { NATIVE_PYTHON_SYNTAX } from '../packages/agentkit-harness/src/native/py
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createSkillDiscovery } from '../src/skill-discovery.mjs';
 import { createStudioSkillManagement, SKILL_MANAGEMENT_CONTRACT } from '../src/skill-management.mjs';
+import { createGithubArchiveSkillSource } from '../src/skill-github-archive-source.mjs';
+import { createZip } from '../src/zip.mjs';
 import { createStudioKnowledgeTools, createKnowledgeConnection, knowledgeBindings } from '../src/knowledge-tools.mjs';
 import { createLegacyMemoryTools, createLegacyMemoryConnection } from '../src/legacy-memory-tools.mjs';
 
@@ -110,15 +112,16 @@ test('actual Native kernel owns all three Skill management effects and preserves
   const skillDiscovery = createSkillDiscovery({ storeDir: join(root, 'skills') }), nativeScope = { ...scope, agentId: first.metadata.id };
   const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close());
   let network = 0;
+  const skillArchive = createZip([{ name: 'repo-commit/SKILL.md', data: '---\nname: kernel-skill\ndescription: Native receipt\n---\nInstructions' }]);
   const management = createStudioSkillManagement({ workspaceRoot, stateDir: join(root, 'state'), agentId: first.metadata.id, agents, skillDiscovery,
-    source: { search: async () => ({ repositories: [] }), inspect: async (_source, request) => {
-      assert.equal(request.assertCurrent(), true); network++;
+    source: createGithubArchiveSkillSource({ fetchImpl: async (url, request) => {
+      request.signal.throwIfAborted(); network++;
       const current = store.load(nativeScope, 'run'), intent = current.intents.find(item => item.operationKey === current.snapshot.pendingIntent);
       assert.equal(current.snapshot.phase, 'executing_tools'); assert.equal(intent.kind, 'tool'); assert.equal(intent.status, 'running');
       assert.equal(intent.claimedFence, current.lease.fence, 'live Native execution fence owns network dispatch');
-      return { repository: { owner: 'owner', name: 'repo', url: 'https://github.com/owner/repo' }, commit: 'a'.repeat(40),
-        candidates: [{ candidateId: 'candidate', path: '', files: [{ path: 'SKILL.md', bytes: Buffer.from('---\nname: kernel-skill\ndescription: Native receipt\n---\nInstructions') }] }] };
-    } } });
+      if (url === 'https://api.github.com/repos/owner/repo/commits/main') return Response.json({ sha: 'a'.repeat(40) });
+      assert.equal(url, `https://codeload.github.com/owner/repo/zip/${'a'.repeat(40)}`); return new Response(skillArchive);
+    } }) });
   const names = ['skill_discover_github', 'skill_install', 'skill_bind_agent'];
   const host = setup(t, names, [], { workspaceRoot, stateDir: join(root, 'state'), config: { agentId: first.metadata.id, toolBindings: names },
     getSkillManagement: id => { assert.equal(id, first.metadata.id); return management; } });
@@ -138,12 +141,12 @@ test('actual Native kernel owns all three Skill management effects and preserves
     models++;
     if (models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'discover', name: names[0], arguments: { source: 'https://github.com/owner/repo' } }] };
     assert.match(input.messages.filter(message => message.role === 'tool').at(-1).content, /Host post-policy:/);
-    if (models === 2) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'install', name: names[1], arguments: { inspection_token: inspection.inspectionToken, candidate_id: 'candidate' } }] };
+    if (models === 2) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'install', name: names[1], arguments: { inspection_token: inspection.inspectionToken, candidate_id: inspection.candidates[0].candidateId } }] };
     if (models === 3) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'bind', name: names[2], arguments: { resource_id: installed.resourceId } }] };
     return { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] };
   } } } });
   kernel.start(snapshot, config); const done = await kernel.runUntilIdle(nativeScope, 'run');
-  assert.equal(done.phase, 'completed'); assert.equal(models, 4); assert.equal(network, 1); assert.equal(host.calls.length, 3);
+  assert.equal(done.phase, 'completed'); assert.equal(models, 4); assert.equal(network, 2); assert.equal(host.calls.length, 3);
   const record = store.load(nativeScope, 'run'), receipts = record.receipts.flatMap(receipt => receipt.result.results ?? []);
   assert.equal(record.intents.filter(intent => intent.kind === 'tool').length, 3);
   assert.equal(receipts.filter(receipt => receipt.status === 'ok').length, 3);
@@ -152,9 +155,9 @@ test('actual Native kernel owns all three Skill management effects and preserves
   assert.equal((await agents.get(first.metadata.id)).spec.bindings.skills[0].resourceId, installed.resourceId);
   assert.deepEqual(record.configuration.tools, config.tools);
   assert.equal(done.buildId, snapshot.buildId);
-  await kernel.runUntilIdle(nativeScope, 'run'); assert.equal(models, 4); assert.equal(network, 1); assert.equal(host.calls.length, 3);
+  await kernel.runUntilIdle(nativeScope, 'run'); assert.equal(models, 4); assert.equal(network, 2); assert.equal(host.calls.length, 3);
   const forged = host.request({ source: 'https://github.com/owner/repo' }, names[0]); forged.scope = nativeScope;
-  await assert.rejects(ports.tools.execute(forged), /authority|unbound|stale/); assert.equal(network, 1);
+  await assert.rejects(ports.tools.execute(forged), /authority|unbound|stale/); assert.equal(network, 2);
 });
 function setup(t, names = ['write_workspace_file'], contracts = [], options = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'studio-native-tools-')), workspaceRoot = join(root, 'workspace');

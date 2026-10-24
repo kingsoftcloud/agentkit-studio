@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createAgentStore } from '../../src/agent-store.mjs';
+import { createZip } from '../../src/zip.mjs';
 import { mountStudioHost } from '../../src/host/bootstrap.mjs';
 import { bindDshInvocationContext } from '../../src/providers/dsh-invocation-context.mjs';
 import { DSH_NODE_BUILTIN_NAMES } from '../../src/providers/dsh-node-builtin-catalog.mjs';
@@ -23,7 +24,7 @@ export async function apply(ctx, options) {
   const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
   const sha256 = value => createHash('sha256').update(value).digest('hex');
   let networkCalls = 0, pendingRequest; const skillRequests = [], a2aRequests = [];
-  const githubRequests = [], knowledgeRequests = [], githubCommit = 'c'.repeat(40), githubTree = 'd'.repeat(40);
+  const githubRequests = [], knowledgeRequests = [], githubCommit = 'c'.repeat(40);
   const memoryRequests = [], memoryRows = () => {
     const db = new DatabaseSync(join(home, 'studio/legacy-memory/effects/effects.sqlite'));
     try { return db.prepare('SELECT * FROM legacy_memory_effects ORDER BY identity').all(); } finally { db.close(); }
@@ -34,26 +35,25 @@ export async function apply(ctx, options) {
   // reducing the logical file count or bypassing candidate byte budgets.
   githubFiles.push(['scripts/review.SH', githubFiles[0][1]]);
   for (let i = githubFiles.length; i < 1000; i++) githubFiles.push([`assets/file-${i}.txt`, githubFiles[0][1]]);
-  const githubBlob = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+  const githubArchive = createZip([...githubFiles.map(([path, data]) => ({ name: `repository-${githubCommit}/${path}`, data })),
+    { name: `repository-${githubCommit}/node_modules/ignored.js`, data: 'excluded dependency' },
+    { name: `repository-${githubCommit}/dist/SKILL.md`, data: 'excluded manifest' }]);
+  const packet = text => Buffer.from((Buffer.byteLength(text) + 4).toString(16).padStart(4, '0') + text);
+  const githubRefs = Buffer.concat([packet('# service=git-upload-pack\n'), Buffer.from('0000'),
+    packet(`${githubCommit} HEAD\0multi_ack symref=HEAD:refs/heads/main\n`), packet(`${githubCommit} refs/heads/main\n`), Buffer.from('0000')]);
   const githubFetch = async (input, init) => {
     assert.equal(previous, null, 'cold original management receipts must not fetch GitHub again');
-    const url = new URL(input); assert.equal(url.origin, 'https://api.github.com');
+    const url = new URL(input); assert.ok(['https://api.github.com', 'https://github.com', 'https://codeload.github.com'].includes(url.origin));
     assert.equal(init.redirect, 'error'); assert.equal(init.method, 'GET'); assert.equal(init.headers.Authorization, undefined);
     init.signal.throwIfAborted(); githubRequests.push(url.pathname + url.search);
     let data;
     if (url.pathname === '/search/repositories') data = { items: [{ full_name: 'packed/repository', html_url: 'https://github.com/packed/repository',
       description: 'Packed GitHub source', default_branch: 'main', stargazers_count: 1, archived: false }] };
-    else if (url.pathname === '/repos/packed/repository/commits/main') data = { sha: githubCommit };
-    else if (url.pathname === `/repos/packed/repository/git/commits/${githubCommit}`) data = { sha: githubCommit, tree: { sha: githubTree } };
-    else if (url.pathname === `/repos/packed/repository/git/trees/${githubTree}`) data = { sha: githubTree, truncated: false, tree: [
-      { path: 'assets', mode: '040000', type: 'tree', sha: 'e'.repeat(40) },
-      { path: 'node_modules/ignored.js', mode: '100644', type: 'blob', sha: 'f'.repeat(40), size: 200 * 1024 * 1024 },
-      { path: 'dist/SKILL.md', mode: '100644', type: 'blob', sha: 'f'.repeat(40), size: 100 },
-      ...githubFiles.map(([path, bytes]) => ({ path, mode: '100644', type: 'blob', sha: githubBlob(bytes), size: bytes.length }))] };
-    else if (url.pathname.startsWith('/repos/packed/repository/git/blobs/')) {
-      const file = githubFiles.find(([, bytes]) => url.pathname.endsWith('/' + githubBlob(bytes))); assert.ok(file, url.pathname);
-      data = { sha: githubBlob(file[1]), size: file[1].length, encoding: 'base64', content: file[1].toString('base64') + '\n' };
-    } else assert.fail(`Unexpected GitHub endpoint: ${url.pathname}`);
+    else if (url.origin === 'https://api.github.com' && url.pathname === '/repos/packed/repository/commits/main') return new Response('', { status: 429 });
+    else if (url.origin === 'https://github.com' && url.pathname === '/packed/repository.git/info/refs') {
+      assert.equal(url.search, '?service=git-upload-pack'); return new Response(githubRefs);
+    } else if (url.origin === 'https://codeload.github.com' && url.pathname === `/packed/repository/zip/${githubCommit}`) return new Response(githubArchive);
+    else assert.fail(`Unexpected GitHub endpoint: ${url.pathname}`);
     return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
   };
   const a2aSpec = { local_name: 'research', binding_id: 'packed-a2a', space_id: 'packed-a2a-space',
@@ -896,8 +896,11 @@ export async function apply(ctx, options) {
         const binary = installedFiles.filter(path => path.endsWith('/assets/.binary'));
         assert.ok(binary.length >= 1);
         for (const path of binary) assert.deepEqual(await readFile(join(privateRoot, path)), githubFiles[1][1]);
-        assert.equal(githubRequests.length - githubStart, 6);
-        const managementProof = { commit: githubCommit, resourceId: installedSkill.resourceId, revision: 2, githubRequests: 6,
+        assert.equal(githubRequests.length - githubStart, 4);
+        assert.deepEqual(githubRequests.slice(githubStart + 1), ['/repos/packed/repository/commits/main',
+          '/packed/repository.git/info/refs?service=git-upload-pack', `/packed/repository/zip/${githubCommit}`]);
+        const managementProof = { commit: githubCommit, resourceId: installedSkill.resourceId, revision: 2, githubRequests: 4,
+          restQuotaFallback: true, immutableArchive: true,
           candidateFiles: 1000, binaryBytes: githubFiles[1][1].length, riskPresented: true,
           exactBinary: true, originalDshOwner: true, duplicateSuppressed: true, oldRevisionPreserved: true, nextRevisionAdmitted: true,
           installRecord: managementRecords.find(item => item.value.request.call.callId === installId).file,

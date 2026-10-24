@@ -45,6 +45,7 @@ function guarded(request, work) {
 
 export function createStudioSkillManagement({ workspaceRoot, stateDir, agentId, skillDiscovery, agents, source } = {}) {
   invariant(typeof agentId === 'string' && agentId.trim() && typeof skillDiscovery?.registerBundleSkills === 'function'
+    && typeof skillDiscovery?.listInstalled === 'function'
     && typeof agents?.get === 'function' && typeof agents?.update === 'function'
     && typeof source?.search === 'function' && typeof source?.inspect === 'function', 'skill_management_binding_invalid');
   const state = commandStateRoot(join(stateDir, 'skill-management'), workspaceRoot, agentId);
@@ -76,8 +77,15 @@ export function createStudioSkillManagement({ workspaceRoot, stateDir, agentId, 
         }
         const result = await guarded(request, () => source.inspect(value, { ref: args.ref ?? 'main', signal: request.signal,
           assertCurrent: () => { guard(request); return true; } })); guard(request);
+        const catalog = await guarded(request, () => skillDiscovery.listInstalled()); guard(request);
+        invariant(Array.isArray(catalog?.items), 'skill_management_catalog_invalid');
+        const installedNames = new Set(catalog.items.filter(item => item.kind === 'skill').map(item => item.name));
         const token = `skg_${randomBytes(32).toString('hex')}`;
         const content = inspections.persist(result, token, request);
+        // Catalog state is presentation only. It must not change the sealed
+        // content identity or another Agent's identical immutable resource ID.
+        content.candidates = content.candidates.map(candidate => candidate.status === 'ready' && installedNames.has(candidate.name)
+          ? { ...candidate, status: 'conflict' } : candidate);
         return { ok: true, mode: 'inspection', inspectionToken: token, ...content, requiresConfirmation: true };
       }
       if (name === 'skill_install') {

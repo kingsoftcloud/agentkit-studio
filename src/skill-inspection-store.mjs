@@ -72,14 +72,14 @@ export function createSkillInspectionStore({ root, agentId, contract, guard }) {
             if (!stored.has(digest)) { guard(request); atomicPrivate(join(blobs, digest), bytes); stored.add(digest); }
             files.push({ path: file.path, sha256: digest, size: bytes.byteLength });
             if (file.path === 'SKILL.md') {
-              try { manifestText = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+              try { manifestText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
               catch { invariant(false, 'skill_management_manifest_invalid'); }
             }
           }
           invariant([...paths].every(path => path.split('/').slice(0, -1)
             .every((_, i, parts) => !paths.has(parts.slice(0, i + 1).join('/')))), 'skill_management_source_invalid');
           invariant(manifestText !== undefined, 'skill_management_manifest_missing');
-          const metadata = parseFrontmatter(manifestText), name = skillSlug(metadata.name), version = String(metadata.version || '1.0.0');
+          const metadata = parseFrontmatter(manifestText, { strict: true }), name = skillSlug(metadata.name), version = String(metadata.version || '1.0.0');
           invariant(typeof metadata.description === 'string' && metadata.description.trim()
             && version.length <= 128 && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version),
           'skill_management_manifest_invalid');

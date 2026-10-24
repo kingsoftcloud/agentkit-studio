@@ -127,7 +127,8 @@ try {
     && row.skills.policyDeniedWithoutRequest && row.skills.postPolicyPreserved && row.skills.scriptsNotExecuted));
   assert.equal(new Set(report.runtimes.map(row => row.skills.rootDir)).size, 2);
   assert.ok(report.runtimes.every(row => row.management.commit === 'c'.repeat(40) && row.management.revision === 2
-    && row.management.githubRequests === 6 && row.management.candidateFiles === 1000 && row.management.binaryBytes === 9 * 1024 * 1024 + 1
+    && row.management.githubRequests === 4 && row.management.restQuotaFallback && row.management.immutableArchive
+    && row.management.candidateFiles === 1000 && row.management.binaryBytes === 9 * 1024 * 1024 + 1
     && row.management.riskPresented && row.management.exactBinary && row.management.originalDshOwner
     && row.management.duplicateSuppressed && row.management.oldRevisionPreserved && row.management.nextRevisionAdmitted));
   assert.ok(report.runtimes.every(row => row.knowledge.actualRequests === 1 && row.knowledge.originalDshOwner

@@ -60,22 +60,34 @@ Automatic same-Session revision refresh is not claimed here.
 
 ## Protocol and remaining parity gaps
 
-The source uses reconstructed `https://api.github.com` endpoints, no credentials
-or environment tokens, and `redirect:error`. Commit/tree/blob identities are
-distinct. Blob Git SHA-1 and canonical wrapped base64 are verified, preserving
-binary and hidden files. Root and nested Skills retain complete subtrees.
-Symlinks and submodules inside selected Skills are rejected; a valid submodule
-outside selected Skills does not invalidate the repository.
+Production Host inspection resolves mutable refs using GitHub's REST commit
+endpoint first. REST transport, quota, timeout or invalid-response failures can
+fall back to a bounded Git upload-pack advertisement. Exact commit SHA input
+skips resolution. Peeled tags take precedence over branch and raw tag refs,
+matching the reference. Each request has its own 20-second deadline; user
+cancellation or lost execution authority cannot dispatch a fallback request.
+REST bodies are bounded to 2 MiB and advertisements to 5 MiB.
 
-Inspection now supports 1,000 files and 100 MiB per Skill, and 5,000 distinct
-selected repository file paths and 200 MiB total. Overlapping candidates count
-the same repository path once; identical bytes at different paths still count
-separately toward logical budgets. Immutable Git blobs are downloaded once per
-inspection, and stored once by content hash. The source retains its 10,000 tree
-entry bound. Candidate selections support up to 5,000 IDs.
+The resolved commit selects one immutable `codeload.github.com` ZIP. Compressed
+bytes are bounded to 50 MiB; the whole archive, including excluded directories
+and content outside selected Skills, must have at most 5,000 regular files and
+200 MiB unpacked bytes, with a maximum file compression ratio of 200. Bounds,
+paths, unique root, symlinks, conflicting entries, local/central headers and
+overlap are checked before expansion; sizes and CRCs are verified before any
+candidate is exposed. Stored and deflated entries, streamed data descriptors,
+UTF-8 and CP437 names are supported. Root and nested Skills retain complete
+subtrees. Each Skill permits 1,000 files and 100 MiB. Candidate selections
+support up to 5,000 IDs; stored files are deduplicated by content hash.
+
+All URLs are reconstructed HTTPS URLs, without credentials or environment
+tokens, and requests use `redirect:error`. The earlier separately bounded Git
+tree/blob API source remains available and tested, but production Host uses the
+archive source; a failed archive does not silently switch to different budget
+semantics.
 
 `.git`, `.venv`, `venv`, `node_modules`, `dist`, `build` and `__pycache__` are
-excluded by exact path segment before candidate selection/download/install.
+excluded by exact path segment before candidate selection/install, after whole
+archive validation.
 Candidate metadata includes sorted script paths with `.py`, `.sh`, `.js`, `.ts`
 or `.ps1` suffixes, case-insensitive manifest network markers, and
 `risk.requiresReview`, following Python `inspect_candidate`. This advisory
@@ -85,15 +97,29 @@ diagnostics; healthy siblings remain available and invalid candidates cannot
 be installed. Transport, authority, integrity and global budget failures still
 reject inspection.
 
+Imported manifests require valid YAML frontmatter and mandatory name and
+description fields. Universal newlines and YAML 1.1 duplicate-key behavior are
+preserved. Existing local display keeps its permissive fallback; malformed
+imports cannot use that fallback to become installable candidates.
+
+Discovery presents a ready candidate with an already-installed name as
+`conflict`. This current catalog state is excluded from the immutable snapshot
+digest and resource identity, so another Agent can share identical installed
+content. Installation independently enforces the actual conflict and explicit
+overwrite under the catalog lock.
+
 These differences remain mandatory audit items before lossless parity:
 
-- Discovery does not yet project an already-installed name as `conflict`.
-  Installation still enforces the real catalog conflict and explicit overwrite.
-- The Git API replaces Git ref advertisement and repository ZIP downloads.
-  GitHub API availability/rate limits differ. Node bounds selected repository
-  content; Python bounds the whole ZIP, including compression ratio and bytes
-  outside selected/excluded Skills. Those archive-specific checks do not apply
-  to individually verified Git blobs; full transport behavior is not equivalent.
+- Python follows redirects; Node rejects them. Node additionally rejects
+  malformed packet framing, duplicate refs, conflicting archive paths and some
+  unsafe entries. ZIP64 is unsupported, and YAML alias expansion is bounded to
+  100; Python's parser accepts additional scalar coercions. These format and
+  transport differences still require a final compatibility decision.
+- Candidate/path sorting uses JavaScript string order; supplementary Unicode
+  ordering has not been proven equivalent to Python's ordering.
+- Local Skill discovery/configuration, dedicated Skill events, reference-aware
+  garbage collection and the complete product flows remain audit items.
+  The optional custom remote Skill Service configuration is a separate path.
   URL `/tree/<ref>/<subdir>` uses a single ref segment; slash-bearing refs use
   the explicit `ref` argument with a plain repository URL.
 - Resource IDs and inspection serialization use new Node formats. Historical
