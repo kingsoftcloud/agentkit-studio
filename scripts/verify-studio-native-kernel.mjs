@@ -18,7 +18,27 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
     session_id: 'a2a-kernel-mounted-native', payload: { content: 'write the proof and answer' } });
   const message = { messageId: 'native-kernel-inbound-message', parts: [{ text: cmd.payload.content }] };
   const calls = [], facts = new Map(), modelRequests = [];
-  let origin, accepted, originalTask, originalRecords, originalOwner, remote, originalLedger, originalFileMtime, originalHistory;
+  let origin, accepted, originalTask, originalRecords, originalOwner, remote, originalLedger, originalFileMtime, originalHistory, originalFrames;
+  const frames = async () => (await readFile(join(root, 'assistant-stream.jsonl'), 'utf8').catch(error => {
+    if (error.code === 'ENOENT') return ''; throw error;
+  })).trim().split('\n').filter(Boolean).map(JSON.parse).filter(row => row.session === cmd.session_id).map(row => row.frame);
+  async function waitForLivePrefix(index, prefix) {
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const live = await frames(), starts = live.filter(frame => frame.type === 'start');
+      const current = starts[index - 1];
+      if (current && live.some(frame => frame.attemptId === current.attemptId
+        && (frame.chunk?.text === prefix || frame.chunk?.argumentsDelta === prefix))) {
+        assert.equal(starts.length, index); assert.equal(live.filter(frame => frame.type === 'end').length, index - 1,
+          'the actual public prefix must arrive before provider completion');
+        if (index === 1) await assert.rejects(stat(join(root, 'workspace/managed-proof.txt')), { code: 'ENOENT' },
+          'partial tool arguments cannot dispatch a workspace write');
+        return;
+      }
+      assert.ok(Date.now() < deadline, 'managed public prefix did not arrive before model settlement');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  }
   function formalLedger() {
     const db = new DatabaseSync(join(root, 'studio/native-harness/managed-kernel/runs.sqlite'), { readOnly: true });
     try {
@@ -62,6 +82,19 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
         if (!first) assert.ok(payload.messages.some(message => message.role === 'tool'
           && (formalBinding ? message.content.includes('managed-proof.txt') : message.content.includes('Durable proof file written'))));
         response.writeHead(200, { 'content-type': 'text/event-stream' });
+        if (formalBinding) {
+          const args = JSON.stringify({ path: 'managed-proof.txt', content: 'Managed formal binding proof\n' });
+          const prefix = first ? '{' : 'Mounted ';
+          response.write('data: ' + JSON.stringify({ choices: [{ index: 0, delta: first
+            ? { tool_calls: [{ index: 0, id: 'inbound-write', type: 'function', function: { name: 'write_workspace_file', arguments: prefix } }] }
+            : { content: prefix }, finish_reason: null }] }) + '\n\n');
+          await waitForLivePrefix(first ? 1 : 2, prefix);
+          response.end('data: ' + JSON.stringify({ usage: { prompt_tokens: first ? 11 : 17,
+            completion_tokens: first ? 5 : 7, total_tokens: first ? 16 : 24 }, choices: [{ index: 0,
+            delta: first ? { tool_calls: [{ index: 0, function: { arguments: args.slice(1) } }] }
+              : { content: 'Native executed answer' }, finish_reason: first ? 'tool_calls' : 'stop' }] }) + '\n\ndata: [DONE]\n\n');
+          return true;
+        }
         response.end('data: ' + JSON.stringify({ usage: { prompt_tokens: first ? 11 : 17,
           completion_tokens: first ? 5 : 7, total_tokens: first ? 16 : 24 },
           choices: [{ index: 0, delta: first ? { tool_calls: [{ index: 0, id: 'inbound-write', type: 'function',
@@ -151,6 +184,17 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
           originalLedger = formalLedger();
           const delivered = JSON.parse(await readFile(join(root, 'managed-session-history.json'), 'utf8'));
           originalHistory = delivered.history;
+          originalFrames = await frames();
+          assert.deepEqual(originalFrames.filter(frame => frame.type === 'start').map(frame => [frame.turn, frame.step, frame.revision]),
+            [[1, 1, 1], [1, 2, 2]]);
+          assert.equal(originalFrames.filter(frame => frame.type === 'end').length, 2);
+          for (const end of originalFrames.filter(frame => frame.type === 'end')) {
+            assert.equal(end.outcome.kind, 'committed'); assert.equal(end.outcome.eventType, 'assistant/message');
+            const chunks = originalFrames.filter(frame => frame.type === 'chunk' && frame.attemptId === end.attemptId);
+            assert.equal(end.index, chunks.length);
+            assert.deepEqual(originalHistory.find(event => event.seq === end.outcome.seq).data.stream,
+              chunks.map(({ time, chunk }) => ({ type: 'chunk', time, chunk })));
+          }
           const users = originalHistory.filter(event => event.type === 'user/message' && event.data.source.kind === 'user');
           assert.equal(users.length, 1, 'managed input must reach public Session history exactly once');
           assert.deepEqual(users[0].data, originalLedger.configuration.hostRecoveryBinding.messages[0]);
@@ -187,6 +231,7 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
         assert.equal(calls.length, count); assert.deepEqual(await records(), originalRecords);
         assert.equal(modelRequests.length, 2); assert.equal(calls.filter(call => call.action === 'SubmitA2AInboundMessage').length, 1);
         if (formalBinding) {
+          assert.deepEqual(await frames(), originalFrames, 'cold replay must not republish old live streams');
           const coldHistory = JSON.parse(await readFile(join(root, 'managed-session-history-cold.json'), 'utf8'));
           assert.deepEqual(coldHistory.slice(0, originalHistory.length), originalHistory,
             'cold Session must preserve every original managed event byte-for-byte');
@@ -212,7 +257,8 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
         assert.deepEqual(owners.find(row => row.phase === 'loaded' && row.pid === mounts.at(-1).pid).state, originalOwner);
         await writeFile(join(root, 'mounted-inbound-evidence.json'), JSON.stringify({ originalPid: mounts[0].pid, coldPid: mounts.at(-1).pid,
           actualNativeExecution: true, actualSessionOwnership: true, formalStudioBinding: formalBinding, ownerUnchangedAfterRestart: true,
-          structuredInput, ...(formalBinding ? { publicHistory: { user: 1, toolResults: 1, modelUsage: 2,
+          structuredInput, ...(formalBinding ? { publicLiveStream: { attempts: 2, prefixBeforeProviderCompletion: true,
+            partialToolNotExecuted: true, durableStreamsMatch: true, coldUnchanged: true }, publicHistory: { user: 1, toolResults: 1, modelUsage: 2,
             coldUnchanged: true, restoreBoundary: 'session/end-seed' } } : {}),
           ...(structuredInput ? { input: { hostFileReceipt: true, actualImageAdmission: true, liveReceiptRetired: true,
             modelMedia: true, persistedInput: true, coldReceiptExpired: true,

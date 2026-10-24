@@ -365,6 +365,24 @@ test('managed delivery checkpoints precede model dispatch and the second owner p
   assert.equal(identities[0].parentRunId, null); assert.equal(identities[1].parentRunId, managedNativeRunId(first));
 });
 
+test('managed live model observers receive the original identity before completion without controlling effects', async t => {
+  const streamed = [];
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async (_request, emit) => {
+      emit({ kind: 'text', text: 'Live answer' });
+      assert.equal(streamed.length, 1, 'callback must run before the model result settles');
+      return response({ text: 'Live answer' });
+    } }, tools: { execute: async () => assert.fail('No tool requested') } }),
+    withExecution: ({ identity, execute }) => execute({ onStream: (actual, event, record) => {
+      assert.equal(actual.runId, identity.runId); assert.deepEqual(actual.scope, identity.scope);
+      streamed.push({ event, record }); throw Error('display unavailable');
+    } }),
+  }) });
+  const cmd = command(); await f.receive(cmd); await f.runtime.drain(cmd.session_id);
+  assert.equal(streamed.length, 1); assert.equal(streamed[0].event.text, 'Live answer');
+  assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
+});
+
 test('a whole-Session owner stays open while Native is paused and resumes the same Run', { timeout: 5000 }, async t => {
   let owners = 0, closed = 0, calls = 0;
   const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {

@@ -98,6 +98,7 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
         if (options?.replayOnly || options?.cancelOnly) return request.execute(options);
         prepareInput = options?.prepareInput;
         const effectSignal = AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]);
+        let live;
         try {
           activeBinding = await host.resolveManagedBinding({ ...payload, signal: effectSignal }, { store,
             admission: { scope: binding.scope, buildId: binding.buildId, configuration: binding.configuration },
@@ -105,21 +106,29 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
           invariant(canonical(activeBinding.configuration) === canonical(binding.configuration)
             && canonical(activeBinding.scope) === canonical(binding.scope) && activeBinding.buildId === binding.buildId,
           'native_dsh_recovery_configuration_changed');
-          let onCheckpoint = options?.onCheckpoint;
+          let onCheckpoint = options?.onCheckpoint, onStream = options?.onStream;
           if (options?.ownership) {
             const capsule = activeBinding.configuration.hostRecoveryBinding, sessions = ctx.get('sessions');
             const deliver = createNativeSessionDelivery({ store, scope: binding.scope, runId,
               session: found.agent.session, turn: options.turn, managedOwnership: options.ownership,
               projections: ctx.get('sessionProjections'), flush: session => sessions.flush(session),
-              inputMessages: capsule.messages, systemText: capsule.systemPrompt, source: capsule.source });
+              inputMessages: capsule.messages, systemText: capsule.systemPrompt, source: capsule.source,
+              onStreamSettled: (...args) => live?.settled(...args) });
+            live = activeBinding.createLiveStream?.({ turn: options.turn, beginStep: deliver.beginStream });
+            onStream = (identity, event, record) => {
+              if (effectSignal.aborted) return;
+              live?.accept(identity, record);
+              options.onStream?.(identity, event, record);
+            };
             onCheckpoint = async snapshot => { effectSignal.throwIfAborted(); await deliver(snapshot);
               effectSignal.throwIfAborted(); await options.onCheckpoint?.(snapshot); };
           }
-          const snapshot = await request.execute({ ...options, onCheckpoint });
+          const snapshot = await request.execute({ ...options, onCheckpoint, onStream });
           if (activeBinding.consumeCompletedTurn)
             await consumeNativeCompletedTurn(activeBinding, store.load(binding.scope, runId), effectSignal);
           return snapshot;
         } finally {
+          live?.abandon();
           try { await activeBinding?.releaseResources?.({ scope: binding.scope, sessionId: command.session_id,
             runId, stage: 'execute', signal: effectSignal }); }
           finally { activeBinding = undefined; prepareInput = undefined; }

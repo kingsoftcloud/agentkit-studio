@@ -379,8 +379,9 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           const tokens = ownedPort(ownedPort(ports.context.tokens, 'countRequest'), 'countText');
           ports.context = portView(ports.context, { tokens });
         }
-        let deliverCheckpoint;
+        let deliverCheckpoint, deliverStream;
         const kernel = new NativeKernel({ store: runStore, ports, owner, digest: hash,
+          onStream: (identity, event, record) => { guard(); deliverStream?.(identity, event, record); },
           onCheckpoint: async snapshot => { guard(); await deliverCheckpoint?.(copy(snapshot));
             guard(); await beforeProjection?.(copy(snapshot)); guard(); project(run); } });
         kernels.set(id, kernel);
@@ -392,7 +393,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           const identity = { scope, runId: id, sessionId, turnId: command.command_id, buildId: run.build_id,
             parentRunId, taskChainId: id };
           let executed = false, boundaryOpen = true, snapshot;
-          const execute = async ({ signal, replayOnly = false, cancelOnly = false, onCheckpoint } = {}) => {
+          const execute = async ({ signal, replayOnly = false, cancelOnly = false, onCheckpoint, onStream } = {}) => {
             guard(); invariant(boundaryOpen && !executed, 'NATIVE_KERNEL_EXECUTION_REENTERED'); executed = true;
             invariant(!cancelOnly || signal?.aborted && !replayOnly, 'NATIVE_KERNEL_CANCEL_SIGNAL_REQUIRED');
             if (replayOnly) {
@@ -400,7 +401,9 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
               invariant(terminal(snapshot.phase), 'NATIVE_KERNEL_OWNER_TERMINAL_MISMATCH'); project(run); return copy(snapshot);
             }
             invariant(onCheckpoint === undefined || typeof onCheckpoint === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
+            invariant(onStream === undefined || typeof onStream === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
             deliverCheckpoint = onCheckpoint;
+            deliverStream = onStream;
             kernel.start(identity, parseNativeJson(run.config));
             const cancel = () => {
               if (closed || lifetime.signal.aborted) return;

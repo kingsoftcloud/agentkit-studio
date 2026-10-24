@@ -139,7 +139,7 @@ export async function consumeNativeCompletedTurn(binding, record, signal) {
  */
 export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecoveryTurn, resolveBackgroundTurn, projections, flush,
   owner = `native-dsh-${randomUUID()}`, durableOwnership = false, ownershipFlushTimeoutMs = 30_000,
-  onStream, publishStreamFrame, onIdle, onCheckpoint, onActive } = {}) {
+  onStream, publishStreamFrame, streamRevisions = new WeakMap(), onIdle, onCheckpoint, onActive } = {}) {
   invariant((onActive === undefined || typeof onActive === 'function') && store && typeof resolveTurn === 'function' && typeof flush === 'function'
     && typeof projections?.stateOf === 'function' && typeof owner === 'string' && owner.trim()
     && typeof durableOwnership === 'boolean' && (resolveRecoveryTurn === undefined || typeof resolveRecoveryTurn === 'function')
@@ -147,7 +147,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
   'native_dsh_host_binding_invalid');
   invariant(Number.isSafeInteger(ownershipFlushTimeoutMs) && ownershipFlushTimeoutMs > 0
     && ownershipFlushTimeoutMs <= 2_147_483_647, 'native_dsh_ownership_flush_timeout_invalid');
-  const active = new Set(), backgroundDrivers = new Set(), revisions = new WeakMap();
+  const active = new Set(), backgroundDrivers = new Set(), revisions = streamRevisions;
   const run = async (payload, admission, background = null) => {
     const { agent, input, turn, signal } = payload;
     invariant(agent?.session && typeof agent.session.id === 'string' && agent.session.id.trim()

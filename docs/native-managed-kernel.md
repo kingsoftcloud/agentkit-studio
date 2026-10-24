@@ -4,6 +4,13 @@
 工具、预算、重试、租约和恢复。DSH 不参与这条路径的执行循环。已有的本地 Studio
 `runtime.type="harness"` 整轮接入保持独立；本模块尚未完成所有产品入口和部署适配。
 
+正式 Studio binding 也使用现有 `agent/assistant-stream` 的 start/chunk/end 帧显示模型
+文本、思考和工具参数预览。普通对话与托管执行共用每个 Agent 的流版本计数，避免切换
+入口后被视为旧流；预览 ID 不授予工具执行权限。模型回执与公共 Session 消息落盘后，
+end 帧才引用真实的全局事件序号；落盘失败或执行中止时以 abandoned 收尾。历史恢复
+使用已提交的流，不重新发布原实时片段。该接线沿用已有帧与所有权契约，无新增 Build
+引擎版本；结构化最终提交等不生成普通实时文本的既有约束保持不变。
+
 参考行为版本：`ksadk-python@355059d78e47ed764bbdb3606304cdf34e9838a3`，
 重点为 `kernel/contracts.py`、`authorization.py`、`store.py`、`execution_grants.py`、
 `worker_controls.py`、`events/canonical.py` 和 `a2a/bootstrap.py`。

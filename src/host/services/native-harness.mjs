@@ -7,6 +7,7 @@ import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sq
 import { createNativeModelPort, nativeModelRecoveryPolicy } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
 import { createNativeDshTurnExecutor, freezeNativeDshConfiguration, NATIVE_DSH_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
+import { nativeLiveStream } from '../../../packages/agentkit-harness/src/native/assistant-stream.mjs';
 import { createNativeChildHistory } from '../../../packages/agentkit-harness/src/native/child-history.mjs';
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
@@ -69,7 +70,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   try { unregister = projections.register(nativeDeliveryProjection()); }
   catch (error) { if (!ledger) store.close(); throw error; }
   const lifetime = new AbortController(), active = new Set(), childOwners = new Set(), controls = new Map();
-  const bindingLeases = new Map();
+  const bindingLeases = new Map(), streamRevisions = new WeakMap();
   async function acquireBinding(sessionId, signal) {
     const scoped = AbortSignal.any([signal, lifetime.signal]);
     for (;;) {
@@ -525,7 +526,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     }
   };
   const execute = createNativeDshTurnExecutor({ store, projections, durableOwnership: true, flush: session => sessions.flush(session),
-    publishStreamFrame, onIdle: createNativeHostInteraction({ ctx, store }),
+    publishStreamFrame, streamRevisions, onIdle: createNativeHostInteraction({ ctx, store }),
     onActive: (payload, control) => {
       const key = controlKey(control.scope.agentId, control.sessionId);
       invariant(!controls.has(key), 'studio_native_child_control_already_active');
@@ -692,7 +693,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         const configuration = freezeNativeDshConfiguration(resolved, input, admission?.configuration.contract);
         invariant(!admission || resolved.buildId === admission.buildId
           && canonical(configuration) === canonical(admission.configuration), 'native_dsh_recovery_configuration_changed');
-        return { ...resolved, configuration };
+        return { ...resolved, configuration,
+          createLiveStream: ({ turn, beginStep }) => nativeLiveStream({ agent: payload.agent, runId, turn,
+            beginStep, revisions: streamRevisions,
+            publish: publishStreamFrame ? frame => publishStreamFrame(payload, frame) : undefined }) };
       } catch (error) {
         await resolved?.releaseResources?.({ scope, sessionId: payload.agent.session.id, runId });
         throw error;

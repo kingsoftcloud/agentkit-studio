@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 
 import { join } from 'node:path';
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { MemoryRunStore, NativeKernel, canonical, copy } from '../packages/agentkit-harness-core/dist/index.mjs';
 
@@ -29,6 +29,10 @@ import { createStudioNativeHarness } from '../src/host/services/native-harness.m
 import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
 
 import { buildExecutionEngine } from '../src/build-engine.mjs';
+import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
+import { command as serverCommand, permitIssuer } from './fixtures/native-managed-kernel.mjs';
+import { NATIVE_DSH_MANAGED_TURN_CONTRACT } from '../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
+import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 
@@ -38,7 +42,7 @@ const hash = value => createHash('sha256').update(canonical(value)).digest('hex'
  * managed execution are test doubles. The local ledger is the harness's own
  * store; the managed ledger is the one a trusted caller passes to
  * resolveManagedBinding, so tests can prove the managed Run never touches it. */
-async function setup(t, { spec = {}, profile = {}, respond, frozen = false, text = 'Finish the managed task', sqlite = false } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond, publishStreamFrame, frozen = false, text = 'Finish the managed task', sqlite = false } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'managed-binding-unit-'));
   const workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
@@ -79,13 +83,15 @@ async function setup(t, { spec = {}, profile = {}, respond, frozen = false, text
     nativeTools: { definitions: () => [], forAgent: () => ({ tools: { execute: async () => assert.fail('No tool dispatched') } }) } };
   if (frozen) agentBinding.buildId = 'frozen-managed-build';
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger: localStore,
+    publishStreamFrame,
     agentEvents: () => ({ serial: async () => agentBinding }),
     assembleContextFor: () => ({ agent }),
     renderPrompt: () => 'Trusted Host instructions',
     fetchImpl: async (url, options) => {
       requests.push({ url, options });
-      const response = respond ? respond(requests.length, JSON.parse(options.body))
+      const response = respond ? await respond(requests.length, JSON.parse(options.body))
         : { choices: [{ index: 0, delta: { content: 'Complete' }, finish_reason: 'stop' }] };
+      if (response instanceof Response) return response;
       return new Response(`data: ${JSON.stringify({ id: `response-${requests.length}`, ...response,
         usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
     } });
@@ -123,6 +129,79 @@ async function runManagedKernel({ binding, store, runId, sessionId, signal, turn
 }
 
 // --- Part A: createStudioNativeHarness.resolveManagedBinding (real assembler + real NativeKernel + managed SQLite) ---
+
+for (const failFlush of [false, true]) test(`managed receiver live preview settles only after durable flush (failFlush=${failFlush})`, { timeout: 10000 }, async t => {
+  const prefix = Promise.withResolvers(), finish = Promise.withResolvers(), frames = [];
+  let toolCalls = 0;
+  const encode = value => new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`);
+  const h = await setup(t, { publishStreamFrame: ({ agent }, frame) => {
+    assert.equal(agent, h.agent); frames.push(frame);
+    if (frame.chunk?.argumentsDelta === '{') prefix.resolve();
+  }, respond: n => n === 1 ? new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(encode({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'preview-call',
+      type: 'function', function: { name: 'inspect', arguments: '{' } }] }, finish_reason: null }] }));
+    finish.promise.then(() => {
+      controller.enqueue(encode({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0,
+        function: { arguments: '}' } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 2, completion_tokens: 3 } }));
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n')); controller.close();
+    });
+  } }), { headers: { 'content-type': 'text/event-stream' } })
+    : { choices: [{ index: 0, delta: { content: 'Managed complete' }, finish_reason: 'stop' }] } });
+  h.agentBinding.nativeTools = { definitions: () => [tool({ name: 'inspect' })],
+    forAgent: () => ({ tools: { execute: async () => { toolCalls++; return { status: 'ok', content: 'Inspected' }; } } }) };
+  const execution = { run: async request => request.execute({ signal: request.signal,
+    prepareInput: async () => ({ kind: 'enter', messages: [], assembly: h.assembly }), turn: 1,
+    ownership: { contract: 'dsh.external-turn/v1', engine: NATIVE_DSH_MANAGED_TURN_CONTRACT, turn: 1,
+      binding: canonical({ contract: NATIVE_DSH_MANAGED_TURN_CONTRACT, identity: request.identity,
+        configDigest: hash(request.configuration) }) } }) };
+  const resolveBinding = createStudioManagedNativeBinding({ ctx: h.ctx, target: h.target, principal: h.principal,
+    resolveHost: async () => h.host, execution });
+  const issuer = permitIssuer({ target: h.target });
+  const runtime = createManagedNativeKernel({ directory: join(h.root, 'receiver'), target: h.target,
+    permitVerifier: issuer.verifier, resolveBinding, assertCurrent: () => true, autoStart: false });
+  t.after(() => runtime.close()); t.after(() => finish.resolve());
+  const cmd = serverCommand({ ...h.makeCommand(), command_id: randomUUID() });
+  await runtime.receive(cmd, issuer.issue(cmd));
+  const running = runtime.drain(cmd.session_id);
+  await prefix.promise;
+  assert.equal(frames[0].type, 'start'); assert.equal(frames[0].step, 1);
+  assert.equal(frames.some(frame => frame.type === 'end'), false);
+  assert.equal(toolCalls, 0); assert.equal(h.events.some(event => event.type === 'tool/call'), false);
+  assert.equal(h.events.some(event => event.type === 'assistant/message'), false);
+  if (failFlush) {
+    h.services.sessions.flush = async () => {
+      if (h.events.some(event => event.type === 'assistant/message')) throw Error('managed stream flush failed');
+      return true;
+    };
+    finish.resolve(); await assert.rejects(running, /managed stream flush failed/);
+    assert.equal(toolCalls, 0); assert.equal(h.requests.length, 1);
+    assert.equal(frames.filter(frame => frame.type === 'end').length, 1);
+    assert.deepEqual(frames.at(-1).outcome, { kind: 'abandoned' });
+    return;
+  }
+  finish.resolve(); await running;
+  assert.equal(toolCalls, 1); assert.equal(h.requests.length, 2);
+  assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => [frame.turn, frame.step, frame.revision]), [[1, 1, 1], [1, 2, 2]]);
+  for (const end of frames.filter(frame => frame.type === 'end')) {
+    assert.equal(end.outcome.kind, 'committed'); assert.equal(end.outcome.eventType, 'assistant/message');
+    const message = h.events.find(event => event.seq === end.outcome.seq);
+    const chunks = frames.filter(frame => frame.type === 'chunk' && frame.attemptId === end.attemptId);
+    assert.deepEqual(message.data.stream, chunks.map(({ time, chunk }) => ({ type: 'chunk', time, chunk })));
+    assert.equal(end.index, chunks.length);
+  }
+  const before = copy(frames);
+  assert.equal((await runtime.receive(cmd, issuer.issue(cmd))).status, 'duplicate'); await runtime.drain(cmd.session_id);
+  assert.deepEqual(frames, before); assert.equal(toolCalls, 1); assert.equal(h.requests.length, 2);
+  // The same live Agent can return to ordinary Studio chat. Its revision must
+  // continue increasing so the UI cannot mistake the next stream for stale data.
+  h.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
+  h.session.append('turn/start', { turn: 2 });
+  h.agent.externalTurns = nativeOwnershipHost(h.session, h.events);
+  const next = h.makePayload({ turn: 2, binding: h.agentBinding });
+  next.input.assembly = h.assembly;
+  await h.host.executeTurn(next);
+  assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => frame.revision), [1, 2, 3]);
+});
 
 test('managed resolveManagedBinding runs model->tool->result through the managed SQLite ledger and leaves the local ledger untouched', async t => {
   let toolCalls = 0;
