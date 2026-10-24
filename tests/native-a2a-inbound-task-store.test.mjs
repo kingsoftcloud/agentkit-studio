@@ -59,6 +59,18 @@ test('canonical completion without runtime completion cannot become successful',
   assert.equal(store.get(identity, ids).cursor, 0); assert.equal(store.get(identity, ids).task.status.state, 'TASK_STATE_WORKING');
 });
 
+test('runtime interruption survives cold reopen and requires a matching control boundary', t => {
+  const { store, config } = fixture(t);
+  store.apply(identity, ids, runtime(1, { event_type: 'run.interrupted', status: 'interrupted', reason: 'effect_outcome_unknown' }));
+  assert.equal(store.get(identity, ids).task.status.state, 'TASK_STATE_WORKING');
+  const cold = createA2aInboundTaskStore(config);
+  assert.throws(() => cold.apply(identity, ids, transition(2, 'failed')), { code: 'A2A_INBOUND_TERMINAL_CONFLICT' });
+  const boundary = transition(2, 'interrupted'), done = cold.apply(identity, ids, boundary);
+  assert.equal(done.task.status.state, 'TASK_STATE_FAILED');
+  assert.equal(done.updates.at(-1).statusUpdate.final, true);
+  assert.equal(cold.apply(identity, ids, boundary).duplicate, true);
+});
+
 test('cancelled and failed canonical boundaries commit independently of transport EOF', t => {
   for (const [state, expected] of [['cancelled', 'TASK_STATE_CANCELED'], ['failed', 'TASK_STATE_FAILED'], ['interrupted', 'TASK_STATE_FAILED']]) {
     const { store } = fixture(t);

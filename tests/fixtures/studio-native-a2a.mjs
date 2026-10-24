@@ -116,7 +116,8 @@ async function applyProof(ctx, options) {
   }), { mode: 0o600 });
 
   const { mountStudioHost } = await import('@kingsoftcloud/agentkit-studio/host-bootstrap');
-  let nativeA2aInbound, nativeManagedKernel;
+  let nativeA2aInbound, nativeManagedKernel, managedExecution, managedSessionId, managedAgentHandle;
+  ctx.effect(() => () => managedAgentHandle?.dispose(), 'verification managed Session handle');
   if (options.inboundProofPath) {
     const proof = JSON.parse(await readFile(options.inboundProofPath, 'utf8'));
     const { createA2aGatewayIdentityVerifier } = await import('../../src/providers/native-a2a-ingress-identity.mjs');
@@ -138,6 +139,10 @@ async function applyProof(ctx, options) {
       const { createNativeKernelPermitVerifier } = await import('../../src/providers/native-kernel-permit.mjs');
       const { createNativeModelPort } = await import('../../packages/agentkit-harness/src/native/model-port.mjs');
       const { configure } = await import('../../packages/agentkit-harness-core/dist/index.mjs');
+      const { createStudioManagedNativeExecution } = await import('../../src/host/services/native-managed-execution.mjs');
+      managedExecution = createStudioManagedNativeExecution({ ctx });
+      managedSessionId = proof.sessionId;
+      ctx.effect(() => () => managedExecution.close(), 'verification managed Session owner');
       const target = { tenantId: proof.targetBinding.tenantId, agentInstanceId: proof.targetBinding.agentId };
       const model = createNativeModelPort({ resolveProfile: async () => ({ protocol: 'openai-chat',
         baseUrl: options.a2aControlPlaneUrl + '/native-inbound-model', apiKey: 'controlled-inbound-model', model: 'inbound-model' }) });
@@ -151,6 +156,19 @@ async function applyProof(ctx, options) {
             tools: [{ name: 'write_fixture', description: 'Write the proof file', parameters: { type: 'object', properties: {} },
               readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 2000,
               contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' }] }),
+          withExecution: async request => {
+            let result;
+            try { result = await managedExecution.run(request); }
+            catch (error) {
+              await writeFile(join(options.directory, 'managed-owner-error.json'), JSON.stringify({ code: error.code, message: error.message, stack: error.stack }));
+              throw error;
+            }
+            const found = await ctx.get('sessionController').resolveAgent(request.identity.sessionId);
+            if (found.error) throw found.error;
+            await appendFile(join(options.directory, 'managed-session-owner.jsonl'), JSON.stringify({ phase: 'closed', pid: process.pid,
+              runId: result.runId, state: managedExecution.status(found.agent) }) + '\n');
+            return result;
+          },
           ports: { model, tools: { execute: async request => {
             request.signal.throwIfAborted();
             await appendFile(join(options.directory, 'inbound-native-effects.jsonl'), JSON.stringify({ pid: process.pid, callId: request.call.callId }) + '\n');
@@ -252,6 +270,21 @@ async function applyProof(ctx, options) {
         if (Date.now() >= deadline) throw Error('Actual SessionController did not mount');
         await new Promise(resolve => setTimeout(resolve, 25));
       }
+    }
+    if (managedExecution) {
+      let managedAgent;
+      if (source === 'resume') {
+        const found = await ctx.get('sessionController').resolveAgent(managedSessionId);
+        if (found.error) throw found.error;
+        managedAgent = found.agent;
+      } else {
+        managedAgentHandle = await ctx.agents.create({ sessionId: managedSessionId,
+          agentOptions: { provider: 'agentkit-studio-fixture', model: 'main' }, meta: { cwd: workspaceRoot } });
+        managedAgent = managedAgentHandle.agent;
+        await ctx.agentPresets.select(managedAgent, presetId);
+      }
+      await appendFile(join(options.directory, 'managed-session-owner.jsonl'), JSON.stringify({ phase: 'loaded', pid: process.pid,
+        source, state: managedExecution.status(managedAgent) }) + '\n');
     }
     await appendFile(join(options.directory, 'mounted-host-http.jsonl'), JSON.stringify({
       source, pid: process.pid, sessionId: agent.session.id, agentId: record.metadata.id, presetId,

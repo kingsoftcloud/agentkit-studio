@@ -287,3 +287,124 @@ test('an invalid resource binding still releases its owner without masking the a
   assert.equal(released.runId, managedNativeRunId(cmd)); assert.equal(released.stage, 'admit');
   assert.equal(released.scope, undefined); assert.deepEqual((await f.status(cmd.session_id)).runs, []);
 });
+
+test('a whole-Session execution boundary starts no effects before its owner permits entry', async t => {
+  const entered = Promise.withResolvers(), allowed = Promise.withResolvers(); let calls = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { calls++; return response(); } } }),
+    withExecution: async ({ execute }) => { entered.resolve(); await allowed.promise; return execute(); },
+  }) });
+  const cmd = command(); await f.receive(cmd); const driving = f.runtime.drain(cmd.session_id);
+  await entered.promise; assert.equal(calls, 0); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'pending');
+  allowed.resolve(); await driving; assert.equal(calls, 1); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
+});
+
+test('a whole-Session owner stays open while Native is paused and resumes the same Run', { timeout: 5000 }, async t => {
+  let owners = 0, closed = 0, calls = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { calls++; return response(); } } }),
+    withExecution: async ({ execute }) => { owners++; const snapshot = await execute(); closed++; return snapshot; },
+  }) });
+  const cmd = command(), receipt = await f.receive(cmd);
+  await f.receive(command({ command_type: 'pause', payload: { run_id: receipt.run_id } }));
+  const driving = f.runtime.drain(cmd.session_id), deadline = Date.now() + 2000;
+  while ((await f.status(cmd.session_id)).runs[0].phase !== 'paused') {
+    assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(owners, 1); assert.equal(closed, 0); assert.equal(calls, 0);
+  await f.receive(command({ command_type: 'resume', payload: { target: { kind: 'run', id: receipt.run_id } } }));
+  await driving; assert.equal(owners, 1); assert.equal(closed, 1); assert.equal(calls, 1);
+  assert.equal((await f.status(cmd.session_id)).runs[0].runId, receipt.run_id);
+});
+
+test('the Session cancel signal durably cancels the active Native Run', async t => {
+  const entered = Promise.withResolvers(), controller = new AbortController();
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { entered.resolve(); return new Promise(() => {}); } } }),
+    withExecution: ({ execute }) => execute({ signal: controller.signal }),
+  }) });
+  const cmd = command(); await f.receive(cmd); const driving = f.runtime.drain(cmd.session_id); await entered.promise;
+  controller.abort({ kind: 'user' }); await driving;
+  assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'canceled');
+  await f.reopen(); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'canceled');
+});
+
+test('an owner cannot invent a terminal result or invoke its execution capability after returning', async t => {
+  let lateExecute, calls = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { calls++; return response(); } } }),
+    withExecution: ({ execute }) => { lateExecute = execute; return { phase: 'completed' }; },
+  }) });
+  const cmd = command(); await f.receive(cmd);
+  await assert.rejects(f.runtime.drain(cmd.session_id), { code: 'NATIVE_KERNEL_EXECUTION_RESULT_INVALID' });
+  await assert.rejects(lateExecute(), { code: 'NATIVE_KERNEL_EXECUTION_REENTERED' });
+  assert.equal(calls, 0); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'pending');
+});
+
+test('a committed Session terminal with a lost receiver ACK replays the original terminal without effects', async t => {
+  let calls = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { calls++; return response(); } } }),
+    withExecution: async ({ execute }) => { await execute(); throw Error('Receiver ACK lost after Session close'); },
+  }) });
+  const cmd = command(), receipt = await f.receive(cmd);
+  await assert.rejects(f.runtime.drain(cmd.session_id), /Receiver ACK lost/); const original = await f.facts(cmd.session_id);
+  assert.equal(calls, 1);
+  f.config.resolveBinding = ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => assert.fail('A closed Session must not call the model') } }),
+    withExecution: ({ execute }) => execute({ replayOnly: true }),
+  });
+  await f.reopen(); await f.runtime.drain(cmd.session_id); assert.equal(calls, 1);
+  assert.deepEqual(await f.facts(cmd.session_id), original);
+  assert.equal((await f.receive(cmd)).run_id, receipt.run_id);
+});
+
+test('Host retirement releases a whole-Session wait without converting pause to user cancellation', { timeout: 5000 }, async t => {
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command), withExecution: ({ execute }) => execute() }) });
+  const cmd = command(), receipt = await f.receive(cmd);
+  await f.receive(command({ command_type: 'pause', payload: { run_id: receipt.run_id } }));
+  const driving = f.runtime.drain(cmd.session_id), stopped = assert.rejects(driving, /Native owner closed/), deadline = Date.now() + 2000;
+  while ((await f.status(cmd.session_id)).runs[0].phase !== 'paused') {
+    assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  await f.runtime.close(); await stopped; await f.reopen();
+  assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'paused');
+});
+
+test('an owner terminal replay cannot execute a pending Run', async t => {
+  let calls = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { calls++; return response(); } } }), withExecution: ({ execute }) => execute({ replayOnly: true }),
+  }) });
+  const cmd = command(); await f.receive(cmd); await assert.rejects(f.runtime.drain(cmd.session_id), { code: 'run_not_found' });
+  assert.equal(calls, 0); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'pending');
+});
+
+test('cancellation-only ownership refuses an active signal before creating any Native effects', async t => {
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command),
+    withExecution: ({ execute }) => execute({ cancelOnly: true, signal: new AbortController().signal }),
+  }) });
+  const cmd = command(); await f.receive(cmd);
+  await assert.rejects(f.runtime.drain(cmd.session_id), { code: 'NATIVE_KERNEL_CANCEL_SIGNAL_REQUIRED' });
+  assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'pending');
+});
+
+test('a paused whole-Session owner observes a resume delivered by another SQLite receiver', { timeout: 5000 }, async t => {
+  let owners = 0, calls = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { calls++; return response(); } } }),
+    withExecution: ({ execute }) => { owners++; return execute(); },
+  }) });
+  const cmd = command(), receipt = await f.receive(cmd);
+  await f.receive(command({ command_type: 'pause', payload: { run_id: receipt.run_id } }));
+  const driving = f.runtime.drain(cmd.session_id), deadline = Date.now() + 2000;
+  while ((await f.status(cmd.session_id)).runs[0].phase !== 'paused') {
+    assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  const other = createManagedNativeKernel(f.config); t.after(() => other.close());
+  const resume = command({ command_type: 'resume', payload: { target: { kind: 'run', id: receipt.run_id } } });
+  assert.equal((await other.receive(resume, f.issuer.issue(resume))).status, 'accepted');
+  await driving; assert.equal(owners, 1); assert.equal(calls, 1);
+  assert.equal((await f.status(cmd.session_id)).runs[0].runId, receipt.run_id);
+  assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
+});

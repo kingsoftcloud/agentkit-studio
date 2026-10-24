@@ -159,11 +159,16 @@ async function managedRecords(root) {
   const files = (await readdir(base, { recursive: true })).filter(path => path.includes('a2a-calls/') && path.endsWith('.json')).sort();
   return Promise.all(files.map(async path => ({ path, content: await readFile(join(base, path), 'utf8') })));
 }
-async function history(root) {
+async function history(root, sessionId = 'a2a-session') {
   const base = join(root, 'sessions');
   const logs = (await readdir(base, { recursive: true })).filter(path => path.endsWith('.jsonl'));
-  assert.equal(logs.length, 1);
-  return jsonl(join(base, logs[0]));
+  const matching = [];
+  for (const path of logs) {
+    const events = await jsonl(join(base, path));
+    if (events[0]?.type === 'session' && events[0].id === sessionId) matching.push(events);
+  }
+  assert.equal(matching.length, 1, `expected exactly one durable history for ${sessionId}`);
+  return matching[0];
 }
 let originalPid = null, restartedPid = null;
 
@@ -491,7 +496,7 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
-    ...(values['reconcile-cold'] || values['busy-cancel'] || values['child-question-cold'] ? [
+    ...(values['reconcile-cold'] || values['busy-cancel'] || values['child-question-cold'] || values['inbound-execution'] ? [
       '    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
       '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
       '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'",
@@ -509,7 +514,7 @@ try {
     `        a2aBindings: ${JSON.stringify(JSON.stringify([a2aSpec]))}`,
     `        mountHost: true`,
     ...(inboundProofPath ? [`        inboundProofPath: ${JSON.stringify(inboundProofPath)}`] : []),
-    `        exportControl: ${values['reconcile-cold'] || values['busy-cancel'] || values['child-question-cold']}`,
+    `        exportControl: ${values['reconcile-cold'] || values['busy-cancel'] || values['child-question-cold'] || values['inbound-execution']}`,
     `        holdTerminalClose: ${values['terminal-close-crash']}`,
     ...(values['busy-cancel'] ? [`        approvalUrl: ${JSON.stringify(`http://127.0.0.1:${serverPort}/approval`)}`] : []),
     ...(values['child-question-cold'] ? ['        childQuestion: true',

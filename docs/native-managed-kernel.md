@@ -47,6 +47,29 @@
 
 ## 版本化传输
 
+### Studio Session 的完整执行边界
+
+可信 binding 可提供 `withExecution({identity, configuration, signal, execute})`，把 Session
+生命周期交给宿主、把唯一执行循环保留在 Native。宿主必须等待 `execute()` 并原样返回其
+结果；不能伪造终态、重复调用或保存回调供生命周期结束后调用。没有此端口时仍为独立的
+managed worker，不自动取得 Studio Session 的执行权。
+
+`createStudioManagedNativeExecution({ctx})` 使用正式 SessionController 解析准确的 Session，
+等待已有回合空闲，再调用维护版 SDK 的 `externalTurns.start/resume`。契约为
+`agentkit.native-managed-dsh-turn/v1`：持久 owner 绑定原 Run、scope、Session、Build 和
+配置摘要，Session owner 落盘成功后才调用 Native。其他引擎或另一 Run 的 owner 会被拒绝。
+暂停、审批等待保留同一 Session owner，由 Native 消费后续持久命令；另一个本地接收进程
+写入的命令也能唤醒等待。Session 取消作用于原 Native Run，Host 退役不会把暂停改成用户取消。
+
+SDK 关闭回合后再落盘，接收器才结算命令。专用 Session projection 在重开时恢复最近的
+已关闭 owner：若 Session 终态已经落盘但接收器 ACK 丢失，只允许读取原 Native 终态，
+不能另开回合或重新执行。该 projection 仅恢复事实，不授予模型、工具或审批权限。
+宿主关闭时先等待 managed runtime 退役，再关闭 execution adapter 及其 projection。
+
+此适配器负责 Session 生命周期，正式 Agent/Build 的完整模型、工具、权限和交互装配仍需
+复用已有 Native Host 组装器。当前挂载验证使用真实 SDK Session、preset、控制器和持久化，
+模型/文件工具 binding 仍为受控夹具；不能据此声明生产 binding、全部恢复场景或 UI 消费完成。
+
 执行适配契约为 `agentkit.managed-native-kernel/v1`。仅显式装配时注册：
 
 | POST 地址 | 请求 |
@@ -91,8 +114,10 @@ inject、scoped interrupt、checkpoint/continuation resume、结构化输入回�
 execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
 
 事实源从已提交 Native 事件生成 runtime/v2、control/v1 和 interaction/v1；包含文本、
-终态与每次模型用量增量。运行态原始 token 流、完整 reasoning/media、公共工具活动和
-所有诊断投影尚未闭环。正式 Agent/Build 的生产 binding 工厂、完整工具/审批资源组装、
+终态、每次模型用量增量、已提交的工具调用/结果、已提交 thinking 捕获以及暂停/恢复。
+未知工具结果投影为失败条目，保留 interrupted 终态，不能伪造成功结果；A2A Task 消费者
+等待匹配的 control 终态后关闭任务。运行态原始 token 流、完整 reasoning/media、公共工具
+活动和所有诊断投影尚未闭环。正式 Agent/Build 的生产 binding 工厂、完整工具/审批资源组装、
 部署中的 Server 传输适配与线上认证仍需补齐。此模块不能替代这些验收。
 
 ## 已执行的验证与复验入口

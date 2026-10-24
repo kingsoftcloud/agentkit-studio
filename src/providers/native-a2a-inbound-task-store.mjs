@@ -73,8 +73,9 @@ function project(record, fact, updates, includeReasoning) {
   const p = fact.payload;
   if (fact.family === 'runtime') {
     check(p.schema_version === 2 && p.run_id === record.runId && p.event_type === fact.event_type && id(p.scope_id));
-    if (['run.completed', 'run.failed', 'run.canceled'].includes(p.event_type)) {
-      const next = p.event_type === 'run.completed' ? 'completed' : p.event_type === 'run.canceled' ? 'cancelled' : 'failed';
+    if (['run.completed', 'run.failed', 'run.canceled', 'run.interrupted'].includes(p.event_type)) {
+      const next = p.event_type === 'run.completed' ? 'completed' : p.event_type === 'run.canceled' ? 'cancelled'
+        : p.event_type === 'run.interrupted' ? 'interrupted' : 'failed';
       invariant(!record.runtimeTerminal || record.runtimeTerminal === next, 'A2A_INBOUND_TERMINAL_CONFLICT');
       if (next === 'completed') {
         check(Array.isArray(p.output_refs)); record.outputText = p.output_refs.length ? output(record, p.output_refs)

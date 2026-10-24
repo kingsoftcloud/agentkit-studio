@@ -21,6 +21,33 @@ function worker(t, message) {
   child.send(message); return { child, messages, boundary, exited };
 }
 
+test('a paused whole-Run worker observes another process delivering its durable resume', { timeout: 15000 }, async t => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-owner-wake-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const issuer = permitIssuer(), cmd = command();
+  const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: cmd.session_id, authorization_ref: randomUUID() };
+  const subscription = { ...query, authorization_ref: randomUUID(), after_seq: 0 };
+  const common = { directory, publicKeyPem: issuer.publicKeyPem, sessionId: cmd.session_id, query, readPermit: issuer.issue(query, 'get_status'),
+    subscription, subscribePermit: issuer.issue(subscription, 'subscribe_events') };
+  const { managedNativeRunId } = await import('../src/providers/native-managed-kernel.mjs');
+  const runId = managedNativeRunId(cmd), pause = command({ command_type: 'pause', payload: { run_id: runId } });
+  const owner = worker(t, { ...common, command: cmd, permit: issuer.issue(cmd), withExecution: true, boundary: 'paused',
+    controls: [{ command: pause, permit: issuer.issue(pause) }] });
+  await Promise.race([owner.boundary, owner.exited.then(exit => assert.fail(JSON.stringify({ exit, messages: owner.messages })))]);
+  assert.equal(lines(join(directory, 'models.jsonl')).length, 0); assert.equal(lines(join(directory, 'effects.jsonl')).length, 0);
+  const resume = command({ command_type: 'resume', payload: { target: { kind: 'run', id: runId } } });
+  const receiver = worker(t, { ...common, command: resume, permit: issuer.issue(resume), receiveOnly: true });
+  const receiverExit = await receiver.exited; assert.equal(receiverExit.code, 0, JSON.stringify(receiver.messages));
+  const ownerExit = await owner.exited; assert.equal(ownerExit.code, 0, JSON.stringify(owner.messages));
+  assert.notEqual(ownerExit.pid, receiverExit.pid);
+  const result = owner.messages.find(message => message.type === 'result'); assert.equal(result.status.runs[0].runId, runId);
+  assert.equal(result.status.runs[0].phase, 'completed'); assertManagedRuntimeFacts(result.facts);
+  const models = lines(join(directory, 'models.jsonl')), effects = lines(join(directory, 'effects.jsonl'));
+  assert.equal(models.length, 2); assert.equal(effects.length, 1);
+  assert.ok([...models, ...effects].every(row => row.pid === ownerExit.pid));
+  t.diagnostic(JSON.stringify({ boundary: 'paused-cross-process-resume', ownerPid: ownerExit.pid, receiverPid: receiverExit.pid,
+    runId, models: 2, fileWrites: 1, receiverEffects: 0, finalState: 'completed' }));
+});
+
 test('expired live worker cannot overwrite a takeover or cause its unknown file tool to be dispatched again', { timeout: 15000 }, async t => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-kernel-fence-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const issuer = permitIssuer(), cmd = command();

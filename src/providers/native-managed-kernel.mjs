@@ -99,7 +99,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   let runStore;
   try { runStore = new SqliteRunStore(join(directory, 'runs.sqlite')); }
   catch (error) { db.close(); throw error; }
-  const lifetime = new AbortController(), active = new Map(), kernels = new Map(), failures = new Map();
+  const lifetime = new AbortController(), active = new Map(), kernels = new Map(), failures = new Map(), wakeWaiters = new Set();
   let closed = false, closing, timer, generation = 0;
   function guard() {
     invariant(!closed && !lifetime.signal.aborted && permitVerifier.verify === verifyPermit, 'NATIVE_KERNEL_AUTHORITY_LOST');
@@ -148,6 +148,25 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     });
   }
   function projectAll() { for (const row of db.prepare('SELECT * FROM managed_runs ORDER BY rowid').all()) project(row); }
+  async function waitForCommand(version, snapshot) {
+    guard(); if (generation !== version) return;
+    await new Promise((resolve, reject) => {
+      const wake = () => { cleanup(); resolve(); };
+      const abort = () => { cleanup(); reject(lifetime.signal.reason); };
+      const cleanup = () => { clearInterval(poll); wakeWaiters.delete(wake); lifetime.signal.removeEventListener('abort', abort); };
+      // The HTTP receiver and Session owner may be different local processes.
+      // A paused Run has no Native heartbeat, so observe its durable command
+      // queue without executing effects or relying on an in-memory wakeup.
+      const poll = setInterval(() => {
+        try {
+          guard(); const current = runStore.load(snapshot.scope, snapshot.runId);
+          if (current.snapshot.revision !== snapshot.revision || current.commands.some(row => !row.consumed)) wake();
+        } catch (error) { cleanup(); reject(error); }
+      }, 100);
+      wakeWaiters.add(wake); lifetime.signal.addEventListener('abort', abort, { once: true });
+      if (generation !== version) wake();
+    });
+  }
   function bindingRequest(command, run, stage) {
     return { command: copy(command), recovery: stage === 'execute', stage,
       runId: run?.run_id ?? managedNativeRunId(command), signal: lifetime.signal, store: runStore,
@@ -348,10 +367,42 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           onCheckpoint: async snapshot => { guard(); await beforeProjection?.(copy(snapshot)); guard(); project(run); } });
         kernels.set(id, kernel);
         try {
-          kernel.start({ scope, runId: id, sessionId, turnId: command.command_id, buildId: run.build_id,
-            parentRunId: null, taskChainId: id }, parseNativeJson(run.config));
-          applyControls(sessionId);
-          const snapshot = await kernel.runUntilIdle(scope, id); guard(); project(run);
+          const identity = { scope, runId: id, sessionId, turnId: command.command_id, buildId: run.build_id,
+            parentRunId: null, taskChainId: id };
+          let executed = false, boundaryOpen = true, snapshot;
+          const execute = async ({ signal, replayOnly = false, cancelOnly = false } = {}) => {
+            guard(); invariant(boundaryOpen && !executed, 'NATIVE_KERNEL_EXECUTION_REENTERED'); executed = true;
+            invariant(!cancelOnly || signal?.aborted && !replayOnly, 'NATIVE_KERNEL_CANCEL_SIGNAL_REQUIRED');
+            if (replayOnly) {
+              snapshot = runStore.load(scope, id).snapshot;
+              invariant(terminal(snapshot.phase), 'NATIVE_KERNEL_OWNER_TERMINAL_MISMATCH'); project(run); return copy(snapshot);
+            }
+            kernel.start(identity, parseNativeJson(run.config));
+            const cancel = () => {
+              if (closed || lifetime.signal.aborted) return;
+              kernel.submit(scope, id, { commandId: `${id}:host-session-cancel`, kind: 'cancel', payload: {} }); wake();
+            };
+            signal?.addEventListener('abort', cancel, { once: true });
+            try {
+              if (signal?.aborted) cancel();
+              for (;;) {
+                guard(); const version = generation; applyControls(sessionId);
+                snapshot = await kernel.runUntilIdle(scope, id); guard(); project(run);
+                if (terminal(snapshot.phase) || !resolved.withExecution) return copy(snapshot);
+                // A whole-Session owner stays open through pause/approval.
+                // Only this Native kernel consumes the durable next command.
+                await waitForCommand(version, snapshot);
+              }
+            } finally { signal?.removeEventListener('abort', cancel); }
+          };
+          invariant(resolved.withExecution === undefined || typeof resolved.withExecution === 'function', 'NATIVE_KERNEL_BINDING_CHANGED');
+          if (resolved.withExecution) {
+            let result;
+            try { result = await resolved.withExecution({ identity: copy(identity), configuration: parseNativeJson(run.config),
+              signal: lifetime.signal, execute }); }
+            finally { boundaryOpen = false; }
+            guard(); invariant(executed && snapshot && canonical(result) === canonical(snapshot), 'NATIVE_KERNEL_EXECUTION_RESULT_INVALID');
+          } else await execute();
           failures.delete(sessionId);
           if (!terminal(snapshot.phase)) return;
           transaction(() => db.prepare("UPDATE managed_commands SET state='settled' WHERE command_id=?").run(row.command_id));
@@ -376,7 +427,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       catch { /* Explicit status/drain reports authority failure. */ }
     }, 0);
   }
-  function wake() { generation++; schedule(); }
+  function wake() { generation++; for (const notify of [...wakeWaiters]) notify(); schedule(); }
   async function drain(sessionId) { guard(); return start(sessionId); }
   function facts(sessionId, after = 0) {
     guard(); invariant(text(sessionId) && Number.isSafeInteger(after) && after >= 0, 'NATIVE_KERNEL_CURSOR_INVALID');

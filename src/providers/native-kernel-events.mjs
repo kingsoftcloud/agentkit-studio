@@ -28,6 +28,37 @@ export function projectNativeKernelEvent(event, { scopeId, commandId } = {}) {
       input_tokens: payload.usage.inputTokens, output_tokens: payload.usage.outputTokens,
       total_tokens: payload.usage.inputTokens + payload.usage.outputTokens,
       cached_tokens: payload.usage.cachedInputTokens ?? 0, reasoning_tokens: payload.usage.reasoningTokens ?? 0 });
+    // Appended after the message/usage facts so existing event_ids stay unchanged.
+    if (payload.candidateStatus !== 'rejected' && Array.isArray(payload.toolCalls)) {
+      for (const call of payload.toolCalls) {
+        if (!call?.callId || !call?.name) continue;
+        runtime({ event_type: 'item.completed', item_id: `call-${call.callId}`, item_kind: 'tool_call',
+          snapshot: { parts: [{ content_type: 'tool_call', part_id: 'call', call_id: call.callId,
+            name: call.name, arguments: call.arguments ?? {} }] } });
+      }
+    }
+    // displayStream thinking records are a committed capture, not a live token callback.
+    const thinkingText = (payload.displayStream?.records ?? [])
+      .filter(record => record.event?.kind === 'thinking' && record.event?.text)
+      .map(record => record.event.text);
+    if (thinkingText.length) runtime({ event_type: 'item.completed', item_id: `reasoning-${event.eventId}`,
+      item_kind: 'reasoning',
+      snapshot: { parts: [{ content_type: 'text', part_id: 'thinking', text: thinkingText.join('') }] } });
+  } else if (event.kind === 'tool.completed') {
+    if (payload.status === 'uncertain') {
+      runtime({ event_type: 'item.failed', item_id: `result-${payload.callId}`, item_kind: 'tool_result',
+        error: { code: 'NATIVE_TOOL_OUTCOME_UNKNOWN', source: 'agentkit-native', scope_id: scopeId } });
+    } else {
+      runtime({ event_type: 'item.completed', item_id: `result-${payload.callId}`, item_kind: 'tool_result',
+        snapshot: { parts: [{ content_type: 'tool_result', part_id: 'result', call_id: payload.callId,
+          result: Object.hasOwn(payload, 'content') ? payload.content : {}, is_error: payload.status === 'error' }] } });
+    }
+  } else if (event.kind === 'tool.rejected') {
+    runtime({ event_type: 'item.failed', item_id: `result-${payload.callId}`, item_kind: 'tool_result',
+      error: { code: 'NATIVE_TOOL_REJECTED', message: payload.reason ?? null, source: 'agentkit-native', scope_id: scopeId } });
+  } else if (event.kind === 'tool.not_dispatched') {
+    runtime({ event_type: 'item.failed', item_id: `result-${payload.callId}`, item_kind: 'tool_result',
+      error: { code: 'NATIVE_TOOL_NOT_DISPATCHED', message: payload.reason ?? null, source: 'agentkit-native', scope_id: scopeId } });
   } else if (event.kind === 'approval.requested') {
     facts.push({ family: 'interaction', family_version: 1, event_type: 'interaction.requested', payload: {
       interaction_id: payload.interactionId, revision: 1, kind: 'approval', request: {
@@ -39,9 +70,19 @@ export function projectNativeKernelEvent(event, { scopeId, commandId } = {}) {
     facts.push({ family: 'interaction', family_version: 1, event_type: 'interaction.resolved', payload: {
       interaction_id: payload.interactionId, revision: 2,
     } }); transition('running');
-  } else if (event.kind === 'command.applied' && payload.reason && !['applied', 'already_paused', 'not_paused'].includes(payload.reason)) {
-    facts.push({ family: 'control', family_version: 1, event_type: 'control.command_rejected',
-      causation_id: payload.commandId, payload: { command_id: payload.commandId, reason: payload.reason } });
+  } else if (event.kind === 'command.applied') {
+    if (payload.reason && !['applied', 'already_paused', 'not_paused'].includes(payload.reason)) {
+      facts.push({ family: 'control', family_version: 1, event_type: 'control.command_rejected',
+        causation_id: payload.commandId, payload: { command_id: payload.commandId, reason: payload.reason } });
+    }
+    // causation is the control command, not the original enqueue.
+    if (payload.reason === 'applied' && payload.kind === 'pause') {
+      facts.push({ family: 'control', family_version: 1, event_type: 'control.run_transition',
+        causation_id: payload.commandId, payload: { run_id: runId, state: 'paused' } });
+    } else if (payload.reason === 'applied' && payload.kind === 'resume') {
+      facts.push({ family: 'control', family_version: 1, event_type: 'control.run_transition',
+        causation_id: payload.commandId, payload: { run_id: runId, state: 'running' } });
+    }
   } else if (event.kind === 'run.terminal') {
     const state = payload.phase === 'canceled' ? 'cancelled' : payload.phase;
     const output = [];
@@ -52,6 +93,7 @@ export function projectNativeKernelEvent(event, { scopeId, commandId } = {}) {
     }
     runtime(state === 'completed' ? { event_type: 'run.completed', status: 'completed', output_refs: output }
       : state === 'cancelled' ? { event_type: 'run.canceled', status: 'canceled', reason: 'Execution canceled' }
+      : state === 'interrupted' ? { event_type: 'run.interrupted', status: 'interrupted', reason: payload.reason ?? null }
         : { event_type: 'run.failed', status: 'failed', error: { code: 'NATIVE_EXECUTION_NOT_COMPLETED',
           message: 'Native execution did not complete', source: 'agentkit-native', scope_id: scopeId } });
     transition(state);

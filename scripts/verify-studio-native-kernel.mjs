@@ -14,7 +14,7 @@ export function createMountedNativeKernelProof(root) {
     session_id: 'a2a-kernel-mounted-native', payload: { content: 'write the proof and answer' } });
   const message = { messageId: 'native-kernel-inbound-message', parts: [{ text: cmd.payload.content }] };
   const calls = [], facts = new Map(), modelRequests = [];
-  let origin, accepted, originalTask, originalRecords, remote;
+  let origin, accepted, originalTask, originalRecords, originalOwner, remote;
   const records = async () => {
     const result = {};
     for (const kind of ['admission', 'tasks']) {
@@ -26,7 +26,7 @@ export function createMountedNativeKernelProof(root) {
   return {
     async prepare() {
       const path = join(root, 'inbound-proof.json');
-      await writeFile(path, JSON.stringify({ executeNative: true, publicKeyPem: signer.publicKeyPem,
+      await writeFile(path, JSON.stringify({ executeNative: true, sessionId: cmd.session_id, publicKeyPem: signer.publicKeyPem,
         targetBinding, kernelPublicKeyPem: issuer.publicKeyPem })); return path;
     },
     async handle(request, response, payload, tokens) {
@@ -68,8 +68,9 @@ export function createMountedNativeKernelProof(root) {
       };
       if (phase === 'before') {
         const response = await send('send_message', 'SendStreamingMessage', { message });
-        const updates = (await response.text()).split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
-        assert.ok(updates.length > 3); assert.ok(updates.every(update => !update.error));
+        const body = await response.text();
+        const updates = body.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
+        assert.ok(updates.length > 3, body); assert.ok(updates.every(update => !update.error), body);
         assert.equal(updates.at(-1).result.statusUpdate.status.state, 'TASK_STATE_COMPLETED');
         const first = updates[0].result.task;
         originalTask = (await (await send('get_task', 'GetTask', { id: first.id })).json()).result;
@@ -78,9 +79,13 @@ export function createMountedNativeKernelProof(root) {
         for (;;) {
           originalRecords = await records();
           const task = JSON.parse(Object.entries(originalRecords).find(([key]) => key.startsWith('tasks/'))[1]);
-          if (facts.size === 2 && Object.values(task.productOutbox).every(row => row.state === 'acknowledged')) break;
+          const owners = (await readFile(join(root, 'managed-session-owner.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+          originalOwner = owners.find(row => row.phase === 'closed' && row.runId === accepted.run_id)?.state;
+          if (facts.size === 2 && originalOwner && Object.values(task.productOutbox).every(row => row.state === 'acknowledged')) break;
           assert.ok(Date.now() < deadline, 'actual Native product facts did not drain'); await new Promise(resolve => setTimeout(resolve, 20));
         }
+        assert.equal(originalOwner.current, null); assert.equal(originalOwner.lastClosed.turn, 1);
+        assert.equal(JSON.parse(originalOwner.lastClosed.binding).identity.runId, accepted.run_id);
       } else {
         const count = calls.length;
         assert.deepEqual((await (await send('get_task', 'GetTask', { id: originalTask.id })).json()).result, originalTask);
@@ -90,8 +95,13 @@ export function createMountedNativeKernelProof(root) {
         const writes = (await readFile(join(root, 'inbound-native-effects.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
         assert.equal(writes.length, 1); assert.equal(writes[0].pid, mounts[0].pid); assert.equal(writes[0].callId, 'inbound-write');
         assert.notEqual(mounts[0].pid, mounts.at(-1).pid);
+        const owners = (await readFile(join(root, 'managed-session-owner.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+        assert.equal(owners.filter(row => row.phase === 'closed').length, 1);
+        assert.deepEqual(owners.find(row => row.phase === 'loaded' && row.pid === mounts.at(-1).pid).state, originalOwner);
         await writeFile(join(root, 'mounted-inbound-evidence.json'), JSON.stringify({ originalPid: mounts[0].pid, coldPid: mounts.at(-1).pid,
-          actualNativeExecution: true, admissions: 1, modelHttp: 2, fileWrites: 1, kernelRunId: accepted.run_id, factIds: [...facts.keys()],
+          actualNativeExecution: true, actualSessionOwnership: true, ownerUnchangedAfterRestart: true,
+          ownerEngine: originalOwner.lastClosed.engine, ownerTurn: originalOwner.lastClosed.turn,
+          admissions: 1, modelHttp: 2, fileWrites: 1, kernelRunId: accepted.run_id, factIds: [...facts.keys()],
           taskId: originalTask.id, taskState: originalTask.status.state, recordsUnchanged: true, coldAdmissionHttp: 0, coldModelHttp: 0, coldFileWrites: 0,
           limitation: 'Actual maintained Host/packed Studio/signed callback/NativeKernel/SQLite/HTTP model/file tool/Session facts. Server peer, model replies and trusted binding are controlled; no deployed Server interoperability, online/fresh-install/all-entry claim.' }, null, 2));
       }

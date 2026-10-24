@@ -12,8 +12,11 @@ process.once('message', async message => {
   try {
     runtime = createManagedNativeKernel({ directory: message.directory, target, autoStart: false, assertCurrent: () => true,
       permitVerifier: createNativeKernelPermitVerifier({ target, verificationKeys: async () => ({ server: message.publicKeyPem }) }),
-      beforeProjection: async snapshot => { if (message.boundary === 'before-projection' && snapshot.phase === 'completed') await hold(message.boundary); },
-      resolveBinding: ({ command }) => binding(command, { model: { generate: async request => {
+      beforeProjection: async snapshot => {
+        if (message.boundary === 'before-projection' && snapshot.phase === 'completed') await hold(message.boundary);
+        if (message.boundary === 'paused' && snapshot.phase === 'paused') await send({ type: 'boundary', boundary: 'paused', pid: process.pid });
+      },
+      resolveBinding: ({ command }) => ({ ...binding(command, { model: { generate: async request => {
         appendFileSync(join(message.directory, 'models.jsonl'), JSON.stringify({ pid: process.pid }) + '\n');
         return request.messages.some(row => row.role === 'tool') ? response() : response({ kind: 'tool_calls', text: '',
           toolCalls: [{ callId: 'write-one', name: 'write', arguments: {} }] });
@@ -22,11 +25,14 @@ process.once('message', async message => {
         if (message.boundary === 'after-effect') await hold(message.boundary);
         return { status: 'ok', content: 'Written exactly once' };
       } } }, { tools: [tool()], limits: { leaseMs: 1000 } }),
+      ...(message.withExecution ? { withExecution: ({ execute }) => execute() } : {}) }),
     });
     if (message.command) {
       const receipt = await runtime.receive(message.command, message.permit); await send({ type: 'receipt', receipt });
       if (message.boundary === 'before-start') await hold(message.boundary);
     }
+    for (const control of message.controls ?? []) await runtime.receive(control.command, control.permit);
+    if (message.receiveOnly) { await runtime.close(); process.disconnect(); return; }
     await runtime.drain(message.sessionId);
     const status = await runtime.getStatus(message.query, message.readPermit);
     const stream = await runtime.subscribe(message.subscription, message.subscribePermit), facts = [];
