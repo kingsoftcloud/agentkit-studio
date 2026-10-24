@@ -2,19 +2,32 @@
  * command -> NativeKernel -> HTTP model -> file tool -> durable Session facts.
  * The trusted model/tool binding and Server peer are explicit fixtures. */
 import assert from 'node:assert/strict';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { ingressSigner, targetBinding, platformTaskId, targetVersionId } from '../tests/fixtures/native-a2a-inbound.mjs';
 import { permitIssuer, command } from '../tests/fixtures/native-managed-kernel.mjs';
 
-export function createMountedNativeKernelProof(root) {
+export function createMountedNativeKernelProof(root, { formalBinding = false } = {}) {
+  const boundTarget = { ...targetBinding };
   const signer = ingressSigner(), issuer = permitIssuer({ target: { tenantId: targetBinding.tenantId, agentInstanceId: targetBinding.agentId } });
   const cmd = command({ tenant_id: targetBinding.tenantId, agent_instance_id: targetBinding.agentId,
     session_id: 'a2a-kernel-mounted-native', payload: { content: 'write the proof and answer' } });
   const message = { messageId: 'native-kernel-inbound-message', parts: [{ text: cmd.payload.content }] };
   const calls = [], facts = new Map(), modelRequests = [];
-  let origin, accepted, originalTask, originalRecords, originalOwner, remote;
+  let origin, accepted, originalTask, originalRecords, originalOwner, remote, originalLedger, originalFileMtime;
+  function formalLedger() {
+    const db = new DatabaseSync(join(root, 'studio/native-harness/managed-kernel/runs.sqlite'), { readOnly: true });
+    try {
+      const row = db.prepare("SELECT key,data FROM native_runs WHERE json_extract(data,'$.snapshot.runId')=?").get(accepted.run_id);
+      assert.ok(row, 'formal binding must use the receiver ledger');
+      const record = parseNativeJson(row.data);
+      record.events = db.prepare('SELECT data FROM native_events WHERE run_key=? ORDER BY seq').all(row.key).map(row => parseNativeJson(row.data));
+      record.items = db.prepare('SELECT collection,data FROM native_items WHERE run_key=? ORDER BY collection,item_key').all(row.key);
+      return record;
+    } finally { db.close(); }
+  }
   const records = async () => {
     const result = {};
     for (const kind of ['admission', 'tasks']) {
@@ -26,7 +39,7 @@ export function createMountedNativeKernelProof(root) {
   return {
     async prepare() {
       const path = join(root, 'inbound-proof.json');
-      await writeFile(path, JSON.stringify({ executeNative: true, sessionId: cmd.session_id, publicKeyPem: signer.publicKeyPem,
+      await writeFile(path, JSON.stringify({ executeNative: true, formalBinding, sessionId: cmd.session_id, publicKeyPem: signer.publicKeyPem,
         targetBinding, kernelPublicKeyPem: issuer.publicKeyPem })); return path;
     },
     async handle(request, response, payload, tokens) {
@@ -34,10 +47,13 @@ export function createMountedNativeKernelProof(root) {
         assert.equal(request.headers.authorization, 'Bearer controlled-inbound-model'); modelRequests.push(payload);
         assert.ok(modelRequests.length <= 2, 'duplicate inbound model execution');
         const first = modelRequests.length === 1;
-        if (!first) assert.ok(payload.messages.some(message => message.role === 'tool' && message.content.includes('Durable proof file written')));
+        if (!first) assert.ok(payload.messages.some(message => message.role === 'tool'
+          && (formalBinding ? message.content.includes('managed-proof.txt') : message.content.includes('Durable proof file written'))));
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.end('data: ' + JSON.stringify({ choices: [{ index: 0, delta: first ? { tool_calls: [{ index: 0, id: 'inbound-write', type: 'function',
-          function: { name: 'write_fixture', arguments: '{}' } }] } : { content: 'Mounted Native executed answer' }, finish_reason: first ? 'tool_calls' : 'stop' }] })
+          function: { name: formalBinding ? 'write_workspace_file' : 'write_fixture', arguments: formalBinding
+            ? JSON.stringify({ path: 'managed-proof.txt', content: 'Managed formal binding proof\n' }) : '{}' } }] }
+          : { content: 'Mounted Native executed answer' }, finish_reason: first ? 'tool_calls' : 'stop' }] })
           + '\n\ndata: [DONE]\n\n'); return true;
       }
       const action = request.url.split('/').at(-1);
@@ -51,6 +67,7 @@ export function createMountedNativeKernelProof(root) {
         const delivered = await fetch(origin + '/_agentkit/native-kernel/v1/commands', { method: 'POST',
           headers: { 'content-type': 'application/json' }, body: canonical({ command: cmd, permit: issuer.issue(cmd) }), signal: AbortSignal.timeout(10000) });
         assert.equal(delivered.status, 202); accepted = await delivered.json(); assert.equal(accepted.status, 'accepted');
+        await writeFile(join(root, 'managed-command-accepted'), accepted.run_id);
         data = { SessionId: cmd.session_id, AgentId: cmd.agent_instance_id, CommandId: cmd.command_id, Receipt: accepted };
       } else for (const fact of payload.Events) {
         assert.equal(fact.run_id, accepted.run_id); assert.equal(fact.event_type, 'control.run_transition');
@@ -59,10 +76,16 @@ export function createMountedNativeKernelProof(root) {
       response.setHeader('content-type', 'application/json'); response.end(canonical({ Code: 0, Data: data })); return true;
     },
     async probe(phase) {
+      if (formalBinding) {
+        const binding = JSON.parse(await readFile(join(root, 'managed-studio-binding.json'), 'utf8'));
+        boundTarget.agentId = binding.agentId; cmd.agent_instance_id = binding.agentId;
+      }
       const mounts = (await readFile(join(root, 'mounted-inbound-host.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
       origin = mounts.at(-1).origin;
       const send = async (operation, method, params) => {
-        const signed = signer.request(operation, { product: true, body: canonical({ jsonrpc: '2.0', id: 'native-kernel-proof', method, params }) });
+        const signed = signer.request(operation, { product: true, claims: { target_agent_id: boundTarget.agentId },
+          body: canonical({ jsonrpc: '2.0', id: 'native-kernel-proof', method, params }) });
+        signed.headers['x-agentengine-route-target'] = boundTarget.agentId;
         const response = await fetch(origin + signed.path, { method: 'POST', headers: signed.headers, body: signed.body, signal: AbortSignal.timeout(15000) });
         assert.equal(response.status, 200); return response;
       };
@@ -86,24 +109,43 @@ export function createMountedNativeKernelProof(root) {
         }
         assert.equal(originalOwner.current, null); assert.equal(originalOwner.lastClosed.turn, 1);
         assert.equal(JSON.parse(originalOwner.lastClosed.binding).identity.runId, accepted.run_id);
+        if (formalBinding) {
+          originalLedger = formalLedger();
+          assert.equal(originalLedger.snapshot.phase, 'completed');
+          assert.equal(originalLedger.snapshot.scope.agentId, boundTarget.agentId);
+          assert.equal(originalLedger.configuration.hostRecoveryBinding.agentId, boundTarget.agentId);
+          assert.equal(originalLedger.events.filter(event => event.kind === 'tool.completed'
+            && event.payload.callId === 'inbound-write' && event.payload.status === 'ok').length, 1);
+          assert.equal(originalLedger.events.filter(event => event.kind === 'model.completed').length, 2);
+          originalFileMtime = (await stat(join(root, 'workspace/managed-proof.txt'), { bigint: true })).mtimeNs;
+        }
       } else {
         const count = calls.length;
         assert.deepEqual((await (await send('get_task', 'GetTask', { id: originalTask.id })).json()).result, originalTask);
         assert.deepEqual((await (await send('send_message', 'SendMessage', { message })).json()).result.task, originalTask);
         assert.equal(calls.length, count); assert.deepEqual(await records(), originalRecords);
         assert.equal(modelRequests.length, 2); assert.equal(calls.filter(call => call.action === 'SubmitA2AInboundMessage').length, 1);
-        const writes = (await readFile(join(root, 'inbound-native-effects.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-        assert.equal(writes.length, 1); assert.equal(writes[0].pid, mounts[0].pid); assert.equal(writes[0].callId, 'inbound-write');
+        if (formalBinding) {
+          assert.equal(await readFile(join(root, 'workspace/managed-proof.txt'), 'utf8'), 'Managed formal binding proof\n');
+          assert.equal((await stat(join(root, 'workspace/managed-proof.txt'), { bigint: true })).mtimeNs, originalFileMtime);
+          assert.deepEqual(formalLedger(), originalLedger, 'cold Host must not alter the original managed Native ledger');
+        }
+        else {
+          const writes = (await readFile(join(root, 'inbound-native-effects.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+          assert.equal(writes.length, 1); assert.equal(writes[0].pid, mounts[0].pid); assert.equal(writes[0].callId, 'inbound-write');
+        }
         assert.notEqual(mounts[0].pid, mounts.at(-1).pid);
         const owners = (await readFile(join(root, 'managed-session-owner.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
         assert.equal(owners.filter(row => row.phase === 'closed').length, 1);
         assert.deepEqual(owners.find(row => row.phase === 'loaded' && row.pid === mounts.at(-1).pid).state, originalOwner);
         await writeFile(join(root, 'mounted-inbound-evidence.json'), JSON.stringify({ originalPid: mounts[0].pid, coldPid: mounts.at(-1).pid,
-          actualNativeExecution: true, actualSessionOwnership: true, ownerUnchangedAfterRestart: true,
+          actualNativeExecution: true, actualSessionOwnership: true, formalStudioBinding: formalBinding, ownerUnchangedAfterRestart: true,
           ownerEngine: originalOwner.lastClosed.engine, ownerTurn: originalOwner.lastClosed.turn,
           admissions: 1, modelHttp: 2, fileWrites: 1, kernelRunId: accepted.run_id, factIds: [...facts.keys()],
           taskId: originalTask.id, taskState: originalTask.status.state, recordsUnchanged: true, coldAdmissionHttp: 0, coldModelHttp: 0, coldFileWrites: 0,
-          limitation: 'Actual maintained Host/packed Studio/signed callback/NativeKernel/SQLite/HTTP model/file tool/Session facts. Server peer, model replies and trusted binding are controlled; no deployed Server interoperability, online/fresh-install/all-entry claim.' }, null, 2));
+          limitation: formalBinding
+            ? 'Actual maintained Host/packed Studio/shared formal Studio assembler/preset/Node workspace tool/Session lifecycle. Server peer/model responses controlled; no deployed Server interoperability, all resources or fresh-install claim.'
+            : 'Actual maintained Host/packed Studio/signed callback/NativeKernel/SQLite/HTTP model/file tool/Session facts. Server peer, model replies and trusted binding are controlled; no deployed Server interoperability, online/fresh-install/all-entry claim.' }, null, 2));
       }
     },
   };

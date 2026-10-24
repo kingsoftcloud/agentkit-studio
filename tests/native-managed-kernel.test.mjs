@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { bindNativeContext } from '../src/providers/native-context.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +29,24 @@ function fixture(t, options = {}) {
     async reopen() { await runtime.close(); runtime = createManagedNativeKernel(config); return runtime; },
   };
 }
+
+test('frozen real context counters and class-private model state survive managed ownership wrapping', async t => {
+  let models = 0;
+  class Model {
+    #answer = 'Frozen answer';
+    async generate() { models++; return response({ text: this.#answer }); }
+  }
+  const model = Object.freeze(new Model());
+  const context = bindNativeContext({ description: { protocol: 'openai-chat', modelName: 'test',
+    contextWindow: 8000, maxOutputTokens: 512, parameters: {} } });
+  const f = fixture(t, { resolveBinding: ({ command }) => binding(command,
+    { model, context: Object.freeze(context.port) }, { contextPolicy: context.policy,
+      profile: { profileId: 'managed', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'managed-profile/v1', ...context.profile } }) });
+  const cmd = command(); await f.receive(cmd); await f.runtime.drain(cmd.session_id);
+  assert.equal(models, 1); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
+  assert.ok((await f.facts(cmd.session_id)).some(fact => fact.event_type === 'item.completed'
+    && fact.payload.snapshot.parts.some(part => part.text === 'Frozen answer')));
+});
 
 test('original command Run lookup retains Python UUIDv5 ASCII encoding for supplementary Unicode', () => {
   const cmd = command({ command_id: '00000000-0000-4000-8000-000000000001', session_id: '会话😀' });

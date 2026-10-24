@@ -54,15 +54,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
   let managedKernel;
-  if (nativeManagedKernel !== undefined) {
-    const { registerStudioManagedNativeKernel } = await import('./services/native-managed-kernel.mjs');
-    managedKernel = registerStudioManagedNativeKernel(ctx, { storeDir: studioStoreDir, configuration: nativeManagedKernel });
-  }
-  if (nativeA2aInbound !== undefined) {
-    const { registerStudioNativeA2aInbound } = await import('./services/native-a2a-inbound.mjs');
-    registerStudioNativeA2aInbound(ctx, { storeDir: studioStoreDir,
-      configuration: { ...nativeA2aInbound, events: nativeA2aInbound.events ?? managedKernel?.events } });
-  }
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
     env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
@@ -224,6 +215,19 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         agentEvents, assembleContextFor, hookRegistry: bridge.nativeHooks, contextSourceRegistry: bridge.nativeContextSources,
       })), 'agentkit-studio: Native Harness lifetime');
   ctx.effect(() => bridge.setNativeTurnExecutor(async payload => (await nativeHost()).executeTurn(payload)), 'agentkit-studio: Native whole-turn registration');
+  if (nativeManagedKernel !== undefined) {
+    // Materialize the shared Host before its managed borrower so teardown
+    // closes the receiver/Native loops before releasing Host-owned resources.
+    if (nativeManagedKernel.resolveBinding === undefined) await nativeHost();
+    const { registerStudioManagedNativeKernel } = await import('./services/native-managed-kernel.mjs');
+    managedKernel = registerStudioManagedNativeKernel(ctx, { storeDir: studioStoreDir,
+      configuration: nativeManagedKernel, resolveHost: nativeHost });
+  }
+  if (nativeA2aInbound !== undefined) {
+    const { registerStudioNativeA2aInbound } = await import('./services/native-a2a-inbound.mjs');
+    registerStudioNativeA2aInbound(ctx, { storeDir: studioStoreDir,
+      configuration: { ...nativeA2aInbound, events: nativeA2aInbound.events ?? managedKernel?.events } });
+  }
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise });

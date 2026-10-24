@@ -92,6 +92,21 @@ async function applyProof(ctx, options) {
     savedIdentity = { id: record.metadata.id };
     await writeFile(identity, JSON.stringify(savedIdentity));
   }
+  const inboundProof = options.inboundProofPath ? JSON.parse(await readFile(options.inboundProofPath, 'utf8')) : null;
+  let managedRecord;
+  if (inboundProof?.formalBinding) {
+    const identityPath = join(options.directory, 'managed-agent-id.json');
+    try { managedRecord = await agents.get(JSON.parse(await readFile(identityPath, 'utf8')).id); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (!managedRecord) {
+      managedRecord = await agents.create({ name: 'Managed formal Native Agent', runtimeType: 'harness',
+        spec: { context: { maxInputTokens: 8000, reserveOutputTokens: 256 } },
+        bindings: { modelProfileIds: ['inbound-fixture'], tools: ['write_workspace_file'] } });
+      await writeFile(identityPath, JSON.stringify({ id: managedRecord.metadata.id }));
+    }
+    inboundProof.targetBinding.agentId = managedRecord.metadata.id;
+    await writeFile(join(options.directory, 'managed-studio-binding.json'), JSON.stringify({ agentId: managedRecord.metadata.id }));
+  }
 
   const home = options.directory;
   const warn = console.warn;
@@ -109,17 +124,19 @@ async function applyProof(ctx, options) {
     modelProfiles: [
       { id: 'fixture', provider: 'openai-compatible', modelName: 'main',
         baseUrl: options.modelUrl, default: true, credentialName: 'STUDIO_NATIVE_A2A_KEY' },
+      ...(managedRecord ? [{ id: 'inbound-fixture', provider: 'openai-compatible', modelName: 'inbound-model',
+        baseUrl: options.a2aControlPlaneUrl + '/native-inbound-model', credentialName: 'STUDIO_NATIVE_INBOUND_KEY' }] : []),
       ...(options.childQuestion ? [{ id: 'child-fixture', provider: 'openai-compatible', modelName: 'child',
         baseUrl: options.modelUrl, credentialName: 'STUDIO_NATIVE_A2A_KEY' }] : []),
     ],
-    modelProfileKeys: { STUDIO_NATIVE_A2A_KEY: 'sk-studio-a2a-secret' },
+    modelProfileKeys: { STUDIO_NATIVE_A2A_KEY: 'sk-studio-a2a-secret', ...(managedRecord ? { STUDIO_NATIVE_INBOUND_KEY: 'controlled-inbound-model' } : {}) },
   }), { mode: 0o600 });
 
   const { mountStudioHost } = await import('@kingsoftcloud/agentkit-studio/host-bootstrap');
   let nativeA2aInbound, nativeManagedKernel, managedExecution, managedSessionId, managedAgentHandle;
   ctx.effect(() => () => managedAgentHandle?.dispose(), 'verification managed Session handle');
   if (options.inboundProofPath) {
-    const proof = JSON.parse(await readFile(options.inboundProofPath, 'utf8'));
+    const proof = inboundProof;
     const { createA2aGatewayIdentityVerifier } = await import('../../src/providers/native-a2a-ingress-identity.mjs');
     const { createInternalA2AControlPlane } = await import('../../src/providers/native-a2a-control-plane.mjs');
     const client = createInternalA2AControlPlane({ baseUrl: options.a2aControlPlaneUrl, tokenProvider: {
@@ -140,9 +157,11 @@ async function applyProof(ctx, options) {
       const { createNativeModelPort } = await import('../../packages/agentkit-harness/src/native/model-port.mjs');
       const { configure } = await import('../../packages/agentkit-harness-core/dist/index.mjs');
       const { createStudioManagedNativeExecution } = await import('../../src/host/services/native-managed-execution.mjs');
-      managedExecution = createStudioManagedNativeExecution({ ctx });
       managedSessionId = proof.sessionId;
-      ctx.effect(() => () => managedExecution.close(), 'verification managed Session owner');
+      if (!proof.formalBinding) {
+        managedExecution = createStudioManagedNativeExecution({ ctx });
+        ctx.effect(() => () => managedExecution.close(), 'verification managed Session owner');
+      }
       const target = { tenantId: proof.targetBinding.tenantId, agentInstanceId: proof.targetBinding.agentId };
       const model = createNativeModelPort({ resolveProfile: async () => ({ protocol: 'openai-chat',
         baseUrl: options.a2aControlPlaneUrl + '/native-inbound-model', apiKey: 'controlled-inbound-model', model: 'inbound-model' }) });
@@ -176,6 +195,10 @@ async function applyProof(ctx, options) {
           } } },
         }),
       };
+      if (proof.formalBinding) {
+        delete nativeManagedKernel.resolveBinding;
+        nativeManagedKernel.principal = { userId: 'mounted-managed-user' };
+      }
     }
   }
   await mountStudioHost(ctx, {
@@ -271,7 +294,7 @@ async function applyProof(ctx, options) {
         await new Promise(resolve => setTimeout(resolve, 25));
       }
     }
-    if (managedExecution) {
+    if (managedSessionId) {
       let managedAgent;
       if (source === 'resume') {
         const found = await ctx.get('sessionController').resolveAgent(managedSessionId);
@@ -279,12 +302,31 @@ async function applyProof(ctx, options) {
         managedAgent = found.agent;
       } else {
         managedAgentHandle = await ctx.agents.create({ sessionId: managedSessionId,
-          agentOptions: { provider: 'agentkit-studio-fixture', model: 'main' }, meta: { cwd: workspaceRoot } });
+          agentOptions: managedRecord ? { provider: 'agentkit-studio-inbound-fixture', model: 'inbound-model' }
+            : { provider: 'agentkit-studio-fixture', model: 'main' }, meta: { cwd: workspaceRoot } });
         managedAgent = managedAgentHandle.agent;
-        await ctx.agentPresets.select(managedAgent, presetId);
+        await ctx.agentPresets.select(managedAgent, managedRecord ? dshPresetId(managedRecord.metadata.id, 1) : presetId);
       }
+      const managedStatus = () => managedExecution ? managedExecution.status(managedAgent)
+        : ctx.get('sessionProjections').stateOf(managedAgent.session, 'agentkitManagedNativeOwner');
       await appendFile(join(options.directory, 'managed-session-owner.jsonl'), JSON.stringify({ phase: 'loaded', pid: process.pid,
-        source, state: managedExecution.status(managedAgent) }) + '\n');
+        source, state: managedStatus() }) + '\n');
+      if (managedRecord && source !== 'resume') {
+        let observed = false, draining = false;
+        const observer = setInterval(() => {
+          if (!draining && existsSync(join(options.directory, 'managed-command-accepted'))) {
+            draining = true;
+            void ctx.get('studioManagedNativeKernel').drain(managedSessionId).catch(error =>
+              writeFile(join(options.directory, 'managed-owner-error.json'), JSON.stringify({ code: error.code, message: error.message, stack: error.stack })));
+          }
+          const state = managedStatus();
+          if (observed || !state.lastClosed) return;
+          observed = true;
+          appendFileSync(join(options.directory, 'managed-session-owner.jsonl'), JSON.stringify({ phase: 'closed', pid: process.pid,
+            runId: JSON.parse(state.lastClosed.binding).identity.runId, state }) + '\n');
+        }, 20);
+        ctx.effect(() => () => clearInterval(observer), 'verification managed owner observation');
+      }
     }
     await appendFile(join(options.directory, 'mounted-host-http.jsonl'), JSON.stringify({
       source, pid: process.pid, sessionId: agent.session.id, agentId: record.metadata.id, presetId,
@@ -329,5 +371,10 @@ async function applyProof(ctx, options) {
         JSON.stringify({ callId: exec.callId, name: exec.name, arguments: exec.arguments }) + '\n');
     }
     return next();
+  });
+  if (managedRecord) ctx.on('approval/request', async request => {
+    if (request.agent.session.id !== managedSessionId || request.toolName !== 'write_workspace_file') return;
+    await appendFile(join(options.directory, 'managed-workspace-approvals.jsonl'), JSON.stringify({ pid: process.pid, callId: request.callId }) + '\n');
+    return 'allowed-once';
   });
 }

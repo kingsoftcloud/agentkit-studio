@@ -319,6 +319,26 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       });
     }
   }
+  function portView(port, replacements) {
+    const read = key => {
+      if (Object.hasOwn(replacements, key)) return replacements[key];
+      const value = Reflect.get(port, key, port);
+      return typeof value === 'function' ? value.bind(port) : value;
+    };
+    // Proxy invariants forbid substituting a frozen target's own method or
+    // tokens property. Use a separate facade while preserving the real method
+    // receiver and its private state, including non-enumerable metadata.
+    return new Proxy(Object.create(Object.getPrototypeOf(port)), {
+      get: (_target, key) => read(key),
+      has: (_target, key) => Object.hasOwn(replacements, key) || key in port,
+      ownKeys: () => [...new Set([...Reflect.ownKeys(port), ...Reflect.ownKeys(replacements)])],
+      getOwnPropertyDescriptor(_target, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(port, key);
+        if (!descriptor && !Object.hasOwn(replacements, key)) return undefined;
+        return { configurable: true, enumerable: descriptor?.enumerable ?? true, writable: false, value: read(key) };
+      },
+    });
+  }
   function ownedPort(port, name) {
     if (!port?.[name]) return port;
     const method = port[name];
@@ -332,10 +352,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         return await Promise.race([work, stopped]);
       } finally { signal.removeEventListener('abort', onAbort); }
     };
-    return new Proxy(port, { get(target, key) {
-      if (key === name) return invoke;
-      const value = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value;
-    } });
+    return portView(port, { [name]: invoke });
   }
   async function drive(sessionId) {
     for (;;) {
@@ -358,10 +375,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         }
         if (ports.context?.tokens) {
           const tokens = ownedPort(ownedPort(ports.context.tokens, 'countRequest'), 'countText');
-          ports.context = new Proxy(ports.context, { get(target, key) {
-            if (key === 'tokens') return tokens;
-            const value = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value;
-          } });
+          ports.context = portView(ports.context, { tokens });
         }
         const kernel = new NativeKernel({ store: runStore, ports, owner, digest: hash,
           onCheckpoint: async snapshot => { guard(); await beforeProjection?.(copy(snapshot)); guard(); project(run); } });

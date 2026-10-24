@@ -83,7 +83,7 @@ export function createStudioManagedNativeExecution({ ctx, flushTimeoutMs = 10000
         guard(signal); admission(payload.ownership);
         invariant(payload.ownership.binding === expected, 'NATIVE_MANAGED_OWNER_CONFLICT');
         invariant(await owned(() => sessions.flush(agent.session), signal, flushTimeoutMs) === true, 'NATIVE_MANAGED_OWNER_NOT_DURABLE');
-        result = await execute({ signal: payload.signal });
+        result = await execute({ signal: payload.signal, prepareInput: payload.prepareInput });
         invariant(terminal(result.phase), 'NATIVE_MANAGED_OWNER_NOT_TERMINAL');
         return { reason: result.phase === 'completed' ? { kind: 'completed' }
           : result.phase === 'canceled' ? { kind: 'aborted', reason: { kind: 'user' } }

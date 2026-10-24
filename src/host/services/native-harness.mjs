@@ -64,10 +64,30 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   invariant(typeof sessions?.flush === 'function' && typeof projections?.register === 'function'
     && typeof renderPrompt === 'function', 'studio_native_host_services_unavailable');
   const store = ledger ?? new SqliteRunStore(join(storeDir, 'native-harness', 'runs.sqlite'));
+  const localStore = store;
   let unregister;
   try { unregister = projections.register(nativeDeliveryProjection()); }
   catch (error) { if (!ledger) store.close(); throw error; }
   const lifetime = new AbortController(), active = new Set(), childOwners = new Set(), controls = new Map();
+  const bindingLeases = new Map();
+  async function acquireBinding(sessionId, signal) {
+    const scoped = AbortSignal.any([signal, lifetime.signal]);
+    for (;;) {
+      scoped.throwIfAborted();
+      const previous = bindingLeases.get(sessionId);
+      if (!previous) {
+        let finish; const done = new Promise(resolve => { finish = resolve; });
+        const lease = { done }; bindingLeases.set(sessionId, lease);
+        return () => { if (bindingLeases.get(sessionId) === lease) { bindingLeases.delete(sessionId); finish(); } };
+      }
+      let onAbort;
+      const stopped = new Promise((_, reject) => {
+        onAbort = () => reject(scoped.reason); scoped.addEventListener('abort', onAbort, { once: true });
+      });
+      try { await Promise.race([previous.done, stopped]); }
+      finally { scoped.removeEventListener('abort', onAbort); }
+    }
+  }
   let closed = false, closing;
   let backgroundRegistry, backgroundOwner, backgroundStart = Promise.resolve();
   let waitRecoveryOwner, waitRecoveryStart = Promise.resolve();
@@ -90,13 +110,19 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ? control.kernel.childTasks(scope, runId) : [];
     } });
   };
-  const resolveBinding = async ({ agent, input, binding, signal, prepareInput }, original) => {
+  const resolveBinding = async ({ agent, input, binding, signal, prepareInput }, original, execution) => {
+      // Both entrypoints assemble identical ports; managed Runs must use the
+      // receiver's actual ledger and trusted principal, never the local ledger.
+      const store = execution?.store ?? localStore;
       if (binding?.runtime !== 'harness' || binding.local !== true) return null;
       invariant(binding.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT, 'studio_native_engine_contract_unsupported');
       invariant(typeof prepareInput === 'function', 'studio_native_whole_turn_host_required');
       invariant(binding.agentId && Number.isSafeInteger(binding.agentRevision) && binding.agentRevision > 0
         && binding.nativeTools, 'studio_native_revision_binding_missing');
       invariant(!binding.buildId || typeof builds?.resolve === 'function', 'studio_native_build_service_unavailable');
+      const releaseBinding = await acquireBinding(String(agent.session.id), signal);
+      let transferred = false;
+      try {
       const record = binding.buildId ? await builds.resolve(binding.agentId, binding.buildId)
         : await agents.getRevision(binding.agentId, binding.agentRevision);
       signal.throwIfAborted();
@@ -147,7 +173,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           if (part.type === 'image' && part.offloaded !== true) childMediaSources.set(partIndex, admission.messages[index].media?.[image++]);
         });
       });
-      const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
+      const scope = execution?.scope ?? { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
       const sessionId = String(agent.session.id);
       const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
       // Pin the combined browser + observer deadline in the same formal tool
@@ -198,7 +224,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
       const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits, vision: !!visionDescription });
       const materialized = original ? { memoryWrite: false } : await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
-        toolAdapter: {}, agent, agentId: binding.agentId, userId: 'local-user', resourceMode: 'context-only' });
+        toolAdapter: {}, agent, agentId: binding.agentId, userId: scope.userId, resourceMode: 'context-only' });
       // A memory write is an external effect and must get its own Native intent.
       // Refuse that composition until its durable port is installed.
       invariant(!materialized.memoryWrite, 'studio_native_memory_write_port_unavailable');
@@ -290,7 +316,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const toolPorts = binding.nativeTools.forAgent(agent, { scope, store,
         ...(componentBinding ? { componentBinding } : {}), ...(children ? { children } : {}) });
       if (vision) toolPorts.tools = vision.wrapTools(toolPorts.tools);
-      return { scope, buildId, source,
+      const resolved = { scope, buildId, source,
         // Optional completed-Turn consumption: the Memory owner consumes only
         // original current-Run human inputs after the committed terminal. It
         // never rewrites the main answer/usage/verification; the executor wraps
@@ -341,7 +367,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             await binding.nativeTools.releaseSession?.(request);
             if (questionError) throw questionError;
           } finally {
-            vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close();
+            try { vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close(); }
+            finally { releaseBinding(); }
           }
         },
         taskContractFactory: facts => extendNativeMemoryGoal(facts.goal,
@@ -414,6 +441,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools)) === canonical(tools),
             'studio_native_input_tool_binding_changed');
           invariant(Array.isArray(next.messages), 'studio_native_prepared_input_invalid');
+          // The post-candidate drain must still catch real queued work. SDK
+          // step preparation also samples clock/runtime snapshots even when
+          // no work arrived; treating those refreshers as new work would
+          // discard every final answer and loop until the model budget ends.
+          const candidate = store.load(scope, request.runId).snapshot.candidate;
+          if (candidate && next.messages.every(message => ['runtime-context', 'time-context'].includes(message?.source?.kind)))
+            return { status: 'admitted', messages: [] };
           const messages = [], images = new Map();
           for (const message of next.messages) {
             invariant(message?.role === 'user' && Array.isArray(message.content), 'studio_native_prepared_input_invalid');
@@ -425,10 +459,12 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           return { status: 'admitted', messages };
         } }, model: parentModel.model },
       };
+      transferred = true; return resolved;
       } catch (error) { vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close(); throw error; }
       } catch (error) { visionDispose?.(); throw error; }
+      } finally { if (!transferred) releaseBinding(); }
   };
-  const resolveRestoredBinding = async (payload, original) => {
+  const resolveRestoredBinding = async (payload, original, execution) => {
     invariant(typeof agentEvents === 'function' && typeof assembleContextFor === 'function', 'studio_native_recovery_dispatch_unavailable');
     const capsule = readNativeRecoveryBinding({ configuration: original.configuration,
       snapshot: { ...original.identity, configDigest: original.configDigest } }, {
@@ -445,7 +481,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     invariant(typeof prompt?.assemble === 'function', 'studio_native_recovery_prompt_unavailable');
     const assembly = await prompt.assemble(assembleContextFor(payload.agent, payload.signal));
     payload.signal.throwIfAborted();
-    return resolveBinding({ ...payload, binding, input: { ...payload.input, assembly } }, { ...original, capsule });
+    return resolveBinding({ ...payload, binding, input: { ...payload.input, assembly } }, { ...original, capsule }, execution);
   };
   const resolveBackgroundBinding = async (payload, { admission, record, source }) => {
     // A notice has no new user input. Reconstruct ports from the original
@@ -623,6 +659,45 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     return starting;
   };
   return {
+    async resolveManagedBinding(payload, { store: managedStore, admission, runId, target, principal }) {
+      invariant(!closed && typeof managedStore?.load === 'function'
+        && typeof runId === 'string' && runId && typeof principal?.userId === 'string' && principal.userId.trim(),
+      'NATIVE_MANAGED_STUDIO_BINDING_INVALID');
+      invariant(typeof agentEvents === 'function' && typeof assembleContextFor === 'function', 'studio_native_recovery_dispatch_unavailable');
+      const scope = { tenantId: target.tenantId, workspaceId, userId: principal.userId, agentId: target.agentInstanceId };
+      const execution = { store: managedStore, scope };
+      let resolved, input = payload.input;
+      if (admission) {
+        invariant(canonical(admission.scope) === canonical(scope), 'NATIVE_MANAGED_STUDIO_TARGET_CHANGED');
+        const configuration = admission.configuration;
+        const identity = { scope, runId, sessionId: payload.agent.session.id,
+          buildId: admission.buildId, turnId: input.messages[0].id, parentRunId: null, taskChainId: runId };
+        const capsule = readNativeRecoveryBinding({ configuration, snapshot: { ...identity, configDigest: hash(configuration) } },
+          { agentId: scope.agentId, sessionId: identity.sessionId, runId });
+        input = { kind: 'enter', messages: copy(capsule.messages) };
+        resolved = await resolveRestoredBinding({ ...payload, input }, { identity, configuration,
+          configDigest: hash(configuration), messages: capsule.messages, source: capsule.source }, execution);
+      } else {
+        const binding = await agentEvents(ctx, payload.agent).serial('agentkit/native-recovery-binding', {});
+        payload.signal.throwIfAborted();
+        invariant(binding?.agentId === scope.agentId, 'NATIVE_MANAGED_STUDIO_TARGET_CHANGED');
+        const prompt = ctx.get('systemPrompt');
+        invariant(typeof prompt?.assemble === 'function', 'studio_native_recovery_prompt_unavailable');
+        const assembly = await prompt.assemble(assembleContextFor(payload.agent, payload.signal));
+        payload.signal.throwIfAborted();
+        resolved = await resolveBinding({ ...payload, input: { ...input, assembly }, binding }, undefined, execution);
+      }
+      try {
+        invariant(resolved, 'NATIVE_MANAGED_STUDIO_BINDING_INVALID');
+        const configuration = freezeNativeDshConfiguration(resolved, input, admission?.configuration.contract);
+        invariant(!admission || resolved.buildId === admission.buildId
+          && canonical(configuration) === canonical(admission.configuration), 'native_dsh_recovery_configuration_changed');
+        return { ...resolved, configuration };
+      } catch (error) {
+        await resolved?.releaseResources?.({ scope, sessionId: payload.agent.session.id, runId });
+        throw error;
+      }
+    },
     startWaitRecovery,
     waitRecoveryStatus: () => waitRecoveryOwner?.status() ?? { running: false, started: false },
     startBackgroundWatcher,

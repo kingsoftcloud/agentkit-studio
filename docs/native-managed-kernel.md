@@ -66,9 +66,22 @@ SDK 关闭回合后再落盘，接收器才结算命令。专用 Session project
 不能另开回合或重新执行。该 projection 仅恢复事实，不授予模型、工具或审批权限。
 宿主关闭时先等待 managed runtime 退役，再关闭 execution adapter 及其 projection。
 
-此适配器负责 Session 生命周期，正式 Agent/Build 的完整模型、工具、权限和交互装配仍需
-复用已有 Native Host 组装器。当前挂载验证使用真实 SDK Session、preset、控制器和持久化，
-模型/文件工具 binding 仍为受控夹具；不能据此声明生产 binding、全部恢复场景或 UI 消费完成。
+此适配器负责 Session 生命周期。未提供自定义 `resolveBinding` 时，显式 managed 配置必须
+提供可信 `principal.userId`；宿主从真实 SessionController/preset 获取 Agent revision 或
+Frozen Build，复用原 Native Host 的完整模型、工具、Memory、Skills、MCP、Browser、
+子任务、Hooks 和上下文装配代码，使用接收器的实际 ledger 与可信 tenant/user/workspace。
+命令不能选择其他 Agent；恢复检查原 Build、模型、消息和完整配置，失败时释放资源。
+SDK 的真实 prepareInput 用于后续输入，已提交的完成回合使用同一有超时边界的可选消费者。
+接收器先退役，再释放 Session adapter 和共用 Host。
+
+资源发现和本地 Native 回合共用每 Session 的装配租约。执行阶段先释放预览资源，取得
+SDK 独占回合后再重建完整 binding 并核对原配置；只有这时端口才能执行，避免等待 Session
+时占住 Memory/vision 资源或覆盖普通回合的 owner。失败和取消均释放对应资源。
+最终候选之后仍检查真实排队输入；只有 SDK 自动生成的 clock/runtime 快照时，不另开模型
+轮次。上述快照在正常模型步仍保留，真实用户/后台输入不会因此被过滤。
+
+该入口仍属显式接入。完整资源组合、更多混合回合并发故障边界、审批/未知结果产品流程
+和全部 SDK 崩溃边界尚需验收，不能仅凭复用装配器声明这些能力全部贯通。
 
 执行适配契约为 `agentkit.managed-native-kernel/v1`。仅显式装配时注册：
 
@@ -110,6 +123,8 @@ SDK 关闭回合后再落盘，接收器才结算命令。专用 Session project
 
 现有接收器支持 enqueue、普通 Run interrupt、pause、Run resume、文本 steer，
 以及经过可信引用校验的 approval 回复。`capabilities` 明确暴露支持集。
+共用 Studio binding 当前只接受文本 enqueue；附件/结构化内容需要显式输入 codec，遇到
+其他形状返回 `NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED`，不使用 JSON 字符串化冒充迁移。
 inject、scoped interrupt、checkpoint/continuation resume、结构化输入回复、
 execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
 
@@ -117,8 +132,8 @@ execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未�
 终态、每次模型用量增量、已提交的工具调用/结果、已提交 thinking 捕获以及暂停/恢复。
 未知工具结果投影为失败条目，保留 interrupted 终态，不能伪造成功结果；A2A Task 消费者
 等待匹配的 control 终态后关闭任务。运行态原始 token 流、完整 reasoning/media、公共工具
-活动和所有诊断投影尚未闭环。正式 Agent/Build 的生产 binding 工厂、完整工具/审批资源组装、
-部署中的 Server 传输适配与线上认证仍需补齐。此模块不能替代这些验收。
+活动和所有诊断投影尚未闭环。共用 Agent/Build binding 的全部资源组合与并发边界、
+审批资源的产品流程、部署中的 Server 传输适配与线上认证仍需补齐。此模块不能替代这些验收。
 
 ## 已执行的验证与复验入口
 

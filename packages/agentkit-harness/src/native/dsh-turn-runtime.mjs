@@ -83,7 +83,7 @@ async function flushOwnership(flush, payload, timeoutMs) {
 // Optional owner consumption follows the committed terminal; it is not a new
 // task effect or acceptance result. A lost acknowledgement must not replace
 // the answer, and the owner must reconcile its own durable source receipts.
-async function consumeCompletedTurn(binding, record, signal) {
+export async function consumeNativeCompletedTurn(binding, record, signal) {
   if (!binding.consumeCompletedTurn || record.snapshot.phase !== 'completed' || signal.aborted) return;
   const deadline = new AbortController(), scoped = AbortSignal.any([signal, deadline.signal]);
   let listener;
@@ -344,7 +344,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
       if (cancelListener) signal.removeEventListener('abort', cancelListener);
       try {
         try {
-          if (admittedRun && binding.consumeCompletedTurn) await consumeCompletedTurn(binding, store.load(scope, runId), signal);
+          if (admittedRun && binding.consumeCompletedTurn) await consumeNativeCompletedTurn(binding, store.load(scope, runId), signal);
         } catch { /* A failed optional owner lookup cannot suppress resource cleanup. */ }
         const cleanup = await Promise.allSettled([
           Promise.resolve().then(() => releaseControls?.()),

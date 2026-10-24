@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { SqliteNativeMemoryProvider } from '../packages/agentkit-harness/src/native/memory-store.mjs';
 import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } from '../packages/agentkit-harness/src/native/memory-candidate.mjs';
-import { MemoryRunStore, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotification, backgroundCommandObservation } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { MemoryRunStore, NativeKernel, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotification, backgroundCommandObservation } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { digest, tool } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { nativeDshBackgroundOwnership } from '../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
@@ -76,6 +76,45 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     bridge, retireContext,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
+
+test('managed binding reuses real Studio assembly with its own ledger and trusted principal', async t => {
+  const f = await setup(t, { recovery: true }), store = new MemoryRunStore();
+  const target = { tenantId: 'managed-tenant', agentInstanceId: f.record.metadata.id };
+  const principal = { userId: 'managed-user' }, runId = 'managed-real-run';
+  const args = { store, admission: null, runId, target, principal };
+  const bound = await f.host.resolveManagedBinding(f.payload, args);
+  const scope = bound.scope;
+  assert.equal(scope.tenantId, target.tenantId); assert.equal(scope.userId, principal.userId);
+  assert.equal(scope.agentId, target.agentInstanceId);
+  const kernel = new NativeKernel({ store, ports: bound.ports, owner: 'managed-test-owner', digest });
+  kernel.start({ scope, runId, sessionId: f.payload.agent.session.id, turnId: 'managed-command',
+    buildId: bound.buildId, parentRunId: null, taskChainId: runId }, bound.configuration);
+  const done = await kernel.runUntilIdle(scope, runId);
+  assert.equal(done.phase, 'completed'); assert.equal(f.requests.length, 1);
+  assert.equal(f.head(), null, 'managed effects must not enter the local Native ledger');
+  await bound.releaseResources?.({ scope, runId, sessionId: done.sessionId });
+  const admission = { scope, buildId: bound.buildId, configuration: bound.configuration };
+  const restored = await f.host.resolveManagedBinding(f.payload, { ...args, admission });
+  assert.deepEqual(restored.configuration, bound.configuration);
+  assert.equal(f.requests.length, 1, 'binding restoration must not invoke the model');
+  await restored.releaseResources?.({ scope, runId, sessionId: done.sessionId });
+  for (const changes of [{ target: { ...target, tenantId: 'other' } }, { principal: { userId: 'other' } }])
+    await assert.rejects(f.host.resolveManagedBinding(f.payload, { ...args, admission, ...changes }),
+      { code: 'NATIVE_MANAGED_STUDIO_TARGET_CHANGED' });
+});
+
+test('managed discovery releases its Session resources before an ordinary Native turn can bind', async t => {
+  const f = await setup(t, { recovery: true }), store = new MemoryRunStore();
+  const target = { tenantId: 'managed-tenant', agentInstanceId: f.record.metadata.id };
+  const bound = await f.host.resolveManagedBinding(f.payload, { store, admission: null, runId: 'preview-run',
+    target, principal: { userId: 'managed-user' } });
+  const ordinary = f.host.executeTurn(f.payload);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.requests.length, 0, 'ordinary resources must wait for the discovery lease');
+  await bound.releaseResources?.({ scope: bound.scope, sessionId: f.payload.agent.session.id, runId: 'preview-run' });
+  await ordinary;
+  assert.equal(f.requests.length, 1); assert.equal(f.head().phase, 'completed');
+});
 
 const contextRegistration = (record, extra = {}) => ({ sourceRef: 'plugin://host-context-proof@1',
   sourceDigest: 'sha256:' + 'e'.repeat(64), agentIds: [record.metadata.id], authorizationVersion: 'policy/v1',
@@ -1037,6 +1076,16 @@ test('Studio Native admits live typed input through Host policy and trusted atta
   assert.deepEqual(context.data.source, { kind: 'tool', callId: 'already-host-owned' });
   assert.equal(fixture.head().goal, 'Finish');
 });
+test('SDK clock and runtime refreshers do not discard a final candidate when no new work arrived', async t => {
+  const fixture = await setup(t);
+  fixture.payload.prepareInput = async () => ({ kind: 'enter', assembly: fixture.payload.input.assembly,
+    messages: ['runtime-context', 'time-context'].map((kind, index) => ({ id: `ambient-${index}`, role: 'user',
+      source: { kind }, content: [{ type: 'text', text: `Fresh ${kind}` }] })) });
+  await fixture.host.executeTurn(fixture.payload);
+  assert.equal(fixture.requests.length, 1); assert.equal(fixture.head().phase, 'completed');
+  assert.equal(fixture.head().finalText, 'Complete');
+});
+
 test('Studio Native respects a pre-step rejection without reporting the stale candidate as completion', async t => {
   const fixture = await setup(t);
   fixture.payload.prepareInput = async () => ({ kind: 'reject' });
