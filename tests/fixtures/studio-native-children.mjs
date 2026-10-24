@@ -53,6 +53,8 @@ export async function apply(ctx, options) {
     const target = { tenantId: 'managed-child-tenant', agentInstanceId: record.metadata.id };
     const { createNativeKernelPermitVerifier } = await import('../../src/providers/native-kernel-permit.mjs');
     nativeManagedKernel = { target, principal: { userId: 'managed-child-user' }, assertCurrent: () => ctx.fiber.uid !== null,
+      ...(a2aProof ? { onWorkerError: ({ sessionId, error }) => writeFileSync(join(home, 'managed-worker-error.json'),
+        JSON.stringify({ pid: process.pid, sessionId, code: error.code, message: error.message, stack: error.stack })) } : {}),
       permitVerifier: createNativeKernelPermitVerifier({ target, verificationKeys: async () => ({ server: proof.publicKeyPem }) }) };
   }
   await mountStudioHost(ctx, { configurationHome: home, ...resourceOptions,

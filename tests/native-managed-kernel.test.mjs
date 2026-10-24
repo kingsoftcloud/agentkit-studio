@@ -31,6 +31,32 @@ function fixture(t, options = {}) {
   };
 }
 
+for (const asynchronous of [false, true]) test(`trusted worker diagnostics preserve the original error and cannot turn observer failure into execution (async=${asynchronous})`, async t => {
+  const failure = Object.assign(Error('private binding detail'), { code: 'session/writer-held' });
+  const observed = []; let executions = 0;
+  const f = fixture(t, { resolveBinding: request => {
+    if (request.stage === 'execute') throw failure;
+    return binding(request.command, { model: { generate: async () => { executions++; return response(); } }, tools: { execute: async () => assert.fail() } });
+  }, onWorkerError: event => {
+    observed.push(event);
+    if (asynchronous) return Promise.reject(Error('observer failed asynchronously'));
+    throw Error('observer failed synchronously');
+  } });
+  const cmd = command(), receipt = await f.receive(cmd);
+  await assert.rejects(f.runtime.drain(cmd.session_id), error => error === failure);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(observed.length, 1); assert.equal(observed[0].sessionId, cmd.session_id); assert.equal(observed[0].error, failure);
+  const view = f.runtime.inspectSession({ scope, sessionId: cmd.session_id, runId: receipt.run_id });
+  assert.equal(view.workerError, 'NATIVE_KERNEL_WORKER_FAILED'); assert.equal(view.commandState, 'accepted');
+  assert.equal(view.record, null); assert.equal(executions, 0);
+  assert.equal((await f.status(cmd.session_id)).runs.length, 1);
+});
+
+test('trusted worker diagnostic configuration must be callable', async t => {
+  const f = fixture(t);
+  assert.throws(() => createManagedNativeKernel({ ...f.config, onWorkerError: {} }), { code: 'NATIVE_KERNEL_CONFIGURATION_INVALID' });
+});
+
 test('trusted managed inspection is scoped, read-only and cannot resume paused or approval work', async t => {
   let models = 0;
   const f = fixture(t, { resolveBinding: ({ command }) => binding(command, {

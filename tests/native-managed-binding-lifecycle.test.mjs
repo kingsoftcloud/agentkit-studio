@@ -61,6 +61,47 @@ test('Host retirement after resource discovery releases a late binding without e
   assert.deepEqual(f.counts(), { leases: 0, lookups: 1, releases: 1, effects: 0 });
 });
 
+for (const abort of [false, true]) test(`accepted recovery waits for SDK writer publication without bypassing Session ownership (abort=${abort})`, async () => {
+  const f = fixture(), signal = new AbortController(); let lookups = 0;
+  const agent = { session: { id: f.request.command.session_id }, whenIdle: async () => {} };
+  const services = { sessionController: { resolveAgent: async id => {
+    assert.equal(id, agent.session.id); lookups++;
+    if (lookups === 1) {
+      assert.deepEqual(f.counts(), { leases: 0, lookups: 0, releases: 0, effects: 0 });
+      if (abort) setTimeout(() => signal.abort(Error('Host retired during SDK restore')), 5);
+      return { error: Object.assign(Error('SDK restore has not published its Agent yet'), { code: 'session/writer-held' }) };
+    }
+    return { agent };
+  } } };
+  let assemblies = 0;
+  const resolve = createStudioManagedNativeBinding({ ctx: { get: key => services[key] }, target, principal: { userId: 'user' },
+    resolveHost: async () => ({ resolveManagedBinding: async () => { assemblies++; return { scope: f.scope, configuration: {},
+      buildId: 'build', ports: {}, releaseResources: async () => {} }; } }), execution: { run() { assert.fail('lookup grants no execution'); } } });
+  const request = { ...f.request, signal: signal.signal, admission: { configuration: {} } };
+  if (abort) {
+    await assert.rejects(resolve(request), error => error.code === 'ABORT_ERR' && error.cause?.message === 'Host retired during SDK restore');
+    assert.equal(lookups, 1); assert.equal(assemblies, 0);
+  } else {
+    const binding = await resolve(request); await binding.release(request);
+    assert.equal(lookups, 2); assert.equal(assemblies, 1);
+  }
+});
+
+for (const code of ['session/not-found', 'session/agent-busy', 'gateway/internal']) test(`managed recovery does not retry or replace ${code}`, async () => {
+  const f = fixture(); let calls = 0; const failure = Object.assign(Error(code), { code });
+  const resolve = createStudioManagedNativeBinding({ ctx: { get: () => ({ resolveAgent: async () => { calls++; return { error: failure }; } }) },
+    target, principal: { userId: 'user' }, resolveHost: async () => assert.fail('failed ownership cannot bind'), execution: { run() {} } });
+  await assert.rejects(resolve({ ...f.request, admission: { configuration: {} } }), error => error === failure); assert.equal(calls, 1);
+});
+
+for (const stage of ['admit', 'execute']) test(`writer contention cannot wait without an original admission (stage=${stage})`, async () => {
+  const f = fixture(); let calls = 0;
+  const failure = Object.assign(Error('writer belongs to another owner'), { code: 'session/writer-held' });
+  const resolve = createStudioManagedNativeBinding({ ctx: { get: () => ({ resolveAgent: async () => { calls++; return { error: failure }; } }) },
+    target, principal: { userId: 'user' }, resolveHost: async () => assert.fail('failed ownership cannot bind'), execution: { run() {} } });
+  await assert.rejects(resolve({ ...f.request, stage, admission: null }), error => error === failure); assert.equal(calls, 1);
+});
+
 for (const admitted of [false, true]) test(`staged file receipts retire only after durable managed admission (admitted=${admitted})`, async () => {
   const cmd = command(), agent = { session: { id: cmd.session_id }, whenIdle: async () => {} };
   const receiptId = '08719d71-2117-40f9-9a74-b59ca0337194';

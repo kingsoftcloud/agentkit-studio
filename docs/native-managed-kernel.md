@@ -48,6 +48,9 @@ end 帧才引用真实的全局事件序号；落盘失败或执行中止时以 
   缺失时拒绝审批回复。必须是只读或按原 command-id 幂等的授权校验，不能靠消耗一次性
   token 代替原子命令准入；它不负责执行工具。
 - `assertCurrent()`：同步返回严格 `true` 的宿主权限和生命周期检查。
+- `onWorkerError({sessionId, error})`：可选的可信宿主诊断回调，收到原始异常。
+  回调抛错或返回拒绝的 Promise 不会覆盖原异常、触发重试或推进执行；公开状态仍仅返回
+  原有的脱敏错误码。原始异常可能含私有资源信息，只应写入受保护的宿主诊断。
 
 `nativeA2aInbound` 省略 `events` 时使用该运行时的真实持久 Session 事件源；出站到
 平台 Server 的 `SubmitA2AInboundMessage` / `CancelA2AInboundTask` 仍沿用已有控制面。
@@ -67,6 +70,10 @@ managed worker，不自动取得 Studio Session 的执行权。
 等待已有回合空闲，再调用维护版 SDK 的 `externalTurns.start/resume`。契约为
 `agentkit.native-managed-dsh-turn/v1`：持久 owner 绑定原 Run、scope、Session、Build 和
 配置摘要，Session owner 落盘成功后才调用 Native。其他引擎或另一 Run 的 owner 会被拒绝。
+SDK 恢复时可能先取得 Session 写句柄、随后才发布 Agent。正式 binding 仅为已准入命令的
+`execute` 阶段等待 `session/writer-held`，最长 10 秒，每 50 毫秒通过原 SessionController
+重新查询，Host 退出可中止等待。首次准入、其他错误以及持续写锁仍直接失败；等待不
+授予 Session 权限，也不允许绕过原 owner 或重新执行未知副作用。
 暂停、审批等待保留同一 Session owner，由 Native 消费后续持久命令；另一个本地接收进程
 写入的命令也能唤醒等待。Session 取消作用于原 Native Run，Host 退役不会把暂停改成用户取消。
 
@@ -285,6 +292,8 @@ node scripts/verify-studio-native-managed-children.mjs --source .artifacts/dsh-n
 node scripts/verify-studio-native-managed-a2a.mjs --source .artifacts/dsh-native-idle \
   --archive <正常打包的 tgz> --keep
 # 可分别添加 --child、--approval，或 --interrupt 验证未回答时的签名取消。
+# --answer-crash 在回答落盘、远端继续操作的补充授权尚未决定时 SIGKILL 实际 SDK Host。
+# 可与 --child、--approval 组合；不与 --interrupt 组合。
 ```
 
 实际打包 Host 已证明：带签名的 Server HTTP 回调驱动 NativeKernel，经真实模型 HTTP
@@ -292,3 +301,8 @@ node scripts/verify-studio-native-managed-a2a.mjs --source .artifacts/dsh-native
 原请求查询/重试不增加模型或文件调用。Server peer、模型响应和可信 binding 均为
 明确受控夹具；不代表真实云端、正式 Server 互操作、全新安装或全部产品入口完成。
 原有 DSH 挂载、Native 整轮出站 A2A 及历史恢复在同一 Host 验证中回归。
+
+`--answer-crash` 额外验证换 PID 后由原持久命令自动恢复，不提交新 Native 命令或恢复
+RPC，不重复提问、模型调用或远端发送。尚未完成的补充操作授权会重新请求，只有新
+宿主的真实授权通过后才继续。最终再换 PID，验证终态历史、账本和回执无新增副作用。
+此边界不等同于远端副作用已经发生、回执尚未落盘时的未知结果恢复。

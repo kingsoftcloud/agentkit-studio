@@ -58,10 +58,11 @@ const rejection = (command, code, status = 'rejected') => ({ schema_version: 1, 
   status, error: { code, message: code, retryable: status === 'queue_full', details: {} } });
 
 export function createManagedNativeKernel({ directory, target, permitVerifier, resolveBinding, authorizeInteraction, assertCurrent,
-  queueLimit = 100, clock = Date.now, autoStart = true, beforeCommit, beforeProjection } = {}) {
+  queueLimit = 100, clock = Date.now, autoStart = true, beforeCommit, beforeProjection, onWorkerError } = {}) {
   invariant(text(directory) && object(target) && text(target.tenantId) && text(target.agentInstanceId)
     && typeof permitVerifier?.verify === 'function' && typeof resolveBinding === 'function' && typeof assertCurrent === 'function'
-    && Number.isSafeInteger(queueLimit) && queueLimit > 0 && typeof autoStart === 'boolean', 'NATIVE_KERNEL_CONFIGURATION_INVALID');
+    && Number.isSafeInteger(queueLimit) && queueLimit > 0 && typeof autoStart === 'boolean'
+    && (onWorkerError === undefined || typeof onWorkerError === 'function'), 'NATIVE_KERNEL_CONFIGURATION_INVALID');
   const bindingTarget = copy(target), verifyPermit = permitVerifier.verify, owner = `native-server-${randomUUID()}`;
   const initialAuthority = assertCurrent();
   if (initialAuthority && typeof initialAuthority.then === 'function') void Promise.resolve(initialAuthority).catch(() => {});
@@ -483,6 +484,9 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     retryAfter.delete(sessionId);
     const startedGeneration = generation;
     const work = drive(sessionId).catch(error => {
+      // Trusted Host diagnostics only. An observer cannot replace the error,
+      // retry work, or authorize any Native effect by throwing/rejecting.
+      try { Promise.resolve(onWorkerError?.({ sessionId, error })).catch(() => {}); } catch {}
       failures.set(sessionId, ['NATIVE_KERNEL_BINDING_CHANGED', 'NATIVE_KERNEL_AUTHORITY_LOST', 'lease_busy', 'stale_fence'].includes(error.code)
         ? error.code : 'NATIVE_KERNEL_WORKER_FAILED');
       if (error.code === 'lease_busy' && schedulingEnabled && !closed) {

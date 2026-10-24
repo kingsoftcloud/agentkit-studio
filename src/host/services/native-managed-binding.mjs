@@ -1,4 +1,5 @@
 import { canonical, copy, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
 import { consumeNativeCompletedTurn } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { createNativeSessionDelivery } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { managedNativeInputParts, admitManagedNativeInput, STUDIO_MANAGED_NATIVE_INPUT } from './native-managed-input.mjs';
@@ -20,7 +21,17 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
       && typeof store?.load === 'function', 'NATIVE_MANAGED_STUDIO_TARGET_CHANGED');
     const controller = ctx.get('sessionController');
     invariant(typeof controller?.resolveAgent === 'function', 'NATIVE_MANAGED_OWNER_HOST_UNAVAILABLE');
-    const found = await controller.resolveAgent(command.session_id); signal.throwIfAborted();
+    let found;
+    const attachmentDeadline = Date.now() + 10000;
+    for (;;) {
+      found = await controller.resolveAgent(command.session_id); signal.throwIfAborted();
+      // SDK restoration can hold its Session writer before publishing the
+      // live Agent. Only an already-admitted command may wait for that narrow
+      // race; every retry still goes through the original ownership API.
+      if (found.error?.code !== 'session/writer-held' || request.stage !== 'execute'
+        || !admission || Date.now() >= attachmentDeadline) break;
+      await delay(50, undefined, { signal });
+    }
     if (found.error) throw found.error;
     invariant(found.agent?.session.id === command.session_id && typeof found.agent.whenIdle === 'function', 'NATIVE_MANAGED_OWNER_SESSION_CHANGED');
     await found.agent.whenIdle(); signal.throwIfAborted();

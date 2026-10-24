@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,15 +15,17 @@ import { command, permitIssuer } from '../tests/fixtures/native-managed-kernel.m
 import { internalPeer, spec, taskId } from '../tests/fixtures/native-a2a-internal-peer.mjs';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
-  child: { type: 'boolean' }, approval: { type: 'boolean' }, interrupt: { type: 'boolean' } } });
+  child: { type: 'boolean' }, approval: { type: 'boolean' }, interrupt: { type: 'boolean' }, 'answer-crash': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 assert.ok(!values.interrupt || !values.approval, 'Interruption proves an unanswered input request');
+assert.ok(!values['answer-crash'] || !values.interrupt, 'Answer crash and interruption are separate boundaries');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source), archive = resolve(values.archive);
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-managed-a2a-')));
 const archiveSha256 = createHash('sha256').update(await readFile(archive)).digest('hex');
 console.log(`Managed A2A evidence: ${root}`);
 const issuer = permitIssuer(), requests = [], questions = [], approvals = [], failures = [];
 const questionEntered = Promise.withResolvers(), releaseAnswer = Promise.withResolvers();
+const releasePermission = Promise.withResolvers(); let permissionsReleased = false, crashEvidence;
 const peer = await internalPeer({ mode: 'pause', ...(values.approval ? { expectedContinuationParts: [{ data: 'approve' }],
   initialTask: { id: 'original-remote', contextId: 'original-context', status: { state: 'TASK_STATE_INPUT_REQUIRED', message: {
     messageId: 'managed-remote-approval', role: 'ROLE_AGENT', parts: [{ text: 'Approve remote operation?' }], metadata: {
@@ -36,7 +39,7 @@ let harness, ledger, localLedger, identity, scope;
 const json = async path => JSON.parse(await readFile(path, 'utf8'));
 const jsonl = async path => (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 async function until(check, label) {
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + 50000;
   for (;;) { assert.deepEqual(failures, []); const result = await check(); if (result) return result;
     assert.ok(Date.now() < deadline, `Timed out: ${label}`); await new Promise(resolve => setTimeout(resolve, 20)); }
 }
@@ -65,7 +68,9 @@ const server = createServer(async (request, response) => {
     }
     if (request.url === '/approval') {
       approvals.push(body); assert.equal(body.toolName, 'a2a_continue_task');
-      assert.match(body.reason, /original-remote/); response.end('{"outcome":"allowed-once"}'); return;
+      assert.match(body.reason, /original-remote/);
+      if (values['answer-crash'] && !permissionsReleased) await releasePermission.promise;
+      if (!response.destroyed) response.end('{"outcome":"allowed-once"}'); return;
     }
     assert.equal(request.url, '/v1/chat/completions'); assert.equal(request.headers.authorization, 'Bearer child-proof-secret');
     requests.push(body); const child = body.model === 'child-proof'; assert.ok(child || body.model === 'parent-proof');
@@ -138,6 +143,49 @@ try {
   const cmd = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
     payload: { content: values.child ? 'Delegate original remote question' : 'Ask original remote question' } });
   const receipt = await send(cmd); assert.equal(receipt.status, 'accepted');
+  if (values['answer-crash']) {
+    await until(() => approvals.length === 1, 'first operation permission request after durable answer');
+    const original = ledger.load(scope, receipt.run_id), journal = peer.record(), native = journal.request.native;
+    const effect = ledger.load(native.scope, native.runId), answered = Object.values(journal.managed.questions.entries);
+    assert.equal(answered.length, 1); assert.equal(answered[0].stage, 'awaiting_permission');
+    assert.equal(answered[0].status, values.approval ? 'approved' : 'submitted');
+    assert.equal(effect.snapshot.phase, 'awaiting_reconciliation');
+    assert.equal(questions.length, 1); assert.equal(requests.length, values.child ? 2 : 1);
+    assert.equal(peer.calls.filter(row => row.wireMethod === 'SendMessage').length, 1);
+    const durableHistory = await until(async () => {
+      const logs = (await readdir(join(root, 'sessions'), { recursive: true })).filter(path => path.endsWith('.jsonl'));
+      if (logs.length !== 1) return false;
+      const history = await jsonl(join(root, 'sessions', logs[0]));
+      return history.filter(row => row.type === 'approval/asked').length === 1 ? history : false;
+    }, 'actual operation approval audit persisted before SIGKILL');
+    const beforeCounts = { models: requests.length, peer: peer.calls.length, questions: questions.length };
+    const dead = harness.client.child, exited = once(dead, 'exit');
+    assert.equal(approvals[0].pid, dead.pid); assert.equal(dead.kill('SIGKILL'), true);
+    const [code, signal] = await exited; assert.equal(code, null); assert.equal(signal, 'SIGKILL');
+    assert.throws(() => process.kill(dead.pid, 0), { code: 'ESRCH' }); await harness.close();
+    harness = new DeepSeekHarness(options); await harness.resumeSession(identity.sessionId);
+    let lastStatusAt = 0;
+    await until(async () => {
+      if (Date.now() - lastStatusAt > 1000) {
+        lastStatusAt = Date.now();
+        await writeFile(join(root, 'managed-a2a-crash-recovery-status.json'), canonical(await rpc('sessions/native-recovery-status',
+          { ...identity, runId: receipt.run_id })));
+      }
+      return approvals.length === 2;
+    }, 'automatic original-command recovery requests fresh permission');
+    assert.notEqual(approvals[1].pid, dead.pid); assert.equal(approvals[1].pid, harness.client.child.pid);
+    assert.deepEqual({ models: requests.length, peer: peer.calls.length, questions: questions.length }, beforeCounts,
+      'restoring a durable answer cannot repeat model/discovery/send/get/cancel or ask the question again');
+    assert.deepEqual(Object.values(peer.record().managed.questions.entries), answered);
+    const restored = ledger.load(native.scope, native.runId);
+    assert.equal(restored.snapshot.runId, effect.snapshot.runId); assert.deepEqual(restored.snapshot, effect.snapshot);
+    assert.deepEqual(restored.intents, effect.intents); assert.deepEqual(restored.receipts, effect.receipts);
+    assert.equal(ledger.list(scope, identity.sessionId).length, 1);
+    crashEvidence = { boundary: 'durable-answer-before-permission', signal, originalPid: dead.pid, recoveredPid: approvals[1].pid,
+      original, effect, answered, durableHistory, beforeCounts, automaticRecovery: true, newNativeCommandOrRecoveryRpc: false };
+    await writeFile(join(root, 'managed-a2a-crash-checkpoint.json'), canonical(crashEvidence));
+    permissionsReleased = true; releasePermission.resolve();
+  }
   if (values.interrupt) {
     await questionEntered.promise;
     const stop = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
@@ -151,7 +199,8 @@ try {
   }, 'original actual SDK owner settles');
   releaseAnswer.resolve();
   assert.equal(status.canReconcile, false); const record = ledger.load(scope, receipt.run_id);
-  assert.equal(record.snapshot.phase, expectedPhase); assert.equal(questions.length, 1); assert.equal(approvals.length, values.interrupt ? 0 : 1);
+  assert.equal(record.snapshot.phase, expectedPhase); assert.equal(questions.length, 1);
+  assert.equal(approvals.length, values.interrupt ? 0 : values['answer-crash'] ? 2 : 1);
   const childReservation = record.snapshot.childBudgetReservations[0];
   const childRecord = values.child ? ledger.load(childReservation.childScope, childReservation.childRunId) : null;
   const effectRecord = childRecord ?? record;
@@ -171,7 +220,7 @@ try {
   assert.equal(warm.filter(row => row.type === 'turn/owner').length, 1);
   assert.equal(warm.filter(row => row.type === 'turn/start').length, 1); assert.equal(warm.filter(row => row.type === 'turn/end').length, 1);
   assert.equal(warm.filter(row => row.type === 'approval/asked').length, approvals.length);
-  assert.equal(warm.filter(row => row.type === 'approval/decided').length, approvals.length);
+  assert.equal(warm.filter(row => row.type === 'approval/decided').length, values.interrupt ? 0 : 1);
   assert.equal((await send(cmd)).status, 'duplicate'); assert.deepEqual(ledger.load(scope, receipt.run_id), record);
   const before = { models: requests.length, peer: peer.calls.length, questions: questions.length, approvals: approvals.length };
   await writeFile(join(root, 'managed-session-history-warm.json'), canonical(warm));
@@ -185,15 +234,17 @@ try {
   const cold = await json(join(root, 'managed-session-history.json')); assert.deepEqual(cold.slice(0, warm.length), warm);
   assert.deepEqual(cold.slice(warm.length).map(({ type, seq, data }) => ({ type, seq, data })),
     [{ type: 'session/end-seed', seq: warm.at(-1).seq + 1, data: {} }]);
-  const processes = await jsonl(join(root, 'host-processes.jsonl')); assert.equal(processes.length, 2);
-  assert.notEqual(processes[0].pid, processes[1].pid); assert.ok(processes.every(row => row.path === nodeBin));
+  const processes = await jsonl(join(root, 'host-processes.jsonl')); assert.equal(processes.length, values['answer-crash'] ? 3 : 2);
+  assert.equal(new Set(processes.map(row => row.pid)).size, processes.length); assert.ok(processes.every(row => row.path === nodeBin));
   await harness.close(); harness = null;
   await writeFile(join(root, 'managed-a2a-proof.json'), canonical({ contract: 'agentkit.managed-a2a-proof/v1', archiveSha256,
     mode: { child: Boolean(values.child), approval: Boolean(values.approval), interrupt: Boolean(values.interrupt) }, processes,
-    receipt, scope, record, childRecord, journal, counts: before, tools: admissions.length, publicEvents: warm.length, coldEffects: 0 }));
-  console.log('Managed A2A PASS: signed original Server command, actual SDK owner, original managed ledger, real Host question/approval audit, separately fenced receipt read or interruption, distinct-PID cold replay with no effects, Node-only PATH.');
+    receipt, scope, record, childRecord, journal, ...(crashEvidence ? { crashEvidence } : {}),
+    counts: before, tools: admissions.length, publicEvents: warm.length, coldEffects: 0 }));
+  console.log(`Managed A2A PASS: signed original Server command, actual SDK owner, original managed ledger, real Host question/approval audit, separately fenced receipt read or interruption, ${crashEvidence ? 'actual SIGKILL after durable answer and automatic original-command recovery, ' : ''}distinct-PID cold replay with no effects, Node-only PATH.`);
 } finally {
-  releaseAnswer.resolve(); await writeFile(join(root, 'controlled-peers.json'), canonical({ requests, questions, approvals, failures, a2a: peer.calls }));
+  releaseAnswer.resolve(); releasePermission.resolve();
+  await writeFile(join(root, 'controlled-peers.json'), canonical({ requests, questions, approvals, failures, a2a: peer.calls }));
   await harness?.close(); ledger?.close(); localLedger?.close(); await peer.close(); server.closeAllConnections();
   await new Promise(resolve => server.close(resolve)); if (!values.keep) await rm(root, { recursive: true, force: true });
 }
