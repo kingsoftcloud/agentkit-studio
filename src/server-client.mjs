@@ -129,6 +129,21 @@ export function buildCloudAgentUpdate(agentId, { spec = {}, name = '', descripti
 /** The general Studio client intentionally excludes deployment mutations. */
 export function createAgentEngineClient(options) { return createClient(options, SERVER_ACTIONS); }
 
+/** A trusted Host SDK endpoint is distinct from the generic Studio server URL.
+ * It grants only the resource SDK actions, never deployment or agent control. */
+export function createAicpResourceClient({ origin, trafficSource = 'agentkit', ...options }) {
+  let endpoint;
+  try { if (origin) endpoint = new URL(origin); } catch { /* stable configuration error below */ }
+  if (origin && (!endpoint || !['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password
+    || endpoint.pathname !== '/' || endpoint.search || endpoint.hash)) {
+    throw new AgentEngineError('AICP_RESOURCE_ENDPOINT_INVALID', 'SDK 地址须为不含凭据、路径或查询的 HTTP(S) origin');
+  }
+  if (typeof trafficSource !== 'string' || /[^\x20-\x7e]/u.test(trafficSource) || Buffer.byteLength(trafficSource) > 16384)
+    throw new AgentEngineError('AICP_RESOURCE_TRAFFIC_SOURCE_INVALID', '请求来源须为可打印 ASCII 字符');
+  const { action } = createClient(options, new Set(['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListSessions']), endpoint ?? null, trafficSource.trim() || 'agentkit');
+  return { action };
+}
+
 /**
  * Node-only deployment transport. The caller owns the durable deployment
  * receipt and must reconcile an unknown create result before sending again.
@@ -181,11 +196,11 @@ export function createAgentEngineDeploymentClient(options) {
 }
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
-function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '', innerKopUrl = '', innerIamUrl = '' }, allowedActions) {
+function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '', innerKopUrl = '', innerIamUrl = '' }, allowedActions, resourceOrigin = null, resourceTrafficSource = null) {
   const endpoints = createCloudEndpointPolicy({ innerKopUrl, innerIamUrl });
   const deploymentIdentity = allowedActions.has('CreateAgentProduct') ? createCloudIdentityResolver({ fetchImpl, timeoutMs, endpointPolicy: endpoints }) : null;
   const resolveBase = (values, fallback = endpoints.publicKop) => {
-    try { return new URL(values.cloudServerUrl || serverUrl || fallback); }
+    try { return new URL(resourceOrigin || values.cloudServerUrl || serverUrl || fallback); }
     catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
   };
   async function inspectIdentity(options) {
@@ -279,14 +294,15 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
     // The official inner AICP endpoint is HTTP, also used by the explicit
     // inner-account fallback below. An explicitly configured inner endpoint
-    // must have the same contract; arbitrary remote HTTP origins stay denied.
-    const officialInner = endpoints.isInnerKop(base);
+    // must have the same contract. A separate Host resource SDK client may
+    // pin its own exact origin; generic Studio URLs grant no signing authority.
+    const officialInner = endpoints.isInnerKop(base) || Boolean(resourceOrigin && base.origin === resourceOrigin.origin);
     if (base.username || base.password || base.search || base.hash || base.pathname !== '/' ||
       (base.protocol !== 'https:' && !(base.protocol === 'http:' && (loopback || officialInner)))) {
       throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；HTTP 仅限本机或官方 AICP 内网入口');
     }
     const requestAgainst = async (requestBase, allowInnerFallback = true) => {
-      const kop = endpoints.isKop(requestBase);
+      const kop = endpoints.isKop(requestBase) || Boolean(resourceOrigin && requestBase.origin === resourceOrigin.origin);
       // `pre-online` is a logical environment, not a signing region: KOP and
       // AWS4 require a real region (cn-beijing-6) plus the X-KSC-CUSTOM-SOURCE
       // marker. Signing with the literal value makes KOP reject the request.
@@ -305,6 +321,7 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
       const headers = { 'Content-Type': 'application/json', Accept: 'application/json',
         'X-Ksc-Request-Id': requestId, 'X-Ksc-Region': controlRegion,
         'X-Ksc-Source': 'agentkit-studio' };
+      if (resourceTrafficSource) headers['X-Traffic-Source'] = resourceTrafficSource;
       if (values.cloudAccountId) headers['X-Ksc-Account-Id'] = values.cloudAccountId;
       const url = new URL(kop ? `/?Action=${name}&Version=${apiVersion}` : `/agentengine/api/v1/${name}`, requestBase);
       if (kop) {
@@ -387,7 +404,7 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
       return { data: preserveEnvelope ? envelope : nativeResource ? (envelope.Data ?? envelope) : envelope.Data,
         requestId: String(envelope.RequestId || envelope.ResponseMetadata?.RequestId || '') };
     };
-    return requestAgainst(base);
+    return requestAgainst(base, !resourceOrigin);
   }
 
   /**

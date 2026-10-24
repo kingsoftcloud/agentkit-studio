@@ -18,6 +18,7 @@ export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
   const skillBackend = options.skillBackend ?? 'local_process', e2b = skillBackend === 'e2b';
   const commandBackend = options.commandBackend ?? 'local_process', e2bCommands = commandBackend === 'e2b';
+  const memoryBackend = options.memoryBackend ?? 'http';
   const previous = existsSync(join(home, 'proof.json')) ? JSON.parse(await readFile(join(home, 'proof.json'), 'utf8')) : null;
   const fullWebText = '完整网页输出 😀 中文 '.repeat(1200);
   const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -81,10 +82,24 @@ export async function apply(ctx, options) {
         else { assert.equal(JSON.parse(payload.events[0]).parts[0].text, 'Packed Memory 😀'); assert.equal(payload.flush, true); res.end('{}'); }
       }); return;
     }
-    if (url.pathname === '/agentengine/api/v1/RetrieveKnowledge') {
+    if (url.pathname === '/' && ['RetrieveKnowledge', 'CreateMemorySdk', 'QueryMemorySdk'].includes(url.searchParams.get('Action'))) {
       let raw = ''; req.on('data', bytes => { raw += bytes; }); req.on('end', () => {
+        const action = url.searchParams.get('Action'), payload = JSON.parse(raw);
+        assert.equal(payload.Action, action); assert.equal(payload.Version, '2025-11-14');
+        assert.equal(payload.Accesskey, 'packed-sdk-key'); assert.match(req.headers.authorization, /Credential=packed-sdk-key\//u);
+        assert.equal(req.headers['x-agentkit-session'], undefined);
+        assert.equal(req.headers['x-traffic-source'], 'packed-resource-source');
+        res.setHeader('content-type', 'application/json');
+        if (action !== 'RetrieveKnowledge') {
+          assert.equal(previous, null, 'cold SDK Memory receipt must not issue another request');
+          assert.equal(memoryBackend, 'sdk'); assert.equal(payload.MemoryCollectionId, 'packed-collection');
+          assert.equal(payload.AgentUserId, 'packed-user');
+          memoryRequests.push({ path: req.url, payload });
+          res.end(JSON.stringify(action === 'CreateMemorySdk' ? { RequestId: 'packed-create', Data: {} }
+            : { Data: [{ Memories: [{ Content: 'Packed Memory 😀' }] }] })); return;
+        }
         assert.equal(previous, null, 'cold knowledge receipt must not issue another request');
-        const payload = JSON.parse(raw); assert.equal(payload.DatasetId, 'packed-kb'); assert.equal(payload.Query, '完整知识查询😀'.repeat(60));
+        assert.equal(payload.DatasetId, 'packed-kb'); assert.equal(payload.Query, '完整知识查询😀'.repeat(60));
         assert.deepEqual(payload.RetrievalModel, { SearchMethod: 'intelligence_search', TopK: 5, RerankingEnable: false });
         knowledgeRequests.push(payload);
         res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ Records: [{ Segment: {
@@ -143,8 +158,11 @@ export async function apply(ctx, options) {
       plugins: [{ config: { binding: { resource: { kind: 'knowledge-base', id: 'packed-kb' } } } }] } } }));
   await mountStudioHost(ctx, { configurationHome: home, githubSkillSourceFetch: githubFetch, env: { AGENTKIT_HOME: home, PATH: process.env.PATH,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, KSADK_WEB_SSRF_POLICY_JSON: '{"allowPrivate":true}',
-    KSADK_KB_ENDPOINT: webOrigin,
-    KSADK_LTM_BACKEND: 'http', KSADK_LTM_HTTP_URL: `${webOrigin}/ltm`,
+    KSADK_KB_ENDPOINT: webOrigin, KSADK_KB_ACCESS_KEY: 'packed-sdk-key', KSADK_KB_SECRET_KEY: 'packed-sdk-secret',
+    KSADK_TRAFFIC_SOURCE: 'packed-resource-source',
+    KSADK_LTM_BACKEND: memoryBackend, KSADK_LTM_HTTP_URL: `${webOrigin}/ltm`,
+    ...(memoryBackend === 'sdk' ? { KSADK_LTM_ENDPOINT: webOrigin, KSADK_LTM_ACCESS_KEY: 'packed-sdk-key',
+      KSADK_LTM_SECRET_KEY: 'packed-sdk-secret', KSADK_LTM_NAMESPACE: 'packed-collection' } : {}),
     AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE: options.browserExecutablePath,
     KSADK_WEB_SEARCH_PROVIDER: 'http', KSADK_WEB_SEARCH_BASE_URL: `${webOrigin}/search`,
     KSADK_SKILL_SPACE_IDS: 'packed-space', KSADK_SKILL_SERVICE_URL: `${webOrigin}/skills/api/v1`,
@@ -790,7 +808,8 @@ export async function apply(ctx, options) {
             ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted Memory' }] } : next());
           try { assert.deepEqual((await invoke()).content, [{ type: 'text', text: 'Host-redacted Memory' }]); } finally { post(); }
         }
-        assert.equal(memoryRequests.length - memoryStart, 2);
+        const expectedMemoryRequests = memoryBackend === 'sdk' ? 3 : 2;
+        assert.equal(memoryRequests.length - memoryStart, expectedMemoryRequests);
         const ownedMemoryRows = memoryRows().filter(row => memoryIds.includes(JSON.parse(row.request).owner.identity.callId));
         assert.equal(ownedMemoryRows.length, 2);
         for (const saved of ownedMemoryRows) {
@@ -799,7 +818,7 @@ export async function apply(ctx, options) {
           assert.equal(original.owner.identity.sessionId, agent.session.id); assert.equal(original.request.context.userId, 'packed-user');
           assert.equal(original.owner.request.binding.contract, 'agentkit.dsh-node-legacy-memory/v1');
         }
-        const memoryProof = { rows: ownedMemoryRows, actualRequests: 2, originalDshOwner: true,
+        const memoryProof = { rows: ownedMemoryRows, backend: memoryBackend, actualRequests: expectedMemoryRequests, originalDshOwner: true,
           duplicateSuppressed: true, policyDenied: true, postPolicyPreserved: true };
         const knowledgeId = `builtin-proof-knowledge-${runtime}`, knowledgeArgs = { query: '完整知识查询😀'.repeat(60) };
         const lookup = () => registry.execute({ agent, callId: knowledgeId, name: 'search_knowledge_base', arguments: knowledgeArgs, signal: new AbortController().signal });

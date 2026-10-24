@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
 import { canonical, copy, invariant, toolInputRejection } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { hostFetch } from './http-fetch.mjs';
-import { createAgentEngineClient } from './server-client.mjs';
+import { createAicpResourceConnection } from './aicp-resource-connection.mjs';
 import { memorySubjectId, memorySessionId } from './memory-identity.mjs';
 import { LegacyMemoryEffects } from './legacy-memory-effects.mjs';
 import { LegacyLocalMemory } from './legacy-memory-local.mjs';
@@ -37,26 +37,8 @@ export function legacyMemoryToolDefinitions() {
     contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' }));
 }
 
-export async function createLegacyMemoryConnection({ configuration, env = {}, fetchImpl = hostFetch,
-  serverUrl = '', sessionToken = '', innerKopUrl = '', innerIamUrl = '' }) {
-  const resolved = await configuration.resolve(), values = Object.fromEntries(['cloudAccessKey', 'cloudSecretKey',
-    'cloudSessionToken', 'cloudRegion', 'cloudAccountId', 'cloudServerUrl', 'cloudCustomSource', 'cloudServiceToken']
-    .map(key => [key, resolved.values[key] ?? '']));
-  const override = (field, ...keys) => { const key = keys.find(key => text(env[key])); if (key) values[field] = env[key].trim(); };
-  override('cloudAccessKey', 'KSADK_LTM_ACCESS_KEY', 'KSYUN_ACCESS_KEY', 'KSYUN_ACCESS_KEY_ID');
-  override('cloudSecretKey', 'KSADK_LTM_SECRET_KEY', 'KSYUN_SECRET_KEY', 'KSYUN_SECRET_ACCESS_KEY');
-  override('cloudSessionToken', 'KSADK_LTM_SESSION_TOKEN', 'KSYUN_SESSION_TOKEN');
-  override('cloudRegion', 'KSADK_LTM_REGION', 'KSYUN_REGION');
-  const endpoint = String(env.KSADK_LTM_ENDPOINT ?? '').trim();
-  if (endpoint) {
-    const scheme = String(env.KSADK_LTM_SCHEME ?? '').trim() || (/\.inner\.api\.ksyun\.com$/.test(endpoint) ? 'http' : 'https');
-    values.cloudServerUrl = endpoint.includes('://') ? endpoint : `${scheme}://${endpoint}`;
-  }
-  const snapshot = copy(values), bindingDigest = hash({ contract: LEGACY_MEMORY_TOOLS, values, serverUrl, innerKopUrl, innerIamUrl });
-  const client = createAgentEngineClient({ configuration: { resolve: async () => ({ values: copy(snapshot) }) }, fetchImpl,
-    serverUrl: endpoint ? '' : serverUrl, sessionToken, innerKopUrl, innerIamUrl });
-  return Object.freeze({ client, bindingDigest });
-}
+export const createLegacyMemoryConnection = options => createAicpResourceConnection({ ...options,
+  prefix: 'KSADK_LTM', contract: LEGACY_MEMORY_TOOLS });
 
 function step(work, signal) {
   signal.throwIfAborted();

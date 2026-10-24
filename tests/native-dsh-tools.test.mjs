@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { NativeKernel, MemoryRunStore, emptyUsage, BACKGROUND_COMMAND_CONTRACT, BACKGROUND_NOTIFICATION_ADMISSION } from '../packages/agentkit-harness-core/dist/index.mjs';
@@ -11,20 +13,41 @@ import { NATIVE_PYTHON_SYNTAX } from '../packages/agentkit-harness/src/native/py
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createSkillDiscovery } from '../src/skill-discovery.mjs';
 import { createStudioSkillManagement, SKILL_MANAGEMENT_CONTRACT } from '../src/skill-management.mjs';
-import { createStudioKnowledgeTools, knowledgeBindings } from '../src/knowledge-tools.mjs';
-import { createLegacyMemoryTools } from '../src/legacy-memory-tools.mjs';
+import { createStudioKnowledgeTools, createKnowledgeConnection, knowledgeBindings } from '../src/knowledge-tools.mjs';
+import { createLegacyMemoryTools, createLegacyMemoryConnection } from '../src/legacy-memory-tools.mjs';
+
+// Real signed Node HTTP transport and SQLite/Kernel; HTTP peer and model are
+// controlled. The registry/Agent in setup below remain explicit test doubles.
+async function resourceConnection(t, prefix, factory, onRequest) {
+  const http = createServer(async (req, res) => {
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    assert.equal(new URL(req.url, 'http://localhost').searchParams.get('Action'), payload.Action);
+    assert.equal(payload.Version, '2025-11-14'); assert.equal(payload.Accesskey, 'native-key');
+    assert.match(req.headers.authorization, /Credential=native-key\//u);
+    assert.equal(req.headers['x-traffic-source'], 'agentkit');
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(onRequest(payload.Action, payload)));
+  });
+  http.listen(0, '127.0.0.1'); await once(http, 'listening');
+  t.after(() => { http.closeAllConnections(); http.close(); });
+  return factory({ configuration: { resolve: async () => ({ values: {} }) },
+    env: { [`${prefix}_ENDPOINT`]: `127.0.0.1:${http.address().port}`, [`${prefix}_SCHEME`]: 'http',
+      [`${prefix}_ACCESS_KEY`]: 'native-key', [`${prefix}_SECRET_KEY`]: 'native-secret' } });
+}
 
 test('actual Native kernel owns legacy Memory writes, full intent and post-policy views', async t => {
   const name = 'save_memory', root = realpathSync(mkdtempSync(join(tmpdir(), 'native-legacy-memory-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
   const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close()); let calls = 0;
   const memory = createLegacyMemoryTools({ agentId: scope.agentId, root: join(root, 'memory'), env: { KSADK_LTM_BACKEND: 'sdk' },
-    connection: { bindingDigest: 'a'.repeat(64), client: { action: async (action, payload) => {
+    connection: await resourceConnection(t, 'KSADK_LTM', createLegacyMemoryConnection, (action, payload) => {
       calls++; const current = store.load(scope, 'run'), intent = current.intents.find(item => item.operationKey === current.snapshot.pendingIntent);
       assert.equal(intent.status, 'running'); assert.equal(intent.kind, 'tool'); assert.equal(intent.claimedFence, current.lease.fence);
       assert.equal(payload.AgentUserId, scope.userId);
-      return action === 'CreateMemorySdk' ? { data: {}, requestId: 'accepted' } : { data: { Memories: ['remembered'] } };
-    } } } });
+      return action === 'CreateMemorySdk' ? { Data: {}, RequestId: 'accepted' } : { Memories: ['remembered'] };
+    }) });
+  t.after(() => memory.close());
   const h = setup(t, [name], [], { workspaceRoot, stateDir: join(root, 'state'), getLegacyMemoryTools: () => memory });
   const original = h.ctx.tools.execute;
   h.ctx.tools.execute = async request => ({ ...await original(request), content: [{ type: 'text', text: 'Host-filtered Memory' }] });
@@ -49,12 +72,13 @@ test('actual Native kernel owns the knowledge intent, original read receipt and 
   const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close()); let calls = 0;
   const knowledge = createStudioKnowledgeTools({ agentId: scope.agentId,
     bindings: knowledgeBindings({ bindings: { plugins: [{ config: { binding: { resource: { kind: 'knowledge-base', id: 'kb' } } } }] } }),
-    connection: { bindingDigest: 'a'.repeat(64), client: { action: async (action, payload) => {
+    connection: await resourceConnection(t, 'KSADK_KB', createKnowledgeConnection, (action, payload) => {
       calls++; assert.equal(action, 'RetrieveKnowledge'); assert.equal(payload.Query, '完整查询😀');
       const current = store.load(scope, 'run'), intent = current.intents.find(item => item.operationKey === current.snapshot.pendingIntent);
       assert.equal(intent.status, 'running'); assert.equal(intent.kind, 'tool'); assert.equal(intent.claimedFence, current.lease.fence);
-      return { data: { Records: [{ Segment: { Content: '原始知识内容', Document: { Name: '来源文档' } } }] } };
-    } } } });
+      return { Records: [{ Segment: { Content: '原始知识内容', Document: { Name: '来源文档' } } }] };
+    }) });
+  t.after(() => knowledge.close());
   const h = setup(t, [name], [], { workspaceRoot, stateDir: join(root, 'state'), getKnowledgeTools: () => knowledge });
   const original = h.ctx.tools.execute;
   h.ctx.tools.execute = async request => ({ ...await original(request), content: [{ type: 'text', text: 'Host-filtered knowledge' }] });

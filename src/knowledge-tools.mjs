@@ -1,12 +1,9 @@
 /** Model-facing knowledge lookup. Independent of Native and DSH lifecycles. */
-import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, toolInputRejection } from '../packages/agentkit-harness-core/dist/index.mjs';
-import { createAgentEngineClient } from './server-client.mjs';
-import { hostFetch } from './http-fetch.mjs';
+import { copy, invariant, toolInputRejection } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { createAicpResourceConnection } from './aicp-resource-connection.mjs';
 
 export const STUDIO_KNOWLEDGE_TOOLS = 'agentkit.studio-knowledge-tools/v1';
 export const STUDIO_KNOWLEDGE_BINDINGS = 'agentkit.studio-knowledge-bindings/v1';
-const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /** Public, immutable admission data; credentials stay in the Host closure. */
@@ -27,29 +24,8 @@ export function knowledgeToolDefinitions() {
 }
 
 /** Snapshot the real Node control-plane transport at Host activation. */
-export async function createKnowledgeConnection({ configuration, env = {}, fetchImpl = hostFetch,
-  serverUrl = '', sessionToken = '', innerKopUrl = '', innerIamUrl = '' }) {
-  const resolved = await configuration.resolve(), values = Object.fromEntries(['cloudAccessKey', 'cloudSecretKey',
-    'cloudSessionToken', 'cloudRegion', 'cloudAccountId', 'cloudServerUrl', 'cloudCustomSource', 'cloudServiceToken']
-    .map(key => [key, resolved.values[key] ?? '']));
-  const override = (field, ...keys) => { const key = keys.find(key => String(env[key] ?? '').trim()); if (key) values[field] = String(env[key]).trim(); };
-  override('cloudAccessKey', 'KSADK_KB_ACCESS_KEY', 'KSYUN_ACCESS_KEY', 'KSYUN_ACCESS_KEY_ID', 'KSYUN_SECRET_ID');
-  override('cloudSecretKey', 'KSADK_KB_SECRET_KEY', 'KSYUN_SECRET_KEY', 'KSYUN_SECRET_ACCESS_KEY');
-  override('cloudSessionToken', 'KSADK_KB_SESSION_TOKEN', 'KSYUN_SESSION_TOKEN');
-  override('cloudRegion', 'KSADK_KB_REGION', 'KSYUN_REGION');
-  const endpoint = String(env.KSADK_KB_ENDPOINT ?? '').trim();
-  if (endpoint) {
-    const scheme = String(env.KSADK_KB_SCHEME ?? '').trim() || (/\.inner\.api\.ksyun\.com$/.test(endpoint) ? 'http' : 'https');
-    values.cloudServerUrl = endpoint.includes('://') ? endpoint : `${scheme}://${endpoint}`;
-  }
-  // Hash connection material in a private closure; no keys/tokens are copied
-  // into a preset, intent, receipt or model-facing result.
-  const bindingDigest = hash({ contract: STUDIO_KNOWLEDGE_TOOLS, values, serverUrl, innerKopUrl, innerIamUrl });
-  const snapshot = copy(values);
-  const client = createAgentEngineClient({ configuration: { resolve: async () => ({ values: copy(snapshot) }) },
-    fetchImpl, serverUrl: endpoint ? '' : serverUrl, sessionToken, innerKopUrl, innerIamUrl });
-  return Object.freeze({ client, bindingDigest });
-}
+export const createKnowledgeConnection = options => createAicpResourceConnection({ ...options,
+  prefix: 'KSADK_KB', contract: STUDIO_KNOWLEDGE_TOOLS });
 
 function step(work, signal) {
   signal.throwIfAborted();

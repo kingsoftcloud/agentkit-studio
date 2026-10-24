@@ -12,11 +12,13 @@ import { createZip } from '../src/zip.mjs';
 import { browserExecutable } from '../tests/fixtures/browser-executable.mjs';
 import { DSH_NODE_BUILTIN_NAMES } from '../src/providers/dsh-node-builtin-catalog.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
-  'skill-backend': { type: 'string', default: 'local_process' }, 'command-backend': { type: 'string', default: 'local_process' } } });
+  'skill-backend': { type: 'string', default: 'local_process' }, 'command-backend': { type: 'string', default: 'local_process' },
+  'memory-backend': { type: 'string', default: 'http' } } });
 assert.ok(Boolean(values.source) !== Boolean(values.installation) && values.archive,
   'Use --source <built maintained DSH> OR --installation <fresh registry project>, plus --archive <Studio.tgz>');
 const skillBackend = values['skill-backend']; assert.ok(['local_process', 'e2b'].includes(skillBackend));
 const commandBackend = values['command-backend']; assert.ok(['local_process', 'e2b'].includes(commandBackend));
+const memoryBackend = values['memory-backend']; assert.ok(['http', 'sdk'].includes(memoryBackend));
 const repository = fileURLToPath(new URL('..', import.meta.url)), source = values.source ? resolve(values.source) : null;
 const installation = values.installation ? resolve(values.installation) : null;
 const root = await mkdtemp(join(tmpdir(), 'studio-node-builtins-'));
@@ -75,6 +77,7 @@ try {
     `        skillBody: ${JSON.stringify(skillBody)}`, `        skillScript: ${JSON.stringify(skillScript)}`, '',
     `        skillBackend: ${JSON.stringify(skillBackend)}`, '',
     `        commandBackend: ${JSON.stringify(commandBackend)}`, '',
+    `        memoryBackend: ${JSON.stringify(memoryBackend)}`, '',
     ...(commandBackend === 'local_process' ? [`        browserExecutablePath: ${JSON.stringify(browserExecutable())}`, ''] : []),
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(installation
@@ -127,7 +130,7 @@ try {
     && row.management.duplicateSuppressed && row.management.oldRevisionPreserved && row.management.nextRevisionAdmitted));
   assert.ok(report.runtimes.every(row => row.knowledge.actualRequests === 1 && row.knowledge.originalDshOwner
     && row.knowledge.duplicateSuppressed && row.knowledge.policyDenied && row.knowledge.postPolicyPreserved));
-  assert.ok(report.runtimes.every(row => row.memory.actualRequests === 2 && row.memory.originalDshOwner
+  assert.ok(report.runtimes.every(row => row.memory.actualRequests === (memoryBackend === 'sdk' ? 3 : 2) && row.memory.backend === memoryBackend && row.memory.originalDshOwner
     && row.memory.duplicateSuppressed && row.memory.policyDenied && row.memory.postPolicyPreserved));
   assert.ok(report.runtimes.every(row => row.workflows.backend === skillBackend && row.workflows.serviceRequests === 2
     && row.workflows.originalDshOwner && row.workflows.oneShotApprovals === 2

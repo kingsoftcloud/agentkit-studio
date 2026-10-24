@@ -78,6 +78,7 @@ PID 恢复。此 fixture 不请求模型，显式设置可信调用上下文；�
 - 自定义 HTTP URL 不接受内嵌凭据、query 或 fragment；改用专用 token 配置。自定义
   SQLite 要求私有目录。旧数据不需兼容，但这些配置约束仍须计入最终能力差异审计。
 - 本地 token 装箱采用参考默认 heuristic；显式 tiktoken/provider 配置尚未对照验收。
-  SDK 的端点自动/网络模式选择、自定义签名端点仍需与知识库一起完成配置兼容审计。
+  SDK 的端点自动探测、网络模式选择和自定义签名端点已与知识库共用 Node 连接层，
+  见 [AICP 资源连接](native-aicp-connections.md)。这不证明实际云网络可达。
 - 真实云 Memory 服务、完整模型/Codex CLI、自动化/定时/Frozen HTTP/部署组合、全新
   纯 Node 安装及默认切换未由这些测试证明，仍属于完整迁移目标。

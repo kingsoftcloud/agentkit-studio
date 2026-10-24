@@ -40,7 +40,12 @@ by `答案` when present. Empty results are `未找到相关知识库内容。`.
 `KSADK_KB_ACCESS_KEY`, `KSADK_KB_SECRET_KEY`, `KSADK_KB_SESSION_TOKEN`, region and
 explicit endpoint overrides are supported, with common `KSYUN_*` credential and
 region fallbacks. Secrets remain in the Host client closure. The transport uses
-the existing Node signing and trusted endpoint rules and API version `2025-11-14`.
+the existing Node signer and API version `2025-11-14`. The shared
+[AICP resource connection](native-aicp-connections.md) additionally supports
+`public`, `inner`, `internal`, `auto` and `detect` network selection, explicit
+SDK host/port/scheme and the captured `KSADK_TRAFFIC_SOURCE` header. A custom SDK
+origin is Host configuration and is signed only for resource actions; setting
+the generic Studio server URL does not grant this authority.
 
 ## Lifecycle and recovery
 
@@ -76,9 +81,11 @@ and DSH Native/Codex ToolRegistry with Python unavailable in its Node/bash PATH.
 
 This does not prove online cloud availability, fresh dependency installation,
 real model/Codex CLI execution, all Frozen/automation/deployment entry points, or
-the full migration. Python endpoint auto-detection/mode selection and arbitrary
-custom signed SDK endpoints are not yet fully reproduced by this connection
-factory. Explicit internal endpoint/scheme variants still require parity review.
-Those configuration gaps remain part of the original goal. Optional legacy
+the full migration. Endpoint selection, explicit internal schemes and signed
+custom origins now have reference-derived matrix tests and actual local HTTP
+proofs, including the Native Kernel/SQLite gateway and packed DSH Native/Codex
+Host with a distinct-PID restart. TCP outcomes in mode matrix tests are controlled;
+real cloud reachability and all deployment network combinations remain unproven.
+Optional legacy
 Memory backends, remaining Python bridges, and the previously documented Skill,
 E2B, A2A and product recovery gaps also remain. No default runtime switch is made.
