@@ -1,9 +1,10 @@
 /** Portable Native builtin classification and capability manifest.
  *
- * The production native-dsh-tools.mjs Node port mounts ten workspace builtins
- * (workspace_status … delete_workspace_file) that do not depend on the legacy
- * Python bridge. A Frozen Build whose executionEngine is pinned to the Native
- * DSH turn contract may export those builtins with their original bindings; a
+ * v1 pins the original ten workspace tools. v2 admits the complete concrete
+ * Node builtin catalog. External services still use the target Host's explicit
+ * configuration, credentials and resource bindings; this manifest grants no
+ * permissions and does not imply that those services are available. A Frozen
+ * Build pinned to the Native DSH turn contract preserves its original bindings; a
  * capability manifest field binds the exact, spec-sorted tool names and the
  * required Native engine so the import side can verify the contract
  * independently of the export check — even when a recomputed archive identity
@@ -11,14 +12,14 @@
 import { isDeepStrictEqual } from 'node:util';
 import { selectedNativeBuildContract } from './build-engine.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
+import { NATIVE_NODE_BUILTIN_NAMES } from './providers/dsh-node-builtin-catalog.mjs';
 
 export const PORTABLE_NATIVE_BUILTIN_CONTRACT = 'agentkit.portable-native-builtin/v1';
+export const PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT = 'agentkit.portable-native-builtin/v2';
 
-// The ten workspace builtins actually mounted by native-dsh-tools.mjs as a Node
-// port. This whitelist is the PROVEN capability for this phase, not the final
-// migration scope; unknown, alias-unclear or Python-dependent tools remain
-// rejected. Kept sorted for a stable, canonical manifest binding.
-export const PORTABLE_NATIVE_BUILTIN_TOOLS = Object.freeze([
+// Keep v1 immutable: old importers cannot mistake new tool families for a
+// capability they understand. Workspace-only exports retain their v1 bytes.
+export const PORTABLE_NATIVE_WORKSPACE_TOOLS = Object.freeze([
   'delete_workspace_file',
   'edit_workspace_file',
   'lint_workspace_file',
@@ -29,6 +30,11 @@ export const PORTABLE_NATIVE_BUILTIN_TOOLS = Object.freeze([
   'workspace_status',
   'write_workspace_file',
   'write_workspace_files',
+]);
+export const PORTABLE_NATIVE_BUILTIN_TOOLS = Object.freeze([...NATIVE_NODE_BUILTIN_NAMES].sort());
+const contracts = new Map([
+  [PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_WORKSPACE_TOOLS],
+  [PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT, PORTABLE_NATIVE_BUILTIN_TOOLS],
 ]);
 
 // Identity fields a tool binding object may carry, matching the formal catalog
@@ -97,8 +103,8 @@ function resolveBindingTools(build) {
  * reflects the Frozen Build's executionEngine rather than a Host env switch or
  * the runtime string alone. Returns:
  *   - { kind: 'none' } when the build binds no builtin tools (legacy export).
- *   - { kind: 'native', manifest } when every bound tool is a whitelisted Node
- *     workspace builtin on a Native Frozen engine build.
+ *   - { kind: 'native', manifest } when every bound tool is a concrete Node
+ *     builtin on a Native Frozen engine build.
  *   - { kind: 'unsupported', names, unknown? } when tools are present but the
  *     build is not a Native Frozen engine build, or some bound tool is not on
  *     the whitelist.
@@ -116,7 +122,9 @@ export function resolvePortableNativeBuiltins(build) {
   if (native !== NATIVE_DSH_TURN_CONTRACT) return { kind: 'unsupported', names };
   const unknown = names.filter(name => !PORTABLE_NATIVE_BUILTIN_TOOLS.includes(name));
   if (unknown.length) return { kind: 'unsupported', names, unknown };
-  return { kind: 'native', manifest: { contract: PORTABLE_NATIVE_BUILTIN_CONTRACT, engine: NATIVE_DSH_TURN_CONTRACT, tools: [...names].sort() } };
+  const contract = names.every(name => PORTABLE_NATIVE_WORKSPACE_TOOLS.includes(name))
+    ? PORTABLE_NATIVE_BUILTIN_CONTRACT : PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT;
+  return { kind: 'native', manifest: { contract, engine: NATIVE_DSH_TURN_CONTRACT, tools: [...names].sort() } };
 }
 
 /**
@@ -132,11 +140,12 @@ function isValidNativeBuiltinManifest(declared) {
   if (!declared || typeof declared !== 'object' || Array.isArray(declared)) return false;
   const keys = Object.keys(declared);
   if (keys.length !== 3 || !keys.includes('contract') || !keys.includes('engine') || !keys.includes('tools')) return false;
-  if (declared.contract !== PORTABLE_NATIVE_BUILTIN_CONTRACT) return false;
+  const allowed = contracts.get(declared.contract);
+  if (!allowed) return false;
   if (declared.engine !== NATIVE_DSH_TURN_CONTRACT) return false;
   if (!Array.isArray(declared.tools) || !declared.tools.length) return false;
   if (new Set(declared.tools).size !== declared.tools.length) return false;
-  if (![...declared.tools].every(name => typeof name === 'string' && PORTABLE_NATIVE_BUILTIN_TOOLS.includes(name))) return false;
+  if (![...declared.tools].every(name => typeof name === 'string' && allowed.includes(name))) return false;
   const sorted = [...declared.tools].sort();
   if (!sorted.every((name, index) => name === declared.tools[index])) return false;
   return true;

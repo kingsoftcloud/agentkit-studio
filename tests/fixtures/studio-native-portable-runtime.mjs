@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createStudioBuild } from '../../src/studio-build.mjs';
-import { createPortableBundles, importPortableBundle } from '../../src/portable-bundle.mjs';
+import { createPortableBundles, importPortableBundle, verifyPortableBundle } from '../../src/portable-bundle.mjs';
 import { selectedNativeBuildContract } from '../../src/build-engine.mjs';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';
@@ -56,7 +56,8 @@ async function applyProof(ctx, options) {
   const sourceBuild = createStudioBuild({ storeDir: sourceStore, nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
   const sourceAgents = createAgentStore({ storeDir: join(sourceStore, 'agents') });
   const record = await sourceAgents.create({ name: 'Portable Runtime proof', runtimeType: 'harness',
-    spec: { instructions: { system: 'PORTABLE_RUNTIME_SYSTEM' }, bindings: { tools: [...TEN_TOOLS], modelProfileId: 'portable-runtime' } } });
+    spec: { instructions: { system: 'PORTABLE_RUNTIME_SYSTEM' }, bindings: {
+      tools: [...TEN_TOOLS, ...(options.catalog ? ['web_search', 'web_fetch'] : [])], modelProfileId: 'portable-runtime' } } });
   const built = await sourceBuild.build({ agentId: record.metadata.id, agentName: record.metadata.name,
     revision: record.metadata.revision, metadata: record.metadata, spec: record.spec, bindings: record.spec.bindings });
 
@@ -67,6 +68,8 @@ async function applyProof(ctx, options) {
   const portable = createPortableBundles({ storeDir: sourceStore, build: sourceBuild, models, adapters, configuration });
   const prepared = await portable.prepare(record.metadata.id, built.id);
   const zip = Buffer.from((await portable.download(record.metadata.id, built.id, prepared.bundleId)).base64, 'base64');
+  const { manifest } = verifyPortableBundle(zip);
+  assert.equal(manifest.nativeBuiltin.contract, `agentkit.portable-native-builtin/v${options.catalog ? 2 : 1}`);
 
   // Recursive decompressed leak check (outer + inner agent-bundle.zip).
   const zipEntries = readZipFiles(zip);
@@ -86,7 +89,7 @@ async function applyProof(ctx, options) {
   const targetBuild = createStudioBuild({ storeDir: join(target, 'studio') });
   const frozen = await targetBuild.resolve(imported.agentId, imported.buildId);
   assert.equal(selectedNativeBuildContract(frozen), 'agentkit.native-dsh-turn/v1');
-  assert.deepEqual(frozen.bindings.tools, [...TEN_TOOLS]);
+  assert.deepEqual(frozen.bindings.tools, [...TEN_TOOLS, ...(options.catalog ? ['web_search', 'web_fetch'] : [])]);
 
   // PRESERVE portable-bundle.zip. Pre-seed the workspace with a known file so the
   // proof can verify read-after-write-deny (bytes unchanged) without relying on
@@ -107,6 +110,7 @@ async function applyProof(ctx, options) {
     AGENTKIT_RUNTIME_AGENT_ID: imported.agentId, AGENTKIT_RUNTIME_BUILD_ID: imported.buildId,
     AGENTKIT_RUNTIME_TOKEN: options.runtimeToken, AGENTKIT_RUNTIME_PORT: String(options.runtimePort),
     PORTABLE_RUNTIME_KEY: 'target-only-secret',
+    ...(options.catalog ? { KSADK_WEB_SEARCH_PROVIDER: 'fake', KSADK_WEB_SSRF_POLICY_JSON: '{"allow_private":true}' } : {}),
   } });
 
   // DSH model adapter must never prepare a call — Native owns the turn.
@@ -121,6 +125,7 @@ async function applyProof(ctx, options) {
     presetId: dshPresetId(record.metadata.id, record.metadata.revision, built.id),
     runtimeToken: options.runtimeToken, runtimePort: options.runtimePort,
     sourcePathLeaked, sourceSecretLeaked,
+    nativeBuiltin: manifest.nativeBuiltin,
     importedRequirements: imported.requirements.map(item => item.name) }), { mode: 0o600 });
 }
 
@@ -133,6 +138,7 @@ async function rehydrate(ctx, options, root, identity) {
     AGENTKIT_RUNTIME_AGENT_ID: identity.agentId, AGENTKIT_RUNTIME_BUILD_ID: identity.buildId,
     AGENTKIT_RUNTIME_TOKEN: identity.runtimeToken, AGENTKIT_RUNTIME_PORT: String(identity.runtimePort),
     PORTABLE_RUNTIME_KEY: 'target-only-secret',
+    ...(options.catalog ? { KSADK_WEB_SEARCH_PROVIDER: 'fake', KSADK_WEB_SSRF_POLICY_JSON: '{"allow_private":true}' } : {}),
   } });
   ctx.llm.registerAdapter(['agentkit-studio-portable-runtime-proof'], {
     providerInfo: provider => ({ id: provider, name: 'Portable Runtime proof' }), providerRetryPolicy: () => undefined,

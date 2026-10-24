@@ -28,7 +28,7 @@ test('the reference inventory has a real Node owner for every ordinary and selec
   const memory = createLegacyMemoryTools({ agentId, root: join(stateDir, 'memory'), workspaceRoot });
   t.after(() => Promise.all([knowledge.close(), memory.close()]));
   const management = createStudioSkillManagement({ agentId, workspaceRoot, stateDir,
-    skillDiscovery: { registerBundleSkills: unused }, agents: { get: unused, update: unused },
+    skillDiscovery: { registerBundleSkills: unused, listInstalled: unused }, agents: { get: unused, update: unused },
     source: { search: unused, inspect: unused } });
   const port = createDshNodeBuiltins({ agentId, agentRevision: 1, buildId: 'inventory-build', workspaceRoot, stateDir,
     ctx: { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, approval: { request: unused } },

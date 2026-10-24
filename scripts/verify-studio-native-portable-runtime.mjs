@@ -28,13 +28,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { readSse } from '../src/sse.mjs';
 
-const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' } } });
+const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' }, catalog: { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 const repository = fileURLToPath(new URL('..', import.meta.url)), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-native-portable-runtime-'));
 console.log(`Studio Native portable runtime evidence: ${root}`);
 let harness;
 const requests = [], failures = [];
+let webReads = 0;
+const firstToolCount = values.catalog ? 5 : 3;
 
 const archiveBytes = await readFile(resolve(values.archive));
 const archiveSha256 = createHash('sha256').update(archiveBytes).digest('hex');
@@ -49,12 +51,18 @@ portProbe.close();
 const workspaceRoot = join(root, 'workspace');
 const originalBytes = 'Original frozen bytes.';
 
-// Model server: Turn 1 = read(0) → write-deny(1) → read(2) → final(3) = 4 calls.
+// Turn 1 = read → write-deny → read → optional search/fetch → final.
 // Turn 2 (after restart) = read(0 within its own run) → final(1) = 2 calls.
 // The step counter resets per Run because each Run starts a fresh model conversation.
 // We detect turn boundaries by the user prompt text.
 const server = createServer(async (request, response) => {
   try {
+    if (values.catalog && request.method === 'GET' && request.url === '/portable-page') {
+      webReads++;
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<html><body><p>Portable Node web evidence.</p></body></html>');
+      return;
+    }
     let raw = ''; for await (const chunk of request) raw += chunk;
     const body = JSON.parse(raw); requests.push(body);
     assert.equal(request.url, '/v1/chat/completions');
@@ -65,16 +73,17 @@ const server = createServer(async (request, response) => {
     const isTurn2 = userMessages.some(m => m.content.includes('confirm it holds the original bytes'));
     let call;
     if (!isTurn2) {
-      // Turn 1: read → write → read → final (steps 0-3 within this Run).
+      // The v2 catalog proof also executes search and a real HTTP fetch.
       if (step === 0) call = { name: 'read_workspace_file', arguments: { path: 'target.txt' } };
       else if (step === 1) call = { name: 'write_workspace_file', arguments: { path: 'target.txt', content: 'Portable runtime evidence.' } };
       else if (step === 2) call = { name: 'read_workspace_file', arguments: { path: 'target.txt' } };
+      else if (values.catalog && step === 3) call = { name: 'web_search', arguments: { query: 'portable catalog' } };
+      else if (values.catalog && step === 4) call = { name: 'web_fetch', arguments: { url: `http://127.0.0.1:${server.address().port}/portable-page` } };
       else call = null;
     } else {
       // Turn 2: read → final. The resumed session carries turn 1's tool results,
-      // so step counts are cumulative (3 from turn 1). Turn 2's first request
-      // has step=3; after issuing a read (step=4), deliver the final answer.
-      if (step <= 3) call = { name: 'read_workspace_file', arguments: { path: 'target.txt' } };
+      // so step counts are cumulative across both runs.
+      if (step <= firstToolCount) call = { name: 'read_workspace_file', arguments: { path: 'target.txt' } };
       else call = null;
     }
     if (call) {
@@ -152,7 +161,8 @@ try {
     '    - id: portable-rt-fixture', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-native-portable-runtime.mjs')).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`, `        repository: ${JSON.stringify(installed)}`,
     `        modelUrl: ${JSON.stringify(modelUrl)}`, `        runtimeToken: ${JSON.stringify(runtimeToken)}`,
-    `        runtimePort: ${JSON.stringify(runtimePort)}`, '',
+    `        runtimePort: ${JSON.stringify(runtimePort)}`,
+    `        catalog: ${Boolean(values.catalog)}`, '',
   ].join('\n'));
 
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
@@ -202,11 +212,11 @@ try {
   assert.equal(first.status, 'completed', `first status must be completed: ${first.status}`);
   assert.ok(first.usage, 'first must have usage');
   assert.equal(first.output_text, 'Portable runtime completed the turn.');
-  // Exactly 4 model calls: read + write + read + final.
-  assert.equal(requests.length - callsBeforeFirst, 4, `first turn must make exactly 4 model calls: ${requests.length - callsBeforeFirst}`);
+  // Exact model count includes both v2 Web calls when selected.
+  assert.equal(requests.length - callsBeforeFirst, firstToolCount + 1, 'exact first-turn model call count');
   // Write denied by policy: file bytes unchanged.
   assert.equal(await readFile(join(workspaceRoot, 'target.txt'), 'utf8'), originalBytes, 'target.txt unchanged after write-deny');
-  report.first = { id: first.id, outputText: first.output_text, model: first.model, status: first.status, usage: first.usage, modelCalls: 4, writeDenied: true };
+  report.first = { id: first.id, outputText: first.output_text, model: first.model, status: first.status, usage: first.usage, modelCalls: firstToolCount + 1, writeDenied: true };
 
   // --- Replay (same request_id + session_id): same response, no new calls.
   const callsBeforeReplay = requests.length;
@@ -223,7 +233,7 @@ try {
     const frames = []; for await (const frame of readSse(response.body)) frames.push(frame);
     assert.equal(frames.at(-1).type, 'response.completed');
     assert.deepEqual(frames.at(-1).response, first);
-    assert.equal(frames.filter(frame => frame.type === 'response.tool_result').length, 3);
+    assert.equal(frames.filter(frame => frame.type === 'response.tool_result').length, firstToolCount);
     assert.equal(frames.filter(frame => frame.type === 'response.tool_result' && frame.is_error).length, 1);
     return frames;
   };
@@ -277,8 +287,8 @@ try {
   const record1 = store.load(scope, runs1[0].runId);
   const identityKeys = ['scope', 'runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId'];
   assert.deepEqual(admission.identity, Object.fromEntries(identityKeys.map(key => [key, record1.snapshot[key]])));
-  assert.equal(record1.snapshot.usage.modelCalls, 4); assert.equal(record1.snapshot.usage.toolCalls, 3);
-  assert.equal(record1.snapshot.usage.inputTokens, 20); assert.equal(record1.snapshot.usage.outputTokens, 30);
+  assert.equal(record1.snapshot.usage.modelCalls, firstToolCount + 1); assert.equal(record1.snapshot.usage.toolCalls, firstToolCount);
+  assert.equal(record1.snapshot.usage.inputTokens, (firstToolCount + 1) * 5); assert.equal(record1.snapshot.usage.outputTokens, firstToolCount * 7 + 9);
   function verifyToolPairing(record, events, expectedCalls) {
     const turn = Number(record.snapshot.turnId);
     const intents = record.intents.filter(intent => intent.kind === 'tool');
@@ -305,16 +315,26 @@ try {
       assert.ok(projectedCall.seq < projectedResult.seq);
       const result = receipt.result.results[0];
       assert.equal(result.status, expected.status); assert.equal(projectedResult.data.message.isError, expected.status === 'error');
-      if (expected.status === 'ok') assert.ok(result.content.content.includes(originalBytes));
+      if (expected.status === 'ok') {
+        if (expected.name === 'web_search') {
+          assert.equal(result.content.provider, 'fake'); assert.equal(result.content.query, 'portable catalog');
+          assert.ok(result.content.results.length > 0);
+        } else if (expected.name === 'web_fetch') assert.ok(result.content.text.includes('Portable Node web evidence.'));
+        else assert.ok(result.content.content.includes(originalBytes));
+      }
       else { assert.equal(result.content.code, 'STUDIO_NATIVE_PERMISSION_DENIED'); assert.equal(result.content.executed, false); }
     }
   }
   const readCall = { name: 'read_workspace_file', arguments: { path: 'target.txt' }, status: 'ok' };
   verifyToolPairing(record1, sessionEvents, [readCall,
-    { name: 'write_workspace_file', arguments: { path: 'target.txt', content: 'Portable runtime evidence.' }, status: 'error' }, readCall]);
+    { name: 'write_workspace_file', arguments: { path: 'target.txt', content: 'Portable runtime evidence.' }, status: 'error' }, readCall,
+    ...(values.catalog ? [
+      { name: 'web_search', arguments: { query: 'portable catalog' }, status: 'ok' },
+      { name: 'web_fetch', arguments: { url: `http://127.0.0.1:${server.address().port}/portable-page` }, status: 'ok' },
+    ] : [])]);
   const toolIntents1 = record1.intents.filter(i => i.kind === 'tool');
-  // Exactly 3 tool intents: read, write-deny, read.
-  assert.equal(toolIntents1.length, 3, `run 1 must have exactly 3 tool intents: ${toolIntents1.length}`);
+  // Every selected tool call must have its own durable intent and receipt.
+  assert.equal(toolIntents1.length, firstToolCount, 'exact first-turn tool intent count');
   const receipts1 = [];
   for (const intent of toolIntents1) {
     const calls = intent.payload.calls ?? [];
@@ -329,8 +349,9 @@ try {
     }
   }
   store.close();
-  // Exact tool sequence: read, write, read.
-  assert.deepEqual(receipts1.map(r => r.name), ['read_workspace_file', 'write_workspace_file', 'read_workspace_file'],
+  // Exact tool sequence, including the v2 Web calls.
+  assert.deepEqual(receipts1.map(r => r.name), ['read_workspace_file', 'write_workspace_file', 'read_workspace_file',
+    ...(values.catalog ? ['web_search', 'web_fetch'] : [])],
     `run 1 tool sequence: ${JSON.stringify(receipts1.map(r => r.name))}`);
   // Write receipt: error with policy denial reason.
   const writeR = receipts1[1];
@@ -427,6 +448,12 @@ try {
   report.sqlite.turnIds = runs2.map(r => Number(r.turnId));
   report.sqlite.ownerEngines = ['agentkit.native/v1', 'agentkit.native/v1'];
   report.sqlite.parentChain = [null, runs2[0].runId];
+  if (values.catalog) {
+    assert.equal(identity.nativeBuiltin.contract, 'agentkit.portable-native-builtin/v2');
+    assert.deepEqual(identity.nativeBuiltin.tools.filter(name => name.startsWith('web_')), ['web_fetch', 'web_search']);
+    assert.equal(webReads, 1, 'HTTP reads must not repeat on warm/cold replay or the second turn');
+    report.catalog = { manifest: identity.nativeBuiltin, webReads, searchProvider: 'fake' };
+  }
 
   // --- Failures array must be empty (model server had no internal errors).
   assert.equal(failures.length, 0, `model server failures must be empty: ${JSON.stringify(failures.map(f => f.message))}`);

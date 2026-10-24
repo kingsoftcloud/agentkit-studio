@@ -13,10 +13,11 @@ import { createZip, readZipFiles, buildIdFor } from '../src/zip.mjs';
 import { prepareLocalResourceContext } from '../src/local-runtime.mjs';
 import { selectedNativeBuildContract } from '../src/build-engine.mjs';
 import { sha256 } from '../src/portable-resources.mjs';
-import { PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_BUILTIN_TOOLS } from '../src/portable-native-tools.mjs';
+import { PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT,
+  PORTABLE_NATIVE_BUILTIN_TOOLS, PORTABLE_NATIVE_WORKSPACE_TOOLS } from '../src/portable-native-tools.mjs';
 
 const NATIVE_DSH_TURN = 'agentkit.native-dsh-turn/v1';
-const TEN_WORKSPACE_TOOLS = [...PORTABLE_NATIVE_BUILTIN_TOOLS];
+const TEN_WORKSPACE_TOOLS = [...PORTABLE_NATIVE_WORKSPACE_TOOLS];
 
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-portable-'));
@@ -237,6 +238,37 @@ test('a combined Native binding (subset of tools plus skill/model/mcp) survives 
   assert.deepEqual(restored.executionEngine, (await verifyPortableBundle(zip)).definition.executionEngine);
 });
 
+test('the complete reference Node builtin inventory survives a v2 Frozen export/import without aliasing or granting authority', async t => {
+  const reference = JSON.parse(await readFile(new URL('./fixtures/native-reference-builtin-catalog.json', import.meta.url)));
+  const names = [...reference.ordinary, ...reference.resourceTools].sort();
+  assert.equal(names.length, 34);
+  assert.deepEqual(PORTABLE_NATIVE_BUILTIN_TOOLS, names);
+  assert.ok(names.includes('run_code')); assert.ok(!names.includes('sandbox_run_code'));
+  const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: names } });
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  const { manifest } = verifyPortableBundle(zip);
+  assert.deepEqual(manifest.nativeBuiltin, { contract: PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT,
+    engine: NATIVE_DSH_TURN, tools: names });
+  const target = join(f.root, 'full-catalog');
+  const imported = await importPortableBundle(zip, target);
+  await rm(join(f.root, 'source-store'), { recursive: true });
+  const restored = await createStudioBuild({ storeDir: join(target, 'studio') }).resolve(imported.agentId, imported.buildId);
+  assert.deepEqual(restored.spec.bindings.tools, names);
+  assert.deepEqual(restored.bindings.tools, names);
+  assert.equal(restored.spec.executionPolicy, undefined, 'capability export cannot add execution permissions');
+  const files = readZipFiles(zip), portable = files.find(file => file.name === 'portable.json');
+  for (const bad of [
+    { ...manifest.nativeBuiltin, contract: PORTABLE_NATIVE_BUILTIN_CONTRACT },
+    { ...manifest.nativeBuiltin, tools: names.filter(name => name !== 'web_fetch') },
+    { ...manifest.nativeBuiltin, tools: names.map(name => name === 'run_code' ? 'sandbox_run_code' : name).sort() },
+  ]) {
+    const { bundleId, createdAt, ...identity } = { ...manifest, nativeBuiltin: bad };
+    portable.data = Buffer.from(JSON.stringify({ ...identity, createdAt, bundleId: `bundle_${sha256(JSON.stringify(identity))}` }));
+    assert.throws(() => verifyPortableBundle(createZip(files)), { code: 'PORTABLE_BUNDLE_INVALID' });
+  }
+});
+
 test('builtin tools that are not Node-wired are rejected with an explicit reason at export', async t => {
   for (const [overrides, messageMatch] of [
     // A Native Frozen engine build binding an unknown, non-whitelisted tool.
@@ -244,11 +276,10 @@ test('builtin tools that are not Node-wired are rejected with an explicit reason
     // A Native Frozen engine build mixing a whitelisted tool with an unknown one.
     [{ nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: ['workspace_status', 'shell'] } }, /shell/],
     // A legacy Harness build (no Native engine pin) cannot export tools yet.
-    [{ bindings: { tools: ['workspace_status'] } }, /Python/],
-    // A DSH Native runtime whose builtins are not yet Node-wired.
-    [{ runtime: 'dsh-native', bindings: { tools: ['workspace_status'] } }, /Python/],
-    // A Codex runtime whose builtins are not yet Node-wired.
-    [{ runtime: 'codex', bindings: { tools: ['workspace_status'] } }, /Python/],
+    [{ bindings: { tools: ['workspace_status'] } }, /Native/],
+    // These runtimes do not pin the Native engine required by this manifest.
+    [{ runtime: 'dsh-native', bindings: { tools: ['workspace_status'] } }, /Native/],
+    [{ runtime: 'codex', bindings: { tools: ['workspace_status'] } }, /Native/],
   ]) {
     const f = await fixture(t, overrides);
     await assert.rejects(f.portable.prepare(f.agentId, f.record.id), { code: 'PORTABLE_BUILTIN_UNSUPPORTED', message: messageMatch });

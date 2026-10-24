@@ -61,15 +61,14 @@ export async function capturePortableResources({ record, models, adapters, confi
   rejectInlineSecrets(record.metadata);
   const bindings = record.spec.bindings || record.bindings || {}, runtime = record.spec.runtime?.type;
   if (!['dsh-native', 'harness', 'codex'].includes(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '运行包仅支持 DSH Native、Codex 和自研 Harness');
-  // Only the Node workspace builtins mounted by native-dsh-tools.mjs may travel
-  // with a Frozen Native engine build; everything else still needs the legacy
-  // Python bridge. The decision follows selectedNativeBuildContract (the Frozen
-  // Build's executionEngine), never a Host env switch or the runtime string.
+  // Concrete Node builtin capabilities travel only with a Frozen Native engine
+  // build. Optional services still require target Host configuration; a tool
+  // binding is never permission to execute or a substitute for credentials.
   const nativeBuiltins = resolvePortableNativeBuiltins(record);
   if (nativeBuiltins.kind === 'invalid') throw portableError('PORTABLE_BINDING_INVALID', '该 Agent 绑定的内置工具形状无效，请修正 Tool 绑定后重新导出');
   if (nativeBuiltins.kind === 'unsupported') throw portableError('PORTABLE_BUILTIN_UNSUPPORTED',
     nativeBuiltins.unknown ? `该 Agent 绑定的内置工具尚不能导出为可迁移运行包：${nativeBuiltins.unknown.join(', ')}`
-      : '该 Agent 绑定的内置工具依赖外部 Python 工具运行时，尚不能导出为可迁移运行包');
+      : '导出内置工具需要固定 Native 执行引擎的 Build，请先重新构建');
   const plugins = bindings.plugins || [];
   if (plugins.some(item => item.enabled === false)) throw portableError('PORTABLE_DISABLED_PLUGIN_UNSUPPORTED', '请先移除已停用的资源插件绑定，当前运行包不迁移其遗留配置');
   const cloudResources = plugins.filter(item => item.enabled !== false).map(item => item.config?.binding?.resource);

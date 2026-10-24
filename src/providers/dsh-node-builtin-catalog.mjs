@@ -26,6 +26,9 @@ const groups = {
 };
 const families = new Map(Object.entries(groups).flatMap(([family, names]) =>
   names.map(name => [sandboxRegistryName(name), family])));
+// Native's model-facing names precede the DSH registry alias. In particular,
+// run_code must not be exported as DSH's sandbox_run_code transport name.
+export const NATIVE_NODE_BUILTIN_NAMES = Object.freeze(Object.values(groups).flat());
 export const DSH_NODE_BUILTIN_NAMES = Object.freeze([...families.keys()]);
 const meta = new Set(['tool_search', 'tool_dispatcher', 'agentengine_tool_dispatcher']);
 
