@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import { authorizeNativeBuiltin } from '../src/providers/native-tool-policy.mjs';
 
 const execution = signal => ({ agent: { session: { id: 'owned-session' } }, name: 'run_command', callId: 'owned-call', signal });
+test('strict bound remote calls require exact one-shot approval even with workspace or full-access standing policy', async () => {
+  for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) for (const outcome of ['allowed-once', 'denied']) {
+    const exec = { ...execution(new AbortController().signal), name: 'call_a2a_agent' }, asked = [];
+    const ctx = { sandboxPolicy: { resolve: () => ({ mode }) }, approval: { request: async request => { asked.push(request); return outcome; } } };
+    const work = authorizeNativeBuiltin(ctx, exec, { readOnly: false }, { requireApproval: true });
+    if (outcome === 'allowed-once') await work;
+    else await assert.rejects(work, { code: 'STUDIO_NATIVE_PERMISSION_DENIED' });
+    assert.equal(asked.length, 1); assert.equal(asked[0].callId, exec.callId); assert.match(asked[0].reason, /strict policy/u);
+  }
+});
 test('Native mutation needs a real Host policy and only a one-shot Host approval can escalate read-only', async () => {
   const exec = execution(new AbortController().signal), definition = { readOnly: false };
   await assert.rejects(authorizeNativeBuiltin({}, exec, definition), { code: 'STUDIO_NATIVE_TOOL_POLICY_UNAVAILABLE' });

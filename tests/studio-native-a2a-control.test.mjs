@@ -18,8 +18,11 @@ import { createStudioNativeRecovery } from '../src/host/services/native-recovery
 import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
 import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
 import { command as managedCommand, permitIssuer } from './fixtures/native-managed-kernel.mjs';
+import { createStudioNativeManagedScopeControl } from '../src/host/services/native-managed-scope-control.mjs';
+import { a2aDecisionDigest } from '../src/providers/native-a2a-decision.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
-async function setup(t, { expectedAnswer = 42, managed = false } = {}) {
+async function setup(t, { expectedAnswer = 42, managed = false, scoped = false, strict = false, unknownCancel = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'studio-a2a-control-'))), workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot);
   const scope = { tenantId: managed ? 'managed-tenant' : 'local', workspaceId: 'workspace',
     userId: managed ? 'managed-user' : 'local-user', agentId: 'agent' };
@@ -37,7 +40,8 @@ async function setup(t, { expectedAnswer = 42, managed = false } = {}) {
     }
     let result;
     if (body.method === 'GetTask') { gets++; assert.equal(body.params.id, task.id); result = task; }
-    else if (body.method === 'CancelTask') { cancels++; assert.equal(body.params.id, task.id); task.status.state = 'TASK_STATE_CANCELED'; result = task; }
+    else if (body.method === 'CancelTask') { cancels++; assert.equal(body.params.id, task.id); task.status.state = 'TASK_STATE_CANCELED';
+      if (unknownCancel) { res.destroy(); return; } result = task; }
     else {
       assert.equal(body.method, 'SendMessage');
       if (body.params.message.taskId) {
@@ -61,8 +65,8 @@ async function setup(t, { expectedAnswer = 42, managed = false } = {}) {
     sessionController: { resolveAgent: async id => { assert.equal(id, 'session'); return { agent }; } },
     approval: { request: async request => { approvals++; approvalRequests.push(request); return decision; } } };
   const config = { agentId: 'agent', a2aBindings: [{ local_name: 'remote', binding_id: 'binding', space_id: 'space',
-    target_agent_id: 'remote', expected_version_id: 'version' }] };
-  let store = new SqliteRunStore(join(root, 'runs.sqlite')), gateway, control, runtime, managedConfig, managedLocalStore;
+    target_agent_id: 'remote', expected_version_id: 'version', ...(strict ? { policy_ref: 'policy://a2a/strict' } : {}) }] };
+  let store = new SqliteRunStore(join(root, 'runs.sqlite')), gateway, control, runtime, managedConfig, managedLocalStore, managedIssuer, scopedControl;
   const binding = { agentId: 'agent', agentRevision: 1, runtime: 'harness', local: true, nativeEngineContract: 'agentkit.native-dsh-turn/v1' };
   function bind() {
     gateway = createNativeDshTools({ ctx, config, workspaceRoot, stateDir: join(root, 'state'),
@@ -70,6 +74,9 @@ async function setup(t, { expectedAnswer = 42, managed = false } = {}) {
     binding.nativeTools = gateway;
     control = createStudioNativeA2aControl({ ctx, store: managedLocalStore ?? store, workspaceId: 'workspace', lifetime, active,
       agentEvents: () => ({ serial: async name => { assert.equal(name, 'agentkit/native-recovery-binding'); return { ...binding, agentRevision: revision }; } }) });
+    scopedControl = createStudioNativeManagedScopeControl({ ctx, workspaceId: 'workspace', lifetime, active,
+      agentEvents: () => ({ serial: async () => ({ ...binding, agentRevision: revision }) }),
+      readChildren: request => services.studioManagedNativeSessionControl.childHistory(request) });
   }
   t.after(async () => {
     lifetime.abort(); await Promise.allSettled([...active]); await runtime?.close(); await gateway.close(); store.close(); managedLocalStore?.close(); server.closeAllConnections();
@@ -80,16 +87,19 @@ async function setup(t, { expectedAnswer = 42, managed = false } = {}) {
     source: { provider: 'fixture', model: 'fixture' }, selection: {}, systemPrompt: 'fixture' });
   const data = fixture({ tools: gateway.definitions(agent, [...registry.values()]), hostRecoveryBinding: capsule });
   const ports = () => ({ ...gateway.forAgent(agent, { scope, store }), model: {
-    generate: async () => { modelCalls++; return { kind: 'tool_calls', text: '', usage: emptyUsage(),
+    generate: async () => { modelCalls++;
+      if (scoped && modelCalls > 1) return { kind: 'final_candidate', text: 'Root continued after scoped cancellation', toolCalls: [], usage: emptyUsage() };
+      return { kind: 'tool_calls', text: '', usage: emptyUsage(),
       toolCalls: [{ callId: 'actual-call', name: 'call_a2a_agent', arguments: { agent: 'remote', message: 'initial' } }] }; },
   } });
   let runId = 'run';
   const installManagedControl = () => { services.studioManagedNativeSessionControl = createStudioManagedNativeSessionControl({
     runtime, target: { tenantId: scope.tenantId, agentInstanceId: scope.agentId }, principal: { userId: scope.userId } }); };
   if (managed) {
-    const target = { tenantId: scope.tenantId, agentInstanceId: scope.agentId }, issuer = permitIssuer({ target });
+    const target = { tenantId: scope.tenantId, agentInstanceId: scope.agentId }, issuer = permitIssuer({ target }); managedIssuer = issuer;
     managedConfig = { directory: join(root, 'receiver'), target, permitVerifier: issuer.verifier, assertCurrent: () => true,
-      autoStart: false, resolveBinding: () => ({ scope, buildId: data.snapshot.buildId,
+      autoStart: false, ...(scoped ? { scopedControl: { prepare: input => scopedControl.prepare(input), execute: input => scopedControl.execute(input) } } : {}),
+      resolveBinding: () => ({ scope, buildId: data.snapshot.buildId,
         configuration: { ...data.config, inputMessages: [{ role: 'user', content: 'call remote' }] }, ports: ports() }) };
     await gateway.close(); runtime = createManagedNativeKernel(managedConfig); managedLocalStore = store;
     store = new SqliteRunStore(join(root, 'receiver/runs.sqlite')); bind(); installManagedControl();
@@ -107,6 +117,22 @@ async function setup(t, { expectedAnswer = 42, managed = false } = {}) {
   const invoke = async (kind, commandId, more = {}) => (await route('sessions/native-a2a-control', { ...request, kind, commandId, ...more })).value;
 
   return { request, invoke, route, approvalRequests, services, peerBodies,
+    scopedCommand: (changes = {}) => managedCommand({ tenant_id: scope.tenantId, agent_instance_id: scope.agentId, session_id: 'session',
+      command_type: 'interrupt', payload: { run_id: runId, scope_id: `a2a-${a2aDecisionDigest({ scope, sessionId: 'session', runId,
+        operationKey: request.operationKey, callId: request.callId })}` }, ...changes }),
+    receiveScoped: cmd => runtime.receive(cmd, managedIssuer.issue(cmd)),
+    scopedRow: id => { const db = new DatabaseSync(join(root, 'receiver/commands.sqlite'));
+      try { return db.prepare('SELECT * FROM managed_scoped_controls WHERE command_id=?').get(id); } finally { db.close(); } },
+    get record() { return store.load(scope, runId); },
+    async reconcile() {
+      // This narrow binding has no SDK whole-turn onIdle owner. Use the actual
+      // receipt waiter to request its separately fenced read; the mounted SDK
+      // verifier covers the automatic production owner path.
+      const bound = ports(), command = await bound.tools.waitForReceipt({ snapshot: store.load(scope, runId).snapshot, signal: lifetime.signal });
+      assert.equal(command.kind, 'reconcile_tool');
+      assert.equal(new NativeKernel({ store, digest, owner: 'receipt-request', ports: bound }).submit(scope, runId, command).status, 'accepted');
+    },
+    drain: () => runtime.drain('session'),
     status: () => createStudioNativeRecovery({ ctx, store: managedLocalStore ?? store, workspaceId: 'workspace', lifetime, active, controls: new Map(),
       controlKey: () => 'key', execute: {} }).status(request),
     count: () => ({ sends, gets, continues, cancels, approvals, modelCalls }),
@@ -117,6 +143,70 @@ async function setup(t, { expectedAnswer = 42, managed = false } = {}) {
       else store = new SqliteRunStore(join(root, 'runs.sqlite'));
       bind(); } };
 }
+
+async function scopedDelivery(f, cmd) {
+  const deadline = Date.now() + 8000;
+  for (;;) {
+    const row = f.scopedRow(cmd.command_id);
+    if (row && row.state !== 'queued') return row;
+    assert.ok(Date.now() < deadline, `scoped delivery did not settle: ${JSON.stringify(row)}`);
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+for (const unknownCancel of [false, true]) test(`signed Server scoped A2A cancellation keeps the root and original journal (unknown=${unknownCancel})`, async t => {
+  const f = await setup(t, { managed: true, scoped: true, unknownCancel }), cancel = f.scopedCommand();
+  const before = f.count(); assert.equal((await f.receiveScoped(cancel)).status, 'accepted');
+  const row = await scopedDelivery(f, cancel); assert.equal(row.state, 'delivered');
+  const result = JSON.parse(row.result); assert.equal(result.outcome, unknownCancel ? 'unknown' : 'remote_cancelled');
+  assert.equal(f.count().cancels, 1); assert.equal(f.count().continues, 0); assert.equal(f.count().approvals, before.approvals);
+  assert.equal(f.record.snapshot.phase, 'awaiting_reconciliation');
+  assert.ok(!f.record.commands.some(row => row.command.kind === 'cancel'));
+  assert.equal((await f.receiveScoped(cancel)).status, 'duplicate');
+  const after = f.count(); await f.reopen();
+  assert.equal((await f.receiveScoped(cancel)).status, 'duplicate'); assert.deepEqual(f.count(), after);
+  if (unknownCancel) { const view = await f.invoke('get', 'confirm-original-cancel'); assert.equal(view.state, 'cancelled'); }
+  await f.reconcile(); await f.drain(); assert.equal(f.record.snapshot.phase, 'completed');
+  assert.equal(f.record.snapshot.finalText, 'Root continued after scoped cancellation');
+  assert.equal(f.count().cancels, 1); assert.equal(f.count().sends, 1); assert.equal(f.count().modelCalls, 2);
+});
+test('Server scope routing refuses another invocation, session or frozen preset without root or remote effects', async t => {
+  const f = await setup(t, { managed: true, scoped: true }), before = f.count();
+  const wrong = f.scopedCommand({ payload: { run_id: f.request.runId, scope_id: 'a2a-unowned' } });
+  assert.equal((await f.receiveScoped(wrong)).error.code, 'native_child_scope_not_found');
+  const foreign = f.scopedCommand({ session_id: 'other' });
+  assert.equal((await f.receiveScoped(foreign)).error.code, 'native_child_scope_not_found');
+  f.drift();
+  await assert.rejects(f.receiveScoped(f.scopedCommand()), { code: 'studio_native_recovery_preset_changed' });
+  assert.deepEqual(f.count(), before); assert.equal(f.record.snapshot.phase, 'awaiting_reconciliation');
+});
+test('Server signature cannot replace original invocation consent after Host switches to read-only', async t => {
+  const f = await setup(t, { managed: true, scoped: true }), before = f.count();
+  f.services.sandboxPolicy = { resolve: () => ({ mode: 'read-only' }) };
+  const cmd = f.scopedCommand(); assert.equal((await f.receiveScoped(cmd)).status, 'accepted');
+  const row = await scopedDelivery(f, cmd); assert.equal(row.state, 'rejected');
+  assert.deepEqual(f.count(), before); assert.equal(f.record.snapshot.phase, 'awaiting_reconciliation');
+});
+test('a preset changed after scoped admission permanently retires delivery before any remote cancellation', async t => {
+  const f = await setup(t, { managed: true, scoped: true }), entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const resolve = f.services.sessionController.resolveAgent; let resolutions = 0;
+  f.services.sessionController.resolveAgent = async id => {
+    if (++resolutions === 2) { entered.resolve(); await release.promise; }
+    return resolve(id);
+  };
+  const before = f.count(), cmd = f.scopedCommand(); assert.equal((await f.receiveScoped(cmd)).status, 'accepted');
+  await entered.promise; f.drift(); release.resolve();
+  assert.equal((await scopedDelivery(f, cmd)).state, 'rejected');
+  assert.deepEqual(f.count(), before); assert.equal(f.record.snapshot.phase, 'awaiting_reconciliation');
+  assert.equal((await f.receiveScoped(cmd)).status, 'duplicate');
+});
+test('strict bound invocation cannot use a standing workspace grant or Server signature as its approval', async t => {
+  const f = await setup(t, { managed: true, scoped: true, strict: true });
+  assert.equal(f.count().approvals, 1, 'original dispatch must request exact-call approval under strict binding');
+  const before = f.count(), cmd = f.scopedCommand(); await f.receiveScoped(cmd);
+  // This narrow Host double has no SDK durable audit; an approval return value
+  // alone cannot stand in for the required original approval ledger.
+  assert.equal((await scopedDelivery(f, cmd)).state, 'rejected'); assert.deepEqual(f.count(), before);
+});
 
 for (const kind of ['continue', 'cancel']) test(`managed A2A ${kind} selects the original receiver ledger and confirms after reopen without another effect`, async t => {
   const f = await setup(t, { managed: true }), original = f.ledger();

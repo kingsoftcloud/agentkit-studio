@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { canonical, copy, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { a2aTerminal, a2aSubscriptionEventId, createA2AProjection } from './native-a2a-protocol.mjs';
 import { a2aPendingApproval, a2aPendingInput, normalizeA2aInputParts, validateA2aHostReceipt } from './native-a2a-decision.mjs';
+import { validateA2aScopeCancellation } from './native-a2a-scope-cancellation.mjs';
 
 export const STUDIO_A2A_CONTROL_CONTRACT = 'agentkit.studio-a2a-task-control/v1';
 export const STUDIO_A2A_SUBSCRIPTION_CONTRACT = 'agentkit.studio-a2a-task-subscription/v1';
@@ -109,6 +110,11 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       // Consent can wait while the original stream publishes a remote Task or
       // terminal. Re-read it rather than publishing that pre-approval snapshot.
       record = readIdentity(locator); invariant(record, 'A2A_CALL_NOT_FOUND'); record.controls ??= {};
+      const scopeCancellation = consent?.scopeCancellation === undefined ? undefined
+        : validateA2aScopeCancellation(record, command, consent.scopeCancellation);
+      if (scopeCancellation) invariant(authority.contract === 'agentkit.managed-native-scoped-control/v1'
+        && authority.commandId === commandId && authority.actor === scopeCancellation.actor
+        && authority.rootRunId === scopeCancellation.rootRunId, 'A2A_SCOPE_CANCELLATION_INVALID');
       entry = record.controls[key];
       if (entry) invariant(entry.contract === STUDIO_A2A_CONTROL_CONTRACT && entry.digest === commandDigest
         && canonical(entry.command) === canonical(command), 'A2A_CONTROL_IDEMPOTENCY_CONFLICT');
@@ -129,7 +135,8 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         invariant(!Object.entries(record.controls).some(([otherKey, value]) => otherKey !== key
           && ['cancel', 'reject'].includes(value.command.kind) && value.phase !== 'resolved'), 'A2A_CANCEL_ALREADY_REQUESTED');
         if (!entry) {
-          entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command, phase: 'queued', createdAt: Date.now() };
+          entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command,
+            ...(scopeCancellation ? { scopeCancellation } : {}), phase: 'queued', createdAt: Date.now() };
           record.controls[key] = entry; check(); publishRecord();
         }
         // The same state transaction that queues a cancellation may settle an
@@ -230,7 +237,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       if (kind === 'reject') invariant(remoteApproval && !approval.decision && pauseDigest(record.projection) === command.pauseDigest,
         'A2A_APPROVAL_REJECTION_NOT_ALLOWED');
       let hostDecision;
-      if (approval && !approval.decision) {
+      if (approval && !approval.decision && !scopeCancellation) {
         invariant(consent?.commandDigest === commandDigest, 'A2A_HOST_DECISION_REQUIRED');
         validateA2aHostReceipt(consent.receipt, record.sessionDestination ?? owner.sessionId);
         if (kind === 'continue') {
@@ -242,6 +249,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       } else if (approval) invariant(kind === 'cancel', remoteApproval ? 'A2A_APPROVAL_ALREADY_DECIDED' : 'A2A_INPUT_ALREADY_DECIDED');
       entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command, message,
         ...(hostDecision ? { hostDecision } : {}),
+        ...(scopeCancellation ? { scopeCancellation } : {}),
         phase: 'sending', createdAt: entry?.createdAt ?? Date.now() };
       record.controls[key] = entry;
       check(); publishRecord(); effectStarted = true;
@@ -281,5 +289,14 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       publishRecord(); return copy(entry.result);
     } finally { release(); }
   }
-  return Object.freeze({ contract: STUDIO_A2A_CONTROL_CONTRACT, execute });
+  return Object.freeze({ contract: STUDIO_A2A_CONTROL_CONTRACT, execute,
+    inspect({ operation_locator, authority, signal }) {
+      checkOwner(signal);
+      invariant(typeof assertControl === 'function' && assertControl({ authority: copy(authority), owner: copy(owner),
+        operation_locator: copy(operation_locator), kind: 'get', commandId: 'scope-inspection', signal }) === true,
+      'A2A_CONTROL_AUTHORITY_LOST');
+      const record = readIdentity(operation_locator); if (!record) return null;
+      return { scopeId: record.request.scopeId, requestDigest: record.requestDigest, native: copy(record.request.native),
+        spec: copy(record.request.spec), task: view(record) };
+    } });
 }

@@ -47,7 +47,14 @@ export function registerStudioManagedNativeKernel(ctx, { storeDir, configuration
   }
   // Session preset restoration must finish before cold commands resolve their
   // Agent/Build. Bootstrap explicitly starts recovery at its readiness boundary.
-  runtime = createManagedNativeKernel({ ...configuration, resolveBinding, autoStart: false,
+  const scopedControl = configuration.scopedControl ?? (execution ? Object.fromEntries(['prepare', 'execute'].map(kind => [kind, async request => {
+    assertCurrent(); request.signal.throwIfAborted();
+    const host = await resolveHost();
+    assertCurrent(); request.signal.throwIfAborted();
+    invariant(typeof host?.managedScopeControl?.[kind] === 'function', 'NATIVE_MANAGED_SCOPE_UNAVAILABLE');
+    return host.managedScopeControl[kind](request);
+  }])) : undefined);
+  runtime = createManagedNativeKernel({ ...configuration, resolveBinding, scopedControl, autoStart: false,
     directory: join(storeDir, 'native-harness', 'managed-kernel'), assertCurrent });
   transport = createManagedNativeKernelHttp(runtime);
   ctx.provide('studioManagedNativeKernel', runtime);

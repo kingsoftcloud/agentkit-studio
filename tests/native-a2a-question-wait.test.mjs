@@ -16,6 +16,8 @@ import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter, createNat
 import { internalPeer, scope, spec } from './fixtures/native-a2a-internal-peer.mjs';
 import { controlConsent } from './fixtures/native-a2a-control-consent.mjs';
 import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { a2aDecisionDigest } from '../src/providers/native-a2a-decision.mjs';
+import { A2A_SCOPE_CANCELLATION } from '../src/providers/native-a2a-scope-cancellation.mjs';
 const remoteTask = (approval = false) => ({ id: 'original-remote', contextId: 'original-context', status: {
   state: 'TASK_STATE_INPUT_REQUIRED', message: { messageId: 'question', role: 'ROLE_AGENT', parts: [{ text: 'City?' }], metadata: {
     input_schema: { type: 'string', ...(approval ? { enum: ['approve', 'reject'] } : {}) },
@@ -54,6 +56,31 @@ async function setup(t, { approval = false, timeout = 90, rootRecovery = false, 
 }
 const submit = () => ({ action: 'submit', parts: [{ data: 'Shanghai' }] });
 const host = (present = submit, authorizeControl = controlConsent) => ({ present, authorizeControl });
+
+for (const approval of [false, true]) test(`scoped cancel retires a held ${approval ? 'approval' : 'input'} presentation without parent wake or late grant`, async t => {
+  const f = await setup(t, { approval }), entered = Promise.withResolvers(), answer = Promise.withResolvers();
+  let asks = 0, grants = 0;
+  const waiting = f.wait(host(() => { asks++; entered.resolve(); return answer.promise; }, () => { grants++; assert.fail('withdrawal cannot grant continuation'); }),
+    AbortSignal.timeout(6000));
+  await entered.promise;
+  const original = f.record(), authority = { contract: 'agentkit.managed-native-scoped-control/v1',
+    commandId: 'server-original-cancel', actor: 'server-user', rootRunId: 'run' };
+  const controller = f.fields.a2a.forSession({ ...f.fields, assertCurrent: () => false, assertControl: () => true,
+    authorizeControl: ({ command, readOnly }) => readOnly ? 'allow' : { decision: 'allow', scopeCancellation: {
+      contract: A2A_SCOPE_CANCELLATION, commandId: command.commandId, scopeId: original.request.scopeId,
+      requestDigest: original.requestDigest, nativeDigest: a2aDecisionDigest(original.request.native), commandDigest: a2aDecisionDigest(command),
+      locator: original.request.identity, actor: authority.actor, rootRunId: 'run' } } }); f.owners.push(controller);
+  assert.equal((await controller.control.execute({ kind: 'cancel', commandId: authority.commandId,
+    operation_locator: original.request.identity, authority, signal: new AbortController().signal })).outcome, 'remote_cancelled');
+  const command = await waiting; answer.resolve(approval ? { action: 'approve' } : submit()); await delay(30);
+  assert.equal(asks, 1); assert.equal(grants, 0); assert.equal(command.kind, 'reconcile_tool');
+  const question = Object.values(f.record().managed.questions.entries)[0];
+  assert.equal(question.status, 'pending'); assert.equal(question.stage, 'withdrawn'); assert.equal(question.parts, undefined);
+  assert.equal(f.record().managed.questionOutcome, undefined);
+  assert.equal((await f.resume(command)).phase, 'completed');
+  assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+  assert.equal(f.calls.filter(call => call.wireMethod === 'CancelTask').length, 1);
+});
 
 test('answer is durable before separate operation consent and original Run resumes once', async t => {
   const f = await setup(t); let questions = 0, grants = 0;

@@ -14,7 +14,7 @@ const denied = code => Object.assign(new Error(code), { code });
  * returned allow. Only the real approval service can grant one escalation.
  * A memory:write builtin is not a workspace write: the Memory tool's own
  * consent runs inside its body, so the standing policy does not gate it. */
-export async function authorizeNativeBuiltin(ctx, exec, definition) {
+export async function authorizeNativeBuiltin(ctx, exec, definition, { requireApproval = false } = {}) {
   exec.signal.throwIfAborted();
   if (definition.readOnly === true) return;
   if (isMemoryWriteOnly(definition)) return;
@@ -28,11 +28,12 @@ export async function authorizeNativeBuiltin(ctx, exec, definition) {
     if (!['read-only', 'workspace-write', 'danger-full-access'].includes(mode)) throw denied('STUDIO_NATIVE_TOOL_POLICY_UNAVAILABLE');
     return mode;
   };
-  if (resolve() !== 'read-only') return;
+  if (resolve() !== 'read-only' && !requireApproval) return;
   const approval = ctx.get?.('approval') ?? ctx.approval;
   if (typeof approval?.request !== 'function') throw denied('STUDIO_NATIVE_PERMISSION_DENIED');
   const outcome = await approval.request({ agent: exec.agent, toolName: exec.name, callId: exec.callId, signal: exec.signal,
-    reason: `Native tool ${exec.name} may modify state and requires approval under read-only policy.` });
+    reason: requireApproval ? `Native tool ${exec.name} requires approval under its bound strict policy.`
+      : `Native tool ${exec.name} may modify state and requires approval under read-only policy.` });
   exec.signal.throwIfAborted();
   resolve(); // Re-read live services; Cordis can return a fresh scoped proxy.
   if (typeof (ctx.get?.('approval') ?? ctx.approval)?.request !== 'function') throw denied('STUDIO_NATIVE_PERMISSION_DENIED');

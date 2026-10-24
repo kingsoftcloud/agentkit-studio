@@ -17,7 +17,8 @@ import { internalPeer, spec, taskId } from '../tests/fixtures/native-a2a-interna
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   child: { type: 'boolean' }, approval: { type: 'boolean' }, interrupt: { type: 'boolean' },
-  'answer-crash': { type: 'boolean' }, 'effect-crash': { type: 'boolean' }, 'server-input': { type: 'boolean' } } });
+  'answer-crash': { type: 'boolean' }, 'effect-crash': { type: 'boolean' }, 'server-input': { type: 'boolean' },
+  scoped: { type: 'boolean' }, strict: { type: 'boolean' }, 'scoped-crash': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 assert.ok(!values.interrupt || !values.approval, 'Interruption proves an unanswered input request');
 assert.ok(!values['answer-crash'] || !values.interrupt, 'Answer crash and interruption are separate boundaries');
@@ -25,6 +26,10 @@ assert.ok(!values['effect-crash'] || !(values['answer-crash'] || values.interrup
   'Effect crash, answer crash and interruption prove separate boundaries');
 assert.ok(!values['server-input'] || !(values['answer-crash'] || values['effect-crash'] || values.interrupt),
   'Server input is a separate original structured interaction proof');
+assert.ok(!values.scoped || !(values['answer-crash'] || values['effect-crash'] || values.interrupt || values['server-input']),
+  'Scoped cancellation is a separate original invocation proof');
+assert.ok(!values.strict || values.scoped, 'Strict approval reuse is verified with scoped cancellation');
+assert.ok(!values['scoped-crash'] || values.scoped, 'Scoped cancellation crash requires --scoped');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source), archive = resolve(values.archive);
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-managed-a2a-')));
 const archiveSha256 = createHash('sha256').update(await readFile(archive)).digest('hex');
@@ -46,6 +51,14 @@ if (values['effect-crash']) peer.setHook(async (call, response) => {
   if (call.wireMethod === 'SendMessage' && call.body?.params?.message?.taskId) {
     // internalPeer has already applied the actual continuation to its remote
     // task before this hook. Hold only the response, never the effect itself.
+    effectEntered.resolve(); await releaseEffect.promise;
+    if (!response.destroyed) response.destroy();
+  }
+});
+if (values['scoped-crash']) peer.setHook(async (call, response) => {
+  if (call.wireMethod === 'CancelTask') {
+    // The real remote fixture has applied cancellation. Its reply is still
+    // held, so neither the private command nor the Server queue can confirm it.
     effectEntered.resolve(); await releaseEffect.promise;
     if (!response.destroyed) response.destroy();
   }
@@ -76,14 +89,14 @@ const server = createServer(async (request, response) => {
     let raw = ''; for await (const part of request) raw += part; const body = JSON.parse(raw);
     if (request.url === '/question') {
       questions.push(body); assert.equal(body.sessionId, identity.sessionId); assert.equal(body.questions.length, 1);
-      questionEntered.resolve(); if (values.interrupt || values['server-input']) await releaseAnswer.promise;
+      questionEntered.resolve(); if (values.interrupt || values['server-input'] || values.scoped) await releaseAnswer.promise;
       const answer = { id: body.questions[0].id, ...(values.approval ? { selected: ['批准远端操作'] }
         : { selected: [], custom: '{"answer":1}' }) };
       if (!response.destroyed) response.end(canonical({ answers: [answer] })); return;
     }
     if (request.url === '/approval') {
-      approvals.push(body); assert.equal(body.toolName, 'a2a_continue_task');
-      assert.match(body.reason, /original-remote/);
+      approvals.push(body); assert.equal(body.toolName, values.strict ? 'call_a2a_agent' : 'a2a_continue_task');
+      assert.match(body.reason, values.strict ? /strict policy/ : /original-remote/);
       if (values['answer-crash'] && !permissionsReleased) await releasePermission.promise;
       if (!response.destroyed) response.end('{"outcome":"allowed-once"}'); return;
     }
@@ -97,8 +110,8 @@ const server = createServer(async (request, response) => {
     } else if (index === 1) call = { name: 'call_a2a_agent', arguments: { agent: 'research', message: 'Ask original remote question' } };
     else {
       const result = JSON.parse(body.messages.findLast(row => row.role === 'tool').content);
-      assert.equal(result.state, 'completed'); assert.equal(result.task_id, taskId);
-      assert.equal(result.reply, values.approval ? 'Approve remote operation?' : 'Please answer');
+      assert.equal(result.state, values.scoped ? 'cancelled' : 'completed'); assert.equal(result.task_id, taskId);
+      assert.equal(result.reply, values.scoped ? '' : values.approval ? 'Approve remote operation?' : 'Please answer');
       text = child ? 'Child consumed remote result' : 'Root consumed remote result';
     }
     const delta = call ? { tool_calls: [{ index: 0, id: `managed-a2a-${requests.length}`, type: 'function',
@@ -125,8 +138,9 @@ try {
   await symlink(installed, join(plugin, 'agentkit-studio'));
   const nodeBin = join(root, 'node-only-bin'); await mkdir(nodeBin); await symlink(process.execPath, join(nodeBin, 'node'));
   const proofPath = join(root, 'managed-proof.json'); await writeFile(proofPath, canonical({ publicKeyPem: issuer.publicKeyPem }));
-  const a2aPath = join(root, 'managed-a2a.json'); await writeFile(a2aPath, canonical({ bindings: [spec], env: peer.env,
-    questionUrl: origin + '/question', approvalUrl: origin + '/approval', serverInput: Boolean(values['server-input']) }));
+  const a2aPath = join(root, 'managed-a2a.json'); await writeFile(a2aPath, canonical({ bindings: [{ ...spec,
+    ...(values.strict ? { policy_ref: 'policy://a2a/strict' } : {}) }], env: peer.env,
+    questionUrl: origin + '/question', approvalUrl: origin + '/approval', serverInput: Boolean(values['server-input']), strict: Boolean(values.strict) }));
   const patch = join(root, 'managed-a2a.patch.yml');
   await writeFile(patch, [
     '- id: session-persistence-jsonl', '  config:', `    root: ${JSON.stringify(join(root, 'sessions'))}`, '    compression: none',
@@ -287,6 +301,71 @@ try {
     await writeFile(join(root, 'managed-a2a-crash-checkpoint.json'), canonical(crashEvidence));
     permissionsReleased = true; releasePermission.resolve();
   }
+  let scopedEvidence;
+  if (values.scoped) {
+    await questionEntered.promise;
+    await until(() => peer.record()?.managed?.questions?.entries && Object.keys(peer.record().managed.questions.entries).length === 1,
+      'original question is durable');
+    const original = peer.record(), before = { models: requests.length, sends: peer.calls.filter(row => row.wireMethod === 'SendMessage').length,
+      cancels: peer.calls.filter(row => row.wireMethod === 'CancelTask').length, approvals: approvals.length };
+    const cancel = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
+      command_type: 'interrupt', payload: { run_id: receipt.run_id, scope_id: original.request.scopeId } });
+    const wrong = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
+      command_type: 'interrupt', payload: { run_id: receipt.run_id, scope_id: 'a2a-unowned' } });
+    assert.equal((await send(wrong, [400])).error.code, 'native_child_scope_not_found');
+    assert.deepEqual({ models: requests.length, sends: peer.calls.filter(row => row.wireMethod === 'SendMessage').length,
+      cancels: peer.calls.filter(row => row.wireMethod === 'CancelTask').length, approvals: approvals.length }, before);
+    assert.equal((await send(cancel)).status, 'accepted');
+    if (values['scoped-crash']) {
+      await effectEntered.promise;
+      const journal = await until(() => { const current = peer.record(), local = current.managed.questions;
+        return local.sessionDelivery?.through === local.nextSeq - 1 ? current : null; }, 'withdrawn original question delivery before crash');
+      const control = Object.values(journal.controls).find(row => row.command.commandId === cancel.command_id);
+      assert.equal(control.phase, 'sending'); assert.equal(control.hostDecision, undefined);
+      assert.equal(control.scopeCancellation.commandId, cancel.command_id);
+      const native = journal.request.native, effect = ledger.load(native.scope, native.runId), parent = ledger.load(scope, receipt.run_id);
+      const counts = { models: requests.length, questions: questions.length, approvals: approvals.length,
+        remote: peer.calls.filter(row => row.wireMethod).length };
+      const beforeReads = peer.calls.filter(row => row.wireMethod === 'GetTask').length;
+      const db = new DatabaseSync(join(root, 'studio/native-harness/managed-kernel/commands.sqlite'), { readOnly: true });
+      try { assert.equal(db.prepare('SELECT state FROM managed_scoped_controls WHERE command_id=?').get(cancel.command_id).state, 'queued'); }
+      finally { db.close(); }
+      const dead = harness.client.child, exited = once(dead, 'exit'); assert.equal(dead.kill('SIGKILL'), true);
+      const [code, signal] = await exited; assert.equal(code, null); assert.equal(signal, 'SIGKILL');
+      assert.throws(() => process.kill(dead.pid, 0), { code: 'ESRCH' });
+      await harness.close(); releaseEffect.resolve();
+      harness = new DeepSeekHarness(options); await harness.resumeSession(identity.sessionId);
+      await until(async () => { const status = await rpc('sessions/native-recovery-status', { ...identity, runId: receipt.run_id });
+        return status.managed.owner === 'open' && status.managed.executionState === 'running'
+          && ledger.load(scope, receipt.run_id).fence > parent.fence; }, 'replacement resumes the original root owner');
+      const recoveredDb = new DatabaseSync(join(root, 'studio/native-harness/managed-kernel/commands.sqlite'), { readOnly: true });
+      let recovered;
+      try { recovered = await until(() => { const row = recoveredDb.prepare('SELECT * FROM managed_scoped_controls WHERE command_id=?').get(cancel.command_id);
+        return row?.state === 'delivered' && row; }, 'replacement delivers same scoped command without remote replay'); }
+      finally { recoveredDb.close(); }
+      assert.equal(JSON.parse(recovered.result).outcome, 'unknown');
+      await new Promise(resolve => setTimeout(resolve, 250));
+      assert.deepEqual({ models: requests.length, questions: questions.length, approvals: approvals.length,
+        remote: peer.calls.filter(row => row.wireMethod).length }, counts);
+      const restored = ledger.load(native.scope, native.runId);
+      assert.deepEqual(restored.snapshot, effect.snapshot); assert.deepEqual(restored.intents, effect.intents);
+      assert.deepEqual(restored.receipts, effect.receipts); assert.deepEqual(peer.record(), journal);
+      const query = { ...identity, runId: receipt.run_id, operationKey: native.operationKey, callId: native.call.callId,
+        ...(values.child ? { childRunId: native.runId } : {}), kind: 'get', commandId: 'confirm-unknown-scoped-cancel' };
+      const observed = await rpc('sessions/native-a2a-control', query); assert.equal(observed.state, 'cancelled');
+      crashEvidence = { boundary: 'remote-scoped-cancel-effect-before-reply', originalPid: dead.pid, recoveredPid: harness.client.child.pid,
+        signal, parent, effect, journal, control, counts, beforeReads, automaticRecovery: true, scopedCommand: cancel,
+        observation: { query, result: observed } };
+      await writeFile(join(root, 'managed-a2a-crash-checkpoint.json'), canonical(crashEvidence));
+    }
+    const db = new DatabaseSync(join(root, 'studio/native-harness/managed-kernel/commands.sqlite'), { readOnly: true });
+    try { const row = await until(() => { const row = db.prepare('SELECT * FROM managed_scoped_controls WHERE command_id=?').get(cancel.command_id);
+      return row?.state !== 'queued' && row; }, 'original Server scoped cancellation delivery');
+      assert.equal(row.state, 'delivered', canonical(row)); assert.equal(JSON.parse(row.result).outcome, values['scoped-crash'] ? 'unknown' : 'remote_cancelled');
+      scopedEvidence = { command: cancel, original, delivered: JSON.parse(row.result), before }; }
+    finally { db.close(); }
+    assert.equal((await send(cancel)).status, 'duplicate');
+  }
   if (values.interrupt) {
     await questionEntered.promise;
     const stop = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
@@ -301,7 +380,7 @@ try {
   releaseAnswer.resolve();
   assert.equal(status.canReconcile, false); const record = ledger.load(scope, receipt.run_id);
   assert.equal(record.snapshot.phase, expectedPhase); assert.equal(questions.length, 1);
-  assert.equal(approvals.length, values.interrupt ? 0 : values['answer-crash'] ? 2 : 1);
+  assert.equal(approvals.length, values.scoped ? values.strict ? 1 : 0 : values.interrupt ? 0 : values['answer-crash'] ? 2 : 1);
   const childReservation = record.snapshot.childBudgetReservations[0];
   const childRecord = values.child ? ledger.load(childReservation.childScope, childReservation.childRunId) : null;
   const effectRecord = childRecord ?? record;
@@ -310,12 +389,21 @@ try {
   assert.equal(effectRecord.intents.filter(row => row.kind === 'tool_receipt').length, values.interrupt ? 0 : 1);
   assert.equal(effectRecord.commands.filter(row => row.command.kind === 'reconcile_tool').length, values.interrupt ? 0 : 1);
   assert.equal(requests.length, values.interrupt ? (values.child ? 2 : 1) : (values.child ? 4 : 2));
-  assert.equal(peer.calls.filter(row => row.wireMethod === 'SendMessage').length, values.interrupt ? 1 : 2);
-  assert.equal(peer.calls.filter(row => row.wireMethod === 'CancelTask').length, 0);
+  assert.equal(peer.calls.filter(row => row.wireMethod === 'SendMessage').length, values.interrupt || values.scoped ? 1 : 2);
+  assert.equal(peer.calls.filter(row => row.wireMethod === 'CancelTask').length, values.scoped ? 1 : 0);
   if (values['effect-crash']) assert.equal(peer.calls.filter(row => row.wireMethod === 'GetTask').length, crashEvidence.beforeReads + 1,
     'only authenticated human observation queries remotely; the separately fenced Native receipt read consumes that durable terminal confirmation');
+  if (values['scoped-crash']) assert.equal(peer.calls.filter(row => row.wireMethod === 'GetTask').length, crashEvidence.beforeReads + 1);
   const journal = peer.record(); assert.equal(journal.request.native.runId, effectRecord.snapshot.runId);
-  if (values.interrupt) assert.deepEqual(Object.values(journal.managed.questions.entries).map(row => row.stage), ['withdrawn']);
+  if (values.interrupt || values.scoped) assert.deepEqual(Object.values(journal.managed.questions.entries).map(row => row.stage), ['withdrawn']);
+  if (values.scoped) {
+    assert.ok(!record.commands.some(row => row.command.kind === 'cancel'));
+    assert.ok(!effectRecord.commands.some(row => row.command.kind === 'cancel'));
+    const resolved = journal.managed.events.log.filter(row => row.event_type === 'interaction.resolved');
+    assert.equal(resolved.length, 1); assert.equal(resolved[0].source.metadata.host_decision, undefined);
+    assert.equal(resolved[0].source.metadata.scope_cancellation.commandId, scopedEvidence.command.command_id);
+    assert.equal(Object.values(journal.controls).find(row => row.scopeCancellation)?.hostDecision, undefined);
+  }
   const admissions = await jsonl(join(root, 'managed-tool-admissions.jsonl'));
   assert.deepEqual(admissions.map(row => row.name), values.child ? ['native_delegate', 'call_a2a_agent'] : ['call_a2a_agent']);
   assert.deepEqual(localLedger.list(scope), []); assert.deepEqual(localLedger.list({ ...scope, tenantId: 'local', userId: 'local-user' }), []);
@@ -323,7 +411,7 @@ try {
   assert.equal(warm.filter(row => row.type === 'turn/owner').length, 1);
   assert.equal(warm.filter(row => row.type === 'turn/start').length, 1); assert.equal(warm.filter(row => row.type === 'turn/end').length, 1);
   assert.equal(warm.filter(row => row.type === 'approval/asked').length, approvals.length);
-  assert.equal(warm.filter(row => row.type === 'approval/decided').length, values.interrupt ? 0 : 1);
+  assert.equal(warm.filter(row => row.type === 'approval/decided').length, values.scoped ? values.strict ? 1 : 0 : values.interrupt ? 0 : 1);
   assert.equal((await send(cmd)).status, 'duplicate'); assert.deepEqual(ledger.load(scope, receipt.run_id), record);
   const before = { models: requests.length, peer: peer.calls.length, questions: questions.length, approvals: approvals.length };
   const interactionRecords = () => {
@@ -333,7 +421,7 @@ try {
     finally { db.close(); }
   };
   const managedInteractions = interactionRecords(); assert.equal(managedInteractions.length, 1);
-  if (values.interrupt) assert.equal(managedInteractions[0].data.closed, true);
+  if (values.interrupt || values.scoped) { assert.equal(managedInteractions[0].data.closed, true); assert.equal(managedInteractions[0].answer, null); }
   else {
     assert.equal(managedInteractions[0].data.pending.kind, values.approval ? 'approval' : 'structured_input');
     assert.equal(managedInteractions[0].answer.action, values.approval ? 'approve' : 'submit');
@@ -356,9 +444,11 @@ try {
   assert.equal(new Set(processes.map(row => row.pid)).size, processes.length); assert.ok(processes.every(row => row.path === nodeBin));
   await harness.close(); harness = null;
   await writeFile(join(root, 'managed-a2a-proof.json'), canonical({ contract: 'agentkit.managed-a2a-proof/v1', archiveSha256,
-    mode: { child: Boolean(values.child), approval: Boolean(values.approval), interrupt: Boolean(values.interrupt), serverInput: Boolean(values['server-input']) }, processes,
+    mode: { child: Boolean(values.child), approval: Boolean(values.approval), interrupt: Boolean(values.interrupt), serverInput: Boolean(values['server-input']),
+      scoped: Boolean(values.scoped), strict: Boolean(values.strict), scopedCrash: Boolean(values['scoped-crash']) }, processes,
     receipt, scope, record, childRecord, journal, managedInteractions, ...(crashEvidence ? { crashEvidence } : {}),
     ...(serverInputEvidence ? { serverInputEvidence } : {}),
+    ...(scopedEvidence ? { scopedEvidence } : {}),
     counts: before, tools: admissions.length, publicEvents: warm.length, coldEffects: 0 }));
   console.log(`Managed A2A PASS: signed original Server command, actual SDK owner, original managed ledger, real Host question/approval audit, separately fenced receipt read or interruption, ${crashEvidence ? `actual SIGKILL at ${crashEvidence.boundary} and automatic original-command recovery, ` : ''}distinct-PID cold replay with no effects, Node-only PATH.`);
 } finally {

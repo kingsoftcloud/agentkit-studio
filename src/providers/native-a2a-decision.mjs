@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant, compileToolInput } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { a2aIdentity, a2aEventJournal, enqueueA2AEvents } from './native-a2a-events.mjs';
+import { validateA2aScopeCancellation } from './native-a2a-scope-cancellation.mjs';
 
 export const A2A_HOST_DECISION = 'agentkit.a2a-host-decision/v1';
 export const A2A_HOST_INPUT_DECISION = 'agentkit.a2a-host-input-decision/v1';
@@ -55,6 +56,24 @@ export function validateA2aHostReceipt(receipt, sessionId) {
  * lock. The complete immutable event and effect intent share one fsync. */
 export function checkpointA2aHostDecision(record, entry) {
   const approval = a2aPendingApproval(record) ?? a2aPendingInput(record);
+  if (entry.scopeCancellation) {
+    const receipt = validateA2aScopeCancellation(record, entry.command, entry.scopeCancellation);
+    if (!approval || approval.decision) return false;
+    const state = a2aEventJournal(record), original = record.request.native, seq = state.nextSeq;
+    const eventId = a2aIdentity('event', 'a2a', record.request.scopeId, approval.interactionId, 'scope-cancel', entry.command.commandId, seq);
+    enqueueA2AEvents(record, [{ schema_version: 2, event_id: eventId, seq, timestamp: Date.now() / 1000,
+      run_id: original.runId, run_seq: null, scope_id: record.request.scopeId, parent_scope_id: original.runId,
+      source: { framework: 'a2a', protocol: null, native_event_id: null, native_cursor: null,
+        native_run_id: record.projection.taskId, native_item_id: null, metadata: { scope_cancellation: receipt } },
+      // RuntimeEvent v2 represents withdrawal as a resolved/canceled response;
+      // interaction.cancelled belongs to the separate managed v1 envelope.
+      event_type: 'interaction.resolved', interaction_id: approval.interactionId, interaction_kind: approval.request.request_type,
+      response: approval.request.request_type === 'approval' ? { response_type: 'approval', decision: 'canceled', data: null }
+        : { response_type: 'structured_input', data: null } }]);
+    state.adapter.hostDecisions ??= {};
+    state.adapter.hostDecisions[approval.interactionId] = { decision: 'canceled', commandDigest: entry.digest, eventId };
+    return true;
+  }
   if (!approval) {
     // A remote progress/repeated-ID sequence can retire the canonical wait.
     // Never downgrade a retired managed wait to arbitrary supplemental input.

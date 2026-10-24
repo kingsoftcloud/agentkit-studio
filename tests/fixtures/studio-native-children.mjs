@@ -74,7 +74,8 @@ export async function apply(ctx, options) {
       return response.json();
     }, { prepend: true });
     ctx.on('approval/request', async request => {
-      if (request.agent.session.id !== 'native-child-parent' || request.toolName !== 'a2a_continue_task') return;
+      if (request.agent.session.id !== 'native-child-parent'
+        || !['a2a_continue_task', ...(a2aProof.strict ? ['call_a2a_agent'] : [])].includes(request.toolName)) return;
       const response = await fetch(a2aProof.approvalUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ pid: process.pid, toolName: request.toolName, callId: request.callId, reason: request.reason }), signal: request.signal });
       if (!response.ok) throw Error('Managed A2A approval peer failed');

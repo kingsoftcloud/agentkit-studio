@@ -11,6 +11,7 @@ import { createNativeChildHistory } from '../../packages/agentkit-harness/src/na
 import { privateDirectory, privateFile, createPrivate } from '../../packages/agentkit-harness/src/native/local-command-state.mjs';
 import { nativeKernelFactId, projectNativeKernelEvent } from './native-kernel-events.mjs';
 import { createManagedNativeInteractions } from './native-managed-interaction.mjs';
+import { createManagedNativeScopedControls } from './native-managed-scoped-control.mjs';
 
 export const MANAGED_NATIVE_KERNEL_CONTRACT = 'agentkit.managed-native-kernel/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -36,6 +37,7 @@ function commandView(value) {
   if (command.command_type === 'resume') check(object(command.payload.target)
     && ['run', 'checkpoint', 'continuation'].includes(command.payload.target.kind) && text(command.payload.target.id));
   if (command.payload.run_id !== undefined && command.payload.run_id !== null) check(text(command.payload.run_id));
+  if (command.payload.scope_id !== undefined && command.payload.scope_id !== null) check(text(command.payload.scope_id));
   return command;
 }
 function businessDigest(command) {
@@ -58,12 +60,14 @@ export function managedNativeRunId(command) {
 const rejection = (command, code, status = 'rejected') => ({ schema_version: 1, command_id: command.command_id,
   status, error: { code, message: code, retryable: status === 'queue_full', details: {} } });
 
-export function createManagedNativeKernel({ directory, target, permitVerifier, resolveBinding, authorizeInteraction, assertCurrent,
+export function createManagedNativeKernel({ directory, target, permitVerifier, resolveBinding, authorizeInteraction, scopedControl, assertCurrent,
   queueLimit = 100, clock = Date.now, autoStart = true, beforeCommit, beforeProjection, onWorkerError } = {}) {
   invariant(text(directory) && object(target) && text(target.tenantId) && text(target.agentInstanceId)
     && typeof permitVerifier?.verify === 'function' && typeof resolveBinding === 'function' && typeof assertCurrent === 'function'
     && Number.isSafeInteger(queueLimit) && queueLimit > 0 && typeof autoStart === 'boolean'
-    && (onWorkerError === undefined || typeof onWorkerError === 'function'), 'NATIVE_KERNEL_CONFIGURATION_INVALID');
+    && (onWorkerError === undefined || typeof onWorkerError === 'function')
+    && (scopedControl === undefined || typeof scopedControl?.prepare === 'function' && typeof scopedControl?.execute === 'function'),
+  'NATIVE_KERNEL_CONFIGURATION_INVALID');
   const bindingTarget = copy(target), verifyPermit = permitVerifier.verify, owner = `native-server-${randomUUID()}`;
   const initialAuthority = assertCurrent();
   if (initialAuthority && typeof initialAuthority.then === 'function') void Promise.resolve(initialAuthority).catch(() => {});
@@ -160,6 +164,16 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         : readChildRecord({ ...query, childRunId: query.sourceRunId });
       return { root: inspected.record, source, command: parseNativeJson(commandRow(inspected.commandId).data) };
     } });
+  const scopedControls = createManagedNativeScopedControls({ db, guard, transaction, append, clock, lifetime, wake, control: scopedControl,
+    lookup(sessionId, runId) {
+      const run = runRow(runId);
+      invariant(run && run.session_id === sessionId, 'NATIVE_MANAGED_SCOPE_NOT_FOUND');
+      return inspectSession({ scope: parseNativeJson(run.scope), sessionId, runId });
+    } });
+  const scopedTimer = setInterval(() => {
+    if (schedulingEnabled && !closed) try { scopedControls.drain(); } catch { /* A later trusted recovery retries the original durable delivery. */ }
+  }, 100);
+  scopedTimer.unref?.();
   function projectAll() { for (const row of db.prepare('SELECT * FROM managed_runs ORDER BY rowid').all()) project(row); }
   async function waitForCommand(version, snapshot, signal, changed) {
     const scoped = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
@@ -246,12 +260,20 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       if (prior.status === 'duplicate' && queued?.state === 'accepted') wake();
       return prior;
     }
-    if (!supported.has(command.command_type) || command.payload.scope_id != null
+    const scoped = command.command_type === 'interrupt' && command.payload.scope_id != null;
+    if (!supported.has(command.command_type) || command.payload.scope_id != null && (!scoped || !scopedControls.supported)
       || command.command_type === 'resume' && (command.payload.target.kind !== 'run' || command.payload.input != null)
       || command.command_type === 'enqueue' && ['legacy_history', 'execution_grant_id', 'execution_grant_attempt_epoch', 'execution_policy_ref', 'teams_context_ref']
         .some(key => command.payload[key] != null)) return rejection(command, 'native_control_unsupported', 'unsupported');
-    let binding, interactionDigest, managedInteraction, admitted = false;
+    let binding, interactionDigest, managedInteraction, scopedTarget, admitted = false;
     try {
+      if (scoped) {
+        const selected = command.payload.run_id ?? db.prepare("SELECT r.run_id FROM managed_runs r JOIN managed_commands c ON r.command_id=c.command_id WHERE r.session_id=? AND c.state='accepted' ORDER BY r.rowid LIMIT 1")
+          .get(command.session_id)?.run_id;
+        try { scopedTarget = await scopedControls.prepare(command, selected); }
+        catch (error) { if (['NATIVE_MANAGED_SCOPE_NOT_FOUND', 'NATIVE_MANAGED_SCOPE_UNAVAILABLE'].includes(error.code))
+          return rejection(command, 'native_child_scope_not_found'); throw error; }
+      }
       if (command.command_type === 'submit_interaction') {
         const row = runRow(command.payload.run_id);
         if (!row || row.session_id !== command.session_id) return rejection(command, 'native_run_not_found');
@@ -289,7 +311,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           db.prepare('INSERT INTO managed_runs(run_id,session_id,command_id,scope,config,build_id) VALUES (?,?,?,?,?,?)')
             .run(runId, command.session_id, command.command_id, canonical(binding.scope), canonical(binding.configuration), binding.buildId);
         } else {
-          runId = command.command_type === 'resume' ? command.payload.target.id : command.payload.run_id;
+          runId = scopedTarget?.runId ?? (command.command_type === 'resume' ? command.payload.target.id : command.payload.run_id);
           if (!runId) runId = db.prepare('SELECT run_id FROM managed_runs WHERE session_id=? ORDER BY rowid DESC LIMIT 1').get(command.session_id)?.run_id;
           const row = runId && runRow(runId);
           if (!row || row.session_id !== command.session_id) return rejection(command, 'native_run_not_found');
@@ -318,10 +340,17 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           event_type: 'control.command_accepted', run_id: runId, payload: { command_id: command.command_id, message_id: result.message_id,
             accepted_seq: seq, status: 'accepted', command_type: command.command_type } }], command);
         if (managedInteraction) interactions.resolve(command, managedInteraction, authorization);
+        if (scopedTarget) scopedControls.admit(command, scopedTarget, authorization);
         return result;
       });
       admitted = accepted.status === 'accepted';
-      if (admitted) { applyControls(command.session_id); wake(); }
+      if (admitted) {
+        applyControls(command.session_id); scopedControls.drain();
+        // A scoped control owns an independent delivery queue. Do not retire
+        // an unrelated pending question before cancellation is durable in its
+        // original A2A journal; delivery wakes the original receipt waiter.
+        if (!scopedTarget) wake();
+      }
       return accepted;
     } finally { await binding?.release?.({ scope: binding.scope === undefined ? undefined : copy(binding.scope), sessionId: command.session_id,
       runId: managedNativeRunId(command), stage: 'admit', admitted, signal: lifetime.signal }); }
@@ -336,6 +365,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     guard();
     for (const row of db.prepare("SELECT * FROM managed_commands WHERE session_id=? AND state='accepted' ORDER BY rowid").all(sessionId)) {
       const command = parseNativeJson(row.data); if (command.command_type === 'enqueue') continue;
+      invariant(command.payload.scope_id == null, 'NATIVE_MANAGED_SCOPE_DELIVERY_INVALID');
       if (command.command_type === 'submit_interaction' && interactions.owns(command)) {
         transaction(() => db.prepare("UPDATE managed_commands SET state='delivered' WHERE command_id=?").run(command.command_id));
         continue;
@@ -560,7 +590,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     }, 0);
   }
   function wake() { generation++; for (const notify of [...wakeWaiters]) notify(); schedule(); }
-  async function drain(sessionId) { guard(); return start(sessionId); }
+  async function drain(sessionId) { guard(); scopedControls.drain(); return start(sessionId); }
   // Trusted Host-only reads. Unlike getStatus this does not project events or
   // consume a Server nonce, and it never starts an accepted command. The HTTP
   // transport deliberately does not expose this composition port.
@@ -634,13 +664,13 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     }
   } });
   try { guard(); projectAll(); wake(); }
-  catch (error) { runStore.close(); db.close(); throw error; }
+  catch (error) { clearInterval(scopedTimer); runStore.close(); db.close(); throw error; }
   return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun, readChildHistory, readChildRecord,
     presentA2aInteraction: request => interactions.present(request),
-    startRecovery() { guard(); schedulingEnabled = true; schedule(); },
+    startRecovery() { guard(); schedulingEnabled = true; scopedControls.drain(); schedule(); },
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
       enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),
-      inject: false, scopedInterrupt: false, resumeTargets: Object.freeze(['run']), structuredInput: typeof authorizeInteraction === 'function',
+      inject: false, scopedInterrupt: scopedControls.supported, resumeTargets: Object.freeze(['run']), structuredInput: typeof authorizeInteraction === 'function',
       approval: typeof authorizeInteraction === 'function', executionGrants: false }),
     async getStatus(query, permit) {
       const { request } = await authenticate(query, permit, 'get_status');
@@ -660,8 +690,8 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     },
     close() {
       if (closing) return closing;
-      closed = true; clearTimeout(timer); clearTimeout(retryTimer); retryAfter.clear(); lifetime.abort(new Error('Native owner closed'));
-      closing = Promise.allSettled([...active.values()]).then(() => { runStore.close(); db.close(); });
+      closed = true; clearTimeout(timer); clearTimeout(retryTimer); clearInterval(scopedTimer); retryAfter.clear(); lifetime.abort(new Error('Native owner closed'));
+      closing = Promise.allSettled([...active.values(), scopedControls.close()]).then(() => { runStore.close(); db.close(); });
       return closing;
     },
   });

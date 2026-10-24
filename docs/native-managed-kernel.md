@@ -223,7 +223,7 @@ owner 固定真实 Native parent，SDK numeric turn 与 Server command-id 始终
 `authorizeInteraction` 时为 true，表示下述托管 A2A 交互回复；它与 enqueue 的多部分输入
 以及 resume.input 是分别校验的能力。
 未知格式仍返回 `NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED`，不使用 JSON 字符串化降级。
-inject、scoped interrupt、checkpoint/continuation resume、resume.input、
+inject、checkpoint/continuation resume、resume.input、
 execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
 
 ## 托管子任务的现有产品入口
@@ -275,8 +275,45 @@ runtime/v2 事实投影与完整 reasoning/media、公共工具活动和所有�
 
 此路径只允许核对同一原操作的回执。Native 工具 `awaiting_interaction` 仍需原 Server
 签名与可信 token 校验，Host 的 A2A 回调不能返回 approval/resume 或新增用户输入。
-Server 的 managed-A2A 结构化交互回复见下节；其他交互生产者、scoped controls 和
+Server 的 managed-A2A 结构化交互回复见下节；其他交互生产者和
 execution grants 的缺口仍按上节明确报告。
+
+## Server 定向取消原 A2A 调用
+
+正式 Studio binding 提供 `capabilities.scopedInterrupt = true`。签名 `interrupt`
+的 `payload.scope_id` 指向原 `execution.scope/v1` 中的 A2A scope，`run_id` 是其
+Native 根任务；省略 `run_id` 时选择该会话最早的已准入活跃根任务，不选择后续排队任务。
+它同时支持根任务的直接调用及原 frozen role/ancestry 校验通过的前台、后台子任务调用。
+该 ID 不是 Native childRunId；不存在、其他会话或其他父任务的 scope 不会降级为根取消。
+未安装可信 scoped control 的独立接收器仍明确返回 unsupported。
+
+Host 从原 Native tool intent、完整运行身份、配置摘要及原私有 A2A journal 解析 locator。
+Server 不能传入 store、scope、工具定义、URL、角色或审批凭据。原请求摘要、工具调用、
+definition、claimed fence 和 frozen ownership 在接收及实际执行前分别核对。
+控制解析通过原 SessionController 和恢复 preset，允许原 SDK turn 持续运行，不能等待
+`whenIdle`，也不借用原工具已经过期的执行租约。
+
+Server 命令、接收回执、accepted fact 和独立 `managed_scoped_controls` 队列同一事务提交。
+队列采用跨接收器租约，投递保持原 commandId，永不提交 Native 根 `cancel`。
+只有原 A2A journal 中的取消已持久化后才唤醒回执等待，避免先撤销并重复展示未回答问题。
+前台子任务另以原本地 journal 撤销等待中的问题，迟到回答不能生成 continuation 权限。
+Host 退役和租约失效撤销执行权限；回复迟到不能确认投递。原 Native 根任务继续运行，
+其后续模型由原 owner 在独立、有 fence 的 `tool_receipt` 核对后推进。
+
+签名只授权 Server 控制投递。远端取消沿用原 invocation 的执行许可：原私有 journal
+必须对应原已准入工具调用；当前 Host policy 必须有效。`read-only` 或
+`policy://a2a/strict` 必须找到同一个 SDK callId 的真实 `approval/asked` 与后续
+`allowed-once` 审计，不能用新 Server 签名或其他调用的许可替代。strict 绑定的首次
+调用即使在 workspace-write 下也必须经过真实审批。人工产品 A2A 控制仍保留其独立
+exact-command consent；Server 定向取消不会伪造人工回答或远端 approve。
+
+授权的撤销记录使用独立 `agentkit.native-a2a-scope-cancellation/v1`，与原取消 effect intent
+原子发布。runtime/v2 沿用合法的 `interaction.resolved` canceled/null 响应，metadata
+明确标记 scope_cancellation，不填写 host_decision；managed interaction/v1 的关闭仍由
+原根任务终态完成。接受取消不等于远端已取消：CancelTask 后必须 GetTask 确认。
+远端副作用后断连或 SIGKILL 保留 sending/unknown，重新投递同一 commandId 不再
+CancelTask。经过授权的 GetTask 可确认原远端任务，再供原 Native 回执核对消费。
+这不承诺全局 exactly-once，也不把未确认的远端结果改写为成功。
 
 ## 已执行的验证与复验入口
 

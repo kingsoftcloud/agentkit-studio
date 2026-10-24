@@ -107,7 +107,7 @@ export function admitA2aQuestionEffect(record, control) {
 /** Remote observations can withdraw an unanswered question, never answer it. */
 export function retireA2aQuestions(record) {
   const journal = record.managed?.questions; if (!journal) return;
-  const activeId = paused(record) ? record.managed.events?.adapter?.activeInteraction?.id : null;
+  const activeId = a2aQuestionView(record)?.interactionId ?? null;
   for (const entry of Object.values(journal.entries)) if (entry.interactionId !== activeId && !terminal.has(entry.stage))
     fact(record, entry, entry.status === 'pending' ? 'withdrawn' : 'observed');
 }

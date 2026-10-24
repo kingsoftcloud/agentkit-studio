@@ -98,20 +98,34 @@ export function createNativeA2aReceiptWaiter({ a2a, scope, sessionId, store, sta
         if (entry.status === 'pending') {
           if (unavailable.has(digest)) return;
           const deadline = AbortSignal.timeout(Math.max(1, wait.deadlineAt - Date.now()));
-          const questionSignal = AbortSignal.any([signal, deadline]);
+          // A Server scoped cancel can retire this original question while a
+          // foreground child's parent is still inside runUntilIdle. The root
+          // command wake cannot abort that child's pending Host presentation.
+          // Observe only the original local journal; this grants no remote I/O.
+          const retired = new AbortController();
+          const questionSignal = AbortSignal.any([signal, deadline, retired.signal]);
+          const watch = setInterval(() => {
+            try {
+              check(query);
+              const current = owner.questions.inspect(query);
+              if (!current || current.wait.questionDigest !== digest)
+                retired.abort(Object.assign(new Error('Original A2A question retired'), { code: 'A2A_QUESTION_STALE' }));
+            } catch (error) { retired.abort(error); }
+          }, 25);
           let answer;
           try {
             answer = await awaitA2aControl(() => questionHost.present({ wait: copy(wait), signal: questionSignal }), questionSignal);
             check(query); entry = owner.questions.answer(query, digest, answer);
           } catch (error) {
             check(query);
+            if (retired.signal.reason?.code === 'A2A_QUESTION_STALE') return;
             if (Date.now() >= wait.deadlineAt) { owner.questions.close(query, digest, 'expired'); return; }
             if (['A2A_QUESTION_UNAVAILABLE', 'NO_PROVIDER', 'CALLER_NOT_LIVE', 'DELEGATED_CALLER'].includes(error?.code)) {
               unavailable.add(digest); return;
             }
             if (['A2A_QUESTION_ANSWER_INVALID', 'A2A_STRUCTURED_INPUT_INVALID', 'A2A_STRUCTURED_INPUT_REQUIRED'].includes(error?.code)) return;
             throw error;
-          }
+          } finally { clearInterval(watch); retired.abort(new Error('Question presentation retired')); }
         }
         if (entry.status === 'rejected' && wait.request.request_type === 'structured_input') return;
         if (!['submitted', 'approved', 'rejected'].includes(entry.status) || entry.effectCommandId) return;

@@ -5,7 +5,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { prepareNativeA2AHost, prepareDshA2AHost } from '../src/providers/native-a2a-host.mjs';
-import { normalizeA2aInputParts } from '../src/providers/native-a2a-decision.mjs';
+import { normalizeA2aInputParts, a2aDecisionDigest } from '../src/providers/native-a2a-decision.mjs';
+import { A2A_SCOPE_CANCELLATION } from '../src/providers/native-a2a-scope-cancellation.mjs';
+import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
 import { internalPeer, scope, spec } from './fixtures/native-a2a-internal-peer.mjs';
 import { controlConsent } from './fixtures/native-a2a-control-consent.mjs';
 const signal = () => new AbortController().signal;
@@ -127,6 +129,45 @@ test('cancellation records withdrawn input without fabricating an answer', async
   assert.deepEqual(f.decisions()[0].response, { response_type: 'structured_input', data: null });
   assert.equal(f.decisions()[0].source.metadata.host_outcome, 'canceled');
   assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+});
+
+test('Server cancellation withdraws the original remote question with original-call authority and no human answer', async t => {
+  const f = await setup(t), record = f.record(), input = f.command();
+  delete input.parts; delete input.pauseDigest; input.kind = 'cancel';
+  input.authority = { contract: 'agentkit.managed-native-scoped-control/v1', commandId: input.commandId, actor: 'server-user', rootRunId: 'run' };
+  f.authorize(({ command }) => ({ decision: 'allow', scopeCancellation: { contract: A2A_SCOPE_CANCELLATION,
+    commandId: command.commandId, scopeId: record.request.scopeId, requestDigest: record.requestDigest,
+    commandDigest: a2aDecisionDigest(command), nativeDigest: a2aDecisionDigest(record.request.native),
+    locator: record.request.identity, actor: 'server-user', rootRunId: 'run' } }));
+  assert.equal((await f.execute(input)).outcome, 'remote_cancelled');
+  assert.equal(f.decisions().length, 1); const resolved = f.decisions()[0];
+  assert.deepEqual(resolved.response, { response_type: 'structured_input', data: null });
+  assert.equal(resolved.source.metadata.host_decision, undefined);
+  assert.equal(resolved.source.metadata.scope_cancellation.commandId, input.commandId);
+  assertManagedRuntimeFacts([ { family: 'runtime', event_type: resolved.event_type, payload: resolved,
+    seq: resolved.seq, event_id: resolved.event_id, timestamp: new Date(resolved.timestamp * 1000).toISOString() } ]);
+  const entry = Object.values(f.record().controls).find(value => value.command.commandId === input.commandId);
+  assert.equal(entry.hostDecision, undefined); assert.equal(entry.scopeCancellation.contract, A2A_SCOPE_CANCELLATION);
+  const effects = f.calls.filter(call => call.wireMethod).length; await f.reopen();
+  assert.equal((await f.execute({ ...input, signal: signal() })).outcome, 'remote_cancelled');
+  assert.equal(f.calls.filter(call => call.wireMethod).length, effects);
+  assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+});
+
+test('invalid Server cancellation evidence and human authority cannot publish even a queued cancel', async t => {
+  const f = await setup(t), original = f.record(), input = f.command();
+  delete input.parts; delete input.pauseDigest; input.kind = 'cancel';
+  const receipt = command => ({ contract: A2A_SCOPE_CANCELLATION, commandId: command.commandId,
+    scopeId: original.request.scopeId, requestDigest: original.requestDigest, commandDigest: a2aDecisionDigest(command),
+    nativeDigest: a2aDecisionDigest(original.request.native), locator: original.request.identity, actor: 'server-user', rootRunId: 'run' });
+  const server = { contract: 'agentkit.managed-native-scoped-control/v1', commandId: input.commandId, actor: 'server-user', rootRunId: 'run' };
+  for (const [authority, drift] of [[{}, {}], [server, { requestDigest: 'changed' }], [server, { nativeDigest: 'changed' }],
+    [server, { actor: 'foreign' }], [server, { locator: { ...original.request.identity, runId: 'foreign' } }]]) {
+    f.authorize(({ command }) => ({ decision: 'allow', scopeCancellation: { ...receipt(command), ...drift } }));
+    await assert.rejects(f.execute({ ...input, authority }), { code: 'A2A_SCOPE_CANCELLATION_INVALID' });
+    assert.deepEqual(f.record().controls, original.controls); assert.deepEqual(f.decisions(), []);
+  }
+  assert.equal(f.calls.filter(call => call.wireMethod === 'CancelTask').length, 0);
 });
 
 // Pure normalization boundary: schema values are facts, never authority.

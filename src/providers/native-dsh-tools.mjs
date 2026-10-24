@@ -241,7 +241,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           exec.signal.throwIfAborted();
           invariant(!invocation.dispatched, 'studio_native_tool_already_dispatched');
           if (formal.has(name) && !mcpContracts.has(name)) {
-            try { await authorizeNativeBuiltin(ctx, exec, formal.get(name)); }
+            try { await authorizeNativeBuiltin(ctx, exec, formal.get(name), {
+              requireApproval: name === 'call_a2a_agent' && (config.a2aBindings ?? []).find(spec => [spec.local_name, spec.target_agent_id]
+                .some(value => typeof args.agent === 'string' && value.trim().toLowerCase().replace(/^a2a-agent-/u, '')
+                  === args.agent.trim().toLowerCase().replace(/^a2a-agent-/u, '')))?.policy_ref === 'policy://a2a/strict',
+            }); }
             catch (error) {
               invocation.outcome = { status: 'error', content: { code: error.code || 'STUDIO_NATIVE_PERMISSION_DENIED', executed: false } };
               throw error;
@@ -544,6 +548,17 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         assertCurrent: () => false, assertControl: input => { invariant(!closed, 'studio_native_tools_closed'); return assertControl(input); },
         authorizeControl });
       try { return await owner.control.execute(request); }
+      finally { owner.close(); }
+    },
+    inspectA2aTask({ scope, sessionId, operation_locator, authority, signal }, { assertControl, parentScope }) {
+      const child = parentScope?.agentId === config.agentId
+        && ['tenantId', 'workspaceId', 'userId'].every(key => scope?.[key] === parentScope[key])
+        && scope?.agentId?.startsWith(`${config.agentId}:child:`);
+      invariant(!closed && a2a && (scope?.agentId === config.agentId || child), 'studio_native_a2a_control_unavailable');
+      const owner = a2a.forSession({ scope, sessionId, stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace,
+        assertCurrent: () => false, assertControl: input => { invariant(!closed, 'studio_native_tools_closed'); return assertControl(input); },
+        authorizeControl: () => { invariant(false, 'A2A_CONTROL_AUTHORITY_REQUIRED'); } });
+      try { return owner.control.inspect({ operation_locator, authority, signal }); }
       finally { owner.close(); }
     },
     remoteSkillBinding: remoteSkills?.binding ?? null,
