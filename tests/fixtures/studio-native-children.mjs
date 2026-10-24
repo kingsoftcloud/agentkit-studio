@@ -10,6 +10,7 @@ export const name = 'studio-native-children-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'credentials', 'connection', 'webServer'];
 export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
+  const a2aProof = options.managedA2aProofPath ? JSON.parse(await readFile(options.managedA2aProofPath, 'utf8')) : null;
   if (options.managedProofPath) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
     node: process.version, path: process.env.PATH }) + '\n');
   await mkdir(workspaceRoot, { recursive: true });
@@ -25,13 +26,17 @@ export async function apply(ctx, options) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (!record) {
     record = await agents.create({ name: 'Native child proof', runtimeType: 'harness', spec: {
-      subAgents: [options.writingRecovery
+      subAgents: [a2aProof
+        ? { name: 'reader', instructions: 'CHILD_A2A_RESEARCHER: ask the bound remote agent and report its exact reply.',
+          tools: ['call_a2a_agent'], modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2 }
+        : options.writingRecovery
         ? { name: 'writer', instructions: 'CHILD_WORKSPACE_WRITER: write child.txt in the isolated child workspace and report completion.',
           tools: ['read_workspace_file', 'write_workspace_file'], modelProfileId: 'child-profile',
           inheritMcp: Boolean(options.mcpUrl), maxTurns: options.mcpUrl ? 5 : 4, maxToolCalls: options.mcpUrl ? 3 : 2 }
         : { name: 'reader', instructions: 'CHILD_WORKSPACE_READER: read proof.txt and report its evidence.',
           tools: ['read_workspace_file'], modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2 }],
-      bindings: { tools: options.writingRecovery ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
+      bindings: { tools: a2aProof ? ['call_a2a_agent'] : options.writingRecovery ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
+        ...(a2aProof ? { a2a: a2aProof.bindings } : {}),
         ...(options.mcpUrl ? { mcpServers: ['child-proof-mcp'] } : {}),
         modelProfileIds: ['parent-profile', 'child-profile'] },
     } });
@@ -52,7 +57,26 @@ export async function apply(ctx, options) {
   }
   await mountStudioHost(ctx, { configurationHome: home, ...resourceOptions,
     ...(nativeManagedKernel ? { nativeManagedKernel } : {}), env: { AGENTKIT_HOME: home,
-    AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } });
+    AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1',
+    ...(a2aProof?.env ?? {}) } });
+  if (a2aProof) {
+    // Only the human answer is controlled. The mounted question/approval
+    // services, their audit records, ownership and remote effects remain real.
+    ctx.on('user-questions/request', async request => {
+      if (request.agent.session.id !== 'native-child-parent') return;
+      const response = await fetch(a2aProof.questionUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pid: process.pid, sessionId: request.agent.session.id, questions: request.questions }), signal: request.signal });
+      if (!response.ok) throw Error('Managed A2A question peer failed');
+      return response.json();
+    }, { prepend: true });
+    ctx.on('approval/request', async request => {
+      if (request.agent.session.id !== 'native-child-parent' || request.toolName !== 'a2a_continue_task') return;
+      const response = await fetch(a2aProof.approvalUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pid: process.pid, toolName: request.toolName, callId: request.callId, reason: request.reason }), signal: request.signal });
+      if (!response.ok) throw Error('Managed A2A approval peer failed');
+      return (await response.json()).outcome;
+    }, { prepend: true });
+  }
   const presetId = dshPresetId(record.metadata.id, record.metadata.revision);
   let activeAgent;
   const authenticate = async () => {

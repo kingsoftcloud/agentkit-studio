@@ -27,8 +27,19 @@ export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime
     const signal = AbortSignal.any([lifetime.signal, ...(callerSignal ? [callerSignal] : []), AbortSignal.timeout(90000)]);
     const task = (async () => {
       signal.throwIfAborted();
-      const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: original.agentId };
-      const record = store.load(scope, original.runId);
+      const managedControl = ctx.get('studioManagedNativeSessionControl');
+      const query = { agentId: original.agentId, sessionId: original.sessionId, runId: original.runId, workspaceId };
+      const managed = managedControl?.agentId === original.agentId ? managedControl.inspect(query) : null;
+      const scope = managed?.scope ?? { tenantId: 'local', workspaceId, userId: 'local-user', agentId: original.agentId };
+      invariant(scope.agentId === original.agentId && scope.workspaceId === workspaceId, 'STUDIO_NATIVE_A2A_IDENTITY_CONFLICT');
+      const readRecord = managed ? () => {
+        invariant(ctx.get('studioManagedNativeSessionControl') === managedControl, 'STUDIO_NATIVE_A2A_IDENTITY_CONFLICT');
+        const current = managedControl.inspect(query);
+        invariant(current && canonical(current.scope) === canonical(scope), 'STUDIO_NATIVE_A2A_IDENTITY_CONFLICT');
+        return current.record;
+      } : () => store.load(scope, original.runId);
+      const record = readRecord();
+      invariant(record, 'STUDIO_NATIVE_A2A_CALL_NOT_FOUND');
       const capsule = readNativeRecoveryBinding(record, original);
       const intent = record.intents.find(intent => intent.operationKey === original.operationKey && intent.kind === 'tool');
       invariant(intent?.payload?.calls?.some(call => call.callId === original.callId && call.name === 'call_a2a_agent'),
@@ -53,8 +64,8 @@ export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime
         invariant(ctx.get('sessionProjections')?.stateOf?.(session, 'agentPreset') === presetId, 'STUDIO_NATIVE_A2A_PRESET_CHANGED');
         // The original persisted owner/configuration remains authoritative;
         // a human control does not reclaim its expired execution lease.
-        const current = store.load(scope, original.runId);
-        invariant(current.snapshot.configDigest === record.snapshot.configDigest
+        const current = readRecord();
+        invariant(current && current.snapshot.configDigest === record.snapshot.configDigest
           && current.snapshot.sessionId === original.sessionId, 'STUDIO_NATIVE_A2A_IDENTITY_CONFLICT');
         return true;
       };

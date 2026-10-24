@@ -125,7 +125,9 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
           }
           const onActive = activeBinding.bindControls ? control => activeBinding.bindControls({
             ownership: options?.ownership, signal: effectSignal }, control) : undefined;
-          const snapshot = await request.execute({ ...options, onCheckpoint, onStream, onActive });
+          const onIdle = activeBinding.onIdle ? (snapshot, { signal: idleSignal, assertCurrent }) => activeBinding.onIdle(snapshot,
+            { signal: AbortSignal.any([effectSignal, idleSignal]), assertCurrent }) : undefined;
+          const snapshot = await request.execute({ ...options, onCheckpoint, onStream, onActive, onIdle });
           if (activeBinding.consumeCompletedTurn)
             await consumeNativeCompletedTurn(activeBinding, store.load(binding.scope, runId), effectSignal);
           return snapshot;

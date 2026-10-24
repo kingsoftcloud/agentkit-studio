@@ -150,23 +150,24 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     });
   }
   function projectAll() { for (const row of db.prepare('SELECT * FROM managed_runs ORDER BY rowid').all()) project(row); }
-  async function waitForCommand(version, snapshot) {
-    guard(); if (generation !== version) return;
+  async function waitForCommand(version, snapshot, signal, changed) {
+    const scoped = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
+    guard(); scoped.throwIfAborted(); if (generation !== version || changed?.()) return;
     await new Promise((resolve, reject) => {
       const wake = () => { cleanup(); resolve(); };
-      const abort = () => { cleanup(); reject(lifetime.signal.reason); };
-      const cleanup = () => { clearInterval(poll); wakeWaiters.delete(wake); lifetime.signal.removeEventListener('abort', abort); };
+      const abort = () => { cleanup(); reject(scoped.reason); };
+      const cleanup = () => { clearInterval(poll); wakeWaiters.delete(wake); scoped.removeEventListener('abort', abort); };
       // The HTTP receiver and Session owner may be different local processes.
       // A paused Run has no Native heartbeat, so observe its durable command
       // queue without executing effects or relying on an in-memory wakeup.
       const poll = setInterval(() => {
         try {
           guard(); const current = runStore.load(snapshot.scope, snapshot.runId);
-          if (current.snapshot.revision !== snapshot.revision || current.commands.some(row => !row.consumed)) wake();
+          if (changed ? changed(current) : current.snapshot.revision !== snapshot.revision || current.commands.some(row => !row.consumed)) wake();
         } catch (error) { cleanup(); reject(error); }
       }, 100);
-      wakeWaiters.add(wake); lifetime.signal.addEventListener('abort', abort, { once: true });
-      if (generation !== version) wake();
+      wakeWaiters.add(wake); scoped.addEventListener('abort', abort, { once: true });
+      if (scoped.aborted) abort(); else if (generation !== version) wake();
     });
   }
   function bindingRequest(command, run, stage) {
@@ -394,7 +395,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           const identity = { scope, runId: id, sessionId, turnId: command.command_id, buildId: run.build_id,
             parentRunId, taskChainId: id };
           let executed = false, boundaryOpen = true, snapshot;
-          const execute = async ({ signal, replayOnly = false, cancelOnly = false, onCheckpoint, onStream, onActive } = {}) => {
+          const execute = async ({ signal, replayOnly = false, cancelOnly = false, onCheckpoint, onStream, onActive, onIdle } = {}) => {
             guard(); invariant(boundaryOpen && !executed, 'NATIVE_KERNEL_EXECUTION_REENTERED'); executed = true;
             invariant(!cancelOnly || signal?.aborted && !replayOnly, 'NATIVE_KERNEL_CANCEL_SIGNAL_REQUIRED');
             if (replayOnly) {
@@ -404,6 +405,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
             invariant(onCheckpoint === undefined || typeof onCheckpoint === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
             invariant(onStream === undefined || typeof onStream === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
             invariant(onActive === undefined || typeof onActive === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
+            invariant(onIdle === undefined || typeof onIdle === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
             deliverCheckpoint = onCheckpoint;
             deliverStream = onStream;
             executing.add(id);
@@ -422,6 +424,38 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
                 guard(); const version = generation; applyControls(sessionId);
                 snapshot = await kernel.runUntilIdle(scope, id); guard(); project(run);
                 if (terminal(snapshot.phase) || !resolved.withExecution) return copy(snapshot);
+                if (onIdle && snapshot.phase === 'awaiting_reconciliation') {
+                  const idle = new AbortController(), scoped = AbortSignal.any([lifetime.signal, idle.signal, ...(signal ? [signal] : [])]);
+                  const fence = runStore.load(scope, id).fence;
+                  const changed = (current = runStore.load(scope, id)) => generation !== version
+                    || current.fence !== fence || current.snapshot.revision !== snapshot.revision
+                    || current.commands.some(row => !row.consumed)
+                    || Boolean(db.prepare("SELECT 1 FROM managed_commands WHERE session_id=? AND state='accepted' AND json_extract(data,'$.command_type')!='enqueue' AND json_extract(receipt,'$.run_id')=? LIMIT 1").get(sessionId, id));
+                  try {
+                    if (changed()) continue;
+                    const waiting = waitForCommand(version, snapshot, idle.signal, changed);
+                    const answer = Promise.resolve().then(() => { scoped.throwIfAborted();
+                      return onIdle(copy(snapshot), { signal: scoped, assertCurrent() {
+                        guard(); scoped.throwIfAborted(); invariant(!changed(), 'NATIVE_KERNEL_IDLE_AUTHORITY_LOST'); return true;
+                      } }); }).then(command => ({ command }));
+                    const result = await Promise.race([answer, waiting.then(() => ({ woken: true }))]);
+                    guard();
+                    if (result.woken || changed()) continue;
+                    scoped.throwIfAborted();
+                    if (result.command) {
+                      // The Host may request the separately fenced read of this
+                      // original receipt. It cannot approve or resume a Server
+                      // interaction, create input, or re-run the original tool.
+                      invariant(result.command.kind === 'reconcile_tool'
+                        && result.command.payload?.originalOperationKey === snapshot.toolReconciliation?.operationKey,
+                      'NATIVE_KERNEL_IDLE_COMMAND_INVALID');
+                      const receipt = kernel.submit(scope, id, result.command);
+                      invariant(receipt.status !== 'rejected', 'NATIVE_KERNEL_IDLE_COMMAND_INVALID');
+                    } else await waiting;
+                  } catch (error) { guard(); if (!changed()) throw error; }
+                  finally { idle.abort(new Error('Native idle attempt retired')); }
+                  continue;
+                }
                 // A whole-Session owner stays open through pause/approval.
                 // Only this Native kernel consumes the durable next command.
                 await waitForCommand(version, snapshot);

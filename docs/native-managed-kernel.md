@@ -94,8 +94,8 @@ Server 控制端提交有效的签名命令。本地核对路由对托管运行�
 `NATIVE_MANAGED_SERVER_CONTROL_REQUIRED`。面板为暂停、审批和核对显示对应说明。
 自定义 `resolveBinding` 不自动注册这个依赖正式 SDK Session 的产品端口。
 
-此接入覆盖状态、用量和原准入重试。托管子任务历史/控制、远端 A2A 操作以及完整的
-Server 交互控制产品接线仍需分别闭环，不能据此认为全部托管产品入口已经迁移完成。
+此接入覆盖状态、用量和原准入重试；托管子任务及远端 A2A 接线见下文。完整的
+Server 交互控制产品接线仍需闭环，不能据此认为全部托管产品入口已经迁移完成。
 宿主关闭时先等待 managed runtime 退役，再关闭 execution adapter 及其 projection。
 
 正式 Host 先创建接收器，等完整控制面和 `presetRegistryStartup.ready` 完成后才调用
@@ -242,6 +242,31 @@ runtime/v2 事实投影与完整 reasoning/media、公共工具活动和所有�
 共用 Agent/Build binding 的全部资源组合与并发边界、
 审批资源的产品流程、部署中的 Server 传输适配与线上认证仍需补齐。此模块不能替代这些验收。
 
+## 托管 A2A 问答、审批与原回执
+
+现有 `sessions/native-a2a-control` 对托管 Run 通过可信 Session binding 读取接收器的
+原 scope 和账本，普通 Run 保留本地读取。控制请求不能选择 tenant/user 或替换绑定。
+远程继续、拒绝和取消仍各自经过原 Host 的操作审批；控制确认不会制造 Native 工具
+结果、重新获得原执行租约或自行恢复根任务。等待审批时变更 preset、版本或可信
+托管 binding，原操作会失去权限。
+
+正式 SDK owner 内的托管根任务在 `awaiting_reconciliation` 时接入现有 A2A 本地
+回执等待器。只有原始 fenced `call_a2a_agent` 且声明 `receipt-observation/v1` 的记录
+可用；未知文件写入等操作不进入此路径。输入问答使用现有 userQuestions 服务，远程
+操作审批使用真实 ApprovalService 的持久审计。问答回答本身不能替代操作审批。
+等待器只观察本地 A2A journal；它返回稳定身份的 `reconcile_tool`，由原 Native Kernel
+另行持久化 `tool_receipt` 意图、取得执行 fence 并核对原结果，不能再次发送原始工具。
+
+每次等待绑定原检查点、执行 fence、SDK owner 和配置。新命令、检查点推进、fence
+变化或 Host 退役会撤销等待；迟到回答不能提交回执命令。另一个 SQLite 接收器的
+持久命令通过队列和轮询唤醒，原 Server 已准入但尚未投递的控制也会撤销根任务问答
+权限。托管子任务沿用原父任务的 managed ownership，检查完整父身份、预算和原意图。
+取消终态撤回仍待回答的远程问题，不把本地取消伪装成远端 CancelTask 成功。
+
+此路径只允许核对同一原操作的回执。Native 工具 `awaiting_interaction` 仍需原 Server
+签名与可信 token 校验，Host 的 A2A 回调不能返回 approval/resume 或新增用户输入。
+Server 结构化交互、scoped controls 和 execution grants 的缺口仍按上节明确报告。
+
 ## 已执行的验证与复验入口
 
 定向测试验证签名与微秒有效期、nonce、幂等、FIFO、并发执行者、暂停/继续/审批、
@@ -257,6 +282,9 @@ node scripts/verify-studio-native-a2a.mjs --source .artifacts/dsh-native-idle \
   --inbound-execution --keep
 node scripts/verify-studio-native-managed-children.mjs --source .artifacts/dsh-native-idle \
   --archive <正常打包的 tgz> --keep
+node scripts/verify-studio-native-managed-a2a.mjs --source .artifacts/dsh-native-idle \
+  --archive <正常打包的 tgz> --keep
+# 可分别添加 --child、--approval，或 --interrupt 验证未回答时的签名取消。
 ```
 
 实际打包 Host 已证明：带签名的 Server HTTP 回调驱动 NativeKernel，经真实模型 HTTP

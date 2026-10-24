@@ -171,6 +171,12 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         session_id: session.id, payload: { content: goal } });
       return receiver.receive(command, issuer.issue(command));
     },
+    async controlManaged(kind, runId) {
+      const command = managedCommand({ tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId,
+        session_id: session.id, command_type: kind,
+        payload: kind === 'resume' ? { target: { kind: 'run', id: runId } } : { run_id: runId } });
+      return receiver.receive(command, issuer.issue(command));
+    },
     async reopenManaged() { await receiver.close(); managedLedger.close(); openManaged(); } };
 }
 
@@ -266,7 +272,7 @@ function installChildQuestionHost(f, answer) {
   return { asked: () => asked, approved: () => approved };
 }
 
-for (const foreground of [false, true]) for (const approval of [false, true]) test(`SQLite ${foreground ? 'foreground' : 'background'} child A2A ${approval ? 'approval' : 'input'} waits through its live root and settles the original result`, { timeout: 20000 }, async t => {
+for (const managed of [false, true]) for (const foreground of [false, true]) for (const approval of [false, true]) test(`${managed ? 'managed' : 'SQLite'} ${foreground ? 'foreground' : 'background'} child A2A ${approval ? 'approval' : 'input'} waits through its live root and settles the original result`, { timeout: 20000 }, async t => {
   const peer = await internalPeer({ mode: 'pause', ...(approval ? { expectedContinuationParts: [{ data: 'approve' }],
     initialTask: { id: 'original-remote', contextId: 'original-context', status: { state: 'TASK_STATE_INPUT_REQUIRED', message: {
       messageId: 'remote-question', role: 'ROLE_AGENT', parts: [{ text: 'Approve remote operation?' }], metadata: {
@@ -278,7 +284,7 @@ for (const foreground of [false, true]) for (const approval of [false, true]) te
   } : {}) });
   t.after(() => peer.close());
   const candidate = Promise.withResolvers();
-  const f = await setup(t, { sqlite: true, a2a: peer, boundTools: [], childTool: foreground ? 'native_delegate' : 'native_start_child',
+  const f = await setup(t, { managed, sqlite: true, a2a: peer, boundTools: [], childTool: foreground ? 'native_delegate' : 'native_start_child',
     role: { tools: ['call_a2a_agent'] },
     onParentContinuation: () => candidate.resolve(),
     childPlan: (_body, index) => index === 1 ? { call: { name: 'call_a2a_agent', arguments: { agent: 'research', message: 'Question in child' } } }
@@ -288,12 +294,14 @@ for (const foreground of [false, true]) for (const approval of [false, true]) te
     return { answers: [{ id: request.questions[0].id, ...(approval ? { selected: ['批准远端操作'] }
       : { selected: [], custom: '{"answer":1}' }) }] };
   });
-  const result = await f.host.executeTurn(f.payload);
-  assert.equal(result.reason.kind, 'completed');
+  if (managed) { await f.admitManaged(); await f.receiver.drain('parent-session'); }
+  else { const result = await f.host.executeTurn(f.payload); assert.equal(result.reason.kind, 'completed'); }
   assert.equal(human.asked(), 1); assert.equal(human.approved(), 1);
-  const parent = f.ledger.list(f.scope, 'parent-session')[0];
+  const selectedStore = managed ? f.managedLedger : f.ledger, selectedScope = managed ? f.managedScope : f.scope;
+  const parent = selectedStore.list(selectedScope, 'parent-session')[0]; assert.equal(parent.phase, 'completed');
+  if (managed) assert.deepEqual(f.ledger.list(f.scope), []);
   const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
-  const child = f.ledger.load(reservation.childScope, reservation.childRunId);
+  const child = selectedStore.load(reservation.childScope, reservation.childRunId);
   assert.equal(child.snapshot.phase, 'completed'); assert.notEqual(child.snapshot.sessionId, 'parent-session');
   assert.equal(child.configuration.tools.length, 1); assert.equal(child.configuration.tools[0].name, 'call_a2a_agent');
   assert.equal(child.events.filter(event => event.kind === 'tool.receipt_reconciled').length, 1);
@@ -320,6 +328,62 @@ for (const foreground of [false, true]) for (const approval of [false, true]) te
   const parentRequests = f.requests.filter(row => row.body.model === 'parent-model');
   assert.equal(parentRequests.length, foreground ? 2 : 3);
   assert.ok(JSON.stringify(parentRequests.at(-1).body.messages).includes('Child consumed original remote result'));
+});
+
+for (const approval of [false, true]) test(`managed root A2A ${approval ? 'approval' : 'input'} uses original Host question and separately fenced receipt read`, { timeout: 20000 }, async t => {
+  const peer = await internalPeer({ mode: 'pause', ...(approval ? { expectedContinuationParts: [{ data: 'approve' }],
+    initialTask: { id: 'original-remote', contextId: 'original-context', status: { state: 'TASK_STATE_INPUT_REQUIRED', message: {
+      messageId: 'root-approval', role: 'ROLE_AGENT', parts: [{ text: 'Approve remote operation?' }], metadata: {
+        input_schema: { type: 'string', enum: ['approve', 'reject'] },
+        ksadk_interaction: { version: 1, kind: 'approval', allowed_decisions: ['approve', 'reject'],
+          presentation: { title: 'remote-write', description: '{"arguments":{}}' } },
+      },
+    } } },
+  } : {}) }); t.after(() => peer.close());
+  const f = await setup(t, { managed: true, sqlite: true, a2a: peer, boundTools: ['call_a2a_agent'], role: { tools: [] },
+    parentPlan: (_body, index) => index === 1 ? { call: { name: 'call_a2a_agent', arguments: { agent: 'research', message: 'Original root question' } } }
+      : { text: 'Root consumed original remote result' } });
+  const human = installChildQuestionHost(f, async request => ({ answers: [{ id: request.questions[0].id,
+    ...(approval ? { selected: ['批准远端操作'] } : { selected: [], custom: '{"answer":1}' }) }] }));
+  const receipt = await f.admitManaged(); await f.receiver.drain('parent-session');
+  const parent = f.managedLedger.load(f.managedScope, receipt.run_id);
+  assert.equal(parent.snapshot.phase, 'completed'); assert.equal(parent.snapshot.finalText, 'Root consumed original remote result');
+  assert.equal(human.asked(), 1); assert.equal(human.approved(), 1);
+  assert.equal(parent.intents.filter(row => row.kind === 'tool').length, 1);
+  assert.equal(parent.intents.filter(row => row.kind === 'tool_receipt').length, 1);
+  assert.equal(parent.events.filter(row => row.kind === 'tool.receipt_reconciled').length, 1);
+  assert.equal(parent.commands.filter(row => row.command.kind === 'reconcile_tool').length, 1);
+  assert.equal(f.requests.length, 2); assert.equal(peer.calls.filter(row => row.wireMethod === 'SendMessage').length, 2);
+  assert.equal(peer.calls.filter(row => row.wireMethod === 'CancelTask').length, 0);
+  assert.deepEqual(f.ledger.list(f.scope), []);
+  const before = { record: parent, calls: peer.calls.length, models: f.requests.length };
+  await f.reopenManaged();
+  const route = createSessionRoutes({ getNativeHost: async () => f.host });
+  const status = (await route('sessions/native-recovery-status', { agentId: f.record.metadata.id, sessionId: 'parent-session', runId: receipt.run_id })).value;
+  assert.equal(status.phase, 'completed'); assert.deepEqual(f.managedLedger.load(f.managedScope, receipt.run_id), before.record);
+  assert.equal(peer.calls.length, before.calls); assert.equal(f.requests.length, before.models);
+});
+
+for (const child of [false, true]) test(`managed ${child ? 'child' : 'root'} A2A question rejects a late answer after signed Server interruption`, { timeout: 20000 }, async t => {
+  const peer = await internalPeer({ mode: 'pause' }); t.after(() => peer.close());
+  const entered = Promise.withResolvers(), delayed = Promise.withResolvers(); let question;
+  const call = { name: 'call_a2a_agent', arguments: { agent: 'research', message: 'Original interrupted question' } };
+  const f = await setup(t, { managed: true, sqlite: true, a2a: peer, boundTools: child ? [] : ['call_a2a_agent'],
+    role: { tools: child ? ['call_a2a_agent'] : [] }, childTool: 'native_delegate',
+    ...(child ? { childPlan: () => ({ call }) } : { parentPlan: () => ({ call }) }),
+    releasePending: () => delayed.resolve({ answers: [] }) });
+  const human = installChildQuestionHost(f, request => { question = request; entered.resolve(); return delayed.promise; });
+  const receipt = await f.admitManaged(), running = f.receiver.drain('parent-session'); await entered.promise;
+  assert.equal((await f.controlManaged('interrupt', receipt.run_id)).status, 'accepted'); await running;
+  const record = f.managedLedger.load(f.managedScope, receipt.run_id);
+  assert.equal(record.snapshot.phase, 'canceled'); assert.equal(question.signal.aborted, true);
+  delayed.resolve({ answers: [{ id: question.questions[0].id, selected: [], custom: '{"answer":1}' }] });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(human.asked(), 1); assert.equal(human.approved(), 0);
+  assert.equal(peer.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+  assert.equal(peer.calls.filter(call => call.wireMethod === 'CancelTask').length, 0);
+  assert.equal(record.commands.filter(row => row.command.kind === 'reconcile_tool').length, 0);
+  assert.deepEqual(Object.values(peer.record().managed.questions.entries).map(row => row.stage), ['withdrawn']);
 });
 
 for (const cancel of ['parent', 'child', 'host']) test(`SQLite ${cancel} cancellation retires an active child A2A question and rejects a late answer`, { timeout: 20000 }, async t => {

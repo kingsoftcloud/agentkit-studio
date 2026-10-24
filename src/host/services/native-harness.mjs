@@ -739,6 +739,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         invariant(!admission || resolved.buildId === admission.buildId
           && canonical(configuration) === canonical(admission.configuration), 'native_dsh_recovery_configuration_changed');
         return { ...resolved, configuration,
+          onIdle: (snapshot, { signal, assertCurrent }) => {
+            if (!nativeA2aReceiptWaitSource(managedStore.load(scope, runId))) return null;
+            const control = controlFor({ agentId: scope.agentId, sessionId: payload.agent.session.id, runId });
+            invariant(control.store === managedStore, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+            return createNativeHostInteraction({ ctx, store: managedStore })({ agent: payload.agent, signal, assertCurrent }, snapshot,
+              { waitForToolReceipt: resolved.ports.tools.waitForReceipt });
+          },
           bindControls: ({ ownership, signal }, control) => {
             const owned = readNativeDshManagedOwnership(ownership, { sessionId: payload.agent.session.id });
             invariant(control.runId === runId && control.sessionId === payload.agent.session.id

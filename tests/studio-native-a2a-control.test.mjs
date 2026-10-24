@@ -15,10 +15,14 @@ import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.
 import { createStudioNativeA2aControl } from '../src/host/services/native-a2a-control.mjs';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { createStudioNativeRecovery } from '../src/host/services/native-recovery.mjs';
+import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
+import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
+import { command as managedCommand, permitIssuer } from './fixtures/native-managed-kernel.mjs';
 
-async function setup(t, { expectedAnswer = 42 } = {}) {
+async function setup(t, { expectedAnswer = 42, managed = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'studio-a2a-control-'))), workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot);
-  const scope = { tenantId: 'local', workspaceId: 'workspace', userId: 'local-user', agentId: 'agent' };
+  const scope = { tenantId: managed ? 'managed-tenant' : 'local', workspaceId: 'workspace',
+    userId: managed ? 'managed-user' : 'local-user', agentId: 'agent' };
   const task = { id: 'remote-original', contextId: 'context-original', status: { state: 'TASK_STATE_INPUT_REQUIRED' } };
   let sends = 0, gets = 0, continues = 0, cancels = 0, approvals = 0, modelCalls = 0, decision = 'allowed-once', revision = 1;
   const approvalRequests = [], registry = new Map(), failures = [], peerBodies = [];
@@ -58,41 +62,75 @@ async function setup(t, { expectedAnswer = 42 } = {}) {
     approval: { request: async request => { approvals++; approvalRequests.push(request); return decision; } } };
   const config = { agentId: 'agent', a2aBindings: [{ local_name: 'remote', binding_id: 'binding', space_id: 'space',
     target_agent_id: 'remote', expected_version_id: 'version' }] };
-  let store = new SqliteRunStore(join(root, 'runs.sqlite')), gateway, control;
+  let store = new SqliteRunStore(join(root, 'runs.sqlite')), gateway, control, runtime, managedConfig, managedLocalStore;
   const binding = { agentId: 'agent', agentRevision: 1, runtime: 'harness', local: true, nativeEngineContract: 'agentkit.native-dsh-turn/v1' };
   function bind() {
     gateway = createNativeDshTools({ ctx, config, workspaceRoot, stateDir: join(root, 'state'),
       commandEnvironment: { KSADK_A2A_SERVICE_URL: origin, KSADK_A2A_ALLOW_PRIVATE: 'true' } });
     binding.nativeTools = gateway;
-    control = createStudioNativeA2aControl({ ctx, store, workspaceId: 'workspace', lifetime, active,
+    control = createStudioNativeA2aControl({ ctx, store: managedLocalStore ?? store, workspaceId: 'workspace', lifetime, active,
       agentEvents: () => ({ serial: async name => { assert.equal(name, 'agentkit/native-recovery-binding'); return { ...binding, agentRevision: revision }; } }) });
   }
   t.after(async () => {
-    lifetime.abort(); await Promise.allSettled([...active]); await gateway.close(); store.close(); server.closeAllConnections();
+    lifetime.abort(); await Promise.allSettled([...active]); await runtime?.close(); await gateway.close(); store.close(); managedLocalStore?.close(); server.closeAllConnections();
     await new Promise(resolve => server.close(resolve)); rmSync(root, { recursive: true, force: true }); assert.deepEqual(failures, []);
   });
   bind();
   const capsule = nativeRecoveryBinding({ binding, input: { messages: [{ id: 'user', role: 'user', content: [{ type: 'text', text: 'call remote' }] }] },
     source: { provider: 'fixture', model: 'fixture' }, selection: {}, systemPrompt: 'fixture' });
   const data = fixture({ tools: gateway.definitions(agent, [...registry.values()]), hostRecoveryBinding: capsule });
-  const kernel = new NativeKernel({ store, digest, owner: 'original', ports: { ...gateway.forAgent(agent, { scope, store }), model: {
+  const ports = () => ({ ...gateway.forAgent(agent, { scope, store }), model: {
     generate: async () => { modelCalls++; return { kind: 'tool_calls', text: '', usage: emptyUsage(),
       toolCalls: [{ callId: 'actual-call', name: 'call_a2a_agent', arguments: { agent: 'remote', message: 'initial' } }] }; },
-  } } });
-  kernel.start({ ...data.snapshot, scope }, data.config); const snapshot = await kernel.runUntilIdle(scope, 'run');
+  } });
+  let runId = 'run';
+  const installManagedControl = () => { services.studioManagedNativeSessionControl = createStudioManagedNativeSessionControl({
+    runtime, target: { tenantId: scope.tenantId, agentInstanceId: scope.agentId }, principal: { userId: scope.userId } }); };
+  if (managed) {
+    const target = { tenantId: scope.tenantId, agentInstanceId: scope.agentId }, issuer = permitIssuer({ target });
+    managedConfig = { directory: join(root, 'receiver'), target, permitVerifier: issuer.verifier, assertCurrent: () => true,
+      autoStart: false, resolveBinding: () => ({ scope, buildId: data.snapshot.buildId,
+        configuration: { ...data.config, inputMessages: [{ role: 'user', content: 'call remote' }] }, ports: ports() }) };
+    await gateway.close(); runtime = createManagedNativeKernel(managedConfig); managedLocalStore = store;
+    store = new SqliteRunStore(join(root, 'receiver/runs.sqlite')); bind(); installManagedControl();
+    const cmd = managedCommand({ tenant_id: scope.tenantId, agent_instance_id: scope.agentId, session_id: 'session' });
+    runId = (await runtime.receive(cmd, issuer.issue(cmd))).run_id; await runtime.drain('session');
+  } else {
+    const kernel = new NativeKernel({ store, digest, owner: 'original', ports: ports() });
+    kernel.start({ ...data.snapshot, scope }, data.config); await kernel.runUntilIdle(scope, runId);
+  }
+  const snapshot = store.load(scope, runId).snapshot;
   assert.equal(snapshot.phase, 'awaiting_reconciliation');
-  const intent = store.load(scope, 'run').intents.find(intent => intent.kind === 'tool');
-  const request = { agentId: 'agent', sessionId: 'session', runId: 'run', operationKey: intent.operationKey, callId: 'actual-call' };
+  const intent = store.load(scope, runId).intents.find(intent => intent.kind === 'tool');
+  const request = { agentId: 'agent', sessionId: 'session', runId, operationKey: intent.operationKey, callId: 'actual-call' };
   const route = createSessionRoutes({ getNativeHost: async () => ({ controlA2aTask: (...args) => control(...args) }) });
   const invoke = async (kind, commandId, more = {}) => (await route('sessions/native-a2a-control', { ...request, kind, commandId, ...more })).value;
 
   return { request, invoke, route, approvalRequests, services, peerBodies,
-    status: () => createStudioNativeRecovery({ ctx, store, workspaceId: 'workspace', lifetime, active, controls: new Map(),
+    status: () => createStudioNativeRecovery({ ctx, store: managedLocalStore ?? store, workspaceId: 'workspace', lifetime, active, controls: new Map(),
       controlKey: () => 'key', execute: {} }).status(request),
     count: () => ({ sends, gets, continues, cancels, approvals, modelCalls }),
-    ledger: () => canonical(store.load(scope, 'run')), deny: () => { decision = 'denied'; }, drift: () => { revision++; },
-    async reopen() { await gateway.close(); store.close(); store = new SqliteRunStore(join(root, 'runs.sqlite')); bind(); } };
+    ledger: () => canonical(store.load(scope, runId)), localRuns: () => managedLocalStore?.list(scope) ?? [],
+    deny: () => { decision = 'denied'; }, drift: () => { revision++; },
+    async reopen() { await gateway.close(); await runtime?.close(); store.close();
+      if (managed) { runtime = createManagedNativeKernel(managedConfig); store = new SqliteRunStore(join(root, 'receiver/runs.sqlite')); installManagedControl(); }
+      else store = new SqliteRunStore(join(root, 'runs.sqlite'));
+      bind(); } };
 }
+
+for (const kind of ['continue', 'cancel']) test(`managed A2A ${kind} selects the original receiver ledger and confirms after reopen without another effect`, async t => {
+  const f = await setup(t, { managed: true }), original = f.ledger();
+  assert.deepEqual((await f.status()).a2aTasks, [{ runId: f.request.runId, operationKey: f.request.operationKey, callId: f.request.callId }]);
+  assert.deepEqual(f.localRuns(), []);
+  const observed = await f.invoke('get', 'managed-read'); assert.equal(observed.state, 'input_required');
+  const more = kind === 'continue' ? { parts: [{ data: { answer: 42 } }], pauseDigest: observed.pauseDigest } : {};
+  const result = await f.invoke(kind, 'managed-original-control', more);
+  assert.equal(result.outcome, kind === 'continue' ? 'submitted' : 'remote_cancelled');
+  assert.equal(f.count().approvals, 1); assert.equal(f.count().modelCalls, 1); assert.equal(f.ledger(), original);
+  const counts = f.count(); await f.reopen();
+  assert.deepEqual(await f.invoke(kind, 'managed-original-control', more), result);
+  assert.deepEqual(f.count(), counts); assert.equal(f.ledger(), original); assert.deepEqual(f.localRuns(), []);
+});
 test('Studio control route reopens the original Native task, approves exact data input and never re-enters the Native loop', async t => {
   const f = await setup(t), ledger = f.ledger(); await f.reopen();
   assert.deepEqual((await f.status()).a2aTasks, [{ runId: 'run', operationKey: f.request.operationKey, callId: 'actual-call' }]);
@@ -149,8 +187,8 @@ test('Studio rejects changed preset, another call and caller-supplied authority/
   f.drift(); await assert.rejects(f.invoke('get', 'changed'), { code: 'studio_native_recovery_preset_changed' });
   assert.equal(f.count().gets, 0); assert.equal(f.count().continues, 0); assert.equal(f.count().cancels, 0);
 });
-for (const change of ['preset', 'revision']) test(`Studio ${change} change while approval waits cannot authorize the old task control`, async t => {
-  const f = await setup(t);
+for (const managed of [false, true]) for (const change of ['preset', 'revision']) test(`${managed ? 'managed' : 'Studio'} ${change} change while approval waits cannot authorize the old task control`, async t => {
+  const f = await setup(t, { managed });
   f.services.approval.request = async () => {
     if (change === 'preset') f.services.sessionProjections.stateOf = () => 'another-preset';
     else f.drift();
@@ -159,4 +197,14 @@ for (const change of ['preset', 'revision']) test(`Studio ${change} change while
   await assert.rejects(f.invoke('cancel', 'changed-during-approval'), { code: change === 'preset'
     ? 'STUDIO_NATIVE_A2A_PRESET_CHANGED' : 'studio_native_recovery_preset_changed' });
   assert.equal(f.count().gets, 0); assert.equal(f.count().cancels, 0);
+});
+
+test('managed trusted ledger binding replacement while approval waits withdraws remote control authority', async t => {
+  const f = await setup(t, { managed: true }), before = f.ledger();
+  f.services.approval.request = async () => {
+    f.services.studioManagedNativeSessionControl = { ...f.services.studioManagedNativeSessionControl };
+    return 'allowed-once';
+  };
+  await assert.rejects(f.invoke('cancel', 'binding-replaced'), { code: 'STUDIO_NATIVE_A2A_IDENTITY_CONFLICT' });
+  assert.equal(f.count().gets, 0); assert.equal(f.count().cancels, 0); assert.equal(f.ledger(), before);
 });

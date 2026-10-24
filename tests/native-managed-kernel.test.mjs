@@ -9,6 +9,7 @@ import { createManagedNativeKernel, managedNativeRunId } from '../src/providers/
 import { createA2aInboundTaskStore } from '../src/providers/native-a2a-inbound-task-store.mjs';
 import { permitIssuer, command, target, scope, binding, response, tool } from './fixtures/native-managed-kernel.mjs';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
+import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 
 function fixture(t, options = {}) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-native-'))), issuer = permitIssuer();
@@ -478,6 +479,138 @@ test('managed live model observers receive the original identity before completi
   const cmd = command(); await f.receive(cmd); await f.runtime.drain(cmd.session_id);
   assert.equal(streamed.length, 1); assert.equal(streamed[0].event.text, 'Live answer');
   assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
+});
+
+function receiptWaitFixture(t, onIdle) {
+  let models = 0, writes = 0, reads = 0;
+  const f = fixture(t, { resolveBinding: request => ({ ...binding(request.command, {
+    model: { generate: async () => ++models === 1 ? response({ kind: 'tool_calls', text: '',
+      toolCalls: [{ callId: 'original-write', name: 'write', arguments: {} }] }) : response() },
+    tools: {
+      execute: async () => { writes++; return { status: 'uncertain', content: 'Original result unknown' }; },
+      observeReceipt: async request => { reads++; return { contract: request.contract,
+        originalOperationKey: request.originalOperationKey, callId: request.call.callId,
+        result: { status: 'ok', content: 'Original write confirmed' } }; },
+    },
+  }, { tools: [tool({ recoveryPolicy: 'receipt-observation/v1' })] }),
+  withExecution: ({ execute }) => execute({ onIdle: (snapshot, context) => onIdle(snapshot, context) }),
+  }) });
+  return Object.assign(f, { counts: () => ({ models, writes, reads }) });
+}
+const receiptCommand = (snapshot, commandId = 'original-receipt-read') => ({ commandId, kind: 'reconcile_tool',
+  payload: { originalOperationKey: snapshot.toolReconciliation.operationKey } });
+async function until(check) {
+  const deadline = Date.now() + 2000;
+  while (!await check()) { assert.ok(Date.now() < deadline, 'expected durable transition'); await new Promise(resolve => setTimeout(resolve, 10)); }
+}
+
+test('managed idle receipt callback cannot answer an original Server Native tool approval', { timeout: 5000 }, async t => {
+  let models = 0, writes = 0;
+  const f = fixture(t, { authorizeInteraction: ({ command }) => command.payload.token_ref === 'server-interaction-ref', resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => ++models === 1 ? response({ kind: 'tool_calls', text: '',
+      toolCalls: [{ callId: 'write', name: 'write', arguments: {} }] }) : response() },
+    tools: { execute: async request => { if (!request.interaction) return { status: 'approval_required', interactionId: 'approval', content: {} };
+      writes++; return { status: 'ok', content: 'written' }; } },
+  }, { tools: [tool()] }), withExecution: ({ execute }) => execute({ onIdle: () => assert.fail('receipt callback cannot approve a Server interaction') }),
+  }) });
+  const cmd = command(), receipt = await f.receive(cmd), driving = f.runtime.drain(cmd.session_id);
+  await until(async () => (await f.status(cmd.session_id)).runs[0].phase === 'awaiting_interaction');
+  assert.equal(writes, 0); assert.equal(models, 1);
+  const pending = f.runtime.inspectSession({ scope, sessionId: cmd.session_id, runId: receipt.run_id }).record.snapshot.pendingInteraction;
+  const decision = command({ command_type: 'submit_interaction', payload: { run_id: receipt.run_id, interaction_id: pending.interactionId,
+    token_ref: 'server-interaction-ref', response: 'approve' } });
+  assert.equal((await f.receive(decision)).status, 'accepted'); await driving;
+  assert.equal(writes, 1); assert.equal(models, 2); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
+});
+
+test('managed idle receipt observation keeps one owner and never replays the original uncertain write', async t => {
+  let attempts = 0;
+  const f = receiptWaitFixture(t, (snapshot, context) => {
+    attempts++; assert.equal(snapshot.phase, 'awaiting_reconciliation');
+    assert.equal(context.assertCurrent(), true); assert.equal(context.signal.aborted, false);
+    assert.deepEqual(f.counts(), { models: 1, writes: 1, reads: 0 });
+    return receiptCommand(snapshot);
+  });
+  const cmd = command(), receipt = await f.receive(cmd); await f.runtime.drain(cmd.session_id);
+  const query = { scope, sessionId: cmd.session_id, runId: receipt.run_id }, original = f.runtime.inspectSession(query).record;
+  assert.equal(original.snapshot.phase, 'completed'); assert.equal(attempts, 1);
+  assert.deepEqual(f.counts(), { models: 2, writes: 1, reads: 1 });
+  assert.equal(original.intents.filter(row => row.kind === 'tool').length, 1);
+  assert.equal(original.intents.filter(row => row.kind === 'tool_receipt').length, 1);
+  assert.equal(original.commands.filter(row => row.command.kind === 'reconcile_tool').length, 1);
+  await f.reopen(); await f.runtime.drain(cmd.session_id);
+  assert.deepEqual(f.runtime.inspectSession(query).record, original);
+  assert.deepEqual(f.counts(), { models: 2, writes: 1, reads: 1 });
+});
+
+for (const invalid of ['submit_interaction', 'resume', 'foreign-receipt']) test(`managed idle Host cannot submit ${invalid}`, async t => {
+  const f = receiptWaitFixture(t, snapshot => invalid === 'foreign-receipt'
+    ? { ...receiptCommand(snapshot), payload: { originalOperationKey: 'foreign' } }
+    : { commandId: 'invalid-host-command', kind: invalid, payload: {} });
+  const cmd = command(), receipt = await f.receive(cmd);
+  await assert.rejects(f.runtime.drain(cmd.session_id), { code: 'NATIVE_KERNEL_IDLE_COMMAND_INVALID' });
+  const record = f.runtime.inspectSession({ scope, sessionId: cmd.session_id, runId: receipt.run_id }).record;
+  assert.equal(record.snapshot.phase, 'awaiting_reconciliation'); assert.deepEqual(record.commands, []);
+  assert.deepEqual(f.counts(), { models: 1, writes: 1, reads: 0 });
+});
+
+for (const control of ['pause', 'interrupt']) test(`another SQLite receiver's ${control} retires a managed idle answer before receipt submission`, { timeout: 5000 }, async t => {
+  const entered = Promise.withResolvers(), delayed = Promise.withResolvers(); let attempt = 0, held;
+  const f = receiptWaitFixture(t, (snapshot, context) => {
+    if (++attempt > 1) return receiptCommand(snapshot);
+    held = { snapshot, ...context }; entered.resolve(); return delayed.promise;
+  });
+  const cmd = command(), receipt = await f.receive(cmd), driving = f.runtime.drain(cmd.session_id); await entered.promise;
+  const other = createManagedNativeKernel(f.config); t.after(() => other.close());
+  const stop = command({ command_type: control, payload: { run_id: receipt.run_id } });
+  assert.equal((await other.receive(stop, f.issuer.issue(stop))).status, 'accepted');
+  // This runs before the original receiver's 100ms poll. The durable queue,
+  // rather than its process-local wake counter, withdraws effect authority.
+  assert.throws(held.assertCurrent, { code: 'NATIVE_KERNEL_IDLE_AUTHORITY_LOST' });
+  delayed.resolve(receiptCommand(held.snapshot, 'late-answer'));
+  if (control === 'pause') {
+    await until(async () => (await f.status(cmd.session_id)).runs[0].phase === 'paused');
+    assert.equal(held.signal.aborted, true); assert.deepEqual(f.counts(), { models: 1, writes: 1, reads: 0 });
+    const resume = command({ command_type: 'resume', payload: { target: { kind: 'run', id: receipt.run_id } } });
+    assert.equal((await other.receive(resume, f.issuer.issue(resume))).status, 'accepted');
+  }
+  await driving;
+  const record = f.runtime.inspectSession({ scope, sessionId: cmd.session_id, runId: receipt.run_id }).record;
+  assert.equal(record.snapshot.phase, control === 'pause' ? 'completed' : 'canceled');
+  assert.equal(held.signal.aborted, true); assert.equal(record.commands.some(row => row.command.commandId === 'late-answer'), false);
+  assert.deepEqual(f.counts(), control === 'pause' ? { models: 2, writes: 1, reads: 1 } : { models: 1, writes: 1, reads: 0 });
+});
+
+test('a new execution fence retires a managed idle answer even without a checkpoint revision change', { timeout: 5000 }, async t => {
+  const entered = Promise.withResolvers(), delayed = Promise.withResolvers(); let attempts = 0, held;
+  const f = receiptWaitFixture(t, (snapshot, context) => {
+    if (++attempts > 1) return receiptCommand(snapshot);
+    held = { snapshot, ...context }; entered.resolve(); return delayed.promise;
+  });
+  const cmd = command(), receipt = await f.receive(cmd), driving = f.runtime.drain(cmd.session_id); await entered.promise;
+  const other = new SqliteRunStore(join(f.directory, 'runs.sqlite')); t.after(() => other.close());
+  const before = other.load(scope, receipt.run_id); assert.equal(before.lease, null, 'idle wait owns no execution lease');
+  const lease = other.acquire(scope, receipt.run_id, 'new-observer', Date.now(), 1000);
+  other.release(scope, receipt.run_id, lease);
+  assert.deepEqual(other.load(scope, receipt.run_id).snapshot, before.snapshot);
+  assert.throws(held.assertCurrent, { code: 'NATIVE_KERNEL_IDLE_AUTHORITY_LOST' });
+  delayed.resolve(receiptCommand(held.snapshot, 'stale-fence-answer')); await driving;
+  const record = other.load(scope, receipt.run_id);
+  assert.equal(record.snapshot.phase, 'completed'); assert.equal(attempts, 2);
+  assert.equal(record.commands.some(row => row.command.commandId === 'stale-fence-answer'), false);
+  assert.deepEqual(f.counts(), { models: 2, writes: 1, reads: 1 });
+});
+
+test('Host retirement withdraws a managed receipt wait without manufacturing cancellation or accepting late answers', async t => {
+  const entered = Promise.withResolvers(), delayed = Promise.withResolvers(); let held;
+  const f = receiptWaitFixture(t, (snapshot, context) => { held = { snapshot, ...context }; entered.resolve(); return delayed.promise; });
+  const cmd = command(), receipt = await f.receive(cmd), driving = f.runtime.drain(cmd.session_id);
+  const stopped = assert.rejects(driving, { code: 'NATIVE_KERNEL_AUTHORITY_LOST' }); await entered.promise;
+  await f.runtime.close(); await stopped; assert.equal(held.signal.aborted, true);
+  delayed.resolve(receiptCommand(held.snapshot, 'retired-answer')); await f.reopen();
+  const record = f.runtime.inspectSession({ scope, sessionId: cmd.session_id, runId: receipt.run_id }).record;
+  assert.equal(record.snapshot.phase, 'awaiting_reconciliation'); assert.deepEqual(record.commands, []);
+  assert.deepEqual(f.counts(), { models: 1, writes: 1, reads: 0 });
 });
 
 test('a whole-Session owner stays open while Native is paused and resumes the same Run', { timeout: 5000 }, async t => {

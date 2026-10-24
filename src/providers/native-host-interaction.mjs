@@ -9,8 +9,8 @@ export const STUDIO_NATIVE_INTERACTION_CONTRACT = 'agentkit.native-host-interact
 /** Ask through the live Host service only for a ledger-owned pending decision.
  * The Kernel remains responsible for accepting and applying the command. */
 export function createNativeHostInteraction({ ctx, store }) {
-  return async ({ agent, signal }, snapshot, { waitForToolReceipt } = {}) => {
-    signal.throwIfAborted();
+  return async ({ agent, signal, assertCurrent }, snapshot, { waitForToolReceipt } = {}) => {
+    signal.throwIfAborted(); assertCurrent?.();
     if (snapshot.phase !== 'awaiting_reconciliation' && snapshot.phase !== 'awaiting_interaction') return null;
     const record = store.load(snapshot.scope, snapshot.runId);
     const childWait = snapshot.phase === 'awaiting_reconciliation' && record.configuration.childOwnerBinding;
@@ -18,7 +18,7 @@ export function createNativeHostInteraction({ ctx, store }) {
     invariant(same(record.snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
     if (snapshot.phase === 'awaiting_reconciliation' && snapshot.toolReconciliation) {
       if (typeof waitForToolReceipt === 'function') {
-        const questionHost = createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, signal });
+        const questionHost = createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, signal, assertCurrent });
         if (childWait) questionHost.assertCurrent();
         const command = await waitForToolReceipt({ snapshot: structuredClone(snapshot), signal,
           questionHost });

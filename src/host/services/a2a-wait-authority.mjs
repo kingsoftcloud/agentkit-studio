@@ -4,13 +4,28 @@ import { canonical, invariant, CHILD_OWNER_CONTRACT, admittedToolBudget, termina
 import { loadOwnedDirectChild } from '../../../packages/agentkit-harness/src/native/owned-child.mjs';
 import { readNativeDshOwnership } from '../../../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { readNativeDshBackgroundOwnership, NATIVE_DSH_BACKGROUND_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
+import { readNativeDshManagedOwnership, NATIVE_DSH_MANAGED_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
 import { a2aDecisionDigest } from '../../providers/native-a2a-decision.mjs';
 import { requestStudioA2aApproval } from './a2a-control-approval.mjs';
 import { createStudioA2aQuestionPresenter } from './a2a-question-presenter.mjs';
 
-export function createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, signal }) {
+export function createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, signal, assertCurrent: assertExternal }) {
   const session = agent.session, checkpoint = canonical(snapshot);
   const child = store.load(snapshot.scope, snapshot.runId).configuration.childOwnerBinding;
+  const managedOwner = agent.externalTurns?.pending?.();
+  const managedRoot = !child && managedOwner?.engine === NATIVE_DSH_MANAGED_TURN_CONTRACT
+    ? readNativeDshManagedOwnership(managedOwner, { sessionId: session.id }) : null;
+  const assertOwner = () => {
+    signal.throwIfAborted(); assertExternal?.();
+    const current = store.load(snapshot.scope, snapshot.runId);
+    invariant(agent.session === session && canonical(current.snapshot) === checkpoint
+      && !current.commands.some(row => !row.consumed), 'A2A_QUESTION_AUTHORITY_LOST');
+    if (managedRoot) invariant(canonical(agent.externalTurns?.pending?.() ?? null) === canonical(managedOwner)
+      && canonical(managedRoot.identity) === canonical(Object.fromEntries(['scope', 'runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId']
+        .map(key => [key, snapshot[key]]))) && managedRoot.configDigest === snapshot.configDigest,
+    'A2A_QUESTION_AUTHORITY_LOST');
+    return true;
+  };
   const assertParent = () => {
     if (!child) return String(session.id) === snapshot.sessionId;
     invariant(child.contract === CHILD_OWNER_CONTRACT && child.parent.sessionId === String(session.id), 'A2A_QUESTION_AUTHORITY_LOST');
@@ -19,7 +34,9 @@ export function createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, sign
     const pending = agent.externalTurns?.pending?.();
     const admission = pending?.engine === NATIVE_DSH_BACKGROUND_TURN_CONTRACT
       ? readNativeDshBackgroundOwnership(pending, { sessionId: session.id, turn: pending.turn })
-      : readNativeDshOwnership(pending, { sessionId: session.id, turn: pending?.turn });
+      : pending?.engine === NATIVE_DSH_MANAGED_TURN_CONTRACT
+        ? readNativeDshManagedOwnership(pending, { sessionId: session.id, turn: pending.turn })
+        : readNativeDshOwnership(pending, { sessionId: session.id, turn: pending?.turn });
     invariant(canonical(identity) === canonical(child.parent) && canonical(admission.identity) === canonical(identity)
       && admission.configDigest === current.configDigest && a2aDecisionDigest(parent.configuration) === current.configDigest
       && !terminal(current.phase) && current.phase !== 'finalizing'
@@ -41,7 +58,7 @@ export function createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, sign
   };
   const presetId = ctx.get('sessionProjections')?.stateOf?.(session, 'agentPreset');
   const assertCurrent = () => {
-    signal.throwIfAborted();
+    assertOwner();
     const current = store.load(snapshot.scope, snapshot.runId);
     invariant(agent.session === session && assertParent()
       && ctx.get('agents')?.get?.(agent.id) === agent && ctx.get('agents')?.roots?.().includes(agent)
@@ -57,7 +74,7 @@ export function createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, sign
   // A root's non-question local receipt wait uses its existing turn owner;
   // optional question services are checked only when actually presenting or
   // authorizing a question, preserving the public non-question wait path.
-  return { present, ...(child ? { assertCurrent } : {}),
+  return { present, assertCurrent: child ? assertCurrent : assertOwner,
     async authorizeControl({ command, task, spec, readOnly, signal: consentSignal }) {
       assertCurrent(); if (readOnly) return 'allow';
       const policy = () => {
