@@ -132,7 +132,8 @@ async function setup(t) {
 test('Studio completes a receipt query and continues the SAME active Run after approved remote input', async t => {
   const f = await setup(t), original = f.load();
   const status = await f.host.recoveryStatus(f.request);
-  assert.equal(status.state, 'reconciliation_required'); assert.equal(status.canResume, false); assert.equal(status.canReconcile, true);
+  assert.equal(status.state, 'recovering'); assert.equal(status.canResume, false); assert.equal(status.canReconcile, true);
+  assert.equal(status.receiptWait.contract, 'agentkit.native-a2a-receipt-wait/v1');
   assert.equal(f.count().modelCalls, 1); assert.equal(f.count().gets, 0);
   await f.continueRemote(); assert.equal(f.count().approvals, 1);
   assert.equal(f.load().snapshot.phase, 'awaiting_reconciliation', 'remote controls alone never forge a Native result');

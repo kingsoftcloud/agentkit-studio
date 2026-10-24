@@ -9,6 +9,24 @@ import { awaitA2aControl } from './native-a2a-controls.mjs';
 
 export const NATIVE_A2A_RECEIPT_WAIT = 'agentkit.native-a2a-receipt-wait/v1';
 
+/** Local, read-only classification. This grants neither a receipt query nor
+ * execution of the original tool. Rebinding still validates the full Host
+ * capsule/configuration before the original external turn can be adopted. */
+export function nativeA2aReceiptWaitSource(record) {
+  const snapshot = record?.snapshot, marker = snapshot?.toolReconciliation;
+  if (snapshot?.phase !== 'awaiting_reconciliation' || snapshot.pendingIntent !== null
+    || marker?.contract !== 'agentkit.tool-receipt-observation/v1') return null;
+  const intent = record.intents.find(item => item.operationKey === marker.operationKey);
+  const call = intent?.payload.calls?.[0], definition = record.configuration.tools.find(item => item.name === call?.name);
+  const receipt = record.receipts.find(item => item.operationKey === marker.operationKey);
+  if (call?.name !== 'call_a2a_agent' || definition?.recoveryPolicy !== 'receipt-observation/v1'
+    || intent.kind !== 'tool' || intent.status !== 'running' || intent.payload.calls.length !== 1
+    || !Number.isSafeInteger(intent.claimedFence) || intent.claimedFence <= 0 || call.callId !== marker.callId
+    || canonical(snapshot.pendingTools.slice(0, 1)) !== canonical([call])
+    || !receipt || !(receipt.status === 'uncertain' || receipt.result.results?.[0]?.status === 'uncertain')) return null;
+  return { intent, call, definition };
+}
+
 /** Cleanup requires an actual committed terminal, never an abandoned Host
  * callback or shutdown signal. It has no network/control execution authority. */
 export function createNativeA2aQuestionTerminator({ a2a, scope, sessionId, store, stateRoot, workspaceRoot, isClosed }) {
@@ -41,14 +59,8 @@ export function createNativeA2aReceiptWaiter({ a2a, scope, sessionId, store, sta
     const intent = record.intents.find(item => item.operationKey === originalOperationKey);
     const call = intent?.payload.calls?.[0], definition = record.configuration.tools.find(item => item.name === call?.name);
     if (call?.name !== 'call_a2a_agent' || definition?.recoveryPolicy !== 'receipt-observation/v1') return null;
-    const receipt = record.receipts.find(item => item.operationKey === originalOperationKey);
     invariant(canonical(snapshot.scope) === canonical(fixedScope) && snapshot.sessionId === sessionId
-      && canonical(record.snapshot) === canonical(snapshot) && snapshot.pendingIntent === null
-      && intent.kind === 'tool' && intent.status === 'running' && intent.payload.calls.length === 1
-      && Number.isSafeInteger(intent.claimedFence) && intent.claimedFence > 0
-      && call.callId === snapshot.toolReconciliation.callId
-      && canonical(snapshot.pendingTools.slice(0, 1)) === canonical([call])
-      && receipt && (receipt.status === 'uncertain' || receipt.result.results?.[0]?.status === 'uncertain'),
+      && canonical(record.snapshot) === canonical(snapshot) && nativeA2aReceiptWaitSource(record),
     'A2A_RECEIPT_WAIT_SOURCE_INVALID');
     const query = { contract: NATIVE_A2A_RECEIPT_WAIT,
       ...Object.fromEntries(['scope', 'sessionId', 'runId', 'turnId', 'buildId', 'parentRunId', 'taskChainId']

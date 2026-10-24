@@ -11,7 +11,7 @@ import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-s
 import { createNativeA2aToolPort, nativeA2aToolDefinitions } from '../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { prepareNativeA2AHost } from '../src/providers/native-a2a-host.mjs';
 import { createNativeToolAuthority } from '../src/providers/native-tool-authority.mjs';
-import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter } from '../src/providers/native-a2a-receipt.mjs';
+import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter, nativeA2aReceiptWaitSource } from '../src/providers/native-a2a-receipt.mjs';
 import { internalPeer, scope, spec } from './fixtures/native-a2a-internal-peer.mjs';
 import { controlConsent } from './fixtures/native-a2a-control-consent.mjs';
 
@@ -54,6 +54,37 @@ async function setup(t, mode = 'pause') {
     closeAuthority() { closed = true; },
   };
 }
+
+test('local recovery admission requires the original fenced A2A receipt source, never an arbitrary unknown write', async t => {
+  const f = await setup(t), original = f.store.load(scope, 'run');
+  const before = f.f.calls.filter(call => call.wireMethod).length;
+  const source = nativeA2aReceiptWaitSource(original);
+  assert.equal(source.call.callId, original.snapshot.toolReconciliation.callId);
+  for (const corrupt of [
+    row => { row.snapshot.phase = 'interrupted'; },
+    row => { row.snapshot.pendingIntent = row.snapshot.toolReconciliation.operationKey; },
+    row => { row.snapshot.toolReconciliation.contract = 'unknown'; },
+    row => { row.snapshot.toolReconciliation.operationKey = 'foreign'; },
+    row => { row.snapshot.toolReconciliation.callId = 'foreign'; },
+    row => { row.configuration.tools.find(item => item.name === source.call.name).recoveryPolicy = undefined; },
+    row => { row.intents.find(item => item.operationKey === source.intent.operationKey).kind = 'model'; },
+    row => { row.intents.find(item => item.operationKey === source.intent.operationKey).status = 'pending'; },
+    row => { row.intents.find(item => item.operationKey === source.intent.operationKey).claimedFence = 0; },
+    row => { row.intents.find(item => item.operationKey === source.intent.operationKey).claimedFence = 1.5; },
+    row => { row.intents.find(item => item.operationKey === source.intent.operationKey).payload.calls.push({ ...source.call, callId: 'second' }); },
+    row => { row.snapshot.pendingTools[0].arguments.message = 'replacement'; },
+    row => { row.receipts = row.receipts.filter(item => item.operationKey !== source.intent.operationKey); },
+    row => { const receipt = row.receipts.find(item => item.operationKey === source.intent.operationKey);
+      receipt.status = 'committed'; receipt.result = { results: [{ status: 'succeeded' }] }; },
+    row => { const call = row.intents.find(item => item.operationKey === source.intent.operationKey).payload.calls[0];
+      call.name = 'write_file'; row.configuration.tools.push({ ...source.definition, name: call.name }); row.snapshot.pendingTools[0].name = call.name; },
+  ]) {
+    const changed = structuredClone(original); corrupt(changed);
+    assert.equal(nativeA2aReceiptWaitSource(changed), null);
+  }
+  assert.deepEqual(f.store.load(scope, 'run'), original, 'classification never changes the durable Run');
+  assert.equal(f.f.calls.filter(call => call.wireMethod).length, before, 'classification never queries the remote task');
+});
 
 for (const mode of ['pause', 'send-lost']) test(`${mode}: managed calls wait without remote requests; abort withdraws the local waiter`, async t => {
   const f = await setup(t, mode), before = f.f.calls.filter(call => call.wireMethod).length;

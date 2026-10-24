@@ -16,8 +16,14 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
       && ['available', 'recovering', 'reconciliation_required', 'failed', 'closed'].includes(value.state)
       && typeof value.canResume === 'boolean' && (!value.canResume || typeof value.runId === 'string' && value.runId.trim())
       && (!runId || value.runId === runId), '恢复记录与原会话或运行不一致，请刷新核对。');
+    const receiptWait = value.receiptWait;
+    if (receiptWait !== undefined) check(receiptWait?.contract === 'agentkit.native-a2a-receipt-wait/v1'
+      && value.phase === 'awaiting_reconciliation'
+      && ['operationKey', 'callId'].every(key => typeof receiptWait[key] === 'string' && receiptWait[key].trim()
+        && receiptWait[key] === value.reconciliation?.[key]), '回执等待与原运行不一致，请刷新核对。');
     if (value.canReconcile !== undefined) check(typeof value.canReconcile === 'boolean'
-      && (!value.canReconcile || value.state === 'reconciliation_required' && !value.canResume
+      && (!value.canReconcile || (value.state === 'reconciliation_required' && (!value.canResume || receiptWait)
+        || value.state === 'recovering' && !value.canResume)
         && value.phase === 'awaiting_reconciliation' && typeof value.runId === 'string' && value.runId.trim()
         && value.reconciliation?.contract === 'agentkit.tool-receipt-observation/v1'
         && ['operationKey', 'callId'].every(key => typeof value.reconciliation[key] === 'string'

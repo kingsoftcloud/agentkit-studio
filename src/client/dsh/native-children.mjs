@@ -46,10 +46,11 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
           h('p', { style: { fontSize: '12px' } }, '包含本运行、工具内模型调用及已结算的子任务用量。')) : null,
         recoveryState.status && recoveryState.status.state !== 'closed' ? h('section', { 'aria-label': '原运行恢复' },
           h('p', null, recoveryState.status.state === 'recovering' ? '原运行已接管，正在继续。'
-            : recoveryState.status.state === 'reconciliation_required' ? '有执行结果未知的操作，需要核对；不会自动重跑。'
+            : recoveryState.status.receiptWait ? '原远端调用仍在等待。可接回原运行继续等待，或主动核对远端结果；不会重发原调用。'
+              : recoveryState.status.state === 'reconciliation_required' ? '有执行结果未知的操作，需要核对；不会自动重跑。'
               : recoveryState.status.state === 'failed' ? '恢复未完成，请核对原配置后重试。' : '检测到尚未结束的原运行，可继续原任务。'),
           recoveryState.status.canResume && !recoveryState.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: recoveryState.sending,
-            onClick: () => void recovery.resume() }, '恢复原运行') : null,
+            onClick: () => void recovery.resume() }, recoveryState.status.receiptWait ? '接回原运行并继续等待' : '恢复原运行') : null,
           recoveryState.status.canReconcile && !recoveryState.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: recoveryState.sending,
             onClick: () => void recovery.reconcile() }, '核对结果并继续原运行') : null) : null,
         recoveryState.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: recoveryState.sending,

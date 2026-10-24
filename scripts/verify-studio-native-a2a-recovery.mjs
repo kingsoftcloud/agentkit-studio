@@ -115,9 +115,19 @@ export async function verifyMountedA2aRecovery(options) {
     await kill('waiting-original-turn');
     await restart();
     const cold = await accepted('sessions/native-recovery-status', identity());
-    assert.equal(cold.state, 'reconciliation_required'); assert.equal(cold.canReconcile, true); assert.equal(cold.canResume, false);
+    assert.equal(cold.state, 'reconciliation_required'); assert.equal(cold.canReconcile, true); assert.equal(cold.canResume, true);
+    assert.deepEqual(cold.receiptWait, { contract: 'agentkit.native-a2a-receipt-wait/v1', operationKey,
+      callId: original.snapshot.toolReconciliation.callId });
     assert.equal(cold.runId, runId);
     assert.equal(canonical(store.load(scope, runId)), canonical(beforeKill), 'history/status alone never drives or mutates Native');
+    const attached = await accepted('sessions/native-recovery-resume', identity());
+    assert.equal(attached.state, 'recovering'); assert.equal(attached.runId, runId);
+    await delay(250);
+    count({ model: 1, discovery: 1, send: 1, get: 1 });
+    assert.equal(store.load(scope, runId).snapshot.phase, 'awaiting_reconciliation');
+    assert.equal(store.load(scope, runId).intents.filter(row => row.kind === 'tool_receipt').length,
+      beforeKill.intents.filter(row => row.kind === 'tool_receipt').length,
+      'reattachment adds no receipt query: the original waiter resumes locally');
     await reconcile('mounted-read-paused');
     count({ model: 1, discovery: 1, send: 1, get: 1 });
     const forged = await rpc('sessions/native-recovery-reconcile', { ...request, operationKey: 'wrong-original', commandId: 'forged' });

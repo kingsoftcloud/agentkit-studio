@@ -59,6 +59,23 @@ and never go to remote `AppendA2ATaskEvents`. The stream contains status, target
 and deadline, without answer content. The task panel prevents replacing a saved
 answer and keeps explicit remote inspection/cancellation available.
 
+### Reattaching a cold Studio turn
+
+After a Host restart, the existing Native recovery panel can **接回原运行并继续等待**
+for an original A2A receipt-observation wait. This resumes the same durable DSH
+turn and Native Run. The Host revalidates the original admission, preset, Build,
+model route, prompt and frozen configuration before installing its waiter.
+Reattachment itself makes no new GetTask, Send, discovery or model request.
+**核对原工具结果** remains a separate explicit receipt query. Refreshing status
+or history does not resume execution.
+
+The versioned `receiptWait` capability is available only for the original
+single `call_a2a_agent` call, its fenced running intent, matching uncertain
+receipt and `receipt-observation/v1` definition. It does not admit an arbitrary
+unknown write. An already active waiter reports `recovering`, cannot be resumed
+twice and still accepts an explicit reconciliation request. Automatic startup
+reattachment and terminal-cleanup replay remain separate work.
+
 ## Verification scope and remaining migration work
 
 `tests/native-a2a-question-wait.test.mjs` exercises real Kernel/SQLite/journals and

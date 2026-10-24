@@ -191,6 +191,29 @@ test('the recovery client retains valid usage and rejects unknown, inconsistent 
   await client.resume(); assert.equal(controls, 0); client.dispose();
 });
 
+test('the client distinguishes local receipt-wait reattachment from an explicit remote reconciliation read', async () => {
+  const identity = { agentId: 'a', sessionId: 's' }, calls = [];
+  const marker = { contract: 'agentkit.tool-receipt-observation/v1', operationKey: 'original', callId: 'call' };
+  let response = { contract: 'agentkit.studio-native-recovery/v1', ...identity, runId: 'run', phase: 'awaiting_reconciliation',
+    state: 'reconciliation_required', canResume: true, canReconcile: true, reconciliation: marker,
+    receiptWait: { contract: 'agentkit.native-a2a-receipt-wait/v1', operationKey: 'original', callId: 'call' } };
+  const state = createNativeRecoveryState({ ...identity, hostRemote: {
+    nativeRecoveryStatus: async () => response,
+    resumeNativeRun: async request => { calls.push(request); response = { ...response, state: 'recovering', canResume: false }; return response; },
+    reconcileNativeTool: () => assert.fail('reattachment must never request remote inspection'),
+  } });
+  await state.refresh(); assert.deepEqual(calls, []);
+  await state.resume(); assert.deepEqual(calls, [{ ...identity, runId: 'run' }]);
+  assert.equal(state.getSnapshot().error, ''); assert.equal(state.getSnapshot().status.state, 'recovering');
+  assert.equal(state.getSnapshot().status.canReconcile, true, 'an active local wait still permits explicit inspection');
+  const accepted = state.getSnapshot().status;
+  for (const field of ['contract', 'operationKey', 'callId']) {
+    response = { ...accepted, receiptWait: { ...accepted.receiptWait, [field]: 'foreign' } };
+    await state.refresh(); assert.equal(state.getSnapshot().status, accepted); assert.match(state.getSnapshot().error, /读取失败/);
+  }
+  state.dispose();
+});
+
 // A fixture variant that drives a real Run through createStudioNativeHarness until
 // a tool effect returns ``uncertain``, leaving the Run ``interrupted`` with an
 // uncertain receipt and a durable turn/owner (no turn/end). This is the

@@ -2,6 +2,7 @@ import { addUsage, canonical, copy, invariant, terminal } from '../../../package
 import { readNativeDshOwnership } from '../../../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, verifyNativeDshBackgroundOwnership } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
+import { nativeA2aReceiptWaitSource, NATIVE_A2A_RECEIPT_WAIT } from '../../providers/native-a2a-receipt.mjs';
 
 export const STUDIO_NATIVE_RECOVERY_CONTRACT = 'agentkit.studio-native-recovery/v1';
 export const STUDIO_NATIVE_USAGE_CONTRACT = 'agentkit.studio-native-usage/v1';
@@ -74,6 +75,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     const snapshot = record?.snapshot;
     const reconciliation = snapshot?.toolReconciliation;
     const waiting = snapshot?.phase === 'awaiting_reconciliation' && Boolean(reconciliation);
+    const receiptWait = nativeA2aReceiptWaitSource(record);
     const incomplete = snapshot && (snapshot.diagnostics.providerUsageIncomplete === true || snapshot.diagnostics.descendantUsageIncomplete === true);
     // This is a read-only view of the original ledger, not usage attributed to
     // a synthetic assistant message or another provider. Unknown counters stay
@@ -89,10 +91,12 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       runId, turn: admission ? inspected.turn : null, accounting,
       ...(a2aTasks.length ? { a2aTasks } : {}),
       ...(reconciliation ? { reconciliation: copy(reconciliation) } : {}),
-      state: !admission ? 'closed' : waiting ? 'reconciliation_required' : driving ? 'recovering'
+      ...(receiptWait ? { receiptWait: { contract: NATIVE_A2A_RECEIPT_WAIT,
+        operationKey: reconciliation.operationKey, callId: receiptWait.call.callId } } : {}),
+      state: !admission ? 'closed' : driving ? 'recovering' : waiting ? 'reconciliation_required'
         : record?.snapshot.phase === 'interrupted' ? 'reconciliation_required' : applicable?.error ? 'failed' : 'available',
       phase: record?.snapshot.phase ?? (admission ? 'admitted' : null),
-      canResume: Boolean(admission && !driving && !waiting && record?.snapshot.phase !== 'interrupted'),
+      canResume: Boolean(admission && !driving && (!waiting || receiptWait) && record?.snapshot.phase !== 'interrupted'),
       canReconcile: Boolean(admission && waiting),
       error: applicable?.error ?? null };
   };
@@ -117,6 +121,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       invariant(inspected.admission, 'studio_native_recovery_turn_not_open');
       invariant(inspected.record?.snapshot.phase !== 'interrupted', 'studio_native_recovery_reconciliation_required');
       invariant(inspected.record?.snapshot.phase !== 'awaiting_reconciliation'
+        || nativeA2aReceiptWaitSource(inspected.record)
         || inspected.record.commands.some(row => !row.consumed && row.command.kind === 'reconcile_tool'
           && row.command.payload.originalOperationKey === inspected.record.snapshot.toolReconciliation?.operationKey),
       'studio_native_recovery_reconciliation_required');
