@@ -31,7 +31,7 @@ import { createSsrfPinnedFetch, resolveWebSearchConfig, resolveWebSsrfPolicy } f
 
 export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, agentRevision, buildId, isClosed, signal,
   env = process.env, fetchImpl = hostFetch, persistOutput, toolBindings, toolContracts = [], componentBindings, skillConnection,
-  skillDefinitions = [], a2aBindings = [], browserExecutablePath, getSkillManagement, getKnowledgeTools, knowledgeBindings,
+  skillDefinitions = [], a2aBindings = [], a2aSessionEvents, browserExecutablePath, getSkillManagement, getKnowledgeTools, knowledgeBindings,
   getLegacyMemoryTools, legacyMemoryBindings } = {}) {
   invariant(persistOutput === undefined || typeof persistOutput === 'function', 'dsh_node_output_store_invalid');
   env = { ...env };
@@ -64,6 +64,7 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
       skillSpaceIds: facts.skillSpaceIds, skillDefinitions, env, fetchImpl, isClosed, signal }) : null;
   const a2a = !requested || nativeA2aToolDefinitions().some(tool => requested.has(tool.name))
     ? createDshNodeA2aTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir, env, bindings: a2aBindings,
+      sessionEvents: a2aSessionEvents,
       fetchImpl, isClosed, signal }) : null;
   const browser = !requested || requested.has('browser_inspect_workspace')
     ? createDshNodeBrowserTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir, browserExecutablePath, backend: commandBackend, isClosed, signal }) : null;

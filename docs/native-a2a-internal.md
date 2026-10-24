@@ -167,9 +167,16 @@ These observations grant no local tool execution or approval authority and do
 not become text output references. This implements outgoing-call consumption;
 it does not implement an inbound server or a public-activity producer.
 
-Approval-decision event integration,
-session-wide canonical event-store consumption, delivery diagnostics in Studio
-UI, and custom outbox-path/backend configuration parity remain open. Do not infer
+Internal outgoing canonical facts now also enter the actual persistent Studio
+Session through an independent per-source cursor. Session-assigned global
+positions, event-ID deduplication and a real durable flush precede source
+acknowledgement; Native children pin their parent display Session. Standard
+Chat and the Studio Assistant render these as read-only business nodes rather
+than model messages or local tools. See [Session observations](native-a2a-session-events.md)
+for the contract, SIGKILL boundaries and actual renderer evidence.
+
+Approval-decision event integration, dedicated delivery-failure diagnostics in
+Studio UI, and custom outbox-path/backend configuration parity remain open. Do not infer
 complete canonical parity from the mapped subset. Subscriptions/automatic waiters and inbound registry/
 server assembly also still require implementation and acceptance.
 Online control-plane authentication and real human/browser acceptance are

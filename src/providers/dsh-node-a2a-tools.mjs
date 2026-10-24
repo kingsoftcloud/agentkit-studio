@@ -23,11 +23,12 @@ function abortable(work, signal) {
 }
 
 export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
-  env = {}, bindings = [], fetchImpl, isClosed = () => false, signal: hostSignal } = {}) {
+  env = {}, bindings = [], fetchImpl, sessionEvents, isClosed = () => false, signal: hostSignal } = {}) {
   invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision >= 1
     && (buildId === null || typeof buildId === 'string' && buildId.trim()) && typeof isClosed === 'function'
     && (hostSignal === undefined || hostSignal instanceof AbortSignal), 'dsh_a2a_binding_invalid');
-  const prepared = prepareDshA2AHost({ env: { ...env }, bindings: copy(bindings), ...(fetchImpl ? { fetchImpl } : {}) });
+  const prepared = prepareDshA2AHost({ env: { ...env }, bindings: copy(bindings), ...(fetchImpl ? { fetchImpl } : {}),
+    ...(sessionEvents ? { sessionEvents } : {}) });
   const definitions = nativeA2aToolDefinitions(), formal = new Map(definitions.map(definition => [definition.name, definition]));
   const lifetime = new AbortController(), ownerSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
   const state = commandStateRoot(join(stateDir, 'a2a'), workspaceRoot, agentId), sessions = new Map(), owners = new Set();
@@ -89,7 +90,10 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
       try {
         return await owner.control.execute({ ...input, signal: AbortSignal.any([input.signal, ownerSignal]),
           operation_locator: { agentId, agentRevision, buildId, sessionId, operationKey: record.request.operationKey, callId } });
-      } finally { owner.close(); owners.delete(owner); }
+      } finally {
+        await Promise.allSettled([Promise.resolve().then(() => owner.eventDelivery?.flushSession?.({ raiseOnError: false }))]);
+        owner.close(); owners.delete(owner);
+      }
     },
     close() {
       if (closing) return closing;
@@ -133,7 +137,10 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
             // lost after Send. Do not replace that receipt with a pre-effect error.
             if (result.status !== 'uncertain') assertCurrent();
             return result;
-          } finally { owner.close(); owners.delete(owner); }
+          } finally {
+            await Promise.allSettled([Promise.resolve().then(() => owner.eventDelivery?.flushSession?.({ raiseOnError: false }))]);
+            owner.close(); owners.delete(owner);
+          }
         };
         return definition.readOnly ? await dispatch() : await ledger.execute({ request, binding, assertCurrent, dispatch });
       } catch (error) {

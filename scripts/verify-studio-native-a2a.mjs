@@ -519,8 +519,10 @@ try {
   let managedBefore = await managedRecords(root);
   if (values['internal-control-plane']) {
     const deadline = Date.now() + 10000;
-    while (JSON.parse(managedBefore[0].content).managed.events.pending.length) {
-      assert.ok(Date.now() < deadline, 'Host outbox did not acknowledge canonical events');
+    while (true) {
+      const journal = JSON.parse(managedBefore[0].content).managed.events;
+      if (!journal.pending.length && journal.sessionDelivery?.through === journal.nextSeq - 1) break;
+      assert.ok(Date.now() < deadline, 'Host remote outbox or durable Session delivery did not acknowledge canonical events');
       await new Promise(resolve => setTimeout(resolve, 20)); managedBefore = await managedRecords(root);
     }
   }
@@ -543,6 +545,21 @@ try {
   const admissionsBefore = await readFile(admissionPath, 'utf8'), admissions = await jsonl(admissionPath);
   assert.equal(admissions.length, 1); assert.equal(admissions[0].name, 'call_a2a_agent');
   const durableBefore = await history(root), owners = durableBefore.filter(event => event.type === 'turn/owner');
+  const sessionObservations = durableBefore.filter(event => event.type === 'agentkit/a2a-observation');
+  if (values['internal-control-plane']) {
+    assert.equal(sessionObservations.length, managed.managed.events.log.length);
+    assert.deepEqual(sessionObservations.map(event => event.data.eventJson), managed.managed.events.log.map(canonical));
+    assert.equal(new Set(sessionObservations.map(event => event.seq)).size, sessionObservations.length);
+    for (const event of sessionObservations) {
+      assert.equal(event.ignorable, true); assert.equal(event.surfaceOp, undefined); assert.equal(event.sourceEventSeqs, undefined);
+      assert.equal(event.data.contract, 'agentkit.a2a-session-event/v1');
+      assert.deepEqual(event.data.owner, { agentId: scope.agentId, sessionId: 'a2a-session', kind: 'native' });
+      assert.equal(event.data.sourceKey, managed.managed.events.sessionDelivery.sourceKey);
+    }
+    assert.ok(modelRequests.every(request => !JSON.stringify(request.messages).includes('agentkit/a2a-observation')));
+    if (values['public-tool-activity']) assert.ok(modelRequests.every(request => !JSON.stringify(request.messages).includes('remote_search')),
+      'remote tool observations are not model tool-call authority');
+  } else assert.equal(sessionObservations.length, 0);
   assert.equal(owners.length, 1);
   const ownership = readNativeDshOwnership(owners[0].data, { sessionId: 'a2a-session', turn: 1 });
   assert.equal(ownership.identity.runId, runId); assert.deepEqual(ownership.identity.scope, scope);
@@ -662,7 +679,8 @@ try {
     node: process.version,
     internalControlPlane: values['internal-control-plane'], publicToolActivity: values['public-tool-activity'], internalActions,
     internalEvents: values['internal-control-plane'] ? { batches: internalEventBatches.length, accepted: acceptedInternalEvents.size,
-      pending: managed.managed.events.pending.length, log: managed.managed.events.log } : null,
+      pending: managed.managed.events.pending.length, sessionDelivery: managed.managed.events.sessionDelivery,
+      sessionObservationCount: sessionObservations.length, log: managed.managed.events.log } : null,
     proofRoot: root,
     originalPid, restartedPid,
     httpCalls: { model: modelCalls, discovery: discoveryCalls, a2aSend: a2aSends, a2aGet: a2aGets },

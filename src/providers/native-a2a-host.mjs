@@ -69,7 +69,9 @@ function strictSpecs(input) {
 
 export function prepareNativeA2AHost(options = {}) { return prepareA2AHost(options, false); }
 export function prepareDshA2AHost(options = {}) { return prepareA2AHost(options, true); }
-function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, workloadTokenProvider } = {}, dsh) {
+function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, workloadTokenProvider, sessionEvents } = {}, dsh) {
+  invariant(sessionEvents === undefined || sessionEvents?.contract === 'agentkit.a2a-session-event/v1'
+    && typeof sessionEvents.write === 'function', 'A2A_SESSION_SINK_INVALID');
   const contract = dsh ? STUDIO_DSH_A2A_HOST : STUDIO_NATIVE_A2A_HOST;
   const fixed = { ...env }, specs = strictSpecs(bindings);
   let spaceId = read(fixed, 'KSADK_A2A_SPACE_ID');
@@ -107,10 +109,11 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
   const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: allowPrivate ? null : isBlockedAddress });
   let closed = false, deliveryClosed = false, closing;
   const eventOwners = new Map();
+  const sessionEventOwners = new Map();
   const lifetime = new AbortController();
   const close = () => closing ??= (async () => {
     closed = true; lifetime.abort(new Error('A2A_HOST_CLOSED'));
-    await Promise.allSettled([...eventOwners.values()].map(value => value.stop()));
+    await Promise.allSettled([...eventOwners.values(), ...sessionEventOwners.values()].map(value => value.stop()));
     deliveryClosed = true; internal?.close(); await pinned.close();
   })();
   async function list({ spaceId: selectedSpace, signal, assertCurrent: authority }) {
@@ -154,7 +157,9 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         source: String(item.Source ?? 'hosted'), url: String(item.AgentCard?.supportedInterfaces?.[0]?.url ?? ''), card: copy(item.AgentCard ?? {}) }));
   }
   function forSession({ scope, agentId, agentRevision, buildId = null, sessionId, stateRoot, workspaceRoot, assertCurrent,
-    assertControl, authorizeControl, assertReceipt }) {
+    assertControl, authorizeControl, assertReceipt, destinationSessionId }) {
+    invariant(destinationSessionId === undefined || typeof destinationSessionId === 'string' && destinationSessionId.length > 0
+      && destinationSessionId.length <= 4096, 'A2A_SESSION_DESTINATION_INVALID');
     if (dsh) invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
       && (buildId === null || typeof buildId === 'string' && buildId.trim()), 'A2A_DSH_OWNER_REQUIRED');
     else scopeKey(scope);
@@ -190,7 +195,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       batches.sort((a, b) => a.createdAt - b.createdAt || a.request.scopeId.localeCompare(b.request.scopeId) || a.sequence - b.sequence);
       return batches[0] ?? null;
     }
-    let eventDispatcher;
+    let eventDispatcher, sessionEventDispatcher;
     if (internal) {
       eventDispatcher = eventOwners.get(directory);
       if (!eventDispatcher) {
@@ -215,6 +220,50 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         eventOwners.set(directory, eventDispatcher);
       }
       eventDispatcher.wake();
+      if (sessionEvents) {
+        sessionEventDispatcher = sessionEventOwners.get(directory);
+        if (!sessionEventDispatcher) {
+          sessionEventDispatcher = createA2AEventDispatcher({ assertCurrent: deliveryGuard,
+            deliveryLock: () => tryLock(join(directory, 'events.session-delivery.sqlite')),
+            pending() {
+              for (const record of sessionRecords()) {
+                const journal = record.managed?.events;
+                if (!journal) continue;
+                const sourceKey = hash({ contract: 'agentkit.a2a-session-event/v1', owner, identity: record.request.identity });
+                const cursor = journal.sessionDelivery, through = cursor?.through ?? 0;
+                invariant(!cursor || cursor.contract === 'agentkit.a2a-session-event/v1' && cursor.sourceKey === sourceKey,
+                  'A2A_SESSION_CURSOR_INVALID');
+                invariant(Number.isSafeInteger(through) && through >= 0 && through < journal.nextSeq, 'A2A_SESSION_CURSOR_INVALID');
+                invariant(record.sessionDestination === undefined || typeof record.sessionDestination === 'string'
+                  && record.sessionDestination.length > 0 && record.sessionDestination.length <= 4096, 'A2A_SESSION_DESTINATION_INVALID');
+                const events = journal.log.filter(event => event.seq > through).slice(0, 100);
+                if (events.length) return { events, request: record.request, taskId: record.managed.taskId,
+                  destinationSessionId: record.sessionDestination ?? record.owner.sessionId,
+                  sourceKey };
+              }
+              return null;
+            },
+            async append({ events, sourceKey, destinationSessionId: target, signal }) {
+              const receipt = await sessionEvents.write({ owner: copy(owner), sourceKey, destinationSessionId: target, events, signal });
+              invariant(receipt?.contract === 'agentkit.a2a-session-event/v1' && receipt.sourceKey === sourceKey
+                && receipt.through === events.at(-1).seq && Number.isSafeInteger(receipt.sessionSeq) && receipt.sessionSeq >= 0,
+              'A2A_SESSION_RECEIPT_INVALID');
+            },
+            update(batch, action) {
+              // A failed UI/history sink keeps every fact pending. It never
+              // dead-letters the execution log or changes remote delivery.
+              if (action !== 'acknowledge') return;
+              commitManaged(batch.request, managed => {
+                const journal = managed.events, through = journal.sessionDelivery?.through ?? 0;
+                invariant(batch.events[0].seq === through + 1 && canonical(journal.log.slice(through, through + batch.events.length))
+                  === canonical(batch.events), 'A2A_SESSION_BATCH_CONFLICT');
+                journal.sessionDelivery = { contract: 'agentkit.a2a-session-event/v1', through: batch.events.at(-1).seq, sourceKey: batch.sourceKey };
+              }, false);
+            } });
+          sessionEventOwners.set(directory, sessionEventDispatcher);
+        }
+        sessionEventDispatcher.wake();
+      }
     }
     function checkOwner(signal) {
       invariant(!closed && !sessionLifetime.signal.aborted, 'A2A_OWNER_CLOSED'); storageGuard(); signal.throwIfAborted();
@@ -237,6 +286,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       const identity = { ...ownerBinding, sessionId, ...(!dsh ? { runId: native.runId } : {}), operationKey: native.operationKey, callId: native.call.callId };
       const previous = readIdentity(identity);
       if (previous) {
+        invariant(destinationSessionId === undefined || previous.sessionDestination === undefined
+          || previous.sessionDestination === destinationSessionId, 'A2A_SESSION_DESTINATION_CONFLICT');
         invariant(canonical(previous.request[dsh ? 'dsh' : 'native']) === canonical(native) && canonical(previous.request.spec) === canonical(spec)
           && previous.request.message.parts.length === 1 && previous.request.message.parts[0].text === message, 'A2A_CALL_IDENTITY_CONFLICT');
         check(native, signal); return copy(previous.request);
@@ -263,6 +314,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
     function newRecord(request, phase) {
       const createdAt = Date.now();
       return { contract, owner, request, requestDigest: hash(request), phase, sendAdmission,
+        ...(destinationSessionId === undefined ? {} : { sessionDestination: destinationSessionId }),
         platformTaskId: `a2a-task-${randomUUID().replaceAll('-', '')}`, createdAt,
         deadlineAt: createdAt + Math.min(90000, Math.ceil((request.spec.timeout_seconds ?? 90) * 1000)),
         projection: createA2AProjection(request.scopeId).snapshot(),
@@ -361,6 +413,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
         atomicPrivate(file(request), bytes);
         eventDispatcher?.wake();
+        sessionEventDispatcher?.wake();
         return true;
       } finally { release(); }
     }
@@ -383,6 +436,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         const bytes = canonical(current) + '\n'; invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
         atomicPrivate(file(request), bytes);
         if (publish) eventDispatcher?.wake();
+        if (publish) sessionEventDispatcher?.wake();
       } finally { release(); }
     }
     const internalWire = internal ? createInternalA2AWire({ controlPlane: internal, readRecord, commit: commitManaged,
@@ -558,6 +612,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
           deadLetters: records.reduce((n, r) => n + (r.managed?.events?.deadLetters.length ?? 0), 0),
           error: records.map(r => r.managed?.events?.permanentError).find(Boolean) ?? null }; },
         replay(identity) { deliveryGuard(); const record = readIdentity(identity); return copy(record?.managed?.events?.log ?? []); },
+        ...(sessionEventDispatcher ? { flushSession: options => sessionEventDispatcher.flush(options) } : {}),
       } } : {}),
       close: () => sessionLifetime.abort(new Error('A2A_SESSION_CLOSED')),
       bindingDescription: { sourceRef: 'ksadk-python:355059d', sourceDigest: hash({ sourceDigest, hostBinding: binding.bindingDigest }), spaceId, planDigest,
@@ -575,7 +630,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         const path = join(directory, entry); invariant(lstatSync(path).size <= 64 * 1024 ** 2, 'A2A_RECORD_LIMIT');
         const record = parseNativeJson(readAll(path));
         if (record.contract !== contract || record.owner?.bindingDigest !== binding.bindingDigest
-          || !record.managed?.events?.pending?.length) continue;
+          || !(record.managed?.events?.pending?.length || sessionEvents && record.managed?.events
+            && (record.managed.events.sessionDelivery?.through ?? 0) < record.managed.events.nextSeq - 1)) continue;
         invariant(record.requestDigest === hash(record.request) && hash(record.request.identity) + '.json' === entry
           && canonical(record.request.identity.sessionId) === canonical(record.owner.sessionId)
           && specs.some(spec => canonical(spec) === canonical(record.request.spec)), 'A2A_CALL_IDENTITY_CONFLICT');

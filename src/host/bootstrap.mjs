@@ -24,6 +24,7 @@ import { createLegacyLocalConversationFactory } from './services/legacy-conversa
 import { loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
 import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
+import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/agentkit-harness/src/skill-bindings.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
@@ -35,6 +36,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     innerIamUrl: runtimeEnv.AGENTENGINE_INNER_IAM_URL || '',
   };
   const bridge = mountRuntimeBridge(ctx);
+  const a2aSessionSink = createStudioA2aSessionSink({ ctx });
+  ctx.effect(() => () => a2aSessionSink.close(), 'agentkit-studio: A2A observation delivery');
   for (const registration of nativeHookRegistrations) {
     const retire = bridge.nativeHooks.register(registration);
     ctx.effect(() => retire, 'agentkit-studio: trusted Native hook source');
@@ -173,6 +176,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ctx.effect(() => bridge.setBuiltinToolsFactory(({ ctx: toolsCtx, config, isClosed, signal }) => createDshNodeBuiltins({
       ctx: toolsCtx, workspaceRoot, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
       isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
+      a2aSessionEvents: a2aSessionSink.forPreset(config),
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
       getSkillManagement, getKnowledgeTools, knowledgeBindings: config.knowledgeBindings,
       getLegacyMemoryTools, legacyMemoryBindings: config.legacyMemoryBindings,
@@ -188,6 +192,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       workspaceRoot, stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
       commandEnvironment: runtimeEnv,
+      a2aSessionEvents: a2aSessionSink.forPreset(config),
       skillConnection,
       getSkillManagement, getKnowledgeTools, getLegacyMemoryTools,
       executeMcpTool: request => bridge.executeResourceTool(request),
